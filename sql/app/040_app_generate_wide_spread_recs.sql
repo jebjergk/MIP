@@ -16,30 +16,30 @@ DECLARE
 BEGIN
     -- Determine the pattern identifier for the wide-spread demo pattern.
     SELECT PATTERN_ID
-    INTO :v_pattern_id
+    INTO v_pattern_id
     FROM MIP.APP.PATTERN_DEFINITION
     WHERE NAME = 'WIDE_SPREAD_DEMO'
     ORDER BY PATTERN_ID
     LIMIT 1;
 
-    IF v_pattern_id IS NULL THEN
+    if (:v_pattern_id IS NULL) THEN
         RETURN 'Pattern WIDE_SPREAD_DEMO not found.';
-    END IF;
+    END if;
 
-    v_window_start := DATEADD(minute, -P_LOOKBACK_MINUTES, v_now);
+    v_window_start := DATEADD(minute, -P_LOOKBACK_MINUTES, :v_now);
 
     -- Insert recommendations for qualifying FX ticks, skipping duplicates.
     INSERT INTO MIP.APP.RECOMMENDATION_LOG (PATTERN_ID, PAIR, TS, SCORE, DETAILS, CREATED_AT)
     SELECT
-        v_pattern_id,
+        :v_pattern_id,
         ft.PAIR,
         ft.TS,
         ft.SPREAD AS SCORE,
         OBJECT_CONSTRUCT('spread', ft.SPREAD) AS DETAILS,
         CURRENT_TIMESTAMP()::TIMESTAMP_NTZ AS CREATED_AT
     FROM MIP.MART.FX_TICKS ft
-    WHERE ft.TS >= v_window_start
-      AND ft.TS <= v_now
+    WHERE ft.TS >= :v_window_start
+      AND ft.TS <= :v_now
       AND ft.SPREAD > P_MIN_SPREAD
       AND NOT EXISTS (
           SELECT 1
@@ -51,6 +51,6 @@ BEGIN
 
     v_rows_inserted := SQLROWCOUNT;
 
-    RETURN 'Inserted ' || v_rows_inserted || ' recommendations';
+    RETURN 'Inserted ' || :v_rows_inserted || ' recommendations';
 END;
 $$;

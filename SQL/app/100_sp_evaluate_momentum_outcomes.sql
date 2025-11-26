@@ -31,7 +31,7 @@ begin
             r.MARKET_TYPE,
             r.INTERVAL_MINUTES,
             r.TS as REC_TS,
-            try_to_double(r.DETAILS:"close") as REC_CLOSE
+            (r.DETAILS:"close")::FLOAT as REC_CLOSE
         from MIP.APP.RECOMMENDATION_LOG r
         where r.MARKET_TYPE      = 'STOCK'
           and r.INTERVAL_MINUTES = 5
@@ -53,7 +53,7 @@ begin
             r.REC_TS,
             r.REC_CLOSE,
             mb.TS as FUTURE_TS,
-            mb.CLOSE as FUTURE_CLOSE,
+            mb.CLOSE::FLOAT as FUTURE_CLOSE,
             row_number() over (
                 partition by r.RECOMMENDATION_ID
                 order by mb.TS
@@ -76,16 +76,16 @@ begin
         case
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0
-            then (cf.FUTURE_CLOSE - cf.REC_CLOSE) / cf.REC_CLOSE
+            then (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT
             else null
         end as RETURN_REALIZED,
         case
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0 then
                 case
-                    when (cf.FUTURE_CLOSE - cf.REC_CLOSE) / cf.REC_CLOSE >= P_HIT_THRESHOLD
+                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT >= P_HIT_THRESHOLD
                         then 'HIT'
-                    when (cf.FUTURE_CLOSE - cf.REC_CLOSE) / cf.REC_CLOSE <= P_MISS_THRESHOLD
+                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT <= P_MISS_THRESHOLD
                         then 'MISS'
                     else 'NEUTRAL'
                 end

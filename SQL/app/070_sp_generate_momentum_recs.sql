@@ -101,7 +101,7 @@ begin
             where r.MARKET_TYPE      = 'STOCK'
               and r.INTERVAL_MINUTES = 5
               and r.RETURN_SIMPLE    is not null
-              and r.VOLUME           >= v_min_volume
+              and r.VOLUME           >= :v_min_volume
               and r.TS               >= dateadd(day, -2, current_timestamp())
         ),
         scored as (
@@ -115,12 +115,12 @@ begin
         select *
         from scored
         where RETURN_SIMPLE >= :P_MIN_RETURN
-          and POSITIVE_LAG_COUNT >= v_consecutive_up_bars
+          and POSITIVE_LAG_COUNT >= :v_consecutive_up_bars
           and MAX_PREV_20_CLOSE is not null
           and CLOSE >= MAX_PREV_20_CLOSE
           and (
                 STDDEV_20 is null
-             or (STDDEV_20 > 0 and RETURN_SIMPLE / STDDEV_20 >= v_vol_adj_threshold)
+             or (STDDEV_20 > 0 and RETURN_SIMPLE / STDDEV_20 >= :v_vol_adj_threshold)
           )
     ) r
     left join MIP.APP.RECOMMENDATION_LOG existing

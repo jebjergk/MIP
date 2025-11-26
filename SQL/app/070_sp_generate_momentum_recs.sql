@@ -11,6 +11,9 @@ $$
 declare
     v_pattern_id number;
     v_inserted   number := 0;
+    v_min_volume number := 1000;
+    v_vol_adj_threshold number := 1.0;
+    v_consecutive_up_bars number := 3;
 begin
     -- Find the MOMENTUM_DEMO pattern
     select PATTERN_ID
@@ -22,6 +25,27 @@ begin
 
     if (v_pattern_id is null) then
         return 'No enabled MOMENTUM_DEMO pattern found. Run SP_SEED_MIP_DEMO() first.';
+    end if;
+
+    -- Configurable thresholds
+    select try_to_number(CONFIG_VALUE)
+      into :v_min_volume
+    from MIP.APP.APP_CONFIG
+    where CONFIG_KEY = 'MIN_VOLUME'
+    limit 1;
+
+    if (v_min_volume is null) then
+        v_min_volume := 1000;
+    end if;
+
+    select try_to_number(CONFIG_VALUE)
+      into :v_vol_adj_threshold
+    from MIP.APP.APP_CONFIG
+    where CONFIG_KEY = 'VOL_ADJ_THRESHOLD'
+    limit 1;
+
+    if (v_vol_adj_threshold is null) then
+        v_vol_adj_threshold := 1.0;
     end if;
 
     -- Insert new recommendations for stocks with RETURN_SIMPLE >= threshold
@@ -47,19 +71,47 @@ begin
             'prev_close',    r.PREV_CLOSE,
             'close',         r.CLOSE
         )                                       as DETAILS
-    from MIP.MART.MARKET_RETURNS r
+    from (
+        with base as (
+            select
+                r.*,
+                lag(r.RETURN_SIMPLE, 1) over w as RET_LAG_1,
+                lag(r.RETURN_SIMPLE, 2) over w as RET_LAG_2,
+                lag(r.RETURN_SIMPLE, 3) over w as RET_LAG_3,
+                (case when lag(r.RETURN_SIMPLE, 1) over w > 0 then 1 else 0 end
+               + case when lag(r.RETURN_SIMPLE, 2) over w > 0 then 1 else 0 end
+               + case when lag(r.RETURN_SIMPLE, 3) over w > 0 then 1 else 0 end) as POSITIVE_LAG_COUNT,
+                max(r.CLOSE) over (w rows between 20 preceding and 1 preceding) as MAX_PREV_20_CLOSE,
+                stddev_samp(r.RETURN_SIMPLE) over (w rows between 19 preceding and current row) as STDDEV_20
+            from MIP.MART.MARKET_RETURNS r
+            window w as (
+                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                order by r.TS
+            )
+            where r.MARKET_TYPE      = 'STOCK'
+              and r.INTERVAL_MINUTES = 5
+              and r.RETURN_SIMPLE    is not null
+              and r.VOLUME           >= v_min_volume
+              and r.TS               >= dateadd(day, -2, current_timestamp())
+        )
+        select *
+        from base
+        where RETURN_SIMPLE >= :P_MIN_RETURN
+          and POSITIVE_LAG_COUNT >= v_consecutive_up_bars
+          and MAX_PREV_20_CLOSE is not null
+          and CLOSE >= MAX_PREV_20_CLOSE
+          and (
+                STDDEV_20 is null
+             or (STDDEV_20 > 0 and RETURN_SIMPLE / STDDEV_20 >= v_vol_adj_threshold)
+          )
+    ) r
     left join MIP.APP.RECOMMENDATION_LOG existing
         on existing.PATTERN_ID       = :v_pattern_id
        and existing.SYMBOL           = r.SYMBOL
        and existing.MARKET_TYPE      = r.MARKET_TYPE
        and existing.INTERVAL_MINUTES = r.INTERVAL_MINUTES
        and existing.TS               = r.TS
-    where r.MARKET_TYPE      = 'STOCK'
-      and r.INTERVAL_MINUTES = 5
-      and r.RETURN_SIMPLE    is not null
-      and r.RETURN_SIMPLE    >= :P_MIN_RETURN
-      and r.TS               >= dateadd(day, -2, current_timestamp())
-      and existing.RECOMMENDATION_ID is null;  -- avoid duplicates
+    where existing.RECOMMENDATION_ID is null;  -- avoid duplicates
 
     v_inserted := sqlrowcount;
 

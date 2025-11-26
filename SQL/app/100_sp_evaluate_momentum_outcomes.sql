@@ -83,9 +83,9 @@ begin
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0 then
                 case
-                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT >= :P_HIT_THRESHOLD
+                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT >= P_HIT_THRESHOLD
                         then 'HIT'
-                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT <= :P_MISS_THRESHOLD
+                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT <= P_MISS_THRESHOLD
                         then 'MISS'
                     else 'NEUTRAL'
                 end

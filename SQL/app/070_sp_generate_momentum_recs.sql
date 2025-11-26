@@ -75,27 +75,45 @@ begin
         with base as (
             select
                 r.*,
-                lag(r.RETURN_SIMPLE, 1) over w as RET_LAG_1,
-                lag(r.RETURN_SIMPLE, 2) over w as RET_LAG_2,
-                lag(r.RETURN_SIMPLE, 3) over w as RET_LAG_3,
-                (case when lag(r.RETURN_SIMPLE, 1) over w > 0 then 1 else 0 end
-               + case when lag(r.RETURN_SIMPLE, 2) over w > 0 then 1 else 0 end
-               + case when lag(r.RETURN_SIMPLE, 3) over w > 0 then 1 else 0 end) as POSITIVE_LAG_COUNT,
-                max(r.CLOSE) over (w rows between 20 preceding and 1 preceding) as MAX_PREV_20_CLOSE,
-                stddev_samp(r.RETURN_SIMPLE) over (w rows between 19 preceding and current row) as STDDEV_20
+                lag(r.RETURN_SIMPLE, 1) over (
+                    partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                    order by r.TS
+                ) as RET_LAG_1,
+                lag(r.RETURN_SIMPLE, 2) over (
+                    partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                    order by r.TS
+                ) as RET_LAG_2,
+                lag(r.RETURN_SIMPLE, 3) over (
+                    partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                    order by r.TS
+                ) as RET_LAG_3,
+                max(r.CLOSE) over (
+                    partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                    order by r.TS
+                    rows between 20 preceding and 1 preceding
+                ) as MAX_PREV_20_CLOSE,
+                stddev_samp(r.RETURN_SIMPLE) over (
+                    partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                    order by r.TS
+                    rows between 19 preceding and current row
+                ) as STDDEV_20
             from MIP.MART.MARKET_RETURNS r
-            window w as (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            )
             where r.MARKET_TYPE      = 'STOCK'
               and r.INTERVAL_MINUTES = 5
               and r.RETURN_SIMPLE    is not null
               and r.VOLUME           >= v_min_volume
               and r.TS               >= dateadd(day, -2, current_timestamp())
+        ),
+        scored as (
+            select
+                b.*,
+                (case when b.RET_LAG_1 > 0 then 1 else 0 end
+               + case when b.RET_LAG_2 > 0 then 1 else 0 end
+               + case when b.RET_LAG_3 > 0 then 1 else 0 end) as POSITIVE_LAG_COUNT
+            from base b
         )
         select *
-        from base
+        from scored
         where RETURN_SIMPLE >= :P_MIN_RETURN
           and POSITIVE_LAG_COUNT >= v_consecutive_up_bars
           and MAX_PREV_20_CLOSE is not null

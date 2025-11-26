@@ -15,6 +15,9 @@ as
 $$
 declare
     v_inserted number := 0;
+    v_horizon_minutes number := P_HORIZON_MINUTES;
+    v_hit_threshold number := P_HIT_THRESHOLD;
+    v_miss_threshold number := P_MISS_THRESHOLD;
 begin
     -- Insert outcomes only for recommendations that don't have an outcome yet for this horizon
     insert into MIP.APP.OUTCOME_EVALUATION (
@@ -41,7 +44,7 @@ begin
         from base_recs b
         left join MIP.APP.OUTCOME_EVALUATION o
           on o.RECOMMENDATION_ID = b.RECOMMENDATION_ID
-         and o.HORIZON_MINUTES   = :P_HORIZON_MINUTES
+         and o.HORIZON_MINUTES   = :v_horizon_minutes
         where o.OUTCOME_ID is null
     ),
     future_bars as (
@@ -63,7 +66,7 @@ begin
           on mb.SYMBOL          = r.SYMBOL
          and mb.MARKET_TYPE     = r.MARKET_TYPE
          and mb.INTERVAL_MINUTES= r.INTERVAL_MINUTES
-         and mb.TS >= dateadd(minute, :P_HORIZON_MINUTES, r.REC_TS)
+         and mb.TS >= dateadd(minute, :v_horizon_minutes, r.REC_TS)
     ),
     chosen_future as (
         select *
@@ -72,7 +75,7 @@ begin
     )
     select
         cf.RECOMMENDATION_ID,
-        :P_HORIZON_MINUTES as HORIZON_MINUTES,
+        :v_horizon_minutes as HORIZON_MINUTES,
         case
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0
@@ -83,9 +86,9 @@ begin
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0 then
                 case
-                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT >= P_HIT_THRESHOLD
+                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT >= :v_hit_threshold
                         then 'HIT'
-                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT <= P_MISS_THRESHOLD
+                    when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT <= :v_miss_threshold
                         then 'MISS'
                     else 'NEUTRAL'
                 end

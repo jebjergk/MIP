@@ -41,7 +41,7 @@ begin
         from base_recs b
         left join MIP.APP.OUTCOME_EVALUATION o
           on o.RECOMMENDATION_ID = b.RECOMMENDATION_ID
-         and o.HORIZON_MINUTES   = P_HORIZON_MINUTES
+         and o.HORIZON_MINUTES   = :P_HORIZON_MINUTES
         where o.OUTCOME_ID is null
     ),
     future_bars as (
@@ -63,7 +63,7 @@ begin
           on mb.SYMBOL          = r.SYMBOL
          and mb.MARKET_TYPE     = r.MARKET_TYPE
          and mb.INTERVAL_MINUTES= r.INTERVAL_MINUTES
-         and mb.TS >= dateadd(minute, P_HORIZON_MINUTES, r.REC_TS)
+         and mb.TS >= dateadd(minute, :P_HORIZON_MINUTES, r.REC_TS)
     ),
     chosen_future as (
         select *
@@ -72,7 +72,7 @@ begin
     )
     select
         cf.RECOMMENDATION_ID,
-        P_HORIZON_MINUTES as HORIZON_MINUTES,
+        :P_HORIZON_MINUTES as HORIZON_MINUTES,
         case
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0

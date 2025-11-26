@@ -10,6 +10,10 @@ grant create streamlit on schema mip.app to role mip_app_role;
 grant usage on warehouse mip_wh_xs to role mip_app_role;
 grant create git repository on schema mip.app to role mip_app_role;
 GRANT USAGE ON INTEGRATION repo_jebjergk TO ROLE mip_app_role;
+GRANT USAGE ON INTEGRATION MIP_ALPHA_EXTERNAL_ACCESS TO ROLE mip_app_role;
+GRANT USAGE ON NETWORK RULE MIP.APP.MIP_ALPHA_NETWORK_RULE TO ROLE mip_app_role;
+
+'MIP_ALPHA_NETWORK_RULE
 
 
 -- App role should be able to execute all current and future APP procedures

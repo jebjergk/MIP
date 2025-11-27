@@ -16,6 +16,15 @@ create table if not exists MIP.APP.PATTERN_DEFINITION (
     CREATED_BY    string        default current_user(),
     UPDATED_AT    timestamp_ntz,
     UPDATED_BY    string,
+    IS_ACTIVE               string        default 'Y',
+    LAST_TRAINED_AT         timestamp_ntz,
+    LAST_BACKTEST_RUN_ID    number,
+    LAST_TRADE_COUNT        number,
+    LAST_HIT_RATE           float,
+    LAST_CUM_RETURN         float,
+    LAST_AVG_RETURN         float,
+    LAST_STD_RETURN         float,
+    PATTERN_SCORE           float,
     constraint PK_PATTERN_DEFINITION primary key (PATTERN_ID),
     constraint UQ_PATTERN_NAME unique (NAME)
 );

@@ -64,6 +64,35 @@ def render_market_overview():
         """
     )
 
+    st.subheader("Data Ingestion")
+    st.caption(
+        "Manual ingestion of AlphaVantage bars. "
+        "This calls the Snowflake stored procedure MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS() "
+        "once. The scheduled task remains suspended by default to keep costs low."
+    )
+
+    if st.button("Run ingestion now"):
+        with st.spinner("Running AlphaVantage ingestion…"):
+            try:
+                session.sql("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS()").collect()
+                st.success("Ingestion completed successfully.")
+            except Exception as e:
+                st.error(f"Ingestion failed: {e}")
+
+    try:
+        last_ts_df = session.sql(
+            """
+            SELECT MAX(TS) AS LAST_TS
+            FROM MIP.MART.MARKET_BARS
+            """
+        ).to_pandas()
+
+        last_ts = last_ts_df["LAST_TS"].iloc[0]
+        if last_ts is not None:
+            st.caption(f"Last bar timestamp in MARKET_BARS: {last_ts}")
+    except Exception:
+        st.caption("Could not determine last bar timestamp.")
+
     # Optional filters
     col1, col2, col3 = st.columns(3)
     with col1:

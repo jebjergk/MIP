@@ -37,13 +37,13 @@ begin
         NOTES
     )
     values (
-        v_market_type,
-        v_interval_minutes,
-        P_HORIZON_MINUTES,
-        P_HIT_THRESHOLD,
-        P_MISS_THRESHOLD,
-        P_FROM_TS,
-        P_TO_TS,
+        :v_market_type,
+        :v_interval_minutes,
+        :P_HORIZON_MINUTES,
+        :P_HIT_THRESHOLD,
+        :P_MISS_THRESHOLD,
+        :P_FROM_TS,
+        :P_TO_TS,
         null
     );
 
@@ -64,7 +64,7 @@ begin
         DETAILS
     )
     select
-        v_run_id,
+        :v_run_id,
         PATTERN_ID,
         SYMBOL,
         TRADE_COUNT,
@@ -90,21 +90,21 @@ begin
             object_construct(
                 'pattern_name', max(p.NAME),
                 'example_symbol', max(r.SYMBOL),
-                'horizon_minutes', P_HORIZON_MINUTES,
-                'hit_threshold', P_HIT_THRESHOLD,
-                'miss_threshold', P_MISS_THRESHOLD,
-                'market_type', v_market_type,
-                'interval_minutes', v_interval_minutes
+                'horizon_minutes', :P_HORIZON_MINUTES,
+                'hit_threshold', :P_HIT_THRESHOLD,
+                'miss_threshold', :P_MISS_THRESHOLD,
+                'market_type', :v_market_type,
+                'interval_minutes', :v_interval_minutes
             ) as DETAILS
         from MIP.APP.RECOMMENDATION_LOG r
         join MIP.APP.OUTCOME_EVALUATION o
             on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
-           and o.HORIZON_MINUTES = P_HORIZON_MINUTES
+           and o.HORIZON_MINUTES = :P_HORIZON_MINUTES
         join MIP.APP.PATTERN_DEFINITION p
             on r.PATTERN_ID = p.PATTERN_ID
-        where r.MARKET_TYPE = v_market_type
-          and r.INTERVAL_MINUTES = v_interval_minutes
-          and r.TS between P_FROM_TS and P_TO_TS
+        where r.MARKET_TYPE = :v_market_type
+          and r.INTERVAL_MINUTES = :v_interval_minutes
+          and r.TS between :P_FROM_TS and :P_TO_TS
           and o.OUTCOME_LABEL in ('HIT', 'MISS', 'NEUTRAL')
           and o.RETURN_REALIZED is not null
         group by r.PATTERN_ID, r.SYMBOL
@@ -112,6 +112,6 @@ begin
 
     v_rows := sqlrowcount;
 
-    return 'Backtest run ' || v_run_id || ' created with ' || v_rows || ' result rows.';
+    return 'Backtest run ' || :v_run_id || ' created with ' || :v_rows || ' result rows.';
 end;
 $$;

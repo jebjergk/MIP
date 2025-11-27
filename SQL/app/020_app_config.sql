@@ -33,6 +33,18 @@ using (
     select 'DEFAULT_FX_PAIRS',
            'EUR/USD,USD/JPY',
            'Comma-separated list of FX pairs to ingest from AlphaVantage'
+    union all
+    select 'PATTERN_MIN_TRADES',
+           '30',
+           'Minimum trade count required to activate a pattern'
+    union all
+    select 'PATTERN_MIN_HIT_RATE',
+           '0.55',
+           'Minimum hit rate required to activate a pattern'
+    union all
+    select 'PATTERN_MIN_CUM_RETURN',
+           '0.0',
+           'Minimum cumulative return required to activate a pattern'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

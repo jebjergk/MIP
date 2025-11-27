@@ -2,7 +2,9 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_GENERATE_MOMENTUM_RECS(
-    P_MIN_RETURN number       -- e.g. 0.002 for +0.2% threshold
+    P_MIN_RETURN       number,      -- e.g. 0.002 for +0.2% threshold
+    P_MARKET_TYPE      string default 'STOCK',
+    P_INTERVAL_MINUTES number default 5
 )
 returns varchar
 language sql
@@ -14,7 +16,12 @@ declare
     v_min_volume number := 1000;
     v_vol_adj_threshold number := 1.0;
     v_consecutive_up_bars number := 3;
+    v_market_type string;
+    v_interval_minutes number;
 begin
+    v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
+    v_interval_minutes := coalesce(P_INTERVAL_MINUTES, 5);
+
     -- Find the MOMENTUM_DEMO pattern
     select PATTERN_ID
       into :v_pattern_id
@@ -98,11 +105,11 @@ begin
                     rows between 19 preceding and current row
                 ) as STDDEV_20
             from MIP.MART.MARKET_RETURNS r
-            where r.MARKET_TYPE      = 'STOCK'
-              and r.INTERVAL_MINUTES = 5
-              and r.RETURN_SIMPLE    is not null
-              and r.VOLUME           >= :v_min_volume
-              and r.TS               >= dateadd(day, -2, current_timestamp())
+            where r.MARKET_TYPE       = :v_market_type
+              and r.INTERVAL_MINUTES  = :v_interval_minutes
+              and r.RETURN_SIMPLE     is not null
+              and (:v_market_type = 'FX' or r.VOLUME >= :v_min_volume)
+              and r.TS                >= dateadd(day, -2, current_timestamp())
         ),
         scored as (
             select

@@ -35,6 +35,21 @@ def to_pandas(df):
         return None
 
 
+def get_market_selection(key_prefix: str = ""):
+    """Shared market selector returning market type and interval minutes."""
+    options = {
+        "Stocks (5-min)": ("STOCK", 5),
+        "FX (Daily)": ("FX", 1440),
+    }
+    choice = st.radio(
+        "Market / timeframe",
+        options=list(options.keys()),
+        horizontal=True,
+        key=f"market_selector_{key_prefix}",
+    )
+    return options.get(choice, ("STOCK", 5))
+
+
 # --- Pages ---
 
 
@@ -174,6 +189,8 @@ def render_signals_recommendations():
         """
     )
 
+    selected_market_type, selected_interval_minutes = get_market_selection("signals")
+
     with st.form("momentum_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -187,13 +204,13 @@ def render_signals_recommendations():
                 help="E.g. 0.002 = 0.2% positive return between bars.",
             )
         with col2:
-            st.caption("Signals are currently generated only for STOCK, 5-minute bars.")
+            st.caption("Momentum signals will run for the selected market and interval.")
 
         submitted = st.form_submit_button("Generate momentum signals")
 
     if submitted:
         # Call the stored procedure
-        call_sql = f"call MIP.APP.SP_GENERATE_MOMENTUM_RECS({min_return})"
+        call_sql = f"call MIP.APP.SP_GENERATE_MOMENTUM_RECS({min_return}, '{selected_market_type}', {selected_interval_minutes})"
         res = run_sql(call_sql).collect()
         msg = res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
         st.success(msg)
@@ -203,7 +220,7 @@ def render_signals_recommendations():
     pattern_df = to_pandas(
         run_sql(
             """
-            select PATTERN_NAME
+            select NAME as PATTERN_NAME
             from MIP.APP.PATTERN_DEFINITION
             order by PATTERN_NAME
             """
@@ -228,11 +245,12 @@ def render_signals_recommendations():
         from MIP.APP.RECOMMENDATION_LOG r
         join MIP.APP.PATTERN_DEFINITION p
           on p.PATTERN_ID = r.PATTERN_ID
-        where 1=1
+        where r.MARKET_TYPE = '{selected_market_type}'
+          and r.INTERVAL_MINUTES = {selected_interval_minutes}
     """
 
     if selected_pattern != "All patterns":
-        rec_query += f"\n        and p.PATTERN_NAME = '{selected_pattern}'"
+        rec_query += f"\n        and p.NAME = '{selected_pattern}'"
 
     rec_query += "\n        order by r.GENERATED_AT desc\n        limit 200"
 
@@ -250,29 +268,68 @@ def render_outcome_evaluation():
 
     st.markdown(
         """
-        Outcome evaluation will use `MIP.APP.OUTCOME_EVALUATION` to track how
-        well recommendations performed after a given time horizon.
-
-        The table exists, but we have not yet implemented the evaluation
-        stored procedure. For now, this page just shows the raw table.
+        Outcome evaluation uses `MIP.APP.SP_EVALUATE_MOMENTUM_OUTCOMES` to track how
+        well recommendations performed after a given time horizon for the selected
+        market and interval.
         """
     )
 
-    df_sp = run_sql(
+    selected_market_type, selected_interval_minutes = get_market_selection("outcomes")
+
+    with st.form("outcome_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            horizon_minutes = st.number_input(
+                "Horizon (minutes)", min_value=1, value=15, step=1
+            )
+        with col2:
+            hit_threshold = st.number_input(
+                "Hit threshold", value=0.002, format="%.6f"
+            )
+        with col3:
+            miss_threshold = st.number_input(
+                "Miss threshold", value=-0.002, format="%.6f"
+            )
+
+        evaluate = st.form_submit_button("Evaluate outcomes")
+
+    if evaluate:
+        call_sql = f"""
+            call MIP.APP.SP_EVALUATE_MOMENTUM_OUTCOMES(
+                {int(horizon_minutes)},
+                {hit_threshold},
+                {miss_threshold},
+                '{selected_market_type}',
+                {selected_interval_minutes}
+            )
         """
+        with st.spinner("Evaluating outcomes..."):
+            res = run_sql(call_sql).collect()
+        msg = res[0][0] if res and len(res[0]) > 0 else "Outcome evaluation completed."
+        st.success(msg)
+
+    outcome_query = f"""
         select
-            OUTCOME_ID,
-            RECOMMENDATION_ID,
-            EVALUATED_AT,
-            HORIZON_MINUTES,
-            RETURN_REALIZED,
-            OUTCOME_LABEL,
-            DETAILS
-        from MIP.APP.OUTCOME_EVALUATION
-        order by EVALUATED_AT desc
+            o.OUTCOME_ID,
+            o.RECOMMENDATION_ID,
+            o.EVALUATED_AT,
+            o.HORIZON_MINUTES,
+            o.RETURN_REALIZED,
+            o.OUTCOME_LABEL,
+            o.DETAILS,
+            r.SYMBOL,
+            r.MARKET_TYPE,
+            r.INTERVAL_MINUTES
+        from MIP.APP.OUTCOME_EVALUATION o
+        join MIP.APP.RECOMMENDATION_LOG r
+          on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+        where r.MARKET_TYPE = '{selected_market_type}'
+          and r.INTERVAL_MINUTES = {selected_interval_minutes}
+        order by o.EVALUATED_AT desc
         limit 200
-        """
-    )
+    """
+
+    df_sp = run_sql(outcome_query)
     df_pd = to_pandas(df_sp)
 
     if df_pd is None or df_pd.empty:
@@ -324,8 +381,8 @@ def render_outcome_evaluation():
                 {miss_threshold},
                 to_timestamp_ntz('{from_ts_str}'),
                 to_timestamp_ntz('{to_ts_str}'),
-                'STOCK',
-                5
+                '{selected_market_type}',
+                {selected_interval_minutes}
             )
         """
 
@@ -351,6 +408,8 @@ def render_outcome_evaluation():
                 TO_TS,
                 NOTES
             from MIP.APP.BACKTEST_RUN
+            where MARKET_TYPE = '{selected_market_type}'
+              and INTERVAL_MINUTES = {selected_interval_minutes}
             order by CREATED_AT desc
             limit 50
             """
@@ -375,7 +434,7 @@ def render_outcome_evaluation():
             select
                 r.BACKTEST_RUN_ID,
                 r.PATTERN_ID,
-                p.PATTERN_NAME,
+                p.NAME as PATTERN_NAME,
                 r.SYMBOL,
                 r.TRADE_COUNT,
                 r.HIT_COUNT,

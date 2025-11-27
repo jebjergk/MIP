@@ -52,3 +52,40 @@ create table if not exists MIP.APP.OUTCOME_EVALUATION (
     DETAILS           variant,
     constraint PK_OUTCOME_EVALUATION primary key (OUTCOME_ID)
 );
+
+-----------------------------
+-- 4. BACKTEST_RUN
+-----------------------------
+create table if not exists MIP.APP.BACKTEST_RUN (
+    BACKTEST_RUN_ID   number        autoincrement,
+    CREATED_AT        timestamp_ntz default current_timestamp(),
+    MARKET_TYPE       string,
+    INTERVAL_MINUTES  number,
+    HORIZON_MINUTES   number,
+    HIT_THRESHOLD     float,
+    MISS_THRESHOLD    float,
+    FROM_TS           timestamp_ntz,
+    TO_TS             timestamp_ntz,
+    NOTES             string,
+    constraint PK_BACKTEST_RUN primary key (BACKTEST_RUN_ID)
+);
+
+-----------------------------
+-- 5. BACKTEST_RESULT
+-----------------------------
+create table if not exists MIP.APP.BACKTEST_RESULT (
+    BACKTEST_RUN_ID number,
+    PATTERN_ID      number,
+    SYMBOL          string,
+    TRADE_COUNT     number,
+    HIT_COUNT       number,
+    MISS_COUNT      number,
+    NEUTRAL_COUNT   number,
+    HIT_RATE        float,
+    AVG_RETURN      float,
+    STD_RETURN      float,
+    CUM_RETURN      float,
+    DETAILS         variant,
+    constraint FK_BACKTEST_RESULT_RUN foreign key (BACKTEST_RUN_ID) references MIP.APP.BACKTEST_RUN(BACKTEST_RUN_ID),
+    constraint FK_BACKTEST_RESULT_PATTERN foreign key (PATTERN_ID) references MIP.APP.PATTERN_DEFINITION(PATTERN_ID)
+);

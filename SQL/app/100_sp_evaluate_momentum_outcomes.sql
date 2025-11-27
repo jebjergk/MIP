@@ -7,7 +7,9 @@ use database MIP;
 create or replace procedure MIP.APP.SP_EVALUATE_MOMENTUM_OUTCOMES(
     P_HORIZON_MINUTES   number,   -- e.g. 15
     P_HIT_THRESHOLD     number,   -- e.g. 0.002  (>= +0.2% = HIT)
-    P_MISS_THRESHOLD    number    -- e.g. -0.002 (<= -0.2% = MISS)
+    P_MISS_THRESHOLD    number,   -- e.g. -0.002 (<= -0.2% = MISS)
+    P_MARKET_TYPE       string default 'STOCK',
+    P_INTERVAL_MINUTES  number default 5
 )
 returns varchar
 language sql
@@ -18,7 +20,12 @@ declare
     v_horizon_minutes number := P_HORIZON_MINUTES;
     v_hit_threshold number := P_HIT_THRESHOLD;
     v_miss_threshold number := P_MISS_THRESHOLD;
+    v_market_type string;
+    v_interval_minutes number;
 begin
+    v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
+    v_interval_minutes := coalesce(P_INTERVAL_MINUTES, 5);
+
     -- Insert outcomes only for recommendations that don't have an outcome yet for this horizon
     insert into MIP.APP.OUTCOME_EVALUATION (
         RECOMMENDATION_ID,
@@ -36,8 +43,8 @@ begin
             r.TS as REC_TS,
             (r.DETAILS:"close")::FLOAT as REC_CLOSE
         from MIP.APP.RECOMMENDATION_LOG r
-        where r.MARKET_TYPE      = 'STOCK'
-          and r.INTERVAL_MINUTES = 5
+        where r.MARKET_TYPE      = :v_market_type
+          and r.INTERVAL_MINUTES = :v_interval_minutes
     ),
     recs_without_outcome as (
         select b.*

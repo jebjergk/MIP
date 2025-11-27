@@ -357,10 +357,16 @@ def render_signals_recommendations():
             select
                 r.TS,
                 r.RECOMMENDATION_ID,
-                coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME
+                coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
+                mb.CLOSE
             from MIP.APP.RECOMMENDATION_LOG r
             left join MIP.APP.PATTERN_DEFINITION p
               on p.PATTERN_ID = r.PATTERN_ID
+            left join MIP.MART.MARKET_BARS mb
+              on mb.SYMBOL = r.SYMBOL
+             and mb.MARKET_TYPE = r.MARKET_TYPE
+             and mb.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+             and mb.TS = r.TS
             where r.SYMBOL = '{selected_symbol}'
               and r.MARKET_TYPE = '{selected_market_type}'
               and r.INTERVAL_MINUTES = {selected_interval_minutes}
@@ -374,22 +380,38 @@ def render_signals_recommendations():
         st.info("No price data available for the selected symbol / window.")
         return
 
-    price_chart = alt.Chart(price_df).mark_line().encode(
-        x=alt.X("TS:T", title="Timestamp"),
-        y=alt.Y("CLOSE:Q", title="Close"),
-        tooltip=["TS:T", "CLOSE:Q"],
+    price_df["CLOSE"] = price_df["CLOSE"].astype(float)
+
+    price_line = (
+        alt.Chart(price_df)
+        .mark_line()
+        .encode(
+            x=alt.X("TS:T", title="Time"),
+            y=alt.Y("CLOSE:Q", title="Price"),
+            tooltip=["TS", "CLOSE"],
+        )
     )
 
     if rec_vis_df is not None and not rec_vis_df.empty:
-        rec_points = alt.Chart(rec_vis_df).mark_rule(color="orange").encode(
-            x=alt.X("TS:T", title="Timestamp"),
-            tooltip=["TS:T", "PATTERN_NAME:N", "RECOMMENDATION_ID:N"],
-        )
-        combined = alt.layer(price_chart, rec_points).resolve_scale(y="shared")
-    else:
-        combined = price_chart
+        rec_vis_df["CLOSE"] = rec_vis_df["CLOSE"].astype(float)
+        rec_vis_df["PATTERN_NAME"] = rec_vis_df["PATTERN_NAME"].astype(str)
 
-    st.altair_chart(combined, use_container_width=True)
+        signal_points = (
+            alt.Chart(rec_vis_df)
+            .mark_point(size=80, shape="triangle-up")
+            .encode(
+                x="TS:T",
+                y="CLOSE:Q",
+                color=alt.Color("PATTERN_NAME:N", title="Pattern"),
+                tooltip=["TS", "CLOSE", "PATTERN_NAME"],
+            )
+        )
+
+        chart = (price_line + signal_points).properties(height=400)
+    else:
+        chart = price_line.properties(height=400)
+
+    st.altair_chart(chart, use_container_width=True)
 
 
 def render_outcome_evaluation():

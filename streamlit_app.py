@@ -576,49 +576,55 @@ def render_outcome_evaluation():
             )
 
             if pattern_perf_df is not None and not pattern_perf_df.empty:
-                top_n = min(len(pattern_perf_df), 20)
-                perf_to_plot = pattern_perf_df.head(top_n).reset_index(drop=True)
+                df = pattern_perf_df.copy().reset_index(drop=True)
 
-                if perf_to_plot.empty:
+                for col in ["CUM_RETURN", "HIT_RATE", "TRADE_COUNT"]:
+                    if col in df.columns:
+                        df[col] = df[col].astype(float)
+
+                df["PATTERN_NAME"] = df["PATTERN_NAME"].astype(str)
+
+                if df.empty:
                     st.info("No backtest results to display.")
                     return
 
-                numeric_cols = ["CUM_RETURN", "AVG_RETURN", "HIT_RATE"]
-                for c in numeric_cols:
-                    if c in perf_to_plot.columns:
-                        perf_to_plot[c] = perf_to_plot[c].astype(float)
+                df = df.sort_values("CUM_RETURN", ascending=False)
 
-                perf_to_plot["PATTERN_NAME"] = perf_to_plot["PATTERN_NAME"].astype(str)
-
-                chart_df = perf_to_plot.dropna(subset=["CUM_RETURN"]).reset_index(
-                    drop=True
-                )
-
-                if chart_df.empty:
-                    st.info("No backtest results to display.")
-                    return
-
-                y_min = float(chart_df["CUM_RETURN"].min())
-                y_max = float(chart_df["CUM_RETURN"].max())
-                if abs(y_max - y_min) < 1e-9:
-                    y_max = y_min + 0.0001
-
-                chart = (
-                    alt.Chart(chart_df)
+                cum_chart = (
+                    alt.Chart(df.head(25))
                     .mark_bar()
                     .encode(
-                        x=alt.X("PATTERN_NAME:N", sort="-y", title="Pattern"),
-                        y=alt.Y(
-                            "CUM_RETURN:Q",
-                            scale=alt.Scale(domain=[y_min, y_max]),
-                            title="Cumulative Return",
-                        ),
-                        tooltip=["PATTERN_NAME", "CUM_RETURN", "TRADE_COUNT"],
+                        x=alt.X("CUM_RETURN:Q", title="Cumulative return"),
+                        y=alt.Y("PATTERN_NAME:N", sort="-x", title="Pattern"),
+                        tooltip=[
+                            "PATTERN_NAME",
+                            "CUM_RETURN",
+                            "TRADE_COUNT",
+                            "HIT_RATE",
+                        ],
                     )
-                    .properties(height=300)
+                    .properties(height=400)
                 )
 
-                st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(cum_chart, use_container_width=True)
+
+                if "HIT_RATE" in df.columns:
+                    hit_chart = (
+                        alt.Chart(df.head(25))
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(
+                                "HIT_RATE:Q",
+                                title="Hit rate",
+                                axis=alt.Axis(format=".0%"),
+                            ),
+                            y=alt.Y("PATTERN_NAME:N", sort="-x", title="Pattern"),
+                            tooltip=["PATTERN_NAME", "HIT_RATE", "TRADE_COUNT"],
+                        )
+                        .properties(height=400)
+                    )
+
+                    st.altair_chart(hit_chart, use_container_width=True)
 
                 scatter_df = to_pandas(
                     run_sql(

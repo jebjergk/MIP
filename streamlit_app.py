@@ -1,4 +1,5 @@
 import streamlit as st
+import altair as alt
 from snowflake.snowpark.context import get_active_session
 from datetime import date, datetime, timedelta
 
@@ -262,6 +263,105 @@ def render_signals_recommendations():
     else:
         st.dataframe(df_pd, use_container_width=True)
 
+    st.markdown("### Signal visualizer")
+
+    symbol_options_df = to_pandas(
+        run_sql(
+            f"""
+            select distinct SYMBOL
+            from (
+                select SYMBOL
+                from MIP.MART.MARKET_BARS
+                where MARKET_TYPE = '{selected_market_type}'
+                  and INTERVAL_MINUTES = {selected_interval_minutes}
+                union
+                select SYMBOL
+                from MIP.APP.RECOMMENDATION_LOG
+                where MARKET_TYPE = '{selected_market_type}'
+                  and INTERVAL_MINUTES = {selected_interval_minutes}
+            )
+            order by SYMBOL
+            """
+        )
+    )
+
+    symbol_choices = (
+        symbol_options_df["SYMBOL"].tolist() if symbol_options_df is not None else []
+    )
+
+    if not symbol_choices:
+        st.info("No symbols available for the selected market / interval yet.")
+        return
+
+    col_symbol, col_window = st.columns([2, 1])
+    with col_symbol:
+        selected_symbol = st.selectbox(
+            "Select symbol", options=symbol_choices, key="signal_symbol_selector"
+        )
+    with col_window:
+        window_days = st.number_input(
+            "Days of history", min_value=1, max_value=60, value=7, step=1
+        )
+
+    from_ts = datetime.now() - timedelta(days=window_days)
+    from_ts_str = from_ts.strftime("%Y-%m-%d %H:%M:%S")
+
+    price_df = to_pandas(
+        run_sql(
+            f"""
+            select
+                TS,
+                CLOSE
+            from MIP.MART.MARKET_BARS
+            where SYMBOL = '{selected_symbol}'
+              and MARKET_TYPE = '{selected_market_type}'
+              and INTERVAL_MINUTES = {selected_interval_minutes}
+              and TS >= to_timestamp_ntz('{from_ts_str}')
+            order by TS
+            """
+        )
+    )
+
+    rec_vis_df = to_pandas(
+        run_sql(
+            f"""
+            select
+                r.TS,
+                r.RECOMMENDATION_ID,
+                coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME
+            from MIP.APP.RECOMMENDATION_LOG r
+            left join MIP.APP.PATTERN_DEFINITION p
+              on p.PATTERN_ID = r.PATTERN_ID
+            where r.SYMBOL = '{selected_symbol}'
+              and r.MARKET_TYPE = '{selected_market_type}'
+              and r.INTERVAL_MINUTES = {selected_interval_minutes}
+              and r.TS >= to_timestamp_ntz('{from_ts_str}')
+            order by r.TS
+            """
+        )
+    )
+
+    if price_df is None or price_df.empty:
+        st.info("No price data available for the selected symbol / window.")
+        return
+
+    price_chart = alt.Chart(price_df).mark_line().encode(
+        x=alt.X("TS:T", title="Timestamp"),
+        y=alt.Y("CLOSE:Q", title="Close"),
+        tooltip=["TS:T", "CLOSE:Q"],
+    )
+
+    if rec_vis_df is not None and not rec_vis_df.empty:
+        rec_points = alt.Chart(rec_vis_df).mark_rule(color="orange").encode(
+            x=alt.X("TS:T", title="Timestamp"),
+            tooltip=["TS:T", "PATTERN_NAME:N", "RECOMMENDATION_ID:N"],
+        )
+        combined = alt.layer(price_chart, rec_points).resolve_scale(y="shared")
+    else:
+        combined = price_chart
+
+    st.altair_chart(combined, use_container_width=True)
+
 
 def render_outcome_evaluation():
     st.subheader("Outcome Evaluation")
@@ -457,6 +557,59 @@ def render_outcome_evaluation():
             st.info("No results found for the selected backtest run.")
         else:
             st.dataframe(result_df, use_container_width=True)
+
+            pattern_perf_df = to_pandas(
+                run_sql(
+                    f"""
+                    select
+                        r.PATTERN_ID,
+                        coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
+                        r.TRADE_COUNT,
+                        r.CUM_RETURN
+                    from MIP.APP.BACKTEST_RESULT r
+                    left join MIP.APP.PATTERN_DEFINITION p
+                      on p.PATTERN_ID = r.PATTERN_ID
+                    where r.BACKTEST_RUN_ID = {selected_run_id}
+                    order by r.CUM_RETURN desc
+                    """
+                )
+            )
+
+            if pattern_perf_df is not None and not pattern_perf_df.empty:
+                top_n = min(len(pattern_perf_df), 20)
+                perf_to_plot = pattern_perf_df.head(top_n)
+                bar_chart = alt.Chart(perf_to_plot).mark_bar().encode(
+                    x=alt.X("PATTERN_NAME:N", sort="-y", title="Pattern"),
+                    y=alt.Y("CUM_RETURN:Q", title="Cumulative Return"),
+                    tooltip=["PATTERN_NAME:N", "CUM_RETURN:Q", "TRADE_COUNT:Q"],
+                ).properties(title="Cumulative return by pattern")
+
+                st.altair_chart(bar_chart, use_container_width=True)
+
+                scatter_df = to_pandas(
+                    run_sql(
+                        f"""
+                        select
+                            r.TRADE_COUNT,
+                            r.HIT_RATE,
+                            coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME
+                        from MIP.APP.BACKTEST_RESULT r
+                        left join MIP.APP.PATTERN_DEFINITION p
+                          on p.PATTERN_ID = r.PATTERN_ID
+                        where r.BACKTEST_RUN_ID = {selected_run_id}
+                        order by r.TRADE_COUNT desc
+                        """
+                    )
+                )
+
+                if scatter_df is not None and not scatter_df.empty:
+                    scatter_chart = alt.Chart(scatter_df).mark_circle(size=80).encode(
+                        x=alt.X("TRADE_COUNT:Q", title="Trade count"),
+                        y=alt.Y("HIT_RATE:Q", title="Hit rate"),
+                        tooltip=["PATTERN_NAME:N", "TRADE_COUNT:Q", "HIT_RATE:Q"],
+                    ).properties(title="Hit rate vs trade count")
+
+                    st.altair_chart(scatter_chart, use_container_width=True)
 
 
 # --- Router ---

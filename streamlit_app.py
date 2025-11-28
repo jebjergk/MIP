@@ -2,6 +2,7 @@ import streamlit as st
 import altair as alt
 from snowflake.snowpark.context import get_active_session
 from datetime import date, datetime, timedelta
+import json
 
 # Get the Snowpark session provided by Snowflake
 session = get_active_session()
@@ -265,24 +266,36 @@ def render_patterns_learning():
         with st.spinner("Running full learning cycle…"):
             try:
                 res = run_sql(call_sql).collect()
-                summary = res[0][0] if res else None
+                summary_raw = res[0][0] if res else None
+
+                # Stored procedure may return a Snowflake OBJECT, JSON string, or plain text
+                if isinstance(summary_raw, str):
+                    try:
+                        summary = json.loads(summary_raw)
+                    except Exception:
+                        summary = summary_raw
+                else:
+                    summary = summary_raw
 
                 st.success("Learning cycle completed.")
                 if summary is not None:
-                    st.caption(
-                        "Ran learning cycle for "
-                        f"{summary.get('market_type', 'N/A')} / "
-                        f"{summary.get('interval_minutes', 'N/A')} with "
-                        f"horizon {summary.get('horizon_minutes', 'N/A')} minutes."
-                    )
-                    st.caption(
-                        f"Backtest run ID: {summary.get('backtest_run_id', 'N/A')}, "
-                        f"window: {summary.get('from_ts', 'N/A')} → {summary.get('to_ts', 'N/A')}"
-                    )
-                    try:
-                        st.json(summary)
-                    except Exception:
-                        st.write(summary)
+                    if isinstance(summary, dict):
+                        st.caption(
+                            "Ran learning cycle for "
+                            f"{summary.get('market_type', 'N/A')} / "
+                            f"{summary.get('interval_minutes', 'N/A')} with "
+                            f"horizon {summary.get('horizon_minutes', 'N/A')} minutes."
+                        )
+                        st.caption(
+                            f"Backtest run ID: {summary.get('backtest_run_id', 'N/A')}, "
+                            f"window: {summary.get('from_ts', 'N/A')} → {summary.get('to_ts', 'N/A')}"
+                        )
+                        try:
+                            st.json(summary)
+                        except Exception:
+                            st.write(summary)
+                    else:
+                        st.caption(str(summary))
                 else:
                     st.info("No summary returned by the stored procedure.")
             except Exception as e:

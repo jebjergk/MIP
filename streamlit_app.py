@@ -269,6 +269,16 @@ def render_patterns_learning():
 
                 st.success("Learning cycle completed.")
                 if summary is not None:
+                    st.caption(
+                        "Ran learning cycle for "
+                        f"{summary.get('market_type', 'N/A')} / "
+                        f"{summary.get('interval_minutes', 'N/A')} with "
+                        f"horizon {summary.get('horizon_minutes', 'N/A')} minutes."
+                    )
+                    st.caption(
+                        f"Backtest run ID: {summary.get('backtest_run_id', 'N/A')}, "
+                        f"window: {summary.get('from_ts', 'N/A')} → {summary.get('to_ts', 'N/A')}"
+                    )
                     try:
                         st.json(summary)
                     except Exception:
@@ -304,7 +314,7 @@ def render_patterns_learning():
 
     perf_filter = st.radio(
         "Pattern status filter",
-        options=["All patterns", "Active only", "Inactive only"],
+        options=["All", "Active", "Inactive"],
         horizontal=True,
     )
 
@@ -332,16 +342,27 @@ def render_patterns_learning():
         st.info("No pattern performance metrics available yet.")
         return
 
-    if perf_filter == "Active only":
+    if perf_filter == "Active":
         perf_df = perf_df[perf_df["IS_ACTIVE"] == "Y"]
-    elif perf_filter == "Inactive only":
+    elif perf_filter == "Inactive":
         perf_df = perf_df[perf_df["IS_ACTIVE"] != "Y"]
 
     if perf_df.empty:
         st.info("No patterns match the selected filter.")
         return
 
-    st.dataframe(perf_df, use_container_width=True)
+    display_cols = [
+        "PATTERN_NAME",
+        "IS_ACTIVE",
+        "LAST_TRADE_COUNT",
+        "LAST_HIT_RATE",
+        "LAST_CUM_RETURN",
+        "PATTERN_SCORE",
+        "LAST_BACKTEST_RUN_ID",
+        "LAST_TRAINED_AT",
+    ]
+
+    st.dataframe(perf_df[display_cols], use_container_width=True)
 
     chart_df = perf_df.copy()
     chart_df = chart_df[chart_df["PATTERN_SCORE"].notna()]

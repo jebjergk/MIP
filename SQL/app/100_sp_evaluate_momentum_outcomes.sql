@@ -6,8 +6,8 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_EVALUATE_MOMENTUM_OUTCOMES(
     P_HORIZON_MINUTES   number,   -- e.g. 15
-    P_HIT_THRESHOLD     number,   -- e.g. 0.002  (>= +0.2% = HIT)
-    P_MISS_THRESHOLD    number,   -- e.g. -0.002 (<= -0.2% = MISS)
+    P_HIT_THRESHOLD     number(18,8),   -- e.g. 0.002  (>= +0.2% = HIT)
+    P_MISS_THRESHOLD    number(18,8),   -- e.g. -0.002 (<= -0.2% = MISS)
     P_MARKET_TYPE       string default 'STOCK',
     P_INTERVAL_MINUTES  number default 5
 )
@@ -17,20 +17,20 @@ as
 $$
 declare
     v_inserted number := 0;
-    v_horizon_minutes number := P_HORIZON_MINUTES;
-    v_hit_threshold number := P_HIT_THRESHOLD;
-    v_miss_threshold number := P_MISS_THRESHOLD;
+    v_horizon_minutes number := :P_HORIZON_MINUTES;
+    v_hit_threshold number(18,8) := :P_HIT_THRESHOLD;
+    v_miss_threshold number(18,8) := :P_MISS_THRESHOLD;
     v_market_type string;
     v_interval_minutes number;
 begin
-    v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
-    v_interval_minutes := coalesce(P_INTERVAL_MINUTES, 5);
+    v_market_type := coalesce(:P_MARKET_TYPE, 'STOCK');
+    v_interval_minutes := coalesce(:P_INTERVAL_MINUTES, 5);
 
     -- Insert outcomes only for recommendations that don't have an outcome yet for this horizon
     insert into MIP.APP.OUTCOME_EVALUATION (
         RECOMMENDATION_ID,
         HORIZON_MINUTES,
-        RETURN_REALIZED,
+        RETURN_REALIZED_DEC,
         OUTCOME_LABEL,
         DETAILS
     )
@@ -93,7 +93,7 @@ begin
              and cf.REC_CLOSE <> 0
             then (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT
             else null
-        end as RETURN_REALIZED,
+        end as RETURN_REALIZED_DEC,
         case
             when cf.REC_CLOSE is not null
              and cf.REC_CLOSE <> 0 then
@@ -102,7 +102,8 @@ begin
                         then 'HIT'
                     when (cf.FUTURE_CLOSE::FLOAT - cf.REC_CLOSE::FLOAT) / cf.REC_CLOSE::FLOAT <= :v_miss_threshold
                         then 'MISS'
-                    else 'NEUTRAL'
+                    else
+                        'NEUTRAL'
                 end
             else 'UNKNOWN'
         end as OUTCOME_LABEL,

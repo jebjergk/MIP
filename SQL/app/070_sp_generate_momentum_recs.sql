@@ -23,6 +23,14 @@ begin
     v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
     v_interval_minutes := coalesce(P_INTERVAL_MINUTES, 5);
 
+    -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
+    delete from MIP.APP.RECOMMENDATION_LOG
+     where PATTERN_ID in (
+            select PATTERN_ID
+              from MIP.APP.PATTERN_DEFINITION
+             where coalesce(IS_ACTIVE, 'N') <> 'Y'
+        );
+
     select try_to_number(CONFIG_VALUE)
       into :v_min_trades_for_usage
     from MIP.APP.APP_CONFIG

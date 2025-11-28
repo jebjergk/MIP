@@ -21,6 +21,7 @@ create or replace procedure MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
 )
 returns variant
 language sql
+execute as caller
 as
 $$
 declare

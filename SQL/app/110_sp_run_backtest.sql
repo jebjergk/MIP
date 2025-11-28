@@ -84,9 +84,9 @@ begin
             count_if(o.OUTCOME_LABEL = 'HIT') as HIT_COUNT,
             count_if(o.OUTCOME_LABEL = 'MISS') as MISS_COUNT,
             count_if(o.OUTCOME_LABEL = 'NEUTRAL') as NEUTRAL_COUNT,
-            avg(o.RETURN_REALIZED) as AVG_RETURN,
-            stddev(o.RETURN_REALIZED) as STD_RETURN,
-            sum(o.RETURN_REALIZED) as CUM_RETURN,
+            avg(o.RETURN_REALIZED_DEC) as AVG_RETURN,
+            stddev(o.RETURN_REALIZED_DEC) as STD_RETURN,
+            sum(o.RETURN_REALIZED_DEC) as CUM_RETURN,
             object_construct(
                 'pattern_name', max(p.NAME),
                 'example_symbol', max(r.SYMBOL),
@@ -106,7 +106,7 @@ begin
           and r.INTERVAL_MINUTES = :v_interval_minutes
           and r.TS between :P_FROM_TS and :P_TO_TS
           and o.OUTCOME_LABEL in ('HIT', 'MISS', 'NEUTRAL')
-          and o.RETURN_REALIZED is not null
+          and o.RETURN_REALIZED_DEC is not null
         group by r.PATTERN_ID, r.SYMBOL
     );
 

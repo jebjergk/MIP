@@ -41,8 +41,13 @@ begin
             r.MARKET_TYPE,
             r.INTERVAL_MINUTES,
             r.TS as REC_TS,
-            (r.DETAILS:"close")::FLOAT as REC_CLOSE
+            mb0.CLOSE::FLOAT as REC_CLOSE
         from MIP.APP.RECOMMENDATION_LOG r
+        join MIP.MART.MARKET_BARS mb0
+          on mb0.SYMBOL           = r.SYMBOL
+         and mb0.MARKET_TYPE      = r.MARKET_TYPE
+         and mb0.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+         and mb0.TS               = r.TS
         where r.MARKET_TYPE      = :v_market_type
           and r.INTERVAL_MINUTES = :v_interval_minutes
     ),
@@ -107,7 +112,11 @@ begin
             'rec_close',     cf.REC_CLOSE,
             'future_close',  cf.FUTURE_CLOSE
         ) as DETAILS
-    from chosen_future cf;
+    from chosen_future cf
+    where cf.REC_CLOSE is not null
+      and cf.REC_CLOSE <> 0
+      and cf.FUTURE_CLOSE is not null
+      and cf.FUTURE_CLOSE <> 0;
 
     v_inserted := sqlrowcount;
 

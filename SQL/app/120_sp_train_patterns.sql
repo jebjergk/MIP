@@ -25,8 +25,8 @@ begin
     else
         v_run_id := (select max(BACKTEST_RUN_ID)
           from MIP.APP.BACKTEST_RUN
-         where MARKET_TYPE = P_MARKET_TYPE
-           and INTERVAL_MINUTES = P_INTERVAL_MINUTES);
+         where MARKET_TYPE = :P_MARKET_TYPE
+           and INTERVAL_MINUTES = :P_INTERVAL_MINUTES);
     end if;
 
     if (:v_run_id is null) then
@@ -34,11 +34,12 @@ begin
     end if;
 
     v_min_trades := 
-        (select coalesce(select to_number(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_TRADES'), 30);
+        (select coalesce(to_number(CONFIG_VALUE),30) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_TRADES');
+--        (select coalesce(select to_number(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_TRADES', 30));
     v_min_hit_rate :=
-        (select coalsesce(select to_double(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_HIT_RATE'), 0.55);
+        (select coalesce(to_double(CONFIG_VALUE), 0.55) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_HIT_RATE');
     v_min_cum_return :=
-        (select coalesce(select to_double(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_CUM_RETURN'), 0.0);
+        (select coalesce(to_double(CONFIG_VALUE), 0.0) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_CUM_RETURN');
     v_pattern_count := 
         (select count(distinct PATTERN_ID) from MIP.APP.BACKTEST_RESULT where BACKTEST_RUN_ID = :v_run_id);
 

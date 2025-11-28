@@ -182,6 +182,102 @@ def render_patterns_learning():
         msg = res[0][0] if res and len(res[0]) > 0 else "Seed procedure completed."
         st.success(msg)
 
+    st.markdown("### Learning cycle controls")
+
+    selected_market_type, selected_interval_minutes = get_market_selection(
+        "learning_cycle"
+    )
+
+    with st.form("learning_cycle_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            horizon_minutes = st.number_input(
+                "Horizon (minutes)", min_value=1, value=15, step=1
+            )
+        with col2:
+            hit_threshold = st.number_input(
+                "Hit threshold", value=0.002, format="%.6f"
+            )
+        with col3:
+            miss_threshold = st.number_input(
+                "Miss threshold", value=-0.002, format="%.6f"
+            )
+
+        col_min, col_window = st.columns(2)
+        with col_min:
+            min_return = st.number_input(
+                "Minimum return filter", value=0.0, format="%.6f"
+            )
+
+        with col_window:
+            window_mode = st.radio(
+                "Date window", ["Last N days", "Custom range"], index=0
+            )
+            if window_mode == "Last N days":
+                last_n_days = st.number_input(
+                    "Last N days", min_value=1, value=30, step=1
+                )
+                date_from = datetime.now() - timedelta(days=int(last_n_days))
+                date_to = datetime.now()
+            else:
+                default_from = date.today() - timedelta(days=30)
+                default_to = date.today()
+                date_range = st.date_input(
+                    "From / to (inclusive)", value=(default_from, default_to)
+                )
+                if (
+                    isinstance(date_range, (list, tuple))
+                    and len(date_range) == 2
+                    and all(date_range)
+                ):
+                    date_from = datetime.combine(date_range[0], datetime.min.time())
+                    date_to = datetime.combine(date_range[1], datetime.max.time())
+                else:
+                    date_from = datetime.combine(default_from, datetime.min.time())
+                    date_to = datetime.combine(default_to, datetime.max.time())
+
+        run_cycle = st.form_submit_button("Run learning cycle")
+
+    if run_cycle:
+        from_ts_str = date_from.strftime("%Y-%m-%d %H:%M:%S")
+        to_ts_str = date_to.strftime("%Y-%m-%d %H:%M:%S")
+        from_ts_sql = f"to_timestamp_ntz('{from_ts_str}')"
+        to_ts_sql = f"to_timestamp_ntz('{to_ts_str}')"
+
+        call_sql = f"""
+            call MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
+                '{selected_market_type}',
+                {selected_interval_minutes},
+                {horizon_minutes},
+                {min_return},
+                {hit_threshold},
+                {miss_threshold},
+                {from_ts_sql},
+                {to_ts_sql},
+                TRUE,
+                TRUE,
+                TRUE,
+                TRUE,
+                TRUE
+            )
+        """
+
+        with st.spinner("Running full learning cycle…"):
+            try:
+                res = run_sql(call_sql).collect()
+                summary = res[0][0] if res else None
+
+                st.success("Learning cycle completed.")
+                if summary is not None:
+                    try:
+                        st.json(summary)
+                    except Exception:
+                        st.write(summary)
+                else:
+                    st.info("No summary returned by the stored procedure.")
+            except Exception as e:
+                st.error(f"Learning cycle failed: {e}")
+
     df_sp = run_sql(
         """
         select

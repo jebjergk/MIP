@@ -16,18 +16,31 @@ declare
     v_min_volume number := 1000;
     v_vol_adj_threshold number := 1.0;
     v_consecutive_up_bars number := 3;
+    v_min_trades_for_usage number := 30;
     v_market_type string;
     v_interval_minutes number;
 begin
     v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
     v_interval_minutes := coalesce(P_INTERVAL_MINUTES, 5);
 
+    select try_to_number(CONFIG_VALUE)
+      into :v_min_trades_for_usage
+    from MIP.APP.APP_CONFIG
+    where CONFIG_KEY = 'PATTERN_MIN_TRADES'
+    limit 1;
+
+    if (v_min_trades_for_usage is null) then
+        v_min_trades_for_usage := 30;
+    end if;
+
     -- Find the MOMENTUM_DEMO pattern
     select PATTERN_ID
       into :v_pattern_id
-    from MIP.APP.PATTERN_DEFINITION
-    where NAME = 'MOMENTUM_DEMO'
-      and ENABLED = true
+    from MIP.APP.PATTERN_DEFINITION p
+    where p.NAME = 'MOMENTUM_DEMO'
+      and p.ENABLED = true
+      and p.IS_ACTIVE = 'Y'
+      and (p.LAST_TRADE_COUNT is null or p.LAST_TRADE_COUNT >= :v_min_trades_for_usage)
     limit 1;
 
     if (v_pattern_id is null) then

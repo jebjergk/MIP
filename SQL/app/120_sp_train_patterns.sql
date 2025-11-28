@@ -20,38 +20,27 @@ declare
     v_min_cum_return   float;
     v_pattern_count    number;
 begin
-    if P_BACKTEST_RUN_ID is not null then
-        v_run_id := P_BACKTEST_RUN_ID;
+    if (:P_BACKTEST_RUN_ID is not null) then
+        v_run_id := :P_BACKTEST_RUN_ID;
     else
-        select max(BACKTEST_RUN_ID)
-          into v_run_id
+        v_run_id := (select max(BACKTEST_RUN_ID)
           from MIP.APP.BACKTEST_RUN
          where MARKET_TYPE = P_MARKET_TYPE
-           and INTERVAL_MINUTES = P_INTERVAL_MINUTES;
+           and INTERVAL_MINUTES = P_INTERVAL_MINUTES);
     end if;
 
-    if v_run_id is null then
+    if (:v_run_id is null) then
         return 'No backtest runs found for given market/interval.';
     end if;
 
-    select coalesce(
-               (select to_number(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_TRADES'),
-               30
-           ),
-           coalesce(
-               (select to_double(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_HIT_RATE'),
-               0.55
-           ),
-           coalesce(
-               (select to_double(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_CUM_RETURN'),
-               0.0
-           )
-      into v_min_trades, v_min_hit_rate, v_min_cum_return;
-
-    select count(distinct PATTERN_ID)
-      into v_pattern_count
-      from MIP.APP.BACKTEST_RESULT
-     where BACKTEST_RUN_ID = v_run_id;
+    v_min_trades := 
+        (select coalesce(select to_number(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_TRADES'), 30);
+    v_min_hit_rate :=
+        (select coalsesce(select to_double(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_HIT_RATE'), 0.55);
+    v_min_cum_return :=
+        (select coalesce(select to_double(CONFIG_VALUE) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'PATTERN_MIN_CUM_RETURN'), 0.0);
+    v_pattern_count := 
+        (select count(distinct PATTERN_ID) from MIP.APP.BACKTEST_RESULT where BACKTEST_RUN_ID = :v_run_id);
 
     merge into MIP.APP.PATTERN_DEFINITION t
     using (

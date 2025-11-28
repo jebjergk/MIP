@@ -204,6 +204,79 @@ def render_patterns_learning():
     else:
         st.dataframe(df_pd, use_container_width=True)
 
+    st.markdown("### Pattern performance (trained metrics)")
+
+    perf_filter = st.radio(
+        "Pattern status filter",
+        options=["All patterns", "Active only", "Inactive only"],
+        horizontal=True,
+    )
+
+    perf_query = """
+        SELECT
+            PATTERN_ID,
+            PATTERN_NAME,
+            DESCRIPTION,
+            IS_ACTIVE,
+            LAST_TRADE_COUNT,
+            LAST_HIT_RATE,
+            LAST_CUM_RETURN,
+            LAST_AVG_RETURN,
+            LAST_STD_RETURN,
+            PATTERN_SCORE,
+            LAST_TRAINED_AT,
+            LAST_BACKTEST_RUN_ID
+        FROM MIP.APP.PATTERN_DEFINITION
+        ORDER BY PATTERN_SCORE DESC NULLS LAST
+    """
+
+    perf_df = to_pandas(run_sql(perf_query))
+
+    if perf_df is None or perf_df.empty:
+        st.info("No pattern performance metrics available yet.")
+        return
+
+    if perf_filter == "Active only":
+        perf_df = perf_df[perf_df["IS_ACTIVE"] == "Y"]
+    elif perf_filter == "Inactive only":
+        perf_df = perf_df[perf_df["IS_ACTIVE"] != "Y"]
+
+    if perf_df.empty:
+        st.info("No patterns match the selected filter.")
+        return
+
+    st.dataframe(perf_df, use_container_width=True)
+
+    chart_df = perf_df.copy()
+    chart_df = chart_df[chart_df["PATTERN_SCORE"].notna()]
+    chart_df["PATTERN_SCORE"] = chart_df["PATTERN_SCORE"].astype(float)
+    chart_df["PATTERN_NAME"] = chart_df["PATTERN_NAME"].astype(str)
+    chart_df["IS_ACTIVE"] = chart_df["IS_ACTIVE"].astype(str)
+
+    if chart_df.empty:
+        return
+
+    score_chart = (
+        alt.Chart(chart_df.head(20))
+        .mark_bar()
+        .encode(
+            x=alt.X("PATTERN_SCORE:Q", title="Pattern score"),
+            y=alt.Y("PATTERN_NAME:N", sort="-x", title="Pattern"),
+            color=alt.Color("IS_ACTIVE:N", title="Active"),
+            tooltip=[
+                "PATTERN_NAME",
+                "PATTERN_SCORE",
+                "IS_ACTIVE",
+                "LAST_TRADE_COUNT",
+                "LAST_HIT_RATE",
+                "LAST_CUM_RETURN",
+            ],
+        )
+        .properties(height=400, title="Top patterns by score")
+    )
+
+    st.altair_chart(score_chart, use_container_width=True)
+
 
 def render_signals_recommendations():
     st.subheader("Signals & Recommendations")

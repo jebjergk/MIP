@@ -75,7 +75,7 @@ begin
     with active_patterns as (
         select
             PATTERN_ID,
-            NAME as PATTERN_KEY,
+            upper(NAME) as PATTERN_KEY,
             NAME as PATTERN_NAME
         from MIP.APP.PATTERN_DEFINITION
         where coalesce(IS_ACTIVE, 'N') = 'Y'
@@ -123,7 +123,7 @@ begin
     ),
     stock_fast as (
         select
-            ap.PATTERN_ID,
+            'STOCK_MOMENTUM_FAST'                  as PATTERN_KEY,
             'STOCK' as MARKET_TYPE,
             5       as INTERVAL_MINUTES,
             r.SYMBOL,
@@ -135,9 +135,7 @@ begin
                 'prev_close',    r.PREV_CLOSE,
                 'close',         r.CLOSE
             )                                       as DETAILS
-        from active_patterns ap
-        join stock_fast_scored r
-          on ap.PATTERN_KEY = 'STOCK_MOMENTUM_FAST'
+        from stock_fast_scored r
         where :v_market_type     = 'STOCK'
           and :v_interval_minutes = 5
           and r.RETURN_SIMPLE    >= :P_MIN_RETURN
@@ -186,7 +184,7 @@ begin
     ),
     stock_slow as (
         select
-            ap.PATTERN_ID,
+            'STOCK_MOMENTUM_SLOW'                  as PATTERN_KEY,
             'STOCK' as MARKET_TYPE,
             5       as INTERVAL_MINUTES,
             r.SYMBOL,
@@ -198,9 +196,7 @@ begin
                 'prev_close',    r.PREV_CLOSE,
                 'close',         r.CLOSE
             )                                       as DETAILS
-        from active_patterns ap
-        join stock_slow_scored r
-          on ap.PATTERN_KEY = 'STOCK_MOMENTUM_SLOW'
+        from stock_slow_scored r
         where :v_market_type     = 'STOCK'
           and :v_interval_minutes = 5
           and r.RETURN_SIMPLE    >= (:P_MIN_RETURN / 2)
@@ -260,7 +256,7 @@ begin
     ),
     fx_daily as (
         select
-            ap.PATTERN_ID,
+            'FX_MOMENTUM_DAILY'                    as PATTERN_KEY,
             'FX'    as MARKET_TYPE,
             1440    as INTERVAL_MINUTES,
             r.SYMBOL,
@@ -275,9 +271,7 @@ begin
                 'sma_20',          r.SMA_20,
                 'avg_ret_5',       r.AVG_RET_5
             )                                       as DETAILS
-        from active_patterns ap
-        join fx_scored r
-          on ap.PATTERN_KEY = 'FX_MOMENTUM_DAILY'
+        from fx_scored r
         where :v_market_type      = 'FX'
           and :v_interval_minutes = 1440
           and r.RETURN_SIMPLE is not null
@@ -294,6 +288,19 @@ begin
         select * from stock_slow
         union all
         select * from fx_daily
+    ),
+    active_recs as (
+        select
+            ap.PATTERN_ID,
+            r.SYMBOL,
+            r.MARKET_TYPE,
+            r.INTERVAL_MINUTES,
+            r.TS,
+            r.SCORE,
+            r.DETAILS
+        from combined_recs r
+        join active_patterns ap
+          on ap.PATTERN_KEY = r.PATTERN_KEY
     )
     select
         r.PATTERN_ID,
@@ -303,7 +310,7 @@ begin
         r.TS,
         r.SCORE,
         r.DETAILS
-    from combined_recs r
+    from active_recs r
     left join MIP.APP.RECOMMENDATION_LOG existing
         on existing.PATTERN_ID       = r.PATTERN_ID
        and existing.SYMBOL           = r.SYMBOL

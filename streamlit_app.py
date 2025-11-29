@@ -183,6 +183,10 @@ def render_patterns_learning():
         msg = res[0][0] if res and len(res[0]) > 0 else "Seed procedure completed."
         st.success(msg)
 
+    st.caption(
+        "This only (re)creates the demo pattern; it no longer removes other patterns."
+    )
+
     st.markdown("### Learning cycle controls")
 
     selected_market_type, selected_interval_minutes = get_market_selection(

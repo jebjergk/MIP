@@ -29,6 +29,22 @@ create table if not exists MIP.APP.PATTERN_DEFINITION (
     constraint UQ_PATTERN_NAME unique (NAME)
 );
 
+-- Seed core momentum patterns (idempotent)
+merge into MIP.APP.PATTERN_DEFINITION t
+using (
+    select 'MOMENTUM_DEMO'        as NAME, 'Demo momentum pattern'                           as DESCRIPTION, 'Y' as IS_ACTIVE, true as ENABLED union all
+    select 'STOCK_MOMENTUM_FAST',    'Stock momentum (fast, stricter)',                        'Y', true union all
+    select 'STOCK_MOMENTUM_SLOW',    'Stock momentum (slow, looser)',                          'Y', true union all
+    select 'FX_MOMENTUM_DAILY',      'FX momentum (daily)',                                    'Y', true
+) s
+   on t.NAME = s.NAME
+ when matched then update set
+     t.DESCRIPTION = s.DESCRIPTION,
+     t.IS_ACTIVE   = coalesce(t.IS_ACTIVE, s.IS_ACTIVE),
+     t.ENABLED     = coalesce(t.ENABLED, s.ENABLED)
+ when not matched then insert (NAME, DESCRIPTION, IS_ACTIVE, ENABLED)
+ values (s.NAME, s.DESCRIPTION, s.IS_ACTIVE, s.ENABLED);
+
 -----------------------------
 -- 2. RECOMMENDATION_LOG
 -----------------------------

@@ -75,10 +75,10 @@ begin
     with active_patterns as (
         select
             PATTERN_ID,
-            NAME as PATTERN_KEY
+            NAME as PATTERN_KEY,
+            NAME as PATTERN_NAME
         from MIP.APP.PATTERN_DEFINITION
-        where ENABLED = true
-          and coalesce(IS_ACTIVE, 'N') = 'Y'
+        where coalesce(IS_ACTIVE, 'N') = 'Y'
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
     ),
     stock_fast_base as (

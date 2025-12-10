@@ -45,14 +45,15 @@ def _parse_symbol_list(raw: str) -> List[str]:
         return []
     return [s.strip() for s in raw.split(",") if s.strip()]
 
-def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str) -> Dict:
+def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str | None) -> Dict:
     params = {
-        "function": "TIME_SERIES_INTRADAY",
+        "function": "TIME_SERIES_DAILY",
         "symbol": symbol,
-        "interval": interval_str,
         "outputsize": "compact",
         "apikey": api_key,
     }
+    if interval_str:
+        params["interval"] = interval_str
     resp = requests.get(ALPHAVANTAGE_BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
     return resp.json()
@@ -84,7 +85,10 @@ def _extract_stock_rows(json_data: Dict, symbol: str, interval_minutes: int) -> 
     ts_dict = json_data.get(ts_key, {})
     for ts_str, bar in ts_dict.items():
         try:
-            ts_dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            try:
+                ts_dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                ts_dt = datetime.strptime(ts_str, "%Y-%m-%d")
             bar_dict = dict(bar)
 
             rows.append({
@@ -160,8 +164,8 @@ def run(session: Session) -> str:
     stock_symbols = _parse_symbol_list(cfg.get("DEFAULT_STOCK_SYMBOLS"))
     fx_pairs = _parse_symbol_list(cfg.get("DEFAULT_FX_PAIRS"))
 
-    stock_interval_minutes = 5
-    stock_interval_str = "5min"
+    stock_interval_minutes = 1440  # daily
+    stock_interval_str = None
     fx_interval_minutes = 1440  # daily
 
     all_rows: List[Dict] = []

@@ -45,7 +45,7 @@ def _parse_symbol_list(raw: str) -> List[str]:
         return []
     return [s.strip() for s in raw.split(",") if s.strip()]
 
-def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str | None) -> Dict:
+def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str | None) -> tuple[Dict, str]:
     params = {
         "function": "TIME_SERIES_DAILY",
         "symbol": symbol,
@@ -56,9 +56,9 @@ def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str | None) -> Di
         params["interval"] = interval_str
     resp = requests.get(ALPHAVANTAGE_BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
-    return resp.json()
+    return resp.json(), resp.url
 
-def _fetch_fx_daily(api_key: str, from_symbol: str, to_symbol: str) -> Dict:
+def _fetch_fx_daily(api_key: str, from_symbol: str, to_symbol: str) -> tuple[Dict, str]:
     params = {
         "function": "FX_DAILY",
         "from_symbol": from_symbol,
@@ -68,7 +68,7 @@ def _fetch_fx_daily(api_key: str, from_symbol: str, to_symbol: str) -> Dict:
     }
     resp = requests.get(ALPHAVANTAGE_BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
-    return resp.json()
+    return resp.json(), resp.url
 
 def _safe_float(v):
     try:
@@ -186,9 +186,12 @@ def run(session: Session) -> str:
 
     all_rows: List[Dict] = []
 
+    request_urls: list[str] = []
+
     # STOCKS
     for symbol in stock_symbols:
-        data = _fetch_stock_bars(api_key, symbol, stock_interval_str)
+        data, final_url = _fetch_stock_bars(api_key, symbol, stock_interval_str)
+        request_urls.append(f"stock {symbol}: {final_url}")
         all_rows.extend(_extract_stock_rows(data, symbol, stock_interval_minutes))
 
     # FX DAILY
@@ -198,7 +201,8 @@ def run(session: Session) -> str:
             continue
         from_sym, to_sym = parsed
         normalized_pair = f"{from_sym}/{to_sym}"
-        data = _fetch_fx_daily(api_key, from_sym, to_sym)
+        data, final_url = _fetch_fx_daily(api_key, from_sym, to_sym)
+        request_urls.append(f"fx {normalized_pair}: {final_url}")
         all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, fx_interval_minutes))
 
     if not all_rows:
@@ -207,5 +211,6 @@ def run(session: Session) -> str:
     df = session.create_dataframe(all_rows)
     df.write.mode("append").save_as_table("MIP.RAW_EXT.MARKET_BARS_RAW")
 
-    return f"Ingestion complete: inserted {len(all_rows)} rows."
+    url_info = " | ".join(request_urls) if request_urls else "no requests made"
+    return f"Ingestion complete: inserted {len(all_rows)} rows. URLs: {url_info}"
 $$;

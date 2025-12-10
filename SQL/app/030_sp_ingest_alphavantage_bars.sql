@@ -115,6 +115,22 @@ def _extract_stock_rows(json_data: Dict, symbol: str, interval_minutes: int) -> 
 
     return rows
 
+def _normalize_fx_pair(pair: str) -> tuple[str, str] | None:
+    # Accept pairs like "EUR/USD", "EURUSD", "eur-usd", etc.
+    cleaned = pair.replace(" ", "").replace("-", "/").replace("_", "/")
+    if "/" in cleaned:
+        parts = cleaned.split("/", 1)
+        from_sym, to_sym = parts[0].upper(), parts[1].upper()
+    elif len(cleaned) == 6:
+        from_sym, to_sym = cleaned[:3].upper(), cleaned[3:].upper()
+    else:
+        return None
+
+    if not (from_sym and to_sym):
+        return None
+
+    return from_sym, to_sym
+
 def _extract_fx_rows_daily(json_data: Dict, pair: str, interval_minutes: int) -> List[Dict]:
     rows: List[Dict] = []
     ts_key = next((k for k in json_data.keys() if k.startswith("Time Series FX")), None)
@@ -176,12 +192,14 @@ def run(session: Session) -> str:
         all_rows.extend(_extract_stock_rows(data, symbol, stock_interval_minutes))
 
     # FX DAILY
-    for pair in fx_pairs:
-        if "/" not in pair:
+    for raw_pair in fx_pairs:
+        parsed = _normalize_fx_pair(raw_pair)
+        if not parsed:
             continue
-        from_sym, to_sym = pair.split("/", 1)
+        from_sym, to_sym = parsed
+        normalized_pair = f"{from_sym}/{to_sym}"
         data = _fetch_fx_daily(api_key, from_sym, to_sym)
-        all_rows.extend(_extract_fx_rows_daily(data, pair, fx_interval_minutes))
+        all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, fx_interval_minutes))
 
     if not all_rows:
         return "Ingestion complete: 0 rows."

@@ -76,6 +76,13 @@ def _safe_float(v):
     except:
         return None
 
+
+def _extract_api_message(json_data: Dict) -> str | None:
+    for key in ("Error Message", "Note", "Information"):
+        if key in json_data:
+            return str(json_data.get(key))
+    return None
+
 def _extract_stock_rows(json_data: Dict, symbol: str, interval_minutes: int) -> List[Dict]:
     rows: List[Dict] = []
     ts_key = next((k for k in json_data.keys() if k.startswith("Time Series")), None)
@@ -156,7 +163,8 @@ def _extract_fx_rows_daily(json_data: Dict, pair: str, interval_minutes: int) ->
                 "HIGH": _safe_float(bar_dict.get("2. high")),
                 "LOW": _safe_float(bar_dict.get("3. low")),
                 "CLOSE": _safe_float(bar_dict.get("4. close")),
-                "VOLUME": _safe_float(bar_dict.get("5. volume")),
+                # FX endpoints do not include volume; keep the column nullable for schema parity
+                "VOLUME": None,
                 "RAW": {
                     "pair": pair,
                     "interval_minutes": interval_minutes,
@@ -187,6 +195,7 @@ def run(session: Session) -> str:
     all_rows: List[Dict] = []
 
     request_urls: list[str] = []
+    diagnostics: list[str] = []
 
     # STOCKS
     for symbol in stock_symbols:
@@ -203,6 +212,10 @@ def run(session: Session) -> str:
         normalized_pair = f"{from_sym}/{to_sym}"
         data, final_url = _fetch_fx_daily(api_key, from_sym, to_sym)
         request_urls.append(f"fx {normalized_pair}: {final_url}")
+        api_msg = _extract_api_message(data)
+        if api_msg:
+            diagnostics.append(f"{normalized_pair}: {api_msg}")
+
         all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, fx_interval_minutes))
 
     if not all_rows:
@@ -211,6 +224,15 @@ def run(session: Session) -> str:
     df = session.create_dataframe(all_rows)
     df.write.mode("append").save_as_table("MIP.RAW_EXT.MARKET_BARS_RAW")
 
+    stock_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "STOCK")
+    fx_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "FX")
+
     url_info = " | ".join(request_urls) if request_urls else "no requests made"
-    return f"Ingestion complete: inserted {len(all_rows)} rows. URLs: {url_info}"
+    diag_info = " | ".join(diagnostics) if diagnostics else "no API warnings"
+
+    return (
+        "Ingestion complete: "
+        f"inserted {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
+        f"URLs: {url_info}. Diagnostics: {diag_info}"
+    )
 $$;

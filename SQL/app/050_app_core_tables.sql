@@ -11,6 +11,7 @@ create table if not exists MIP.APP.PATTERN_DEFINITION (
     PATTERN_ID    number        autoincrement,
     NAME          string        not null,
     DESCRIPTION   string,
+    PARAMS_JSON   variant,
     ENABLED       boolean       default true,
     CREATED_AT    timestamp_ntz default current_timestamp(),
     CREATED_BY    string        default current_user(),
@@ -32,18 +33,74 @@ create table if not exists MIP.APP.PATTERN_DEFINITION (
 -- Seed core momentum patterns (idempotent)
 merge into MIP.APP.PATTERN_DEFINITION t
 using (
-    select 'MOMENTUM_DEMO'        as NAME, 'Demo momentum pattern'                           as DESCRIPTION, 'Y' as IS_ACTIVE, true as ENABLED union all
-    select 'STOCK_MOMENTUM_FAST',    'Stock momentum (fast, stricter)',                        'Y', true union all
-    select 'STOCK_MOMENTUM_SLOW',    'Stock momentum (slow, looser)',                          'Y', true union all
-    select 'FX_MOMENTUM_DAILY',      'FX momentum (daily)',                                    'Y', true
+    select
+        'MOMENTUM_DEMO' as NAME,
+        'Demo momentum pattern' as DESCRIPTION,
+        object_construct(
+            'fast_window', 20,
+            'slow_window', 3,
+            'lookback_days', 1,
+            'min_return', 0.002,
+            'min_zscore', 1.0,
+            'market_type', 'STOCK',
+            'interval_minutes', 5
+        ) as PARAMS_JSON,
+        'Y' as IS_ACTIVE,
+        true as ENABLED
+    union all
+    select
+        'STOCK_MOMENTUM_FAST',
+        'Stock momentum (fast, stricter)',
+        object_construct(
+            'fast_window', 20,
+            'slow_window', 3,
+            'lookback_days', 1,
+            'min_return', 0.002,
+            'min_zscore', 1.0,
+            'market_type', 'STOCK',
+            'interval_minutes', 5
+        ),
+        'Y',
+        true
+    union all
+    select
+        'STOCK_MOMENTUM_SLOW',
+        'Stock momentum (slow, looser)',
+        object_construct(
+            'fast_window', 30,
+            'slow_window', 2,
+            'lookback_days', 3,
+            'min_return', 0.001,
+            'min_zscore', 0.75,
+            'market_type', 'STOCK',
+            'interval_minutes', 5
+        ),
+        'Y',
+        true
+    union all
+    select
+        'FX_MOMENTUM_DAILY',
+        'FX momentum (daily)',
+        object_construct(
+            'fast_window', 10,
+            'slow_window', 20,
+            'lookback_days', 60,
+            'min_return', 0.001,
+            'min_zscore', 0.0,
+            'market_type', 'FX',
+            'interval_minutes', 1440
+        ),
+        'Y',
+        true
 ) s
    on t.NAME = s.NAME
  when matched then update set
-     t.DESCRIPTION = s.DESCRIPTION,
-     t.IS_ACTIVE   = coalesce(t.IS_ACTIVE, s.IS_ACTIVE),
-     t.ENABLED     = coalesce(t.ENABLED, s.ENABLED)
- when not matched then insert (NAME, DESCRIPTION, IS_ACTIVE, ENABLED)
- values (s.NAME, s.DESCRIPTION, s.IS_ACTIVE, s.ENABLED);
+   t.DESCRIPTION = s.DESCRIPTION,
+    t.PARAMS_JSON = coalesce(t.PARAMS_JSON, s.PARAMS_JSON),
+    t.IS_ACTIVE   = coalesce(t.IS_ACTIVE, s.IS_ACTIVE),
+    t.ENABLED     = coalesce(t.ENABLED, s.ENABLED)
+ when not matched then insert (NAME, DESCRIPTION, PARAMS_JSON, IS_ACTIVE, ENABLED)
+ values (s.NAME, s.DESCRIPTION, s.PARAMS_JSON, s.IS_ACTIVE, s.ENABLED);
 
 -----------------------------
 -- 2. RECOMMENDATION_LOG

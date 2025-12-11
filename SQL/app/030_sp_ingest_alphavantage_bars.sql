@@ -29,6 +29,7 @@ handler = 'run'
 as
 $$
 import requests
+import time
 from datetime import datetime
 from typing import List, Dict
 from snowflake.snowpark import Session
@@ -202,6 +203,7 @@ def run(session: Session) -> str:
         data, final_url = _fetch_stock_bars(api_key, symbol, stock_interval_str)
         request_urls.append(f"stock {symbol}: {final_url}")
         all_rows.extend(_extract_stock_rows(data, symbol, stock_interval_minutes))
+        time.sleep(2)
 
     # FX DAILY
     for raw_pair in fx_pairs:
@@ -217,6 +219,7 @@ def run(session: Session) -> str:
             diagnostics.append(f"{normalized_pair}: {api_msg}")
 
         all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, fx_interval_minutes))
+        time.sleep(2)
 
     if not all_rows:
         return "Ingestion complete: 0 rows."

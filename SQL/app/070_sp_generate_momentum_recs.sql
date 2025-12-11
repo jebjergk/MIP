@@ -186,7 +186,21 @@ begin
                     where existing.RECOMMENDATION_ID is null
                 )
                 select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
-            ' using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, v_min_volume, pattern.LOOKBACK_DAYS, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.SLOW_WINDOW, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
+            ' using (
+                pattern.MARKET_TYPE,
+                pattern.INTERVAL_MINUTES,
+                v_min_volume,
+                pattern.LOOKBACK_DAYS,
+                pattern.SLOW_WINDOW,
+                pattern.FAST_WINDOW,
+                pattern.FAST_WINDOW,
+                pattern.PATTERN_ID,
+                pattern.PATTERN_KEY,
+                pattern.MIN_RETURN,
+                pattern.SLOW_WINDOW,
+                pattern.MIN_ZSCORE,
+                pattern.MIN_ZSCORE
+            );
 
             v_inserted := v_inserted + sqlrowcount;
         elseif (pattern.MARKET_TYPE = 'FX') then
@@ -289,7 +303,20 @@ begin
                     where existing.RECOMMENDATION_ID is null
                 )
                 select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
-            ' using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, pattern.LOOKBACK_DAYS, pattern.FAST_WINDOW, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
+            ' using (
+                pattern.MARKET_TYPE,
+                pattern.INTERVAL_MINUTES,
+                pattern.LOOKBACK_DAYS,
+                pattern.FAST_WINDOW,
+                pattern.SLOW_WINDOW,
+                pattern.FAST_WINDOW,
+                pattern.FAST_WINDOW,
+                pattern.PATTERN_ID,
+                pattern.PATTERN_KEY,
+                pattern.MIN_RETURN,
+                pattern.MIN_ZSCORE,
+                pattern.MIN_ZSCORE
+            );
 
             v_inserted := v_inserted + sqlrowcount;
         end if;

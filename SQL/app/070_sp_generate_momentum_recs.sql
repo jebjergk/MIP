@@ -98,7 +98,7 @@ begin
             null;
     end;
 
-    for pattern in (
+    for pattern_row in (
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
@@ -116,15 +116,15 @@ begin
           and (P_INTERVAL_MINUTES is null or P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, v_default_interval_minutes))
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
     ) do
-        v_pattern_market_type   := pattern.MARKET_TYPE;
-        v_pattern_interval      := pattern.INTERVAL_MINUTES;
-        v_pattern_fast_window   := pattern.FAST_WINDOW;
-        v_pattern_slow_window   := pattern.SLOW_WINDOW;
-        v_pattern_lookback_days := pattern.LOOKBACK_DAYS;
-        v_pattern_min_return    := pattern.MIN_RETURN;
-        v_pattern_min_zscore    := pattern.MIN_ZSCORE;
-        v_pattern_id            := pattern.PATTERN_ID;
-        v_pattern_key           := pattern.PATTERN_KEY;
+        v_pattern_market_type   := pattern_row.MARKET_TYPE;
+        v_pattern_interval      := pattern_row.INTERVAL_MINUTES;
+        v_pattern_fast_window   := pattern_row.FAST_WINDOW;
+        v_pattern_slow_window   := pattern_row.SLOW_WINDOW;
+        v_pattern_lookback_days := pattern_row.LOOKBACK_DAYS;
+        v_pattern_min_return    := pattern_row.MIN_RETURN;
+        v_pattern_min_zscore    := pattern_row.MIN_ZSCORE;
+        v_pattern_id            := pattern_row.PATTERN_ID;
+        v_pattern_key           := pattern_row.PATTERN_KEY;
 
         select count(*)
           into :v_market_return_count

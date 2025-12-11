@@ -76,13 +76,13 @@ begin
     -- Default parameters based on MOMENTUM_DEMO (fallback to literals if missing)
     begin
         select
-            coalesce(PARAMS_JSON:fast_window::number, v_default_fast_window),
-            coalesce(PARAMS_JSON:slow_window::number, v_default_slow_window),
-            coalesce(PARAMS_JSON:lookback_days::number, v_default_lookback_days),
-            coalesce(PARAMS_JSON:min_return::float, v_default_min_return),
-            coalesce(PARAMS_JSON:min_zscore::float, v_default_min_zscore),
-            coalesce(PARAMS_JSON:market_type::string, v_default_market_type),
-            coalesce(PARAMS_JSON:interval_minutes::number, v_default_interval_minutes)
+            coalesce(PARAMS_JSON:fast_window::number, :v_default_fast_window),
+            coalesce(PARAMS_JSON:slow_window::number, :v_default_slow_window),
+            coalesce(PARAMS_JSON:lookback_days::number, :v_default_lookback_days),
+            coalesce(PARAMS_JSON:min_return::float, :v_default_min_return),
+            coalesce(PARAMS_JSON:min_zscore::float, :v_default_min_zscore),
+            coalesce(PARAMS_JSON:market_type::string, :v_default_market_type),
+            coalesce(PARAMS_JSON:interval_minutes::number, :v_default_interval_minutes)
         into :v_default_fast_window,
              :v_default_slow_window,
              :v_default_lookback_days,
@@ -102,18 +102,18 @@ begin
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
-            coalesce(PARAMS_JSON:market_type::string, P_MARKET_TYPE, v_default_market_type) as MARKET_TYPE,
-            coalesce(PARAMS_JSON:interval_minutes::number, P_INTERVAL_MINUTES, v_default_interval_minutes) as INTERVAL_MINUTES,
-            coalesce(PARAMS_JSON:fast_window::number, v_default_fast_window) as FAST_WINDOW,
-            coalesce(PARAMS_JSON:slow_window::number, v_default_slow_window) as SLOW_WINDOW,
-            coalesce(PARAMS_JSON:lookback_days::number, v_default_lookback_days) as LOOKBACK_DAYS,
-            coalesce(PARAMS_JSON:min_return::float, P_MIN_RETURN, v_default_min_return) as MIN_RETURN,
-            coalesce(PARAMS_JSON:min_zscore::float, v_vol_adj_threshold, v_default_min_zscore) as MIN_ZSCORE
+            coalesce(PARAMS_JSON:market_type::string, :P_MARKET_TYPE, :v_default_market_type) as MARKET_TYPE,
+            coalesce(PARAMS_JSON:interval_minutes::number, :P_INTERVAL_MINUTES, :v_default_interval_minutes) as INTERVAL_MINUTES,
+            coalesce(PARAMS_JSON:fast_window::number, :v_default_fast_window) as FAST_WINDOW,
+            coalesce(PARAMS_JSON:slow_window::number, :v_default_slow_window) as SLOW_WINDOW,
+            coalesce(PARAMS_JSON:lookback_days::number, :v_default_lookback_days) as LOOKBACK_DAYS,
+            coalesce(PARAMS_JSON:min_return::float, :P_MIN_RETURN, :v_default_min_return) as MIN_RETURN,
+            coalesce(PARAMS_JSON:min_zscore::float, :v_vol_adj_threshold, :v_default_min_zscore) as MIN_ZSCORE
         from MIP.APP.PATTERN_DEFINITION
         where coalesce(IS_ACTIVE, 'N') = 'Y'
           and coalesce(ENABLED, true)
-          and (P_MARKET_TYPE is null or upper(P_MARKET_TYPE) = coalesce(upper(PARAMS_JSON:market_type::string), v_default_market_type))
-          and (P_INTERVAL_MINUTES is null or P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, v_default_interval_minutes))
+          and (:P_MARKET_TYPE is null or upper(:P_MARKET_TYPE) = coalesce(upper(PARAMS_JSON:market_type::string), :v_default_market_type))
+          and (:P_INTERVAL_MINUTES is null or :P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, :v_default_interval_minutes))
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
     ) do
         v_pattern_market_type   := pattern_row.MARKET_TYPE;
@@ -129,8 +129,8 @@ begin
         select count(*)
           into :v_market_return_count
           from MIP.MART.MARKET_RETURNS
-         where MARKET_TYPE = v_pattern_market_type
-           and INTERVAL_MINUTES = v_pattern_interval;
+         where MARKET_TYPE = :v_pattern_market_type
+           and INTERVAL_MINUTES = :v_pattern_interval;
 
         if (v_market_return_count = 0) then
             v_status_msgs := v_status_msgs ||

@@ -86,7 +86,7 @@ begin
         );
 
         select max(BACKTEST_RUN_ID)
-          into v_backtest_run_id
+          into :v_backtest_run_id
           from MIP.APP.BACKTEST_RUN
          where MARKET_TYPE = :P_MARKET_TYPE
            and INTERVAL_MINUTES = :P_INTERVAL_MINUTES;
@@ -103,7 +103,7 @@ begin
                 'pattern_score', PATTERN_SCORE
             )
         )
-          into v_pattern_summary
+          into :v_pattern_summary
           from MIP.APP.PATTERN_DEFINITION
          where LAST_BACKTEST_RUN_ID = :v_backtest_run_id
            and coalesce(ENABLED, true) = true;
@@ -116,23 +116,23 @@ begin
     end if;
 
     return object_construct(
-        'market_type',       :P_MARKET_TYPE,
-        'interval_minutes',  :P_INTERVAL_MINUTES,
-        'horizon_minutes',   :P_HORIZON_MINUTES,
-        'from_ts',           :v_from_ts,
-        'to_ts',             :v_to_ts,
-        'backtest_run_id',   :v_backtest_run_id,
-        'did_ingest',        :v_do_ingest,
-        'did_signals',       :v_do_signals,
-        'did_evaluate',      :v_do_evaluate,
-        'did_backtest',      :v_do_backtest,
-        'did_train',         :v_do_train,
-        'msg_ingest',        :v_msg_ingest,
-        'msg_signals',       :v_msg_signals,
-        'msg_evaluate',      :v_msg_eval,
-        'msg_backtest',      :v_msg_backtest,
-        'msg_train',         :v_msg_train,
-        'patterns',          :coalesce(v_pattern_summary, array_construct())
+        'market_type',       P_MARKET_TYPE,
+        'interval_minutes',  P_INTERVAL_MINUTES,
+        'horizon_minutes',   P_HORIZON_MINUTES,
+        'from_ts',           v_from_ts,
+        'to_ts',             v_to_ts,
+        'backtest_run_id',   v_backtest_run_id,
+        'did_ingest',        v_do_ingest,
+        'did_signals',       v_do_signals,
+        'did_evaluate',      v_do_evaluate,
+        'did_backtest',      v_do_backtest,
+        'did_train',         v_do_train,
+        'msg_ingest',        v_msg_ingest,
+        'msg_signals',       v_msg_signals,
+        'msg_evaluate',      v_msg_eval,
+        'msg_backtest',      v_msg_backtest,
+        'msg_train',         v_msg_train,
+        'patterns',          coalesce(v_pattern_summary, array_construct())
     );
 end;
 $$;

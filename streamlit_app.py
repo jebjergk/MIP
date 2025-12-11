@@ -57,12 +57,23 @@ def get_market_selection(key_prefix: str = ""):
 
 def run_momentum_generator(min_return: float, market_type: str, interval_minutes: int):
     """Call the canonical momentum signal generator stored procedure."""
+    try:
+        result = session.call(
+            SIGNAL_GENERATOR_SP, float(min_return), market_type, int(interval_minutes)
+        )
+    except Exception:
+        # Fallback to a SQL call to surface the underlying Snowflake error message
+        call_sql = (
+            f"call {SIGNAL_GENERATOR_SP}({min_return}, '{market_type}', {interval_minutes})"
+        )
+        res = run_sql(call_sql).collect()
+        return res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
 
-    call_sql = (
-        f"call {SIGNAL_GENERATOR_SP}({min_return}, '{market_type}', {interval_minutes})"
-    )
-    res = run_sql(call_sql).collect()
-    return res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
+    if result is None:
+        return "Signal procedure completed."
+    if isinstance(result, list):
+        return result[0][0] if result and len(result[0]) > 0 else "Signal procedure completed."
+    return result
 
 
 # --- Pages ---

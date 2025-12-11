@@ -22,6 +22,9 @@ page = st.sidebar.radio(
 # --- Helper functions ---
 
 
+SIGNAL_GENERATOR_SP = "MIP.APP.SP_GENERATE_MOMENTUM_RECS"
+
+
 def run_sql(query: str):
     """Convenience wrapper to run a SQL statement and return a Snowpark DataFrame."""
     return session.sql(query)
@@ -50,6 +53,16 @@ def get_market_selection(key_prefix: str = ""):
         key=f"market_selector_{key_prefix}",
     )
     return options.get(choice, ("STOCK", 5))
+
+
+def run_momentum_generator(min_return: float, market_type: str, interval_minutes: int):
+    """Call the canonical momentum signal generator stored procedure."""
+
+    call_sql = (
+        f"call {SIGNAL_GENERATOR_SP}({min_return}, '{market_type}', {interval_minutes})"
+    )
+    res = run_sql(call_sql).collect()
+    return res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
 
 
 # --- Pages ---
@@ -446,11 +459,13 @@ def render_signals_recommendations():
         submitted = st.form_submit_button("Generate momentum signals")
 
     if submitted:
-        # Call the stored procedure
-        call_sql = f"call MIP.APP.SP_GENERATE_MOMENTUM_RECS({min_return}, '{selected_market_type}', {selected_interval_minutes})"
-        res = run_sql(call_sql).collect()
-        msg = res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
-        st.success(msg)
+        try:
+            msg = run_momentum_generator(
+                min_return, selected_market_type, selected_interval_minutes
+            )
+            st.success(msg)
+        except Exception as e:
+            st.error(f"Momentum generation failed: {e}")
 
     st.markdown("### Latest recommendations (joined with pattern name)")
 

@@ -38,6 +38,7 @@ declare
     v_do_evaluate      boolean;
     v_do_backtest      boolean;
     v_do_train         boolean;
+    v_training_summary array;
     v_pattern_summary  array;
 begin
     v_to_ts   := coalesce(P_TO_TS, current_timestamp());
@@ -112,7 +113,72 @@ begin
     end if;
 
     if (v_do_train) then
-        v_msg_train := 'Pattern metrics refreshed via SP_RUN_BACKTEST';
+        -- Capture pre-training metrics for patterns included in the backtest run
+        create or replace temporary table TMP_PATTERN_METRICS_BEFORE as
+        select
+            pd.PATTERN_ID,
+            pd.NAME as PATTERN_NAME,
+            br.TRADE_COUNT as TRADES_EVALUATED,
+            pd.LAST_HIT_RATE,
+            pd.LAST_CUM_RETURN,
+            pd.PATTERN_SCORE as PATTERN_SCORE_BEFORE
+        from (
+            select PATTERN_ID, sum(TRADE_COUNT) as TRADE_COUNT
+              from MIP.APP.BACKTEST_RESULT
+             where BACKTEST_RUN_ID = :v_backtest_run_id
+             group by PATTERN_ID
+        ) br
+        join MIP.APP.PATTERN_DEFINITION pd
+          on pd.PATTERN_ID = br.PATTERN_ID;
+
+        call MIP.APP.SP_TRAIN_PATTERNS_FROM_BACKTEST(
+            :v_backtest_run_id,
+            :P_MARKET_TYPE,
+            :P_INTERVAL_MINUTES
+        );
+
+        select array_agg(
+            object_construct(
+                'pattern_id', pd.PATTERN_ID,
+                'pattern_name', pd.NAME,
+                'trades_evaluated', coalesce(br.TRADE_COUNT, pd.LAST_TRADE_COUNT),
+                'hit_rate', pd.LAST_HIT_RATE,
+                'cum_return', pd.LAST_CUM_RETURN,
+                'pattern_score_before', before.PATTERN_SCORE_BEFORE,
+                'pattern_score_after', pd.PATTERN_SCORE
+            )
+        )
+          into :v_training_summary
+          from MIP.APP.PATTERN_DEFINITION pd
+          join TMP_PATTERN_METRICS_BEFORE before
+            on before.PATTERN_ID = pd.PATTERN_ID
+          left join (
+              select PATTERN_ID, sum(TRADE_COUNT) as TRADE_COUNT
+                from MIP.APP.BACKTEST_RESULT
+               where BACKTEST_RUN_ID = :v_backtest_run_id
+               group by PATTERN_ID
+          ) br
+            on br.PATTERN_ID = pd.PATTERN_ID;
+
+        drop table if exists TMP_PATTERN_METRICS_BEFORE;
+
+        if (exists (
+                select 1
+                  from information_schema.tables
+                 where table_schema = 'AGENT_OUT'
+                   and table_name = 'TRAINING_RUN_LOG'
+            )) then
+            insert into MIP.AGENT_OUT.TRAINING_RUN_LOG (LOG_TS, SUMMARY)
+            select current_timestamp(),
+                   object_construct(
+                       'market_type', :P_MARKET_TYPE,
+                       'interval_minutes', :P_INTERVAL_MINUTES,
+                       'backtest_run_id', :v_backtest_run_id,
+                       'patterns', coalesce(:v_training_summary, array_construct())
+                   );
+        end if;
+
+        v_msg_train := 'Pattern metrics refreshed via SP_TRAIN_PATTERNS_FROM_BACKTEST';
     end if;
 
     return object_construct(
@@ -132,7 +198,8 @@ begin
         'msg_evaluate',      v_msg_eval,
         'msg_backtest',      v_msg_backtest,
         'msg_train',         v_msg_train,
-        'patterns',          coalesce(v_pattern_summary, array_construct())
+        'patterns',          coalesce(v_pattern_summary, array_construct()),
+        'training_summary',  coalesce(v_training_summary, array_construct())
     );
 end;
 $$;

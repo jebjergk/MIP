@@ -14,15 +14,15 @@ declare
     v_inserted                number := 0;
     v_min_volume              number := 1000;
     v_vol_adj_threshold       number := 1.0;
-    v_consecutive_up_bars     number := 3;
-    v_slow_consecutive_bars   number := 2;
     v_min_trades_for_usage    number := 30;
-    v_market_type             string;
-    v_interval_minutes        number;
+    v_default_fast_window     number := 20;
+    v_default_slow_window     number := 3;
+    v_default_lookback_days   number := 1;
+    v_default_min_return      float  := 0.002;
+    v_default_min_zscore      float  := 1.0;
+    v_default_market_type     string := 'STOCK';
+    v_default_interval_minutes number := 5;
 begin
-    v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
-    v_interval_minutes := coalesce(P_INTERVAL_MINUTES, 5);
-
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
     delete from MIP.APP.RECOMMENDATION_LOG
      where PATTERN_ID in (
@@ -62,264 +62,240 @@ begin
         v_vol_adj_threshold := 1.0;
     end if;
 
-    -- Insert new recommendations across active patterns
-    insert into MIP.APP.RECOMMENDATION_LOG (
-        PATTERN_ID,
-        SYMBOL,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        TS,
-        SCORE,
-        DETAILS
-    )
-    with active_patterns as (
+    -- Default parameters based on MOMENTUM_DEMO (fallback to literals if missing)
+    begin
+        select
+            coalesce(PARAMS_JSON:fast_window::number, v_default_fast_window),
+            coalesce(PARAMS_JSON:slow_window::number, v_default_slow_window),
+            coalesce(PARAMS_JSON:lookback_days::number, v_default_lookback_days),
+            coalesce(PARAMS_JSON:min_return::float, v_default_min_return),
+            coalesce(PARAMS_JSON:min_zscore::float, v_default_min_zscore),
+            coalesce(PARAMS_JSON:market_type::string, v_default_market_type),
+            coalesce(PARAMS_JSON:interval_minutes::number, v_default_interval_minutes)
+        into :v_default_fast_window,
+             :v_default_slow_window,
+             :v_default_lookback_days,
+             :v_default_min_return,
+             :v_default_min_zscore,
+             :v_default_market_type,
+             :v_default_interval_minutes
+        from MIP.APP.PATTERN_DEFINITION
+        where upper(NAME) = 'MOMENTUM_DEMO'
+        limit 1;
+    exception
+        when statement_error then
+            null;
+    end;
+
+    for pattern in (
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
-            NAME as PATTERN_NAME
+            coalesce(PARAMS_JSON:market_type::string, P_MARKET_TYPE, v_default_market_type) as MARKET_TYPE,
+            coalesce(PARAMS_JSON:interval_minutes::number, P_INTERVAL_MINUTES, v_default_interval_minutes) as INTERVAL_MINUTES,
+            coalesce(PARAMS_JSON:fast_window::number, v_default_fast_window) as FAST_WINDOW,
+            coalesce(PARAMS_JSON:slow_window::number, v_default_slow_window) as SLOW_WINDOW,
+            coalesce(PARAMS_JSON:lookback_days::number, v_default_lookback_days) as LOOKBACK_DAYS,
+            coalesce(PARAMS_JSON:min_return::float, P_MIN_RETURN, v_default_min_return) as MIN_RETURN,
+            coalesce(PARAMS_JSON:min_zscore::float, v_vol_adj_threshold, v_default_min_zscore) as MIN_ZSCORE
         from MIP.APP.PATTERN_DEFINITION
         where coalesce(IS_ACTIVE, 'N') = 'Y'
+          and coalesce(ENABLED, true)
+          and (P_MARKET_TYPE is null or upper(P_MARKET_TYPE) = coalesce(upper(PARAMS_JSON:market_type::string), v_default_market_type))
+          and (P_INTERVAL_MINUTES is null or P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, v_default_interval_minutes))
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
-    ),
-    stock_fast_base as (
-        select
-            r.*,
-            lag(r.RETURN_SIMPLE, 1) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_1,
-            lag(r.RETURN_SIMPLE, 2) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_2,
-            lag(r.RETURN_SIMPLE, 3) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_3,
-            max(r.CLOSE) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-                rows between 20 preceding and 1 preceding
-            ) as MAX_PREV_20_CLOSE,
-            stddev_samp(r.RETURN_SIMPLE) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-                rows between 19 preceding and current row
-            ) as STDDEV_20
-        from MIP.MART.MARKET_RETURNS r
-        where r.MARKET_TYPE       = 'STOCK'
-          and r.INTERVAL_MINUTES  = 5
-          and r.RETURN_SIMPLE     is not null
-          and r.VOLUME            >= :v_min_volume
-          and r.TS                >= dateadd(day, -1, current_timestamp())
-    ),
-    stock_fast_scored as (
-        select
-            b.*,
-            (case when b.RET_LAG_1 > 0 then 1 else 0 end
-           + case when b.RET_LAG_2 > 0 then 1 else 0 end
-           + case when b.RET_LAG_3 > 0 then 1 else 0 end) as POSITIVE_LAG_COUNT
-        from stock_fast_base b
-    ),
-    stock_fast as (
-        select
-            'STOCK_MOMENTUM_FAST'                  as PATTERN_KEY,
-            'STOCK' as MARKET_TYPE,
-            5       as INTERVAL_MINUTES,
-            r.SYMBOL,
-            r.TS,
-            r.RETURN_SIMPLE                         as SCORE,
-            object_construct(
-                'pattern_key',   'STOCK_MOMENTUM_FAST',
-                'return_simple', r.RETURN_SIMPLE,
-                'prev_close',    r.PREV_CLOSE,
-                'close',         r.CLOSE
-            )                                       as DETAILS
-        from stock_fast_scored r
-        where :v_market_type     = 'STOCK'
-          and :v_interval_minutes = 5
-          and r.RETURN_SIMPLE    >= :P_MIN_RETURN
-          and r.POSITIVE_LAG_COUNT >= :v_consecutive_up_bars
-          and r.MAX_PREV_20_CLOSE is not null
-          and r.CLOSE >= r.MAX_PREV_20_CLOSE
-          and (
-                r.STDDEV_20 is null
-             or (r.STDDEV_20 > 0 and r.RETURN_SIMPLE / r.STDDEV_20 >= :v_vol_adj_threshold)
-          )
-    ),
-    stock_slow_base as (
-        select
-            r.*,
-            lag(r.RETURN_SIMPLE, 1) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_1,
-            lag(r.RETURN_SIMPLE, 2) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_2,
-            max(r.CLOSE) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-                rows between 30 preceding and 1 preceding
-            ) as MAX_PREV_30_CLOSE,
-            stddev_samp(r.RETURN_SIMPLE) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-                rows between 29 preceding and current row
-            ) as STDDEV_30
-        from MIP.MART.MARKET_RETURNS r
-        where r.MARKET_TYPE       = 'STOCK'
-          and r.INTERVAL_MINUTES  = 5
-          and r.RETURN_SIMPLE     is not null
-          and r.VOLUME            >= (:v_min_volume / 2)
-          and r.TS                >= dateadd(day, -3, current_timestamp())
-    ),
-    stock_slow_scored as (
-        select
-            b.*,
-            (case when b.RET_LAG_1 > 0 then 1 else 0 end
-           + case when b.RET_LAG_2 > 0 then 1 else 0 end) as POSITIVE_LAG_COUNT
-        from stock_slow_base b
-    ),
-    stock_slow as (
-        select
-            'STOCK_MOMENTUM_SLOW'                  as PATTERN_KEY,
-            'STOCK' as MARKET_TYPE,
-            5       as INTERVAL_MINUTES,
-            r.SYMBOL,
-            r.TS,
-            r.RETURN_SIMPLE                         as SCORE,
-            object_construct(
-                'pattern_key',   'STOCK_MOMENTUM_SLOW',
-                'return_simple', r.RETURN_SIMPLE,
-                'prev_close',    r.PREV_CLOSE,
-                'close',         r.CLOSE
-            )                                       as DETAILS
-        from stock_slow_scored r
-        where :v_market_type     = 'STOCK'
-          and :v_interval_minutes = 5
-          and r.RETURN_SIMPLE    >= (:P_MIN_RETURN / 2)
-          and r.POSITIVE_LAG_COUNT >= :v_slow_consecutive_bars
-          and r.MAX_PREV_30_CLOSE is not null
-          and r.CLOSE >= r.MAX_PREV_30_CLOSE
-          and (
-                r.STDDEV_30 is null
-             or (r.STDDEV_30 > 0 and r.RETURN_SIMPLE / r.STDDEV_30 >= (:v_vol_adj_threshold * 0.75))
-          )
-    ),
-    fx_base as (
-        select
-            mb.*,
-            lag(mb.CLOSE) over (
-                partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
-                order by mb.TS
-            ) as PREV_CLOSE,
-            avg(mb.CLOSE) over (
-                partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
-                order by mb.TS
-                rows between 9 preceding and current row
-            ) as SMA_SHORT,
-            avg(mb.CLOSE) over (
-                partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
-                order by mb.TS
-                rows between 19 preceding and current row
-            ) as SMA_20
-        from MIP.MART.MARKET_BARS mb
-        where mb.MARKET_TYPE       = 'FX'
-          and mb.INTERVAL_MINUTES  = 1440
-          and mb.TS                >= dateadd(day, -60, current_timestamp())
-    ),
-    fx_returns as (
-        select
-            f.*,
-            case when f.PREV_CLOSE is null or f.PREV_CLOSE = 0 then null else (f.CLOSE / f.PREV_CLOSE) - 1 end as RETURN_SIMPLE
-        from fx_base f
-    ),
-    fx_scored as (
-        select
-            r.*,
-            lag(r.RETURN_SIMPLE, 1) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_1,
-            lag(r.RETURN_SIMPLE, 2) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-            ) as RET_LAG_2,
-            avg(r.RETURN_SIMPLE) over (
-                partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
-                order by r.TS
-                rows between 4 preceding and current row
-            ) as AVG_RET_5
-        from fx_returns r
-    ),
-    fx_daily as (
-        select
-            'FX_MOMENTUM_DAILY'                    as PATTERN_KEY,
-            'FX'    as MARKET_TYPE,
-            1440    as INTERVAL_MINUTES,
-            r.SYMBOL,
-            r.TS,
-            r.RETURN_SIMPLE                         as SCORE,
-            object_construct(
-                'pattern_key',     'FX_MOMENTUM_DAILY',
-                'return_simple',   r.RETURN_SIMPLE,
-                'prev_close',      r.PREV_CLOSE,
-                'close',           r.CLOSE,
-                'sma_short',       r.SMA_SHORT,
-                'sma_20',          r.SMA_20,
-                'avg_ret_5',       r.AVG_RET_5
-            )                                       as DETAILS
-        from fx_scored r
-        where :v_market_type      = 'FX'
-          and :v_interval_minutes = 1440
-          and r.RETURN_SIMPLE is not null
-          and r.SMA_SHORT is not null
-          and r.CLOSE >= r.SMA_SHORT
-          and r.SMA_20  is not null
-          and r.CLOSE >= r.SMA_20
-          and coalesce(r.AVG_RET_5, 0) >= (:P_MIN_RETURN / 2)
-          and ((r.RET_LAG_1 is null or r.RET_LAG_1 > 0) and (r.RET_LAG_2 is null or r.RET_LAG_2 > 0))
-    ),
-    combined_recs as (
-        select * from stock_fast
-        union all
-        select * from stock_slow
-        union all
-        select * from fx_daily
-    ),
-    active_recs as (
-        select
-            ap.PATTERN_ID,
-            r.SYMBOL,
-            r.MARKET_TYPE,
-            r.INTERVAL_MINUTES,
-            r.TS,
-            r.SCORE,
-            r.DETAILS
-        from combined_recs r
-        join active_patterns ap
-          on ap.PATTERN_KEY = r.PATTERN_KEY
-    )
-    select
-        r.PATTERN_ID,
-        r.SYMBOL,
-        r.MARKET_TYPE,
-        r.INTERVAL_MINUTES,
-        r.TS,
-        r.SCORE,
-        r.DETAILS
-    from active_recs r
-    left join MIP.APP.RECOMMENDATION_LOG existing
-        on existing.PATTERN_ID       = r.PATTERN_ID
-       and existing.SYMBOL           = r.SYMBOL
-       and existing.MARKET_TYPE      = r.MARKET_TYPE
-       and existing.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-       and existing.TS               = r.TS
-    where existing.RECOMMENDATION_ID is null;  -- avoid duplicates
+    ) do
+        if (pattern.MARKET_TYPE = 'STOCK') then
+            execute immediate
+            $$
+                insert into MIP.APP.RECOMMENDATION_LOG (
+                    PATTERN_ID,
+                    SYMBOL,
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    TS,
+                    SCORE,
+                    DETAILS
+                )
+                with returns_filtered as (
+                    select
+                        r.*,
+                        row_number() over (
+                            partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                            order by r.TS
+                        ) as RN
+                    from MIP.MART.MARKET_RETURNS r
+                    where r.MARKET_TYPE = ?
+                      and r.INTERVAL_MINUTES = ?
+                      and r.RETURN_SIMPLE is not null
+                      and r.VOLUME >= ?
+                      and r.TS >= dateadd(day, -?, current_timestamp())
+                ),
+                scored as (
+                    select
+                        rf.*,
+                        (select count(*) from returns_filtered rf2
+                          where rf2.SYMBOL = rf.SYMBOL
+                            and rf2.MARKET_TYPE = rf.MARKET_TYPE
+                            and rf2.INTERVAL_MINUTES = rf.INTERVAL_MINUTES
+                            and rf2.RN < rf.RN
+                            and rf2.RN >= rf.RN - ?
+                            and rf2.RETURN_SIMPLE > 0) as POSITIVE_LAG_COUNT,
+                        (select max(rf2.CLOSE) from returns_filtered rf2
+                          where rf2.SYMBOL = rf.SYMBOL
+                            and rf2.MARKET_TYPE = rf.MARKET_TYPE
+                            and rf2.INTERVAL_MINUTES = rf.INTERVAL_MINUTES
+                            and rf2.RN < rf.RN
+                            and rf2.RN >= rf.RN - ?) as MAX_PREV_CLOSE,
+                        (select stddev_samp(rf2.RETURN_SIMPLE) from returns_filtered rf2
+                          where rf2.SYMBOL = rf.SYMBOL
+                            and rf2.MARKET_TYPE = rf.MARKET_TYPE
+                            and rf2.INTERVAL_MINUTES = rf.INTERVAL_MINUTES
+                            and rf2.RN > rf.RN - ?
+                            and rf2.RN <= rf.RN) as STDDEV_WINDOW
+                    from returns_filtered rf
+                ),
+                pattern_recs as (
+                    select
+                        ? as PATTERN_ID,
+                        rf.SYMBOL,
+                        rf.MARKET_TYPE,
+                        rf.INTERVAL_MINUTES,
+                        rf.TS,
+                        rf.RETURN_SIMPLE as SCORE,
+                        object_construct(
+                            'pattern_key', ?,
+                            'return_simple', rf.RETURN_SIMPLE,
+                            'prev_close', rf.PREV_CLOSE,
+                            'close', rf.CLOSE
+                        ) as DETAILS
+                    from scored rf
+                    where rf.RETURN_SIMPLE >= ?
+                      and rf.POSITIVE_LAG_COUNT >= ?
+                      and (rf.MAX_PREV_CLOSE is null or rf.CLOSE >= rf.MAX_PREV_CLOSE)
+                      and (? is null or rf.STDDEV_WINDOW is null or (rf.STDDEV_WINDOW > 0 and rf.RETURN_SIMPLE / rf.STDDEV_WINDOW >= ?))
+                ),
+                new_recs as (
+                    select p.*
+                    from pattern_recs p
+                    left join MIP.APP.RECOMMENDATION_LOG existing
+                      on existing.PATTERN_ID = p.PATTERN_ID
+                     and existing.SYMBOL = p.SYMBOL
+                     and existing.MARKET_TYPE = p.MARKET_TYPE
+                     and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
+                     and existing.TS = p.TS
+                    where existing.RECOMMENDATION_ID is null
+                )
+                select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
+            $$ using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, v_min_volume, pattern.LOOKBACK_DAYS, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.SLOW_WINDOW, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
 
-    v_inserted := sqlrowcount;
+            v_inserted := v_inserted + sqlrowcount;
+        elseif (pattern.MARKET_TYPE = 'FX') then
+            execute immediate
+            $$
+                insert into MIP.APP.RECOMMENDATION_LOG (
+                    PATTERN_ID,
+                    SYMBOL,
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    TS,
+                    SCORE,
+                    DETAILS
+                )
+                with bars as (
+                    select
+                        mb.*,
+                        row_number() over (
+                            partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
+                            order by mb.TS
+                        ) as RN,
+                        lag(mb.CLOSE) over (
+                            partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
+                            order by mb.TS
+                        ) as PREV_CLOSE
+                    from MIP.MART.MARKET_BARS mb
+                    where mb.MARKET_TYPE = ?
+                      and mb.INTERVAL_MINUTES = ?
+                      and mb.TS >= dateadd(day, -?, current_timestamp())
+                ),
+                returns as (
+                    select
+                        b.*,
+                        case when b.PREV_CLOSE is null or b.PREV_CLOSE = 0 then null else (b.CLOSE / b.PREV_CLOSE) - 1 end as RETURN_SIMPLE
+                    from bars b
+                ),
+                scored as (
+                    select
+                        r.*,
+                        (select avg(r2.CLOSE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as SMA_FAST,
+                        (select avg(r2.CLOSE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as SMA_SLOW,
+                        (select avg(r2.RETURN_SIMPLE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as AVG_RETURN_WINDOW,
+                        (select stddev_samp(r2.RETURN_SIMPLE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as STDDEV_WINDOW
+                    from returns r
+                ),
+                pattern_recs as (
+                    select
+                        ? as PATTERN_ID,
+                        r.SYMBOL,
+                        r.MARKET_TYPE,
+                        r.INTERVAL_MINUTES,
+                        r.TS,
+                        r.RETURN_SIMPLE as SCORE,
+                        object_construct(
+                            'pattern_key', ?,
+                            'return_simple', r.RETURN_SIMPLE,
+                            'prev_close', r.PREV_CLOSE,
+                            'close', r.CLOSE,
+                            'sma_fast', r.SMA_FAST,
+                            'sma_slow', r.SMA_SLOW,
+                            'avg_return_window', r.AVG_RETURN_WINDOW
+                        ) as DETAILS
+                    from scored r
+                    where r.RETURN_SIMPLE is not null
+                      and r.SMA_FAST is not null
+                      and r.SMA_SLOW is not null
+                      and r.CLOSE >= r.SMA_FAST
+                      and r.CLOSE >= r.SMA_SLOW
+                      and coalesce(r.AVG_RETURN_WINDOW, 0) >= ?
+                      and (? is null or r.STDDEV_WINDOW is null or r.STDDEV_WINDOW = 0 or r.RETURN_SIMPLE / r.STDDEV_WINDOW >= ?)
+                ),
+                new_recs as (
+                    select p.*
+                    from pattern_recs p
+                    left join MIP.APP.RECOMMENDATION_LOG existing
+                      on existing.PATTERN_ID = p.PATTERN_ID
+                     and existing.SYMBOL = p.SYMBOL
+                     and existing.MARKET_TYPE = p.MARKET_TYPE
+                     and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
+                     and existing.TS = p.TS
+                    where existing.RECOMMENDATION_ID is null
+                )
+                select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
+            $$ using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, pattern.LOOKBACK_DAYS, pattern.FAST_WINDOW, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
+
+            v_inserted := v_inserted + sqlrowcount;
+        end if;
+    end for;
 
     return 'Inserted ' || v_inserted || ' momentum recommendations.';
 end;

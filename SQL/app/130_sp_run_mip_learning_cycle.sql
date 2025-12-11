@@ -38,6 +38,7 @@ declare
     v_do_evaluate      boolean;
     v_do_backtest      boolean;
     v_do_train         boolean;
+    v_pattern_summary  array;
 begin
     v_to_ts   := coalesce(P_TO_TS, current_timestamp());
     v_from_ts := coalesce(P_FROM_TS, dateadd('day', -7, v_to_ts));
@@ -89,16 +90,29 @@ begin
           from MIP.APP.BACKTEST_RUN
          where MARKET_TYPE = :P_MARKET_TYPE
            and INTERVAL_MINUTES = :P_INTERVAL_MINUTES;
+
+        select array_agg(
+            object_construct(
+                'pattern_id', PATTERN_ID,
+                'pattern_name', NAME,
+                'trade_count', LAST_TRADE_COUNT,
+                'hit_rate', LAST_HIT_RATE,
+                'cum_return', LAST_CUM_RETURN,
+                'avg_return', LAST_AVG_RETURN,
+                'std_return', LAST_STD_RETURN,
+                'pattern_score', PATTERN_SCORE
+            )
+        )
+          into v_pattern_summary
+          from MIP.APP.PATTERN_DEFINITION
+         where LAST_BACKTEST_RUN_ID = :v_backtest_run_id
+           and coalesce(ENABLED, true) = true;
     else
         v_backtest_run_id := null;
     end if;
 
     if (v_do_train) then
-        call MIP.APP.SP_TRAIN_PATTERNS_FROM_BACKTEST(
-            :v_backtest_run_id,
-            :P_MARKET_TYPE,
-            :P_INTERVAL_MINUTES
-        );
+        v_msg_train := 'Pattern metrics refreshed via SP_RUN_BACKTEST';
     end if;
 
     return object_construct(
@@ -117,7 +131,8 @@ begin
         'msg_signals',       :v_msg_signals,
         'msg_evaluate',      :v_msg_eval,
         'msg_backtest',      :v_msg_backtest,
-        'msg_train',         :v_msg_train
+        'msg_train',         :v_msg_train,
+        'patterns',          :coalesce(v_pattern_summary, array_construct())
     );
 end;
 $$;

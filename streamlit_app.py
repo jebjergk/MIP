@@ -372,6 +372,21 @@ def render_patterns_learning():
         st.info("No pattern performance metrics available yet.")
         return
 
+    metric_cols = [
+        "LAST_TRADE_COUNT",
+        "LAST_HIT_RATE",
+        "LAST_CUM_RETURN",
+        "LAST_AVG_RETURN",
+        "LAST_STD_RETURN",
+        "PATTERN_SCORE",
+    ]
+
+    has_metrics = perf_df[metric_cols].notna().any().any()
+
+    if not has_metrics:
+        st.info("No pattern performance metrics available yet.")
+        return
+
     if perf_filter == "Active":
         perf_df = perf_df[perf_df["IS_ACTIVE"] == "Y"]
     elif perf_filter == "Inactive":

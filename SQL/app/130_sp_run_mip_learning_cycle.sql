@@ -59,6 +59,8 @@ begin
             :P_MARKET_TYPE,
             :P_INTERVAL_MINUTES
         );
+
+        v_msg_signals := 'Signals generated via MIP.APP.SP_GENERATE_MOMENTUM_RECS';
     end if;
 
     if (v_do_evaluate) then

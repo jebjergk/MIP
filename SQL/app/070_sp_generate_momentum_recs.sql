@@ -140,7 +140,7 @@ begin
             continue;
         end if;
 
-        if (pattern.MARKET_TYPE = 'STOCK') then
+        if (v_pattern_market_type = 'STOCK') then
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
@@ -243,7 +243,7 @@ begin
             );
 
             v_inserted := v_inserted + sqlrowcount;
-        elseif (pattern.MARKET_TYPE = 'FX') then
+        elseif (v_pattern_market_type = 'FX') then
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,

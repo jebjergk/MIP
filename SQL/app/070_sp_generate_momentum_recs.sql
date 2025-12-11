@@ -22,6 +22,15 @@ declare
     v_default_min_zscore      float  := 1.0;
     v_default_market_type     string := 'STOCK';
     v_default_interval_minutes number := 5;
+    v_pattern_market_type     string;
+    v_pattern_interval        number;
+    v_pattern_fast_window     number;
+    v_pattern_slow_window     number;
+    v_pattern_lookback_days   number;
+    v_pattern_min_return      float;
+    v_pattern_min_zscore      float;
+    v_pattern_id              number;
+    v_pattern_key             string;
     pattern_cur cursor;
 begin
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
@@ -107,6 +116,16 @@ begin
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage);
 
     for pattern in pattern_cur do
+        v_pattern_market_type   := pattern.MARKET_TYPE;
+        v_pattern_interval      := pattern.INTERVAL_MINUTES;
+        v_pattern_fast_window   := pattern.FAST_WINDOW;
+        v_pattern_slow_window   := pattern.SLOW_WINDOW;
+        v_pattern_lookback_days := pattern.LOOKBACK_DAYS;
+        v_pattern_min_return    := pattern.MIN_RETURN;
+        v_pattern_min_zscore    := pattern.MIN_ZSCORE;
+        v_pattern_id            := pattern.PATTERN_ID;
+        v_pattern_key           := pattern.PATTERN_KEY;
+
         if (pattern.MARKET_TYPE = 'STOCK') then
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
@@ -126,8 +145,8 @@ begin
                             order by r.TS
                         ) as RN
                     from MIP.MART.MARKET_RETURNS r
-                    where r.MARKET_TYPE = ?
-                      and r.INTERVAL_MINUTES = ?
+                  where r.MARKET_TYPE = ?
+                    and r.INTERVAL_MINUTES = ?
                       and r.RETURN_SIMPLE is not null
                       and r.VOLUME >= ?
                       and r.TS >= dateadd(day, -?, current_timestamp())
@@ -194,19 +213,19 @@ begin
                       and existing.TS = p.TS
                 )
             ' using (
-                pattern.MARKET_TYPE,
-                pattern.INTERVAL_MINUTES,
+                v_pattern_market_type,
+                v_pattern_interval,
                 v_min_volume,
-                pattern.LOOKBACK_DAYS,
-                pattern.SLOW_WINDOW,
-                pattern.FAST_WINDOW,
-                pattern.FAST_WINDOW,
-                pattern.PATTERN_ID,
-                pattern.PATTERN_KEY,
-                pattern.MIN_RETURN,
-                pattern.SLOW_WINDOW,
-                pattern.MIN_ZSCORE,
-                pattern.MIN_ZSCORE
+                v_pattern_lookback_days,
+                v_pattern_slow_window,
+                v_pattern_fast_window,
+                v_pattern_fast_window,
+                v_pattern_id,
+                v_pattern_key,
+                v_pattern_min_return,
+                v_pattern_slow_window,
+                v_pattern_min_zscore,
+                v_pattern_min_zscore
             );
 
             v_inserted := v_inserted + sqlrowcount;
@@ -233,8 +252,8 @@ begin
                             order by mb.TS
                         ) as PREV_CLOSE
                     from MIP.MART.MARKET_BARS mb
-                    where mb.MARKET_TYPE = ?
-                      and mb.INTERVAL_MINUTES = ?
+                  where mb.MARKET_TYPE = ?
+                    and mb.INTERVAL_MINUTES = ?
                       and mb.TS >= dateadd(day, -?, current_timestamp())
                 ),
                 returns as (
@@ -316,18 +335,18 @@ begin
                       and existing.TS = p.TS
                 )
             ' using (
-                pattern.MARKET_TYPE,
-                pattern.INTERVAL_MINUTES,
-                pattern.LOOKBACK_DAYS,
-                pattern.FAST_WINDOW,
-                pattern.SLOW_WINDOW,
-                pattern.FAST_WINDOW,
-                pattern.FAST_WINDOW,
-                pattern.PATTERN_ID,
-                pattern.PATTERN_KEY,
-                pattern.MIN_RETURN,
-                pattern.MIN_ZSCORE,
-                pattern.MIN_ZSCORE
+                v_pattern_market_type,
+                v_pattern_interval,
+                v_pattern_lookback_days,
+                v_pattern_fast_window,
+                v_pattern_slow_window,
+                v_pattern_fast_window,
+                v_pattern_fast_window,
+                v_pattern_id,
+                v_pattern_key,
+                v_pattern_min_return,
+                v_pattern_min_zscore,
+                v_pattern_min_zscore
             );
 
             v_inserted := v_inserted + sqlrowcount;

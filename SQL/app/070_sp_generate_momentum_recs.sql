@@ -173,19 +173,24 @@ begin
                       and rf.POSITIVE_LAG_COUNT >= ?
                       and (rf.MAX_PREV_CLOSE is null or rf.CLOSE >= rf.MAX_PREV_CLOSE)
                       and (? is null or rf.STDDEV_WINDOW is null or (rf.STDDEV_WINDOW > 0 and rf.RETURN_SIMPLE / rf.STDDEV_WINDOW >= ?))
-                ),
-                new_recs as (
-                    select p.*
-                    from pattern_recs p
-                    left join MIP.APP.RECOMMENDATION_LOG existing
-                      on existing.PATTERN_ID = p.PATTERN_ID
-                     and existing.SYMBOL = p.SYMBOL
-                     and existing.MARKET_TYPE = p.MARKET_TYPE
-                     and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
-                     and existing.TS = p.TS
-                    where existing.RECOMMENDATION_ID is null
                 )
-                select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
+                select PATTERN_ID,
+                       SYMBOL,
+                       MARKET_TYPE,
+                       INTERVAL_MINUTES,
+                       TS,
+                       SCORE,
+                       DETAILS
+                from pattern_recs p
+                where not exists (
+                    select 1
+                    from MIP.APP.RECOMMENDATION_LOG existing
+                    where existing.PATTERN_ID = p.PATTERN_ID
+                      and existing.SYMBOL = p.SYMBOL
+                      and existing.MARKET_TYPE = p.MARKET_TYPE
+                      and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
+                      and existing.TS = p.TS
+                )
             ' using (
                 pattern.MARKET_TYPE,
                 pattern.INTERVAL_MINUTES,
@@ -290,19 +295,24 @@ begin
                       and r.CLOSE >= r.SMA_SLOW
                       and coalesce(r.AVG_RETURN_WINDOW, 0) >= ?
                       and (? is null or r.STDDEV_WINDOW is null or r.STDDEV_WINDOW = 0 or r.RETURN_SIMPLE / r.STDDEV_WINDOW >= ?)
-                ),
-                new_recs as (
-                    select p.*
-                    from pattern_recs p
-                    left join MIP.APP.RECOMMENDATION_LOG existing
-                      on existing.PATTERN_ID = p.PATTERN_ID
-                     and existing.SYMBOL = p.SYMBOL
-                     and existing.MARKET_TYPE = p.MARKET_TYPE
-                     and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
-                     and existing.TS = p.TS
-                    where existing.RECOMMENDATION_ID is null
                 )
-                select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
+                select PATTERN_ID,
+                       SYMBOL,
+                       MARKET_TYPE,
+                       INTERVAL_MINUTES,
+                       TS,
+                       SCORE,
+                       DETAILS
+                from pattern_recs p
+                where not exists (
+                    select 1
+                    from MIP.APP.RECOMMENDATION_LOG existing
+                    where existing.PATTERN_ID = p.PATTERN_ID
+                      and existing.SYMBOL = p.SYMBOL
+                      and existing.MARKET_TYPE = p.MARKET_TYPE
+                      and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
+                      and existing.TS = p.TS
+                )
             ' using (
                 pattern.MARKET_TYPE,
                 pattern.INTERVAL_MINUTES,

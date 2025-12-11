@@ -88,8 +88,9 @@ def render_market_overview():
     if st.button("Run ingestion now"):
         with st.spinner("Running AlphaVantage ingestion…"):
             try:
-                session.sql("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS()").collect()
-                st.success("Ingestion completed successfully.")
+                res = session.sql("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS()").collect()
+                msg = res[0][0] if res and len(res[0]) > 0 else "Ingestion completed successfully."
+                st.success(msg)
             except Exception as e:
                 st.error(f"Ingestion failed: {e}")
 
@@ -478,7 +479,10 @@ def render_signals_recommendations():
             msg = run_momentum_generator(
                 min_return, selected_market_type, selected_interval_minutes
             )
-            st.success(msg)
+            if "Warnings:" in msg:
+                st.warning(msg)
+            else:
+                st.success(msg)
         except Exception as e:
             st.error(f"Momentum generation failed: {e}")
 

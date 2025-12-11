@@ -84,6 +84,19 @@ def _extract_api_message(json_data: Dict) -> str | None:
             return str(json_data.get(key))
     return None
 
+
+def _require_time_series_key(json_data: Dict, expected_key: str, context: str) -> None:
+    if expected_key in json_data:
+        return
+
+    api_message = _extract_api_message(json_data)
+    available_keys = list(json_data.keys())
+    extra_msg = f" API message: {api_message}" if api_message else ""
+    raise ValueError(
+        f"{context} missing expected '{expected_key}' in AlphaVantage response. "
+        f"Available keys: {available_keys if available_keys else 'none'}.{extra_msg}"
+    )
+
 def _extract_stock_rows(json_data: Dict, symbol: str, interval_minutes: int) -> List[Dict]:
     rows: List[Dict] = []
     ts_key = next((k for k in json_data.keys() if k.startswith("Time Series")), None)
@@ -202,6 +215,10 @@ def run(session: Session) -> str:
     for symbol in stock_symbols:
         data, final_url = _fetch_stock_bars(api_key, symbol, stock_interval_str)
         request_urls.append(f"stock {symbol}: {final_url}")
+        _require_time_series_key(data, "Time Series (Daily)", f"Symbol {symbol}")
+        api_msg = _extract_api_message(data)
+        if api_msg:
+            diagnostics.append(f"{symbol}: {api_msg}")
         all_rows.extend(_extract_stock_rows(data, symbol, stock_interval_minutes))
         time.sleep(2)
 
@@ -217,6 +234,11 @@ def run(session: Session) -> str:
         api_msg = _extract_api_message(data)
         if api_msg:
             diagnostics.append(f"{normalized_pair}: {api_msg}")
+        _require_time_series_key(
+            data,
+            "Time Series FX (Daily)",
+            f"FX pair {normalized_pair}",
+        )
 
         all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, fx_interval_minutes))
         time.sleep(2)

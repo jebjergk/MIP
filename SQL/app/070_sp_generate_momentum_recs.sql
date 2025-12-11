@@ -31,6 +31,8 @@ declare
     v_pattern_min_zscore      float;
     v_pattern_id              number;
     v_pattern_key             string;
+    v_market_return_count     number;
+    v_status_msgs             string := '';
 begin
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
     delete from MIP.APP.RECOMMENDATION_LOG
@@ -123,6 +125,20 @@ begin
         v_pattern_min_zscore    := pattern.MIN_ZSCORE;
         v_pattern_id            := pattern.PATTERN_ID;
         v_pattern_key           := pattern.PATTERN_KEY;
+
+        select count(*)
+          into :v_market_return_count
+          from MIP.MART.MARKET_RETURNS
+         where MARKET_TYPE = v_pattern_market_type
+           and INTERVAL_MINUTES = v_pattern_interval;
+
+        if (v_market_return_count = 0) then
+            v_status_msgs := v_status_msgs ||
+                'Skipped ' || v_pattern_key ||
+                ' (' || v_pattern_market_type || '/' || v_pattern_interval ||
+                '): no rows in MART.MARKET_RETURNS. ';
+            continue;
+        end if;
 
         if (pattern.MARKET_TYPE = 'STOCK') then
             execute immediate '
@@ -351,6 +367,11 @@ begin
         end if;
     end for;
 
-    return 'Inserted ' || v_inserted || ' momentum recommendations.';
+    if (v_status_msgs is null) then
+        v_status_msgs := '';
+    end if;
+
+    return 'Inserted ' || v_inserted || ' momentum recommendations.' ||
+           case when v_status_msgs != '' then ' Warnings: ' || v_status_msgs else '' end;
 end;
 $$;

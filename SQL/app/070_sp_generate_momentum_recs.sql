@@ -102,8 +102,8 @@ begin
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
-            coalesce(PARAMS_JSON:market_type::string, :P_MARKET_TYPE, :v_default_market_type) as MARKET_TYPE,
-            coalesce(PARAMS_JSON:interval_minutes::number, :P_INTERVAL_MINUTES, :v_default_interval_minutes) as INTERVAL_MINUTES,
+            coalesce(PARAMS_JSON:market_type::string, :P_MARKET_TYPE, :v_default_market_type) as PATTERN_MARKET_TYPE,
+            coalesce(PARAMS_JSON:interval_minutes::number, :P_INTERVAL_MINUTES, :v_default_interval_minutes) as PATTERN_INTERVAL_MINUTES,
             coalesce(PARAMS_JSON:fast_window::number, :v_default_fast_window) as FAST_WINDOW,
             coalesce(PARAMS_JSON:slow_window::number, :v_default_slow_window) as SLOW_WINDOW,
             coalesce(PARAMS_JSON:lookback_days::number, :v_default_lookback_days) as LOOKBACK_DAYS,
@@ -116,8 +116,8 @@ begin
           and (:P_INTERVAL_MINUTES is null or :P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, :v_default_interval_minutes))
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
     ) do
-        v_pattern_market_type   := pattern_row.MARKET_TYPE;
-        v_pattern_interval      := pattern_row.INTERVAL_MINUTES;
+        v_pattern_market_type   := pattern_row.PATTERN_MARKET_TYPE;
+        v_pattern_interval      := pattern_row.PATTERN_INTERVAL_MINUTES;
         v_pattern_fast_window   := pattern_row.FAST_WINDOW;
         v_pattern_slow_window   := pattern_row.SLOW_WINDOW;
         v_pattern_lookback_days := pattern_row.LOOKBACK_DAYS;

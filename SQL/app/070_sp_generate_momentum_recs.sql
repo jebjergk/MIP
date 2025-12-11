@@ -22,6 +22,7 @@ declare
     v_default_min_zscore      float  := 1.0;
     v_default_market_type     string := 'STOCK';
     v_default_interval_minutes number := 5;
+    pattern_cur cursor;
 begin
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
     delete from MIP.APP.RECOMMENDATION_LOG
@@ -87,7 +88,7 @@ begin
             null;
     end;
 
-    for pattern in (
+    open pattern_cur for
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
@@ -103,8 +104,9 @@ begin
           and coalesce(ENABLED, true)
           and (P_MARKET_TYPE is null or upper(P_MARKET_TYPE) = coalesce(upper(PARAMS_JSON:market_type::string), v_default_market_type))
           and (P_INTERVAL_MINUTES is null or P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, v_default_interval_minutes))
-          and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
-    ) do
+          and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage);
+
+    for pattern in pattern_cur do
         if (pattern.MARKET_TYPE = 'STOCK') then
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (

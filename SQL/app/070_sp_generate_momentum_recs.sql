@@ -106,8 +106,7 @@ begin
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
     ) do
         if (pattern.MARKET_TYPE = 'STOCK') then
-            execute immediate
-            $$
+            execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
                     SYMBOL,
@@ -164,10 +163,10 @@ begin
                         rf.TS,
                         rf.RETURN_SIMPLE as SCORE,
                         object_construct(
-                            'pattern_key', ?,
-                            'return_simple', rf.RETURN_SIMPLE,
-                            'prev_close', rf.PREV_CLOSE,
-                            'close', rf.CLOSE
+                            ''pattern_key'', ?,
+                            ''return_simple'', rf.RETURN_SIMPLE,
+                            ''prev_close'', rf.PREV_CLOSE,
+                            ''close'', rf.CLOSE
                         ) as DETAILS
                     from scored rf
                     where rf.RETURN_SIMPLE >= ?
@@ -187,12 +186,11 @@ begin
                     where existing.RECOMMENDATION_ID is null
                 )
                 select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
-            $$ using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, v_min_volume, pattern.LOOKBACK_DAYS, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.SLOW_WINDOW, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
+            ' using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, v_min_volume, pattern.LOOKBACK_DAYS, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.SLOW_WINDOW, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
 
             v_inserted := v_inserted + sqlrowcount;
         elseif (pattern.MARKET_TYPE = 'FX') then
-            execute immediate
-            $$
+            execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
                     SYMBOL,
@@ -262,13 +260,13 @@ begin
                         r.TS,
                         r.RETURN_SIMPLE as SCORE,
                         object_construct(
-                            'pattern_key', ?,
-                            'return_simple', r.RETURN_SIMPLE,
-                            'prev_close', r.PREV_CLOSE,
-                            'close', r.CLOSE,
-                            'sma_fast', r.SMA_FAST,
-                            'sma_slow', r.SMA_SLOW,
-                            'avg_return_window', r.AVG_RETURN_WINDOW
+                            ''pattern_key'', ?,
+                            ''return_simple'', r.RETURN_SIMPLE,
+                            ''prev_close'', r.PREV_CLOSE,
+                            ''close'', r.CLOSE,
+                            ''sma_fast'', r.SMA_FAST,
+                            ''sma_slow'', r.SMA_SLOW,
+                            ''avg_return_window'', r.AVG_RETURN_WINDOW
                         ) as DETAILS
                     from scored r
                     where r.RETURN_SIMPLE is not null
@@ -291,7 +289,7 @@ begin
                     where existing.RECOMMENDATION_ID is null
                 )
                 select PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS from new_recs
-            $$ using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, pattern.LOOKBACK_DAYS, pattern.FAST_WINDOW, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
+            ' using pattern.MARKET_TYPE, pattern.INTERVAL_MINUTES, pattern.LOOKBACK_DAYS, pattern.FAST_WINDOW, pattern.SLOW_WINDOW, pattern.FAST_WINDOW, pattern.FAST_WINDOW, pattern.PATTERN_ID, pattern.PATTERN_KEY, pattern.MIN_RETURN, pattern.MIN_ZSCORE, pattern.MIN_ZSCORE;
 
             v_inserted := v_inserted + sqlrowcount;
         end if;

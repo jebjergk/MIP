@@ -98,49 +98,24 @@ begin
             null;
     end;
 
-    let v_pattern_rs resultset;
-
-    execute immediate $$
+    for pattern_row in (
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
-            coalesce(PARAMS_JSON:market_type::string, ?, ?) as PATTERN_MARKET_TYPE,
-            coalesce(PARAMS_JSON:interval_minutes::number, ?, ?) as PATTERN_INTERVAL_MINUTES,
-            coalesce(PARAMS_JSON:fast_window::number, ?) as FAST_WINDOW,
-            coalesce(PARAMS_JSON:slow_window::number, ?) as SLOW_WINDOW,
-            coalesce(PARAMS_JSON:lookback_days::number, ?) as LOOKBACK_DAYS,
-            coalesce(PARAMS_JSON:min_return::float, ?, ?) as MIN_RETURN,
-            coalesce(PARAMS_JSON:min_zscore::float, ?, ?) as MIN_ZSCORE
+            coalesce(PARAMS_JSON:market_type::string, :P_MARKET_TYPE, :v_default_market_type) as PATTERN_MARKET_TYPE,
+            coalesce(PARAMS_JSON:interval_minutes::number, :P_INTERVAL_MINUTES, :v_default_interval_minutes) as PATTERN_INTERVAL_MINUTES,
+            coalesce(PARAMS_JSON:fast_window::number, :v_default_fast_window) as FAST_WINDOW,
+            coalesce(PARAMS_JSON:slow_window::number, :v_default_slow_window) as SLOW_WINDOW,
+            coalesce(PARAMS_JSON:lookback_days::number, :v_default_lookback_days) as LOOKBACK_DAYS,
+            coalesce(PARAMS_JSON:min_return::float, :P_MIN_RETURN, :v_default_min_return) as MIN_RETURN,
+            coalesce(PARAMS_JSON:min_zscore::float, :v_vol_adj_threshold, :v_default_min_zscore) as MIN_ZSCORE
         from MIP.APP.PATTERN_DEFINITION
         where coalesce(IS_ACTIVE, 'N') = 'Y'
           and coalesce(ENABLED, true)
-          and (? is null or upper(?) = coalesce(upper(PARAMS_JSON:market_type::string), ?))
-          and (? is null or ? = coalesce(PARAMS_JSON:interval_minutes::number, ?))
-          and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= ?)
-    $$
-    into v_pattern_rs
-    using (
-        P_MARKET_TYPE,
-        v_default_market_type,
-        P_INTERVAL_MINUTES,
-        v_default_interval_minutes,
-        v_default_fast_window,
-        v_default_slow_window,
-        v_default_lookback_days,
-        P_MIN_RETURN,
-        v_default_min_return,
-        v_vol_adj_threshold,
-        v_default_min_zscore,
-        P_MARKET_TYPE,
-        P_MARKET_TYPE,
-        v_default_market_type,
-        P_INTERVAL_MINUTES,
-        P_INTERVAL_MINUTES,
-        v_default_interval_minutes,
-        v_min_trades_for_usage
-    );
-
-    for pattern_row in v_pattern_rs do
+          and (:P_MARKET_TYPE is null or upper(:P_MARKET_TYPE) = coalesce(upper(PARAMS_JSON:market_type::string), :v_default_market_type))
+          and (:P_INTERVAL_MINUTES is null or :P_INTERVAL_MINUTES = coalesce(PARAMS_JSON:interval_minutes::number, :v_default_interval_minutes))
+          and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= :v_min_trades_for_usage)
+    ) do
         v_pattern_market_type   := pattern_row.PATTERN_MARKET_TYPE;
         v_pattern_interval      := pattern_row.PATTERN_INTERVAL_MINUTES;
         v_pattern_fast_window   := pattern_row.FAST_WINDOW;

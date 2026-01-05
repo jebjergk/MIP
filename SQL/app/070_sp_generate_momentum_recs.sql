@@ -4,7 +4,7 @@ use database MIP;
 create or replace procedure MIP.APP.SP_GENERATE_MOMENTUM_RECS(
     P_MIN_RETURN       number,      -- e.g. 0.002 for +0.2% threshold
     P_MARKET_TYPE      string default 'STOCK',
-    P_INTERVAL_MINUTES number default 5
+    P_INTERVAL_MINUTES number default null -- P_INTERVAL_MINUTES = NULL means "use whatever interval each pattern defines
 )
 returns varchar
 language sql

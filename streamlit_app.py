@@ -40,6 +40,21 @@ def to_pandas(df):
         return None
 
 
+def get_market_timeframe_options(conn):
+    """Return market/timeframe tuples from active pattern definitions."""
+    query = """
+        select
+            coalesce(PARAMS_JSON:market_type::string, 'STOCK') as MARKET_TYPE,
+            coalesce(PARAMS_JSON:interval_minutes::number, 1440) as INTERVAL_MINUTES
+        from MIP.APP.PATTERN_DEFINITION
+        where coalesce(IS_ACTIVE, 'N') = 'Y'
+          and coalesce(ENABLED, true)
+        order by MARKET_TYPE, INTERVAL_MINUTES
+    """
+    rows = conn.sql(query).collect()
+    return [(row["MARKET_TYPE"], int(row["INTERVAL_MINUTES"])) for row in rows]
+
+
 def get_market_selection(key_prefix: str = ""):
     """Shared market selector returning market type and interval minutes."""
     options = {

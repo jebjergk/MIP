@@ -218,8 +218,24 @@ def render_patterns_learning():
 
     st.markdown("### Learning cycle controls")
 
-    selected_market_type, selected_interval_minutes = get_market_selection(
-        "learning_cycle"
+    market_timeframe_options = get_market_timeframe_options(session)
+
+    def format_market_timeframe_option(option):
+        market_type, interval_minutes = option
+        market_label = {"STOCK": "Stocks", "FX": "FX"}.get(
+            market_type, str(market_type).title()
+        )
+        interval_label = (
+            "Daily" if interval_minutes == 1440 else f"{interval_minutes}-min"
+        )
+        return f"{market_label} ({interval_label})"
+
+    selected_market_timeframes = st.multiselect(
+        "Select one or more market / timeframe combinations",
+        options=market_timeframe_options,
+        default=market_timeframe_options,
+        format_func=format_market_timeframe_option,
+        key="market_selector_learning_cycle",
     )
 
     with st.form("learning_cycle_form"):
@@ -273,44 +289,55 @@ def render_patterns_learning():
         run_cycle = st.form_submit_button("Run learning cycle")
 
     if run_cycle:
+        if not selected_market_timeframes:
+            st.warning("Select at least one market / timeframe combination.")
+            return
+
         from_ts_str = date_from.strftime("%Y-%m-%d %H:%M:%S")
         to_ts_str = date_to.strftime("%Y-%m-%d %H:%M:%S")
         from_ts_sql = f"to_timestamp_ntz('{from_ts_str}')"
         to_ts_sql = f"to_timestamp_ntz('{to_ts_str}')"
 
-        call_sql = f"""
-            call MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
-                '{selected_market_type}',
-                {selected_interval_minutes},
-                {horizon_minutes},
-                {min_return},
-                {hit_threshold},
-                {miss_threshold},
-                {from_ts_sql},
-                {to_ts_sql},
-                TRUE,
-                TRUE,
-                TRUE,
-                TRUE,
-                TRUE
-            )
-        """
-
         with st.spinner("Running full learning cycle…"):
-            try:
-                res = run_sql(call_sql).collect()
-                summary_raw = res[0][0] if res else None
+            summaries = []
+            errors = []
+            for market_type, interval_minutes in selected_market_timeframes:
+                call_sql = f"""
+                    call MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
+                        '{market_type}',
+                        {interval_minutes},
+                        {horizon_minutes},
+                        {min_return},
+                        {hit_threshold},
+                        {miss_threshold},
+                        {from_ts_sql},
+                        {to_ts_sql},
+                        TRUE,
+                        TRUE,
+                        TRUE,
+                        TRUE,
+                        TRUE
+                    )
+                """
+                try:
+                    res = run_sql(call_sql).collect()
+                    summary_raw = res[0][0] if res else None
 
-                # Stored procedure may return a Snowflake OBJECT, JSON string, or plain text
-                if isinstance(summary_raw, str):
-                    try:
-                        summary = json.loads(summary_raw)
-                    except Exception:
+                    # Stored procedure may return a Snowflake OBJECT, JSON string, or plain text
+                    if isinstance(summary_raw, str):
+                        try:
+                            summary = json.loads(summary_raw)
+                        except Exception:
+                            summary = summary_raw
+                    else:
                         summary = summary_raw
-                else:
-                    summary = summary_raw
+                    summaries.append(summary)
+                except Exception as e:
+                    errors.append(f"{market_type} / {interval_minutes}: {e}")
 
-                st.success("Learning cycle completed.")
+        if summaries:
+            st.success("Learning cycle completed.")
+            for summary in summaries:
                 if summary is not None:
                     if isinstance(summary, dict):
                         st.caption(
@@ -331,8 +358,12 @@ def render_patterns_learning():
                         st.caption(str(summary))
                 else:
                     st.info("No summary returned by the stored procedure.")
-            except Exception as e:
-                st.error(f"Learning cycle failed: {e}")
+
+        if errors:
+            st.error(
+                "Learning cycle failed for the following selections:\n"
+                + "\n".join(errors)
+            )
 
     df_sp = run_sql(
         """

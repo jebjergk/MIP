@@ -300,12 +300,13 @@ def render_patterns_learning():
 
         with st.spinner("Running full learning cycle…"):
             summaries = []
-            errors = []
+            run_results = []
             for market_type, interval_minutes in selected_market_timeframes:
+                interval_sql = "NULL" if interval_minutes is None else str(int(interval_minutes))
                 call_sql = f"""
                     call MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
                         '{market_type}',
-                        {interval_minutes},
+                        {interval_sql},
                         {horizon_minutes},
                         {min_return},
                         {hit_threshold},
@@ -332,8 +333,26 @@ def render_patterns_learning():
                     else:
                         summary = summary_raw
                     summaries.append(summary)
+                    run_results.append(
+                        {
+                            "market_type": market_type,
+                            "interval_minutes": interval_minutes,
+                            "status": "Success",
+                        }
+                    )
                 except Exception as e:
-                    errors.append(f"{market_type} / {interval_minutes}: {e}")
+                    run_results.append(
+                        {
+                            "market_type": market_type,
+                            "interval_minutes": interval_minutes,
+                            "status": "Failed",
+                            "message": str(e),
+                        }
+                    )
+
+        if run_results:
+            st.markdown("#### Run summary")
+            st.dataframe(run_results, use_container_width=True)
 
         if summaries:
             st.success("Learning cycle completed.")
@@ -358,12 +377,6 @@ def render_patterns_learning():
                         st.caption(str(summary))
                 else:
                     st.info("No summary returned by the stored procedure.")
-
-        if errors:
-            st.error(
-                "Learning cycle failed for the following selections:\n"
-                + "\n".join(errors)
-            )
 
     df_sp = run_sql(
         """

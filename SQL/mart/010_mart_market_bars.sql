@@ -75,7 +75,41 @@ where RN = 1;
 -- 3. Returns: MARKET_RETURNS
 ----------------------------------------------
 create or replace view MIP.MART.MARKET_RETURNS as
-with ordered as (
+with deduped as (
+    select
+        TS,
+        SYMBOL,
+        SOURCE,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        OPEN,
+        HIGH,
+        LOW,
+        CLOSE,
+        VOLUME,
+        INGESTED_AT
+    from (
+        select
+            TS,
+            SYMBOL,
+            SOURCE,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            OPEN,
+            HIGH,
+            LOW,
+            CLOSE,
+            VOLUME,
+            INGESTED_AT,
+            row_number() over (
+                partition by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+                order by INGESTED_AT desc, SOURCE desc
+            ) as RN
+        from MIP.MART.MARKET_BARS
+    )
+    where RN = 1
+),
+ordered as (
     select
         TS,
         SYMBOL,
@@ -92,7 +126,7 @@ with ordered as (
             partition by SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
             order by TS
         ) as PREV_CLOSE
-    from MIP.MART.MARKET_BARS
+    from deduped
 )
 select
     TS,

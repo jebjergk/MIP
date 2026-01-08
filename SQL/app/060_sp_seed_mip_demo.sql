@@ -36,7 +36,7 @@ begin
         values (s.NAME, s.DESCRIPTION, s.PARAMS_JSON, 'Y', true);
 
     -- Seed minimal demo bars with a dedicated symbol so this procedure remains non-destructive.
-    merge into MIP.RAW_EXT.MARKET_BARS_RAW t
+    merge into MIP.MART.MARKET_BARS t
     using (
         select
             to_timestamp_ntz('2024-05-01 09:30:00') as TS,
@@ -49,7 +49,7 @@ begin
             99.75                                   as LOW,
             101.00                                  as CLOSE,
             150000                                  as VOLUME,
-            object_construct('seed', 'MOMENTUM_DEMO') as RAW
+            current_timestamp()                      as INGESTED_AT
         union all
         select
             to_timestamp_ntz('2024-05-01 09:35:00'),
@@ -62,7 +62,7 @@ begin
             100.90,
             102.25,
             162500,
-            object_construct('seed', 'MOMENTUM_DEMO')
+            current_timestamp()
         union all
         select
             to_timestamp_ntz('2024-05-01 09:40:00'),
@@ -75,7 +75,7 @@ begin
             101.50,
             102.10,
             158000,
-            object_construct('seed', 'MOMENTUM_DEMO')
+            current_timestamp()
     ) s
        on t.TS = s.TS
       and t.SYMBOL = s.SYMBOL
@@ -89,11 +89,10 @@ begin
             t.LOW             = s.LOW,
             t.CLOSE           = s.CLOSE,
             t.VOLUME          = s.VOLUME,
-            t.RAW             = s.RAW,
-            t.INGESTED_AT     = coalesce(t.INGESTED_AT, current_timestamp())
+            t.INGESTED_AT     = coalesce(t.INGESTED_AT, s.INGESTED_AT)
      when not matched then
-        insert (TS, SYMBOL, SOURCE, MARKET_TYPE, INTERVAL_MINUTES, OPEN, HIGH, LOW, CLOSE, VOLUME, RAW, INGESTED_AT)
-        values (s.TS, s.SYMBOL, s.SOURCE, s.MARKET_TYPE, s.INTERVAL_MINUTES, s.OPEN, s.HIGH, s.LOW, s.CLOSE, s.VOLUME, s.RAW, current_timestamp());
+        insert (TS, SYMBOL, SOURCE, MARKET_TYPE, INTERVAL_MINUTES, OPEN, HIGH, LOW, CLOSE, VOLUME, INGESTED_AT)
+        values (s.TS, s.SYMBOL, s.SOURCE, s.MARKET_TYPE, s.INTERVAL_MINUTES, s.OPEN, s.HIGH, s.LOW, s.CLOSE, s.VOLUME, s.INGESTED_AT);
 
     return 'Seeded MOMENTUM_DEMO pattern and demo bars (idempotent, non-destructive).';
 end;

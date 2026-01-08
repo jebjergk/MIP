@@ -247,7 +247,85 @@ def run(session: Session) -> str:
         return "Ingestion complete: 0 rows."
 
     df = session.create_dataframe(all_rows)
-    df.write.mode("append").save_as_table("MIP.RAW_EXT.MARKET_BARS_RAW")
+    stage_table = "MIP.APP.STG_MARKET_BARS"
+    df.write.mode("overwrite").save_as_table(stage_table, table_type="temporary")
+
+    merge_sql = f"""
+        merge into MIP.MART.MARKET_BARS t
+        using {stage_table} s
+           on t.MARKET_TYPE = s.MARKET_TYPE
+          and t.SYMBOL = s.SYMBOL
+          and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
+          and t.TS = s.TS
+        when matched and (
+            t.SOURCE IS DISTINCT FROM s.SOURCE
+            or t.OPEN IS DISTINCT FROM s.OPEN
+            or t.HIGH IS DISTINCT FROM s.HIGH
+            or t.LOW IS DISTINCT FROM s.LOW
+            or t.CLOSE IS DISTINCT FROM s.CLOSE
+            or t.VOLUME IS DISTINCT FROM s.VOLUME
+            or t.INGESTED_AT IS DISTINCT FROM s.INGESTED_AT
+        ) then update set
+            t.SOURCE = s.SOURCE,
+            t.OPEN = s.OPEN,
+            t.HIGH = s.HIGH,
+            t.LOW = s.LOW,
+            t.CLOSE = s.CLOSE,
+            t.VOLUME = s.VOLUME,
+            t.INGESTED_AT = s.INGESTED_AT
+        when not matched then insert (
+            TS,
+            SYMBOL,
+            SOURCE,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            OPEN,
+            HIGH,
+            LOW,
+            CLOSE,
+            VOLUME,
+            INGESTED_AT
+        ) values (
+            s.TS,
+            s.SYMBOL,
+            s.SOURCE,
+            s.MARKET_TYPE,
+            s.INTERVAL_MINUTES,
+            s.OPEN,
+            s.HIGH,
+            s.LOW,
+            s.CLOSE,
+            s.VOLUME,
+            s.INGESTED_AT
+        )
+    """
+    session.sql(merge_sql).collect()
+
+    duplicate_rows = session.sql(
+        """
+        select
+            MARKET_TYPE,
+            SYMBOL,
+            INTERVAL_MINUTES,
+            TS,
+            count(*) as CNT
+        from MIP.MART.MARKET_BARS
+        group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+        having count(*) > 1
+        order by CNT desc
+        limit 5
+        """
+    ).collect()
+
+    if duplicate_rows:
+        sample_keys = "; ".join(
+            f"{row['MARKET_TYPE']} {row['SYMBOL']} {row['INTERVAL_MINUTES']} {row['TS']} (cnt={row['CNT']})"
+            for row in duplicate_rows
+        )
+        return (
+            "Ingestion failed guardrail: duplicate keys found in MIP.MART.MARKET_BARS. "
+            f"Sample keys: {sample_keys}"
+        )
 
     stock_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "STOCK")
     fx_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "FX")
@@ -257,7 +335,7 @@ def run(session: Session) -> str:
 
     return (
         "Ingestion complete: "
-        f"inserted {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
+        f"merged {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
         f"URLs: {url_info}. Diagnostics: {diag_info}"
     )
 $$;

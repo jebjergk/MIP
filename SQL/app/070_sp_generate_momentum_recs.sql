@@ -4,7 +4,9 @@ use database MIP;
 create or replace procedure MIP.APP.SP_GENERATE_MOMENTUM_RECS(
     P_MIN_RETURN       number,      -- e.g. 0.002 for +0.2% threshold
     P_MARKET_TYPE      string default 'STOCK',
-    P_INTERVAL_MINUTES number default null -- P_INTERVAL_MINUTES = NULL means "use whatever interval each pattern defines
+    P_INTERVAL_MINUTES number default null, -- P_INTERVAL_MINUTES = NULL means "use whatever interval each pattern defines
+    P_LOOKBACK_DAYS    number default null,
+    P_MIN_ZSCORE       float default null
 )
 returns varchar
 language sql
@@ -136,11 +138,11 @@ begin
             -- SLOW_WINDOW
             v_default_slow_window,
             -- LOOKBACK_DAYS
-            v_default_lookback_days,
+            coalesce(P_LOOKBACK_DAYS, v_default_lookback_days),
             -- MIN_RETURN
             P_MIN_RETURN, v_default_min_return,
             -- MIN_ZSCORE
-            v_vol_adj_threshold, v_default_min_zscore,
+            coalesce(P_MIN_ZSCORE, v_vol_adj_threshold), v_default_min_zscore,
     
             -- WHERE clause: market type filter
             P_MARKET_TYPE, P_MARKET_TYPE, v_default_market_type,

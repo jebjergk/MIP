@@ -70,11 +70,32 @@ def get_market_selection(key_prefix: str = ""):
     return options.get(choice, ("STOCK", 5))
 
 
-def run_momentum_generator(min_return: float, market_type: str, interval_minutes: int):
+def sql_literal(value):
+    """Render a Python value as a SQL literal."""
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return f"'{value}'"
+    return str(value)
+
+
+def run_momentum_generator(
+    min_return: float,
+    market_type: str,
+    interval_minutes: int,
+    lookback_days: int | None = None,
+    min_zscore: float | None = None,
+):
     """Call the canonical momentum signal generator stored procedure."""
 
     call_sql = (
-        f"call {SIGNAL_GENERATOR_SP}({min_return}, '{market_type}', {interval_minutes})"
+        "call "
+        f"{SIGNAL_GENERATOR_SP}("
+        f"{sql_literal(min_return)}, "
+        f"{sql_literal(market_type)}, "
+        f"{sql_literal(interval_minutes)}, "
+        f"{sql_literal(lookback_days)}, "
+        f"{sql_literal(min_zscore)})"
     )
     res = run_sql(call_sql).collect()
     return res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
@@ -754,27 +775,135 @@ def render_signals_recommendations():
 
     selected_market_type, selected_interval_minutes = get_market_selection("signals")
 
+    pattern_defaults_df = to_pandas(
+        run_sql(
+            """
+            select
+                coalesce(PARAMS_JSON:lookback_days::number, 1) as LOOKBACK_DAYS,
+                coalesce(PARAMS_JSON:min_return::float, 0.002) as MIN_RETURN,
+                coalesce(PARAMS_JSON:min_zscore::float, 1.0) as MIN_ZSCORE
+            from MIP.APP.PATTERN_DEFINITION
+            where upper(NAME) = 'MOMENTUM_DEMO'
+            limit 1
+            """
+        )
+    )
+    default_lookback_days = 1
+    default_min_return = 0.002
+    default_min_zscore = 1.0
+    if pattern_defaults_df is not None and not pattern_defaults_df.empty:
+        default_lookback_days = int(pattern_defaults_df["LOOKBACK_DAYS"].iloc[0])
+        default_min_return = float(pattern_defaults_df["MIN_RETURN"].iloc[0])
+        default_min_zscore = float(pattern_defaults_df["MIN_ZSCORE"].iloc[0])
+
     with st.form("momentum_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            min_return = st.number_input(
-                "Minimum simple return threshold",
+        st.markdown("#### Pattern Defaults (read-only)")
+        defaults_col1, defaults_col2, defaults_col3 = st.columns(3)
+        with defaults_col1:
+            st.number_input(
+                "min_return",
+                value=default_min_return,
+                format="%.4f",
+                disabled=True,
+            )
+        with defaults_col2:
+            st.number_input(
+                "lookback_days",
+                min_value=1,
+                value=default_lookback_days,
+                step=1,
+                disabled=True,
+            )
+        with defaults_col3:
+            st.number_input(
+                "min_zscore",
+                value=default_min_zscore,
+                format="%.2f",
+                disabled=True,
+            )
+
+        st.markdown("#### Overrides (optional)")
+        override_col1, override_col2 = st.columns(2)
+        with override_col1:
+            override_min_return = st.checkbox(
+                "Override min_return",
+                value=False,
+                key="override_min_return",
+            )
+            min_return_override_value = st.number_input(
+                "min_return override value",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.002,
+                value=default_min_return,
                 step=0.001,
                 format="%.4f",
                 help="E.g. 0.002 = 0.2% positive return between bars.",
+                disabled=not override_min_return,
             )
-        with col2:
+        with override_col2:
+            override_lookback_days = st.checkbox(
+                "Override lookback_days",
+                value=False,
+                key="override_lookback_days",
+            )
+            lookback_days_override_value = st.number_input(
+                "lookback_days override value",
+                min_value=1,
+                value=default_lookback_days,
+                step=1,
+                disabled=not override_lookback_days,
+            )
+
+        override_col3, override_col4 = st.columns(2)
+        with override_col3:
+            override_min_zscore = st.checkbox(
+                "Override min_zscore",
+                value=False,
+                key="override_min_zscore",
+            )
+            min_zscore_override_value = st.number_input(
+                "min_zscore override value",
+                value=default_min_zscore,
+                format="%.2f",
+                disabled=not override_min_zscore,
+            )
+        with override_col4:
             st.caption("Momentum signals will run for the selected market and interval.")
+
+        active_overrides = []
+        if override_min_return:
+            active_overrides.append(f"min_return={min_return_override_value:.4f}")
+        if override_lookback_days:
+            active_overrides.append(f"lookback_days={int(lookback_days_override_value)}")
+        if override_min_zscore:
+            active_overrides.append(f"min_zscore={min_zscore_override_value:.2f}")
+
+        if active_overrides:
+            st.success(f"Active overrides: {', '.join(active_overrides)}")
+        else:
+            st.caption("Active overrides: None")
+
+        st.caption("Use overrides above to adjust per-run thresholds.")
 
         submitted = st.form_submit_button("Generate momentum signals")
 
     if submitted:
         try:
+            min_return_value = (
+                min_return_override_value if override_min_return else None
+            )
+            lookback_days_value = (
+                int(lookback_days_override_value) if override_lookback_days else None
+            )
+            min_zscore_value = (
+                min_zscore_override_value if override_min_zscore else None
+            )
             msg = run_momentum_generator(
-                min_return, selected_market_type, selected_interval_minutes
+                min_return_value,
+                selected_market_type,
+                selected_interval_minutes,
+                lookback_days=lookback_days_value,
+                min_zscore=min_zscore_value,
             )
             if "Warnings:" in msg:
                 st.warning(msg)

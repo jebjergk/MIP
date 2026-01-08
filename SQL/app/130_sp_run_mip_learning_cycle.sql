@@ -59,7 +59,9 @@ begin
         call MIP.APP.SP_GENERATE_MOMENTUM_RECS(
             :P_MIN_RETURN,
             :P_MARKET_TYPE,
-            :P_INTERVAL_MINUTES
+            :P_INTERVAL_MINUTES,
+            null,
+            null
         );
 
         v_msg_signals := 'Signals generated via MIP.APP.SP_GENERATE_MOMENTUM_RECS';

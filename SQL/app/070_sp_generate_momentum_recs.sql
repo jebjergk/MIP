@@ -35,6 +35,9 @@ declare
     v_status_msgs             string := '';
     v_sql                     string;
     v_rs                      resultset;
+    v_before                  number;
+    v_after                   number;
+    v_delta                   number;
 begin
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
     delete from MIP.APP.RECOMMENDATION_LOG
@@ -176,6 +179,11 @@ begin
         end if;
 
         if (v_pattern_market_type = 'STOCK') then
+            select count(*)
+              into :v_before
+              from MIP.APP.RECOMMENDATION_LOG
+             where PATTERN_ID = :v_pattern_id;
+
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
@@ -277,8 +285,19 @@ begin
                 v_pattern_min_zscore
             );
 
-            v_inserted := v_inserted + sqlrowcount;
+            select count(*)
+              into :v_after
+              from MIP.APP.RECOMMENDATION_LOG
+             where PATTERN_ID = :v_pattern_id;
+
+            v_delta := v_after - v_before;
+            v_inserted := v_inserted + v_delta;
         elseif (v_pattern_market_type = 'FX') then
+            select count(*)
+              into :v_before
+              from MIP.APP.RECOMMENDATION_LOG
+             where PATTERN_ID = :v_pattern_id;
+
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
@@ -398,7 +417,13 @@ begin
                 v_pattern_min_zscore
             );
 
-            v_inserted := v_inserted + sqlrowcount;
+            select count(*)
+              into :v_after
+              from MIP.APP.RECOMMENDATION_LOG
+             where PATTERN_ID = :v_pattern_id;
+
+            v_delta := v_after - v_before;
+            v_inserted := v_inserted + v_delta;
         end if;
     end for;
 

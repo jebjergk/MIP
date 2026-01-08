@@ -21,7 +21,7 @@ declare
     v_default_min_return      float  := 0.002;
     v_default_min_zscore      float  := 1.0;
     v_default_market_type     string := 'STOCK';
-    v_default_interval_minutes number := 5;
+    v_default_interval_minutes number := 1440;
     v_pattern_market_type     string;
     v_pattern_interval        number;
     v_pattern_fast_window     number;
@@ -111,7 +111,7 @@ begin
             coalesce(PARAMS_JSON:slow_window::number, ?) as SLOW_WINDOW,
             coalesce(PARAMS_JSON:lookback_days::number, ?) as LOOKBACK_DAYS,
             coalesce(PARAMS_JSON:min_return::float, ?, ?) as MIN_RETURN,
-            coalesce(PARAMS_JSON:min_zscore::float, ?, ?) as MIN_ZSCORE
+            coalesce(PARAMS_JSON:min_zscore::float, ?) as MIN_ZSCORE
         from MIP.APP.PATTERN_DEFINITION
         where coalesce(IS_ACTIVE, ''N'') = ''Y''
           and coalesce(ENABLED, true)
@@ -119,7 +119,7 @@ begin
                or upper(?) = coalesce(upper(PARAMS_JSON:market_type::string), ?))
           and (? is null 
                or ? = coalesce(PARAMS_JSON:interval_minutes::number, ?))
-          and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT >= ?)
+          and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT = 0 or LAST_TRADE_COUNT >= ?)
         ';
 
     v_rs := (
@@ -198,7 +198,7 @@ begin
                     and r.INTERVAL_MINUTES = ?
                       and r.RETURN_SIMPLE is not null
                       and r.VOLUME >= ?
-                      and r.TS >= dateadd(day, -?, current_timestamp())
+                      and r.TS::date >= dateadd(day, -?, current_date())
                 ),
                 scored as (
                     select
@@ -303,7 +303,7 @@ begin
                     from MIP.MART.MARKET_BARS mb
                   where mb.MARKET_TYPE = ?
                     and mb.INTERVAL_MINUTES = ?
-                      and mb.TS >= dateadd(day, -?, current_timestamp())
+                      and mb.TS::date >= dateadd(day, -?, current_date())
                 ),
                 returns as (
                     select

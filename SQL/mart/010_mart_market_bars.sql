@@ -17,10 +17,10 @@ create or replace table MIP.MART.MARKET_BARS (
     SOURCE           STRING,
     MARKET_TYPE      STRING,         -- 'STOCK' or 'FX'
     INTERVAL_MINUTES NUMBER,         -- e.g. 5 for intraday stocks, 1440 for FX daily
-    OPEN             NUMBER,
-    HIGH             NUMBER,
-    LOW              NUMBER,
-    CLOSE            NUMBER,
+    OPEN             NUMBER(18,8),
+    HIGH             NUMBER(18,8),
+    LOW              NUMBER(18,8),
+    CLOSE            NUMBER(18,8),
     VOLUME           NUMBER,
     INGESTED_AT      TIMESTAMP_NTZ
 );

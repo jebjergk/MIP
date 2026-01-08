@@ -783,6 +783,86 @@ def render_signals_recommendations():
         except Exception as e:
             st.error(f"Momentum generation failed: {e}")
 
+    st.markdown("### Latest Run Results")
+    st.caption(
+        "Summary of the most recent recommendation generation run for the selected "
+        "market and interval."
+    )
+
+    latest_run_counts = to_pandas(
+        run_sql(
+            f"""
+            with latest_run as (
+                select max(GENERATED_AT) as GENERATED_AT
+                from MIP.APP.RECOMMENDATION_LOG
+                where MARKET_TYPE = '{selected_market_type}'
+                  and INTERVAL_MINUTES = {selected_interval_minutes}
+            )
+            select
+                r.PATTERN_ID,
+                count(*) as RECOMMENDATION_COUNT
+            from MIP.APP.RECOMMENDATION_LOG r
+            join latest_run lr
+              on r.GENERATED_AT = lr.GENERATED_AT
+            where r.MARKET_TYPE = '{selected_market_type}'
+              and r.INTERVAL_MINUTES = {selected_interval_minutes}
+            group by r.PATTERN_ID
+            order by RECOMMENDATION_COUNT desc, r.PATTERN_ID
+            """
+        )
+    )
+
+    if latest_run_counts is None or latest_run_counts.empty:
+        st.info("No recent run results found for the selected market/interval.")
+    else:
+        st.markdown("**Counts by pattern**")
+        st.dataframe(latest_run_counts, use_container_width=True)
+
+    latest_recs_df = to_pandas(
+        run_sql(
+            f"""
+            select
+                PATTERN_ID,
+                SYMBOL,
+                TS,
+                SCORE,
+                PATTERN_KEY
+            from MIP.APP.RECOMMENDATION_LOG
+            where MARKET_TYPE = '{selected_market_type}'
+              and INTERVAL_MINUTES = {selected_interval_minutes}
+            order by GENERATED_AT desc, TS desc
+            limit 50
+            """
+        )
+    )
+
+    st.markdown("**Latest 50 recommendations**")
+    if latest_recs_df is None or latest_recs_df.empty:
+        st.info("No recommendations available yet.")
+    else:
+        st.dataframe(latest_recs_df, use_container_width=True)
+
+    active_defaults_df = to_pandas(
+        run_sql(
+            """
+            select
+                PATTERN_ID,
+                NAME as PATTERN_NAME,
+                PARAMS_JSON
+            from MIP.APP.PATTERN_DEFINITION
+            where coalesce(IS_ACTIVE, 'N') = 'Y'
+              and coalesce(ENABLED, true)
+            order by PATTERN_ID
+            """
+        )
+    )
+
+    st.markdown("**Active pattern defaults**")
+    if active_defaults_df is None or active_defaults_df.empty:
+        st.info("No active pattern defaults available.")
+    else:
+        st.dataframe(active_defaults_df, use_container_width=True)
+
     st.markdown("### Latest recommendations (joined with pattern name)")
 
     pattern_df = to_pandas(

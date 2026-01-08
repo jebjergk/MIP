@@ -1,7 +1,7 @@
 -- 010_mart_market_bars.sql
 -- Purpose:
---   Analytic views on top of MIP.RAW_EXT.MARKET_BARS_RAW
---   - MARKET_BARS: cleaned base view
+--   Analytic views on top of MIP.MART.MARKET_BARS
+--   - MARKET_BARS: cleaned base table
 --   - MARKET_LATEST_PER_SYMBOL: latest bar per symbol/interval
 --   - MARKET_RETURNS: simple & log returns per bar
 
@@ -9,26 +9,24 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -------------------------------
--- 1. Base view: MARKET_BARS
+-- 1. Base table: MARKET_BARS
 -------------------------------
-create or replace view MIP.MART.MARKET_BARS as
-select
-    TS,
-    SYMBOL,
-    SOURCE,
-    MARKET_TYPE,       -- 'STOCK' or 'FX'
-    INTERVAL_MINUTES,  -- e.g. 5 for intraday stocks, 1440 for FX daily
-    OPEN,
-    HIGH,
-    LOW,
-    CLOSE,
-    VOLUME,
-    INGESTED_AT
-from MIP.RAW_EXT.MARKET_BARS_RAW;
+create or replace table MIP.MART.MARKET_BARS (
+    TS               TIMESTAMP_NTZ,
+    SYMBOL           STRING,
+    SOURCE           STRING,
+    MARKET_TYPE      STRING,         -- 'STOCK' or 'FX'
+    INTERVAL_MINUTES NUMBER,         -- e.g. 5 for intraday stocks, 1440 for FX daily
+    OPEN             NUMBER,
+    HIGH             NUMBER,
+    LOW              NUMBER,
+    CLOSE            NUMBER,
+    VOLUME           NUMBER,
+    INGESTED_AT      TIMESTAMP_NTZ
+);
 
 -- Notes:
--- - RAW JSON is intentionally not exposed here; use RAW_EXT if you need it.
--- - This view is the main "fact table" for time-series analytics.
+-- - This table is the main "fact table" for time-series analytics.
 
 
 ----------------------------------------------

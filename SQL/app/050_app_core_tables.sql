@@ -122,7 +122,21 @@ create table if not exists MIP.APP.RECOMMENDATION_LOG (
 );
 
 -----------------------------
--- 3. OUTCOME_EVALUATION (for later)
+-- 3. RECOMMENDATION_OUTCOMES
+-----------------------------
+create table if not exists MIP.APP.RECOMMENDATION_OUTCOMES (
+    RECOMMENDATION_OUTCOME_ID number        autoincrement,
+    RECOMMENDATION_ID         number        not null,
+    HORIZON_DAYS              number        not null,
+    EVALUATED_AT              timestamp_ntz default current_timestamp(),
+    RETURN_FORWARD            number,
+    DETAILS                   variant,
+    constraint PK_RECOMMENDATION_OUTCOMES primary key (RECOMMENDATION_OUTCOME_ID),
+    constraint UQ_RECOMMENDATION_OUTCOMES unique (RECOMMENDATION_ID, HORIZON_DAYS)
+);
+
+-----------------------------
+-- 4. OUTCOME_EVALUATION (for later)
 -----------------------------
 create table if not exists MIP.APP.OUTCOME_EVALUATION (
     OUTCOME_ID        number        autoincrement,
@@ -136,7 +150,7 @@ create table if not exists MIP.APP.OUTCOME_EVALUATION (
 );
 
 -----------------------------
--- 4. BACKTEST_RUN
+-- 5. BACKTEST_RUN
 -----------------------------
 create table if not exists MIP.APP.BACKTEST_RUN (
     BACKTEST_RUN_ID   number        autoincrement,
@@ -153,7 +167,7 @@ create table if not exists MIP.APP.BACKTEST_RUN (
 );
 
 -----------------------------
--- 5. BACKTEST_RESULT
+-- 6. BACKTEST_RESULT
 -----------------------------
 create table if not exists MIP.APP.BACKTEST_RESULT (
     BACKTEST_RUN_ID number,

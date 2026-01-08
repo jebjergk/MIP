@@ -80,6 +80,152 @@ def run_momentum_generator(min_return: float, market_type: str, interval_minutes
     return res[0][0] if res and len(res[0]) > 0 else "Signal procedure completed."
 
 
+def run_post_ingest_health_checks():
+    """Run basic post-ingest data quality checks and return structured results."""
+    results = {
+        "errors": [],
+        "counts": None,
+        "dup_bars_summary": None,
+        "dup_bars_samples": None,
+        "dup_returns_summary": None,
+        "dup_returns_samples": None,
+        "recent_ts": None,
+    }
+
+    try:
+        counts_df = to_pandas(
+            run_sql(
+                """
+                select
+                    count(*) as TOTAL_ROWS,
+                    max(INGESTED_AT) as LAST_INGESTED_AT,
+                    sum(
+                        case
+                            when INGESTED_AT = (
+                                select max(INGESTED_AT) from MIP.MART.MARKET_BARS
+                            )
+                            then 1
+                            else 0
+                        end
+                    ) as LAST_INGEST_ROWS
+                from MIP.MART.MARKET_BARS
+                """
+            )
+        )
+        results["counts"] = counts_df
+    except Exception as exc:
+        results["errors"].append(f"Row count check failed: {exc}")
+
+    try:
+        dup_bars_summary = to_pandas(
+            run_sql(
+                """
+                with dupes as (
+                    select
+                        MARKET_TYPE,
+                        SYMBOL,
+                        INTERVAL_MINUTES,
+                        TS,
+                        count(*) as DUP_COUNT
+                    from MIP.MART.MARKET_BARS
+                    group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+                    having count(*) > 1
+                )
+                select
+                    count(*) as DUP_KEYS,
+                    sum(DUP_COUNT - 1) as DUP_EXTRA_ROWS
+                from dupes
+                """
+            )
+        )
+        dup_bars_samples = to_pandas(
+            run_sql(
+                """
+                select
+                    MARKET_TYPE,
+                    SYMBOL,
+                    INTERVAL_MINUTES,
+                    TS,
+                    count(*) as DUP_COUNT
+                from MIP.MART.MARKET_BARS
+                group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+                having count(*) > 1
+                order by DUP_COUNT desc, TS desc
+                limit 5
+                """
+            )
+        )
+        results["dup_bars_summary"] = dup_bars_summary
+        results["dup_bars_samples"] = dup_bars_samples
+    except Exception as exc:
+        results["errors"].append(f"MARKET_BARS duplicate check failed: {exc}")
+
+    try:
+        dup_returns_summary = to_pandas(
+            run_sql(
+                """
+                with dupes as (
+                    select
+                        MARKET_TYPE,
+                        SYMBOL,
+                        INTERVAL_MINUTES,
+                        TS,
+                        count(*) as DUP_COUNT
+                    from MIP.MART.MARKET_RETURNS
+                    group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+                    having count(*) > 1
+                )
+                select
+                    count(*) as DUP_KEYS,
+                    sum(DUP_COUNT - 1) as DUP_EXTRA_ROWS
+                from dupes
+                """
+            )
+        )
+        dup_returns_samples = to_pandas(
+            run_sql(
+                """
+                select
+                    MARKET_TYPE,
+                    SYMBOL,
+                    INTERVAL_MINUTES,
+                    TS,
+                    count(*) as DUP_COUNT
+                from MIP.MART.MARKET_RETURNS
+                group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+                having count(*) > 1
+                order by DUP_COUNT desc, TS desc
+                limit 5
+                """
+            )
+        )
+        results["dup_returns_summary"] = dup_returns_summary
+        results["dup_returns_samples"] = dup_returns_samples
+    except Exception as exc:
+        results["errors"].append(f"MARKET_RETURNS duplicate check failed: {exc}")
+
+    try:
+        recent_ts_df = to_pandas(
+            run_sql(
+                """
+                select
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    max(TS) as MOST_RECENT_TS,
+                    count(*) as ROWS_IN_MARKET
+                from MIP.MART.MARKET_BARS
+                group by MARKET_TYPE, INTERVAL_MINUTES
+                order by MARKET_TYPE, INTERVAL_MINUTES
+                """
+            )
+        )
+        results["recent_ts"] = recent_ts_df
+    except Exception as exc:
+        results["errors"].append(f"Most recent TS check failed: {exc}")
+
+    return results
+
+
 # --- Pages ---
 
 
@@ -106,6 +252,7 @@ def render_market_overview():
                 res = session.sql("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS()").collect()
                 msg = res[0][0] if res and len(res[0]) > 0 else "Ingestion completed successfully."
                 st.success(msg)
+                st.session_state["post_ingest_checks"] = run_post_ingest_health_checks()
             except Exception as e:
                 st.error(f"Ingestion failed: {e}")
 
@@ -122,6 +269,97 @@ def render_market_overview():
             st.caption(f"Last bar timestamp in MARKET_BARS: {last_ts}")
     except Exception:
         st.caption("Could not determine last bar timestamp.")
+
+    st.markdown("### Post-ingest health checks")
+    st.caption(
+        "Lightweight checks after ingestion: row counts, duplicates by natural key, "
+        "and the most recent timestamp per market/interval."
+    )
+
+    if st.button("Run health checks", key="run_post_ingest_checks"):
+        st.session_state["post_ingest_checks"] = run_post_ingest_health_checks()
+
+    checks = st.session_state.get("post_ingest_checks")
+
+    if checks:
+        errors = checks.get("errors", [])
+        counts_df = checks.get("counts")
+        dup_bars_summary = checks.get("dup_bars_summary")
+        dup_returns_summary = checks.get("dup_returns_summary")
+
+        dup_bars_keys = (
+            int(dup_bars_summary["DUP_KEYS"].iloc[0])
+            if dup_bars_summary is not None and not dup_bars_summary.empty
+            else 0
+        )
+        dup_returns_keys = (
+            int(dup_returns_summary["DUP_KEYS"].iloc[0])
+            if dup_returns_summary is not None and not dup_returns_summary.empty
+            else 0
+        )
+
+        total_rows = (
+            int(counts_df["TOTAL_ROWS"].iloc[0])
+            if counts_df is not None and not counts_df.empty
+            else 0
+        )
+
+        if errors:
+            status = "FAIL"
+        elif dup_bars_keys > 0 or dup_returns_keys > 0:
+            status = "FAIL"
+        elif total_rows == 0:
+            status = "WARN"
+        else:
+            status = "OK"
+
+        if status == "OK":
+            st.success("Post-ingest status: OK")
+        elif status == "WARN":
+            st.warning("Post-ingest status: WARN")
+        else:
+            st.error("Post-ingest status: FAIL")
+
+        if errors:
+            st.write("Errors encountered:")
+            for err in errors:
+                st.write(f"- {err}")
+
+        if counts_df is not None and not counts_df.empty:
+            last_ingest_ts = counts_df["LAST_INGESTED_AT"].iloc[0]
+            last_ingest_rows = counts_df["LAST_INGEST_ROWS"].iloc[0]
+            st.caption(
+                f"Total rows in MARKET_BARS: {total_rows:,}. "
+                f"Rows ingested/merged in latest batch: {last_ingest_rows:,}. "
+                f"Latest INGESTED_AT: {last_ingest_ts}."
+            )
+
+        if dup_bars_summary is not None and not dup_bars_summary.empty:
+            st.caption(
+                "MARKET_BARS duplicates by (MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS): "
+                f"{dup_bars_keys} duplicate keys."
+            )
+
+        if dup_returns_summary is not None and not dup_returns_summary.empty:
+            st.caption(
+                "MARKET_RETURNS duplicates by (MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS): "
+                f"{dup_returns_keys} duplicate keys."
+            )
+
+        recent_ts_df = checks.get("recent_ts")
+        if recent_ts_df is not None and not recent_ts_df.empty:
+            st.markdown("**Most recent bar timestamp per market/interval**")
+            st.dataframe(recent_ts_df, use_container_width=True)
+
+        dup_bars_samples = checks.get("dup_bars_samples")
+        if dup_bars_samples is not None and not dup_bars_samples.empty:
+            st.markdown("**Sample duplicate keys in MARKET_BARS**")
+            st.dataframe(dup_bars_samples, use_container_width=True)
+
+        dup_returns_samples = checks.get("dup_returns_samples")
+        if dup_returns_samples is not None and not dup_returns_samples.empty:
+            st.markdown("**Sample duplicate keys in MARKET_RETURNS**")
+            st.dataframe(dup_returns_samples, use_container_width=True)
 
     # Optional filters
     col1, col2, col3 = st.columns(3)

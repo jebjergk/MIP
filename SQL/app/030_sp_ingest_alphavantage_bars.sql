@@ -248,7 +248,7 @@ def run(session: Session) -> str:
 
     df = session.create_dataframe(all_rows)
     stage_table = "MIP.APP.STG_MARKET_BARS"
-    df.write.mode("overwrite").save_as_table(stage_table, table_type="temporary")
+    df.write.mode("overwrite").save_as_table(stage_table, table_type="transient")
 
     merge_sql = f"""
         merge into MIP.MART.MARKET_BARS t
@@ -300,6 +300,7 @@ def run(session: Session) -> str:
         )
     """
     session.sql(merge_sql).collect()
+    session.sql(f"drop table if exists {stage_table}").collect()
 
     duplicate_rows = session.sql(
         """

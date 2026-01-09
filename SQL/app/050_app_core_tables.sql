@@ -5,7 +5,95 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -----------------------------
--- 1. PATTERN_DEFINITION
+-- 1. INGEST_UNIVERSE
+-----------------------------
+create table if not exists MIP.APP.INGEST_UNIVERSE (
+    SYMBOL           string        not null,
+    MARKET_TYPE      string        not null,
+    INTERVAL_MINUTES number        not null,
+    IS_ENABLED       boolean       default true,
+    PRIORITY         number        default 0,
+    CREATED_AT       timestamp_ntz default current_timestamp(),
+    NOTES            string,
+    constraint PK_INGEST_UNIVERSE primary key (SYMBOL, MARKET_TYPE, INTERVAL_MINUTES)
+);
+
+merge into MIP.APP.INGEST_UNIVERSE t
+using (
+    select 'AAPL' as SYMBOL, 'STOCK' as MARKET_TYPE, 1440 as INTERVAL_MINUTES,
+           true as IS_ENABLED, 100 as PRIORITY, 'Seed stock universe' as NOTES
+    union all
+    select 'MSFT', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'AMZN', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'NVDA', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'GOOGL', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'META', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'TSLA', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'JPM', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'XOM', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'JNJ', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'PG', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'KO', 'STOCK', 1440, true, 100, 'Seed stock universe'
+    union all
+    select 'SPY', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    union all
+    select 'QQQ', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    union all
+    select 'IWM', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    union all
+    select 'DIA', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    union all
+    select 'XLK', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    union all
+    select 'XLF', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    union all
+    select 'EURUSD', 'FX', 1440, true, 80, 'Seed FX universe'
+    union all
+    select 'GBPUSD', 'FX', 1440, true, 80, 'Seed FX universe'
+    union all
+    select 'USDJPY', 'FX', 1440, true, 80, 'Seed FX universe'
+    union all
+    select 'USDCHF', 'FX', 1440, true, 80, 'Seed FX universe'
+    union all
+    select 'AUDUSD', 'FX', 1440, true, 80, 'Seed FX universe'
+    union all
+    select 'USDCAD', 'FX', 1440, true, 80, 'Seed FX universe'
+) s
+   on t.SYMBOL = s.SYMBOL
+  and t.MARKET_TYPE = s.MARKET_TYPE
+  and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
+when matched then update set
+    t.IS_ENABLED = coalesce(t.IS_ENABLED, s.IS_ENABLED),
+    t.PRIORITY = coalesce(t.PRIORITY, s.PRIORITY),
+    t.NOTES = coalesce(t.NOTES, s.NOTES)
+when not matched then insert (
+    SYMBOL,
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    IS_ENABLED,
+    PRIORITY,
+    NOTES
+) values (
+    s.SYMBOL,
+    s.MARKET_TYPE,
+    s.INTERVAL_MINUTES,
+    s.IS_ENABLED,
+    s.PRIORITY,
+    s.NOTES
+);
+
+-----------------------------
+-- 2. PATTERN_DEFINITION
 -----------------------------
 create table if not exists MIP.APP.PATTERN_DEFINITION (
     PATTERN_ID    number        autoincrement,

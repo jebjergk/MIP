@@ -3,6 +3,8 @@ import altair as alt
 from snowflake.snowpark.context import get_active_session
 from datetime import date, datetime, timedelta
 import json
+import math
+import pandas as pd
 
 # Get the Snowpark session provided by Snowflake
 session = get_active_session()
@@ -84,6 +86,106 @@ def sql_literal(value):
     if isinstance(value, str):
         return f"'{value}'"
     return str(value)
+
+
+def normalize_optional_value(value):
+    """Normalize pandas/NaN values to None for SQL."""
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
+
+
+def fetch_ingest_universe():
+    query = """
+        select
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            IS_ENABLED,
+            PRIORITY,
+            CREATED_AT,
+            NOTES
+        from MIP.APP.INGEST_UNIVERSE
+        order by PRIORITY desc, MARKET_TYPE, SYMBOL, INTERVAL_MINUTES
+    """
+    return to_pandas(run_sql(query))
+
+
+def save_ingest_universe_updates(df: pd.DataFrame) -> None:
+    if df is None or df.empty:
+        return
+    for _, row in df.iterrows():
+        is_enabled = bool(row["IS_ENABLED"]) if pd.notna(row["IS_ENABLED"]) else False
+        priority_value = normalize_optional_value(row.get("PRIORITY"))
+        priority = int(priority_value) if priority_value is not None else 0
+        update_sql = f"""
+            update MIP.APP.INGEST_UNIVERSE
+               set IS_ENABLED = {sql_literal(is_enabled)},
+                   PRIORITY = {sql_literal(priority)},
+                   NOTES = {sql_literal(normalize_optional_value(row.get("NOTES")))}
+             where SYMBOL = {sql_literal(row["SYMBOL"])}
+               and MARKET_TYPE = {sql_literal(row["MARKET_TYPE"])}
+               and INTERVAL_MINUTES = {sql_literal(int(row["INTERVAL_MINUTES"]))}
+        """
+        run_sql(update_sql).collect()
+
+
+def upsert_ingest_universe_row(
+    symbol: str,
+    market_type: str,
+    interval_minutes: int,
+    is_enabled: bool,
+    priority: int,
+    notes: str | None,
+) -> None:
+    merge_sql = f"""
+        merge into MIP.APP.INGEST_UNIVERSE t
+        using (
+            select
+                {sql_literal(symbol)} as SYMBOL,
+                {sql_literal(market_type)} as MARKET_TYPE,
+                {sql_literal(interval_minutes)} as INTERVAL_MINUTES,
+                {sql_literal(is_enabled)} as IS_ENABLED,
+                {sql_literal(priority)} as PRIORITY,
+                {sql_literal(notes)} as NOTES
+        ) s
+           on t.SYMBOL = s.SYMBOL
+          and t.MARKET_TYPE = s.MARKET_TYPE
+          and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
+        when matched then update set
+            t.IS_ENABLED = s.IS_ENABLED,
+            t.PRIORITY = s.PRIORITY,
+            t.NOTES = s.NOTES
+        when not matched then insert (
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            IS_ENABLED,
+            PRIORITY,
+            NOTES
+        ) values (
+            s.SYMBOL,
+            s.MARKET_TYPE,
+            s.INTERVAL_MINUTES,
+            s.IS_ENABLED,
+            s.PRIORITY,
+            s.NOTES
+        )
+    """
+    run_sql(merge_sql).collect()
+
+
+def delete_ingest_universe_rows(rows: list[dict]) -> None:
+    for row in rows:
+        delete_sql = f"""
+            delete from MIP.APP.INGEST_UNIVERSE
+             where SYMBOL = {sql_literal(row["SYMBOL"])}
+               and MARKET_TYPE = {sql_literal(row["MARKET_TYPE"])}
+               and INTERVAL_MINUTES = {sql_literal(int(row["INTERVAL_MINUTES"]))}
+        """
+        run_sql(delete_sql).collect()
 
 
 def run_momentum_generator(
@@ -371,6 +473,86 @@ def render_ingestion():
             st.caption(f"Last bar timestamp in MARKET_BARS: {last_ts}")
     except Exception:
         st.caption("Could not determine last bar timestamp.")
+
+    st.markdown("### Ingest universe admin")
+    st.caption("View and manage the enabled ingestion universe for AlphaVantage.")
+
+    universe_df = fetch_ingest_universe()
+    if universe_df is None or universe_df.empty:
+        st.info("No ingestion universe rows found yet.")
+    else:
+        enabled_count = int(universe_df["IS_ENABLED"].fillna(False).sum())
+        if enabled_count > 25:
+            st.warning(
+                "More than 25 symbols are enabled. Ingestion will process only the top "
+                "25 by priority."
+            )
+
+        edited_df = st.data_editor(
+            universe_df,
+            use_container_width=True,
+            disabled=["SYMBOL", "MARKET_TYPE", "INTERVAL_MINUTES", "CREATED_AT"],
+            column_config={
+                "IS_ENABLED": st.column_config.CheckboxColumn("Enabled"),
+                "PRIORITY": st.column_config.NumberColumn("Priority", step=1),
+                "CREATED_AT": st.column_config.DatetimeColumn("Created at"),
+            },
+            key="ingest_universe_editor",
+        )
+
+        if st.button("Save universe updates"):
+            save_ingest_universe_updates(edited_df)
+            st.success("Ingest universe updated.")
+            st.rerun()
+
+        with st.form("add_ingest_universe_row"):
+            st.markdown("**Add or update a symbol**")
+            symbol = st.text_input("Symbol", placeholder="e.g., AAPL or EURUSD")
+            market_type = st.selectbox("Market type", ["STOCK", "ETF", "FX"])
+            interval_minutes = st.number_input(
+                "Interval minutes",
+                min_value=1,
+                value=1440,
+                step=1,
+            )
+            priority = st.number_input("Priority", value=100, step=1)
+            is_enabled = st.checkbox("Enabled", value=True)
+            notes = st.text_input("Notes")
+            submitted = st.form_submit_button("Save symbol")
+
+        if submitted:
+            if not symbol.strip():
+                st.error("Symbol is required.")
+            else:
+                upsert_ingest_universe_row(
+                    symbol.strip().upper(),
+                    market_type,
+                    int(interval_minutes),
+                    bool(is_enabled),
+                    int(priority),
+                    notes.strip() if notes else None,
+                )
+                st.success("Symbol saved.")
+                st.rerun()
+
+        remove_options = {
+            f"{row['MARKET_TYPE']} {row['SYMBOL']} ({int(row['INTERVAL_MINUTES'])}m)": {
+                "SYMBOL": row["SYMBOL"],
+                "MARKET_TYPE": row["MARKET_TYPE"],
+                "INTERVAL_MINUTES": int(row["INTERVAL_MINUTES"]),
+            }
+            for _, row in universe_df.iterrows()
+        }
+        remove_selection = st.multiselect(
+            "Select rows to remove",
+            options=list(remove_options.keys()),
+        )
+        if st.button("Remove selected", key="remove_ingest_universe_rows"):
+            delete_ingest_universe_rows(
+                [remove_options[key] for key in remove_selection]
+            )
+            st.success("Selected rows removed.")
+            st.rerun()
 
     st.markdown("### Post-ingest health checks")
     st.caption(

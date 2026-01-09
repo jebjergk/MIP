@@ -13,11 +13,11 @@ create or replace procedure MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
     P_MISS_THRESHOLD     number,
     P_FROM_TS            timestamp_ntz,
     P_TO_TS              timestamp_ntz,
-    P_DO_INGEST          boolean,
-    P_DO_SIGNALS         boolean,
-    P_DO_EVALUATE        boolean,
-    P_DO_BACKTEST        boolean,
-    P_DO_TRAIN           boolean
+    P_DO_INGEST          boolean default false,
+    P_DO_SIGNALS         boolean default true,
+    P_DO_EVALUATE        boolean default true,
+    P_DO_BACKTEST        boolean default true,
+    P_DO_TRAIN           boolean default true
 )
 returns variant
 language sql
@@ -44,7 +44,7 @@ begin
     v_to_ts   := coalesce(P_TO_TS, current_timestamp());
     v_from_ts := coalesce(P_FROM_TS, dateadd('day', -7, v_to_ts));
 
-    v_do_ingest   := coalesce(P_DO_INGEST, true);
+    v_do_ingest   := coalesce(P_DO_INGEST, false);
     v_do_signals  := coalesce(P_DO_SIGNALS, true);
     v_do_evaluate := coalesce(P_DO_EVALUATE, true);
     v_do_backtest := coalesce(P_DO_BACKTEST, true);

@@ -476,6 +476,48 @@ def render_patterns_learning():
     )
 
     st.markdown("### Learning cycle controls")
+    st.info(
+        "Learning Cycle uses existing ingested data; run ingestion separately on the "
+        "Ingestion page if needed."
+    )
+
+    st.markdown("#### Data freshness")
+    try:
+        freshness_df = to_pandas(
+            run_sql(
+                """
+                select
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    max(TS) as LATEST_BAR_TS,
+                    max(INGESTED_AT) as LAST_INGESTED_AT
+                from MIP.MART.MARKET_BARS
+                group by MARKET_TYPE, INTERVAL_MINUTES
+                order by MARKET_TYPE, INTERVAL_MINUTES
+                """
+            )
+        )
+        if freshness_df is None or freshness_df.empty:
+            st.caption("No ingested market data available yet.")
+        else:
+            st.dataframe(freshness_df, use_container_width=True)
+
+        overall_ingest_df = to_pandas(
+            run_sql(
+                """
+                select max(INGESTED_AT) as LAST_INGESTION_TS
+                from MIP.MART.MARKET_BARS
+                """
+            )
+        )
+        if overall_ingest_df is not None and not overall_ingest_df.empty:
+            last_ingestion_ts = overall_ingest_df["LAST_INGESTION_TS"].iloc[0]
+            if last_ingestion_ts is not None:
+                st.caption(
+                    f"Last ingestion timestamp (all markets): {last_ingestion_ts}"
+                )
+    except Exception:
+        st.caption("Unable to load data freshness details.")
 
     market_timeframe_options = get_market_timeframe_options(session)
 
@@ -563,7 +605,7 @@ def render_patterns_learning():
             for market_type, interval_minutes in selected_market_timeframes:
                 interval_sql = "NULL" if interval_minutes is None else str(int(interval_minutes))
                 call_sql = f"""
-                    call MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
+                call MIP.APP.SP_RUN_MIP_LEARNING_CYCLE(
                         '{market_type}',
                         {interval_sql},
                         {horizon_minutes},
@@ -572,7 +614,7 @@ def render_patterns_learning():
                         {miss_threshold},
                         {from_ts_sql},
                         {to_ts_sql},
-                        TRUE,
+                        FALSE,
                         TRUE,
                         TRUE,
                         TRUE,

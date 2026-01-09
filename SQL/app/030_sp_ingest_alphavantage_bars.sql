@@ -31,7 +31,7 @@ $$
 import requests
 import time
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from snowflake.snowpark import Session
 
 ALPHAVANTAGE_BASE_URL = "https://www.alphavantage.co/query"
@@ -41,14 +41,25 @@ def _get_config_map(session: Session) -> Dict[str, str]:
     rows = cfg_df.collect()
     return {row["CONFIG_KEY"]: row["CONFIG_VALUE"] for row in rows}
 
-def _parse_symbol_list(raw: str) -> List[str]:
-    if not raw:
-        return []
-    return [s.strip() for s in raw.split(",") if s.strip()]
+def _interval_to_alpha(interval_minutes: int) -> str | None:
+    if interval_minutes == 1440:
+        return None
+    allowed = {1, 5, 15, 30, 60}
+    if interval_minutes in allowed:
+        return f"{interval_minutes}min"
+    return None
 
-def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str | None) -> tuple[Dict, str]:
+def _fetch_stock_bars(api_key: str, symbol: str, interval_minutes: int) -> tuple[Dict, str, str]:
+    interval_str = _interval_to_alpha(interval_minutes)
+    if interval_str:
+        function_name = "TIME_SERIES_INTRADAY"
+        expected_key = f"Time Series ({interval_str})"
+    else:
+        function_name = "TIME_SERIES_DAILY"
+        expected_key = "Time Series (Daily)"
+
     params = {
-        "function": "TIME_SERIES_DAILY",
+        "function": function_name,
         "symbol": symbol,
         "outputsize": "compact",
         "apikey": api_key,
@@ -57,19 +68,29 @@ def _fetch_stock_bars(api_key: str, symbol: str, interval_str: str | None) -> tu
         params["interval"] = interval_str
     resp = requests.get(ALPHAVANTAGE_BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
-    return resp.json(), resp.url
+    return resp.json(), resp.url, expected_key
 
-def _fetch_fx_daily(api_key: str, from_symbol: str, to_symbol: str) -> tuple[Dict, str]:
+def _fetch_fx_bars(api_key: str, from_symbol: str, to_symbol: str, interval_minutes: int) -> tuple[Dict, str, str]:
+    interval_str = _interval_to_alpha(interval_minutes)
+    if interval_str:
+        function_name = "FX_INTRADAY"
+        expected_key = f"Time Series FX ({interval_str})"
+    else:
+        function_name = "FX_DAILY"
+        expected_key = "Time Series FX (Daily)"
+
     params = {
-        "function": "FX_DAILY",
+        "function": function_name,
         "from_symbol": from_symbol,
         "to_symbol": to_symbol,
         "outputsize": "compact",
         "apikey": api_key,
     }
+    if interval_str:
+        params["interval"] = interval_str
     resp = requests.get(ALPHAVANTAGE_BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
-    return resp.json(), resp.url
+    return resp.json(), resp.url, expected_key
 
 def _safe_float(v):
     try:
@@ -97,7 +118,12 @@ def _require_time_series_key(json_data: Dict, expected_key: str, context: str) -
         f"Available keys: {available_keys if available_keys else 'none'}.{extra_msg}"
     )
 
-def _extract_stock_rows(json_data: Dict, symbol: str, interval_minutes: int) -> List[Dict]:
+def _extract_stock_rows(
+    json_data: Dict,
+    symbol: str,
+    interval_minutes: int,
+    market_type: str,
+) -> List[Dict]:
     rows: List[Dict] = []
     ts_key = next((k for k in json_data.keys() if k.startswith("Time Series")), None)
     if not ts_key:
@@ -116,7 +142,7 @@ def _extract_stock_rows(json_data: Dict, symbol: str, interval_minutes: int) -> 
                 "TS": ts_dt,
                 "SYMBOL": symbol,
                 "SOURCE": "ALPHAVANTAGE",
-                "MARKET_TYPE": "STOCK",
+                "MARKET_TYPE": market_type,
                 "INTERVAL_MINUTES": interval_minutes,
                 "OPEN": _safe_float(bar_dict.get("1. open")),
                 "HIGH": _safe_float(bar_dict.get("2. high")),
@@ -192,6 +218,22 @@ def _extract_fx_rows_daily(json_data: Dict, pair: str, interval_minutes: int) ->
 
     return rows
 
+def _load_ingest_universe(session: Session) -> Tuple[List[Dict], int, bool]:
+    rows = session.sql(
+        """
+        select
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            PRIORITY
+        from MIP.APP.INGEST_UNIVERSE
+        where coalesce(IS_ENABLED, true)
+        order by PRIORITY desc, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
+        """
+    ).collect()
+    total_rows = len(rows)
+    return rows[:25], total_rows, total_rows > 25
+
 def run(session: Session) -> str:
     cfg = _get_config_map(session)
 
@@ -199,48 +241,62 @@ def run(session: Session) -> str:
     if not api_key or api_key == "<PLACEHOLDER>":
         return "ALPHAVANTAGE_API_KEY missing"
 
-    stock_symbols = _parse_symbol_list(cfg.get("DEFAULT_STOCK_SYMBOLS"))
-    fx_pairs = _parse_symbol_list(cfg.get("DEFAULT_FX_PAIRS"))
-
-    stock_interval_minutes = 1440  # daily
-    stock_interval_str = None
-    fx_interval_minutes = 1440  # daily
+    ingest_rows, enabled_total, truncated = _load_ingest_universe(session)
+    if not ingest_rows:
+        return "No enabled rows found in MIP.APP.INGEST_UNIVERSE."
 
     all_rows: List[Dict] = []
 
     request_urls: list[str] = []
     diagnostics: list[str] = []
 
-    # STOCKS
-    for symbol in stock_symbols:
-        data, final_url = _fetch_stock_bars(api_key, symbol, stock_interval_str)
-        request_urls.append(f"stock {symbol}: {final_url}")
-        _require_time_series_key(data, "Time Series (Daily)", f"Symbol {symbol}")
-        api_msg = _extract_api_message(data)
-        if api_msg:
-            diagnostics.append(f"{symbol}: {api_msg}")
-        all_rows.extend(_extract_stock_rows(data, symbol, stock_interval_minutes))
-        time.sleep(2)
+    for row in ingest_rows:
+        market_type = str(row["MARKET_TYPE"]).upper()
+        symbol = str(row["SYMBOL"]).upper()
+        interval_minutes = int(row["INTERVAL_MINUTES"])
 
-    # FX DAILY
-    for raw_pair in fx_pairs:
-        parsed = _normalize_fx_pair(raw_pair)
-        if not parsed:
+        if _interval_to_alpha(interval_minutes) is None and interval_minutes != 1440:
+            diagnostics.append(
+                f"{symbol}: unsupported interval_minutes {interval_minutes} (skipping)"
+            )
             continue
-        from_sym, to_sym = parsed
-        normalized_pair = f"{from_sym}/{to_sym}"
-        data, final_url = _fetch_fx_daily(api_key, from_sym, to_sym)
-        request_urls.append(f"fx {normalized_pair}: {final_url}")
-        api_msg = _extract_api_message(data)
-        if api_msg:
-            diagnostics.append(f"{normalized_pair}: {api_msg}")
-        _require_time_series_key(
-            data,
-            "Time Series FX (Daily)",
-            f"FX pair {normalized_pair}",
-        )
 
-        all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, fx_interval_minutes))
+        if market_type in ("STOCK", "ETF"):
+            data, final_url, expected_key = _fetch_stock_bars(
+                api_key, symbol, interval_minutes
+            )
+            request_urls.append(
+                f"{market_type.lower()} {symbol} {interval_minutes}m: {final_url}"
+            )
+            _require_time_series_key(data, expected_key, f"{market_type} {symbol}")
+            api_msg = _extract_api_message(data)
+            if api_msg:
+                diagnostics.append(f"{symbol}: {api_msg}")
+            all_rows.extend(
+                _extract_stock_rows(data, symbol, interval_minutes, market_type)
+            )
+        elif market_type == "FX":
+            parsed = _normalize_fx_pair(symbol)
+            if not parsed:
+                diagnostics.append(f"{symbol}: unable to parse FX pair (skipping)")
+                continue
+            from_sym, to_sym = parsed
+            normalized_pair = f"{from_sym}/{to_sym}"
+            data, final_url, expected_key = _fetch_fx_bars(
+                api_key, from_sym, to_sym, interval_minutes
+            )
+            request_urls.append(
+                f"fx {normalized_pair} {interval_minutes}m: {final_url}"
+            )
+            api_msg = _extract_api_message(data)
+            if api_msg:
+                diagnostics.append(f"{normalized_pair}: {api_msg}")
+            _require_time_series_key(data, expected_key, f"FX pair {normalized_pair}")
+            all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, interval_minutes))
+        else:
+            diagnostics.append(f"{symbol}: unknown market_type {market_type} (skipping)")
+            continue
+
         time.sleep(2)
 
     if not all_rows:
@@ -328,14 +384,22 @@ def run(session: Session) -> str:
             f"Sample keys: {sample_keys}"
         )
 
-    stock_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "STOCK")
+    stock_count = sum(
+        1 for row in all_rows if row.get("MARKET_TYPE") in ("STOCK", "ETF")
+    )
     fx_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "FX")
 
     url_info = " | ".join(request_urls) if request_urls else "no requests made"
     diag_info = " | ".join(diagnostics) if diagnostics else "no API warnings"
 
+    prefix = ""
+    if truncated:
+        prefix = (
+            f"Warning: {enabled_total} enabled rows; ingesting top 25 by priority. "
+        )
+
     return (
-        "Ingestion complete: "
+        f"{prefix}Ingestion complete: "
         f"merged {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
         f"URLs: {url_info}. Diagnostics: {diag_info}"
     )

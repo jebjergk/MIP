@@ -17,6 +17,7 @@ page = st.sidebar.radio(
     "Navigation",
     [
         "Morning Brief",
+        "Ingestion",
         "Market Overview",
         "Patterns & Learning",
         "Signals & Recommendations",
@@ -266,7 +267,81 @@ def render_market_overview():
         """
     )
 
-    st.subheader("Data Ingestion")
+    # Optional filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        market_type_choice = st.radio(
+            "Market type",
+            options=["All", "Stocks only", "FX only"],
+            index=0,
+            horizontal=True,
+        )
+    with col2:
+        symbol_options_df = to_pandas(
+            run_sql(
+                """
+                select distinct SYMBOL
+                from MIP.MART.MARKET_LATEST_PER_SYMBOL
+                order by SYMBOL
+                """
+            )
+        )
+        symbol_choices = (
+            symbol_options_df["SYMBOL"].tolist() if symbol_options_df is not None else []
+        )
+        selected_symbols = st.multiselect(
+            "Filter by symbol (optional)",
+            options=symbol_choices,
+            default=[],
+            help="Leave empty for all symbols.",
+        )
+    with col3:
+        interval_filter = st.selectbox(
+            "Interval (minutes)", options=["All", 5, 1440], index=0
+        )
+
+    base_query = """
+        select
+            TS,
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            OPEN,
+            HIGH,
+            LOW,
+            CLOSE,
+            VOLUME,
+            INGESTED_AT
+        from MIP.MART.MARKET_LATEST_PER_SYMBOL
+        where 1 = 1
+    """
+
+    filters = []
+    if market_type_choice == "Stocks only":
+        filters.append("and MARKET_TYPE = 'STOCK'")
+    elif market_type_choice == "FX only":
+        filters.append("and MARKET_TYPE = 'FX'")
+
+    if selected_symbols:
+        symbol_list = ",".join([f"'{sym}'" for sym in selected_symbols])
+        filters.append(f"and SYMBOL in ({symbol_list})")
+
+    if interval_filter != "All":
+        filters.append(f"and INTERVAL_MINUTES = {interval_filter}")
+
+    query = base_query + "\n" + "\n".join(filters) + "\norder by MARKET_TYPE, SYMBOL;"
+
+    df_sp = run_sql(query)
+    df_pd = to_pandas(df_sp)
+
+    if df_pd is None or df_pd.empty:
+        st.info("No market data available yet. Try running the ingestion procedure.")
+    else:
+        st.dataframe(df_pd, use_container_width=True)
+
+
+def render_ingestion():
+    st.subheader("Ingestion")
     st.caption(
         "Manual ingestion of AlphaVantage bars. "
         "This calls the Snowflake stored procedure MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS() "
@@ -387,78 +462,6 @@ def render_market_overview():
         if dup_returns_samples is not None and not dup_returns_samples.empty:
             st.markdown("**Sample duplicate keys in MARKET_RETURNS**")
             st.dataframe(dup_returns_samples, use_container_width=True)
-
-    # Optional filters
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        market_type_choice = st.radio(
-            "Market type",
-            options=["All", "Stocks only", "FX only"],
-            index=0,
-            horizontal=True,
-        )
-    with col2:
-        symbol_options_df = to_pandas(
-            run_sql(
-                """
-                select distinct SYMBOL
-                from MIP.MART.MARKET_LATEST_PER_SYMBOL
-                order by SYMBOL
-                """
-            )
-        )
-        symbol_choices = (
-            symbol_options_df["SYMBOL"].tolist() if symbol_options_df is not None else []
-        )
-        selected_symbols = st.multiselect(
-            "Filter by symbol (optional)",
-            options=symbol_choices,
-            default=[],
-            help="Leave empty for all symbols.",
-        )
-    with col3:
-        interval_filter = st.selectbox(
-            "Interval (minutes)", options=["All", 5, 1440], index=0
-        )
-
-    base_query = """
-        select
-            TS,
-            SYMBOL,
-            MARKET_TYPE,
-            INTERVAL_MINUTES,
-            OPEN,
-            HIGH,
-            LOW,
-            CLOSE,
-            VOLUME,
-            INGESTED_AT
-        from MIP.MART.MARKET_LATEST_PER_SYMBOL
-        where 1 = 1
-    """
-
-    filters = []
-    if market_type_choice == "Stocks only":
-        filters.append("and MARKET_TYPE = 'STOCK'")
-    elif market_type_choice == "FX only":
-        filters.append("and MARKET_TYPE = 'FX'")
-
-    if selected_symbols:
-        symbol_list = ",".join([f"'{sym}'" for sym in selected_symbols])
-        filters.append(f"and SYMBOL in ({symbol_list})")
-
-    if interval_filter != "All":
-        filters.append(f"and INTERVAL_MINUTES = {interval_filter}")
-
-    query = base_query + "\n" + "\n".join(filters) + "\norder by MARKET_TYPE, SYMBOL;"
-
-    df_sp = run_sql(query)
-    df_pd = to_pandas(df_sp)
-
-    if df_pd is None or df_pd.empty:
-        st.info("No market data available yet. Try running the ingestion procedure.")
-    else:
-        st.dataframe(df_pd, use_container_width=True)
 
 
 def render_morning_brief():
@@ -725,6 +728,38 @@ def render_patterns_learning():
         """
     )
 
+    st.info(
+        "Learning Cycle uses existing ingested data; run ingestion separately on the "
+        "Ingestion page if needed."
+    )
+
+    st.markdown("### Data freshness")
+    st.caption(
+        "Latest bar timestamp per market/interval, plus the most recent ingestion timestamp."
+    )
+    freshness_df = to_pandas(
+        run_sql(
+            """
+            select
+                MARKET_TYPE,
+                INTERVAL_MINUTES,
+                max(TS) as MOST_RECENT_TS,
+                max(INGESTED_AT) as LAST_INGESTED_AT
+            from MIP.MART.MARKET_BARS
+            group by MARKET_TYPE, INTERVAL_MINUTES
+            order by MARKET_TYPE, INTERVAL_MINUTES
+            """
+        )
+    )
+
+    if freshness_df is None or freshness_df.empty:
+        st.info("No market bars available yet. Run ingestion to populate data.")
+    else:
+        last_ingest_ts = freshness_df["LAST_INGESTED_AT"].max()
+        if last_ingest_ts is not None:
+            st.caption(f"Last ingestion timestamp: {last_ingest_ts}")
+        st.dataframe(freshness_df, use_container_width=True)
+
     # Option to reseed demo pattern (idempotent)
     if st.button("Seed / refresh MOMENTUM_DEMO pattern"):
         res = run_sql("call MIP.APP.SP_SEED_MIP_DEMO()").collect()
@@ -832,7 +867,7 @@ def render_patterns_learning():
                         {miss_threshold},
                         {from_ts_sql},
                         {to_ts_sql},
-                        TRUE,
+                        FALSE,
                         TRUE,
                         TRUE,
                         TRUE,
@@ -1711,10 +1746,12 @@ def render_outcome_evaluation():
 
 
 # --- Router ---
-if page == "Market Overview":
-    render_market_overview()
-elif page == "Morning Brief":
+if page == "Morning Brief":
     render_morning_brief()
+elif page == "Ingestion":
+    render_ingestion()
+elif page == "Market Overview":
+    render_market_overview()
 elif page == "Patterns & Learning":
     render_patterns_learning()
 elif page == "Signals & Recommendations":

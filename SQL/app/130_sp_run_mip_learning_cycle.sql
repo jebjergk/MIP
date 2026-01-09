@@ -44,7 +44,7 @@ begin
     v_to_ts   := coalesce(P_TO_TS, current_timestamp());
     v_from_ts := coalesce(P_FROM_TS, dateadd('day', -7, v_to_ts));
 
-    v_do_ingest   := coalesce(P_DO_INGEST, true);
+    v_do_ingest   := coalesce(P_DO_INGEST, false);
     v_do_signals  := coalesce(P_DO_SIGNALS, true);
     v_do_evaluate := coalesce(P_DO_EVALUATE, true);
     v_do_backtest := coalesce(P_DO_BACKTEST, true);

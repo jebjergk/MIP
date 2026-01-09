@@ -1,9 +1,11 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
+-- Streamlit runtime role: MIP_APP_ROLE
 -- App role needs to read APP tables for the UI
 grant select on all tables in schema MIP.APP to role MIP_APP_ROLE;
 grant select on future tables in schema MIP.APP to role MIP_APP_ROLE;
+grant select, insert, update, delete on table MIP.APP.INGEST_UNIVERSE to role MIP_APP_ROLE;
 grant usage on database mip to role mip_app_role;
 grant usage on all schemas in database mip to role mip_app_role;
 grant create streamlit on schema mip.app to role mip_app_role;

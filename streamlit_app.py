@@ -448,6 +448,16 @@ def render_ingestion():
         "This calls the Snowflake stored procedure MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS() "
         "once. The scheduled task remains suspended by default to keep costs low."
     )
+    debug_enabled = st.toggle("Debug", value=False, key="ingestion_debug")
+    if debug_enabled:
+        role_value = None
+        try:
+            role_rows = run_sql("select current_role() as CURRENT_ROLE").collect()
+            if role_rows:
+                role_value = role_rows[0]["CURRENT_ROLE"]
+        except Exception as exc:
+            role_value = f"Error: {exc}"
+        st.caption(f"CURRENT_ROLE(): {role_value}")
 
     if st.button("Run ingestion now"):
         with st.spinner("Running AlphaVantage ingestion…"):

@@ -15,7 +15,13 @@ st.caption("Snowflake-native POC • AlphaVantage data • All analytics in SQL 
 # Sidebar navigation
 page = st.sidebar.radio(
     "Navigation",
-    ["Market Overview", "Patterns & Learning", "Signals & Recommendations", "Outcome Evaluation"],
+    [
+        "Morning Brief",
+        "Market Overview",
+        "Patterns & Learning",
+        "Signals & Recommendations",
+        "Outcome Evaluation",
+    ],
 )
 
 
@@ -453,6 +459,260 @@ def render_market_overview():
         st.info("No market data available yet. Try running the ingestion procedure.")
     else:
         st.dataframe(df_pd, use_container_width=True)
+
+
+def render_morning_brief():
+    st.subheader("Morning Brief")
+    st.caption(
+        "Snapshot of the most recent recommendations, outcome KPIs, top signals, and "
+        "data health checks. Facts only, based on stored tables."
+    )
+
+    selected_market_type, selected_interval_minutes = get_market_selection("morning")
+
+    st.markdown("### Latest recommendations")
+
+    latest_run_df = to_pandas(
+        run_sql(
+            f"""
+            select max(GENERATED_AT) as GENERATED_AT
+            from MIP.APP.RECOMMENDATION_LOG
+            where MARKET_TYPE = '{selected_market_type}'
+              and INTERVAL_MINUTES = {selected_interval_minutes}
+            """
+        )
+    )
+    latest_run_ts = (
+        latest_run_df["GENERATED_AT"].iloc[0]
+        if latest_run_df is not None and not latest_run_df.empty
+        else None
+    )
+    latest_run_ts_str = None
+    if latest_run_ts is not None:
+        try:
+            latest_run_ts_str = latest_run_ts.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            latest_run_ts_str = str(latest_run_ts)
+    if latest_run_ts_str == "NaT":
+        latest_run_ts_str = None
+
+    latest_tab, last_day_tab = st.tabs(["Latest run", "Last 24 hours"])
+
+    with latest_tab:
+        if latest_run_ts_str is None:
+            st.info("No recommendation runs found for the selected market/interval.")
+        else:
+            st.caption(f"Latest run timestamp: {latest_run_ts_str}")
+
+            latest_counts_df = to_pandas(
+                run_sql(
+                    f"""
+                    select
+                        coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
+                        count(*) as RECOMMENDATION_COUNT
+                    from MIP.APP.RECOMMENDATION_LOG r
+                    left join MIP.APP.PATTERN_DEFINITION p
+                      on p.PATTERN_ID = r.PATTERN_ID
+                    where r.MARKET_TYPE = '{selected_market_type}'
+                      and r.INTERVAL_MINUTES = {selected_interval_minutes}
+                      and r.GENERATED_AT = to_timestamp_ntz('{latest_run_ts_str}')
+                    group by PATTERN_NAME
+                    order by RECOMMENDATION_COUNT desc, PATTERN_NAME
+                    """
+                )
+            )
+
+            if latest_counts_df is None or latest_counts_df.empty:
+                st.info("No recommendations logged for the latest run.")
+            else:
+                st.markdown("**Counts by pattern**")
+                st.dataframe(latest_counts_df, use_container_width=True)
+
+            latest_recs_df = to_pandas(
+                run_sql(
+                    f"""
+                    select
+                        r.GENERATED_AT,
+                        coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
+                        r.SYMBOL,
+                        r.TS,
+                        r.SCORE
+                    from MIP.APP.RECOMMENDATION_LOG r
+                    left join MIP.APP.PATTERN_DEFINITION p
+                      on p.PATTERN_ID = r.PATTERN_ID
+                    where r.MARKET_TYPE = '{selected_market_type}'
+                      and r.INTERVAL_MINUTES = {selected_interval_minutes}
+                      and r.GENERATED_AT = to_timestamp_ntz('{latest_run_ts_str}')
+                    order by r.SCORE desc nulls last, r.TS desc
+                    limit 50
+                    """
+                )
+            )
+
+            st.markdown("**Latest run recommendations (top 50 by score)**")
+            if latest_recs_df is None or latest_recs_df.empty:
+                st.info("No recommendations available for the latest run.")
+            else:
+                st.dataframe(latest_recs_df, use_container_width=True)
+
+    with last_day_tab:
+        st.caption("Last 24 hours of recommendation activity.")
+
+        recent_counts_df = to_pandas(
+            run_sql(
+                f"""
+                select
+                    coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
+                    count(*) as RECOMMENDATION_COUNT
+                from MIP.APP.RECOMMENDATION_LOG r
+                left join MIP.APP.PATTERN_DEFINITION p
+                  on p.PATTERN_ID = r.PATTERN_ID
+                where r.MARKET_TYPE = '{selected_market_type}'
+                  and r.INTERVAL_MINUTES = {selected_interval_minutes}
+                  and r.GENERATED_AT >= dateadd('day', -1, current_timestamp())
+                group by PATTERN_NAME
+                order by RECOMMENDATION_COUNT desc, PATTERN_NAME
+                """
+            )
+        )
+
+        if recent_counts_df is None or recent_counts_df.empty:
+            st.info("No recommendations in the last 24 hours.")
+        else:
+            st.markdown("**Counts by pattern (last 24 hours)**")
+            st.dataframe(recent_counts_df, use_container_width=True)
+
+        top_symbols_df = to_pandas(
+            run_sql(
+                f"""
+                select
+                    r.SYMBOL,
+                    count(*) as SIGNAL_COUNT
+                from MIP.APP.RECOMMENDATION_LOG r
+                where r.MARKET_TYPE = '{selected_market_type}'
+                  and r.INTERVAL_MINUTES = {selected_interval_minutes}
+                  and r.GENERATED_AT >= dateadd('day', -1, current_timestamp())
+                group by r.SYMBOL
+                order by SIGNAL_COUNT desc, r.SYMBOL
+                limit 20
+                """
+            )
+        )
+
+        st.markdown("**Top symbols (last 24 hours)**")
+        if top_symbols_df is None or top_symbols_df.empty:
+            st.info("No symbol activity in the last 24 hours.")
+        else:
+            st.dataframe(top_symbols_df, use_container_width=True)
+
+    st.markdown("### Outcome KPIs by pattern (last 30 days)")
+
+    outcome_kpi_df = to_pandas(
+        run_sql(
+            f"""
+            select
+                coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
+                count(*) as OUTCOME_COUNT,
+                sum(case when o.OUTCOME_LABEL = 'HIT' then 1 else 0 end) as HIT_COUNT,
+                avg(case when o.OUTCOME_LABEL = 'HIT' then 1 else 0 end) as HIT_RATE,
+                avg(o.RETURN_REALIZED) as AVG_RETURN,
+                sum(o.RETURN_REALIZED) as CUM_RETURN
+            from MIP.APP.OUTCOME_EVALUATION o
+            join MIP.APP.RECOMMENDATION_LOG r
+              on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+            left join MIP.APP.PATTERN_DEFINITION p
+              on p.PATTERN_ID = r.PATTERN_ID
+            where r.MARKET_TYPE = '{selected_market_type}'
+              and r.INTERVAL_MINUTES = {selected_interval_minutes}
+              and o.EVALUATED_AT >= dateadd('day', -30, current_timestamp())
+            group by PATTERN_NAME
+            order by CUM_RETURN desc nulls last, OUTCOME_COUNT desc
+            """
+        )
+    )
+
+    if outcome_kpi_df is None or outcome_kpi_df.empty:
+        st.info("No outcome KPIs available for the last 30 days.")
+    else:
+        st.dataframe(outcome_kpi_df, use_container_width=True)
+
+    st.markdown("### Data health checks")
+    if st.button("Refresh health checks", key="refresh_morning_checks"):
+        st.session_state["morning_health_checks"] = run_post_ingest_health_checks()
+
+    if "morning_health_checks" not in st.session_state:
+        st.session_state["morning_health_checks"] = run_post_ingest_health_checks()
+
+    checks = st.session_state.get("morning_health_checks")
+    if checks:
+        errors = checks.get("errors", [])
+        counts_df = checks.get("counts")
+        dup_bars_summary = checks.get("dup_bars_summary")
+        dup_returns_summary = checks.get("dup_returns_summary")
+
+        dup_bars_keys = (
+            int(dup_bars_summary["DUP_KEYS"].iloc[0])
+            if dup_bars_summary is not None and not dup_bars_summary.empty
+            else 0
+        )
+        dup_returns_keys = (
+            int(dup_returns_summary["DUP_KEYS"].iloc[0])
+            if dup_returns_summary is not None and not dup_returns_summary.empty
+            else 0
+        )
+
+        total_rows = (
+            int(counts_df["TOTAL_ROWS"].iloc[0])
+            if counts_df is not None and not counts_df.empty
+            else 0
+        )
+
+        if errors:
+            status = "FAIL"
+        elif dup_bars_keys > 0 or dup_returns_keys > 0:
+            status = "FAIL"
+        elif total_rows == 0:
+            status = "WARN"
+        else:
+            status = "OK"
+
+        if status == "OK":
+            st.success("Health check status: OK")
+        elif status == "WARN":
+            st.warning("Health check status: WARN")
+        else:
+            st.error("Health check status: FAIL")
+
+        if errors:
+            st.write("Errors encountered:")
+            for err in errors:
+                st.write(f"- {err}")
+
+        if counts_df is not None and not counts_df.empty:
+            last_ingest_ts = counts_df["LAST_INGESTED_AT"].iloc[0]
+            last_ingest_rows = counts_df["LAST_INGEST_ROWS"].iloc[0]
+            st.caption(
+                f"Total rows in MARKET_BARS: {total_rows:,}. "
+                f"Rows ingested/merged in latest batch: {last_ingest_rows:,}. "
+                f"Latest INGESTED_AT: {last_ingest_ts}."
+            )
+
+        if dup_bars_summary is not None and not dup_bars_summary.empty:
+            st.caption(
+                "MARKET_BARS duplicates by (MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS): "
+                f"{dup_bars_keys} duplicate keys."
+            )
+
+        if dup_returns_summary is not None and not dup_returns_summary.empty:
+            st.caption(
+                "MARKET_RETURNS duplicates by (MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS): "
+                f"{dup_returns_keys} duplicate keys."
+            )
+
+        recent_ts_df = checks.get("recent_ts")
+        if recent_ts_df is not None and not recent_ts_df.empty:
+            st.markdown("**Most recent bar timestamp per market/interval**")
+            st.dataframe(recent_ts_df, use_container_width=True)
 
 
 def render_patterns_learning():
@@ -1453,6 +1713,8 @@ def render_outcome_evaluation():
 # --- Router ---
 if page == "Market Overview":
     render_market_overview()
+elif page == "Morning Brief":
+    render_morning_brief()
 elif page == "Patterns & Learning":
     render_patterns_learning()
 elif page == "Signals & Recommendations":

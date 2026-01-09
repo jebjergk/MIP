@@ -40,6 +40,8 @@ declare
     v_before                  number;
     v_after                   number;
     v_delta                   number;
+    v_effective_lookback_days number;
+    v_effective_min_zscore    float;
 begin
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
     delete from MIP.APP.RECOMMENDATION_LOG
@@ -127,6 +129,9 @@ begin
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT = 0 or LAST_TRADE_COUNT >= ?)
         ';
 
+    v_effective_lookback_days := coalesce(P_LOOKBACK_DAYS, v_default_lookback_days);
+    v_effective_min_zscore := coalesce(P_MIN_ZSCORE, v_vol_adj_threshold);
+
     v_rs := (
         execute immediate :v_sql using (
             -- For PATTERN_MARKET_TYPE
@@ -138,11 +143,11 @@ begin
             -- SLOW_WINDOW
             v_default_slow_window,
             -- LOOKBACK_DAYS
-            coalesce(P_LOOKBACK_DAYS, v_default_lookback_days),
+            v_effective_lookback_days,
             -- MIN_RETURN
             P_MIN_RETURN, v_default_min_return,
             -- MIN_ZSCORE
-            coalesce(P_MIN_ZSCORE, v_vol_adj_threshold), v_default_min_zscore,
+            v_effective_min_zscore, v_default_min_zscore,
     
             -- WHERE clause: market type filter
             P_MARKET_TYPE, P_MARKET_TYPE, v_default_market_type,

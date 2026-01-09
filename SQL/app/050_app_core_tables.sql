@@ -193,7 +193,7 @@ using (
 -----------------------------
 -- 2. RECOMMENDATION_LOG
 -----------------------------
-create table if not exists MIP.APP.RECOMMENDATION_LOG (
+create or replace table MIP.APP.RECOMMENDATION_LOG (
     RECOMMENDATION_ID number        autoincrement,
     PATTERN_ID        number        not null,
     SYMBOL            string        not null,
@@ -201,7 +201,7 @@ create table if not exists MIP.APP.RECOMMENDATION_LOG (
     INTERVAL_MINUTES  number        not null,
     TS                timestamp_ntz not null,  -- bar timestamp from MART
     GENERATED_AT      timestamp_ntz default current_timestamp(),
-    SCORE             number,                 -- e.g. return, z-score, etc.
+    SCORE             number(38,10),                 -- e.g. return, z-score, etc.
     DETAILS           variant,                -- JSON with extra info
     constraint PK_RECOMMENDATION_LOG primary key (RECOMMENDATION_ID)
     -- We can add a foreign key later if desired:

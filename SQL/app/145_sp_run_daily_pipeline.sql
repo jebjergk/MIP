@@ -18,7 +18,20 @@ declare
     v_msg_signals      string;
     v_msg_eval         string;
     v_return_rows      number := 0;
+    v_run_id           string := uuid_string();
 begin
+    execute immediate 'alter session set query_tag = ''' || v_run_id || '''';
+    call MIP.APP.SP_LOG_EVENT(
+        'PIPELINE',
+        'SP_RUN_DAILY_PIPELINE',
+        'START',
+        null,
+        object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
+        null,
+        v_run_id,
+        null
+    );
+
     call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS();
     v_msg_ingest := 'Ingestion completed for enabled universe.';
 
@@ -113,6 +126,25 @@ begin
     call MIP.APP.SP_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_to_ts);
     v_msg_eval := 'Recommendation outcomes evaluated for last 90 days.';
 
+    call MIP.APP.SP_LOG_EVENT(
+        'PIPELINE',
+        'SP_RUN_DAILY_PIPELINE',
+        'SUCCESS',
+        v_return_rows,
+        object_construct(
+            'from_ts', v_from_ts,
+            'to_ts', v_to_ts,
+            'market_returns_rows', v_return_rows,
+            'msg_ingest', v_msg_ingest,
+            'msg_returns', v_msg_returns,
+            'msg_signals', v_msg_signals,
+            'msg_evaluate', v_msg_eval
+        ),
+        null,
+        v_run_id,
+        null
+    );
+
     return object_construct(
         'from_ts', v_from_ts,
         'to_ts', v_to_ts,
@@ -122,5 +154,18 @@ begin
         'msg_signals', v_msg_signals,
         'msg_evaluate', v_msg_eval
     );
+exception
+    when other then
+        call MIP.APP.SP_LOG_EVENT(
+            'PIPELINE',
+            'SP_RUN_DAILY_PIPELINE',
+            'FAIL',
+            null,
+            object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
+            sqlerrm,
+            v_run_id,
+            null
+        );
+        raise;
 end;
 $$;

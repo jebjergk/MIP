@@ -158,6 +158,65 @@ def fetch_task_history(task_name: str, limit: int = 20):
     return to_pandas(run_sql(query))
 
 
+def fetch_audit_log_options(column_name: str):
+    query = f"""
+        select distinct {column_name}
+        from MIP.APP.MIP_AUDIT_LOG
+        where {column_name} is not null
+        order by {column_name}
+    """
+    return to_pandas(run_sql(query))
+
+
+def fetch_audit_log(
+    date_start: date,
+    date_end: date,
+    statuses: list[str] | None = None,
+    event_types: list[str] | None = None,
+    run_id: str | None = None,
+    limit: int = 200,
+):
+    filters = []
+    if date_start:
+        filters.append(f"event_ts >= {sql_literal(date_start)}")
+    if date_end:
+        filters.append(
+            f"event_ts < dateadd(day, 1, {sql_literal(date_end)})"
+        )
+    if statuses:
+        status_list = ", ".join(sql_literal(status) for status in statuses)
+        filters.append(f"status in ({status_list})")
+    if event_types:
+        type_list = ", ".join(sql_literal(event_type) for event_type in event_types)
+        filters.append(f"event_type in ({type_list})")
+    if run_id:
+        filters.append(f"run_id = {sql_literal(run_id)}")
+
+    where_clause = f"where {' and '.join(filters)}" if filters else ""
+    query = f"""
+        select
+            event_ts,
+            run_id,
+            parent_run_id,
+            event_type,
+            event_name,
+            status,
+            rows_affected,
+            details,
+            error_message,
+            invoked_by_user,
+            invoked_by_role,
+            invoked_warehouse,
+            query_id,
+            session_id
+        from MIP.APP.MIP_AUDIT_LOG
+        {where_clause}
+        order by event_ts desc
+        limit {limit}
+    """
+    return to_pandas(run_sql(query))
+
+
 def check_task_privilege(task_name: str, privilege: str):
     """Return True/False if SYSTEM$HAS_PRIVILEGE can be checked, else None."""
     query = f"""
@@ -2217,6 +2276,93 @@ def render_admin_ops():
         st.caption("No task history available.")
     else:
         st.dataframe(history_df, use_container_width=True, height=400)
+
+    st.markdown("### Audit Log")
+    audit_filters = st.columns(4)
+    default_end = date.today()
+    default_start = default_end - timedelta(days=7)
+    with audit_filters[0]:
+        audit_start = st.date_input(
+            "Start date", value=default_start, key="audit_start_date"
+        )
+    with audit_filters[1]:
+        audit_end = st.date_input("End date", value=default_end, key="audit_end_date")
+
+    status_options_df = fetch_audit_log_options("status")
+    status_options = (
+        status_options_df["STATUS"].dropna().tolist()
+        if status_options_df is not None and not status_options_df.empty
+        else []
+    )
+    with audit_filters[2]:
+        audit_statuses = st.multiselect(
+            "Status",
+            options=status_options,
+            default=status_options if status_options else None,
+            key="audit_statuses",
+        )
+
+    event_type_options_df = fetch_audit_log_options("event_type")
+    event_type_options = (
+        event_type_options_df["EVENT_TYPE"].dropna().tolist()
+        if event_type_options_df is not None and not event_type_options_df.empty
+        else []
+    )
+    with audit_filters[3]:
+        audit_event_types = st.multiselect(
+            "Event type",
+            options=event_type_options,
+            default=event_type_options if event_type_options else None,
+            key="audit_event_types",
+        )
+
+    audit_run_id = st.text_input(
+        "Run ID (optional)",
+        value="",
+        help="Filter audit events by a specific run_id.",
+        key="audit_run_id",
+    )
+
+    audit_df = fetch_audit_log(
+        audit_start,
+        audit_end,
+        statuses=audit_statuses or None,
+        event_types=audit_event_types or None,
+        run_id=audit_run_id.strip() or None,
+        limit=200,
+    )
+
+    if audit_df is None or audit_df.empty:
+        st.caption("No audit log entries for the selected filters.")
+        return
+
+    summary_cols = [
+        "EVENT_TS",
+        "EVENT_TYPE",
+        "EVENT_NAME",
+        "STATUS",
+        "ROWS_AFFECTED",
+        "RUN_ID",
+        "ERROR_MESSAGE",
+    ]
+    summary_cols = [col for col in summary_cols if col in audit_df.columns]
+    st.dataframe(audit_df[summary_cols], use_container_width=True, height=320)
+
+    for _, row in audit_df.iterrows():
+        title = (
+            f"{row.get('EVENT_TS')} • {row.get('EVENT_TYPE')} • "
+            f"{row.get('EVENT_NAME')} • {row.get('STATUS')}"
+        )
+        with st.expander(title):
+            st.write(f"Run ID: {row.get('RUN_ID')}")
+            if row.get("PARENT_RUN_ID"):
+                st.write(f"Parent Run ID: {row.get('PARENT_RUN_ID')}")
+            details = row.get("DETAILS")
+            if details:
+                st.json(details)
+            error_message = row.get("ERROR_MESSAGE")
+            if error_message:
+                st.error(error_message)
 
 
 # --- Router ---

@@ -7,7 +7,7 @@ use database MIP;
 create or replace procedure MIP.APP.SP_RUN_DAILY_PIPELINE()
 returns variant
 language sql
-execute as caller
+execute as owner
 as
 $$
 declare

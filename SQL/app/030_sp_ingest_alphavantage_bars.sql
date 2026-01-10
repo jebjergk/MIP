@@ -28,6 +28,7 @@ external_access_integrations = (MIP_ALPHA_EXTERNAL_ACCESS)
 handler = 'run'
 as
 $$
+import json
 import requests
 import time
 from datetime import datetime
@@ -97,6 +98,46 @@ def _safe_float(v):
         return float(v)
     except:
         return None
+
+
+def _sql_literal(value) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, (int, float)):
+        return str(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _variant_literal(value) -> str:
+    if value is None:
+        return "null"
+    return f"parse_json({_sql_literal(json.dumps(value))})"
+
+
+def _log_event(
+    session: Session,
+    event_type: str,
+    event_name: str,
+    status: str,
+    rows_affected: int | None,
+    details: Dict | None,
+    error_message: str | None,
+    run_id: str,
+) -> None:
+    sql = f"""
+        call MIP.APP.SP_LOG_EVENT(
+            {_sql_literal(event_type)},
+            {_sql_literal(event_name)},
+            {_sql_literal(status)},
+            {rows_affected if rows_affected is not None else 'null'},
+            {_variant_literal(details)},
+            {_sql_literal(error_message)},
+            {_sql_literal(run_id)},
+            null
+        )
+    """
+    session.sql(sql).collect()
 
 
 def _extract_api_message(json_data: Dict) -> str | None:
@@ -235,172 +276,276 @@ def _load_ingest_universe(session: Session) -> Tuple[List[Dict], int, bool]:
     return rows[:25], total_rows, total_rows > 25
 
 def run(session: Session) -> str:
-    cfg = _get_config_map(session)
-
-    api_key = cfg.get("ALPHAVANTAGE_API_KEY")
-    if not api_key or api_key == "<PLACEHOLDER>":
-        return "ALPHAVANTAGE_API_KEY missing"
-
-    ingest_rows, enabled_total, truncated = _load_ingest_universe(session)
-    if not ingest_rows:
-        return "No enabled rows found in MIP.APP.INGEST_UNIVERSE."
-
-    all_rows: List[Dict] = []
-
-    request_urls: list[str] = []
-    diagnostics: list[str] = []
-
-    for row in ingest_rows:
-        market_type = str(row["MARKET_TYPE"]).upper()
-        symbol = str(row["SYMBOL"]).upper()
-        interval_minutes = int(row["INTERVAL_MINUTES"])
-
-        if _interval_to_alpha(interval_minutes) is None and interval_minutes != 1440:
-            diagnostics.append(
-                f"{symbol}: unsupported interval_minutes {interval_minutes} (skipping)"
-            )
-            continue
-
-        if market_type in ("STOCK", "ETF"):
-            data, final_url, expected_key = _fetch_stock_bars(
-                api_key, symbol, interval_minutes
-            )
-            request_urls.append(
-                f"{market_type.lower()} {symbol} {interval_minutes}m: {final_url}"
-            )
-            _require_time_series_key(data, expected_key, f"{market_type} {symbol}")
-            api_msg = _extract_api_message(data)
-            if api_msg:
-                diagnostics.append(f"{symbol}: {api_msg}")
-            all_rows.extend(
-                _extract_stock_rows(data, symbol, interval_minutes, market_type)
-            )
-        elif market_type == "FX":
-            parsed = _normalize_fx_pair(symbol)
-            if not parsed:
-                diagnostics.append(f"{symbol}: unable to parse FX pair (skipping)")
-                continue
-            from_sym, to_sym = parsed
-            normalized_pair = f"{from_sym}/{to_sym}"
-            data, final_url, expected_key = _fetch_fx_bars(
-                api_key, from_sym, to_sym, interval_minutes
-            )
-            request_urls.append(
-                f"fx {normalized_pair} {interval_minutes}m: {final_url}"
-            )
-            api_msg = _extract_api_message(data)
-            if api_msg:
-                diagnostics.append(f"{normalized_pair}: {api_msg}")
-            _require_time_series_key(data, expected_key, f"FX pair {normalized_pair}")
-            all_rows.extend(_extract_fx_rows_daily(data, normalized_pair, interval_minutes))
-        else:
-            diagnostics.append(f"{symbol}: unknown market_type {market_type} (skipping)")
-            continue
-
-        time.sleep(2)
-
-    if not all_rows:
-        return "Ingestion complete: 0 rows."
-
-    df = session.create_dataframe(all_rows)
-    stage_table = "MIP.APP.STG_MARKET_BARS"
-    df.write.mode("overwrite").save_as_table(stage_table, table_type="transient")
-
-    merge_sql = f"""
-        merge into MIP.MART.MARKET_BARS t
-        using {stage_table} s
-           on t.MARKET_TYPE = s.MARKET_TYPE
-          and t.SYMBOL = s.SYMBOL
-          and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
-          and t.TS = s.TS
-        when matched and (
-            t.SOURCE IS DISTINCT FROM s.SOURCE
-            or t.OPEN IS DISTINCT FROM s.OPEN
-            or t.HIGH IS DISTINCT FROM s.HIGH
-            or t.LOW IS DISTINCT FROM s.LOW
-            or t.CLOSE IS DISTINCT FROM s.CLOSE
-            or t.VOLUME IS DISTINCT FROM s.VOLUME
-            or t.INGESTED_AT IS DISTINCT FROM s.INGESTED_AT
-        ) then update set
-            t.SOURCE = s.SOURCE,
-            t.OPEN = s.OPEN,
-            t.HIGH = s.HIGH,
-            t.LOW = s.LOW,
-            t.CLOSE = s.CLOSE,
-            t.VOLUME = s.VOLUME,
-            t.INGESTED_AT = s.INGESTED_AT
-        when not matched then insert (
-            TS,
-            SYMBOL,
-            SOURCE,
-            MARKET_TYPE,
-            INTERVAL_MINUTES,
-            OPEN,
-            HIGH,
-            LOW,
-            CLOSE,
-            VOLUME,
-            INGESTED_AT
-        ) values (
-            s.TS,
-            s.SYMBOL,
-            s.SOURCE,
-            s.MARKET_TYPE,
-            s.INTERVAL_MINUTES,
-            s.OPEN,
-            s.HIGH,
-            s.LOW,
-            s.CLOSE,
-            s.VOLUME,
-            s.INGESTED_AT
-        )
-    """
-    session.sql(merge_sql).collect()
-    session.sql(f"drop table if exists {stage_table}").collect()
-
-    duplicate_rows = session.sql(
-        """
-        select
-            MARKET_TYPE,
-            SYMBOL,
-            INTERVAL_MINUTES,
-            TS,
-            count(*) as CNT
-        from MIP.MART.MARKET_BARS
-        group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
-        having count(*) > 1
-        order by CNT desc
-        limit 5
-        """
+    run_id_row = session.sql(
+        "select coalesce(nullif(current_query_tag(), ''), uuid_string()) as RUN_ID"
     ).collect()
+    run_id = run_id_row[0]["RUN_ID"] if run_id_row else None
 
-    if duplicate_rows:
-        sample_keys = "; ".join(
-            f"{row['MARKET_TYPE']} {row['SYMBOL']} {row['INTERVAL_MINUTES']} {row['TS']} (cnt={row['CNT']})"
-            for row in duplicate_rows
+    _log_event(
+        session,
+        "INGESTION",
+        "SP_INGEST_ALPHAVANTAGE_BARS",
+        "START",
+        None,
+        None,
+        None,
+        run_id,
+    )
+
+    try:
+        cfg = _get_config_map(session)
+
+        api_key = cfg.get("ALPHAVANTAGE_API_KEY")
+        if not api_key or api_key == "<PLACEHOLDER>":
+            message = "ALPHAVANTAGE_API_KEY missing"
+            _log_event(
+                session,
+                "INGESTION",
+                "SP_INGEST_ALPHAVANTAGE_BARS",
+                "FAIL",
+                0,
+                {"reason": "missing_api_key"},
+                message,
+                run_id,
+            )
+            return message
+
+        ingest_rows, enabled_total, truncated = _load_ingest_universe(session)
+        if not ingest_rows:
+            message = "No enabled rows found in MIP.APP.INGEST_UNIVERSE."
+            _log_event(
+                session,
+                "INGESTION",
+                "SP_INGEST_ALPHAVANTAGE_BARS",
+                "SUCCESS",
+                0,
+                {"symbols_processed": 0, "symbols_enabled": enabled_total},
+                None,
+                run_id,
+            )
+            return message
+
+        all_rows: List[Dict] = []
+
+        request_urls: list[str] = []
+        diagnostics: list[str] = []
+
+        for row in ingest_rows:
+            market_type = str(row["MARKET_TYPE"]).upper()
+            symbol = str(row["SYMBOL"]).upper()
+            interval_minutes = int(row["INTERVAL_MINUTES"])
+
+            if _interval_to_alpha(interval_minutes) is None and interval_minutes != 1440:
+                diagnostics.append(
+                    f"{symbol}: unsupported interval_minutes {interval_minutes} (skipping)"
+                )
+                continue
+
+            if market_type in ("STOCK", "ETF"):
+                data, final_url, expected_key = _fetch_stock_bars(
+                    api_key, symbol, interval_minutes
+                )
+                request_urls.append(
+                    f"{market_type.lower()} {symbol} {interval_minutes}m: {final_url}"
+                )
+                _require_time_series_key(data, expected_key, f"{market_type} {symbol}")
+                api_msg = _extract_api_message(data)
+                if api_msg:
+                    diagnostics.append(f"{symbol}: {api_msg}")
+                all_rows.extend(
+                    _extract_stock_rows(data, symbol, interval_minutes, market_type)
+                )
+            elif market_type == "FX":
+                parsed = _normalize_fx_pair(symbol)
+                if not parsed:
+                    diagnostics.append(f"{symbol}: unable to parse FX pair (skipping)")
+                    continue
+                from_sym, to_sym = parsed
+                normalized_pair = f"{from_sym}/{to_sym}"
+                data, final_url, expected_key = _fetch_fx_bars(
+                    api_key, from_sym, to_sym, interval_minutes
+                )
+                request_urls.append(
+                    f"fx {normalized_pair} {interval_minutes}m: {final_url}"
+                )
+                api_msg = _extract_api_message(data)
+                if api_msg:
+                    diagnostics.append(f"{normalized_pair}: {api_msg}")
+                _require_time_series_key(
+                    data, expected_key, f"FX pair {normalized_pair}"
+                )
+                all_rows.extend(
+                    _extract_fx_rows_daily(data, normalized_pair, interval_minutes)
+                )
+            else:
+                diagnostics.append(
+                    f"{symbol}: unknown market_type {market_type} (skipping)"
+                )
+                continue
+
+            time.sleep(2)
+
+        if not all_rows:
+            message = "Ingestion complete: 0 rows."
+            _log_event(
+                session,
+                "INGESTION",
+                "SP_INGEST_ALPHAVANTAGE_BARS",
+                "SUCCESS",
+                0,
+                {
+                    "symbols_processed": len(ingest_rows),
+                    "symbols_enabled": enabled_total,
+                    "truncated": truncated,
+                },
+                None,
+                run_id,
+            )
+            return message
+
+        df = session.create_dataframe(all_rows)
+        stage_table = "MIP.APP.STG_MARKET_BARS"
+        df.write.mode("overwrite").save_as_table(stage_table, table_type="transient")
+
+        merge_sql = f"""
+            merge into MIP.MART.MARKET_BARS t
+            using {stage_table} s
+               on t.MARKET_TYPE = s.MARKET_TYPE
+              and t.SYMBOL = s.SYMBOL
+              and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
+              and t.TS = s.TS
+            when matched and (
+                t.SOURCE IS DISTINCT FROM s.SOURCE
+                or t.OPEN IS DISTINCT FROM s.OPEN
+                or t.HIGH IS DISTINCT FROM s.HIGH
+                or t.LOW IS DISTINCT FROM s.LOW
+                or t.CLOSE IS DISTINCT FROM s.CLOSE
+                or t.VOLUME IS DISTINCT FROM s.VOLUME
+                or t.INGESTED_AT IS DISTINCT FROM s.INGESTED_AT
+            ) then update set
+                t.SOURCE = s.SOURCE,
+                t.OPEN = s.OPEN,
+                t.HIGH = s.HIGH,
+                t.LOW = s.LOW,
+                t.CLOSE = s.CLOSE,
+                t.VOLUME = s.VOLUME,
+                t.INGESTED_AT = s.INGESTED_AT
+            when not matched then insert (
+                TS,
+                SYMBOL,
+                SOURCE,
+                MARKET_TYPE,
+                INTERVAL_MINUTES,
+                OPEN,
+                HIGH,
+                LOW,
+                CLOSE,
+                VOLUME,
+                INGESTED_AT
+            ) values (
+                s.TS,
+                s.SYMBOL,
+                s.SOURCE,
+                s.MARKET_TYPE,
+                s.INTERVAL_MINUTES,
+                s.OPEN,
+                s.HIGH,
+                s.LOW,
+                s.CLOSE,
+                s.VOLUME,
+                s.INGESTED_AT
+            )
+        """
+        session.sql(merge_sql).collect()
+        session.sql(f"drop table if exists {stage_table}").collect()
+
+        duplicate_rows = session.sql(
+            """
+            select
+                MARKET_TYPE,
+                SYMBOL,
+                INTERVAL_MINUTES,
+                TS,
+                count(*) as CNT
+            from MIP.MART.MARKET_BARS
+            group by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+            having count(*) > 1
+            order by CNT desc
+            limit 5
+            """
+        ).collect()
+
+        if duplicate_rows:
+            sample_keys = "; ".join(
+                f"{row['MARKET_TYPE']} {row['SYMBOL']} {row['INTERVAL_MINUTES']} {row['TS']} (cnt={row['CNT']})"
+                for row in duplicate_rows
+            )
+            message = (
+                "Ingestion failed guardrail: duplicate keys found in MIP.MART.MARKET_BARS. "
+                f"Sample keys: {sample_keys}"
+            )
+            _log_event(
+                session,
+                "INGESTION",
+                "SP_INGEST_ALPHAVANTAGE_BARS",
+                "FAIL",
+                len(all_rows),
+                {
+                    "symbols_processed": len(ingest_rows),
+                    "symbols_enabled": enabled_total,
+                    "truncated": truncated,
+                },
+                message,
+                run_id,
+            )
+            return message
+
+        stock_count = sum(
+            1 for row in all_rows if row.get("MARKET_TYPE") in ("STOCK", "ETF")
         )
+        fx_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "FX")
+
+        url_info = " | ".join(request_urls) if request_urls else "no requests made"
+        diag_info = " | ".join(diagnostics) if diagnostics else "no API warnings"
+
+        prefix = ""
+        if truncated:
+            prefix = (
+                f"Warning: {enabled_total} enabled rows; ingesting top 25 by priority. "
+            )
+
+        _log_event(
+            session,
+            "INGESTION",
+            "SP_INGEST_ALPHAVANTAGE_BARS",
+            "SUCCESS",
+            len(all_rows),
+            {
+                "symbols_processed": len(ingest_rows),
+                "symbols_enabled": enabled_total,
+                "truncated": truncated,
+                "stock_rows": stock_count,
+                "fx_rows": fx_count,
+            },
+            None,
+            run_id,
+        )
+
         return (
-            "Ingestion failed guardrail: duplicate keys found in MIP.MART.MARKET_BARS. "
-            f"Sample keys: {sample_keys}"
+            f"{prefix}Ingestion complete: "
+            f"merged {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
+            f"URLs: {url_info}. Diagnostics: {diag_info}"
         )
-
-    stock_count = sum(
-        1 for row in all_rows if row.get("MARKET_TYPE") in ("STOCK", "ETF")
-    )
-    fx_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "FX")
-
-    url_info = " | ".join(request_urls) if request_urls else "no requests made"
-    diag_info = " | ".join(diagnostics) if diagnostics else "no API warnings"
-
-    prefix = ""
-    if truncated:
-        prefix = (
-            f"Warning: {enabled_total} enabled rows; ingesting top 25 by priority. "
+    except Exception as exc:
+        _log_event(
+            session,
+            "INGESTION",
+            "SP_INGEST_ALPHAVANTAGE_BARS",
+            "FAIL",
+            None,
+            None,
+            str(exc),
+            run_id,
         )
-
-    return (
-        f"{prefix}Ingestion complete: "
-        f"merged {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
-        f"URLs: {url_info}. Diagnostics: {diag_info}"
-    )
+        raise
 $$;

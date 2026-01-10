@@ -42,7 +42,26 @@ declare
     v_delta                   number;
     v_effective_lookback_days number;
     v_effective_min_zscore    float;
+    v_patterns_processed      number := 0;
+    v_run_id                  string := coalesce(nullif(current_query_tag(), ''), uuid_string());
 begin
+    call MIP.APP.SP_LOG_EVENT(
+        'RECOMMENDATIONS',
+        'SP_GENERATE_MOMENTUM_RECS',
+        'START',
+        null,
+        object_construct(
+            'market_type', P_MARKET_TYPE,
+            'interval_minutes', P_INTERVAL_MINUTES,
+            'min_return', P_MIN_RETURN,
+            'lookback_days', P_LOOKBACK_DAYS,
+            'min_zscore', P_MIN_ZSCORE
+        ),
+        null,
+        v_run_id,
+        null
+    );
+
     -- Purge any recommendations tied to inactive patterns so they disappear once deactivated
     delete from MIP.APP.RECOMMENDATION_LOG
      where PATTERN_ID in (
@@ -161,6 +180,7 @@ begin
     
     for pattern_row in v_rs
     do
+        v_patterns_processed := v_patterns_processed + 1;
         v_pattern_market_type   := pattern_row.PATTERN_MARKET_TYPE;
         v_pattern_interval      := pattern_row.PATTERN_INTERVAL_MINUTES;
         v_pattern_fast_window   := pattern_row.FAST_WINDOW;
@@ -438,7 +458,40 @@ begin
         v_status_msgs := '';
     end if;
 
+    call MIP.APP.SP_LOG_EVENT(
+        'RECOMMENDATIONS',
+        'SP_GENERATE_MOMENTUM_RECS',
+        'SUCCESS',
+        v_inserted,
+        object_construct(
+            'patterns_processed', v_patterns_processed,
+            'market_type', P_MARKET_TYPE,
+            'interval_minutes', P_INTERVAL_MINUTES,
+            'status_messages', v_status_msgs
+        ),
+        null,
+        v_run_id,
+        null
+    );
+
     return 'Inserted ' || v_inserted || ' momentum recommendations.' ||
            case when v_status_msgs != '' then ' Warnings: ' || v_status_msgs else '' end;
+exception
+    when other then
+        call MIP.APP.SP_LOG_EVENT(
+            'RECOMMENDATIONS',
+            'SP_GENERATE_MOMENTUM_RECS',
+            'FAIL',
+            v_inserted,
+            object_construct(
+                'patterns_processed', v_patterns_processed,
+                'market_type', P_MARKET_TYPE,
+                'interval_minutes', P_INTERVAL_MINUTES
+            ),
+            sqlerrm,
+            v_run_id,
+            null
+        );
+        raise;
 end;
 $$;

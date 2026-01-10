@@ -53,9 +53,9 @@ begin
         object_construct(
             'market_type', :P_MARKET_TYPE,
             'interval_minutes', :P_INTERVAL_MINUTES,
-            'min_return', P_MIN_RETURN,
-            'lookback_days', P_LOOKBACK_DAYS,
-            'min_zscore', P_MIN_ZSCORE
+            'min_return', :P_MIN_RETURN,
+            'lookback_days', :P_LOOKBACK_DAYS,
+            'min_zscore', :P_MIN_ZSCORE
         ),
         null,
         :v_run_id,

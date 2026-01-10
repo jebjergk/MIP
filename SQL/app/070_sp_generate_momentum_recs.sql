@@ -462,7 +462,7 @@ begin
         'RECOMMENDATIONS',
         'SP_GENERATE_MOMENTUM_RECS',
         'SUCCESS',
-        v_inserted,
+        :v_inserted,
         object_construct(
             'patterns_processed', v_patterns_processed,
             'market_type', P_MARKET_TYPE,
@@ -482,7 +482,7 @@ exception
             'RECOMMENDATIONS',
             'SP_GENERATE_MOMENTUM_RECS',
             'FAIL',
-            v_inserted,
+            :v_inserted,
             object_construct(
                 'patterns_processed', v_patterns_processed,
                 'market_type', P_MARKET_TYPE,

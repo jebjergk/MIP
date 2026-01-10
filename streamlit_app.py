@@ -97,6 +97,18 @@ def normalize_optional_value(value):
     return value
 
 
+def warn_low_sample_counts(df: pd.DataFrame, threshold: int = 30) -> None:
+    """Warn when KPI sample counts fall below a threshold."""
+    if df is None or df.empty or "SAMPLE_COUNT" not in df.columns:
+        return
+    low_sample = df[df["SAMPLE_COUNT"].fillna(0) < threshold]
+    if not low_sample.empty:
+        st.warning(
+            f"{len(low_sample)} KPI rows have sample_count < {threshold}. "
+            "Interpret hit rates and returns with caution."
+        )
+
+
 def fetch_ingest_universe():
     query = """
         select
@@ -837,22 +849,24 @@ def render_morning_brief():
         run_sql(
             f"""
             select
-                coalesce(p.NAME, concat('Pattern ', r.PATTERN_ID)) as PATTERN_NAME,
-                count(*) as OUTCOME_COUNT,
-                sum(case when o.OUTCOME_LABEL = 'HIT' then 1 else 0 end) as HIT_COUNT,
-                avg(case when o.OUTCOME_LABEL = 'HIT' then 1 else 0 end) as HIT_RATE,
-                avg(o.RETURN_REALIZED) as AVG_RETURN,
-                sum(o.RETURN_REALIZED) as CUM_RETURN
-            from MIP.APP.OUTCOME_EVALUATION o
-            join MIP.APP.RECOMMENDATION_LOG r
-              on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+                coalesce(p.NAME, concat('Pattern ', k.PATTERN_ID)) as PATTERN_NAME,
+                k.MARKET_TYPE,
+                k.INTERVAL_MINUTES,
+                k.HORIZON_DAYS,
+                k.SAMPLE_COUNT,
+                k.HIT_RATE,
+                k.AVG_FORWARD_RETURN,
+                k.MEDIAN_FORWARD_RETURN,
+                k.MIN_FORWARD_RETURN,
+                k.MAX_FORWARD_RETURN,
+                k.LAST_CALCULATED_AT
+            from MIP.APP.V_PATTERN_KPIS k
             left join MIP.APP.PATTERN_DEFINITION p
-              on p.PATTERN_ID = r.PATTERN_ID
-            where r.MARKET_TYPE = '{selected_market_type}'
-              and r.INTERVAL_MINUTES = {selected_interval_minutes}
-              and o.EVALUATED_AT >= dateadd('day', -30, current_timestamp())
-            group by PATTERN_NAME
-            order by CUM_RETURN desc nulls last, OUTCOME_COUNT desc
+              on p.PATTERN_ID = k.PATTERN_ID
+            where k.MARKET_TYPE = '{selected_market_type}'
+              and k.INTERVAL_MINUTES = {selected_interval_minutes}
+              and k.LAST_CALCULATED_AT >= dateadd('day', -30, current_timestamp())
+            order by k.HORIZON_DAYS, k.SAMPLE_COUNT desc, PATTERN_NAME
             """
         )
     )
@@ -860,6 +874,7 @@ def render_morning_brief():
     if outcome_kpi_df is None or outcome_kpi_df.empty:
         st.info("No outcome KPIs available for the last 30 days.")
     else:
+        warn_low_sample_counts(outcome_kpi_df)
         st.dataframe(outcome_kpi_df, use_container_width=True)
 
     st.markdown("### Data health checks")
@@ -1176,6 +1191,99 @@ def render_patterns_learning():
         st.info("No patterns defined yet. Click the button above to seed MOMENTUM_DEMO.")
     else:
         st.dataframe(df_pd, use_container_width=True)
+
+    st.markdown("### Pattern KPIs (forward returns)")
+
+    kpi_filters_df = to_pandas(
+        run_sql(
+            """
+            select distinct
+                MARKET_TYPE,
+                INTERVAL_MINUTES
+            from MIP.APP.V_PATTERN_KPIS
+            order by MARKET_TYPE, INTERVAL_MINUTES
+            """
+        )
+    )
+
+    if kpi_filters_df is None or kpi_filters_df.empty:
+        st.info("No pattern KPI data available yet.")
+    else:
+        market_options = kpi_filters_df["MARKET_TYPE"].dropna().unique().tolist()
+        selected_kpi_market = st.selectbox(
+            "KPI market type", options=market_options, key="kpi_market_type"
+        )
+
+        interval_options = (
+            kpi_filters_df[kpi_filters_df["MARKET_TYPE"] == selected_kpi_market][
+                "INTERVAL_MINUTES"
+            ]
+            .dropna()
+            .astype(int)
+            .unique()
+            .tolist()
+        )
+        interval_options = sorted(interval_options)
+        selected_kpi_interval = st.selectbox(
+            "KPI interval (minutes)",
+            options=interval_options,
+            key="kpi_interval_minutes",
+        )
+
+        horizon_options_df = to_pandas(
+            run_sql(
+                f"""
+                select distinct HORIZON_DAYS
+                from MIP.APP.V_PATTERN_KPIS
+                where MARKET_TYPE = '{selected_kpi_market}'
+                  and INTERVAL_MINUTES = {selected_kpi_interval}
+                order by HORIZON_DAYS
+                """
+            )
+        )
+        horizon_options = (
+            horizon_options_df["HORIZON_DAYS"].dropna().astype(int).tolist()
+            if horizon_options_df is not None and not horizon_options_df.empty
+            else []
+        )
+        selected_horizons = st.multiselect(
+            "Horizon days",
+            options=horizon_options,
+            default=horizon_options,
+            key="kpi_horizon_days",
+        )
+
+        if selected_horizons:
+            horizon_list = ", ".join(str(int(h)) for h in selected_horizons)
+            kpi_query = f"""
+                select
+                    coalesce(p.NAME, concat('Pattern ', k.PATTERN_ID)) as PATTERN_NAME,
+                    k.HORIZON_DAYS,
+                    k.SAMPLE_COUNT,
+                    k.HIT_RATE,
+                    k.AVG_FORWARD_RETURN,
+                    k.MEDIAN_FORWARD_RETURN,
+                    k.MIN_FORWARD_RETURN,
+                    k.MAX_FORWARD_RETURN,
+                    k.LAST_CALCULATED_AT
+                from MIP.APP.V_PATTERN_KPIS k
+                left join MIP.APP.PATTERN_DEFINITION p
+                  on p.PATTERN_ID = k.PATTERN_ID
+                where k.MARKET_TYPE = '{selected_kpi_market}'
+                  and k.INTERVAL_MINUTES = {selected_kpi_interval}
+                  and k.HORIZON_DAYS in ({horizon_list})
+                order by k.HORIZON_DAYS, k.SAMPLE_COUNT desc, PATTERN_NAME
+            """
+
+            kpi_df = to_pandas(run_sql(kpi_query))
+        else:
+            kpi_df = None
+
+        if kpi_df is None or kpi_df.empty:
+            st.info("No KPI rows found for the selected filters.")
+        else:
+            warn_low_sample_counts(kpi_df)
+            st.dataframe(kpi_df, use_container_width=True)
 
     st.markdown("### Pattern performance (trained metrics)")
 

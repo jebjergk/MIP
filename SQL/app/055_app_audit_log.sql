@@ -49,7 +49,8 @@ begin
         ROWS_AFFECTED,
         DETAILS,
         ERROR_MESSAGE
-    ) values (
+    )
+    select
         current_timestamp(),
         :v_run_id,
         :P_PARENT_RUN_ID,
@@ -57,9 +58,8 @@ begin
         :P_EVENT_NAME,
         :P_STATUS,
         :P_ROWS_AFFECTED,
-        :P_DETAILS,
-        :P_ERROR_MESSAGE
-    );
+        coalesce(try_parse_json(:P_DETAILS), :P_DETAILS),
+        :P_ERROR_MESSAGE;
 
     return v_run_id;
 end;

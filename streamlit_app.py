@@ -1314,6 +1314,42 @@ def render_patterns_learning():
     else:
         st.dataframe(df_pd, use_container_width=True)
 
+    st.markdown("### Pattern training scorecard (last 90 days, 5-day horizon)")
+    st.caption("Only TRUSTED patterns will be used for portfolio simulation.")
+
+    scorecard_query = """
+        select
+            coalesce(p.NAME, concat('Pattern ', s.PATTERN_ID)) as PATTERN_NAME,
+            s.PATTERN_ID,
+            s.MARKET_TYPE,
+            s.INTERVAL_MINUTES,
+            s.SAMPLE_COUNT,
+            s.HIT_RATE,
+            s.AVG_FORWARD_RETURN,
+            s.MEDIAN_FORWARD_RETURN,
+            s.MIN_FORWARD_RETURN,
+            s.MAX_FORWARD_RETURN,
+            s.LAST_SIGNAL_DATE,
+            s.PATTERN_STATUS
+        from MIP.APP.V_PATTERN_SCORECARD s
+        left join MIP.APP.PATTERN_DEFINITION p
+          on p.PATTERN_ID = s.PATTERN_ID
+        order by
+            case s.PATTERN_STATUS
+                when 'TRUSTED' then 1
+                when 'WATCH' then 2
+                else 3
+            end,
+            s.HIT_RATE desc,
+            s.SAMPLE_COUNT desc
+    """
+
+    scorecard_df = to_pandas(run_sql(scorecard_query))
+    if scorecard_df is None or scorecard_df.empty:
+        st.info("No scorecard data available yet.")
+    else:
+        st.dataframe(scorecard_df, use_container_width=True)
+
     st.markdown("### Pattern KPIs (forward returns)")
 
     kpi_filters_df = to_pandas(

@@ -22,43 +22,21 @@ begin
     call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS();
     v_msg_ingest := 'Ingestion completed for enabled universe.';
 
-    execute immediate $$
-        create or replace view MIP.MART.MARKET_RETURNS as
-        with deduped as (
-            select
-                TS,
-                SYMBOL,
-                SOURCE,
-                MARKET_TYPE,
-                INTERVAL_MINUTES,
-                OPEN,
-                HIGH,
-                LOW,
-                CLOSE,
-                VOLUME,
-                INGESTED_AT
-            from (
-                select
-                    TS,
-                    SYMBOL,
-                    SOURCE,
-                    MARKET_TYPE,
-                    INTERVAL_MINUTES,
-                    OPEN,
-                    HIGH,
-                    LOW,
-                    CLOSE,
-                    VOLUME,
-                    INGESTED_AT,
-                    row_number() over (
-                        partition by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
-                        order by INGESTED_AT desc, SOURCE desc
-                    ) as RN
-                from MIP.MART.MARKET_BARS
-            )
-            where RN = 1
-        ),
-        ordered as (
+    create or replace view MIP.MART.MARKET_RETURNS as
+    with deduped as (
+        select
+            TS,
+            SYMBOL,
+            SOURCE,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            OPEN,
+            HIGH,
+            LOW,
+            CLOSE,
+            VOLUME,
+            INGESTED_AT
+        from (
             select
                 TS,
                 SYMBOL,
@@ -71,12 +49,15 @@ begin
                 CLOSE,
                 VOLUME,
                 INGESTED_AT,
-                lag(CLOSE) over (
-                    partition by SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
-                    order by TS
-                ) as PREV_CLOSE
-            from deduped
+                row_number() over (
+                    partition by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
+                    order by INGESTED_AT desc, SOURCE desc
+                ) as RN
+            from MIP.MART.MARKET_BARS
         )
+        where RN = 1
+    ),
+    ordered as (
         select
             TS,
             SYMBOL,
@@ -89,19 +70,36 @@ begin
             CLOSE,
             VOLUME,
             INGESTED_AT,
-            PREV_CLOSE,
-            case 
-                when PREV_CLOSE is not null and PREV_CLOSE <> 0 
-                then (CLOSE - PREV_CLOSE) / PREV_CLOSE
-                else null
-            end as RETURN_SIMPLE,
-            case 
-                when PREV_CLOSE is not null and PREV_CLOSE > 0 and CLOSE > 0
-                then ln(CLOSE / PREV_CLOSE)
-                else null
-            end as RETURN_LOG
-        from ordered
-    $$;
+            lag(CLOSE) over (
+                partition by SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
+                order by TS
+            ) as PREV_CLOSE
+        from deduped
+    )
+    select
+        TS,
+        SYMBOL,
+        SOURCE,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        OPEN,
+        HIGH,
+        LOW,
+        CLOSE,
+        VOLUME,
+        INGESTED_AT,
+        PREV_CLOSE,
+        case 
+            when PREV_CLOSE is not null and PREV_CLOSE <> 0 
+            then (CLOSE - PREV_CLOSE) / PREV_CLOSE
+            else null
+        end as RETURN_SIMPLE,
+        case 
+            when PREV_CLOSE is not null and PREV_CLOSE > 0 and CLOSE > 0
+            then ln(CLOSE / PREV_CLOSE)
+            else null
+        end as RETURN_LOG
+    from ordered;
 
     select count(*)
       into :v_return_rows

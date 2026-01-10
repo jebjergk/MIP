@@ -2152,7 +2152,9 @@ def render_admin_ops():
         task_state = row.get("STATE")
         task_schedule = row.get("SCHEDULE")
     else:
-        st.warning("Task metadata is unavailable. Check that the task exists and you have access.")
+        st.caption(
+            "Task metadata is unavailable. Check that the task exists and you have access."
+        )
 
     col_task, col_state, col_schedule = st.columns(3)
     col_task.metric("Task", DAILY_PIPELINE_TASK)
@@ -2212,7 +2214,7 @@ def render_admin_ops():
     st.markdown("### Recent task runs")
     history_df = fetch_task_history(DAILY_PIPELINE_TASK, limit=20)
     if history_df is None or history_df.empty:
-        st.info("No task history available.")
+        st.caption("No task history available.")
     else:
         st.dataframe(history_df, use_container_width=True, height=400)
 

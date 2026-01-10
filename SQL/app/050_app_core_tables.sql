@@ -212,15 +212,26 @@ create or replace table MIP.APP.RECOMMENDATION_LOG (
 -----------------------------
 -- 3. RECOMMENDATION_OUTCOMES
 -----------------------------
-create table if not exists MIP.APP.RECOMMENDATION_OUTCOMES (
-    RECOMMENDATION_OUTCOME_ID number        autoincrement,
-    RECOMMENDATION_ID         number        not null,
-    HORIZON_DAYS              number        not null,
-    EVALUATED_AT              timestamp_ntz default current_timestamp(),
-    RETURN_FORWARD            number,
-    DETAILS                   variant,
-    constraint PK_RECOMMENDATION_OUTCOMES primary key (RECOMMENDATION_OUTCOME_ID),
-    constraint UQ_RECOMMENDATION_OUTCOMES unique (RECOMMENDATION_ID, HORIZON_DAYS)
+create or replace table MIP.APP.RECOMMENDATION_OUTCOMES (
+    PATTERN_ID       number        not null,
+    SYMBOL           string        not null,
+    MARKET_TYPE      string        not null,
+    INTERVAL_MINUTES number        not null,
+    REC_TS           timestamp_ntz not null,
+    HORIZON_DAYS     number        not null,
+    REC_CLOSE        number,
+    FUTURE_CLOSE     number,
+    FORWARD_RETURN   number,
+    HIT              boolean,
+    CALCULATED_AT    timestamp_ntz default current_timestamp(),
+    constraint PK_RECOMMENDATION_OUTCOMES primary key (
+        PATTERN_ID,
+        SYMBOL,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        REC_TS,
+        HORIZON_DAYS
+    )
 );
 
 -----------------------------

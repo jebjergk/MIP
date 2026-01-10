@@ -1,13 +1,13 @@
 -- 150_task_run_daily_training.sql
--- Purpose: Schedule daily training loop execution
+-- Purpose: Schedule daily pipeline execution
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace task MIP.APP.TASK_RUN_DAILY_TRAINING
+create or replace task MIP.APP.TASK_RUN_DAILY_PIPELINE
     warehouse = MIP_WH_XS
     schedule = 'USING CRON 0 7 * * * Europe/Berlin'
 as
-    call MIP.APP.SP_RUN_DAILY_TRAINING();
+    call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
-alter task MIP.APP.TASK_RUN_DAILY_TRAINING resume;
+alter task MIP.APP.TASK_RUN_DAILY_PIPELINE resume;

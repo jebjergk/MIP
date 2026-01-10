@@ -23,6 +23,7 @@ page = st.sidebar.radio(
         "Market Overview",
         "Patterns & Learning",
         "Signals & Recommendations",
+        "Admin / Ops",
         "Outcome Evaluation",
     ],
 )
@@ -32,6 +33,8 @@ page = st.sidebar.radio(
 
 
 SIGNAL_GENERATOR_SP = "MIP.APP.SP_GENERATE_MOMENTUM_RECS"
+DAILY_PIPELINE_TASK = "MIP.APP.TASK_RUN_DAILY_PIPELINE"
+DAILY_PIPELINE_SP = "MIP.APP.SP_RUN_DAILY_PIPELINE"
 
 
 def run_sql(query: str):
@@ -107,6 +110,66 @@ def warn_low_sample_counts(df: pd.DataFrame, threshold: int = 30) -> None:
             f"{len(low_sample)} KPI rows have sample_count < {threshold}. "
             "Interpret hit rates and returns with caution."
         )
+
+
+def parse_task_parts(task_name: str) -> tuple[str, str, str]:
+    """Return database, schema, and task name from a fully-qualified task string."""
+    parts = task_name.split(".")
+    if len(parts) != 3:
+        return ("", "", task_name)
+    return parts[0], parts[1], parts[2]
+
+
+def fetch_task_metadata(task_name: str):
+    """Fetch task metadata from INFORMATION_SCHEMA.TASKS."""
+    database, schema, task = parse_task_parts(task_name)
+    if not database or not schema:
+        return None
+    query = f"""
+        select
+            name,
+            state,
+            schedule
+        from {database}.information_schema.tasks
+        where name = {sql_literal(task)}
+          and schema_name = {sql_literal(schema)}
+          and database_name = {sql_literal(database)}
+    """
+    return to_pandas(run_sql(query))
+
+
+def fetch_task_history(task_name: str, limit: int = 20):
+    """Fetch recent task history rows for a task."""
+    database, _, _ = parse_task_parts(task_name)
+    if not database:
+        return None
+    query = f"""
+        select
+            start_time,
+            end_time,
+            state,
+            error_message
+        from table({database}.information_schema.task_history(
+            task_name => {sql_literal(task_name)},
+            result_limit => {limit}
+        ))
+        order by start_time desc
+    """
+    return to_pandas(run_sql(query))
+
+
+def check_task_privilege(task_name: str, privilege: str):
+    """Return True/False if SYSTEM$HAS_PRIVILEGE can be checked, else None."""
+    query = f"""
+        select system$has_privilege('TASK', {sql_literal(task_name)}, {sql_literal(privilege)}) as HAS_PRIVILEGE
+    """
+    try:
+        rows = run_sql(query).collect()
+        if not rows:
+            return None
+        return str(rows[0]["HAS_PRIVILEGE"]).lower() in ("true", "1", "yes")
+    except Exception:
+        return None
 
 
 def fetch_ingest_universe():
@@ -2073,7 +2136,85 @@ def render_outcome_evaluation():
                         tooltip=["PATTERN_NAME:N", "TRADE_COUNT:Q", "HIT_RATE:Q"],
                     ).properties(title="Hit rate vs trade count")
 
-                    st.altair_chart(scatter_chart, use_container_width=True)
+                st.altair_chart(scatter_chart, use_container_width=True)
+
+
+def render_admin_ops():
+    st.subheader("Admin / Ops")
+    st.caption("Monitor and control the daily pipeline task.")
+
+    task_metadata = fetch_task_metadata(DAILY_PIPELINE_TASK)
+    task_state = None
+    task_schedule = None
+
+    if task_metadata is not None and not task_metadata.empty:
+        row = task_metadata.iloc[0]
+        task_state = row.get("STATE")
+        task_schedule = row.get("SCHEDULE")
+    else:
+        st.warning("Task metadata is unavailable. Check that the task exists and you have access.")
+
+    col_task, col_state, col_schedule = st.columns(3)
+    col_task.metric("Task", DAILY_PIPELINE_TASK)
+    col_state.metric("State", task_state or "Unknown")
+    col_schedule.metric("Schedule", task_schedule or "Unknown")
+
+    st.markdown("### Manual run")
+    if st.button("Run pipeline now"):
+        with st.spinner("Running SP_RUN_DAILY_PIPELINE..."):
+            try:
+                run_sql(f"call {DAILY_PIPELINE_SP}()").collect()
+                st.success("Pipeline triggered successfully.")
+            except Exception as exc:
+                st.error(f"Failed to run pipeline: {exc}")
+
+    st.markdown("### Task controls")
+    operate_allowed = check_task_privilege(DAILY_PIPELINE_TASK, "OPERATE")
+    ownership_allowed = check_task_privilege(DAILY_PIPELINE_TASK, "OWNERSHIP")
+    can_manage = any(value is True for value in [operate_allowed, ownership_allowed])
+    missing_privs = [
+        priv
+        for priv, allowed in [("OPERATE", operate_allowed), ("OWNERSHIP", ownership_allowed)]
+        if allowed is False
+    ]
+
+    if can_manage:
+        control_cols = st.columns(2)
+        with control_cols[0]:
+            if st.button(
+                "Suspend task",
+                disabled=task_state is not None and str(task_state).upper() == "SUSPENDED",
+            ):
+                try:
+                    run_sql(f"alter task {DAILY_PIPELINE_TASK} suspend").collect()
+                    st.success("Task suspended.")
+                except Exception as exc:
+                    st.error(f"Failed to suspend task: {exc}")
+        with control_cols[1]:
+            if st.button(
+                "Resume task",
+                disabled=task_state is not None and str(task_state).upper() == "STARTED",
+            ):
+                try:
+                    run_sql(f"alter task {DAILY_PIPELINE_TASK} resume").collect()
+                    st.success("Task resumed.")
+                except Exception as exc:
+                    st.error(f"Failed to resume task: {exc}")
+    else:
+        if missing_privs:
+            st.info(
+                "Task controls hidden. Missing privilege(s): "
+                f"{', '.join(sorted(missing_privs))}."
+            )
+        else:
+            st.info("Task controls hidden. Unable to verify task privileges.")
+
+    st.markdown("### Recent task runs")
+    history_df = fetch_task_history(DAILY_PIPELINE_TASK, limit=20)
+    if history_df is None or history_df.empty:
+        st.info("No task history available.")
+    else:
+        st.dataframe(history_df, use_container_width=True, height=400)
 
 
 # --- Router ---
@@ -2087,5 +2228,7 @@ elif page == "Patterns & Learning":
     render_patterns_learning()
 elif page == "Signals & Recommendations":
     render_signals_recommendations()
+elif page == "Admin / Ops":
+    render_admin_ops()
 else:
     render_outcome_evaluation()

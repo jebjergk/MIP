@@ -51,14 +51,14 @@ begin
         'START',
         null,
         object_construct(
-            'market_type', P_MARKET_TYPE,
-            'interval_minutes', P_INTERVAL_MINUTES,
+            'market_type', :P_MARKET_TYPE,
+            'interval_minutes', :P_INTERVAL_MINUTES,
             'min_return', P_MIN_RETURN,
             'lookback_days', P_LOOKBACK_DAYS,
             'min_zscore', P_MIN_ZSCORE
         ),
         null,
-        v_run_id,
+        :v_run_id,
         null
     );
 
@@ -180,7 +180,7 @@ begin
     
     for pattern_row in v_rs
     do
-        v_patterns_processed := v_patterns_processed + 1;
+        v_patterns_processed := :v_patterns_processed + 1;
         v_pattern_market_type   := pattern_row.PATTERN_MARKET_TYPE;
         v_pattern_interval      := pattern_row.PATTERN_INTERVAL_MINUTES;
         v_pattern_fast_window   := pattern_row.FAST_WINDOW;
@@ -464,13 +464,13 @@ begin
         'SUCCESS',
         :v_inserted,
         object_construct(
-            'patterns_processed', v_patterns_processed,
-            'market_type', P_MARKET_TYPE,
-            'interval_minutes', P_INTERVAL_MINUTES,
-            'status_messages', v_status_msgs
+            'patterns_processed', :v_patterns_processed,
+            'market_type', :P_MARKET_TYPE,
+            'interval_minutes', :P_INTERVAL_MINUTES,
+            'status_messages', :v_status_msgs
         ),
         null,
-        v_run_id,
+        :v_run_id,
         null
     );
 
@@ -484,12 +484,12 @@ exception
             'FAIL',
             :v_inserted,
             object_construct(
-                'patterns_processed', v_patterns_processed,
-                'market_type', P_MARKET_TYPE,
-                'interval_minutes', P_INTERVAL_MINUTES
+                'patterns_processed', :v_patterns_processed,
+                'market_type', :P_MARKET_TYPE,
+                'interval_minutes', :P_INTERVAL_MINUTES
             ),
-            sqlerrm,
-            v_run_id,
+            :sqlerrm,
+            :v_run_id,
             null
         );
         raise;

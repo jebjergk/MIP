@@ -18,13 +18,7 @@ create table if not exists MIP.APP.PORTFOLIO_PROFILE (
     DESCRIPTION         string,
     CREATED_AT          timestamp_ntz default current_timestamp(),
     constraint PK_PORTFOLIO_PROFILE primary key (PROFILE_ID),
-    constraint UQ_PORTFOLIO_PROFILE_NAME unique (NAME),
-    constraint CHK_PORTFOLIO_PROFILE_BUST_ACTION
-        check (BUST_ACTION in (
-            'ALLOW_EXITS_ONLY',
-            'LIQUIDATE_NEXT_BAR',
-            'LIQUIDATE_IMMEDIATE'
-        ))
+    constraint UQ_PORTFOLIO_PROFILE_NAME unique (NAME)
 );
 
 alter table MIP.APP.PORTFOLIO_PROFILE
@@ -33,14 +27,6 @@ alter table MIP.APP.PORTFOLIO_PROFILE
 update MIP.APP.PORTFOLIO_PROFILE
    set BUST_ACTION = 'ALLOW_EXITS_ONLY'
  where BUST_ACTION is null;
-
-alter table MIP.APP.PORTFOLIO_PROFILE
-    add constraint if not exists CHK_PORTFOLIO_PROFILE_BUST_ACTION
-        check (BUST_ACTION in (
-            'ALLOW_EXITS_ONLY',
-            'LIQUIDATE_NEXT_BAR',
-            'LIQUIDATE_IMMEDIATE'
-        ));
 
 merge into MIP.APP.PORTFOLIO_PROFILE as target
 using (

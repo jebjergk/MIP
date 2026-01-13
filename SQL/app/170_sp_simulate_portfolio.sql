@@ -9,10 +9,12 @@ create or replace procedure MIP.APP.SP_SIMULATE_PORTFOLIO(
     P_FROM_DATE date,
     P_TO_DATE date,
     P_HOLD_DAYS number default 5,
-    P_MAX_POSITIONS number default 10,
-    P_MAX_POSITION_PCT number default 0.10,
+    P_MAX_POSITIONS number default null,
+    P_MAX_POSITION_PCT number default null,
     P_MIN_ABS_SCORE number default 0.0,
-    P_MARKET_TYPE string default 'STOCK'
+    P_MARKET_TYPE string default 'STOCK',
+    P_LIQUIDATE_ON_BUST boolean default true,
+    P_DRAWDOWN_RECOVERY_PCT number default null
 )
 returns variant
 language sql
@@ -24,6 +26,18 @@ declare
     v_market_type string;
     v_interval_minutes number := 1440;
     v_starting_cash number(18,2);
+    v_profile_id number;
+    v_profile_name string;
+    v_profile_max_positions number;
+    v_profile_max_position_pct number(18,6);
+    v_profile_bust_equity_pct number(18,6);
+    v_profile_drawdown_stop_pct number(18,6);
+    v_effective_max_positions number;
+    v_effective_max_position_pct number(18,6);
+    v_bust_equity_pct number(18,6);
+    v_bust_equity_threshold number(18,2);
+    v_drawdown_stop_pct number(18,6);
+    v_drawdown_recovery_pct number(18,6);
     v_cash number(18,2);
     v_day_index number := 0;
     v_open_positions number := 0;
@@ -42,12 +56,29 @@ declare
     v_opportunity_view_exists boolean := false;
     v_opportunity_source string;
     v_max_position_value number(18,2);
+    v_sim_status string := 'ACTIVE';
+    v_bust_ts timestamp_ntz;
 begin
     v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
 
-    select STARTING_CASH
+    select
+        p.STARTING_CASH,
+        p.PROFILE_ID,
+        prof.NAME,
+        prof.MAX_POSITIONS,
+        prof.MAX_POSITION_PCT,
+        prof.BUST_EQUITY_PCT,
+        prof.DRAWDOWN_STOP_PCT
       into v_starting_cash
-      from MIP.APP.PORTFOLIO
+           , v_profile_id
+           , v_profile_name
+           , v_profile_max_positions
+           , v_profile_max_position_pct
+           , v_profile_bust_equity_pct
+           , v_profile_drawdown_stop_pct
+      from MIP.APP.PORTFOLIO p
+      left join MIP.APP.PORTFOLIO_PROFILE prof
+        on prof.PROFILE_ID = p.PROFILE_ID
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
     if (v_starting_cash is null) then
@@ -61,6 +92,12 @@ begin
     v_cash := v_starting_cash;
     v_peak_equity := v_starting_cash;
     v_total_equity := v_starting_cash;
+    v_effective_max_positions := coalesce(P_MAX_POSITIONS, v_profile_max_positions, 10);
+    v_effective_max_position_pct := coalesce(P_MAX_POSITION_PCT, v_profile_max_position_pct, 0.10);
+    v_bust_equity_pct := coalesce(v_profile_bust_equity_pct, 0);
+    v_bust_equity_threshold := v_starting_cash * v_bust_equity_pct;
+    v_drawdown_stop_pct := v_profile_drawdown_stop_pct;
+    v_drawdown_recovery_pct := P_DRAWDOWN_RECOVERY_PCT;
 
     select count(*) > 0
       into v_opportunity_view_exists
@@ -94,12 +131,18 @@ begin
             'from_date', :P_FROM_DATE,
             'to_date', :P_TO_DATE,
             'hold_days', :P_HOLD_DAYS,
-            'max_positions', :P_MAX_POSITIONS,
-            'max_position_pct', :P_MAX_POSITION_PCT,
+            'max_positions', :v_effective_max_positions,
+            'max_position_pct', :v_effective_max_position_pct,
             'min_abs_score', :P_MIN_ABS_SCORE,
             'market_type', :v_market_type,
             'interval_minutes', :v_interval_minutes,
-            'opportunity_source', :v_opportunity_source
+            'opportunity_source', :v_opportunity_source,
+            'profile_id', :v_profile_id,
+            'profile_name', :v_profile_name,
+            'bust_equity_pct', :v_bust_equity_pct,
+            'drawdown_stop_pct', :v_drawdown_stop_pct,
+            'liquidate_on_bust', :P_LIQUIDATE_ON_BUST,
+            'drawdown_recovery_pct', :v_drawdown_recovery_pct
         )
     );
 
@@ -198,13 +241,200 @@ begin
            and mb.TS = bar.TS;
 
         v_total_equity := v_cash + v_equity_value;
-        v_max_position_value := v_total_equity * coalesce(P_MAX_POSITION_PCT, 0.10);
 
         select count(*)
           into v_open_positions
           from TEMP_POSITIONS;
 
-        if (v_open_positions < coalesce(P_MAX_POSITIONS, 10)) then
+        v_peak_equity := greatest(v_peak_equity, v_total_equity);
+        v_drawdown := case
+            when v_peak_equity = 0 then null
+            else (v_total_equity - v_peak_equity) / v_peak_equity
+        end;
+        v_max_drawdown := least(v_max_drawdown, coalesce(v_drawdown, 0));
+
+        if (
+            v_sim_status <> 'BUST'
+            and v_bust_equity_pct is not null
+            and v_bust_equity_pct > 0
+            and v_total_equity <= v_bust_equity_threshold
+        ) then
+            v_sim_status := 'BUST';
+            v_bust_ts := bar.TS;
+
+            insert into MIP.APP.MIP_AUDIT_LOG (
+                EVENT_TS,
+                RUN_ID,
+                EVENT_TYPE,
+                EVENT_NAME,
+                STATUS,
+                ROWS_AFFECTED,
+                DETAILS
+            )
+            values (
+                current_timestamp(),
+                :v_run_id,
+                'PORTFOLIO_SIM',
+                'SIMULATION_BUST',
+                'WARN',
+                null,
+                object_construct(
+                    'portfolio_id', :P_PORTFOLIO_ID,
+                    'bust_equity_pct', :v_bust_equity_pct,
+                    'bust_threshold', :v_bust_equity_threshold,
+                    'total_equity', :v_total_equity,
+                    'ts', bar.TS
+                )
+            );
+
+            if (P_LIQUIDATE_ON_BUST) then
+                for bust_pos in (
+                    select *
+                    from TEMP_POSITIONS
+                ) do
+                    declare
+                        v_bust_sell_price number(18,8);
+                        v_bust_sell_notional number(18,8);
+                        v_bust_sell_pnl number(18,8);
+                    begin
+                        select CLOSE
+                          into v_bust_sell_price
+                          from MIP.MART.MARKET_BARS
+                         where MARKET_TYPE = :v_market_type
+                           and INTERVAL_MINUTES = :v_interval_minutes
+                           and SYMBOL = bust_pos.SYMBOL
+                           and TS = bar.TS;
+
+                        if (v_bust_sell_price is not null) then
+                            v_bust_sell_notional := v_bust_sell_price * bust_pos.QUANTITY;
+                            v_bust_sell_pnl := (v_bust_sell_price - bust_pos.ENTRY_PRICE) * bust_pos.QUANTITY;
+                            v_cash := v_cash + v_bust_sell_notional;
+
+                            insert into MIP.APP.PORTFOLIO_TRADES (
+                                PORTFOLIO_ID,
+                                RUN_ID,
+                                SYMBOL,
+                                MARKET_TYPE,
+                                INTERVAL_MINUTES,
+                                TRADE_TS,
+                                SIDE,
+                                PRICE,
+                                QUANTITY,
+                                NOTIONAL,
+                                REALIZED_PNL,
+                                CASH_AFTER,
+                                SCORE
+                            )
+                            values (
+                                :P_PORTFOLIO_ID,
+                                :v_run_id,
+                                bust_pos.SYMBOL,
+                                :v_market_type,
+                                :v_interval_minutes,
+                                bar.TS,
+                                'SELL',
+                                v_bust_sell_price,
+                                bust_pos.QUANTITY,
+                                v_bust_sell_notional,
+                                v_bust_sell_pnl,
+                                v_cash,
+                                bust_pos.ENTRY_SCORE
+                            );
+
+                            delete from TEMP_POSITIONS
+                             where SYMBOL = bust_pos.SYMBOL
+                               and ENTRY_TS = bust_pos.ENTRY_TS;
+
+                            v_trade_count := v_trade_count + 1;
+                        end if;
+                    end;
+                end for;
+
+                select coalesce(sum(pos.QUANTITY * mb.CLOSE), 0)
+                  into v_equity_value
+                  from TEMP_POSITIONS pos
+                  join MIP.MART.MARKET_BARS mb
+                    on mb.SYMBOL = pos.SYMBOL
+                   and mb.MARKET_TYPE = :v_market_type
+                   and mb.INTERVAL_MINUTES = :v_interval_minutes
+                   and mb.TS = bar.TS;
+
+                v_total_equity := v_cash + v_equity_value;
+            end if;
+        end if;
+
+        if (
+            v_sim_status <> 'BUST'
+            and v_drawdown_stop_pct is not null
+            and v_drawdown_stop_pct > 0
+        ) then
+            if (v_sim_status = 'ACTIVE' and v_max_drawdown <= -abs(v_drawdown_stop_pct)) then
+                v_sim_status := 'PAUSED';
+
+                insert into MIP.APP.MIP_AUDIT_LOG (
+                    EVENT_TS,
+                    RUN_ID,
+                    EVENT_TYPE,
+                    EVENT_NAME,
+                    STATUS,
+                    ROWS_AFFECTED,
+                    DETAILS
+                )
+                values (
+                    current_timestamp(),
+                    :v_run_id,
+                    'PORTFOLIO_SIM',
+                    'SIMULATION_PAUSED',
+                    'INFO',
+                    null,
+                    object_construct(
+                        'portfolio_id', :P_PORTFOLIO_ID,
+                        'drawdown_stop_pct', :v_drawdown_stop_pct,
+                        'max_drawdown', :v_max_drawdown,
+                        'ts', bar.TS
+                    )
+                );
+            elseif (
+                v_sim_status = 'PAUSED'
+                and v_drawdown_recovery_pct is not null
+                and v_drawdown_recovery_pct > 0
+                and v_drawdown >= -abs(v_drawdown_recovery_pct)
+            ) then
+                v_sim_status := 'ACTIVE';
+
+                insert into MIP.APP.MIP_AUDIT_LOG (
+                    EVENT_TS,
+                    RUN_ID,
+                    EVENT_TYPE,
+                    EVENT_NAME,
+                    STATUS,
+                    ROWS_AFFECTED,
+                    DETAILS
+                )
+                values (
+                    current_timestamp(),
+                    :v_run_id,
+                    'PORTFOLIO_SIM',
+                    'SIMULATION_RESUMED',
+                    'INFO',
+                    null,
+                    object_construct(
+                        'portfolio_id', :P_PORTFOLIO_ID,
+                        'drawdown_recovery_pct', :v_drawdown_recovery_pct,
+                        'drawdown', :v_drawdown,
+                        'ts', bar.TS
+                    )
+                );
+            end if;
+        end if;
+
+        select count(*)
+          into v_open_positions
+          from TEMP_POSITIONS;
+
+        v_max_position_value := v_total_equity * v_effective_max_position_pct;
+
+        if (v_sim_status = 'ACTIVE' and v_open_positions < v_effective_max_positions) then
             for rec in (
                 select
                     SYMBOL,
@@ -229,7 +459,7 @@ begin
                     v_buy_qty number(18,8);
                     v_buy_cost number(18,8);
                 begin
-                    if (v_open_positions < coalesce(P_MAX_POSITIONS, 10)) then
+                    if (v_open_positions < v_effective_max_positions) then
                         if (not exists (
                             select 1 from TEMP_POSITIONS where SYMBOL = rec.SYMBOL
                         )) then
@@ -357,7 +587,8 @@ begin
             DAILY_PNL,
             DAILY_RETURN,
             PEAK_EQUITY,
-            DRAWDOWN
+            DRAWDOWN,
+            STATUS
         )
         values (
             :P_PORTFOLIO_ID,
@@ -370,7 +601,8 @@ begin
             v_daily_pnl,
             v_daily_return,
             v_peak_equity,
-            v_drawdown
+            v_drawdown,
+            v_sim_status
         );
 
         v_prev_total_equity := v_total_equity;
@@ -416,6 +648,11 @@ begin
            MAX_DRAWDOWN = :v_max_drawdown,
            WIN_DAYS = :v_win_days,
            LOSS_DAYS = :v_loss_days,
+           STATUS = :v_sim_status,
+           BUST_AT = case
+               when v_sim_status = 'BUST' then :v_bust_ts
+               else null
+           end,
            UPDATED_AT = current_timestamp()
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
@@ -445,6 +682,8 @@ begin
                 else (v_total_equity - v_starting_cash) / v_starting_cash
             end,
             'max_drawdown', :v_max_drawdown,
+            'status', :v_sim_status,
+            'bust_at', :v_bust_ts,
             'win_days', :v_win_days,
             'loss_days', :v_loss_days
         )
@@ -462,6 +701,8 @@ begin
             else (v_total_equity - v_starting_cash) / v_starting_cash
         end,
         'max_drawdown', :v_max_drawdown,
+        'portfolio_status', :v_sim_status,
+        'bust_at', :v_bust_ts,
         'win_days', :v_win_days,
         'loss_days', :v_loss_days
     );

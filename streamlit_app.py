@@ -23,6 +23,7 @@ page = st.sidebar.radio(
         "Market Overview",
         "Patterns & Learning",
         "Signals & Recommendations",
+        "Portfolio",
         "Admin / Ops",
         "Outcome Evaluation",
     ],
@@ -87,6 +88,8 @@ def sql_literal(value):
     if value is None:
         return "null"
     if isinstance(value, str):
+        return f"'{value}'"
+    if isinstance(value, (date, datetime)):
         return f"'{value}'"
     return str(value)
 
@@ -213,6 +216,116 @@ def fetch_audit_log(
         {where_clause}
         order by event_ts desc
         limit {limit}
+    """
+    return to_pandas(run_sql(query))
+
+
+def fetch_portfolios():
+    query = """
+        select
+            PORTFOLIO_ID,
+            NAME,
+            BASE_CURRENCY,
+            STARTING_CASH,
+            LAST_SIMULATION_RUN_ID,
+            LAST_SIMULATED_AT,
+            FINAL_EQUITY,
+            TOTAL_RETURN,
+            MAX_DRAWDOWN,
+            WIN_DAYS,
+            LOSS_DAYS,
+            NOTES
+        from MIP.APP.PORTFOLIO
+        order by PORTFOLIO_ID
+    """
+    return to_pandas(run_sql(query))
+
+
+def create_portfolio(name: str, starting_cash: float, base_currency: str, notes: str | None):
+    query = f"""
+        insert into MIP.APP.PORTFOLIO (
+            NAME,
+            BASE_CURRENCY,
+            STARTING_CASH,
+            NOTES
+        )
+        values (
+            {sql_literal(name)},
+            {sql_literal(base_currency)},
+            {starting_cash},
+            {sql_literal(notes)}
+        )
+    """
+    run_sql(query).collect()
+
+
+def fetch_portfolio_run_id(portfolio_id: int):
+    query = f"""
+        select LAST_SIMULATION_RUN_ID
+        from MIP.APP.PORTFOLIO
+        where PORTFOLIO_ID = {portfolio_id}
+    """
+    df = to_pandas(run_sql(query))
+    if df is None or df.empty:
+        return None
+    return df.iloc[0]["LAST_SIMULATION_RUN_ID"]
+
+
+def fetch_portfolio_daily(portfolio_id: int, run_id: str):
+    query = f"""
+        select
+            TS,
+            CASH,
+            EQUITY_VALUE,
+            TOTAL_EQUITY,
+            OPEN_POSITIONS,
+            DAILY_PNL,
+            DAILY_RETURN,
+            PEAK_EQUITY,
+            DRAWDOWN
+        from MIP.APP.PORTFOLIO_DAILY
+        where PORTFOLIO_ID = {portfolio_id}
+          and RUN_ID = {sql_literal(run_id)}
+        order by TS
+    """
+    return to_pandas(run_sql(query))
+
+
+def fetch_portfolio_trades(portfolio_id: int, run_id: str):
+    query = f"""
+        select
+            TRADE_TS,
+            SYMBOL,
+            SIDE,
+            PRICE,
+            QUANTITY,
+            NOTIONAL,
+            REALIZED_PNL,
+            CASH_AFTER,
+            SCORE
+        from MIP.APP.PORTFOLIO_TRADES
+        where PORTFOLIO_ID = {portfolio_id}
+          and RUN_ID = {sql_literal(run_id)}
+        order by TRADE_TS, SYMBOL
+    """
+    return to_pandas(run_sql(query))
+
+
+def fetch_portfolio_positions(portfolio_id: int, run_id: str):
+    query = f"""
+        select
+            SYMBOL,
+            ENTRY_TS,
+            ENTRY_PRICE,
+            QUANTITY,
+            COST_BASIS,
+            ENTRY_SCORE,
+            ENTRY_INDEX,
+            HOLD_UNTIL_INDEX
+        from MIP.APP.PORTFOLIO_POSITIONS
+        where PORTFOLIO_ID = {portfolio_id}
+          and RUN_ID = {sql_literal(run_id)}
+        order by SYMBOL
     """
     return to_pandas(run_sql(query))
 
@@ -2234,6 +2347,168 @@ def render_outcome_evaluation():
                 st.altair_chart(scatter_chart, use_container_width=True)
 
 
+def render_portfolio():
+    st.subheader("Portfolio")
+    st.caption("Run paper portfolio simulations over daily bars.")
+
+    portfolios_df = fetch_portfolios()
+
+    with st.expander("Create portfolio", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            new_name = st.text_input("Portfolio name", value="Paper Portfolio")
+        with col2:
+            new_starting_cash = st.number_input(
+                "Starting cash",
+                min_value=0.0,
+                value=100000.0,
+                step=1000.0,
+            )
+        with col3:
+            new_base_currency = st.selectbox(
+                "Base currency",
+                options=["USD", "EUR", "GBP"],
+                index=0,
+            )
+        new_notes = st.text_area("Notes", value="")
+        if st.button("Create portfolio"):
+            if new_name and new_starting_cash is not None:
+                create_portfolio(new_name, new_starting_cash, new_base_currency, new_notes)
+                st.success("Portfolio created.")
+                portfolios_df = fetch_portfolios()
+
+    if portfolios_df is None or portfolios_df.empty:
+        st.info("Create a portfolio to run simulations.")
+        return
+
+    portfolio_options = {
+        f"{row['PORTFOLIO_ID']} • {row['NAME']}": row["PORTFOLIO_ID"]
+        for _, row in portfolios_df.iterrows()
+    }
+    selection = st.selectbox("Select portfolio", list(portfolio_options.keys()))
+    portfolio_id = portfolio_options[selection]
+
+    portfolio_row = portfolios_df[portfolios_df["PORTFOLIO_ID"] == portfolio_id].iloc[0]
+    st.markdown("### Summary")
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Starting Cash", f"${portfolio_row['STARTING_CASH']:,.2f}")
+    metric_cols[1].metric(
+        "Final Equity",
+        f"${portfolio_row['FINAL_EQUITY']:,.2f}"
+        if pd.notnull(portfolio_row["FINAL_EQUITY"])
+        else "—",
+    )
+    metric_cols[2].metric(
+        "Total Return",
+        f"{portfolio_row['TOTAL_RETURN']:.2%}"
+        if pd.notnull(portfolio_row["TOTAL_RETURN"])
+        else "—",
+    )
+    metric_cols[3].metric(
+        "Max Drawdown",
+        f"{portfolio_row['MAX_DRAWDOWN']:.2%}"
+        if pd.notnull(portfolio_row["MAX_DRAWDOWN"])
+        else "—",
+    )
+
+    details_cols = st.columns(3)
+    details_cols[0].metric(
+        "Win Days",
+        int(portfolio_row["WIN_DAYS"]) if pd.notnull(portfolio_row["WIN_DAYS"]) else "—",
+    )
+    details_cols[1].metric(
+        "Loss Days",
+        int(portfolio_row["LOSS_DAYS"]) if pd.notnull(portfolio_row["LOSS_DAYS"]) else "—",
+    )
+    details_cols[2].metric(
+        "Last Simulated",
+        portfolio_row["LAST_SIMULATED_AT"]
+        if pd.notnull(portfolio_row["LAST_SIMULATED_AT"])
+        else "—",
+    )
+
+    st.markdown("---")
+    st.markdown("### Run simulation")
+
+    today = date.today()
+    default_start = today - timedelta(days=90)
+    sim_col1, sim_col2, sim_col3 = st.columns(3)
+    with sim_col1:
+        from_date = st.date_input("From date", value=default_start)
+    with sim_col2:
+        to_date = st.date_input("To date", value=today)
+    with sim_col3:
+        market_type = st.selectbox("Market type", options=["STOCK", "FX"], index=0)
+
+    param_col1, param_col2, param_col3, param_col4 = st.columns(4)
+    with param_col1:
+        hold_days = st.number_input("Hold days", min_value=1, value=5, step=1)
+    with param_col2:
+        max_positions = st.number_input("Max positions", min_value=1, value=10, step=1)
+    with param_col3:
+        max_position_pct = st.number_input(
+            "Max position %",
+            min_value=0.01,
+            max_value=1.0,
+            value=0.10,
+            step=0.01,
+            format="%.2f",
+        )
+    with param_col4:
+        min_abs_score = st.number_input(
+            "Min abs score", min_value=0.0, value=0.0, step=0.1
+        )
+
+    if st.button("Run simulation"):
+        query = f"""
+            call MIP.APP.SP_SIMULATE_PORTFOLIO(
+                {portfolio_id},
+                {sql_literal(from_date)},
+                {sql_literal(to_date)},
+                {hold_days},
+                {max_positions},
+                {max_position_pct},
+                {min_abs_score},
+                {sql_literal(market_type)}
+            )
+        """
+        results = run_sql(query).collect()
+        if results:
+            st.success("Simulation completed.")
+            st.json(results[0][0])
+        else:
+            st.warning("Simulation completed, but no result was returned.")
+        portfolios_df = fetch_portfolios()
+        portfolio_row = portfolios_df[portfolios_df["PORTFOLIO_ID"] == portfolio_id].iloc[0]
+
+    run_id = fetch_portfolio_run_id(portfolio_id)
+    if not run_id:
+        st.info("Run a simulation to see results.")
+        return
+
+    st.markdown("---")
+    st.markdown("### Daily equity")
+    daily_df = fetch_portfolio_daily(portfolio_id, run_id)
+    if daily_df is not None and not daily_df.empty:
+        st.dataframe(daily_df, use_container_width=True, height=320)
+    else:
+        st.info("No daily equity records found for this run.")
+
+    st.markdown("### Trade history")
+    trades_df = fetch_portfolio_trades(portfolio_id, run_id)
+    if trades_df is not None and not trades_df.empty:
+        st.dataframe(trades_df, use_container_width=True, height=320)
+    else:
+        st.info("No trades recorded for this run.")
+
+    st.markdown("### Current holdings")
+    positions_df = fetch_portfolio_positions(portfolio_id, run_id)
+    if positions_df is not None and not positions_df.empty:
+        st.dataframe(positions_df, use_container_width=True, height=240)
+    else:
+        st.info("No open positions for this run.")
+
+
 def render_admin_ops():
     st.subheader("Admin / Ops")
     st.caption("Monitor and control the daily pipeline task.")
@@ -2412,6 +2687,8 @@ elif page == "Patterns & Learning":
     render_patterns_learning()
 elif page == "Signals & Recommendations":
     render_signals_recommendations()
+elif page == "Portfolio":
+    render_portfolio()
 elif page == "Admin / Ops":
     render_admin_ops()
 else:

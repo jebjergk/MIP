@@ -13,12 +13,34 @@ create table if not exists MIP.APP.PORTFOLIO_PROFILE (
     MAX_POSITIONS       number,
     MAX_POSITION_PCT    number(18,6),
     BUST_EQUITY_PCT     number(18,6),
+    BUST_ACTION         string        not null default 'ALLOW_EXITS_ONLY',
     DRAWDOWN_STOP_PCT   number(18,6),
     DESCRIPTION         string,
     CREATED_AT          timestamp_ntz default current_timestamp(),
     constraint PK_PORTFOLIO_PROFILE primary key (PROFILE_ID),
-    constraint UQ_PORTFOLIO_PROFILE_NAME unique (NAME)
+    constraint UQ_PORTFOLIO_PROFILE_NAME unique (NAME),
+    constraint CHK_PORTFOLIO_PROFILE_BUST_ACTION
+        check (BUST_ACTION in (
+            'ALLOW_EXITS_ONLY',
+            'LIQUIDATE_NEXT_BAR',
+            'LIQUIDATE_IMMEDIATE'
+        ))
 );
+
+alter table MIP.APP.PORTFOLIO_PROFILE
+    add column if not exists BUST_ACTION string default 'ALLOW_EXITS_ONLY';
+
+update MIP.APP.PORTFOLIO_PROFILE
+   set BUST_ACTION = 'ALLOW_EXITS_ONLY'
+ where BUST_ACTION is null;
+
+alter table MIP.APP.PORTFOLIO_PROFILE
+    add constraint if not exists CHK_PORTFOLIO_PROFILE_BUST_ACTION
+        check (BUST_ACTION in (
+            'ALLOW_EXITS_ONLY',
+            'LIQUIDATE_NEXT_BAR',
+            'LIQUIDATE_IMMEDIATE'
+        ));
 
 merge into MIP.APP.PORTFOLIO_PROFILE as target
 using (
@@ -27,12 +49,13 @@ using (
         column2 as MAX_POSITIONS,
         column3 as MAX_POSITION_PCT,
         column4 as BUST_EQUITY_PCT,
-        column5 as DRAWDOWN_STOP_PCT,
-        column6 as DESCRIPTION
+        column5 as BUST_ACTION,
+        column6 as DRAWDOWN_STOP_PCT,
+        column7 as DESCRIPTION
     from values
-        ('PRIVATE_SAVINGS', 5, 0.05, 0.60, 0.10, 'Capital preservation with tight risk controls.'),
-        ('LOW_RISK', 8, 0.08, 0.50, 0.15, 'Conservative risk with moderate drawdown limits.'),
-        ('HIGH_RISK', 15, 0.15, 0.35, 0.30, 'Aggressive risk targeting higher volatility.')
+        ('PRIVATE_SAVINGS', 5, 0.05, 0.60, 'ALLOW_EXITS_ONLY', 0.10, 'Capital preservation with tight risk controls.'),
+        ('LOW_RISK', 8, 0.08, 0.50, 'LIQUIDATE_NEXT_BAR', 0.15, 'Conservative risk with moderate drawdown limits.'),
+        ('HIGH_RISK', 15, 0.15, 0.35, 'LIQUIDATE_IMMEDIATE', 0.30, 'Aggressive risk targeting higher volatility.')
 ) as source
 on target.NAME = source.NAME
 when not matched then
@@ -41,6 +64,7 @@ when not matched then
         MAX_POSITIONS,
         MAX_POSITION_PCT,
         BUST_EQUITY_PCT,
+        BUST_ACTION,
         DRAWDOWN_STOP_PCT,
         DESCRIPTION
     )
@@ -49,6 +73,7 @@ when not matched then
         source.MAX_POSITIONS,
         source.MAX_POSITION_PCT,
         source.BUST_EQUITY_PCT,
+        source.BUST_ACTION,
         source.DRAWDOWN_STOP_PCT,
         source.DESCRIPTION
     );

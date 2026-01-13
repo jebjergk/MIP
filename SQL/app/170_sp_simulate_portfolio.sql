@@ -31,11 +31,14 @@ declare
     v_profile_max_positions number;
     v_profile_max_position_pct number(18,6);
     v_profile_bust_equity_pct number(18,6);
+    v_profile_bust_action string;
     v_profile_drawdown_stop_pct number(18,6);
     v_effective_max_positions number;
     v_effective_max_position_pct number(18,6);
     v_bust_equity_pct number(18,6);
     v_bust_equity_threshold number(18,2);
+    v_bust_action string;
+    v_bust_liquidate_index number;
     v_drawdown_stop_pct number(18,6);
     v_drawdown_recovery_pct number(18,6);
     v_cash number(18,2);
@@ -68,6 +71,7 @@ begin
         prof.MAX_POSITIONS,
         prof.MAX_POSITION_PCT,
         prof.BUST_EQUITY_PCT,
+        prof.BUST_ACTION,
         prof.DRAWDOWN_STOP_PCT
       into v_starting_cash
            , v_profile_id
@@ -75,6 +79,7 @@ begin
            , v_profile_max_positions
            , v_profile_max_position_pct
            , v_profile_bust_equity_pct
+           , v_profile_bust_action
            , v_profile_drawdown_stop_pct
       from MIP.APP.PORTFOLIO p
       left join MIP.APP.PORTFOLIO_PROFILE prof
@@ -96,8 +101,16 @@ begin
     v_effective_max_position_pct := coalesce(P_MAX_POSITION_PCT, v_profile_max_position_pct, 0.10);
     v_bust_equity_pct := coalesce(v_profile_bust_equity_pct, 0);
     v_bust_equity_threshold := v_starting_cash * v_bust_equity_pct;
+    v_bust_action := coalesce(v_profile_bust_action, 'ALLOW_EXITS_ONLY');
+    if (not P_LIQUIDATE_ON_BUST) then
+        v_bust_action := 'ALLOW_EXITS_ONLY';
+    end if;
+    if (v_interval_minutes = 1440 and v_bust_action = 'LIQUIDATE_IMMEDIATE') then
+        v_bust_action := 'LIQUIDATE_NEXT_BAR';
+    end if;
     v_drawdown_stop_pct := v_profile_drawdown_stop_pct;
     v_drawdown_recovery_pct := P_DRAWDOWN_RECOVERY_PCT;
+    v_bust_liquidate_index := null;
 
     select count(*) > 0
       into v_opportunity_view_exists
@@ -140,6 +153,7 @@ begin
             'profile_id', :v_profile_id,
             'profile_name', :v_profile_name,
             'bust_equity_pct', :v_bust_equity_pct,
+            'bust_action', :v_bust_action,
             'drawdown_stop_pct', :v_drawdown_stop_pct,
             'liquidate_on_bust', :P_LIQUIDATE_ON_BUST,
             'drawdown_recovery_pct', :v_drawdown_recovery_pct
@@ -231,6 +245,72 @@ begin
             end;
         end for;
 
+        if (v_bust_liquidate_index is not null and v_day_index >= v_bust_liquidate_index) then
+            for bust_pos in (
+                select *
+                from TEMP_POSITIONS
+            ) do
+                declare
+                    v_bust_sell_price number(18,8);
+                    v_bust_sell_notional number(18,8);
+                    v_bust_sell_pnl number(18,8);
+                begin
+                    select CLOSE
+                      into v_bust_sell_price
+                      from MIP.MART.MARKET_BARS
+                     where MARKET_TYPE = :v_market_type
+                       and INTERVAL_MINUTES = :v_interval_minutes
+                       and SYMBOL = bust_pos.SYMBOL
+                       and TS = bar.TS;
+
+                    if (v_bust_sell_price is not null) then
+                        v_bust_sell_notional := v_bust_sell_price * bust_pos.QUANTITY;
+                        v_bust_sell_pnl := (v_bust_sell_price - bust_pos.ENTRY_PRICE) * bust_pos.QUANTITY;
+                        v_cash := v_cash + v_bust_sell_notional;
+
+                        insert into MIP.APP.PORTFOLIO_TRADES (
+                            PORTFOLIO_ID,
+                            RUN_ID,
+                            SYMBOL,
+                            MARKET_TYPE,
+                            INTERVAL_MINUTES,
+                            TRADE_TS,
+                            SIDE,
+                            PRICE,
+                            QUANTITY,
+                            NOTIONAL,
+                            REALIZED_PNL,
+                            CASH_AFTER,
+                            SCORE
+                        )
+                        values (
+                            :P_PORTFOLIO_ID,
+                            :v_run_id,
+                            bust_pos.SYMBOL,
+                            :v_market_type,
+                            :v_interval_minutes,
+                            bar.TS,
+                            'SELL',
+                            v_bust_sell_price,
+                            bust_pos.QUANTITY,
+                            v_bust_sell_notional,
+                            v_bust_sell_pnl,
+                            v_cash,
+                            bust_pos.ENTRY_SCORE
+                        );
+
+                        delete from TEMP_POSITIONS
+                         where SYMBOL = bust_pos.SYMBOL
+                           and ENTRY_TS = bust_pos.ENTRY_TS;
+
+                        v_trade_count := v_trade_count + 1;
+                    end if;
+                end;
+            end for;
+
+            v_bust_liquidate_index := null;
+        end if;
+
         select coalesce(sum(pos.QUANTITY * mb.CLOSE), 0)
           into v_equity_value
           from TEMP_POSITIONS pos
@@ -283,11 +363,12 @@ begin
                     'bust_equity_pct', :v_bust_equity_pct,
                     'bust_threshold', :v_bust_equity_threshold,
                     'total_equity', :v_total_equity,
+                    'bust_action', :v_bust_action,
                     'ts', bar.TS
                 )
             );
 
-            if (P_LIQUIDATE_ON_BUST) then
+            if (v_bust_action = 'LIQUIDATE_IMMEDIATE') then
                 for bust_pos in (
                     select *
                     from TEMP_POSITIONS
@@ -360,6 +441,8 @@ begin
                    and mb.TS = bar.TS;
 
                 v_total_equity := v_cash + v_equity_value;
+            elseif (v_bust_action = 'LIQUIDATE_NEXT_BAR') then
+                v_bust_liquidate_index := v_day_index + 1;
             end if;
         end if;
 

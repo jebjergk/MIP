@@ -252,6 +252,7 @@ def fetch_portfolio_profiles():
             MAX_POSITIONS,
             MAX_POSITION_PCT,
             BUST_EQUITY_PCT,
+            BUST_ACTION,
             DRAWDOWN_STOP_PCT,
             DESCRIPTION
         from MIP.APP.PORTFOLIO_PROFILE
@@ -2488,16 +2489,20 @@ def render_portfolio():
         else "—",
     )
 
-    status_cols = st.columns(3)
+    status_cols = st.columns(4)
     status_cols[0].metric(
-        "Status",
+        "Current Status",
         portfolio_row["STATUS"] if pd.notnull(portfolio_row["STATUS"]) else "—",
     )
     status_cols[1].metric(
+        "Bust Action",
+        profile_row["BUST_ACTION"] if profile_row is not None else "—",
+    )
+    status_cols[2].metric(
         "Bust Date",
         portfolio_row["BUST_AT"] if pd.notnull(portfolio_row["BUST_AT"]) else "—",
     )
-    status_cols[2].metric(
+    status_cols[3].metric(
         "Risk Profile",
         profile_row["NAME"] if profile_row is not None else "—",
     )

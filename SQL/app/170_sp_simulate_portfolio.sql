@@ -182,7 +182,7 @@ begin
         v_day_index := v_day_index + 1;
         v_days_simulated := v_days_simulated + 1;
 
-        for pos in (
+        for position_row in (
             select *
             from TEMP_POSITIONS
             where HOLD_UNTIL_INDEX <= :v_day_index
@@ -197,12 +197,12 @@ begin
                   from MIP.MART.MARKET_BARS
                  where MARKET_TYPE = :v_market_type
                    and INTERVAL_MINUTES = :v_interval_minutes
-                   and SYMBOL = pos.SYMBOL
+                   and SYMBOL = position_row.SYMBOL
                    and TS = bar.TS;
 
                 if (v_sell_price is not null) then
-                    v_sell_notional := v_sell_price * pos.QUANTITY;
-                    v_sell_pnl := (v_sell_price - pos.ENTRY_PRICE) * pos.QUANTITY;
+                    v_sell_notional := v_sell_price * position_row.QUANTITY;
+                    v_sell_pnl := (v_sell_price - position_row.ENTRY_PRICE) * position_row.QUANTITY;
                     v_cash := v_cash + v_sell_notional;
 
                     insert into MIP.APP.PORTFOLIO_TRADES (
@@ -223,22 +223,22 @@ begin
                     values (
                         :P_PORTFOLIO_ID,
                         :v_run_id,
-                        pos.SYMBOL,
+                        position_row.SYMBOL,
                         :v_market_type,
                         :v_interval_minutes,
                         bar.TS,
                         'SELL',
                         v_sell_price,
-                        pos.QUANTITY,
+                        position_row.QUANTITY,
                         v_sell_notional,
                         v_sell_pnl,
                         v_cash,
-                        pos.ENTRY_SCORE
+                        position_row.ENTRY_SCORE
                     );
 
                     delete from TEMP_POSITIONS
-                     where SYMBOL = pos.SYMBOL
-                       and ENTRY_TS = pos.ENTRY_TS;
+                     where SYMBOL = position_row.SYMBOL
+                       and ENTRY_TS = position_row.ENTRY_TS;
 
                     v_trade_count := v_trade_count + 1;
                 end if;
@@ -311,11 +311,11 @@ begin
             v_bust_liquidate_index := null;
         end if;
 
-        select coalesce(sum(pos.QUANTITY * mb.CLOSE), 0)
+        select coalesce(sum(tp.QUANTITY * mb.CLOSE), 0)
           into v_equity_value
-          from TEMP_POSITIONS pos
+          from TEMP_POSITIONS tp
           join MIP.MART.MARKET_BARS mb
-            on mb.SYMBOL = pos.SYMBOL
+            on mb.SYMBOL = tp.SYMBOL
            and mb.MARKET_TYPE = :v_market_type
            and mb.INTERVAL_MINUTES = :v_interval_minutes
            and mb.TS = bar.TS;
@@ -431,11 +431,11 @@ begin
                     end;
                 end for;
 
-                select coalesce(sum(pos.QUANTITY * mb.CLOSE), 0)
+                select coalesce(sum(tp.QUANTITY * mb.CLOSE), 0)
                   into v_equity_value
-                  from TEMP_POSITIONS pos
+                  from TEMP_POSITIONS tp
                   join MIP.MART.MARKET_BARS mb
-                    on mb.SYMBOL = pos.SYMBOL
+                    on mb.SYMBOL = tp.SYMBOL
                    and mb.MARKET_TYPE = :v_market_type
                    and mb.INTERVAL_MINUTES = :v_interval_minutes
                    and mb.TS = bar.TS;
@@ -624,11 +624,11 @@ begin
             end for;
         end if;
 
-        select coalesce(sum(pos.QUANTITY * mb.CLOSE), 0)
+        select coalesce(sum(tp.QUANTITY * mb.CLOSE), 0)
           into v_equity_value
-          from TEMP_POSITIONS pos
+          from TEMP_POSITIONS tp
           join MIP.MART.MARKET_BARS mb
-            on mb.SYMBOL = pos.SYMBOL
+            on mb.SYMBOL = tp.SYMBOL
            and mb.MARKET_TYPE = :v_market_type
            and mb.INTERVAL_MINUTES = :v_interval_minutes
            and mb.TS = bar.TS;

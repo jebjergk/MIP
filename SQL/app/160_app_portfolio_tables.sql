@@ -5,10 +5,60 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -----------------------------
+-- 0. PORTFOLIO_PROFILE
+-----------------------------
+create table if not exists MIP.APP.PORTFOLIO_PROFILE (
+    PROFILE_ID          number        autoincrement,
+    NAME                string        not null,
+    MAX_POSITIONS       number,
+    MAX_POSITION_PCT    number(18,6),
+    BUST_EQUITY_PCT     number(18,6),
+    DRAWDOWN_STOP_PCT   number(18,6),
+    DESCRIPTION         string,
+    CREATED_AT          timestamp_ntz default current_timestamp(),
+    constraint PK_PORTFOLIO_PROFILE primary key (PROFILE_ID),
+    constraint UQ_PORTFOLIO_PROFILE_NAME unique (NAME)
+);
+
+merge into MIP.APP.PORTFOLIO_PROFILE as target
+using (
+    select
+        column1 as NAME,
+        column2 as MAX_POSITIONS,
+        column3 as MAX_POSITION_PCT,
+        column4 as BUST_EQUITY_PCT,
+        column5 as DRAWDOWN_STOP_PCT,
+        column6 as DESCRIPTION
+    from values
+        ('PRIVATE_SAVINGS', 5, 0.05, 0.60, 0.10, 'Capital preservation with tight risk controls.'),
+        ('LOW_RISK', 8, 0.08, 0.50, 0.15, 'Conservative risk with moderate drawdown limits.'),
+        ('HIGH_RISK', 15, 0.15, 0.35, 0.30, 'Aggressive risk targeting higher volatility.')
+) as source
+on target.NAME = source.NAME
+when not matched then
+    insert (
+        NAME,
+        MAX_POSITIONS,
+        MAX_POSITION_PCT,
+        BUST_EQUITY_PCT,
+        DRAWDOWN_STOP_PCT,
+        DESCRIPTION
+    )
+    values (
+        source.NAME,
+        source.MAX_POSITIONS,
+        source.MAX_POSITION_PCT,
+        source.BUST_EQUITY_PCT,
+        source.DRAWDOWN_STOP_PCT,
+        source.DESCRIPTION
+    );
+
+-----------------------------
 -- 1. PORTFOLIO
 -----------------------------
 create table if not exists MIP.APP.PORTFOLIO (
     PORTFOLIO_ID            number        autoincrement,
+    PROFILE_ID              number,
     NAME                    string        not null,
     BASE_CURRENCY           string        default 'USD',
     STARTING_CASH           number(18,2)  not null,
@@ -19,10 +69,14 @@ create table if not exists MIP.APP.PORTFOLIO (
     MAX_DRAWDOWN            number(18,6),
     WIN_DAYS                number,
     LOSS_DAYS               number,
+    STATUS                  string        default 'ACTIVE',
+    BUST_AT                 timestamp_ntz,
     NOTES                   string,
     CREATED_AT              timestamp_ntz default current_timestamp(),
     UPDATED_AT              timestamp_ntz default current_timestamp(),
-    constraint PK_PORTFOLIO primary key (PORTFOLIO_ID)
+    constraint PK_PORTFOLIO primary key (PORTFOLIO_ID),
+    constraint FK_PORTFOLIO_PROFILE foreign key (PROFILE_ID)
+        references MIP.APP.PORTFOLIO_PROFILE(PROFILE_ID)
 );
 
 -----------------------------
@@ -87,6 +141,7 @@ create table if not exists MIP.APP.PORTFOLIO_DAILY (
     DAILY_RETURN     number(18,6),
     PEAK_EQUITY      number(18,2),
     DRAWDOWN         number(18,6),
+    STATUS           string        default 'ACTIVE',
     CREATED_AT       timestamp_ntz default current_timestamp(),
     constraint PK_PORTFOLIO_DAILY primary key (PORTFOLIO_ID, RUN_ID, TS)
 );

@@ -223,37 +223,64 @@ def fetch_audit_log(
 def fetch_portfolios():
     query = """
         select
-            PORTFOLIO_ID,
-            NAME,
-            BASE_CURRENCY,
-            STARTING_CASH,
-            LAST_SIMULATION_RUN_ID,
-            LAST_SIMULATED_AT,
-            FINAL_EQUITY,
-            TOTAL_RETURN,
-            MAX_DRAWDOWN,
-            WIN_DAYS,
-            LOSS_DAYS,
-            NOTES
-        from MIP.APP.PORTFOLIO
-        order by PORTFOLIO_ID
+            p.PORTFOLIO_ID,
+            p.PROFILE_ID,
+            p.NAME,
+            p.BASE_CURRENCY,
+            p.STARTING_CASH,
+            p.LAST_SIMULATION_RUN_ID,
+            p.LAST_SIMULATED_AT,
+            p.FINAL_EQUITY,
+            p.TOTAL_RETURN,
+            p.MAX_DRAWDOWN,
+            p.WIN_DAYS,
+            p.LOSS_DAYS,
+            p.STATUS,
+            p.BUST_AT,
+            p.NOTES
+        from MIP.APP.PORTFOLIO p
+        order by p.PORTFOLIO_ID
     """
     return to_pandas(run_sql(query))
 
 
-def create_portfolio(name: str, starting_cash: float, base_currency: str, notes: str | None):
+def fetch_portfolio_profiles():
+    query = """
+        select
+            PROFILE_ID,
+            NAME,
+            MAX_POSITIONS,
+            MAX_POSITION_PCT,
+            BUST_EQUITY_PCT,
+            DRAWDOWN_STOP_PCT,
+            DESCRIPTION
+        from MIP.APP.PORTFOLIO_PROFILE
+        order by PROFILE_ID
+    """
+    return to_pandas(run_sql(query))
+
+
+def create_portfolio(
+    name: str,
+    starting_cash: float,
+    base_currency: str,
+    notes: str | None,
+    profile_id: int | None,
+):
     query = f"""
         insert into MIP.APP.PORTFOLIO (
             NAME,
             BASE_CURRENCY,
             STARTING_CASH,
-            NOTES
+            NOTES,
+            PROFILE_ID
         )
         values (
             {sql_literal(name)},
             {sql_literal(base_currency)},
             {starting_cash},
-            {sql_literal(notes)}
+            {sql_literal(notes)},
+            {sql_literal(profile_id)}
         )
     """
     run_sql(query).collect()
@@ -282,7 +309,8 @@ def fetch_portfolio_daily(portfolio_id: int, run_id: str):
             DAILY_PNL,
             DAILY_RETURN,
             PEAK_EQUITY,
-            DRAWDOWN
+            DRAWDOWN,
+            STATUS
         from MIP.APP.PORTFOLIO_DAILY
         where PORTFOLIO_ID = {portfolio_id}
           and RUN_ID = {sql_literal(run_id)}
@@ -2352,9 +2380,10 @@ def render_portfolio():
     st.caption("Run paper portfolio simulations over daily bars.")
 
     portfolios_df = fetch_portfolios()
+    profiles_df = fetch_portfolio_profiles()
 
     with st.expander("Create portfolio", expanded=False):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             new_name = st.text_input("Portfolio name", value="Paper Portfolio")
         with col2:
@@ -2370,10 +2399,31 @@ def render_portfolio():
                 options=["USD", "EUR", "GBP"],
                 index=0,
             )
+        with col4:
+            if profiles_df is not None and not profiles_df.empty:
+                profile_options = {
+                    f"{row['NAME']}": row["PROFILE_ID"]
+                    for _, row in profiles_df.iterrows()
+                }
+                new_profile_name = st.selectbox(
+                    "Risk profile",
+                    options=list(profile_options.keys()),
+                    index=0,
+                )
+                new_profile_id = profile_options.get(new_profile_name)
+            else:
+                st.warning("No portfolio profiles found. Create one in SQL to assign.")
+                new_profile_id = None
         new_notes = st.text_area("Notes", value="")
         if st.button("Create portfolio"):
             if new_name and new_starting_cash is not None:
-                create_portfolio(new_name, new_starting_cash, new_base_currency, new_notes)
+                create_portfolio(
+                    new_name,
+                    new_starting_cash,
+                    new_base_currency,
+                    new_notes,
+                    new_profile_id,
+                )
                 st.success("Portfolio created.")
                 portfolios_df = fetch_portfolios()
 
@@ -2389,6 +2439,17 @@ def render_portfolio():
     portfolio_id = portfolio_options[selection]
 
     portfolio_row = portfolios_df[portfolios_df["PORTFOLIO_ID"] == portfolio_id].iloc[0]
+    profile_row = None
+    if (
+        profiles_df is not None
+        and not profiles_df.empty
+        and pd.notnull(portfolio_row["PROFILE_ID"])
+    ):
+        profile_match = profiles_df[
+            profiles_df["PROFILE_ID"] == portfolio_row["PROFILE_ID"]
+        ]
+        if not profile_match.empty:
+            profile_row = profile_match.iloc[0]
     st.markdown("### Summary")
     metric_cols = st.columns(4)
     metric_cols[0].metric("Starting Cash", f"${portfolio_row['STARTING_CASH']:,.2f}")
@@ -2427,6 +2488,47 @@ def render_portfolio():
         else "—",
     )
 
+    status_cols = st.columns(3)
+    status_cols[0].metric(
+        "Status",
+        portfolio_row["STATUS"] if pd.notnull(portfolio_row["STATUS"]) else "—",
+    )
+    status_cols[1].metric(
+        "Bust Date",
+        portfolio_row["BUST_AT"] if pd.notnull(portfolio_row["BUST_AT"]) else "—",
+    )
+    status_cols[2].metric(
+        "Risk Profile",
+        profile_row["NAME"] if profile_row is not None else "—",
+    )
+
+    if profile_row is not None:
+        profile_cols = st.columns(4)
+        profile_cols[0].metric(
+            "Max Positions",
+            int(profile_row["MAX_POSITIONS"])
+            if pd.notnull(profile_row["MAX_POSITIONS"])
+            else "—",
+        )
+        profile_cols[1].metric(
+            "Max Position %",
+            f"{profile_row['MAX_POSITION_PCT']:.2%}"
+            if pd.notnull(profile_row["MAX_POSITION_PCT"])
+            else "—",
+        )
+        profile_cols[2].metric(
+            "Bust Equity %",
+            f"{profile_row['BUST_EQUITY_PCT']:.2%}"
+            if pd.notnull(profile_row["BUST_EQUITY_PCT"])
+            else "—",
+        )
+        profile_cols[3].metric(
+            "Drawdown Stop %",
+            f"{profile_row['DRAWDOWN_STOP_PCT']:.2%}"
+            if pd.notnull(profile_row["DRAWDOWN_STOP_PCT"])
+            else "—",
+        )
+
     st.markdown("---")
     st.markdown("### Run simulation")
 
@@ -2440,19 +2542,42 @@ def render_portfolio():
     with sim_col3:
         market_type = st.selectbox("Market type", options=["STOCK", "FX"], index=0)
 
+    use_profile_limits = st.checkbox(
+        "Use profile risk limits",
+        value=profile_row is not None,
+        help="When enabled, max positions and max position % come from the selected profile.",
+    )
+
     param_col1, param_col2, param_col3, param_col4 = st.columns(4)
     with param_col1:
         hold_days = st.number_input("Hold days", min_value=1, value=5, step=1)
     with param_col2:
-        max_positions = st.number_input("Max positions", min_value=1, value=10, step=1)
+        default_max_positions = (
+            int(profile_row["MAX_POSITIONS"])
+            if profile_row is not None and pd.notnull(profile_row["MAX_POSITIONS"])
+            else 10
+        )
+        max_positions = st.number_input(
+            "Max positions",
+            min_value=1,
+            value=default_max_positions,
+            step=1,
+            disabled=use_profile_limits,
+        )
     with param_col3:
+        default_max_position_pct = (
+            float(profile_row["MAX_POSITION_PCT"])
+            if profile_row is not None and pd.notnull(profile_row["MAX_POSITION_PCT"])
+            else 0.10
+        )
         max_position_pct = st.number_input(
             "Max position %",
             min_value=0.01,
             max_value=1.0,
-            value=0.10,
+            value=default_max_position_pct,
             step=0.01,
             format="%.2f",
+            disabled=use_profile_limits,
         )
     with param_col4:
         min_abs_score = st.number_input(
@@ -2460,14 +2585,16 @@ def render_portfolio():
         )
 
     if st.button("Run simulation"):
+        max_positions_sql = "null" if use_profile_limits else max_positions
+        max_position_pct_sql = "null" if use_profile_limits else max_position_pct
         query = f"""
             call MIP.APP.SP_SIMULATE_PORTFOLIO(
                 {portfolio_id},
                 {sql_literal(from_date)},
                 {sql_literal(to_date)},
                 {hold_days},
-                {max_positions},
-                {max_position_pct},
+                {max_positions_sql},
+                {max_position_pct_sql},
                 {min_abs_score},
                 {sql_literal(market_type)}
             )
@@ -2487,11 +2614,32 @@ def render_portfolio():
         return
 
     st.markdown("---")
-    st.markdown("### Daily equity")
     daily_df = fetch_portfolio_daily(portfolio_id, run_id)
     if daily_df is not None and not daily_df.empty:
+        latest_row = daily_df.iloc[-1]
+        drawdown_cols = st.columns(3)
+        drawdown_cols[0].metric(
+            "Current Drawdown",
+            f"{latest_row['DRAWDOWN']:.2%}"
+            if pd.notnull(latest_row["DRAWDOWN"])
+            else "—",
+        )
+        drawdown_cols[1].metric(
+            "Peak Equity",
+            f"${latest_row['PEAK_EQUITY']:,.2f}"
+            if pd.notnull(latest_row["PEAK_EQUITY"])
+            else "—",
+        )
+        drawdown_cols[2].metric(
+            "Latest Equity",
+            f"${latest_row['TOTAL_EQUITY']:,.2f}"
+            if pd.notnull(latest_row["TOTAL_EQUITY"])
+            else "—",
+        )
+        st.markdown("### Daily equity")
         st.dataframe(daily_df, use_container_width=True, height=320)
     else:
+        st.markdown("### Daily equity")
         st.info("No daily equity records found for this run.")
 
     st.markdown("### Trade history")

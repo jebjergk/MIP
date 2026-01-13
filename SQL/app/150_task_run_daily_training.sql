@@ -1,6 +1,9 @@
 -- 150_task_run_daily_training.sql
 -- Purpose: Schedule daily pipeline execution
 
+use role accountadmin;
+GRANT EXECUTE TASK ON ACCOUNT TO ROLE MIP_ADMIN_ROLE;
+
 use role MIP_ADMIN_ROLE;
 use database MIP;
 

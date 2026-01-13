@@ -2379,6 +2379,43 @@ def render_outcome_evaluation():
 def render_portfolio():
     st.subheader("Portfolio")
     st.caption("Run paper portfolio simulations over daily bars.")
+    st.markdown(
+        """
+        <style>
+        .portfolio-stat-card {
+            padding: 0.75rem 0.9rem;
+            background-color: #f8f9fb;
+            border: 1px solid #e6e9ef;
+            border-radius: 0.6rem;
+        }
+        .portfolio-stat-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #667085;
+            margin-bottom: 0.25rem;
+        }
+        .portfolio-stat-value {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #101828;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    def render_stat(column, label: str, value: str) -> None:
+        with column:
+            st.markdown(
+                f"""
+                <div class="portfolio-stat-card">
+                    <div class="portfolio-stat-label">{label}</div>
+                    <div class="portfolio-stat-value">{value}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     portfolios_df = fetch_portfolios()
     profiles_df = fetch_portfolio_profiles()
@@ -2453,20 +2490,27 @@ def render_portfolio():
             profile_row = profile_match.iloc[0]
     st.markdown("### Summary")
     metric_cols = st.columns(4)
-    metric_cols[0].metric("Starting Cash", f"${portfolio_row['STARTING_CASH']:,.2f}")
-    metric_cols[1].metric(
+    render_stat(
+        metric_cols[0],
+        "Starting Cash",
+        f"${portfolio_row['STARTING_CASH']:,.2f}",
+    )
+    render_stat(
+        metric_cols[1],
         "Final Equity",
         f"${portfolio_row['FINAL_EQUITY']:,.2f}"
         if pd.notnull(portfolio_row["FINAL_EQUITY"])
         else "—",
     )
-    metric_cols[2].metric(
+    render_stat(
+        metric_cols[2],
         "Total Return",
         f"{portfolio_row['TOTAL_RETURN']:.2%}"
         if pd.notnull(portfolio_row["TOTAL_RETURN"])
         else "—",
     )
-    metric_cols[3].metric(
+    render_stat(
+        metric_cols[3],
         "Max Drawdown",
         f"{portfolio_row['MAX_DRAWDOWN']:.2%}"
         if pd.notnull(portfolio_row["MAX_DRAWDOWN"])
@@ -2474,60 +2518,75 @@ def render_portfolio():
     )
 
     details_cols = st.columns(3)
-    details_cols[0].metric(
+    render_stat(
+        details_cols[0],
         "Win Days",
-        int(portfolio_row["WIN_DAYS"]) if pd.notnull(portfolio_row["WIN_DAYS"]) else "—",
+        str(int(portfolio_row["WIN_DAYS"]))
+        if pd.notnull(portfolio_row["WIN_DAYS"])
+        else "—",
     )
-    details_cols[1].metric(
+    render_stat(
+        details_cols[1],
         "Loss Days",
-        int(portfolio_row["LOSS_DAYS"]) if pd.notnull(portfolio_row["LOSS_DAYS"]) else "—",
+        str(int(portfolio_row["LOSS_DAYS"]))
+        if pd.notnull(portfolio_row["LOSS_DAYS"])
+        else "—",
     )
-    details_cols[2].metric(
+    render_stat(
+        details_cols[2],
         "Last Simulated",
-        portfolio_row["LAST_SIMULATED_AT"]
+        str(portfolio_row["LAST_SIMULATED_AT"])
         if pd.notnull(portfolio_row["LAST_SIMULATED_AT"])
         else "—",
     )
 
     status_cols = st.columns(4)
-    status_cols[0].metric(
+    render_stat(
+        status_cols[0],
         "Current Status",
         portfolio_row["STATUS"] if pd.notnull(portfolio_row["STATUS"]) else "—",
     )
-    status_cols[1].metric(
+    render_stat(
+        status_cols[1],
         "Bust Action",
         profile_row["BUST_ACTION"] if profile_row is not None else "—",
     )
-    status_cols[2].metric(
+    render_stat(
+        status_cols[2],
         "Bust Date",
-        portfolio_row["BUST_AT"] if pd.notnull(portfolio_row["BUST_AT"]) else "—",
+        str(portfolio_row["BUST_AT"]) if pd.notnull(portfolio_row["BUST_AT"]) else "—",
     )
-    status_cols[3].metric(
+    render_stat(
+        status_cols[3],
         "Risk Profile",
         profile_row["NAME"] if profile_row is not None else "—",
     )
 
     if profile_row is not None:
         profile_cols = st.columns(4)
-        profile_cols[0].metric(
+        render_stat(
+            profile_cols[0],
             "Max Positions",
-            int(profile_row["MAX_POSITIONS"])
+            str(int(profile_row["MAX_POSITIONS"]))
             if pd.notnull(profile_row["MAX_POSITIONS"])
             else "—",
         )
-        profile_cols[1].metric(
+        render_stat(
+            profile_cols[1],
             "Max Position %",
             f"{profile_row['MAX_POSITION_PCT']:.2%}"
             if pd.notnull(profile_row["MAX_POSITION_PCT"])
             else "—",
         )
-        profile_cols[2].metric(
+        render_stat(
+            profile_cols[2],
             "Bust Equity %",
             f"{profile_row['BUST_EQUITY_PCT']:.2%}"
             if pd.notnull(profile_row["BUST_EQUITY_PCT"])
             else "—",
         )
-        profile_cols[3].metric(
+        render_stat(
+            profile_cols[3],
             "Drawdown Stop %",
             f"{profile_row['DRAWDOWN_STOP_PCT']:.2%}"
             if pd.notnull(profile_row["DRAWDOWN_STOP_PCT"])

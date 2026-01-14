@@ -238,7 +238,7 @@ exception
             'FAIL',
             v_merged,
             object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
-            sqlerrm,
+            :sqlerrm,
             v_run_id,
             null
         );

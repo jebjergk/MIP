@@ -130,7 +130,7 @@ begin
         'PIPELINE',
         'SP_RUN_DAILY_PIPELINE',
         'SUCCESS',
-        v_return_rows,
+        :v_return_rows,
         object_construct(
             'from_ts', :v_from_ts,
             'to_ts', :v_to_ts,

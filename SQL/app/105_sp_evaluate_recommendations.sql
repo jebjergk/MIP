@@ -24,9 +24,9 @@ begin
         'SP_EVALUATE_RECOMMENDATIONS',
         'START',
         null,
-        object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
+        object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
         null,
-        v_run_id,
+        :v_run_id,
         null
     );
 
@@ -220,16 +220,16 @@ begin
         'SUCCESS',
         :v_merged,
         object_construct(
-            'from_ts', v_from_ts,
-            'to_ts', v_to_ts,
-            'horizon_counts', v_horizon_counts
+            'from_ts', :v_from_ts,
+            'to_ts', :v_to_ts,
+            'horizon_counts', :v_horizon_counts
         ),
         null,
-        v_run_id,
+        :v_run_id,
         null
     );
 
-    return 'Upserted ' || v_merged || ' recommendation outcomes from ' || v_from_ts || ' to ' || v_to_ts || '.';
+    return 'Upserted ' || :v_merged || ' recommendation outcomes from ' || :v_from_ts || ' to ' || :v_to_ts || '.';
 exception
     when other then
         call MIP.APP.SP_LOG_EVENT(
@@ -237,9 +237,9 @@ exception
             'SP_EVALUATE_RECOMMENDATIONS',
             'FAIL',
             :v_merged,
-            object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
+            object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
             :sqlerrm,
-            v_run_id,
+            :v_run_id,
             null
         );
         raise;

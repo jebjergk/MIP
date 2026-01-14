@@ -218,7 +218,7 @@ begin
         'EVALUATION',
         'SP_EVALUATE_RECOMMENDATIONS',
         'SUCCESS',
-        v_merged,
+        :v_merged,
         object_construct(
             'from_ts', v_from_ts,
             'to_ts', v_to_ts,
@@ -236,7 +236,7 @@ exception
             'EVALUATION',
             'SP_EVALUATE_RECOMMENDATIONS',
             'FAIL',
-            v_merged,
+            :v_merged,
             object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
             :sqlerrm,
             v_run_id,

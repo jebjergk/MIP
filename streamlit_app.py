@@ -127,7 +127,7 @@ def fetch_task_metadata(task_name: str):
     """Fetch task metadata from INFORMATION_SCHEMA.TASKS."""
     database, schema, task = parse_task_parts(task_name)
     if not database or not schema:
-        return None
+        return None, "Task name must be fully-qualified (DB.SCHEMA.TASK)."
     query = f"""
         select
             name,
@@ -138,7 +138,10 @@ def fetch_task_metadata(task_name: str):
           and schema_name = {sql_literal(schema)}
           and database_name = {sql_literal(database)}
     """
-    return to_pandas(run_sql(query))
+    try:
+        return to_pandas(run_sql(query)), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def fetch_task_history(task_name: str, limit: int = 20):
@@ -2725,7 +2728,7 @@ def render_admin_ops():
     st.subheader("Admin / Ops")
     st.caption("Monitor and control the daily pipeline task.")
 
-    task_metadata = fetch_task_metadata(DAILY_PIPELINE_TASK)
+    task_metadata, task_metadata_error = fetch_task_metadata(DAILY_PIPELINE_TASK)
     task_state = None
     task_schedule = None
 
@@ -2734,14 +2737,27 @@ def render_admin_ops():
         task_state = row.get("STATE")
         task_schedule = row.get("SCHEDULE")
     else:
-        st.caption(
-            "Task metadata is unavailable. Check that the task exists and you have access."
-        )
+        if task_metadata_error:
+            st.warning(
+                "Task metadata is unavailable due to an error. "
+                f"Details: {task_metadata_error}"
+            )
+        else:
+            st.info(
+                "Task metadata is unavailable. Confirm the task exists and that "
+                "your role has MONITOR or OWNERSHIP on the task."
+            )
 
     col_task, col_state, col_schedule = st.columns(3)
-    col_task.metric("Task", DAILY_PIPELINE_TASK)
-    col_state.metric("State", task_state or "Unknown")
-    col_schedule.metric("Schedule", task_schedule or "Unknown")
+    with col_task:
+        st.markdown("**Task**")
+        st.write(DAILY_PIPELINE_TASK)
+    with col_state:
+        st.markdown("**State**")
+        st.write(task_state or "Unknown")
+    with col_schedule:
+        st.markdown("**Schedule**")
+        st.write(task_schedule or "Unknown")
 
     st.markdown("### Manual run")
     if st.button("Run pipeline now"):
@@ -2763,35 +2779,55 @@ def render_admin_ops():
     ]
 
     if can_manage:
-        control_cols = st.columns(2)
-        with control_cols[0]:
-            if st.button(
-                "Suspend task",
-                disabled=task_state is not None and str(task_state).upper() == "SUSPENDED",
-            ):
-                try:
-                    run_sql(f"alter task {DAILY_PIPELINE_TASK} suspend").collect()
-                    st.success("Task suspended.")
-                except Exception as exc:
-                    st.error(f"Failed to suspend task: {exc}")
-        with control_cols[1]:
-            if st.button(
-                "Resume task",
-                disabled=task_state is not None and str(task_state).upper() == "STARTED",
-            ):
-                try:
-                    run_sql(f"alter task {DAILY_PIPELINE_TASK} resume").collect()
-                    st.success("Task resumed.")
-                except Exception as exc:
-                    st.error(f"Failed to resume task: {exc}")
+        control_help = None
+    elif missing_privs:
+        control_help = f"Missing privilege(s): {', '.join(sorted(missing_privs))}."
     else:
+        control_help = (
+            "Unable to verify privileges. Ensure the role has OPERATE or OWNERSHIP."
+        )
+
+    control_cols = st.columns(2)
+    with control_cols[0]:
+        if st.button(
+            "Suspend task",
+            disabled=(
+                not can_manage
+                or (task_state is not None and str(task_state).upper() == "SUSPENDED")
+            ),
+            help=control_help,
+        ):
+            try:
+                run_sql(f"alter task {DAILY_PIPELINE_TASK} suspend").collect()
+                st.success("Task suspended.")
+            except Exception as exc:
+                st.error(f"Failed to suspend task: {exc}")
+    with control_cols[1]:
+        if st.button(
+            "Resume task",
+            disabled=(
+                not can_manage
+                or (task_state is not None and str(task_state).upper() == "STARTED")
+            ),
+            help=control_help,
+        ):
+            try:
+                run_sql(f"alter task {DAILY_PIPELINE_TASK} resume").collect()
+                st.success("Task resumed.")
+            except Exception as exc:
+                st.error(f"Failed to resume task: {exc}")
+
+    if not can_manage:
         if missing_privs:
             st.info(
-                "Task controls hidden. Missing privilege(s): "
+                "Task controls are disabled. Missing privilege(s): "
                 f"{', '.join(sorted(missing_privs))}."
             )
         else:
-            st.info("Task controls hidden. Unable to verify task privileges.")
+            st.info(
+                "Task controls are disabled. Unable to verify task privileges "
+                "with the current role."
+            )
 
     st.markdown("### Recent task runs")
     history_df = fetch_task_history(DAILY_PIPELINE_TASK, limit=20)

@@ -26,7 +26,7 @@ begin
         'SP_RUN_DAILY_PIPELINE',
         'START',
         null,
-        object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
+        object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
         null,
         v_run_id,
         null
@@ -132,13 +132,13 @@ begin
         'SUCCESS',
         v_return_rows,
         object_construct(
-            'from_ts', v_from_ts,
-            'to_ts', v_to_ts,
-            'market_returns_rows', v_return_rows,
-            'msg_ingest', v_msg_ingest,
-            'msg_returns', v_msg_returns,
-            'msg_signals', v_msg_signals,
-            'msg_evaluate', v_msg_eval
+            'from_ts', :v_from_ts,
+            'to_ts', :v_to_ts,
+            'market_returns_rows', :v_return_rows,
+            'msg_ingest', :v_msg_ingest,
+            'msg_returns', :v_msg_returns,
+            'msg_signals', :v_msg_signals,
+            'msg_evaluate', :v_msg_eval
         ),
         null,
         v_run_id,
@@ -146,13 +146,13 @@ begin
     );
 
     return object_construct(
-        'from_ts', v_from_ts,
-        'to_ts', v_to_ts,
-        'market_returns_rows', v_return_rows,
-        'msg_ingest', v_msg_ingest,
-        'msg_returns', v_msg_returns,
-        'msg_signals', v_msg_signals,
-        'msg_evaluate', v_msg_eval
+        'from_ts', :v_from_ts,
+        'to_ts', :v_to_ts,
+        'market_returns_rows', :v_return_rows,
+        'msg_ingest', :v_msg_ingest,
+        'msg_returns', :v_msg_returns,
+        'msg_signals', :v_msg_signals,
+        'msg_evaluate', :v_msg_eval
     );
 exception
     when other then
@@ -161,7 +161,7 @@ exception
             'SP_RUN_DAILY_PIPELINE',
             'FAIL',
             null,
-            object_construct('from_ts', v_from_ts, 'to_ts', v_to_ts),
+            object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
             sqlerrm,
             v_run_id,
             null

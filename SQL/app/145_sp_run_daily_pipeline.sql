@@ -28,7 +28,7 @@ begin
         null,
         object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
         null,
-        v_run_id,
+        :v_run_id,
         null
     );
 
@@ -141,7 +141,7 @@ begin
             'msg_evaluate', :v_msg_eval
         ),
         null,
-        v_run_id,
+        :v_run_id,
         null
     );
 
@@ -163,7 +163,7 @@ exception
             null,
             object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
             :sqlerrm,
-            v_run_id,
+            :v_run_id,
             null
         );
         raise;

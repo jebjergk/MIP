@@ -1,3 +1,4 @@
+-- Generating momentum Records
 use role MIP_ADMIN_ROLE;
 use database MIP;
 

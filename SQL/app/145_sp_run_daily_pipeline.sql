@@ -121,6 +121,7 @@ begin
 
     call MIP.APP.SP_GENERATE_MOMENTUM_RECS(null, 'STOCK', null, null, null);
     call MIP.APP.SP_GENERATE_MOMENTUM_RECS(null, 'FX', null, null, null);
+    call MIP.APP.SP_GENERATE_MOMENTUM_RECS(null, 'ETF', null, null, null);
     v_msg_signals := 'Momentum recommendations generated for active daily patterns.';
 
     call MIP.APP.SP_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_to_ts);

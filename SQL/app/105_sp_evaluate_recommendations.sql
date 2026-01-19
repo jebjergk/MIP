@@ -33,7 +33,7 @@ begin
     merge into MIP.APP.RECOMMENDATION_OUTCOMES t
     using (
         with horizons as (
-            select column1::number as HORIZON_DAYS
+            select column1::number as HORIZON_BARS
             from values (1), (3), (5), (10)
         ),
         bar_index as (
@@ -51,15 +51,15 @@ begin
         ),
         base_recs as (
             select
-                r.PATTERN_ID,
+                r.RECOMMENDATION_ID,
                 r.SYMBOL,
                 r.MARKET_TYPE,
                 r.INTERVAL_MINUTES,
-                r.TS as REC_TS,
-                bi.CLOSE::FLOAT as REC_CLOSE,
-                bi.BAR_INDEX as REC_BAR_INDEX
+                r.TS as ENTRY_TS,
+                bi.CLOSE::FLOAT as ENTRY_PRICE,
+                bi.BAR_INDEX as ENTRY_BAR_INDEX
             from MIP.APP.RECOMMENDATION_LOG r
-            join bar_index bi
+            left join bar_index bi
               on bi.SYMBOL = r.SYMBOL
              and bi.MARKET_TYPE = r.MARKET_TYPE
              and bi.INTERVAL_MINUTES = r.INTERVAL_MINUTES
@@ -69,87 +69,106 @@ begin
         ),
         future_bars as (
             select
-                r.PATTERN_ID,
-                r.SYMBOL,
-                r.MARKET_TYPE,
-                r.INTERVAL_MINUTES,
-                r.REC_TS,
-                r.REC_CLOSE,
-                h.HORIZON_DAYS,
-                bf.TS as FUTURE_TS,
-                bf.CLOSE::FLOAT as FUTURE_CLOSE
+                r.RECOMMENDATION_ID,
+                r.ENTRY_TS,
+                r.ENTRY_PRICE,
+                h.HORIZON_BARS,
+                bf.TS as EXIT_TS,
+                bf.CLOSE::FLOAT as EXIT_PRICE
             from base_recs r
             join horizons h
               on 1 = 1
-            join bar_index bf
+            left join bar_index bf
               on bf.SYMBOL = r.SYMBOL
              and bf.MARKET_TYPE = r.MARKET_TYPE
              and bf.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and bf.BAR_INDEX = r.REC_BAR_INDEX + h.HORIZON_DAYS
+             and bf.BAR_INDEX = r.ENTRY_BAR_INDEX + h.HORIZON_BARS
         )
         select
-            fb.PATTERN_ID,
-            fb.SYMBOL,
-            fb.MARKET_TYPE,
-            fb.INTERVAL_MINUTES,
-            fb.REC_TS,
-            fb.HORIZON_DAYS,
-            fb.REC_CLOSE,
-            fb.FUTURE_CLOSE,
-            (fb.FUTURE_CLOSE::FLOAT - fb.REC_CLOSE::FLOAT) / fb.REC_CLOSE::FLOAT as FORWARD_RETURN,
-            (fb.FUTURE_CLOSE::FLOAT - fb.REC_CLOSE::FLOAT) / fb.REC_CLOSE::FLOAT > 0 as HIT,
+            fb.RECOMMENDATION_ID,
+            fb.HORIZON_BARS,
+            fb.ENTRY_TS,
+            fb.EXIT_TS,
+            fb.ENTRY_PRICE,
+            fb.EXIT_PRICE,
+            case
+                when fb.ENTRY_PRICE is not null
+                 and fb.ENTRY_PRICE <> 0
+                 and fb.EXIT_PRICE is not null
+                 and fb.EXIT_PRICE <> 0
+                then (fb.EXIT_PRICE::FLOAT - fb.ENTRY_PRICE::FLOAT) / fb.ENTRY_PRICE::FLOAT
+                else null
+            end as REALIZED_RETURN,
+            'LONG' as DIRECTION,
+            case
+                when fb.ENTRY_PRICE is not null
+                 and fb.ENTRY_PRICE <> 0
+                 and fb.EXIT_PRICE is not null
+                 and fb.EXIT_PRICE <> 0
+                then (fb.EXIT_PRICE::FLOAT - fb.ENTRY_PRICE::FLOAT) / fb.ENTRY_PRICE::FLOAT >= 0
+                else null
+            end as HIT_FLAG,
+            'THRESHOLD' as HIT_RULE,
+            0 as MIN_RETURN_THRESHOLD,
+            case
+                when fb.ENTRY_PRICE is null or fb.ENTRY_PRICE = 0 then 'INSUFFICIENT_DATA'
+                when fb.EXIT_PRICE is null or fb.EXIT_PRICE = 0 then 'PENDING'
+                else 'SUCCESS'
+            end as EVAL_STATUS,
             current_timestamp() as CALCULATED_AT
         from future_bars fb
-        where fb.REC_CLOSE is not null
-          and fb.REC_CLOSE <> 0
-          and fb.FUTURE_CLOSE is not null
-          and fb.FUTURE_CLOSE <> 0
     ) s
-      on t.PATTERN_ID = s.PATTERN_ID
-     and t.SYMBOL = s.SYMBOL
-     and t.MARKET_TYPE = s.MARKET_TYPE
-     and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
-     and t.REC_TS = s.REC_TS
-     and t.HORIZON_DAYS = s.HORIZON_DAYS
+      on t.RECOMMENDATION_ID = s.RECOMMENDATION_ID
+     and t.HORIZON_BARS = s.HORIZON_BARS
     when matched then update set
-        t.REC_CLOSE = s.REC_CLOSE,
-        t.FUTURE_CLOSE = s.FUTURE_CLOSE,
-        t.FORWARD_RETURN = s.FORWARD_RETURN,
-        t.HIT = s.HIT,
+        t.ENTRY_TS = s.ENTRY_TS,
+        t.EXIT_TS = s.EXIT_TS,
+        t.ENTRY_PRICE = s.ENTRY_PRICE,
+        t.EXIT_PRICE = s.EXIT_PRICE,
+        t.REALIZED_RETURN = s.REALIZED_RETURN,
+        t.DIRECTION = s.DIRECTION,
+        t.HIT_FLAG = s.HIT_FLAG,
+        t.HIT_RULE = s.HIT_RULE,
+        t.MIN_RETURN_THRESHOLD = s.MIN_RETURN_THRESHOLD,
+        t.EVAL_STATUS = s.EVAL_STATUS,
         t.CALCULATED_AT = s.CALCULATED_AT
     when not matched then insert (
-        PATTERN_ID,
-        SYMBOL,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        REC_TS,
-        HORIZON_DAYS,
-        REC_CLOSE,
-        FUTURE_CLOSE,
-        FORWARD_RETURN,
-        HIT,
+        RECOMMENDATION_ID,
+        HORIZON_BARS,
+        ENTRY_TS,
+        EXIT_TS,
+        ENTRY_PRICE,
+        EXIT_PRICE,
+        REALIZED_RETURN,
+        DIRECTION,
+        HIT_FLAG,
+        HIT_RULE,
+        MIN_RETURN_THRESHOLD,
+        EVAL_STATUS,
         CALCULATED_AT
     ) values (
-        s.PATTERN_ID,
-        s.SYMBOL,
-        s.MARKET_TYPE,
-        s.INTERVAL_MINUTES,
-        s.REC_TS,
-        s.HORIZON_DAYS,
-        s.REC_CLOSE,
-        s.FUTURE_CLOSE,
-        s.FORWARD_RETURN,
-        s.HIT,
+        s.RECOMMENDATION_ID,
+        s.HORIZON_BARS,
+        s.ENTRY_TS,
+        s.EXIT_TS,
+        s.ENTRY_PRICE,
+        s.EXIT_PRICE,
+        s.REALIZED_RETURN,
+        s.DIRECTION,
+        s.HIT_FLAG,
+        s.HIT_RULE,
+        s.MIN_RETURN_THRESHOLD,
+        s.EVAL_STATUS,
         s.CALCULATED_AT
     );
 
     v_merged := sqlrowcount;
 
-    select object_agg(HORIZON_DAYS, CNT)
+    select object_agg(HORIZON_BARS, CNT)
       into :v_horizon_counts
     from (
         with horizons as (
-            select column1::number as HORIZON_DAYS
+            select column1::number as HORIZON_BARS
             from values (1), (3), (5), (10)
         ),
         bar_index as (
@@ -167,15 +186,15 @@ begin
         ),
         base_recs as (
             select
-                r.PATTERN_ID,
+                r.RECOMMENDATION_ID,
                 r.SYMBOL,
                 r.MARKET_TYPE,
                 r.INTERVAL_MINUTES,
-                r.TS as REC_TS,
-                bi.CLOSE::FLOAT as REC_CLOSE,
-                bi.BAR_INDEX as REC_BAR_INDEX
+                r.TS as ENTRY_TS,
+                bi.CLOSE::FLOAT as ENTRY_PRICE,
+                bi.BAR_INDEX as ENTRY_BAR_INDEX
             from MIP.APP.RECOMMENDATION_LOG r
-            join bar_index bi
+            left join bar_index bi
               on bi.SYMBOL = r.SYMBOL
              and bi.MARKET_TYPE = r.MARKET_TYPE
              and bi.INTERVAL_MINUTES = r.INTERVAL_MINUTES
@@ -185,33 +204,30 @@ begin
         ),
         future_bars as (
             select
-                r.PATTERN_ID,
-                r.SYMBOL,
-                r.MARKET_TYPE,
-                r.INTERVAL_MINUTES,
-                r.REC_TS,
-                r.REC_CLOSE,
-                h.HORIZON_DAYS,
-                bf.TS as FUTURE_TS,
-                bf.CLOSE::FLOAT as FUTURE_CLOSE
+                r.RECOMMENDATION_ID,
+                r.ENTRY_TS,
+                r.ENTRY_PRICE,
+                h.HORIZON_BARS,
+                bf.TS as EXIT_TS,
+                bf.CLOSE::FLOAT as EXIT_PRICE
             from base_recs r
             join horizons h
               on 1 = 1
-            join bar_index bf
+            left join bar_index bf
               on bf.SYMBOL = r.SYMBOL
              and bf.MARKET_TYPE = r.MARKET_TYPE
              and bf.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and bf.BAR_INDEX = r.REC_BAR_INDEX + h.HORIZON_DAYS
+             and bf.BAR_INDEX = r.ENTRY_BAR_INDEX + h.HORIZON_BARS
         )
         select
-            fb.HORIZON_DAYS,
+            fb.HORIZON_BARS,
             count(*) as CNT
         from future_bars fb
-        where fb.REC_CLOSE is not null
-          and fb.REC_CLOSE <> 0
-          and fb.FUTURE_CLOSE is not null
-          and fb.FUTURE_CLOSE <> 0
-        group by fb.HORIZON_DAYS
+        where fb.ENTRY_PRICE is not null
+          and fb.ENTRY_PRICE <> 0
+          and fb.EXIT_PRICE is not null
+          and fb.EXIT_PRICE <> 0
+        group by fb.HORIZON_BARS
     );
 
     call MIP.APP.SP_LOG_EVENT(

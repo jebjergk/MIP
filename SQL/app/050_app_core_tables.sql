@@ -213,24 +213,22 @@ create or replace table MIP.APP.RECOMMENDATION_LOG (
 -- 3. RECOMMENDATION_OUTCOMES
 -----------------------------
 create or replace table MIP.APP.RECOMMENDATION_OUTCOMES (
-    PATTERN_ID       number        not null,
-    SYMBOL           string        not null,
-    MARKET_TYPE      string        not null,
-    INTERVAL_MINUTES number        not null,
-    REC_TS           timestamp_ntz not null,
-    HORIZON_DAYS     number        not null,
-    REC_CLOSE        number,
-    FUTURE_CLOSE     number,
-    FORWARD_RETURN   number,
-    HIT              boolean,
-    CALCULATED_AT    timestamp_ntz default current_timestamp(),
+    RECOMMENDATION_ID     number        not null,
+    HORIZON_BARS          number        not null,
+    ENTRY_TS              timestamp_ntz not null,
+    EXIT_TS               timestamp_ntz,
+    ENTRY_PRICE           number,
+    EXIT_PRICE            number,
+    REALIZED_RETURN       number,
+    DIRECTION             string,
+    HIT_FLAG              boolean,
+    HIT_RULE              string,
+    MIN_RETURN_THRESHOLD  number,
+    EVAL_STATUS           string,
+    CALCULATED_AT         timestamp_ntz default current_timestamp(),
     constraint PK_RECOMMENDATION_OUTCOMES primary key (
-        PATTERN_ID,
-        SYMBOL,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        REC_TS,
-        HORIZON_DAYS
+        RECOMMENDATION_ID,
+        HORIZON_BARS
     )
 );
 

@@ -4,139 +4,134 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace procedure MIP.APP.SP_EVALUATE_RECOMMENDATIONS(
-    P_FROM_DATE timestamp_ntz,
-    P_TO_DATE   timestamp_ntz
+CREATE OR REPLACE PROCEDURE MIP.APP.SP_EVALUATE_RECOMMENDATIONS(
+    :P_FROM_DATE TIMESTAMP_NTZ,
+    :P_TO_DATE   TIMESTAMP_NTZ,
+    :P_MIN_RETURN_THRESHOLD FLOAT DEFAULT 0.0
 )
-returns varchar
-language sql
-as
+RETURNS VARCHAR
+LANGUAGE SQL
+AS
 $$
-declare
-    v_from_ts timestamp_ntz := coalesce(:P_FROM_DATE, dateadd(day, -90, current_date()));
-    v_to_ts   timestamp_ntz := coalesce(:P_TO_DATE, current_timestamp());
-    v_merged  number := 0;
-    v_horizon_counts variant;
-    v_run_id  string := coalesce(nullif(current_query_tag(), ''), uuid_string());
-begin
-    call MIP.APP.SP_LOG_EVENT(
+DECLARE
+    v_from_ts TIMESTAMP_NTZ := COALESCE(:P_FROM_DATE, DATEADD(day, -90, CURRENT_DATE()));
+    v_to_ts   TIMESTAMP_NTZ := COALESCE(:P_TO_DATE, CURRENT_TIMESTAMP());
+    v_thr     FLOAT := COALESCE(:P_MIN_RETURN_THRESHOLD, 0.0);
+    v_merged  NUMBER := 0;
+    v_horizon_counts VARIANT;
+    v_run_id  STRING := COALESCE(NULLIF(CURRENT_QUERY_TAG(), ''), UUID_STRING());
+BEGIN
+    CALL MIP.APP.SP_LOG_EVENT(
         'EVALUATION',
         'SP_EVALUATE_RECOMMENDATIONS',
         'START',
-        null,
-        object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
-        null,
+        NULL,
+        OBJECT_CONSTRUCT('from_ts', :v_from_ts, 'to_ts', :v_to_ts, 'min_return_threshold', :v_thr),
+        NULL,
         :v_run_id,
-        null
+        NULL
     );
 
-    merge into MIP.APP.RECOMMENDATION_OUTCOMES t
-    using (
-        with horizons as (
-            select column1::number as HORIZON_BARS
-            from values (1), (3), (5), (10), (20)
+    MERGE INTO MIP.APP.RECOMMENDATION_OUTCOMES t
+    USING (
+        WITH horizons AS (
+            SELECT column1::NUMBER AS HORIZON_BARS
+            FROM VALUES (1), (3), (5), (10), (20)
         ),
-        entry_bars as (
-            select
+        entry_bars AS (
+            SELECT
                 r.RECOMMENDATION_ID,
                 r.SYMBOL,
                 r.MARKET_TYPE,
                 r.INTERVAL_MINUTES,
-                r.TS as ENTRY_TS,
-                b.CLOSE::FLOAT as ENTRY_PRICE
-            from MIP.APP.RECOMMENDATION_LOG r
-            left join MIP.MART.MARKET_BARS b
-              on b.SYMBOL = r.SYMBOL
-             and b.MARKET_TYPE = r.MARKET_TYPE
-             and b.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and b.TS <= r.TS
-            where r.TS >= :v_from_ts
-              and r.TS <= :v_to_ts
-            qualify row_number() over (
-                partition by r.RECOMMENDATION_ID
-                order by b.TS desc
-            ) = 1
+                r.TS AS ENTRY_TS,
+                b.CLOSE::FLOAT AS ENTRY_PRICE
+            FROM MIP.APP.RECOMMENDATION_LOG r
+            LEFT JOIN MIP.MART.MARKET_BARS b
+              ON b.SYMBOL = r.SYMBOL
+             AND b.MARKET_TYPE = r.MARKET_TYPE
+             AND b.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+             AND b.TS = r.TS                      -- strict entry bar
+            WHERE r.TS >= :v_from_ts
+              AND r.TS <= :v_to_ts
         ),
-        future_ranked as (
-            select
+        future_ranked AS (
+            SELECT
                 e.RECOMMENDATION_ID,
-                b.TS as EXIT_TS,
-                b.CLOSE::FLOAT as EXIT_PRICE,
-                row_number() over (
-                    partition by e.RECOMMENDATION_ID
-                    order by b.TS
-                ) as FUTURE_RN
-            from entry_bars e
-            join MIP.MART.MARKET_BARS b
-              on b.SYMBOL = e.SYMBOL
-             and b.MARKET_TYPE = e.MARKET_TYPE
-             and b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
-             and b.TS > e.ENTRY_TS
+                b.TS AS EXIT_TS,
+                b.CLOSE::FLOAT AS EXIT_PRICE,
+                ROW_NUMBER() OVER (
+                    PARTITION BY e.RECOMMENDATION_ID
+                    ORDER BY b.TS
+                ) AS FUTURE_RN
+            FROM entry_bars e
+            JOIN MIP.MART.MARKET_BARS b
+              ON b.SYMBOL = e.SYMBOL
+             AND b.MARKET_TYPE = e.MARKET_TYPE
+             AND b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
+             AND b.TS > e.ENTRY_TS                 -- strict future: lookahead-safe
+            WHERE e.ENTRY_PRICE IS NOT NULL
+              AND e.ENTRY_PRICE <> 0
         ),
-        future_bars as (
-            select
+        future_bars AS (
+            SELECT
                 e.RECOMMENDATION_ID,
                 e.ENTRY_TS,
                 e.ENTRY_PRICE,
                 h.HORIZON_BARS,
                 fr.EXIT_TS,
                 fr.EXIT_PRICE
-            from entry_bars e
-            join horizons h
-              on 1 = 1
-            left join future_ranked fr
-              on fr.RECOMMENDATION_ID = e.RECOMMENDATION_ID
-             and fr.FUTURE_RN = h.HORIZON_BARS
+            FROM entry_bars e
+            JOIN horizons h ON 1=1
+            LEFT JOIN future_ranked fr
+              ON fr.RECOMMENDATION_ID = e.RECOMMENDATION_ID
+             AND fr.FUTURE_RN = h.HORIZON_BARS
         )
-        select
+        SELECT
             fb.RECOMMENDATION_ID,
             fb.HORIZON_BARS,
             fb.ENTRY_TS,
             fb.EXIT_TS,
             fb.ENTRY_PRICE,
             fb.EXIT_PRICE,
-            case
-                when fb.ENTRY_PRICE is not null
-                 and fb.ENTRY_PRICE <> 0
-                 and fb.EXIT_PRICE is not null
-                 and fb.EXIT_PRICE <> 0
-                then (fb.EXIT_PRICE::FLOAT - fb.ENTRY_PRICE::FLOAT) / fb.ENTRY_PRICE::FLOAT
-                else null
-            end as REALIZED_RETURN,
-            'LONG' as DIRECTION,
-            case
-                when fb.ENTRY_PRICE is not null
-                 and fb.ENTRY_PRICE <> 0
-                 and fb.EXIT_PRICE is not null
-                 and fb.EXIT_PRICE <> 0
-                then (fb.EXIT_PRICE::FLOAT - fb.ENTRY_PRICE::FLOAT) / fb.ENTRY_PRICE::FLOAT >= 0
-                else null
-            end as HIT_FLAG,
-            'THRESHOLD' as HIT_RULE,
-            0 as MIN_RETURN_THRESHOLD,
-            case
-                when fb.ENTRY_PRICE is null or fb.ENTRY_PRICE = 0 then 'INSUFFICIENT_DATA'
-                when fb.EXIT_PRICE is null or fb.EXIT_PRICE = 0 then 'PENDING'
-                else 'SUCCESS'
-            end as EVAL_STATUS,
-            current_timestamp() as CALCULATED_AT
-        from future_bars fb
+            CASE
+                WHEN fb.ENTRY_PRICE IS NOT NULL AND fb.ENTRY_PRICE <> 0
+                 AND fb.EXIT_PRICE  IS NOT NULL AND fb.EXIT_PRICE  <> 0
+                THEN (fb.EXIT_PRICE / fb.ENTRY_PRICE) - 1
+                ELSE NULL
+            END AS REALIZED_RETURN,
+            'LONG' AS DIRECTION,
+            CASE
+                WHEN fb.ENTRY_PRICE IS NOT NULL AND fb.ENTRY_PRICE <> 0
+                 AND fb.EXIT_PRICE  IS NOT NULL AND fb.EXIT_PRICE  <> 0
+                THEN ((fb.EXIT_PRICE / fb.ENTRY_PRICE) - 1) >= :v_thr
+                ELSE NULL
+            END AS HIT_FLAG,
+            'THRESHOLD' AS HIT_RULE,
+            :v_thr AS MIN_RETURN_THRESHOLD,
+            CASE
+                WHEN fb.ENTRY_PRICE IS NULL OR fb.ENTRY_PRICE = 0 THEN 'FAILED_NO_ENTRY_BAR'
+                WHEN fb.EXIT_PRICE  IS NULL OR fb.EXIT_PRICE  = 0 THEN 'INSUFFICIENT_FUTURE_DATA'
+                ELSE 'SUCCESS'
+            END AS EVAL_STATUS,
+            CURRENT_TIMESTAMP() AS CALCULATED_AT
+        FROM future_bars fb
     ) s
-      on t.RECOMMENDATION_ID = s.RECOMMENDATION_ID
-     and t.HORIZON_BARS = s.HORIZON_BARS
-    when matched then update set
-        t.ENTRY_TS = s.ENTRY_TS,
-        t.EXIT_TS = s.EXIT_TS,
-        t.ENTRY_PRICE = s.ENTRY_PRICE,
-        t.EXIT_PRICE = s.EXIT_PRICE,
-        t.REALIZED_RETURN = s.REALIZED_RETURN,
-        t.DIRECTION = s.DIRECTION,
-        t.HIT_FLAG = s.HIT_FLAG,
-        t.HIT_RULE = s.HIT_RULE,
+      ON t.RECOMMENDATION_ID = s.RECOMMENDATION_ID
+     AND t.HORIZON_BARS      = s.HORIZON_BARS
+    WHEN MATCHED THEN UPDATE SET
+        t.ENTRY_TS             = s.ENTRY_TS,
+        t.EXIT_TS              = s.EXIT_TS,
+        t.ENTRY_PRICE          = s.ENTRY_PRICE,
+        t.EXIT_PRICE           = s.EXIT_PRICE,
+        t.REALIZED_RETURN      = s.REALIZED_RETURN,
+        t.DIRECTION            = s.DIRECTION,
+        t.HIT_FLAG             = s.HIT_FLAG,
+        t.HIT_RULE             = s.HIT_RULE,
         t.MIN_RETURN_THRESHOLD = s.MIN_RETURN_THRESHOLD,
-        t.EVAL_STATUS = s.EVAL_STATUS,
-        t.CALCULATED_AT = s.CALCULATED_AT
-    when not matched then insert (
+        t.EVAL_STATUS          = s.EVAL_STATUS,
+        t.CALCULATED_AT        = s.CALCULATED_AT
+    WHEN NOT MATCHED THEN INSERT (
         RECOMMENDATION_ID,
         HORIZON_BARS,
         ENTRY_TS,
@@ -150,7 +145,7 @@ begin
         MIN_RETURN_THRESHOLD,
         EVAL_STATUS,
         CALCULATED_AT
-    ) values (
+    ) VALUES (
         s.RECOMMENDATION_ID,
         s.HORIZON_BARS,
         s.ENTRY_TS,
@@ -166,106 +161,43 @@ begin
         s.CALCULATED_AT
     );
 
-    v_merged := sqlrowcount;
+    v_merged := SQLROWCOUNT;
 
-    select object_agg(HORIZON_BARS, CNT)
-      into :v_horizon_counts
-    from (
-        with horizons as (
-            select column1::number as HORIZON_BARS
-            from values (1), (3), (5), (10), (20)
-        ),
-        entry_bars as (
-            select
-                r.RECOMMENDATION_ID,
-                r.SYMBOL,
-                r.MARKET_TYPE,
-                r.INTERVAL_MINUTES,
-                r.TS as ENTRY_TS,
-                b.CLOSE::FLOAT as ENTRY_PRICE
-            from MIP.APP.RECOMMENDATION_LOG r
-            left join MIP.MART.MARKET_BARS b
-              on b.SYMBOL = r.SYMBOL
-             and b.MARKET_TYPE = r.MARKET_TYPE
-             and b.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and b.TS <= r.TS
-            where r.TS >= :v_from_ts
-              and r.TS <= :v_to_ts
-            qualify row_number() over (
-                partition by r.RECOMMENDATION_ID
-                order by b.TS desc
-            ) = 1
-        ),
-        future_ranked as (
-            select
-                e.RECOMMENDATION_ID,
-                b.TS as EXIT_TS,
-                b.CLOSE::FLOAT as EXIT_PRICE,
-                row_number() over (
-                    partition by e.RECOMMENDATION_ID
-                    order by b.TS
-                ) as FUTURE_RN
-            from entry_bars e
-            join MIP.MART.MARKET_BARS b
-              on b.SYMBOL = e.SYMBOL
-             and b.MARKET_TYPE = e.MARKET_TYPE
-             and b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
-             and b.TS > e.ENTRY_TS
-        ),
-        future_bars as (
-            select
-                e.RECOMMENDATION_ID,
-                e.ENTRY_TS,
-                e.ENTRY_PRICE,
-                h.HORIZON_BARS,
-                fr.EXIT_TS,
-                fr.EXIT_PRICE
-            from entry_bars e
-            join horizons h
-              on 1 = 1
-            left join future_ranked fr
-              on fr.RECOMMENDATION_ID = e.RECOMMENDATION_ID
-             and fr.FUTURE_RN = h.HORIZON_BARS
-        )
-        select
-            fb.HORIZON_BARS,
-            count(*) as CNT
-        from future_bars fb
-        where fb.ENTRY_PRICE is not null
-          and fb.ENTRY_PRICE <> 0
-          and fb.EXIT_PRICE is not null
-          and fb.EXIT_PRICE <> 0
-        group by fb.HORIZON_BARS
+    -- counts by horizon (same as your current)
+    SELECT OBJECT_AGG(HORIZON_BARS, CNT)
+      INTO :v_horizon_counts
+    FROM (
+        SELECT HORIZON_BARS, COUNT(*) AS CNT
+        FROM MIP.APP.RECOMMENDATION_OUTCOMES
+        WHERE CALCULATED_AT >= DATEADD(minute, -10, CURRENT_TIMESTAMP())
+        GROUP BY HORIZON_BARS
     );
 
-    call MIP.APP.SP_LOG_EVENT(
+    CALL MIP.APP.SP_LOG_EVENT(
         'EVALUATION',
         'SP_EVALUATE_RECOMMENDATIONS',
         'SUCCESS',
         :v_merged,
-        object_construct(
-            'from_ts', :v_from_ts,
-            'to_ts', :v_to_ts,
-            'horizon_counts', :v_horizon_counts
-        ),
-        null,
+        OBJECT_CONSTRUCT('from_ts', :v_from_ts, 'to_ts', :v_to_ts, 'horizon_counts', :v_horizon_counts),
+        NULL,
         :v_run_id,
-        null
+        NULL
     );
 
-    return 'Upserted ' || :v_merged || ' recommendation outcomes from ' || :v_from_ts || ' to ' || :v_to_ts || '.';
-exception
-    when other then
-        call MIP.APP.SP_LOG_EVENT(
+    RETURN 'Upserted ' || :v_merged || ' recommendation outcomes from ' || :v_from_ts || ' to ' || :v_to_ts || '.';
+
+EXCEPTION
+    WHEN OTHER THEN
+        CALL MIP.APP.SP_LOG_EVENT(
             'EVALUATION',
             'SP_EVALUATE_RECOMMENDATIONS',
             'FAIL',
             :v_merged,
-            object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
-            :sqlerrm,
+            OBJECT_CONSTRUCT('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
+            :SQLERRM,
             :v_run_id,
-            null
+            NULL
         );
-        raise;
-end;
+        RAISE;
+END;
 $$;

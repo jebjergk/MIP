@@ -2320,10 +2320,23 @@ def render_admin_ops():
                 ]
                 selected = st.multiselect("Market / timeframe", options=options, default=options)
 
-                horizon_minutes = st.number_input("Horizon (minutes)", min_value=1, value=15, step=1)
+                horizon_minutes = st.number_input("Horizon (minutes)", min_value=1, value=1440, step=1)
                 hit_threshold = st.number_input("Hit threshold", value=0.002, format="%.6f")
                 miss_threshold = st.number_input("Miss threshold", value=-0.002, format="%.6f")
-                min_return = st.number_input("Minimum return filter", value=0.0, format="%.6f")
+                min_return = st.number_input(
+                    "Min recommendation score to evaluate", value=0.0, format="%.6f"
+                )
+                incompatible_intervals = [
+                    interval
+                    for _, interval in selected
+                    if interval is not None and horizon_minutes < int(interval)
+                ]
+                if incompatible_intervals:
+                    st.warning(
+                        "Horizon minutes is shorter than the selected interval minutes "
+                        f"({sorted(set(incompatible_intervals))}). Please align the horizon with "
+                        "the bar interval (e.g., 1440 for daily bars)."
+                    )
                 date_from = date.today() - timedelta(days=30)
                 date_to = date.today()
                 date_range = st.date_input("From / to (inclusive)", value=(date_from, date_to))

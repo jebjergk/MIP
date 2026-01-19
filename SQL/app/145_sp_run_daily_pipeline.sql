@@ -25,6 +25,7 @@ declare
     v_rows_after       number := 0;
     v_rows_delta       number := 0;
     v_market_type      string;
+    v_market_types     resultset;
     v_market_type_count number := 0;
     v_pattern_count    number := 0;
     v_min_return       number := 0.0;
@@ -280,11 +281,13 @@ begin
       from MIP.MART.MARKET_RETURNS;
     v_msg_returns := 'Market returns refreshed (' || v_return_rows || ' rows).';
 
-    for rec in (
+    v_market_types := (
         select MARKET_TYPE
           from MIP.APP.TMP_MARKET_TYPES
          order by MARKET_TYPE
-    ) do
+    );
+
+    for rec in v_market_types do
         v_market_type := rec.MARKET_TYPE;
         v_min_return := 0.0;
 

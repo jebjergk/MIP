@@ -163,13 +163,15 @@ BEGIN
 
     v_merged := SQLROWCOUNT;
 
-    -- counts by horizon (same as your current)
+    -- counts by horizon for this run's window
     SELECT OBJECT_AGG(HORIZON_BARS, CNT)
       INTO :v_horizon_counts
     FROM (
         SELECT HORIZON_BARS, COUNT(*) AS CNT
         FROM MIP.APP.RECOMMENDATION_OUTCOMES
-        WHERE CALCULATED_AT >= DATEADD(minute, -10, CURRENT_TIMESTAMP())
+        WHERE ENTRY_TS >= :v_from_ts
+          AND ENTRY_TS <= :v_to_ts
+          AND EVAL_STATUS = 'SUCCESS'
         GROUP BY HORIZON_BARS
     );
 

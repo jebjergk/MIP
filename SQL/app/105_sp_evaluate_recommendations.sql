@@ -34,55 +34,59 @@ begin
     using (
         with horizons as (
             select column1::number as HORIZON_BARS
-            from values (1), (3), (5), (10)
+            from values (1), (3), (5), (10), (20)
         ),
-        bar_index as (
-            select
-                SYMBOL,
-                MARKET_TYPE,
-                INTERVAL_MINUTES,
-                TS,
-                CLOSE::FLOAT as CLOSE,
-                row_number() over (
-                    partition by SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
-                    order by TS
-                ) as BAR_INDEX
-            from MIP.MART.MARKET_BARS
-        ),
-        base_recs as (
+        entry_bars as (
             select
                 r.RECOMMENDATION_ID,
                 r.SYMBOL,
                 r.MARKET_TYPE,
                 r.INTERVAL_MINUTES,
                 r.TS as ENTRY_TS,
-                bi.CLOSE::FLOAT as ENTRY_PRICE,
-                bi.BAR_INDEX as ENTRY_BAR_INDEX
+                b.CLOSE::FLOAT as ENTRY_PRICE
             from MIP.APP.RECOMMENDATION_LOG r
-            left join bar_index bi
-              on bi.SYMBOL = r.SYMBOL
-             and bi.MARKET_TYPE = r.MARKET_TYPE
-             and bi.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and bi.TS = r.TS
+            left join MIP.MART.MARKET_BARS b
+              on b.SYMBOL = r.SYMBOL
+             and b.MARKET_TYPE = r.MARKET_TYPE
+             and b.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+             and b.TS <= r.TS
             where r.TS >= :v_from_ts
               and r.TS <= :v_to_ts
+            qualify row_number() over (
+                partition by r.RECOMMENDATION_ID
+                order by b.TS desc
+            ) = 1
+        ),
+        future_ranked as (
+            select
+                e.RECOMMENDATION_ID,
+                b.TS as EXIT_TS,
+                b.CLOSE::FLOAT as EXIT_PRICE,
+                row_number() over (
+                    partition by e.RECOMMENDATION_ID
+                    order by b.TS
+                ) as FUTURE_RN
+            from entry_bars e
+            join MIP.MART.MARKET_BARS b
+              on b.SYMBOL = e.SYMBOL
+             and b.MARKET_TYPE = e.MARKET_TYPE
+             and b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
+             and b.TS > e.ENTRY_TS
         ),
         future_bars as (
             select
-                r.RECOMMENDATION_ID,
-                r.ENTRY_TS,
-                r.ENTRY_PRICE,
+                e.RECOMMENDATION_ID,
+                e.ENTRY_TS,
+                e.ENTRY_PRICE,
                 h.HORIZON_BARS,
-                bf.TS as EXIT_TS,
-                bf.CLOSE::FLOAT as EXIT_PRICE
-            from base_recs r
+                fr.EXIT_TS,
+                fr.EXIT_PRICE
+            from entry_bars e
             join horizons h
               on 1 = 1
-            left join bar_index bf
-              on bf.SYMBOL = r.SYMBOL
-             and bf.MARKET_TYPE = r.MARKET_TYPE
-             and bf.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and bf.BAR_INDEX = r.ENTRY_BAR_INDEX + h.HORIZON_BARS
+            left join future_ranked fr
+              on fr.RECOMMENDATION_ID = e.RECOMMENDATION_ID
+             and fr.FUTURE_RN = h.HORIZON_BARS
         )
         select
             fb.RECOMMENDATION_ID,
@@ -169,55 +173,59 @@ begin
     from (
         with horizons as (
             select column1::number as HORIZON_BARS
-            from values (1), (3), (5), (10)
+            from values (1), (3), (5), (10), (20)
         ),
-        bar_index as (
-            select
-                SYMBOL,
-                MARKET_TYPE,
-                INTERVAL_MINUTES,
-                TS,
-                CLOSE::FLOAT as CLOSE,
-                row_number() over (
-                    partition by SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
-                    order by TS
-                ) as BAR_INDEX
-            from MIP.MART.MARKET_BARS
-        ),
-        base_recs as (
+        entry_bars as (
             select
                 r.RECOMMENDATION_ID,
                 r.SYMBOL,
                 r.MARKET_TYPE,
                 r.INTERVAL_MINUTES,
                 r.TS as ENTRY_TS,
-                bi.CLOSE::FLOAT as ENTRY_PRICE,
-                bi.BAR_INDEX as ENTRY_BAR_INDEX
+                b.CLOSE::FLOAT as ENTRY_PRICE
             from MIP.APP.RECOMMENDATION_LOG r
-            left join bar_index bi
-              on bi.SYMBOL = r.SYMBOL
-             and bi.MARKET_TYPE = r.MARKET_TYPE
-             and bi.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and bi.TS = r.TS
+            left join MIP.MART.MARKET_BARS b
+              on b.SYMBOL = r.SYMBOL
+             and b.MARKET_TYPE = r.MARKET_TYPE
+             and b.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+             and b.TS <= r.TS
             where r.TS >= :v_from_ts
               and r.TS <= :v_to_ts
+            qualify row_number() over (
+                partition by r.RECOMMENDATION_ID
+                order by b.TS desc
+            ) = 1
+        ),
+        future_ranked as (
+            select
+                e.RECOMMENDATION_ID,
+                b.TS as EXIT_TS,
+                b.CLOSE::FLOAT as EXIT_PRICE,
+                row_number() over (
+                    partition by e.RECOMMENDATION_ID
+                    order by b.TS
+                ) as FUTURE_RN
+            from entry_bars e
+            join MIP.MART.MARKET_BARS b
+              on b.SYMBOL = e.SYMBOL
+             and b.MARKET_TYPE = e.MARKET_TYPE
+             and b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
+             and b.TS > e.ENTRY_TS
         ),
         future_bars as (
             select
-                r.RECOMMENDATION_ID,
-                r.ENTRY_TS,
-                r.ENTRY_PRICE,
+                e.RECOMMENDATION_ID,
+                e.ENTRY_TS,
+                e.ENTRY_PRICE,
                 h.HORIZON_BARS,
-                bf.TS as EXIT_TS,
-                bf.CLOSE::FLOAT as EXIT_PRICE
-            from base_recs r
+                fr.EXIT_TS,
+                fr.EXIT_PRICE
+            from entry_bars e
             join horizons h
               on 1 = 1
-            left join bar_index bf
-              on bf.SYMBOL = r.SYMBOL
-             and bf.MARKET_TYPE = r.MARKET_TYPE
-             and bf.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             and bf.BAR_INDEX = r.ENTRY_BAR_INDEX + h.HORIZON_BARS
+            left join future_ranked fr
+              on fr.RECOMMENDATION_ID = e.RECOMMENDATION_ID
+             and fr.FUTURE_RN = h.HORIZON_BARS
         )
         select
             fb.HORIZON_BARS,

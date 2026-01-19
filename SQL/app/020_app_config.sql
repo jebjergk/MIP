@@ -45,6 +45,10 @@ using (
     select 'PATTERN_MIN_CUM_RETURN',
            '0.0',
            'Minimum cumulative return required to activate a pattern'
+    union all
+    select 'SIM_MIN_SAMPLE_SIZE',
+           '30',
+           'Minimum sample size per pattern/market type/horizon before simulation readiness'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

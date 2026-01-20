@@ -22,7 +22,7 @@ execute as owner
 as
 $$
 declare
-    v_as_of_ts timestamp_ntz := coalesce(:P_AS_OF_DATE, MIP.APP.F_NOW_BERLIN_NTZ());
+    v_as_of_ts timestamp_ntz := coalesce(:P_AS_OF_DATE, current_timestamp()::timestamp_ntz);
     v_min_sample_size number := 30;
     v_max_horizon number := 0;
     v_missing_outcomes number := 0;

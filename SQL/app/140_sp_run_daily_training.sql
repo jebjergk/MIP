@@ -11,8 +11,8 @@ execute as caller
 as
 $$
 declare
-    v_from_ts          timestamp_ntz := dateadd(day, -90, MIP.APP.F_NOW_BERLIN_NTZ());
-    v_to_ts            timestamp_ntz := MIP.APP.F_NOW_BERLIN_NTZ();
+    v_from_ts          timestamp_ntz := dateadd(day, -90, current_timestamp()::timestamp_ntz);
+    v_to_ts            timestamp_ntz := current_timestamp()::timestamp_ntz;
     v_return_rows      number := 0;
     v_kpi_rows         number := 0;
     v_msg_ingest       string := 'Skipped ingestion (run separately).';

@@ -14,8 +14,8 @@ LANGUAGE SQL
 AS
 $$
 DECLARE
-    v_from_ts TIMESTAMP_NTZ := COALESCE(:P_FROM_DATE, DATEADD(day, -90, MIP.APP.F_NOW_BERLIN_NTZ()));
-    v_to_ts   TIMESTAMP_NTZ := COALESCE(:P_TO_DATE, MIP.APP.F_NOW_BERLIN_NTZ());
+    v_from_ts TIMESTAMP_NTZ := COALESCE(:P_FROM_DATE, DATEADD(day, -90, current_timestamp()::timestamp_ntz));
+    v_to_ts   TIMESTAMP_NTZ := COALESCE(:P_TO_DATE, current_timestamp()::timestamp_ntz);
     v_thr     FLOAT := COALESCE(:P_MIN_RETURN_THRESHOLD, 0.0);
     v_merged  NUMBER := 0;
     v_horizon_counts VARIANT;

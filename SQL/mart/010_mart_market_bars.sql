@@ -11,7 +11,7 @@ use database MIP;
 -------------------------------
 -- 1. Base table: MARKET_BARS
 -------------------------------
-create or replace table MIP.MART.MARKET_BARS (
+create table if not exists MIP.MART.MARKET_BARS (
     TS               TIMESTAMP_NTZ,
     SYMBOL           STRING,
     SOURCE           STRING,
@@ -24,6 +24,29 @@ create or replace table MIP.MART.MARKET_BARS (
     VOLUME           NUMBER,
     INGESTED_AT      TIMESTAMP_NTZ
 );
+
+alter table MIP.MART.MARKET_BARS
+    add column if not exists TS TIMESTAMP_NTZ;
+alter table MIP.MART.MARKET_BARS
+    add column if not exists SYMBOL STRING;
+alter table MIP.MART.MARKET_BARS
+    add column if not exists SOURCE STRING;
+alter table MIP.MART.MARKET_BARS
+    add column if not exists MARKET_TYPE STRING;
+alter table MIP.MART.MARKET_BARS
+    add column if not exists INTERVAL_MINUTES NUMBER;
+alter table MIP.MART.MARKET_BARS
+    add column if not exists OPEN NUMBER(18,8);
+alter table MIP.MART.MARKET_BARS
+    add column if not exists HIGH NUMBER(18,8);
+alter table MIP.MART.MARKET_BARS
+    add column if not exists LOW NUMBER(18,8);
+alter table MIP.MART.MARKET_BARS
+    add column if not exists CLOSE NUMBER(18,8);
+alter table MIP.MART.MARKET_BARS
+    add column if not exists VOLUME NUMBER;
+alter table MIP.MART.MARKET_BARS
+    add column if not exists INGESTED_AT TIMESTAMP_NTZ;
 
 -- Notes:
 -- - This table is the main "fact table" for time-series analytics.

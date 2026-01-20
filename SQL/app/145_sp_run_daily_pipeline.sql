@@ -11,8 +11,8 @@ execute as caller
 as
 $$
 declare
-    v_from_ts          timestamp_ntz := dateadd(day, -90, MIP.APP.F_NOW_BERLIN_NTZ());
-    v_to_ts            timestamp_ntz := MIP.APP.F_NOW_BERLIN_NTZ();
+    v_from_ts          timestamp_ntz := dateadd(day, -90, current_timestamp()::timestamp_ntz);
+    v_to_ts            timestamp_ntz := current_timestamp()::timestamp_ntz;
     v_msg_ingest       string;
     v_msg_returns      string;
     v_msg_signals      string;
@@ -126,7 +126,7 @@ begin
         insert into MIP.APP.TMP_MARKET_TYPES (MARKET_TYPE)
         select distinct MARKET_TYPE
           from MIP.MART.MARKET_BARS
-         where TS >= dateadd(day, -7, MIP.APP.F_NOW_BERLIN_NTZ());
+         where TS >= dateadd(day, -7, current_timestamp()::timestamp_ntz);
     end if;
 
     v_step_start := MIP.APP.F_NOW_BERLIN_NTZ();

@@ -1,7 +1,7 @@
-# Timestamp standard for MIP (Berlin local NTZ)
+# Timestamp standard for MIP (system vs market)
 
 ## Standard
-All **persisted** timestamps in MIP tables must be stored as:
+Only **system timestamps** in MIP tables must be stored as:
 
 - **Type:** `TIMESTAMP_NTZ`
 - **Semantic:** Berlin local wall-clock time (DST-aware; CET/CEST)
@@ -23,13 +23,19 @@ $$;
 ```
 
 ## Where to apply
-Use `MIP.APP.F_NOW_BERLIN_NTZ()` for any **persisted** timestamp columns, including (but not limited to):
+Use `MIP.APP.F_NOW_BERLIN_NTZ()` for **system timestamps** such as:
 
-- `*_TS`, `*_AT`, `EVENT_TS`, `CREATED_AT`, `UPDATED_AT`, `GENERATED_AT`,
-  `CALCULATED_AT`, `RUN_TS`
+- `CREATED_AT`, `UPDATED_AT`, `GENERATED_AT`,
+  `CALCULATED_AT`, `RUN_TS`, `STARTED_AT`, `ENDED_AT`, `EVENT_TS`
 - Table defaults
 - Inserts/updates in stored procedures
 - Audit logging
+
+Do **not** apply Berlin normalization to market/business timestamps such as:
+
+- `TS`, `BAR_TS`, `TRADE_TS`, `QUOTE_TS`
+- window parameters like `FROM_TS` / `TO_TS`
+- any timestamp used to join to `MIP.MART.MARKET_BARS.TS`
 
 ## Correct patterns
 ```sql
@@ -47,6 +53,11 @@ SET UPDATED_AT = MIP.APP.F_NOW_BERLIN_NTZ()
 ```
 
 ## Incorrect patterns
+```sql
+-- Market timestamps should not be defaulted to Berlin
+TS TIMESTAMP_NTZ DEFAULT MIP.APP.F_NOW_BERLIN_NTZ()
+```
+
 ```sql
 -- Relies on session timezone (not allowed)
 DEFAULT CURRENT_TIMESTAMP()

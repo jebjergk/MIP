@@ -133,7 +133,7 @@ begin
         DETAILS
     )
     values (
-        current_timestamp(),
+        MIP.APP.F_NOW_BERLIN_NTZ(),
         :v_run_id,
         'PORTFOLIO_SIM',
         'SIMULATION_START',
@@ -352,7 +352,7 @@ begin
                 DETAILS
             )
             values (
-                current_timestamp(),
+                MIP.APP.F_NOW_BERLIN_NTZ(),
                 :v_run_id,
                 'PORTFOLIO_SIM',
                 'SIMULATION_BUST',
@@ -464,7 +464,7 @@ begin
                     DETAILS
                 )
                 values (
-                    current_timestamp(),
+                    MIP.APP.F_NOW_BERLIN_NTZ(),
                     :v_run_id,
                     'PORTFOLIO_SIM',
                     'SIMULATION_PAUSED',
@@ -495,7 +495,7 @@ begin
                     DETAILS
                 )
                 values (
-                    current_timestamp(),
+                    MIP.APP.F_NOW_BERLIN_NTZ(),
                     :v_run_id,
                     'PORTFOLIO_SIM',
                     'SIMULATION_RESUMED',
@@ -722,7 +722,7 @@ begin
 
     update MIP.APP.PORTFOLIO
        set LAST_SIMULATION_RUN_ID = :v_run_id,
-           LAST_SIMULATED_AT = current_timestamp(),
+           LAST_SIMULATED_AT = MIP.APP.F_NOW_BERLIN_NTZ(),
            FINAL_EQUITY = :v_total_equity,
            TOTAL_RETURN = case
                when v_starting_cash = 0 then null
@@ -736,7 +736,7 @@ begin
                when v_sim_status = 'BUST' then :v_bust_ts
                else null
            end,
-           UPDATED_AT = current_timestamp()
+           UPDATED_AT = MIP.APP.F_NOW_BERLIN_NTZ()
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
     insert into MIP.APP.MIP_AUDIT_LOG (
@@ -749,7 +749,7 @@ begin
         DETAILS
     )
     values (
-        current_timestamp(),
+        MIP.APP.F_NOW_BERLIN_NTZ(),
         :v_run_id,
         'PORTFOLIO_SIM',
         'SIMULATION_END',

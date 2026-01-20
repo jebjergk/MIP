@@ -67,6 +67,23 @@ from MIP.APP.RECOMMENDATION_LOG;
 -- 4) Outcomes present
 select count(*) as outcome_rows
 from MIP.APP.RECOMMENDATION_OUTCOMES;
+
+-- 5) Trusted signal buckets
+select count(*) as trusted_buckets
+from MIP.MART.V_TRUSTED_SIGNALS
+where is_trusted;
+
+-- 6) Portfolio signals populated
+select count(*) as portfolio_rows
+from MIP.MART.V_PORTFOLIO_SIGNALS;
+
+-- 7) Score calibration buckets present
+select count(*) as calibration_rows
+from MIP.MART.SCORE_CALIBRATION;
+
+-- 8) Signals mapped to expected returns
+select count(*) as expected_return_rows
+from MIP.MART.V_SIGNALS_WITH_EXPECTED_RETURN;
 ```
 
 ## Backfill procedure (safe re-run)

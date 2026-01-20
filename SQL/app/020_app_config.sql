@@ -23,7 +23,7 @@ create table if not exists MIP.APP.APP_CONFIG (
 merge into MIP.APP.APP_CONFIG t
 using (
     select 'ALPHAVANTAGE_API_KEY' as CONFIG_KEY,
-           '<PLACEHOLDER>'        as CONFIG_VALUE,
+           '7UYJREVV2O8KJ1Q4'        as CONFIG_VALUE,
            'API key for AlphaVantage market data (set this manually)' as DESCRIPTION
     union all
     select 'DEFAULT_STOCK_SYMBOLS',

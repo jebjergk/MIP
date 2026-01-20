@@ -52,7 +52,7 @@ begin
             CUM_RETURN,
             AVG_RETURN,
             STD_RETURN,
-            MIP.APP.F_NOW_BERLIN_NTZ() as LAST_TRAINED_AT,
+            CURRENT_TIMESTAMP() as LAST_TRAINED_AT,
             :v_run_id as LAST_BACKTEST_RUN_ID,
             case
                 when TRADE_COUNT >= :v_min_trades

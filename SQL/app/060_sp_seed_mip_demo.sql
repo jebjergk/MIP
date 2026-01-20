@@ -29,7 +29,7 @@ begin
             t.PARAMS_JSON = s.PARAMS_JSON,
             t.IS_ACTIVE   = 'Y',
             t.ENABLED     = true,
-            t.UPDATED_AT  = MIP.APP.F_NOW_BERLIN_NTZ(),
+            t.UPDATED_AT  = CURRENT_TIMESTAMP(),
             t.UPDATED_BY  = current_user()
      when not matched then
         insert (NAME, DESCRIPTION, PARAMS_JSON, IS_ACTIVE, ENABLED)
@@ -49,7 +49,7 @@ begin
             99.75                                   as LOW,
             101.00                                  as CLOSE,
             150000                                  as VOLUME,
-            MIP.APP.F_NOW_BERLIN_NTZ()                      as INGESTED_AT
+            CURRENT_TIMESTAMP()                      as INGESTED_AT
         union all
         select
             to_timestamp_ntz('2024-05-01 09:35:00'),
@@ -62,7 +62,7 @@ begin
             100.90,
             102.25,
             162500,
-            MIP.APP.F_NOW_BERLIN_NTZ()
+            CURRENT_TIMESTAMP()
         union all
         select
             to_timestamp_ntz('2024-05-01 09:40:00'),
@@ -75,7 +75,7 @@ begin
             101.50,
             102.10,
             158000,
-            MIP.APP.F_NOW_BERLIN_NTZ()
+            CURRENT_TIMESTAMP()
     ) s
        on t.TS = s.TS
       and t.SYMBOL = s.SYMBOL

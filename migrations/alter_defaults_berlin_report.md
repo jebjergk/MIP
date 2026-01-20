@@ -1,6 +1,6 @@
 # Berlin timestamp default standardization report
 
-The following system timestamp columns now default to `MIP.APP.F_NOW_BERLIN_NTZ()`:
+The following system timestamp columns now default to `CURRENT_TIMESTAMP()`:
 
 | Schema | Table | Column |
 | --- | --- | --- |

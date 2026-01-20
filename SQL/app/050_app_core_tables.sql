@@ -13,7 +13,7 @@ create table if not exists MIP.APP.INGEST_UNIVERSE (
     INTERVAL_MINUTES number        not null,
     IS_ENABLED       boolean       default true,
     PRIORITY         number        default 0,
-    CREATED_AT       timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
     NOTES            string,
     constraint PK_INGEST_UNIVERSE primary key (SYMBOL, MARKET_TYPE, INTERVAL_MINUTES)
 );
@@ -101,7 +101,7 @@ create table if not exists MIP.APP.PATTERN_DEFINITION (
     DESCRIPTION   string,
     PARAMS_JSON   variant,
     ENABLED       boolean       default true,
-    CREATED_AT    timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT    timestamp_ntz default CURRENT_TIMESTAMP(),
     CREATED_BY    string        default current_user(),
     UPDATED_AT    timestamp_ntz,
     UPDATED_BY    string,
@@ -200,7 +200,7 @@ create table if not exists MIP.APP.RECOMMENDATION_LOG (
     MARKET_TYPE       string        not null,  -- 'STOCK' or 'FX'
     INTERVAL_MINUTES  number        not null,
     TS                timestamp_ntz not null,  -- bar timestamp from MART
-    GENERATED_AT      timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    GENERATED_AT      timestamp_ntz default CURRENT_TIMESTAMP(),
     SCORE             number(38,10),                 -- e.g. return, z-score, etc.
     DETAILS           variant,                -- JSON with extra info
     constraint PK_RECOMMENDATION_LOG primary key (RECOMMENDATION_ID)
@@ -222,7 +222,7 @@ alter table MIP.APP.RECOMMENDATION_LOG
 alter table MIP.APP.RECOMMENDATION_LOG
     add column if not exists TS timestamp_ntz;
 alter table MIP.APP.RECOMMENDATION_LOG
-    add column if not exists GENERATED_AT timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ();
+    add column if not exists GENERATED_AT timestamp_ntz default CURRENT_TIMESTAMP();
 alter table MIP.APP.RECOMMENDATION_LOG
     add column if not exists SCORE number(38,10);
 alter table MIP.APP.RECOMMENDATION_LOG
@@ -244,7 +244,7 @@ create table if not exists MIP.APP.RECOMMENDATION_OUTCOMES (
     HIT_RULE              string,
     MIN_RETURN_THRESHOLD  number(38,8),
     EVAL_STATUS           string,
-    CALCULATED_AT         timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CALCULATED_AT         timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_RECOMMENDATION_OUTCOMES primary key (
         RECOMMENDATION_ID,
         HORIZON_BARS
@@ -276,7 +276,7 @@ alter table MIP.APP.RECOMMENDATION_OUTCOMES
 alter table MIP.APP.RECOMMENDATION_OUTCOMES
     add column if not exists EVAL_STATUS string;
 alter table MIP.APP.RECOMMENDATION_OUTCOMES
-    add column if not exists CALCULATED_AT timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ();
+    add column if not exists CALCULATED_AT timestamp_ntz default CURRENT_TIMESTAMP();
 
 -----------------------------
 -- 4. OUTCOME_EVALUATION (for later)
@@ -284,7 +284,7 @@ alter table MIP.APP.RECOMMENDATION_OUTCOMES
 create table if not exists MIP.APP.OUTCOME_EVALUATION (
     OUTCOME_ID        number        autoincrement,
     RECOMMENDATION_ID number        not null,
-    EVALUATED_AT      timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    EVALUATED_AT      timestamp_ntz default CURRENT_TIMESTAMP(),
     HORIZON_MINUTES   number,
     RETURN_REALIZED   number,       -- realized return over horizon
     OUTCOME_LABEL     string,       -- 'HIT', 'MISS', 'NEUTRAL', etc.
@@ -297,7 +297,7 @@ create table if not exists MIP.APP.OUTCOME_EVALUATION (
 -----------------------------
 create table if not exists MIP.APP.BACKTEST_RUN (
     BACKTEST_RUN_ID   number        autoincrement,
-    CREATED_AT        timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT        timestamp_ntz default CURRENT_TIMESTAMP(),
     MARKET_TYPE       string,
     INTERVAL_MINUTES  number,
     HORIZON_MINUTES   number,

@@ -2,7 +2,8 @@
 
 ## System timestamps (Berlin-local)
 Use Berlin-local `TIMESTAMP_NTZ` **only** for system/audit timestamps that record when MIP processes ran.
-These should default to `MIP.APP.F_NOW_BERLIN_NTZ()`.
+This assumes the account/session timezone is set to `Europe/Berlin`.
+These should default to `CURRENT_TIMESTAMP()`.
 
 **Examples**
 - `CREATED_AT`, `UPDATED_AT`, `GENERATED_AT`, `CALCULATED_AT`
@@ -11,7 +12,7 @@ These should default to `MIP.APP.F_NOW_BERLIN_NTZ()`.
 
 **Example DDL**
 ```sql
-CREATED_AT TIMESTAMP_NTZ DEFAULT MIP.APP.F_NOW_BERLIN_NTZ()
+CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 ```
 
 ## Market/business timestamps (as-is)
@@ -30,5 +31,5 @@ TS TIMESTAMP_NTZ NOT NULL
 
 **Example procedure default**
 ```sql
-v_to_ts TIMESTAMP_NTZ := COALESCE(:P_TO_DATE, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ)
+v_to_ts TIMESTAMP_NTZ := COALESCE(:P_TO_DATE, CURRENT_TIMESTAMP())
 ```

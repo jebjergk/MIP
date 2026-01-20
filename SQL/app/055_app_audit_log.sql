@@ -5,7 +5,7 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create table if not exists MIP.APP.MIP_AUDIT_LOG (
-    EVENT_TS          timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    EVENT_TS          timestamp_ntz default CURRENT_TIMESTAMP(),
     RUN_ID            string        default uuid_string(),
     PARENT_RUN_ID     string,
     EVENT_TYPE        string        default 'GENERAL',
@@ -51,7 +51,7 @@ begin
         ERROR_MESSAGE
     )
     select
-        MIP.APP.F_NOW_BERLIN_NTZ(),
+        CURRENT_TIMESTAMP(),
         :v_run_id,
         :P_PARENT_RUN_ID,
         :P_EVENT_TYPE,

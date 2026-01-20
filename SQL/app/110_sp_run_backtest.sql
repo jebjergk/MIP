@@ -163,7 +163,7 @@ begin
                LAST_AVG_RETURN      = :v_avg_return,
                LAST_STD_RETURN      = :v_std_return,
                PATTERN_SCORE        = :v_pattern_score,
-               UPDATED_AT           = current_timestamp(),
+               UPDATED_AT           = MIP.APP.F_NOW_BERLIN_NTZ(),
                UPDATED_BY           = current_user()
          where PATTERN_ID = rec.PATTERN_ID;
 

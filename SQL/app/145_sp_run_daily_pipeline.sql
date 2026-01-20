@@ -11,8 +11,8 @@ execute as caller
 as
 $$
 declare
-    v_from_ts          timestamp_ntz := dateadd(day, -90, current_date());
-    v_to_ts            timestamp_ntz := current_timestamp();
+    v_from_ts          timestamp_ntz := dateadd(day, -90, MIP.APP.F_NOW_BERLIN_NTZ());
+    v_to_ts            timestamp_ntz := MIP.APP.F_NOW_BERLIN_NTZ();
     v_msg_ingest       string;
     v_msg_returns      string;
     v_msg_signals      string;
@@ -42,7 +42,7 @@ begin
         null
     );
 
-    v_step_start := current_timestamp();
+    v_step_start := MIP.APP.F_NOW_BERLIN_NTZ();
     select count(*)
       into :v_rows_before
       from MIP.MART.MARKET_BARS;
@@ -52,7 +52,7 @@ begin
           into :v_rows_after
           from MIP.MART.MARKET_BARS;
         v_rows_delta := v_rows_after - v_rows_before;
-        v_step_end := current_timestamp();
+        v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -64,7 +64,7 @@ begin
             ERROR_MESSAGE
         )
         select
-            convert_timezone('UTC', 'CET', current_timestamp()),
+            MIP.APP.F_NOW_BERLIN_NTZ(),
             :v_run_id,
             'PIPELINE_STEP',
             'INGESTION',
@@ -82,7 +82,7 @@ begin
             null;
     exception
         when other then
-            v_step_end := current_timestamp();
+            v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
@@ -94,7 +94,7 @@ begin
                 ERROR_MESSAGE
             )
             select
-                convert_timezone('UTC', 'CET', current_timestamp()),
+                MIP.APP.F_NOW_BERLIN_NTZ(),
                 :v_run_id,
                 'PIPELINE_STEP',
                 'INGESTION',
@@ -126,10 +126,10 @@ begin
         insert into MIP.APP.TMP_MARKET_TYPES (MARKET_TYPE)
         select distinct MARKET_TYPE
           from MIP.MART.MARKET_BARS
-         where TS >= dateadd(day, -7, current_date());
+         where TS >= dateadd(day, -7, MIP.APP.F_NOW_BERLIN_NTZ());
     end if;
 
-    v_step_start := current_timestamp();
+    v_step_start := MIP.APP.F_NOW_BERLIN_NTZ();
     select count(*)
       into :v_rows_before
       from MIP.MART.MARKET_RETURNS;
@@ -217,7 +217,7 @@ begin
           into :v_rows_after
           from MIP.MART.MARKET_RETURNS;
         v_rows_delta := v_rows_after - v_rows_before;
-        v_step_end := current_timestamp();
+        v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -229,7 +229,7 @@ begin
             ERROR_MESSAGE
         )
         select
-            convert_timezone('UTC', 'CET', current_timestamp()),
+            MIP.APP.F_NOW_BERLIN_NTZ(),
             :v_run_id,
             'PIPELINE_STEP',
             'RETURNS_REFRESH',
@@ -247,7 +247,7 @@ begin
             null;
     exception
         when other then
-            v_step_end := current_timestamp();
+            v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
@@ -259,7 +259,7 @@ begin
                 ERROR_MESSAGE
             )
             select
-                convert_timezone('UTC', 'CET', current_timestamp()),
+                MIP.APP.F_NOW_BERLIN_NTZ(),
                 :v_run_id,
                 'PIPELINE_STEP',
                 'RETURNS_REFRESH',
@@ -310,7 +310,7 @@ begin
                 ERROR_MESSAGE
             )
             select
-                convert_timezone('UTC', 'CET', current_timestamp()),
+                MIP.APP.F_NOW_BERLIN_NTZ(),
                 :v_run_id,
                 'PIPELINE_STEP',
                 'PATTERN_CHECK',
@@ -320,14 +320,14 @@ begin
                     'step_name', 'pattern_check',
                     'market_type', :v_market_type,
                     'interval_minutes', null,
-                    'started_at', current_timestamp(),
-                    'completed_at', current_timestamp(),
+                    'started_at', MIP.APP.F_NOW_BERLIN_NTZ(),
+                    'completed_at', MIP.APP.F_NOW_BERLIN_NTZ(),
                     'message', 'No active patterns matched market type.'
                 ),
                 null;
         end if;
 
-        v_step_start := current_timestamp();
+        v_step_start := MIP.APP.F_NOW_BERLIN_NTZ();
         select count(*)
           into :v_rows_before
           from MIP.APP.RECOMMENDATION_LOG
@@ -341,7 +341,7 @@ begin
               from MIP.APP.RECOMMENDATION_LOG
              where MARKET_TYPE = :v_market_type;
             v_rows_delta := v_rows_after - v_rows_before;
-            v_step_end := current_timestamp();
+            v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
@@ -353,7 +353,7 @@ begin
                 ERROR_MESSAGE
             )
             select
-                convert_timezone('UTC', 'CET', current_timestamp()),
+                MIP.APP.F_NOW_BERLIN_NTZ(),
                 :v_run_id,
                 'PIPELINE_STEP',
                 'RECOMMENDATIONS',
@@ -375,7 +375,7 @@ begin
                 null;
         exception
             when other then
-                v_step_end := current_timestamp();
+                v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
                 insert into MIP.APP.MIP_AUDIT_LOG (
                     EVENT_TS,
                     RUN_ID,
@@ -387,7 +387,7 @@ begin
                     ERROR_MESSAGE
                 )
                 select
-                    convert_timezone('UTC', 'CET', current_timestamp()),
+                    MIP.APP.F_NOW_BERLIN_NTZ(),
                     :v_run_id,
                     'PIPELINE_STEP',
                     'RECOMMENDATIONS',
@@ -410,7 +410,7 @@ begin
     end for;
     v_msg_signals := 'Momentum recommendations generated for active daily patterns.';
 
-    v_step_start := current_timestamp();
+    v_step_start := MIP.APP.F_NOW_BERLIN_NTZ();
     select count(*)
       into :v_rows_before
       from MIP.APP.RECOMMENDATION_OUTCOMES;
@@ -420,7 +420,7 @@ begin
           into :v_rows_after
           from MIP.APP.RECOMMENDATION_OUTCOMES;
         v_rows_delta := v_rows_after - v_rows_before;
-        v_step_end := current_timestamp();
+        v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -432,7 +432,7 @@ begin
             ERROR_MESSAGE
         )
         select
-            convert_timezone('UTC', 'CET', current_timestamp()),
+            MIP.APP.F_NOW_BERLIN_NTZ(),
             :v_run_id,
             'PIPELINE_STEP',
             'EVALUATION',
@@ -450,7 +450,7 @@ begin
             null;
     exception
         when other then
-            v_step_end := current_timestamp();
+            v_step_end := MIP.APP.F_NOW_BERLIN_NTZ();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
@@ -462,7 +462,7 @@ begin
                 ERROR_MESSAGE
             )
             select
-                convert_timezone('UTC', 'CET', current_timestamp()),
+                MIP.APP.F_NOW_BERLIN_NTZ(),
                 :v_run_id,
                 'PIPELINE_STEP',
                 'EVALUATION',

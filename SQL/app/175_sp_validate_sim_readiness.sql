@@ -5,7 +5,7 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create table if not exists MIP.APP.SIM_READINESS_AUDIT (
-    AUDIT_TS   timestamp_ntz default current_timestamp(),
+    AUDIT_TS   timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
     RUN_ID     string        default uuid_string(),
     AS_OF_TS   timestamp_ntz,
     SIM_READY  boolean,
@@ -22,7 +22,7 @@ execute as owner
 as
 $$
 declare
-    v_as_of_ts timestamp_ntz := coalesce(:P_AS_OF_DATE, current_timestamp());
+    v_as_of_ts timestamp_ntz := coalesce(:P_AS_OF_DATE, MIP.APP.F_NOW_BERLIN_NTZ());
     v_min_sample_size number := 30;
     v_max_horizon number := 0;
     v_missing_outcomes number := 0;
@@ -213,7 +213,7 @@ begin
         REASONS,
         DETAILS
     ) values (
-        current_timestamp(),
+        MIP.APP.F_NOW_BERLIN_NTZ(),
         :v_run_id,
         :v_as_of_ts,
         :v_sim_ready,

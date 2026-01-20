@@ -9,7 +9,7 @@ use database MIP;
 -----------------------------
 create table if not exists MIP.APP.BACKTEST_RUN (
     BACKTEST_RUN_ID      number autoincrement start 1 increment 1,
-    CREATED_AT           timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT           timestamp_ntz default CURRENT_TIMESTAMP(),
     MARKET_TYPE          string,
     INTERVAL_MINUTES     number,
     HORIZON_MINUTES      number,
@@ -25,7 +25,7 @@ create table if not exists MIP.APP.BACKTEST_RUN (
 alter table MIP.APP.BACKTEST_RUN
     add column if not exists BACKTEST_RUN_ID number;
 alter table MIP.APP.BACKTEST_RUN
-    add column if not exists CREATED_AT timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ();
+    add column if not exists CREATED_AT timestamp_ntz default CURRENT_TIMESTAMP();
 alter table MIP.APP.BACKTEST_RUN
     add column if not exists MARKET_TYPE string;
 alter table MIP.APP.BACKTEST_RUN

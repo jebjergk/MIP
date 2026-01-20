@@ -171,7 +171,7 @@ begin
                    and table_name = 'TRAINING_RUN_LOG'
             )) then
             insert into MIP.AGENT_OUT.TRAINING_RUN_LOG (LOG_TS, SUMMARY)
-            select MIP.APP.F_NOW_BERLIN_NTZ(),
+            select CURRENT_TIMESTAMP(),
                    object_construct(
                        'market_type', :P_MARKET_TYPE,
                        'interval_minutes', :P_INTERVAL_MINUTES,

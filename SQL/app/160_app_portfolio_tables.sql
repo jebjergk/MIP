@@ -16,7 +16,7 @@ create table if not exists MIP.APP.PORTFOLIO_PROFILE (
     BUST_ACTION         string        not null default 'ALLOW_EXITS_ONLY',
     DRAWDOWN_STOP_PCT   number(18,6),
     DESCRIPTION         string,
-    CREATED_AT          timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT          timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_PROFILE primary key (PROFILE_ID),
     constraint UQ_PORTFOLIO_PROFILE_NAME unique (NAME)
 );
@@ -83,8 +83,8 @@ create table if not exists MIP.APP.PORTFOLIO (
     STATUS                  string        default 'ACTIVE',
     BUST_AT                 timestamp_ntz,
     NOTES                   string,
-    CREATED_AT              timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
-    UPDATED_AT              timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT              timestamp_ntz default CURRENT_TIMESTAMP(),
+    UPDATED_AT              timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO primary key (PORTFOLIO_ID),
     constraint FK_PORTFOLIO_PROFILE foreign key (PROFILE_ID)
         references MIP.APP.PORTFOLIO_PROFILE(PROFILE_ID)
@@ -106,7 +106,7 @@ create table if not exists MIP.APP.PORTFOLIO_POSITIONS (
     ENTRY_SCORE      number(18,10),
     ENTRY_INDEX      number        not null,
     HOLD_UNTIL_INDEX number        not null,
-    CREATED_AT       timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_POSITIONS primary key (
         PORTFOLIO_ID,
         RUN_ID,
@@ -133,7 +133,7 @@ create table if not exists MIP.APP.PORTFOLIO_TRADES (
     REALIZED_PNL     number(18,8),
     CASH_AFTER       number(18,2)  not null,
     SCORE            number(18,10),
-    CREATED_AT       timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_TRADES primary key (TRADE_ID)
 );
 
@@ -153,7 +153,7 @@ create table if not exists MIP.APP.PORTFOLIO_DAILY (
     PEAK_EQUITY      number(18,2),
     DRAWDOWN         number(18,6),
     STATUS           string        default 'ACTIVE',
-    CREATED_AT       timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_DAILY primary key (PORTFOLIO_ID, RUN_ID, TS)
 );
 

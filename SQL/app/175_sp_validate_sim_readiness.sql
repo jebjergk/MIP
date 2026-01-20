@@ -5,7 +5,7 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create table if not exists MIP.APP.SIM_READINESS_AUDIT (
-    AUDIT_TS   timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ(),
+    AUDIT_TS   timestamp_ntz default CURRENT_TIMESTAMP(),
     RUN_ID     string        default uuid_string(),
     AS_OF_TS   timestamp_ntz,
     SIM_READY  boolean,
@@ -213,7 +213,7 @@ begin
         REASONS,
         DETAILS
     ) values (
-        MIP.APP.F_NOW_BERLIN_NTZ(),
+        CURRENT_TIMESTAMP(),
         :v_run_id,
         :v_as_of_ts,
         :v_sim_ready,

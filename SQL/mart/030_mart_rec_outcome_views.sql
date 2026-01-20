@@ -110,20 +110,25 @@ join MIP.MART.REC_OUTCOME_PERF p
 
 create or replace view MIP.MART.V_PORTFOLIO_SIGNALS as
 select
-    o.RECOMMENDATION_ID,
-    o.HORIZON_BARS,
-    r.SCORE,
-    o.REALIZED_RETURN,
-    o.HIT_FLAG,
-    coalesce(t.IS_TRUSTED, false) as IS_TRUSTED
-from MIP.APP.RECOMMENDATION_OUTCOMES o
-join MIP.APP.RECOMMENDATION_LOG r
-  on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
-left join MIP.MART.V_TRUSTED_SIGNALS t
-  on t.PATTERN_ID = r.PATTERN_ID
- and t.MARKET_TYPE = r.MARKET_TYPE
- and t.INTERVAL_MINUTES = r.INTERVAL_MINUTES
- and t.HORIZON_BARS = o.HORIZON_BARS;
+    rl.RECOMMENDATION_ID,
+    rl.TS,
+    rl.SYMBOL,
+    rl.MARKET_TYPE,
+    rl.INTERVAL_MINUTES,
+    rl.PATTERN_ID,
+    rl.SCORE,
+    ts.HORIZON_BARS
+from MIP.APP.RECOMMENDATION_LOG rl
+join MIP.MART.V_TRUSTED_SIGNALS ts
+  on ts.PATTERN_ID = rl.PATTERN_ID
+ and ts.MARKET_TYPE = rl.MARKET_TYPE
+ and ts.INTERVAL_MINUTES = rl.INTERVAL_MINUTES
+where rl.INTERVAL_MINUTES = 1440
+  and ts.IS_TRUSTED = true
+qualify row_number() over (
+    partition by rl.RECOMMENDATION_ID, ts.HORIZON_BARS
+    order by rl.TS desc
+) = 1;
 
 create or replace view MIP.MART.SCORE_CALIBRATION as
 with scored as (

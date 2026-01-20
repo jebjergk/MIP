@@ -117,7 +117,23 @@ begin
         HOLD_UNTIL_INDEX number
     );
 
-    create temporary table TEMP_SIGNALS as
+    create temporary table TEMP_SIGNALS (
+        RECOMMENDATION_ID number,
+        ENTRY_TS timestamp_ntz,
+        SYMBOL string,
+        MARKET_TYPE string,
+        INTERVAL_MINUTES number,
+        PATTERN_ID number,
+        SCORE number(18,10),
+        HORIZON_BARS number,
+        ENTRY_INDEX number,
+        ENTRY_PRICE number(18,8),
+        HOLD_UNTIL_INDEX number,
+        EXIT_TS timestamp_ntz,
+        EXIT_PRICE number(18,8)
+    );
+
+    insert into TEMP_SIGNALS
     select
         s.RECOMMENDATION_ID,
         s.TS as ENTRY_TS,

@@ -37,6 +37,8 @@ declare
     v_position_count number := 0;
     v_daily_count number := 0;
     v_max_position_value number(18,2);
+    v_bar_ts timestamp_ntz;
+    v_bar_index number;
 begin
     select
         p.STARTING_CASH,
@@ -170,27 +172,42 @@ begin
           and TS between :P_FROM_TS and :P_TO_TS
         order by TS
     ) do
+        v_bar_ts := bar.TS;
+        v_bar_index := bar.BAR_INDEX;
         for position_row in (
             select *
             from TEMP_POSITIONS
-            where HOLD_UNTIL_INDEX <= :bar.BAR_INDEX
+            where HOLD_UNTIL_INDEX <= :v_bar_index
         ) do
             declare
                 v_sell_price number(18,8);
                 v_sell_notional number(18,8);
                 v_sell_pnl number(18,8);
+                v_position_symbol string;
+                v_position_market_type string;
+                v_position_entry_ts timestamp_ntz;
+                v_position_entry_price number(18,8);
+                v_position_qty number(18,8);
+                v_position_entry_score number(18,10);
             begin
+                v_position_symbol := position_row.SYMBOL;
+                v_position_market_type := position_row.MARKET_TYPE;
+                v_position_entry_ts := position_row.ENTRY_TS;
+                v_position_entry_price := position_row.ENTRY_PRICE;
+                v_position_qty := position_row.QUANTITY;
+                v_position_entry_score := position_row.ENTRY_SCORE;
+
                 select CLOSE
                   into v_sell_price
                   from MIP.MART.V_BAR_INDEX
-                 where SYMBOL = :position_row.SYMBOL
-                   and MARKET_TYPE = :position_row.MARKET_TYPE
+                 where SYMBOL = :v_position_symbol
+                   and MARKET_TYPE = :v_position_market_type
                    and INTERVAL_MINUTES = 1440
-                   and TS = :bar.TS;
+                   and TS = :v_bar_ts;
 
                 if (v_sell_price is not null) then
-                    v_sell_notional := v_sell_price * position_row.QUANTITY;
-                    v_sell_pnl := (v_sell_price - position_row.ENTRY_PRICE) * position_row.QUANTITY;
+                    v_sell_notional := v_sell_price * v_position_qty;
+                    v_sell_pnl := (v_sell_price - v_position_entry_price) * v_position_qty;
                     v_cash := v_cash + v_sell_notional;
 
                     insert into MIP.APP.PORTFOLIO_TRADES (
@@ -211,23 +228,23 @@ begin
                     values (
                         :P_PORTFOLIO_ID,
                         :v_run_id,
-                        :position_row.SYMBOL,
-                        :position_row.MARKET_TYPE,
+                        :v_position_symbol,
+                        :v_position_market_type,
                         1440,
-                        :bar.TS,
+                        :v_bar_ts,
                         'SELL',
                         v_sell_price,
-                        :position_row.QUANTITY,
+                        :v_position_qty,
                         v_sell_notional,
                         v_sell_pnl,
                         v_cash,
-                        :position_row.ENTRY_SCORE
+                        :v_position_entry_score
                     );
 
                     delete from TEMP_POSITIONS
-                     where SYMBOL = :position_row.SYMBOL
-                       and MARKET_TYPE = :position_row.MARKET_TYPE
-                       and ENTRY_TS = :position_row.ENTRY_TS;
+                     where SYMBOL = :v_position_symbol
+                       and MARKET_TYPE = :v_position_market_type
+                       and ENTRY_TS = :v_position_entry_ts;
 
                     v_trade_count := v_trade_count + 1;
                 end if;
@@ -241,7 +258,7 @@ begin
             on vb.SYMBOL = tp.SYMBOL
            and vb.MARKET_TYPE = tp.MARKET_TYPE
            and vb.INTERVAL_MINUTES = 1440
-           and vb.TS = :bar.TS;
+           and vb.TS = :v_bar_ts;
 
         v_total_equity := v_cash + v_equity_value;
 
@@ -279,7 +296,7 @@ begin
             for rec in (
                 select *
                 from TEMP_SIGNALS
-                where ENTRY_TS = :bar.TS
+                where ENTRY_TS = :v_bar_ts
                 order by SCORE desc
             ) do
                 declare
@@ -287,13 +304,26 @@ begin
                     v_target_value number(18,8);
                     v_buy_qty number(18,8);
                     v_buy_cost number(18,8);
+                    v_signal_symbol string;
+                    v_signal_market_type string;
+                    v_signal_entry_ts timestamp_ntz;
+                    v_signal_entry_index number;
+                    v_signal_hold_until_index number;
+                    v_signal_score number(18,10);
                 begin
+                    v_signal_symbol := rec.SYMBOL;
+                    v_signal_market_type := rec.MARKET_TYPE;
+                    v_signal_entry_ts := rec.ENTRY_TS;
+                    v_signal_entry_index := rec.ENTRY_INDEX;
+                    v_signal_hold_until_index := rec.HOLD_UNTIL_INDEX;
+                    v_signal_score := rec.SCORE;
+
                     if (v_open_positions < v_max_positions) then
                         if (not exists (
                             select 1
                             from TEMP_POSITIONS
-                            where SYMBOL = rec.SYMBOL
-                              and MARKET_TYPE = rec.MARKET_TYPE
+                            where SYMBOL = :v_signal_symbol
+                              and MARKET_TYPE = :v_signal_market_type
                         )) then
                             v_buy_price := rec.ENTRY_PRICE;
                             v_target_value := least(v_max_position_value, v_cash);
@@ -313,15 +343,15 @@ begin
                                     HOLD_UNTIL_INDEX
                                 )
                                 values (
-                                    rec.SYMBOL,
-                                    rec.MARKET_TYPE,
-                                    rec.ENTRY_TS,
+                                    :v_signal_symbol,
+                                    :v_signal_market_type,
+                                    :v_signal_entry_ts,
                                     v_buy_price,
                                     v_buy_qty,
                                     v_buy_cost,
-                                    rec.SCORE,
-                                    rec.ENTRY_INDEX,
-                                    rec.HOLD_UNTIL_INDEX
+                                    :v_signal_score,
+                                    :v_signal_entry_index,
+                                    :v_signal_hold_until_index
                                 );
 
                                 v_cash := v_cash - v_buy_cost;
@@ -344,17 +374,17 @@ begin
                                 values (
                                     :P_PORTFOLIO_ID,
                                     :v_run_id,
-                                    rec.SYMBOL,
-                                    rec.MARKET_TYPE,
+                                    :v_signal_symbol,
+                                    :v_signal_market_type,
                                     1440,
-                                    rec.ENTRY_TS,
+                                    :v_signal_entry_ts,
                                     'BUY',
                                     v_buy_price,
                                     v_buy_qty,
                                     v_buy_cost,
                                     null,
                                     v_cash,
-                                    rec.SCORE
+                                    :v_signal_score
                                 );
 
                                 insert into MIP.APP.PORTFOLIO_POSITIONS (
@@ -374,16 +404,16 @@ begin
                                 values (
                                     :P_PORTFOLIO_ID,
                                     :v_run_id,
-                                    rec.SYMBOL,
-                                    rec.MARKET_TYPE,
+                                    :v_signal_symbol,
+                                    :v_signal_market_type,
                                     1440,
-                                    rec.ENTRY_TS,
+                                    :v_signal_entry_ts,
                                     v_buy_price,
                                     v_buy_qty,
                                     v_buy_cost,
-                                    rec.SCORE,
-                                    rec.ENTRY_INDEX,
-                                    rec.HOLD_UNTIL_INDEX
+                                    :v_signal_score,
+                                    :v_signal_entry_index,
+                                    :v_signal_hold_until_index
                                 );
 
                                 v_trade_count := v_trade_count + 1;
@@ -403,7 +433,7 @@ begin
             on vb.SYMBOL = tp.SYMBOL
            and vb.MARKET_TYPE = tp.MARKET_TYPE
            and vb.INTERVAL_MINUTES = 1440
-           and vb.TS = :bar.TS;
+           and vb.TS = :v_bar_ts;
 
         v_total_equity := v_cash + v_equity_value;
 
@@ -441,7 +471,7 @@ begin
         values (
             :P_PORTFOLIO_ID,
             :v_run_id,
-            :bar.TS,
+            :v_bar_ts,
             v_cash,
             v_equity_value,
             v_total_equity,

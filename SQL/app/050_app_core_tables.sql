@@ -193,7 +193,7 @@ using (
 -----------------------------
 -- 2. RECOMMENDATION_LOG
 -----------------------------
-create or replace table MIP.APP.RECOMMENDATION_LOG (
+create table if not exists MIP.APP.RECOMMENDATION_LOG (
     RECOMMENDATION_ID number        autoincrement,
     PATTERN_ID        number        not null,
     SYMBOL            string        not null,
@@ -209,10 +209,29 @@ create or replace table MIP.APP.RECOMMENDATION_LOG (
     --   foreign key (PATTERN_ID) references MIP.APP.PATTERN_DEFINITION(PATTERN_ID)
 );
 
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists RECOMMENDATION_ID number;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists PATTERN_ID number;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists SYMBOL string;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists MARKET_TYPE string;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists INTERVAL_MINUTES number;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists TS timestamp_ntz;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists GENERATED_AT timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ();
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists SCORE number(38,10);
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists DETAILS variant;
+
 -----------------------------
 -- 3. RECOMMENDATION_OUTCOMES
 -----------------------------
-create or replace table MIP.APP.RECOMMENDATION_OUTCOMES (
+create table if not exists MIP.APP.RECOMMENDATION_OUTCOMES (
     RECOMMENDATION_ID     number        not null,
     HORIZON_BARS          number        not null,
     ENTRY_TS              timestamp_ntz not null,
@@ -231,6 +250,33 @@ create or replace table MIP.APP.RECOMMENDATION_OUTCOMES (
         HORIZON_BARS
     )
 );
+
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists RECOMMENDATION_ID number;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists HORIZON_BARS number;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists ENTRY_TS timestamp_ntz;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists EXIT_TS timestamp_ntz;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists ENTRY_PRICE number(38,8);
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists EXIT_PRICE number(38,8);
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists REALIZED_RETURN number(38,8);
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists DIRECTION string;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists HIT_FLAG boolean;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists HIT_RULE string;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists MIN_RETURN_THRESHOLD number(38,8);
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists EVAL_STATUS string;
+alter table MIP.APP.RECOMMENDATION_OUTCOMES
+    add column if not exists CALCULATED_AT timestamp_ntz default MIP.APP.F_NOW_BERLIN_NTZ();
 
 -----------------------------
 -- 4. OUTCOME_EVALUATION (for later)

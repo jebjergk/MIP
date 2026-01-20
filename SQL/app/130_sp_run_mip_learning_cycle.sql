@@ -41,7 +41,7 @@ declare
     v_training_summary array;
     v_pattern_summary  array;
 begin
-    v_to_ts   := coalesce(P_TO_TS, MIP.APP.F_NOW_BERLIN_NTZ());
+    v_to_ts   := coalesce(P_TO_TS, current_timestamp()::timestamp_ntz);
     v_from_ts := coalesce(P_FROM_TS, dateadd('day', -7, v_to_ts));
 
     v_do_ingest   := coalesce(P_DO_INGEST, false);

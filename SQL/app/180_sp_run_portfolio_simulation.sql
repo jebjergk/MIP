@@ -11,7 +11,7 @@ create or replace procedure MIP.APP.SP_RUN_PORTFOLIO_SIMULATION(
 )
 returns variant
 language sql
-execute as owner
+execute as caller
 as
 $$
 declare

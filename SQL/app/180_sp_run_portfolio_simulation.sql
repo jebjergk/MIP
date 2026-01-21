@@ -39,6 +39,8 @@ declare
     v_max_position_value number(18,2);
     v_bar_ts timestamp_ntz;
     v_bar_index number;
+    v_bar_sql string;
+    v_bar_rs resultset;
 begin
     select
         p.STARTING_CASH,
@@ -165,13 +167,16 @@ begin
       and s.TS between :P_FROM_TS and :P_TO_TS
       and exit_bar.TS <= :P_TO_TS;
 
-    for bar_row in (
+    v_bar_sql := '
         select TS, BAR_INDEX
         from MIP.MART.V_BAR_INDEX
         where INTERVAL_MINUTES = 1440
-          and TS between :P_FROM_TS and :P_TO_TS
+          and TS between ? and ?
         order by TS
-    ) do
+    ';
+    v_bar_rs := (execute immediate :v_bar_sql using (P_FROM_TS, P_TO_TS));
+
+    for bar_row in v_bar_rs do
         v_bar_ts := bar_row.TS;
         v_bar_index := bar_row.BAR_INDEX;
         for position_row in (

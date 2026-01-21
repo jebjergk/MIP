@@ -172,7 +172,7 @@ begin
       and exit_bar.TS <= :P_TO_TS;
 
     v_bar_sql := '
-        select TS, BAR_INDEX
+        select distinct TS, BAR_INDEX
         from MIP.MART.V_BAR_INDEX
         where INTERVAL_MINUTES = 1440
           and TS between ? and ?

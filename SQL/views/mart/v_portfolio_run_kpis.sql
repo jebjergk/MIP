@@ -5,7 +5,15 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace view MIP.MART.V_PORTFOLIO_RUN_KPIS as
-with daily as (
+with daily_dedup as (
+    select *
+    from MIP.APP.PORTFOLIO_DAILY
+    qualify row_number() over (
+        partition by PORTFOLIO_ID, RUN_ID, TS
+        order by CREATED_AT desc, TS desc
+    ) = 1
+),
+daily_calc as (
     select
         d.PORTFOLIO_ID,
         d.RUN_ID,
@@ -14,13 +22,31 @@ with daily as (
         d.EQUITY_VALUE,
         d.TOTAL_EQUITY,
         d.OPEN_POSITIONS,
-        d.DAILY_PNL,
-        d.DAILY_RETURN,
         d.PEAK_EQUITY,
         d.DRAWDOWN,
         p.STARTING_CASH,
-        coalesce(prof.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT
-    from MIP.APP.PORTFOLIO_DAILY d
+        coalesce(prof.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT,
+        case
+            when lag(d.TOTAL_EQUITY) over (
+                partition by d.PORTFOLIO_ID, d.RUN_ID
+                order by d.TS
+            ) is null then null
+            else (d.TOTAL_EQUITY / nullif(lag(d.TOTAL_EQUITY) over (
+                partition by d.PORTFOLIO_ID, d.RUN_ID
+                order by d.TS
+            ), 0)) - 1
+        end as EQUITY_RETURN,
+        case
+            when lag(d.TOTAL_EQUITY) over (
+                partition by d.PORTFOLIO_ID, d.RUN_ID
+                order by d.TS
+            ) is null then null
+            else d.TOTAL_EQUITY - lag(d.TOTAL_EQUITY) over (
+                partition by d.PORTFOLIO_ID, d.RUN_ID
+                order by d.TS
+            )
+        end as EQUITY_PNL
+    from daily_dedup d
     join MIP.APP.PORTFOLIO p
       on p.PORTFOLIO_ID = d.PORTFOLIO_ID
     left join MIP.APP.PORTFOLIO_PROFILE prof
@@ -38,16 +64,16 @@ agg as (
         max(DRAWDOWN) as MAX_DRAWDOWN,
         max(PEAK_EQUITY) as PEAK_EQUITY,
         min(TOTAL_EQUITY) as MIN_EQUITY,
-        stddev_samp(DAILY_RETURN) as DAILY_VOLATILITY,
-        avg(DAILY_RETURN) as AVG_DAILY_RETURN,
-        count_if(DAILY_PNL > 0) as WIN_DAYS,
-        count_if(DAILY_PNL < 0) as LOSS_DAYS,
-        avg(case when DAILY_PNL > 0 then DAILY_PNL end) as AVG_WIN_PNL,
-        avg(case when DAILY_PNL < 0 then DAILY_PNL end) as AVG_LOSS_PNL,
+        stddev_samp(EQUITY_RETURN) as DAILY_VOLATILITY,
+        avg(EQUITY_RETURN) as AVG_DAILY_RETURN,
+        count_if(EQUITY_PNL > 0) as WIN_DAYS,
+        count_if(EQUITY_PNL < 0) as LOSS_DAYS,
+        avg(case when EQUITY_PNL > 0 then EQUITY_PNL end) as AVG_WIN_PNL,
+        avg(case when EQUITY_PNL < 0 then EQUITY_PNL end) as AVG_LOSS_PNL,
         avg(OPEN_POSITIONS) as AVG_OPEN_POSITIONS,
         count_if(OPEN_POSITIONS > 0) / nullif(count(*), 0) as TIME_IN_MARKET,
         min(case when DRAWDOWN >= DRAWDOWN_STOP_PCT then TS end) as DRAWDOWN_STOP_TS
-    from daily
+    from daily_calc
     group by
         PORTFOLIO_ID,
         RUN_ID

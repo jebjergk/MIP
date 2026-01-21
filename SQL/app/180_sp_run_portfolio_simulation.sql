@@ -577,23 +577,8 @@ begin
       into v_daily_count
       from TEMP_DAY_SPINE;
 
-    with run_daily as (
-        select
-            TS,
-            TOTAL_EQUITY,
-            DAILY_PNL,
-            DRAWDOWN
-        from MIP.APP.PORTFOLIO_DAILY
-        where PORTFOLIO_ID = :P_PORTFOLIO_ID
-          and RUN_ID = :v_run_id
-    ),
-    final_row as (
-        select TOTAL_EQUITY
-        from run_daily
-        qualify row_number() over (order by TS desc) = 1
-    )
     select
-        (select TOTAL_EQUITY from final_row),
+        max(case when rn = 1 then TOTAL_EQUITY else null end),
         max(DRAWDOWN),
         sum(case when DAILY_PNL > 0 then 1 else 0 end),
         sum(case when DAILY_PNL < 0 then 1 else 0 end),
@@ -606,7 +591,17 @@ begin
            v_win_days,
            v_loss_days,
            v_bust_at
-      from run_daily;
+      from (
+        select
+            TS,
+            TOTAL_EQUITY,
+            DAILY_PNL,
+            DRAWDOWN,
+            row_number() over (order by TS desc) as rn
+        from MIP.APP.PORTFOLIO_DAILY
+        where PORTFOLIO_ID = :P_PORTFOLIO_ID
+          and RUN_ID = :v_run_id
+      ) run_daily;
 
     v_total_return := case
         when v_starting_cash is null or v_starting_cash = 0 then null

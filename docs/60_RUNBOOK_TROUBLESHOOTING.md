@@ -89,6 +89,25 @@ from MIP.MART.SCORE_CALIBRATION;
 -- 8) Signals mapped to expected returns
 select count(*) as expected_return_rows
 from MIP.MART.V_SIGNALS_WITH_EXPECTED_RETURN;
+
+-- 9) Score calibration monotonicity (avg return by decile)
+select
+  score_decile,
+  avg(avg_realized_return) as avg_return
+from MIP.MART.SCORE_CALIBRATION
+group by score_decile
+order by score_decile;
+
+-- 10) Score calibration monotonicity by pattern/horizon
+select
+  pattern_id,
+  market_type,
+  interval_minutes,
+  horizon_bars,
+  score_decile,
+  avg_realized_return
+from MIP.MART.SCORE_CALIBRATION
+order by pattern_id, market_type, interval_minutes, horizon_bars, score_decile;
 ```
 
 ## Backfill procedure (safe re-run)

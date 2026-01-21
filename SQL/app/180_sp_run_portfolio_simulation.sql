@@ -25,9 +25,6 @@ declare
     v_cash number(18,2);
     v_total_equity number(18,2);
     v_equity_value number(18,2);
-    v_prev_total_equity number(18,2);
-    v_daily_pnl number(18,2);
-    v_daily_return number(18,6);
     v_peak_equity number(18,2);
     v_drawdown number(18,6);
     v_open_positions number := 0;
@@ -36,6 +33,7 @@ declare
     v_trade_count number := 0;
     v_position_count number := 0;
     v_daily_count number := 0;
+    v_position_days_expanded number := 0;
     v_max_position_value number(18,2);
     v_bar_ts timestamp_ntz;
     v_bar_index number;
@@ -141,6 +139,11 @@ begin
         EXIT_PRICE number(18,8)
     );
 
+    create or replace temporary table TEMP_DAILY_CASH (
+        TS timestamp_ntz,
+        CASH number(18,2)
+    );
+
     insert into TEMP_SIGNALS
     select
         s.RECOMMENDATION_ID,
@@ -172,10 +175,11 @@ begin
       and exit_bar.TS <= :P_TO_TS;
 
     v_bar_sql := '
-        select distinct TS, BAR_INDEX
+        select TS, BAR_INDEX
         from MIP.MART.V_BAR_INDEX
         where INTERVAL_MINUTES = 1440
           and TS between ? and ?
+        qualify row_number() over (partition by TS order by BAR_INDEX) = 1
         order by TS
     ';
     v_bar_rs := (execute immediate :v_bar_sql using (P_FROM_TS, P_TO_TS));
@@ -450,55 +454,114 @@ begin
 
         v_total_equity := v_cash + v_equity_value;
 
-        if (v_prev_total_equity is null) then
-            v_daily_pnl := 0;
-            v_daily_return := null;
-        else
-            v_daily_pnl := v_total_equity - v_prev_total_equity;
-            v_daily_return := case
-                when v_prev_total_equity = 0 then null
-                else v_daily_pnl / v_prev_total_equity
-            end;
-        end if;
+        insert into TEMP_DAILY_CASH (TS, CASH)
+        values (:v_bar_ts, :v_cash);
+    end for;
 
-        v_peak_equity := greatest(v_peak_equity, v_total_equity);
-        v_drawdown := case
-            when v_peak_equity = 0 then null
-            else (v_peak_equity - v_total_equity) / v_peak_equity
-        end;
+    create or replace temporary table TEMP_DAY_SPINE as
+    select TS, BAR_INDEX
+    from MIP.MART.V_BAR_INDEX
+    where INTERVAL_MINUTES = 1440
+      and TS between :P_FROM_TS and :P_TO_TS
+    qualify row_number() over (partition by TS order by BAR_INDEX) = 1;
 
-        insert into MIP.APP.PORTFOLIO_DAILY (
-            PORTFOLIO_ID,
-            RUN_ID,
+    create or replace temporary table TEMP_POSITION_DAYS as
+    select
+        d.TS,
+        d.BAR_INDEX,
+        p.SYMBOL,
+        p.MARKET_TYPE,
+        p.QUANTITY
+    from MIP.APP.PORTFOLIO_POSITIONS p
+    join TEMP_DAY_SPINE d
+      on d.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
+    where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+      and p.RUN_ID = :v_run_id
+      and p.INTERVAL_MINUTES = 1440;
+
+    select count(*)
+      into v_position_days_expanded
+      from TEMP_POSITION_DAYS;
+
+    create or replace temporary table TEMP_DAILY_EQUITY as
+    select
+        pd.TS,
+        sum(pd.QUANTITY * vb.CLOSE) as EQUITY_VALUE,
+        count(distinct pd.SYMBOL) as OPEN_POSITIONS
+    from TEMP_POSITION_DAYS pd
+    join MIP.MART.V_BAR_INDEX vb
+      on vb.SYMBOL = pd.SYMBOL
+     and vb.MARKET_TYPE = pd.MARKET_TYPE
+     and vb.INTERVAL_MINUTES = 1440
+     and vb.BAR_INDEX = pd.BAR_INDEX
+    group by pd.TS;
+
+    insert into MIP.APP.PORTFOLIO_DAILY (
+        PORTFOLIO_ID,
+        RUN_ID,
+        TS,
+        CASH,
+        EQUITY_VALUE,
+        TOTAL_EQUITY,
+        OPEN_POSITIONS,
+        DAILY_PNL,
+        DAILY_RETURN,
+        PEAK_EQUITY,
+        DRAWDOWN,
+        STATUS
+    )
+    with daily_base as (
+        select
+            d.TS,
+            d.BAR_INDEX,
+            coalesce(c.CASH, 0) as CASH,
+            coalesce(e.EQUITY_VALUE, 0) as EQUITY_VALUE,
+            coalesce(e.OPEN_POSITIONS, 0) as OPEN_POSITIONS
+        from TEMP_DAY_SPINE d
+        left join TEMP_DAILY_CASH c
+          on c.TS = d.TS
+        left join TEMP_DAILY_EQUITY e
+          on e.TS = d.TS
+    ),
+    daily_calc as (
+        select
             TS,
             CASH,
             EQUITY_VALUE,
-            TOTAL_EQUITY,
             OPEN_POSITIONS,
-            DAILY_PNL,
-            DAILY_RETURN,
-            PEAK_EQUITY,
-            DRAWDOWN,
-            STATUS
-        )
-        values (
-            :P_PORTFOLIO_ID,
-            :v_run_id,
-            :v_bar_ts,
-            :v_cash,
-            :v_equity_value,
-            :v_total_equity,
-            :v_open_positions,
-            :v_daily_pnl,
-            :v_daily_return,
-            :v_peak_equity,
-            :v_drawdown,
-            'ACTIVE'
-        );
+            CASH + EQUITY_VALUE as TOTAL_EQUITY,
+            lag(CASH + EQUITY_VALUE) over (order by TS) as PREV_TOTAL_EQUITY,
+            max(CASH + EQUITY_VALUE) over (order by TS rows between unbounded preceding and current row) as PEAK_EQUITY
+        from daily_base
+    )
+    select
+        :P_PORTFOLIO_ID,
+        :v_run_id,
+        TS,
+        CASH,
+        EQUITY_VALUE,
+        TOTAL_EQUITY,
+        OPEN_POSITIONS,
+        case
+            when PREV_TOTAL_EQUITY is null then 0
+            else TOTAL_EQUITY - PREV_TOTAL_EQUITY
+        end as DAILY_PNL,
+        case
+            when PREV_TOTAL_EQUITY is null or PREV_TOTAL_EQUITY = 0 then null
+            else (TOTAL_EQUITY - PREV_TOTAL_EQUITY) / PREV_TOTAL_EQUITY
+        end as DAILY_RETURN,
+        PEAK_EQUITY,
+        case
+            when PEAK_EQUITY = 0 then null
+            else (PEAK_EQUITY - TOTAL_EQUITY) / PEAK_EQUITY
+        end as DRAWDOWN,
+        'ACTIVE'
+    from daily_calc
+    order by TS;
 
-        v_daily_count := v_daily_count + 1;
-        v_prev_total_equity := v_total_equity;
-    end for;
+    select count(*)
+      into v_daily_count
+      from TEMP_DAY_SPINE;
 
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',
@@ -511,6 +574,7 @@ begin
             'trades', :v_trade_count,
             'positions', :v_position_count,
             'daily_rows', :v_daily_count,
+            'position_days_expanded', :v_position_days_expanded,
             'final_equity', :v_total_equity,
             'entries_blocked', :v_entries_blocked,
             'block_reason', :v_block_reason
@@ -527,6 +591,7 @@ begin
         'trades', :v_trade_count,
         'positions', :v_position_count,
         'daily_rows', :v_daily_count,
+        'position_days_expanded', :v_position_days_expanded,
         'final_equity', :v_total_equity,
         'entries_blocked', :v_entries_blocked,
         'block_reason', :v_block_reason

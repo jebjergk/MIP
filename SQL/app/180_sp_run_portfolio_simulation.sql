@@ -165,15 +165,15 @@ begin
       and s.TS between :P_FROM_TS and :P_TO_TS
       and exit_bar.TS <= :P_TO_TS;
 
-    for bar in (
+    for bar_row in (
         select TS, BAR_INDEX
         from MIP.MART.V_BAR_INDEX
         where INTERVAL_MINUTES = 1440
           and TS between :P_FROM_TS and :P_TO_TS
         order by TS
     ) do
-        v_bar_ts := bar.TS;
-        v_bar_index := bar.BAR_INDEX;
+        v_bar_ts := bar_row.TS;
+        v_bar_index := bar_row.BAR_INDEX;
         for position_row in (
             select *
             from TEMP_POSITIONS

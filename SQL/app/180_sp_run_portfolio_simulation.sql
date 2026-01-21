@@ -21,6 +21,7 @@ declare
     v_max_positions number;
     v_max_position_pct number(18,6);
     v_bust_equity_pct number(18,6);
+    v_bust_action string;
     v_drawdown_stop_pct number(18,6);
     v_cash number(18,2);
     v_total_equity number(18,2);
@@ -43,6 +44,13 @@ declare
     v_position_rs resultset;
     v_signal_sql string;
     v_signal_rs resultset;
+    v_final_equity number(18,2);
+    v_total_return number(18,6);
+    v_max_drawdown number(18,6);
+    v_win_days number;
+    v_loss_days number;
+    v_bust_at timestamp_ntz;
+    v_last_simulated_at timestamp_ntz;
 begin
     select
         p.STARTING_CASH,
@@ -50,12 +58,14 @@ begin
         prof.MAX_POSITIONS,
         prof.MAX_POSITION_PCT,
         prof.BUST_EQUITY_PCT,
+        prof.BUST_ACTION,
         prof.DRAWDOWN_STOP_PCT
       into v_starting_cash,
            v_profile_id,
            v_max_positions,
            v_max_position_pct,
            v_bust_equity_pct,
+           v_bust_action,
            v_drawdown_stop_pct
       from MIP.APP.PORTFOLIO p
       left join MIP.APP.PORTFOLIO_PROFILE prof
@@ -75,6 +85,7 @@ begin
             'max_positions', :v_max_positions,
             'max_position_pct', :v_max_position_pct,
             'bust_equity_pct', :v_bust_equity_pct,
+            'bust_action', :v_bust_action,
             'drawdown_stop_pct', :v_drawdown_stop_pct
         ),
         null,
@@ -105,8 +116,11 @@ begin
         );
     end if;
 
-    v_max_positions := coalesce(v_max_positions, 10);
-    v_max_position_pct := coalesce(v_max_position_pct, 0.10);
+    v_max_positions := coalesce(v_max_positions, 5);
+    v_max_position_pct := coalesce(v_max_position_pct, 0.05);
+    v_bust_equity_pct := coalesce(v_bust_equity_pct, 0.60);
+    v_bust_action := coalesce(v_bust_action, 'ALLOW_EXITS_ONLY');
+    v_drawdown_stop_pct := coalesce(v_drawdown_stop_pct, 0.10);
     v_cash := v_starting_cash;
     v_total_equity := v_starting_cash;
     v_peak_equity := v_starting_cash;
@@ -563,6 +577,56 @@ begin
       into v_daily_count
       from TEMP_DAY_SPINE;
 
+    with run_daily as (
+        select
+            TS,
+            TOTAL_EQUITY,
+            DAILY_PNL,
+            DRAWDOWN
+        from MIP.APP.PORTFOLIO_DAILY
+        where PORTFOLIO_ID = :P_PORTFOLIO_ID
+          and RUN_ID = :v_run_id
+    ),
+    final_row as (
+        select TOTAL_EQUITY
+        from run_daily
+        qualify row_number() over (order by TS desc) = 1
+    )
+    select
+        (select TOTAL_EQUITY from final_row),
+        max(DRAWDOWN),
+        sum(case when DAILY_PNL > 0 then 1 else 0 end),
+        sum(case when DAILY_PNL < 0 then 1 else 0 end),
+        min(case
+            when TOTAL_EQUITY <= :v_starting_cash * :v_bust_equity_pct then TS
+            else null
+        end)
+      into v_final_equity,
+           v_max_drawdown,
+           v_win_days,
+           v_loss_days,
+           v_bust_at
+      from run_daily;
+
+    v_total_return := case
+        when v_starting_cash is null or v_starting_cash = 0 then null
+        else v_final_equity / v_starting_cash - 1
+    end;
+
+    v_last_simulated_at := current_timestamp();
+
+    update MIP.APP.PORTFOLIO
+       set LAST_SIMULATION_RUN_ID = :v_run_id,
+           LAST_SIMULATED_AT = :v_last_simulated_at,
+           FINAL_EQUITY = :v_final_equity,
+           TOTAL_RETURN = :v_total_return,
+           MAX_DRAWDOWN = :v_max_drawdown,
+           WIN_DAYS = :v_win_days,
+           LOSS_DAYS = :v_loss_days,
+           BUST_AT = :v_bust_at,
+           UPDATED_AT = :v_last_simulated_at
+     where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',
         'SUCCESS',
@@ -575,7 +639,12 @@ begin
             'positions', :v_position_count,
             'daily_rows', :v_daily_count,
             'position_days_expanded', :v_position_days_expanded,
-            'final_equity', :v_total_equity,
+            'final_equity', :v_final_equity,
+            'total_return', :v_total_return,
+            'max_drawdown', :v_max_drawdown,
+            'win_days', :v_win_days,
+            'loss_days', :v_loss_days,
+            'bust_at', :v_bust_at,
             'entries_blocked', :v_entries_blocked,
             'block_reason', :v_block_reason
         ),
@@ -592,7 +661,11 @@ begin
         'positions', :v_position_count,
         'daily_rows', :v_daily_count,
         'position_days_expanded', :v_position_days_expanded,
-        'final_equity', :v_total_equity,
+        'final_equity', :v_final_equity,
+        'total_return', :v_total_return,
+        'max_drawdown', :v_max_drawdown,
+        'win_days', :v_win_days,
+        'loss_days', :v_loss_days,
         'entries_blocked', :v_entries_blocked,
         'block_reason', :v_block_reason
     );

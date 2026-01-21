@@ -135,33 +135,37 @@ with scored as (
     select
         r.PATTERN_ID,
         r.MARKET_TYPE,
+        r.INTERVAL_MINUTES,
         o.HORIZON_BARS,
         r.SCORE,
         o.REALIZED_RETURN,
         o.HIT_FLAG,
         ntile(10) over (
-            partition by r.PATTERN_ID, r.MARKET_TYPE, o.HORIZON_BARS
+            partition by r.PATTERN_ID, r.MARKET_TYPE, r.INTERVAL_MINUTES, o.HORIZON_BARS
             order by r.SCORE
         ) as SCORE_DECILE
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
     where o.EVAL_STATUS = 'SUCCESS'
-      and o.REALIZED_RETURN is not null
 )
 select
     PATTERN_ID,
     MARKET_TYPE,
+    INTERVAL_MINUTES,
     HORIZON_BARS,
     SCORE_DECILE,
     count(*) as N,
-    avg(REALIZED_RETURN) as AVG_RETURN,
-    median(REALIZED_RETURN) as MEDIAN_RETURN,
-    avg(case when HIT_FLAG then 1 else 0 end) as HIT_RATE
+    avg(REALIZED_RETURN) as AVG_REALIZED_RETURN,
+    median(REALIZED_RETURN) as MEDIAN_REALIZED_RETURN,
+    avg(case when HIT_FLAG is null then null else iff(HIT_FLAG, 1, 0) end) as HIT_RATE,
+    min(SCORE) as SCORE_MIN,
+    max(SCORE) as SCORE_MAX
 from scored
 group by
     PATTERN_ID,
     MARKET_TYPE,
+    INTERVAL_MINUTES,
     HORIZON_BARS,
     SCORE_DECILE;
 
@@ -171,25 +175,28 @@ with scored as (
         r.RECOMMENDATION_ID,
         r.PATTERN_ID,
         r.MARKET_TYPE,
+        r.INTERVAL_MINUTES,
         o.HORIZON_BARS,
         r.SCORE,
         ntile(10) over (
-            partition by r.PATTERN_ID, r.MARKET_TYPE, o.HORIZON_BARS
+            partition by r.PATTERN_ID, r.MARKET_TYPE, r.INTERVAL_MINUTES, o.HORIZON_BARS
             order by r.SCORE
         ) as SCORE_DECILE
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+    where o.EVAL_STATUS = 'SUCCESS'
 )
 select
     s.RECOMMENDATION_ID,
     s.HORIZON_BARS,
     s.SCORE,
     s.SCORE_DECILE,
-    c.AVG_RETURN as EXPECTED_RETURN
+    c.AVG_REALIZED_RETURN as EXPECTED_RETURN
 from scored s
 left join MIP.MART.SCORE_CALIBRATION c
   on c.PATTERN_ID = s.PATTERN_ID
  and c.MARKET_TYPE = s.MARKET_TYPE
+ and c.INTERVAL_MINUTES = s.INTERVAL_MINUTES
  and c.HORIZON_BARS = s.HORIZON_BARS
  and c.SCORE_DECILE = s.SCORE_DECILE;

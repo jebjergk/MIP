@@ -29,6 +29,7 @@ kpis as (
         DAILY_VOLATILITY,
         AVG_DAILY_RETURN,
         AVG_EQ_RETURN,
+        MAX_MARKET_RETURN_RAW,
         MAX_MARKET_RETURN
     from MIP.MART.V_PORTFOLIO_RUN_KPIS
     where PORTFOLIO_ID = 1
@@ -42,6 +43,7 @@ select
     k.DAILY_VOLATILITY,
     k.AVG_DAILY_RETURN as AVG_MARKET_RETURN,
     k.AVG_EQ_RETURN,
+    k.MAX_MARKET_RETURN_RAW,
     k.MAX_MARKET_RETURN
 from base_counts b
 left join kpis k
@@ -76,24 +78,38 @@ select
     HORIZON_BARS,
     N_SUCCESS,
     AVG_RETURN
-from MIP.MART.V_SIGNAL_OUTCOME_KPIS
-where N_SUCCESS >= 20
+from MIP.MART.V_TRUST_METRICS
 order by AVG_RETURN desc
 limit 10;
 
--- Score calibration monotonicity table
+-- Score calibration monotonicity table (single bucket)
+with bucket as (
+    select
+        PATTERN_ID,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        HORIZON_BARS
+    from MIP.MART.V_TRUST_METRICS
+    order by AVG_RETURN desc
+    limit 1
+)
 select
-    PATTERN_ID,
-    MARKET_TYPE,
-    INTERVAL_MINUTES,
-    HORIZON_BARS,
-    SCORE_DECILE,
-    AVG_RETURN,
-    N
-from MIP.MART.V_SCORE_CALIBRATION
+    c.PATTERN_ID,
+    c.MARKET_TYPE,
+    c.INTERVAL_MINUTES,
+    c.HORIZON_BARS,
+    c.SCORE_DECILE,
+    c.AVG_RETURN,
+    c.N
+from MIP.MART.V_SCORE_CALIBRATION c
+join bucket b
+  on b.PATTERN_ID = c.PATTERN_ID
+ and b.MARKET_TYPE = c.MARKET_TYPE
+ and b.INTERVAL_MINUTES = c.INTERVAL_MINUTES
+ and b.HORIZON_BARS = c.HORIZON_BARS
 order by
-    PATTERN_ID,
-    MARKET_TYPE,
-    INTERVAL_MINUTES,
-    HORIZON_BARS,
-    SCORE_DECILE;
+    c.PATTERN_ID,
+    c.MARKET_TYPE,
+    c.INTERVAL_MINUTES,
+    c.HORIZON_BARS,
+    c.SCORE_DECILE;

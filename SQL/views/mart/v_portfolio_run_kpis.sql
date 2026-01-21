@@ -60,6 +60,12 @@ daily_calc as (
             else (EQUITY_VALUE - PREV_EQUITY_VALUE) / nullif(PREV_TOTAL_EQUITY, 0)
         end as MARKET_RETURN,
         case
+            when PREV_EQUITY_VALUE is not null
+             and PREV_EQUITY_VALUE <> 0
+            then (EQUITY_VALUE - PREV_EQUITY_VALUE) / nullif(PREV_TOTAL_EQUITY, 0)
+            else null
+        end as MARKET_RETURN_KPI,
+        case
             when PREV_TOTAL_EQUITY is null then null
             else (CASH - PREV_CASH) / nullif(PREV_TOTAL_EQUITY, 0)
         end as CAPITAL_FLOW_RETURN,
@@ -86,10 +92,11 @@ agg as (
         max(DRAWDOWN) as MAX_DRAWDOWN,
         max(PEAK_EQUITY) as PEAK_EQUITY,
         min(TOTAL_EQUITY) as MIN_EQUITY,
-        stddev_samp(MARKET_RETURN) as DAILY_VOLATILITY,
-        avg(MARKET_RETURN) as AVG_DAILY_RETURN,
+        stddev_samp(MARKET_RETURN_KPI) as DAILY_VOLATILITY,
+        avg(MARKET_RETURN_KPI) as AVG_DAILY_RETURN,
         avg(EQUITY_RETURN) as AVG_EQ_RETURN,
-        max(MARKET_RETURN) as MAX_MARKET_RETURN,
+        max(MARKET_RETURN) as MAX_MARKET_RETURN_RAW,
+        max(MARKET_RETURN_KPI) as MAX_MARKET_RETURN,
         avg(EQUITY_RETURN - TOTAL_RETURN_RECON) as AVG_RETURN_RECON_DIFF,
         count_if(MARKET_RETURN > 0) as WIN_DAYS,
         count_if(MARKET_RETURN < 0) as LOSS_DAYS,
@@ -118,6 +125,7 @@ select
     DAILY_VOLATILITY,
     AVG_DAILY_RETURN,
     AVG_EQ_RETURN,
+    MAX_MARKET_RETURN_RAW,
     MAX_MARKET_RETURN,
     AVG_RETURN_RECON_DIFF,
     WIN_DAYS,

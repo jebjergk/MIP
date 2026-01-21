@@ -50,6 +50,11 @@ order by event_ts desc
 limit 50;
 ```
 
+### 5) Snowflake FOR loop + dynamic SQL errors
+**Symptom**: Stored procedures fail when iterating over a SQL string variable in a `FOR` loop.
+**Why it happens**: Snowflake expects dynamic SQL in `FOR` loops to be executed into a `RESULTSET` first; iterating directly over `EXECUTE IMMEDIATE` or raw SQL strings can raise errors.
+**Fix**: Assign the SQL string to a variable, execute it into a `RESULTSET`, and loop over that resultset (e.g., `v_rs := (execute immediate :v_sql using (...)); for rec in v_rs do ... end for;`).【F:SQL/app/180_sp_run_portfolio_simulation.sql†L169-L380】
+
 ## Smoke test queries
 ```sql
 -- 1) Latest ingestion timestamp

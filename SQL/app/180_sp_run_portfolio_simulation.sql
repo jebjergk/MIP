@@ -41,6 +41,10 @@ declare
     v_bar_index number;
     v_bar_sql string;
     v_bar_rs resultset;
+    v_position_sql string;
+    v_position_rs resultset;
+    v_signal_sql string;
+    v_signal_rs resultset;
 begin
     select
         p.STARTING_CASH,
@@ -179,11 +183,13 @@ begin
     for bar_row in v_bar_rs do
         v_bar_ts := bar_row.TS;
         v_bar_index := bar_row.BAR_INDEX;
-        for position_row in (
+        v_position_sql := '
             select *
             from TEMP_POSITIONS
-            where HOLD_UNTIL_INDEX <= :v_bar_index
-        ) do
+            where HOLD_UNTIL_INDEX <= ?
+        ';
+        v_position_rs := (execute immediate :v_position_sql using (v_bar_index));
+        for position_row in v_position_rs do
             declare
                 v_sell_price number(18,8);
                 v_sell_notional number(18,8);
@@ -298,12 +304,14 @@ begin
         v_max_position_value := v_total_equity * v_max_position_pct;
 
         if (not v_entries_blocked and v_open_positions < v_max_positions) then
-            for rec in (
+            v_signal_sql := '
                 select *
                 from TEMP_SIGNALS
-                where ENTRY_TS = :v_bar_ts
+                where ENTRY_TS = ?
                 order by SCORE desc
-            ) do
+            ';
+            v_signal_rs := (execute immediate :v_signal_sql using (v_bar_ts));
+            for rec in v_signal_rs do
                 declare
                     v_buy_price number(18,8);
                     v_target_value number(18,8);

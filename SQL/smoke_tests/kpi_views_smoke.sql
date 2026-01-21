@@ -8,6 +8,43 @@ where PORTFOLIO_ID = 1
 order by TO_TS desc
 limit 1;
 
+-- Deduped trading days vs distinct timestamps and KPI daily stats for portfolio_id=1
+with base_counts as (
+    select
+        PORTFOLIO_ID,
+        RUN_ID,
+        count(*) as ROWS_TOTAL,
+        count(distinct TS) as DISTINCT_TS
+    from MIP.APP.PORTFOLIO_DAILY
+    where PORTFOLIO_ID = 1
+    group by
+        PORTFOLIO_ID,
+        RUN_ID
+),
+kpis as (
+    select
+        PORTFOLIO_ID,
+        RUN_ID,
+        TRADING_DAYS,
+        DAILY_VOLATILITY,
+        AVG_DAILY_RETURN
+    from MIP.MART.V_PORTFOLIO_RUN_KPIS
+    where PORTFOLIO_ID = 1
+)
+select
+    b.PORTFOLIO_ID,
+    b.RUN_ID,
+    b.ROWS_TOTAL,
+    b.DISTINCT_TS,
+    k.TRADING_DAYS,
+    k.DAILY_VOLATILITY,
+    k.AVG_DAILY_RETURN
+from base_counts b
+left join kpis k
+  on k.PORTFOLIO_ID = b.PORTFOLIO_ID
+ and k.RUN_ID = b.RUN_ID
+order by b.RUN_ID desc;
+
 -- Attribution totals vs run PnL (final equity minus starting cash)
 select
     k.PORTFOLIO_ID,

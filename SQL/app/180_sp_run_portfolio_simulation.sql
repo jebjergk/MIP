@@ -113,7 +113,7 @@ begin
     v_total_equity := v_starting_cash;
     v_peak_equity := v_starting_cash;
 
-    create temporary table TEMP_POSITIONS (
+    create or replace temporary table TEMP_POSITIONS (
         SYMBOL string,
         MARKET_TYPE string,
         ENTRY_TS timestamp_ntz,
@@ -125,7 +125,7 @@ begin
         HOLD_UNTIL_INDEX number
     );
 
-    create temporary table TEMP_SIGNALS (
+    create or replace temporary table TEMP_SIGNALS (
         RECOMMENDATION_ID number,
         ENTRY_TS timestamp_ntz,
         SYMBOL string,

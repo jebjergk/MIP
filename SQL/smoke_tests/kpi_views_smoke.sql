@@ -27,7 +27,9 @@ kpis as (
         RUN_ID,
         TRADING_DAYS,
         DAILY_VOLATILITY,
-        AVG_DAILY_RETURN
+        AVG_DAILY_RETURN,
+        AVG_EQ_RETURN,
+        MAX_MARKET_RETURN
     from MIP.MART.V_PORTFOLIO_RUN_KPIS
     where PORTFOLIO_ID = 1
 )
@@ -38,7 +40,9 @@ select
     b.DISTINCT_TS,
     k.TRADING_DAYS,
     k.DAILY_VOLATILITY,
-    k.AVG_DAILY_RETURN
+    k.AVG_DAILY_RETURN as AVG_MARKET_RETURN,
+    k.AVG_EQ_RETURN,
+    k.MAX_MARKET_RETURN
 from base_counts b
 left join kpis k
   on k.PORTFOLIO_ID = b.PORTFOLIO_ID

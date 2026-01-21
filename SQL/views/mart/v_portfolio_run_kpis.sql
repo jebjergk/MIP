@@ -13,7 +13,7 @@ with daily_dedup as (
         order by CREATED_AT desc, TS desc
     ) = 1
 ),
-daily_calc as (
+daily_base as (
     select
         d.PORTFOLIO_ID,
         d.RUN_ID,
@@ -26,31 +26,53 @@ daily_calc as (
         d.DRAWDOWN,
         p.STARTING_CASH,
         coalesce(prof.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT,
-        case
-            when lag(d.TOTAL_EQUITY) over (
-                partition by d.PORTFOLIO_ID, d.RUN_ID
-                order by d.TS
-            ) is null then null
-            else (d.TOTAL_EQUITY / nullif(lag(d.TOTAL_EQUITY) over (
-                partition by d.PORTFOLIO_ID, d.RUN_ID
-                order by d.TS
-            ), 0)) - 1
-        end as EQUITY_RETURN,
-        case
-            when lag(d.TOTAL_EQUITY) over (
-                partition by d.PORTFOLIO_ID, d.RUN_ID
-                order by d.TS
-            ) is null then null
-            else d.TOTAL_EQUITY - lag(d.TOTAL_EQUITY) over (
-                partition by d.PORTFOLIO_ID, d.RUN_ID
-                order by d.TS
-            )
-        end as EQUITY_PNL
+        lag(d.TOTAL_EQUITY) over (
+            partition by d.PORTFOLIO_ID, d.RUN_ID
+            order by d.TS
+        ) as PREV_TOTAL_EQUITY,
+        lag(d.EQUITY_VALUE) over (
+            partition by d.PORTFOLIO_ID, d.RUN_ID
+            order by d.TS
+        ) as PREV_EQUITY_VALUE,
+        lag(d.CASH) over (
+            partition by d.PORTFOLIO_ID, d.RUN_ID
+            order by d.TS
+        ) as PREV_CASH
     from daily_dedup d
     join MIP.APP.PORTFOLIO p
       on p.PORTFOLIO_ID = d.PORTFOLIO_ID
     left join MIP.APP.PORTFOLIO_PROFILE prof
       on prof.PROFILE_ID = p.PROFILE_ID
+),
+daily_calc as (
+    select
+        *,
+        case
+            when PREV_TOTAL_EQUITY is null then null
+            else (TOTAL_EQUITY / nullif(PREV_TOTAL_EQUITY, 0)) - 1
+        end as EQUITY_RETURN,
+        case
+            when PREV_TOTAL_EQUITY is null then null
+            else TOTAL_EQUITY - PREV_TOTAL_EQUITY
+        end as EQUITY_PNL,
+        case
+            when PREV_TOTAL_EQUITY is null then null
+            else (EQUITY_VALUE - PREV_EQUITY_VALUE) / nullif(PREV_TOTAL_EQUITY, 0)
+        end as MARKET_RETURN,
+        case
+            when PREV_TOTAL_EQUITY is null then null
+            else (CASH - PREV_CASH) / nullif(PREV_TOTAL_EQUITY, 0)
+        end as CAPITAL_FLOW_RETURN,
+        case
+            when PREV_TOTAL_EQUITY is null then null
+            else EQUITY_VALUE - PREV_EQUITY_VALUE
+        end as MARKET_PNL,
+        case
+            when PREV_TOTAL_EQUITY is null then null
+            else ((EQUITY_VALUE - PREV_EQUITY_VALUE) / nullif(PREV_TOTAL_EQUITY, 0))
+                 + ((CASH - PREV_CASH) / nullif(PREV_TOTAL_EQUITY, 0))
+        end as TOTAL_RETURN_RECON
+    from daily_base
 ),
 agg as (
     select
@@ -64,12 +86,15 @@ agg as (
         max(DRAWDOWN) as MAX_DRAWDOWN,
         max(PEAK_EQUITY) as PEAK_EQUITY,
         min(TOTAL_EQUITY) as MIN_EQUITY,
-        stddev_samp(EQUITY_RETURN) as DAILY_VOLATILITY,
-        avg(EQUITY_RETURN) as AVG_DAILY_RETURN,
-        count_if(EQUITY_PNL > 0) as WIN_DAYS,
-        count_if(EQUITY_PNL < 0) as LOSS_DAYS,
-        avg(case when EQUITY_PNL > 0 then EQUITY_PNL end) as AVG_WIN_PNL,
-        avg(case when EQUITY_PNL < 0 then EQUITY_PNL end) as AVG_LOSS_PNL,
+        stddev_samp(MARKET_RETURN) as DAILY_VOLATILITY,
+        avg(MARKET_RETURN) as AVG_DAILY_RETURN,
+        avg(EQUITY_RETURN) as AVG_EQ_RETURN,
+        max(MARKET_RETURN) as MAX_MARKET_RETURN,
+        avg(EQUITY_RETURN - TOTAL_RETURN_RECON) as AVG_RETURN_RECON_DIFF,
+        count_if(MARKET_RETURN > 0) as WIN_DAYS,
+        count_if(MARKET_RETURN < 0) as LOSS_DAYS,
+        avg(case when MARKET_RETURN > 0 then MARKET_PNL end) as AVG_WIN_PNL,
+        avg(case when MARKET_RETURN < 0 then MARKET_PNL end) as AVG_LOSS_PNL,
         avg(OPEN_POSITIONS) as AVG_OPEN_POSITIONS,
         count_if(OPEN_POSITIONS > 0) / nullif(count(*), 0) as TIME_IN_MARKET,
         min(case when DRAWDOWN >= DRAWDOWN_STOP_PCT then TS end) as DRAWDOWN_STOP_TS
@@ -92,6 +117,9 @@ select
     MIN_EQUITY,
     DAILY_VOLATILITY,
     AVG_DAILY_RETURN,
+    AVG_EQ_RETURN,
+    MAX_MARKET_RETURN,
+    AVG_RETURN_RECON_DIFF,
     WIN_DAYS,
     LOSS_DAYS,
     AVG_WIN_PNL,

@@ -244,11 +244,11 @@ begin
                         1440,
                         :v_bar_ts,
                         'SELL',
-                        v_sell_price,
+                        :v_sell_price,
                         :v_position_qty,
-                        v_sell_notional,
-                        v_sell_pnl,
-                        v_cash,
+                        :v_sell_notional,
+                        :v_sell_pnl,
+                        :v_cash,
                         :v_position_entry_score
                     );
 
@@ -359,9 +359,9 @@ begin
                                     :v_signal_symbol,
                                     :v_signal_market_type,
                                     :v_signal_entry_ts,
-                                    v_buy_price,
-                                    v_buy_qty,
-                                    v_buy_cost,
+                                    :v_buy_price,
+                                    :v_buy_qty,
+                                    :v_buy_cost,
                                     :v_signal_score,
                                     :v_signal_entry_index,
                                     :v_signal_hold_until_index
@@ -392,11 +392,11 @@ begin
                                     1440,
                                     :v_signal_entry_ts,
                                     'BUY',
-                                    v_buy_price,
-                                    v_buy_qty,
-                                    v_buy_cost,
+                                    :v_buy_price,
+                                    :v_buy_qty,
+                                    :v_buy_cost,
                                     null,
-                                    v_cash,
+                                    :v_cash,
                                     :v_signal_score
                                 );
 
@@ -421,9 +421,9 @@ begin
                                     :v_signal_market_type,
                                     1440,
                                     :v_signal_entry_ts,
-                                    v_buy_price,
-                                    v_buy_qty,
-                                    v_buy_cost,
+                                    :v_buy_price,
+                                    :v_buy_qty,
+                                    :v_buy_cost,
                                     :v_signal_score,
                                     :v_signal_entry_index,
                                     :v_signal_hold_until_index
@@ -485,14 +485,14 @@ begin
             :P_PORTFOLIO_ID,
             :v_run_id,
             :v_bar_ts,
-            v_cash,
-            v_equity_value,
-            v_total_equity,
-            v_open_positions,
-            v_daily_pnl,
-            v_daily_return,
-            v_peak_equity,
-            v_drawdown,
+            :v_cash,
+            :v_equity_value,
+            :v_total_equity,
+            :v_open_positions,
+            :v_daily_pnl,
+            :v_daily_return,
+            :v_peak_equity,
+            :v_drawdown,
             'ACTIVE'
         );
 

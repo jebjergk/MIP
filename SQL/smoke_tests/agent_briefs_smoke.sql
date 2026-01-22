@@ -13,6 +13,34 @@ select *
 from MIP.MART.V_AGENT_SIGNAL_HEALTH_BRIEF
 limit 10;
 
+select
+    pattern_id,
+    market_type,
+    interval_minutes,
+    horizon_bars,
+    trust_label,
+    recommended_action,
+    reason,
+    as_of_ts
+from MIP.MART.V_TRUSTED_SIGNAL_POLICY
+where trust_label = 'TRUSTED'
+order by reason:avg_return desc
+limit 20;
+
+select
+    pattern_id,
+    market_type,
+    interval_minutes,
+    horizon_bars,
+    trust_label,
+    recommended_action,
+    reason,
+    as_of_ts
+from MIP.MART.V_TRUSTED_SIGNAL_POLICY
+where trust_label = 'WATCH'
+order by reason:avg_return asc
+limit 20;
+
 select b.*
 from MIP.MART.V_AGENT_PORTFOLIO_RISK_BRIEF b
 join latest_run r

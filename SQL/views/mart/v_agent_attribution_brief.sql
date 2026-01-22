@@ -62,8 +62,7 @@ contributors as (
                 'win_rate', WIN_RATE,
                 'contribution_pct', CONTRIBUTION_PCT
             )
-            order by TOTAL_REALIZED_PNL desc
-        ) as TOP_CONTRIBUTORS
+        ) within group (order by TOTAL_REALIZED_PNL desc) as TOP_CONTRIBUTORS
     from (
         select
             b.*, 
@@ -92,8 +91,7 @@ detractors as (
                 'win_rate', WIN_RATE,
                 'contribution_pct', CONTRIBUTION_PCT
             )
-            order by TOTAL_REALIZED_PNL asc
-        ) as TOP_DETRACTORS
+        ) within group (order by TOTAL_REALIZED_PNL asc) as TOP_DETRACTORS
     from (
         select
             b.*, 

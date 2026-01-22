@@ -17,8 +17,7 @@ with trusted_now as (
                 'recommended_action', recommended_action,
                 'reason', reason
             )
-            order by reason:avg_return::float desc, reason:n_success::int desc
-        ) as items
+        ) within group (order by reason:avg_return::float desc, reason:n_success::int desc) as items
     from (
         select
             pattern_id,
@@ -49,8 +48,7 @@ watch_negative as (
                 'reason', reason,
                 'brief_category', brief_category
             )
-            order by reason:avg_return::float asc
-        ) as items
+        ) within group (order by reason:avg_return::float asc) as items
     from (
         select
             pattern_id,
@@ -84,8 +82,7 @@ changes as (
                 'reason', reason,
                 'brief_category', brief_category
             )
-            order by as_of_ts desc
-        ) as items
+        ) within group (order by as_of_ts desc) as items
     from (
         select
             pattern_id,
@@ -136,8 +133,7 @@ by_market_type as (
                 'top_contributors', top_contributors,
                 'top_detractors', top_detractors
             )
-            order by market_type
-        ) as items
+        ) within group (order by market_type) as items
     from (
         select
             market_type,

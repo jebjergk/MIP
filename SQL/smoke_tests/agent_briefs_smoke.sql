@@ -54,3 +54,18 @@ join latest_run r
   on r.portfolio_id = b.portfolio_id
  and r.run_id = b.run_id
 where b.portfolio_id = 1;
+
+select *
+from MIP.MART.V_AGENT_DAILY_SIGNAL_BRIEF
+order by AS_OF_TS desc
+limit 20;
+
+select *
+from MIP.MART.V_AGENT_DAILY_RISK_BRIEF
+order by AS_OF_TS desc
+limit 20;
+
+select *
+from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF
+order by AS_OF_TS desc
+limit 20;

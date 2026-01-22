@@ -52,6 +52,7 @@ contributors as (
     select
         PORTFOLIO_ID,
         RUN_ID,
+        MARKET_TYPE,
         array_agg(
             object_construct(
                 'symbol', SYMBOL,
@@ -67,7 +68,7 @@ contributors as (
         select
             b.*,
             row_number() over (
-                partition by b.PORTFOLIO_ID, b.RUN_ID
+                partition by b.PORTFOLIO_ID, b.RUN_ID, b.MARKET_TYPE
                 order by b.TOTAL_REALIZED_PNL desc
             ) as RN
         from base b
@@ -75,12 +76,14 @@ contributors as (
     where RN <= 5
     group by
         PORTFOLIO_ID,
-        RUN_ID
+        RUN_ID,
+        MARKET_TYPE
 ),
 detractors as (
     select
         PORTFOLIO_ID,
         RUN_ID,
+        MARKET_TYPE,
         array_agg(
             object_construct(
                 'symbol', SYMBOL,
@@ -96,7 +99,7 @@ detractors as (
         select
             b.*,
             row_number() over (
-                partition by b.PORTFOLIO_ID, b.RUN_ID
+                partition by b.PORTFOLIO_ID, b.RUN_ID, b.MARKET_TYPE
                 order by b.TOTAL_REALIZED_PNL asc
             ) as RN
         from base b
@@ -104,7 +107,8 @@ detractors as (
     where RN <= 5
     group by
         PORTFOLIO_ID,
-        RUN_ID
+        RUN_ID,
+        MARKET_TYPE
 )
 select
     r.PORTFOLIO_ID,
@@ -122,6 +126,8 @@ from market_type_rollup r
 left join contributors c
   on c.PORTFOLIO_ID = r.PORTFOLIO_ID
  and c.RUN_ID = r.RUN_ID
+ and c.MARKET_TYPE = r.MARKET_TYPE
 left join detractors d
   on d.PORTFOLIO_ID = r.PORTFOLIO_ID
- and d.RUN_ID = r.RUN_ID;
+ and d.RUN_ID = r.RUN_ID
+ and d.MARKET_TYPE = r.MARKET_TYPE;

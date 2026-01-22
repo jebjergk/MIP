@@ -103,6 +103,16 @@ changes as (
         limit 20
     )
 ),
+latest_run as (
+    select
+        run_id,
+        from_ts,
+        to_ts
+    from MIP.MART.V_AGENT_DAILY_RISK_BRIEF
+    where portfolio_id = 1
+    order by to_ts desc, as_of_ts desc
+    limit 1
+),
 latest_risk as (
     select
         object_construct(
@@ -120,7 +130,8 @@ latest_risk as (
         run_id
     from MIP.MART.V_AGENT_DAILY_RISK_BRIEF
     where portfolio_id = 1
-    qualify row_number() over (order by coalesce(as_of_ts, to_ts) desc) = 1
+      and run_id = (select run_id from latest_run)
+    qualify row_number() over (order by as_of_ts desc) = 1
 ),
 by_market_type as (
     select
@@ -144,7 +155,7 @@ by_market_type as (
             top_detractors
         from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF
         where portfolio_id = 1
-          and run_id = (select run_id from latest_risk)
+          and run_id = (select run_id from latest_run)
           and market_type in ('STOCK', 'FX')
         order by market_type
         limit 2
@@ -162,7 +173,7 @@ select
             'latest', (select item from latest_risk)
         ),
         'attribution', object_construct(
-            'latest_run_id', (select run_id from latest_risk),
+            'latest_run_id', (select run_id from latest_run),
             'by_market_type', coalesce((select items from by_market_type), array_construct())
         )
     ) as BRIEF;

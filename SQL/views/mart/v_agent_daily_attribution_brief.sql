@@ -95,16 +95,11 @@ detractors as (
                 'contribution_pct', CONTRIBUTION_PCT
             )
         ) within group (order by TOTAL_REALIZED_PNL asc) as TOP_DETRACTORS
-    from (
-        select
-            b.*,
-            row_number() over (
-                partition by b.PORTFOLIO_ID, b.RUN_ID, b.MARKET_TYPE
-                order by b.TOTAL_REALIZED_PNL asc
-            ) as RN
-        from base b
-    ) ranked
-    where RN <= 5
+    from base
+    qualify row_number() over (
+        partition by PORTFOLIO_ID, RUN_ID, MARKET_TYPE
+        order by TOTAL_REALIZED_PNL asc
+    ) <= 5
     group by
         PORTFOLIO_ID,
         RUN_ID,

@@ -74,3 +74,39 @@ select top_contributors
 from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF
 where market_type = 'FX'
 limit 1;
+
+with base_min as (
+    select
+        PORTFOLIO_ID,
+        RUN_ID,
+        MARKET_TYPE,
+        SYMBOL,
+        TOTAL_REALIZED_PNL
+    from MIP.MART.V_PORTFOLIO_ATTRIBUTION
+    qualify row_number() over (
+        partition by PORTFOLIO_ID, RUN_ID, MARKET_TYPE
+        order by TOTAL_REALIZED_PNL asc
+    ) = 1
+),
+detractor_symbols as (
+    select
+        b.PORTFOLIO_ID,
+        b.RUN_ID,
+        b.MARKET_TYPE,
+        f.value:symbol::string as SYMBOL
+    from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF b,
+    lateral flatten(input => b.TOP_DETRACTORS) f
+)
+select
+    m.PORTFOLIO_ID,
+    m.RUN_ID,
+    m.MARKET_TYPE,
+    m.SYMBOL as EXPECTED_MIN_SYMBOL,
+    m.TOTAL_REALIZED_PNL as EXPECTED_MIN_PNL
+from base_min m
+left join detractor_symbols d
+  on d.PORTFOLIO_ID = m.PORTFOLIO_ID
+ and d.RUN_ID = m.RUN_ID
+ and d.MARKET_TYPE = m.MARKET_TYPE
+ and d.SYMBOL = m.SYMBOL
+where d.SYMBOL is null;

@@ -19,14 +19,6 @@ with calibration as (
         MARKET_TYPE,
         INTERVAL_MINUTES,
         HORIZON_BARS
-),
-trusted as (
-    select
-        PATTERN_ID,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        HORIZON_BARS
-    from MIP.MART.V_TRUST_METRICS
 )
 select
     s.PATTERN_ID,
@@ -49,26 +41,27 @@ select
     s.OLDEST_NOT_READY_ENTRY_TS,
     s.NEWEST_NOT_READY_ENTRY_TS,
     s.LATEST_MATURED_ENTRY_TS,
-    iff(t.PATTERN_ID is null, 'UNTRUSTED', 'TRUSTED') as TRUST_STATUS,
+    case
+        when s.N_SUCCESS >= 30
+         and s.COVERAGE_RATE >= 0.8
+         and (s.AVG_RETURN > 0 or s.MEDIAN_RETURN > 0)
+        then 'TRUSTED'
+        when s.N_SUCCESS >= 30
+         and s.COVERAGE_RATE >= 0.8
+        then 'WATCH'
+        else 'UNTRUSTED'
+    end as TRUST_STATUS,
     c.CALIBRATION_DECILES,
     c.CALIBRATION_SAMPLE_N,
     case
-        when s.N_SUCCESS is null
-         or s.N_SUCCESS < 30
-         or s.COVERAGE_RATE is null
-         or s.COVERAGE_RATE < 0.8
-         or s.AVG_RETURN is null
-         or s.AVG_RETURN <= 0
-        then 'WARN'
-        else 'OK'
+        when s.N_SUCCESS >= 30
+         and s.COVERAGE_RATE >= 0.8
+         and (s.AVG_RETURN > 0 or s.MEDIAN_RETURN > 0)
+        then 'OK'
+        else 'WARN'
     end as STATUS,
     current_timestamp() as AS_OF_TS
 from MIP.MART.V_SIGNAL_OUTCOME_KPIS s
-left join trusted t
-  on t.PATTERN_ID = s.PATTERN_ID
- and t.MARKET_TYPE = s.MARKET_TYPE
- and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
- and t.HORIZON_BARS = s.HORIZON_BARS
 left join calibration c
   on c.PATTERN_ID = s.PATTERN_ID
  and c.MARKET_TYPE = s.MARKET_TYPE

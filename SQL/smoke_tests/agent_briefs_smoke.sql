@@ -69,3 +69,8 @@ select *
 from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF
 order by AS_OF_TS desc
 limit 20;
+
+select top_contributors
+from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF
+where market_type = 'FX'
+limit 1;

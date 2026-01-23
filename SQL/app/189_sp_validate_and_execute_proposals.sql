@@ -149,59 +149,82 @@ begin
         )
     );
 
-    insert into MIP.APP.PORTFOLIO_TRADES (
-        PORTFOLIO_ID,
-        RUN_ID,
-        SYMBOL,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        TRADE_TS,
-        SIDE,
-        PRICE,
-        QUANTITY,
-        NOTIONAL,
-        REALIZED_PNL,
-        CASH_AFTER,
-        SCORE
-    )
-    select
-        :P_PORTFOLIO_ID,
-        to_varchar(:P_RUN_ID),
-        p.SYMBOL,
-        p.MARKET_TYPE,
-        1440,
-        current_timestamp(),
-        p.SIDE,
-        lp.CLOSE,
-        iff(lp.CLOSE is null or lp.CLOSE = 0, null, (:v_total_equity * p.TARGET_WEIGHT) / lp.CLOSE),
-        :v_total_equity * p.TARGET_WEIGHT,
-        null,
-        :v_total_equity,
-        p.SOURCE_SIGNALS:score::number
-    from MIP.AGENT_OUT.ORDER_PROPOSALS p
-    join TMP_PROPOSAL_VALIDATION v
-      on v.PROPOSAL_ID = p.PROPOSAL_ID
-    join (
-        select SYMBOL, MARKET_TYPE, CLOSE
-        from (
-            select
-                SYMBOL,
-                MARKET_TYPE,
-                CLOSE,
-                row_number() over (
-                    partition by SYMBOL, MARKET_TYPE
-                    order by TS desc
-                ) as rn
-            from MIP.MART.MARKET_BARS
-            where INTERVAL_MINUTES = 1440
+    merge into MIP.APP.PORTFOLIO_TRADES as target
+    using (
+        select
+            p.PROPOSAL_ID,
+            :P_PORTFOLIO_ID as PORTFOLIO_ID,
+            to_varchar(:P_RUN_ID) as RUN_ID,
+            p.SYMBOL,
+            p.MARKET_TYPE,
+            1440 as INTERVAL_MINUTES,
+            current_timestamp() as TRADE_TS,
+            p.SIDE,
+            lp.CLOSE as PRICE,
+            iff(lp.CLOSE is null or lp.CLOSE = 0, null, (:v_total_equity * p.TARGET_WEIGHT) / lp.CLOSE) as QUANTITY,
+            :v_total_equity * p.TARGET_WEIGHT as NOTIONAL,
+            null as REALIZED_PNL,
+            :v_total_equity as CASH_AFTER,
+            p.SOURCE_SIGNALS:score::number as SCORE
+        from MIP.AGENT_OUT.ORDER_PROPOSALS p
+        join TMP_PROPOSAL_VALIDATION v
+          on v.PROPOSAL_ID = p.PROPOSAL_ID
+        join (
+            select SYMBOL, MARKET_TYPE, CLOSE
+            from (
+                select
+                    SYMBOL,
+                    MARKET_TYPE,
+                    CLOSE,
+                    row_number() over (
+                        partition by SYMBOL, MARKET_TYPE
+                        order by TS desc
+                    ) as rn
+                from MIP.MART.MARKET_BARS
+                where INTERVAL_MINUTES = 1440
+            )
+            where rn = 1
+        ) lp
+          on lp.SYMBOL = p.SYMBOL
+         and lp.MARKET_TYPE = p.MARKET_TYPE
+        where p.RUN_ID = :P_RUN_ID
+          and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+          and p.STATUS = 'APPROVED'
+    ) as source
+    on target.PROPOSAL_ID = source.PROPOSAL_ID
+    when not matched then
+        insert (
+            PROPOSAL_ID,
+            PORTFOLIO_ID,
+            RUN_ID,
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            TRADE_TS,
+            SIDE,
+            PRICE,
+            QUANTITY,
+            NOTIONAL,
+            REALIZED_PNL,
+            CASH_AFTER,
+            SCORE
         )
-        where rn = 1
-    ) lp
-      on lp.SYMBOL = p.SYMBOL
-     and lp.MARKET_TYPE = p.MARKET_TYPE
-    where p.RUN_ID = :P_RUN_ID
-      and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
-      and p.STATUS = 'APPROVED';
+        values (
+            source.PROPOSAL_ID,
+            source.PORTFOLIO_ID,
+            source.RUN_ID,
+            source.SYMBOL,
+            source.MARKET_TYPE,
+            source.INTERVAL_MINUTES,
+            source.TRADE_TS,
+            source.SIDE,
+            source.PRICE,
+            source.QUANTITY,
+            source.NOTIONAL,
+            source.REALIZED_PNL,
+            source.CASH_AFTER,
+            source.SCORE
+        );
 
     v_executed_count := v_approved_count;
 

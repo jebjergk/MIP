@@ -1,0 +1,127 @@
+-- 148_sp_pipeline_write_morning_briefs.sql
+-- Purpose: Pipeline step to persist morning briefs for active portfolios
+
+use role MIP_ADMIN_ROLE;
+use database MIP;
+
+create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
+    P_RUN_ID string
+)
+returns variant
+language sql
+execute as caller
+as
+$$
+declare
+    v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
+    v_step_start timestamp_ntz;
+    v_step_end timestamp_ntz;
+    v_portfolios resultset;
+    v_portfolio_id number;
+    v_rows_before number;
+    v_rows_after number;
+    v_results array := array_construct();
+    v_portfolio_count number := 0;
+begin
+    v_portfolios := (
+        select PORTFOLIO_ID
+          from MIP.APP.PORTFOLIO
+         where STATUS = 'ACTIVE'
+         order by PORTFOLIO_ID
+    );
+
+    for rec in v_portfolios do
+        v_portfolio_id := rec.PORTFOLIO_ID;
+        v_portfolio_count := v_portfolio_count + 1;
+        v_step_start := current_timestamp();
+
+        begin
+            select count(*)
+              into :v_rows_before
+              from MIP.AGENT_OUT.MORNING_BRIEF
+             where PORTFOLIO_ID = :v_portfolio_id
+               and PIPELINE_RUN_ID = :v_run_id;
+
+            call MIP.APP.SP_WRITE_MORNING_BRIEF(:v_portfolio_id, :v_run_id);
+
+            select count(*)
+              into :v_rows_after
+              from MIP.AGENT_OUT.MORNING_BRIEF
+             where PORTFOLIO_ID = :v_portfolio_id
+               and PIPELINE_RUN_ID = :v_run_id;
+
+            v_step_end := current_timestamp();
+
+            insert into MIP.APP.MIP_AUDIT_LOG (
+                EVENT_TS,
+                RUN_ID,
+                EVENT_TYPE,
+                EVENT_NAME,
+                STATUS,
+                ROWS_AFFECTED,
+                DETAILS,
+                ERROR_MESSAGE
+            )
+            select
+                current_timestamp(),
+                :v_run_id,
+                'PIPELINE_STEP',
+                'MORNING_BRIEF',
+                'SUCCESS',
+                :v_rows_after,
+                object_construct(
+                    'step_name', 'morning_brief',
+                    'portfolio_id', :v_portfolio_id,
+                    'started_at', :v_step_start,
+                    'completed_at', :v_step_end,
+                    'rows_before', :v_rows_before,
+                    'rows_after', :v_rows_after
+                ),
+                null;
+
+            v_results := array_append(
+                :v_results,
+                object_construct(
+                    'portfolio_id', :v_portfolio_id,
+                    'rows_before', :v_rows_before,
+                    'rows_after', :v_rows_after
+                )
+            );
+        exception
+            when other then
+                v_step_end := current_timestamp();
+                insert into MIP.APP.MIP_AUDIT_LOG (
+                    EVENT_TS,
+                    RUN_ID,
+                    EVENT_TYPE,
+                    EVENT_NAME,
+                    STATUS,
+                    ROWS_AFFECTED,
+                    DETAILS,
+                    ERROR_MESSAGE
+                )
+                select
+                    current_timestamp(),
+                    :v_run_id,
+                    'PIPELINE_STEP',
+                    'MORNING_BRIEF',
+                    'FAIL',
+                    null,
+                    object_construct(
+                        'step_name', 'morning_brief',
+                        'portfolio_id', :v_portfolio_id,
+                        'started_at', :v_step_start,
+                        'completed_at', :v_step_end
+                    ),
+                    :sqlerrm;
+                raise;
+        end;
+    end for;
+
+    return object_construct(
+        'status', 'SUCCESS',
+        'portfolio_count', :v_portfolio_count,
+        'results', :v_results
+    );
+end;
+$$;

@@ -20,6 +20,7 @@ declare
     v_candidate_count number := 0;
     v_inserted_count number := 0;
     v_selected_count number := 0;
+    v_dedup_skipped_count number := 0;
     v_target_weight float;
     v_run_id_string string := to_varchar(:P_RUN_ID);
 begin
@@ -69,76 +70,105 @@ begin
             'status', 'NO_ELIGIBLE_SIGNALS',
             'run_id', :P_RUN_ID,
             'portfolio_id', :P_PORTFOLIO_ID,
-            'inserted_count', 0
+            'proposal_candidates', 0,
+            'proposal_inserted', 0,
+            'proposal_dedup_skipped', 0
         );
     end if;
 
     v_selected_count := least(v_candidate_count, v_max_positions);
     v_target_weight := least(1.0 / v_selected_count, v_max_position_pct);
 
-    insert into MIP.AGENT_OUT.ORDER_PROPOSALS (
-        RUN_ID,
-        PORTFOLIO_ID,
-        SYMBOL,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        SIDE,
-        TARGET_WEIGHT,
-        RECOMMENDATION_ID,
-        SIGNAL_TS,
-        SIGNAL_PATTERN_ID,
-        SIGNAL_INTERVAL_MINUTES,
-        SIGNAL_RUN_ID,
-        SIGNAL_SNAPSHOT,
-        SOURCE_SIGNALS,
-        RATIONALE,
-        STATUS
-    )
-    select
-        :P_RUN_ID,
-        :P_PORTFOLIO_ID,
-        s.SYMBOL,
-        s.MARKET_TYPE,
-        s.INTERVAL_MINUTES,
-        'BUY',
-        :v_target_weight,
-        s.RECOMMENDATION_ID,
-        s.TS,
-        s.PATTERN_ID,
-        s.INTERVAL_MINUTES,
-        s.RUN_ID,
-        s.DETAILS,
-        object_construct(
-            'recommendation_id', s.RECOMMENDATION_ID,
-            'pattern_id', s.PATTERN_ID,
-            'ts', s.TS,
-            'score', s.SCORE,
-            'interval_minutes', s.INTERVAL_MINUTES,
-            'run_id', s.RUN_ID
-        ),
-        object_construct(
-            'strategy', 'equal_weight',
-            'max_positions', :v_max_positions,
-            'max_position_pct', :v_max_position_pct
-        ),
-        'PROPOSED'
-    from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-    where s.IS_ELIGIBLE
-      and (
-          s.RUN_ID = :v_run_id_string
-          or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
-      )
-    qualify row_number() over (
-        order by s.SCORE desc, s.TS desc, s.SYMBOL
-    ) <= :v_max_positions;
+    merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
+    using (
+        select
+            :P_RUN_ID as RUN_ID,
+            :P_PORTFOLIO_ID as PORTFOLIO_ID,
+            s.SYMBOL,
+            s.MARKET_TYPE,
+            s.INTERVAL_MINUTES,
+            'BUY' as SIDE,
+            :v_target_weight as TARGET_WEIGHT,
+            s.RECOMMENDATION_ID,
+            s.TS as SIGNAL_TS,
+            s.PATTERN_ID as SIGNAL_PATTERN_ID,
+            s.INTERVAL_MINUTES as SIGNAL_INTERVAL_MINUTES,
+            s.RUN_ID as SIGNAL_RUN_ID,
+            s.DETAILS as SIGNAL_SNAPSHOT,
+            object_construct(
+                'recommendation_id', s.RECOMMENDATION_ID,
+                'pattern_id', s.PATTERN_ID,
+                'ts', s.TS,
+                'score', s.SCORE,
+                'interval_minutes', s.INTERVAL_MINUTES,
+                'run_id', s.RUN_ID
+            ) as SOURCE_SIGNALS,
+            object_construct(
+                'strategy', 'equal_weight',
+                'max_positions', :v_max_positions,
+                'max_position_pct', :v_max_position_pct
+            ) as RATIONALE
+        from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+        where s.IS_ELIGIBLE
+          and (
+              s.RUN_ID = :v_run_id_string
+              or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+          )
+        qualify row_number() over (
+            order by s.SCORE desc, s.TS desc, s.SYMBOL
+        ) <= :v_max_positions
+    ) as source
+    on target.PORTFOLIO_ID = source.PORTFOLIO_ID
+   and target.RUN_ID = source.RUN_ID
+   and target.RECOMMENDATION_ID = source.RECOMMENDATION_ID
+    when not matched then
+        insert (
+            RUN_ID,
+            PORTFOLIO_ID,
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            SIDE,
+            TARGET_WEIGHT,
+            RECOMMENDATION_ID,
+            SIGNAL_TS,
+            SIGNAL_PATTERN_ID,
+            SIGNAL_INTERVAL_MINUTES,
+            SIGNAL_RUN_ID,
+            SIGNAL_SNAPSHOT,
+            SOURCE_SIGNALS,
+            RATIONALE,
+            STATUS
+        )
+        values (
+            source.RUN_ID,
+            source.PORTFOLIO_ID,
+            source.SYMBOL,
+            source.MARKET_TYPE,
+            source.INTERVAL_MINUTES,
+            source.SIDE,
+            source.TARGET_WEIGHT,
+            source.RECOMMENDATION_ID,
+            source.SIGNAL_TS,
+            source.SIGNAL_PATTERN_ID,
+            source.SIGNAL_INTERVAL_MINUTES,
+            source.SIGNAL_RUN_ID,
+            source.SIGNAL_SNAPSHOT,
+            source.SOURCE_SIGNALS,
+            source.RATIONALE,
+            'PROPOSED'
+        );
 
     v_inserted_count := SQLROWCOUNT;
+    v_dedup_skipped_count := greatest(:v_selected_count - :v_inserted_count, 0);
 
     return object_construct(
         'status', 'SUCCESS',
         'run_id', :P_RUN_ID,
         'portfolio_id', :P_PORTFOLIO_ID,
-        'inserted_count', :v_inserted_count,
+        'proposal_candidates', :v_candidate_count,
+        'proposal_inserted', :v_inserted_count,
+        'proposal_dedup_skipped', :v_dedup_skipped_count,
         'target_weight', :v_target_weight
     );
 end;

@@ -120,6 +120,7 @@ create table if not exists MIP.APP.PORTFOLIO_POSITIONS (
 -----------------------------
 create table if not exists MIP.APP.PORTFOLIO_TRADES (
     TRADE_ID         number        autoincrement,
+    PROPOSAL_ID      number,
     PORTFOLIO_ID     number        not null,
     RUN_ID           string        not null,
     SYMBOL           string        not null,
@@ -136,6 +137,9 @@ create table if not exists MIP.APP.PORTFOLIO_TRADES (
     CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_TRADES primary key (TRADE_ID)
 );
+
+alter table if exists MIP.APP.PORTFOLIO_TRADES
+    add column if not exists PROPOSAL_ID number;
 
 -----------------------------
 -- 4. PORTFOLIO_DAILY

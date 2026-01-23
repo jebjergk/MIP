@@ -480,6 +480,8 @@ begin
     end;
     v_msg_eval := 'Recommendation outcomes evaluated for last 90 days.';
 
+    call MIP.APP.SP_WRITE_MORNING_BRIEF(1, :v_run_id);
+
     call MIP.APP.SP_LOG_EVENT(
         'PIPELINE',
         'SP_RUN_DAILY_PIPELINE',

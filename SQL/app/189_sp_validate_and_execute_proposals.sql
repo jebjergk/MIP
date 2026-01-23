@@ -23,17 +23,21 @@ declare
     v_executed_count number := 0;
     v_proposal_count number := 0;
 begin
-    select
-        p.PROFILE_ID,
-        prof.MAX_POSITIONS,
-        prof.MAX_POSITION_PCT
-      into v_profile_id,
-           v_max_positions,
-           v_max_position_pct
-      from MIP.APP.PORTFOLIO p
-      left join MIP.APP.PORTFOLIO_PROFILE prof
-        on prof.PROFILE_ID = p.PROFILE_ID
-     where p.PORTFOLIO_ID = :P_PORTFOLIO_ID;
+    let v_profile := (
+        select object_construct(
+            'profile_id', p.PROFILE_ID,
+            'max_positions', prof.MAX_POSITIONS,
+            'max_position_pct', prof.MAX_POSITION_PCT
+        )
+        from MIP.APP.PORTFOLIO p
+        left join MIP.APP.PORTFOLIO_PROFILE prof
+          on prof.PROFILE_ID = p.PROFILE_ID
+       where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+    );
+
+    v_profile_id := v_profile:profile_id::number;
+    v_max_positions := v_profile:max_positions::number;
+    v_max_position_pct := v_profile:max_position_pct::float;
 
     if (v_profile_id is null) then
         return object_construct(
@@ -98,16 +102,21 @@ begin
      and lp.MARKET_TYPE = p.MARKET_TYPE
      and lp.rn = 1;
 
-    select count(*)
-      into :v_proposal_count
-      from TMP_PROPOSAL_VALIDATION;
+    v_proposal_count := coalesce(
+        (select count(*) from TMP_PROPOSAL_VALIDATION),
+        0
+    );
 
-    select
-        count_if(array_size(validation_errors) > 0),
-        count_if(array_size(validation_errors) = 0)
-      into :v_rejected_count,
-           :v_approved_count
-      from TMP_PROPOSAL_VALIDATION;
+    let v_validation_counts := (
+        select object_construct(
+            'rejected', count_if(array_size(validation_errors) > 0),
+            'approved', count_if(array_size(validation_errors) = 0)
+        )
+        from TMP_PROPOSAL_VALIDATION
+    );
+
+    v_rejected_count := coalesce(v_validation_counts:rejected::number, 0);
+    v_approved_count := coalesce(v_validation_counts:approved::number, 0);
 
     update MIP.AGENT_OUT.ORDER_PROPOSALS as p
        set STATUS = 'REJECTED',
@@ -124,7 +133,7 @@ begin
      where p.PROPOSAL_ID = v.PROPOSAL_ID
        and array_size(v.validation_errors) = 0;
 
-    select coalesce(
+    v_total_equity := coalesce(
         (
             select TOTAL_EQUITY
               from MIP.APP.PORTFOLIO_DAILY
@@ -137,8 +146,7 @@ begin
               from MIP.APP.PORTFOLIO
              where PORTFOLIO_ID = :P_PORTFOLIO_ID
         )
-    )
-      into :v_total_equity;
+    );
 
     insert into MIP.APP.PORTFOLIO_TRADES (
         PORTFOLIO_ID,

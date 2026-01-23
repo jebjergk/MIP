@@ -22,7 +22,6 @@ declare
     v_approved_count number := 0;
     v_executed_count number := 0;
     v_proposal_count number := 0;
-    v_run_id_string string := to_varchar(:P_RUN_ID);
 begin
     let v_profile := (
         select object_construct(
@@ -84,25 +83,19 @@ begin
         p.INTERVAL_MINUTES,
         p.SOURCE_SIGNALS,
         v.SYMBOL as eligible_symbol,
+        v.IS_ELIGIBLE as eligible_flag,
         lp.CLOSE as latest_price,
         array_construct_compact(
-            iff(v.SYMBOL is null, 'NO_ELIGIBLE_SIGNAL', null),
+            iff(p.RECOMMENDATION_ID is null, 'MISSING_RECOMMENDATION_ID', null),
+            iff(p.RECOMMENDATION_ID is not null and v.RECOMMENDATION_ID is null, 'NO_SIGNAL_MATCH', null),
+            iff(v.RECOMMENDATION_ID is not null and not v.IS_ELIGIBLE, 'INELIGIBLE_SIGNAL', null),
             iff(p.TARGET_WEIGHT > :v_max_position_pct, 'EXCEEDS_MAX_POSITION_PCT', null),
             iff(p.proposal_rank > :v_max_positions, 'EXCEEDS_MAX_POSITIONS', null),
             iff(lp.CLOSE is null, 'MISSING_PRICE', null)
         ) as validation_errors
     from proposals p
     left join MIP.APP.V_SIGNALS_ELIGIBLE_TODAY v
-      on (
-          v.RUN_ID = :v_run_id_string
-          or try_to_number(replace(v.RUN_ID, 'T', '')) = :P_RUN_ID
-      )
-     and v.SYMBOL = p.SYMBOL
-     and v.MARKET_TYPE = p.MARKET_TYPE
-     and v.INTERVAL_MINUTES = p.INTERVAL_MINUTES
-     and v.TS = p.SOURCE_SIGNALS:ts::timestamp_ntz
-     and v.PATTERN_ID = p.SOURCE_SIGNALS:pattern_id::number
-     and v.IS_ELIGIBLE
+      on v.RECOMMENDATION_ID = p.RECOMMENDATION_ID
     left join latest_prices lp
       on lp.SYMBOL = p.SYMBOL
      and lp.MARKET_TYPE = p.MARKET_TYPE

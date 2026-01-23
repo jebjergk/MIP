@@ -67,41 +67,10 @@ watch_negative as (
         limit 10
     )
 ),
-changes as (
+morning_brief_delta as (
     select
-        array_agg(
-            object_construct(
-                'pattern_id', pattern_id,
-                'market_type', market_type,
-                'interval_minutes', interval_minutes,
-                'horizon_bars', horizon_bars,
-                'trust_label', trust_label,
-                'recommended_action', recommended_action,
-                'previous_trust_label', previous_trust_label,
-                'previous_recommended_action', previous_recommended_action,
-                'reason', reason,
-                'brief_category', brief_category
-            )
-        ) within group (order by as_of_ts desc) as items
-    from (
-        select
-            pattern_id,
-            market_type,
-            interval_minutes,
-            horizon_bars,
-            trust_label,
-            recommended_action,
-            previous_trust_label,
-            previous_recommended_action,
-            reason,
-            brief_category,
-            as_of_ts
-        from MIP.MART.V_AGENT_DAILY_SIGNAL_BRIEF
-        where previous_trust_label is not null
-          and previous_trust_label <> trust_label
-        order by as_of_ts desc
-        limit 20
-    )
+        brief
+    from MIP.MART.V_MORNING_BRIEF_WITH_DELTA
 ),
 latest_run as (
     select
@@ -167,7 +136,7 @@ select
         'signals', object_construct(
             'trusted_now', coalesce((select items from trusted_now), array_construct()),
             'watch_negative', coalesce((select items from watch_negative), array_construct()),
-            'changes', coalesce((select items from changes), array_construct())
+            'changes', coalesce((select brief from morning_brief_delta), object_construct())
         ),
         'risk', object_construct(
             'latest', (select item from latest_risk)

@@ -84,13 +84,12 @@ begin
     v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_to_ts));
     v_portfolio_result := (call MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS(:v_from_ts, :v_to_ts, :v_run_id));
 
-    select max(to_number(replace(RUN_ID, 'T', '')))
+    select max(try_to_number(replace(RUN_ID, 'T', '')))
       into :v_signal_run_id
-      from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
-     where TS::date = current_date();
+      from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
 
     if (v_signal_run_id is null) then
-        select max(to_number(replace(RUN_ID, 'T', '')))
+        select max(try_to_number(replace(RUN_ID, 'T', '')))
           into :v_signal_run_id
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
     end if;
@@ -100,7 +99,7 @@ begin
           into :v_eligible_signal_count
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
          where IS_ELIGIBLE
-           and to_number(replace(RUN_ID, 'T', '')) = :v_signal_run_id;
+           and try_to_number(replace(RUN_ID, 'T', '')) = :v_signal_run_id;
 
         v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
             :v_run_id,

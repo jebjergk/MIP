@@ -21,6 +21,7 @@ declare
     v_inserted_count number := 0;
     v_selected_count number := 0;
     v_target_weight float;
+    v_run_id_string string := to_varchar(:P_RUN_ID);
 begin
     select
         p.PROFILE_ID,
@@ -58,7 +59,10 @@ begin
       into :v_candidate_count
       from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
      where IS_ELIGIBLE
-       and to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID;
+       and (
+           RUN_ID = :v_run_id_string
+           or try_to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID
+       );
 
     if (v_candidate_count = 0) then
         return object_construct(
@@ -106,7 +110,10 @@ begin
         'PROPOSED'
     from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
     where s.IS_ELIGIBLE
-      and to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+      and (
+          s.RUN_ID = :v_run_id_string
+          or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+      )
     qualify row_number() over (
         order by s.SCORE desc, s.TS desc, s.SYMBOL
     ) <= :v_max_positions;

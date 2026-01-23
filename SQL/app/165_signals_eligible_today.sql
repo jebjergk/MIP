@@ -16,38 +16,19 @@ with recs as (
         r.GENERATED_AT,
         r.SCORE,
         r.DETAILS,
+        r.DETAILS:run_id::string as LOG_RUN_ID,
         min(r.GENERATED_AT) over (
             partition by r.TS, r.MARKET_TYPE, r.INTERVAL_MINUTES
         ) as RUN_GENERATED_AT
     from MIP.APP.RECOMMENDATION_LOG r
 ),
-policy_scored as (
+daily_flags as (
     select
-        p.PATTERN_ID,
-        p.MARKET_TYPE,
-        p.INTERVAL_MINUTES,
-        p.HORIZON_BARS,
-        p.TRUST_LABEL,
-        p.RECOMMENDED_ACTION,
-        p.REASON,
-        case p.TRUST_LABEL
-            when 'TRUSTED' then 3
-            when 'WATCH' then 2
-            else 1
-        end as TRUST_RANK
-    from MIP.MART.V_TRUSTED_SIGNAL_POLICY p
-),
-policy_ranked as (
-    select
-        p.*,
-        row_number() over (
-            partition by p.PATTERN_ID, p.MARKET_TYPE, p.INTERVAL_MINUTES
-            order by p.TRUST_RANK desc, p.HORIZON_BARS desc
-        ) as POLICY_RN
-    from policy_scored p
+        count_if(LOG_RUN_ID is not null and GENERATED_AT::date = current_date()) > 0 as HAS_DAILY_RUN_ID
+    from recs
 )
 select
-    to_varchar(r.RUN_GENERATED_AT, 'YYYYMMDD\"T\"HH24MISS') as RUN_ID,
+    coalesce(r.LOG_RUN_ID, to_varchar(r.RUN_GENERATED_AT, 'YYYYMMDD\"T\"HH24MISS')) as RUN_ID,
     r.RECOMMENDATION_ID,
     r.TS,
     r.SYMBOL,
@@ -56,26 +37,24 @@ select
     r.PATTERN_ID,
     r.SCORE,
     r.DETAILS,
-    coalesce(p.TRUST_LABEL, 'UNTRUSTED') as TRUST_LABEL,
-    coalesce(p.RECOMMENDED_ACTION, 'DISABLE') as RECOMMENDED_ACTION,
+    c.TRUST_LABEL,
+    c.RECOMMENDED_ACTION,
     iff(
-        coalesce(p.TRUST_LABEL, 'UNTRUSTED') = 'TRUSTED'
-        and coalesce(p.RECOMMENDED_ACTION, 'DISABLE') = 'ENABLE',
+        c.TRUST_LABEL = 'TRUSTED'
+        and c.RECOMMENDED_ACTION = 'ENABLE',
         true,
         false
     ) as IS_ELIGIBLE,
-    object_construct(
-        'trust_label', coalesce(p.TRUST_LABEL, 'UNTRUSTED'),
-        'recommended_action', coalesce(p.RECOMMENDED_ACTION, 'DISABLE'),
-        'policy_source', 'MIP.MART.V_TRUSTED_SIGNAL_POLICY',
-        'policy_version', 'v1',
-        'horizon_bars', p.HORIZON_BARS,
-        'reason', p.REASON,
-        'note', iff(p.PATTERN_ID is null, 'NO_POLICY_MATCH', null)
-    ) as GATING_REASON
+    c.GATING_REASON
 from recs r
-left join policy_ranked p
-  on p.PATTERN_ID = r.PATTERN_ID
- and p.MARKET_TYPE = r.MARKET_TYPE
- and p.INTERVAL_MINUTES = r.INTERVAL_MINUTES
- and p.POLICY_RN = 1;
+cross join daily_flags f
+left join MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION c
+  on c.SYMBOL = r.SYMBOL
+ and c.MARKET_TYPE = r.MARKET_TYPE
+ and c.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+ and c.TS = r.TS
+ and c.PATTERN_ID = r.PATTERN_ID
+where (
+    (f.HAS_DAILY_RUN_ID and r.LOG_RUN_ID is not null and r.GENERATED_AT::date = current_date())
+    or (not f.HAS_DAILY_RUN_ID and r.GENERATED_AT::date = current_date())
+);

@@ -108,7 +108,7 @@ latest_run as (
         run_id,
         from_ts,
         to_ts
-    from MIP.MART.V_AGENT_DAILY_RISK_BRIEF
+    from MIP.MART.V_PORTFOLIO_RUN_KPIS
     where portfolio_id = 1
     order by to_ts desc, as_of_ts desc
     limit 1

@@ -22,6 +22,12 @@ declare
     v_eval_result variant;
     v_portfolio_result variant;
     v_brief_result variant;
+    v_signal_run_id number;
+    v_eligible_signal_count number := 0;
+    v_proposed_count number := 0;
+    v_approved_count number := 0;
+    v_rejected_count number := 0;
+    v_executed_count number := 0;
     v_recommendation_results array := array_construct();
     v_recommendation_result variant;
     v_summary variant;
@@ -77,7 +83,55 @@ begin
 
     v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_to_ts));
     v_portfolio_result := (call MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS(:v_from_ts, :v_to_ts, :v_run_id));
-    v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(:v_run_id));
+
+    select max(to_number(replace(RUN_ID, 'T', '')))
+      into :v_signal_run_id
+      from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
+     where TS::date = current_date();
+
+    if (v_signal_run_id is null) then
+        select max(to_number(replace(RUN_ID, 'T', '')))
+          into :v_signal_run_id
+          from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
+    end if;
+
+    if (v_signal_run_id is not null) then
+        select count(*)
+          into :v_eligible_signal_count
+          from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
+         where IS_ELIGIBLE
+           and to_number(replace(RUN_ID, 'T', '')) = :v_signal_run_id;
+
+        v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
+            :v_run_id,
+            :v_signal_run_id
+        ));
+
+        select count(*)
+          into :v_proposed_count
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID = :v_signal_run_id;
+
+        select count(*)
+          into :v_approved_count
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID = :v_signal_run_id
+           and STATUS in ('APPROVED', 'EXECUTED');
+
+        select count(*)
+          into :v_rejected_count
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID = :v_signal_run_id
+           and STATUS = 'REJECTED';
+
+        select count(*)
+          into :v_executed_count
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID = :v_signal_run_id
+           and STATUS = 'EXECUTED';
+    else
+        v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(:v_run_id, null));
+    end if;
 
     v_summary := object_construct(
         'run_id', :v_run_id,
@@ -88,7 +142,13 @@ begin
         'recommendations', :v_recommendation_results,
         'evaluation', :v_eval_result,
         'portfolio_simulation', :v_portfolio_result,
-        'morning_brief', :v_brief_result
+        'morning_brief', :v_brief_result,
+        'signal_run_id', :v_signal_run_id,
+        'eligible_signals', :v_eligible_signal_count,
+        'proposals_proposed', :v_proposed_count,
+        'proposals_approved', :v_approved_count,
+        'proposals_rejected', :v_rejected_count,
+        'proposals_executed', :v_executed_count
     );
 
     call MIP.APP.SP_LOG_EVENT(

@@ -5,7 +5,8 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
-    P_RUN_ID string
+    P_RUN_ID string,
+    P_SIGNAL_RUN_ID number
 )
 returns variant
 language sql
@@ -20,6 +21,9 @@ declare
     v_portfolio_id number;
     v_rows_before number;
     v_rows_after number;
+    v_propose_result variant;
+    v_validate_result variant;
+    v_signal_run_id number := :P_SIGNAL_RUN_ID;
     v_results array := array_construct();
     v_portfolio_count number := 0;
 begin
@@ -41,6 +45,21 @@ begin
               from MIP.AGENT_OUT.MORNING_BRIEF
              where PORTFOLIO_ID = :v_portfolio_id
                and PIPELINE_RUN_ID = :v_run_id;
+
+            if (v_signal_run_id is not null) then
+                v_propose_result := (call MIP.APP.SP_AGENT_PROPOSE_TRADES(
+                    :v_signal_run_id,
+                    :v_portfolio_id
+                ));
+
+                v_validate_result := (call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
+                    :v_signal_run_id,
+                    :v_portfolio_id
+                ));
+            else
+                v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');
+                v_validate_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');
+            end if;
 
             call MIP.APP.SP_WRITE_MORNING_BRIEF(:v_portfolio_id, :v_run_id);
 
@@ -75,7 +94,10 @@ begin
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'rows_before', :v_rows_before,
-                    'rows_after', :v_rows_after
+                    'rows_after', :v_rows_after,
+                    'signal_run_id', :v_signal_run_id,
+                    'proposal_result', :v_propose_result,
+                    'validation_result', :v_validate_result
                 ),
                 null;
 
@@ -84,7 +106,10 @@ begin
                 object_construct(
                     'portfolio_id', :v_portfolio_id,
                     'rows_before', :v_rows_before,
-                    'rows_after', :v_rows_after
+                    'rows_after', :v_rows_after,
+                    'signal_run_id', :v_signal_run_id,
+                    'proposal_result', :v_propose_result,
+                    'validation_result', :v_validate_result
                 )
             );
         exception

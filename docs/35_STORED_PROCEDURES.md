@@ -3,13 +3,13 @@
 ## Pipeline & orchestration
 | Procedure | Inputs | Returns | Outputs / Side Effects |
 | --- | --- | --- | --- |
-| `MIP.APP.SP_RUN_DAILY_PIPELINE` | None | `variant` summary | Orchestrates ingest → returns → recs → evaluation → portfolio sims → morning briefs.【F:SQL/app/145_sp_run_daily_pipeline.sql†L1-L108】 |
+| `MIP.APP.SP_RUN_DAILY_PIPELINE` | None | `variant` summary | Orchestrates ingest → returns → recs → evaluation → portfolio sims → proposals/validation → morning briefs.【F:SQL/app/145_sp_run_daily_pipeline.sql†L1-L168】 |
 | `MIP.APP.SP_PIPELINE_INGEST` | None | `variant` step summary | Wraps `SP_INGEST_ALPHAVANTAGE_BARS`, logs audit rows, updates `MART.MARKET_BARS`.【F:SQL/app/142_sp_pipeline_ingest.sql†L1-L80】 |
 | `MIP.APP.SP_PIPELINE_REFRESH_RETURNS` | None | `variant` step summary | Recreates `MART.MARKET_RETURNS` from `MART.MARKET_BARS` and logs audit rows.【F:SQL/app/143_sp_pipeline_refresh_returns.sql†L1-L104】 |
 | `MIP.APP.SP_PIPELINE_GENERATE_RECOMMENDATIONS` | `P_MARKET_TYPE`, `P_INTERVAL_MINUTES` | `variant` step summary | Calls `SP_GENERATE_MOMENTUM_RECS` and logs recommendation counts per market type (ETF included).【F:SQL/app/144_sp_pipeline_generate_recommendations.sql†L1-L120】 |
 | `MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS` | `P_FROM_TS`, `P_TO_TS` | `variant` step summary | Calls `SP_EVALUATE_RECOMMENDATIONS` and logs outcome row counts.【F:SQL/app/146_sp_pipeline_evaluate_recommendations.sql†L1-L74】 |
 | `MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS` | `P_FROM_TS`, `P_TO_TS`, `P_RUN_ID` | `variant` step summary | Loops active portfolios and calls `SP_RUN_PORTFOLIO_SIMULATION` to populate portfolio tables and audit rows.【F:SQL/app/147_sp_pipeline_run_portfolios.sql†L1-L120】 |
-| `MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS` | `P_RUN_ID` | `variant` step summary | Calls `SP_WRITE_MORNING_BRIEF` per active portfolio and audits persistence counts.【F:SQL/app/148_sp_pipeline_write_morning_briefs.sql†L1-L86】 |
+| `MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS` | `P_RUN_ID`, `P_SIGNAL_RUN_ID` | `variant` step summary | Calls `SP_AGENT_PROPOSE_TRADES`/`SP_VALIDATE_AND_EXECUTE_PROPOSALS` then `SP_WRITE_MORNING_BRIEF` per active portfolio and audits persistence counts.【F:SQL/app/148_sp_pipeline_write_morning_briefs.sql†L1-L101】 |
 
 ## Ingestion & recommendation generation
 | Procedure | Inputs | Returns | Outputs / Side Effects |
@@ -37,6 +37,8 @@
 ## Agent outputs & utilities
 | Procedure | Inputs | Returns | Outputs / Side Effects |
 | --- | --- | --- | --- |
+| `MIP.APP.SP_AGENT_PROPOSE_TRADES` | `P_RUN_ID`, `P_PORTFOLIO_ID` | `variant` | Inserts `PROPOSED` rows into `AGENT_OUT.ORDER_PROPOSALS` with equal-weight targets for eligible signals.【F:SQL/app/188_sp_agent_propose_trades.sql†L1-L94】 |
+| `MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS` | `P_RUN_ID`, `P_PORTFOLIO_ID` | `variant` | Validates proposals against eligibility + portfolio constraints, rejects invalid rows, and executes approved trades into `APP.PORTFOLIO_TRADES`.【F:SQL/app/189_sp_validate_and_execute_proposals.sql†L1-L177】 |
 | `MIP.APP.SP_WRITE_MORNING_BRIEF` | `P_PORTFOLIO_ID`, `P_PIPELINE_RUN_ID` | `variant` | Merges `V_MORNING_BRIEF_JSON` into `AGENT_OUT.MORNING_BRIEF`.【F:SQL/app/186_sp_write_morning_brief.sql†L7-L48】 |
 | `MIP.APP.SP_SEED_MIP_DEMO` | None | `string` | Seeds demo pattern + market bars for non-destructive demos.【F:SQL/app/060_sp_seed_mip_demo.sql†L4-L72】 |
 | `MIP.APP.SP_LOG_EVENT` | `P_EVENT_TYPE`, `P_EVENT_NAME`, `P_STATUS`, `P_ROWS_AFFECTED`, `P_DETAILS`, `P_ERROR_MESSAGE`, `P_RUN_ID`, `P_PARENT_RUN_ID` | `varchar` | Inserts audit rows into `MIP.APP.MIP_AUDIT_LOG`.【F:SQL/app/055_app_audit_log.sql†L19-L54】 |

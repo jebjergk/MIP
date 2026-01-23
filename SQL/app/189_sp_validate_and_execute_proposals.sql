@@ -102,14 +102,19 @@ begin
       into :v_proposal_count
       from TMP_PROPOSAL_VALIDATION;
 
+    select
+        count_if(array_size(validation_errors) > 0),
+        count_if(array_size(validation_errors) = 0)
+      into :v_rejected_count,
+           :v_approved_count
+      from TMP_PROPOSAL_VALIDATION;
+
     update MIP.AGENT_OUT.ORDER_PROPOSALS as p
        set STATUS = 'REJECTED',
            VALIDATION_ERRORS = v.validation_errors
       from TMP_PROPOSAL_VALIDATION v
      where p.PROPOSAL_ID = v.PROPOSAL_ID
        and array_size(v.validation_errors) > 0;
-
-    get diagnostics v_rejected_count = row_count;
 
     update MIP.AGENT_OUT.ORDER_PROPOSALS as p
        set STATUS = 'APPROVED',
@@ -118,8 +123,6 @@ begin
       from TMP_PROPOSAL_VALIDATION v
      where p.PROPOSAL_ID = v.PROPOSAL_ID
        and array_size(v.validation_errors) = 0;
-
-    get diagnostics v_approved_count = row_count;
 
     select coalesce(
         (
@@ -191,7 +194,7 @@ begin
       and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
       and p.STATUS = 'APPROVED';
 
-    get diagnostics v_executed_count = row_count;
+    v_executed_count := v_approved_count;
 
     update MIP.AGENT_OUT.ORDER_PROPOSALS
        set STATUS = 'EXECUTED',

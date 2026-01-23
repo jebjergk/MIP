@@ -110,7 +110,7 @@ latest_run as (
         to_ts
     from MIP.MART.V_PORTFOLIO_RUN_KPIS
     where portfolio_id = 1
-    order by to_ts desc, as_of_ts desc
+    order by to_ts desc
     limit 1
 ),
 latest_risk as (

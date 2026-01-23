@@ -5,12 +5,13 @@
 - **Core analytics (views and tables in MART/APP)**: `MIP.MART.MARKET_RETURNS` is built from `MIP.MART.MARKET_BARS`, recommendations are stored in `MIP.APP.RECOMMENDATION_LOG`, and evaluation results land in `MIP.APP.RECOMMENDATION_OUTCOMES`.【F:SQL/mart/010_mart_market_bars.sql†L1-L107】【F:SQL/app/050_app_core_tables.sql†L194-L239】
 - **Orchestration**: `MIP.APP.TASK_RUN_DAILY_PIPELINE` schedules a daily run of `MIP.APP.SP_RUN_DAILY_PIPELINE`.【F:SQL/app/150_task_run_daily_training.sql†L1-L14】
 - **Monitoring & audit**: `MIP.APP.SP_LOG_EVENT` writes to `MIP.APP.MIP_AUDIT_LOG` for pipeline and step-level logging.【F:SQL/app/055_app_audit_log.sql†L1-L54】
+- **Agent outputs (morning brief)**: `MIP.MART.V_MORNING_BRIEF_JSON` composes trusted signals, risk, and attribution (plus deltas), and `MIP.APP.SP_WRITE_MORNING_BRIEF` persists the JSON into `MIP.AGENT_OUT.MORNING_BRIEF` for agents to consume.【F:SQL/views/mart/v_morning_brief_json.sql†L1-L139】【F:SQL/views/mart/v_morning_brief_with_delta.sql†L1-L190】【F:SQL/app/186_sp_write_morning_brief.sql†L1-L48】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】
 
 ## Schemas and responsibilities
 - **`MIP.RAW_EXT`**: raw external data (staging/ingestion footprint).【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L29-L43】
 - **`MIP.MART`**: analytic models and views (e.g., `MARKET_BARS`, `MARKET_RETURNS`, KPI views).【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L29-L43】【F:SQL/mart/010_mart_market_bars.sql†L1-L107】【F:SQL/mart/030_mart_rec_outcome_views.sql†L1-L71】
 - **`MIP.APP`**: application tables, stored procedures, and configuration for the pipeline (recommendation logs, outcomes, audit log, stored procedures).【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L29-L43】【F:SQL/app/050_app_core_tables.sql†L194-L239】【F:SQL/app/055_app_audit_log.sql†L1-L54】
-- **`MIP.AGENT_OUT`**: reserved for future narrative/agent outputs (not used in the daily pipeline today).【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L29-L43】
+- **`MIP.AGENT_OUT`**: persisted agent outputs, including `MORNING_BRIEF` snapshots written by the daily pipeline.【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L29-L43】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】【F:SQL/app/148_sp_pipeline_write_morning_briefs.sql†L1-L86】
 
 ## Roles and warehouse assumptions
 - **Roles**: `MIP_ADMIN_ROLE` (full control), `MIP_APP_ROLE` (read MART/AGENT_OUT + execute APP procedures).【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L7-L92】

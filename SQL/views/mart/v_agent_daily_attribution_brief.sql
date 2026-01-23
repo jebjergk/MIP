@@ -48,6 +48,20 @@ market_type_rollup as (
         b.MARKET_TYPE,
         t.TOTAL_REALIZED_PNL
 ),
+contributors_ranked as (
+    select
+        b.*,
+        row_number() over (
+            partition by b.PORTFOLIO_ID, b.RUN_ID, b.MARKET_TYPE
+            order by b.TOTAL_REALIZED_PNL desc
+        ) as RN_DESC
+    from base b
+),
+contributors_top as (
+    select *
+    from contributors_ranked
+    where RN_DESC <= 5
+),
 contributors as (
     select
         PORTFOLIO_ID,
@@ -64,20 +78,26 @@ contributors as (
                 'contribution_pct', CONTRIBUTION_PCT
             )
         ) within group (order by TOTAL_REALIZED_PNL desc) as TOP_CONTRIBUTORS
-    from (
-        select
-            b.*,
-            row_number() over (
-                partition by b.PORTFOLIO_ID, b.RUN_ID, b.MARKET_TYPE
-                order by b.TOTAL_REALIZED_PNL desc
-            ) as RN
-        from base b
-    ) ranked
-    where RN <= 5
+    from contributors_top
     group by
         PORTFOLIO_ID,
         RUN_ID,
         MARKET_TYPE
+),
+detractors_ranked as (
+    select
+        b.*,
+        row_number() over (
+            partition by b.PORTFOLIO_ID, b.RUN_ID, b.MARKET_TYPE
+            order by b.TOTAL_REALIZED_PNL asc
+        ) as RN_ASC
+    from base b
+),
+detractors_top as (
+    select
+        *
+    from detractors_ranked
+    where RN_ASC <= 5
 ),
 detractors as (
     select
@@ -95,11 +115,7 @@ detractors as (
                 'contribution_pct', CONTRIBUTION_PCT
             )
         ) within group (order by TOTAL_REALIZED_PNL asc) as TOP_DETRACTORS
-    from base
-    qualify row_number() over (
-        partition by PORTFOLIO_ID, RUN_ID, MARKET_TYPE
-        order by TOTAL_REALIZED_PNL asc
-    ) <= 5
+    from detractors_top
     group by
         PORTFOLIO_ID,
         RUN_ID,

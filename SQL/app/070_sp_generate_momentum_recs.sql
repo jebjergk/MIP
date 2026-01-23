@@ -136,7 +136,7 @@ begin
         select
             PATTERN_ID,
             upper(NAME) as PATTERN_KEY,
-            coalesce(PARAMS_JSON:market_type::string, ?, ?) as PATTERN_MARKET_TYPE,
+            upper(coalesce(PARAMS_JSON:market_type::string, ?, ?)) as PATTERN_MARKET_TYPE,
             coalesce(PARAMS_JSON:interval_minutes::number, ?, ?) as PATTERN_INTERVAL_MINUTES,
             coalesce(PARAMS_JSON:fast_window::number, ?) as FAST_WINDOW,
             coalesce(PARAMS_JSON:slow_window::number, ?) as SLOW_WINDOW,
@@ -147,7 +147,7 @@ begin
         where coalesce(IS_ACTIVE, ''N'') = ''Y''
           and coalesce(ENABLED, true)
           and (? is null 
-               or upper(?) = coalesce(upper(PARAMS_JSON:market_type::string), ?))
+               or upper(?) = coalesce(upper(PARAMS_JSON:market_type::string), upper(?)))
           and (? is null 
                or ? = coalesce(PARAMS_JSON:interval_minutes::number, ?))
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT = 0 or LAST_TRADE_COUNT >= ?)
@@ -203,7 +203,15 @@ begin
         v_history_rows := 0;
         v_candidate_rows_at_as_of := 0;
 
-        if (v_pattern_market_type = 'STOCK') then
+        if (v_pattern_market_type not in ('STOCK', 'ETF', 'FX')) then
+            v_status_msgs := v_status_msgs ||
+                'Pattern ' || v_pattern_key ||
+                ' (' || v_pattern_market_type || '/' || v_pattern_interval ||
+                '): unsupported market_type. ';
+            continue;
+        end if;
+
+        if (v_pattern_market_type in ('STOCK', 'ETF')) then
             select max(TS)
               into :v_as_of_ts
               from MIP.MART.MARKET_RETURNS
@@ -225,7 +233,7 @@ begin
             continue;
         end if;
 
-        if (v_pattern_market_type = 'STOCK') then
+        if (v_pattern_market_type in ('STOCK', 'ETF')) then
             select count(*)
               into :v_history_rows
               from MIP.MART.MARKET_RETURNS

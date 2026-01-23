@@ -48,6 +48,7 @@ policy_ranked as (
 )
 select
     to_varchar(r.RUN_GENERATED_AT, 'YYYYMMDD\"T\"HH24MISS') as RUN_ID,
+    r.RECOMMENDATION_ID,
     r.TS,
     r.SYMBOL,
     r.MARKET_TYPE,

@@ -6,8 +6,9 @@
 3. **Recommendation generation (ETF included)**: `MIP.APP.SP_PIPELINE_GENERATE_RECOMMENDATIONS` calls `SP_GENERATE_MOMENTUM_RECS` for each market type discovered in `MIP.APP.INGEST_UNIVERSE` (STOCK/ETF/FX), writing to `MIP.APP.RECOMMENDATION_LOG`.【F:SQL/app/144_sp_pipeline_generate_recommendations.sql†L1-L120】【F:SQL/app/145_sp_run_daily_pipeline.sql†L31-L80】【F:SQL/app/050_app_core_tables.sql†L10-L83】
 4. **Outcome evaluation**: `MIP.APP.SP_EVALUATE_RECOMMENDATIONS` creates horizon-based outcomes in `MIP.APP.RECOMMENDATION_OUTCOMES` using a `MERGE`, ensuring idempotent upserts for each `(RECOMMENDATION_ID, HORIZON_BARS)` pair.【F:SQL/app/105_sp_evaluate_recommendations.sql†L7-L154】
 5. **Portfolio simulation**: `MIP.APP.SP_RUN_PORTFOLIO_SIMULATION` consumes portfolio configuration and opportunity signals to populate portfolio positions, trades, and daily equity series, which roll up into run-level KPIs and events views in `MIP.MART`.【F:SQL/app/160_app_portfolio_tables.sql†L71-L170】【F:SQL/app/180_sp_run_portfolio_simulation.sql†L1-L180】【F:SQL/views/mart/v_portfolio_run_kpis.sql†L1-L122】【F:SQL/views/mart/v_portfolio_run_events.sql†L1-L62】
-6. **Agent outputs / morning brief**: `MIP.MART.V_MORNING_BRIEF_JSON` composes trusted signals, risk, attribution, and delta changes, and `MIP.APP.SP_WRITE_MORNING_BRIEF` persists the JSON to `MIP.AGENT_OUT.MORNING_BRIEF` for downstream agent consumption.【F:SQL/views/mart/v_morning_brief_json.sql†L1-L139】【F:SQL/views/mart/v_morning_brief_with_delta.sql†L1-L190】【F:SQL/app/186_sp_write_morning_brief.sql†L1-L48】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】
-7. **KPI views**: Coverage, performance, and trust ranking are derived from outcomes and the recommendation log, and published as views in `MIP.MART` for reporting and controlling audiences.【F:SQL/mart/030_mart_rec_outcome_views.sql†L1-L82】
+6. **Agent proposals + execution**: `MIP.APP.SP_AGENT_PROPOSE_TRADES` writes equal-weight trade proposals for eligible signals into `MIP.AGENT_OUT.ORDER_PROPOSALS`, and `SP_VALIDATE_AND_EXECUTE_PROPOSALS` approves/rejects them before inserting paper trades into `MIP.APP.PORTFOLIO_TRADES`.【F:SQL/app/188_sp_agent_propose_trades.sql†L1-L94】【F:SQL/app/189_sp_validate_and_execute_proposals.sql†L1-L177】【F:SQL/app/187_agent_out_order_proposals.sql†L1-L24】【F:SQL/app/160_app_portfolio_tables.sql†L111-L150】
+7. **Agent outputs / morning brief**: `MIP.MART.V_MORNING_BRIEF_JSON` composes trusted signals, risk, attribution, and delta changes, and `MIP.APP.SP_WRITE_MORNING_BRIEF` persists the JSON to `MIP.AGENT_OUT.MORNING_BRIEF` for downstream agent consumption.【F:SQL/views/mart/v_morning_brief_json.sql†L1-L139】【F:SQL/views/mart/v_morning_brief_with_delta.sql†L1-L190】【F:SQL/app/186_sp_write_morning_brief.sql†L1-L48】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】
+8. **KPI views**: Coverage, performance, and trust ranking are derived from outcomes and the recommendation log, and published as views in `MIP.MART` for reporting and controlling audiences.【F:SQL/mart/030_mart_rec_outcome_views.sql†L1-L82】
 
 ## Mermaid diagram: data flow
 ```mermaid
@@ -17,17 +18,21 @@ flowchart LR
     REC_LOG[MIP.APP.RECOMMENDATION_LOG]
     REC_OUTCOMES[MIP.APP.RECOMMENDATION_OUTCOMES]
     PORTFOLIO_DAILY[MIP.APP.PORTFOLIO_DAILY]
+    PORTFOLIO_TRADES[MIP.APP.PORTFOLIO_TRADES]
     RUN_KPIS[MIP.MART.V_PORTFOLIO_RUN_KPIS]
     KPI_COVERAGE[MIP.MART.REC_OUTCOME_COVERAGE]
     KPI_PERF[MIP.MART.REC_OUTCOME_PERF]
     KPI_TRUST[MIP.MART.REC_PATTERN_TRUST_RANKING]
     MORNING_BRIEF[MIP.AGENT_OUT.MORNING_BRIEF]
+    ORDER_PROPOSALS[MIP.AGENT_OUT.ORDER_PROPOSALS]
 
     MARKET_BARS --> MARKET_RETURNS
     MARKET_RETURNS --> REC_LOG
     REC_LOG --> REC_OUTCOMES
     REC_LOG --> PORTFOLIO_DAILY
     PORTFOLIO_DAILY --> RUN_KPIS
+    REC_LOG --> ORDER_PROPOSALS
+    ORDER_PROPOSALS --> PORTFOLIO_TRADES
     REC_OUTCOMES --> KPI_COVERAGE
     REC_OUTCOMES --> KPI_PERF
     KPI_COVERAGE --> KPI_TRUST
@@ -45,7 +50,7 @@ flowchart TD
     RECS[MIP.APP.SP_GENERATE_MOMENTUM_RECS]
     EVAL[MIP.APP.SP_EVALUATE_RECOMMENDATIONS]
     PORTFOLIO[MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS]
-    BRIEF[MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS]
+    BRIEF[MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS\n(propose/validate/execute + brief)]
 
     TASK --> PIPELINE
     PIPELINE --> INGEST

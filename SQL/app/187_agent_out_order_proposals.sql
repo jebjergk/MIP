@@ -13,6 +13,7 @@ create table if not exists MIP.AGENT_OUT.ORDER_PROPOSALS (
     PROPOSED_AT        timestamp_ntz default current_timestamp(),
     SYMBOL             varchar,
     MARKET_TYPE        varchar,
+    INTERVAL_MINUTES   number,
     SIDE               varchar,
     TARGET_WEIGHT      float,
     SOURCE_SIGNALS     variant,
@@ -23,3 +24,6 @@ create table if not exists MIP.AGENT_OUT.ORDER_PROPOSALS (
     EXECUTED_AT        timestamp_ntz,
     constraint PK_ORDER_PROPOSALS primary key (PROPOSAL_ID)
 );
+
+alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
+    add column if not exists INTERVAL_MINUTES number;

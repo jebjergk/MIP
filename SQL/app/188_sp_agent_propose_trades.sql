@@ -5,8 +5,8 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_PROPOSE_TRADES(
-    P_RUN_ID number,
-    P_PORTFOLIO_ID number
+    P_PORTFOLIO_ID number,
+    P_RUN_ID number
 )
 returns variant
 language sql
@@ -81,6 +81,7 @@ begin
         PORTFOLIO_ID,
         SYMBOL,
         MARKET_TYPE,
+        INTERVAL_MINUTES,
         SIDE,
         TARGET_WEIGHT,
         SOURCE_SIGNALS,
@@ -92,6 +93,7 @@ begin
         :P_PORTFOLIO_ID,
         s.SYMBOL,
         s.MARKET_TYPE,
+        s.INTERVAL_MINUTES,
         'BUY',
         :v_target_weight,
         object_construct(

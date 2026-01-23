@@ -14,6 +14,7 @@ execute as caller
 as
 $$
 declare
+    v_profile variant;
     v_profile_id number;
     v_max_positions number;
     v_max_position_pct float;
@@ -22,8 +23,9 @@ declare
     v_approved_count number := 0;
     v_executed_count number := 0;
     v_proposal_count number := 0;
+    v_validation_counts variant;
 begin
-    let v_profile := (
+    v_profile := (
         select object_construct(
             'profile_id', p.PROFILE_ID,
             'max_positions', prof.MAX_POSITIONS,
@@ -106,7 +108,7 @@ begin
         0
     );
 
-    let v_validation_counts := (
+    v_validation_counts := (
         select object_construct(
             'rejected', count_if(array_size(validation_errors) > 0),
             'approved', count_if(array_size(validation_errors) = 0)

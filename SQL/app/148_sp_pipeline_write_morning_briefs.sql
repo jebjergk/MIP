@@ -48,13 +48,13 @@ begin
 
             if (v_signal_run_id is not null) then
                 v_propose_result := (call MIP.APP.SP_AGENT_PROPOSE_TRADES(
-                    :v_signal_run_id,
-                    :v_portfolio_id
+                    :v_portfolio_id,
+                    :v_signal_run_id
                 ));
 
                 v_validate_result := (call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
-                    :v_signal_run_id,
-                    :v_portfolio_id
+                    :v_portfolio_id,
+                    :v_signal_run_id
                 ));
             else
                 v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');

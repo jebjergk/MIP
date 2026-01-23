@@ -5,8 +5,8 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
-    P_RUN_ID number,
-    P_PORTFOLIO_ID number
+    P_PORTFOLIO_ID number,
+    P_RUN_ID number
 )
 returns variant
 language sql
@@ -81,6 +81,7 @@ begin
         p.TARGET_WEIGHT,
         p.SYMBOL,
         p.MARKET_TYPE,
+        p.INTERVAL_MINUTES,
         p.SOURCE_SIGNALS,
         v.SYMBOL as eligible_symbol,
         lp.CLOSE as latest_price,
@@ -98,6 +99,7 @@ begin
       )
      and v.SYMBOL = p.SYMBOL
      and v.MARKET_TYPE = p.MARKET_TYPE
+     and v.INTERVAL_MINUTES = p.INTERVAL_MINUTES
      and v.TS = p.SOURCE_SIGNALS:ts::timestamp_ntz
      and v.PATTERN_ID = p.SOURCE_SIGNALS:pattern_id::number
      and v.IS_ELIGIBLE

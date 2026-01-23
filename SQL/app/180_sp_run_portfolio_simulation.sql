@@ -625,8 +625,8 @@ begin
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',
         'SUCCESS',
-        'INFO',
-        null,
+        'SUCCESS',
+        :v_daily_count,
         object_construct(
             'portfolio_id', :P_PORTFOLIO_ID,
             'run_id', :v_run_id,

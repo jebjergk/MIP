@@ -111,7 +111,7 @@ begin
         order by s.SCORE desc, s.TS desc, s.SYMBOL
     ) <= :v_max_positions;
 
-    get diagnostics v_inserted_count = row_count;
+    v_inserted_count := SQLROWCOUNT;
 
     return object_construct(
         'status', 'SUCCESS',

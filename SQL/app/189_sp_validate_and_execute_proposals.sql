@@ -22,6 +22,7 @@ declare
     v_approved_count number := 0;
     v_executed_count number := 0;
     v_proposal_count number := 0;
+    v_run_id_string string := to_varchar(:P_RUN_ID);
 begin
     let v_profile := (
         select object_construct(
@@ -91,7 +92,10 @@ begin
         ) as validation_errors
     from proposals p
     left join MIP.APP.V_SIGNALS_ELIGIBLE_TODAY v
-      on to_number(replace(v.RUN_ID, 'T', '')) = :P_RUN_ID
+      on (
+          v.RUN_ID = :v_run_id_string
+          or try_to_number(replace(v.RUN_ID, 'T', '')) = :P_RUN_ID
+      )
      and v.SYMBOL = p.SYMBOL
      and v.MARKET_TYPE = p.MARKET_TYPE
      and v.TS = p.SOURCE_SIGNALS:ts::timestamp_ntz

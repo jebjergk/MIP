@@ -34,14 +34,18 @@ declare
     v_pattern_min_zscore      float;
     v_pattern_id              number;
     v_pattern_key             string;
-    v_market_return_count     number;
+    v_as_of_ts                timestamp_ntz;
+    v_history_days_for_stats  number;
+    v_insert_days             number := 1;
+    v_history_rows            number;
+    v_candidate_rows_at_as_of number;
+    v_skip_reason             string;
     v_status_msgs             string := '';
     v_sql                     string;
     v_rs                      resultset;
     v_before                  number;
     v_after                   number;
     v_delta                   number;
-    v_effective_lookback_days number;
     v_effective_min_zscore    float;
     v_patterns_processed      number := 0;
     v_run_id                  string := coalesce(nullif(current_query_tag(), ''), uuid_string());
@@ -149,9 +153,6 @@ begin
           and (LAST_TRADE_COUNT is null or LAST_TRADE_COUNT = 0 or LAST_TRADE_COUNT >= ?)
         ';
 
-    v_effective_lookback_days := coalesce(P_LOOKBACK_DAYS, v_default_lookback_days);
-    v_effective_min_zscore := coalesce(P_MIN_ZSCORE, v_vol_adj_threshold);
-
     v_rs := (
         execute immediate :v_sql using (
             -- For PATTERN_MARKET_TYPE
@@ -163,11 +164,11 @@ begin
             -- SLOW_WINDOW
             v_default_slow_window,
             -- LOOKBACK_DAYS
-            v_effective_lookback_days,
+            v_default_lookback_days,
             -- MIN_RETURN
             P_MIN_RETURN, v_default_min_return,
             -- MIN_ZSCORE
-            v_effective_min_zscore, v_default_min_zscore,
+            v_default_min_zscore,
     
             -- WHERE clause: market type filter
             P_MARKET_TYPE, P_MARKET_TYPE, v_default_market_type,
@@ -192,21 +193,57 @@ begin
         v_pattern_id            := pattern_row.PATTERN_ID;
         v_pattern_key           := pattern_row.PATTERN_KEY;
 
-        select count(*)
-          into :v_market_return_count
-          from MIP.MART.MARKET_RETURNS
-         where MARKET_TYPE = :v_pattern_market_type
-           and INTERVAL_MINUTES = :v_pattern_interval;
+        v_effective_min_zscore := coalesce(P_MIN_ZSCORE, v_pattern_min_zscore, v_default_min_zscore);
+        v_history_days_for_stats := greatest(
+            coalesce(P_LOOKBACK_DAYS, v_pattern_lookback_days, v_default_lookback_days),
+            30
+        );
+        v_skip_reason := null;
+        v_as_of_ts := null;
+        v_history_rows := 0;
+        v_candidate_rows_at_as_of := 0;
 
-        if (v_market_return_count = 0) then
+        if (v_pattern_market_type = 'STOCK') then
+            select max(TS)
+              into :v_as_of_ts
+              from MIP.MART.MARKET_RETURNS
+             where MARKET_TYPE = :v_pattern_market_type
+               and INTERVAL_MINUTES = :v_pattern_interval;
+        elseif (v_pattern_market_type = 'FX') then
+            select max(TS)
+              into :v_as_of_ts
+              from MIP.MART.MARKET_BARS
+             where MARKET_TYPE = :v_pattern_market_type
+               and INTERVAL_MINUTES = :v_pattern_interval;
+        end if;
+
+        if (v_as_of_ts is null) then
             v_status_msgs := v_status_msgs ||
                 'Skipped ' || v_pattern_key ||
                 ' (' || v_pattern_market_type || '/' || v_pattern_interval ||
-                '): no rows in MART.MARKET_RETURNS. ';
+                '): as_of_ts is null. ';
             continue;
         end if;
 
         if (v_pattern_market_type = 'STOCK') then
+            select count(*)
+              into :v_history_rows
+              from MIP.MART.MARKET_RETURNS
+             where MARKET_TYPE = :v_pattern_market_type
+               and INTERVAL_MINUTES = :v_pattern_interval
+               and RETURN_SIMPLE is not null
+               and VOLUME >= :v_min_volume
+               and TS::date >= dateadd(day, -:v_history_days_for_stats, :v_as_of_ts::date);
+
+            select count(*)
+              into :v_candidate_rows_at_as_of
+              from MIP.MART.MARKET_RETURNS
+             where MARKET_TYPE = :v_pattern_market_type
+               and INTERVAL_MINUTES = :v_pattern_interval
+               and RETURN_SIMPLE is not null
+               and VOLUME >= :v_min_volume
+               and TS::date = :v_as_of_ts::date;
+
             select count(*)
               into :v_before
               from MIP.APP.RECOMMENDATION_LOG
@@ -234,7 +271,7 @@ begin
                     and r.INTERVAL_MINUTES = ?
                       and r.RETURN_SIMPLE is not null
                       and r.VOLUME >= ?
-                      and r.TS::date >= dateadd(day, -?, current_date())
+                      and r.TS::date >= dateadd(day, -?, ?::date)
                 ),
                 scored as (
                     select
@@ -279,6 +316,7 @@ begin
                       and rf.POSITIVE_LAG_COUNT >= ?
                       and (rf.MAX_PREV_CLOSE is null or rf.CLOSE >= rf.MAX_PREV_CLOSE)
                       and (? is null or rf.STDDEV_WINDOW is null or (rf.STDDEV_WINDOW > 0 and rf.RETURN_SIMPLE / rf.STDDEV_WINDOW >= ?))
+                      and rf.TS::date between dateadd(day, -(? - 1), ?::date) and ?::date
                 )
                 select PATTERN_ID,
                        SYMBOL,
@@ -301,7 +339,8 @@ begin
                 v_pattern_market_type,
                 v_pattern_interval,
                 v_min_volume,
-                v_pattern_lookback_days,
+                v_history_days_for_stats,
+                v_as_of_ts,
                 v_pattern_slow_window,
                 v_pattern_fast_window,
                 v_pattern_fast_window,
@@ -309,8 +348,11 @@ begin
                 v_pattern_key,
                 v_pattern_min_return,
                 v_pattern_slow_window,
-                v_pattern_min_zscore,
-                v_pattern_min_zscore
+                v_effective_min_zscore,
+                v_effective_min_zscore,
+                v_insert_days,
+                v_as_of_ts,
+                v_as_of_ts
             );
 
             select count(*)
@@ -320,7 +362,30 @@ begin
 
             v_delta := v_after - v_before;
             v_inserted := v_inserted + v_delta;
+            if (v_delta = 0) then
+                if (v_candidate_rows_at_as_of = 0) then
+                    v_skip_reason := 'no eligible rows at as_of_ts';
+                elseif (v_history_rows = 0) then
+                    v_skip_reason := 'no history rows for stats window';
+                else
+                    v_skip_reason := 'no new recs matched thresholds or already existed';
+                end if;
+            end if;
         elseif (v_pattern_market_type = 'FX') then
+            select count(*)
+              into :v_history_rows
+              from MIP.MART.MARKET_BARS
+             where MARKET_TYPE = :v_pattern_market_type
+               and INTERVAL_MINUTES = :v_pattern_interval
+               and TS::date >= dateadd(day, -:v_history_days_for_stats, :v_as_of_ts::date);
+
+            select count(*)
+              into :v_candidate_rows_at_as_of
+              from MIP.MART.MARKET_BARS
+             where MARKET_TYPE = :v_pattern_market_type
+               and INTERVAL_MINUTES = :v_pattern_interval
+               and TS::date = :v_as_of_ts::date;
+
             select count(*)
               into :v_before
               from MIP.APP.RECOMMENDATION_LOG
@@ -350,7 +415,7 @@ begin
                     from MIP.MART.MARKET_BARS mb
                   where mb.MARKET_TYPE = ?
                     and mb.INTERVAL_MINUTES = ?
-                      and mb.TS::date >= dateadd(day, -?, current_date())
+                      and mb.TS::date >= dateadd(day, -?, ?::date)
                 ),
                 returns as (
                     select
@@ -412,6 +477,7 @@ begin
                       and r.CLOSE >= r.SMA_SLOW
                       and coalesce(r.AVG_RETURN_WINDOW, 0) >= ?
                       and (? is null or r.STDDEV_WINDOW is null or r.STDDEV_WINDOW = 0 or r.RETURN_SIMPLE / r.STDDEV_WINDOW >= ?)
+                      and r.TS::date between dateadd(day, -(? - 1), ?::date) and ?::date
                 )
                 select PATTERN_ID,
                        SYMBOL,
@@ -433,7 +499,8 @@ begin
             ' using (
                 v_pattern_market_type,
                 v_pattern_interval,
-                v_pattern_lookback_days,
+                v_history_days_for_stats,
+                v_as_of_ts,
                 v_pattern_fast_window,
                 v_pattern_slow_window,
                 v_pattern_fast_window,
@@ -441,8 +508,11 @@ begin
                 v_pattern_id,
                 v_pattern_key,
                 v_pattern_min_return,
-                v_pattern_min_zscore,
-                v_pattern_min_zscore
+                v_effective_min_zscore,
+                v_effective_min_zscore,
+                v_insert_days,
+                v_as_of_ts,
+                v_as_of_ts
             );
 
             select count(*)
@@ -452,7 +522,27 @@ begin
 
             v_delta := v_after - v_before;
             v_inserted := v_inserted + v_delta;
+            if (v_delta = 0) then
+                if (v_candidate_rows_at_as_of = 0) then
+                    v_skip_reason := 'no eligible rows at as_of_ts';
+                elseif (v_history_rows = 0) then
+                    v_skip_reason := 'no history rows for stats window';
+                else
+                    v_skip_reason := 'no new recs matched thresholds or already existed';
+                end if;
+            end if;
         end if;
+
+        v_status_msgs := v_status_msgs ||
+            'Pattern ' || v_pattern_key ||
+            ' (' || v_pattern_market_type || '/' || v_pattern_interval ||
+            '): as_of_ts=' || to_varchar(v_as_of_ts) ||
+            ', history_days=' || v_history_days_for_stats ||
+            ', history_rows=' || v_history_rows ||
+            ', candidate_rows_at_as_of_ts=' || v_candidate_rows_at_as_of ||
+            ', inserted_delta=' || v_delta ||
+            case when v_skip_reason is not null then ', skip_reason=' || v_skip_reason else '' end ||
+            '. ';
     end for;
 
     if (v_status_msgs is null) then

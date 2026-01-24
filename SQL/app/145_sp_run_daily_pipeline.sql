@@ -12,12 +12,16 @@ as
 $$
 declare
     v_from_ts timestamp_ntz := dateadd(day, -90, current_timestamp()::timestamp_ntz);
-    v_to_ts timestamp_ntz := current_timestamp()::timestamp_ntz;
+    v_requested_to_ts timestamp_ntz := current_timestamp()::timestamp_ntz;
+    v_effective_to_ts timestamp_ntz := :v_requested_to_ts;
+    v_latest_market_bars_ts timestamp_ntz;
     v_run_id string := uuid_string();
     v_market_types resultset;
     v_market_type string;
     v_market_type_count number := 0;
     v_ingest_result variant;
+    v_ingest_status string;
+    v_ingest_rate_limit boolean := false;
     v_returns_result variant;
     v_eval_result variant;
     v_portfolio_result variant;
@@ -40,13 +44,72 @@ begin
         'SP_RUN_DAILY_PIPELINE',
         'START',
         null,
-        object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
+        object_construct('from_ts', :v_from_ts, 'requested_to_ts', :v_requested_to_ts),
         null,
         :v_run_id,
         null
     );
 
-    v_ingest_result := (call MIP.APP.SP_PIPELINE_INGEST());
+    begin
+        v_ingest_result := (call MIP.APP.SP_PIPELINE_INGEST());
+    exception
+        when other then
+            call MIP.APP.SP_LOG_EVENT(
+                'PIPELINE',
+                'SP_RUN_DAILY_PIPELINE',
+                'FAIL',
+                null,
+                object_construct('from_ts', :v_from_ts, 'requested_to_ts', :v_requested_to_ts),
+                :sqlerrm,
+                :v_run_id,
+                null
+            );
+            raise;
+    end;
+
+    v_ingest_status := coalesce(:v_ingest_result:"status"::string, 'UNKNOWN');
+    v_ingest_rate_limit := coalesce(
+        :v_ingest_result:"ingest_result":"rate_limit_hit"::boolean,
+        :v_ingest_result:"rate_limit_hit"::boolean,
+        false
+    );
+
+    if (v_ingest_rate_limit or v_ingest_status in ('SUCCESS_WITH_SKIPS', 'SKIP_RATE_LIMIT')) then
+        insert into MIP.APP.MIP_AUDIT_LOG (
+            EVENT_TS,
+            RUN_ID,
+            EVENT_TYPE,
+            EVENT_NAME,
+            STATUS,
+            ROWS_AFFECTED,
+            DETAILS,
+            ERROR_MESSAGE
+        )
+        select
+            current_timestamp(),
+            :v_run_id,
+            'INGESTION',
+            'INGESTION',
+            'SKIP_RATE_LIMIT',
+            null,
+            object_construct(
+                'requested_to_ts', :v_requested_to_ts,
+                'ingest_status', :v_ingest_status,
+                'ingest_result', :v_ingest_result
+            ),
+            null;
+    end if;
+
+    select max(ts)
+      into :v_latest_market_bars_ts
+      from MIP.MART.MARKET_BARS;
+
+    v_effective_to_ts := coalesce(
+        least(:v_requested_to_ts, :v_latest_market_bars_ts),
+        :v_latest_market_bars_ts,
+        :v_requested_to_ts
+    );
+
     v_returns_result := (call MIP.APP.SP_PIPELINE_REFRESH_RETURNS());
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_MARKET_TYPES (MARKET_TYPE string);
@@ -81,8 +144,8 @@ begin
         v_recommendation_results := array_append(:v_recommendation_results, :v_recommendation_result);
     end for;
 
-    v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_to_ts));
-    v_portfolio_result := (call MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS(:v_from_ts, :v_to_ts, :v_run_id));
+    v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_effective_to_ts));
+    v_portfolio_result := (call MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS(:v_from_ts, :v_effective_to_ts, :v_run_id));
 
     select max(try_to_number(replace(RUN_ID, 'T', '')))
       into :v_signal_run_id
@@ -135,7 +198,9 @@ begin
     v_summary := object_construct(
         'run_id', :v_run_id,
         'from_ts', :v_from_ts,
-        'to_ts', :v_to_ts,
+        'requested_to_ts', :v_requested_to_ts,
+        'effective_to_ts', :v_effective_to_ts,
+        'latest_market_bars_ts', :v_latest_market_bars_ts,
         'ingestion', :v_ingest_result,
         'returns_refresh', :v_returns_result,
         'recommendations', :v_recommendation_results,
@@ -169,7 +234,7 @@ exception
             'SP_RUN_DAILY_PIPELINE',
             'FAIL',
             null,
-            object_construct('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
+            object_construct('from_ts', :v_from_ts, 'requested_to_ts', :v_requested_to_ts),
             :sqlerrm,
             :v_run_id,
             null

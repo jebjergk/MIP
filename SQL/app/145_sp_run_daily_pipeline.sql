@@ -169,28 +169,17 @@ begin
             :v_signal_run_id
         ));
 
-        select count(*)
-          into :v_proposed_count
+        select
+            count(*) as proposed_count,
+            count_if(STATUS in ('APPROVED', 'EXECUTED')) as approved_count,
+            count_if(STATUS = 'REJECTED') as rejected_count,
+            count_if(STATUS = 'EXECUTED') as executed_count
+          into :v_proposed_count,
+               :v_approved_count,
+               :v_rejected_count,
+               :v_executed_count
           from MIP.AGENT_OUT.ORDER_PROPOSALS
          where RUN_ID = :v_signal_run_id;
-
-        select count(*)
-          into :v_approved_count
-          from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id
-           and STATUS in ('APPROVED', 'EXECUTED');
-
-        select count(*)
-          into :v_rejected_count
-          from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id
-           and STATUS = 'REJECTED';
-
-        select count(*)
-          into :v_executed_count
-          from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id
-           and STATUS = 'EXECUTED';
     else
         v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(:v_run_id, null));
     end if;

@@ -32,6 +32,9 @@ declare
     v_entries_blocked boolean := false;
     v_block_reason string;
     v_trade_count number := 0;
+    v_trade_candidates number := 0;
+    v_trade_inserted number := 0;
+    v_trade_dedup_skipped number := 0;
     v_position_count number := 0;
     v_daily_count number := 0;
     v_position_days_expanded number := 0;
@@ -44,6 +47,8 @@ declare
     v_position_rs resultset;
     v_signal_sql string;
     v_signal_rs resultset;
+    v_trade_day timestamp_ntz;
+    v_trade_rows_affected number := 0;
     v_final_equity number(18,2);
     v_total_return number(18,6);
     v_max_drawdown number(18,6);
@@ -238,44 +243,78 @@ begin
                     v_sell_notional := v_sell_price * v_position_qty;
                     v_sell_pnl := (v_sell_price - v_position_entry_price) * v_position_qty;
                     v_cash := v_cash + v_sell_notional;
+                    v_trade_candidates := v_trade_candidates + 1;
+                    v_trade_day := date_trunc('day', v_bar_ts);
 
-                    insert into MIP.APP.PORTFOLIO_TRADES (
-                        PORTFOLIO_ID,
-                        RUN_ID,
-                        SYMBOL,
-                        MARKET_TYPE,
-                        INTERVAL_MINUTES,
-                        TRADE_TS,
-                        SIDE,
-                        PRICE,
-                        QUANTITY,
-                        NOTIONAL,
-                        REALIZED_PNL,
-                        CASH_AFTER,
-                        SCORE
-                    )
-                    values (
-                        :P_PORTFOLIO_ID,
-                        :v_run_id,
-                        :v_position_symbol,
-                        :v_position_market_type,
-                        1440,
-                        :v_bar_ts,
-                        'SELL',
-                        :v_sell_price,
-                        :v_position_qty,
-                        :v_sell_notional,
-                        :v_sell_pnl,
-                        :v_cash,
-                        :v_position_entry_score
-                    );
+                    merge into MIP.APP.PORTFOLIO_TRADES as target
+                    using (
+                        select
+                            :P_PORTFOLIO_ID as PORTFOLIO_ID,
+                            :v_run_id as RUN_ID,
+                            :v_position_symbol as SYMBOL,
+                            :v_position_market_type as MARKET_TYPE,
+                            1440 as INTERVAL_MINUTES,
+                            :v_bar_ts as TRADE_TS,
+                            'SELL' as SIDE,
+                            :v_sell_price as PRICE,
+                            :v_position_qty as QUANTITY,
+                            :v_sell_notional as NOTIONAL,
+                            :v_sell_pnl as REALIZED_PNL,
+                            :v_cash as CASH_AFTER,
+                            :v_position_entry_score as SCORE,
+                            :v_trade_day as TRADE_DAY
+                    ) as source
+                    on target.PORTFOLIO_ID = source.PORTFOLIO_ID
+                       and target.PROPOSAL_ID is null
+                       and date_trunc('day', target.TRADE_TS) = source.TRADE_DAY
+                       and target.SYMBOL = source.SYMBOL
+                       and target.SIDE = source.SIDE
+                       and target.PRICE = source.PRICE
+                       and target.QUANTITY = source.QUANTITY
+                    when not matched then
+                        insert (
+                            PORTFOLIO_ID,
+                            RUN_ID,
+                            SYMBOL,
+                            MARKET_TYPE,
+                            INTERVAL_MINUTES,
+                            TRADE_TS,
+                            SIDE,
+                            PRICE,
+                            QUANTITY,
+                            NOTIONAL,
+                            REALIZED_PNL,
+                            CASH_AFTER,
+                            SCORE
+                        )
+                        values (
+                            source.PORTFOLIO_ID,
+                            source.RUN_ID,
+                            source.SYMBOL,
+                            source.MARKET_TYPE,
+                            source.INTERVAL_MINUTES,
+                            source.TRADE_TS,
+                            source.SIDE,
+                            source.PRICE,
+                            source.QUANTITY,
+                            source.NOTIONAL,
+                            source.REALIZED_PNL,
+                            source.CASH_AFTER,
+                            source.SCORE
+                        );
+
+                    get diagnostics v_trade_rows_affected = row_count;
+                    if (v_trade_rows_affected > 0) then
+                        v_trade_inserted := v_trade_inserted + v_trade_rows_affected;
+                        v_trade_count := v_trade_count + v_trade_rows_affected;
+                    else
+                        v_trade_dedup_skipped := v_trade_dedup_skipped + 1;
+                    end if;
 
                     delete from TEMP_POSITIONS
                      where SYMBOL = :v_position_symbol
                        and MARKET_TYPE = :v_position_market_type
                        and ENTRY_TS = :v_position_entry_ts;
-
-                    v_trade_count := v_trade_count + 1;
                 end if;
             end;
         end for;
@@ -386,37 +425,73 @@ begin
                                 );
 
                                 v_cash := v_cash - v_buy_cost;
+                                v_trade_candidates := v_trade_candidates + 1;
+                                v_trade_day := date_trunc('day', v_signal_entry_ts);
 
-                                insert into MIP.APP.PORTFOLIO_TRADES (
-                                    PORTFOLIO_ID,
-                                    RUN_ID,
-                                    SYMBOL,
-                                    MARKET_TYPE,
-                                    INTERVAL_MINUTES,
-                                    TRADE_TS,
-                                    SIDE,
-                                    PRICE,
-                                    QUANTITY,
-                                    NOTIONAL,
-                                    REALIZED_PNL,
-                                    CASH_AFTER,
-                                    SCORE
-                                )
-                                values (
-                                    :P_PORTFOLIO_ID,
-                                    :v_run_id,
-                                    :v_signal_symbol,
-                                    :v_signal_market_type,
-                                    1440,
-                                    :v_signal_entry_ts,
-                                    'BUY',
-                                    :v_buy_price,
-                                    :v_buy_qty,
-                                    :v_buy_cost,
-                                    null,
-                                    :v_cash,
-                                    :v_signal_score
-                                );
+                                merge into MIP.APP.PORTFOLIO_TRADES as target
+                                using (
+                                    select
+                                        :P_PORTFOLIO_ID as PORTFOLIO_ID,
+                                        :v_run_id as RUN_ID,
+                                        :v_signal_symbol as SYMBOL,
+                                        :v_signal_market_type as MARKET_TYPE,
+                                        1440 as INTERVAL_MINUTES,
+                                        :v_signal_entry_ts as TRADE_TS,
+                                        'BUY' as SIDE,
+                                        :v_buy_price as PRICE,
+                                        :v_buy_qty as QUANTITY,
+                                        :v_buy_cost as NOTIONAL,
+                                        null as REALIZED_PNL,
+                                        :v_cash as CASH_AFTER,
+                                        :v_signal_score as SCORE,
+                                        :v_trade_day as TRADE_DAY
+                                ) as source
+                                on target.PORTFOLIO_ID = source.PORTFOLIO_ID
+                                   and target.PROPOSAL_ID is null
+                                   and date_trunc('day', target.TRADE_TS) = source.TRADE_DAY
+                                   and target.SYMBOL = source.SYMBOL
+                                   and target.SIDE = source.SIDE
+                                   and target.PRICE = source.PRICE
+                                   and target.QUANTITY = source.QUANTITY
+                                when not matched then
+                                    insert (
+                                        PORTFOLIO_ID,
+                                        RUN_ID,
+                                        SYMBOL,
+                                        MARKET_TYPE,
+                                        INTERVAL_MINUTES,
+                                        TRADE_TS,
+                                        SIDE,
+                                        PRICE,
+                                        QUANTITY,
+                                        NOTIONAL,
+                                        REALIZED_PNL,
+                                        CASH_AFTER,
+                                        SCORE
+                                    )
+                                    values (
+                                        source.PORTFOLIO_ID,
+                                        source.RUN_ID,
+                                        source.SYMBOL,
+                                        source.MARKET_TYPE,
+                                        source.INTERVAL_MINUTES,
+                                        source.TRADE_TS,
+                                        source.SIDE,
+                                        source.PRICE,
+                                        source.QUANTITY,
+                                        source.NOTIONAL,
+                                        source.REALIZED_PNL,
+                                        source.CASH_AFTER,
+                                        source.SCORE
+                                    );
+
+                                get diagnostics v_trade_rows_affected = row_count;
+                                if (v_trade_rows_affected > 0) then
+                                    v_trade_inserted := v_trade_inserted + v_trade_rows_affected;
+                                    v_trade_count := v_trade_count + v_trade_rows_affected;
+                                else
+                                    v_trade_dedup_skipped := v_trade_dedup_skipped + 1;
+                                end if;
 
                                 insert into MIP.APP.PORTFOLIO_POSITIONS (
                                     PORTFOLIO_ID,
@@ -447,7 +522,6 @@ begin
                                     :v_signal_hold_until_index
                                 );
 
-                                v_trade_count := v_trade_count + 1;
                                 v_position_count := v_position_count + 1;
                                 v_open_positions := v_open_positions + 1;
                             end if;
@@ -631,6 +705,9 @@ begin
             'portfolio_id', :P_PORTFOLIO_ID,
             'run_id', :v_run_id,
             'trades', :v_trade_count,
+            'trade_candidates', :v_trade_candidates,
+            'trade_inserted', :v_trade_inserted,
+            'trade_dedup_skipped', :v_trade_dedup_skipped,
             'positions', :v_position_count,
             'daily_rows', :v_daily_count,
             'position_days_expanded', :v_position_days_expanded,
@@ -653,6 +730,9 @@ begin
         'run_id', :v_run_id,
         'portfolio_id', :P_PORTFOLIO_ID,
         'trades', :v_trade_count,
+        'trade_candidates', :v_trade_candidates,
+        'trade_inserted', :v_trade_inserted,
+        'trade_dedup_skipped', :v_trade_dedup_skipped,
         'positions', :v_position_count,
         'daily_rows', :v_daily_count,
         'position_days_expanded', :v_position_days_expanded,

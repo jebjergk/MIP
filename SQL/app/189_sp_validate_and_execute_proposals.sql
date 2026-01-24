@@ -191,7 +191,8 @@ begin
           and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
           and p.STATUS = 'APPROVED'
     ) as source
-    on target.PROPOSAL_ID = source.PROPOSAL_ID
+    on target.PORTFOLIO_ID = source.PORTFOLIO_ID
+       and target.PROPOSAL_ID = source.PROPOSAL_ID
     when not matched then
         insert (
             PROPOSAL_ID,

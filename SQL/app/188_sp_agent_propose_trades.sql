@@ -22,12 +22,9 @@ declare
     v_remaining_capacity number := 0;
     v_inserted_count number := 0;
     v_selected_count number := 0;
-    v_dedup_skipped_count number := 0;
-    v_overflow_count number := 0;
     v_target_weight float := 0.05;
     v_run_id_string string := to_varchar(:P_RUN_ID);
     v_current_bar_index number := 0;
-    v_overflow_preview variant := array_construct();
 begin
     select
         p.PROFILE_ID,
@@ -89,15 +86,16 @@ begin
     select count(*)
       into :v_candidate_count
       from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
-     where IS_ELIGIBLE
+     where IS_ELIGIBLE = true
+       and TRUST_LABEL = 'TRUSTED'
        and (
            RUN_ID = :v_run_id_string
            or try_to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID
        );
 
-    v_overflow_count := greatest(:v_candidate_count - :v_remaining_capacity, 0);
+    v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
 
-    if (v_candidate_count = 0) then
+    if (v_candidate_count = 0 or v_remaining_capacity = 0) then
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -115,158 +113,27 @@ begin
             'INFO',
             0,
             object_construct(
-                'portfolio_id', :P_PORTFOLIO_ID,
                 'max_positions', :v_max_positions,
                 'open_positions', :v_open_positions,
                 'remaining_capacity', :v_remaining_capacity,
-                'candidate_count', 0,
-                'proposed_count', 0,
-                'overflow_count', 0
+                'candidate_count', :v_candidate_count,
+                'proposed_count', :v_selected_count
             )
         );
 
         return object_construct(
-            'status', 'NO_ELIGIBLE_SIGNALS',
+            'status', iff(v_candidate_count = 0, 'NO_ELIGIBLE_SIGNALS', 'NO_CAPACITY'),
             'run_id', :P_RUN_ID,
             'portfolio_id', :P_PORTFOLIO_ID,
             'max_positions', :v_max_positions,
             'open_positions', :v_open_positions,
             'remaining_capacity', :v_remaining_capacity,
-            'proposal_candidates', 0,
-            'proposal_selected', 0,
+            'proposal_candidates', :v_candidate_count,
+            'proposal_selected', :v_selected_count,
             'proposal_inserted', 0,
-            'proposal_dedup_skipped', 0,
-            'overflow_count', 0,
             'target_weight', :v_target_weight
         );
     end if;
-
-    if (v_remaining_capacity = 0) then
-        v_overflow_preview := (
-            with ranked_candidates as (
-                select
-                    s.SYMBOL,
-                    s.PATTERN_ID,
-                    s.SCORE,
-                    s.RECOMMENDATION_ID,
-                    row_number() over (
-                        order by
-                            case s.TRUST_LABEL
-                                when 'TRUSTED' then 3
-                                when 'WATCH' then 2
-                                else 1
-                            end desc,
-                            s.SCORE desc,
-                            s.RECOMMENDATION_ID
-                    ) as RN
-                from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-                where s.IS_ELIGIBLE
-                  and (
-                      s.RUN_ID = :v_run_id_string
-                      or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
-                  )
-            )
-            select coalesce(
-                array_agg(
-                    object_construct(
-                        'symbol', SYMBOL,
-                        'pattern_id', PATTERN_ID,
-                        'score', SCORE,
-                        'recommendation_id', RECOMMENDATION_ID
-                    )
-                ),
-                array_construct()
-            )
-            from ranked_candidates
-            where RN <= 10
-        );
-
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS
-        )
-        values (
-            current_timestamp(),
-            :v_run_id_string,
-            'AGENT',
-            'SP_AGENT_PROPOSE_TRADES',
-            'INFO',
-            0,
-            object_construct(
-                'portfolio_id', :P_PORTFOLIO_ID,
-                'max_positions', :v_max_positions,
-                'open_positions', :v_open_positions,
-                'remaining_capacity', 0,
-                'candidate_count', :v_candidate_count,
-                'proposed_count', 0,
-                'overflow_count', :v_candidate_count,
-                'overflow_preview', :v_overflow_preview
-            )
-        );
-
-        return object_construct(
-            'status', 'NO_CAPACITY',
-            'run_id', :P_RUN_ID,
-            'portfolio_id', :P_PORTFOLIO_ID,
-            'max_positions', :v_max_positions,
-            'open_positions', :v_open_positions,
-            'remaining_capacity', 0,
-            'proposal_candidates', :v_candidate_count,
-            'proposal_selected', 0,
-            'proposal_inserted', 0,
-            'proposal_dedup_skipped', 0,
-            'overflow_count', :v_candidate_count,
-            'target_weight', :v_target_weight,
-            'overflow_preview', :v_overflow_preview
-        );
-    end if;
-
-    v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
-
-    v_overflow_preview := (
-        with ranked_candidates as (
-            select
-                s.SYMBOL,
-                s.PATTERN_ID,
-                s.SCORE,
-                s.RECOMMENDATION_ID,
-                row_number() over (
-                    order by
-                        case s.TRUST_LABEL
-                            when 'TRUSTED' then 3
-                            when 'WATCH' then 2
-                            else 1
-                        end desc,
-                        s.SCORE desc,
-                        s.RECOMMENDATION_ID
-                ) as RN
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
-              )
-        )
-        select coalesce(
-            array_agg(
-                object_construct(
-                    'symbol', SYMBOL,
-                    'pattern_id', PATTERN_ID,
-                    'score', SCORE,
-                    'recommendation_id', RECOMMENDATION_ID
-                )
-            ),
-            array_construct()
-        )
-        from ranked_candidates
-        where RN > :v_remaining_capacity
-          and RN <= :v_remaining_capacity + 10
-    );
 
     merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
     using (
@@ -275,16 +142,12 @@ begin
                 s.*,
                 row_number() over (
                     order by
-                        case s.TRUST_LABEL
-                            when 'TRUSTED' then 3
-                            when 'WATCH' then 2
-                            else 1
-                        end desc,
                         s.SCORE desc,
                         s.RECOMMENDATION_ID
                 ) as RN
             from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE
+            where s.IS_ELIGIBLE = true
+              and s.TRUST_LABEL = 'TRUSTED'
               and (
                   s.RUN_ID = :v_run_id_string
                   or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
@@ -370,7 +233,6 @@ begin
         );
 
     v_inserted_count := SQLROWCOUNT;
-    v_dedup_skipped_count := greatest(:v_selected_count - :v_inserted_count, 0);
 
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
@@ -389,15 +251,11 @@ begin
         'INFO',
         :v_inserted_count,
         object_construct(
-            'portfolio_id', :P_PORTFOLIO_ID,
             'max_positions', :v_max_positions,
             'open_positions', :v_open_positions,
             'remaining_capacity', :v_remaining_capacity,
             'candidate_count', :v_candidate_count,
-            'proposed_count', :v_inserted_count,
-            'selected_count', :v_selected_count,
-            'overflow_count', :v_overflow_count,
-            'overflow_preview', :v_overflow_preview
+            'proposed_count', :v_selected_count
         )
     );
 
@@ -411,10 +269,7 @@ begin
         'proposal_candidates', :v_candidate_count,
         'proposal_selected', :v_selected_count,
         'proposal_inserted', :v_inserted_count,
-        'proposal_dedup_skipped', :v_dedup_skipped_count,
-        'overflow_count', :v_overflow_count,
-        'target_weight', :v_target_weight,
-        'overflow_preview', :v_overflow_preview
+        'target_weight', :v_target_weight
     );
 end;
 $$;

@@ -303,7 +303,7 @@ begin
                             source.SCORE
                         );
 
-                    get diagnostics v_trade_rows_affected = row_count;
+                    v_trade_rows_affected := SQLROWCOUNT;
                     if (v_trade_rows_affected > 0) then
                         v_trade_inserted := v_trade_inserted + v_trade_rows_affected;
                         v_trade_count := v_trade_count + v_trade_rows_affected;
@@ -485,7 +485,7 @@ begin
                                         source.SCORE
                                     );
 
-                                get diagnostics v_trade_rows_affected = row_count;
+                                v_trade_rows_affected := SQLROWCOUNT;
                                 if (v_trade_rows_affected > 0) then
                                     v_trade_inserted := v_trade_inserted + v_trade_rows_affected;
                                     v_trade_count := v_trade_count + v_trade_rows_affected;

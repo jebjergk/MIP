@@ -25,6 +25,14 @@ declare
     v_target_weight float := 0.05;
     v_run_id_string string := to_varchar(:P_RUN_ID);
     v_current_bar_index number := 0;
+    v_max_new_stock number := 0;
+    v_max_new_fx number := 0;
+    v_available_stock number := 0;
+    v_available_fx number := 0;
+    v_skipped_held_count number := 0;
+    v_selected_stock number := 0;
+    v_selected_fx number := 0;
+    v_selected_etf number := 0;
 begin
     select
         p.PROFILE_ID,
@@ -135,16 +143,25 @@ begin
         );
     end if;
 
-    merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
-    using (
-        with ranked_candidates as (
+    v_max_new_stock := ceil(:v_remaining_capacity * 0.6);
+    v_max_new_fx := :v_remaining_capacity - :v_max_new_stock;
+
+    select
+        coalesce(sum(iff(market_type_group = 'STOCK', 1, 0)), 0) as stock_count,
+        coalesce(sum(iff(market_type_group = 'FX', 1, 0)), 0) as fx_count
+      into :v_available_stock,
+           :v_available_fx
+      from (
+        with eligible_candidates as (
             select
-                s.*,
-                row_number() over (
-                    order by
-                        s.SCORE desc,
-                        s.RECOMMENDATION_ID
-                ) as RN
+                s.RECOMMENDATION_ID,
+                s.SYMBOL,
+                s.MARKET_TYPE,
+                s.SCORE,
+                case
+                    when s.MARKET_TYPE = 'FX' then 'FX'
+                    else 'STOCK'
+                end as MARKET_TYPE_GROUP
             from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
             where s.IS_ELIGIBLE = true
               and s.TRUST_LABEL = 'TRUSTED'
@@ -152,6 +169,211 @@ begin
                   s.RUN_ID = :v_run_id_string
                   or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
               )
+        ),
+        deduped_candidates as (
+            select
+                e.*
+            from eligible_candidates e
+            qualify row_number() over (
+                partition by e.SYMBOL
+                order by e.SCORE desc, e.RECOMMENDATION_ID
+            ) = 1
+        )
+        select MARKET_TYPE_GROUP
+        from deduped_candidates
+    );
+
+    if (:v_available_stock = 0 and :v_available_fx > 0) then
+        v_max_new_stock := 0;
+        v_max_new_fx := :v_remaining_capacity;
+    elseif (:v_available_fx = 0 and :v_available_stock > 0) then
+        v_max_new_stock := :v_remaining_capacity;
+        v_max_new_fx := 0;
+    end if;
+
+    select
+        coalesce(sum(iff(is_already_held = 1, 1, 0)), 0) as held_count
+      into :v_skipped_held_count
+      from (
+        with held_symbols as (
+            select distinct
+                p.SYMBOL
+            from MIP.APP.PORTFOLIO_POSITIONS p
+            where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+              and p.HOLD_UNTIL_INDEX >= :v_current_bar_index
+        ),
+        eligible_candidates as (
+            select
+                s.RECOMMENDATION_ID,
+                s.SYMBOL,
+                s.SCORE
+            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+            where s.IS_ELIGIBLE = true
+              and s.TRUST_LABEL = 'TRUSTED'
+              and (
+                  s.RUN_ID = :v_run_id_string
+                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+              )
+        ),
+        deduped_candidates as (
+            select
+                e.*
+            from eligible_candidates e
+            qualify row_number() over (
+                partition by e.SYMBOL
+                order by e.SCORE desc, e.RECOMMENDATION_ID
+            ) = 1
+        ),
+        prioritized as (
+            select
+                d.*,
+                iff(h.SYMBOL is null, 0, 1) as is_already_held
+            from deduped_candidates d
+            left join held_symbols h
+              on h.SYMBOL = d.SYMBOL
+        )
+        select is_already_held
+        from prioritized
+        where exists (
+            select 1
+            from prioritized p2
+            where p2.is_already_held = 0
+        )
+    );
+
+    merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
+    using (
+        with held_symbols as (
+            select distinct
+                p.SYMBOL
+            from MIP.APP.PORTFOLIO_POSITIONS p
+            where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+              and p.HOLD_UNTIL_INDEX >= :v_current_bar_index
+        ),
+        eligible_candidates as (
+            select
+                s.*,
+                case
+                    when s.MARKET_TYPE = 'FX' then 'FX'
+                    else 'STOCK'
+                end as MARKET_TYPE_GROUP
+            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+            where s.IS_ELIGIBLE = true
+              and s.TRUST_LABEL = 'TRUSTED'
+              and (
+                  s.RUN_ID = :v_run_id_string
+                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+              )
+        ),
+        deduped_candidates as (
+            select
+                e.*
+            from eligible_candidates e
+            qualify row_number() over (
+                partition by e.SYMBOL
+                order by e.SCORE desc, e.RECOMMENDATION_ID
+            ) = 1
+        ),
+        prioritized as (
+            select
+                d.*,
+                iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY
+            from deduped_candidates d
+            left join held_symbols h
+              on h.SYMBOL = d.SYMBOL
+        ),
+        ranked as (
+            select
+                p.*,
+                row_number() over (
+                    order by
+                        p.HELD_PRIORITY asc,
+                        p.SCORE desc,
+                        p.RECOMMENDATION_ID
+                ) as OVERALL_RANK,
+                row_number() over (
+                    partition by p.MARKET_TYPE_GROUP
+                    order by
+                        p.HELD_PRIORITY asc,
+                        p.SCORE desc,
+                        p.RECOMMENDATION_ID
+                ) as TYPE_RANK
+            from prioritized p
+        ),
+        stock_pass as (
+            select
+                r.*
+            from ranked r
+            where r.MARKET_TYPE_GROUP = 'STOCK'
+              and r.TYPE_RANK <= :v_max_new_stock
+        ),
+        fx_pass as (
+            select
+                r.*
+            from ranked r
+            where r.MARKET_TYPE_GROUP = 'FX'
+              and r.TYPE_RANK <= :v_max_new_fx
+        ),
+        quota_selected as (
+            select * from stock_pass
+            union all
+            select * from fx_pass
+        ),
+        quota_limited as (
+            select
+                q.*,
+                row_number() over (
+                    order by q.OVERALL_RANK
+                ) as QUOTA_ORDER
+            from quota_selected q
+        ),
+        primary_selected as (
+            select
+                q.*
+            from quota_limited q
+            where q.QUOTA_ORDER <= :v_remaining_capacity
+        ),
+        remaining_slots as (
+            select greatest(
+                :v_remaining_capacity - (select count(*) from primary_selected),
+                0
+            ) as SLOTS
+        ),
+        backfill_candidates as (
+            select
+                r.*
+            from ranked r
+            left join primary_selected p
+              on p.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+            where p.RECOMMENDATION_ID is null
+        ),
+        backfill_ranked as (
+            select
+                b.*,
+                row_number() over (
+                    order by b.OVERALL_RANK
+                ) as BACKFILL_RANK
+            from backfill_candidates b
+        ),
+        backfill_selected as (
+            select
+                b.*
+            from backfill_ranked b
+            cross join remaining_slots rs
+            where b.BACKFILL_RANK <= rs.SLOTS
+        ),
+        final_selected as (
+            select * from primary_selected
+            union all
+            select * from backfill_selected
+        ),
+        final_ranked as (
+            select
+                f.*,
+                row_number() over (
+                    order by f.OVERALL_RANK
+                ) as SELECTION_RANK
+            from final_selected f
         )
         select
             :P_RUN_ID as RUN_ID,
@@ -178,18 +400,24 @@ begin
                 'interval_minutes', s.INTERVAL_MINUTES,
                 'run_id', s.RUN_ID,
                 'trust_label', s.TRUST_LABEL,
-                'recommended_action', s.RECOMMENDED_ACTION
+                'recommended_action', s.RECOMMENDED_ACTION,
+                'held_priority', s.HELD_PRIORITY,
+                'market_type_group', s.MARKET_TYPE_GROUP
             ) as SOURCE_SIGNALS,
             object_construct(
-                'strategy', 'capacity_aware_top_n',
+                'strategy', 'diversified_capacity_aware_top_n',
                 'max_positions', :v_max_positions,
                 'open_positions', :v_open_positions,
                 'remaining_capacity', :v_remaining_capacity,
                 'max_position_pct', :v_max_position_pct,
-                'selection_rank', s.RN
+                'market_type_quota', object_construct(
+                    'STOCK', :v_max_new_stock,
+                    'FX', :v_max_new_fx
+                ),
+                'selection_rank', s.SELECTION_RANK
             ) as RATIONALE
-        from ranked_candidates s
-        where s.RN <= :v_remaining_capacity
+        from final_ranked s
+        where s.SELECTION_RANK <= :v_remaining_capacity
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
    and target.RUN_ID = source.RUN_ID
@@ -234,6 +462,29 @@ begin
 
     v_inserted_count := SQLROWCOUNT;
 
+    select
+        coalesce(sum(iff(market_type_group = 'STOCK', 1, 0)), 0) as stock_selected,
+        coalesce(sum(iff(market_type_group = 'FX', 1, 0)), 0) as fx_selected,
+        coalesce(sum(iff(market_type = 'ETF', 1, 0)), 0) as etf_selected
+      into :v_selected_stock,
+           :v_selected_fx,
+           :v_selected_etf
+      from (
+        select distinct
+            s.RECOMMENDATION_ID,
+            case
+                when s.MARKET_TYPE = 'FX' then 'FX'
+                else 'STOCK'
+            end as market_type_group,
+            s.MARKET_TYPE
+        from MIP.AGENT_OUT.ORDER_PROPOSALS s
+        where s.PORTFOLIO_ID = :P_PORTFOLIO_ID
+          and s.RUN_ID = :P_RUN_ID
+          and s.STATUS = 'PROPOSED'
+    );
+
+    v_selected_count := least(:v_remaining_capacity, :v_selected_stock + :v_selected_fx);
+
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
@@ -255,7 +506,13 @@ begin
             'open_positions', :v_open_positions,
             'remaining_capacity', :v_remaining_capacity,
             'candidate_count', :v_candidate_count,
-            'proposed_count', :v_selected_count
+            'proposed_count', :v_selected_count,
+            'picked_by_market_type', object_construct(
+                'STOCK', :v_selected_stock,
+                'FX', :v_selected_fx,
+                'ETF', :v_selected_etf
+            ),
+            'skipped_held_count', :v_skipped_held_count
         )
     );
 
@@ -269,7 +526,17 @@ begin
         'proposal_candidates', :v_candidate_count,
         'proposal_selected', :v_selected_count,
         'proposal_inserted', :v_inserted_count,
-        'target_weight', :v_target_weight
+        'target_weight', :v_target_weight,
+        'market_type_quota', object_construct(
+            'STOCK', :v_max_new_stock,
+            'FX', :v_max_new_fx
+        ),
+        'picked_by_market_type', object_construct(
+            'STOCK', :v_selected_stock,
+            'FX', :v_selected_fx,
+            'ETF', :v_selected_etf
+        ),
+        'skipped_held_count', :v_skipped_held_count
     );
 end;
 $$;

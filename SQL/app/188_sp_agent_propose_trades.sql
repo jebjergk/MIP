@@ -181,7 +181,7 @@ begin
         )
         select MARKET_TYPE_GROUP
         from deduped_candidates
-    );
+    ) available_counts;
 
     if (:v_available_stock = 0 and :v_available_fx > 0) then
         v_max_new_stock := 0;
@@ -239,7 +239,7 @@ begin
             from prioritized p2
             where p2.is_already_held = 0
         )
-    );
+    ) eligible_counts;
 
     merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
     using (
@@ -481,7 +481,7 @@ begin
         where s.PORTFOLIO_ID = :P_PORTFOLIO_ID
           and s.RUN_ID = :P_RUN_ID
           and s.STATUS = 'PROPOSED'
-    );
+    ) selected_counts;
 
     v_selected_count := least(:v_remaining_capacity, :v_selected_stock + :v_selected_fx);
 

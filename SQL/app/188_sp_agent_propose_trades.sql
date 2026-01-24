@@ -113,7 +113,7 @@ begin
             ROWS_AFFECTED,
             DETAILS
         )
-        values (
+        select
             current_timestamp(),
             :v_run_id_string,
             'AGENT',
@@ -126,8 +126,7 @@ begin
                 'remaining_capacity', :v_remaining_capacity,
                 'candidate_count', :v_candidate_count,
                 'proposed_count', :v_selected_count
-            )
-        );
+            );
 
         return object_construct(
             'status', iff(v_candidate_count = 0, 'NO_ELIGIBLE_SIGNALS', 'NO_CAPACITY'),
@@ -494,7 +493,7 @@ begin
         ROWS_AFFECTED,
         DETAILS
     )
-    values (
+    select
         current_timestamp(),
         :v_run_id_string,
         'AGENT',
@@ -513,8 +512,7 @@ begin
                 'ETF', :v_selected_etf
             ),
             'skipped_held_count', :v_skipped_held_count
-        )
-    );
+        );
 
     return object_construct(
         'status', 'SUCCESS',

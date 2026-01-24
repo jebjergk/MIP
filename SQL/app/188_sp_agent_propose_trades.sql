@@ -20,6 +20,8 @@ declare
     v_candidate_count number := 0;
     v_open_positions number := 0;
     v_remaining_capacity number := 0;
+    v_entries_blocked boolean := false;
+    v_block_reason string;
     v_inserted_count number := 0;
     v_selected_count number := 0;
     v_target_weight float := 0.05;
@@ -85,11 +87,60 @@ begin
 
     select count(*)
       into :v_open_positions
-      from MIP.APP.PORTFOLIO_POSITIONS p
+      from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
      where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
-       and p.HOLD_UNTIL_INDEX >= :v_current_bar_index;
+       and p.CURRENT_BAR_INDEX = :v_current_bar_index;
 
     v_remaining_capacity := greatest(:v_max_positions - :v_open_positions, 0);
+
+    select
+        coalesce(max(ENTRIES_BLOCKED), false),
+        max(BLOCK_REASON)
+      into :v_entries_blocked,
+           :v_block_reason
+      from MIP.MART.V_PORTFOLIO_RISK_GATE
+     where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
+    if (v_entries_blocked) then
+        insert into MIP.APP.MIP_AUDIT_LOG (
+            EVENT_TS,
+            RUN_ID,
+            EVENT_TYPE,
+            EVENT_NAME,
+            STATUS,
+            ROWS_AFFECTED,
+            DETAILS
+        )
+        select
+            current_timestamp(),
+            :v_run_id_string,
+            'AGENT',
+            'SP_AGENT_PROPOSE_TRADES',
+            'SKIP_ENTRIES_BLOCKED',
+            0,
+            object_construct(
+                'entries_blocked', :v_entries_blocked,
+                'block_reason', :v_block_reason,
+                'max_positions', :v_max_positions,
+                'open_positions', :v_open_positions,
+                'remaining_capacity', :v_remaining_capacity
+            );
+
+        return object_construct(
+            'status', 'SKIP_ENTRIES_BLOCKED',
+            'run_id', :P_RUN_ID,
+            'portfolio_id', :P_PORTFOLIO_ID,
+            'entries_blocked', :v_entries_blocked,
+            'block_reason', :v_block_reason,
+            'max_positions', :v_max_positions,
+            'open_positions', :v_open_positions,
+            'remaining_capacity', :v_remaining_capacity,
+            'proposal_candidates', 0,
+            'proposal_selected', 0,
+            'proposal_inserted', 0,
+            'target_weight', :v_target_weight
+        );
+    end if;
 
     select count(*)
       into :v_candidate_count
@@ -197,9 +248,9 @@ begin
         with held_symbols as (
             select distinct
                 p.SYMBOL
-            from MIP.APP.PORTFOLIO_POSITIONS p
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
-              and p.HOLD_UNTIL_INDEX >= :v_current_bar_index
+              and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),
         eligible_candidates as (
             select
@@ -245,9 +296,9 @@ begin
         with held_symbols as (
             select distinct
                 p.SYMBOL
-            from MIP.APP.PORTFOLIO_POSITIONS p
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
-              and p.HOLD_UNTIL_INDEX >= :v_current_bar_index
+              and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),
         eligible_candidates as (
             select

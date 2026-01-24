@@ -20,7 +20,7 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS()
-returns varchar
+returns variant
 language python
 runtime_version = '3.12'
 packages = ('requests', 'snowflake-snowpark-python')
@@ -147,9 +147,38 @@ def _extract_api_message(json_data: Dict) -> str | None:
     return None
 
 
-def _require_time_series_key(json_data: Dict, expected_key: str, context: str) -> None:
+def _is_rate_limit_message(message: str | None) -> bool:
+    if not message:
+        return False
+    msg = message.lower()
+    rate_limit_tokens = (
+        "rate limit",
+        "standard api rate limit",
+        "please subscribe",
+        "premium plans",
+    )
+    return any(token in msg for token in rate_limit_tokens)
+
+
+def _rate_limit_message(json_data: Dict) -> str | None:
+    info = json_data.get("Information")
+    if info and _is_rate_limit_message(str(info)):
+        return str(info)
+
+    api_message = _extract_api_message(json_data)
+    if _is_rate_limit_message(api_message):
+        return api_message
+
+    return None
+
+
+def _require_time_series_key(json_data: Dict, expected_key: str, context: str) -> str | None:
     if expected_key in json_data:
-        return
+        return None
+
+    rate_limit_msg = _rate_limit_message(json_data)
+    if rate_limit_msg:
+        return rate_limit_msg
 
     api_message = _extract_api_message(json_data)
     available_keys = list(json_data.keys())
@@ -275,7 +304,7 @@ def _load_ingest_universe(session: Session) -> Tuple[List[Dict], int, bool]:
     total_rows = len(rows)
     return rows[:25], total_rows, total_rows > 25
 
-def run(session: Session) -> str:
+def run(session: Session) -> Dict:
     run_id_row = session.sql(
         "select coalesce(nullif(current_query_tag(), ''), uuid_string()) as RUN_ID"
     ).collect()
@@ -298,48 +327,101 @@ def run(session: Session) -> str:
         api_key = cfg.get("ALPHAVANTAGE_API_KEY")
         if not api_key or api_key == "<PLACEHOLDER>":
             message = "ALPHAVANTAGE_API_KEY missing"
+            result = {
+                "status": "FAIL_MISSING_API_KEY",
+                "rows_inserted": 0,
+                "symbols_processed": 0,
+                "symbols_skipped": 0,
+                "skipped_rate_limit": 0,
+                "rate_limit_hit": False,
+                "error": message,
+            }
             _log_event(
                 session,
                 "INGESTION",
                 "SP_INGEST_ALPHAVANTAGE_BARS",
                 "FAIL",
                 0,
-                {"reason": "missing_api_key"},
+                {"reason": "missing_api_key", "result": result},
                 message,
                 run_id,
             )
-            return message
+            return result
 
         ingest_rows, enabled_total, truncated = _load_ingest_universe(session)
         if not ingest_rows:
-            message = "No enabled rows found in MIP.APP.INGEST_UNIVERSE."
+            result = {
+                "status": "SUCCESS",
+                "rows_inserted": 0,
+                "symbols_processed": 0,
+                "symbols_skipped": 0,
+                "skipped_rate_limit": 0,
+                "rate_limit_hit": False,
+                "symbols_enabled": enabled_total,
+                "truncated": truncated,
+                "symbols": [],
+            }
             _log_event(
                 session,
                 "INGESTION",
                 "SP_INGEST_ALPHAVANTAGE_BARS",
                 "SUCCESS",
                 0,
-                {"symbols_processed": 0, "symbols_enabled": enabled_total},
+                result,
                 None,
                 run_id,
             )
-            return message
+            return result
 
         all_rows: List[Dict] = []
+        symbol_results: List[Dict] = []
 
         request_urls: list[str] = []
         diagnostics: list[str] = []
+
+        rate_limit_hit = False
+        symbols_processed = 0
+        symbols_skipped = 0
+        skipped_rate_limit = 0
 
         for row in ingest_rows:
             market_type = str(row["MARKET_TYPE"]).upper()
             symbol = str(row["SYMBOL"]).upper()
             interval_minutes = int(row["INTERVAL_MINUTES"])
 
+            symbol_result = {
+                "symbol": symbol,
+                "market_type": market_type,
+                "interval_minutes": interval_minutes,
+                "status": "PENDING",
+                "skip_reason": None,
+                "rows_extracted": 0,
+            }
+
+            if rate_limit_hit:
+                symbol_result.update({
+                    "status": "SKIPPED",
+                    "skip_reason": "RATE_LIMIT",
+                })
+                symbol_results.append(symbol_result)
+                symbols_skipped += 1
+                skipped_rate_limit += 1
+                diagnostics.append(f"{symbol}: skipped after rate limit detected")
+                continue
+
             if _interval_to_alpha(interval_minutes) is None and interval_minutes != 1440:
                 diagnostics.append(
                     f"{symbol}: unsupported interval_minutes {interval_minutes} (skipping)"
                 )
+                symbol_result.update({
+                    "status": "SKIPPED",
+                    "skip_reason": "UNSUPPORTED_INTERVAL",
+                })
+                symbol_results.append(symbol_result)
+                symbols_skipped += 1
                 continue
+
+            symbols_processed += 1
 
             if market_type in ("STOCK", "ETF"):
                 data, final_url, expected_key = _fetch_stock_bars(
@@ -348,60 +430,125 @@ def run(session: Session) -> str:
                 request_urls.append(
                     f"{market_type.lower()} {symbol} {interval_minutes}m: {final_url}"
                 )
-                _require_time_series_key(data, expected_key, f"{market_type} {symbol}")
+                rate_limit_msg = _require_time_series_key(
+                    data, expected_key, f"{market_type} {symbol}"
+                )
+                if rate_limit_msg:
+                    rate_limit_hit = True
+                    symbol_result.update({
+                        "status": "SKIPPED",
+                        "skip_reason": "RATE_LIMIT",
+                        "api_message": rate_limit_msg,
+                    })
+                    symbol_results.append(symbol_result)
+                    symbols_skipped += 1
+                    skipped_rate_limit += 1
+                    diagnostics.append(f"{symbol}: rate limit detected")
+                    continue
                 api_msg = _extract_api_message(data)
                 if api_msg:
                     diagnostics.append(f"{symbol}: {api_msg}")
-                all_rows.extend(
-                    _extract_stock_rows(data, symbol, interval_minutes, market_type)
+                extracted_rows = _extract_stock_rows(
+                    data, symbol, interval_minutes, market_type
                 )
             elif market_type == "FX":
                 parsed = _normalize_fx_pair(symbol)
                 if not parsed:
                     diagnostics.append(f"{symbol}: unable to parse FX pair (skipping)")
+                    symbol_result.update({
+                        "status": "SKIPPED",
+                        "skip_reason": "INVALID_FX_PAIR",
+                    })
+                    symbol_results.append(symbol_result)
+                    symbols_skipped += 1
                     continue
                 from_sym, to_sym = parsed
                 normalized_pair = f"{from_sym}/{to_sym}"
+                symbol_result["symbol"] = normalized_pair
                 data, final_url, expected_key = _fetch_fx_bars(
                     api_key, from_sym, to_sym, interval_minutes
                 )
                 request_urls.append(
                     f"fx {normalized_pair} {interval_minutes}m: {final_url}"
                 )
+                rate_limit_msg = _require_time_series_key(
+                    data, expected_key, f"FX pair {normalized_pair}"
+                )
+                if rate_limit_msg:
+                    rate_limit_hit = True
+                    symbol_result.update({
+                        "status": "SKIPPED",
+                        "skip_reason": "RATE_LIMIT",
+                        "api_message": rate_limit_msg,
+                    })
+                    symbol_results.append(symbol_result)
+                    symbols_skipped += 1
+                    skipped_rate_limit += 1
+                    diagnostics.append(f"{normalized_pair}: rate limit detected")
+                    continue
                 api_msg = _extract_api_message(data)
                 if api_msg:
                     diagnostics.append(f"{normalized_pair}: {api_msg}")
-                _require_time_series_key(
-                    data, expected_key, f"FX pair {normalized_pair}"
-                )
-                all_rows.extend(
-                    _extract_fx_rows_daily(data, normalized_pair, interval_minutes)
+                extracted_rows = _extract_fx_rows_daily(
+                    data, normalized_pair, interval_minutes
                 )
             else:
                 diagnostics.append(
                     f"{symbol}: unknown market_type {market_type} (skipping)"
                 )
+                symbol_result.update({
+                    "status": "SKIPPED",
+                    "skip_reason": "UNKNOWN_MARKET_TYPE",
+                })
+                symbol_results.append(symbol_result)
+                symbols_skipped += 1
                 continue
+
+            symbol_result.update({
+                "status": "SUCCESS",
+                "rows_extracted": len(extracted_rows),
+            })
+            symbol_results.append(symbol_result)
+            all_rows.extend(extracted_rows)
 
             time.sleep(2)
 
+        if rate_limit_hit:
+            for pending_result in symbol_results:
+                if pending_result["status"] == "PENDING":
+                    pending_result.update({
+                        "status": "SKIPPED",
+                        "skip_reason": "RATE_LIMIT",
+                    })
+
+        rows_inserted = len(all_rows)
+
         if not all_rows:
-            message = "Ingestion complete: 0 rows."
+            status = "SUCCESS_WITH_SKIPS" if symbols_skipped else "SUCCESS"
+            result = {
+                "status": status,
+                "rows_inserted": 0,
+                "symbols_processed": symbols_processed,
+                "symbols_skipped": symbols_skipped,
+                "skipped_rate_limit": skipped_rate_limit,
+                "rate_limit_hit": rate_limit_hit,
+                "symbols_enabled": enabled_total,
+                "truncated": truncated,
+                "symbols": symbol_results,
+                "request_urls": request_urls,
+                "diagnostics": diagnostics,
+            }
             _log_event(
                 session,
                 "INGESTION",
                 "SP_INGEST_ALPHAVANTAGE_BARS",
-                "SUCCESS",
+                status,
                 0,
-                {
-                    "symbols_processed": len(ingest_rows),
-                    "symbols_enabled": enabled_total,
-                    "truncated": truncated,
-                },
+                result,
                 None,
                 run_id,
             )
-            return message
+            return result
 
         df = session.create_dataframe(all_rows)
         stage_table = "MIP.APP.STG_MARKET_BARS"
@@ -489,53 +636,61 @@ def run(session: Session) -> str:
                 "INGESTION",
                 "SP_INGEST_ALPHAVANTAGE_BARS",
                 "FAIL",
-                len(all_rows),
+                rows_inserted,
                 {
-                    "symbols_processed": len(ingest_rows),
-                    "symbols_enabled": enabled_total,
-                    "truncated": truncated,
+                    "symbols_processed": symbols_processed,
+                    "symbols_skipped": symbols_skipped,
+                    "skipped_rate_limit": skipped_rate_limit,
+                    "rate_limit_hit": rate_limit_hit,
                 },
                 message,
                 run_id,
             )
-            return message
+            return {
+                "status": "FAIL_DUPLICATE_KEYS",
+                "rows_inserted": rows_inserted,
+                "symbols_processed": symbols_processed,
+                "symbols_skipped": symbols_skipped,
+                "skipped_rate_limit": skipped_rate_limit,
+                "rate_limit_hit": rate_limit_hit,
+                "error": message,
+                "symbols": symbol_results,
+            }
 
         stock_count = sum(
             1 for row in all_rows if row.get("MARKET_TYPE") in ("STOCK", "ETF")
         )
         fx_count = sum(1 for row in all_rows if row.get("MARKET_TYPE") == "FX")
 
-        url_info = " | ".join(request_urls) if request_urls else "no requests made"
-        diag_info = " | ".join(diagnostics) if diagnostics else "no API warnings"
-
-        prefix = ""
-        if truncated:
-            prefix = (
-                f"Warning: {enabled_total} enabled rows; ingesting top 25 by priority. "
-            )
+        status = "SUCCESS_WITH_SKIPS" if symbols_skipped else "SUCCESS"
+        result = {
+            "status": status,
+            "rows_inserted": rows_inserted,
+            "symbols_processed": symbols_processed,
+            "symbols_skipped": symbols_skipped,
+            "skipped_rate_limit": skipped_rate_limit,
+            "rate_limit_hit": rate_limit_hit,
+            "symbols_enabled": enabled_total,
+            "truncated": truncated,
+            "stock_rows": stock_count,
+            "fx_rows": fx_count,
+            "symbols": symbol_results,
+            "request_urls": request_urls,
+            "diagnostics": diagnostics,
+        }
 
         _log_event(
             session,
             "INGESTION",
             "SP_INGEST_ALPHAVANTAGE_BARS",
-            "SUCCESS",
-            len(all_rows),
-            {
-                "symbols_processed": len(ingest_rows),
-                "symbols_enabled": enabled_total,
-                "truncated": truncated,
-                "stock_rows": stock_count,
-                "fx_rows": fx_count,
-            },
+            status,
+            rows_inserted,
+            result,
             None,
             run_id,
         )
 
-        return (
-            f"{prefix}Ingestion complete: "
-            f"merged {len(all_rows)} rows (stocks: {stock_count}, fx: {fx_count}). "
-            f"URLs: {url_info}. Diagnostics: {diag_info}"
-        )
+        return result
     except Exception as exc:
         _log_event(
             session,

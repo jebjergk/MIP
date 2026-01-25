@@ -145,6 +145,18 @@ latest_risk as (
       and run_id = (select run_id from latest_run)
     qualify row_number() over (order by as_of_ts desc) = 1
 ),
+entry_gate_status as (
+    select
+        object_construct(
+            'entries_blocked', ENTRIES_BLOCKED,
+            'block_reason', BLOCK_REASON,
+            'risk_status', RISK_STATUS,
+            'drawdown_stop_ts', DRAWDOWN_STOP_TS,
+            'open_positions', OPEN_POSITIONS
+        ) as item
+    from MIP.MART.V_PORTFOLIO_RISK_GATE
+    where PORTFOLIO_ID = 1
+),
 latest_exposure as (
     select
         run_id,
@@ -288,6 +300,7 @@ select
             'rejected', coalesce((select items from proposal_rejections), array_construct()),
             'executed_trades', coalesce((select items from executed_trades), array_construct())
         ),
+        'pipeline_run_id', (select run_id from latest_proposal_run),
         'attribution', object_construct(
             'latest_run_id', (select run_id from latest_run),
             'by_market_type', coalesce((select items from by_market_type), array_construct())

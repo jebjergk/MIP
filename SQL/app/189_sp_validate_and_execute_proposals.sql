@@ -24,6 +24,10 @@ declare
     v_executed_count number := 0;
     v_proposal_count number := 0;
     v_validation_counts variant;
+    v_entries_blocked boolean := false;
+    v_block_reason string;
+    v_run_id_string string := to_varchar(:P_RUN_ID);
+    v_buy_proposals_blocked number := 0;
 begin
     v_profile := (
         select object_construct(
@@ -51,6 +55,64 @@ begin
 
     v_max_positions := coalesce(v_max_positions, 5);
     v_max_position_pct := coalesce(v_max_position_pct, 1.0);
+
+    -- CRIT-001: Entry gate enforcement - check if entries are blocked
+    select
+        coalesce(max(ENTRIES_BLOCKED), false),
+        max(BLOCK_REASON)
+      into :v_entries_blocked,
+           :v_block_reason
+      from MIP.MART.V_PORTFOLIO_RISK_GATE
+     where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
+    -- When entry gate is active, reject all BUY-side proposals immediately (exits-only mode)
+    if (v_entries_blocked) then
+        select count(*)
+          into :v_buy_proposals_blocked
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID = :P_RUN_ID
+           and PORTFOLIO_ID = :P_PORTFOLIO_ID
+           and STATUS = 'PROPOSED'
+           and SIDE = 'BUY';
+
+        -- Reject all BUY proposals due to entry gate
+        if (v_buy_proposals_blocked > 0) then
+            update MIP.AGENT_OUT.ORDER_PROPOSALS
+               set STATUS = 'REJECTED',
+                   VALIDATION_ERRORS = array_construct('ENTRY_GATE_BLOCKED'),
+                   APPROVED_AT = null
+             where RUN_ID = :P_RUN_ID
+               and PORTFOLIO_ID = :P_PORTFOLIO_ID
+               and STATUS = 'PROPOSED'
+               and SIDE = 'BUY';
+
+            insert into MIP.APP.MIP_AUDIT_LOG (
+                EVENT_TS,
+                RUN_ID,
+                EVENT_TYPE,
+                EVENT_NAME,
+                STATUS,
+                ROWS_AFFECTED,
+                DETAILS
+            )
+            select
+                current_timestamp(),
+                :v_run_id_string,
+                'AGENT',
+                'SP_VALIDATE_AND_EXECUTE_PROPOSALS',
+                'ENTRY_GATE_BLOCKED',
+                :v_buy_proposals_blocked,
+                object_construct(
+                    'entries_blocked', :v_entries_blocked,
+                    'block_reason', :v_block_reason,
+                    'buy_proposals_rejected', :v_buy_proposals_blocked,
+                    'portfolio_id', :P_PORTFOLIO_ID
+                );
+        end if;
+
+        -- Note: SELL proposals are allowed to proceed (exits-only mode)
+        -- Continue with validation for SELL proposals and any remaining proposals
+    end if;
 
     create or replace temporary table TMP_PROPOSAL_VALIDATION as
     with latest_prices as (
@@ -83,11 +145,14 @@ begin
         p.SYMBOL,
         p.MARKET_TYPE,
         p.INTERVAL_MINUTES,
+        p.SIDE,
         p.SOURCE_SIGNALS,
         v.SYMBOL as eligible_symbol,
         v.IS_ELIGIBLE as eligible_flag,
         lp.CLOSE as latest_price,
         array_construct_compact(
+            -- CRIT-001: Entry gate check - reject BUY proposals when entries_blocked=true
+            iff(:v_entries_blocked and p.SIDE = 'BUY', 'ENTRY_GATE_BLOCKED', null),
             iff(p.RECOMMENDATION_ID is null, 'MISSING_RECOMMENDATION_ID', null),
             iff(p.RECOMMENDATION_ID is not null and v.RECOMMENDATION_ID is null, 'NO_SIGNAL_MATCH', null),
             iff(v.RECOMMENDATION_ID is not null and not v.IS_ELIGIBLE, 'INELIGIBLE_SIGNAL', null),
@@ -149,6 +214,108 @@ begin
         )
     );
 
+    -- Phase 3.6: Strengthen position sizing validation - check total exposure before executing
+    declare
+        v_total_exposure_pct float;
+        v_open_positions_count number;
+    begin
+        -- Calculate total exposure from approved proposals
+        select coalesce(sum(TARGET_WEIGHT), 0)
+          into v_total_exposure_pct
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID = :P_RUN_ID
+           and PORTFOLIO_ID = :P_PORTFOLIO_ID
+           and STATUS = 'APPROVED'
+           and SIDE = 'BUY';
+
+        -- Get current open positions count
+        select count(*)
+          into v_open_positions_count
+          from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
+        -- Reject proposals if total exposure would exceed limits
+        if (v_total_exposure_pct > v_max_position_pct * 1.01) then
+            -- Allow 1% tolerance for rounding
+            update MIP.AGENT_OUT.ORDER_PROPOSALS
+               set STATUS = 'REJECTED',
+                   VALIDATION_ERRORS = array_construct('TOTAL_EXPOSURE_EXCEEDS_LIMIT'),
+                   APPROVED_AT = null
+             where RUN_ID = :P_RUN_ID
+               and PORTFOLIO_ID = :P_PORTFOLIO_ID
+               and STATUS = 'APPROVED'
+               and SIDE = 'BUY';
+
+            insert into MIP.APP.MIP_AUDIT_LOG (
+                EVENT_TS,
+                RUN_ID,
+                EVENT_TYPE,
+                EVENT_NAME,
+                STATUS,
+                ROWS_AFFECTED,
+                DETAILS
+            )
+            select
+                current_timestamp(),
+                :v_run_id_string,
+                'AGENT',
+                'SP_VALIDATE_AND_EXECUTE_PROPOSALS',
+                'TOTAL_EXPOSURE_EXCEEDED',
+                SQLROWCOUNT,
+                object_construct(
+                    'total_exposure_pct', :v_total_exposure_pct,
+                    'max_position_pct', :v_max_position_pct,
+                    'open_positions', :v_open_positions_count,
+                    'max_positions', :v_max_positions
+                );
+        end if;
+
+        -- Also check position count limit
+        if (v_open_positions_count + v_approved_count > v_max_positions) then
+            -- Reject excess proposals beyond position limit
+            update MIP.AGENT_OUT.ORDER_PROPOSALS
+               set STATUS = 'REJECTED',
+                   VALIDATION_ERRORS = array_construct('EXCEEDS_MAX_POSITIONS'),
+                   APPROVED_AT = null
+             where RUN_ID = :P_RUN_ID
+               and PORTFOLIO_ID = :P_PORTFOLIO_ID
+               and STATUS = 'APPROVED'
+               and SIDE = 'BUY'
+               and PROPOSAL_ID in (
+                   select PROPOSAL_ID
+                     from MIP.AGENT_OUT.ORDER_PROPOSALS
+                    where RUN_ID = :P_RUN_ID
+                      and PORTFOLIO_ID = :P_PORTFOLIO_ID
+                      and STATUS = 'APPROVED'
+                      and SIDE = 'BUY'
+                    order by PROPOSED_AT desc
+                    offset :v_max_positions - :v_open_positions_count
+               );
+
+            insert into MIP.APP.MIP_AUDIT_LOG (
+                EVENT_TS,
+                RUN_ID,
+                EVENT_TYPE,
+                EVENT_NAME,
+                STATUS,
+                ROWS_AFFECTED,
+                DETAILS
+            )
+            select
+                current_timestamp(),
+                :v_run_id_string,
+                'AGENT',
+                'SP_VALIDATE_AND_EXECUTE_PROPOSALS',
+                'POSITION_COUNT_EXCEEDED',
+                SQLROWCOUNT,
+                object_construct(
+                    'open_positions', :v_open_positions_count,
+                    'approved_count', :v_approved_count,
+                    'max_positions', :v_max_positions
+                );
+        end if;
+    end;
+
     merge into MIP.APP.PORTFOLIO_TRADES as target
     using (
         select
@@ -190,6 +357,8 @@ begin
         where p.RUN_ID = :P_RUN_ID
           and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
           and p.STATUS = 'APPROVED'
+          -- CRIT-001: Extra safety - never execute BUY trades when entry gate is active
+          and not (:v_entries_blocked and p.SIDE = 'BUY')
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
        and target.PROPOSAL_ID = source.PROPOSAL_ID
@@ -243,7 +412,10 @@ begin
         'proposal_count', :v_proposal_count,
         'approved_count', :v_approved_count,
         'rejected_count', :v_rejected_count,
-        'executed_count', :v_executed_count
+        'executed_count', :v_executed_count,
+        'entries_blocked', :v_entries_blocked,
+        'block_reason', :v_block_reason,
+        'buy_proposals_blocked', :v_buy_proposals_blocked
     );
 end;
 $$;

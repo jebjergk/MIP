@@ -169,6 +169,8 @@ begin
             :v_signal_run_id
         ));
 
+        -- HIGH-002: Improved proposal count query with better run ID scoping
+        -- Use both RUN_ID (number) and SIGNAL_RUN_ID (string) for robust matching
         select
             count(*) as proposed_count,
             count_if(STATUS in ('APPROVED', 'EXECUTED')) as approved_count,
@@ -179,7 +181,14 @@ begin
                :v_rejected_count,
                :v_executed_count
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id;
+         where RUN_ID = :v_signal_run_id
+            or (
+                SIGNAL_RUN_ID is not null
+                and (
+                    SIGNAL_RUN_ID = to_varchar(:v_signal_run_id)
+                    or try_to_number(replace(SIGNAL_RUN_ID, 'T', '')) = :v_signal_run_id
+                )
+            );
     else
         v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(:v_run_id, null));
     end if;

@@ -15,3 +15,6 @@
 
 ## Known unknowns / TODO
 - **Missing from repo:** None identified for the objects explicitly requested in this documentation pack.
+
+## New developer onboarding
+- **Start here**: `docs/05_DEVELOPER_ONBOARDING.md` summarizes the latest delivered capabilities and the repository map for a second developer to ramp quickly.

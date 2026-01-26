@@ -741,7 +741,7 @@ begin
 
     v_brief_rows_delta := :v_brief_rows_after - :v_brief_rows_before;
 
-    select array_agg(BRIEF_ID order by BRIEF_ID)
+    select array_agg(BRIEF_ID) within group (order by BRIEF_ID)
       into :v_brief_ids
       from MIP.AGENT_OUT.MORNING_BRIEF
      where PIPELINE_RUN_ID = :v_run_id;

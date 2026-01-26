@@ -49,6 +49,22 @@ using (
     select 'SIM_MIN_SAMPLE_SIZE',
            '30',
            'Minimum sample size per pattern/market type/horizon before simulation readiness'
+    union all
+    select 'SLIPPAGE_BPS',
+           '2',
+           'Estimated slippage (bps) applied to trade price'
+    union all
+    select 'FEE_BPS',
+           '1',
+           'Transaction fee (bps) applied to trade notional'
+    union all
+    select 'MIN_FEE',
+           '0',
+           'Optional minimum fee per trade (absolute amount)'
+    union all
+    select 'SPREAD_BPS',
+           '0',
+           'Optional bid/ask spread (bps, applied half per side)'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

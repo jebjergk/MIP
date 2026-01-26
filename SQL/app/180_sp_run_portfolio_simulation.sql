@@ -56,6 +56,10 @@ declare
     v_loss_days number;
     v_bust_at timestamp_ntz;
     v_last_simulated_at timestamp_ntz;
+    v_slippage_bps number(18,8);
+    v_fee_bps number(18,8);
+    v_min_fee number(18,8);
+    v_spread_bps number(18,8);
 begin
     select
         p.STARTING_CASH,
@@ -129,6 +133,17 @@ begin
     v_cash := v_starting_cash;
     v_total_equity := v_starting_cash;
     v_peak_equity := v_starting_cash;
+
+    select
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE end)), 2),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE end)), 1),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'MIN_FEE' then CONFIG_VALUE end)), 0),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0)
+      into v_slippage_bps,
+           v_fee_bps,
+           v_min_fee,
+           v_spread_bps
+      from MIP.APP.APP_CONFIG;
 
     create or replace temporary table TEMP_POSITIONS (
         SYMBOL string,
@@ -215,13 +230,16 @@ begin
         for position_row in v_position_rs do
             declare
                 v_sell_price number(18,8);
+                v_sell_exec_price number(18,8);
                 v_sell_notional number(18,8);
+                v_sell_fee number(18,8);
                 v_sell_pnl number(18,8);
                 v_position_symbol string;
                 v_position_market_type string;
                 v_position_entry_ts timestamp_ntz;
                 v_position_entry_price number(18,8);
                 v_position_qty number(18,8);
+                v_position_cost_basis number(18,8);
                 v_position_entry_score number(18,10);
             begin
                 v_position_symbol := position_row.SYMBOL;
@@ -229,6 +247,7 @@ begin
                 v_position_entry_ts := position_row.ENTRY_TS;
                 v_position_entry_price := position_row.ENTRY_PRICE;
                 v_position_qty := position_row.QUANTITY;
+                v_position_cost_basis := position_row.COST_BASIS;
                 v_position_entry_score := position_row.ENTRY_SCORE;
 
                 select CLOSE
@@ -240,9 +259,11 @@ begin
                    and TS = :v_bar_ts;
 
                 if (v_sell_price is not null) then
-                    v_sell_notional := v_sell_price * v_position_qty;
-                    v_sell_pnl := (v_sell_price - v_position_entry_price) * v_position_qty;
-                    v_cash := v_cash + v_sell_notional;
+                    v_sell_exec_price := v_sell_price * (1 - ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                    v_sell_notional := v_sell_exec_price * v_position_qty;
+                    v_sell_fee := greatest(coalesce(v_min_fee, 0), abs(v_sell_notional) * v_fee_bps / 10000);
+                    v_sell_pnl := v_sell_notional - v_sell_fee - v_position_cost_basis;
+                    v_cash := v_cash + v_sell_notional - v_sell_fee;
                     v_trade_candidates := v_trade_candidates + 1;
                     v_trade_day := date_trunc('day', v_bar_ts);
 
@@ -256,7 +277,7 @@ begin
                             1440 as INTERVAL_MINUTES,
                             :v_bar_ts as TRADE_TS,
                             'SELL' as SIDE,
-                            :v_sell_price as PRICE,
+                            :v_sell_exec_price as PRICE,
                             :v_position_qty as QUANTITY,
                             :v_sell_notional as NOTIONAL,
                             :v_sell_pnl as REALIZED_PNL,
@@ -371,9 +392,12 @@ begin
             for rec in v_signal_rs do
                 declare
                     v_buy_price number(18,8);
+                    v_buy_exec_price number(18,8);
                     v_target_value number(18,8);
                     v_buy_qty number(18,8);
-                    v_buy_cost number(18,8);
+                    v_buy_notional number(18,8);
+                    v_buy_fee number(18,8);
+                    v_total_cost number(18,8);
                     v_signal_symbol string;
                     v_signal_market_type string;
                     v_signal_entry_ts timestamp_ntz;
@@ -398,9 +422,12 @@ begin
                             v_buy_price := rec.ENTRY_PRICE;
                             v_target_value := least(v_max_position_value, v_cash);
                             v_buy_qty := v_target_value / nullif(v_buy_price, 0);
-                            v_buy_cost := v_buy_qty * v_buy_price;
+                            v_buy_exec_price := v_buy_price * (1 + ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                            v_buy_notional := v_buy_qty * v_buy_exec_price;
+                            v_buy_fee := greatest(coalesce(v_min_fee, 0), abs(v_buy_notional) * v_fee_bps / 10000);
+                            v_total_cost := v_buy_notional + v_buy_fee;
 
-                            if (v_buy_qty > 0 and v_buy_cost <= v_cash) then
+                            if (v_buy_qty > 0 and v_total_cost <= v_cash) then
                                 insert into TEMP_POSITIONS (
                                     SYMBOL,
                                     MARKET_TYPE,
@@ -416,15 +443,15 @@ begin
                                     :v_signal_symbol,
                                     :v_signal_market_type,
                                     :v_signal_entry_ts,
-                                    :v_buy_price,
+                                    :v_buy_exec_price,
                                     :v_buy_qty,
-                                    :v_buy_cost,
+                                    :v_total_cost,
                                     :v_signal_score,
                                     :v_signal_entry_index,
                                     :v_signal_hold_until_index
                                 );
 
-                                v_cash := v_cash - v_buy_cost;
+                                v_cash := v_cash - v_total_cost;
                                 v_trade_candidates := v_trade_candidates + 1;
                                 v_trade_day := date_trunc('day', v_signal_entry_ts);
 
@@ -438,9 +465,9 @@ begin
                                         1440 as INTERVAL_MINUTES,
                                         :v_signal_entry_ts as TRADE_TS,
                                         'BUY' as SIDE,
-                                        :v_buy_price as PRICE,
+                                        :v_buy_exec_price as PRICE,
                                         :v_buy_qty as QUANTITY,
-                                        :v_buy_cost as NOTIONAL,
+                                        :v_buy_notional as NOTIONAL,
                                         null as REALIZED_PNL,
                                         :v_cash as CASH_AFTER,
                                         :v_signal_score as SCORE,
@@ -514,9 +541,9 @@ begin
                                     :v_signal_market_type,
                                     1440,
                                     :v_signal_entry_ts,
-                                    :v_buy_price,
+                                    :v_buy_exec_price,
                                     :v_buy_qty,
-                                    :v_buy_cost,
+                                    :v_total_cost,
                                     :v_signal_score,
                                     :v_signal_entry_index,
                                     :v_signal_hold_until_index

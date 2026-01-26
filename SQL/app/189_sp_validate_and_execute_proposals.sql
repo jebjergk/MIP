@@ -29,6 +29,10 @@ declare
     v_allowed_actions string;
     v_run_id_string string := to_varchar(:P_RUN_ID);
     v_buy_proposals_blocked number := 0;
+    v_slippage_bps number(18,8);
+    v_fee_bps number(18,8);
+    v_min_fee number(18,8);
+    v_spread_bps number(18,8);
 begin
     v_profile := (
         select object_construct(
@@ -56,6 +60,17 @@ begin
 
     v_max_positions := coalesce(v_max_positions, 5);
     v_max_position_pct := coalesce(v_max_position_pct, 1.0);
+
+    select
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE end)), 2),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE end)), 1),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'MIN_FEE' then CONFIG_VALUE end)), 0),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0)
+      into v_slippage_bps,
+           v_fee_bps,
+           v_min_fee,
+           v_spread_bps
+      from MIP.APP.APP_CONFIG;
 
     -- CRIT-001: Entry gate enforcement - check if entries are blocked
     select
@@ -293,8 +308,9 @@ begin
                       and PORTFOLIO_ID = :P_PORTFOLIO_ID
                       and STATUS = 'APPROVED'
                       and SIDE = 'BUY'
-                    order by PROPOSED_AT desc
-                    offset :v_max_positions - :v_open_positions_count
+                    qualify row_number() over (
+                        order by PROPOSED_AT desc
+                    ) > greatest(:v_max_positions - :v_open_positions_count, 0)
                );
 
             insert into MIP.APP.MIP_AUDIT_LOG (

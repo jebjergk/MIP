@@ -61,6 +61,10 @@ declare
     v_max_position_value number(18,2);
     v_sim_status string := 'ACTIVE';
     v_bust_ts timestamp_ntz;
+    v_slippage_bps number(18,8);
+    v_fee_bps number(18,8);
+    v_min_fee number(18,8);
+    v_spread_bps number(18,8);
 begin
     v_market_type := coalesce(P_MARKET_TYPE, 'STOCK');
 
@@ -111,6 +115,17 @@ begin
     v_drawdown_stop_pct := v_profile_drawdown_stop_pct;
     v_drawdown_recovery_pct := P_DRAWDOWN_RECOVERY_PCT;
     v_bust_liquidate_index := null;
+
+    select
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE end)), 2),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE end)), 1),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'MIN_FEE' then CONFIG_VALUE end)), 0),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0)
+      into v_slippage_bps,
+           v_fee_bps,
+           v_min_fee,
+           v_spread_bps
+      from MIP.APP.APP_CONFIG;
 
     select count(*) > 0
       into v_opportunity_view_exists
@@ -189,7 +204,9 @@ begin
         ) do
             declare
                 v_sell_price number(18,8);
+                v_sell_exec_price number(18,8);
                 v_sell_notional number(18,8);
+                v_sell_fee number(18,8);
                 v_sell_pnl number(18,8);
             begin
                 select CLOSE
@@ -201,9 +218,11 @@ begin
                    and TS = bar.TS;
 
                 if (v_sell_price is not null) then
-                    v_sell_notional := v_sell_price * position_row.QUANTITY;
-                    v_sell_pnl := (v_sell_price - position_row.ENTRY_PRICE) * position_row.QUANTITY;
-                    v_cash := v_cash + v_sell_notional;
+                    v_sell_exec_price := v_sell_price * (1 - ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                    v_sell_notional := v_sell_exec_price * position_row.QUANTITY;
+                    v_sell_fee := greatest(coalesce(v_min_fee, 0), abs(v_sell_notional) * v_fee_bps / 10000);
+                    v_sell_pnl := v_sell_notional - v_sell_fee - position_row.COST_BASIS;
+                    v_cash := v_cash + v_sell_notional - v_sell_fee;
 
                     insert into MIP.APP.PORTFOLIO_TRADES (
                         PORTFOLIO_ID,
@@ -228,7 +247,7 @@ begin
                         :v_interval_minutes,
                         bar.TS,
                         'SELL',
-                        v_sell_price,
+                        v_sell_exec_price,
                         :position_row.QUANTITY,
                         v_sell_notional,
                         v_sell_pnl,
@@ -252,7 +271,9 @@ begin
             ) do
                 declare
                     v_bust_sell_price number(18,8);
+                    v_bust_sell_exec_price number(18,8);
                     v_bust_sell_notional number(18,8);
+                    v_bust_sell_fee number(18,8);
                     v_bust_sell_pnl number(18,8);
                 begin
                     select CLOSE
@@ -264,9 +285,11 @@ begin
                        and TS = bar.TS;
 
                     if (v_bust_sell_price is not null) then
-                        v_bust_sell_notional := v_bust_sell_price * bust_pos.QUANTITY;
-                        v_bust_sell_pnl := (v_bust_sell_price - bust_pos.ENTRY_PRICE) * bust_pos.QUANTITY;
-                        v_cash := v_cash + v_bust_sell_notional;
+                        v_bust_sell_exec_price := v_bust_sell_price * (1 - ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                        v_bust_sell_notional := v_bust_sell_exec_price * bust_pos.QUANTITY;
+                        v_bust_sell_fee := greatest(coalesce(v_min_fee, 0), abs(v_bust_sell_notional) * v_fee_bps / 10000);
+                        v_bust_sell_pnl := v_bust_sell_notional - v_bust_sell_fee - bust_pos.COST_BASIS;
+                        v_cash := v_cash + v_bust_sell_notional - v_bust_sell_fee;
 
                         insert into MIP.APP.PORTFOLIO_TRADES (
                             PORTFOLIO_ID,
@@ -291,7 +314,7 @@ begin
                             :v_interval_minutes,
                             bar.TS,
                             'SELL',
-                            v_bust_sell_price,
+                            v_bust_sell_exec_price,
                             :bust_pos.QUANTITY,
                             v_bust_sell_notional,
                             v_bust_sell_pnl,
@@ -375,7 +398,9 @@ begin
                 ) do
                     declare
                         v_bust_sell_price number(18,8);
+                        v_bust_sell_exec_price number(18,8);
                         v_bust_sell_notional number(18,8);
+                        v_bust_sell_fee number(18,8);
                         v_bust_sell_pnl number(18,8);
                     begin
                         select CLOSE
@@ -387,9 +412,11 @@ begin
                            and TS = bar.TS;
 
                         if (v_bust_sell_price is not null) then
-                            v_bust_sell_notional := v_bust_sell_price * bust_pos.QUANTITY;
-                            v_bust_sell_pnl := (v_bust_sell_price - bust_pos.ENTRY_PRICE) * bust_pos.QUANTITY;
-                            v_cash := v_cash + v_bust_sell_notional;
+                            v_bust_sell_exec_price := v_bust_sell_price * (1 - ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                            v_bust_sell_notional := v_bust_sell_exec_price * bust_pos.QUANTITY;
+                            v_bust_sell_fee := greatest(coalesce(v_min_fee, 0), abs(v_bust_sell_notional) * v_fee_bps / 10000);
+                            v_bust_sell_pnl := v_bust_sell_notional - v_bust_sell_fee - bust_pos.COST_BASIS;
+                            v_cash := v_cash + v_bust_sell_notional - v_bust_sell_fee;
 
                             insert into MIP.APP.PORTFOLIO_TRADES (
                                 PORTFOLIO_ID,
@@ -414,7 +441,7 @@ begin
                                 :v_interval_minutes,
                                 bar.TS,
                                 'SELL',
-                                v_bust_sell_price,
+                                v_bust_sell_exec_price,
                                 :bust_pos.QUANTITY,
                                 v_bust_sell_notional,
                                 v_bust_sell_pnl,
@@ -538,9 +565,12 @@ begin
             ) do
                 declare
                     v_buy_price number(18,8);
+                    v_buy_exec_price number(18,8);
                     v_target_value number(18,8);
                     v_buy_qty number(18,8);
-                    v_buy_cost number(18,8);
+                    v_buy_notional number(18,8);
+                    v_buy_fee number(18,8);
+                    v_total_cost number(18,8);
                 begin
                     if (v_open_positions < v_effective_max_positions) then
                         if (not exists (
@@ -557,9 +587,12 @@ begin
                             if (v_buy_price is not null) then
                                 v_target_value := least(v_max_position_value, v_cash);
                                 v_buy_qty := floor(v_target_value / nullif(v_buy_price, 0));
-                                v_buy_cost := v_buy_qty * v_buy_price;
+                                v_buy_exec_price := v_buy_price * (1 + ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                                v_buy_notional := v_buy_qty * v_buy_exec_price;
+                                v_buy_fee := greatest(coalesce(v_min_fee, 0), abs(v_buy_notional) * v_fee_bps / 10000);
+                                v_total_cost := v_buy_notional + v_buy_fee;
 
-                                if (v_buy_qty > 0 and v_buy_cost <= v_cash) then
+                                if (v_buy_qty > 0 and v_total_cost <= v_cash) then
                                     insert into TEMP_POSITIONS (
                                         SYMBOL,
                                         ENTRY_TS,
@@ -573,15 +606,15 @@ begin
                                     values (
                                         rec.SYMBOL,
                                         bar.TS,
-                                        v_buy_price,
+                                        v_buy_exec_price,
                                         v_buy_qty,
-                                        v_buy_cost,
+                                        v_total_cost,
                                         rec.SCORE,
                                         v_day_index,
                                         v_day_index + coalesce(P_HOLD_DAYS, 5)
                                     );
 
-                                    v_cash := v_cash - v_buy_cost;
+                                    v_cash := v_cash - v_total_cost;
 
                                     insert into MIP.APP.PORTFOLIO_TRADES (
                                         PORTFOLIO_ID,
@@ -606,9 +639,9 @@ begin
                                         :v_interval_minutes,
                                         bar.TS,
                                         'BUY',
-                                        v_buy_price,
+                                        v_buy_exec_price,
                                         v_buy_qty,
-                                        v_buy_cost,
+                                        v_buy_notional,
                                         null,
                                         v_cash,
                                         rec.SCORE

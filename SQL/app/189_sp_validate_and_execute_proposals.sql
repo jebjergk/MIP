@@ -156,6 +156,24 @@ begin
         where p.RUN_ID = :P_RUN_ID
           and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
           and p.STATUS = 'PROPOSED'
+    ),
+    open_positions as (
+        select
+            SYMBOL,
+            MARKET_TYPE,
+            count(*) as open_positions
+        from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+        where PORTFOLIO_ID = :P_PORTFOLIO_ID
+        group by SYMBOL, MARKET_TYPE
+    ),
+    proposal_dupes as (
+        select
+            SYMBOL,
+            MARKET_TYPE,
+            count(*) as proposal_count,
+            count(distinct SIDE) as side_count
+        from proposals
+        group by SYMBOL, MARKET_TYPE
     )
     select
         p.PROPOSAL_ID,
@@ -169,6 +187,9 @@ begin
         v.SYMBOL as eligible_symbol,
         v.IS_ELIGIBLE as eligible_flag,
         lp.CLOSE as latest_price,
+        op.open_positions,
+        pd.proposal_count,
+        pd.side_count,
         array_construct_compact(
             -- CRIT-001: Entry gate check - reject BUY proposals when entries_blocked=true
             iff(:v_entries_blocked and p.SIDE = 'BUY', 'ENTRY_GATE_BLOCKED', null),
@@ -178,11 +199,21 @@ begin
             iff(v.RECOMMENDATION_ID is not null and not v.IS_ELIGIBLE, 'INELIGIBLE_SIGNAL', null),
             iff(p.TARGET_WEIGHT > :v_max_position_pct, 'EXCEEDS_MAX_POSITION_PCT', null),
             iff(p.proposal_rank > :v_max_positions, 'EXCEEDS_MAX_POSITIONS', null),
+            iff(p.SIDE = 'BUY' and coalesce(op.open_positions, 0) > 0, 'ALREADY_OPEN_POSITION', null),
+            iff(p.SIDE = 'SELL' and coalesce(op.open_positions, 0) = 0, 'NO_OPEN_POSITION', null),
+            iff(coalesce(pd.proposal_count, 0) > 1, 'DUPLICATE_SYMBOL_PROPOSAL', null),
+            iff(coalesce(pd.side_count, 0) > 1, 'CONFLICTING_SIDE_PROPOSALS', null),
             iff(lp.CLOSE is null, 'MISSING_PRICE', null)
         ) as validation_errors
     from proposals p
     left join MIP.APP.V_SIGNALS_ELIGIBLE_TODAY v
       on v.RECOMMENDATION_ID = p.RECOMMENDATION_ID
+    left join open_positions op
+      on op.SYMBOL = p.SYMBOL
+     and op.MARKET_TYPE = p.MARKET_TYPE
+    left join proposal_dupes pd
+      on pd.SYMBOL = p.SYMBOL
+     and pd.MARKET_TYPE = p.MARKET_TYPE
     left join latest_prices lp
       on lp.SYMBOL = p.SYMBOL
      and lp.MARKET_TYPE = p.MARKET_TYPE

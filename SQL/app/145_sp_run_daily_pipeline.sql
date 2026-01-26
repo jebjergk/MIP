@@ -440,9 +440,39 @@ begin
         ),
         null;
 
+    create or replace temporary table MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID number);
+    insert into MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID)
+    select PORTFOLIO_ID
+      from MIP.APP.PORTFOLIO
+     where STATUS = 'ACTIVE';
+
     v_step_start := current_timestamp();
     begin
-        v_portfolio_result := (call MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS(:v_from_ts, :v_effective_to_ts, :v_run_id));
+        v_portfolio_results := array_construct();
+        v_portfolio_count := 0;
+        v_portfolios := (
+            select PORTFOLIO_ID
+              from MIP.APP.TMP_PIPELINE_PORTFOLIOS
+             order by PORTFOLIO_ID
+        );
+
+        for rec in v_portfolios do
+            v_portfolio_id := rec.PORTFOLIO_ID;
+            v_portfolio_count := v_portfolio_count + 1;
+            v_portfolio_run_result := (call MIP.APP.SP_PIPELINE_RUN_PORTFOLIO(
+                :v_portfolio_id,
+                :v_from_ts,
+                :v_effective_to_ts,
+                :v_run_id
+            ));
+            v_portfolio_results := array_append(:v_portfolio_results, :v_portfolio_run_result);
+        end for;
+
+        v_portfolio_result := object_construct(
+            'status', 'SUCCESS',
+            'portfolio_count', :v_portfolio_count,
+            'results', :v_portfolio_results
+        );
     exception
         when other then
             v_step_end := current_timestamp();

@@ -33,6 +33,7 @@ begin
            :v_brief_executed_count,
            :v_brief_risk_status
       from MIP.MART.V_MORNING_BRIEF_JSON
+     where PORTFOLIO_ID = :P_PORTFOLIO_ID
      limit 1;
 
     -- Get actual counts from tables
@@ -113,12 +114,13 @@ begin
     merge into MIP.AGENT_OUT.MORNING_BRIEF as target
     using (
         select
-            :P_PORTFOLIO_ID as portfolio_id,
+            PORTFOLIO_ID as portfolio_id,
             BRIEF:attribution:latest_run_id::string as run_id,
             AS_OF_TS as as_of_ts,
             BRIEF as brief,
             :P_PIPELINE_RUN_ID as pipeline_run_id
         from MIP.MART.V_MORNING_BRIEF_JSON
+        where PORTFOLIO_ID = :P_PORTFOLIO_ID
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
    and target.RUN_ID = source.RUN_ID

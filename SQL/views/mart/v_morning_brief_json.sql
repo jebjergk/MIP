@@ -5,7 +5,12 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace view MIP.MART.V_MORNING_BRIEF_JSON as
-with trusted_now as (
+with portfolio_scope as (
+    select PORTFOLIO_ID
+    from MIP.APP.PORTFOLIO
+    where STATUS = 'ACTIVE'
+),
+trusted_now as (
     select
         array_agg(
             object_construct(
@@ -69,21 +74,25 @@ watch_negative as (
 ),
 morning_brief_delta as (
     select
+        portfolio_id,
         brief
     from MIP.MART.V_MORNING_BRIEF_WITH_DELTA
 ),
 latest_run as (
     select
+        portfolio_id,
         run_id,
         from_ts,
         to_ts
     from MIP.MART.V_PORTFOLIO_RUN_KPIS
-    where portfolio_id = 1
-    order by to_ts desc
-    limit 1
+    qualify row_number() over (
+        partition by portfolio_id
+        order by to_ts desc
+    ) = 1
 ),
 latest_kpis as (
     select
+        portfolio_id,
         run_id,
         from_ts,
         to_ts,
@@ -91,12 +100,15 @@ latest_kpis as (
         avg_daily_return,
         daily_volatility,
         max_drawdown,
-        row_number() over (order by to_ts desc) as rn
+        row_number() over (
+            partition by portfolio_id
+            order by to_ts desc
+        ) as rn
     from MIP.MART.V_PORTFOLIO_RUN_KPIS
-    where portfolio_id = 1
 ),
 kpi_deltas as (
     select
+        curr.portfolio_id,
         object_construct(
             'run_id', curr.run_id,
             'total_return', object_construct(
@@ -122,55 +134,55 @@ kpi_deltas as (
         ) as item
     from latest_kpis curr
     left join latest_kpis prev
-        on prev.rn = 2
+        on prev.portfolio_id = curr.portfolio_id
+       and prev.rn = 2
     where curr.rn = 1
 ),
 latest_risk as (
     select
+        r.portfolio_id,
         object_construct(
-            'run_id', run_id,
-            'from_ts', from_ts,
-            'to_ts', to_ts,
-            'total_return', total_return,
-            'max_drawdown', max_drawdown,
-            'daily_volatility', daily_volatility,
-            'stop_reason', stop_reason,
-            'drawdown_stop_ts', drawdown_stop_ts,
-            'risk_status', risk_status,
-            'drawdown_stop_pct', drawdown_stop_pct
+            'run_id', r.run_id,
+            'from_ts', r.from_ts,
+            'to_ts', r.to_ts,
+            'total_return', r.total_return,
+            'max_drawdown', r.max_drawdown,
+            'daily_volatility', r.daily_volatility,
+            'stop_reason', r.stop_reason,
+            'drawdown_stop_ts', r.drawdown_stop_ts,
+            'risk_status', r.risk_status,
+            'drawdown_stop_pct', r.drawdown_stop_pct
         ) as item,
-        run_id
-    from MIP.MART.V_AGENT_DAILY_RISK_BRIEF
-    where portfolio_id = 1
-      and run_id = (select run_id from latest_run)
-    qualify row_number() over (order by as_of_ts desc) = 1
-),
-entry_gate_status as (
-    select
-        object_construct(
-            'entries_blocked', ENTRIES_BLOCKED,
-            'block_reason', BLOCK_REASON,
-            'risk_status', RISK_STATUS,
-            'drawdown_stop_ts', DRAWDOWN_STOP_TS,
-            'open_positions', OPEN_POSITIONS
-        ) as item
-    from MIP.MART.V_PORTFOLIO_RISK_GATE
-    where PORTFOLIO_ID = 1
+        r.run_id
+    from MIP.MART.V_AGENT_DAILY_RISK_BRIEF r
+    join latest_run lr
+      on lr.portfolio_id = r.portfolio_id
+     and lr.run_id = r.run_id
+    qualify row_number() over (
+        partition by r.portfolio_id
+        order by r.as_of_ts desc
+    ) = 1
 ),
 latest_exposure as (
     select
-        run_id,
-        ts,
-        cash,
-        total_equity,
-        open_positions,
-        row_number() over (order by ts desc) as rn
-    from MIP.APP.PORTFOLIO_DAILY
-    where portfolio_id = 1
-      and run_id = (select run_id from latest_run)
+        d.portfolio_id,
+        d.run_id,
+        d.ts,
+        d.cash,
+        d.total_equity,
+        d.open_positions,
+        row_number() over (
+            partition by d.portfolio_id
+            order by d.ts desc
+        ) as rn
+    from MIP.APP.PORTFOLIO_DAILY d
+    join latest_run lr
+      on lr.portfolio_id = d.portfolio_id
+     and lr.run_id = d.run_id
 ),
 exposure_deltas as (
     select
+        curr.portfolio_id,
         object_construct(
             'run_id', curr.run_id,
             'as_of_ts', curr.ts,
@@ -192,33 +204,46 @@ exposure_deltas as (
         ) as item
     from latest_exposure curr
     left join latest_exposure prev
-        on prev.rn = 2
+        on prev.portfolio_id = curr.portfolio_id
+       and prev.rn = 2
     where curr.rn = 1
 ),
 latest_proposal_run as (
     select
+        portfolio_id,
         run_id
-    from MIP.AGENT_OUT.ORDER_PROPOSALS
-    where portfolio_id = 1
-    order by proposed_at desc
-    limit 1
+    from (
+        select
+            portfolio_id,
+            run_id,
+            row_number() over (
+                partition by portfolio_id
+                order by proposed_at desc
+            ) as rn
+        from MIP.AGENT_OUT.ORDER_PROPOSALS
+    )
+    where rn = 1
 ),
 proposal_summary as (
     select
+        p.portfolio_id,
         object_construct(
-            'run_id', (select run_id from latest_proposal_run),
+            'run_id', p.run_id,
             'total', count(*),
             'proposed', count_if(status = 'PROPOSED'),
             'approved', count_if(status in ('APPROVED', 'EXECUTED')),
             'rejected', count_if(status = 'REJECTED'),
             'executed', count_if(status = 'EXECUTED')
         ) as item
-    from MIP.AGENT_OUT.ORDER_PROPOSALS
-    where portfolio_id = 1
-      and run_id = (select run_id from latest_proposal_run)
+    from MIP.AGENT_OUT.ORDER_PROPOSALS op
+    join latest_proposal_run p
+      on p.portfolio_id = op.portfolio_id
+     and p.run_id = op.run_id
+    group by p.portfolio_id, p.run_id
 ),
 proposal_rejections as (
     select
+        p.portfolio_id,
         array_agg(
             object_construct(
                 'proposal_id', proposal_id,
@@ -228,13 +253,16 @@ proposal_rejections as (
                 'validation_errors', validation_errors
             )
         ) as items
-    from MIP.AGENT_OUT.ORDER_PROPOSALS
-    where portfolio_id = 1
-      and run_id = (select run_id from latest_proposal_run)
-      and status = 'REJECTED'
+    from MIP.AGENT_OUT.ORDER_PROPOSALS op
+    join latest_proposal_run p
+      on p.portfolio_id = op.portfolio_id
+     and p.run_id = op.run_id
+    where op.status = 'REJECTED'
+    group by p.portfolio_id
 ),
 executed_trades as (
     select
+        p.portfolio_id,
         array_agg(
             object_construct(
                 'trade_id', trade_id,
@@ -249,11 +277,14 @@ executed_trades as (
             )
         ) within group (order by trade_ts desc) as items
     from MIP.APP.PORTFOLIO_TRADES
-    where portfolio_id = 1
-      and run_id = to_varchar((select run_id from latest_proposal_run))
+    join latest_proposal_run p
+      on p.portfolio_id = PORTFOLIO_TRADES.portfolio_id
+     and PORTFOLIO_TRADES.run_id = to_varchar(p.run_id)
+    group by p.portfolio_id
 ),
 by_market_type as (
     select
+        b.portfolio_id,
         array_agg(
             object_construct(
                 'market_type', market_type,
@@ -264,45 +295,60 @@ by_market_type as (
                 'top_detractors', top_detractors
             )
         ) within group (order by market_type) as items
-    from (
-        select
-            market_type,
-            total_realized_pnl,
-            roundtrips,
-            win_rate,
-            top_contributors,
-            top_detractors
-        from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF
-        where portfolio_id = 1
-          and run_id = (select run_id from latest_run)
-          and market_type in ('STOCK', 'FX')
-        order by market_type
-        limit 2
-    )
+    from MIP.MART.V_AGENT_DAILY_ATTRIBUTION_BRIEF b
+    join latest_run lr
+      on lr.portfolio_id = b.portfolio_id
+     and lr.run_id = b.run_id
+    where b.market_type in ('STOCK', 'FX')
+    group by b.portfolio_id
 )
 select
+    p.portfolio_id,
     current_timestamp() as AS_OF_TS,
     object_construct(
         'signals', object_construct(
-            'trusted_now', coalesce((select items from trusted_now), array_construct()),
-            'watch_negative', coalesce((select items from watch_negative), array_construct()),
-            'changes', coalesce((select brief from morning_brief_delta), object_construct())
+            'trusted_now', coalesce(tn.items, array_construct()),
+            'watch_negative', coalesce(wn.items, array_construct()),
+            'changes', coalesce(mbd.brief, object_construct())
         ),
         'risk', object_construct(
-            'latest', (select item from latest_risk)
+            'latest', lrisk.item
         ),
         'portfolio', object_construct(
-            'kpis', coalesce((select item from kpi_deltas), object_construct()),
-            'exposure', coalesce((select item from exposure_deltas), object_construct())
+            'kpis', coalesce(kpi.item, object_construct()),
+            'exposure', coalesce(exposure.item, object_construct())
         ),
         'proposals', object_construct(
-            'summary', coalesce((select item from proposal_summary), object_construct()),
-            'rejected', coalesce((select items from proposal_rejections), array_construct()),
-            'executed_trades', coalesce((select items from executed_trades), array_construct())
+            'summary', coalesce(psummary.item, object_construct()),
+            'rejected', coalesce(preject.items, array_construct()),
+            'executed_trades', coalesce(etrades.items, array_construct())
         ),
-        'pipeline_run_id', (select run_id from latest_proposal_run),
+        'pipeline_run_id', lpr.run_id,
         'attribution', object_construct(
-            'latest_run_id', (select run_id from latest_run),
-            'by_market_type', coalesce((select items from by_market_type), array_construct())
+            'latest_run_id', lrun.run_id,
+            'by_market_type', coalesce(bmt.items, array_construct())
         )
     ) as BRIEF;
+from portfolio_scope p
+cross join trusted_now tn
+cross join watch_negative wn
+left join morning_brief_delta mbd
+  on mbd.portfolio_id = p.portfolio_id
+left join latest_run lrun
+  on lrun.portfolio_id = p.portfolio_id
+left join kpi_deltas kpi
+  on kpi.portfolio_id = p.portfolio_id
+left join latest_risk lrisk
+  on lrisk.portfolio_id = p.portfolio_id
+left join exposure_deltas exposure
+  on exposure.portfolio_id = p.portfolio_id
+left join latest_proposal_run lpr
+  on lpr.portfolio_id = p.portfolio_id
+left join proposal_summary psummary
+  on psummary.portfolio_id = p.portfolio_id
+left join proposal_rejections preject
+  on preject.portfolio_id = p.portfolio_id
+left join executed_trades etrades
+  on etrades.portfolio_id = p.portfolio_id
+left join by_market_type bmt
+  on bmt.portfolio_id = p.portfolio_id;

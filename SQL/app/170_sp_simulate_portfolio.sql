@@ -214,7 +214,7 @@ begin
                   from MIP.MART.MARKET_BARS
                  where MARKET_TYPE = :v_market_type
                    and INTERVAL_MINUTES = :v_interval_minutes
-                   and SYMBOL = :position_row.SYMBOL
+                   and SYMBOL = position_row.SYMBOL
                    and TS = bar.TS;
 
                 if (v_sell_price is not null) then
@@ -242,22 +242,22 @@ begin
                     values (
                         :P_PORTFOLIO_ID,
                         :v_run_id,
-                        :position_row.SYMBOL,
+                        position_row.SYMBOL,
                         :v_market_type,
                         :v_interval_minutes,
                         bar.TS,
                         'SELL',
                         v_sell_exec_price,
-                        :position_row.QUANTITY,
+                        position_row.QUANTITY,
                         v_sell_notional,
                         v_sell_pnl,
                         v_cash,
-                        :position_row.ENTRY_SCORE
+                        position_row.ENTRY_SCORE
                     );
 
                     delete from TEMP_POSITIONS
-                     where SYMBOL = :position_row.SYMBOL
-                       and ENTRY_TS = :position_row.ENTRY_TS;
+                     where SYMBOL = position_row.SYMBOL
+                       and ENTRY_TS = position_row.ENTRY_TS;
 
                     v_trade_count := v_trade_count + 1;
                 end if;
@@ -281,7 +281,7 @@ begin
                       from MIP.MART.MARKET_BARS
                      where MARKET_TYPE = :v_market_type
                        and INTERVAL_MINUTES = :v_interval_minutes
-                       and SYMBOL = :bust_pos.SYMBOL
+                       and SYMBOL = bust_pos.SYMBOL
                        and TS = bar.TS;
 
                     if (v_bust_sell_price is not null) then
@@ -309,22 +309,22 @@ begin
                         values (
                             :P_PORTFOLIO_ID,
                             :v_run_id,
-                            :bust_pos.SYMBOL,
+                            bust_pos.SYMBOL,
                             :v_market_type,
                             :v_interval_minutes,
                             bar.TS,
                             'SELL',
                             v_bust_sell_exec_price,
-                            :bust_pos.QUANTITY,
+                            bust_pos.QUANTITY,
                             v_bust_sell_notional,
                             v_bust_sell_pnl,
                             v_cash,
-                            :bust_pos.ENTRY_SCORE
+                            bust_pos.ENTRY_SCORE
                         );
 
                         delete from TEMP_POSITIONS
-                         where SYMBOL = :bust_pos.SYMBOL
-                           and ENTRY_TS = :bust_pos.ENTRY_TS;
+                         where SYMBOL = bust_pos.SYMBOL
+                           and ENTRY_TS = bust_pos.ENTRY_TS;
 
                         v_trade_count := v_trade_count + 1;
                     end if;
@@ -408,7 +408,7 @@ begin
                           from MIP.MART.MARKET_BARS
                          where MARKET_TYPE = :v_market_type
                            and INTERVAL_MINUTES = :v_interval_minutes
-                           and SYMBOL = :bust_pos.SYMBOL
+                           and SYMBOL = bust_pos.SYMBOL
                            and TS = bar.TS;
 
                         if (v_bust_sell_price is not null) then
@@ -436,22 +436,22 @@ begin
                             values (
                                 :P_PORTFOLIO_ID,
                                 :v_run_id,
-                                :bust_pos.SYMBOL,
+                                bust_pos.SYMBOL,
                                 :v_market_type,
                                 :v_interval_minutes,
                                 bar.TS,
                                 'SELL',
                                 v_bust_sell_exec_price,
-                                :bust_pos.QUANTITY,
+                                bust_pos.QUANTITY,
                                 v_bust_sell_notional,
                                 v_bust_sell_pnl,
                                 v_cash,
-                                :bust_pos.ENTRY_SCORE
+                                bust_pos.ENTRY_SCORE
                             );
 
                             delete from TEMP_POSITIONS
-                             where SYMBOL = :bust_pos.SYMBOL
-                               and ENTRY_TS = :bust_pos.ENTRY_TS;
+                             where SYMBOL = bust_pos.SYMBOL
+                               and ENTRY_TS = bust_pos.ENTRY_TS;
 
                             v_trade_count := v_trade_count + 1;
                         end if;

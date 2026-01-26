@@ -370,25 +370,7 @@ begin
 
     merge into MIP.APP.PORTFOLIO_TRADES as target
     using (
-        select
-            p.PROPOSAL_ID,
-            :P_PORTFOLIO_ID as PORTFOLIO_ID,
-            to_varchar(:P_RUN_ID) as RUN_ID,
-            p.SYMBOL,
-            p.MARKET_TYPE,
-            1440 as INTERVAL_MINUTES,
-            current_timestamp() as TRADE_TS,
-            p.SIDE,
-            lp.CLOSE as PRICE,
-            iff(lp.CLOSE is null or lp.CLOSE = 0, null, (:v_total_equity * p.TARGET_WEIGHT) / lp.CLOSE) as QUANTITY,
-            :v_total_equity * p.TARGET_WEIGHT as NOTIONAL,
-            null as REALIZED_PNL,
-            :v_total_equity as CASH_AFTER,
-            p.SOURCE_SIGNALS:score::number as SCORE
-        from MIP.AGENT_OUT.ORDER_PROPOSALS p
-        join TMP_PROPOSAL_VALIDATION v
-          on v.PROPOSAL_ID = p.PROPOSAL_ID
-        join (
+        with latest_prices as (
             select SYMBOL, MARKET_TYPE, CLOSE
             from (
                 select
@@ -403,14 +385,81 @@ begin
                 where INTERVAL_MINUTES = 1440
             )
             where rn = 1
-        ) lp
-          on lp.SYMBOL = p.SYMBOL
-         and lp.MARKET_TYPE = p.MARKET_TYPE
-        where p.RUN_ID = :P_RUN_ID
-          and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
-          and p.STATUS = 'APPROVED'
-          -- CRIT-001: Extra safety - never execute BUY trades when entry gate is active
-          and not (:v_entries_blocked and p.SIDE = 'BUY')
+        ),
+        base as (
+            select
+                p.PROPOSAL_ID,
+                :P_PORTFOLIO_ID as PORTFOLIO_ID,
+                to_varchar(:P_RUN_ID) as RUN_ID,
+                p.SYMBOL,
+                p.MARKET_TYPE,
+                1440 as INTERVAL_MINUTES,
+                current_timestamp() as TRADE_TS,
+                p.SIDE,
+                lp.CLOSE as MID_PRICE,
+                :v_total_equity * p.TARGET_WEIGHT as NOTIONAL,
+                p.SOURCE_SIGNALS:score::number as SCORE
+            from MIP.AGENT_OUT.ORDER_PROPOSALS p
+            join TMP_PROPOSAL_VALIDATION v
+              on v.PROPOSAL_ID = p.PROPOSAL_ID
+            join latest_prices lp
+              on lp.SYMBOL = p.SYMBOL
+             and lp.MARKET_TYPE = p.MARKET_TYPE
+            where p.RUN_ID = :P_RUN_ID
+              and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+              and p.STATUS = 'APPROVED'
+              -- CRIT-001: Extra safety - never execute BUY trades when entry gate is active
+              and not (:v_entries_blocked and p.SIDE = 'BUY')
+        ),
+        priced as (
+            select
+                *,
+                case
+                    when MID_PRICE is null then null
+                    when SIDE = 'BUY' then MID_PRICE * (1 + ((:v_slippage_bps + (:v_spread_bps / 2)) / 10000))
+                    when SIDE = 'SELL' then MID_PRICE * (1 - ((:v_slippage_bps + (:v_spread_bps / 2)) / 10000))
+                    else MID_PRICE
+                end as PRICE
+            from base
+        ),
+        costed as (
+            select
+                PROPOSAL_ID,
+                PORTFOLIO_ID,
+                RUN_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                INTERVAL_MINUTES,
+                TRADE_TS,
+                SIDE,
+                PRICE,
+                iff(PRICE is null or PRICE = 0, null, NOTIONAL / nullif(PRICE, 0)) as QUANTITY,
+                NOTIONAL,
+                null as REALIZED_PNL,
+                greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000) as FEE,
+                SCORE
+            from priced
+        )
+        select
+            PROPOSAL_ID,
+            PORTFOLIO_ID,
+            RUN_ID,
+            SYMBOL,
+            MARKET_TYPE,
+            INTERVAL_MINUTES,
+            TRADE_TS,
+            SIDE,
+            PRICE,
+            QUANTITY,
+            NOTIONAL,
+            REALIZED_PNL,
+            case
+                when SIDE = 'BUY' then :v_total_equity - (NOTIONAL + FEE)
+                when SIDE = 'SELL' then :v_total_equity + (NOTIONAL - FEE)
+                else :v_total_equity
+            end as CASH_AFTER,
+            SCORE
+        from costed
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
        and target.PROPOSAL_ID = source.PROPOSAL_ID

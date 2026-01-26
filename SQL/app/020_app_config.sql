@@ -27,11 +27,11 @@ using (
            'API key for AlphaVantage market data (set this manually)' as DESCRIPTION
     union all
     select 'DEFAULT_STOCK_SYMBOLS',
-           'AAPL,MSFT',
+           'AAPL,MSFT,JNJ,IWM,XLK,JPM,SPY,NVDA,META,KO,QQQ,PG,XOM,AMZN,GOOGL,TSLA,DIA,XLF',
            'Comma-separated list of stock symbols to ingest from AlphaVantage'
     union all
     select 'DEFAULT_FX_PAIRS',
-           'EUR/USD,USD/JPY',
+           'EUR/USD,USD/JPY,USD/CAD,AUD/USD,GBP/USD,USD/CHF',
            'Comma-separated list of FX pairs to ingest from AlphaVantage'
     union all
     select 'PATTERN_MIN_TRADES',

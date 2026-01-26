@@ -680,12 +680,34 @@ begin
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
          where IS_ELIGIBLE
            and try_to_number(replace(RUN_ID, 'T', '')) = :v_signal_run_id;
+    end if;
 
-        v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
+    v_brief_results := array_construct();
+    v_brief_count := 0;
+    v_portfolios := (
+        select PORTFOLIO_ID
+          from MIP.APP.TMP_PIPELINE_PORTFOLIOS
+         order by PORTFOLIO_ID
+    );
+
+    for rec in v_portfolios do
+        v_portfolio_id := rec.PORTFOLIO_ID;
+        v_brief_count := v_brief_count + 1;
+        v_brief_run_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
+            :v_portfolio_id,
             :v_run_id,
             :v_signal_run_id
         ));
+        v_brief_results := array_append(:v_brief_results, :v_brief_run_result);
+    end for;
 
+    v_brief_result := object_construct(
+        'status', 'SUCCESS',
+        'portfolio_count', :v_brief_count,
+        'results', :v_brief_results
+    );
+
+    if (v_signal_run_id is not null) then
         -- HIGH-002: Improved proposal count query with better run ID scoping
         -- Use both RUN_ID (number) and SIGNAL_RUN_ID (string) for robust matching
         select
@@ -706,8 +728,6 @@ begin
                     or try_to_number(replace(SIGNAL_RUN_ID, 'T', '')) = :v_signal_run_id
                 )
             );
-    else
-        v_brief_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(:v_run_id, null));
     end if;
 
     v_brief_end := current_timestamp();

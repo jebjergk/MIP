@@ -38,7 +38,7 @@ select
     count(distinct case when g.ENTRIES_BLOCKED and g.BLOCK_REASON = 'DRAWDOWN_STOP_ACTIVE' then g.PORTFOLIO_ID end) as portfolios_with_active_stops,
     count(distinct case when g.ENTRIES_BLOCKED then p.PROPOSAL_ID end) as proposals_during_stops,
     count(distinct case when g.ENTRIES_BLOCKED and p.SIDE = 'BUY' then p.PROPOSAL_ID end) as buy_proposals_during_stops
-from MIP.MART.V_PORTFOLIO_RISK_GATE g
+from MIP.MART.V_PORTFOLIO_RISK_STATE g
 left join MIP.AGENT_OUT.ORDER_PROPOSALS p
   on p.PORTFOLIO_ID = g.PORTFOLIO_ID
   and p.PROPOSED_AT >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days')

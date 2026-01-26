@@ -21,7 +21,8 @@ declare
     v_open_positions number := 0;
     v_remaining_capacity number := 0;
     v_entries_blocked boolean := false;
-    v_block_reason string;
+    v_stop_reason string;
+    v_allowed_actions string;
     v_inserted_count number := 0;
     v_selected_count number := 0;
     v_target_weight float := 0.05;
@@ -95,13 +96,27 @@ begin
 
     select
         coalesce(max(ENTRIES_BLOCKED), false),
-        max(BLOCK_REASON)
+        max(STOP_REASON),
+        max(ALLOWED_ACTIONS)
       into :v_entries_blocked,
-           :v_block_reason
-      from MIP.MART.V_PORTFOLIO_RISK_GATE
+           :v_stop_reason,
+           :v_allowed_actions
+      from MIP.MART.V_PORTFOLIO_RISK_STATE
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
     if (v_entries_blocked) then
+        select count(*)
+          into :v_candidate_count
+          from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
+         where IS_ELIGIBLE = true
+           and TRUST_LABEL = 'TRUSTED'
+           and (
+               RUN_ID = :v_run_id_string
+               or try_to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID
+           );
+
+        v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
+
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -120,10 +135,13 @@ begin
             0,
             object_construct(
                 'entries_blocked', :v_entries_blocked,
-                'block_reason', :v_block_reason,
+                'stop_reason', :v_stop_reason,
+                'allowed_actions', :v_allowed_actions,
                 'max_positions', :v_max_positions,
                 'open_positions', :v_open_positions,
-                'remaining_capacity', :v_remaining_capacity
+                'remaining_capacity', :v_remaining_capacity,
+                'candidate_count', :v_candidate_count,
+                'proposed_count', :v_selected_count
             );
 
         return object_construct(
@@ -131,12 +149,13 @@ begin
             'run_id', :P_RUN_ID,
             'portfolio_id', :P_PORTFOLIO_ID,
             'entries_blocked', :v_entries_blocked,
-            'block_reason', :v_block_reason,
+            'stop_reason', :v_stop_reason,
+            'allowed_actions', :v_allowed_actions,
             'max_positions', :v_max_positions,
             'open_positions', :v_open_positions,
             'remaining_capacity', :v_remaining_capacity,
-            'proposal_candidates', 0,
-            'proposal_selected', 0,
+            'proposal_candidates', :v_candidate_count,
+            'proposal_selected', :v_selected_count,
             'proposal_inserted', 0,
             'target_weight', :v_target_weight
         );

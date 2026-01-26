@@ -25,7 +25,8 @@ declare
     v_proposal_count number := 0;
     v_validation_counts variant;
     v_entries_blocked boolean := false;
-    v_block_reason string;
+    v_stop_reason string;
+    v_allowed_actions string;
     v_run_id_string string := to_varchar(:P_RUN_ID);
     v_buy_proposals_blocked number := 0;
 begin
@@ -59,10 +60,12 @@ begin
     -- CRIT-001: Entry gate enforcement - check if entries are blocked
     select
         coalesce(max(ENTRIES_BLOCKED), false),
-        max(BLOCK_REASON)
+        max(STOP_REASON),
+        max(ALLOWED_ACTIONS)
       into :v_entries_blocked,
-           :v_block_reason
-      from MIP.MART.V_PORTFOLIO_RISK_GATE
+           :v_stop_reason,
+           :v_allowed_actions
+      from MIP.MART.V_PORTFOLIO_RISK_STATE
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
     -- When entry gate is active, reject all BUY-side proposals immediately (exits-only mode)
@@ -72,18 +75,18 @@ begin
           from MIP.AGENT_OUT.ORDER_PROPOSALS
          where RUN_ID = :P_RUN_ID
            and PORTFOLIO_ID = :P_PORTFOLIO_ID
-           and STATUS = 'PROPOSED'
+           and STATUS in ('PROPOSED', 'APPROVED')
            and SIDE = 'BUY';
 
         -- Reject all BUY proposals due to entry gate
         if (v_buy_proposals_blocked > 0) then
             update MIP.AGENT_OUT.ORDER_PROPOSALS
                set STATUS = 'REJECTED',
-                   VALIDATION_ERRORS = array_construct('ENTRY_GATE_BLOCKED'),
+                   VALIDATION_ERRORS = array_construct_compact('ENTRY_GATE_BLOCKED', :v_stop_reason),
                    APPROVED_AT = null
              where RUN_ID = :P_RUN_ID
                and PORTFOLIO_ID = :P_PORTFOLIO_ID
-               and STATUS = 'PROPOSED'
+               and STATUS in ('PROPOSED', 'APPROVED')
                and SIDE = 'BUY';
 
             insert into MIP.APP.MIP_AUDIT_LOG (
@@ -104,7 +107,8 @@ begin
                 :v_buy_proposals_blocked,
                 object_construct(
                     'entries_blocked', :v_entries_blocked,
-                    'block_reason', :v_block_reason,
+                    'stop_reason', :v_stop_reason,
+                    'allowed_actions', :v_allowed_actions,
                     'buy_proposals_rejected', :v_buy_proposals_blocked,
                     'portfolio_id', :P_PORTFOLIO_ID
                 );
@@ -153,6 +157,7 @@ begin
         array_construct_compact(
             -- CRIT-001: Entry gate check - reject BUY proposals when entries_blocked=true
             iff(:v_entries_blocked and p.SIDE = 'BUY', 'ENTRY_GATE_BLOCKED', null),
+            iff(:v_entries_blocked and p.SIDE = 'BUY', :v_stop_reason, null),
             iff(p.RECOMMENDATION_ID is null, 'MISSING_RECOMMENDATION_ID', null),
             iff(p.RECOMMENDATION_ID is not null and v.RECOMMENDATION_ID is null, 'NO_SIGNAL_MATCH', null),
             iff(v.RECOMMENDATION_ID is not null and not v.IS_ELIGIBLE, 'INELIGIBLE_SIGNAL', null),
@@ -396,14 +401,15 @@ begin
             source.SCORE
         );
 
-    v_executed_count := v_approved_count;
-
     update MIP.AGENT_OUT.ORDER_PROPOSALS
        set STATUS = 'EXECUTED',
            EXECUTED_AT = current_timestamp()
      where RUN_ID = :P_RUN_ID
        and PORTFOLIO_ID = :P_PORTFOLIO_ID
-       and STATUS = 'APPROVED';
+       and STATUS = 'APPROVED'
+       and not (:v_entries_blocked and SIDE = 'BUY');
+
+    v_executed_count := SQLROWCOUNT;
 
     return object_construct(
         'status', 'SUCCESS',
@@ -414,7 +420,8 @@ begin
         'rejected_count', :v_rejected_count,
         'executed_count', :v_executed_count,
         'entries_blocked', :v_entries_blocked,
-        'block_reason', :v_block_reason,
+        'stop_reason', :v_stop_reason,
+        'allowed_actions', :v_allowed_actions,
         'buy_proposals_blocked', :v_buy_proposals_blocked
     );
 end;

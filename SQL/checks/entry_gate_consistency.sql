@@ -13,7 +13,7 @@ set v_portfolio_id = null;
 select
     count(*) as buy_proposals_during_block
 from MIP.AGENT_OUT.ORDER_PROPOSALS p
-join MIP.MART.V_PORTFOLIO_RISK_GATE g
+join MIP.MART.V_PORTFOLIO_RISK_STATE g
   on g.PORTFOLIO_ID = p.PORTFOLIO_ID
 where p.SIDE = 'BUY'
   and (:v_run_id is null or p.RUN_ID = :v_run_id)
@@ -26,7 +26,7 @@ where p.SIDE = 'BUY'
 select
     count(*) as buy_executions_during_block
 from MIP.APP.PORTFOLIO_TRADES t
-join MIP.MART.V_PORTFOLIO_RISK_GATE g
+join MIP.MART.V_PORTFOLIO_RISK_STATE g
   on g.PORTFOLIO_ID = t.PORTFOLIO_ID
 join MIP.AGENT_OUT.ORDER_PROPOSALS p
   on p.PROPOSAL_ID = t.PROPOSAL_ID
@@ -42,7 +42,7 @@ select
     count(*) as sell_executions_during_block,
     sum(t.NOTIONAL) as total_sell_notional
 from MIP.APP.PORTFOLIO_TRADES t
-join MIP.MART.V_PORTFOLIO_RISK_GATE g
+join MIP.MART.V_PORTFOLIO_RISK_STATE g
   on g.PORTFOLIO_ID = t.PORTFOLIO_ID
 where t.SIDE = 'SELL'
   and (:v_run_id is null or t.RUN_ID = :v_run_id)
@@ -50,7 +50,7 @@ where t.SIDE = 'SELL'
   and g.ENTRIES_BLOCKED = true
   and t.TRADE_TS >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days');
 
--- Check 4: Cross-reference V_PORTFOLIO_RISK_GATE with actual proposal counts
+-- Check 4: Cross-reference V_PORTFOLIO_RISK_STATE with actual proposal counts
 -- Verify that when entry gate is active, proposal counts reflect the block
 select
     g.PORTFOLIO_ID,
@@ -60,7 +60,7 @@ select
     count(distinct p.PROPOSAL_ID) as proposals_after_stop,
     count(distinct case when p.SIDE = 'BUY' then p.PROPOSAL_ID end) as buy_proposals_after_stop,
     count(distinct case when p.SIDE = 'SELL' then p.PROPOSAL_ID end) as sell_proposals_after_stop
-from MIP.MART.V_PORTFOLIO_RISK_GATE g
+from MIP.MART.V_PORTFOLIO_RISK_STATE g
 left join MIP.AGENT_OUT.ORDER_PROPOSALS p
   on p.PORTFOLIO_ID = g.PORTFOLIO_ID
   and p.PROPOSED_AT >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days')
@@ -90,7 +90,7 @@ select
         when g.BLOCK_REASON != expected_block_reason then 'INCONSISTENT'
         else 'CONSISTENT'
     end as consistency_status
-from MIP.MART.V_PORTFOLIO_RISK_GATE g
+from MIP.MART.V_PORTFOLIO_RISK_STATE g
 where g.ENTRIES_BLOCKED = true
   and (:v_portfolio_id is null or g.PORTFOLIO_ID = :v_portfolio_id)
   and g.BLOCK_REASON != case
@@ -120,7 +120,7 @@ select
     count(distinct p.PROPOSAL_ID) as total_proposals_during_blocks,
     count(distinct case when p.SIDE = 'BUY' and g.ENTRIES_BLOCKED then p.PROPOSAL_ID end) as buy_proposals_during_blocks,
     count(distinct case when p.SIDE = 'SELL' and g.ENTRIES_BLOCKED then p.PROPOSAL_ID end) as sell_proposals_during_blocks
-from MIP.MART.V_PORTFOLIO_RISK_GATE g
+from MIP.MART.V_PORTFOLIO_RISK_STATE g
 left join MIP.AGENT_OUT.ORDER_PROPOSALS p
   on p.PORTFOLIO_ID = g.PORTFOLIO_ID
   and p.PROPOSED_AT >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days')

@@ -28,7 +28,7 @@ begin
         select count(*)
           into v_check_result
           from MIP.AGENT_OUT.ORDER_PROPOSALS p
-          join MIP.MART.V_PORTFOLIO_RISK_GATE g
+          join MIP.MART.V_PORTFOLIO_RISK_STATE g
             on g.PORTFOLIO_ID = p.PORTFOLIO_ID
           where p.SIDE = 'BUY'
             and (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))

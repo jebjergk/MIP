@@ -44,6 +44,7 @@ select
 select
     'VIEW_ACCESSIBILITY' as test_name,
     (select count(*) from MIP.MART.V_PORTFOLIO_RISK_GATE) as risk_gate_rows,
+    (select count(*) from MIP.MART.V_PORTFOLIO_RISK_STATE) as risk_state_rows,
     (select count(*) from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY) as eligible_signals_rows,
     (select count(*) from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS) as open_positions_rows,
     (select count(*) from MIP.MART.V_PORTFOLIO_RUN_KPIS) as portfolio_kpis_rows;

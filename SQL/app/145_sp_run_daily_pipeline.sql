@@ -19,6 +19,11 @@ declare
     v_market_types resultset;
     v_market_type string;
     v_market_type_count number := 0;
+    v_portfolios resultset;
+    v_portfolio_id number;
+    v_portfolio_results array := array_construct();
+    v_portfolio_count number := 0;
+    v_portfolio_run_result variant;
     v_ingest_result variant;
     v_ingest_status string;
     v_ingest_rate_limit boolean := false;
@@ -26,6 +31,9 @@ declare
     v_eval_result variant;
     v_portfolio_result variant;
     v_brief_result variant;
+    v_brief_results array := array_construct();
+    v_brief_count number := 0;
+    v_brief_run_result variant;
     v_signal_run_id number;
     v_eligible_signal_count number := 0;
     v_proposed_count number := 0;

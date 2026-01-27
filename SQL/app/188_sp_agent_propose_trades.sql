@@ -113,7 +113,7 @@ begin
            and TRUST_LABEL = 'TRUSTED'
            and (
                RUN_ID = :v_run_id_string
-               or try_to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID
+               or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID
            );
 
         v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
@@ -171,7 +171,7 @@ begin
        and TRUST_LABEL = 'TRUSTED'
        and (
            RUN_ID = :v_run_id_string
-           or try_to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID
+           or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID
        );
 
     v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
@@ -241,7 +241,7 @@ begin
               and s.TRUST_LABEL = 'TRUSTED'
               and (
                   s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+                  or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
               )
         ),
         deduped_candidates as (
@@ -286,7 +286,7 @@ begin
               and s.TRUST_LABEL = 'TRUSTED'
               and (
                   s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+                  or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
               )
         ),
         deduped_candidates as (
@@ -336,7 +336,7 @@ begin
               and s.TRUST_LABEL = 'TRUSTED'
               and (
                   s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
+                  or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
               )
         ),
         deduped_candidates as (

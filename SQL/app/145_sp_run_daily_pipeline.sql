@@ -667,12 +667,12 @@ begin
         ),
         null;
 
-    select max(try_to_number(replace(RUN_ID, 'T', '')))
+    select max(try_to_number(replace(to_varchar(RUN_ID), 'T', '')))
       into :v_signal_run_id
       from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
 
     if (v_signal_run_id is null) then
-        select max(try_to_number(replace(RUN_ID, 'T', '')))
+        select max(try_to_number(replace(to_varchar(RUN_ID), 'T', '')))
           into :v_signal_run_id
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
     end if;
@@ -707,7 +707,7 @@ begin
           into :v_eligible_signal_count
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
          where IS_ELIGIBLE
-           and try_to_number(replace(RUN_ID, 'T', '')) = :v_signal_run_id;
+           and try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :v_signal_run_id;
     end if;
 
     v_brief_results := array_construct();
@@ -754,7 +754,7 @@ begin
                 SIGNAL_RUN_ID is not null
                 and (
                     SIGNAL_RUN_ID = to_varchar(:v_signal_run_id)
-                    or try_to_number(replace(SIGNAL_RUN_ID, 'T', '')) = :v_signal_run_id
+                    or try_to_number(replace(to_varchar(SIGNAL_RUN_ID), 'T', '')) = :v_signal_run_id
                 )
             );
     end if;

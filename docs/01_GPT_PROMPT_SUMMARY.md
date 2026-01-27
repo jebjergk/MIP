@@ -45,3 +45,40 @@ When responding as the lead architect/SME:
 
 ## BONUS
 For roadmap status, delivery vs backlog, and current state (rate-limit, no-new-bars, drawdown stop), see `docs/ROADMAP_CHECKLIST.md`.
+
+---
+
+## BONUS (Mandatory if you touch code anyway)
+
+When implementing any change (even small), also do the following:
+
+### 1) Observability / Audit JSON quality
+- Ensure every pipeline step writes a clear `status` and a clear `reason` when skipped.
+- Add/extend audit JSON counts where relevant:
+  - `candidate_count`
+  - `filtered_by_threshold_count`
+  - `dedup_skipped_count`
+  - `inserted_count`
+- Ensure the top-level pipeline audit includes:
+  - `has_new_bars` (boolean)
+  - `pipeline_status_reason` (string when relevant)
+
+### 2) Operator runbook / "is it healthy?" SQL
+- If you touched logic, add or update one short operator query in:
+  - `MIP/docs/RUNBOOK.md`
+- The runbook query must let us answer in <30 seconds:
+  - "Did the pipeline run successfully?"
+  - "Did we ingest new bars?"
+  - "Did we generate recommendations?"
+  - "Did we evaluate outcomes?"
+  - "Did we simulate portfolio / block entries?"
+  - "Why was something skipped?"
+
+### 3) Idempotency & safety checks
+- No step should insert duplicates for the same `(pattern_id, symbol, interval_minutes, ts)` unless explicitly intended.
+- If the pipeline is run multiple times per day, repeated runs must be safe and should skip cleanly when there is no new data.
+
+### 4) Acceptance tests / examples
+- If behavior changed, update `ACCEPTANCE_TESTS.md` (or add a new short section) with:
+  - the expected audit statuses and reasons
+  - at least one example run_id worth validating

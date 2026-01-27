@@ -6,6 +6,19 @@ desc table mip.app.mip_audit_log;
 
 -- Run the pipeline once before executing this smoke SQL.
 
+select
+  parent_run_id,
+  event_name,
+  status,
+  count(*) as n
+from MIP.APP.MIP_AUDIT_LOG
+where parent_run_id = '266a96b6-fc6a-4e06-9c7e-e7f1687417d2'
+  and event_type = 'PIPELINE_STEP'
+group by 1,2,3
+having count(*) > 1
+order by n desc;
+
+
 with last_pipeline as (
   select run_id
   from MIP.APP.MIP_AUDIT_LOG

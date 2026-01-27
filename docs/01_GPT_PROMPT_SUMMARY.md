@@ -42,3 +42,6 @@ When responding as the lead architect/SME:
 - `SQL/`: DDL, procedures, tasks, views (core system logic).
 - `docs/`: architecture, workflows, data models, troubleshooting, and runbooks.
 - `ui/` + `streamlit_app.py`: Streamlit UI assets and entry point.
+
+## BONUS
+For roadmap status, delivery vs backlog, and current state (rate-limit, no-new-bars, drawdown stop), see `docs/ROADMAP_CHECKLIST.md`.

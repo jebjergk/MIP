@@ -3,6 +3,60 @@
 ## Role framing
 You are **GPT** acting as the **Lead Architect** and **Subject Matter Expert (SME)** for the Market Intelligence Platform (MIP). You own the end-to-end requirements and must provide authoritative guidance for architecture, data flows, storage, orchestration, and agent outputs.
 
+## Roadmap checklist (3 phases)
+
+Legend: ✅ done • 🟨 in progress • ⬜ planned • 🧪 experimental • ⛔ blocked
+
+### Phase 1 — Foundation (daily bars → signals → evaluation)
+✅ Ingest daily bars for STOCK / ETF / FX (AlphaVantage) into RAW/MART
+✅ Refresh returns layer (MARKET_RETURNS) from MARKET_BARS
+✅ Generate recommendations (pattern-based) per MARKET_TYPE and INTERVAL
+✅ Avoid duplicate recommendations for same :as_of_ts (idempotent runs)
+✅ Evaluation procedure writes outcomes for multiple horizons (e.g. 1/3/5/10/20 bars)
+✅ Audit logging of pipeline + steps with structured JSON details
+✅ Portfolio simulation exists with constraints (max positions, max weight, drawdown stop)
+
+🟨 Make pipeline "smart-skip" when there are NO_NEW_BARS (skip recs/eval/sim/brief)
+🟨 Make ingestion robust to AlphaVantage daily rate limits (skip gracefully, don't corrupt state)
+
+⬜ Define and lock "success criteria" / KPIs for training (hit-rate, avg return, Sharpe proxy, drawdown, turnover)
+⬜ Add "data quality / completeness checks" for MARKET_BARS (missing days, stale symbols, decimals)
+⬜ Ensure ETFs are first-class across ALL downstream steps (no hardcoding FX/STOCK anywhere)
+
+**Where we are now (current focus):**
+🟨 We are stabilizing daily pipeline behavior under repeated runs + rate limits:
+- Expected: ingestion may SKIP_RATE_LIMIT
+- Expected: pipeline may SKIP_NO_NEW_BARS (no new bars since latest_market_bars_ts)
+- Goal: downstream steps correctly SKIP_NO_NEW_BARS and do not produce duplicate outputs
+
+---
+
+### Phase 2 — Paper portfolio execution (cash + realistic mechanics)
+⬜ Add cash account + position sizing based on available cash (not just target_weight)
+⬜ Implement transaction costs & slippage (simple model first)
+⬜ Add order lifecycle simulation (signal → proposal → execution → fills)
+⬜ Exposure controls per asset class and per symbol (caps)
+⬜ Portfolio PnL attribution by signal/pattern/asset class
+⬜ Daily "paper run" that produces proposed trades + executed trades deterministically
+
+---
+
+### Phase 3 — Risk layer + hedging + AI brief/suggestions
+⬜ Risk layer: daily VaR proxy / volatility targeting / drawdown regime controls
+⬜ Hedging logic (index hedge via ETFs; FX hedge for USD exposure, etc.)
+⬜ Explainability: rationale per recommendation + per trade
+⬜ AI Morning Brief summarizing: what changed, why, what to do next (read-only)
+⬜ Store agent outputs into AGENT_OUT tables and render in Streamlit UI
+🧪 Add news/sentiment agent later (only after daily-bar training is effective)
+
+---
+
+### Always-on operating rules
+✅ Prefer daily-bar training until it is effective; do NOT move to higher-frequency paid data prematurely
+✅ Pipeline must be idempotent: re-running same :to_ts must not duplicate outputs
+✅ Every procedure must write structured audit logs with step_name + reason + counts
+✅ No hardcoding of market types/symbols; must come from universe/config tables
+
 ## System overview (what MIP is)
 - **MIP is a Snowflake-native analytics pipeline** that ingests daily market bars, calculates returns, generates recommendations, evaluates outcomes, simulates portfolios, and writes morning briefs for agents. The canonical orchestrator is `MIP.APP.SP_RUN_DAILY_PIPELINE` (triggered by `MIP.APP.TASK_RUN_DAILY_PIPELINE`).【F:SQL/app/145_sp_run_daily_pipeline.sql†L1-L108】【F:SQL/app/150_task_run_daily_training.sql†L1-L14】
 - **Not a live trading system**: all “trades” are simulated within Snowflake and persisted to portfolio tables; no broker integrations exist in this repo.【F:SQL/app/189_sp_validate_and_execute_proposals.sql†L1-L177】【F:SQL/app/160_app_portfolio_tables.sql†L111-L150】

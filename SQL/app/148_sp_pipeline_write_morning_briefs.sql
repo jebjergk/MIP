@@ -7,7 +7,8 @@ use database MIP;
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
     P_PORTFOLIO_ID number,
     P_RUN_ID string,
-    P_SIGNAL_RUN_ID number
+    P_SIGNAL_RUN_ID number,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -36,12 +37,14 @@ begin
         if (v_signal_run_id is not null) then
             v_propose_result := (call MIP.APP.SP_AGENT_PROPOSE_TRADES(
                 :P_PORTFOLIO_ID,
-                :v_signal_run_id
+                :v_signal_run_id,
+                :P_PARENT_RUN_ID
             ));
 
             v_validate_result := (call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
                 :P_PORTFOLIO_ID,
-                :v_signal_run_id
+                :v_signal_run_id,
+                :P_PARENT_RUN_ID
             ));
         else
             v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');
@@ -61,6 +64,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -71,6 +75,7 @@ begin
         select
             current_timestamp(),
             :v_run_id,
+            :P_PARENT_RUN_ID,
             'PIPELINE_STEP',
             'MORNING_BRIEF',
             'SUCCESS',
@@ -102,6 +107,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -112,6 +118,7 @@ begin
             select
                 current_timestamp(),
                 :v_run_id,
+                :P_PARENT_RUN_ID,
                 'PIPELINE_STEP',
                 'MORNING_BRIEF',
                 'FAIL',
@@ -130,7 +137,8 @@ $$;
 
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
     P_RUN_ID string,
-    P_SIGNAL_RUN_ID number
+    P_SIGNAL_RUN_ID number,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -158,7 +166,8 @@ begin
         v_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
             :v_portfolio_id,
             :v_run_id,
-            :P_SIGNAL_RUN_ID
+            :P_SIGNAL_RUN_ID,
+            :P_PARENT_RUN_ID
         ));
         v_results := array_append(:v_results, :v_result);
     end for;

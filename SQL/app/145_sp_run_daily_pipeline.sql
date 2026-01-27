@@ -93,13 +93,14 @@ begin
 
     v_step_start := current_timestamp();
     begin
-        v_ingest_result := (call MIP.APP.SP_PIPELINE_INGEST());
+        v_ingest_result := (call MIP.APP.SP_PIPELINE_INGEST(:v_run_id));
     exception
         when other then
             v_step_end := current_timestamp();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -109,6 +110,7 @@ begin
             )
             select
                 current_timestamp(),
+                :v_run_id,
                 :v_run_id,
                 'PIPELINE_STEP',
                 'INGESTION',
@@ -148,6 +150,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -157,6 +160,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'INGESTION',
@@ -180,6 +184,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -189,6 +194,7 @@ begin
         )
         select
             current_timestamp(),
+            :v_run_id,
             :v_run_id,
             'INGESTION',
             'INGESTION',
@@ -214,13 +220,14 @@ begin
 
     v_step_start := current_timestamp();
     begin
-        v_returns_result := (call MIP.APP.SP_PIPELINE_REFRESH_RETURNS());
+        v_returns_result := (call MIP.APP.SP_PIPELINE_REFRESH_RETURNS(:v_run_id));
     exception
         when other then
             v_step_end := current_timestamp();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -230,6 +237,7 @@ begin
             )
             select
                 current_timestamp(),
+                :v_run_id,
                 :v_run_id,
                 'PIPELINE_STEP',
                 'RETURNS_REFRESH',
@@ -248,6 +256,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -257,6 +266,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'RETURNS_REFRESH',
@@ -302,7 +312,8 @@ begin
             v_market_type := rec.MARKET_TYPE;
             v_recommendation_result := (call MIP.APP.SP_PIPELINE_GENERATE_RECOMMENDATIONS(
                 :v_market_type,
-                :v_interval_minutes
+                :v_interval_minutes,
+                :v_run_id
             ));
             v_recommendation_results := array_append(:v_recommendation_results, :v_recommendation_result);
         end for;
@@ -312,6 +323,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -321,6 +333,7 @@ begin
             )
             select
                 current_timestamp(),
+                :v_run_id,
                 :v_run_id,
                 'PIPELINE_STEP',
                 'RECOMMENDATIONS',
@@ -350,6 +363,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -359,6 +373,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'RECOMMENDATIONS',
@@ -378,13 +393,14 @@ begin
 
     v_step_start := current_timestamp();
     begin
-        v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_effective_to_ts));
+        v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(:v_from_ts, :v_effective_to_ts, :v_run_id));
     exception
         when other then
             v_step_end := current_timestamp();
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -394,6 +410,7 @@ begin
             )
             select
                 current_timestamp(),
+                :v_run_id,
                 :v_run_id,
                 'PIPELINE_STEP',
                 'EVALUATION',
@@ -414,6 +431,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -423,6 +441,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'EVALUATION',
@@ -463,6 +482,7 @@ begin
                 :v_portfolio_id,
                 :v_from_ts,
                 :v_effective_to_ts,
+                :v_run_id,
                 :v_run_id
             ));
             v_portfolio_results := array_append(:v_portfolio_results, :v_portfolio_run_result);
@@ -479,6 +499,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -488,6 +509,7 @@ begin
             )
             select
                 current_timestamp(),
+                :v_run_id,
                 :v_run_id,
                 'PIPELINE_STEP',
                 'PORTFOLIO_SIMULATION',
@@ -522,6 +544,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -531,6 +554,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'PORTFOLIO_SIMULATION',
@@ -585,6 +609,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -594,6 +619,7 @@ begin
             )
             select
                 current_timestamp(),
+                :v_run_id,
                 :v_run_id,
                 'PIPELINE_STEP',
                 'TRUSTED_SIGNAL_REFRESH',
@@ -613,6 +639,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -622,6 +649,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'TRUSTED_SIGNAL_REFRESH',
@@ -696,7 +724,8 @@ begin
         v_brief_run_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
             :v_portfolio_id,
             :v_run_id,
-            :v_signal_run_id
+            :v_signal_run_id,
+            :v_run_id
         ));
         v_brief_results := array_append(:v_brief_results, :v_brief_run_result);
     end for;
@@ -751,6 +780,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -760,6 +790,7 @@ begin
     )
     select
         current_timestamp(),
+        :v_run_id,
         :v_run_id,
         'PIPELINE_STEP',
         'MORNING_BRIEF',
@@ -802,6 +833,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -811,6 +843,7 @@ begin
         )
         select
             current_timestamp(),
+            :v_run_id,
             :v_run_id,
             'PIPELINE_STEP',
             'PROPOSER',
@@ -833,6 +866,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -842,6 +876,7 @@ begin
         )
         select
             current_timestamp(),
+            :v_run_id,
             :v_run_id,
             'PIPELINE_STEP',
             'EXECUTOR',
@@ -867,6 +902,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -876,6 +912,7 @@ begin
         )
         select
             current_timestamp(),
+            :v_run_id,
             :v_run_id,
             'PIPELINE_STEP',
             'PROPOSER',
@@ -893,6 +930,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -902,6 +940,7 @@ begin
         )
         select
             current_timestamp(),
+            :v_run_id,
             :v_run_id,
             'PIPELINE_STEP',
             'EXECUTOR',

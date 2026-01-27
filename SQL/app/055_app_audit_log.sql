@@ -38,6 +38,10 @@ as
 $$
 declare
     v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
+    v_parent_run_id string := coalesce(
+        nullif(:P_PARENT_RUN_ID, ''),
+        iff(:P_EVENT_TYPE <> 'PIPELINE', nullif(current_query_tag(), ''), null)
+    );
 begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
@@ -53,7 +57,7 @@ begin
     select
         CURRENT_TIMESTAMP(),
         :v_run_id,
-        :P_PARENT_RUN_ID,
+        :v_parent_run_id,
         :P_EVENT_TYPE,
         :P_EVENT_NAME,
         :P_STATUS,

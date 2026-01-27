@@ -107,7 +107,7 @@ begin
             ),
             null,
             :P_PIPELINE_RUN_ID,
-            null
+            :P_PIPELINE_RUN_ID
         );
     end if;
 

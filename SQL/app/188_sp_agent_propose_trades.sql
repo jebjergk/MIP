@@ -6,7 +6,8 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_PROPOSE_TRADES(
     P_PORTFOLIO_ID number,
-    P_RUN_ID number
+    P_RUN_ID number,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -120,6 +121,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -129,6 +131,7 @@ begin
         select
             current_timestamp(),
             :v_run_id_string,
+            :P_PARENT_RUN_ID,
             'AGENT',
             'SP_AGENT_PROPOSE_TRADES',
             'SKIP_ENTRIES_BLOCKED',
@@ -177,6 +180,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -186,6 +190,7 @@ begin
         select
             current_timestamp(),
             :v_run_id_string,
+            :P_PARENT_RUN_ID,
             'AGENT',
             'SP_AGENT_PROPOSE_TRADES',
             'INFO',
@@ -557,6 +562,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -566,6 +572,7 @@ begin
     select
         current_timestamp(),
         :v_run_id_string,
+        :P_PARENT_RUN_ID,
         'AGENT',
         'SP_AGENT_PROPOSE_TRADES',
         'INFO',

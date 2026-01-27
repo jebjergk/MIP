@@ -6,7 +6,8 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(
     P_FROM_TS timestamp_ntz,
-    P_TO_TS timestamp_ntz
+    P_TO_TS timestamp_ntz,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -38,6 +39,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -48,6 +50,7 @@ begin
         select
             current_timestamp(),
             :v_run_id,
+            :P_PARENT_RUN_ID,
             'PIPELINE_STEP',
             'EVALUATION',
             'SUCCESS',
@@ -79,6 +82,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -89,6 +93,7 @@ begin
             select
                 current_timestamp(),
                 :v_run_id,
+                :P_PARENT_RUN_ID,
                 'PIPELINE_STEP',
                 'EVALUATION',
                 'FAIL',

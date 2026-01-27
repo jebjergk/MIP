@@ -8,7 +8,8 @@ create or replace procedure MIP.APP.SP_PIPELINE_RUN_PORTFOLIO(
     P_PORTFOLIO_ID number,
     P_FROM_TS timestamp_ntz,
     P_TO_TS timestamp_ntz,
-    P_RUN_ID string
+    P_RUN_ID string,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -56,6 +57,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -66,6 +68,7 @@ begin
         select
             current_timestamp(),
             :v_run_id,
+            :P_PARENT_RUN_ID,
             'PIPELINE_STEP',
             'PORTFOLIO_SIMULATION',
             :v_audit_status,
@@ -90,6 +93,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -100,6 +104,7 @@ begin
             select
                 current_timestamp(),
                 :v_run_id,
+                :P_PARENT_RUN_ID,
                 'PIPELINE_STEP',
                 'PORTFOLIO_SIMULATION',
                 'FAIL',
@@ -121,7 +126,8 @@ $$;
 create or replace procedure MIP.APP.SP_PIPELINE_RUN_PORTFOLIOS(
     P_FROM_TS timestamp_ntz,
     P_TO_TS timestamp_ntz,
-    P_RUN_ID string
+    P_RUN_ID string,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -150,7 +156,8 @@ begin
             :v_portfolio_id,
             :P_FROM_TS,
             :P_TO_TS,
-            :v_run_id
+            :v_run_id,
+            :P_PARENT_RUN_ID
         ));
         v_results := array_append(:v_results, :v_sim_result);
     end for;

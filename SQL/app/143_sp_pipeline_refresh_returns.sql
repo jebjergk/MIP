@@ -4,7 +4,9 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace procedure MIP.APP.SP_PIPELINE_REFRESH_RETURNS()
+create or replace procedure MIP.APP.SP_PIPELINE_REFRESH_RETURNS(
+    P_PARENT_RUN_ID string default null
+)
 returns variant
 language sql
 execute as caller
@@ -126,6 +128,7 @@ begin
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -136,6 +139,7 @@ begin
         select
             current_timestamp(),
             :v_run_id,
+            :P_PARENT_RUN_ID,
             'PIPELINE_STEP',
             'RETURNS_REFRESH',
             'SUCCESS',
@@ -166,6 +170,7 @@ begin
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
+                PARENT_RUN_ID,
                 EVENT_TYPE,
                 EVENT_NAME,
                 STATUS,
@@ -176,6 +181,7 @@ begin
             select
                 current_timestamp(),
                 :v_run_id,
+                :P_PARENT_RUN_ID,
                 'PIPELINE_STEP',
                 'RETURNS_REFRESH',
                 'FAIL',

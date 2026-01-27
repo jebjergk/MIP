@@ -1,8 +1,18 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-select event_ts, event_type, event_name, status, error_message,details from mip.app.mip_audit_log order by event_ts desc;
+select * from mip.app.mip_audit_log order by event_ts desc;
 desc table mip.app.mip_audit_log;
+
+select
+  event_type,
+  event_name,
+  status,
+  count(*) as n
+from MIP.APP.MIP_AUDIT_LOG
+where parent_run_id = '345e397e-ea0a-4fec-af67-f5604ef9caf7'
+group by 1,2,3
+order by 1,2,3;
 
 select distinct symbol, market_type from mip.app.ingest_universe;
 

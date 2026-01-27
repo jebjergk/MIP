@@ -95,27 +95,15 @@ begin
             end if;
         end if;
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
-            :v_run_id,
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :P_PARENT_RUN_ID,
-            'PIPELINE_STEP',
             'RECOMMENDATIONS',
             'SUCCESS',
             :v_inserted_count,
             object_construct(
                 'step_name', 'recommendations',
+                'scope', 'MARKET_TYPE',
+                'scope_key', :P_MARKET_TYPE,
                 'market_type', :P_MARKET_TYPE,
                 'interval_minutes', :P_INTERVAL_MINUTES,
                 'started_at', :v_step_start,
@@ -132,7 +120,8 @@ begin
                 'pattern_count', :v_pattern_count,
                 'skip_reason', :v_skip_reason
             ),
-            null;
+            null
+        );
 
         return object_construct(
             'status', 'SUCCESS',
@@ -152,34 +141,23 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
-                :v_run_id,
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :P_PARENT_RUN_ID,
-                'PIPELINE_STEP',
                 'RECOMMENDATIONS',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'recommendations',
+                    'scope', 'MARKET_TYPE',
+                    'scope_key', :P_MARKET_TYPE,
                     'market_type', :P_MARKET_TYPE,
                     'interval_minutes', :P_INTERVAL_MINUTES,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'min_return', :v_min_return
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
 end;

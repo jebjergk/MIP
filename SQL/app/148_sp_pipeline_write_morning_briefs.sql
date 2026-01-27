@@ -61,27 +61,15 @@ begin
 
         v_step_end := current_timestamp();
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
-            :v_run_id,
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :P_PARENT_RUN_ID,
-            'PIPELINE_STEP',
             'MORNING_BRIEF',
             'SUCCESS',
             :v_rows_after,
             object_construct(
                 'step_name', 'morning_brief',
+                'scope', 'PORTFOLIO',
+                'scope_key', to_varchar(:P_PORTFOLIO_ID),
                 'portfolio_id', :P_PORTFOLIO_ID,
                 'started_at', :v_step_start,
                 'completed_at', :v_step_end,
@@ -91,7 +79,8 @@ begin
                 'proposal_result', :v_propose_result,
                 'validation_result', :v_validate_result
             ),
-            null;
+            null
+        );
 
         return object_construct(
             'portfolio_id', :P_PORTFOLIO_ID,
@@ -104,32 +93,21 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
-                :v_run_id,
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :P_PARENT_RUN_ID,
-                'PIPELINE_STEP',
                 'MORNING_BRIEF',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'morning_brief',
+                    'scope', 'PORTFOLIO',
+                    'scope_key', to_varchar(:P_PORTFOLIO_ID),
                     'portfolio_id', :P_PORTFOLIO_ID,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
 end;

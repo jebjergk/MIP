@@ -68,3 +68,76 @@ begin
     return v_run_id;
 end;
 $$;
+
+create or replace procedure MIP.APP.SP_AUDIT_LOG_STEP(
+    P_PARENT_RUN_ID string,
+    P_EVENT_NAME string,
+    P_STATUS string,
+    P_ROWS_AFFECTED number,
+    P_DETAILS variant,
+    P_ERROR_MESSAGE string default null
+)
+returns string
+language sql
+execute as owner
+as
+$$
+declare
+    v_step_name string;
+    v_scope string;
+    v_scope_key string;
+    v_existing_run_id string;
+    v_new_run_id string := uuid_string();
+begin
+    -- Extract required fields from P_DETAILS
+    v_step_name := :P_DETAILS:"step_name"::string;
+    v_scope := coalesce(:P_DETAILS:"scope"::string, 'AGG');
+    v_scope_key := :P_DETAILS:"scope_key"::string;
+
+    -- Check for existing duplicate row (idempotent insert)
+    select RUN_ID
+      into :v_existing_run_id
+      from MIP.APP.MIP_AUDIT_LOG
+     where PARENT_RUN_ID = :P_PARENT_RUN_ID
+       and EVENT_TYPE = 'PIPELINE_STEP'
+       and EVENT_NAME = :P_EVENT_NAME
+       and STATUS = :P_STATUS
+       and DETAILS:"step_name"::string = :v_step_name
+       and coalesce(DETAILS:"scope"::string, 'AGG') = :v_scope
+       and (
+           (DETAILS:"scope_key"::string is null and :v_scope_key is null)
+           or (DETAILS:"scope_key"::string = :v_scope_key)
+       )
+     limit 1;
+
+    -- If duplicate exists, return existing RUN_ID
+    if (v_existing_run_id is not null) then
+        return v_existing_run_id;
+    end if;
+
+    -- Insert new step log with fresh UUID
+    insert into MIP.APP.MIP_AUDIT_LOG (
+        EVENT_TS,
+        RUN_ID,
+        PARENT_RUN_ID,
+        EVENT_TYPE,
+        EVENT_NAME,
+        STATUS,
+        ROWS_AFFECTED,
+        DETAILS,
+        ERROR_MESSAGE
+    )
+    select
+        CURRENT_TIMESTAMP(),
+        :v_new_run_id,
+        :P_PARENT_RUN_ID,
+        'PIPELINE_STEP',
+        :P_EVENT_NAME,
+        :P_STATUS,
+        :P_ROWS_AFFECTED,
+        coalesce(try_parse_json(:P_DETAILS), :P_DETAILS),
+        :P_ERROR_MESSAGE;
+
+    return v_new_run_id;
+end;
+$$;

@@ -97,32 +97,21 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                :v_run_id,
-                'PIPELINE_STEP',
                 'INGESTION',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'ingestion',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'requested_to_ts', :v_requested_to_ts
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             call MIP.APP.SP_LOG_EVENT(
                 'PIPELINE',
                 'SP_RUN_DAILY_PIPELINE',
@@ -147,27 +136,15 @@ begin
     v_rows_after := :v_ingest_result:"rows_after"::number;
     v_rows_delta := coalesce(:v_ingest_result:"rows_delta"::number, :v_rows_after - :v_rows_before);
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'INGESTION',
         :v_ingest_status,
         :v_rows_delta,
         object_construct(
             'step_name', 'ingestion',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_step_start,
             'completed_at', :v_step_end,
             'rows_before', :v_rows_before,
@@ -178,34 +155,25 @@ begin
             'requested_to_ts', :v_requested_to_ts,
             'ingest_result', :v_ingest_result
         ),
-        null;
+        null
+    );
 
     if (v_ingest_rate_limit or v_ingest_status in ('SUCCESS_WITH_SKIPS', 'SKIP_RATE_LIMIT')) then
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            :v_run_id,
-            'INGESTION',
             'INGESTION',
             'SKIP_RATE_LIMIT',
             null,
             object_construct(
+                'step_name', 'ingestion',
+                'scope', 'AGG',
+                'scope_key', null,
                 'requested_to_ts', :v_requested_to_ts,
                 'ingest_status', :v_ingest_status,
                 'ingest_result', :v_ingest_result
             ),
-            null;
+            null
+        );
     end if;
 
     select max(ts)
@@ -224,56 +192,33 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                :v_run_id,
-                'PIPELINE_STEP',
                 'RETURNS_REFRESH',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'returns_refresh',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
     v_step_end := current_timestamp();
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'RETURNS_REFRESH',
         'SUCCESS',
         :v_returns_result:"returns_at_latest_ts"::number,
         object_construct(
             'step_name', 'returns_refresh',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_step_start,
             'completed_at', :v_step_end,
             'latest_market_bars_ts', :v_returns_result:"latest_market_bars_ts"::timestamp_ntz,
@@ -281,7 +226,8 @@ begin
             'market_bars_at_latest_ts', :v_returns_result:"market_bars_at_latest_ts"::number,
             'returns_at_latest_ts', :v_returns_result:"returns_at_latest_ts"::number
         ),
-        null;
+        null
+    );
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_MARKET_TYPES (MARKET_TYPE string);
     insert into MIP.APP.TMP_PIPELINE_MARKET_TYPES (MARKET_TYPE)
@@ -320,33 +266,22 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                :v_run_id,
-                'PIPELINE_STEP',
                 'RECOMMENDATIONS',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'recommendations',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'interval_minutes', :v_interval_minutes,
                     'market_type_count', :v_market_type_count
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
     v_step_end := current_timestamp();
@@ -360,27 +295,15 @@ begin
            :v_rows_delta
       from table(flatten(input => :v_recommendation_results));
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'RECOMMENDATIONS',
         'SUCCESS',
         :v_rows_delta,
         object_construct(
             'step_name', 'recommendations',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_step_start,
             'completed_at', :v_step_end,
             'rows_before', :v_rows_before,
@@ -389,7 +312,8 @@ begin
             'interval_minutes', :v_interval_minutes,
             'market_type_count', :v_market_type_count
         ),
-        null;
+        null
+    );
 
     v_step_start := current_timestamp();
     begin
@@ -397,58 +321,35 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                :v_run_id,
-                'PIPELINE_STEP',
                 'EVALUATION',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'evaluation',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'from_ts', :v_from_ts,
                     'to_ts', :v_effective_to_ts
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
     v_step_end := current_timestamp();
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'EVALUATION',
         'SUCCESS',
         :v_eval_result:"rows_delta"::number,
         object_construct(
             'step_name', 'evaluation',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_step_start,
             'completed_at', :v_step_end,
             'rows_before', :v_eval_result:"rows_before"::number,
@@ -457,7 +358,8 @@ begin
             'from_ts', :v_from_ts,
             'to_ts', :v_effective_to_ts
         ),
-        null;
+        null
+    );
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID number);
     insert into MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID)
@@ -496,33 +398,22 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                :v_run_id,
-                'PIPELINE_STEP',
                 'PORTFOLIO_SIMULATION',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'portfolio_simulation',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'from_ts', :v_from_ts,
                     'to_ts', :v_effective_to_ts
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
     v_step_end := current_timestamp();
@@ -541,27 +432,15 @@ begin
     v_portfolio_stop_reasons := coalesce(:v_portfolio_stop_reasons, array_construct());
     v_portfolio_run_ids := coalesce(:v_portfolio_run_ids, array_construct());
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'PORTFOLIO_SIMULATION',
         'SUCCESS',
         :v_portfolio_trades,
         object_construct(
             'step_name', 'portfolio_simulation',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_step_start,
             'completed_at', :v_step_end,
             'portfolio_count', :v_portfolio_result:"portfolio_count"::number,
@@ -572,7 +451,8 @@ begin
             'entries_blocked', :v_portfolio_entries_blocked,
             'stop_reason', :v_portfolio_stop_reasons
         ),
-        null;
+        null
+    );
 
     v_step_start := current_timestamp();
     begin
@@ -606,57 +486,34 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                :v_run_id,
-                'PIPELINE_STEP',
                 'TRUSTED_SIGNAL_REFRESH',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'trusted_signal_refresh',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'procedure_name', :v_trusted_signal_proc
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
     v_step_end := current_timestamp();
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'TRUSTED_SIGNAL_REFRESH',
         :v_trusted_signal_status,
         :v_trusted_signal_rows_delta,
         object_construct(
             'step_name', 'trusted_signal_refresh',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_step_start,
             'completed_at', :v_step_end,
             'rows_before', :v_trusted_signal_rows_before,
@@ -665,7 +522,8 @@ begin
             'procedure_name', :v_trusted_signal_proc,
             'procedure_status', :v_trusted_signal_status
         ),
-        null;
+        null
+    );
 
     select max(try_to_number(replace(to_varchar(RUN_ID), 'T', '')))
       into :v_signal_run_id
@@ -777,27 +635,15 @@ begin
 
     v_brief_ids := coalesce(:v_brief_ids, array_construct());
 
-    insert into MIP.APP.MIP_AUDIT_LOG (
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        DETAILS,
-        ERROR_MESSAGE
-    )
-    select
-        current_timestamp(),
+    call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        :v_run_id,
-        'PIPELINE_STEP',
         'MORNING_BRIEF',
         'SUCCESS',
         :v_brief_rows_delta,
         object_construct(
             'step_name', 'morning_brief',
+            'scope', 'AGG',
+            'scope_key', null,
             'started_at', :v_brief_start,
             'completed_at', :v_brief_end,
             'rows_before', :v_brief_rows_before,
@@ -807,7 +653,8 @@ begin
             'brief_ids', :v_brief_ids,
             'signal_run_id', :v_signal_run_id
         ),
-        null;
+        null
+    );
 
     if (v_signal_run_id is not null) then
         select count(*)
@@ -830,27 +677,15 @@ begin
         v_executed_delta := :v_executed_after - :v_executed_before;
         v_trades_delta := :v_trades_after - :v_trades_before;
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            :v_run_id,
-            'PIPELINE_STEP',
             'PROPOSER',
             'SUCCESS',
             :v_proposals_delta,
             object_construct(
                 'step_name', 'proposer',
+                'scope', 'AGG',
+                'scope_key', null,
                 'started_at', :v_proposer_start,
                 'completed_at', :v_proposer_end,
                 'rows_before', :v_proposals_before,
@@ -861,29 +696,18 @@ begin
                 'approved_count', :v_approved_count,
                 'rejected_count', :v_rejected_count
             ),
-            null;
+            null
+        );
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            :v_run_id,
-            'PIPELINE_STEP',
             'EXECUTOR',
             'SUCCESS',
             :v_executed_delta,
             object_construct(
                 'step_name', 'executor',
+                'scope', 'AGG',
+                'scope_key', null,
                 'started_at', :v_executor_start,
                 'completed_at', :v_executor_end,
                 'rows_before', :v_executed_before,
@@ -897,63 +721,42 @@ begin
                 'trade_rows_after', :v_trades_after,
                 'trade_rows_delta', :v_trades_delta
             ),
-            null;
+            null
+        );
     else
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            :v_run_id,
-            'PIPELINE_STEP',
             'PROPOSER',
             'SKIPPED_NO_SIGNAL_RUN_ID',
             0,
             object_construct(
                 'step_name', 'proposer',
+                'scope', 'AGG',
+                'scope_key', null,
                 'started_at', :v_proposer_start,
                 'completed_at', :v_proposer_end,
                 'signal_run_id', :v_signal_run_id,
                 'reason', 'NO_SIGNAL_RUN_ID'
             ),
-            null;
+            null
+        );
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            :v_run_id,
-            'PIPELINE_STEP',
             'EXECUTOR',
             'SKIPPED_NO_SIGNAL_RUN_ID',
             0,
             object_construct(
                 'step_name', 'executor',
+                'scope', 'AGG',
+                'scope_key', null,
                 'started_at', :v_executor_start,
                 'completed_at', :v_executor_end,
                 'signal_run_id', :v_signal_run_id,
                 'reason', 'NO_SIGNAL_RUN_ID'
             ),
-            null;
+            null
+        );
     end if;
 
     v_summary := object_construct(

@@ -125,27 +125,15 @@ begin
 
         v_step_end := current_timestamp();
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            PARENT_RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
-            :v_run_id,
+        call MIP.APP.SP_AUDIT_LOG_STEP(
             :P_PARENT_RUN_ID,
-            'PIPELINE_STEP',
             'RETURNS_REFRESH',
             'SUCCESS',
             null,
             object_construct(
                 'step_name', 'returns_refresh',
+                'scope', 'AGG',
+                'scope_key', null,
                 'started_at', :v_step_start,
                 'completed_at', :v_step_end,
                 'latest_market_bars_ts', :v_latest_market_bars_ts,
@@ -153,7 +141,8 @@ begin
                 'market_bars_at_latest_ts', :v_market_bars_at_latest_ts,
                 'returns_at_latest_ts', :v_returns_at_latest_ts
             ),
-            null;
+            null
+        );
 
         return object_construct(
             'status', 'SUCCESS',
@@ -167,31 +156,20 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                PARENT_RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
-                :v_run_id,
+            call MIP.APP.SP_AUDIT_LOG_STEP(
                 :P_PARENT_RUN_ID,
-                'PIPELINE_STEP',
                 'RETURNS_REFRESH',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'returns_refresh',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
 end;

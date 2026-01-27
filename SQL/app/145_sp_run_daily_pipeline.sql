@@ -352,9 +352,9 @@ begin
     v_step_end := current_timestamp();
 
     select
-        coalesce(sum(try_to_number(value:rows_before)), 0),
-        coalesce(sum(try_to_number(value:rows_after)), 0),
-        coalesce(sum(try_to_number(value:inserted_count)), 0)
+        coalesce(sum(try_to_number(value:rows_before::string)), 0),
+        coalesce(sum(try_to_number(value:rows_after::string)), 0),
+        coalesce(sum(try_to_number(value:inserted_count::string)), 0)
       into :v_rows_before,
            :v_rows_after,
            :v_rows_delta
@@ -528,7 +528,7 @@ begin
     v_step_end := current_timestamp();
 
     select
-        coalesce(sum(try_to_number(value:trades)), 0),
+        coalesce(sum(try_to_number(value:trades::string)), 0),
         coalesce(sum(iff(value:entries_blocked::boolean, 1, 0)), 0),
         array_agg(distinct value:block_reason::string),
         array_agg(distinct value:run_id::string)

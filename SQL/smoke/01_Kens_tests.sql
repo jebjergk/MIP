@@ -1,6 +1,9 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
+select event_ts, event_type, event_name, status, error_message,details from mip.app.mip_audit_log order by event_ts desc;
+desc table mip.app.mip_audit_log;
+
 select distinct symbol, market_type from mip.app.ingest_universe;
 
 select * from agent_out.order_proposals;
@@ -8,6 +11,14 @@ desc table agent_out.order_proposals;
 
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
+select * from mip.mart.v_morning_brief_json limit 1;
+desc table mip.app.portfolio;
+
+desc view MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL;
+desc view MIP.app.PORTFOLIO_POSITIONS;
+desc view MIP.MART.V_PORTFOLIO_RISK_GATE;
+
+desc table mip.agent_out.morning_brief;
 select
     PORTFOLIO_ID,
     SYMBOL,

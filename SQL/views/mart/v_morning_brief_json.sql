@@ -4,7 +4,11 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace view MIP.MART.V_MORNING_BRIEF_JSON as
+create or replace view MIP.MART.V_MORNING_BRIEF_JSON (
+    PORTFOLIO_ID,
+    AS_OF_TS,
+    BRIEF
+) as
 with portfolio_scope as (
     select PORTFOLIO_ID
     from MIP.APP.PORTFOLIO

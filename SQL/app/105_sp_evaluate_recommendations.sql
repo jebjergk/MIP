@@ -26,7 +26,13 @@ BEGIN
         'SP_EVALUATE_RECOMMENDATIONS',
         'START',
         NULL,
-        OBJECT_CONSTRUCT('from_ts', :v_from_ts, 'to_ts', :v_to_ts, 'min_return_threshold', :v_thr),
+        OBJECT_CONSTRUCT(
+            'scope', 'AGG',
+            'step_name', 'evaluation',
+            'from_ts', :v_from_ts,
+            'to_ts', :v_to_ts,
+            'min_return_threshold', :v_thr
+        ),
         NULL,
         :v_run_id,
         NULL
@@ -180,7 +186,13 @@ BEGIN
         'SP_EVALUATE_RECOMMENDATIONS',
         'SUCCESS',
         :v_merged,
-        OBJECT_CONSTRUCT('from_ts', :v_from_ts, 'to_ts', :v_to_ts, 'horizon_counts', :v_horizon_counts),
+        OBJECT_CONSTRUCT(
+            'scope', 'AGG',
+            'step_name', 'evaluation',
+            'from_ts', :v_from_ts,
+            'to_ts', :v_to_ts,
+            'horizon_counts', :v_horizon_counts
+        ),
         NULL,
         :v_run_id,
         NULL
@@ -195,7 +207,12 @@ EXCEPTION
             'SP_EVALUATE_RECOMMENDATIONS',
             'FAIL',
             :v_merged,
-            OBJECT_CONSTRUCT('from_ts', :v_from_ts, 'to_ts', :v_to_ts),
+            OBJECT_CONSTRUCT(
+                'scope', 'AGG',
+                'step_name', 'evaluation',
+                'from_ts', :v_from_ts,
+                'to_ts', :v_to_ts
+            ),
             :SQLERRM,
             :v_run_id,
             NULL

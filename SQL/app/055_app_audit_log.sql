@@ -29,7 +29,9 @@ create or replace procedure MIP.APP.SP_LOG_EVENT(
     P_DETAILS variant,
     P_ERROR_MESSAGE string,
     P_RUN_ID string default null,
-    P_PARENT_RUN_ID string default null
+    P_PARENT_RUN_ID string default null,
+    P_ROOT_RUN_ID string default null,
+    P_EVENT_RUN_ID string default null
 )
 returns varchar
 language sql
@@ -37,12 +39,21 @@ execute as owner
 as
 $$
 declare
-    v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
-    v_parent_run_id string := coalesce(
-        nullif(:P_PARENT_RUN_ID, ''),
-        iff(:P_EVENT_TYPE <> 'PIPELINE', nullif(current_query_tag(), ''), null)
-    );
+    v_run_id string;
+    v_parent_run_id string;
 begin
+    if (:P_EVENT_TYPE = 'PIPELINE') then
+        v_run_id := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
+        v_parent_run_id := coalesce(nullif(:P_PARENT_RUN_ID, ''), null);
+    else
+        v_parent_run_id := coalesce(
+            nullif(:P_PARENT_RUN_ID, ''),
+            nullif(:P_ROOT_RUN_ID, ''),
+            nullif(current_query_tag(), '')
+        );
+        v_run_id := coalesce(nullif(:P_EVENT_RUN_ID, ''), uuid_string());
+    end if;
+
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,

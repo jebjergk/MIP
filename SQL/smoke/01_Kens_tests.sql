@@ -6,6 +6,8 @@ select distinct symbol, market_type from mip.app.ingest_universe;
 select * from agent_out.order_proposals;
 desc table agent_out.order_proposals;
 
+call MIP.APP.SP_RUN_DAILY_PIPELINE();
+
 select
     PORTFOLIO_ID,
     SYMBOL,

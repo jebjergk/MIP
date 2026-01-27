@@ -88,7 +88,7 @@ begin
 
     select count(*)
       into :v_open_positions
-      from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
+      from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
      where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
        and p.CURRENT_BAR_INDEX = :v_current_bar_index;
 
@@ -267,7 +267,7 @@ begin
         with held_symbols as (
             select distinct
                 p.SYMBOL
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),
@@ -315,7 +315,7 @@ begin
         with held_symbols as (
             select distinct
                 p.SYMBOL
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),

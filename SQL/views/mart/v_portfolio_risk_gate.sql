@@ -54,7 +54,7 @@ open_positions as (
         max(AS_OF_TS) as AS_OF_TS,
         max(CURRENT_BAR_INDEX) as CURRENT_BAR_INDEX,
         max(OPEN_POSITIONS) as OPEN_POSITIONS
-    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS
+    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
     group by PORTFOLIO_ID
 )
 select

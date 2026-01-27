@@ -15,6 +15,13 @@ declare
     v_requested_to_ts timestamp_ntz := current_timestamp()::timestamp_ntz;
     v_effective_to_ts timestamp_ntz := :v_requested_to_ts;
     v_latest_market_bars_ts timestamp_ntz;
+    v_latest_market_bars_ts_before timestamp_ntz;
+    v_latest_market_bars_ts_after timestamp_ntz;
+    v_has_new_bars boolean := false;
+    v_skip_downstream boolean := false;
+    v_any_step_skipped_or_degraded boolean := false;
+    v_pipeline_status_reason string;
+    v_pipeline_root_status string := 'SUCCESS';
     v_run_id string := uuid_string();
     v_market_types resultset;
     v_market_type string;
@@ -91,6 +98,10 @@ begin
         null
     );
 
+    select max(ts)
+      into :v_latest_market_bars_ts_before
+      from MIP.MART.MARKET_BARS;
+
     v_step_start := current_timestamp();
     begin
         v_ingest_result := (call MIP.APP.SP_PIPELINE_INGEST(:v_run_id));
@@ -136,6 +147,23 @@ begin
     v_rows_after := :v_ingest_result:"rows_after"::number;
     v_rows_delta := coalesce(:v_ingest_result:"rows_delta"::number, :v_rows_after - :v_rows_before);
 
+    select max(ts)
+      into :v_latest_market_bars_ts_after
+      from MIP.MART.MARKET_BARS;
+    v_latest_market_bars_ts := :v_latest_market_bars_ts_after;
+    v_has_new_bars := (
+        :v_latest_market_bars_ts_after is not null
+        and :v_latest_market_bars_ts_before is not null
+        and :v_latest_market_bars_ts_after > :v_latest_market_bars_ts_before
+    );
+    v_skip_downstream := (
+        not :v_has_new_bars
+        and :v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS')
+    );
+    if (:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS')) then
+        v_any_step_skipped_or_degraded := true;
+    end if;
+
     call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
         'INGESTION',
@@ -175,10 +203,6 @@ begin
             null
         );
     end if;
-
-    select max(ts)
-      into :v_latest_market_bars_ts
-      from MIP.MART.MARKET_BARS;
 
     v_effective_to_ts := coalesce(
         least(:v_requested_to_ts, :v_latest_market_bars_ts),
@@ -228,6 +252,147 @@ begin
         ),
         null
     );
+
+    if (v_skip_downstream) then
+        v_step_start := current_timestamp();
+        v_step_end := current_timestamp();
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'RECOMMENDATIONS',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'recommendations',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'EVALUATION',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'evaluation',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'PORTFOLIO_SIMULATION',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'portfolio_simulation',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'TRUSTED_SIGNAL_REFRESH',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'trusted_signal_refresh',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'MORNING_BRIEF',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'morning_brief',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'PROPOSER',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'proposer',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'EXECUTOR',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'executor',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
+        v_pipeline_status_reason := 'RATE_LIMIT';
+        v_pipeline_root_status := 'SUCCESS_WITH_SKIPS';
+        v_summary := object_construct(
+            'run_id', :v_run_id,
+            'from_ts', :v_from_ts,
+            'requested_to_ts', :v_requested_to_ts,
+            'effective_to_ts', :v_effective_to_ts,
+            'latest_market_bars_ts', :v_latest_market_bars_ts,
+            'has_new_bars', :v_has_new_bars,
+            'latest_market_bars_ts_before', :v_latest_market_bars_ts_before,
+            'latest_market_bars_ts_after', :v_latest_market_bars_ts_after,
+            'pipeline_status_reason', :v_pipeline_status_reason,
+            'ingestion', :v_ingest_result,
+            'returns_refresh', :v_returns_result,
+            'recommendations', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'signal_run_id', null
+        );
+        call MIP.APP.SP_LOG_EVENT(
+            'PIPELINE',
+            'SP_RUN_DAILY_PIPELINE',
+            :v_pipeline_root_status,
+            null,
+            :v_summary,
+            null,
+            :v_run_id,
+            null
+        );
+        return :v_summary;
+    end if;
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_MARKET_TYPES (MARKET_TYPE string);
     insert into MIP.APP.TMP_PIPELINE_MARKET_TYPES (MARKET_TYPE)
@@ -476,6 +641,7 @@ begin
             v_trusted_signal_status := 'SUCCESS';
         else
             v_trusted_signal_status := 'SKIPPED_NOT_FOUND';
+            v_any_step_skipped_or_degraded := true;
         end if;
 
         select count(*)
@@ -757,7 +923,11 @@ begin
             ),
             null
         );
+        v_any_step_skipped_or_degraded := true;
     end if;
+
+    v_pipeline_root_status := iff(:v_any_step_skipped_or_degraded, 'SUCCESS_WITH_SKIPS', 'SUCCESS');
+    v_pipeline_status_reason := iff(:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS'), 'RATE_LIMIT', null);
 
     v_summary := object_construct(
         'run_id', :v_run_id,
@@ -765,6 +935,10 @@ begin
         'requested_to_ts', :v_requested_to_ts,
         'effective_to_ts', :v_effective_to_ts,
         'latest_market_bars_ts', :v_latest_market_bars_ts,
+        'has_new_bars', :v_has_new_bars,
+        'latest_market_bars_ts_before', :v_latest_market_bars_ts_before,
+        'latest_market_bars_ts_after', :v_latest_market_bars_ts_after,
+        'pipeline_status_reason', :v_pipeline_status_reason,
         'ingestion', :v_ingest_result,
         'returns_refresh', :v_returns_result,
         'recommendations', :v_recommendation_results,
@@ -782,7 +956,7 @@ begin
     call MIP.APP.SP_LOG_EVENT(
         'PIPELINE',
         'SP_RUN_DAILY_PIPELINE',
-        'SUCCESS',
+        :v_pipeline_root_status,
         null,
         :v_summary,
         null,

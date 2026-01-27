@@ -332,7 +332,7 @@ select
             'latest_run_id', lrun.run_id,
             'by_market_type', coalesce(bmt.items, array_construct())
         )
-    ) as BRIEF;
+    ) as BRIEF
 from portfolio_scope p
 cross join trusted_now tn
 cross join watch_negative wn

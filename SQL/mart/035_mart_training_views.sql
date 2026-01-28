@@ -1,113 +1,86 @@
 -- 035_mart_training_views.sql
--- Purpose: Base join of signals + outcomes + pattern metadata, training KPIs, and leaderboard rankings.
+-- Purpose: Base join of signals + outcomes, training KPIs, and leaderboard.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -- ------------------------------------------------------------------------------
 -- V_SIGNAL_OUTCOMES_BASE
--- One row per (recommendation_id, horizon_bars). Clean join of LOG + OUTCOMES + PATTERN_DEFINITION.
+-- One row per (recommendation_id, horizon_bars). LOG join OUTCOMES on RECOMMENDATION_ID only.
+-- All LOG columns, all OUTCOMES columns, plus derived: hit_int, is_success, hold_minutes.
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_SIGNAL_OUTCOMES_BASE as
 select
     r.RECOMMENDATION_ID,
-    o.HORIZON_BARS,
     r.PATTERN_ID,
-    p.NAME as PATTERN_NAME,
-    r.MARKET_TYPE,
     r.SYMBOL,
+    r.MARKET_TYPE,
     r.INTERVAL_MINUTES,
-    r.TS as TS,
-    o.REALIZED_RETURN as RETURN_REALIZED,
-    o.HIT_FLAG as HIT_FLAG
+    r.TS as SIGNAL_TS,
+    r.GENERATED_AT,
+    r.SCORE,
+    r.DETAILS,
+    o.HORIZON_BARS,
+    o.ENTRY_TS,
+    o.EXIT_TS,
+    o.ENTRY_PRICE,
+    o.EXIT_PRICE,
+    o.REALIZED_RETURN,
+    o.DIRECTION,
+    o.HIT_FLAG,
+    o.HIT_RULE,
+    o.MIN_RETURN_THRESHOLD,
+    o.EVAL_STATUS,
+    o.CALCULATED_AT,
+    iff(o.HIT_FLAG, 1, 0) as HIT_INT,
+    (o.EVAL_STATUS = 'SUCCESS') as IS_SUCCESS,
+    iff(o.EXIT_TS is null, null, datediff('minute', o.ENTRY_TS, o.EXIT_TS)) as HOLD_MINUTES
 from MIP.APP.RECOMMENDATION_LOG r
 join MIP.APP.RECOMMENDATION_OUTCOMES o
-  on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
-join MIP.APP.PATTERN_DEFINITION p
-  on p.PATTERN_ID = r.PATTERN_ID;
+  on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID;
 
 -- ------------------------------------------------------------------------------
 -- V_TRAINING_KPIS
--- Aggregated metrics by (pattern_id, market_type, interval_minutes, horizon_bars).
--- Uses EVAL_STATUS = 'SUCCESS' and non-null REALIZED_RETURN only.
+-- Aggregated by (PATTERN_ID, MARKET_TYPE, INTERVAL_MINUTES, HORIZON_BARS).
+-- Success-only metrics use FILTER (WHERE is_success).
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRAINING_KPIS as
-select
-    r.PATTERN_ID,
-    r.MARKET_TYPE,
-    r.INTERVAL_MINUTES,
-    o.HORIZON_BARS,
-    count(*) as N_SIGNALS,
-    avg(case when o.HIT_FLAG then 1 else 0 end) as HIT_RATE,
-    avg(o.REALIZED_RETURN) as AVG_RETURN,
-    median(o.REALIZED_RETURN) as MEDIAN_RETURN,
-    stddev_samp(o.REALIZED_RETURN) as STDDEV_RETURN,
-    min(o.REALIZED_RETURN) as MIN_RETURN,
-    max(o.REALIZED_RETURN) as MAX_RETURN,
-    avg(o.REALIZED_RETURN) / nullif(stddev_samp(o.REALIZED_RETURN), 0) as SHARPE_LIKE,
-    max(r.TS) as LAST_SIGNAL_TS
-from MIP.APP.RECOMMENDATION_OUTCOMES o
-join MIP.APP.RECOMMENDATION_LOG r
-  on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
-where o.EVAL_STATUS = 'SUCCESS'
-  and o.REALIZED_RETURN is not null
-group by
-    r.PATTERN_ID,
-    r.MARKET_TYPE,
-    r.INTERVAL_MINUTES,
-    o.HORIZON_BARS;
-
--- ------------------------------------------------------------------------------
--- V_TRAINING_LEADERBOARD
--- Same KPIs as V_TRAINING_KPIS but ranked: Top 10 by HIT_RATE, SHARPE_LIKE, AVG_RETURN.
--- rank_category: 'HIT_RATE' | 'SHARPE_LIKE' | 'AVG_RETURN'
--- ------------------------------------------------------------------------------
-create or replace view MIP.MART.V_TRAINING_LEADERBOARD as
-with kpis as (
-    select * from MIP.MART.V_TRAINING_KPIS
-),
-ranked as (
-    select
-        *,
-        'HIT_RATE' as RANK_CATEGORY,
-        row_number() over (order by HIT_RATE desc nulls last) as RN
-    from kpis
-    union all
-    select
-        *,
-        'SHARPE_LIKE',
-        row_number() over (order by SHARPE_LIKE desc nulls last)
-    from kpis
-    union all
-    select
-        *,
-        'AVG_RETURN',
-        row_number() over (order by AVG_RETURN desc nulls last)
-    from kpis
-)
 select
     PATTERN_ID,
     MARKET_TYPE,
     INTERVAL_MINUTES,
     HORIZON_BARS,
-    N_SIGNALS,
-    HIT_RATE,
-    AVG_RETURN,
-    MEDIAN_RETURN,
-    STDDEV_RETURN,
-    MIN_RETURN,
-    MAX_RETURN,
-    SHARPE_LIKE,
-    LAST_SIGNAL_TS,
-    RANK_CATEGORY,
-    RN as RANK_NUMBER
-from ranked
-where RN <= 10;
+    count(*) as N_SIGNALS,
+    count_if(IS_SUCCESS) as N_SUCCESS,
+    avg(HIT_INT) filter (where IS_SUCCESS) as HIT_RATE_SUCCESS,
+    avg(REALIZED_RETURN) filter (where IS_SUCCESS) as AVG_RETURN_SUCCESS,
+    median(REALIZED_RETURN) filter (where IS_SUCCESS) as MEDIAN_RETURN_SUCCESS,
+    stddev(REALIZED_RETURN) filter (where IS_SUCCESS) as STDDEV_RETURN_SUCCESS,
+    avg(abs(REALIZED_RETURN)) filter (where IS_SUCCESS) as AVG_ABS_RETURN_SUCCESS,
+    avg(REALIZED_RETURN) filter (where IS_SUCCESS)
+        / nullif(stddev(REALIZED_RETURN) filter (where IS_SUCCESS), 0) as SHARPE_LIKE_SUCCESS,
+    max(SIGNAL_TS) as LAST_SIGNAL_TS
+from MIP.MART.V_SIGNAL_OUTCOMES_BASE
+group by
+    PATTERN_ID,
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    HORIZON_BARS;
 
 -- ------------------------------------------------------------------------------
--- Acceptance tests (SQL checks) — run after deploy; use in PR description.
+-- V_TRAINING_LEADERBOARD
+-- V_TRAINING_KPIS filtered to n_success >= 30 (min_success_signals).
+-- Rank by: sharpe_like_success desc, hit_rate_success desc, avg_return_success desc.
+-- Views cannot parameterize; 30 is documented as the default.
 -- ------------------------------------------------------------------------------
--- select * from MIP.MART.V_TRAINING_KPIS limit 20;
+create or replace view MIP.MART.V_TRAINING_LEADERBOARD as
+select *
+from MIP.MART.V_TRAINING_KPIS
+where N_SUCCESS >= 30;
+
+-- ------------------------------------------------------------------------------
+-- Acceptance tests — run after deploy; use in PR description.
+-- ------------------------------------------------------------------------------
+-- select * from MIP.MART.V_SIGNAL_OUTCOMES_BASE order by CALCULATED_AT desc limit 20;
+-- select * from MIP.MART.V_TRAINING_KPIS order by sharpe_like_success desc nulls last limit 25;
 -- select * from MIP.MART.V_TRAINING_LEADERBOARD limit 50;
--- should be > 0 if outcomes exist
--- select count(*) from MIP.MART.V_SIGNAL_OUTCOMES_BASE;

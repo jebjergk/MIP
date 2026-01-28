@@ -81,6 +81,11 @@ Legend: ✅ done • 🟨 in progress • ⬜ planned • 🧪 experimental • 
 - **Portfolio KPIs**: `MIP.MART.V_PORTFOLIO_RUN_KPIS`, `MIP.MART.V_PORTFOLIO_RUN_EVENTS`.【F:SQL/views/mart/v_portfolio_run_kpis.sql†L1-L122】【F:SQL/views/mart/v_portfolio_run_events.sql†L1-L62】
 - **Morning brief**: `MIP.MART.V_MORNING_BRIEF_JSON` → `MIP.AGENT_OUT.MORNING_BRIEF`.【F:SQL/views/mart/v_morning_brief_json.sql†L1-L139】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】
 
+### Training Views
+- **`MIP.MART.V_SIGNAL_OUTCOMES_BASE`**: One row per `(recommendation_id, horizon_bars)`. Join of `RECOMMENDATION_LOG`, `RECOMMENDATION_OUTCOMES`, and `PATTERN_DEFINITION`. Columns include `pattern_id`, `pattern_name`, `market_type`, `symbol`, `interval_minutes`, `ts`, `horizon_bars`, `return_realized`, `hit_flag`.【F:SQL/mart/035_mart_training_views.sql】
+- **`MIP.MART.V_TRAINING_KPIS`**: Aggregates by `(pattern_id, market_type, interval_minutes, horizon_bars)`. Metrics: `n_signals`, `hit_rate`, `avg_return`, `median_return`, `stddev_return`, `min_return`, `max_return`, `sharpe_like`, `last_signal_ts`.【F:SQL/mart/035_mart_training_views.sql】
+- **`MIP.MART.V_TRAINING_LEADERBOARD`**: Same KPIs, ranked. Top 10 by `hit_rate`, by `sharpe_like`, and by `avg_return`. Includes `rank_category` (`HIT_RATE` | `SHARPE_LIKE` | `AVG_RETURN`) and `rank_number`.【F:SQL/mart/035_mart_training_views.sql】
+
 ## Operating assumptions
 - **Snowflake roles & warehouse**: `MIP_ADMIN_ROLE`, `MIP_APP_ROLE`, and `MIP_WH_XS` are defined for secure execution and scheduling.【F:SQL/bootstrap/001_bootstrap_mip_infra.sql†L7-L92】
 - **Agent view of truth**: morning brief JSON is the canonical consumable agent payload, derived from trusted MART views and persisted to AGENT_OUT.【F:SQL/views/mart/v_morning_brief_json.sql†L1-L139】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】

@@ -752,7 +752,7 @@ begin
                         'completed_at', current_timestamp(),
                         'signal_run_id', :v_signal_run_id
                     ),
-                    sqlerrm
+                    :sqlerrm
                 );
                 raise;
         end;

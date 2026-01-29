@@ -35,6 +35,8 @@ declare
     v_brief_json        variant;
     v_brief_id          number;
     v_generated_at      timestamp_ntz := current_timestamp();
+    v_training_rs       resultset;
+    v_candidate_rs      resultset;
 begin
     -- Configurable min_n_signals for candidate_summary (default 20)
     select coalesce(try_to_number(CONFIG_VALUE), 20)
@@ -69,74 +71,83 @@ begin
         'stop_reason', :v_stop_reason
     );
 
-    -- Training summary: top 5 from V_TRAINING_LEADERBOARD
-    select array_agg(obj) within group (order by rn)
-      into :v_training_top5
-      from (
-        select
-            row_number() over (order by SHARPE_LIKE_SUCCESS desc nulls last, HIT_RATE_SUCCESS desc nulls last, AVG_RETURN_SUCCESS desc nulls last) as rn,
-            object_construct(
-                'pattern_id', PATTERN_ID,
-                'market_type', MARKET_TYPE,
-                'interval_minutes', INTERVAL_MINUTES,
-                'horizon_bars', HORIZON_BARS,
-                'n_signals', N_SIGNALS,
-                'n_success', N_SUCCESS,
-                'hit_rate_success', HIT_RATE_SUCCESS,
-                'avg_return_success', AVG_RETURN_SUCCESS,
-                'sharpe_like_success', SHARPE_LIKE_SUCCESS
-            ) as obj
-        from MIP.MART.V_TRAINING_LEADERBOARD
-        qualify rn <= 5
-      ) t;
+    -- Training summary: top 5 from V_TRAINING_LEADERBOARD (resultset to avoid SELECT...INTO context)
+    v_training_rs := (
+        select array_agg(obj) within group (order by rn) as agg
+        from (
+            select
+                row_number() over (order by SHARPE_LIKE_SUCCESS desc nulls last, HIT_RATE_SUCCESS desc nulls last, AVG_RETURN_SUCCESS desc nulls last) as rn,
+                object_construct(
+                    'pattern_id', PATTERN_ID,
+                    'market_type', MARKET_TYPE,
+                    'interval_minutes', INTERVAL_MINUTES,
+                    'horizon_bars', HORIZON_BARS,
+                    'n_signals', N_SIGNALS,
+                    'n_success', N_SUCCESS,
+                    'hit_rate_success', HIT_RATE_SUCCESS,
+                    'avg_return_success', AVG_RETURN_SUCCESS,
+                    'sharpe_like_success', SHARPE_LIKE_SUCCESS
+                ) as obj
+            from MIP.MART.V_TRAINING_LEADERBOARD
+            qualify rn <= 5
+        ) t
+    );
+    for rec in v_training_rs do
+        v_training_top5 := rec.agg;
+        break;
+    end for;
     v_training_summary := coalesce(:v_training_top5, array_construct());
 
     -- Candidate summary: top 5 "paper candidates" from V_TRUSTED_SIGNALS_LATEST_TS (this run)
-    -- Rank by (hit_rate_success * avg_return_success), guard n_signals >= v_min_n_signals
-    -- Use nested subqueries (no WITH) so SELECT...INTO is allowed
-    select array_agg(obj) within group (order by rn)
-      into :v_candidate_top5
-      from (
-        select
-            rn,
-            object_construct(
-                'recommendation_id', RECOMMENDATION_ID,
-                'pattern_id', PATTERN_ID,
-                'symbol', SYMBOL,
-                'market_type', MARKET_TYPE,
-                'interval_minutes', INTERVAL_MINUTES,
-                'horizon_bars', HORIZON_BARS,
-                'score', SCORE,
-                'n_signals', N_SIGNALS,
-                'hit_rate_success', HIT_RATE_SUCCESS,
-                'avg_return_success', AVG_RETURN_SUCCESS,
-                'ranking_score', RANKING_SCORE
-            ) as obj
+    -- Rank by (hit_rate_success * avg_return_success), guard n_signals >= v_min_n_signals (resultset to avoid SELECT...INTO)
+    v_candidate_rs := (
+        select array_agg(obj) within group (order by rn) as agg
         from (
             select
-                RECOMMENDATION_ID,
-                PATTERN_ID,
-                SYMBOL,
-                MARKET_TYPE,
-                INTERVAL_MINUTES,
-                HORIZON_BARS,
-                SCORE,
-                N_SIGNALS,
-                HIT_RATE_SUCCESS,
-                AVG_RETURN_SUCCESS,
-                (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) as RANKING_SCORE,
-                row_number() over (
-                    order by (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) desc nulls last,
-                             SCORE desc nulls last,
-                             RECOMMENDATION_ID
-                ) as rn
-            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-            where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID
-                   or to_varchar(P_SIGNAL_RUN_ID) = RUN_ID)
-              and coalesce(N_SIGNALS, 0) >= :v_min_n_signals
-        ) ranked
-        where rn <= 5
-      ) sub;
+                rn,
+                object_construct(
+                    'recommendation_id', RECOMMENDATION_ID,
+                    'pattern_id', PATTERN_ID,
+                    'symbol', SYMBOL,
+                    'market_type', MARKET_TYPE,
+                    'interval_minutes', INTERVAL_MINUTES,
+                    'horizon_bars', HORIZON_BARS,
+                    'score', SCORE,
+                    'n_signals', N_SIGNALS,
+                    'hit_rate_success', HIT_RATE_SUCCESS,
+                    'avg_return_success', AVG_RETURN_SUCCESS,
+                    'ranking_score', RANKING_SCORE
+                ) as obj
+            from (
+                select
+                    RECOMMENDATION_ID,
+                    PATTERN_ID,
+                    SYMBOL,
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    HORIZON_BARS,
+                    SCORE,
+                    N_SIGNALS,
+                    HIT_RATE_SUCCESS,
+                    AVG_RETURN_SUCCESS,
+                    (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) as RANKING_SCORE,
+                    row_number() over (
+                        order by (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) desc nulls last,
+                                 SCORE desc nulls last,
+                                 RECOMMENDATION_ID
+                    ) as rn
+                from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+                where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID
+                       or to_varchar(P_SIGNAL_RUN_ID) = RUN_ID)
+                  and coalesce(N_SIGNALS, 0) >= :v_min_n_signals
+            ) ranked
+            where rn <= 5
+        ) sub
+    );
+    for rec in v_candidate_rs do
+        v_candidate_top5 := rec.agg;
+        break;
+    end for;
     v_candidate_top5 := coalesce(:v_candidate_top5, array_construct());
     if (array_size(:v_candidate_top5) = 0) then
         select

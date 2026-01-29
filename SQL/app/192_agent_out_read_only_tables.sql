@@ -15,7 +15,7 @@ create table if not exists MIP.AGENT_OUT.AGENT_RUN_LOG (
     RUN_ID          varchar(64)   not null,
     AGENT_NAME      varchar(128)  not null,
     AS_OF_TS        timestamp_ntz,
-    SIGNAL_RUN_ID    number,
+    SIGNAL_RUN_ID   varchar(64),  -- pipeline run id (UUID) or numeric string for deterministic tie-back
     STATUS          varchar(64)   not null,
     INPUTS_JSON     variant,
     OUTPUTS_JSON    variant,

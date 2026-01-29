@@ -215,8 +215,7 @@ begin
                             RECOMMENDATION_ID
                     ) as rn
                 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-                where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID
-                       or to_varchar(:P_SIGNAL_RUN_ID) = RUN_ID)
+                where RUN_ID = to_varchar(:P_SIGNAL_RUN_ID)
                   and (
                       (coalesce(CONFIDENCE, 'HIGH') = 'HIGH' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals)
                       or (coalesce(CONFIDENCE, 'LOW') = 'LOW' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals_bootstrap)
@@ -236,7 +235,7 @@ begin
             select case
                 when not exists (
                     select 1 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-                    where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID or to_varchar(:P_SIGNAL_RUN_ID) = RUN_ID)
+                    where RUN_ID = to_varchar(:P_SIGNAL_RUN_ID)
                 ) then 'no_trusted_signals_at_latest_ts'
                 else 'no_candidates_with_min_n_signals'
             end
@@ -244,7 +243,7 @@ begin
         v_candidate_diagnostics := object_construct(
             'as_of_ts', :P_AS_OF_TS,
             'signal_run_id', :P_SIGNAL_RUN_ID,
-            'view_raw_count', (select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID or to_varchar(:P_SIGNAL_RUN_ID) = RUN_ID),
+            'view_raw_count', (select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where RUN_ID = to_varchar(:P_SIGNAL_RUN_ID)),
             'reason', :v_candidate_reason
         );
     end if;

@@ -50,7 +50,10 @@ declare
     v_training_count       number := 0;
     v_candidate_count      number := 0;
     v_effective_min_signals number;
-    v_run_id               string;
+    v_run_id                string;
+    v_audit_details         variant;
+    v_inputs_json           variant;
+    v_outputs_json          variant;
 begin
     -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF
     v_config_rs := (select MIN_N_SIGNALS, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, RANKING_FORMULA_TYPE, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
@@ -316,6 +319,12 @@ begin
 
     -- One audit event (EVENT_TYPE='AGENT', EVENT_NAME='SP_AGENT_GENERATE_MORNING_BRIEF')
     v_run_id := (select uuid_string());
+    v_audit_details := object_construct(
+        'as_of_ts', :P_AS_OF_TS,
+        'signal_run_id', :P_SIGNAL_RUN_ID,
+        'agent_name', :v_agent_name,
+        'brief_id', :v_brief_id
+    );
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
@@ -334,17 +343,14 @@ begin
         'SP_AGENT_GENERATE_MORNING_BRIEF',
         :v_status,
         1,
-        object_construct(
-            'as_of_ts', :P_AS_OF_TS,
-            'signal_run_id', :P_SIGNAL_RUN_ID,
-            'agent_name', :v_agent_name,
-            'brief_id', :v_brief_id
-        )
+        :v_audit_details
     );
 
     -- P1: AGENT_RUN_LOG with rowcounts for observability (success path)
     begin
         v_run_id := (select uuid_string());
+        v_inputs_json := object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
+        v_outputs_json := object_construct('training_count', :v_training_count, 'candidate_count', :v_candidate_count, 'brief_id', :v_brief_id);
         insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
             RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, CREATED_AT
         )
@@ -354,8 +360,8 @@ begin
             :P_AS_OF_TS,
             :P_SIGNAL_RUN_ID,
             'SUCCESS',
-            object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID),
-            object_construct('training_count', :v_training_count, 'candidate_count', :v_candidate_count, 'brief_id', :v_brief_id),
+            :v_inputs_json,
+            :v_outputs_json,
             current_timestamp()
         );
     exception
@@ -369,6 +375,7 @@ exception
     when other then
         v_status := 'ERROR';
         v_run_id := (select uuid_string());
+        v_audit_details := object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name);
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -388,12 +395,13 @@ exception
             'SP_AGENT_GENERATE_MORNING_BRIEF',
             :v_status,
             0,
-            object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name),
+            :v_audit_details,
             :sqlerrm
         );
         -- Optionally write AGENT_RUN_LOG if table exists (run in same proc; ignore errors on insert)
         begin
             v_run_id := (select uuid_string());
+            v_inputs_json := object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
             insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
                 RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, ERROR_MESSAGE, CREATED_AT
             )
@@ -403,7 +411,7 @@ exception
                 :P_AS_OF_TS,
                 :P_SIGNAL_RUN_ID,
                 'ERROR',
-                object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID),
+                :v_inputs_json,
                 null,
                 :sqlerrm,
                 current_timestamp()

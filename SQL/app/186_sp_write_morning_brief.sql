@@ -118,28 +118,32 @@ begin
             BRIEF:attribution:latest_run_id::string as run_id,
             AS_OF_TS as as_of_ts,
             BRIEF as brief,
-            :P_PIPELINE_RUN_ID as pipeline_run_id
+            :P_PIPELINE_RUN_ID as pipeline_run_id,
+            cast(null as varchar(128)) as agent_name
         from MIP.MART.V_MORNING_BRIEF_JSON
         where PORTFOLIO_ID = :P_PORTFOLIO_ID
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
+   and target.AS_OF_TS = source.AS_OF_TS
    and target.RUN_ID = source.RUN_ID
+   and coalesce(target.AGENT_NAME, '') = coalesce(source.AGENT_NAME, '')
     when matched then update set
         target.BRIEF = source.BRIEF,
-        target.AS_OF_TS = source.AS_OF_TS,
         target.PIPELINE_RUN_ID = source.PIPELINE_RUN_ID
     when not matched then insert (
         PORTFOLIO_ID,
         RUN_ID,
-        BRIEF,
         AS_OF_TS,
-        PIPELINE_RUN_ID
+        BRIEF,
+        PIPELINE_RUN_ID,
+        AGENT_NAME
     ) values (
         source.PORTFOLIO_ID,
         source.RUN_ID,
-        source.BRIEF,
         source.AS_OF_TS,
-        source.PIPELINE_RUN_ID
+        source.BRIEF,
+        source.PIPELINE_RUN_ID,
+        source.AGENT_NAME
     );
 
     return object_construct(

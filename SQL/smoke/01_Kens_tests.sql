@@ -5,14 +5,14 @@ ALTER GIT REPOSITORY MIP.APP.MIP FETCH;
 
 
 select * from mip.app.mip_audit_log order by event_ts desc;
-desc table mip.app.recommendation_log;
+desc table MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
 
 --drop table mip.agent_out.agent_morning_brief;
 
-select signal_run_id, count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS group by 1 order by 2 desc;
+select RUN_ID, count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS group by 1 order by 2 desc;
 
 -- Run the pipeline once before executing this smoke SQL.
-select distinct signal_run_id from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
+select distinct RUN_ID from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
 select * from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
 select * from MIP.MART.V_TRAINING_KPIS limit 20;
 select * from MIP.MART.V_TRAINING_LEADERBOARD limit 50;
@@ -66,8 +66,13 @@ where PROPOSAL_ID in (
 
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
--- Smoke: agent morning brief (RUN_ID = pipeline UUID). Run pipeline once first.
-select * from MIP.AGENT_OUT.MORNING_BRIEF order by created_at desc limit 5;
--- Candidate section is non-empty when V_TRUSTED_SIGNALS_LATEST_TS has rows for that run_id:
--- select RUN_ID, count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS group by RUN_ID;
--- Then check BRIEF_JSON:candidate_summary (or brief->candidate_summary) for same RUN_ID.
+-- D) Smoke: MORNING_BRIEF (RUN_ID = pipeline UUID). Run pipeline once first.
+select *
+from MIP.AGENT_OUT.MORNING_BRIEF
+order by created_at desc
+limit 5;
+
+-- Validate candidates exist when trusted signals exist for that run (use a run_id from above):
+-- set run_id = '<paste RUN_ID from MORNING_BRIEF>';
+-- select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where run_id = :run_id;
+-- Then check BRIEF_JSON: candidate_summary.candidates is non-empty when count > 0.

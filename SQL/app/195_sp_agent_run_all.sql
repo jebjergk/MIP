@@ -33,7 +33,9 @@ begin
             select BRIEF_ID
             from MIP.AGENT_OUT.MORNING_BRIEF
             where PORTFOLIO_ID = 0
+              and AS_OF_TS = :P_AS_OF_TS
               and RUN_ID = :P_RUN_ID
+              and AGENT_NAME = :v_agent_name
             limit 1
         );
     end if;

@@ -1,6 +1,6 @@
 -- 193_sp_agent_generate_morning_brief.sql
 -- Purpose: Read-only agent morning brief: build BRIEF_JSON from MART views, write to AGENT_OUT.MORNING_BRIEF (PORTFOLIO_ID=0 for agent briefs).
--- Deterministic for (as_of_ts, run_id, agent_name). Upsert by (PORTFOLIO_ID=0, RUN_ID).
+-- Deterministic for (as_of_ts, run_id, agent_name). Upsert by (AS_OF_TS, RUN_ID, AGENT_NAME).
 -- Note: Avoid SELECT...INTO in Snowflake procedures; use := (SELECT ...) or RESULTSET + FOR loop. See MIP/docs/SNOWFLAKE_SQL_LIMITATIONS.md.
 
 use role MIP_ADMIN_ROLE;
@@ -169,83 +169,94 @@ begin
         'fallback_used', :v_training_fallback
     );
 
-    -- Candidate summary: top N from V_TRUSTED_SIGNALS_LATEST_TS (this run). Rank by formula type; if 0, emit empty list + diagnostics.
-    v_candidate_rs := (
-        select array_agg(obj) within group (order by rn) as agg
-        from (
-            select
-                rn,
-                object_construct(
-                    'recommendation_id', RECOMMENDATION_ID,
-                    'pattern_id', PATTERN_ID,
-                    'symbol', SYMBOL,
-                    'market_type', MARKET_TYPE,
-                    'interval_minutes', INTERVAL_MINUTES,
-                    'horizon_bars', HORIZON_BARS,
-                    'score', SCORE,
-                    'n_signals', N_SIGNALS,
-                    'confidence', CONFIDENCE,
-                    'hit_rate_success', HIT_RATE_SUCCESS,
-                    'avg_return_success', AVG_RETURN_SUCCESS,
-                    'sharpe_like_success', SHARPE_LIKE_SUCCESS,
-                    'ranking_score', RANKING_SCORE
-                ) as obj
+    -- Candidate summary: top N from V_TRUSTED_SIGNALS_LATEST_TS where RUN_ID = :p_run_id.
+    -- Order: (HIT_RATE_SUCCESS * AVG_RETURN_SUCCESS) desc, SHARPE_LIKE_SUCCESS desc, SCORE desc, N_SIGNALS desc; take top_n_candidates.
+    -- Guard: if P_RUN_ID is null or candidate count = 0, set reason + diagnostics (expected run_id, counts by run_id near latest ts).
+    if (P_RUN_ID is null) then
+        v_candidate_reason := 'no_trusted_signals_for_run_id';
+        v_candidate_diagnostics := object_construct(
+            'expected_run_id', :P_RUN_ID,
+            'reason', :v_candidate_reason,
+            'note', 'P_RUN_ID was null; V_TRUSTED_SIGNALS_LATEST_TS is RUN_ID-keyed'
+        );
+        v_candidate_top5 := array_construct();
+    else
+        v_candidate_rs := (
+            select array_agg(obj) within group (order by rn) as agg
             from (
                 select
-                    RECOMMENDATION_ID,
-                    PATTERN_ID,
-                    SYMBOL,
-                    MARKET_TYPE,
-                    INTERVAL_MINUTES,
-                    HORIZON_BARS,
-                    SCORE,
-                    N_SIGNALS,
-                    CONFIDENCE,
-                    HIT_RATE_SUCCESS,
-                    AVG_RETURN_SUCCESS,
-                    SHARPE_LIKE_SUCCESS,
-                    iff(:v_ranking_formula_type = 'SHARPE_LIKE',
-                        coalesce(SHARPE_LIKE_SUCCESS, -999),
-                        coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) as RANKING_SCORE,
-                    row_number() over (
-                        order by
-                            iff(:v_ranking_formula_type = 'SHARPE_LIKE', SHARPE_LIKE_SUCCESS, (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0))) desc nulls last,
-                            SCORE desc nulls last,
-                            RECOMMENDATION_ID
-                    ) as rn
-                from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-                where RUN_ID = :P_RUN_ID
-                  and (
-                      (coalesce(CONFIDENCE, 'HIGH') = 'HIGH' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals)
-                      or (coalesce(CONFIDENCE, 'LOW') = 'LOW' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals_bootstrap)
-                  )
-            ) ranked
-            where rn <= :v_top_n_candidates
-        ) sub
-    );
-    for rec in v_candidate_rs do
-        v_candidate_top5 := rec.agg;
-        break;
-    end for;
-    v_candidate_top5 := coalesce(:v_candidate_top5, array_construct());
-    v_candidate_count := array_size(:v_candidate_top5);
-    if (v_candidate_count = 0) then
-        v_candidate_reason := (
-            select case
-                when not exists (
-                    select 1 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+                    rn,
+                    object_construct(
+                        'recommendation_id', RECOMMENDATION_ID,
+                        'pattern_id', PATTERN_ID,
+                        'symbol', SYMBOL,
+                        'market_type', MARKET_TYPE,
+                        'interval_minutes', INTERVAL_MINUTES,
+                        'horizon_bars', HORIZON_BARS,
+                        'score', SCORE,
+                        'n_signals', N_SIGNALS,
+                        'confidence', CONFIDENCE,
+                        'hit_rate_success', HIT_RATE_SUCCESS,
+                        'avg_return_success', AVG_RETURN_SUCCESS,
+                        'sharpe_like_success', SHARPE_LIKE_SUCCESS,
+                        'ranking_score', RANKING_SCORE
+                    ) as obj
+                from (
+                    select
+                        RECOMMENDATION_ID,
+                        PATTERN_ID,
+                        SYMBOL,
+                        MARKET_TYPE,
+                        INTERVAL_MINUTES,
+                        HORIZON_BARS,
+                        SCORE,
+                        N_SIGNALS,
+                        CONFIDENCE,
+                        HIT_RATE_SUCCESS,
+                        AVG_RETURN_SUCCESS,
+                        SHARPE_LIKE_SUCCESS,
+                        (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) as RANKING_SCORE,
+                        row_number() over (
+                            order by
+                                (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) desc nulls last,
+                                coalesce(SHARPE_LIKE_SUCCESS, -999) desc nulls last,
+                                SCORE desc nulls last,
+                                N_SIGNALS desc nulls last,
+                                RECOMMENDATION_ID
+                        ) as rn
+                    from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
                     where RUN_ID = :P_RUN_ID
-                ) then 'no_trusted_signals_at_latest_ts'
-                else 'no_candidates_with_min_n_signals'
-            end
+                      and (
+                          (coalesce(CONFIDENCE, 'HIGH') = 'HIGH' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals)
+                          or (coalesce(CONFIDENCE, 'LOW') = 'LOW' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals_bootstrap)
+                      )
+                ) ranked
+                where rn <= :v_top_n_candidates
+            ) sub
         );
-        v_candidate_diagnostics := object_construct(
-            'as_of_ts', :P_AS_OF_TS,
-            'run_id', :P_RUN_ID,
-            'view_raw_count', (select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where RUN_ID = :P_RUN_ID),
-            'reason', :v_candidate_reason
-        );
+        for rec in v_candidate_rs do
+            v_candidate_top5 := rec.agg;
+            break;
+        end for;
+        v_candidate_top5 := coalesce(:v_candidate_top5, array_construct());
+        v_candidate_count := array_size(:v_candidate_top5);
+        if (v_candidate_count = 0) then
+            v_candidate_reason := 'no_trusted_signals_for_run_id';
+            v_candidate_diagnostics := object_construct(
+                'expected_run_id', :P_RUN_ID,
+                'as_of_ts', :P_AS_OF_TS,
+                'view_raw_count_for_run', (select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where RUN_ID = :P_RUN_ID),
+                'counts_by_run_id_near_latest_ts', (
+                    select array_agg(object_construct('run_id', RUN_ID, 'cnt', c)) within group (order by c desc)
+                    from (select RUN_ID, count(*) as c from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS group by RUN_ID)
+                ),
+                'reason', :v_candidate_reason
+            );
+        else
+            v_candidate_diagnostics := null;
+        end if;
     end if;
+    v_candidate_count := array_size(:v_candidate_top5);
     -- Contract: always same keys (candidates array, reason, fallback_used, diagnostics)
     v_candidate_summary := object_construct(
         'candidates', :v_candidate_top5,
@@ -297,7 +308,7 @@ begin
         'data_lineage', :v_data_lineage
     );
 
-    -- Upsert into MIP.AGENT_OUT.MORNING_BRIEF: agent rows use PORTFOLIO_ID=0, RUN_ID=UUID (P_RUN_ID); unique (PORTFOLIO_ID, RUN_ID)
+    -- Upsert into MIP.AGENT_OUT.MORNING_BRIEF on (AS_OF_TS, RUN_ID, AGENT_NAME). SIGNAL_RUN_ID populated only if available; not used for joins.
     merge into MIP.AGENT_OUT.MORNING_BRIEF t
     using (
         select
@@ -312,13 +323,11 @@ begin
             :v_generated_at as CREATED_AT,
             :P_RUN_ID as SIGNAL_RUN_ID
     ) s
-    on t.PORTFOLIO_ID = s.PORTFOLIO_ID and t.RUN_ID = s.RUN_ID
+    on t.PORTFOLIO_ID = s.PORTFOLIO_ID and t.AS_OF_TS = s.AS_OF_TS and coalesce(t.RUN_ID, '') = coalesce(s.RUN_ID, '') and t.AGENT_NAME = s.AGENT_NAME
     when matched then
         update set
-            t.AS_OF_TS = s.AS_OF_TS,
             t.BRIEF = s.BRIEF,
             t.PIPELINE_RUN_ID = s.PIPELINE_RUN_ID,
-            t.AGENT_NAME = s.AGENT_NAME,
             t.STATUS = s.STATUS,
             t.BRIEF_JSON = s.BRIEF_JSON,
             t.CREATED_AT = s.CREATED_AT,
@@ -331,7 +340,9 @@ begin
         select BRIEF_ID
         from MIP.AGENT_OUT.MORNING_BRIEF
         where PORTFOLIO_ID = 0
+          and AS_OF_TS = :P_AS_OF_TS
           and RUN_ID = :P_RUN_ID
+          and AGENT_NAME = :v_agent_name
         limit 1
     );
 

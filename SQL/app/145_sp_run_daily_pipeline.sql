@@ -728,11 +728,11 @@ begin
     -- Use current pipeline run id as signal_run_id so agent ties back to recommendations we just generated (DETAILS:run_id = v_run_id).
     v_signal_run_id := :v_run_id;
 
-    -- [A4] Agent step: call SP_AGENT_RUN_ALL with pipeline run id so brief filters by RUN_ID deterministically
+    -- [A4] Agent step: pass pipeline UUID into SP_AGENT_RUN_ALL; log step with run_id, as_of_ts, agent_results
     v_agent_brief_start := current_timestamp();
     if (v_signal_run_id is not null) then
         begin
-            v_agent_brief_result := (call MIP.APP.SP_AGENT_RUN_ALL(:v_effective_to_ts, :v_signal_run_id));
+            v_agent_brief_result := (call MIP.APP.SP_AGENT_RUN_ALL(:v_effective_to_ts, :v_run_id));
             v_agent_brief_status := coalesce(v_agent_brief_result:agent_results[0]:status::string, 'SUCCESS');
             v_agent_brief_id := v_agent_brief_result:agent_results[0]:brief_id::number;
         exception
@@ -772,11 +772,12 @@ begin
                 'step_name', 'agent_run_all',
                 'scope', 'AGG',
                 'scope_key', null,
-                'started_at', :v_agent_brief_start,
-                'completed_at', :v_agent_brief_end,
+                'run_id', :v_run_id,
+                'as_of_ts', :v_effective_to_ts,
                 'brief_id', :v_agent_brief_id,
-                'signal_run_id', :v_signal_run_id,
-                'agent_results', :v_agent_brief_result
+                'agent_results', :v_agent_brief_result,
+                'started_at', :v_agent_brief_start,
+                'completed_at', :v_agent_brief_end
             ),
             null
         );

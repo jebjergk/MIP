@@ -50,6 +50,7 @@ declare
     v_training_count       number := 0;
     v_candidate_count      number := 0;
     v_effective_min_signals number;
+    v_run_id               string;
 begin
     -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF
     v_config_rs := (select MIN_N_SIGNALS, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, RANKING_FORMULA_TYPE, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
@@ -314,6 +315,7 @@ begin
     );
 
     -- One audit event (EVENT_TYPE='AGENT', EVENT_NAME='SP_AGENT_GENERATE_MORNING_BRIEF')
+    v_run_id := (select uuid_string());
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
@@ -326,7 +328,7 @@ begin
     )
     values (
         current_timestamp(),
-        uuid_string(),
+        :v_run_id,
         null,
         'AGENT',
         'SP_AGENT_GENERATE_MORNING_BRIEF',
@@ -342,11 +344,12 @@ begin
 
     -- P1: AGENT_RUN_LOG with rowcounts for observability (success path)
     begin
+        v_run_id := (select uuid_string());
         insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
             RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, CREATED_AT
         )
         values (
-            uuid_string(),
+            :v_run_id,
             :v_agent_name,
             :P_AS_OF_TS,
             :P_SIGNAL_RUN_ID,
@@ -365,6 +368,7 @@ begin
 exception
     when other then
         v_status := 'ERROR';
+        v_run_id := (select uuid_string());
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -378,7 +382,7 @@ exception
         )
         values (
             current_timestamp(),
-            uuid_string(),
+            :v_run_id,
             null,
             'AGENT',
             'SP_AGENT_GENERATE_MORNING_BRIEF',
@@ -389,11 +393,12 @@ exception
         );
         -- Optionally write AGENT_RUN_LOG if table exists (run in same proc; ignore errors on insert)
         begin
+            v_run_id := (select uuid_string());
             insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
                 RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, ERROR_MESSAGE, CREATED_AT
             )
             values (
-                uuid_string(),
+                :v_run_id,
                 :v_agent_name,
                 :P_AS_OF_TS,
                 :P_SIGNAL_RUN_ID,

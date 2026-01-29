@@ -385,7 +385,7 @@ exception
             :v_status,
             0,
             object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name),
-            sqlerrm
+            :sqlerrm
         );
         -- Optionally write AGENT_RUN_LOG if table exists (run in same proc; ignore errors on insert)
         begin
@@ -400,13 +400,13 @@ exception
                 'ERROR',
                 object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID),
                 null,
-                sqlerrm,
+                :sqlerrm,
                 current_timestamp()
             );
         exception
             when other then
                 null;
         end;
-        return object_construct('status', 'ERROR', 'error_message', sqlerrm, 'as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
+        return object_construct('status', 'ERROR', 'error_message', :sqlerrm, 'as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
 end;
 $$;

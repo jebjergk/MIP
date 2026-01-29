@@ -18,17 +18,17 @@ set signal_run_id = (
 -- Call agent morning brief
 call MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF($as_of_ts, $signal_run_id);
 
--- Show last 5 briefs
+-- Show last 5 agent briefs (MORNING_BRIEF with PORTFOLIO_ID=0; BRIEF has { status, agent_name, brief })
 select
     BRIEF_ID,
     AS_OF_TS,
-    SIGNAL_RUN_ID,
-    AGENT_NAME,
-    STATUS,
-    BRIEF_JSON:system_status:as_of_ts::timestamp_ntz as system_as_of_ts,
-    array_size(BRIEF_JSON:training_summary::array) as training_count,
-    BRIEF_JSON:candidate_summary:reason::string as candidate_reason,
-    CREATED_AT
-from MIP.AGENT_OUT.AGENT_MORNING_BRIEF
-order by CREATED_AT desc
+    RUN_ID,
+    BRIEF:agent_name::string as agent_name,
+    BRIEF:status::string as status,
+    BRIEF:brief:system_status:as_of_ts::timestamp_ntz as system_as_of_ts,
+    array_size(BRIEF:brief:training_summary::array) as training_count,
+    BRIEF:brief:candidate_summary:reason::string as candidate_reason
+from MIP.AGENT_OUT.MORNING_BRIEF
+where PORTFOLIO_ID = 0
+order by AS_OF_TS desc
 limit 5;

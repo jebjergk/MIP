@@ -19,10 +19,10 @@ Stable, deterministic "Morning Brief" agent for daily runs.
 
 ## Output table
 
-- Agent morning brief rows: **`MIP.AGENT_OUT.AGENT_MORNING_BRIEF`** (spec name "MORNING_BRIEF"; this name coexists with portfolio `MORNING_BRIEF` in the same schema).
+- Agent morning brief rows: **`MIP.AGENT_OUT.MORNING_BRIEF`** with `PORTFOLIO_ID=0` (sentinel for agent briefs). Row key: `RUN_ID = agent_name || '_' || to_varchar(as_of_ts) || '_' || to_varchar(signal_run_id)`. Column `BRIEF` holds `{ status, agent_name, brief }` where `brief` is the full brief JSON.
 - Optional run log: **`MIP.AGENT_OUT.AGENT_RUN_LOG`**.
 
 ## Idempotency
 
 - All DDL: `create table if not exists` / `create or replace` as appropriate.
-- Upsert into agent output by `(AS_OF_TS, SIGNAL_RUN_ID, AGENT_NAME)` (MERGE in `SP_AGENT_GENERATE_MORNING_BRIEF`).
+- Upsert into `MIP.AGENT_OUT.MORNING_BRIEF` by `(PORTFOLIO_ID=0, RUN_ID)` (MERGE in `SP_AGENT_GENERATE_MORNING_BRIEF`).

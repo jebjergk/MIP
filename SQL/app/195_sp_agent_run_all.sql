@@ -31,10 +31,9 @@ begin
     else
         v_brief_id := (
             select BRIEF_ID
-            from MIP.AGENT_OUT.AGENT_MORNING_BRIEF
-            where AS_OF_TS = :P_AS_OF_TS
-              and SIGNAL_RUN_ID = :P_SIGNAL_RUN_ID
-              and AGENT_NAME = :v_agent_name
+            from MIP.AGENT_OUT.MORNING_BRIEF
+            where PORTFOLIO_ID = 0
+              and RUN_ID = :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || to_varchar(:P_SIGNAL_RUN_ID)
             limit 1
         );
     end if;

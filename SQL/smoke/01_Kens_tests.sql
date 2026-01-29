@@ -4,6 +4,8 @@ use database MIP;
 select * from mip.app.mip_audit_log order by event_ts desc;
 desc table mip.app.recommendation_log;
 
+drop table mip.agent_out.agent_morning_brief;
+
 -- Run the pipeline once before executing this smoke SQL.
 
 select * from MIP.MART.V_TRAINING_KPIS limit 20;

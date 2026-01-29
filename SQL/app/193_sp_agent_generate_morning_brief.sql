@@ -1,5 +1,5 @@
 -- 193_sp_agent_generate_morning_brief.sql
--- Purpose: Read-only agent morning brief: build BRIEF_JSON from MART views, write to AGENT_OUT.AGENT_MORNING_BRIEF.
+-- Purpose: Read-only agent morning brief: build BRIEF_JSON from MART views, write to AGENT_OUT.MORNING_BRIEF (PORTFOLIO_ID=0 for agent briefs).
 -- Deterministic for given as_of_ts + signal_run_id; no external APIs; one audit event; upsert by (as_of_ts, signal_run_id, agent_name).
 -- Note: Avoid SELECT...INTO in Snowflake procedures; use := (SELECT ...) or RESULTSET + FOR loop. See MIP/docs/SNOWFLAKE_SQL_LIMITATIONS.md.
 
@@ -43,6 +43,7 @@ declare
     v_data_lineage         variant;
     v_brief_json           variant;
     v_brief_id             number;
+    v_run_id_key           string;  -- RUN_ID for agent row in MORNING_BRIEF (unique per as_of_ts, signal_run_id, agent_name)
     v_generated_at         timestamp_ntz := current_timestamp();
     v_training_rs          resultset;
     v_candidate_rs         resultset;
@@ -289,30 +290,29 @@ begin
         'data_lineage', :v_data_lineage
     );
 
-    -- Upsert: MERGE by (AS_OF_TS, SIGNAL_RUN_ID, AGENT_NAME); match then update BRIEF_JSON/STATUS/CREATED_AT, else insert
-    merge into MIP.AGENT_OUT.AGENT_MORNING_BRIEF t
+    -- Upsert into MIP.AGENT_OUT.MORNING_BRIEF using PORTFOLIO_ID=0 for agent briefs; RUN_ID = unique key per (agent_name, as_of_ts, signal_run_id)
+    v_run_id_key := :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || to_varchar(:P_SIGNAL_RUN_ID);
+    merge into MIP.AGENT_OUT.MORNING_BRIEF t
     using (
         select
+            0 as PORTFOLIO_ID,
+            :v_run_id_key as RUN_ID,
             :P_AS_OF_TS as AS_OF_TS,
-            :P_SIGNAL_RUN_ID as SIGNAL_RUN_ID,
-            :v_agent_name as AGENT_NAME,
-            :v_status as STATUS,
-            :v_brief_json as BRIEF_JSON,
-            :v_generated_at as CREATED_AT
+            object_construct('status', :v_status, 'agent_name', :v_agent_name, 'brief', :v_brief_json) as BRIEF,
+            to_varchar(:P_SIGNAL_RUN_ID) as PIPELINE_RUN_ID
     ) s
-    on t.AS_OF_TS = s.AS_OF_TS and t.SIGNAL_RUN_ID = s.SIGNAL_RUN_ID and t.AGENT_NAME = s.AGENT_NAME
+    on t.PORTFOLIO_ID = s.PORTFOLIO_ID and t.RUN_ID = s.RUN_ID
     when matched then
-        update set t.BRIEF_JSON = s.BRIEF_JSON, t.STATUS = s.STATUS, t.CREATED_AT = s.CREATED_AT
+        update set t.AS_OF_TS = s.AS_OF_TS, t.BRIEF = s.BRIEF, t.PIPELINE_RUN_ID = s.PIPELINE_RUN_ID
     when not matched then
-        insert (AS_OF_TS, SIGNAL_RUN_ID, AGENT_NAME, STATUS, BRIEF_JSON, CREATED_AT)
-        values (s.AS_OF_TS, s.SIGNAL_RUN_ID, s.AGENT_NAME, s.STATUS, s.BRIEF_JSON, s.CREATED_AT);
+        insert (PORTFOLIO_ID, RUN_ID, AS_OF_TS, BRIEF, PIPELINE_RUN_ID)
+        values (s.PORTFOLIO_ID, s.RUN_ID, s.AS_OF_TS, s.BRIEF, s.PIPELINE_RUN_ID);
 
     v_brief_id := (
         select BRIEF_ID
-        from MIP.AGENT_OUT.AGENT_MORNING_BRIEF
-        where AS_OF_TS = :P_AS_OF_TS
-          and SIGNAL_RUN_ID = :P_SIGNAL_RUN_ID
-          and AGENT_NAME = :v_agent_name
+        from MIP.AGENT_OUT.MORNING_BRIEF
+        where PORTFOLIO_ID = 0
+          and RUN_ID = :v_run_id_key
         limit 1
     );
 

@@ -455,7 +455,7 @@ begin
             from final_selected f
         )
         select
-            :P_RUN_ID as RUN_ID,
+            :P_RUN_ID as RUN_ID_VARCHAR,
             :P_PORTFOLIO_ID as PORTFOLIO_ID,
             s.SYMBOL,
             s.MARKET_TYPE,
@@ -497,11 +497,11 @@ begin
         where s.SELECTION_RANK <= :v_remaining_capacity
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
-   and target.RUN_ID = source.RUN_ID
+   and target.RUN_ID_VARCHAR = source.RUN_ID_VARCHAR
    and target.RECOMMENDATION_ID = source.RECOMMENDATION_ID
     when not matched then
         insert (
-            RUN_ID,
+            RUN_ID_VARCHAR,
             PORTFOLIO_ID,
             SYMBOL,
             MARKET_TYPE,
@@ -519,7 +519,7 @@ begin
             STATUS
         )
         values (
-            source.RUN_ID,
+            source.RUN_ID_VARCHAR,
             source.PORTFOLIO_ID,
             source.SYMBOL,
             source.MARKET_TYPE,
@@ -556,7 +556,7 @@ begin
             s.MARKET_TYPE
         from MIP.AGENT_OUT.ORDER_PROPOSALS s
         where s.PORTFOLIO_ID = :P_PORTFOLIO_ID
-          and s.RUN_ID = :P_RUN_ID
+          and s.RUN_ID_VARCHAR = :P_RUN_ID
           and s.STATUS = 'PROPOSED'
     ) selected_counts;
 

@@ -4,9 +4,9 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
+-- Content-only view; no AS_OF_TS. Procedure supplies (as_of_ts, run_id) for MERGE key.
 create or replace view MIP.MART.V_MORNING_BRIEF_JSON (
     PORTFOLIO_ID,
-    AS_OF_TS,
     BRIEF
 ) as
 with portfolio_scope as (
@@ -219,7 +219,7 @@ latest_proposal_run as (
     from (
         select
             portfolio_id,
-            run_id,
+            coalesce(RUN_ID_VARCHAR, to_varchar(RUN_ID)) as run_id,
             row_number() over (
                 partition by portfolio_id
                 order by proposed_at desc
@@ -242,7 +242,7 @@ proposal_summary as (
     from MIP.AGENT_OUT.ORDER_PROPOSALS op
     join latest_proposal_run p
       on p.portfolio_id = op.portfolio_id
-     and p.run_id = op.run_id
+     and p.run_id = coalesce(op.RUN_ID_VARCHAR, to_varchar(op.RUN_ID))
     group by p.portfolio_id, p.run_id
 ),
 proposal_rejections as (
@@ -260,7 +260,7 @@ proposal_rejections as (
     from MIP.AGENT_OUT.ORDER_PROPOSALS op
     join latest_proposal_run p
       on p.portfolio_id = op.portfolio_id
-     and p.run_id = op.run_id
+     and p.run_id = coalesce(op.RUN_ID_VARCHAR, to_varchar(op.RUN_ID))
     where op.status = 'REJECTED'
     group by p.portfolio_id
 ),
@@ -283,7 +283,7 @@ executed_trades as (
     from MIP.APP.PORTFOLIO_TRADES
     join latest_proposal_run p
       on p.portfolio_id = PORTFOLIO_TRADES.portfolio_id
-     and PORTFOLIO_TRADES.run_id = to_varchar(p.run_id)
+     and PORTFOLIO_TRADES.run_id = p.run_id
     group by p.portfolio_id
 ),
 by_market_type as (
@@ -308,7 +308,6 @@ by_market_type as (
 )
 select
     p.portfolio_id,
-    current_timestamp() as AS_OF_TS,
     object_construct(
         'signals', object_construct(
             'trusted_now', coalesce(tn.items, array_construct()),

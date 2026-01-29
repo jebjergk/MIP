@@ -812,12 +812,12 @@ begin
         select count(*)
           into :v_proposals_before
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id;
+         where RUN_ID_VARCHAR = :v_signal_run_id;
 
         select count(*)
           into :v_executed_before
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id
+         where RUN_ID_VARCHAR = :v_signal_run_id
            and STATUS = 'EXECUTED';
 
         select count(*)
@@ -845,6 +845,7 @@ begin
         v_brief_count := v_brief_count + 1;
         v_brief_run_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
             :v_portfolio_id,
+            :v_effective_to_ts,
             :v_run_id,
             :v_signal_run_id,
             :v_run_id
@@ -859,8 +860,7 @@ begin
     );
 
     if (v_signal_run_id is not null) then
-        -- HIGH-002: Improved proposal count query with better run ID scoping
-        -- Use both RUN_ID (number) and SIGNAL_RUN_ID (string) for robust matching
+        -- Canonical run ID: use RUN_ID_VARCHAR only (no dual scoping).
         select
             count(*) as proposed_count,
             count_if(STATUS in ('APPROVED', 'EXECUTED')) as approved_count,
@@ -871,8 +871,7 @@ begin
                :v_rejected_count,
                :v_executed_count
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id
-            or (SIGNAL_RUN_ID is not null and SIGNAL_RUN_ID = :v_signal_run_id);
+         where RUN_ID_VARCHAR = :v_signal_run_id;
     end if;
 
     v_brief_end := current_timestamp();
@@ -902,6 +901,8 @@ begin
             'step_name', 'morning_brief',
             'scope', 'AGG',
             'scope_key', null,
+            'as_of_ts', :v_effective_to_ts,
+            'run_id', :v_run_id,
             'started_at', :v_brief_start,
             'completed_at', :v_brief_end,
             'rows_before', :v_brief_rows_before,
@@ -918,12 +919,12 @@ begin
         select count(*)
           into :v_proposals_after
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id;
+         where RUN_ID_VARCHAR = :v_signal_run_id;
 
         select count(*)
           into :v_executed_after
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :v_signal_run_id
+         where RUN_ID_VARCHAR = :v_signal_run_id
            and STATUS = 'EXECUTED';
 
         select count(*)

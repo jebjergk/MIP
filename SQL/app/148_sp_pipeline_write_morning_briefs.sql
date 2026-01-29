@@ -1,11 +1,13 @@
 -- 148_sp_pipeline_write_morning_briefs.sql
--- Purpose: Pipeline step to persist morning briefs for active portfolios
+-- Purpose: Pipeline step to persist morning briefs for active portfolios.
+-- Passes as_of_ts and run_id from pipeline; brief write is deterministic + idempotent.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
     P_PORTFOLIO_ID number,
+    P_AS_OF_TS timestamp_ntz,
     P_RUN_ID string,
     P_SIGNAL_RUN_ID string,   -- pipeline run id for deterministic tie-back to recommendations
     P_PARENT_RUN_ID string default null
@@ -32,7 +34,8 @@ begin
           into :v_rows_before
           from MIP.AGENT_OUT.MORNING_BRIEF
          where PORTFOLIO_ID = :P_PORTFOLIO_ID
-           and PIPELINE_RUN_ID = :v_run_id;
+           and RUN_ID = :v_run_id
+           and AS_OF_TS = :P_AS_OF_TS;
 
         if (v_signal_run_id is not null) then
             v_propose_result := (call MIP.APP.SP_AGENT_PROPOSE_TRADES(
@@ -51,13 +54,14 @@ begin
             v_validate_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');
         end if;
 
-        call MIP.APP.SP_WRITE_MORNING_BRIEF(:P_PORTFOLIO_ID, :v_run_id);
+        call MIP.APP.SP_WRITE_MORNING_BRIEF(:P_PORTFOLIO_ID, :P_AS_OF_TS, :v_run_id, 'MORNING_BRIEF');
 
         select count(*)
           into :v_rows_after
           from MIP.AGENT_OUT.MORNING_BRIEF
          where PORTFOLIO_ID = :P_PORTFOLIO_ID
-           and PIPELINE_RUN_ID = :v_run_id;
+           and RUN_ID = :v_run_id
+           and AS_OF_TS = :P_AS_OF_TS;
 
         v_step_end := current_timestamp();
 
@@ -71,6 +75,8 @@ begin
                 'scope', 'PORTFOLIO',
                 'scope_key', to_varchar(:P_PORTFOLIO_ID),
                 'portfolio_id', :P_PORTFOLIO_ID,
+                'as_of_ts', :P_AS_OF_TS,
+                'run_id', :v_run_id,
                 'started_at', :v_step_start,
                 'completed_at', :v_step_end,
                 'rows_before', :v_rows_before,
@@ -84,6 +90,8 @@ begin
 
         return object_construct(
             'portfolio_id', :P_PORTFOLIO_ID,
+            'as_of_ts', :P_AS_OF_TS,
+            'run_id', :v_run_id,
             'rows_before', :v_rows_before,
             'rows_after', :v_rows_after,
             'signal_run_id', :v_signal_run_id,
@@ -114,8 +122,9 @@ end;
 $$;
 
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
+    P_AS_OF_TS timestamp_ntz,
     P_RUN_ID string,
-    P_SIGNAL_RUN_ID number,
+    P_SIGNAL_RUN_ID string,
     P_PARENT_RUN_ID string default null
 )
 returns variant
@@ -143,6 +152,7 @@ begin
         v_portfolio_count := v_portfolio_count + 1;
         v_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
             :v_portfolio_id,
+            :P_AS_OF_TS,
             :v_run_id,
             :P_SIGNAL_RUN_ID,
             :P_PARENT_RUN_ID

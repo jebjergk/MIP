@@ -149,4 +149,11 @@
 
 ---
 
-*Changelog: Initial version. Summarizes project context, architecture, rules, recent work (≈5 days), roadmap, repo map, and conventions for ChatGPT carry-over.*
+## 9. Clarifications (do not assume done)
+
+- **HIGH-001 addressed (T4):** `ORDER_PROPOSALS` now has `RUN_ID_VARCHAR`; procedures write and filter by it. Dual scoping removed; pipeline and checks use `RUN_ID_VARCHAR = :run_id` only. Migration: `migrations/order_proposals_run_id_varchar_phase_a.sql`. Some integrity/run-scoping checks may still reference `RUN_ID`/`SIGNAL_RUN_ID` and could be updated to `RUN_ID_VARCHAR` for consistency.
+- **Morning brief idempotency (T1–T3):** `SP_WRITE_MORNING_BRIEF` takes `(P_PORTFOLIO_ID, P_AS_OF_TS, P_RUN_ID, P_AGENT_NAME)`; MERGE key uses only those params. `V_MORNING_BRIEF_JSON` is content-only (no `AS_OF_TS`). Pipeline passes `as_of_ts` / `run_id`; brief step is skipped when `has_new_bars=false`. Smoke: `morning_brief_idempotency_smoke.sql`.
+
+---
+
+*Changelog: Initial version. Clarifications added 2026-01-29 (HIGH-001, morning brief idempotency).*

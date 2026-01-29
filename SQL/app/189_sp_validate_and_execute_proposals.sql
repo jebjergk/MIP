@@ -89,7 +89,7 @@ begin
         select count(*)
           into :v_buy_proposals_blocked
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :P_RUN_ID
+         where RUN_ID_VARCHAR = :P_RUN_ID
            and PORTFOLIO_ID = :P_PORTFOLIO_ID
            and STATUS in ('PROPOSED', 'APPROVED')
            and SIDE = 'BUY';
@@ -100,7 +100,7 @@ begin
                set STATUS = 'REJECTED',
                    VALIDATION_ERRORS = array_construct_compact('ENTRY_GATE_BLOCKED', :v_stop_reason),
                    APPROVED_AT = null
-             where RUN_ID = :P_RUN_ID
+             where RUN_ID_VARCHAR = :P_RUN_ID
                and PORTFOLIO_ID = :P_PORTFOLIO_ID
                and STATUS in ('PROPOSED', 'APPROVED')
                and SIDE = 'BUY';
@@ -156,7 +156,7 @@ begin
                 order by p.PROPOSED_AT, p.PROPOSAL_ID
             ) as proposal_rank
         from MIP.AGENT_OUT.ORDER_PROPOSALS p
-        where p.RUN_ID = :P_RUN_ID
+        where p.RUN_ID_VARCHAR = :P_RUN_ID
           and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
           and p.STATUS = 'PROPOSED'
     ),
@@ -277,7 +277,7 @@ begin
         select coalesce(sum(TARGET_WEIGHT), 0)
           into v_total_exposure_pct
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID = :P_RUN_ID
+         where RUN_ID_VARCHAR = :P_RUN_ID
            and PORTFOLIO_ID = :P_PORTFOLIO_ID
            and STATUS = 'APPROVED'
            and SIDE = 'BUY';
@@ -295,7 +295,7 @@ begin
                set STATUS = 'REJECTED',
                    VALIDATION_ERRORS = array_construct('TOTAL_EXPOSURE_EXCEEDS_LIMIT'),
                    APPROVED_AT = null
-             where RUN_ID = :P_RUN_ID
+             where RUN_ID_VARCHAR = :P_RUN_ID
                and PORTFOLIO_ID = :P_PORTFOLIO_ID
                and STATUS = 'APPROVED'
                and SIDE = 'BUY';
@@ -333,14 +333,14 @@ begin
                set STATUS = 'REJECTED',
                    VALIDATION_ERRORS = array_construct('EXCEEDS_MAX_POSITIONS'),
                    APPROVED_AT = null
-             where RUN_ID = :P_RUN_ID
+             where RUN_ID_VARCHAR = :P_RUN_ID
                and PORTFOLIO_ID = :P_PORTFOLIO_ID
                and STATUS = 'APPROVED'
                and SIDE = 'BUY'
                and PROPOSAL_ID in (
                    select PROPOSAL_ID
                      from MIP.AGENT_OUT.ORDER_PROPOSALS
-                    where RUN_ID = :P_RUN_ID
+                    where RUN_ID_VARCHAR = :P_RUN_ID
                       and PORTFOLIO_ID = :P_PORTFOLIO_ID
                       and STATUS = 'APPROVED'
                       and SIDE = 'BUY'
@@ -412,7 +412,7 @@ begin
             join latest_prices lp
               on lp.SYMBOL = p.SYMBOL
              and lp.MARKET_TYPE = p.MARKET_TYPE
-            where p.RUN_ID = :P_RUN_ID
+            where p.RUN_ID_VARCHAR = :P_RUN_ID
               and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.STATUS = 'APPROVED'
               -- CRIT-001: Extra safety - never execute BUY trades when entry gate is active
@@ -507,7 +507,7 @@ begin
     update MIP.AGENT_OUT.ORDER_PROPOSALS
        set STATUS = 'EXECUTED',
            EXECUTED_AT = current_timestamp()
-     where RUN_ID = :P_RUN_ID
+     where RUN_ID_VARCHAR = :P_RUN_ID
        and PORTFOLIO_ID = :P_PORTFOLIO_ID
        and STATUS = 'APPROVED'
        and not (:v_entries_blocked and SIDE = 'BUY');

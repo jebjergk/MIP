@@ -1,8 +1,8 @@
 -- morning_brief_smoke.sql
--- Smoke tests for V_MORNING_BRIEF_JSON
+-- Smoke tests for V_MORNING_BRIEF_JSON (content-only; no AS_OF_TS)
 
 select
-    AS_OF_TS,
+    PORTFOLIO_ID,
     BRIEF:signals:trusted_now[0] as TRUSTED_NOW_SAMPLE,
     BRIEF:risk:latest:risk_status as RISK_STATUS,
     BRIEF:attribution:by_market_type[0]:market_type as ATTRIBUTION_MARKET_TYPE

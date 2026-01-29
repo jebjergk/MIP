@@ -87,6 +87,11 @@ declare
     v_brief_rows_after number := 0;
     v_brief_rows_delta number := 0;
     v_brief_ids array := array_construct();
+    v_agent_brief_result variant;
+    v_agent_brief_id number;
+    v_agent_brief_status string;
+    v_agent_brief_start timestamp_ntz;
+    v_agent_brief_end timestamp_ntz;
 begin
     execute immediate 'alter session set query_tag = ''' || v_run_id || '''';
 
@@ -364,6 +369,21 @@ begin
             ),
             null
         );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'AGENT_GENERATE_MORNING_BRIEF',
+            'SKIPPED_NO_NEW_BARS',
+            null,
+            object_construct(
+                'step_name', 'agent_generate_morning_brief',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
         v_pipeline_status_reason := 'RATE_LIMIT';
         v_pipeline_root_status := 'SUCCESS_WITH_SKIPS';
         v_summary := object_construct(
@@ -382,6 +402,7 @@ begin
             'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'signal_run_id', null
         );
         call MIP.APP.SP_LOG_EVENT(
@@ -714,6 +735,75 @@ begin
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
     end if;
 
+    -- Agent morning brief (read-only): run only when has_new_bars and we have a signal run
+    v_agent_brief_start := current_timestamp();
+    if (v_signal_run_id is not null) then
+        begin
+            v_agent_brief_result := (call MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(:v_effective_to_ts, :v_signal_run_id));
+            v_agent_brief_status := 'SUCCESS';
+            v_agent_brief_id := :v_agent_brief_result:brief_id::number;
+        exception
+            when other then
+                v_agent_brief_status := 'FAIL';
+                v_agent_brief_id := null;
+                call MIP.APP.SP_AUDIT_LOG_STEP(
+                    :v_run_id,
+                    'AGENT_GENERATE_MORNING_BRIEF',
+                    'FAIL',
+                    null,
+                    object_construct(
+                        'step_name', 'agent_generate_morning_brief',
+                        'scope', 'AGG',
+                        'scope_key', null,
+                        'started_at', :v_agent_brief_start,
+                        'completed_at', current_timestamp(),
+                        'signal_run_id', :v_signal_run_id
+                    ),
+                    sqlerrm
+                );
+                raise;
+        end;
+    else
+        v_agent_brief_status := 'SKIPPED_NO_SIGNAL_RUN_ID';
+        v_agent_brief_id := null;
+    end if;
+    v_agent_brief_end := current_timestamp();
+
+    if (v_signal_run_id is not null and v_agent_brief_status = 'SUCCESS') then
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'AGENT_GENERATE_MORNING_BRIEF',
+            :v_agent_brief_status,
+            1,
+            object_construct(
+                'step_name', 'agent_generate_morning_brief',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_agent_brief_start,
+                'completed_at', :v_agent_brief_end,
+                'brief_id', :v_agent_brief_id,
+                'signal_run_id', :v_signal_run_id
+            ),
+            null
+        );
+    elseif (v_agent_brief_status = 'SKIPPED_NO_SIGNAL_RUN_ID') then
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'AGENT_GENERATE_MORNING_BRIEF',
+            :v_agent_brief_status,
+            0,
+            object_construct(
+                'step_name', 'agent_generate_morning_brief',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_agent_brief_start,
+                'completed_at', :v_agent_brief_end,
+                'reason', 'NO_SIGNAL_RUN_ID'
+            ),
+            null
+        );
+    end if;
+
     v_brief_start := current_timestamp();
     select count(*)
       into :v_brief_rows_before
@@ -957,6 +1047,10 @@ begin
         'recommendations', :v_recommendation_results,
         'evaluation', :v_eval_result,
         'portfolio_simulation', :v_portfolio_result,
+        'agent_generate_morning_brief', object_construct(
+            'status', iff(:v_agent_brief_status = 'SUCCESS', 'SUCCESS', :v_agent_brief_status),
+            'brief_id', :v_agent_brief_id
+        ),
         'morning_brief', :v_brief_result,
         'signal_run_id', :v_signal_run_id,
         'eligible_signals', :v_eligible_signal_count,

@@ -335,16 +335,7 @@ begin
         ROWS_AFFECTED,
         DETAILS
     )
-    values (
-        current_timestamp(),
-        :v_run_id,
-        null,
-        'AGENT',
-        'SP_AGENT_GENERATE_MORNING_BRIEF',
-        :v_status,
-        1,
-        :v_audit_details
-    );
+    select current_timestamp(), :v_run_id, null, 'AGENT', 'SP_AGENT_GENERATE_MORNING_BRIEF', :v_status, 1, :v_audit_details;
 
     -- P1: AGENT_RUN_LOG with rowcounts for observability (success path)
     begin
@@ -354,16 +345,7 @@ begin
         insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
             RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, CREATED_AT
         )
-        values (
-            :v_run_id,
-            :v_agent_name,
-            :P_AS_OF_TS,
-            :P_SIGNAL_RUN_ID,
-            'SUCCESS',
-            :v_inputs_json,
-            :v_outputs_json,
-            current_timestamp()
-        );
+        select :v_run_id, :v_agent_name, :P_AS_OF_TS, :P_SIGNAL_RUN_ID, 'SUCCESS', :v_inputs_json, :v_outputs_json, current_timestamp();
     exception
         when other then
             null;
@@ -387,17 +369,7 @@ exception
             DETAILS,
             ERROR_MESSAGE
         )
-        values (
-            current_timestamp(),
-            :v_run_id,
-            null,
-            'AGENT',
-            'SP_AGENT_GENERATE_MORNING_BRIEF',
-            :v_status,
-            0,
-            :v_audit_details,
-            :sqlerrm
-        );
+        select current_timestamp(), :v_run_id, null, 'AGENT', 'SP_AGENT_GENERATE_MORNING_BRIEF', :v_status, 0, :v_audit_details, :sqlerrm;
         -- Optionally write AGENT_RUN_LOG if table exists (run in same proc; ignore errors on insert)
         begin
             v_run_id := (select uuid_string());
@@ -405,17 +377,7 @@ exception
             insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
                 RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, ERROR_MESSAGE, CREATED_AT
             )
-            values (
-                :v_run_id,
-                :v_agent_name,
-                :P_AS_OF_TS,
-                :P_SIGNAL_RUN_ID,
-                'ERROR',
-                :v_inputs_json,
-                null,
-                :sqlerrm,
-                current_timestamp()
-            );
+            select :v_run_id, :v_agent_name, :P_AS_OF_TS, :P_SIGNAL_RUN_ID, 'ERROR', :v_inputs_json, null, :sqlerrm, current_timestamp();
         exception
             when other then
                 null;

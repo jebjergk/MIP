@@ -55,14 +55,13 @@ declare
     v_inputs_json           variant;
     v_outputs_json          variant;
 begin
-    -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF
-    v_config_rs := (select MIN_N_SIGNALS, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, RANKING_FORMULA_TYPE, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
+    -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF (omit RANKING_FORMULA_TYPE so proc works before 194 adds column)
+    v_config_rs := (select MIN_N_SIGNALS, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
     for rec in v_config_rs do
         v_min_n_signals := rec.MIN_N_SIGNALS;
         v_top_n_patterns := rec.TOP_N_PATTERNS;
         v_top_n_candidates := rec.TOP_N_CANDIDATES;
         v_ranking_formula := rec.RANKING_FORMULA;
-        v_ranking_formula_type := rec.RANKING_FORMULA_TYPE;
         v_enabled := rec.ENABLED;
         break;
     end for;
@@ -70,7 +69,7 @@ begin
     if (:v_top_n_patterns is null) then v_top_n_patterns := 5; end if;
     if (:v_top_n_candidates is null) then v_top_n_candidates := 5; end if;
     if (:v_ranking_formula is null) then v_ranking_formula := 'HIT_RATE_SUCCESS * AVG_RETURN_SUCCESS'; end if;
-    if (:v_ranking_formula_type is null) then v_ranking_formula_type := 'HIT_RATE_AVG_RETURN'; end if;
+    -- v_ranking_formula_type stays default 'HIT_RATE_AVG_RETURN'; set from config only after 194 adds column
     if (:v_enabled is null) then v_enabled := true; end if;
 
     -- System status: latest market bars, entries allowed (aggregate from risk state)

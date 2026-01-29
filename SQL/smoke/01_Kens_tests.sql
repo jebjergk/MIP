@@ -25,6 +25,9 @@ desc view MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL;
 desc view MIP.app.PORTFOLIO_POSITIONS;
 desc view MIP.MART.V_PORTFOLIO_RISK_GATE;
 
+desc view MIP.MART.V_TRAINING_LEADERBOARD; 
+desc view MIP.MART.V_SIGNAL_OUTCOMES_BASE;
+
 desc table mip.agent_out.morning_brief;
 select
     PORTFOLIO_ID,

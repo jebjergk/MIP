@@ -1,42 +1,36 @@
 -- 036_mart_trusted_gate_views.sql
--- Purpose: Trusted signal gate v1 — allow-list from training KPIs, trusted-signals-at-latest-TS, top-N.
+-- Purpose: Trusted signal gate — allow-list from V_TRAINING_LEADERBOARD + TRAINING_GATE_PARAMS; trusted-signals-at-latest-TS; top-N.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -- ------------------------------------------------------------------------------
 -- D1: V_TRUSTED_PATTERN_HORIZONS
--- Allow-list for what we are willing to trade. Built from V_TRAINING_KPIS.
--- v1 thresholds: N_SIGNALS >= 30, HIT_RATE >= 0.52, SHARPE_LIKE > 0, AVG_RETURN > 0 (optional).
+-- One row per (pattern_id, market_type, interval, horizon) that passes training thresholds.
+-- Thresholds from MIP.APP.TRAINING_GATE_PARAMS (single active row).
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_PATTERN_HORIZONS as
+with p as (
+    select MIN_SIGNALS, MIN_HIT_RATE, MIN_AVG_RETURN
+    from MIP.APP.TRAINING_GATE_PARAMS
+    where IS_ACTIVE
+    qualify row_number() over (order by PARAM_SET) = 1
+)
 select
-    k.PATTERN_ID,
-    k.MARKET_TYPE,
-    k.INTERVAL_MINUTES,
-    k.HORIZON_BARS,
-    k.N_SIGNALS,
-    k.HIT_RATE_SUCCESS as HIT_RATE,
-    k.AVG_RETURN_SUCCESS as AVG_RETURN,
-    k.SHARPE_LIKE_SUCCESS as SHARPE_LIKE,
-    (
-        coalesce(k.N_SIGNALS, 0) >= 30
-        and coalesce(k.HIT_RATE_SUCCESS, 0) >= 0.52
-        and coalesce(k.SHARPE_LIKE_SUCCESS, 0) > 0
-        and coalesce(k.AVG_RETURN_SUCCESS, 0) > 0
-    ) as IS_TRUSTED,
-    case
-        when coalesce(k.N_SIGNALS, 0) < 30
-            then 'N_SIGNALS<' || 30
-        when coalesce(k.HIT_RATE_SUCCESS, 0) < 0.52
-            then 'HIT_RATE<0.52'
-        when coalesce(k.SHARPE_LIKE_SUCCESS, 0) <= 0
-            then 'SHARPE_LIKE<=0'
-        when coalesce(k.AVG_RETURN_SUCCESS, 0) <= 0
-            then 'AVG_RETURN<=0'
-        else 'OK'
-    end as TRUST_REASON
-from MIP.MART.V_TRAINING_KPIS k;
+    l.PATTERN_ID,
+    l.MARKET_TYPE,
+    l.INTERVAL_MINUTES,
+    l.HORIZON_BARS,
+    l.N_SIGNALS,
+    l.N_SUCCESS,
+    l.HIT_RATE_SUCCESS,
+    l.AVG_RETURN_SUCCESS,
+    l.SHARPE_LIKE_SUCCESS
+from MIP.MART.V_TRAINING_LEADERBOARD l
+cross join p
+where l.N_SIGNALS >= p.MIN_SIGNALS
+  and coalesce(l.HIT_RATE_SUCCESS, 0) >= p.MIN_HIT_RATE
+  and coalesce(l.AVG_RETURN_SUCCESS, -999) >= p.MIN_AVG_RETURN;
 
 -- ------------------------------------------------------------------------------
 -- V_SIGNALS_LATEST_TS (helper for audit)
@@ -66,36 +60,53 @@ where r.INTERVAL_MINUTES = 1440
 
 -- ------------------------------------------------------------------------------
 -- D2: V_TRUSTED_SIGNALS_LATEST_TS
--- Signals at latest bar TS (INTERVAL_MINUTES=1440), joined to trusted pattern/horizons only.
--- Includes RUN_ID (from DETAILS:run_id or GENERATED_AT), IS_TRUSTED, TRUST_REASON, SCORE.
--- One row per RECOMMENDATION_ID — pick best horizon per rec via qualify.
+-- Today's trusted candidates: V_SIGNAL_OUTCOMES_BASE at latest signal_ts, restricted to
+-- (pattern_id, market_type, interval_minutes, horizon_bars) in V_TRUSTED_PATTERN_HORIZONS.
+-- One row per (recommendation_id, horizon_bars); explainability fields from trusted horizon.
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS as
-with joined as (
+with latest as (
+    select max(SIGNAL_TS) as latest_ts
+    from MIP.MART.V_SIGNAL_OUTCOMES_BASE
+),
+trusted_ph as (
     select
-        r.RECOMMENDATION_ID,
-        r.PATTERN_ID,
-        r.SYMBOL,
-        r.MARKET_TYPE,
-        r.INTERVAL_MINUTES,
-        r.SIGNAL_TS,
-        r.GENERATED_AT,
-        r.SCORE,
-        r.DETAILS,
-        r.RUN_ID,
-        t.HORIZON_BARS,
+        PATTERN_ID,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        HORIZON_BARS,
+        N_SIGNALS,
+        HIT_RATE_SUCCESS,
+        AVG_RETURN_SUCCESS,
+        SHARPE_LIKE_SUCCESS
+    from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
+),
+candidates as (
+    select
+        o.RECOMMENDATION_ID,
+        o.PATTERN_ID,
+        o.SYMBOL,
+        o.MARKET_TYPE,
+        o.INTERVAL_MINUTES,
+        o.HORIZON_BARS,
+        o.SIGNAL_TS,
+        o.SCORE,
+        o.DETAILS,
+        coalesce(o.DETAILS:run_id::string, to_varchar(o.GENERATED_AT, 'YYYYMMDD"T"HH24MISS')) as RUN_ID,
+        l.latest_ts as LAST_SIGNAL_TS,
         t.N_SIGNALS,
-        t.HIT_RATE,
-        t.AVG_RETURN,
-        t.SHARPE_LIKE,
-        t.IS_TRUSTED,
-        t.TRUST_REASON
-    from MIP.MART.V_SIGNALS_LATEST_TS r
-    join MIP.MART.V_TRUSTED_PATTERN_HORIZONS t
-      on t.PATTERN_ID = r.PATTERN_ID
-     and t.MARKET_TYPE = r.MARKET_TYPE
-     and t.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-     and t.IS_TRUSTED = true
+        t.HIT_RATE_SUCCESS,
+        t.AVG_RETURN_SUCCESS,
+        t.SHARPE_LIKE_SUCCESS,
+        'GATE_PASS' as TRUST_REASON
+    from MIP.MART.V_SIGNAL_OUTCOMES_BASE o
+    join trusted_ph t
+      on t.PATTERN_ID = o.PATTERN_ID
+     and t.MARKET_TYPE = o.MARKET_TYPE
+     and t.INTERVAL_MINUTES = o.INTERVAL_MINUTES
+     and t.HORIZON_BARS = o.HORIZON_BARS
+    join latest l
+      on o.SIGNAL_TS = l.latest_ts
 )
 select
     RECOMMENDATION_ID,
@@ -103,39 +114,32 @@ select
     SYMBOL,
     MARKET_TYPE,
     INTERVAL_MINUTES,
+    HORIZON_BARS,
     SIGNAL_TS,
-    GENERATED_AT,
     SCORE,
     DETAILS,
     RUN_ID,
-    HORIZON_BARS,
+    LAST_SIGNAL_TS,
     N_SIGNALS,
-    HIT_RATE,
-    AVG_RETURN,
-    SHARPE_LIKE,
-    IS_TRUSTED,
-    TRUST_REASON,
-    null::number as LEADERBOARD_RANK
-from joined
-qualify row_number() over (
-    partition by RECOMMENDATION_ID
-    order by SHARPE_LIKE desc nulls last, HIT_RATE desc nulls last, AVG_RETURN desc nulls last
-) = 1;
+    HIT_RATE_SUCCESS,
+    AVG_RETURN_SUCCESS,
+    SHARPE_LIKE_SUCCESS,
+    TRUST_REASON
+from candidates;
 
 -- ------------------------------------------------------------------------------
 -- Bonus: V_TRUSTED_TOP10
--- Top 10 trusted (pattern, horizon) combos by SHARPE_LIKE for brief anchor.
+-- Top 10 trusted (pattern, horizon) combos by SHARPE_LIKE_SUCCESS for brief anchor.
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_TOP10 as
 select *
 from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
-where IS_TRUSTED
-qualify row_number() over (order by SHARPE_LIKE desc nulls last) <= 10;
+qualify row_number() over (order by SHARPE_LIKE_SUCCESS desc nulls last) <= 10;
 
 -- ------------------------------------------------------------------------------
 -- Smoke / acceptance queries (run after deploy)
 -- ------------------------------------------------------------------------------
 -- select * from MIP.MART.V_TRAINING_LEADERBOARD limit 20;
--- select * from MIP.MART.V_TRUSTED_PATTERN_HORIZONS where IS_TRUSTED order by SHARPE_LIKE desc limit 50;
--- select count(*) as trusted_count from MIP.MART.V_TRUSTED_PATTERN_HORIZONS where IS_TRUSTED;
+-- select * from MIP.MART.V_TRUSTED_PATTERN_HORIZONS order by SHARPE_LIKE_SUCCESS desc nulls last limit 50;
+-- select count(*) as trusted_count from MIP.MART.V_TRUSTED_PATTERN_HORIZONS;
 -- select * from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS limit 50;

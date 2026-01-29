@@ -61,6 +61,9 @@ declare
     v_trusted_signal_rows_before number := 0;
     v_trusted_signal_rows_after number := 0;
     v_trusted_signal_rows_delta number := 0;
+    v_trusted_candidates number := 0;
+    v_trusted_patterns number := 0;
+    v_gate_param_set string := null;
     v_proposer_start timestamp_ntz;
     v_proposer_end timestamp_ntz;
     v_executor_start timestamp_ntz;
@@ -671,6 +674,13 @@ begin
     end;
     v_step_end := current_timestamp();
 
+    select count(*) into :v_trusted_candidates from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
+    select count(*) into :v_trusted_patterns from MIP.MART.V_TRUSTED_PATTERN_HORIZONS;
+    select PARAM_SET into :v_gate_param_set
+      from MIP.APP.TRAINING_GATE_PARAMS
+     where IS_ACTIVE
+     qualify row_number() over (order by PARAM_SET) = 1;
+
     call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
         'TRUSTED_SIGNAL_REFRESH',
@@ -686,7 +696,10 @@ begin
             'rows_after', :v_trusted_signal_rows_after,
             'rows_delta', :v_trusted_signal_rows_delta,
             'procedure_name', :v_trusted_signal_proc,
-            'procedure_status', :v_trusted_signal_status
+            'procedure_status', :v_trusted_signal_status,
+            'trusted_candidates', :v_trusted_candidates,
+            'trusted_patterns', :v_trusted_patterns,
+            'gate_param_set', :v_gate_param_set
         ),
         null
     );

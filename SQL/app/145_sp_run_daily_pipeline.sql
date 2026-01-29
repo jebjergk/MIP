@@ -371,11 +371,11 @@ begin
         );
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            'AGENT_GENERATE_MORNING_BRIEF',
+            'AGENT',
             'SKIPPED_NO_NEW_BARS',
             null,
             object_construct(
-                'step_name', 'agent_generate_morning_brief',
+                'step_name', 'agent_run_all',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_step_start,
@@ -735,24 +735,24 @@ begin
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
     end if;
 
-    -- Agent morning brief (read-only): run only when has_new_bars and we have a signal run
+    -- [A4] Agent step: run only when has_new_bars and we have a signal run; call SP_AGENT_RUN_ALL
     v_agent_brief_start := current_timestamp();
     if (v_signal_run_id is not null) then
         begin
-            v_agent_brief_result := (call MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(:v_effective_to_ts, :v_signal_run_id));
-            v_agent_brief_status := 'SUCCESS';
-            v_agent_brief_id := :v_agent_brief_result:brief_id::number;
+            v_agent_brief_result := (call MIP.APP.SP_AGENT_RUN_ALL(:v_effective_to_ts, :v_signal_run_id));
+            v_agent_brief_status := coalesce(v_agent_brief_result:agent_results[0]:status::string, 'SUCCESS');
+            v_agent_brief_id := v_agent_brief_result:agent_results[0]:brief_id::number;
         exception
             when other then
                 v_agent_brief_status := 'FAIL';
                 v_agent_brief_id := null;
                 call MIP.APP.SP_AUDIT_LOG_STEP(
                     :v_run_id,
-                    'AGENT_GENERATE_MORNING_BRIEF',
+                    'AGENT',
                     'FAIL',
                     null,
                     object_construct(
-                        'step_name', 'agent_generate_morning_brief',
+                        'step_name', 'agent_run_all',
                         'scope', 'AGG',
                         'scope_key', null,
                         'started_at', :v_agent_brief_start,
@@ -772,28 +772,29 @@ begin
     if (v_signal_run_id is not null and v_agent_brief_status = 'SUCCESS') then
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            'AGENT_GENERATE_MORNING_BRIEF',
+            'AGENT',
             :v_agent_brief_status,
             1,
             object_construct(
-                'step_name', 'agent_generate_morning_brief',
+                'step_name', 'agent_run_all',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_agent_brief_start,
                 'completed_at', :v_agent_brief_end,
                 'brief_id', :v_agent_brief_id,
-                'signal_run_id', :v_signal_run_id
+                'signal_run_id', :v_signal_run_id,
+                'agent_results', :v_agent_brief_result
             ),
             null
         );
     elseif (v_agent_brief_status = 'SKIPPED_NO_SIGNAL_RUN_ID') then
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            'AGENT_GENERATE_MORNING_BRIEF',
+            'AGENT',
             :v_agent_brief_status,
             0,
             object_construct(
-                'step_name', 'agent_generate_morning_brief',
+                'step_name', 'agent_run_all',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_agent_brief_start,

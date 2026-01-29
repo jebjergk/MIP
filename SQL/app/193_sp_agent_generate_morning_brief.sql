@@ -19,6 +19,10 @@ declare
     v_agent_name        string := 'AGENT_V0_MORNING_BRIEF';
     v_status           string := 'SUCCESS';
     v_min_n_signals     number := 20;
+    v_top_n_patterns    number := 5;
+    v_top_n_candidates  number := 5;
+    v_ranking_formula   string := 'HIT_RATE_SUCCESS * AVG_RETURN_SUCCESS';
+    v_enabled           boolean := true;
     v_has_new_bars      boolean := false;
     v_latest_market_ts  timestamp_ntz;
     v_entries_allowed   boolean := true;
@@ -38,12 +42,23 @@ declare
     v_generated_at      timestamp_ntz := current_timestamp();
     v_training_rs       resultset;
     v_candidate_rs      resultset;
+    v_config_rs         resultset;
 begin
-    -- Configurable min_n_signals for candidate_summary (default 20)
-    v_min_n_signals := (select coalesce(try_to_number(CONFIG_VALUE), 20) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'AGENT_BRIEF_MIN_N_SIGNALS' limit 1);
-    if (:v_min_n_signals is null) then
-        v_min_n_signals := 20;
-    end if;
+    -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF
+    v_config_rs := (select MIN_N_SIGNALS, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
+    for rec in v_config_rs do
+        v_min_n_signals := rec.MIN_N_SIGNALS;
+        v_top_n_patterns := rec.TOP_N_PATTERNS;
+        v_top_n_candidates := rec.TOP_N_CANDIDATES;
+        v_ranking_formula := rec.RANKING_FORMULA;
+        v_enabled := rec.ENABLED;
+        break;
+    end for;
+    if (:v_min_n_signals is null) then v_min_n_signals := 20; end if;
+    if (:v_top_n_patterns is null) then v_top_n_patterns := 5; end if;
+    if (:v_top_n_candidates is null) then v_top_n_candidates := 5; end if;
+    if (:v_ranking_formula is null) then v_ranking_formula := 'HIT_RATE_SUCCESS * AVG_RETURN_SUCCESS'; end if;
+    if (:v_enabled is null) then v_enabled := true; end if;
 
     -- System status: latest market bars, entries allowed (aggregate from risk state)
     v_latest_market_ts := (select max(TS) from MIP.MART.MARKET_BARS);
@@ -58,18 +73,24 @@ begin
     );
 
     v_system_status := object_construct(
+        'as_of_ts', :P_AS_OF_TS,
+        'signal_run_id', :P_SIGNAL_RUN_ID,
+        'generated_at', :v_generated_at,
         'has_new_bars', :v_has_new_bars,
         'latest_market_bars_ts', :v_latest_market_ts,
         'entries_allowed', :v_entries_allowed,
-        'stop_reason', :v_stop_reason
+        'stop_reason', :v_stop_reason,
+        'source_views', array_construct('MIP.MART.V_TRAINING_LEADERBOARD', 'MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS', 'MIP.MART.V_PORTFOLIO_RISK_STATE', 'MIP.MART.MARKET_BARS'),
+        'filters', object_construct('min_n_signals', :v_min_n_signals, 'top_n_patterns', :v_top_n_patterns, 'top_n_candidates', :v_top_n_candidates),
+        'determinism_key', object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name)
     );
 
-    -- Training summary: top 5 from V_TRAINING_LEADERBOARD (resultset to avoid SELECT...INTO context)
+    -- Training summary: top N from V_TRAINING_LEADERBOARD, N_SIGNALS >= min_n_signals, order by HIT_RATE_SUCCESS desc, AVG_RETURN_SUCCESS desc
     v_training_rs := (
         select array_agg(obj) within group (order by rn) as agg
         from (
             select
-                row_number() over (order by SHARPE_LIKE_SUCCESS desc nulls last, HIT_RATE_SUCCESS desc nulls last, AVG_RETURN_SUCCESS desc nulls last) as rn,
+                row_number() over (order by HIT_RATE_SUCCESS desc nulls last, AVG_RETURN_SUCCESS desc nulls last) as rn,
                 object_construct(
                     'pattern_id', PATTERN_ID,
                     'market_type', MARKET_TYPE,
@@ -82,7 +103,8 @@ begin
                     'sharpe_like_success', SHARPE_LIKE_SUCCESS
                 ) as obj
             from MIP.MART.V_TRAINING_LEADERBOARD
-            qualify rn <= 5
+            where N_SIGNALS >= :v_min_n_signals
+            qualify rn <= :v_top_n_patterns
         ) t
     );
     for rec in v_training_rs do
@@ -134,7 +156,7 @@ begin
                        or to_varchar(P_SIGNAL_RUN_ID) = RUN_ID)
                   and coalesce(N_SIGNALS, 0) >= :v_min_n_signals
             ) ranked
-            where rn <= 5
+            where rn <= :v_top_n_candidates
         ) sub
     );
     for rec in v_candidate_rs do
@@ -192,28 +214,23 @@ begin
         'data_lineage', :v_data_lineage
     );
 
-    -- Upsert: delete existing row for (as_of_ts, signal_run_id, agent_name) then insert
-    delete from MIP.AGENT_OUT.AGENT_MORNING_BRIEF
-     where AS_OF_TS = :P_AS_OF_TS
-       and SIGNAL_RUN_ID = :P_SIGNAL_RUN_ID
-       and AGENT_NAME = :v_agent_name;
-
-    insert into MIP.AGENT_OUT.AGENT_MORNING_BRIEF (
-        AS_OF_TS,
-        SIGNAL_RUN_ID,
-        AGENT_NAME,
-        STATUS,
-        BRIEF_JSON,
-        CREATED_AT
-    )
-    values (
-        :P_AS_OF_TS,
-        :P_SIGNAL_RUN_ID,
-        :v_agent_name,
-        :v_status,
-        :v_brief_json,
-        :v_generated_at
-    );
+    -- Upsert: MERGE by (AS_OF_TS, SIGNAL_RUN_ID, AGENT_NAME); match then update BRIEF_JSON/STATUS/CREATED_AT, else insert
+    merge into MIP.AGENT_OUT.AGENT_MORNING_BRIEF t
+    using (
+        select
+            :P_AS_OF_TS as AS_OF_TS,
+            :P_SIGNAL_RUN_ID as SIGNAL_RUN_ID,
+            :v_agent_name as AGENT_NAME,
+            :v_status as STATUS,
+            :v_brief_json as BRIEF_JSON,
+            :v_generated_at as CREATED_AT
+    ) s
+    on t.AS_OF_TS = s.AS_OF_TS and t.SIGNAL_RUN_ID = s.SIGNAL_RUN_ID and t.AGENT_NAME = s.AGENT_NAME
+    when matched then
+        update set t.BRIEF_JSON = s.BRIEF_JSON, t.STATUS = s.STATUS, t.CREATED_AT = s.CREATED_AT
+    when not matched then
+        insert (AS_OF_TS, SIGNAL_RUN_ID, AGENT_NAME, STATUS, BRIEF_JSON, CREATED_AT)
+        values (s.AS_OF_TS, s.SIGNAL_RUN_ID, s.AGENT_NAME, s.STATUS, s.BRIEF_JSON, s.CREATED_AT);
 
     v_brief_id := (
         select BRIEF_ID
@@ -251,10 +268,11 @@ begin
         )
     );
 
-    return object_construct('brief_json', :v_brief_json, 'brief_id', :v_brief_id);
+    -- Return BRIEF_JSON (variant) per spec
+    return :v_brief_json;
 exception
     when other then
-        v_status := 'FAIL';
+        v_status := 'ERROR';
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -274,9 +292,29 @@ exception
             'SP_AGENT_GENERATE_MORNING_BRIEF',
             :v_status,
             0,
-            object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID),
+            object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name),
             sqlerrm
         );
-        raise;
+        -- Optionally write AGENT_RUN_LOG if table exists (run in same proc; ignore errors on insert)
+        begin
+            insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
+                RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, ERROR_MESSAGE, CREATED_AT
+            )
+            values (
+                uuid_string(),
+                :v_agent_name,
+                :P_AS_OF_TS,
+                :P_SIGNAL_RUN_ID,
+                'ERROR',
+                object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID),
+                null,
+                sqlerrm,
+                current_timestamp()
+            );
+        exception
+            when other then
+                null;
+        end;
+        return object_construct('status', 'ERROR', 'error_message', sqlerrm, 'as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
 end;
 $$;

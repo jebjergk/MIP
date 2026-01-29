@@ -39,7 +39,9 @@ create table if not exists MIP.AGENT_OUT.AGENT_RUN_LOG (
 );
 
 -- ------------------------------------------------------------------------------
--- Grants (consistent with bootstrap: read roles select, admin owns)
+-- Grants: MIP_ADMIN_ROLE full control (ownership via bootstrap); MIP_APP_ROLE select + insert on agent tables
 -- ------------------------------------------------------------------------------
+grant select, insert on table MIP.AGENT_OUT.AGENT_MORNING_BRIEF to role MIP_APP_ROLE;
+grant select, insert on table MIP.AGENT_OUT.AGENT_RUN_LOG to role MIP_APP_ROLE;
 grant select on all tables in schema MIP.AGENT_OUT to role MIP_APP_ROLE;
 grant select on future tables in schema MIP.AGENT_OUT to role MIP_APP_ROLE;

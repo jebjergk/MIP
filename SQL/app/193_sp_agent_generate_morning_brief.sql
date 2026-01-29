@@ -93,51 +93,56 @@ begin
 
     -- Candidate summary: top 5 "paper candidates" from V_TRUSTED_SIGNALS_LATEST_TS (this run)
     -- Rank by (hit_rate_success * avg_return_success), guard n_signals >= v_min_n_signals
-    with eligible as (
-        select
-            RECOMMENDATION_ID,
-            PATTERN_ID,
-            SYMBOL,
-            MARKET_TYPE,
-            INTERVAL_MINUTES,
-            HORIZON_BARS,
-            SCORE,
-            N_SIGNALS,
-            HIT_RATE_SUCCESS,
-            AVG_RETURN_SUCCESS,
-            (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) as RANKING_SCORE
-        from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-        where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID
-               or to_varchar(P_SIGNAL_RUN_ID) = RUN_ID)
-          and coalesce(N_SIGNALS, 0) >= :v_min_n_signals
-    ),
-    ranked as (
-        select
-            e.*,
-            row_number() over (
-                order by e.RANKING_SCORE desc nulls last,
-                         e.SCORE desc nulls last,
-                         e.RECOMMENDATION_ID
-            ) as rn
-        from eligible e
-    )
-    select array_agg(
-        object_construct(
-            'recommendation_id', RECOMMENDATION_ID,
-            'pattern_id', PATTERN_ID,
-            'symbol', SYMBOL,
-            'market_type', MARKET_TYPE,
-            'interval_minutes', INTERVAL_MINUTES,
-            'horizon_bars', HORIZON_BARS,
-            'score', SCORE,
-            'n_signals', N_SIGNALS,
-            'hit_rate_success', HIT_RATE_SUCCESS,
-            'avg_return_success', AVG_RETURN_SUCCESS,
-            'ranking_score', RANKING_SCORE
-        ) within group (order by rn)
+    -- Subquery required: Snowflake rejects SELECT...INTO when statement starts with WITH
+    select array_agg(obj) within group (order by rn)
       into :v_candidate_top5
-      from ranked
-     where rn <= 5;
+      from (
+        with eligible as (
+            select
+                RECOMMENDATION_ID,
+                PATTERN_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                INTERVAL_MINUTES,
+                HORIZON_BARS,
+                SCORE,
+                N_SIGNALS,
+                HIT_RATE_SUCCESS,
+                AVG_RETURN_SUCCESS,
+                (coalesce(HIT_RATE_SUCCESS, 0) * coalesce(AVG_RETURN_SUCCESS, 0)) as RANKING_SCORE
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+            where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID
+                   or to_varchar(P_SIGNAL_RUN_ID) = RUN_ID)
+              and coalesce(N_SIGNALS, 0) >= :v_min_n_signals
+        ),
+        ranked as (
+            select
+                e.*,
+                row_number() over (
+                    order by e.RANKING_SCORE desc nulls last,
+                             e.SCORE desc nulls last,
+                             e.RECOMMENDATION_ID
+                ) as rn
+            from eligible e
+        )
+        select
+            rn,
+            object_construct(
+                'recommendation_id', RECOMMENDATION_ID,
+                'pattern_id', PATTERN_ID,
+                'symbol', SYMBOL,
+                'market_type', MARKET_TYPE,
+                'interval_minutes', INTERVAL_MINUTES,
+                'horizon_bars', HORIZON_BARS,
+                'score', SCORE,
+                'n_signals', N_SIGNALS,
+                'hit_rate_success', HIT_RATE_SUCCESS,
+                'avg_return_success', AVG_RETURN_SUCCESS,
+                'ranking_score', RANKING_SCORE
+            ) as obj
+        from ranked
+        where rn <= 5
+      ) sub;
     v_candidate_top5 := coalesce(:v_candidate_top5, array_construct());
     if (array_size(:v_candidate_top5) = 0) then
         select

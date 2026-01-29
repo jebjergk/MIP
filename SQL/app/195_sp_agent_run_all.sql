@@ -7,7 +7,7 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_RUN_ALL(
     P_AS_OF_TS      timestamp_ntz,
-    P_SIGNAL_RUN_ID number
+    P_SIGNAL_RUN_ID string   -- pipeline run id (recommendations DETAILS:run_id) for deterministic tie-back
 )
 returns variant
 language sql
@@ -33,7 +33,7 @@ begin
             select BRIEF_ID
             from MIP.AGENT_OUT.MORNING_BRIEF
             where PORTFOLIO_ID = 0
-              and RUN_ID = :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || to_varchar(:P_SIGNAL_RUN_ID)
+              and RUN_ID = :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || :P_SIGNAL_RUN_ID
             limit 1
         );
     end if;

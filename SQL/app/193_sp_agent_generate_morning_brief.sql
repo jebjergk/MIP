@@ -8,7 +8,7 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(
     P_AS_OF_TS      timestamp_ntz,
-    P_SIGNAL_RUN_ID number
+    P_SIGNAL_RUN_ID variant   -- number (e.g. 0 bootstrap) or string (pipeline run id) for deterministic tie-back
 )
 returns variant
 language sql
@@ -19,6 +19,7 @@ declare
     v_agent_name           string := 'AGENT_V0_MORNING_BRIEF';
     v_status               string := 'SUCCESS';
     v_min_n_signals        number := 20;
+    v_min_n_signals_bootstrap number := 5;   -- bootstrap: allow LOW-confidence candidates with N_SIGNALS >= this
     v_top_n_patterns       number := 5;
     v_top_n_candidates     number := 5;
     v_ranking_formula      string := 'HIT_RATE_SUCCESS * AVG_RETURN_SUCCESS';
@@ -57,9 +58,10 @@ declare
     v_outputs_json          variant;
 begin
     -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF (omit RANKING_FORMULA_TYPE so proc works before 194 adds column)
-    v_config_rs := (select MIN_N_SIGNALS, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
+    v_config_rs := (select MIN_N_SIGNALS, coalesce(MIN_N_SIGNALS_BOOTSTRAP, 5) as MIN_N_SIGNALS_BOOTSTRAP, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
     for rec in v_config_rs do
         v_min_n_signals := rec.MIN_N_SIGNALS;
+        v_min_n_signals_bootstrap := rec.MIN_N_SIGNALS_BOOTSTRAP;
         v_top_n_patterns := rec.TOP_N_PATTERNS;
         v_top_n_candidates := rec.TOP_N_CANDIDATES;
         v_ranking_formula := rec.RANKING_FORMULA;
@@ -67,6 +69,7 @@ begin
         break;
     end for;
     if (:v_min_n_signals is null) then v_min_n_signals := 20; end if;
+    if (:v_min_n_signals_bootstrap is null) then v_min_n_signals_bootstrap := 5; end if;
     if (:v_top_n_patterns is null) then v_top_n_patterns := 5; end if;
     if (:v_top_n_candidates is null) then v_top_n_candidates := 5; end if;
     if (:v_ranking_formula is null) then v_ranking_formula := 'HIT_RATE_SUCCESS * AVG_RETURN_SUCCESS'; end if;
@@ -182,6 +185,7 @@ begin
                     'horizon_bars', HORIZON_BARS,
                     'score', SCORE,
                     'n_signals', N_SIGNALS,
+                    'confidence', CONFIDENCE,
                     'hit_rate_success', HIT_RATE_SUCCESS,
                     'avg_return_success', AVG_RETURN_SUCCESS,
                     'sharpe_like_success', SHARPE_LIKE_SUCCESS,
@@ -197,6 +201,7 @@ begin
                     HORIZON_BARS,
                     SCORE,
                     N_SIGNALS,
+                    CONFIDENCE,
                     HIT_RATE_SUCCESS,
                     AVG_RETURN_SUCCESS,
                     SHARPE_LIKE_SUCCESS,
@@ -212,7 +217,10 @@ begin
                 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
                 where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID
                        or to_varchar(:P_SIGNAL_RUN_ID) = RUN_ID)
-                  and coalesce(N_SIGNALS, 0) >= :v_min_n_signals
+                  and (
+                      (coalesce(CONFIDENCE, 'HIGH') = 'HIGH' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals)
+                      or (coalesce(CONFIDENCE, 'LOW') = 'LOW' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals_bootstrap)
+                  )
             ) ranked
             where rn <= :v_top_n_candidates
         ) sub
@@ -248,12 +256,13 @@ begin
         'diagnostics', :v_candidate_diagnostics
     );
 
-    -- BONUS: Explainability; assumptions reflect formula type
+    -- BONUS: Explainability; assumptions reflect formula type and bootstrap
     v_assumptions := object_construct(
         'min_n_signals', :v_min_n_signals,
+        'min_n_signals_bootstrap', :v_min_n_signals_bootstrap,
         'ranking_formula', :v_ranking_formula,
         'ranking_formula_type', :v_ranking_formula_type,
-        'horizons_considered', 'from V_TRUSTED_PATTERN_HORIZONS (training gate passed)'
+        'horizons_considered', 'from V_TRUSTED_PATTERN_HORIZONS (training gate passed); LOW confidence allows bootstrap threshold'
     );
     v_rationale_templates := array_construct(
         'Top pattern/horizon by Sharpe-like (success-only).',
@@ -291,7 +300,7 @@ begin
     );
 
     -- Upsert into MIP.AGENT_OUT.MORNING_BRIEF using PORTFOLIO_ID=0 for agent briefs; RUN_ID = unique key per (agent_name, as_of_ts, signal_run_id)
-    v_run_id_key := :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || to_varchar(:P_SIGNAL_RUN_ID);
+    v_run_id_key := :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || coalesce(to_varchar(:P_SIGNAL_RUN_ID), '0');
     merge into MIP.AGENT_OUT.MORNING_BRIEF t
     using (
         select

@@ -6,7 +6,7 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_PROPOSE_TRADES(
     P_PORTFOLIO_ID number,
-    P_RUN_ID number,
+    P_RUN_ID string,   -- pipeline run id for deterministic tie-back to recommendations
     P_PARENT_RUN_ID string default null
 )
 returns variant
@@ -27,7 +27,7 @@ declare
     v_inserted_count number := 0;
     v_selected_count number := 0;
     v_target_weight float := 0.05;
-    v_run_id_string string := to_varchar(:P_RUN_ID);
+    v_run_id_string string := :P_RUN_ID;
     v_current_bar_index number := 0;
     v_max_new_stock number := 0;
     v_max_new_fx number := 0;
@@ -255,7 +255,7 @@ begin
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             where s.RUN_ID = :v_run_id_string
-               or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
+               or s.RUN_ID = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -296,7 +296,7 @@ begin
                 s.SCORE
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             where s.RUN_ID = :v_run_id_string
-               or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
+               or s.RUN_ID = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -342,7 +342,7 @@ begin
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             where s.RUN_ID = :v_run_id_string
-               or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
+               or s.RUN_ID = :P_RUN_ID
         ),
         deduped_candidates as (
             select

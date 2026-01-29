@@ -6,7 +6,7 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
     P_PORTFOLIO_ID number,
-    P_RUN_ID number,
+    P_RUN_ID string,   -- pipeline run id for deterministic tie-back to recommendations
     P_PARENT_RUN_ID string default null
 )
 returns variant
@@ -28,7 +28,7 @@ declare
     v_entries_blocked boolean := false;
     v_stop_reason string;
     v_allowed_actions string;
-    v_run_id_string string := to_varchar(:P_RUN_ID);
+    v_run_id_string string := :P_RUN_ID;
     v_buy_proposals_blocked number := 0;
     v_slippage_bps number(18,8);
     v_fee_bps number(18,8);

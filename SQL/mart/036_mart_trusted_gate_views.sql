@@ -7,11 +7,15 @@ use database MIP;
 -- ------------------------------------------------------------------------------
 -- D1: V_TRUSTED_PATTERN_HORIZONS
 -- One row per (pattern_id, market_type, interval, horizon) that passes training thresholds.
--- Thresholds from MIP.APP.TRAINING_GATE_PARAMS (single active row).
+-- Full gate: N_SIGNALS >= MIN_SIGNALS -> confidence HIGH. Bootstrap: N_SIGNALS >= MIN_SIGNALS_BOOTSTRAP -> confidence LOW.
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_PATTERN_HORIZONS as
 with p as (
-    select MIN_SIGNALS, MIN_HIT_RATE, MIN_AVG_RETURN
+    select
+        MIN_SIGNALS,
+        coalesce(MIN_SIGNALS_BOOTSTRAP, 5) as MIN_SIGNALS_BOOTSTRAP,
+        MIN_HIT_RATE,
+        MIN_AVG_RETURN
     from MIP.APP.TRAINING_GATE_PARAMS
     where IS_ACTIVE
     qualify row_number() over (order by PARAM_SET) = 1
@@ -25,10 +29,15 @@ select
     l.N_SUCCESS,
     l.HIT_RATE_SUCCESS,
     l.AVG_RETURN_SUCCESS,
-    l.SHARPE_LIKE_SUCCESS
+    l.SHARPE_LIKE_SUCCESS,
+    case
+        when l.N_SIGNALS >= p.MIN_SIGNALS then 'HIGH'
+        when l.N_SIGNALS >= p.MIN_SIGNALS_BOOTSTRAP then 'LOW'
+        else 'LOW'
+    end as CONFIDENCE
 from MIP.MART.V_TRAINING_LEADERBOARD l
 cross join p
-where l.N_SIGNALS >= p.MIN_SIGNALS
+where (l.N_SIGNALS >= p.MIN_SIGNALS or l.N_SIGNALS >= p.MIN_SIGNALS_BOOTSTRAP)
   and coalesce(l.HIT_RATE_SUCCESS, 0) >= p.MIN_HIT_RATE
   and coalesce(l.AVG_RETURN_SUCCESS, -999) >= p.MIN_AVG_RETURN;
 
@@ -78,7 +87,8 @@ trusted_ph as (
         N_SIGNALS,
         HIT_RATE_SUCCESS,
         AVG_RETURN_SUCCESS,
-        SHARPE_LIKE_SUCCESS
+        SHARPE_LIKE_SUCCESS,
+        CONFIDENCE
     from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
 ),
 candidates as (
@@ -98,6 +108,7 @@ candidates as (
         t.HIT_RATE_SUCCESS,
         t.AVG_RETURN_SUCCESS,
         t.SHARPE_LIKE_SUCCESS,
+        t.CONFIDENCE,
         'GATE_PASS' as TRUST_REASON
     from MIP.MART.V_SIGNAL_OUTCOMES_BASE o
     join trusted_ph t
@@ -124,6 +135,7 @@ select
     HIT_RATE_SUCCESS,
     AVG_RETURN_SUCCESS,
     SHARPE_LIKE_SUCCESS,
+    CONFIDENCE,
     TRUST_REASON
 from candidates;
 

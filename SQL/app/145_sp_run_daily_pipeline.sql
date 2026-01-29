@@ -41,7 +41,7 @@ declare
     v_brief_results array := array_construct();
     v_brief_count number := 0;
     v_brief_run_result variant;
-    v_signal_run_id number;
+    v_signal_run_id string;   -- pipeline run id (= recommendations DETAILS:run_id); passed to agent for deterministic tie-back
     v_eligible_signal_count number := 0;
     v_proposed_count number := 0;
     v_approved_count number := 0;
@@ -725,17 +725,10 @@ begin
         null
     );
 
-    select max(try_to_number(replace(to_varchar(RUN_ID), 'T', '')))
-      into :v_signal_run_id
-      from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
+    -- Use current pipeline run id as signal_run_id so agent ties back to recommendations we just generated (DETAILS:run_id = v_run_id).
+    v_signal_run_id := :v_run_id;
 
-    if (v_signal_run_id is null) then
-        select max(try_to_number(replace(to_varchar(RUN_ID), 'T', '')))
-          into :v_signal_run_id
-          from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY;
-    end if;
-
-    -- [A4] Agent step: run only when has_new_bars and we have a signal run; call SP_AGENT_RUN_ALL
+    -- [A4] Agent step: call SP_AGENT_RUN_ALL with pipeline run id so brief filters by RUN_ID deterministically
     v_agent_brief_start := current_timestamp();
     if (v_signal_run_id is not null) then
         begin
@@ -835,7 +828,7 @@ begin
           into :v_eligible_signal_count
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
          where IS_ELIGIBLE
-           and try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :v_signal_run_id;
+           and RUN_ID = :v_signal_run_id;
     end if;
 
     v_brief_results := array_construct();
@@ -878,13 +871,7 @@ begin
                :v_executed_count
           from MIP.AGENT_OUT.ORDER_PROPOSALS
          where RUN_ID = :v_signal_run_id
-            or (
-                SIGNAL_RUN_ID is not null
-                and (
-                    SIGNAL_RUN_ID = to_varchar(:v_signal_run_id)
-                    or try_to_number(replace(to_varchar(SIGNAL_RUN_ID), 'T', '')) = :v_signal_run_id
-                )
-            );
+            or (SIGNAL_RUN_ID is not null and SIGNAL_RUN_ID = :v_signal_run_id);
     end if;
 
     v_brief_end := current_timestamp();

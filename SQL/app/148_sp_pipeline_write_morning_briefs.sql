@@ -7,7 +7,7 @@ use database MIP;
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
     P_PORTFOLIO_ID number,
     P_RUN_ID string,
-    P_SIGNAL_RUN_ID number,
+    P_SIGNAL_RUN_ID string,   -- pipeline run id for deterministic tie-back to recommendations
     P_PARENT_RUN_ID string default null
 )
 returns variant
@@ -23,7 +23,7 @@ declare
     v_rows_after number;
     v_propose_result variant;
     v_validate_result variant;
-    v_signal_run_id number := :P_SIGNAL_RUN_ID;
+    v_signal_run_id string := :P_SIGNAL_RUN_ID;
 begin
     v_step_start := current_timestamp();
 

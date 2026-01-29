@@ -1,5 +1,5 @@
 -- 188_sp_agent_propose_trades.sql
--- Purpose: Deterministic agent proposal generator for eligible signals
+-- Purpose: Deterministic agent proposal generator. Uses V_TRUSTED_SIGNALS_LATEST_TS (trusted-gate v1).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -37,6 +37,9 @@ declare
     v_selected_stock number := 0;
     v_selected_fx number := 0;
     v_selected_etf number := 0;
+    v_candidate_count_raw number := 0;
+    v_candidate_count_trusted number := 0;
+    v_trusted_rejected_count number := 0;
 begin
     select
         p.PROFILE_ID,
@@ -107,15 +110,19 @@ begin
 
     if (v_entries_blocked) then
         select count(*)
-          into :v_candidate_count
-          from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
-         where IS_ELIGIBLE = true
-           and TRUST_LABEL = 'TRUSTED'
-           and (
-               RUN_ID = :v_run_id_string
-               or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID
-           );
+          into :v_candidate_count_raw
+          from MIP.MART.V_SIGNALS_LATEST_TS
+         where RUN_ID = :v_run_id_string
+            or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
 
+        select count(*)
+          into :v_candidate_count_trusted
+          from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+         where RUN_ID = :v_run_id_string
+            or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
+
+        v_candidate_count := :v_candidate_count_trusted;
+        v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
         v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
 
         insert into MIP.APP.MIP_AUDIT_LOG (
@@ -144,7 +151,10 @@ begin
                 'open_positions', :v_open_positions,
                 'remaining_capacity', :v_remaining_capacity,
                 'candidate_count', :v_candidate_count,
-                'proposed_count', :v_selected_count
+                'proposed_count', :v_selected_count,
+                'candidate_count_raw', :v_candidate_count_raw,
+                'candidate_count_trusted', :v_candidate_count_trusted,
+                'trusted_rejected_count', :v_trusted_rejected_count
             );
 
         return object_construct(
@@ -165,15 +175,19 @@ begin
     end if;
 
     select count(*)
-      into :v_candidate_count
-      from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
-     where IS_ELIGIBLE = true
-       and TRUST_LABEL = 'TRUSTED'
-       and (
-           RUN_ID = :v_run_id_string
-           or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID
-       );
+      into :v_candidate_count_raw
+      from MIP.MART.V_SIGNALS_LATEST_TS
+     where RUN_ID = :v_run_id_string
+        or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
 
+    select count(*)
+      into :v_candidate_count_trusted
+      from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+     where RUN_ID = :v_run_id_string
+        or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
+
+    v_candidate_count := :v_candidate_count_trusted;
+    v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
     v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
 
     if (v_candidate_count = 0 or v_remaining_capacity = 0) then
@@ -200,7 +214,10 @@ begin
                 'open_positions', :v_open_positions,
                 'remaining_capacity', :v_remaining_capacity,
                 'candidate_count', :v_candidate_count,
-                'proposed_count', :v_selected_count
+                'proposed_count', :v_selected_count,
+                'candidate_count_raw', :v_candidate_count_raw,
+                'candidate_count_trusted', :v_candidate_count_trusted,
+                'trusted_rejected_count', :v_trusted_rejected_count
             );
 
         return object_construct(
@@ -236,13 +253,9 @@ begin
                     when s.MARKET_TYPE = 'FX' then 'FX'
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE = true
-              and s.TRUST_LABEL = 'TRUSTED'
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
-              )
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            where s.RUN_ID = :v_run_id_string
+               or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -281,13 +294,9 @@ begin
                 s.RECOMMENDATION_ID,
                 s.SYMBOL,
                 s.SCORE
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE = true
-              and s.TRUST_LABEL = 'TRUSTED'
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
-              )
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            where s.RUN_ID = :v_run_id_string
+               or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -331,13 +340,9 @@ begin
                     when s.MARKET_TYPE = 'FX' then 'FX'
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE = true
-              and s.TRUST_LABEL = 'TRUSTED'
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
-              )
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            where s.RUN_ID = :v_run_id_string
+               or try_to_number(replace(to_varchar(s.RUN_ID), 'T', '')) = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -455,13 +460,10 @@ begin
             s.SYMBOL,
             s.MARKET_TYPE,
             s.INTERVAL_MINUTES,
-            case s.RECOMMENDED_ACTION
-                when 'DISABLE' then 'SELL'
-                else 'BUY'
-            end as SIDE,
+            'BUY' as SIDE,
             :v_target_weight as TARGET_WEIGHT,
             s.RECOMMENDATION_ID,
-            s.TS as SIGNAL_TS,
+            s.SIGNAL_TS,
             s.PATTERN_ID as SIGNAL_PATTERN_ID,
             s.INTERVAL_MINUTES as SIGNAL_INTERVAL_MINUTES,
             s.RUN_ID as SIGNAL_RUN_ID,
@@ -469,14 +471,15 @@ begin
             object_construct(
                 'recommendation_id', s.RECOMMENDATION_ID,
                 'pattern_id', s.PATTERN_ID,
-                'ts', s.TS,
+                'ts', s.SIGNAL_TS,
                 'score', s.SCORE,
                 'interval_minutes', s.INTERVAL_MINUTES,
                 'run_id', s.RUN_ID,
-                'trust_label', s.TRUST_LABEL,
-                'recommended_action', s.RECOMMENDED_ACTION,
+                'trust_label', 'TRUSTED',
+                'recommended_action', 'ENABLE',
                 'held_priority', s.HELD_PRIORITY,
-                'market_type_group', s.MARKET_TYPE_GROUP
+                'market_type_group', s.MARKET_TYPE_GROUP,
+                'trust_reason', s.TRUST_REASON
             ) as SOURCE_SIGNALS,
             object_construct(
                 'strategy', 'diversified_capacity_aware_top_n',
@@ -583,6 +586,9 @@ begin
             'remaining_capacity', :v_remaining_capacity,
             'candidate_count', :v_candidate_count,
             'proposed_count', :v_selected_count,
+            'candidate_count_raw', :v_candidate_count_raw,
+            'candidate_count_trusted', :v_candidate_count_trusted,
+            'trusted_rejected_count', :v_trusted_rejected_count,
             'picked_by_market_type', object_construct(
                 'STOCK', :v_selected_stock,
                 'FX', :v_selected_fx,

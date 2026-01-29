@@ -352,7 +352,7 @@ begin
         insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
             RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, CREATED_AT
         )
-        select :v_run_id, :v_agent_name, :P_AS_OF_TS, :P_SIGNAL_RUN_ID, 'SUCCESS', :v_inputs_json, :v_outputs_json, current_timestamp();
+        select :v_run_id, :v_agent_name, :P_AS_OF_TS, to_varchar(:P_SIGNAL_RUN_ID), 'SUCCESS', :v_inputs_json, :v_outputs_json, current_timestamp();
     exception
         when other then
             null;
@@ -384,7 +384,7 @@ exception
             insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
                 RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, ERROR_MESSAGE, CREATED_AT
             )
-            select :v_run_id, :v_agent_name, :P_AS_OF_TS, :P_SIGNAL_RUN_ID, 'ERROR', :v_inputs_json, null, :sqlerrm, current_timestamp();
+            select :v_run_id, :v_agent_name, :P_AS_OF_TS, to_varchar(:P_SIGNAL_RUN_ID), 'ERROR', :v_inputs_json, null, :sqlerrm, current_timestamp();
         exception
             when other then
                 null;

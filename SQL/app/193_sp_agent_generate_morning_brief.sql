@@ -1,6 +1,7 @@
 -- 193_sp_agent_generate_morning_brief.sql
 -- Purpose: Read-only agent morning brief: build BRIEF_JSON from MART views, write to AGENT_OUT.AGENT_MORNING_BRIEF.
 -- Deterministic for given as_of_ts + signal_run_id; no external APIs; one audit event; upsert by (as_of_ts, signal_run_id, agent_name).
+-- Note: Avoid SELECT...INTO in Snowflake procedures; use := (SELECT ...) or RESULTSET + FOR loop. See MIP/docs/SNOWFLAKE_SQL_LIMITATIONS.md.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -39,23 +40,15 @@ declare
     v_candidate_rs      resultset;
 begin
     -- Configurable min_n_signals for candidate_summary (default 20)
-    select coalesce(try_to_number(CONFIG_VALUE), 20)
-      into :v_min_n_signals
-      from MIP.APP.APP_CONFIG
-     where CONFIG_KEY = 'AGENT_BRIEF_MIN_N_SIGNALS'
-     limit 1;
+    v_min_n_signals := (select coalesce(try_to_number(CONFIG_VALUE), 20) from MIP.APP.APP_CONFIG where CONFIG_KEY = 'AGENT_BRIEF_MIN_N_SIGNALS' limit 1);
     if (:v_min_n_signals is null) then
         v_min_n_signals := 20;
     end if;
 
     -- System status: latest market bars, entries allowed (aggregate from risk state)
-    select max(TS) into :v_latest_market_ts from MIP.MART.MARKET_BARS;
-    select
-        coalesce(min(iff(not coalesce(ENTRIES_BLOCKED, false), true, false)), true),
-        max(STOP_REASON)
-      into :v_entries_allowed,
-           :v_stop_reason
-      from MIP.MART.V_PORTFOLIO_RISK_STATE;
+    v_latest_market_ts := (select max(TS) from MIP.MART.MARKET_BARS);
+    v_entries_allowed := (select coalesce(min(iff(not coalesce(ENTRIES_BLOCKED, false), true, false)), true) from MIP.MART.V_PORTFOLIO_RISK_STATE);
+    v_stop_reason := (select max(STOP_REASON) from MIP.MART.V_PORTFOLIO_RISK_STATE);
     v_has_new_bars := (:v_latest_market_ts is not null);
 
     v_header := object_construct(
@@ -150,15 +143,15 @@ begin
     end for;
     v_candidate_top5 := coalesce(:v_candidate_top5, array_construct());
     if (array_size(:v_candidate_top5) = 0) then
-        select
-            case
+        v_candidate_reason := (
+            select case
                 when not exists (
                     select 1 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
                     where (try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_SIGNAL_RUN_ID or to_varchar(P_SIGNAL_RUN_ID) = RUN_ID)
                 ) then 'no_trusted_signals_at_latest_ts'
                 else 'no_candidates_with_min_n_signals'
             end
-          into :v_candidate_reason;
+        );
     end if;
     v_candidate_summary := object_construct(
         'candidates', :v_candidate_top5,
@@ -222,12 +215,14 @@ begin
         :v_generated_at
     );
 
-    select BRIEF_ID into :v_brief_id
-      from MIP.AGENT_OUT.AGENT_MORNING_BRIEF
-     where AS_OF_TS = :P_AS_OF_TS
-       and SIGNAL_RUN_ID = :P_SIGNAL_RUN_ID
-       and AGENT_NAME = :v_agent_name
-     limit 1;
+    v_brief_id := (
+        select BRIEF_ID
+        from MIP.AGENT_OUT.AGENT_MORNING_BRIEF
+        where AS_OF_TS = :P_AS_OF_TS
+          and SIGNAL_RUN_ID = :P_SIGNAL_RUN_ID
+          and AGENT_NAME = :v_agent_name
+        limit 1
+    );
 
     -- One audit event (EVENT_TYPE='AGENT', EVENT_NAME='SP_AGENT_GENERATE_MORNING_BRIEF')
     insert into MIP.APP.MIP_AUDIT_LOG (

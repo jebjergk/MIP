@@ -803,7 +803,7 @@ begin
     select count(*)
       into :v_brief_rows_before
       from MIP.AGENT_OUT.MORNING_BRIEF
-     where PIPELINE_RUN_ID = :v_run_id;
+     where to_varchar(PIPELINE_RUN_ID) = :v_run_id;
 
     v_proposer_start := :v_brief_start;
     v_executor_start := :v_brief_start;
@@ -882,14 +882,14 @@ begin
     select count(*)
       into :v_brief_rows_after
       from MIP.AGENT_OUT.MORNING_BRIEF
-     where PIPELINE_RUN_ID = :v_run_id;
+     where to_varchar(PIPELINE_RUN_ID) = :v_run_id;
 
     v_brief_rows_delta := :v_brief_rows_after - :v_brief_rows_before;
 
     select array_agg(BRIEF_ID) within group (order by BRIEF_ID)
       into :v_brief_ids
       from MIP.AGENT_OUT.MORNING_BRIEF
-     where PIPELINE_RUN_ID = :v_run_id;
+     where to_varchar(PIPELINE_RUN_ID) = :v_run_id;
 
     v_brief_ids := coalesce(:v_brief_ids, array_construct());
 

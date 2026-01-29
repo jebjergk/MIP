@@ -42,7 +42,7 @@ join MIP.APP.RECOMMENDATION_OUTCOMES o
 -- ------------------------------------------------------------------------------
 -- V_TRAINING_KPIS
 -- Aggregated by (PATTERN_ID, MARKET_TYPE, INTERVAL_MINUTES, HORIZON_BARS).
--- Success-only metrics use FILTER (WHERE is_success).
+-- Success-only metrics use CASE inside aggregates (Snowflake has no FILTER clause).
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRAINING_KPIS as
 select
@@ -52,13 +52,13 @@ select
     HORIZON_BARS,
     count(*) as N_SIGNALS,
     count_if(IS_SUCCESS) as N_SUCCESS,
-    avg(HIT_INT) filter (where IS_SUCCESS) as HIT_RATE_SUCCESS,
-    avg(REALIZED_RETURN) filter (where IS_SUCCESS) as AVG_RETURN_SUCCESS,
-    median(REALIZED_RETURN) filter (where IS_SUCCESS) as MEDIAN_RETURN_SUCCESS,
-    stddev(REALIZED_RETURN) filter (where IS_SUCCESS) as STDDEV_RETURN_SUCCESS,
-    avg(abs(REALIZED_RETURN)) filter (where IS_SUCCESS) as AVG_ABS_RETURN_SUCCESS,
-    avg(REALIZED_RETURN) filter (where IS_SUCCESS)
-        / nullif(stddev(REALIZED_RETURN) filter (where IS_SUCCESS), 0) as SHARPE_LIKE_SUCCESS,
+    avg(case when IS_SUCCESS then HIT_INT end) as HIT_RATE_SUCCESS,
+    avg(case when IS_SUCCESS then REALIZED_RETURN end) as AVG_RETURN_SUCCESS,
+    median(case when IS_SUCCESS then REALIZED_RETURN end) as MEDIAN_RETURN_SUCCESS,
+    stddev(case when IS_SUCCESS then REALIZED_RETURN end) as STDDEV_RETURN_SUCCESS,
+    avg(case when IS_SUCCESS then abs(REALIZED_RETURN) end) as AVG_ABS_RETURN_SUCCESS,
+    avg(case when IS_SUCCESS then REALIZED_RETURN end)
+        / nullif(stddev(case when IS_SUCCESS then REALIZED_RETURN end), 0) as SHARPE_LIKE_SUCCESS,
     max(SIGNAL_TS) as LAST_SIGNAL_TS
 from MIP.MART.V_SIGNAL_OUTCOMES_BASE
 group by

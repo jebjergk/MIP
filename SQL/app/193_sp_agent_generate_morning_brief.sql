@@ -1,6 +1,6 @@
 -- 193_sp_agent_generate_morning_brief.sql
 -- Purpose: Read-only agent morning brief: build BRIEF_JSON from MART views, write to AGENT_OUT.MORNING_BRIEF (PORTFOLIO_ID=0 for agent briefs).
--- Deterministic for given as_of_ts + signal_run_id; no external APIs; one audit event; upsert by (as_of_ts, signal_run_id, agent_name).
+-- Deterministic for (as_of_ts, run_id, agent_name). Upsert by (PORTFOLIO_ID=0, RUN_ID).
 -- Note: Avoid SELECT...INTO in Snowflake procedures; use := (SELECT ...) or RESULTSET + FOR loop. See MIP/docs/SNOWFLAKE_SQL_LIMITATIONS.md.
 
 use role MIP_ADMIN_ROLE;
@@ -8,7 +8,7 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(
     P_AS_OF_TS      timestamp_ntz,
-    P_SIGNAL_RUN_ID variant   -- number (e.g. 0 bootstrap) or string (pipeline run id) for deterministic tie-back
+    P_RUN_ID        varchar   -- pipeline run id (UUID); trusted signals view is RUN_ID-keyed
 )
 returns variant
 language sql
@@ -44,7 +44,6 @@ declare
     v_data_lineage         variant;
     v_brief_json           variant;
     v_brief_id             number;
-    v_run_id_key           string;  -- RUN_ID for agent row in MORNING_BRIEF (unique per as_of_ts, signal_run_id, agent_name)
     v_generated_at         timestamp_ntz := current_timestamp();
     v_training_rs          resultset;
     v_candidate_rs         resultset;
@@ -84,7 +83,7 @@ begin
 
     v_header := object_construct(
         'as_of_ts', :P_AS_OF_TS,
-        'signal_run_id', :P_SIGNAL_RUN_ID,
+        'run_id', :P_RUN_ID,
         'generated_at', :v_generated_at
     );
 
@@ -158,7 +157,7 @@ begin
 
     v_system_status := object_construct(
         'as_of_ts', :P_AS_OF_TS,
-        'signal_run_id', :P_SIGNAL_RUN_ID,
+        'run_id', :P_RUN_ID,
         'generated_at', :v_generated_at,
         'has_new_bars', :v_has_new_bars,
         'latest_market_bars_ts', :v_latest_market_ts,
@@ -166,7 +165,7 @@ begin
         'stop_reason', :v_stop_reason,
         'source_views', array_construct('MIP.MART.V_TRAINING_LEADERBOARD', 'MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS', 'MIP.MART.V_PORTFOLIO_RISK_STATE', 'MIP.MART.MARKET_BARS'),
         'filters', object_construct('min_n_signals', :v_min_n_signals, 'top_n_patterns', :v_top_n_patterns, 'top_n_candidates', :v_top_n_candidates),
-        'determinism_key', object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name),
+        'determinism_key', object_construct('as_of_ts', :P_AS_OF_TS, 'run_id', :P_RUN_ID, 'agent_name', :v_agent_name),
         'fallback_used', :v_training_fallback
     );
 
@@ -215,7 +214,7 @@ begin
                             RECOMMENDATION_ID
                     ) as rn
                 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-                where RUN_ID = to_varchar(:P_SIGNAL_RUN_ID)
+                where RUN_ID = :P_RUN_ID
                   and (
                       (coalesce(CONFIDENCE, 'HIGH') = 'HIGH' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals)
                       or (coalesce(CONFIDENCE, 'LOW') = 'LOW' and coalesce(N_SIGNALS, 0) >= :v_min_n_signals_bootstrap)
@@ -235,15 +234,15 @@ begin
             select case
                 when not exists (
                     select 1 from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-                    where RUN_ID = to_varchar(:P_SIGNAL_RUN_ID)
+                    where RUN_ID = :P_RUN_ID
                 ) then 'no_trusted_signals_at_latest_ts'
                 else 'no_candidates_with_min_n_signals'
             end
         );
         v_candidate_diagnostics := object_construct(
             'as_of_ts', :P_AS_OF_TS,
-            'signal_run_id', :P_SIGNAL_RUN_ID,
-            'view_raw_count', (select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where RUN_ID = to_varchar(:P_SIGNAL_RUN_ID)),
+            'run_id', :P_RUN_ID,
+            'view_raw_count', (select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS where RUN_ID = :P_RUN_ID),
             'reason', :v_candidate_reason
         );
     end if;
@@ -283,7 +282,7 @@ begin
         ),
         'filters_applied', object_construct(
             'training_summary', 'top 5 by sharpe_like_success, hit_rate_success, avg_return_success',
-            'candidate_summary', 'signal_run_id match, n_signals >= min_n_signals, top 5 by ranking_score'
+            'candidate_summary', 'RUN_ID match (V_TRUSTED_SIGNALS_LATEST_TS), n_signals >= min_n_signals, top 5 by ranking_score'
         )
     );
 
@@ -298,29 +297,41 @@ begin
         'data_lineage', :v_data_lineage
     );
 
-    -- Upsert into MIP.AGENT_OUT.MORNING_BRIEF using PORTFOLIO_ID=0 for agent briefs; RUN_ID = unique key per (agent_name, as_of_ts, signal_run_id)
-    v_run_id_key := :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || coalesce(to_varchar(:P_SIGNAL_RUN_ID), '0');
+    -- Upsert into MIP.AGENT_OUT.MORNING_BRIEF: agent rows use PORTFOLIO_ID=0, RUN_ID=UUID (P_RUN_ID); unique (PORTFOLIO_ID, RUN_ID)
     merge into MIP.AGENT_OUT.MORNING_BRIEF t
     using (
         select
             0 as PORTFOLIO_ID,
-            :v_run_id_key as RUN_ID,
+            :P_RUN_ID as RUN_ID,
             :P_AS_OF_TS as AS_OF_TS,
             object_construct('status', :v_status, 'agent_name', :v_agent_name, 'brief', :v_brief_json) as BRIEF,
-            to_varchar(:P_SIGNAL_RUN_ID) as PIPELINE_RUN_ID
+            :P_RUN_ID as PIPELINE_RUN_ID,
+            :v_agent_name as AGENT_NAME,
+            :v_status as STATUS,
+            :v_brief_json as BRIEF_JSON,
+            :v_generated_at as CREATED_AT,
+            :P_RUN_ID as SIGNAL_RUN_ID
     ) s
     on t.PORTFOLIO_ID = s.PORTFOLIO_ID and t.RUN_ID = s.RUN_ID
     when matched then
-        update set t.AS_OF_TS = s.AS_OF_TS, t.BRIEF = s.BRIEF, t.PIPELINE_RUN_ID = s.PIPELINE_RUN_ID
+        update set
+            t.AS_OF_TS = s.AS_OF_TS,
+            t.BRIEF = s.BRIEF,
+            t.PIPELINE_RUN_ID = s.PIPELINE_RUN_ID,
+            t.AGENT_NAME = s.AGENT_NAME,
+            t.STATUS = s.STATUS,
+            t.BRIEF_JSON = s.BRIEF_JSON,
+            t.CREATED_AT = s.CREATED_AT,
+            t.SIGNAL_RUN_ID = s.SIGNAL_RUN_ID
     when not matched then
-        insert (PORTFOLIO_ID, RUN_ID, AS_OF_TS, BRIEF, PIPELINE_RUN_ID)
-        values (s.PORTFOLIO_ID, s.RUN_ID, s.AS_OF_TS, s.BRIEF, s.PIPELINE_RUN_ID);
+        insert (PORTFOLIO_ID, RUN_ID, AS_OF_TS, BRIEF, PIPELINE_RUN_ID, AGENT_NAME, STATUS, BRIEF_JSON, CREATED_AT, SIGNAL_RUN_ID)
+        values (s.PORTFOLIO_ID, s.RUN_ID, s.AS_OF_TS, s.BRIEF, s.PIPELINE_RUN_ID, s.AGENT_NAME, s.STATUS, s.BRIEF_JSON, s.CREATED_AT, s.SIGNAL_RUN_ID);
 
     v_brief_id := (
         select BRIEF_ID
         from MIP.AGENT_OUT.MORNING_BRIEF
         where PORTFOLIO_ID = 0
-          and RUN_ID = :v_run_id_key
+          and RUN_ID = :P_RUN_ID
         limit 1
     );
 
@@ -328,7 +339,7 @@ begin
     v_run_id := (select uuid_string());
     v_audit_details := object_construct(
         'as_of_ts', :P_AS_OF_TS,
-        'signal_run_id', :P_SIGNAL_RUN_ID,
+        'run_id', :P_RUN_ID,
         'agent_name', :v_agent_name,
         'brief_id', :v_brief_id
     );
@@ -347,12 +358,12 @@ begin
     -- P1: AGENT_RUN_LOG with rowcounts for observability (success path)
     begin
         v_run_id := (select uuid_string());
-        v_inputs_json := object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
+        v_inputs_json := object_construct('as_of_ts', :P_AS_OF_TS, 'run_id', :P_RUN_ID);
         v_outputs_json := object_construct('training_count', :v_training_count, 'candidate_count', :v_candidate_count, 'brief_id', :v_brief_id);
         insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
             RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, CREATED_AT
         )
-        select :v_run_id, :v_agent_name, :P_AS_OF_TS, to_varchar(:P_SIGNAL_RUN_ID), 'SUCCESS', :v_inputs_json, :v_outputs_json, current_timestamp();
+        select :v_run_id, :v_agent_name, :P_AS_OF_TS, :P_RUN_ID, 'SUCCESS', :v_inputs_json, :v_outputs_json, current_timestamp();
     exception
         when other then
             null;
@@ -364,7 +375,7 @@ exception
     when other then
         v_status := 'ERROR';
         v_run_id := (select uuid_string());
-        v_audit_details := object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID, 'agent_name', :v_agent_name);
+        v_audit_details := object_construct('as_of_ts', :P_AS_OF_TS, 'run_id', :P_RUN_ID, 'agent_name', :v_agent_name);
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
@@ -380,15 +391,15 @@ exception
         -- Optionally write AGENT_RUN_LOG if table exists (run in same proc; ignore errors on insert)
         begin
             v_run_id := (select uuid_string());
-            v_inputs_json := object_construct('as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
+            v_inputs_json := object_construct('as_of_ts', :P_AS_OF_TS, 'run_id', :P_RUN_ID);
             insert into MIP.AGENT_OUT.AGENT_RUN_LOG (
                 RUN_ID, AGENT_NAME, AS_OF_TS, SIGNAL_RUN_ID, STATUS, INPUTS_JSON, OUTPUTS_JSON, ERROR_MESSAGE, CREATED_AT
             )
-            select :v_run_id, :v_agent_name, :P_AS_OF_TS, to_varchar(:P_SIGNAL_RUN_ID), 'ERROR', :v_inputs_json, null, :sqlerrm, current_timestamp();
+            select :v_run_id, :v_agent_name, :P_AS_OF_TS, :P_RUN_ID, 'ERROR', :v_inputs_json, null, :sqlerrm, current_timestamp();
         exception
             when other then
                 null;
         end;
-        return object_construct('status', 'ERROR', 'error_message', :sqlerrm, 'as_of_ts', :P_AS_OF_TS, 'signal_run_id', :P_SIGNAL_RUN_ID);
+        return object_construct('status', 'ERROR', 'error_message', :sqlerrm, 'as_of_ts', :P_AS_OF_TS, 'run_id', :P_RUN_ID);
 end;
 $$;

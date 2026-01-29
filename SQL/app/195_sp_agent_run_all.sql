@@ -7,7 +7,7 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_RUN_ALL(
     P_AS_OF_TS      timestamp_ntz,
-    P_SIGNAL_RUN_ID string   -- pipeline run id (recommendations DETAILS:run_id) for deterministic tie-back
+    P_RUN_ID        varchar   -- pipeline run id (UUID); trusted signals view is RUN_ID-keyed
 )
 returns variant
 language sql
@@ -22,7 +22,7 @@ declare
     v_agent_results array := array_construct();
 begin
     -- Call morning brief agent
-    v_brief_result := (call MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(:P_AS_OF_TS, :P_SIGNAL_RUN_ID));
+    v_brief_result := (call MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(:P_AS_OF_TS, :P_RUN_ID));
 
     -- If procedure returned error object (has status='ERROR'), capture status
     if (v_brief_result is not null and v_brief_result:status::string = 'ERROR') then
@@ -33,7 +33,7 @@ begin
             select BRIEF_ID
             from MIP.AGENT_OUT.MORNING_BRIEF
             where PORTFOLIO_ID = 0
-              and RUN_ID = :v_agent_name || '_' || to_varchar(:P_AS_OF_TS, 'YYYY-MM-DD"T"HH24:MI:SS.FF3') || '_' || :P_SIGNAL_RUN_ID
+              and RUN_ID = :P_RUN_ID
             limit 1
         );
     end if;

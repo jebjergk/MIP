@@ -9,10 +9,11 @@ desc table mip.app.recommendation_log;
 
 --drop table mip.agent_out.agent_morning_brief;
 
-
+select signal_run_id, count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS group by 1 order by 2 desc;
 
 -- Run the pipeline once before executing this smoke SQL.
-
+select distinct signal_run_id from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
+select * from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
 select * from MIP.MART.V_TRAINING_KPIS limit 20;
 select * from MIP.MART.V_TRAINING_LEADERBOARD limit 50;
 -- should be > 0 if outcomes exist
@@ -64,3 +65,9 @@ where PROPOSAL_ID in (
 );
 
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
+
+-- Smoke: agent morning brief (RUN_ID = pipeline UUID). Run pipeline once first.
+select * from MIP.AGENT_OUT.MORNING_BRIEF order by created_at desc limit 5;
+-- Candidate section is non-empty when V_TRUSTED_SIGNALS_LATEST_TS has rows for that run_id:
+-- select RUN_ID, count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS group by RUN_ID;
+-- Then check BRIEF_JSON:candidate_summary (or brief->candidate_summary) for same RUN_ID.

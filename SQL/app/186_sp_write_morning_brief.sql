@@ -17,6 +17,7 @@ execute as caller
 as
 $$
 declare
+    exc_no_brief exception;
     v_brief variant;
     v_attr variant;
     v_brief_proposed_count number;

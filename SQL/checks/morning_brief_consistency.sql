@@ -190,6 +190,19 @@ where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
   and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
   and mb.PIPELINE_RUN_ID is null;
 
+-- Check 6: Verify brief:"pipeline_run_id" matches RUN_ID (column)
+-- Expect 0: briefs where JSON pipeline_run_id != row RUN_ID
+select
+    mb.BRIEF_ID,
+    mb.PORTFOLIO_ID,
+    mb.RUN_ID,
+    mb.BRIEF:pipeline_run_id::string as brief_pipeline_run_id,
+    case when coalesce(mb.BRIEF:pipeline_run_id::string, '') != coalesce(mb.RUN_ID, '') then 'PIPELINE_RUN_ID_MISMATCH' else 'CONSISTENT' end as consistency_status
+from MIP.AGENT_OUT.MORNING_BRIEF mb
+where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
+  and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
+  and coalesce(mb.BRIEF:pipeline_run_id::string, '') != coalesce(mb.RUN_ID, '');
+
 -- Summary: Morning brief consistency summary
 select
     'MORNING_BRIEF_CONSISTENCY' as check_name,

@@ -5,7 +5,7 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -- Content-only view; no AS_OF_TS. Procedure supplies (as_of_ts, run_id) for MERGE key.
--- Attribution in written brief is overwritten by SP_WRITE_MORNING_BRIEF with pipeline RUN_ID only.
+-- Attribution in written brief is overwritten by SP_WRITE_MORNING_BRIEF with pipeline_run_id and as_of_ts only (no latest_run_id).
 create or replace view MIP.MART.V_MORNING_BRIEF_JSON (
     PORTFOLIO_ID,
     BRIEF

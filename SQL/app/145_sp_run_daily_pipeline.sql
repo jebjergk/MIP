@@ -1036,7 +1036,6 @@ begin
             'brief_id', :v_agent_brief_id
         ),
         'morning_brief', :v_brief_result,
-        'run_id', :v_run_id,
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,
         'proposals_approved', :v_approved_count,

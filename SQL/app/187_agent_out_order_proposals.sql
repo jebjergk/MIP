@@ -8,7 +8,7 @@ create schema if not exists MIP.AGENT_OUT;
 
 create table if not exists MIP.AGENT_OUT.ORDER_PROPOSALS (
     PROPOSAL_ID        number identity,
-    RUN_ID             number,
+    RUN_ID             varchar(64),
     PORTFOLIO_ID       number,
     PROPOSED_AT        timestamp_ntz default current_timestamp(),
     SYMBOL             varchar,

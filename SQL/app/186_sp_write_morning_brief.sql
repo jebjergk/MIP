@@ -53,6 +53,8 @@ begin
     -- Overwrite attribution: pipeline_run_id and as_of_ts only; do not write latest_run_id.
     v_attr := coalesce(v_brief:attribution, object_construct());
     v_attr := object_delete(v_attr, 'latest_run_id');
+    v_attr := object_delete(v_attr, 'pipeline_run_id');
+    v_attr := object_delete(v_attr, 'as_of_ts');
     v_attr := object_insert(v_attr, 'pipeline_run_id', :P_RUN_ID);
     v_attr := object_insert(v_attr, 'as_of_ts', to_varchar(:P_AS_OF_TS));
     v_brief := object_delete(v_brief, 'attribution');

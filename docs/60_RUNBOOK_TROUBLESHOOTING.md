@@ -1,5 +1,76 @@
 # Runbook & Troubleshooting
 
+## RUNBOOK: run summary by :run_id
+
+Use a single run identifier (e.g. from `MIP_AUDIT_LOG` after a pipeline run) to see steps, counts, and any errors for that run. Replace `:run_id` with your run ID (UUID string).
+
+**Run summary (steps + counts + errors):**
+```sql
+select
+    EVENT_TS,
+    EVENT_TYPE,
+    EVENT_NAME,
+    STATUS,
+    ROWS_AFFECTED,
+    ERROR_MESSAGE,
+    DETAILS
+from MIP.APP.MIP_AUDIT_LOG
+where (EVENT_TYPE = 'PIPELINE' and RUN_ID = :run_id)
+   or (EVENT_TYPE = 'PIPELINE_STEP' and PARENT_RUN_ID = :run_id)
+order by EVENT_TS;
+```
+
+**Run-level event timeline (audit log for this run):**
+```sql
+select EVENT_TS, EVENT_NAME, STATUS, ROWS_AFFECTED, ERROR_MESSAGE
+from MIP.APP.MIP_AUDIT_LOG
+where (RUN_ID = :run_id or PARENT_RUN_ID = :run_id)
+order by EVENT_TS;
+```
+
+**Portfolio run events (drawdown stops, etc.; view has no event_ts, use DRAWDOWN_STOP_TS):**
+```sql
+select *
+from MIP.MART.V_PORTFOLIO_RUN_EVENTS
+where RUN_ID = :run_id
+order by PORTFOLIO_ID, DRAWDOWN_STOP_TS;
+```
+
+**KPI summary for run:**
+```sql
+select *
+from MIP.MART.V_PORTFOLIO_RUN_KPIS
+where RUN_ID = :run_id;
+```
+
+**Audit log (raw) for run:**
+```sql
+select *
+from MIP.APP.MIP_AUDIT_LOG
+where RUN_ID = :run_id or PARENT_RUN_ID = :run_id
+order by EVENT_TS;
+```
+
+**Attribution smoke (must be 0 for new briefs):**
+```sql
+select count(*) as bad_rows
+from MIP.AGENT_OUT.MORNING_BRIEF
+where RUN_ID = :run_id
+  and BRIEF:"attribution":"latest_run_id" is not null;
+```
+
+## RUN_ID column inventory
+
+To verify all RUN_ID-related columns are string types (no numeric coercion), run:
+
+```sql
+-- See MIP/SQL/scripts/run_id_inventory.sql
+select table_schema, table_name, column_name, data_type
+from MIP.INFORMATION_SCHEMA.COLUMNS
+where upper(column_name) like '%RUN_ID%'
+order by 1, 2, 3;
+```
+
 ## Common failure modes & checks
 
 ### 1) Missing bars → insufficient outcomes

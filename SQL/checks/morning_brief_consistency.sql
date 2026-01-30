@@ -1,5 +1,7 @@
 -- morning_brief_consistency.sql
--- Purpose: Validate morning brief reflects actual executed decisions and matches proposal/execution counts
+-- Purpose: Validate morning brief reflects actual executed decisions and matches proposal/execution counts.
+-- Parameterizable via session vars v_run_id and v_portfolio_id (null = check all).
+-- Uses coalesce(BRIEF_JSON, BRIEF) so pipeline-written briefs (BRIEF only) and agent briefs (BRIEF_JSON) both work.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -14,26 +16,26 @@ with brief_proposals as (
     select
         mb.PIPELINE_RUN_ID,
         mb.PORTFOLIO_ID,
-        mb.BRIEF_JSON:proposals:proposed_count::number as brief_proposed_count,
-        mb.BRIEF_JSON:proposals:approved_count::number as brief_approved_count,
-        mb.BRIEF_JSON:proposals:rejected_count::number as brief_rejected_count,
-        mb.BRIEF_JSON:proposals:executed_count::number as brief_executed_count
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:proposed_count::number as brief_proposed_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:approved_count::number as brief_approved_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:rejected_count::number as brief_rejected_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:executed_count::number as brief_executed_count
     from MIP.AGENT_OUT.MORNING_BRIEF mb
     where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
       and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
 ),
 actual_proposals as (
     select
-        p.RUN_ID as PIPELINE_RUN_ID,
+        p.RUN_ID_VARCHAR as PIPELINE_RUN_ID,
         p.PORTFOLIO_ID,
         count(*) as actual_proposed_count,
         count_if(p.STATUS = 'APPROVED' or p.STATUS = 'EXECUTED') as actual_approved_count,
         count_if(p.STATUS = 'REJECTED') as actual_rejected_count,
         count_if(p.STATUS = 'EXECUTED') as actual_executed_count
     from MIP.AGENT_OUT.ORDER_PROPOSALS p
-    where (:v_run_id is null or p.RUN_ID = :v_run_id)
+    where (:v_run_id is null or p.RUN_ID_VARCHAR = :v_run_id)
       and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
-    group by p.RUN_ID, p.PORTFOLIO_ID
+    group by p.RUN_ID_VARCHAR, p.PORTFOLIO_ID
 )
 select
     bp.PIPELINE_RUN_ID,
@@ -67,13 +69,13 @@ where bp.brief_proposed_count != ap.actual_proposed_count
 select
     mb.PIPELINE_RUN_ID,
     mb.PORTFOLIO_ID,
-    mb.BRIEF_JSON:risk:status::string as brief_risk_status,
+    (coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:status::string as brief_risk_status,
     g.RISK_STATUS as gate_risk_status,
     g.ENTRIES_BLOCKED,
     g.BLOCK_REASON,
     case
-        when mb.BRIEF_JSON:risk:status::string != g.RISK_STATUS then 'RISK_STATUS_MISMATCH'
-        when mb.BRIEF_JSON:risk:entries_blocked::boolean != g.ENTRIES_BLOCKED then 'ENTRIES_BLOCKED_MISMATCH'
+        when (coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:status::string != g.RISK_STATUS then 'RISK_STATUS_MISMATCH'
+        when (coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:entries_blocked::boolean != g.ENTRIES_BLOCKED then 'ENTRIES_BLOCKED_MISMATCH'
         else 'CONSISTENT'
     end as consistency_status
 from MIP.AGENT_OUT.MORNING_BRIEF mb
@@ -82,8 +84,8 @@ join MIP.MART.V_PORTFOLIO_RISK_GATE g
 where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
   and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
   and (
-      mb.BRIEF_JSON:risk:status::string != g.RISK_STATUS
-      or mb.BRIEF_JSON:risk:entries_blocked::boolean != g.ENTRIES_BLOCKED
+      (coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:status::string != g.RISK_STATUS
+      or (coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:entries_blocked::boolean != g.ENTRIES_BLOCKED
   );
 
 -- Check 3: Verify brief signal summaries match V_SIGNALS_ELIGIBLE_TODAY for the run
@@ -92,10 +94,10 @@ with brief_signals as (
     select
         mb.PIPELINE_RUN_ID,
         mb.PORTFOLIO_ID,
-        mb.BRIEF_JSON:signals:trusted_count::number as brief_trusted_count,
-        mb.BRIEF_JSON:signals:watch_count::number as brief_watch_count,
-        mb.BRIEF_JSON:signals:eligible_count::number as brief_eligible_count,
-        mb.BRIEF_JSON:signals:signal_run_id::string as brief_signal_run_id
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:trusted_count::number as brief_trusted_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:watch_count::number as brief_watch_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:eligible_count::number as brief_eligible_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:signal_run_id::string as brief_signal_run_id
     from MIP.AGENT_OUT.MORNING_BRIEF mb
     where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
       and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
@@ -139,9 +141,9 @@ with brief_executions as (
     select
         mb.PIPELINE_RUN_ID,
         mb.PORTFOLIO_ID,
-        mb.BRIEF_JSON:executions:total_count::number as brief_execution_count,
-        mb.BRIEF_JSON:executions:buy_count::number as brief_buy_count,
-        mb.BRIEF_JSON:executions:sell_count::number as brief_sell_count
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):executions:total_count::number as brief_execution_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):executions:buy_count::number as brief_buy_count,
+        (coalesce(mb.BRIEF_JSON, mb.BRIEF)):executions:sell_count::number as brief_sell_count
     from MIP.AGENT_OUT.MORNING_BRIEF mb
     where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
       and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
@@ -203,7 +205,7 @@ where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
   and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
   and coalesce(mb.BRIEF:pipeline_run_id::string, '') != coalesce(mb.RUN_ID, '');
 
--- Summary: Morning brief consistency summary
+-- Summary: Morning brief consistency summary (counts only)
 select
     'MORNING_BRIEF_CONSISTENCY' as check_name,
     count(distinct mb.PIPELINE_RUN_ID) as distinct_brief_runs,
@@ -213,3 +215,79 @@ select
 from MIP.AGENT_OUT.MORNING_BRIEF mb
 where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id)
   and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id);
+
+-- Final: PASS/FAIL summary row (0 mismatches = PASS)
+with mismatch_counts as (
+    select (select count(*) from (
+        with brief_proposals as (
+            select mb.PIPELINE_RUN_ID, mb.PORTFOLIO_ID,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:proposed_count::number as brief_proposed_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:approved_count::number as brief_approved_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:rejected_count::number as brief_rejected_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):proposals:executed_count::number as brief_executed_count
+            from MIP.AGENT_OUT.MORNING_BRIEF mb
+            where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id) and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
+        ),
+        actual_proposals as (
+            select p.RUN_ID_VARCHAR as PIPELINE_RUN_ID, p.PORTFOLIO_ID, count(*) as actual_proposed_count,
+                count_if(p.STATUS = 'APPROVED' or p.STATUS = 'EXECUTED') as actual_approved_count,
+                count_if(p.STATUS = 'REJECTED') as actual_rejected_count, count_if(p.STATUS = 'EXECUTED') as actual_executed_count
+            from MIP.AGENT_OUT.ORDER_PROPOSALS p
+            where (:v_run_id is null or p.RUN_ID_VARCHAR = :v_run_id) and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
+            group by p.RUN_ID_VARCHAR, p.PORTFOLIO_ID
+        )
+        select 1 from brief_proposals bp join actual_proposals ap on ap.PIPELINE_RUN_ID = bp.PIPELINE_RUN_ID and ap.PORTFOLIO_ID = bp.PORTFOLIO_ID
+        where bp.brief_proposed_count != ap.actual_proposed_count or bp.brief_approved_count != ap.actual_approved_count or bp.brief_rejected_count != ap.actual_rejected_count or bp.brief_executed_count != ap.actual_executed_count
+    )) as c1,
+    (select count(*) from (
+        select 1 from MIP.AGENT_OUT.MORNING_BRIEF mb
+        join MIP.MART.V_PORTFOLIO_RISK_GATE g on g.PORTFOLIO_ID = mb.PORTFOLIO_ID
+        where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id) and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
+          and ((coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:status::string != g.RISK_STATUS or (coalesce(mb.BRIEF_JSON, mb.BRIEF)):risk:entries_blocked::boolean != g.ENTRIES_BLOCKED)
+    )) as c2,
+    (select count(*) from (
+        with brief_signals as (
+            select mb.PIPELINE_RUN_ID, mb.PORTFOLIO_ID,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:trusted_count::number as brief_trusted_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:watch_count::number as brief_watch_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:eligible_count::number as brief_eligible_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):signals:signal_run_id::string as brief_signal_run_id
+            from MIP.AGENT_OUT.MORNING_BRIEF mb
+            where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id) and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
+        ),
+        actual_signals as (
+            select s.RUN_ID as RUN_ID_STR, count_if(s.TRUST_LABEL = 'TRUSTED') as actual_trusted_count, count_if(s.TRUST_LABEL = 'WATCH') as actual_watch_count, count_if(s.IS_ELIGIBLE = true) as actual_eligible_count
+            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s where (:v_run_id is null or s.RUN_ID = :v_run_id) group by s.RUN_ID
+        )
+        select 1 from brief_signals bs left join actual_signals asig on asig.RUN_ID_STR = bs.brief_signal_run_id
+        where bs.brief_trusted_count != coalesce(asig.actual_trusted_count, 0) or bs.brief_watch_count != coalesce(asig.actual_watch_count, 0) or bs.brief_eligible_count != coalesce(asig.actual_eligible_count, 0)
+    )) as c3,
+    (select count(*) from (
+        with brief_executions as (
+            select mb.PIPELINE_RUN_ID, mb.PORTFOLIO_ID,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):executions:total_count::number as brief_execution_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):executions:buy_count::number as brief_buy_count,
+                (coalesce(mb.BRIEF_JSON, mb.BRIEF)):executions:sell_count::number as brief_sell_count
+            from MIP.AGENT_OUT.MORNING_BRIEF mb
+            where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id) and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
+        ),
+        actual_executions as (
+            select t.RUN_ID as PIPELINE_RUN_ID, t.PORTFOLIO_ID, count(*) as actual_execution_count, count_if(t.SIDE = 'BUY') as actual_buy_count, count_if(t.SIDE = 'SELL') as actual_sell_count
+            from MIP.APP.PORTFOLIO_TRADES t where (:v_run_id is null or t.RUN_ID = :v_run_id) and (:v_portfolio_id is null or t.PORTFOLIO_ID = :v_portfolio_id) group by t.RUN_ID, t.PORTFOLIO_ID
+        )
+        select 1 from brief_executions be join actual_executions ae on ae.PIPELINE_RUN_ID = be.PIPELINE_RUN_ID and ae.PORTFOLIO_ID = be.PORTFOLIO_ID
+        where be.brief_execution_count != ae.actual_execution_count or be.brief_buy_count != ae.actual_buy_count or be.brief_sell_count != ae.actual_sell_count
+    )) as c4,
+    (select count(*) from MIP.AGENT_OUT.MORNING_BRIEF mb
+     where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id) and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id) and mb.PIPELINE_RUN_ID is null) as c5,
+    (select count(*) from MIP.AGENT_OUT.MORNING_BRIEF mb
+     where (:v_run_id is null or mb.PIPELINE_RUN_ID = :v_run_id) and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id) and coalesce(mb.BRIEF:pipeline_run_id::string, '') != coalesce(mb.RUN_ID, '')) as c6
+)
+select
+    'MORNING_BRIEF_CONSISTENCY' as check_name,
+    iff(c1 + c2 + c3 + c4 + c5 + c6 = 0, 'PASS', 'FAIL') as result,
+    c1 + c2 + c3 + c4 + c5 + c6 as mismatch_count
+from mismatch_counts;
+
+-- Optional: log PASS/FAIL to MIP_AUDIT_LOG. Run after setting v_run_id; replace :run_id with your run ID if needed.
+-- call MIP.APP.SP_LOG_EVENT('VALIDATION', 'MORNING_BRIEF_CONSISTENCY', '<PASS|FAIL>', <mismatch_count>, object_construct('mismatch_count', <mismatch_count>), null, :run_id, null);

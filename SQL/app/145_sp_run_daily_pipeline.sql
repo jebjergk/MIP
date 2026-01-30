@@ -106,6 +106,8 @@ begin
         null
     );
 
+    call MIP.APP.SP_ENFORCE_RUN_SCOPING(:v_run_id, null);
+
     select max(ts)
       into :v_latest_market_bars_ts_before
       from MIP.MART.MARKET_BARS;

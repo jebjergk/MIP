@@ -5,11 +5,11 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
--- PIPELINE_RUN_ID must be varchar so pipeline UUID can be stored/compared (was NUMBER in some older deploys)
+-- PIPELINE_RUN_ID and RUN_ID must be varchar so pipeline UUID can be stored/compared (were NUMBER in some older deploys).
+-- Fixes: "Numeric value 'a022327d-...' is not recognized" when pipeline/agent passes UUID.
 alter table MIP.AGENT_OUT.MORNING_BRIEF alter column PIPELINE_RUN_ID set data type varchar(64);
-
--- RUN_ID nullable for backwards compat (if column already exists as NOT NULL, allow null)
 alter table MIP.AGENT_OUT.MORNING_BRIEF add column if not exists RUN_ID varchar(64);
+alter table MIP.AGENT_OUT.MORNING_BRIEF alter column RUN_ID set data type varchar(64);  -- in case RUN_ID existed as number
 alter table MIP.AGENT_OUT.MORNING_BRIEF alter column RUN_ID drop not null;  -- no-op or makes nullable
 
 -- Add MERGE-key unique; drop old (PORTFOLIO_ID, RUN_ID) if present so agent can have multiple rows per run_id (different AS_OF_TS)

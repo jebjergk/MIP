@@ -1,6 +1,6 @@
 -- 193_sp_agent_generate_morning_brief.sql
--- Purpose: Read-only agent morning brief: build BRIEF_JSON from MART views, write to AGENT_OUT.MORNING_BRIEF (PORTFOLIO_ID=0 for agent briefs).
--- Deterministic for (as_of_ts, run_id, agent_name). Upsert by (AS_OF_TS, RUN_ID, AGENT_NAME).
+-- Purpose: Read-only agent morning brief (DISABLED). Previously wrote to MORNING_BRIEF with PORTFOLIO_ID=0.
+-- Agent disabled: any call logs and returns without writing; no portfolio_id=0 artifacts.
 -- Note: Avoid SELECT...INTO in Snowflake procedures; use := (SELECT ...) or RESULTSET + FOR loop. See MIP/docs/SNOWFLAKE_SQL_LIMITATIONS.md.
 
 use role MIP_ADMIN_ROLE;
@@ -56,6 +56,19 @@ declare
     v_inputs_json           variant;
     v_outputs_json          variant;
 begin
+    -- Guard: agent disabled; do not write to MORNING_BRIEF (no portfolio_id=0 artifacts).
+    call MIP.APP.SP_LOG_EVENT(
+        'VALIDATION',
+        'SP_AGENT_GENERATE_MORNING_BRIEF',
+        'SKIP_AGENT_V0_DISABLED',
+        null,
+        object_construct('agent_name', :v_agent_name, 'reason', 'AGENT_V0_MORNING_BRIEF_REMOVED'),
+        'Agent disabled; no write to MORNING_BRIEF',
+        :P_RUN_ID,
+        null
+    );
+    return object_construct('status', 'DISABLED', 'reason', 'AGENT_V0_MORNING_BRIEF_REMOVED');
+
     -- Load config from MIP.APP.AGENT_CONFIG for AGENT_V0_MORNING_BRIEF (omit RANKING_FORMULA_TYPE so proc works before 194 adds column)
     v_config_rs := (select MIN_N_SIGNALS, coalesce(MIN_N_SIGNALS_BOOTSTRAP, 5) as MIN_N_SIGNALS_BOOTSTRAP, TOP_N_PATTERNS, TOP_N_CANDIDATES, RANKING_FORMULA, ENABLED from MIP.APP.AGENT_CONFIG where AGENT_NAME = :v_agent_name limit 1);
     for rec in v_config_rs do

@@ -794,6 +794,23 @@ begin
             ),
             null
         );
+    elseif (v_agent_brief_status = 'SKIPPED') then
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'AGENT',
+            :v_agent_brief_status,
+            0,
+            object_construct(
+                'step_name', 'agent_run_all',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_agent_brief_start,
+                'completed_at', :v_agent_brief_end,
+                'reason', 'AGENT_V0_MORNING_BRIEF_REMOVED',
+                'agent_results', :v_agent_brief_result
+            ),
+            null
+        );
     end if;
 
     v_brief_start := current_timestamp();

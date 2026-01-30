@@ -1,5 +1,6 @@
 -- 195_sp_agent_run_all.sql
--- [A3] Pipeline step wrapper: run all agents (future-proof). For now calls SP_AGENT_GENERATE_MORNING_BRIEF only.
+-- [A3] Pipeline step wrapper: run all agents (future-proof).
+-- AGENT_V0_MORNING_BRIEF removed: no longer calls SP_AGENT_GENERATE_MORNING_BRIEF (no portfolio_id=0 writes).
 -- Returns JSON: { agent_results: [{ agent_name, status, brief_id }] }
 
 use role MIP_ADMIN_ROLE;
@@ -16,32 +17,12 @@ as
 $$
 declare
     v_agent_name   string := 'AGENT_V0_MORNING_BRIEF';
-    v_brief_result variant;
-    v_brief_id     number;
-    v_status       string := 'SUCCESS';
+    v_status       string := 'SKIPPED';
     v_agent_results array := array_construct();
 begin
-    -- Call morning brief agent
-    v_brief_result := (call MIP.APP.SP_AGENT_GENERATE_MORNING_BRIEF(:P_AS_OF_TS, :P_RUN_ID));
-
-    -- If procedure returned error object (has status='ERROR'), capture status
-    if (v_brief_result is not null and v_brief_result:status::string = 'ERROR') then
-        v_status := 'ERROR';
-        v_brief_id := null;
-    else
-        v_brief_id := (
-            select BRIEF_ID
-            from MIP.AGENT_OUT.MORNING_BRIEF
-            where PORTFOLIO_ID = 0
-              and AS_OF_TS = :P_AS_OF_TS
-              and RUN_ID = :P_RUN_ID
-              and AGENT_NAME = :v_agent_name
-            limit 1
-        );
-    end if;
-
+    -- AGENT_V0_MORNING_BRIEF disabled: do not call SP_AGENT_GENERATE_MORNING_BRIEF (no writes to MORNING_BRIEF with portfolio_id=0).
     v_agent_results := array_construct(
-        object_construct('agent_name', :v_agent_name, 'status', :v_status, 'brief_id', :v_brief_id)
+        object_construct('agent_name', :v_agent_name, 'status', :v_status, 'brief_id', null)
     );
 
     return object_construct('agent_results', :v_agent_results);

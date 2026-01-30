@@ -54,7 +54,9 @@ begin
     v_attr := coalesce(v_brief:attribution, object_construct());
     v_attr := object_insert(v_attr, 'pipeline_run_id', :P_RUN_ID);
     v_attr := object_insert(v_attr, 'as_of_ts', to_varchar(:P_AS_OF_TS));
+    v_brief := object_delete(v_brief, 'attribution');
     v_brief := object_insert(v_brief, 'attribution', v_attr);
+    v_brief := object_delete(v_brief, 'pipeline_run_id');
     v_brief := object_insert(v_brief, 'pipeline_run_id', :P_RUN_ID);
 
     -- MED-003: Morning brief consistency validation (optional; use extracted counts from v_brief)

@@ -8,8 +8,7 @@ use database MIP;
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
     P_PORTFOLIO_ID number,
     P_AS_OF_TS timestamp_ntz,
-    P_RUN_ID string,
-    P_SIGNAL_RUN_ID string,   -- pipeline run id for deterministic tie-back to recommendations
+    P_RUN_ID string,   -- pipeline run id (canonical); used for propose/validate and brief
     P_PARENT_RUN_ID string default null
 )
 returns variant
@@ -25,7 +24,6 @@ declare
     v_rows_after number;
     v_propose_result variant;
     v_validate_result variant;
-    v_signal_run_id string := :P_SIGNAL_RUN_ID;
 begin
     v_step_start := current_timestamp();
 
@@ -37,21 +35,21 @@ begin
            and RUN_ID = :v_run_id
            and AS_OF_TS = :P_AS_OF_TS;
 
-        if (v_signal_run_id is not null) then
+        if (v_run_id is not null) then
             v_propose_result := (call MIP.APP.SP_AGENT_PROPOSE_TRADES(
                 :P_PORTFOLIO_ID,
-                :v_signal_run_id,
+                :v_run_id,
                 :P_PARENT_RUN_ID
             ));
 
             v_validate_result := (call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
                 :P_PORTFOLIO_ID,
-                :v_signal_run_id,
+                :v_run_id,
                 :P_PARENT_RUN_ID
             ));
         else
-            v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');
-            v_validate_result := object_construct('status', 'SKIPPED', 'reason', 'NO_SIGNAL_RUN_ID');
+            v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_RUN_ID');
+            v_validate_result := object_construct('status', 'SKIPPED', 'reason', 'NO_RUN_ID');
         end if;
 
         call MIP.APP.SP_WRITE_MORNING_BRIEF(:P_PORTFOLIO_ID, :P_AS_OF_TS, :v_run_id, 'MORNING_BRIEF');
@@ -81,7 +79,6 @@ begin
                 'completed_at', :v_step_end,
                 'rows_before', :v_rows_before,
                 'rows_after', :v_rows_after,
-                'signal_run_id', :v_signal_run_id,
                 'proposal_result', :v_propose_result,
                 'validation_result', :v_validate_result
             ),
@@ -94,7 +91,6 @@ begin
             'run_id', :v_run_id,
             'rows_before', :v_rows_before,
             'rows_after', :v_rows_after,
-            'signal_run_id', :v_signal_run_id,
             'proposal_result', :v_propose_result,
             'validation_result', :v_validate_result
         );
@@ -124,7 +120,6 @@ $$;
 create or replace procedure MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEFS(
     P_AS_OF_TS timestamp_ntz,
     P_RUN_ID string,
-    P_SIGNAL_RUN_ID string,
     P_PARENT_RUN_ID string default null
 )
 returns variant
@@ -154,7 +149,6 @@ begin
             :v_portfolio_id,
             :P_AS_OF_TS,
             :v_run_id,
-            :P_SIGNAL_RUN_ID,
             :P_PARENT_RUN_ID
         ));
         v_results := array_append(:v_results, :v_result);

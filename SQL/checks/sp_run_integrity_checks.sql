@@ -34,66 +34,49 @@ begin
     begin
         declare
             v_orphaned_proposals number := 0;
-            v_invalid_signal_run_ids number := 0;
             v_trade_proposal_mismatch number := 0;
         begin
-            -- Check for orphaned proposal run IDs
+            -- Check for orphaned proposal run IDs (canonical RUN_ID_VARCHAR only; no SIGNAL_RUN_ID scoping)
             select count(*)
               into v_orphaned_proposals
               from MIP.AGENT_OUT.ORDER_PROPOSALS p
               left join MIP.APP.MIP_AUDIT_LOG a
-                on a.RUN_ID = to_varchar(p.RUN_ID)
+                on a.RUN_ID = p.RUN_ID_VARCHAR
                 and a.EVENT_TYPE = 'PIPELINE'
                 and a.EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
-              where p.RUN_ID is not null
-                and (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
+              where p.RUN_ID_VARCHAR is not null
+                and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
                 and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
                 and a.RUN_ID is null;
 
-            -- Check for invalid signal run IDs
-            select count(*)
-              into v_invalid_signal_run_ids
-              from MIP.AGENT_OUT.ORDER_PROPOSALS p
-              where p.SIGNAL_RUN_ID is not null
-                and (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
-                and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
-                and not exists (
-                    select 1
-                    from MIP.APP.RECOMMENDATION_LOG r
-                    where (
-                        r.RUN_ID = p.SIGNAL_RUN_ID
-                        or try_to_number(replace(r.RUN_ID, 'T', '')) = try_to_number(replace(p.SIGNAL_RUN_ID, 'T', ''))
-                    )
-                    and r.RECOMMENDATION_ID = p.RECOMMENDATION_ID
-                );
+            -- SIGNAL_RUN_ID is optional/legacy; no production fail on linkage
 
-            -- Check for trade-proposal run ID mismatches
+            -- Check for trade-proposal run ID mismatches (canonical RUN_ID_VARCHAR)
             select count(*)
               into v_trade_proposal_mismatch
               from MIP.APP.PORTFOLIO_TRADES t
               join MIP.AGENT_OUT.ORDER_PROPOSALS p
                 on p.PROPOSAL_ID = t.PROPOSAL_ID
-              where (:P_RUN_ID is null or t.RUN_ID = :P_RUN_ID)
+              where (:P_RUN_ID is null or to_varchar(t.RUN_ID) = :P_RUN_ID)
                 and (:P_PORTFOLIO_ID is null or t.PORTFOLIO_ID = :P_PORTFOLIO_ID)
                 and (
-                    to_varchar(t.RUN_ID) != to_varchar(p.RUN_ID)
+                    to_varchar(t.RUN_ID) != p.RUN_ID_VARCHAR
                     or t.RUN_ID is null
-                    or p.RUN_ID is null
+                    or p.RUN_ID_VARCHAR is null
                 );
 
-            if (v_orphaned_proposals > 0 or v_invalid_signal_run_ids > 0 or v_trade_proposal_mismatch > 0) then
+            if (v_orphaned_proposals > 0 or v_trade_proposal_mismatch > 0) then
                 v_check_result := object_construct(
                     'check_name', 'RUN_SCOPING_VALIDATION',
                     'status', 'FAIL',
                     'timestamp', current_timestamp(),
                     'details', object_construct(
                         'orphaned_proposals', :v_orphaned_proposals,
-                        'invalid_signal_run_ids', :v_invalid_signal_run_ids,
                         'trade_proposal_mismatch', :v_trade_proposal_mismatch
                     )
                 );
                 v_failed_checks := :v_failed_checks + 1;
-                v_failures := array_append(:v_failures, 'RUN_SCOPING_VALIDATION: Found ' || (:v_orphaned_proposals + :v_invalid_signal_run_ids + :v_trade_proposal_mismatch) || ' scoping issues');
+                v_failures := array_append(:v_failures, 'RUN_SCOPING_VALIDATION: Found ' || (:v_orphaned_proposals + :v_trade_proposal_mismatch) || ' scoping issues');
             else
                 v_check_result := object_construct(
                     'check_name', 'RUN_SCOPING_VALIDATION',
@@ -101,7 +84,6 @@ begin
                     'timestamp', current_timestamp(),
                     'details', object_construct(
                         'orphaned_proposals', :v_orphaned_proposals,
-                        'invalid_signal_run_ids', :v_invalid_signal_run_ids,
                         'trade_proposal_mismatch', :v_trade_proposal_mismatch
                     )
                 );
@@ -137,7 +119,7 @@ begin
           join MIP.MART.V_PORTFOLIO_RISK_STATE g
             on g.PORTFOLIO_ID = p.PORTFOLIO_ID
           where p.SIDE = 'BUY'
-            and (:P_RUN_ID is null or p.RUN_ID = :P_RUN_ID)
+            and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
             and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
             and g.ENTRIES_BLOCKED = true
             and p.PROPOSED_AT >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days');
@@ -221,12 +203,12 @@ begin
         select count(*)
           into v_check_result
           from (
-              select RUN_ID, PORTFOLIO_ID, RECOMMENDATION_ID, count(*) as proposal_count
+              select RUN_ID_VARCHAR, PORTFOLIO_ID, RECOMMENDATION_ID, count(*) as proposal_count
               from MIP.AGENT_OUT.ORDER_PROPOSALS
-              where (:P_RUN_ID is null or RUN_ID = :P_RUN_ID)
+              where (:P_RUN_ID is null or RUN_ID_VARCHAR = :P_RUN_ID)
                 and (:P_PORTFOLIO_ID is null or PORTFOLIO_ID = :P_PORTFOLIO_ID)
                 and RECOMMENDATION_ID is not null
-              group by RUN_ID, PORTFOLIO_ID, RECOMMENDATION_ID
+              group by RUN_ID_VARCHAR, PORTFOLIO_ID, RECOMMENDATION_ID
               having count(*) > 1
           );
         
@@ -291,14 +273,14 @@ begin
                   ),
                   actual_proposals as (
                       select
-                          p.RUN_ID as PIPELINE_RUN_ID,
+                          p.RUN_ID_VARCHAR as PIPELINE_RUN_ID,
                           p.PORTFOLIO_ID,
                           count(*) as actual_proposed_count,
                           count_if(p.STATUS = 'EXECUTED') as actual_executed_count
                       from MIP.AGENT_OUT.ORDER_PROPOSALS p
-                      where (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
+                      where (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
                         and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
-                      group by p.RUN_ID, p.PORTFOLIO_ID
+                      group by p.RUN_ID_VARCHAR, p.PORTFOLIO_ID
                   )
                   select bp.*
                   from brief_proposals bp

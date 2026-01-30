@@ -89,18 +89,18 @@ select
 from MIP.MART.V_PORTFOLIO_RISK_STATE
 where PORTFOLIO_ID = $portfolio_id;
 
-call MIP.APP.SP_AGENT_PROPOSE_TRADES($portfolio_id, $run_id);
+call MIP.APP.SP_AGENT_PROPOSE_TRADES($portfolio_id, $run_id_string);
 
 select
     'ENTRY_GATE_BUY_PROPOSALS' as test_name,
     count(*) as buy_proposals_inserted
 from MIP.AGENT_OUT.ORDER_PROPOSALS
-where RUN_ID = $run_id
+where RUN_ID_VARCHAR = $run_id_string
   and PORTFOLIO_ID = $portfolio_id
   and SIDE = 'BUY';
 
 insert into MIP.AGENT_OUT.ORDER_PROPOSALS (
-    RUN_ID,
+    RUN_ID_VARCHAR,
     PORTFOLIO_ID,
     SYMBOL,
     MARKET_TYPE,
@@ -131,13 +131,13 @@ select
     object_construct('score', 0.95),
     object_construct('source', 'SMOKE_ENTRY_GATE_TEST');
 
-call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS($portfolio_id, $run_id);
+call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS($portfolio_id, $run_id_string);
 
 select
     'ENTRY_GATE_BUY_EXECUTIONS' as test_name,
     count(*) as buy_executions
 from MIP.APP.PORTFOLIO_TRADES
-where RUN_ID = $run_id
+where RUN_ID = $run_id_string
   and PORTFOLIO_ID = $portfolio_id
   and SIDE = 'BUY';
 
@@ -146,16 +146,16 @@ select
     count_if(STATUS = 'REJECTED') as rejected_count,
     count_if(STATUS = 'EXECUTED') as executed_count
 from MIP.AGENT_OUT.ORDER_PROPOSALS
-where RUN_ID = $run_id
+where RUN_ID_VARCHAR = $run_id_string
   and PORTFOLIO_ID = $portfolio_id
   and SIDE = 'BUY';
 
 delete from MIP.APP.PORTFOLIO_TRADES
-where RUN_ID = $run_id
+where RUN_ID = $run_id_string
   and PORTFOLIO_ID = $portfolio_id;
 
 delete from MIP.AGENT_OUT.ORDER_PROPOSALS
-where RUN_ID = $run_id
+where RUN_ID_VARCHAR = $run_id_string
   and PORTFOLIO_ID = $portfolio_id;
 
 delete from MIP.APP.RECOMMENDATION_LOG

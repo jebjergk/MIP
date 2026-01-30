@@ -10,7 +10,7 @@ from MIP.MART.V_MORNING_BRIEF_JSON;
 
 select count(*) as RUN_ID_MISMATCH_COUNT
 from MIP.MART.V_MORNING_BRIEF_JSON
-where BRIEF:risk:latest:run_id::string <> BRIEF:attribution:latest_run_id::string;
+where BRIEF:risk:latest:run_id::string <> BRIEF:attribution:pipeline_run_id::string;
 
 select count(*) as ROW_COUNT
 from MIP.MART.V_MORNING_BRIEF_JSON;

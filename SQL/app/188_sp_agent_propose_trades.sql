@@ -112,14 +112,12 @@ begin
         select count(*)
           into :v_candidate_count_raw
           from MIP.MART.V_SIGNALS_LATEST_TS
-         where RUN_ID = :v_run_id_string
-            or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
+         where RUN_ID = :v_run_id_string;
 
         select count(*)
           into :v_candidate_count_trusted
           from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-         where RUN_ID = :v_run_id_string
-            or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
+         where RUN_ID = :v_run_id_string;
 
         v_candidate_count := :v_candidate_count_trusted;
         v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
@@ -177,14 +175,12 @@ begin
     select count(*)
       into :v_candidate_count_raw
       from MIP.MART.V_SIGNALS_LATEST_TS
-     where RUN_ID = :v_run_id_string
-        or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
+     where RUN_ID = :v_run_id_string;
 
     select count(*)
       into :v_candidate_count_trusted
       from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-     where RUN_ID = :v_run_id_string
-        or try_to_number(replace(to_varchar(RUN_ID), 'T', '')) = :P_RUN_ID;
+     where RUN_ID = :v_run_id_string;
 
     v_candidate_count := :v_candidate_count_trusted;
     v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
@@ -255,7 +251,6 @@ begin
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             where s.RUN_ID = :v_run_id_string
-               or s.RUN_ID = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -296,7 +291,6 @@ begin
                 s.SCORE
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             where s.RUN_ID = :v_run_id_string
-               or s.RUN_ID = :P_RUN_ID
         ),
         deduped_candidates as (
             select
@@ -342,7 +336,6 @@ begin
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             where s.RUN_ID = :v_run_id_string
-               or s.RUN_ID = :P_RUN_ID
         ),
         deduped_candidates as (
             select

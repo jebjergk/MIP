@@ -102,12 +102,12 @@ with brief_signals as (
 ),
 actual_signals as (
     select
-        s.RUN_ID as SIGNAL_RUN_ID,
+        s.RUN_ID as RUN_ID_STR,
         count_if(s.TRUST_LABEL = 'TRUSTED') as actual_trusted_count,
         count_if(s.TRUST_LABEL = 'WATCH') as actual_watch_count,
         count_if(s.IS_ELIGIBLE = true) as actual_eligible_count
     from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-    where (:v_run_id is null or try_to_number(replace(s.RUN_ID, 'T', '')) = try_to_number(replace(:v_run_id, 'T', '')))
+    where (:v_run_id is null or s.RUN_ID = :v_run_id)
     group by s.RUN_ID
 )
 select
@@ -128,10 +128,7 @@ select
     end as consistency_status
 from brief_signals bs
 left join actual_signals asig
-  on (
-      asig.SIGNAL_RUN_ID = bs.brief_signal_run_id
-      or try_to_number(replace(asig.SIGNAL_RUN_ID, 'T', '')) = try_to_number(replace(bs.brief_signal_run_id, 'T', ''))
-  )
+  on asig.RUN_ID_STR = bs.brief_signal_run_id
 where bs.brief_trusted_count != coalesce(asig.actual_trusted_count, 0)
    or bs.brief_watch_count != coalesce(asig.actual_watch_count, 0)
    or bs.brief_eligible_count != coalesce(asig.actual_eligible_count, 0);

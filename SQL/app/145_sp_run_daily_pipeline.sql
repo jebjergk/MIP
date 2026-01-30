@@ -41,7 +41,7 @@ declare
     v_brief_results array := array_construct();
     v_brief_count number := 0;
     v_brief_run_result variant;
-    v_signal_run_id string;   -- pipeline run id (= recommendations DETAILS:run_id); passed to agent for deterministic tie-back
+    -- v_run_id is the single canonical pipeline RUN_ID (UUID); passed to agent and brief steps.
     v_eligible_signal_count number := 0;
     v_proposed_count number := 0;
     v_approved_count number := 0;
@@ -403,7 +403,7 @@ begin
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
-            'signal_run_id', null
+            'run_id', :v_run_id
         );
         call MIP.APP.SP_LOG_EVENT(
             'PIPELINE',
@@ -725,12 +725,9 @@ begin
         null
     );
 
-    -- Use current pipeline run id as signal_run_id so agent ties back to recommendations we just generated (DETAILS:run_id = v_run_id).
-    v_signal_run_id := :v_run_id;
-
-    -- [A4] Agent step: pass pipeline UUID into SP_AGENT_RUN_ALL; log step with run_id, as_of_ts, agent_results
+    -- [A4] Agent step: pass pipeline RUN_ID into SP_AGENT_RUN_ALL; log step with run_id, as_of_ts, agent_results
     v_agent_brief_start := current_timestamp();
-    if (v_signal_run_id is not null) then
+    if (v_run_id is not null) then
         begin
             v_agent_brief_result := (call MIP.APP.SP_AGENT_RUN_ALL(:v_effective_to_ts, :v_run_id));
             v_agent_brief_status := coalesce(v_agent_brief_result:agent_results[0]:status::string, 'SUCCESS');
@@ -750,19 +747,18 @@ begin
                         'scope_key', null,
                         'started_at', :v_agent_brief_start,
                         'completed_at', current_timestamp(),
-                        'signal_run_id', :v_signal_run_id
                     ),
                     :sqlerrm
                 );
                 raise;
         end;
     else
-        v_agent_brief_status := 'SKIPPED_NO_SIGNAL_RUN_ID';
+        v_agent_brief_status := 'SKIPPED_NO_RUN_ID';
         v_agent_brief_id := null;
     end if;
     v_agent_brief_end := current_timestamp();
 
-    if (v_signal_run_id is not null and v_agent_brief_status = 'SUCCESS') then
+    if (v_run_id is not null and v_agent_brief_status = 'SUCCESS') then
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'AGENT',
@@ -781,7 +777,7 @@ begin
             ),
             null
         );
-    elseif (v_agent_brief_status = 'SKIPPED_NO_SIGNAL_RUN_ID') then
+    elseif (v_agent_brief_status = 'SKIPPED_NO_RUN_ID') then
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'AGENT',
@@ -793,7 +789,7 @@ begin
                 'scope_key', null,
                 'started_at', :v_agent_brief_start,
                 'completed_at', :v_agent_brief_end,
-                'reason', 'NO_SIGNAL_RUN_ID'
+                'reason', 'NO_RUN_ID'
             ),
             null
         );
@@ -808,28 +804,28 @@ begin
     v_proposer_start := :v_brief_start;
     v_executor_start := :v_brief_start;
 
-    if (v_signal_run_id is not null) then
+    if (v_run_id is not null) then
         select count(*)
           into :v_proposals_before
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID_VARCHAR = :v_signal_run_id;
+         where RUN_ID_VARCHAR = :v_run_id;
 
         select count(*)
           into :v_executed_before
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID_VARCHAR = :v_signal_run_id
+         where RUN_ID_VARCHAR = :v_run_id
            and STATUS = 'EXECUTED';
 
         select count(*)
           into :v_trades_before
           from MIP.APP.PORTFOLIO_TRADES
-         where RUN_ID = to_varchar(:v_signal_run_id);
+         where RUN_ID = to_varchar(:v_run_id);
 
         select count(*)
           into :v_eligible_signal_count
           from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
          where IS_ELIGIBLE
-           and RUN_ID = :v_signal_run_id;
+           and RUN_ID = :v_run_id;
     end if;
 
     v_brief_results := array_construct();
@@ -847,7 +843,6 @@ begin
             :v_portfolio_id,
             :v_effective_to_ts,
             :v_run_id,
-            :v_signal_run_id,
             :v_run_id
         ));
         v_brief_results := array_append(:v_brief_results, :v_brief_run_result);
@@ -859,7 +854,7 @@ begin
         'results', :v_brief_results
     );
 
-    if (v_signal_run_id is not null) then
+    if (v_run_id is not null) then
         -- Canonical run ID: use RUN_ID_VARCHAR only (no dual scoping).
         select
             count(*) as proposed_count,
@@ -871,7 +866,7 @@ begin
                :v_rejected_count,
                :v_executed_count
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID_VARCHAR = :v_signal_run_id;
+         where RUN_ID_VARCHAR = :v_run_id;
     end if;
 
     v_brief_end := current_timestamp();
@@ -909,28 +904,27 @@ begin
             'rows_after', :v_brief_rows_after,
             'rows_delta', :v_brief_rows_delta,
             'brief_count', :v_brief_rows_after,
-            'brief_ids', :v_brief_ids,
-            'signal_run_id', :v_signal_run_id
+            'brief_ids', :v_brief_ids
         ),
         null
     );
 
-    if (v_signal_run_id is not null) then
+    if (v_run_id is not null) then
         select count(*)
           into :v_proposals_after
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID_VARCHAR = :v_signal_run_id;
+         where RUN_ID_VARCHAR = :v_run_id;
 
         select count(*)
           into :v_executed_after
           from MIP.AGENT_OUT.ORDER_PROPOSALS
-         where RUN_ID_VARCHAR = :v_signal_run_id
+         where RUN_ID_VARCHAR = :v_run_id
            and STATUS = 'EXECUTED';
 
         select count(*)
           into :v_trades_after
           from MIP.APP.PORTFOLIO_TRADES
-         where RUN_ID = to_varchar(:v_signal_run_id);
+         where RUN_ID = to_varchar(:v_run_id);
 
         v_proposals_delta := :v_proposals_after - :v_proposals_before;
         v_executed_delta := :v_executed_after - :v_executed_before;
@@ -950,7 +944,7 @@ begin
                 'rows_before', :v_proposals_before,
                 'rows_after', :v_proposals_after,
                 'rows_delta', :v_proposals_delta,
-                'signal_run_id', :v_signal_run_id,
+                'run_id', :v_run_id,
                 'proposed_count', :v_proposed_count,
                 'approved_count', :v_approved_count,
                 'rejected_count', :v_rejected_count
@@ -972,7 +966,7 @@ begin
                 'rows_before', :v_executed_before,
                 'rows_after', :v_executed_after,
                 'rows_delta', :v_executed_delta,
-                'signal_run_id', :v_signal_run_id,
+                'run_id', :v_run_id,
                 'executed_count', :v_executed_count,
                 'approved_count', :v_approved_count,
                 'rejected_count', :v_rejected_count,
@@ -986,7 +980,7 @@ begin
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'PROPOSER',
-            'SKIPPED_NO_SIGNAL_RUN_ID',
+            'SKIPPED_NO_RUN_ID',
             0,
             object_construct(
                 'step_name', 'proposer',
@@ -994,8 +988,7 @@ begin
                 'scope_key', null,
                 'started_at', :v_proposer_start,
                 'completed_at', :v_proposer_end,
-                'signal_run_id', :v_signal_run_id,
-                'reason', 'NO_SIGNAL_RUN_ID'
+                'reason', 'NO_RUN_ID'
             ),
             null
         );
@@ -1003,7 +996,7 @@ begin
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'EXECUTOR',
-            'SKIPPED_NO_SIGNAL_RUN_ID',
+            'SKIPPED_NO_RUN_ID',
             0,
             object_construct(
                 'step_name', 'executor',
@@ -1011,8 +1004,7 @@ begin
                 'scope_key', null,
                 'started_at', :v_executor_start,
                 'completed_at', :v_executor_end,
-                'signal_run_id', :v_signal_run_id,
-                'reason', 'NO_SIGNAL_RUN_ID'
+                'reason', 'NO_RUN_ID'
             ),
             null
         );
@@ -1042,7 +1034,7 @@ begin
             'brief_id', :v_agent_brief_id
         ),
         'morning_brief', :v_brief_result,
-        'signal_run_id', :v_signal_run_id,
+        'run_id', :v_run_id,
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,
         'proposals_approved', :v_approved_count,

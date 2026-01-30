@@ -80,6 +80,7 @@ begin
            :v_actual_executed_proposals
       from MIP.AGENT_OUT.ORDER_PROPOSALS
      where PORTFOLIO_ID = :P_PORTFOLIO_ID
+       and RUN_ID_VARCHAR = :P_RUN_ID
        and PROPOSED_AT >= :P_AS_OF_TS - interval '1 day'
        and PROPOSED_AT <= :P_AS_OF_TS + interval '1 hour';
 

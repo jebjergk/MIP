@@ -1,6 +1,11 @@
 -- 186_sp_write_morning_brief.sql
 -- Purpose: Persist morning brief snapshot into AGENT_OUT. Deterministic + idempotent on (P_PORTFOLIO_ID, P_AS_OF_TS, P_RUN_ID, P_AGENT_NAME).
 -- MERGE key uses only pipeline-passed params; view is content-only.
+--
+-- Attribution overwrite contract (final merged BRIEF must satisfy):
+--   - BRIEF:"as_of_ts" is populated at root from P_AS_OF_TS.
+--   - BRIEF:"attribution":"as_of_ts" is removed / not present.
+--   - attribution contains only pipeline fields (pipeline_run_id).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -65,18 +70,18 @@ begin
         raise exc_no_brief;
     end if;
 
-    -- Overwrite attribution: pipeline_run_id only (no as_of_ts in attribution). Canonical as_of_ts at BRIEF root.
+    -- Attribution overwrite: attribution = pipeline fields only (pipeline_run_id); as_of_ts at BRIEF root only.
     v_attr := coalesce(v_brief:attribution, object_construct());
     v_attr := object_delete(v_attr, 'latest_run_id');
     v_attr := object_delete(v_attr, 'pipeline_run_id');
-    v_attr := object_delete(v_attr, 'as_of_ts');
+    v_attr := object_delete(v_attr, 'as_of_ts');   -- ensure attribution never contains as_of_ts
     v_attr := object_insert(v_attr, 'pipeline_run_id', :P_RUN_ID);
     v_brief := object_delete(v_brief, 'attribution');
     v_brief := object_insert(v_brief, 'attribution', v_attr);
     v_brief := object_delete(v_brief, 'pipeline_run_id');
     v_brief := object_insert(v_brief, 'pipeline_run_id', :P_RUN_ID);
     v_brief := object_delete(v_brief, 'as_of_ts');
-    v_brief := object_insert(v_brief, 'as_of_ts', to_varchar(:P_AS_OF_TS));
+    v_brief := object_insert(v_brief, 'as_of_ts', to_varchar(:P_AS_OF_TS));  -- canonical at root
 
     -- MED-003: Morning brief consistency validation (optional; use extracted counts from v_brief)
     begin

@@ -746,7 +746,7 @@ begin
                         'scope', 'AGG',
                         'scope_key', null,
                         'started_at', :v_agent_brief_start,
-                        'completed_at', current_timestamp(),
+                        'completed_at', current_timestamp()
                     ),
                     :sqlerrm
                 );

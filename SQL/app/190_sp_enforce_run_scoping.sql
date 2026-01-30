@@ -17,16 +17,16 @@ declare
     v_validation_errors array := array_construct();
     v_validation_status string := 'PASS';
     v_result variant;
+    v_audit_count number := 0;
+    v_mismatch_count number := 0;
 begin
     -- Validation 1: Ensure pipeline run ID exists in audit log
-    if not exists (
-        select 1
-        from MIP.APP.MIP_AUDIT_LOG
-        where RUN_ID = :P_RUN_ID
-          and EVENT_TYPE = 'PIPELINE'
-          and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
-        limit 1
-    ) then
+    select count(*) into :v_audit_count
+      from MIP.APP.MIP_AUDIT_LOG
+     where RUN_ID = :P_RUN_ID
+       and EVENT_TYPE = 'PIPELINE'
+       and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE';
+    if (v_audit_count = 0) then
         v_validation_errors := array_append(
             :v_validation_errors,
             'INVALID_RUN_ID: Run ID ' || :P_RUN_ID || ' not found in audit log'
@@ -36,14 +36,12 @@ begin
 
     -- Validation 2: If portfolio ID provided, check proposals scoped by RUN_ID_VARCHAR only
     if (:P_PORTFOLIO_ID is not null and :P_RUN_ID is not null) then
-        if exists (
-            select 1
-            from MIP.AGENT_OUT.ORDER_PROPOSALS
-            where PORTFOLIO_ID = :P_PORTFOLIO_ID
-              and coalesce(RUN_ID_VARCHAR, '') != :P_RUN_ID
-              and PROPOSED_AT >= current_timestamp() - interval '1 hour'
-            limit 1
-        ) then
+        select count(*) into :v_mismatch_count
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID
+           and coalesce(RUN_ID_VARCHAR, '') != :P_RUN_ID
+           and PROPOSED_AT >= current_timestamp() - interval '1 hour';
+        if (v_mismatch_count > 0) then
             v_validation_errors := array_append(
                 :v_validation_errors,
                 'PROPOSAL_RUN_ID_MISMATCH: Found proposals with different run ID for portfolio ' || :P_PORTFOLIO_ID

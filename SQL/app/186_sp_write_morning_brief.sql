@@ -30,6 +30,21 @@ declare
     v_validation_warnings array := array_construct();
     v_agent_name varchar := coalesce(nullif(trim(:P_AGENT_NAME), ''), 'MORNING_BRIEF');
 begin
+    -- Guard: do not write for invalid portfolio (e.g. test portfolio_id=0).
+    if (:P_PORTFOLIO_ID is null or :P_PORTFOLIO_ID <= 0) then
+        call MIP.APP.SP_LOG_EVENT(
+            'VALIDATION',
+            'SP_WRITE_MORNING_BRIEF',
+            'SKIP_INVALID_PORTFOLIO',
+            null,
+            object_construct('portfolio_id', :P_PORTFOLIO_ID, 'reason', 'PORTFOLIO_ID_LE_ZERO'),
+            'Portfolio ID must be positive',
+            :P_RUN_ID,
+            null
+        );
+        return object_construct('status', 'SKIP_INVALID_PORTFOLIO', 'portfolio_id', :P_PORTFOLIO_ID);
+    end if;
+
     -- Fetch BRIEF from view (content only); procedure overwrites attribution keys.
     select BRIEF
       into :v_brief
@@ -50,17 +65,18 @@ begin
         raise exc_no_brief;
     end if;
 
-    -- Overwrite attribution: pipeline_run_id and as_of_ts only; do not write latest_run_id.
+    -- Overwrite attribution: pipeline_run_id only (no as_of_ts in attribution). Canonical as_of_ts at BRIEF root.
     v_attr := coalesce(v_brief:attribution, object_construct());
     v_attr := object_delete(v_attr, 'latest_run_id');
     v_attr := object_delete(v_attr, 'pipeline_run_id');
     v_attr := object_delete(v_attr, 'as_of_ts');
     v_attr := object_insert(v_attr, 'pipeline_run_id', :P_RUN_ID);
-    v_attr := object_insert(v_attr, 'as_of_ts', to_varchar(:P_AS_OF_TS));
     v_brief := object_delete(v_brief, 'attribution');
     v_brief := object_insert(v_brief, 'attribution', v_attr);
     v_brief := object_delete(v_brief, 'pipeline_run_id');
     v_brief := object_insert(v_brief, 'pipeline_run_id', :P_RUN_ID);
+    v_brief := object_delete(v_brief, 'as_of_ts');
+    v_brief := object_insert(v_brief, 'as_of_ts', to_varchar(:P_AS_OF_TS));
 
     -- MED-003: Morning brief consistency validation (optional; use extracted counts from v_brief)
     begin

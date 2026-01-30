@@ -60,3 +60,15 @@ where run_id_varchar = $run_id_2
 group by run_id_varchar, portfolio_id, symbol, side
 having count(*) > 1;
 -- Expect 0 rows.
+
+select run_id, count(*) as pipeline_events
+from MIP.APP.MIP_AUDIT_LOG
+where run_id in ($run_id_1, $run_id_2)
+group by run_id
+order by run_id;
+
+select run_id, count(*) as brief_rows
+from MIP.AGENT_OUT.MORNING_BRIEF
+where run_id in ($run_id_1, $run_id_2)
+group by run_id
+order by run_id;

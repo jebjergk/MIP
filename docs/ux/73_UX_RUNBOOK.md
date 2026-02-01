@@ -25,33 +25,79 @@ The API ([MIP/apps/mip_ui_api/app/config.py](MIP/apps/mip_ui_api/app/config.py))
 
 ### Key-pair authentication (MFA environments)
 
-When your Snowflake account requires MFA or you prefer key-pair auth:
-
-1. **Generate a keypair** (minimum 2048-bit RSA, PEM format):
-   ```bash
-   # Unencrypted (simpler; protect file with OS permissions)
-   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
-
-   # Encrypted (recommended; you'll set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE)
-   openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 des3 -inform PEM -out rsa_key.p8
-   ```
-
-2. **Generate the public key** and assign it to your Snowflake user:
-   ```bash
-   openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
-   ```
-   Then in Snowflake: `ALTER USER <your_user> SET RSA_PUBLIC_KEY='<contents of rsa_key.pub, excluding -----BEGIN/END----- lines>';`
-
-3. **Store the private key** locally (e.g. `~/.snowflake/rsa_key.p8` or a project-local path). Restrict permissions: `chmod 600 rsa_key.p8`.
-
-4. **Set env vars** in `.env`:
-   ```
-   SNOWFLAKE_AUTH_METHOD=keypair
-   SNOWFLAKE_PRIVATE_KEY_PATH=/path/to/rsa_key.p8
-   SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=   # optional, for encrypted keys
-   ```
+When your Snowflake account requires MFA or you prefer key-pair auth, see [Deploying the Local UX API User (Key-Pair Auth)](#deploying-the-local-ux-api-user-key-pair-auth) below.
 
 If auth fails (e.g. MFA user with password), the UI shows: *Snowflake auth failed — MFA users must use keypair or OAuth.*
+
+## Deploying the Local UX API User (Key-Pair Auth)
+
+Use this section when deploying the UX API to a **new Snowflake account** or when the account requires MFA. The deployment kit lives in `MIP/SQL/deploy/ux_api_user/`.
+
+### Why MFA makes password auth unsuitable for a local backend
+
+When Snowflake enforces MFA (e.g. Duo Push, TOTP), password-only auth requires interactive approval on each connection. A headless API server cannot respond to push notifications or enter TOTP codes. Key-pair authentication (or OAuth) avoids that by using a pre-registered public key; the server signs requests with the private key and Snowflake verifies without human interaction.
+
+### How to generate the keypair
+
+Use OpenSSL to create a 2048-bit RSA key in PEM/PKCS#8 format:
+
+```bash
+# Unencrypted (simpler; protect file with OS permissions)
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+
+# Encrypted (recommended; set SNOWFLAKE_PRIVATE_KEY_PASSPHRASE in .env)
+openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 des3 -inform PEM -out rsa_key.p8
+```
+
+Then generate the public key:
+
+```bash
+openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+```
+
+### Where to store the private key locally
+
+Store the private key in a secure location, e.g. `~/.snowflake/rsa_key.p8` or a project-local path. Restrict permissions so only the API process can read it:
+
+```bash
+chmod 600 rsa_key.p8
+```
+
+Never commit the private key to version control. Add `*.p8` and the key path to `.gitignore`.
+
+### How to set `rsa_public_key` in Snowflake
+
+Use script `MIP/SQL/deploy/ux_api_user/03_set_rsa_public_key.sql`:
+
+1. Open `rsa_key.pub` and copy the base64 content **between** `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----`. Remove the header/footer lines and concatenate the base64 lines into a single string (no newlines).
+2. Edit `03_set_rsa_public_key.sql`, replace `REPLACE_ME_WITH_PUBLIC_KEY_BODY` with that string, and replace `:ux_user` if you use a different user name.
+3. Run the script as SECURITYADMIN (or equivalent).
+
+### Environment variables in `.env`
+
+Copy `.env.example` to `.env` and set:
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `SNOWFLAKE_AUTH_METHOD` | `keypair` | Use key-pair auth (required for MFA accounts) |
+| `SNOWFLAKE_USER` | `:ux_user` (e.g. `MIP_UI_API`) | UX API service user |
+| `SNOWFLAKE_ROLE` | `:ux_role` (e.g. `MIP_UI_API_ROLE`) | Role granted to the user |
+| `SNOWFLAKE_PRIVATE_KEY_PATH` | `/path/to/rsa_key.p8` | Absolute path to the private key file |
+| `SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` | *(optional)* | Passphrase if the key is encrypted |
+| `SNOWFLAKE_ACCOUNT` | e.g. `xy12345.us-east-1` | Snowflake account identifier |
+| `SNOWFLAKE_WAREHOUSE` | e.g. `MIP_WH_XS` | Warehouse for queries |
+| `SNOWFLAKE_DATABASE` | `MIP` | Database (must match MIP deployment) |
+| `SNOWFLAKE_SCHEMA` | `APP` | Schema (typically `APP`) |
+
+### Verification checklist
+
+After deployment:
+
+1. Run the API: `uvicorn app.main:app --reload --app-dir MIP/apps/mip_ui_api`
+2. Call `GET /api/status` (or `http://localhost:8000/status`).
+3. Expect `snowflake_ok: true` and `auth_method: "keypair"`.
+
+If `snowflake_ok` is `false`, check the `snowflake_message` field for the error; the UI header will also show the message.
 
 ### Local development
 

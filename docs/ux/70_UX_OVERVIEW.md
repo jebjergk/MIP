@@ -2,6 +2,29 @@
 
 High-level UX goals, personas, and mapping from screens to canonical MIP objects. Copy/paste friendly; no wireframes.
 
+## Quickstart
+
+Get the local UX running in a few steps:
+
+1. **Generate a keypair** and store the private key (e.g. `~/.snowflake/rsa_key.p8`, `chmod 600`). See [73_UX_RUNBOOK.md](73_UX_RUNBOOK.md) “Deploying the Local UX API User”.
+
+2. **Run the deployment scripts** (in order, as SECURITYADMIN / MIP_ADMIN_ROLE):
+   - `MIP/SQL/deploy/ux_api_user/01_create_role_and_user.sql`
+   - `MIP/SQL/deploy/ux_api_user/02_grants_readonly.sql`
+   - `MIP/SQL/deploy/ux_api_user/03_set_rsa_public_key.sql` (paste public key body, replace placeholders)
+
+3. **Fill `.env`** from `.env.example` with `SNOWFLAKE_AUTH_METHOD=keypair`, `SNOWFLAKE_PRIVATE_KEY_PATH`, and other vars.
+
+4. **Start backend and frontend:**
+   ```bash
+   uvicorn app.main:app --reload --app-dir MIP/apps/mip_ui_api
+   ```
+   ```bash
+   cd MIP/apps/mip_ui_web && npm run dev
+   ```
+
+5. **Validate:** `GET /api/status` returns `snowflake_ok: true`.
+
 ## Goals
 
 - **Visibility**: Operators and developers can inspect pipeline runs, portfolio state, morning briefs, and training status without writing SQL.

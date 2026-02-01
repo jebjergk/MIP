@@ -23,6 +23,7 @@ export default function App() {
         <Link to="/audit">Audit Viewer</Link>
         <Link to="/brief">Morning Brief</Link>
         <Link to="/training">Training Status</Link>
+        <Link to="/suggestions">Suggestions</Link>
         <Link to="/debug">Debug</Link>
         <ExplainModeToggle />
       </nav>

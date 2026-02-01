@@ -3,7 +3,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+# Load .env from repo root (mip_0.7/), not MIP/
+env_path = Path(__file__).resolve().parent.parent.parent.parent.parent / ".env"
 load_dotenv(env_path)
 
 

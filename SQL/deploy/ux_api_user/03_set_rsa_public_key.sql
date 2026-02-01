@@ -36,4 +36,5 @@
 
 use role SECURITYADMIN;
 
-alter user MIP_UI_API set rsa_public_key = 'REPLACE_ME_WITH_PUBLIC_KEY_BODY';  -- :ux_user, :rsa_public_key
+-- IMPORTANT: Paste the key as ONE line, no newlines (remove line breaks from rsa_key.pub)
+alter user MIP_UI_API set rsa_public_key = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1Y10zgLkq+GKeBolizXHWI7vnPBpcf1mv2vDnSb5pn2fDNrpZjBaBfouOp/Xts6b2HIDguEtXosRRArQAoSwBbQ26S5T5v1TK/mv6Tv8QnUXjQfuuCNgbPQ0PZ0ppPHtI/brSnhSJehpSWF1qRDQTy+vPpocLNNI13clzCpsqW5JdCYfGAURrI/YO0UeyCpzlEwTKeVAV6Yby9RQZraa78o2a7Y17ohC4mtgBYbfssFGBGgbouV/1V3R1b/ymoDtcRWCg/xyktXqcIlPtahOv3WMuhsPYoLXb/jlZItvCC+IlI1JwzjpPhKL9iFNncP5x2OUbSCGanqkSoRPQQibBwIDAQAB';  -- :ux_user, :rsa_public_key

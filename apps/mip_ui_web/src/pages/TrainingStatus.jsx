@@ -184,7 +184,7 @@ export default function TrainingStatus() {
 
       {filteredRows.length === 0 && (
         <EmptyState
-          title={rows.length === 0 ? 'No training status rows yet' : 'No rows match the current filters'}
+          title={rows.length === 0 ? 'No evaluated recommendations found yet' : 'No rows match the current filters'}
           action={rows.length === 0 ? 'Run pipeline in Snowflake.' : 'Clear or adjust filters above.'}
           explanation={rows.length === 0 ? 'Training status comes from recommendation and outcome data. Run the pipeline to populate it.' : 'Try a different market type or symbol search.'}
           reasons={rows.length === 0 ? ['Pipeline has not run yet.', 'No recommendations or outcomes in MIP.APP.'] : []}

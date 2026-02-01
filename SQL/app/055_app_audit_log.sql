@@ -77,6 +77,11 @@ begin
     if (v_replay_batch_id is not null) then
         v_event_type := 'REPLAY';
         v_details := coalesce(v_details, object_construct());
+        -- Remove replay keys first so object_insert is idempotent (caller may already pass them)
+        v_details := object_delete(v_details, 'mode');
+        v_details := object_delete(v_details, 'replay_batch_id');
+        v_details := object_delete(v_details, 'effective_to_ts');
+        v_details := object_delete(v_details, 'day_run_id');
         v_details := object_insert(v_details, 'mode', 'REPLAY');
         v_details := object_insert(v_details, 'replay_batch_id', :v_replay_batch_id);
         v_details := object_insert(v_details, 'effective_to_ts', :v_effective_to_ts);
@@ -146,6 +151,11 @@ begin
      limit 1;
     if (v_replay_batch_id is not null) then
         v_event_type := 'REPLAY';
+        -- Remove replay keys first so object_insert is idempotent
+        v_details := object_delete(v_details, 'mode');
+        v_details := object_delete(v_details, 'replay_batch_id');
+        v_details := object_delete(v_details, 'effective_to_ts');
+        v_details := object_delete(v_details, 'day_run_id');
         v_details := object_insert(v_details, 'mode', 'REPLAY');
         v_details := object_insert(v_details, 'replay_batch_id', :v_replay_batch_id);
         v_details := object_insert(v_details, 'effective_to_ts', :v_effective_to_ts);

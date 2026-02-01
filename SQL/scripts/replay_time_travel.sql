@@ -56,36 +56,66 @@ call MIP.APP.SP_REPLAY_TIME_TRAVEL(
 );
 
 
--- Controlled dates:
-
-set interval_minutes = 1440;
-
-set use_full_universe_start = true;
-
+-- produce recommndations time travel replayControlled dates:
 set from_date = '2025-08-22';
-set to_date   = '2025-08-29';
-
+set to_date   = '2025-09-30';
 set run_portfolios = false;
-set run_briefs     = false;
+set run_briefs = false;
 
 call MIP.APP.SP_REPLAY_TIME_TRAVEL(
-  to_date($from_date),
-  to_date($to_date),
-  $run_portfolios,
-  $run_briefs
+    to_date($from_date),
+    to_date($to_date),
+    $run_portfolios,
+    $run_briefs
 );
 
--- check outcome
-select count(*) as outcomes_total
+select
+  count(*) as outcomes_total,
+  min(calculated_at) as min_calculated_at,
+  max(calculated_at) as max_calculated_at
 from MIP.APP.RECOMMENDATION_OUTCOMES;
 
-select ts::date as d, market_type, count(*) as recs
+select count(*) as outcomes_last_2h
+from MIP.APP.RECOMMENDATION_OUTCOMES
+where calculated_at >= dateadd(hour, -2, current_timestamp());
+
+select
+  market_type,
+  count(*) as recs,
+  min(ts) as min_ts,
+  max(ts) as max_ts
 from MIP.APP.RECOMMENDATION_LOG
-where ts::date between to_date($from_date) and to_date($to_date)
+group by 1
+order by 1;
+
+select
+  ts::date as d,
+  market_type,
+  count(*) as recs
+from MIP.APP.RECOMMENDATION_LOG
 group by 1,2
 order by 1,2;
-select pattern_id, symbol, market_type, interval_minutes, ts, count(*) as n
+
+select
+  date_trunc('week', ts)::date as week,
+  market_type,
+  count(*) as recs
 from MIP.APP.RECOMMENDATION_LOG
-where ts::date between to_date($from_date) and to_date($to_date)
-group by 1,2,3,4,5
-having count(*) > 1;
+group by 1,2
+order by 1,2;
+
+
+select
+  horizon_bars,
+  count(*) as outcomes
+from MIP.APP.RECOMMENDATION_OUTCOMES
+group by 1
+order by 1;
+
+select
+  count(distinct rl.recommendation_id) as recs_total,
+  count(distinct ro.recommendation_id) as recs_with_outcomes,
+  round(count(distinct ro.recommendation_id) / nullif(count(distinct rl.recommendation_id),0), 4) as coverage_ratio
+from MIP.APP.RECOMMENDATION_LOG rl
+left join MIP.APP.RECOMMENDATION_OUTCOMES ro
+  on ro.recommendation_id = rl.recommendation_id;

@@ -8,19 +8,21 @@ import './InfoTooltip.css'
  * When Explain mode is OFF, renders nothing.
  * Key convention: use key="audit.has_new_bars" (scope optional), or scope="audit" key="has_new_bars" (backward compatible).
  * @param {string} [scope] - Glossary scope (audit, portfolio, risk_gate, signals, proposals, positions, trades, ui)
- * @param {string} key - Glossary key: either dot-key "audit.has_new_bars" or plain "has_new_bars" when scope is set
+ * @param {string} [key] - Glossary key (React reserves this; use entryKey if not passed)
+ * @param {string} [entryKey] - Glossary key: either dot-key "audit.has_new_bars" or plain "has_new_bars" when scope is set
  * @param {'short' | 'long'} variant - Which text to show (short = brief, long = full explanation)
  */
-export default function InfoTooltip({ scope, key: glossaryKey, variant = 'short' }) {
+export default function InfoTooltip({ scope, key: glossaryKey, entryKey, variant = 'short' }) {
+  const keyToUse = glossaryKey ?? entryKey
   const { explainMode } = useExplainMode()
   const [showLong, setShowLong] = useState(false)
   const anchorRef = useRef(null)
   const popoverRef = useRef(null)
 
   const entry =
-    glossaryKey?.includes('.')
-      ? getGlossaryEntryByDotKey(glossaryKey)
-      : getGlossaryEntry(scope, glossaryKey)
+    keyToUse?.includes('.')
+      ? getGlossaryEntryByDotKey(keyToUse)
+      : getGlossaryEntry(scope, keyToUse)
 
   useEffect(() => {
     if (!showLong || !anchorRef.current || !popoverRef.current) return

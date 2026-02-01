@@ -1,0 +1,47 @@
+.status-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.85rem;
+  border-radius: 4px;
+  margin-right: 0.5rem;
+}
+
+.status-banner-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-banner--ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.status-banner--ok .status-banner-dot {
+  background: #2e7d32;
+}
+
+.status-banner--degraded {
+  background: #fff8e1;
+  color: #f57c00;
+}
+
+.status-banner--degraded .status-banner-dot {
+  background: #f57c00;
+}
+
+.status-banner--down {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.status-banner--down .status-banner-dot {
+  background: #c62828;
+}
+
+.status-banner-label {
+  font-weight: 500;
+}

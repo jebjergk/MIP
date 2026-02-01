@@ -6,6 +6,7 @@ import MorningBrief from './pages/MorningBrief'
 import TrainingStatus from './pages/TrainingStatus'
 import Suggestions from './pages/Suggestions'
 import ExplainModeToggle from './components/ExplainModeToggle'
+import StatusBanner from './components/StatusBanner'
 
 const API_BASE = '/api'
 
@@ -15,6 +16,7 @@ export default function App() {
   return (
     <>
       <nav>
+        <StatusBanner />
         <Link to="/">Home</Link>
         <Link to="/portfolios">Portfolios</Link>
         <Link to="/audit">Audit Viewer</Link>

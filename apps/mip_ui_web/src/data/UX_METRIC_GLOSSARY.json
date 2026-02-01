@@ -137,6 +137,10 @@
     "status_badge": {
       "short": "A label showing the current state of a run, portfolio, or step.",
       "long": "Status badges show at a glance whether something succeeded, failed, is pending, or was skipped. Hover for more detail on what that status means in this context."
+    },
+    "system_status": {
+      "short": "API and Snowflake data backend health.",
+      "long": "Green means the API and Snowflake data backend are both reachable. Yellow means the API is up but Snowflake (where portfolios, briefs, and training data live) is not reachable—check credentials and network. Red means the API itself is not reachable—the server may be down or unreachable."
     }
   },
   "training_status": {

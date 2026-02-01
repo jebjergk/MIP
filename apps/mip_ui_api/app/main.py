@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import runs, portfolios, briefs, training, performance
+from app.routers import runs, portfolios, briefs, training, performance, status
 
 app = FastAPI(
     title="MIP UI API",
@@ -15,6 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(status.router)
 app.include_router(runs.router)
 app.include_router(portfolios.router)
 app.include_router(briefs.router)

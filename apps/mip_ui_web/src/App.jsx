@@ -5,6 +5,7 @@ import AuditViewer from './pages/AuditViewer'
 import MorningBrief from './pages/MorningBrief'
 import TrainingStatus from './pages/TrainingStatus'
 import Suggestions from './pages/Suggestions'
+import Debug from './pages/Debug'
 import ExplainModeToggle from './components/ExplainModeToggle'
 import StatusBanner from './components/StatusBanner'
 
@@ -22,6 +23,7 @@ export default function App() {
         <Link to="/audit">Audit Viewer</Link>
         <Link to="/brief">Morning Brief</Link>
         <Link to="/training">Training Status</Link>
+        <Link to="/debug">Debug</Link>
         <ExplainModeToggle />
       </nav>
       <main className="page">
@@ -34,6 +36,7 @@ export default function App() {
           <Route path="/brief" element={<MorningBrief />} />
           <Route path="/training" element={<TrainingStatus />} />
           <Route path="/suggestions" element={<Suggestions />} />
+          <Route path="/debug" element={<Debug />} />
         </Routes>
       </main>
     </>

@@ -1,6 +1,6 @@
 /**
- * Glossary data for InfoTooltip. Source of truth: docs/UX_METRIC_GLOSSARY.yml
- * Generated JSON: docs/UX_METRIC_GLOSSARY.json and this copy in src/data.
+ * Glossary data for InfoTooltip. Source of truth: MIP/docs/ux/UX_METRIC_GLOSSARY.yml
+ * Generated JSON: MIP/docs/ux/UX_METRIC_GLOSSARY.json and this copy in src/data.
  * Key convention: use key="audit.has_new_bars" or scope="audit" key="has_new_bars" (backward compatible).
  */
 import glossaryData from './UX_METRIC_GLOSSARY.json'

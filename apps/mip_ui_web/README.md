@@ -10,11 +10,11 @@ React (Vite) frontend for MIP: Home, Portfolio, Audit Viewer, Morning Brief, Tra
 
 ## Glossary (tooltips)
 
-- **Single source of truth:** `docs/UX_METRIC_GLOSSARY.yml` (repo root).
+- **Single source of truth:** `MIP/docs/ux/UX_METRIC_GLOSSARY.yml`.
 - **Generate JSON** (after editing YAML):
   - From repo root: `python scripts/generate_glossary_json.py` (requires `pip install pyyaml`), or
   - From `MIP/apps/mip_ui_web`: `npm run generate:glossary` (requires `yaml` devDependency).
-  This writes `docs/UX_METRIC_GLOSSARY.json` and `MIP/apps/mip_ui_web/src/data/UX_METRIC_GLOSSARY.json`.
+  This writes `MIP/docs/ux/UX_METRIC_GLOSSARY.json` and `MIP/apps/mip_ui_web/src/data/UX_METRIC_GLOSSARY.json`.
 - **Validate** (CI / pre-commit): run the same script with `--check`. It exits 1 if generated JSON would differ from on-disk JSON.
   - From repo root: `python scripts/generate_glossary_json.py --check`
   - From `MIP/apps/mip_ui_web`: `npm run validate:glossary`

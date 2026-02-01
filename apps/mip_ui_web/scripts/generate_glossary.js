@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Single source of truth: docs/UX_METRIC_GLOSSARY.yml
+ * Single source of truth: MIP/docs/ux/UX_METRIC_GLOSSARY.yml
  * Generates:
- *   docs/UX_METRIC_GLOSSARY.json
+ *   MIP/docs/ux/UX_METRIC_GLOSSARY.json
  *   MIP/apps/mip_ui_web/src/data/UX_METRIC_GLOSSARY.json
  * Run from repo root: node MIP/apps/mip_ui_web/scripts/generate_glossary.js
  * Or from MIP/apps/mip_ui_web: node scripts/generate_glossary.js
@@ -18,8 +18,8 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const appRoot = join(scriptDir, '..')
 // Repo root is 3 levels up from mip_ui_web (MIP/apps/mip_ui_web -> MIP/apps -> MIP -> repo root)
 const repoRoot = join(appRoot, '..', '..', '..')
-const docsYml = join(repoRoot, 'docs', 'UX_METRIC_GLOSSARY.yml')
-const docsJson = join(repoRoot, 'docs', 'UX_METRIC_GLOSSARY.json')
+const docsYml = join(repoRoot, 'MIP', 'docs', 'ux', 'UX_METRIC_GLOSSARY.yml')
+const docsJson = join(repoRoot, 'MIP', 'docs', 'ux', 'UX_METRIC_GLOSSARY.json')
 const appJson = join(appRoot, 'src', 'data', 'UX_METRIC_GLOSSARY.json')
 
 function loadYaml() {

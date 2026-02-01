@@ -20,21 +20,38 @@ declare
     v_latest_returns_ts timestamp_ntz;
     v_market_bars_at_latest_ts number := 0;
     v_returns_at_latest_ts number := 0;
+    v_effective_cap timestamp_ntz;
 begin
+    -- Use effective_to_ts override when present (replay/time-travel)
+    select EFFECTIVE_TO_TS into :v_effective_cap
+      from MIP.APP.RUN_SCOPE_OVERRIDE
+     where RUN_ID = :v_run_id
+     limit 1;
+
     select max(TS)
       into :v_latest_market_bars_ts
-      from MIP.MART.MARKET_BARS;
+      from MIP.MART.MARKET_BARS
+     where (:v_effective_cap is null or TS <= :v_effective_cap);
 
     if (v_latest_market_bars_ts is not null) then
         select count(*)
           into :v_market_bars_at_latest_ts
           from MIP.MART.MARKET_BARS
-         where TS = :v_latest_market_bars_ts;
+         where TS = :v_latest_market_bars_ts
+           and (:v_effective_cap is null or TS <= :v_effective_cap);
     end if;
 
     begin
         create or replace view MIP.MART.MARKET_RETURNS as
-        with deduped as (
+        with bars_scoped as (
+            select *
+              from MIP.MART.MARKET_BARS
+             where (
+                   (select EFFECTIVE_TO_TS from MIP.APP.RUN_SCOPE_OVERRIDE where RUN_ID = current_query_tag() limit 1) is null
+                   or TS <= (select EFFECTIVE_TO_TS from MIP.APP.RUN_SCOPE_OVERRIDE where RUN_ID = current_query_tag() limit 1)
+             )
+        ),
+        deduped as (
             select
                 TS,
                 SYMBOL,
@@ -64,7 +81,7 @@ begin
                         partition by MARKET_TYPE, SYMBOL, INTERVAL_MINUTES, TS
                         order by INGESTED_AT desc, SOURCE desc
                     ) as RN
-                from MIP.MART.MARKET_BARS
+                from bars_scoped
             )
             where RN = 1
         ),

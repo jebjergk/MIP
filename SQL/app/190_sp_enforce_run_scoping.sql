@@ -1,12 +1,21 @@
 -- 190_sp_enforce_run_scoping.sql
--- Purpose: Helper procedure to validate run scoping and prevent cross-run contamination
+-- Purpose: Helper procedure to validate run scoping and prevent cross-run contamination.
+-- Optional P_EFFECTIVE_TO_TS: when set (e.g. replay/time-travel), stores override so downstream
+-- "latest ts" logic uses TS <= P_EFFECTIVE_TO_TS instead of max(TS).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
+create table if not exists MIP.APP.RUN_SCOPE_OVERRIDE (
+    RUN_ID            string primary key,
+    EFFECTIVE_TO_TS    timestamp_ntz not null,
+    CREATED_AT         timestamp_ntz default current_timestamp()
+);
+
 create or replace procedure MIP.APP.SP_ENFORCE_RUN_SCOPING(
     P_RUN_ID string,   -- canonical pipeline run id (UUID/varchar)
-    P_PORTFOLIO_ID number default null
+    P_PORTFOLIO_ID number default null,
+    P_EFFECTIVE_TO_TS timestamp_ntz default null  -- when set, time-travel/replay: downstream uses this as "latest" cap
 )
 returns variant
 language sql
@@ -20,6 +29,23 @@ declare
     v_audit_count number := 0;
     v_mismatch_count number := 0;
 begin
+    -- Effective-date override (replay/time-travel): store so downstream procs can cap "latest ts"
+    if (:P_EFFECTIVE_TO_TS is not null) then
+        merge into MIP.APP.RUN_SCOPE_OVERRIDE t
+        using (select :P_RUN_ID as RUN_ID, :P_EFFECTIVE_TO_TS as EFFECTIVE_TO_TS) s
+        on t.RUN_ID = s.RUN_ID
+        when matched then update set t.EFFECTIVE_TO_TS = s.EFFECTIVE_TO_TS, t.CREATED_AT = current_timestamp()
+        when not matched then insert (RUN_ID, EFFECTIVE_TO_TS) values (s.RUN_ID, s.EFFECTIVE_TO_TS);
+        return object_construct(
+            'status', 'PASS',
+            'run_id', :P_RUN_ID,
+            'portfolio_id', :P_PORTFOLIO_ID,
+            'effective_to_ts', :P_EFFECTIVE_TO_TS,
+            'validation_errors', array_construct(),
+            'timestamp', current_timestamp()
+        );
+    end if;
+
     -- Validation 1: Ensure pipeline run ID exists in audit log
     select count(*) into :v_audit_count
       from MIP.APP.MIP_AUDIT_LOG

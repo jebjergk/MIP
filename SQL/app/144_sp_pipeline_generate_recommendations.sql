@@ -27,12 +27,20 @@ declare
     v_pattern_count number := 0;
     v_min_return number := 0.0;
     v_skip_reason string;
+    v_effective_cap timestamp_ntz;
 begin
+    -- Use effective_to_ts override when present (replay/time-travel)
+    select EFFECTIVE_TO_TS into :v_effective_cap
+      from MIP.APP.RUN_SCOPE_OVERRIDE
+     where RUN_ID = :v_run_id
+     limit 1;
+
     select max(TS)
       into :v_latest_market_bars_ts
       from MIP.MART.MARKET_BARS
      where MARKET_TYPE = :P_MARKET_TYPE
-       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES;
+       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES
+       and (:v_effective_cap is null or TS <= :v_effective_cap);
 
     select max(TS)
       into :v_latest_returns_ts

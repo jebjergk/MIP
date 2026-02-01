@@ -5,7 +5,9 @@ ALTER GIT REPOSITORY MIP.APP.MIP FETCH;
 select * from mip.app.mip_audit_log order by event_ts desc;
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
+select min(ts, max())
 
+dfgbhdo 
 desc table MIP.APP.PORTFOLIO;
 
   -- show both columns if they exist
@@ -28,6 +30,7 @@ where run_id = 'd10d4593-84a9-4738-bd3e-200ff23076d5'
     or brief:"attribution":"as_of_ts" is not null
   );
 
+
 set run_id = (
   select run_id
   from MIP.APP.MIP_AUDIT_LOG
@@ -47,6 +50,15 @@ select count(*) as n from MIP.APP.PORTFOLIO_DAILY where portfolio_id = 0;
 -- sanity: make sure PORTFOLIO table truly has no 0
 select count(*) as n from MIP.APP.PORTFOLIO where portfolio_id = 0;
 
+SELECT
+    SYMBOL,
+    INTERVAL_MINUTES,
+    COUNT(*) AS CNT,
+    MIN(TS) AS MIN_TS,
+    MAX(TS) AS MAX_TS
+FROM MIP.MART.MARKET_BARS
+GROUP BY SYMBOL, INTERVAL_MINUTES
+ORDER BY SYMBOL, INTERVAL_MINUTES;
 
 select run_id, agent_name, as_of_ts, pipeline_run_id
 from MIP.AGENT_OUT.MORNING_BRIEF

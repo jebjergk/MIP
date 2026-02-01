@@ -1,0 +1,121 @@
+/* Suggestions page: ranked symbol/pattern, tooltips, no execution */
+
+.suggestions-intro {
+  color: #555;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+.suggestions-filters {
+  margin-bottom: 0.75rem;
+}
+
+.suggestions-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.suggestions-filters input[type="number"] {
+  width: 4rem;
+  padding: 0.3rem 0.4rem;
+  margin-left: 0.25rem;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.suggestions-count {
+  font-size: 0.9rem;
+  color: #666;
+  margin-bottom: 1rem;
+}
+
+.suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.suggestion-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.suggestion-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.suggestion-rank {
+  font-weight: 700;
+  color: #666;
+}
+
+.suggestion-symbol {
+  font-weight: 600;
+}
+
+.suggestion-pattern,
+.suggestion-market {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.suggestion-stage {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.suggestion-stage-insufficient {
+  background: #f5d0d0;
+  color: #8b0000;
+}
+
+.suggestion-stage-warming-up {
+  background: #f5e6c8;
+  color: #7d5a00;
+}
+
+.suggestion-stage-learning {
+  background: #c8e0f5;
+  color: #0a5276;
+}
+
+.suggestion-stage-confident {
+  background: #c8f5d0;
+  color: #0d5c0d;
+}
+
+.suggestion-score {
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.suggestion-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.suggestion-explanation {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #333;
+  line-height: 1.4;
+}
+
+.suggestions-empty {
+  color: #666;
+  font-style: italic;
+}

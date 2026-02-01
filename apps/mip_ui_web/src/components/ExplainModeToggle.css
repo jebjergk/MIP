@@ -1,0 +1,16 @@
+.explain-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.explain-mode-toggle input {
+  cursor: pointer;
+}
+
+.explain-mode-label {
+  user-select: none;
+}

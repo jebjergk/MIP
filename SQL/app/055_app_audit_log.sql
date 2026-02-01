@@ -1,8 +1,17 @@
 -- 055_app_audit_log.sql
--- Purpose: Append-only audit log for MIP procedures and tasks
+-- Purpose: Append-only audit log for MIP procedures and tasks.
+-- REPLAY_CONTEXT: when set for a run_id (day_run_id), SP_AUDIT_LOG_STEP and SP_LOG_EVENT
+-- write EVENT_TYPE='REPLAY' and add mode, replay_batch_id, effective_to_ts, day_run_id to DETAILS.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
+
+create table if not exists MIP.APP.REPLAY_CONTEXT (
+    RUN_ID             string primary key,   -- day_run_id for this replay day
+    REPLAY_BATCH_ID    string not null,
+    EFFECTIVE_TO_TS    timestamp_ntz not null,
+    CREATED_AT         timestamp_ntz default current_timestamp()
+);
 
 create table if not exists MIP.APP.MIP_AUDIT_LOG (
     EVENT_TS          timestamp_ntz default CURRENT_TIMESTAMP(),
@@ -41,6 +50,11 @@ $$
 declare
     v_run_id string;
     v_parent_run_id string;
+    v_event_type string := :P_EVENT_TYPE;
+    v_details variant := coalesce(try_parse_json(:P_DETAILS), :P_DETAILS);
+    v_replay_batch_id string;
+    v_effective_to_ts timestamp_ntz;
+    v_replay_run_id string;
 begin
     if (:P_EVENT_TYPE = 'PIPELINE') then
         v_run_id := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
@@ -52,6 +66,21 @@ begin
             nullif(current_query_tag(), '')
         );
         v_run_id := coalesce(nullif(:P_EVENT_RUN_ID, ''), uuid_string());
+    end if;
+
+    -- Replay tagging: if this run_id or parent is in REPLAY_CONTEXT, use EVENT_TYPE=REPLAY and add replay DETAILS
+    select REPLAY_BATCH_ID, EFFECTIVE_TO_TS, RUN_ID
+      into :v_replay_batch_id, :v_effective_to_ts, :v_replay_run_id
+      from MIP.APP.REPLAY_CONTEXT
+     where RUN_ID = :v_run_id or RUN_ID = :v_parent_run_id
+     limit 1;
+    if (v_replay_batch_id is not null) then
+        v_event_type := 'REPLAY';
+        v_details := coalesce(v_details, object_construct());
+        v_details := object_insert(v_details, 'mode', 'REPLAY');
+        v_details := object_insert(v_details, 'replay_batch_id', :v_replay_batch_id);
+        v_details := object_insert(v_details, 'effective_to_ts', :v_effective_to_ts);
+        v_details := object_insert(v_details, 'day_run_id', :v_replay_run_id);
     end if;
 
     insert into MIP.APP.MIP_AUDIT_LOG (
@@ -69,11 +98,11 @@ begin
         CURRENT_TIMESTAMP(),
         :v_run_id,
         :v_parent_run_id,
-        :P_EVENT_TYPE,
+        :v_event_type,
         :P_EVENT_NAME,
         :P_STATUS,
         :P_ROWS_AFFECTED,
-        coalesce(try_parse_json(:P_DETAILS), :P_DETAILS),
+        :v_details,
         :P_ERROR_MESSAGE;
 
     return v_run_id;
@@ -99,18 +128,36 @@ declare
     v_scope_key string;
     v_existing_run_id string;
     v_new_run_id string := uuid_string();
+    v_event_type string := 'PIPELINE_STEP';
+    v_details variant := coalesce(try_parse_json(:P_DETAILS), :P_DETAILS);
+    v_replay_batch_id string;
+    v_effective_to_ts timestamp_ntz;
 begin
     -- Extract required fields from P_DETAILS
     v_step_name := :P_DETAILS:"step_name"::string;
     v_scope := coalesce(:P_DETAILS:"scope"::string, 'AGG');
     v_scope_key := :P_DETAILS:"scope_key"::string;
 
-    -- Check for existing duplicate row (idempotent insert)
+    -- Replay tagging: if P_PARENT_RUN_ID is in REPLAY_CONTEXT, use EVENT_TYPE=REPLAY and add replay DETAILS
+    select REPLAY_BATCH_ID, EFFECTIVE_TO_TS
+      into :v_replay_batch_id, :v_effective_to_ts
+      from MIP.APP.REPLAY_CONTEXT
+     where RUN_ID = :P_PARENT_RUN_ID
+     limit 1;
+    if (v_replay_batch_id is not null) then
+        v_event_type := 'REPLAY';
+        v_details := object_insert(v_details, 'mode', 'REPLAY');
+        v_details := object_insert(v_details, 'replay_batch_id', :v_replay_batch_id);
+        v_details := object_insert(v_details, 'effective_to_ts', :v_effective_to_ts);
+        v_details := object_insert(v_details, 'day_run_id', :P_PARENT_RUN_ID);
+    end if;
+
+    -- Check for existing duplicate row (idempotent insert); match EVENT_TYPE used for this run
     select RUN_ID
       into :v_existing_run_id
       from MIP.APP.MIP_AUDIT_LOG
      where PARENT_RUN_ID = :P_PARENT_RUN_ID
-       and EVENT_TYPE = 'PIPELINE_STEP'
+       and EVENT_TYPE = :v_event_type
        and EVENT_NAME = :P_EVENT_NAME
        and STATUS = :P_STATUS
        and DETAILS:"step_name"::string = :v_step_name
@@ -121,12 +168,10 @@ begin
        )
      limit 1;
 
-    -- If duplicate exists, return existing RUN_ID
     if (v_existing_run_id is not null) then
         return v_existing_run_id;
     end if;
 
-    -- Insert new step log with fresh UUID
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
@@ -142,11 +187,11 @@ begin
         CURRENT_TIMESTAMP(),
         :v_new_run_id,
         :P_PARENT_RUN_ID,
-        'PIPELINE_STEP',
+        :v_event_type,
         :P_EVENT_NAME,
         :P_STATUS,
         :P_ROWS_AFFECTED,
-        coalesce(try_parse_json(:P_DETAILS), :P_DETAILS),
+        :v_details,
         :P_ERROR_MESSAGE;
 
     return v_new_run_id;

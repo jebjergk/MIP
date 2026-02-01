@@ -54,3 +54,38 @@ call MIP.APP.SP_REPLAY_TIME_TRAVEL(
     $run_portfolios,
     $run_briefs
 );
+
+
+-- Controlled dates:
+
+set interval_minutes = 1440;
+
+set use_full_universe_start = true;
+
+set from_date = '2025-08-22';
+set to_date   = '2025-08-29';
+
+set run_portfolios = false;
+set run_briefs     = false;
+
+call MIP.APP.SP_REPLAY_TIME_TRAVEL(
+  to_date($from_date),
+  to_date($to_date),
+  $run_portfolios,
+  $run_briefs
+);
+
+-- check outcome
+select count(*) as outcomes_total
+from MIP.APP.RECOMMENDATION_OUTCOMES;
+
+select ts::date as d, market_type, count(*) as recs
+from MIP.APP.RECOMMENDATION_LOG
+where ts::date between to_date($from_date) and to_date($to_date)
+group by 1,2
+order by 1,2;
+select pattern_id, symbol, market_type, interval_minutes, ts, count(*) as n
+from MIP.APP.RECOMMENDATION_LOG
+where ts::date between to_date($from_date) and to_date($to_date)
+group by 1,2,3,4,5
+having count(*) > 1;

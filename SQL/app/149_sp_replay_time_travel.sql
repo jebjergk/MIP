@@ -46,11 +46,14 @@ begin
         'START',
         null,
         object_construct(
+            'mode', 'REPLAY',
+            'replay_batch_id', :v_replay_run_id,
+            'effective_to_ts', null,
+            'day_run_id', null,
             'from_date', :P_FROM_DATE,
             'to_date', :P_TO_DATE,
             'run_portfolios', :P_RUN_PORTFOLIOS,
-            'run_briefs', :P_RUN_BRIEFS,
-            'replay_batch_id', :v_replay_run_id
+            'run_briefs', :P_RUN_BRIEFS
         ),
         null,
         :v_replay_run_id,
@@ -63,12 +66,22 @@ begin
 
         execute immediate 'alter session set query_tag = ''' || :v_run_id || '''';
 
+        -- Register replay context so downstream SP_AUDIT_LOG_STEP / SP_LOG_EVENT tag rows with EVENT_TYPE=REPLAY
+        insert into MIP.APP.REPLAY_CONTEXT (RUN_ID, REPLAY_BATCH_ID, EFFECTIVE_TO_TS)
+        values (:v_run_id, :v_replay_run_id, :v_effective_to_ts);
+
         call MIP.APP.SP_LOG_EVENT(
             'REPLAY',
             'REPLAY_DAY',
             'START',
             null,
-            object_construct('effective_to_ts', :v_effective_to_ts, 'run_id', :v_run_id, 'day', :v_d),
+            object_construct(
+                'mode', 'REPLAY',
+                'replay_batch_id', :v_replay_run_id,
+                'effective_to_ts', :v_effective_to_ts,
+                'day_run_id', :v_run_id,
+                'day', :v_d
+            ),
             null,
             :v_run_id,
             :v_replay_run_id
@@ -142,8 +155,10 @@ begin
             'SUCCESS',
             null,
             object_construct(
+                'mode', 'REPLAY',
+                'replay_batch_id', :v_replay_run_id,
                 'effective_to_ts', :v_effective_to_ts,
-                'run_id', :v_run_id,
+                'day_run_id', :v_run_id,
                 'day', :v_d,
                 'returns_result', :v_returns_result,
                 'evaluation_result', :v_eval_result
@@ -153,6 +168,7 @@ begin
             :v_replay_run_id
         );
 
+        delete from MIP.APP.REPLAY_CONTEXT where RUN_ID = :v_run_id;
         delete from MIP.APP.RUN_SCOPE_OVERRIDE where RUN_ID = :v_run_id;
 
         v_day_count := v_day_count + 1;
@@ -168,6 +184,9 @@ begin
         'run_briefs', :P_RUN_BRIEFS,
         'replay_batch_id', :v_replay_run_id
     );
+    v_summary := object_insert(v_summary, 'mode', 'REPLAY');
+    v_summary := object_insert(v_summary, 'effective_to_ts', null);
+    v_summary := object_insert(v_summary, 'day_run_id', null);
 
     call MIP.APP.SP_LOG_EVENT(
         'REPLAY',
@@ -189,10 +208,13 @@ exception
             'FAIL',
             null,
             object_construct(
+                'mode', 'REPLAY',
+                'replay_batch_id', :v_replay_run_id,
+                'effective_to_ts', null,
+                'day_run_id', null,
                 'from_date', :P_FROM_DATE,
                 'to_date', :P_TO_DATE,
-                'day_count', :v_day_count,
-                'replay_batch_id', :v_replay_run_id
+                'day_count', :v_day_count
             ),
             :sqlerrm,
             :v_replay_run_id,

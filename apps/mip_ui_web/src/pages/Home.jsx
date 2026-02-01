@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import EmptyState from '../components/EmptyState'
 
 export default function Home() {
   return (
@@ -13,6 +14,12 @@ export default function Home() {
         <li><Link to="/suggestions">Suggestions</Link> — ranked symbol/pattern recommendations</li>
         <li><Link to="/debug">Debug</Link> — route smoke checks (API health)</li>
       </ul>
+      <EmptyState
+        title="Seeing empty pages?"
+        action={<>Run the daily pipeline in Snowflake, then check <Link to="/audit">Audit Viewer</Link>.</>}
+        explanation="MIP data is populated by the daily pipeline. If pages look empty, run SP_RUN_DAILY_PIPELINE in Snowflake."
+        reasons={['Pipeline has not run yet.', 'Snowflake credentials may be missing or invalid.']}
+      />
     </>
   )
 }

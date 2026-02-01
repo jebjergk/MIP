@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
+import EmptyState from '../components/EmptyState'
+import ErrorState from '../components/ErrorState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
@@ -72,7 +74,7 @@ export default function TrainingStatus() {
   }, [rows, marketTypeFilter, symbolSearch])
 
   if (loading) return <p>Loading…</p>
-  if (error) return <p>Error: {error}</p>
+  if (error) return <ErrorState message={error} />
 
   return (
     <>
@@ -181,9 +183,12 @@ export default function TrainingStatus() {
       </div>
 
       {filteredRows.length === 0 && (
-        <p className="training-status-empty">
-          {rows.length === 0 ? 'No training status rows yet.' : 'No rows match the current filters.'}
-        </p>
+        <EmptyState
+          title={rows.length === 0 ? 'No training status rows yet' : 'No rows match the current filters'}
+          action={rows.length === 0 ? 'Run pipeline in Snowflake.' : 'Clear or adjust filters above.'}
+          explanation={rows.length === 0 ? 'Training status comes from recommendation and outcome data. Run the pipeline to populate it.' : 'Try a different market type or symbol search.'}
+          reasons={rows.length === 0 ? ['Pipeline has not run yet.', 'No recommendations or outcomes in MIP.APP.'] : []}
+        />
       )}
     </>
   )

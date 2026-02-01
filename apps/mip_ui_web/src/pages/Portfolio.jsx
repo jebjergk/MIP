@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
+import ErrorState from '../components/ErrorState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
 
@@ -51,7 +52,8 @@ export default function Portfolio() {
   }, [portfolioId])
 
   if (loading) return <p>Loading…</p>
-  if (error) return <p>Error: {error}</p>
+  if (error) return <ErrorState message={error} />
+
 
   if (portfolioId && portfolio) {
     return (
@@ -132,6 +134,7 @@ export default function Portfolio() {
               {(!snapshot.positions || snapshot.positions.length === 0) && (
                 <EmptyState
                   title="No positions"
+                  action="Run pipeline or wait for next run."
                   explanation="This portfolio has no open positions right now. Positions are the assets (e.g. stocks) the strategy currently holds."
                   reasons={['The run has not opened any positions yet.', 'Data may be from a time before any trades.', 'The risk gate may be blocking new entries.']}
                 />
@@ -166,6 +169,7 @@ export default function Portfolio() {
               {(!snapshot.trades || snapshot.trades.length === 0) && (
                 <EmptyState
                   title="No trades"
+                  action="Run pipeline or wait for next run."
                   explanation="No trades are shown for this snapshot. Trades are the buy/sell actions the strategy has executed."
                   reasons={['The run may not have executed any trades yet.', 'Data may be from before the first trade.', 'Score or threshold filters may have excluded all signals.', 'The risk gate may be blocking new entries.']}
                 />
@@ -183,6 +187,20 @@ export default function Portfolio() {
             </details>
           </>
         )}
+      </>
+    )
+  }
+
+  if (portfolios.length === 0) {
+    return (
+      <>
+        <h1>Portfolios</h1>
+        <EmptyState
+          title="No portfolios yet"
+          action={<>Run pipeline, then <Link to="/audit">check Audit Viewer</Link>.</>}
+          explanation="Portfolios are created by the pipeline. Run the daily pipeline, then check Audit Viewer for runs."
+          reasons={['Pipeline has not run yet.', 'No portfolios have been created in MIP.APP.PORTFOLIO.']}
+        />
       </>
     )
   }

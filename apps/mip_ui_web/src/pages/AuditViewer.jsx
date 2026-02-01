@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
+import EmptyState from '../components/EmptyState'
+import ErrorState from '../components/ErrorState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './AuditViewer.css'
@@ -43,7 +45,7 @@ export default function AuditViewer() {
   }, [runId])
 
   if (loading) return <p>Loading…</p>
-  if (error) return <p>Error: {error}</p>
+  if (error) return <ErrorState message={error} />
 
   if (runId && runDetail) {
     const sections = runDetail.sections || []
@@ -164,6 +166,20 @@ export default function AuditViewer() {
           </table>
           {timeline.length > 50 && <p className="audit-timeline-more">Showing first 50 of {timeline.length} events.</p>}
         </div>
+      </>
+    )
+  }
+
+  if (runs.length === 0) {
+    return (
+      <>
+        <h1>Audit Viewer</h1>
+        <EmptyState
+          title="No runs yet"
+          action="Run pipeline in Snowflake (SP_RUN_DAILY_PIPELINE)."
+          explanation="Pipeline runs appear here after the daily pipeline executes. Trigger it in Snowflake, then refresh."
+          reasons={['Pipeline has not run yet.', 'MIP_AUDIT_LOG may be empty.']}
+        />
       </>
     )
   }

@@ -12,6 +12,7 @@ const STATUS = {
 
 export default function StatusBanner() {
   const [status, setStatus] = useState(STATUS.LOADING)
+  const [snowflakeMessage, setSnowflakeMessage] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -19,6 +20,7 @@ export default function StatusBanner() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((data) => {
         if (cancelled) return
+        setSnowflakeMessage(data.snowflake_message ?? null)
         if (data.api_ok && data.snowflake_ok) {
           setStatus(STATUS.OK)
         } else if (data.api_ok && !data.snowflake_ok) {
@@ -33,11 +35,12 @@ export default function StatusBanner() {
     return () => { cancelled = true }
   }, [])
 
+  const degradedLabel = snowflakeMessage ?? 'Data backend not reachable'
   const label =
     status === STATUS.OK
       ? 'All systems OK'
       : status === STATUS.DEGRADED
-        ? 'Data backend not reachable'
+        ? degradedLabel
         : status === STATUS.DOWN
           ? 'API not reachable'
           : null

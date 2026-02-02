@@ -55,12 +55,34 @@ function maturityProxy(recsTotal, horizonsCovered, outcomesTotal) {
   return Math.min(100, Math.round(recPart + horPart + outPart))
 }
 
-/** Suggestion score (transparent, deterministic): maturity*0.6 + mean_realized_return at h5*1000*0.2 + pct_positive at h5*100*0.2. */
+/**
+ * Horizon used for suggestion score: horizon 5 if present; else best available of {3, 5, 10} by pct_positive (then mean return).
+ * Documented in glossary suggestion_score_formula.
+ */
+function getScoreHorizon(byHorizon) {
+  const list = byHorizon || []
+  const h5 = list.find((h) => h.horizon_bars === 5)
+  if (h5) return h5
+  const allowed = [3, 5, 10]
+  const candidates = list.filter((h) => allowed.includes(h.horizon_bars ?? 0))
+  if (candidates.length === 0) return null
+  const best = [...candidates].sort((a, b) => {
+    const pa = a.pct_positive != null ? Number(a.pct_positive) : -1
+    const pb = b.pct_positive != null ? Number(b.pct_positive) : -1
+    if (pa !== pb) return pb - pa
+    const ma = (a.mean_realized_return ?? a.mean_outcome) != null ? Number(a.mean_realized_return ?? a.mean_outcome) : -Infinity
+    const mb = (b.mean_realized_return ?? b.mean_outcome) != null ? Number(b.mean_realized_return ?? b.mean_outcome) : -Infinity
+    return mb - ma
+  })[0]
+  return best
+}
+
+/** Suggestion score (transparent, deterministic): 0.6*maturity + 0.2*(mean_return*1000) + 0.2*(pct_positive*100). Uses horizon 5 if present; else best of {3,5,10}. */
 function computeSuggestionScore(maturity, byHorizon) {
-  const h5 = byHorizon.find((h) => h.horizon_bars === 5)
-  if (!h5) return maturity * 0.6
-  const mean = (h5.mean_realized_return ?? h5.mean_outcome) != null ? Number(h5.mean_realized_return ?? h5.mean_outcome) : 0
-  const pct = h5.pct_positive != null ? Number(h5.pct_positive) : 0
+  const h = getScoreHorizon(byHorizon)
+  if (!h) return maturity * 0.6
+  const mean = (h.mean_realized_return ?? h.mean_outcome) != null ? Number(h.mean_realized_return ?? h.mean_outcome) : 0
+  const pct = h.pct_positive != null ? Number(h.pct_positive) : 0
   return maturity * 0.6 + mean * 1000 * 0.2 + pct * 100 * 0.2
 }
 

@@ -191,17 +191,29 @@ training_status:
 # Performance summary (outcomes by horizon)
 performance:
   horizon_bars:
-    short: Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal.
-    long: "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. Different horizons can show different performance."
+    short: Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal; for daily data, 1 bar = 1 day.
+    long: "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. For daily data, horizon is in days. Different horizons can show different performance."
   n:
     short: Number of evaluated outcomes for this horizon.
     long: "N is the count of outcomes (successful evaluations) for this horizon. Higher N means the mean and pct positive are based on more data."
   mean_outcome:
     short: Average realized return for that horizon.
     long: "Mean outcome is the average return realized when holding for this many bars after the signal. Positive means the pattern tended to make money over that horizon."
+  mean_realized_return:
+    short: Average realized return over this horizon (decimal, e.g. 0.02 = 2%).
+    long: "Mean realized return is the average return actually achieved when holding for this many bars after the signal. It uses REALIZED_RETURN from evaluated outcomes. Positive means the pattern tended to make money over this horizon; the value is in decimal form (e.g. 0.02 = 2%)."
+  realized_return:
+    short: Return from entry price to exit price over the chosen horizon (decimal).
+    long: "Realized return is the actual return from the entry price to the exit price at the chosen horizon. It is computed from completed evaluations only. Shown in decimal form (e.g. 0.02 = 2%)."
   pct_positive:
-    short: Share of outcomes that had positive return (0–100%).
+    short: Share of outcomes that had positive return (0–1 as decimal, shown as 0–100%).
     long: "Pct positive is the fraction of evaluated outcomes where the return was positive. Higher means the pattern wins more often over this horizon."
+  pct_hit:
+    short: Share of outcomes where HIT_FLAG was true (target hit).
+    long: "Pct hit is the fraction of evaluated outcomes where the hit flag was true—i.e. the outcome met the pattern's target or success criterion. It is stored as 0–1 and shown as 0–100%."
+  hit_rate:
+    short: "Hit rate: how often the move exceeded the minimum threshold (same as pct_hit)."
+    long: "Hit rate shows how often the realized move exceeded the pattern's minimum threshold (HIT_FLAG = true). It is the same as pct_hit: the fraction of outcomes that met the success criterion."
   min_outcome:
     short: Smallest realized return in the sample.
     long: "Min outcome is the worst single outcome over this horizon. It shows the downside risk in the sample."
@@ -218,11 +230,14 @@ suggestions:
     short: Deterministic rank score (maturity + sample); higher is better.
     long: "Rank score is the maturity score (0–100) used to order suggestions. Only rows that meet the minimum sample size are shown. Higher score means more data and more reliable metrics."
   suggestion_score:
-    short: Transparent score blending maturity and performance at horizon 5/10 (mean_outcome, pct_positive).
-    long: "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then 0.5 × maturity_score (from Training Status or a proxy from sample size and horizons) + 0.25 × pct_positive at best of horizon 5/10 + 0.25 × normalized mean_outcome at best of 5/10. No magic—formula is deterministic and shown in the tooltip."
+    short: "Transparent score: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Uses horizon 5 if present; else best of {3,5,10}."
+    long: "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then score = 0.6 × maturity_score (from Training Status or a proxy) + 0.2 × (mean_realized_return × 1000) + 0.2 × (pct_positive × 100). We use horizon 5 when present; otherwise we choose the best available horizon from {3, 5, 10} by pct_positive (then mean return). No magic—formula is deterministic and shown in the tooltip."
   suggestion_score_formula:
-    short: Score = 0.5 × maturity + 0.25 × pct_positive (h5/h10) + 0.25 × mean_outcome (h5/h10). Requires recs ≥ 10, horizons ≥ 3.
-    long: "The suggestion score uses only: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) performance at horizon 5 and/or 10 bars—pct_positive and mean_outcome. Minimum bars: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
+    short: "Score = 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Horizon: 5 if present, else best of {3,5,10}. Requires recs ≥ 10, horizons ≥ 3."
+    long: "The suggestion score uses: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) performance at one horizon—we use horizon 5 when present, otherwise the best available of {3, 5, 10} by pct_positive (then mean return). Formula: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Minimum: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
+  why_this_is_shown:
+    short: Plain-English reason this candidate appears in the list (deterministic, no LLM).
+    long: "Why this is shown is a fixed template filled with this row's numbers: that it meets the minimums (recs_total ≥ 10, horizons_covered ≥ 3), its maturity score and stage, and its 5-bar mean return and pct positive. It explains why this symbol/pattern is ranked and shown."
   min_sample:
     short: Minimum number of recommendations required to appear in suggestions.
     long: "Minimum sample is the least number of recommendations a symbol/pattern must have to be listed. It filters out very new or thin data so rankings are meaningful."
@@ -266,7 +281,7 @@ brief:
 # Today page (composition view)
 today:
   today_overview:
-    short: Single view: system status, portfolio situation, and today's candidates from evaluated history.
+    short: "Single view: system status, portfolio situation, and today's candidates from evaluated history."
     long: "Today composes the most important information into one page: is the system alive, what is the portfolio risk state, what are the top things to look at today (ranked by maturity and outcome history). Research guidance only—no auto-trading."
   today_score:
     short: Deterministic score combining maturity and outcome performance for ranking today's candidates.

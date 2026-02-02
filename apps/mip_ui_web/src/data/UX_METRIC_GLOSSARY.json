@@ -49,18 +49,6 @@
     "status": {
       "short": "Current state of the portfolio (e.g. active, closed, bust).",
       "long": "Portfolio status describes whether the portfolio is active (running), closed (manually stopped), or bust (hit a loss limit and stopped). Use it to see if the portfolio is still trading."
-    },
-    "cash": {
-      "short": "Current cash balance (uninvested).",
-      "long": "Cash is the amount of money in the portfolio that is not invested in positions. It's what you have available to buy with or that came from selling."
-    },
-    "exposure": {
-      "short": "Market value of open positions.",
-      "long": "Exposure is the total market value of all open positions—how much is currently invested. Together with cash it makes up total equity."
-    },
-    "total_equity": {
-      "short": "Total portfolio value (cash + positions) as of this snapshot.",
-      "long": "Total equity is cash plus the market value of positions—your full portfolio value at this point in time. It answers: where do we stand right now?"
     }
   },
   "risk_gate": {
@@ -106,10 +94,6 @@
     }
   },
   "positions": {
-    "snapshot": {
-      "short": "Positions are current holdings (snapshot as of a point in time).",
-      "long": "A position snapshot is the set of open holdings at a given time (e.g. latest bar). It shows what you hold now, not the full history. The snapshot uses only open positions from the canonical view."
-    },
     "symbol": {
       "short": "The ticker or identifier for the holding (e.g. stock or asset).",
       "long": "Symbol is the market identifier for the asset you hold—like a stock ticker. It tells you which asset this position is for."
@@ -124,10 +108,6 @@
     }
   },
   "trades": {
-    "event": {
-      "short": "Trades are execution history (events) in the snapshot time window.",
-      "long": "Trades are discrete buy/sell events. The list shown is aligned to the same run as the position snapshot so you see the executions that led to (or from) the current holdings."
-    },
     "symbol": {
       "short": "The ticker or identifier for the asset that was traded.",
       "long": "Symbol is the market identifier for the asset that was bought or sold in this trade."
@@ -262,10 +242,6 @@
       "short": "Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal; for daily data, 1 bar = 1 day.",
       "long": "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. For daily data, horizon is in days. Different horizons can show different performance."
     },
-    "horizon_days": {
-      "short": "Horizon in days (for daily data, same as horizon_bars).",
-      "long": "For daily bars, horizon in days is the same as horizon_bars: 1 bar = 1 day, 5 bars = 5 days. Used in plain-language explanations."
-    },
     "n": {
       "short": "Number of evaluated outcomes for this horizon.",
       "long": "N is the count of outcomes (successful evaluations) for this horizon. Higher N means the mean and pct positive are based on more data."
@@ -284,11 +260,11 @@
     },
     "pct_positive": {
       "short": "Share of outcomes that had positive return (0–1 as decimal, shown as 0–100%).",
-      "long": "Pct positive is the fraction of evaluated outcomes where the return was positive. It is stored as 0–1 (e.g. 0.65 = 65%). Higher means the pattern wins more often over this horizon."
+      "long": "Pct positive is the fraction of evaluated outcomes where the return was positive. Higher means the pattern wins more often over this horizon."
     },
     "pct_hit": {
       "short": "Share of outcomes where HIT_FLAG was true (target hit).",
-      "long": "Pct hit is the fraction of evaluated outcomes where the hit flag was true—i.e. the outcome met the pattern's target or success criterion. It is stored as 0–1 and shown as 0–100%. Use with pct_positive to see how often the pattern both made money and hit its target."
+      "long": "Pct hit is the fraction of evaluated outcomes where the hit flag was true—i.e. the outcome met the pattern's target or success criterion. It is stored as 0–1 and shown as 0–100%."
     },
     "hit_rate": {
       "short": "Hit rate: how often the move exceeded the minimum threshold (same as pct_hit).",
@@ -313,12 +289,12 @@
       "long": "Rank score is the maturity score (0–100) used to order suggestions. Only rows that meet the minimum sample size are shown. Higher score means more data and more reliable metrics."
     },
     "suggestion_score": {
-      "short": "Transparent deterministic score: maturity × 0.6 + mean_realized_return at 5 bars × 1000 × 0.2 + pct_positive at 5 bars × 100 × 0.2.",
-      "long": "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then score = maturity_score (from Training Status or a proxy) × 0.6 + mean_realized_return at horizon 5 × 1000 × 0.2 + pct_positive at horizon 5 (0–1) × 100 × 0.2. No magic—formula is deterministic and shown in the tooltip."
+      "short": "Transparent score: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Uses horizon 5 if present; else best of {3,5,10}.",
+      "long": "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then score = 0.6 × maturity_score (from Training Status or a proxy) + 0.2 × (mean_realized_return × 1000) + 0.2 × (pct_positive × 100). We use horizon 5 when present; otherwise we choose the best available horizon from {3, 5, 10} by pct_positive (then mean return). No magic—formula is deterministic and shown in the tooltip."
     },
     "suggestion_score_formula": {
-      "short": "Score = maturity × 0.6 + mean_realized_return (h5) × 1000 × 0.2 + pct_positive (h5) × 100 × 0.2. Requires recs ≥ 10, horizons ≥ 3.",
-      "long": "The suggestion score uses: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) at horizon 5 bars only—mean_realized_return and pct_positive. Minimum bars: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
+      "short": "Score = 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Horizon: 5 if present, else best of {3,5,10}. Requires recs ≥ 10, horizons ≥ 3.",
+      "long": "The suggestion score uses: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) performance at one horizon—we use horizon 5 when present, otherwise the best available of {3, 5, 10} by pct_positive (then mean return). Formula: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Minimum: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
     },
     "why_this_is_shown": {
       "short": "Plain-English reason this candidate appears in the list (deterministic, no LLM).",
@@ -365,22 +341,32 @@
       "long": "Sample size is recs_total: how many recommendations were generated for this market_type/symbol/pattern_id. Shown so you know how much history the suggestion is based on."
     }
   },
+  "brief": {
+    "as_of_ts": {
+      "short": "What is as-of time?",
+      "long": "As-of time is the timestamp of the data this brief was built from. It tells you how fresh the brief is—e.g. the latest bar or pipeline run that fed into signals, risk, and proposals."
+    },
+    "pipeline_run_id": {
+      "short": "What is pipeline run id?",
+      "long": "Pipeline run id is the unique identifier of the daily pipeline run that produced this brief. Use it to trace back to audit logs, order proposals, and the exact run that wrote this brief."
+    }
+  },
   "today": {
     "today_overview": {
-      "short": "Single view: system status, portfolio situation, and today’s candidates from evaluated history.",
+      "short": "Single view: system status, portfolio situation, and today's candidates from evaluated history.",
       "long": "Today composes the most important information into one page: is the system alive, what is the portfolio risk state, what are the top things to look at today (ranked by maturity and outcome history). Research guidance only—no auto-trading."
     },
     "today_score": {
-      "short": "Deterministic score combining maturity and outcome performance for ranking today’s candidates.",
+      "short": "Deterministic score combining maturity and outcome performance for ranking today's candidates.",
       "long": "Today score ranks candidates: a blend of data maturity (0–100) and outcome history (mean return and pct positive at 5-bar horizon). Higher score means stronger data and better historical performance. Used only to order the list."
     },
     "why_this_is_shown": {
-      "short": "Plain-English reason this candidate appears in today’s list (deterministic, no LLM).",
-      "long": "Why it’s shown is a fixed template: ranked by data maturity and outcome history, with 5-bar horizon mean return and pct positive. It explains why this symbol/pattern is in today’s top candidates."
+      "short": "Plain-English reason this candidate appears in today's list (deterministic, no LLM).",
+      "long": "Why it's shown is a fixed template: ranked by data maturity and outcome history, with 5-bar horizon mean return and pct positive. It explains why this symbol/pattern is in today's top candidates."
     },
     "candidate": {
-      "short": "A symbol/pattern pair from today’s eligible signals, ranked by maturity and outcome history.",
-      "long": "A candidate is a symbol and pattern that appeared in today’s eligible signals (V_SIGNALS_ELIGIBLE_TODAY, daily bars). It is enriched with maturity metrics and outcome performance, then ranked. Shown only if maturity stage is not INSUFFICIENT and minimum sample is met."
+      "short": "A symbol/pattern pair from today's eligible signals, ranked by maturity and outcome history.",
+      "long": "A candidate is a symbol and pattern that appeared in today's eligible signals (V_SIGNALS_ELIGIBLE_TODAY, daily bars). It is enriched with maturity metrics and outcome performance, then ranked. Shown only if maturity stage is not INSUFFICIENT and minimum sample is met."
     },
     "recent_events": {
       "short": "Run-level portfolio events (e.g. drawdown stop, first flat).",

@@ -238,13 +238,37 @@
     }
   },
   "performance": {
+    "horizon_bars": {
+      "short": "Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal; for daily data, 1 bar = 1 day.",
+      "long": "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. For daily data, horizon is in days. Different horizons can show different performance."
+    },
+    "n": {
+      "short": "Number of evaluated outcomes for this horizon.",
+      "long": "N is the count of outcomes (successful evaluations) for this horizon. Higher N means the mean and pct positive are based on more data."
+    },
     "mean_outcome": {
       "short": "Average realized return for that horizon.",
       "long": "Mean outcome is the average return realized when holding for this many bars after the signal. Positive means the pattern tended to make money over that horizon."
     },
+    "mean_realized_return": {
+      "short": "Average realized return over this horizon (decimal, e.g. 0.02 = 2%).",
+      "long": "Mean realized return is the average return actually achieved when holding for this many bars after the signal. It uses REALIZED_RETURN from evaluated outcomes. Positive means the pattern tended to make money over this horizon; the value is in decimal form (e.g. 0.02 = 2%)."
+    },
+    "realized_return": {
+      "short": "Return from entry price to exit price over the chosen horizon (decimal).",
+      "long": "Realized return is the actual return from the entry price to the exit price at the chosen horizon. It is computed from completed evaluations only. Shown in decimal form (e.g. 0.02 = 2%)."
+    },
     "pct_positive": {
-      "short": "Share of outcomes that had positive return (0–100%).",
+      "short": "Share of outcomes that had positive return (0–1 as decimal, shown as 0–100%).",
       "long": "Pct positive is the fraction of evaluated outcomes where the return was positive. Higher means the pattern wins more often over this horizon."
+    },
+    "pct_hit": {
+      "short": "Share of outcomes where HIT_FLAG was true (target hit).",
+      "long": "Pct hit is the fraction of evaluated outcomes where the hit flag was true—i.e. the outcome met the pattern's target or success criterion. It is stored as 0–1 and shown as 0–100%."
+    },
+    "hit_rate": {
+      "short": "Hit rate: how often the move exceeded the minimum threshold (same as pct_hit).",
+      "long": "Hit rate shows how often the realized move exceeded the pattern's minimum threshold (HIT_FLAG = true). It is the same as pct_hit: the fraction of outcomes that met the success criterion."
     },
     "min_outcome": {
       "short": "Smallest realized return in the sample.",
@@ -264,9 +288,41 @@
       "short": "Deterministic rank score (maturity + sample); higher is better.",
       "long": "Rank score is the maturity score (0–100) used to order suggestions. Only rows that meet the minimum sample size are shown. Higher score means more data and more reliable metrics."
     },
+    "suggestion_score": {
+      "short": "Transparent score: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Uses horizon 5 if present; else best of {3,5,10}.",
+      "long": "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then score = 0.6 × maturity_score (from Training Status or a proxy) + 0.2 × (mean_realized_return × 1000) + 0.2 × (pct_positive × 100). We use horizon 5 when present; otherwise we choose the best available horizon from {3, 5, 10} by pct_positive (then mean return). No magic—formula is deterministic and shown in the tooltip."
+    },
+    "suggestion_score_formula": {
+      "short": "Score = 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Horizon: 5 if present, else best of {3,5,10}. Requires recs ≥ 10, horizons ≥ 3.",
+      "long": "The suggestion score uses: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) performance at one horizon—we use horizon 5 when present, otherwise the best available of {3, 5, 10} by pct_positive (then mean return). Formula: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Minimum: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
+    },
+    "why_this_is_shown": {
+      "short": "Plain-English reason this candidate appears in the list (deterministic, no LLM).",
+      "long": "Why this is shown is a fixed template filled with this row's numbers: that it meets the minimums (recs_total ≥ 10, horizons_covered ≥ 3), its maturity score and stage, and its 5-bar mean return and pct positive. It explains why this symbol/pattern is ranked and shown."
+    },
     "min_sample": {
       "short": "Minimum number of recommendations required to appear in suggestions.",
       "long": "Minimum sample is the least number of recommendations a symbol/pattern must have to be listed. It filters out very new or thin data so rankings are meaningful."
+    },
+    "min_recs_required": {
+      "short": "recs_total ≥ 10 required for a symbol/pattern to appear in the ranked list.",
+      "long": "Minimum recs required means at least 10 recommendations must exist for this market_type/symbol/pattern_id (daily bars) before the row is shown. This avoids ranking on too little data."
+    },
+    "min_horizons_required": {
+      "short": "At least 3 distinct horizons (e.g. 1, 3, 5, 10, 20 bars) must have outcome data.",
+      "long": "Minimum horizons required means at least 3 of the standard evaluation windows (1, 3, 5, 10, 20 bars) must have evaluated outcomes. This ensures the score uses meaningful horizon coverage."
+    },
+    "what_history_suggests": {
+      "short": "Two-line plain-English summary from evaluated history (template-based, no LLM).",
+      "long": "What history suggests is a fixed template: line 1 = sample size and pct positive at the strongest horizon; line 2 = mean return at that horizon. It summarizes what the data shows—deterministic, not AI-generated."
+    },
+    "how_to_interpret": {
+      "short": "How to read the horizon table and use this for research (no trading advice).",
+      "long": "How to interpret: each row is one holding period (1, 3, 5, 10, 20 bars). N = outcome count; mean = average return; pct positive = share of wins. Use this to see which horizon performed best. Research guidance only—not execution advice."
+    },
+    "horizon_strip": {
+      "short": "Mini strip showing pct_positive or mean_outcome for horizons 1, 3, 5, 10, 20.",
+      "long": "The horizon strip shows a compact view of performance across the five standard horizons. Each cell is either pct_positive (share of positive returns) or mean_outcome (average return). Green shades = better; red = worse. Helps compare at a glance."
     },
     "explanation_summary": {
       "short": "Plain-English summary of why this row is ranked here (no LLM).",
@@ -275,6 +331,14 @@
     "no_trades_notice": {
       "short": "This page does not execute or propose trades.",
       "long": "Suggestions are informational only. No trades are placed or proposed from this page. Use Training Status and Performance Summary for analysis; execution happens elsewhere."
+    },
+    "detail_drawer": {
+      "short": "Click a candidate to open the detail drawer with full horizon table and how to interpret.",
+      "long": "The detail drawer shows the full per-horizon table (N, mean, pct positive, min, max) and short text on how to interpret the numbers. Close by clicking outside or the close control."
+    },
+    "sample_size": {
+      "short": "Number of recommendations (recs_total) for this symbol/pattern—the sample size.",
+      "long": "Sample size is recs_total: how many recommendations were generated for this market_type/symbol/pattern_id. Shown so you know how much history the suggestion is based on."
     }
   },
   "brief": {
@@ -285,6 +349,32 @@
     "pipeline_run_id": {
       "short": "What is pipeline run id?",
       "long": "Pipeline run id is the unique identifier of the daily pipeline run that produced this brief. Use it to trace back to audit logs, order proposals, and the exact run that wrote this brief."
+    }
+  },
+  "today": {
+    "today_overview": {
+      "short": "Single view: system status, portfolio situation, and today's candidates from evaluated history.",
+      "long": "Today composes the most important information into one page: is the system alive, what is the portfolio risk state, what are the top things to look at today (ranked by maturity and outcome history). Research guidance only—no auto-trading."
+    },
+    "today_score": {
+      "short": "Deterministic score combining maturity and outcome performance for ranking today's candidates.",
+      "long": "Today score ranks candidates: a blend of data maturity (0–100) and outcome history (mean return and pct positive at 5-bar horizon). Higher score means stronger data and better historical performance. Used only to order the list."
+    },
+    "why_this_is_shown": {
+      "short": "Plain-English reason this candidate appears in today's list (deterministic, no LLM).",
+      "long": "Why it's shown is a fixed template: ranked by data maturity and outcome history, with 5-bar horizon mean return and pct positive. It explains why this symbol/pattern is in today's top candidates."
+    },
+    "candidate": {
+      "short": "A symbol/pattern pair from today's eligible signals, ranked by maturity and outcome history.",
+      "long": "A candidate is a symbol and pattern that appeared in today's eligible signals (V_SIGNALS_ELIGIBLE_TODAY, daily bars). It is enriched with maturity metrics and outcome performance, then ranked. Shown only if maturity stage is not INSUFFICIENT and minimum sample is met."
+    },
+    "recent_events": {
+      "short": "Run-level portfolio events (e.g. drawdown stop, first flat).",
+      "long": "Recent events come from V_PORTFOLIO_RUN_EVENTS: markers like drawdown stop and first time flat (no positions) after a stop. They help you see what happened in recent simulation runs."
+    },
+    "latest_brief": {
+      "short": "Most recent morning brief for the selected portfolio.",
+      "long": "Latest brief is the most recent morning brief written for this portfolio (from MORNING_BRIEF). It includes as_of_ts and pipeline_run_id. Expand to see the full brief JSON."
     }
   }
 }

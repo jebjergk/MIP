@@ -197,7 +197,7 @@ export default function Portfolio() {
         <h1>Portfolios</h1>
         <EmptyState
           title="No portfolios yet"
-          action={<>Run pipeline, then <Link to="/audit">check Audit Viewer</Link>.</>}
+          action={<>Run pipeline, then <Link to="/runs">check Runs</Link>.</>}
           explanation="Portfolios are created by the pipeline. Run the daily pipeline, then check Audit Viewer for runs."
           reasons={['Pipeline has not run yet.', 'No portfolios have been created in MIP.APP.PORTFOLIO.']}
         />

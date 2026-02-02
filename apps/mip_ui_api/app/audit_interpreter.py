@@ -262,6 +262,29 @@ def build_phases_and_sections(rows: list[dict]) -> tuple[list[dict], list[dict]]
     return phases, sections
 
 
+def build_interpreted_narrative(rows: list[dict], sections: list[dict], narrative_bullets: list[str]) -> str:
+    """
+    Build a short paragraph for "What happened" that states clearly when there were no new bars.
+    """
+    has_no_new_bars = any(
+        (r.get("STATUS") or "").upper() == "SKIPPED_NO_NEW_BARS"
+        or _get(_details(r), "reason") == "NO_NEW_BARS"
+        for r in rows
+    )
+    if has_no_new_bars:
+        return (
+            "This run had no new market bars. The pipeline did not run recommendations, evaluation, "
+            "or portfolio steps because there was no new market data after ingestion. Run again after new data is available."
+        )
+    if sections:
+        headlines = [s.get("headline", "") for s in sections if s.get("headline")]
+        if headlines:
+            return " ".join(headlines) + "."
+    if narrative_bullets:
+        return " ".join(narrative_bullets[:5])  # first few bullets as paragraph
+    return "Pipeline run completed. See timeline for details."
+
+
 def interpret_timeline(rows: list[dict]) -> dict:
     """
     Input: list of audit rows (EVENT_TS, EVENT_TYPE, EVENT_NAME, STATUS, ROWS_AFFECTED, DETAILS, ERROR_MESSAGE).
@@ -271,6 +294,7 @@ def interpret_timeline(rows: list[dict]) -> dict:
       - narrative_bullets: legacy flat list
       - phases: [{ phase_key, phase_label, events }]
       - sections: [{ headline, what_happened, why, impact, next_check, phase_key?, phase_label? }]
+      - interpreted_narrative: short paragraph (no new bars stated clearly when applicable)
     """
     summary_cards = []
     narrative_bullets = []
@@ -280,6 +304,7 @@ def interpret_timeline(rows: list[dict]) -> dict:
             narrative_bullets.append(step_to_narrative_bullet(r))
 
     phases, sections = build_phases_and_sections(rows)
+    interpreted_narrative = build_interpreted_narrative(rows, sections, narrative_bullets)
 
     return {
         "timeline": rows,
@@ -287,4 +312,5 @@ def interpret_timeline(rows: list[dict]) -> dict:
         "narrative_bullets": narrative_bullets,
         "phases": phases,
         "sections": sections,
+        "interpreted_narrative": interpreted_narrative,
     }

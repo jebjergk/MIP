@@ -7,7 +7,7 @@ export default function Home() {
       <h1>MIP UI</h1>
       <p>Read-only view of pipeline runs, portfolios, morning briefs, and training status.</p>
       <ul>
-        <li><Link to="/audit">Audit Viewer</Link> — recent runs and run timeline + interpreted summary</li>
+        <li><Link to="/runs">Runs</Link> — recent pipeline runs and run detail (timeline + narrative)</li>
         <li><Link to="/portfolios">Portfolios</Link> — list and detail (header, snapshot)</li>
         <li><Link to="/brief">Morning Brief</Link> — latest brief per portfolio</li>
         <li><Link to="/training">Training Status</Link> — training status (first draft)</li>
@@ -16,7 +16,7 @@ export default function Home() {
       </ul>
       <EmptyState
         title="Seeing empty pages?"
-        action={<>Run the daily pipeline in Snowflake, then check <Link to="/audit">Audit Viewer</Link>.</>}
+        action={<>Run the daily pipeline in Snowflake, then check <Link to="/runs">Runs</Link>.</>}
         explanation="MIP data is populated by the daily pipeline. If pages look empty, run SP_RUN_DAILY_PIPELINE in Snowflake."
         reasons={['Pipeline has not run yet.', 'Snowflake credentials may be missing or invalid.']}
       />

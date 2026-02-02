@@ -1,4 +1,24 @@
-/* Audit Viewer v1.1: sections + timeline with tooltips */
+/* Audit Viewer / Runs: narrative + sections + timeline with tooltips */
+
+.audit-narrative {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.audit-narrative h2 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.audit-narrative-text {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: #333;
+}
 
 .audit-what-happened {
   margin: 1rem 0;
@@ -122,4 +142,29 @@
   font-size: 0.85rem;
   color: #666;
   margin: 0.25rem 0 0 0;
+}
+
+/* Runs list: clickable rows */
+.runs-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.runs-table th,
+.runs-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border: 1px solid #ddd;
+}
+
+.runs-table th {
+  background: #f0f0f0;
+}
+
+.runs-table-row-clickable {
+  cursor: pointer;
+}
+
+.runs-table-row-clickable:hover {
+  background: #f0f7ff;
 }

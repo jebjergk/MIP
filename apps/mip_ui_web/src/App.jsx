@@ -20,7 +20,7 @@ export default function App() {
         <StatusBanner />
         <Link to="/">Home</Link>
         <Link to="/portfolios">Portfolios</Link>
-        <Link to="/audit">Audit Viewer</Link>
+        <Link to="/runs">Runs</Link>
         <Link to="/brief">Morning Brief</Link>
         <Link to="/training">Training Status</Link>
         <Link to="/suggestions">Suggestions</Link>
@@ -32,8 +32,8 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/portfolios" element={<Portfolio />} />
           <Route path="/portfolios/:portfolioId" element={<Portfolio />} />
-          <Route path="/audit" element={<AuditViewer />} />
-          <Route path="/audit/:runId" element={<AuditViewer />} />
+          <Route path="/runs" element={<AuditViewer />} />
+          <Route path="/runs/:runId" element={<AuditViewer />} />
           <Route path="/brief" element={<MorningBrief />} />
           <Route path="/training" element={<TrainingStatus />} />
           <Route path="/suggestions" element={<Suggestions />} />

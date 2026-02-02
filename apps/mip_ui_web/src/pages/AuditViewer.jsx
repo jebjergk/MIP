@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
@@ -24,7 +24,7 @@ export default function AuditViewer() {
       setError(null)
       try {
         if (runId) {
-          const res = await fetch(`${API_BASE}/runs/${runId}`)
+          const res = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}`)
           if (!res.ok) throw new Error(res.statusText)
           const data = await res.json()
           if (!cancelled) setRunDetail(data)
@@ -45,17 +45,33 @@ export default function AuditViewer() {
   }, [runId])
 
   if (loading) return <p>Loading…</p>
-  if (error) return <ErrorState message={error} />
+  if (error) {
+    return (
+      <>
+        {runId && <p><Link to="/runs">← Back to runs</Link></p>}
+        <ErrorState message={error} />
+      </>
+    )
+  }
 
   if (runId && runDetail) {
     const sections = runDetail.sections || []
     const phases = runDetail.phases || []
     const timeline = runDetail.timeline || []
+    const interpretedNarrative = runDetail.interpreted_narrative
 
     return (
       <>
         <h1>Run: {runId}</h1>
-        <p><Link to="/audit">← Back to runs</Link></p>
+        <p><Link to="/runs">← Back to runs</Link></p>
+
+        {/* Top narrative: "What happened" (includes "no new bars" clearly when applicable) */}
+        {interpretedNarrative && (
+          <section className="audit-narrative" aria-label="What happened">
+            <h2>What happened <InfoTooltip scope="audit" key="run_status" variant="short" /></h2>
+            <p className="audit-narrative-text">{interpretedNarrative}</p>
+          </section>
+        )}
 
         {/* What happened and why — structured sections */}
         {sections.length > 0 && (
@@ -173,7 +189,7 @@ export default function AuditViewer() {
   if (runs.length === 0) {
     return (
       <>
-        <h1>Audit Viewer</h1>
+        <h1>Runs</h1>
         <EmptyState
           title="No runs yet"
           action="Run pipeline in Snowflake (SP_RUN_DAILY_PIPELINE)."
@@ -186,22 +202,34 @@ export default function AuditViewer() {
 
   return (
     <>
-      <h1>Audit Viewer</h1>
+      <h1>Runs</h1>
       <p>Recent pipeline runs. Click a run to see timeline and interpreted summary.</p>
       <table className="runs-table">
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Started</th>
+            <th>Completed</th>
             <th>Run ID</th>
             <th>Status <InfoTooltip scope="audit" key="run_status" variant="short" /></th>
+            <th>Summary</th>
           </tr>
         </thead>
         <tbody>
           {runs.map((r) => (
-            <tr key={r.RUN_ID}>
-              <td>{r.EVENT_TS}</td>
-              <td><Link to={`/audit/${r.RUN_ID}`}>{r.RUN_ID?.slice(0, 8)}…</Link></td>
-              <td><span className="status-badge" title={statusBadgeTitle}>{r.STATUS}</span></td>
+            <tr
+              key={r.run_id}
+              className="runs-table-row-clickable"
+              onClick={() => navigate(`/runs/${encodeURIComponent(r.run_id)}`)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/runs/${encodeURIComponent(r.run_id)}`); } }}
+              aria-label={`View run ${r.run_id}`}
+            >
+              <td>{r.started_at ?? '—'}</td>
+              <td>{r.completed_at ?? '—'}</td>
+              <td><Link to={`/runs/${encodeURIComponent(r.run_id)}`} onClick={(e) => e.stopPropagation()}>{r.run_id?.slice(0, 12)}{(r.run_id?.length || 0) > 12 ? '…' : ''}</Link></td>
+              <td><span className="status-badge" title={statusBadgeTitle}>{r.status ?? '—'}</span></td>
+              <td>{r.summary_hint ?? '—'}</td>
             </tr>
           ))}
         </tbody>

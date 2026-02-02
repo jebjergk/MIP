@@ -22,9 +22,15 @@ const SCOPE_SUG = 'suggestions'
 const SCOPE_PERF = 'performance'
 const SCOPE_TRAINING = 'training_status'
 
-const MIN_RECS_REQUIRED = 10
+const MIN_RECS_STRONG = 10
+const MIN_RECS_EARLY = 3
 const MIN_HORIZONS_REQUIRED = 3
 const HORIZON_BARS_ORDER = [1, 3, 5, 10, 20]
+
+/** Effective score for early signals: score * min(1, recs_total / 10). */
+function effectiveScore(score, recsTotal) {
+  return score * Math.min(1, (recsTotal ?? 0) / MIN_RECS_STRONG)
+}
 
 function stageGlossaryKey(stage) {
   if (!stage) return 'maturity_stage'
@@ -124,7 +130,7 @@ function whyThisIsShown(item, maturity, stage, byHorizon) {
   const meanH5 = h5?.mean_realized_return ?? h5?.mean_outcome
   const pctH5 = h5?.pct_positive != null ? (Number(h5.pct_positive) * 100).toFixed(1) : '—'
   const meanStr = meanH5 != null ? `${(Number(meanH5) * 100).toFixed(2)}%` : '—'
-  return `Meets minimums (recs ≥ ${MIN_RECS_REQUIRED}, horizons ≥ ${MIN_HORIZONS_REQUIRED}). Ranked by suggestion score: maturity ${maturity.toFixed(0)} (${stage}), 5-bar mean return ${meanStr}, 5-bar pct positive ${pctH5}%.`
+  return `Meets minimums (recs ≥ ${MIN_RECS_STRONG} for strong, or ≥ ${MIN_RECS_EARLY} for early; horizons ≥ ${MIN_HORIZONS_REQUIRED}). Ranked by suggestion score: maturity ${maturity.toFixed(0)} (${stage}), 5-bar mean return ${meanStr}, 5-bar pct positive ${pctH5}%.`
 }
 
 /** Best horizon (bars) by pct_positive for "Why" micro-copy. */
@@ -257,22 +263,25 @@ export default function Suggestions() {
     return map
   }, [trainingData])
 
-  const candidates = useMemo(() => {
+  const [showEarlySignals, setShowEarlySignals] = useState(true)
+
+  const { strongCandidates, earlyCandidates } = useMemo(() => {
     const items = summaryData?.items ?? []
-    const filtered = items.filter((item) => {
+    const horizonsCount = (item) => typeof item.horizons_covered === 'number' ? item.horizons_covered : (Array.isArray(item.horizons_covered) ? item.horizons_covered.length : 0)
+    const strong = []
+    const early = []
+    items.forEach((item) => {
       const recs = item.recs_total ?? 0
-      const horizons = typeof item.horizons_covered === 'number' ? item.horizons_covered : (Array.isArray(item.horizons_covered) ? item.horizons_covered.length : 0)
-      return recs >= MIN_RECS_REQUIRED && horizons >= MIN_HORIZONS_REQUIRED
-    })
-    return filtered.map((item) => {
+      const horizons = horizonsCount(item)
+      if (horizons < MIN_HORIZONS_REQUIRED) return
       const key = `${item.market_type}|${item.symbol}|${item.pattern_id}`
       const trainingRow = trainingByKey[key]
-      const maturity = trainingRow?.maturity_score != null ? Number(trainingRow.maturity_score) : maturityProxy(item.recs_total, typeof item.horizons_covered === 'number' ? item.horizons_covered : (item.horizons_covered || []).length, item.outcomes_total)
+      const maturity = trainingRow?.maturity_score != null ? Number(trainingRow.maturity_score) : maturityProxy(item.recs_total, horizons, item.outcomes_total)
       const score = computeSuggestionScore(maturity, item.by_horizon || [])
       const [line1, line2] = whatHistorySuggests(item.recs_total, item.outcomes_total, item.by_horizon)
       const stage = trainingRow?.maturity_stage ?? maturityStageLabel(maturity)
       const whyShown = whyThisIsShown(item, maturity, stage, item.by_horizon || [])
-      return {
+      const row = {
         ...item,
         suggestion_score: Math.round(score * 100) / 100,
         maturity_score: maturity,
@@ -281,8 +290,27 @@ export default function Suggestions() {
         what_history_line2: line2,
         why_this_is_shown: whyShown,
       }
-    }).sort((a, b) => (b.suggestion_score ?? 0) - (a.suggestion_score ?? 0))
+      if (recs >= MIN_RECS_STRONG) {
+        row.tier = 'strong'
+        row.isEarlySignal = false
+        strong.push(row)
+      } else if (recs >= MIN_RECS_EARLY) {
+        row.tier = 'early'
+        row.isEarlySignal = true
+        row.effective_score = Math.round(effectiveScore(row.suggestion_score, recs) * 100) / 100
+        early.push(row)
+      }
+    })
+    strong.sort((a, b) => (b.suggestion_score ?? 0) - (a.suggestion_score ?? 0))
+    early.sort((a, b) => (b.effective_score ?? 0) - (a.effective_score ?? 0))
+    return { strongCandidates: strong, earlyCandidates: early }
   }, [summaryData, trainingByKey])
+
+  const displayList = showEarlySignals ? [...strongCandidates, ...earlyCandidates] : strongCandidates
+  const hasStrong = strongCandidates.length > 0
+  const hasEarly = earlyCandidates.length > 0
+  const showEmptyState = displayList.length === 0
+  const emptyStrongOnly = !hasStrong && hasEarly
 
   if (loading) {
     return (
@@ -310,34 +338,72 @@ export default function Suggestions() {
       </p>
 
       <p className="suggestions-requirements">
-        Minimum to appear: recs_total ≥ {MIN_RECS_REQUIRED}
-        <InfoTooltip scope={SCOPE_SUG} key="min_recs_required" variant="short" />
-        , horizons_covered ≥ {MIN_HORIZONS_REQUIRED}
+        Strong candidates: recs_total ≥ {MIN_RECS_STRONG}
+        <InfoTooltip scope={SCOPE_SUG} key="strong_candidate" variant="short" />
+        , horizons ≥ {MIN_HORIZONS_REQUIRED}. Early signals: recs_total ≥ {MIN_RECS_EARLY}
+        <InfoTooltip scope={SCOPE_SUG} key="early_signal" variant="short" />
+        , horizons ≥ {MIN_HORIZONS_REQUIRED}
         <InfoTooltip scope={SCOPE_SUG} key="min_horizons_required" variant="short" />
         .
       </p>
 
+      <label className="suggestions-toggle-early">
+        <input
+          type="checkbox"
+          checked={showEarlySignals}
+          onChange={(e) => setShowEarlySignals(e.target.checked)}
+          aria-label="Show early signals (low confidence)"
+        />
+        <span>Show early signals</span>
+      </label>
+
       <p className="suggestions-count">
-        Showing {candidates.length} candidate{candidates.length !== 1 ? 's' : ''}.
+        {emptyStrongOnly && (
+          <span className="suggestions-count-subtext">No strong candidates yet. Showing early signals with low confidence.</span>
+        )}
+        Showing {displayList.length} candidate{displayList.length !== 1 ? 's' : ''}
+        {displayList.length > 0 && hasStrong && hasEarly && showEarlySignals && (
+          <span> ({strongCandidates.length} strong, {earlyCandidates.length} early)</span>
+        )}.
       </p>
 
-      {candidates.length === 0 ? (
-        <EmptyState
-          title="Not enough evaluated history"
-          action="Run more pipelines to generate recommendations and outcomes, then return here."
-          explanation="No symbol/pattern pairs meet the minimum: recs_total ≥ 10 and at least 3 horizons (e.g. 1, 3, 5, 10, 20 bars) with outcome data. Suggestions are derived from /performance/summary (RECOMMENDATION_LOG + RECOMMENDATION_OUTCOMES, daily bars only)."
-          reasons={[
-            `Minimum required: recs_total ≥ ${MIN_RECS_REQUIRED}, horizons_covered ≥ ${MIN_HORIZONS_REQUIRED}.`,
-            'Pipeline has not run enough, or data is for other intervals (we use daily bars only).',
-            'Check Training Status to see which triples have sufficient data.',
-          ]}
-        />
+      {showEmptyState ? (
+        hasEarly && !showEarlySignals ? (
+          <EmptyState
+            title="No strong candidates yet"
+            action="Turn on 'Show early signals' to see low-confidence items (recs ≥ 3, horizons ≥ 3)."
+            explanation="No symbol/pattern pairs yet meet the strong threshold (recs_total ≥ 10). Some early signals exist with fewer examples—enable the toggle to show them; treat as directional only."
+            reasons={['Strong requires recs_total ≥ 10 and horizons ≥ 3.', 'Early signals are ranked by effective score (score × min(1, recs/10)).']}
+          />
+        ) : (
+          <EmptyState
+            title="Not enough evaluated history"
+            action="Run more pipelines to generate recommendations and outcomes, then return here."
+            explanation="No symbol/pattern pairs meet the minimum: recs_total ≥ 3 and at least 3 horizons (e.g. 1, 3, 5, 10, 20 bars) with outcome data. Suggestions are derived from /performance/summary (RECOMMENDATION_LOG + RECOMMENDATION_OUTCOMES, daily bars only)."
+            reasons={[
+              `Minimum: recs_total ≥ ${MIN_RECS_EARLY}, horizons_covered ≥ ${MIN_HORIZONS_REQUIRED}.`,
+              'Pipeline has not run enough, or data is for other intervals (we use daily bars only).',
+              'Check Training Status to see which triples have sufficient data.',
+            ]}
+          />
+        )
       ) : (
         <div className="suggestions-list">
-          {candidates.map((row, i) => (
+          {emptyStrongOnly && (
+            <div className="suggestions-no-strong-banner" role="status">
+              <strong>No strong candidates yet.</strong> Showing early signals with low confidence.
+            </div>
+          )}
+          {hasStrong && (
+            <p className="suggestions-tier-heading">
+              Strong candidates
+              <InfoTooltip scope={SCOPE_SUG} key="strong_candidate" variant="short" />
+            </p>
+          )}
+          {hasStrong && strongCandidates.map((row, i) => (
             <article
-              key={`${row.symbol}-${row.pattern_id}-${row.market_type}`}
-              className="suggestion-card"
+              key={`strong-${row.symbol}-${row.pattern_id}-${row.market_type}`}
+              className="suggestion-card suggestion-card-strong"
               data-rank={i + 1}
               onClick={() => setSelectedItem(row)}
               role="button"
@@ -345,7 +411,6 @@ export default function Suggestions() {
               onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSelectedItem(row)}
               aria-label={`Open detail for ${row.symbol} pattern ${row.pattern_id}`}
             >
-              {/* Row 1: symbol / market / pattern + rank + score */}
               <div className="suggestion-header">
                 <span className="suggestion-rank">#{i + 1}</span>
                 <span className="suggestion-triple">
@@ -363,15 +428,11 @@ export default function Suggestions() {
                   <span className="suggestion-score">{formatNum(row.suggestion_score)}</span>
                 </span>
               </div>
-
-              {/* Sample size */}
               <div className="suggestion-sample" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'sample_size')?.short : undefined}>
                 Sample size
                 <InfoTooltip scope={SCOPE_SUG} key="sample_size" variant="short" />
                 : <strong>{formatNum(row.recs_total)}</strong>
               </div>
-
-              {/* Maturity badge + progress bar */}
               <div className="suggestion-maturity" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.short : undefined}>
                 <span className={`suggestion-stage suggestion-stage-${(row.maturity_stage || '').toLowerCase().replace('_', '-')}`} title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, stageGlossaryKey(row.maturity_stage))?.short : undefined}>
                   {row.maturity_stage ?? '—'}
@@ -381,21 +442,14 @@ export default function Suggestions() {
                   <div className="suggestion-maturity-bar" style={{ width: `${Math.min(100, Math.max(0, row.maturity_score ?? 0))}%` }} aria-hidden="true" />
                 </div>
               </div>
-
-              {/* What history suggests */}
               <div className="suggestion-what-history" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'what_history_suggests')?.short : undefined}>
                 <strong>What history suggests</strong>
                 <InfoTooltip scope={SCOPE_SUG} key="what_history_suggests" variant="short" />
                 <p className="suggestion-what-line1">{row.what_history_line1}</p>
                 <p className="suggestion-what-line2">{row.what_history_line2}</p>
               </div>
-
-              {/* Sparkline-like horizon strip + full strip with values */}
               <div className="suggestion-horizon-strip" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'horizon_strip')?.short : undefined}>
-                <span className="suggestion-horizon-strip-label">
-                  Horizon strip (1 / 3 / 5 / 10 / 20)
-                  <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" />
-                </span>
+                <span className="suggestion-horizon-strip-label">Horizon strip (1 / 3 / 5 / 10 / 20) <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" /></span>
                 <div className="suggestion-sparkline" aria-hidden="true">
                   {HORIZON_BARS_ORDER.map((hb) => {
                     const h = (row.by_horizon || []).find((x) => x.horizon_bars === hb)
@@ -404,10 +458,7 @@ export default function Suggestions() {
                     const val = mean != null ? mean : (pct != null ? pct : 0)
                     const heightPct = val == null ? 0 : Math.min(100, Math.max(0, 50 + val))
                     const barCls = val == null ? 'suggestion-sparkline-bar' : val >= 0 ? 'suggestion-sparkline-bar has-value positive' : 'suggestion-sparkline-bar has-value negative'
-                    const hoverText = `${hb} days: mean ${mean != null ? formatPct(mean) : '—'}, pct positive ${pct != null ? formatPct(pct) : '—'}`
-                    return (
-                      <div key={hb} className={barCls} style={{ height: `${heightPct}%` }} title={hoverText} />
-                    )
+                    return <div key={hb} className={barCls} style={{ height: `${heightPct}%` }} title={`${hb}d: mean ${mean != null ? formatPct(mean) : '—'}, pct ${pct != null ? formatPct(pct) : '—'}`} />
                   })}
                 </div>
                 <div className="suggestion-horizon-strip-cells">
@@ -418,9 +469,8 @@ export default function Suggestions() {
                     const mean = (h?.mean_realized_return ?? h?.mean_outcome) != null ? Number(h.mean_realized_return ?? h.mean_outcome) * 100 : null
                     const val = pct != null ? pct : mean
                     const cls = val == null ? 'strip-cell empty' : val >= 50 ? 'strip-cell good' : 'strip-cell weak'
-                    const hoverText = `${hb} bars: pct_positive ${pct != null ? formatPct(pct) : '—'}, mean_realized_return ${mean != null ? formatPct(mean) : '—'}`
                     return (
-                      <div key={hb} className={cls} title={hoverText}>
+                      <div key={hb} className={cls} title={`${hb} bars: pct ${pct != null ? formatPct(pct) : '—'}, mean ${mean != null ? formatPct(mean) : '—'}`}>
                         <span className="strip-h">{hb}</span>
                         <span className="strip-v">{val != null ? formatPct(val) : '—'}</span>
                       </div>
@@ -428,20 +478,120 @@ export default function Suggestions() {
                   })}
                 </div>
               </div>
-
               <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()} role="navigation" aria-label="Connect to other views">
-                <Link to={trainingUrl(row)} className="suggestion-link" title="Training Status filtered to this symbol/pattern">
-                  View Training
-                </Link>
-                <Link to="/portfolios" className="suggestion-link" title="Portfolio snapshot — see if you hold this symbol">
-                  View Portfolio
-                </Link>
-                <Link to="/brief" className="suggestion-link" title="Morning brief — see if this symbol is mentioned">
-                  View Brief
-                </Link>
+                <Link to={trainingUrl(row)} className="suggestion-link" title="Training Status filtered to this symbol/pattern">View Training</Link>
+                <Link to="/portfolios" className="suggestion-link" title="Portfolio snapshot — see if you hold this symbol">View Portfolio</Link>
+                <Link to="/brief" className="suggestion-link" title="Morning brief — see if this symbol is mentioned">View Brief</Link>
               </div>
             </article>
           ))}
+          {showEarlySignals && hasEarly && (
+            <>
+              <p className="suggestions-tier-heading">
+                Early signals (low confidence)
+                <InfoTooltip scope={SCOPE_SUG} key="early_signal" variant="short" />
+              </p>
+              {earlyCandidates.map((row, i) => (
+                <article
+                  key={`early-${row.symbol}-${row.pattern_id}-${row.market_type}`}
+                  className="suggestion-card suggestion-card-early"
+                  data-rank={hasStrong ? strongCandidates.length + i + 1 : i + 1}
+                  onClick={() => setSelectedItem(row)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setSelectedItem(row)}
+                  aria-label={`Open detail for ${row.symbol} pattern ${row.pattern_id} (early signal)`}
+                >
+                  <div className="suggestion-header">
+                    <span className="suggestion-rank">#{hasStrong ? strongCandidates.length + i + 1 : i + 1}</span>
+                    <span className="suggestion-triple">
+                      <span className="suggestion-symbol">{row.symbol ?? '—'}</span>
+                      <span className="suggestion-sep">/</span>
+                      <span className="suggestion-market">{row.market_type ?? '—'}</span>
+                      <span className="suggestion-sep">/</span>
+                      <span className="suggestion-pattern">pattern {row.pattern_id ?? '—'}</span>
+                    </span>
+                    <span className="suggestion-score-block">
+                      <span className="suggestion-score-label">
+                        Score
+                        <InfoTooltip scope={SCOPE_SUG} key="suggestion_score" variant="short" />
+                        / Effective
+                        <InfoTooltip scope={SCOPE_SUG} key="effective_score" variant="short" />
+                      </span>
+                      <span className="suggestion-score" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'suggestion_score_formula')?.short : undefined}>
+                        {formatNum(row.suggestion_score)}
+                      </span>
+                      <span className="suggestion-effective-score" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'effective_score')?.short : undefined}>
+                        {formatNum(row.effective_score)}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="suggestion-badge-early" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'why_confidence_low')?.short : undefined}>
+                    Early / Low confidence
+                    <InfoTooltip scope={SCOPE_SUG} key="why_confidence_low" variant="short" />
+                  </div>
+                  <p className="suggestion-early-sentence">
+                    Only {formatNum(row.recs_total)} evaluated examples so far—treat as directional only.
+                  </p>
+                  <div className="suggestion-sample" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'sample_size')?.short : undefined}>
+                    Sample size
+                    <InfoTooltip scope={SCOPE_SUG} key="sample_size" variant="short" />
+                    : <strong>{formatNum(row.recs_total)}</strong>
+                  </div>
+                  <div className="suggestion-maturity" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.short : undefined}>
+                    <span className={`suggestion-stage suggestion-stage-${(row.maturity_stage || '').toLowerCase().replace('_', '-')}`} title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, stageGlossaryKey(row.maturity_stage))?.short : undefined}>
+                      {row.maturity_stage ?? '—'}
+                      <InfoTooltip scope={SCOPE_TRAINING} key={stageGlossaryKey(row.maturity_stage)} variant="short" />
+                    </span>
+                    <div className="suggestion-maturity-bar-wrap" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.long : undefined}>
+                      <div className="suggestion-maturity-bar" style={{ width: `${Math.min(100, Math.max(0, row.maturity_score ?? 0))}%` }} aria-hidden="true" />
+                    </div>
+                  </div>
+                  <div className="suggestion-what-history" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'what_history_suggests')?.short : undefined}>
+                    <strong>What history suggests</strong>
+                    <InfoTooltip scope={SCOPE_SUG} key="what_history_suggests" variant="short" />
+                    <p className="suggestion-what-line1">{row.what_history_line1}</p>
+                    <p className="suggestion-what-line2">{row.what_history_line2}</p>
+                  </div>
+                  <div className="suggestion-horizon-strip" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'horizon_strip')?.short : undefined}>
+                    <span className="suggestion-horizon-strip-label">Horizon strip (1 / 3 / 5 / 10 / 20) <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" /></span>
+                    <div className="suggestion-sparkline" aria-hidden="true">
+                      {HORIZON_BARS_ORDER.map((hb) => {
+                        const h = (row.by_horizon || []).find((x) => x.horizon_bars === hb)
+                        const mean = (h?.mean_realized_return ?? h?.mean_outcome) != null ? Number(h.mean_realized_return ?? h.mean_outcome) * 100 : null
+                        const pct = h?.pct_positive != null ? Number(h.pct_positive) * 100 : null
+                        const val = mean != null ? mean : (pct != null ? pct : 0)
+                        const heightPct = val == null ? 0 : Math.min(100, Math.max(0, 50 + val))
+                        const barCls = val == null ? 'suggestion-sparkline-bar' : val >= 0 ? 'suggestion-sparkline-bar has-value positive' : 'suggestion-sparkline-bar has-value negative'
+                        return <div key={hb} className={barCls} style={{ height: `${heightPct}%` }} title={`${hb}d: mean ${mean != null ? formatPct(mean) : '—'}, pct ${pct != null ? formatPct(pct) : '—'}`} />
+                      })}
+                    </div>
+                    <div className="suggestion-horizon-strip-cells">
+                      {HORIZON_BARS_ORDER.map((hb) => {
+                        const h = (row.by_horizon || []).find((x) => x.horizon_bars === hb)
+                        const pctRaw = h?.pct_positive != null ? Number(h.pct_positive) : null
+                        const pct = pctRaw != null ? pctRaw * 100 : null
+                        const mean = (h?.mean_realized_return ?? h?.mean_outcome) != null ? Number(h.mean_realized_return ?? h.mean_outcome) * 100 : null
+                        const val = pct != null ? pct : mean
+                        const cls = val == null ? 'strip-cell empty' : val >= 50 ? 'strip-cell good' : 'strip-cell weak'
+                        return (
+                          <div key={hb} className={cls} title={`${hb} bars: pct ${pct != null ? formatPct(pct) : '—'}, mean ${mean != null ? formatPct(mean) : '—'}`}>
+                            <span className="strip-h">{hb}</span>
+                            <span className="strip-v">{val != null ? formatPct(val) : '—'}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()} role="navigation" aria-label="Connect to other views">
+                    <Link to={trainingUrl(row)} className="suggestion-link" title="Training Status filtered to this symbol/pattern">View Training</Link>
+                    <Link to="/portfolios" className="suggestion-link" title="Portfolio snapshot — see if you hold this symbol">View Portfolio</Link>
+                    <Link to="/brief" className="suggestion-link" title="Morning brief — see if this symbol is mentioned">View Brief</Link>
+                  </div>
+                </article>
+              ))}
+            </>
+          )}
         </div>
       )}
 

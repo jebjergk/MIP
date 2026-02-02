@@ -12,7 +12,7 @@ select *
 from MIP.APP.PORTFOLIO_POSITIONS
 where portfolio_id = 1;
 
-desc table MIP.APP.recommendation_outcomes
+desc table MIP.APP.recommendation_outcomes;
  limit 1;
 
 select count(*) as trades

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -45,6 +46,16 @@ function computeSuggestionScore(maturity, byHorizon) {
   const mean = best.mean_outcome != null ? Number(best.mean_outcome) : 0
   const meanNorm = Math.max(0, Math.min(1, (mean + 0.2) / 0.4))
   return 50 * (maturity / 100) + 25 * pct + 25 * meanNorm
+}
+
+/** Build Training Status URL filtered to this symbol/pattern. */
+function trainingUrl(item) {
+  const p = new URLSearchParams()
+  if (item?.symbol) p.set('symbol', item.symbol)
+  if (item?.market_type) p.set('market_type', item.market_type)
+  if (item?.pattern_id != null) p.set('pattern_id', String(item.pattern_id))
+  const q = p.toString()
+  return q ? `/training?${q}` : '/training'
 }
 
 /** Two-line "What history suggests" template. */
@@ -255,6 +266,18 @@ export default function Suggestions() {
                   })}
                 </div>
               </div>
+
+              <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()}>
+                <Link to={trainingUrl(row)} className="suggestion-link">
+                  Training Status →
+                </Link>
+                <Link to="/portfolios" className="suggestion-link" title="Check if you hold this symbol in a portfolio">
+                  Portfolio (do I hold it?)
+                </Link>
+                <Link to="/brief" className="suggestion-link" title="See if this symbol is mentioned in the morning brief">
+                  Morning Brief
+                </Link>
+              </div>
             </article>
           ))}
         </div>
@@ -282,6 +305,17 @@ export default function Suggestions() {
               </button>
             </div>
             <div className="suggestion-drawer-body">
+              <div className="suggestion-drawer-cross-links">
+                <Link to={trainingUrl(selectedItem)} className="suggestion-link" onClick={() => setSelectedItem(null)}>
+                  Training Status (filtered to this symbol/pattern) →
+                </Link>
+                <Link to="/portfolios" className="suggestion-link" onClick={() => setSelectedItem(null)} title="Check if you hold this symbol">
+                  Portfolio (do I hold it?)
+                </Link>
+                <Link to="/brief" className="suggestion-link" onClick={() => setSelectedItem(null)} title="See if mentioned in brief">
+                  Morning Brief
+                </Link>
+              </div>
               <p className="suggestion-drawer-how" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'how_to_interpret')?.short : undefined}>
                 <strong>How to interpret</strong>
                 <InfoTooltip scope={SCOPE_SUG} key="how_to_interpret" variant="short" />

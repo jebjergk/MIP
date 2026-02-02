@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
@@ -33,11 +34,25 @@ function formatNum(n) {
 
 export default function TrainingStatus() {
   const { explainMode } = useExplainMode()
+  const [searchParams] = useSearchParams()
+  const appliedUrlRef = useRef(false)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [marketTypeFilter, setMarketTypeFilter] = useState('')
   const [symbolSearch, setSymbolSearch] = useState('')
+  const [patternIdFilter, setPatternIdFilter] = useState('')
+
+  useEffect(() => {
+    if (appliedUrlRef.current) return
+    appliedUrlRef.current = true
+    const s = searchParams.get('symbol')
+    const m = searchParams.get('market_type')
+    const p = searchParams.get('pattern_id')
+    if (s != null && s !== '') setSymbolSearch(s)
+    if (m != null && m !== '') setMarketTypeFilter(m)
+    if (p != null && p !== '') setPatternIdFilter(p)
+  }, [searchParams])
 
   useEffect(() => {
     let cancelled = false
@@ -70,9 +85,10 @@ export default function TrainingStatus() {
         const sym = (get(r, 'symbol') ?? '').toLowerCase()
         if (!sym.includes(symbolSearch.trim().toLowerCase())) return false
       }
+      if (patternIdFilter !== '' && String(get(r, 'pattern_id')) !== String(patternIdFilter)) return false
       return true
     })
-  }, [rows, marketTypeFilter, symbolSearch])
+  }, [rows, marketTypeFilter, symbolSearch, patternIdFilter])
 
   if (loading) {
     return (

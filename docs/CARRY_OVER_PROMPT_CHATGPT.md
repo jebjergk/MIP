@@ -12,7 +12,7 @@
 
 - Pipeline runs end-to-end: **ingest → returns → recommendations → evaluation → portfolio sim → morning brief**.
 - Run ID canonicalization and morning brief idempotency implemented.
-- **Current focus:** UX development — improve the Streamlit app to surface morning briefs, agent outputs, portfolio KPIs, and training/trust views.
+- **Current focus:** Local UX platform (FastAPI + React) to surface morning briefs, portfolio KPIs, audit runs, and training status.
 
 ---
 
@@ -54,7 +54,7 @@
 `V_SIGNALS_ELIGIBLE_TODAY`, `V_PIPELINE_RUN_SCOPING`, `V_OPPORTUNITY_FEED`, `V_PATTERN_KPIS`, `V_PATTERN_SCORECARD`, `V_TRUSTED_SIGNAL_CLASSIFICATION`
 
 **MIP.AGENT_OUT:**  
-`V_MORNING_BRIEF_SUMMARY` — flattens `MORNING_BRIEF` for ops/Streamlit (risk status, proposal/signal counts).
+`V_MORNING_BRIEF_SUMMARY` — flattens `MORNING_BRIEF` for ops/UI (risk status, proposal/signal counts).
 
 ---
 
@@ -78,35 +78,47 @@
 
 - **Pipeline:** End-to-end daily automation; rate limit and no-new-bars handling; idempotent steps.
 - **Run ID:** Canonical `RUN_ID_VARCHAR` on `ORDER_PROPOSALS`; dual scoping removed.
-- **Morning brief:** Deterministic and idempotent on `(portfolio_id, as_of_ts, run_id, agent_name)`; pipeline passes `as_of_ts`/`run_id`; `V_MORNING_BRIEF_JSON` is content-only.
+- **Morning brief:** Deterministic and idempotent on `(portfolio_id, as_of_ts, run_id, agent_name)`; pipeline passes `as_of_ts`/`run_id`; `V_MORNING_BRIEF_JSON` is content-only. Attribution overwritten with `pipeline_run_id` and `as_of_ts` only (no `latest_run_id`).
+- **Merge key alignment:** `MORNING_BRIEF` unique key `(PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME)`.
 - **Risk / entry gate:** Drawdown stop → `ALLOW_EXITS_ONLY`; execution blocks BUY when `ENTRIES_BLOCKED=true`.
 - **Agent flow:** Propose → validate → execute → write brief; `MORNING_BRIEF`, `ORDER_PROPOSALS` populated.
+- **Consistency checks:** `morning_brief_consistency.sql` validates brief JSON vs `ORDER_PROPOSALS` counts.
+- **Smoke tests:** Attribution smoke (no `attribution:latest_run_id`), idempotency smoke, `01_Kens_tests.sql` for ad-hoc brief writes.
 
 ---
 
-## 7. UI Planning and Current Streamlit Structure
+## 7. UX Development: Where We Are
+
+### Current UX: FastAPI + React (read-only, local)
+
+**Stack:** API (FastAPI) + Web (React + Vite). Connects to Snowflake via env config. No writes to Snowflake from UI/API.
+
+**API** (`MIP/apps/mip_ui_api/`):  
+- `GET /runs` — recent pipeline runs  
+- `GET /runs/{run_id}` — run timeline + interpreted summary  
+- `GET /portfolios` — portfolio list  
+- `GET /portfolios/{id}` — portfolio header  
+- `GET /portfolios/{id}/snapshot` — positions, trades, daily, KPIs, risk  
+- `GET /briefs/latest` — latest morning brief per portfolio  
+- `GET /training/status` — training row count + leaderboard  
+- `GET /today` — today's snapshot  
+- `GET /live/metrics` — live metrics (MIP_AUDIT_LOG, MORNING_BRIEF)  
+- `GET /status` — API health (snowflake_ok)  
+- `GET /performance/summary`, `/performance/distribution`, `/performance/suggestions`
+
+**Web** (`MIP/apps/mip_ui_web/`):  
+- **Pages:** Home, Today (default), Portfolio, Audit Viewer, Morning Brief, Training Status, Suggestions, Debug  
+- **Features:** Explain mode (tooltips/glossary), `UX_METRIC_GLOSSARY` (YAML → JSON), StatusBanner, LiveHeader  
+
+**Streamlit (legacy):** `MIP/streamlit_app.py`, `MIP/ui/layout.py` — kept for reference only. **Do not suggest Streamlit as the primary UX.**
+
+**UX docs** (`MIP/docs/ux/`):  
+`70_UX_OVERVIEW.md`, `71_UX_DATA_CONTRACT.md`, `72_UX_QUERIES.md`, `73_UX_RUNBOOK.md`, `74_CANONICAL_OBJECTS.md`, `75_MIP_CONTEXT_CURRENT.md`
 
 ### Intended UI mapping (from KPI_LAYER.md)
 - **Portfolio dashboard:** `V_PORTFOLIO_RUN_KPIS`, `V_PORTFOLIO_RUN_EVENTS`
 - **Attribution view:** `V_PORTFOLIO_ATTRIBUTION`, `V_PORTFOLIO_ATTRIBUTION_BY_PATTERN`
 - **Signal quality and calibration:** `V_SIGNAL_OUTCOME_KPIS`, `V_SCORE_CALIBRATION`, `V_SIGNALS_WITH_EXPECTED_RETURN`
-
-### Phase 3 goal (from roadmap)
-Store agent outputs in `AGENT_OUT` and **render in Streamlit UI**.
-
-### Current Streamlit app (streamlit_app.py, ui/layout.py)
-- **Stack:** Snowpark `get_active_session()`, runs in Snowflake native app.
-- **Pages:** Overview | Opportunities | Portfolio | Training & Trust | Admin / Ops
-- **Overview:** Pipeline health, data freshness, portfolio snapshot, opportunities snapshot
-- **Opportunities:** Screener using `V_OPPORTUNITY_FEED`, filters
-- **Portfolio:** Portfolio config, trades, equity
-- **Training & Trust:** Pattern KPIs, backtesting
-- **Admin / Ops:** Tabs — Pipeline, Ingestion, Patterns, Audit Log, Advanced (task controls, health checks)
-- **Layout helpers:** `apply_layout`, `section_header`, `render_badge` from `ui.layout`
-
-### Views for UI
-- **V_MORNING_BRIEF_SUMMARY:** Flattens `MORNING_BRIEF` for ops/Streamlit (risk status, proposal/signal counts).
-- **MORNING_BRIEF.BRIEF:** JSON variant with full brief content (signals, risk, attribution, proposals).
 
 ---
 
@@ -115,16 +127,18 @@ Store agent outputs in `AGENT_OUT` and **render in Streamlit UI**.
 - **Run ID:** `RUN_ID` / `PIPELINE_RUN_ID` are **varchar(64)** UUID strings. Do not treat as numeric.
 - **Idempotency:** Re-runs for same `to_ts` must not duplicate outputs.
 - **Timestamp policy:** System timestamps use Berlin `CURRENT_TIMESTAMP()`; market timestamps stay as-is.
-- **Do not:** Invent table, view, or procedure names; assume views exist without checking the catalog.
+- **Canonical objects only:** Do not invent table, view, or procedure names. Use the lists above exactly.
 
 ---
 
 ## 9. Repo Landmarks
 
 - **SQL:** `MIP/SQL/bootstrap/`, `app/`, `mart/`, `views/mart/`, `views/app/`, `checks/`, `smoke/`
-- **UI:** `MIP/streamlit_app.py`, `MIP/ui/layout.py`
+- **UX:** `MIP/apps/mip_ui_api/` (FastAPI), `MIP/apps/mip_ui_web/` (React)
+- **UX docs:** `MIP/docs/ux/`
+- **Streamlit (legacy):** `MIP/streamlit_app.py`, `MIP/ui/layout.py`
 - **Docs:** `05_DEVELOPER_ONBOARDING.md`, `10_ARCHITECTURE.md`, `40_TABLE_CATALOG.md`, `35_STORED_PROCEDURES.md`, `KPI_LAYER.md`, `ROADMAP_CHECKLIST.md`
 
 ---
 
-*Changelog: Replaced with UX-phase carry-over 2026-01-29. Machinery complete; focus on Streamlit UX. Canonical table/view/procedure lists to prevent hallucinated names.*
+*Changelog: 2026-01-29 — Refresh for UX phase. Current UX is FastAPI + React; Streamlit is legacy. Added UX development section, expanded "what we achieved," canonical object catalogs.*

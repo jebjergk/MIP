@@ -648,7 +648,7 @@ def get_portfolio_snapshot(
 
         cards = {
             "cash_and_exposure": cash_and_exposure,
-            "open_positions": positions,
+            "open_positions": open_positions_filtered,
             "closed_this_bar_positions": closed_this_bar_positions,
             "recent_trades": trades[:20],
             "risk_gate_status": risk_gate_status,

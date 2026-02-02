@@ -18,6 +18,7 @@ export default function Portfolio() {
   const [snapshot, setSnapshot] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [lookbackDays, setLookbackDays] = useState(30)
 
   useEffect(() => {
     let cancelled = false
@@ -37,9 +38,10 @@ export default function Portfolio() {
           if (cancelled) return
           setPortfolio(port)
           const runId = port.LAST_SIMULATION_RUN_ID ?? null
-          const snapUrl = runId
-            ? `${API_BASE}/portfolios/${portfolioId}/snapshot?run_id=${encodeURIComponent(runId)}`
-            : `${API_BASE}/portfolios/${portfolioId}/snapshot`
+          const params = new URLSearchParams()
+          if (runId) params.set('run_id', runId)
+          params.set('lookback_days', String(lookbackDays))
+          const snapUrl = `${API_BASE}/portfolios/${portfolioId}/snapshot?${params.toString()}`
           const snapRes = await fetch(snapUrl)
           if (!snapRes.ok) throw new Error(snapRes.statusText)
           if (!cancelled) setSnapshot(await snapRes.json())
@@ -55,7 +57,7 @@ export default function Portfolio() {
     }
     load()
     return () => { cancelled = true }
-  }, [portfolioId])
+  }, [portfolioId, lookbackDays])
 
   if (loading) {
     return (
@@ -130,7 +132,9 @@ export default function Portfolio() {
           const cards = snapshot.cards || {}
           const cashExposure = cards.cash_and_exposure
           const openPositions = cards.open_positions ?? snapshot.positions ?? []
-          const recentTrades = cards.recent_trades ?? snapshot.trades ?? []
+          const tradesList = Array.isArray(snapshot.trades) ? snapshot.trades : (cards.recent_trades ?? [])
+          const tradesTotal = snapshot.trades_total ?? cards.trades_total ?? 0
+          const lastTradeTs = snapshot.last_trade_ts ?? cards.last_trade_ts ?? null
           const riskGateStatus = cards.risk_gate_status || {}
           const entriesBlocked = riskGateStatus.entries_blocked ?? false
           const summary = riskGateStatus.summary ?? (entriesBlocked ? 'Entries blocked but exits allowed.' : 'Trading allowed.')
@@ -197,22 +201,40 @@ export default function Portfolio() {
                   )}
                 </div>
 
-                {/* Recent Trades */}
+                {/* Recent Trades (events) */}
                 <div className="portfolio-card portfolio-card-trades">
-                  <h3 className="portfolio-card-title">Recent Trades <InfoTooltip scope="trades" key="side" variant="short" /></h3>
-                  {Array.isArray(recentTrades) && recentTrades.length > 0 ? (
+                  <h3 className="portfolio-card-title">Trades (events) <InfoTooltip scope="trades" entryKey="event" variant="short" /></h3>
+                  <div className="portfolio-trades-lookback">
+                    <label>
+                      Lookback
+                      <select
+                        value={lookbackDays}
+                        onChange={(e) => setLookbackDays(Number(e.target.value))}
+                        aria-label="Trades lookback days"
+                      >
+                        <option value={1}>1 day</option>
+                        <option value={7}>7 days</option>
+                        <option value={30}>30 days</option>
+                        <option value={-1}>All</option>
+                      </select>
+                    </label>
+                    {tradesTotal > 0 && (
+                      <span className="portfolio-trades-total">{tradesTotal} total</span>
+                    )}
+                  </div>
+                  {tradesList.length > 0 ? (
                     <table className="portfolio-card-table">
                       <thead>
                         <tr>
-                          <th>Symbol <InfoTooltip scope="trades" key="symbol" variant="short" /></th>
-                          <th>Side <InfoTooltip scope="trades" key="side" variant="short" /></th>
-                          <th>Quantity <InfoTooltip scope="trades" key="quantity" variant="short" /></th>
-                          <th>Price <InfoTooltip scope="trades" key="price" variant="short" /></th>
-                          <th>Notional <InfoTooltip scope="trades" key="notional" variant="short" /></th>
+                          <th>Symbol <InfoTooltip scope="trades" entryKey="symbol" variant="short" /></th>
+                          <th>Side <InfoTooltip scope="trades" entryKey="side" variant="short" /></th>
+                          <th>Quantity <InfoTooltip scope="trades" entryKey="quantity" variant="short" /></th>
+                          <th>Price <InfoTooltip scope="trades" entryKey="price" variant="short" /></th>
+                          <th>Notional <InfoTooltip scope="trades" entryKey="notional" variant="short" /></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {recentTrades.slice(0, 10).map((t, i) => (
+                        {tradesList.slice(0, 20).map((t, i) => (
                           <tr key={i}>
                             <td>{t.SYMBOL ?? t.symbol}</td>
                             <td>{t.SIDE ?? t.side}</td>
@@ -223,11 +245,15 @@ export default function Portfolio() {
                         ))}
                       </tbody>
                     </table>
+                  ) : tradesTotal > 0 ? (
+                    <p className="portfolio-trades-no-range">
+                      No trades in this range. Last trade: {lastTradeTs != null ? String(lastTradeTs).slice(0, 19) : '—'}
+                    </p>
                   ) : (
                     <EmptyState
                       title="No trades"
                       action="Run pipeline or wait for next run."
-                      explanation="No trades are shown for this snapshot. Trades are the buy/sell actions the strategy has executed."
+                      explanation="Trades are execution history (events). None have been recorded for this portfolio yet."
                       reasons={['The run may not have executed any trades yet.', 'Data may be from before the first trade.', 'Score or threshold filters may have excluded all signals.', 'The risk gate may be blocking new entries.']}
                     />
                   )}

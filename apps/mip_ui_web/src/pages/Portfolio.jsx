@@ -282,11 +282,12 @@ export default function Portfolio() {
                 <div className="portfolio-card portfolio-card-risk-gate">
                   <h3 className="portfolio-card-title risk-gate-headline" title={explainMode ? (getGlossaryEntry('risk_gate', 'mode')?.short ?? '') : undefined}>
                     Risk Gate:{' '}
-                    <span className={riskLabel === 'NORMAL' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>✅ Normal</span>
-                    {' / '}
-                    <span className={riskLabel === 'CAUTION' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>⚠️ Caution</span>
-                    {' / '}
-                    <span className={riskLabel === 'DEFENSIVE' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>🛑 Defensive</span>
+                    <span className="risk-gate-mode risk-gate-mode--current">
+                      {riskLabel === 'NORMAL' && '✅ Normal'}
+                      {riskLabel === 'CAUTION' && '⚠️ Caution'}
+                      {riskLabel === 'DEFENSIVE' && '🛑 Defensive'}
+                      {riskLabel !== 'NORMAL' && riskLabel !== 'CAUTION' && riskLabel !== 'DEFENSIVE' && '✅ Normal'}
+                    </span>
                     {explainMode && <InfoTooltip scope="risk_gate" entryKey="mode" variant="short" />}
                   </h3>
                   {riskStrategy && (

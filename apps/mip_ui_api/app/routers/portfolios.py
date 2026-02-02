@@ -359,7 +359,8 @@ def get_portfolio_snapshot(
                 if r and r[0]:
                     effective_run_id = r[0]
 
-        # Open positions: latest snapshot, only open (canonical view uses AS_OF_TS + IS_OPEN)
+        # Open positions: all positions still open as of latest bar (HOLD_UNTIL_INDEX not reached), from any run.
+        # So you see everything you still possess, including positions opened in earlier runs.
         positions = []
         snapshot_ts = None
         try:

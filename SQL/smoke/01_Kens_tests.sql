@@ -8,28 +8,29 @@ select * from mip.app.mip_audit_log where event_ts::date = '2026-02-01' order by
 
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
-select *
-from MIP.APP.PORTFOLIO_POSITIONS
-where portfolio_id = 1;
-
-desc table MIP.APP.recommendation_outcomes;
- limit 1;
-
-select *
-from MIP.APP.PORTFOLIO
-where portfolio_id = 1;
-
-select *
-from MIP.APP.PORTFOLIO_PROFILE
-where portfolio_id = 1;
 
 select
-  side,
-  count(*) as n
-from MIP.<schema>.<table>
-group by 1
-order by n desc;
+  portfolio_id,
+  run_id,
+  symbol,
+  market_type,
+  entry_ts,
+  quantity,
+  case
+    when quantity > 0 then 'BUY'
+    when quantity < 0 then 'SELL'
+    else 'FLAT'
+  end as side,
+  entry_price,
+  cost_basis
+from MIP.APP.PORTFOLIO_POSITIONS
+where portfolio_id = 1
+order by entry_ts desc;
 
-SELECT PORTFOLIO_ID, PROFILE_ID, NAME
-FROM MIP.APP.PORTFOLIO
-WHERE PORTFOLIO_ID = 1;
+
+
+
+
+
+
+  desc table MIP.APP.PORTFOLIO_POSITIONS;

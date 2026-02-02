@@ -182,7 +182,7 @@ export default function Portfolio() {
                   )}
                 </div>
 
-                {/* Open Positions */}
+                {/* Open Positions — sorted by hold-until bar ascending (next to close first) */}
                 <div id="portfolio-positions" className="portfolio-card portfolio-card-positions">
                   <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" entryKey="symbol" variant="short" /></h3>
                   {Array.isArray(openPositions) && openPositions.length > 0 ? (
@@ -194,17 +194,26 @@ export default function Portfolio() {
                             <th>Side <InfoTooltip scope="positions" entryKey="side" variant="short" /></th>
                             <th>Quantity <InfoTooltip scope="positions" entryKey="quantity" variant="short" /></th>
                             <th>Cost basis <InfoTooltip scope="positions" entryKey="cost_basis" variant="short" /></th>
+                            <th title="Bar index when this position is scheduled to close (next to close first)">Hold until (bar)</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {openPositions.slice(0, 20).map((pos, i) => (
-                            <tr key={i}>
-                              <td>{pos.SYMBOL ?? pos.symbol}</td>
-                              <td>{pos.side_label ?? pos.side ?? '—'}</td>
-                              <td>{pos.QUANTITY ?? pos.quantity}</td>
-                              <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
-                            </tr>
-                          ))}
+                          {[...openPositions]
+                            .sort((a, b) => {
+                              const ha = a.HOLD_UNTIL_INDEX ?? a.hold_until_index ?? 0
+                              const hb = b.HOLD_UNTIL_INDEX ?? b.hold_until_index ?? 0
+                              return Number(ha) - Number(hb)
+                            })
+                            .slice(0, 20)
+                            .map((pos, i) => (
+                              <tr key={i}>
+                                <td>{pos.SYMBOL ?? pos.symbol}</td>
+                                <td>{pos.side_label ?? pos.side ?? '—'}</td>
+                                <td>{pos.QUANTITY ?? pos.quantity}</td>
+                                <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                                <td>{pos.HOLD_UNTIL_INDEX ?? pos.hold_until_index ?? '—'}</td>
+                              </tr>
+                            ))}
                         </tbody>
                       </table>
                     </div>

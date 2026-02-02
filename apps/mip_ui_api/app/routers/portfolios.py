@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.db import get_connection, fetch_all, serialize_rows, serialize_row
@@ -101,21 +103,17 @@ def _enrich_positions_side(positions: list[dict]) -> list[dict]:
 
 def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
     """
-    Resolve HOLD_UNTIL_INDEX to a date (hold_until_ts) per position using MIP.MART.V_BAR_INDEX.
-    Bar index is per (SYMBOL, MARKET_TYPE, INTERVAL_MINUTES). Normalize key types so lookup matches.
-    Fallback: if no match by (SYMBOL, MARKET_TYPE, INTERVAL, BAR), try (SYMBOL, INTERVAL, BAR) only.
+    Resolve HOLD_UNTIL_INDEX to bar date (hold_until_ts) using MIP.MART.V_BAR_INDEX.TS.
+    Query by (SYMBOL, BAR_INDEX) only with INTERVAL_MINUTES=1440 so we don't depend on MARKET_TYPE.
     """
     keys_to_lookup = []
     for row in positions:
         s = _get(row, "SYMBOL", "symbol")
-        m = _get(row, "MARKET_TYPE", "market_type")
-        i = _get(row, "INTERVAL_MINUTES", "interval_minutes")
         h = _get(row, "HOLD_UNTIL_INDEX", "hold_until_index")
         if s is not None and h is not None:
             try:
                 bar = int(float(h))
-                interval = int(float(i)) if i is not None else 1440
-                keys_to_lookup.append((s, m or "STOCK", interval, bar))
+                keys_to_lookup.append((s, bar))
             except (TypeError, ValueError):
                 pass
     if not keys_to_lookup:
@@ -126,31 +124,29 @@ def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
         if t not in seen:
             seen.add(t)
             unique_keys.append(t)
-    placeholders = ", ".join(["(%s, %s, %s, %s)"] * len(unique_keys))
+    placeholders = ", ".join(["(%s, %s)"] * len(unique_keys))
     params = []
-    for (s, m, i, b) in unique_keys:
-        params.extend([s, m, i, b])
+    for (s, b) in unique_keys:
+        params.extend([s, b])
     try:
         cur.execute(
             f"""
-            select SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, BAR_INDEX, TS
+            select SYMBOL, BAR_INDEX, TS
             from MIP.MART.V_BAR_INDEX
-            where (SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, BAR_INDEX) in ({placeholders})
+            where INTERVAL_MINUTES = 1440 and (SYMBOL, BAR_INDEX) in ({placeholders})
+            qualify row_number() over (partition by SYMBOL, BAR_INDEX order by TS) = 1
             """,
             params,
         )
         rows = fetch_all(cur)
         key_to_ts = {}
-        # Normalize key components to int so lookup matches (DB may return Decimal)
         for r in rows:
             s_ = r.get("SYMBOL") or r.get("symbol")
-            m_ = r.get("MARKET_TYPE") or r.get("market_type")
-            i_ = r.get("INTERVAL_MINUTES") or r.get("interval_minutes")
             b_ = r.get("BAR_INDEX") or r.get("bar_index")
             ts_ = r.get("TS") or r.get("ts")
             if s_ is not None and b_ is not None and ts_ is not None:
                 try:
-                    k = (s_, m_, int(float(i_ or 1440)), int(float(b_)))
+                    k = (s_, int(float(b_)))
                     if hasattr(ts_, "isoformat"):
                         ts_ = ts_.isoformat()
                     key_to_ts[k] = ts_
@@ -158,67 +154,33 @@ def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
                     pass
         for row in positions:
             s = _get(row, "SYMBOL", "symbol")
-            m = _get(row, "MARKET_TYPE", "market_type")
-            i = _get(row, "INTERVAL_MINUTES", "interval_minutes")
             h = _get(row, "HOLD_UNTIL_INDEX", "hold_until_index")
             if s is None or h is None:
                 continue
             try:
-                bar = int(float(h))
-                interval = int(float(i)) if i is not None else 1440
-                k = (s, m or "STOCK", interval, bar)
+                k = (s, int(float(h)))
                 if k in key_to_ts:
                     row["hold_until_ts"] = key_to_ts[k]
             except (TypeError, ValueError):
                 pass
-        # Fallback: positions still missing hold_until_ts — resolve by (SYMBOL, INTERVAL, BAR) only
-        missing = [( _get(r, "SYMBOL", "symbol"), int(float(_get(r, "INTERVAL_MINUTES", "interval_minutes") or 1440)), int(float(_get(r, "HOLD_UNTIL_INDEX", "hold_until_index")))) for r in positions if not r.get("hold_until_ts") and _get(r, "SYMBOL", "symbol") and _get(r, "HOLD_UNTIL_INDEX", "hold_until_index") is not None]
-        missing = list(dict.fromkeys(missing))
-        if missing:
-            ph = ", ".join(["(%s, %s, %s)"] * len(missing))
-            params2 = []
-            for (s, i, b) in missing:
-                params2.extend([s, i, b])
-            cur.execute(
-                f"""
-                select SYMBOL, INTERVAL_MINUTES, BAR_INDEX, TS
-                from MIP.MART.V_BAR_INDEX
-                where INTERVAL_MINUTES = 1440 and (SYMBOL, INTERVAL_MINUTES, BAR_INDEX) in ({ph})
-                qualify row_number() over (partition by SYMBOL, INTERVAL_MINUTES, BAR_INDEX order by TS) = 1
-                """,
-                params2,
-            )
-            fallback_rows = fetch_all(cur)
-            key2_to_ts = {}
-            for r in fallback_rows:
-                s_ = r.get("SYMBOL") or r.get("symbol")
-                i_ = r.get("INTERVAL_MINUTES") or r.get("interval_minutes")
-                b_ = r.get("BAR_INDEX") or r.get("bar_index")
-                ts_ = r.get("TS") or r.get("ts")
-                if s_ is not None and b_ is not None and ts_ is not None:
-                    try:
-                        k2 = (s_, int(float(i_ or 1440)), int(float(b_)))
-                        if hasattr(ts_, "isoformat"):
-                            ts_ = ts_.isoformat()
-                        key2_to_ts[k2] = ts_
-                    except (TypeError, ValueError):
-                        pass
-            for row in positions:
-                if row.get("hold_until_ts"):
-                    continue
-                try:
-                    s = _get(row, "SYMBOL", "symbol")
-                    i = int(float(_get(row, "INTERVAL_MINUTES", "interval_minutes") or 1440))
-                    h = _get(row, "HOLD_UNTIL_INDEX", "hold_until_index")
-                    if h is not None and s is not None:
-                        k2 = (s, i, int(float(h)))
-                        if k2 in key2_to_ts:
-                            row["hold_until_ts"] = key2_to_ts[k2]
-                except (TypeError, ValueError):
-                    pass
     except Exception:
         pass
     return positions
+
+
+def _position_still_open_by_date(position: dict) -> bool:
+    """
+    True if position should be shown as open: no hold_until_ts (unresolved) or hold_until date is today or in the future.
+    Filters out positions whose hold-until bar date is in the past (canonical view can be stale).
+    """
+    ts = position.get("hold_until_ts")
+    if ts is None:
+        return True
+    try:
+        hold_date = str(ts)[:10]
+        return hold_date >= date.today().isoformat()
+    except Exception:
+        return True
 
 
 def _get(row: dict | None, *keys: str):
@@ -653,6 +615,9 @@ def get_portfolio_snapshot(
                 and str(t.get("RUN_ID") or t.get("run_id") or "") == str(effective_run_id)
             )
 
+        # Only show as "open" positions whose hold_until date is today or in the future (canonical can be stale)
+        open_positions_filtered = [p for p in positions if _position_still_open_by_date(p)]
+
         # Portfolio profile (for risk strategy: thresholds from PORTFOLIO_PROFILE)
         # Only show the profile actually linked to this portfolio; no fallback to avoid showing wrong thresholds.
         profile_row = None
@@ -729,7 +694,7 @@ def get_portfolio_snapshot(
         }
 
         return {
-            "positions": positions,
+            "positions": open_positions_filtered,
             "closed_this_bar_positions": closed_this_bar_positions,
             "trades": trades,
             "trades_total": trades_total,

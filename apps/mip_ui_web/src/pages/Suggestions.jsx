@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { API_BASE } from '../App'
+import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
@@ -194,9 +195,12 @@ export default function Suggestions() {
       </div>
 
       {ranked.length === 0 && (
-        <p className="suggestions-empty">
-          No rows meet the minimum sample size. Lower the min sample or run more pipelines to generate recommendations.
-        </p>
+        <EmptyState
+          title="No suggestions match"
+          action="Lower the min sample above or run more pipelines to generate recommendations."
+          explanation={rows.length === 0 ? 'Training data is empty. Run the pipeline to populate recommendations and outcomes.' : 'No symbol/pattern rows meet the minimum sample size for the current filter.'}
+          reasons={rows.length === 0 ? ['Pipeline has not run yet.', 'No data in MIP.APP.RECOMMENDATION_LOG / RECOMMENDATION_OUTCOMES.'] : ['Min sample filter is too high.', 'Try a lower min sample value.']}
+        />
       )}
     </>
   )

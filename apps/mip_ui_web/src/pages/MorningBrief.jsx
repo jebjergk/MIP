@@ -121,15 +121,14 @@ export default function MorningBrief() {
         <EmptyState
           title="No brief exists yet for this portfolio"
           action={<>Run the daily pipeline for this portfolio, then load again.</>}
-          message={briefResponse?.message}
-          explanation="Briefs are written when the pipeline runs and writes morning briefs for each portfolio."
+          explanation={briefResponse?.message ?? 'Briefs are written when the pipeline runs and writes morning briefs for each portfolio.'}
           reasons={['Pipeline has not run yet for this portfolio.', 'No brief row in MIP.AGENT_OUT.MORNING_BRIEF.']}
         />
       )}
       {brief && (
         <>
           <section className="brief-summary-card" aria-label="Brief summary">
-            <h2>Brief Summary {brief.status != null && <><span className="status-badge" title={statusBadgeTitle}>{brief.status}</span></>}</h2>
+            <h2>Brief Summary</h2>
             <dl className="brief-summary-dl">
               <dt>As-of <InfoTooltip scope="brief" key="as_of_ts" variant="short" /></dt>
               <dd>{brief.as_of_ts ?? '—'}</dd>

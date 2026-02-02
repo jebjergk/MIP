@@ -64,6 +64,7 @@ export default function Portfolio() {
     return (
       <>
         <h1>{portfolioId ? 'Portfolio' : 'Portfolios'}</h1>
+        {portfolioId && <p><Link to="/portfolios">← Back to list</Link></p>}
         <ErrorState message={error} />
       </>
     )

@@ -19,6 +19,7 @@ grant usage on schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;
 
 -- Tables (MIP.APP)
 grant select on table MIP.APP.PORTFOLIO             to role MIP_UI_API_ROLE;
+grant select on table MIP.APP.PORTFOLIO_PROFILE     to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_TRADES      to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_POSITIONS   to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_DAILY       to role MIP_UI_API_ROLE;

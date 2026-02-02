@@ -216,17 +216,10 @@ def _build_risk_strategy(
         "reason_text": risk_gate_normalized.get("reason_text") or "Portfolio is within safe limits.",
     }
 
-    # No profile at all (no row or profile_id missing and not a default fallback)
-    if not profile_row:
-        return {
-            "profile_id": None,
-            "profile_name": None,
-            "summary": "No risk profile linked. Thresholds are not shown.",
-            "rules": [],
-            "state": state,
-        }
-    profile_id = _get(profile_row, "PROFILE_ID", "profile_id")
-    if profile_id is None and not profile_row.get("_default_fallback"):
+    # Treat as "no profile" only if we have no row or neither profile_id nor profile name (join failed or portfolio not linked)
+    profile_id = _get(profile_row, "PROFILE_ID", "profile_id") if profile_row else None
+    profile_name = _get(profile_row, "NAME", "name") if profile_row else None
+    if not profile_row or (profile_id is None and profile_name is None):
         return {
             "profile_id": None,
             "profile_name": None,
@@ -235,15 +228,12 @@ def _build_risk_strategy(
             "state": state,
         }
 
-    is_default_fallback = profile_row.pop("_default_fallback", False)
-    profile_name = _get(profile_row, "NAME", "name")
+    profile_id = profile_id or _get(profile_row, "PROFILE_ID", "profile_id")
+    profile_name = profile_name or _get(profile_row, "NAME", "name")
     description = _get(profile_row, "DESCRIPTION", "description")
-    if is_default_fallback:
-        summary = "Default profile (portfolio not linked to a profile). Thresholds below."
-    else:
-        summary = (description and str(description).strip()) or (
-            "This profile sets limits on drawdown, bust level, and position size."
-        )
+    summary = (description and str(description).strip()) or (
+        "This profile sets limits on drawdown, bust level, and position size."
+    )
 
     rules: list[dict] = []
 
@@ -498,6 +488,7 @@ def get_portfolio_snapshot(
         risk_gate_normalized = _normalize_risk_gate(rg_first, rs_first)
 
         # Portfolio profile (for risk strategy: thresholds from PORTFOLIO_PROFILE)
+        # Only show the profile actually linked to this portfolio; no fallback to avoid showing wrong thresholds.
         profile_row = None
         try:
             cur.execute(
@@ -516,24 +507,6 @@ def get_portfolio_snapshot(
                 cols = [d[0] for d in cur.description]
                 profile_row = dict(zip(cols, row))
                 profile_row = serialize_row(profile_row) if profile_row else None
-            # If portfolio has no profile linked (PROFILE_ID null), fallback to first profile
-            if profile_row is not None and _get(profile_row, "PROFILE_ID", "profile_id") is None:
-                cur.execute(
-                    """
-                    select PROFILE_ID, NAME, DESCRIPTION,
-                           DRAWDOWN_STOP_PCT, BUST_EQUITY_PCT, BUST_ACTION,
-                           MAX_POSITIONS, MAX_POSITION_PCT
-                    from MIP.APP.PORTFOLIO_PROFILE
-                    order by PROFILE_ID
-                    limit 1
-                    """,
-                )
-                default_row = cur.fetchone()
-                if default_row is not None and cur.description:
-                    cols = [d[0] for d in cur.description]
-                    profile_row = serialize_row(dict(zip(cols, default_row)))
-                    if profile_row is not None:
-                        profile_row["_default_fallback"] = True  # so we can show "Default profile (not linked)"
         except Exception:
             pass
         risk_strategy = _build_risk_strategy(profile_row, risk_gate_normalized)

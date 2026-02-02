@@ -29,3 +29,7 @@ select
 from MIP.<schema>.<table>
 group by 1
 order by n desc;
+
+SELECT PORTFOLIO_ID, PROFILE_ID, NAME
+FROM MIP.APP.PORTFOLIO
+WHERE PORTFOLIO_ID = 1;

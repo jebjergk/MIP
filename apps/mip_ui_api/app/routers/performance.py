@@ -1,61 +1,93 @@
 """
 Performance summary: outcomes-based stats per (market_type, symbol, pattern_id).
 GET /performance/summary — items[] grouped by triple; optional filters; daily bars only.
-GET /performance/suggestions — ranked symbol/pattern pairs with deterministic narratives.
-Uses MIP.APP.RECOMMENDATION_LOG (daily bars only) + MIP.APP.RECOMMENDATION_OUTCOMES.
-No writes.
+Uses MIP.APP.RECOMMENDATION_LOG (rl) + MIP.APP.RECOMMENDATION_OUTCOMES (ro).
+EVAL_STATUS = 'COMPLETED'; REALIZED_RETURN; null-safe HIT_FLAG. No writes.
+Canonical SQL: docs/ux/72_UX_QUERIES.md.
 """
 from collections import defaultdict
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.db import get_connection, fetch_all
 
 router = APIRouter(prefix="/performance", tags=["performance"])
 
+
+# --- Response models (Pydantic) ---
+class ByHorizonItem(BaseModel):
+    horizon_bars: int
+    n: int
+    mean_realized_return: float | None = None
+    pct_positive: float | None = None
+    pct_hit: float | None = None
+    min_realized_return: float | None = None
+    max_realized_return: float | None = None
+
+
+class SummaryItem(BaseModel):
+    market_type: str | None = None
+    symbol: str | None = None
+    pattern_id: int | None = None
+    interval_minutes: int | None = Field(default=1440, description="Bar interval; 1440 = daily")
+    recs_total: int = 0
+    outcomes_total: int = 0
+    horizons_covered: int = 0
+    last_recommendation_ts: str | None = None
+    by_horizon: list[ByHorizonItem] = Field(default_factory=list)
+
+
+class SummaryResponse(BaseModel):
+    items: list[SummaryItem] = Field(default_factory=list)
+
+
 # Daily bars only (INTERVAL_MINUTES = 1440). Optional filters: pass None to skip.
-# Recs per (market_type, symbol, pattern_id)
+# Triple-level: recs_total, last_recommendation_ts, interval_minutes
 SUMMARY_RECS_SQL = """
 select
-  r.MARKET_TYPE as market_type,
-  r.SYMBOL as symbol,
-  r.PATTERN_ID as pattern_id,
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  rl.INTERVAL_MINUTES as interval_minutes,
   count(*) as recs_total,
-  max(r.TS) as last_recommendation_ts
-from MIP.APP.RECOMMENDATION_LOG r
-where r.INTERVAL_MINUTES = 1440
-  and (%(market_type)s is null or r.MARKET_TYPE = %(market_type)s)
-  and (%(symbol)s is null or r.SYMBOL = %(symbol)s)
-  and (%(pattern_id)s is null or r.PATTERN_ID = %(pattern_id)s)
-group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
-order by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
+  max(rl.TS) as last_recommendation_ts
+from MIP.APP.RECOMMENDATION_LOG rl
+where rl.INTERVAL_MINUTES = 1440
+  and (%(market_type)s is null or rl.MARKET_TYPE = %(market_type)s)
+  and (%(symbol)s is null or rl.SYMBOL = %(symbol)s)
+  and (%(pattern_id)s is null or rl.PATTERN_ID = %(pattern_id)s)
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID
 """
 
-# Outcomes per (market_type, symbol, pattern_id, horizon_bars); daily only; optional filters
+# By-horizon: EVAL_STATUS = 'COMPLETED'; mean_realized_return, pct_positive, pct_hit (null-safe), min/max
 SUMMARY_BY_HORIZON_SQL = """
 select
-  r.MARKET_TYPE as market_type,
-  r.SYMBOL as symbol,
-  r.PATTERN_ID as pattern_id,
-  o.HORIZON_BARS as horizon_bars,
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  ro.HORIZON_BARS as horizon_bars,
   count(*) as n,
-  avg(o.REALIZED_RETURN) as mean_outcome,
-  sum(case when o.REALIZED_RETURN > 0 then 1 else 0 end)::float / nullif(count(*), 0) as pct_positive,
-  min(o.REALIZED_RETURN) as min_outcome,
-  max(o.REALIZED_RETURN) as max_outcome
-from MIP.APP.RECOMMENDATION_LOG r
-join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
-where r.INTERVAL_MINUTES = 1440
-  and (%(market_type)s is null or r.MARKET_TYPE = %(market_type)s)
-  and (%(symbol)s is null or r.SYMBOL = %(symbol)s)
-  and (%(pattern_id)s is null or r.PATTERN_ID = %(pattern_id)s)
-  and o.EVAL_STATUS = 'SUCCESS'
-  and o.REALIZED_RETURN is not null
-group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, o.HORIZON_BARS
-order by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, o.HORIZON_BARS
+  avg(ro.REALIZED_RETURN) as mean_realized_return,
+  avg(case when ro.REALIZED_RETURN > 0 then 1 else 0 end) as pct_positive,
+  avg(case when coalesce(ro.HIT_FLAG, false) then 1 else 0 end) as pct_hit,
+  min(ro.REALIZED_RETURN) as min_realized_return,
+  max(ro.REALIZED_RETURN) as max_realized_return
+from MIP.APP.RECOMMENDATION_LOG rl
+join MIP.APP.RECOMMENDATION_OUTCOMES ro on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+where rl.INTERVAL_MINUTES = 1440
+  and (%(market_type)s is null or rl.MARKET_TYPE = %(market_type)s)
+  and (%(symbol)s is null or rl.SYMBOL = %(symbol)s)
+  and (%(pattern_id)s is null or rl.PATTERN_ID = %(pattern_id)s)
+  and ro.EVAL_STATUS = 'COMPLETED'
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS
 """
 
 
-def _get(row: dict, *keys) -> any:
+def _get(row: dict, *keys: str) -> Any:
     """First value found for any of the keys (case-insensitive)."""
     for k in keys:
         if k in row and row[k] is not None:
@@ -67,34 +99,36 @@ def _get(row: dict, *keys) -> any:
 
 
 def _serialize_by_horizon_row(row: dict) -> dict:
-    """One by_horizon element: horizon_bars, n, mean_outcome, pct_positive, min_outcome, max_outcome."""
+    """One by_horizon element: horizon_bars, n, mean_realized_return, pct_positive, pct_hit, min/max_realized_return."""
     hb = _get(row, "horizon_bars", "HORIZON_BARS")
     n = _get(row, "n", "N")
-    mean_o = _get(row, "mean_outcome", "MEAN_OUTCOME")
-    pct = _get(row, "pct_positive", "PCT_POSITIVE")
-    min_o = _get(row, "min_outcome", "MIN_OUTCOME")
-    max_o = _get(row, "max_outcome", "MAX_OUTCOME")
-    out = {
+    mean_r = _get(row, "mean_realized_return", "MEAN_REALIZED_RETURN")
+    pct_pos = _get(row, "pct_positive", "PCT_POSITIVE")
+    pct_hit = _get(row, "pct_hit", "PCT_HIT")
+    min_r = _get(row, "min_realized_return", "MIN_REALIZED_RETURN")
+    max_r = _get(row, "max_realized_return", "MAX_REALIZED_RETURN")
+    return {
         "horizon_bars": int(hb) if hb is not None else None,
         "n": int(n) if n is not None else None,
-        "mean_outcome": float(mean_o) if mean_o is not None else None,
-        "pct_positive": float(pct) if pct is not None else None,
-        "min_outcome": float(min_o) if min_o is not None else None,
-        "max_outcome": float(max_o) if max_o is not None else None,
+        "mean_realized_return": float(mean_r) if mean_r is not None else None,
+        "pct_positive": float(pct_pos) if pct_pos is not None else None,
+        "pct_hit": float(pct_hit) if pct_hit is not None else None,
+        "min_realized_return": float(min_r) if min_r is not None else None,
+        "max_realized_return": float(max_r) if max_r is not None else None,
     }
-    return out
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=SummaryResponse)
 def get_performance_summary(
     market_type: str | None = Query(None, description="Market type (e.g. STOCK, ETF, FX)"),
     symbol: str | None = Query(None, description="Symbol (ticker)"),
     pattern_id: int | None = Query(None, description="Pattern ID"),
 ):
     """
-    Outcomes-based performance summary. Items grouped by (market_type, symbol, pattern_id).
-    Uses MIP.APP.RECOMMENDATION_LOG and MIP.APP.RECOMMENDATION_OUTCOMES only; daily bars (INTERVAL_MINUTES = 1440).
-    Optional query params filter which triples are returned. No writes.
+    Outcomes-based performance summary using REALIZED_RETURN.
+    Items grouped by (market_type, symbol, pattern_id, interval_minutes).
+    Filter: rl.INTERVAL_MINUTES = 1440; ro.EVAL_STATUS = 'COMPLETED'; null-safe HIT_FLAG.
+    Optional query params. No writes. Canonical SQL: docs/ux/72_UX_QUERIES.md.
     """
     params = {"market_type": market_type, "symbol": symbol, "pattern_id": pattern_id}
     conn = get_connection()
@@ -109,12 +143,13 @@ def get_performance_summary(
     finally:
         conn.close()
 
-    # Key by (market_type, symbol, pattern_id)
+    # Key by (market_type, symbol, pattern_id, interval_minutes)
     def key(r):
         return (
             _get(r, "market_type", "MARKET_TYPE"),
             _get(r, "symbol", "SYMBOL"),
             _get(r, "pattern_id", "PATTERN_ID"),
+            _get(r, "interval_minutes", "INTERVAL_MINUTES"),
         )
 
     recs_by_key = {}
@@ -123,45 +158,70 @@ def get_performance_summary(
         recs_by_key[k] = {
             "recs_total": int(_get(r, "recs_total", "RECS_TOTAL") or 0),
             "last_recommendation_ts": _get(r, "last_recommendation_ts", "LAST_RECOMMENDATION_TS"),
+            "interval_minutes": _get(r, "interval_minutes", "INTERVAL_MINUTES"),
         }
 
-    horizons_by_key = defaultdict(list)
+    horizons_by_key: dict[tuple, list] = defaultdict(list)
     for r in horizon_rows:
         k = key(r)
         horizons_by_key[k].append(_serialize_by_horizon_row(r))
 
-    items = []
-    seen = set()
+    items: list[SummaryItem] = []
+    seen: set[tuple] = set()
     for r in recs_rows:
         k = key(r)
         if k in seen:
             continue
         seen.add(k)
-        mt, sy, pid = k
+        mt, sy, pid, interval_min = k
         recs_info = recs_by_key.get(k, {})
         recs_total = recs_info.get("recs_total", 0)
         last_ts = recs_info.get("last_recommendation_ts")
-        by_horizon = horizons_by_key.get(k, [])
-        by_horizon.sort(key=lambda h: (h["horizon_bars"] or 0))
-        outcomes_total = sum((h.get("n") or 0) for h in by_horizon)
-        horizons_covered = sorted({h["horizon_bars"] for h in by_horizon if h.get("horizon_bars") is not None})
+        interval_minutes = recs_info.get("interval_minutes")
+        if interval_minutes is not None:
+            try:
+                interval_minutes = int(interval_minutes)
+            except (TypeError, ValueError):
+                interval_minutes = 1440
+        else:
+            interval_minutes = 1440
+        by_horizon_raw = horizons_by_key.get(k, [])
+        by_horizon_raw.sort(key=lambda h: (h.get("horizon_bars") or 0))
+        outcomes_total = sum((h.get("n") or 0) for h in by_horizon_raw)
+        horizons_covered = len({h["horizon_bars"] for h in by_horizon_raw if h.get("horizon_bars") is not None})
 
-        # Serialize timestamp for JSON
         if last_ts is not None and hasattr(last_ts, "isoformat"):
             last_ts = last_ts.isoformat()
 
-        items.append({
-            "market_type": mt,
-            "symbol": sy,
-            "pattern_id": pid,
-            "recs_total": recs_total,
-            "outcomes_total": outcomes_total,
-            "horizons_covered": horizons_covered,
-            "last_recommendation_ts": last_ts,
-            "by_horizon": by_horizon,
-        })
-    items.sort(key=lambda x: (x["market_type"] or "", x["symbol"] or "", x["pattern_id"] or 0))
-    return {"items": items}
+        by_horizon = [
+            ByHorizonItem(
+                horizon_bars=h["horizon_bars"],
+                n=h.get("n") or 0,
+                mean_realized_return=h.get("mean_realized_return"),
+                pct_positive=h.get("pct_positive"),
+                pct_hit=h.get("pct_hit"),
+                min_realized_return=h.get("min_realized_return"),
+                max_realized_return=h.get("max_realized_return"),
+            )
+            for h in by_horizon_raw
+            if h.get("horizon_bars") is not None
+        ]
+
+        items.append(
+            SummaryItem(
+                market_type=mt,
+                symbol=sy,
+                pattern_id=pid,
+                interval_minutes=interval_minutes,
+                recs_total=recs_total,
+                outcomes_total=outcomes_total,
+                horizons_covered=horizons_covered,
+                last_recommendation_ts=last_ts,
+                by_horizon=by_horizon,
+            )
+        )
+    items.sort(key=lambda x: (x.market_type or "", x.symbol or "", x.pattern_id or 0))
+    return SummaryResponse(items=items)
 
 
 # --- Suggestions: all pairs with per-horizon outcomes (daily only) ---

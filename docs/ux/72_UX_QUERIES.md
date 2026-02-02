@@ -220,33 +220,57 @@ Backend adds maturity_score (0–100), maturity_stage (INSUFFICIENT / WARMING_UP
 
 ## Performance summary (GET /performance/summary)
 
-Inputs: :market_type, :symbol, :pattern_id (all required). Aggregate outcomes by HORIZON_BARS from MIP.APP.RECOMMENDATION_LOG + MIP.APP.RECOMMENDATION_OUTCOMES (EVAL_STATUS = 'SUCCESS', REALIZED_RETURN not null). Return counts, mean outcome, pct positive, min/max per horizon, and last_recommendation_ts.
+Query params (all optional): :market_type, :symbol, :pattern_id. Filter strictly to daily bars: rl.INTERVAL_MINUTES = 1440. Join MIP.APP.RECOMMENDATION_LOG rl and MIP.APP.RECOMMENDATION_OUTCOMES ro on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID. Only include evaluated rows: ro.EVAL_STATUS = 'COMPLETED' (non-COMPLETED excluded). Use REALIZED_RETURN as the numeric outcome. Null-safe HIT_FLAG: coalesce(ro.HIT_FLAG, false).
+
+Canonical SQL – by-horizon (one row per market_type, symbol, pattern_id, interval_minutes, horizon_bars):
 
 ```sql
 select
-  o.HORIZON_BARS as horizon_bars,
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  rl.INTERVAL_MINUTES as interval_minutes,
+  count(distinct rl.RECOMMENDATION_ID) as recs_total,
+  count(*) as outcomes_total,
+  count(distinct ro.HORIZON_BARS) as horizons_covered,
+  max(rl.TS) as last_recommendation_ts,
+  ro.HORIZON_BARS as horizon_bars,
   count(*) as n,
-  avg(o.REALIZED_RETURN) as mean_outcome,
-  sum(case when o.REALIZED_RETURN > 0 then 1 else 0 end)::float / nullif(count(*), 0) as pct_positive,
-  min(o.REALIZED_RETURN) as min_outcome,
-  max(o.REALIZED_RETURN) as max_outcome
-from MIP.APP.RECOMMENDATION_LOG r
-join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
-where r.MARKET_TYPE = :market_type
-  and r.SYMBOL = :symbol
-  and r.PATTERN_ID = :pattern_id
-  and r.INTERVAL_MINUTES = 1440
-  and o.EVAL_STATUS = 'SUCCESS'
-  and o.REALIZED_RETURN is not null
-group by o.HORIZON_BARS
-order by o.HORIZON_BARS;
+  avg(ro.REALIZED_RETURN) as mean_realized_return,
+  avg(case when ro.REALIZED_RETURN > 0 then 1 else 0 end) as pct_positive,
+  avg(case when coalesce(ro.HIT_FLAG, false) then 1 else 0 end) as pct_hit,
+  min(ro.REALIZED_RETURN) as min_realized_return,
+  max(ro.REALIZED_RETURN) as max_realized_return
+from MIP.APP.RECOMMENDATION_LOG rl
+join MIP.APP.RECOMMENDATION_OUTCOMES ro
+  on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+where rl.INTERVAL_MINUTES = 1440
+  and (:market_type is null or rl.MARKET_TYPE = :market_type)
+  and (:symbol is null or rl.SYMBOL = :symbol)
+  and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
+  and ro.EVAL_STATUS = 'COMPLETED'
+group by
+  rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES,
+  ro.HORIZON_BARS
+order by
+  rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS;
 ```
 
+Triple-level (recs_total, last_recommendation_ts per triple) – for aggregation when building items:
+
 ```sql
-select max(r.TS) as last_recommendation_ts
-from MIP.APP.RECOMMENDATION_LOG r
-where r.MARKET_TYPE = :market_type
-  and r.SYMBOL = :symbol
-  and r.PATTERN_ID = :pattern_id
-  and r.INTERVAL_MINUTES = 1440;
+select
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  rl.INTERVAL_MINUTES as interval_minutes,
+  count(*) as recs_total,
+  max(rl.TS) as last_recommendation_ts
+from MIP.APP.RECOMMENDATION_LOG rl
+where rl.INTERVAL_MINUTES = 1440
+  and (:market_type is null or rl.MARKET_TYPE = :market_type)
+  and (:symbol is null or rl.SYMBOL = :symbol)
+  and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID;
 ```

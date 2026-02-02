@@ -43,7 +43,7 @@ function computeSuggestionScore(maturity, byHorizon) {
   const best = [h5, h10].filter(Boolean).sort((a, b) => (b?.pct_positive ?? 0) - (a?.pct_positive ?? 0))[0]
   if (!best) return maturity * 0.5
   const pct = best.pct_positive != null ? Number(best.pct_positive) : 0
-  const mean = best.mean_outcome != null ? Number(best.mean_outcome) : 0
+  const mean = (best.mean_realized_return ?? best.mean_outcome) != null ? Number(best.mean_realized_return ?? best.mean_outcome) : 0
   const meanNorm = Math.max(0, Math.min(1, (mean + 0.2) / 0.4))
   return 50 * (maturity / 100) + 25 * pct + 25 * meanNorm
 }
@@ -63,7 +63,8 @@ function whatHistorySuggests(recsTotal, outcomesTotal, byHorizon) {
   const best = [...(byHorizon || [])].sort((a, b) => (b?.pct_positive ?? 0) - (a?.pct_positive ?? 0))[0]
   const pctVal = best?.pct_positive != null ? Number(best.pct_positive) : null
   const pctStr = pctVal != null ? `${(pctVal * 100).toFixed(1)}%` : '—'
-  const meanStr = best?.mean_outcome != null ? `${(Number(best.mean_outcome) * 100).toFixed(2)}%` : '—'
+  const meanVal = best?.mean_realized_return ?? best?.mean_outcome
+  const meanStr = meanVal != null ? `${(Number(meanVal) * 100).toFixed(2)}%` : '—'
   const h = best?.horizon_bars ?? '?'
   return [
     `Based on ${recsTotal ?? 0} recommendations and ${outcomesTotal ?? 0} evaluated outcomes, positive at ${pctStr} over the strongest horizon (${h} bars).`,
@@ -125,13 +126,13 @@ export default function Suggestions() {
     const items = summaryData?.items ?? []
     const filtered = items.filter((item) => {
       const recs = item.recs_total ?? 0
-      const horizons = Array.isArray(item.horizons_covered) ? item.horizons_covered.length : 0
+      const horizons = typeof item.horizons_covered === 'number' ? item.horizons_covered : (Array.isArray(item.horizons_covered) ? item.horizons_covered.length : 0)
       return recs >= MIN_RECS_REQUIRED && horizons >= MIN_HORIZONS_REQUIRED
     })
     return filtered.map((item) => {
       const key = `${item.market_type}|${item.symbol}|${item.pattern_id}`
       const trainingRow = trainingByKey[key]
-      const maturity = trainingRow?.maturity_score != null ? Number(trainingRow.maturity_score) : maturityProxy(item.recs_total, (item.horizons_covered || []).length, item.outcomes_total)
+      const maturity = trainingRow?.maturity_score != null ? Number(trainingRow.maturity_score) : maturityProxy(item.recs_total, typeof item.horizons_covered === 'number' ? item.horizons_covered : (item.horizons_covered || []).length, item.outcomes_total)
       const score = computeSuggestionScore(maturity, item.by_horizon || [])
       const [line1, line2] = whatHistorySuggests(item.recs_total, item.outcomes_total, item.by_horizon)
       return {
@@ -233,7 +234,7 @@ export default function Suggestions() {
                 <span title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'horizons_covered')?.short : undefined}>
                   Horizons
                   <InfoTooltip scope={SCOPE_TRAINING} key="horizons_covered" variant="short" />
-                  : {(row.horizons_covered || []).length}
+                  : {typeof row.horizons_covered === 'number' ? row.horizons_covered : (row.horizons_covered || []).length}
                 </span>
               </div>
 
@@ -254,7 +255,7 @@ export default function Suggestions() {
                     const h = (row.by_horizon || []).find((x) => x.horizon_bars === hb)
                     const pctRaw = h?.pct_positive != null ? Number(h.pct_positive) : null
                     const pct = pctRaw != null ? pctRaw * 100 : null
-                    const mean = h?.mean_outcome != null ? Number(h.mean_outcome) * 100 : null
+                    const mean = (h?.mean_realized_return ?? h?.mean_outcome) != null ? Number(h.mean_realized_return ?? h.mean_outcome) * 100 : null
                     const val = pct != null ? pct : mean
                     const cls = val == null ? 'strip-cell empty' : val >= 50 ? 'strip-cell good' : 'strip-cell weak'
                     return (
@@ -338,10 +339,10 @@ export default function Suggestions() {
                     <tr key={j}>
                       <td>{h.horizon_bars} bars</td>
                       <td>{formatNum(h.n)}</td>
-                      <td>{h.mean_outcome != null ? `${(Number(h.mean_outcome) * 100).toFixed(2)}%` : '—'}</td>
+                      <td>{(h.mean_realized_return ?? h.mean_outcome) != null ? `${(Number(h.mean_realized_return ?? h.mean_outcome) * 100).toFixed(2)}%` : '—'}</td>
                       <td>{h.pct_positive != null ? `${(Number(h.pct_positive) * 100).toFixed(1)}%` : '—'}</td>
-                      <td>{h.min_outcome != null ? `${(Number(h.min_outcome) * 100).toFixed(2)}%` : '—'}</td>
-                      <td>{h.max_outcome != null ? `${(Number(h.max_outcome) * 100).toFixed(2)}%` : '—'}</td>
+                      <td>{(h.min_realized_return ?? h.min_outcome) != null ? `${(Number(h.min_realized_return ?? h.min_outcome) * 100).toFixed(2)}%` : '—'}</td>
+                      <td>{(h.max_realized_return ?? h.max_outcome) != null ? `${(Number(h.max_realized_return ?? h.max_outcome) * 100).toFixed(2)}%` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>

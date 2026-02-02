@@ -270,15 +270,22 @@ export default function Portfolio() {
                           </tr>
                         </thead>
                         <tbody>
-                          {tradesList.slice(0, 20).map((t, i) => (
-                            <tr key={i} className={t.from_last_run ? 'portfolio-trade-from-last-run' : undefined} title={t.from_last_run ? 'From latest run' : undefined}>
-                              <td>{t.SYMBOL ?? t.symbol}</td>
-                              <td>{t.SIDE ?? t.side}</td>
-                              <td>{t.QUANTITY ?? t.quantity}</td>
-                              <td>{t.PRICE != null ? Number(t.PRICE ?? t.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
-                              <td>{t.NOTIONAL != null ? Number(t.NOTIONAL ?? t.notional).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
-                            </tr>
-                          ))}
+                          {tradesList.slice(0, 20).map((t, i) => {
+                              const price = t.PRICE ?? t.price
+                              const qty = t.QUANTITY ?? t.quantity
+                              const notional = (price != null && qty != null)
+                                ? Number(price) * Number(qty)
+                                : (t.NOTIONAL ?? t.notional)
+                              return (
+                                <tr key={i} className={t.from_last_run ? 'portfolio-trade-from-last-run' : undefined} title={t.from_last_run ? 'From latest run' : undefined}>
+                                  <td>{t.SYMBOL ?? t.symbol}</td>
+                                  <td>{t.SIDE ?? t.side}</td>
+                                  <td>{t.QUANTITY ?? t.quantity}</td>
+                                  <td>{price != null ? Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                                  <td>{notional != null ? Number(notional).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                                </tr>
+                              )
+                            })}
                         </tbody>
                       </table>
                     </div>

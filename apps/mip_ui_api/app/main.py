@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import runs, portfolios, briefs, training, performance, status, today
+from app.routers import runs, portfolios, briefs, training, performance, status, today, live
 
 app = FastAPI(
     title="MIP UI API",
@@ -22,6 +22,7 @@ app.include_router(briefs.router)
 app.include_router(training.router)
 app.include_router(performance.router)
 app.include_router(today.router)
+app.include_router(live.router)
 
 
 @app.get("/")

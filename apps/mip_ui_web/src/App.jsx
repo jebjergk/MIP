@@ -8,6 +8,7 @@ import TrainingStatus from './pages/TrainingStatus'
 import Suggestions from './pages/Suggestions'
 import Debug from './pages/Debug'
 import ExplainModeToggle from './components/ExplainModeToggle'
+import LiveHeader from './components/LiveHeader'
 import StatusBanner from './components/StatusBanner'
 
 const API_BASE = '/api'
@@ -19,6 +20,7 @@ export default function App() {
     <>
       <nav>
         <StatusBanner />
+        <LiveHeader />
         <Link to="/">Home</Link>
         <Link to="/portfolios">Portfolios</Link>
         <Link to="/runs">Runs</Link>

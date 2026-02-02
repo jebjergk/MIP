@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   BarChart,
@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
+import { relativeTime } from '../components/LiveHeader'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
@@ -188,6 +189,8 @@ export default function Suggestions() {
   const [distributionValues, setDistributionValues] = useState([])
   const [distributionLoading, setDistributionLoading] = useState(false)
   const [distributionError, setDistributionError] = useState(null)
+  const [liveMetrics, setLiveMetrics] = useState(null)
+  const [refreshingSummary, setRefreshingSummary] = useState(false)
 
   useEffect(() => {
     if (!selectedItem) return
@@ -251,6 +254,30 @@ export default function Suggestions() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchLive = () => {
+      fetch(`${API_BASE}/live/metrics?portfolio_id=1`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+        .then((data) => {
+          if (!cancelled) setLiveMetrics(data)
+        })
+        .catch(() => { if (!cancelled) setLiveMetrics(null) })
+    }
+    fetchLive()
+    const interval = setInterval(fetchLive, 60_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
+  const refetchSummary = useCallback(() => {
+    setRefreshingSummary(true)
+    fetch(`${API_BASE}/performance/summary`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((data) => setSummaryData(data))
+      .catch(() => {})
+      .finally(() => setRefreshingSummary(false))
   }, [])
 
   const trainingByKey = useMemo(() => {
@@ -357,6 +384,31 @@ export default function Suggestions() {
         <span>Show early signals</span>
       </label>
 
+      {liveMetrics && (showEmptyState || emptyStrongOnly) && (
+        <div className="suggestions-live-callout" role="status">
+          <strong>
+            {!hasStrong ? 'No strong candidates yet' : 'Live'}
+            {liveMetrics?.outcomes?.last_calculated_at && (
+              <> — last update {relativeTime(liveMetrics.outcomes.last_calculated_at)} ago</>
+            )}
+            {(liveMetrics?.outcomes?.since_last_run ?? 0) > 0 && (
+              <>; +{liveMetrics.outcomes.since_last_run} new evaluations since last run</>
+            )}
+          </strong>
+          {(liveMetrics?.outcomes?.since_last_run ?? 0) > 0 && (
+            <button
+              type="button"
+              className="suggestions-refresh-btn"
+              onClick={refetchSummary}
+              disabled={refreshingSummary}
+              aria-label="Refresh suggestions from server"
+            >
+              {refreshingSummary ? 'Refreshing…' : 'Refresh suggestions'}
+            </button>
+          )}
+        </div>
+      )}
+
       <p className="suggestions-count">
         {emptyStrongOnly && (
           <span className="suggestions-count-subtext">No strong candidates yet. Showing early signals with low confidence.</span>
@@ -376,16 +428,43 @@ export default function Suggestions() {
             reasons={['Strong requires recs_total ≥ 10 and horizons ≥ 3.', 'Early signals are ranked by effective score (score × min(1, recs/10)).']}
           />
         ) : (
-          <EmptyState
-            title="Not enough evaluated history"
-            action="Run more pipelines to generate recommendations and outcomes, then return here."
-            explanation="No symbol/pattern pairs meet the minimum: recs_total ≥ 3 and at least 3 horizons (e.g. 1, 3, 5, 10, 20 bars) with outcome data. Suggestions are derived from /performance/summary (RECOMMENDATION_LOG + RECOMMENDATION_OUTCOMES, daily bars only)."
-            reasons={[
-              `Minimum: recs_total ≥ ${MIN_RECS_EARLY}, horizons_covered ≥ ${MIN_HORIZONS_REQUIRED}.`,
-              'Pipeline has not run enough, or data is for other intervals (we use daily bars only).',
-              'Check Training Status to see which triples have sufficient data.',
-            ]}
-          />
+          <>
+            {liveMetrics?.outcomes && (
+              <div className="suggestions-empty-live-copy" role="status">
+                <p>We're tracking new evaluations as they arrive.</p>
+                <p>
+                  Last evaluation update: {relativeTime(liveMetrics.outcomes.last_calculated_at)} ago.
+                </p>
+                {(liveMetrics.outcomes.since_last_run ?? 0) > 0 && (
+                  <p>
+                    Since the last pipeline run, we've added +{liveMetrics.outcomes.since_last_run} new
+                    evaluated outcomes.
+                  </p>
+                )}
+                {(liveMetrics?.outcomes?.since_last_run ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    className="suggestions-refresh-btn"
+                    onClick={refetchSummary}
+                    disabled={refreshingSummary}
+                    aria-label="Refresh suggestions from server"
+                  >
+                    {refreshingSummary ? 'Refreshing…' : 'Refresh suggestions'}
+                  </button>
+                )}
+              </div>
+            )}
+            <EmptyState
+              title="Not enough evaluated history"
+              action="Run more pipelines to generate recommendations and outcomes, then return here."
+              explanation="No symbol/pattern pairs meet the minimum: recs_total ≥ 3 and at least 3 horizons (e.g. 1, 3, 5, 10, 20 bars) with outcome data. Suggestions are derived from /performance/summary (RECOMMENDATION_LOG + RECOMMENDATION_OUTCOMES, daily bars only)."
+              reasons={[
+                `Minimum: recs_total ≥ ${MIN_RECS_EARLY}, horizons_covered ≥ ${MIN_HORIZONS_REQUIRED}.`,
+                'Pipeline has not run enough, or data is for other intervals (we use daily bars only).',
+                'Check Training Status to see which triples have sufficient data.',
+              ]}
+            />
+          </>
         )
       ) : (
         <div className="suggestions-list">

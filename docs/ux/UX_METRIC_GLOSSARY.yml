@@ -301,3 +301,21 @@ today:
   latest_brief:
     short: Most recent morning brief for the selected portfolio.
     long: "Latest brief is the most recent morning brief written for this portfolio (from MORNING_BRIEF). It includes as_of_ts and pipeline_run_id. Expand to see the full brief JSON."
+
+# Live metrics (header + Suggestions)
+live:
+  last_pipeline_run:
+    short: "When the last daily pipeline run completed (or started if not yet completed)."
+    long: "Last pipeline run is the most recent SP_RUN_DAILY_PIPELINE execution from the audit log. It shows how fresh the system is—new recommendations and outcomes are produced by pipeline runs."
+  new_evaluations_since_last_run:
+    short: "Number of outcome rows (RECOMMENDATION_OUTCOMES) calculated after the last pipeline run completed."
+    long: "New evaluations since last run counts how many outcome records have CALCULATED_AT after the last run's completion time. It tells you how much new evidence has been added since the last full run (e.g. from backfills or async evaluation)."
+  data_freshness:
+    short: "How recently outcome data was last updated (max CALCULATED_AT)."
+    long: "Data freshness is when the most recent outcome row was calculated. It shows how up-to-date the suggestions and training data are. Outcomes are updated by the pipeline and by any async evaluation jobs."
+  calculated_at:
+    short: "When this outcome row was computed (plain language: time the evaluation was done)."
+    long: "Calculated at is the timestamp when the system computed this outcome—when the return was realized and recorded. It tells you how fresh each outcome is. Used to measure data freshness and to count new evaluations since the last pipeline run."
+  latest_brief:
+    short: Most recent morning brief for the selected portfolio (as_of_ts).
+    long: "Latest brief is the most recent morning brief for this portfolio. The as_of_ts shows when the brief was built. Shown in the live header when a brief exists."

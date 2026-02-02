@@ -63,6 +63,19 @@
   color: #666;
 }
 
+.suggestion-triple {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.suggestion-sep {
+  color: #888;
+  font-weight: 400;
+}
+
 .suggestion-symbol {
   font-weight: 600;
 }
@@ -71,6 +84,59 @@
 .suggestion-market {
   font-size: 0.9rem;
   color: #555;
+}
+
+.suggestion-score-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.suggestion-score-label {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.suggestion-sample {
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  color: #444;
+}
+
+.suggestion-sample strong {
+  font-weight: 600;
+}
+
+/* Maturity badge + progress bar */
+.suggestion-maturity {
+  margin-bottom: 0.5rem;
+}
+
+.suggestion-maturity .suggestion-stage {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+.suggestion-maturity-bar-wrap {
+  display: inline-block;
+  width: 120px;
+  height: 8px;
+  background: #eee;
+  border-radius: 4px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.suggestion-maturity-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #c8e0f5, #0a5276);
+  border-radius: 4px;
+  transition: width 0.2s ease;
 }
 
 .suggestion-stage {
@@ -335,11 +401,30 @@
   padding: 1.25rem;
 }
 
+.suggestion-drawer-why {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #444;
+  margin: 0 0 1rem 0;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border-left: 3px solid #1565c0;
+}
+
+.suggestion-drawer-why p {
+  margin: 0.35rem 0 0 0;
+}
+
 .suggestion-drawer-how {
   font-size: 0.9rem;
   line-height: 1.5;
   color: #444;
   margin: 0 0 1rem 0;
+}
+
+.suggestion-drawer-how p {
+  margin: 0.35rem 0 0 0;
 }
 
 .suggestion-drawer-table {

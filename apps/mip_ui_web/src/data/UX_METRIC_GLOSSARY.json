@@ -288,5 +288,31 @@
       "short": "This page does not execute or propose trades.",
       "long": "Suggestions are informational only. No trades are placed or proposed from this page. Use Training Status and Performance Summary for analysis; execution happens elsewhere."
     }
+  },
+  "today": {
+    "today_overview": {
+      "short": "Single view: system status, portfolio situation, and today’s candidates from evaluated history.",
+      "long": "Today composes the most important information into one page: is the system alive, what is the portfolio risk state, what are the top things to look at today (ranked by maturity and outcome history). Research guidance only—no auto-trading."
+    },
+    "today_score": {
+      "short": "Deterministic score combining maturity and outcome performance for ranking today’s candidates.",
+      "long": "Today score ranks candidates: a blend of data maturity (0–100) and outcome history (mean return and pct positive at 5-bar horizon). Higher score means stronger data and better historical performance. Used only to order the list."
+    },
+    "why_this_is_shown": {
+      "short": "Plain-English reason this candidate appears in today’s list (deterministic, no LLM).",
+      "long": "Why it’s shown is a fixed template: ranked by data maturity and outcome history, with 5-bar horizon mean return and pct positive. It explains why this symbol/pattern is in today’s top candidates."
+    },
+    "candidate": {
+      "short": "A symbol/pattern pair from today’s eligible signals, ranked by maturity and outcome history.",
+      "long": "A candidate is a symbol and pattern that appeared in today’s eligible signals (V_SIGNALS_ELIGIBLE_TODAY, daily bars). It is enriched with maturity metrics and outcome performance, then ranked. Shown only if maturity stage is not INSUFFICIENT and minimum sample is met."
+    },
+    "recent_events": {
+      "short": "Run-level portfolio events (e.g. drawdown stop, first flat).",
+      "long": "Recent events come from V_PORTFOLIO_RUN_EVENTS: markers like drawdown stop and first time flat (no positions) after a stop. They help you see what happened in recent simulation runs."
+    },
+    "latest_brief": {
+      "short": "Most recent morning brief for the selected portfolio.",
+      "long": "Latest brief is the most recent morning brief written for this portfolio (from MORNING_BRIEF). It includes as_of_ts and pipeline_run_id. Expand to see the full brief JSON."
+    }
   }
 }

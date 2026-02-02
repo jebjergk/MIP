@@ -1,4 +1,5 @@
-import { Routes, Route, Link } from 'react-router-dom'
+import { Routes, Route, Link, Navigate } from 'react-router-dom'
+import Today from './pages/Today'
 import Home from './pages/Home'
 import Portfolio from './pages/Portfolio'
 import AuditViewer from './pages/AuditViewer'
@@ -29,7 +30,9 @@ export default function App() {
       </nav>
       <main className="page">
         <Routes>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<Navigate to="/today" replace />} />
+          <Route path="/today" element={<Today />} />
+          <Route path="/home" element={<Home />} />
           <Route path="/portfolios" element={<Portfolio />} />
           <Route path="/portfolios/:portfolioId" element={<Portfolio />} />
           <Route path="/runs" element={<AuditViewer />} />

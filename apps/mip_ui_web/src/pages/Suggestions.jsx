@@ -456,6 +456,7 @@ export default function Suggestions() {
             days: h.horizon_bars,
             mean_pct: (h.mean_realized_return ?? h.mean_outcome) != null ? Number(h.mean_realized_return ?? h.mean_outcome) * 100 : null,
             pct_positive: h.pct_positive != null ? Number(h.pct_positive) * 100 : null,
+            pct_hit: h.pct_hit != null ? Number(h.pct_hit) * 100 : null,
           }))
         const distBins = buildHistogramBins(distributionValues)
         const distMean = distributionValues.length ? distributionValues.reduce((a, b) => a + b, 0) / distributionValues.length : null
@@ -530,16 +531,20 @@ export default function Suggestions() {
                   </div>
                 </section>
 
-                {/* Section B: Charts */}
+                {/* Section B: Charts (Recharts); tooltips in plain language when Explain Mode on) */}
                 <section className="evidence-section evidence-charts" aria-label="Charts">
-                  <h3>Horizon strip (mean return by days)</h3>
+                  <h3>Horizon strip (1 / 3 / 5 / 10 / 20 days)</h3>
                   {explainMode && <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" />}
                   <div className="evidence-horizon-chart">
+                    <span className="evidence-chart-label">Average return over holding period</span>
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart data={horizonChartData} margin={{ top: 8, right: 8, bottom: 24, left: 8 }}>
                         <XAxis dataKey="days" tickFormatter={(v) => `${v} days`} />
                         <YAxis tickFormatter={(v) => `${v}%`} />
-                        <Tooltip formatter={(v) => [v != null ? `${Number(v).toFixed(2)}%` : '—', 'Mean return']} labelFormatter={(l) => `${l} days`} />
+                        <Tooltip
+                          formatter={(v) => [v != null ? `${Number(v).toFixed(2)}%` : '—', explainMode ? (getGlossaryEntry(SCOPE_PERF, 'mean_realized_return')?.short ?? 'Mean return') : 'Mean return']}
+                          labelFormatter={(l) => (explainMode ? `${l} days — ${getGlossaryEntry(SCOPE_PERF, 'horizon_bars')?.short ?? 'holding period'}` : `${l} days`)}
+                        />
                         <Bar dataKey="mean_pct" name="Mean return" fill="#1976d2" radius={[4, 4, 0, 0]}>
                           {horizonChartData.map((_, i) => (
                             <Cell key={i} fill={horizonChartData[i].mean_pct >= 0 ? '#2e7d32' : '#c62828'} />
@@ -549,13 +554,30 @@ export default function Suggestions() {
                     </ResponsiveContainer>
                   </div>
                   <div className="evidence-pct-chart">
-                    <span className="evidence-chart-label">% positive by horizon</span>
+                    <span className="evidence-chart-label">Share of outcomes that were positive</span>
                     <ResponsiveContainer width="100%" height={120}>
                       <BarChart data={horizonChartData} margin={{ top: 4, right: 8, bottom: 24, left: 8 }}>
                         <XAxis dataKey="days" tickFormatter={(v) => `${v}d`} />
                         <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-                        <Tooltip formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', '% positive']} labelFormatter={(l) => `${l} days`} />
+                        <Tooltip
+                          formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', explainMode ? (getGlossaryEntry(SCOPE_PERF, 'pct_positive')?.short ?? '% positive') : '% positive']}
+                          labelFormatter={(l) => `${l} days`}
+                        />
                         <Bar dataKey="pct_positive" name="% positive" fill="#1565c0" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="evidence-pct-chart">
+                    <span className="evidence-chart-label">Hit rate — how often the move met the target</span>
+                    <ResponsiveContainer width="100%" height={120}>
+                      <BarChart data={horizonChartData} margin={{ top: 4, right: 8, bottom: 24, left: 8 }}>
+                        <XAxis dataKey="days" tickFormatter={(v) => `${v}d`} />
+                        <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                        <Tooltip
+                          formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', explainMode ? (getGlossaryEntry(SCOPE_PERF, 'hit_rate')?.short ?? 'Hit rate') : 'Hit rate']}
+                          labelFormatter={(l) => `${l} days`}
+                        />
+                        <Bar dataKey="pct_hit" name="Hit rate" fill="#5e35b1" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>

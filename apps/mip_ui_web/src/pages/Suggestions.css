@@ -346,7 +346,7 @@
   text-decoration: underline;
 }
 
-/* Detail drawer */
+/* Detail drawer (modal or right-side panel) */
 .suggestion-drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -356,6 +356,31 @@
   align-items: center;
   justify-content: center;
   padding: 1rem;
+}
+
+.suggestion-drawer-evidence.suggestion-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  max-width: 720px;
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+  animation: evidence-drawer-in 0.2s ease-out;
+}
+
+@keyframes evidence-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.suggestion-drawer-backdrop:has(.suggestion-drawer-evidence) {
+  justify-content: flex-end;
+  padding: 0;
 }
 
 .suggestion-drawer {

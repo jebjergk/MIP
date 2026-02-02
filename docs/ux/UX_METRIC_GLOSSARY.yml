@@ -193,6 +193,9 @@ performance:
   horizon_bars:
     short: Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal; for daily data, 1 bar = 1 day.
     long: "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. For daily data, horizon is in days. Different horizons can show different performance."
+  horizon_days:
+    short: "Horizon in days (for daily data, same as horizon_bars)."
+    long: "For daily bars, horizon in days is the same as horizon_bars: 1 bar = 1 day, 5 bars = 5 days. Used in plain-language explanations."
   n:
     short: Number of evaluated outcomes for this horizon.
     long: "N is the count of outcomes (successful evaluations) for this horizon. Higher N means the mean and pct positive are based on more data."

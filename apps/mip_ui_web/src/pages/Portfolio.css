@@ -28,6 +28,7 @@
   border-radius: 8px;
   padding: 1rem;
   background: #fafafa;
+  min-width: 0; /* allow grid item to shrink so overflow scroll works */
 }
 
 .portfolio-card-cash-exposure {
@@ -86,8 +87,14 @@
 
 .portfolio-card-table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
   font-size: 0.9rem;
+}
+
+.portfolio-card-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .portfolio-card-table th,

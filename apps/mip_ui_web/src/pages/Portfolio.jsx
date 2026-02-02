@@ -183,26 +183,30 @@ export default function Portfolio() {
 
                 {/* Open Positions */}
                 <div id="portfolio-positions" className="portfolio-card portfolio-card-positions">
-                  <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" key="symbol" variant="short" /></h3>
+                  <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" entryKey="symbol" variant="short" /></h3>
                   {Array.isArray(openPositions) && openPositions.length > 0 ? (
-                    <table className="portfolio-card-table">
-                      <thead>
-                        <tr>
-                          <th>Symbol <InfoTooltip scope="positions" key="symbol" variant="short" /></th>
-                          <th>Quantity <InfoTooltip scope="positions" key="quantity" variant="short" /></th>
-                          <th>Cost basis <InfoTooltip scope="positions" key="cost_basis" variant="short" /></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {openPositions.slice(0, 20).map((pos, i) => (
-                          <tr key={i}>
-                            <td>{pos.SYMBOL ?? pos.symbol}</td>
-                            <td>{pos.QUANTITY ?? pos.quantity}</td>
-                            <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                    <div className="portfolio-card-table-wrap">
+                      <table className="portfolio-card-table">
+                        <thead>
+                          <tr>
+                            <th>Symbol <InfoTooltip scope="positions" entryKey="symbol" variant="short" /></th>
+                            <th>Side <InfoTooltip scope="positions" entryKey="side" variant="short" /></th>
+                            <th>Quantity <InfoTooltip scope="positions" entryKey="quantity" variant="short" /></th>
+                            <th>Cost basis <InfoTooltip scope="positions" entryKey="cost_basis" variant="short" /></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {openPositions.slice(0, 20).map((pos, i) => (
+                            <tr key={i}>
+                              <td>{pos.SYMBOL ?? pos.symbol}</td>
+                              <td>{pos.side_label ?? pos.side ?? '—'}</td>
+                              <td>{pos.QUANTITY ?? pos.quantity}</td>
+                              <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
                     <EmptyState
                       title="No open positions"
@@ -235,28 +239,30 @@ export default function Portfolio() {
                     )}
                   </div>
                   {tradesList.length > 0 ? (
-                    <table className="portfolio-card-table">
-                      <thead>
-                        <tr>
-                          <th>Symbol <InfoTooltip scope="trades" entryKey="symbol" variant="short" /></th>
-                          <th>Side <InfoTooltip scope="trades" entryKey="side" variant="short" /></th>
-                          <th>Quantity <InfoTooltip scope="trades" entryKey="quantity" variant="short" /></th>
-                          <th>Price <InfoTooltip scope="trades" entryKey="price" variant="short" /></th>
-                          <th>Notional <InfoTooltip scope="trades" entryKey="notional" variant="short" /></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {tradesList.slice(0, 20).map((t, i) => (
-                          <tr key={i}>
-                            <td>{t.SYMBOL ?? t.symbol}</td>
-                            <td>{t.SIDE ?? t.side}</td>
-                            <td>{t.QUANTITY ?? t.quantity}</td>
-                            <td>{t.PRICE != null ? Number(t.PRICE ?? t.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
-                            <td>{t.NOTIONAL != null ? Number(t.NOTIONAL ?? t.notional).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                    <div className="portfolio-card-table-wrap">
+                      <table className="portfolio-card-table">
+                        <thead>
+                          <tr>
+                            <th>Symbol <InfoTooltip scope="trades" entryKey="symbol" variant="short" /></th>
+                            <th>Side <InfoTooltip scope="trades" entryKey="side" variant="short" /></th>
+                            <th>Quantity <InfoTooltip scope="trades" entryKey="quantity" variant="short" /></th>
+                            <th>Price <InfoTooltip scope="trades" entryKey="price" variant="short" /></th>
+                            <th>Notional <InfoTooltip scope="trades" entryKey="notional" variant="short" /></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {tradesList.slice(0, 20).map((t, i) => (
+                            <tr key={i}>
+                              <td>{t.SYMBOL ?? t.symbol}</td>
+                              <td>{t.SIDE ?? t.side}</td>
+                              <td>{t.QUANTITY ?? t.quantity}</td>
+                              <td>{t.PRICE != null ? Number(t.PRICE ?? t.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                              <td>{t.NOTIONAL != null ? Number(t.NOTIONAL ?? t.notional).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : tradesTotal > 0 ? (
                     <p className="portfolio-trades-no-range">
                       No trades in this range. Last trade: {lastTradeTs != null ? String(lastTradeTs).slice(0, 19) : '—'}

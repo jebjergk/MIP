@@ -138,6 +138,9 @@ positions:
   symbol:
     short: The ticker or identifier for the holding (e.g. stock or asset).
     long: "Symbol is the market identifier for the asset you hold—like a stock ticker. It tells you which asset this position is for."
+  side:
+    short: "Long = you own the asset; Short = you owe it (sold borrowed); Flat = no position."
+    long: "Side describes the direction of the position. Long means you own the asset (bought it). Short means you sold it (borrowed) and owe it—you profit if the price falls. Flat means no exposure."
   quantity:
     short: How many units of the asset you hold.
     long: "Quantity is the number of shares or units you own in this position. It's used with price to see current value."

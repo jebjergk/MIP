@@ -74,6 +74,31 @@ def _first(d: list) -> dict | None:
     return d[0] if d else None
 
 
+def _enrich_positions_side(positions: list[dict]) -> list[dict]:
+    """Add side (BUY/SELL/FLAT) and side_label (Long/Short/Flat) from QUANTITY."""
+    for row in positions:
+        q = _get(row, "QUANTITY", "quantity")
+        if q is None:
+            row["side"] = "FLAT"
+            row["side_label"] = "Flat"
+        else:
+            try:
+                n = float(q)
+                if n > 0:
+                    row["side"] = "BUY"
+                    row["side_label"] = "Long"
+                elif n < 0:
+                    row["side"] = "SELL"
+                    row["side_label"] = "Short"
+                else:
+                    row["side"] = "FLAT"
+                    row["side_label"] = "Flat"
+            except (TypeError, ValueError):
+                row["side"] = "FLAT"
+                row["side_label"] = "Flat"
+    return positions
+
+
 def _get(row: dict | None, *keys: str):
     """First value from row for any of the given keys (case-insensitive fallback)."""
     if not row:
@@ -256,6 +281,7 @@ def get_portfolio_snapshot(
                     (portfolio_id, row[0]),
                 )
                 positions = serialize_rows(fetch_all(cur))
+        positions = _enrich_positions_side(positions)
 
         # Trades: trade_ts_col=TRADE_TS, run_id_col=RUN_ID. Total + last_ts for portfolio; list filtered by lookback_days
         cur.execute(

@@ -239,3 +239,18 @@
   font-size: 0.9rem;
   cursor: pointer;
 }
+
+.risk-gate-explain-this {
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  color: #1565c0;
+  background: transparent;
+  border: 1px solid #1565c0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.risk-gate-explain-this:hover {
+  background: #e3f2fd;
+}

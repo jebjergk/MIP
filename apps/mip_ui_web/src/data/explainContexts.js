@@ -41,6 +41,60 @@ export const PORTFOLIO_EXPLAIN_CONTEXT = {
   ],
 }
 
+export const RISK_GATE_EXPLAIN_CONTEXT = {
+  id: 'risk_gate',
+  title: 'Risk Gate',
+  what: 'The Risk Gate is the rule set that controls whether the portfolio can open new positions or only close or reduce existing ones. It has three modes—Normal (full trading), Caution (warn but entries allowed), and Defensive (exits only)—so you always know what is allowed.',
+  why: 'So you see at a glance what the system will and won\'t do: whether you can add risk or should only reduce it. No guessing from raw codes or logs.',
+  how: 'The API reads V_PORTFOLIO_RISK_GATE and V_PORTFOLIO_RISK_STATE, then normalizes them into a single plain-language object: mode, entries_allowed, exits_allowed, reason_text, and what_to_do_now. The UI shows the permission matrix and recommended actions.',
+  sources: [
+    { object: 'MIP.MART.V_PORTFOLIO_RISK_GATE', purpose: 'Risk gate state per portfolio (e.g. entries blocked, allowed actions).' },
+    { object: 'MIP.MART.V_PORTFOLIO_RISK_STATE', purpose: 'Risk state and stop reason (ALLOWED_ACTIONS, STOP_REASON, RISK_STATUS). Preferred when present; combined with risk gate for normalized output.' },
+  ],
+  fields: [
+    {
+      key: 'entries_allowed',
+      label: 'Entries allowed',
+      meaning: 'Whether opening new positions (buy, add) is allowed. When false, only closing or reducing positions is permitted.',
+      calc: 'Derived from ENTRIES_BLOCKED: entries_allowed = NOT entries_blocked. Also respects ALLOWED_ACTIONS from risk state (ALLOW_ENTRIES vs ALLOW_EXITS_ONLY).',
+      glossaryKey: 'risk_gate.entries_allowed',
+    },
+    {
+      key: 'exits_only',
+      label: 'Exits only',
+      meaning: 'Mode where only closing or reducing positions is allowed; no new entries. The gate never blocks unwinding—you can always reduce exposure.',
+      calc: 'Shown when mode = ALLOW_EXITS_ONLY (from risk state) or when entries are blocked. UI subtext displays "Exits only" and permission matrix shows Open new positions: Blocked.',
+      glossaryKey: 'risk_gate.defensive_mode',
+    },
+    {
+      key: 'drawdown_stop',
+      label: 'Drawdown stop',
+      meaning: 'A safety rule that pauses new entries when the portfolio has lost too much from its peak (e.g. past a set percentage). You can still close or reduce positions.',
+      calc: 'Exists to prevent losses from snowballing: once the drop exceeds the configured threshold, the system stops adding exposure until conditions improve or you restart the episode. Reason code may be DRAWDOWN_STOP_ACTIVE.',
+      glossaryKey: 'risk_gate.drawdown_stop',
+    },
+    {
+      key: 'mode',
+      label: 'Mode (Normal / Caution / Defensive)',
+      meaning: 'Human-friendly label: Normal = full trading, Caution = be careful with new positions, Defensive = exits only.',
+      calc: 'Derived from risk_status and entries_blocked: Defensive when entries blocked or ALLOW_EXITS_ONLY; Caution when RISK_STATUS = WARN; else Normal.',
+      glossaryKey: 'risk_gate.mode',
+    },
+    {
+      key: 'reason_text',
+      label: 'Reason text',
+      meaning: 'One-sentence plain-language reason for the current gate state (e.g. within limits, drawdown hit, safety pause).',
+      glossaryKey: 'risk_gate.reason_text',
+    },
+    {
+      key: 'what_to_do_now',
+      label: 'What to do now',
+      meaning: 'Bullet list of recommended actions for the current mode—e.g. use Suggestions, avoid opening many positions, or only close/reduce.',
+      glossaryKey: 'risk_gate.what_to_do_now',
+    },
+  ],
+}
+
 export const RUNS_EXPLAIN_CONTEXT = {
   id: 'runs',
   title: 'Runs (Audit)',

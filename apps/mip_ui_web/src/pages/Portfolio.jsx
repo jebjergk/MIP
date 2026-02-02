@@ -6,9 +6,9 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter } from '../context/ExplainCenterContext'
+import { useExplainCenter, useExplainSection } from '../context/ExplainCenterContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
-import { PORTFOLIO_EXPLAIN_CONTEXT } from '../data/explainContexts'
+import { PORTFOLIO_EXPLAIN_CONTEXT, RISK_GATE_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Portfolio.css'
 
 export default function Portfolio() {
@@ -23,6 +23,7 @@ export default function Portfolio() {
   const [lookbackDays, setLookbackDays] = useState(30)
   const [showRestartModal, setShowRestartModal] = useState(false)
   const { setContext } = useExplainCenter()
+  const openExplainRiskGate = useExplainSection(RISK_GATE_EXPLAIN_CONTEXT)
 
   useEffect(() => {
     setContext(PORTFOLIO_EXPLAIN_CONTEXT)
@@ -285,7 +286,7 @@ export default function Portfolio() {
                     {mode === 'ALLOW_EXITS_ONLY' ? 'Exits only' : 'Entries allowed'}
                   </p>
                   <dl className="portfolio-card-dl risk-gate-matrix">
-                    <dt>Open new positions <InfoTooltip scope="risk_gate" key="entries_allowed" variant="short" /></dt>
+                    <dt>Open new positions <InfoTooltip scope="risk_gate" entryKey="entries_allowed" variant="short" /></dt>
                     <dd>{entriesAllowed ? 'Allowed' : 'Blocked'}</dd>
                     <dt>Close/reduce positions <InfoTooltip scope="risk_gate" entryKey="exits_allowed" variant="short" /></dt>
                     <dd>Allowed</dd>

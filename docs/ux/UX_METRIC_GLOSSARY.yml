@@ -190,6 +190,12 @@ training_status:
 
 # Performance summary (outcomes by horizon)
 performance:
+  horizon_bars:
+    short: Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal.
+    long: "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. Different horizons can show different performance."
+  n:
+    short: Number of evaluated outcomes for this horizon.
+    long: "N is the count of outcomes (successful evaluations) for this horizon. Higher N means the mean and pct positive are based on more data."
   mean_outcome:
     short: Average realized return for that horizon.
     long: "Mean outcome is the average return realized when holding for this many bars after the signal. Positive means the pattern tended to make money over that horizon."
@@ -211,15 +217,42 @@ suggestions:
   rank_score:
     short: Deterministic rank score (maturity + sample); higher is better.
     long: "Rank score is the maturity score (0–100) used to order suggestions. Only rows that meet the minimum sample size are shown. Higher score means more data and more reliable metrics."
+  suggestion_score:
+    short: Transparent score blending maturity and performance at horizon 5/10 (mean_outcome, pct_positive).
+    long: "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then 0.5 × maturity_score (from Training Status or a proxy from sample size and horizons) + 0.25 × pct_positive at best of horizon 5/10 + 0.25 × normalized mean_outcome at best of 5/10. No magic—formula is deterministic and shown in the tooltip."
+  suggestion_score_formula:
+    short: Score = 0.5 × maturity + 0.25 × pct_positive (h5/h10) + 0.25 × mean_outcome (h5/h10). Requires recs ≥ 10, horizons ≥ 3.
+    long: "The suggestion score uses only: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) performance at horizon 5 and/or 10 bars—pct_positive and mean_outcome. Minimum bars: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
   min_sample:
     short: Minimum number of recommendations required to appear in suggestions.
     long: "Minimum sample is the least number of recommendations a symbol/pattern must have to be listed. It filters out very new or thin data so rankings are meaningful."
+  min_recs_required:
+    short: recs_total ≥ 10 required for a symbol/pattern to appear in the ranked list.
+    long: "Minimum recs required means at least 10 recommendations must exist for this market_type/symbol/pattern_id (daily bars) before the row is shown. This avoids ranking on too little data."
+  min_horizons_required:
+    short: At least 3 distinct horizons (e.g. 1, 3, 5, 10, 20 bars) must have outcome data.
+    long: "Minimum horizons required means at least 3 of the standard evaluation windows (1, 3, 5, 10, 20 bars) must have evaluated outcomes. This ensures the score uses meaningful horizon coverage."
+  what_history_suggests:
+    short: Two-line plain-English summary from evaluated history (template-based, no LLM).
+    long: "What history suggests is a fixed template: line 1 = sample size and pct positive at the strongest horizon; line 2 = mean return at that horizon. It summarizes what the data shows—deterministic, not AI-generated."
+  how_to_interpret:
+    short: How to read the horizon table and use this for research (no trading advice).
+    long: "How to interpret: each row is one holding period (1, 3, 5, 10, 20 bars). N = outcome count; mean = average return; pct positive = share of wins. Use this to see which horizon performed best. Research guidance only—not execution advice."
+  horizon_strip:
+    short: Mini strip showing pct_positive or mean_outcome for horizons 1, 3, 5, 10, 20.
+    long: "The horizon strip shows a compact view of performance across the five standard horizons. Each cell is either pct_positive (share of positive returns) or mean_outcome (average return). Green shades = better; red = worse. Helps compare at a glance."
   explanation_summary:
     short: Plain-English summary of why this row is ranked here (no LLM).
     long: "The explanation is a fixed template filled with this row's numbers—recommendations, coverage, maturity stage, and how many horizons have positive average outcomes. It is deterministic, not AI-generated."
   no_trades_notice:
     short: This page does not execute or propose trades.
     long: "Suggestions are informational only. No trades are placed or proposed from this page. Use Training Status and Performance Summary for analysis; execution happens elsewhere."
+  detail_drawer:
+    short: Click a candidate to open the detail drawer with full horizon table and how to interpret.
+    long: "The detail drawer shows the full per-horizon table (N, mean, pct positive, min, max) and short text on how to interpret the numbers. Close by clicking outside or the close control."
+  sample_size:
+    short: Number of recommendations (recs_total) for this symbol/pattern—the sample size.
+    long: "Sample size is recs_total: how many recommendations were generated for this market_type/symbol/pattern_id. Shown so you know how much history the suggestion is based on."
 
 # Morning Brief page
 brief:

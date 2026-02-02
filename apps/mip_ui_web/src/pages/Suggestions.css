@@ -42,6 +42,12 @@
   border-radius: 8px;
   padding: 1rem;
   background: #fafafa;
+  cursor: pointer;
+}
+
+.suggestion-card:hover {
+  background: #f5f5f5;
+  border-color: #ccc;
 }
 
 .suggestion-header {
@@ -145,6 +151,172 @@
 }
 
 .suggestion-horizons-table th {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+/* Requirements line */
+.suggestions-requirements {
+  font-size: 0.9rem;
+  color: #555;
+  margin-bottom: 0.5rem;
+}
+
+.suggestions-requirements .info-tooltip {
+  margin-left: 0.2rem;
+}
+
+/* What history suggests */
+.suggestion-what-history {
+  margin: 0.5rem 0;
+}
+
+.suggestion-what-history strong {
+  margin-right: 0.35rem;
+}
+
+.suggestion-what-line1,
+.suggestion-what-line2 {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #333;
+}
+
+/* Horizon strip (1/3/5/10/20) */
+.suggestion-horizon-strip {
+  margin-top: 0.5rem;
+}
+
+.suggestion-horizon-strip-label {
+  display: inline-block;
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 0.35rem;
+}
+
+.suggestion-horizon-strip-label .info-tooltip {
+  margin-left: 0.2rem;
+}
+
+.suggestion-horizon-strip-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.suggestion-horizon-strip-cells .strip-cell {
+  min-width: 2.5rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  text-align: center;
+  border: 1px solid #e0e0e0;
+}
+
+.suggestion-horizon-strip-cells .strip-cell .strip-h {
+  display: block;
+  font-weight: 600;
+  color: #555;
+}
+
+.suggestion-horizon-strip-cells .strip-cell .strip-v {
+  display: block;
+}
+
+.suggestion-horizon-strip-cells .strip-cell.empty {
+  background: #f5f5f5;
+  color: #999;
+}
+
+.suggestion-horizon-strip-cells .strip-cell.good {
+  background: #e8f5e9;
+  color: #1b5e20;
+  border-color: #c8e6c9;
+}
+
+.suggestion-horizon-strip-cells .strip-cell.weak {
+  background: #ffebee;
+  color: #b71c1c;
+  border-color: #ffcdd2;
+}
+
+/* Detail drawer */
+.suggestion-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.suggestion-drawer {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  max-width: 640px;
+  width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.suggestion-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.suggestion-drawer-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.suggestion-drawer-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #666;
+  padding: 0 0.25rem;
+}
+
+.suggestion-drawer-close:hover {
+  color: #000;
+}
+
+.suggestion-drawer-body {
+  padding: 1.25rem;
+}
+
+.suggestion-drawer-how {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #444;
+  margin: 0 0 1rem 0;
+}
+
+.suggestion-drawer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.suggestion-drawer-table th,
+.suggestion-drawer-table td {
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  border: 1px solid #e0e0e0;
+}
+
+.suggestion-drawer-table th {
   background: #f5f5f5;
   font-weight: 600;
 }

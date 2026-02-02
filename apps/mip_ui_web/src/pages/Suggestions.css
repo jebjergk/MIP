@@ -327,22 +327,39 @@
   text-decoration: underline;
 }
 
-.suggestion-drawer-cross-links {
+.suggestion-drawer-cross-links,
+.suggestion-drawer-connect {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
+  align-items: center;
+  gap: 0.5rem 1rem;
   margin-bottom: 1rem;
   padding-bottom: 1rem;
   border-bottom: 1px solid #e0e0e0;
 }
 
-.suggestion-drawer-cross-links .suggestion-link {
+.suggestion-drawer-connect-label {
+  font-size: 0.9rem;
+  color: #555;
+  font-weight: 500;
+  margin-right: 0.25rem;
+}
+
+.suggestion-drawer-connect-sep {
+  color: #bbb;
+  font-weight: 300;
+  user-select: none;
+}
+
+.suggestion-drawer-cross-links .suggestion-link,
+.suggestion-drawer-connect .suggestion-link {
   font-size: 0.95rem;
   color: #1565c0;
   text-decoration: none;
 }
 
-.suggestion-drawer-cross-links .suggestion-link:hover {
+.suggestion-drawer-cross-links .suggestion-link:hover,
+.suggestion-drawer-connect .suggestion-link:hover {
   text-decoration: underline;
 }
 

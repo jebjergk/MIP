@@ -429,15 +429,15 @@ export default function Suggestions() {
                 </div>
               </div>
 
-              <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()}>
-                <Link to={trainingUrl(row)} className="suggestion-link">
-                  Training Status →
+              <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()} role="navigation" aria-label="Connect to other views">
+                <Link to={trainingUrl(row)} className="suggestion-link" title="Training Status filtered to this symbol/pattern">
+                  View Training
                 </Link>
-                <Link to="/portfolios" className="suggestion-link" title="Check if you hold this symbol in a portfolio">
-                  Portfolio (do I hold it?)
+                <Link to="/portfolios" className="suggestion-link" title="Portfolio snapshot — see if you hold this symbol">
+                  View Portfolio
                 </Link>
-                <Link to="/brief" className="suggestion-link" title="See if this symbol is mentioned in the morning brief">
-                  Morning Brief
+                <Link to="/brief" className="suggestion-link" title="Morning brief — see if this symbol is mentioned">
+                  View Brief
                 </Link>
               </div>
             </article>
@@ -487,12 +487,19 @@ export default function Suggestions() {
                 </button>
               </div>
               <div className="suggestion-drawer-body">
-                <div className="suggestion-drawer-cross-links">
+                <div className="suggestion-drawer-connect" role="navigation" aria-label="Connect to other views">
+                  <span className="suggestion-drawer-connect-label">Connect:</span>
                   <Link to={trainingUrl(selectedItem)} className="suggestion-link" onClick={() => setSelectedItem(null)}>
-                    Training Status →
+                    View Training
                   </Link>
-                  <Link to="/portfolios" className="suggestion-link" onClick={() => setSelectedItem(null)}>Portfolio</Link>
-                  <Link to="/brief" className="suggestion-link" onClick={() => setSelectedItem(null)}>Morning Brief</Link>
+                  <span className="suggestion-drawer-connect-sep" aria-hidden="true">·</span>
+                  <Link to="/portfolios" className="suggestion-link" onClick={() => setSelectedItem(null)} title="Portfolio snapshot — see if you hold this symbol">
+                    View Portfolio
+                  </Link>
+                  <span className="suggestion-drawer-connect-sep" aria-hidden="true">·</span>
+                  <Link to="/brief" className="suggestion-link" onClick={() => setSelectedItem(null)} title="Morning brief — see if this symbol is mentioned">
+                    View Brief
+                  </Link>
                 </div>
 
                 {/* Section A: Plain language explanation (micro-copy) */}

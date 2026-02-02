@@ -143,6 +143,54 @@ def score_training_status_row(
     return TrainingStatusScore(maturity_score=round(total_score, 1), maturity_stage=stage, reasons=reasons)
 
 
+def score_training_status_row_debug(
+    recs_total: int,
+    outcomes_total: int,
+    horizons_covered: int,
+    min_signals: int = DEFAULT_MIN_SIGNALS,
+) -> dict[str, Any]:
+    """
+    Same as score_training_status_row but returns a dict with scoring inputs and component scores
+    for verification (debug endpoint, unit tests).
+    """
+    possible_outcomes = recs_total * MAX_HORIZONS if recs_total else 0
+    coverage_ratio = (outcomes_total / possible_outcomes) if possible_outcomes else 0.0
+    coverage_ratio = min(1.0, coverage_ratio)
+
+    score_sample, score_coverage, score_horizons = compute_maturity_score(
+        recs_total, outcomes_total, horizons_covered, min_signals
+    )
+    total_score = score_sample + score_coverage + score_horizons
+    total_score = min(100.0, max(0.0, total_score))
+    stage = get_maturity_stage(total_score)
+    reasons = build_reasons(
+        recs_total,
+        outcomes_total,
+        horizons_covered,
+        coverage_ratio,
+        score_sample,
+        score_coverage,
+        score_horizons,
+        total_score,
+        min_signals,
+    )
+    return {
+        "scoring_inputs": {
+            "recs_total": recs_total,
+            "outcomes_total": outcomes_total,
+            "horizons_covered": horizons_covered,
+            "min_signals": min_signals,
+            "coverage_ratio": round(coverage_ratio, 6),
+        },
+        "score_sample": round(score_sample, 4),
+        "score_coverage": round(score_coverage, 4),
+        "score_horizons": round(score_horizons, 4),
+        "maturity_score": round(total_score, 1),
+        "maturity_stage": stage,
+        "reasons": reasons,
+    }
+
+
 def _get_int(row: dict[str, Any], *keys: str) -> int:
     """Get first present key (case-insensitive); return 0 if missing."""
     for k in keys:

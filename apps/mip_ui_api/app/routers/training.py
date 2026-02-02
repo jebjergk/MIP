@@ -5,9 +5,12 @@ optional MIP.APP.PATTERN_DEFINITION (labels), MIP.APP.TRAINING_GATE_PARAMS (thre
 """
 from fastapi import APIRouter, HTTPException
 
-from app.db import get_connection, fetch_all, serialize_rows
+from app.config import training_debug_enabled
+from app.db import get_connection, fetch_all, serialize_row, serialize_rows
 from app.training_status import (
+    _get_int,
     apply_scoring_to_rows,
+    score_training_status_row_debug,
     DEFAULT_MIN_SIGNALS,
 )
 
@@ -106,6 +109,50 @@ def get_training_status():
         rows = fetch_all(cur)
         scored = apply_scoring_to_rows(rows, min_signals=min_signals)
         return {"rows": serialize_rows(scored)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/status/debug")
+def get_training_status_debug():
+    """
+    Dev-only: raw aggregated metrics before scoring + scoring inputs and computed
+    maturity_score, maturity_stage, reasons. Enable with ENABLE_TRAINING_DEBUG=1.
+    """
+    if not training_debug_enabled():
+        raise HTTPException(status_code=404, detail="Training debug not enabled")
+    conn = get_connection()
+    try:
+        min_signals = _get_min_signals(conn)
+        cur = conn.cursor()
+        cur.execute(TRAINING_STATUS_SQL)
+        rows = fetch_all(cur)
+        out = []
+        for r in rows:
+            recs = _get_int(r, "recs_total")
+            outcomes = _get_int(r, "outcomes_total")
+            horizons = _get_int(r, "horizons_covered")
+            raw = {
+                "market_type": r.get("market_type") or r.get("MARKET_TYPE"),
+                "symbol": r.get("symbol") or r.get("SYMBOL"),
+                "pattern_id": r.get("pattern_id") or r.get("PATTERN_ID"),
+                "interval_minutes": r.get("interval_minutes") or r.get("INTERVAL_MINUTES"),
+                "as_of_ts": r.get("as_of_ts") or r.get("AS_OF_TS"),
+                "recs_total": recs,
+                "outcomes_total": outcomes,
+                "horizons_covered": horizons,
+                "coverage_ratio": r.get("coverage_ratio") or r.get("COVERAGE_RATIO"),
+                "avg_outcome_h1": r.get("avg_outcome_h1") or r.get("AVG_OUTCOME_H1"),
+                "avg_outcome_h3": r.get("avg_outcome_h3") or r.get("AVG_OUTCOME_H3"),
+                "avg_outcome_h5": r.get("avg_outcome_h5") or r.get("AVG_OUTCOME_H5"),
+                "avg_outcome_h10": r.get("avg_outcome_h10") or r.get("AVG_OUTCOME_H10"),
+                "avg_outcome_h20": r.get("avg_outcome_h20") or r.get("AVG_OUTCOME_H20"),
+            }
+            scoring = score_training_status_row_debug(recs, outcomes, horizons, min_signals)
+            out.append({"raw": serialize_row(raw), "scoring": scoring})
+        return {"min_signals": min_signals, "rows": out}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

@@ -24,3 +24,8 @@ def get_snowflake_config():
         "database": os.getenv("SNOWFLAKE_DATABASE"),
         "schema": os.getenv("SNOWFLAKE_SCHEMA"),
     }
+
+
+def training_debug_enabled() -> bool:
+    """True if GET /training/status/debug is allowed (dev-only). Set ENABLE_TRAINING_DEBUG=1."""
+    return (os.getenv("ENABLE_TRAINING_DEBUG") or "").strip().lower() in ("1", "true", "yes")

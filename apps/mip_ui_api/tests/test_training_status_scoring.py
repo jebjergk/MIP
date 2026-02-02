@@ -1,5 +1,6 @@
 """
 Pure-Python unit tests for Training Status v1 scoring. No Snowflake needed.
+Deterministic scoring: recs_total=0 → score=0/INSUFFICIENT; partial horizons; coverage edge cases.
 """
 import unittest
 import sys
@@ -12,6 +13,7 @@ from app.training_status import (
     compute_maturity_score,
     get_maturity_stage,
     score_training_status_row,
+    score_training_status_row_debug,
     apply_scoring_to_rows,
     DEFAULT_MIN_SIGNALS,
     MAX_HORIZONS,
@@ -45,8 +47,29 @@ class TestComputeMaturityScore(unittest.TestCase):
         self.assertAlmostEqual(s_hor, POINTS_HORIZONS)
 
     def test_horizons_partial(self):
+        """Partial horizons → lower horizon completeness component (3 of 5 → 18 pts)."""
         s_sample, s_cov, s_hor = compute_maturity_score(10, 20, 3)
         self.assertAlmostEqual(s_hor, POINTS_HORIZONS * (3 / MAX_HORIZONS))
+        self.assertAlmostEqual(s_hor, 18.0)
+
+    def test_coverage_ratio_division_by_zero(self):
+        """recs_total=0 → possible_outcomes=0 → coverage_ratio=0, no division by zero."""
+        s_sample, s_cov, s_hor = compute_maturity_score(0, 0, 0)
+        self.assertEqual(s_sample, 0.0)
+        self.assertEqual(s_cov, 0.0)
+        self.assertEqual(s_hor, 0.0)
+
+    def test_coverage_ratio_over_one_capped(self):
+        """outcomes_total > recs_total*5 → coverage capped at 1.0."""
+        recs = 10
+        outcomes_over = recs * MAX_HORIZONS + 100
+        s_sample, s_cov, s_hor = compute_maturity_score(recs, outcomes_over, MAX_HORIZONS)
+        self.assertAlmostEqual(s_cov, POINTS_COVERAGE)
+        self.assertLessEqual(s_cov, POINTS_COVERAGE)
+        r = score_training_status_row(recs, outcomes_over, MAX_HORIZONS)
+        self.assertLessEqual(r.maturity_score, 100.0)
+        debug = score_training_status_row_debug(recs, outcomes_over, MAX_HORIZONS)
+        self.assertLessEqual(debug["scoring_inputs"]["coverage_ratio"], 1.0)
 
 
 class TestGetMaturityStage(unittest.TestCase):
@@ -68,7 +91,8 @@ class TestGetMaturityStage(unittest.TestCase):
 
 
 class TestScoreTrainingStatusRow(unittest.TestCase):
-    def test_zero_row(self):
+    def test_recs_total_zero_score_zero_stage_insufficient(self):
+        """recs_total=0 → score=0, stage=INSUFFICIENT (canonical verification)."""
         r = score_training_status_row(0, 0, 0)
         self.assertEqual(r.maturity_score, 0.0)
         self.assertEqual(r.maturity_stage, "INSUFFICIENT")
@@ -109,6 +133,28 @@ class TestApplyScoringToRows(unittest.TestCase):
         out = apply_scoring_to_rows(rows)
         self.assertEqual(len(out), 1)
         self.assertIn("maturity_score", out[0])
+
+
+class TestScoreTrainingStatusRowDebug(unittest.TestCase):
+    """Debug output shape and deterministic scoring consistency."""
+
+    def test_debug_recs_zero(self):
+        d = score_training_status_row_debug(0, 0, 0)
+        self.assertEqual(d["scoring_inputs"]["recs_total"], 0)
+        self.assertEqual(d["scoring_inputs"]["coverage_ratio"], 0)
+        self.assertEqual(d["maturity_score"], 0.0)
+        self.assertEqual(d["maturity_stage"], "INSUFFICIENT")
+        self.assertEqual(d["score_sample"], 0.0)
+        self.assertEqual(d["score_coverage"], 0.0)
+        self.assertEqual(d["score_horizons"], 0.0)
+
+    def test_debug_matches_score_row(self):
+        recs, outcomes, horizons = 20, 50, 3
+        r = score_training_status_row(recs, outcomes, horizons)
+        d = score_training_status_row_debug(recs, outcomes, horizons)
+        self.assertEqual(d["maturity_score"], r.maturity_score)
+        self.assertEqual(d["maturity_stage"], r.maturity_stage)
+        self.assertEqual(d["reasons"], r.reasons)
 
 
 if __name__ == "__main__":

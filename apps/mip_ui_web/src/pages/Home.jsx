@@ -6,13 +6,8 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import './Home.css'
 
-const DASHBOARD_TIMEOUT_MS = 5000
-
-function timeout(ms) {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Dashboard timeout')), ms)
-  })
-}
+/** After this many ms we show the dashboard with whatever facts we have (partial is OK). */
+const DASHBOARD_MAX_WAIT_MS = 5000
 
 export default function Home() {
   const [loading, setLoading] = useState(true)
@@ -28,58 +23,45 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false
 
-    async function loadDashboard() {
-      const statusPromise = fetch(`${API_BASE}/status`)
-        .then((r) => (r.ok ? r.json() : {}))
-        .then((d) => ({ snowflakeOk: !!d.snowflake_ok, snowflakeMessage: d.snowflake_message ?? null }))
-        .catch(() => ({ snowflakeOk: false, snowflakeMessage: 'Not reachable' }))
-
-      const portfoliosPromise = fetch(`${API_BASE}/portfolios`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then((list) => ({ portfoliosCount: Array.isArray(list) ? list.length : 0 }))
-        .catch(() => ({ portfoliosCount: null }))
-
-      const briefPromise = fetch(`${API_BASE}/briefs/latest?portfolio_id=1`)
-        .then((r) => (r.ok ? r.json() : { found: false }))
-        .then((d) => ({ latestBriefTs: d.found ? d.as_of_ts : null }))
-        .catch(() => ({ latestBriefTs: null }))
-
-      const runsPromise = fetch(`${API_BASE}/runs?limit=1`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then((list) => {
-          const first = Array.isArray(list) && list.length ? list[0] : null
-          return { latestRunTs: first?.completed_at ?? first?.started_at ?? null }
-        })
-        .catch(() => ({ latestRunTs: null }))
-
-      try {
-        const results = await Promise.race([
-          Promise.allSettled([statusPromise, portfoliosPromise, briefPromise, runsPromise]),
-          timeout(DASHBOARD_TIMEOUT_MS),
-        ])
-
-        if (cancelled) return
-
-        const [status, portfolios, brief, runs] = results.map((r) => (r.status === 'fulfilled' ? r.value : {}))
-        setFacts({
-          snowflakeOk: status.snowflakeOk ?? null,
-          snowflakeMessage: status.snowflakeMessage ?? null,
-          portfoliosCount: portfolios.portfoliosCount ?? null,
-          latestBriefTs: brief.latestBriefTs ?? null,
-          latestRunTs: runs.latestRunTs ?? null,
-        })
-        setError(null)
-      } catch (e) {
-        if (!cancelled) {
-          setError(e.message === 'Dashboard timeout' ? 'Dashboard timed out (5s). Check network or API.' : e.message)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+    const mergeFacts = (partial) => {
+      if (!cancelled) setFacts((prev) => ({ ...prev, ...partial }))
     }
 
-    loadDashboard()
-    return () => { cancelled = true }
+    const stopLoading = () => {
+      if (!cancelled) setLoading(false)
+    }
+
+    const p1 = fetch(`${API_BASE}/status`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d) => mergeFacts({ snowflakeOk: !!d.snowflake_ok, snowflakeMessage: d.snowflake_message ?? null }))
+      .catch(() => mergeFacts({ snowflakeOk: false, snowflakeMessage: 'Not reachable' }))
+
+    const p2 = fetch(`${API_BASE}/portfolios`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => mergeFacts({ portfoliosCount: Array.isArray(list) ? list.length : 0 }))
+      .catch(() => mergeFacts({ portfoliosCount: null }))
+
+    const p3 = fetch(`${API_BASE}/briefs/latest?portfolio_id=1`)
+      .then((r) => (r.ok ? r.json() : { found: false }))
+      .then((d) => mergeFacts({ latestBriefTs: d.found ? d.as_of_ts : null }))
+      .catch(() => mergeFacts({ latestBriefTs: null }))
+
+    const p4 = fetch(`${API_BASE}/runs?limit=1`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        const first = Array.isArray(list) && list.length ? list[0] : null
+        mergeFacts({ latestRunTs: first?.completed_at ?? first?.started_at ?? null })
+      })
+      .catch(() => mergeFacts({ latestRunTs: null }))
+
+    // Show dashboard after 5s with whatever we have, or as soon as all four finish.
+    const stopWaitingTimer = setTimeout(stopLoading, DASHBOARD_MAX_WAIT_MS)
+    Promise.allSettled([p1, p2, p3, p4]).then(stopLoading)
+
+    return () => {
+      cancelled = true
+      clearTimeout(stopWaitingTimer)
+    }
   }, [])
 
   if (loading) {

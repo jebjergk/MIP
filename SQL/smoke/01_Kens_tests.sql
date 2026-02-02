@@ -9,7 +9,7 @@ select * from mip.app.mip_audit_log where event_ts::date = '2026-02-01' order by
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
 
-select * from MIP.MART.V_BAR_INDEX order by ts desc;
+select * from MIP.MART.V_BAR_INDEX where bar_index = 56 order by ts desc;
 
 
 

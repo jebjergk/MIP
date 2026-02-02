@@ -1,0 +1,102 @@
+/* Portfolio Overview: operator clarity cards — "where do we stand right now?" */
+
+.portfolio-overview-intro {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: #444;
+}
+
+.portfolio-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.portfolio-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.portfolio-card-cash-exposure {
+  border-left: 4px solid #2e7d32;
+}
+
+.portfolio-card-positions {
+  border-left: 4px solid #1565c0;
+}
+
+.portfolio-card-trades {
+  border-left: 4px solid #6a1b9a;
+}
+
+.portfolio-card-risk-gate {
+  border-left: 4px solid #c62828;
+}
+
+.portfolio-card-title {
+  font-size: 1rem;
+  margin: 0 0 0.75rem 0;
+  color: #333;
+}
+
+.portfolio-card-dl {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.portfolio-card-dl dt {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  color: #555;
+}
+
+.portfolio-card-dl dt:first-of-type {
+  margin-top: 0;
+}
+
+.portfolio-card-dl dd {
+  margin: 0.15rem 0 0 0;
+  color: #333;
+}
+
+.portfolio-card-meta {
+  font-size: 0.8rem;
+  color: #666;
+  margin-top: 0.5rem;
+}
+
+.portfolio-card-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.portfolio-card-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.portfolio-card-table th,
+.portfolio-card-table td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.portfolio-card-table th {
+  font-weight: 600;
+  color: #555;
+}
+
+.portfolio-card-risk-summary {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.portfolio-card-risk-summary strong {
+  color: #333;
+}

@@ -49,6 +49,18 @@
     "status": {
       "short": "Current state of the portfolio (e.g. active, closed, bust).",
       "long": "Portfolio status describes whether the portfolio is active (running), closed (manually stopped), or bust (hit a loss limit and stopped). Use it to see if the portfolio is still trading."
+    },
+    "cash": {
+      "short": "Current cash balance (uninvested).",
+      "long": "Cash is the amount of money in the portfolio that is not invested in positions. It's what you have available to buy with or that came from selling."
+    },
+    "exposure": {
+      "short": "Market value of open positions.",
+      "long": "Exposure is the total market value of all open positions—how much is currently invested. Together with cash it makes up total equity."
+    },
+    "total_equity": {
+      "short": "Total portfolio value (cash + positions) as of this snapshot.",
+      "long": "Total equity is cash plus the market value of positions—your full portfolio value at this point in time. It answers: where do we stand right now?"
     }
   },
   "risk_gate": {

@@ -69,9 +69,14 @@ def get_portfolio(portfolio_id: int):
         conn.close()
 
 
+def _first(d: list) -> dict | None:
+    """First element of list or None."""
+    return d[0] if d else None
+
+
 @router.get("/{portfolio_id}/snapshot")
 def get_portfolio_snapshot(portfolio_id: int, run_id: str | None = None):
-    """Combined read: positions, trades, daily, KPIs, risk for this portfolio (optional run_id filter)."""
+    """Combined read: positions, trades, daily, KPIs, risk + operator-clarity cards (optional run_id filter)."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -125,7 +130,7 @@ def get_portfolio_snapshot(portfolio_id: int, run_id: str | None = None):
             "select * from MIP.MART.V_PORTFOLIO_RISK_GATE where PORTFOLIO_ID = %s",
             (portfolio_id,),
         )
-        risk_gate = serialize_rows(fetch_all(cur))
+        risk_gate_rows = serialize_rows(fetch_all(cur))
 
         # Risk (state)
         cur.execute(
@@ -134,13 +139,60 @@ def get_portfolio_snapshot(portfolio_id: int, run_id: str | None = None):
         )
         risk_state = serialize_rows(fetch_all(cur))
 
+        # --- Operator-clarity cards ---
+        latest_daily = _first(daily)
+        rg = _first(risk_gate_rows)
+
+        cash_and_exposure = None
+        if latest_daily:
+            cash = latest_daily.get("CASH") or latest_daily.get("cash")
+            equity_value = latest_daily.get("EQUITY_VALUE") or latest_daily.get("equity_value")
+            total_equity = latest_daily.get("TOTAL_EQUITY") or latest_daily.get("total_equity")
+            cash_and_exposure = {
+                "cash": cash,
+                "exposure": equity_value,
+                "total_equity": total_equity,
+                "as_of_ts": latest_daily.get("TS") or latest_daily.get("ts"),
+            }
+        else:
+            latest_kpi = _first(kpis)
+            if latest_kpi:
+                fe = latest_kpi.get("FINAL_EQUITY") or latest_kpi.get("final_equity")
+                cash_and_exposure = {
+                    "cash": None,
+                    "exposure": None,
+                    "total_equity": fe,
+                    "as_of_ts": latest_kpi.get("TO_TS") or latest_kpi.get("to_ts"),
+                }
+
+        entries_blocked = None
+        block_reason = None
+        if rg:
+            entries_blocked = rg.get("ENTRIES_BLOCKED") if rg.get("ENTRIES_BLOCKED") is not None else rg.get("entries_blocked")
+            block_reason = rg.get("BLOCK_REASON") or rg.get("block_reason") or rg.get("STOP_REASON") or rg.get("stop_reason")
+
+        risk_gate_status = {
+            "entries_blocked": bool(entries_blocked),
+            "exits_allowed": True,
+            "summary": "Entries blocked but exits allowed." if entries_blocked else "Trading allowed.",
+            "stop_reason": block_reason,
+        }
+
+        cards = {
+            "cash_and_exposure": cash_and_exposure,
+            "open_positions": positions,
+            "recent_trades": trades[:20],
+            "risk_gate_status": risk_gate_status,
+        }
+
         return {
             "positions": positions,
             "trades": trades,
             "daily": daily,
             "kpis": kpis,
-            "risk_gate": risk_gate,
+            "risk_gate": risk_gate_rows,
             "risk_state": risk_state,
+            "cards": cards,
         }
     finally:
         conn.close()

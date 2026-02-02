@@ -7,6 +7,7 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
+import './Portfolio.css'
 
 export default function Portfolio() {
   const { portfolioId } = useParams()
@@ -30,14 +31,18 @@ export default function Portfolio() {
         if (cancelled) return
         setPortfolios(list)
         if (portfolioId) {
-          const [headerRes, snapRes] = await Promise.all([
-            fetch(`${API_BASE}/portfolios/${portfolioId}`),
-            fetch(`${API_BASE}/portfolios/${portfolioId}/snapshot`),
-          ])
+          const headerRes = await fetch(`${API_BASE}/portfolios/${portfolioId}`)
           if (!headerRes.ok) throw new Error(headerRes.statusText)
+          const port = await headerRes.json()
+          if (cancelled) return
+          setPortfolio(port)
+          const runId = port.LAST_SIMULATION_RUN_ID ?? null
+          const snapUrl = runId
+            ? `${API_BASE}/portfolios/${portfolioId}/snapshot?run_id=${encodeURIComponent(runId)}`
+            : `${API_BASE}/portfolios/${portfolioId}/snapshot`
+          const snapRes = await fetch(snapUrl)
           if (!snapRes.ok) throw new Error(snapRes.statusText)
-          setPortfolio(await headerRes.json())
-          setSnapshot(await snapRes.json())
+          if (!cancelled) setSnapshot(await snapRes.json())
         } else {
           setPortfolio(null)
           setSnapshot(null)
@@ -121,88 +126,127 @@ export default function Portfolio() {
             </div>
           )}
         </div>
-        {snapshot && (
-          <>
-            <h2>Snapshot</h2>
-            <p>Positions: {snapshot.positions?.length ?? 0} · Trades: {snapshot.trades?.length ?? 0} · Daily: {snapshot.daily?.length ?? 0} · KPIs: {snapshot.kpis?.length ?? 0}</p>
-            <details>
-              <summary>Positions</summary>
-              {Array.isArray(snapshot.positions) && snapshot.positions.length > 0 && (
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Symbol <InfoTooltip key="positions.symbol" variant="short" /></th>
-                      <th>Quantity <InfoTooltip key="positions.quantity" variant="short" /></th>
-                      <th>Cost basis <InfoTooltip key="positions.cost_basis" variant="short" /></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {snapshot.positions.slice(0, 20).map((pos, i) => (
-                      <tr key={i}>
-                        <td>{pos.SYMBOL ?? pos.symbol}</td>
-                        <td>{pos.QUANTITY ?? pos.quantity}</td>
-                        <td>{pos.COST_BASIS ?? pos.cost_basis}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {(!snapshot.positions || snapshot.positions.length === 0) && (
-                <EmptyState
-                  title="No positions"
-                  action="Run pipeline or wait for next run."
-                  explanation="This portfolio has no open positions right now. Positions are the assets (e.g. stocks) the strategy currently holds."
-                  reasons={['The run has not opened any positions yet.', 'Data may be from a time before any trades.', 'The risk gate may be blocking new entries.']}
-                />
-              )}
-            </details>
-            <details>
-              <summary>Trades</summary>
-              {Array.isArray(snapshot.trades) && snapshot.trades.length > 0 && (
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Symbol <InfoTooltip key="trades.symbol" variant="short" /></th>
-                      <th>Side <InfoTooltip key="trades.side" variant="short" /></th>
-                      <th>Quantity <InfoTooltip key="trades.quantity" variant="short" /></th>
-                      <th>Price <InfoTooltip key="trades.price" variant="short" /></th>
-                      <th>Notional <InfoTooltip key="trades.notional" variant="short" /></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {snapshot.trades.slice(0, 10).map((t, i) => (
-                      <tr key={i}>
-                        <td>{t.SYMBOL ?? t.symbol}</td>
-                        <td>{t.SIDE ?? t.side}</td>
-                        <td>{t.QUANTITY ?? t.quantity}</td>
-                        <td>{t.PRICE ?? t.price}</td>
-                        <td>{t.NOTIONAL ?? t.notional}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {(!snapshot.trades || snapshot.trades.length === 0) && (
-                <EmptyState
-                  title="No trades"
-                  action="Run pipeline or wait for next run."
-                  explanation="No trades are shown for this snapshot. Trades are the buy/sell actions the strategy has executed."
-                  reasons={['The run may not have executed any trades yet.', 'Data may be from before the first trade.', 'Score or threshold filters may have excluded all signals.', 'The risk gate may be blocking new entries.']}
-                />
-              )}
-            </details>
-            <details>
-              <summary>Risk gate <InfoTooltip scope="risk_gate" key="entries_blocked" variant="short" /></summary>
-              {snapshot.risk_gate && (
-                <div className="risk-gate-summary">
-                  <p><strong>Entries blocked</strong> <InfoTooltip scope="risk_gate" key="entries_blocked" variant="short" />: {String(snapshot.risk_gate.ENTRIES_BLOCKED ?? snapshot.risk_gate.entries_blocked ?? '—')}</p>
-                  <p><strong>Stop reason</strong> <InfoTooltip scope="risk_gate" key="stop_reason" variant="short" />: {String(snapshot.risk_gate.STOP_REASON ?? snapshot.risk_gate.stop_reason ?? '—')}</p>
+        {snapshot && (() => {
+          const cards = snapshot.cards || {}
+          const cashExposure = cards.cash_and_exposure
+          const openPositions = cards.open_positions ?? snapshot.positions ?? []
+          const recentTrades = cards.recent_trades ?? snapshot.trades ?? []
+          const riskGateStatus = cards.risk_gate_status || {}
+          const entriesBlocked = riskGateStatus.entries_blocked ?? false
+          const summary = riskGateStatus.summary ?? (entriesBlocked ? 'Entries blocked but exits allowed.' : 'Trading allowed.')
+          const stopReason = riskGateStatus.stop_reason
+
+          return (
+            <>
+              <h2>Portfolio Overview</h2>
+              <p className="portfolio-overview-intro">Where do we stand right now? Snapshot as of last simulation run.</p>
+
+              <section className="portfolio-cards" aria-label="Portfolio snapshot cards">
+                {/* Cash & Exposure */}
+                <div className="portfolio-card portfolio-card-cash-exposure">
+                  <h3 className="portfolio-card-title">Cash & Exposure <InfoTooltip scope="portfolio" key="total_equity" variant="short" /></h3>
+                  {cashExposure ? (
+                    <dl className="portfolio-card-dl">
+                      <dt>Cash <InfoTooltip scope="portfolio" key="cash" variant="short" /></dt>
+                      <dd>{cashExposure.cash != null ? Number(cashExposure.cash).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
+                      <dt>Exposure <InfoTooltip scope="portfolio" key="exposure" variant="short" /></dt>
+                      <dd>{cashExposure.exposure != null ? Number(cashExposure.exposure).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
+                      <dt>Total equity <InfoTooltip scope="portfolio" key="total_equity" variant="short" /></dt>
+                      <dd>{cashExposure.total_equity != null ? Number(cashExposure.total_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
+                      {cashExposure.as_of_ts && <dd className="portfolio-card-meta">As of {String(cashExposure.as_of_ts).slice(0, 19)}</dd>}
+                    </dl>
+                  ) : (
+                    <p className="portfolio-card-empty">No daily data yet. Run pipeline to see cash and exposure.</p>
+                  )}
                 </div>
-              )}
-              <pre>{JSON.stringify(snapshot.risk_gate, null, 2)}</pre>
-            </details>
-          </>
-        )}
+
+                {/* Open Positions */}
+                <div className="portfolio-card portfolio-card-positions">
+                  <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" key="symbol" variant="short" /></h3>
+                  {Array.isArray(openPositions) && openPositions.length > 0 ? (
+                    <table className="portfolio-card-table">
+                      <thead>
+                        <tr>
+                          <th>Symbol <InfoTooltip scope="positions" key="symbol" variant="short" /></th>
+                          <th>Quantity <InfoTooltip scope="positions" key="quantity" variant="short" /></th>
+                          <th>Cost basis <InfoTooltip scope="positions" key="cost_basis" variant="short" /></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {openPositions.slice(0, 20).map((pos, i) => (
+                          <tr key={i}>
+                            <td>{pos.SYMBOL ?? pos.symbol}</td>
+                            <td>{pos.QUANTITY ?? pos.quantity}</td>
+                            <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <EmptyState
+                      title="No open positions"
+                      action="Run pipeline or wait for next run."
+                      explanation="This portfolio has no open positions right now. Positions are the assets (e.g. stocks) the strategy currently holds."
+                      reasons={['The run has not opened any positions yet.', 'Data may be from a time before any trades.', 'The risk gate may be blocking new entries.']}
+                    />
+                  )}
+                </div>
+
+                {/* Recent Trades */}
+                <div className="portfolio-card portfolio-card-trades">
+                  <h3 className="portfolio-card-title">Recent Trades <InfoTooltip scope="trades" key="side" variant="short" /></h3>
+                  {Array.isArray(recentTrades) && recentTrades.length > 0 ? (
+                    <table className="portfolio-card-table">
+                      <thead>
+                        <tr>
+                          <th>Symbol <InfoTooltip scope="trades" key="symbol" variant="short" /></th>
+                          <th>Side <InfoTooltip scope="trades" key="side" variant="short" /></th>
+                          <th>Quantity <InfoTooltip scope="trades" key="quantity" variant="short" /></th>
+                          <th>Price <InfoTooltip scope="trades" key="price" variant="short" /></th>
+                          <th>Notional <InfoTooltip scope="trades" key="notional" variant="short" /></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recentTrades.slice(0, 10).map((t, i) => (
+                          <tr key={i}>
+                            <td>{t.SYMBOL ?? t.symbol}</td>
+                            <td>{t.SIDE ?? t.side}</td>
+                            <td>{t.QUANTITY ?? t.quantity}</td>
+                            <td>{t.PRICE != null ? Number(t.PRICE ?? t.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                            <td>{t.NOTIONAL != null ? Number(t.NOTIONAL ?? t.notional).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <EmptyState
+                      title="No trades"
+                      action="Run pipeline or wait for next run."
+                      explanation="No trades are shown for this snapshot. Trades are the buy/sell actions the strategy has executed."
+                      reasons={['The run may not have executed any trades yet.', 'Data may be from before the first trade.', 'Score or threshold filters may have excluded all signals.', 'The risk gate may be blocking new entries.']}
+                    />
+                  )}
+                </div>
+
+                {/* Risk Gate Status */}
+                <div className="portfolio-card portfolio-card-risk-gate">
+                  <h3 className="portfolio-card-title">Risk Gate Status <InfoTooltip scope="risk_gate" key="entries_blocked" variant="short" /></h3>
+                  <p className="portfolio-card-risk-summary">
+                    <strong>{summary}</strong>
+                    {entriesBlocked && ' '}
+                    {entriesBlocked && <InfoTooltip scope="risk_gate" key="allow_exits_only" variant="short" />}
+                  </p>
+                  {stopReason != null && String(stopReason) !== '' && (
+                    <dl className="portfolio-card-dl">
+                      <dt>Stop reason <InfoTooltip scope="risk_gate" key="stop_reason" variant="short" /></dt>
+                      <dd>{String(stopReason)}</dd>
+                    </dl>
+                  )}
+                </div>
+              </section>
+            </>
+          )
+        })()}
       </>
     )
   }

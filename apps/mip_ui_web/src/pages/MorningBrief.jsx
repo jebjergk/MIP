@@ -4,6 +4,7 @@ import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
+import LoadingState from '../components/LoadingState'
 import './MorningBrief.css'
 
 export default function MorningBrief() {
@@ -46,7 +47,14 @@ export default function MorningBrief() {
   const found = briefResponse?.found === true
   const brief = found ? briefResponse : null
 
-  if (portfoliosLoading) return <p>Loading…</p>
+  if (portfoliosLoading) {
+    return (
+      <>
+        <h1>Morning Brief</h1>
+        <LoadingState />
+      </>
+    )
+  }
   if (error && !portfolioId) {
     return (
       <>

@@ -4,6 +4,7 @@ import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
+import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './AuditViewer.css'
@@ -44,10 +45,18 @@ export default function AuditViewer() {
     return () => { cancelled = true }
   }, [runId])
 
-  if (loading) return <p>Loading…</p>
+  if (loading) {
+    return (
+      <>
+        <h1>{runId ? `Run: ${runId}` : 'Runs'}</h1>
+        <LoadingState />
+      </>
+    )
+  }
   if (error) {
     return (
       <>
+        <h1>{runId ? `Run: ${runId}` : 'Runs'}</h1>
         {runId && <p><Link to="/runs">← Back to runs</Link></p>}
         <ErrorState message={error} />
       </>

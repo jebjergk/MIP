@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { API_BASE } from '../App'
+import LoadingState from '../components/LoadingState'
 import './Debug.css'
 
 function previewFromData(data, isError = false) {
@@ -204,7 +205,7 @@ export default function Debug() {
         Copy diagnostics
       </button>
 
-      {loading && <p>Running smoke checks…</p>}
+      {loading && <LoadingState message="Running smoke checks…" />}
 
       <table className="debug-table">
         <thead>

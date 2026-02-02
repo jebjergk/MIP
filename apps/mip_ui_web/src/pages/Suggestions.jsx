@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { API_BASE } from '../App'
+import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
+import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './Suggestions.css'
@@ -97,8 +99,22 @@ export default function Suggestions() {
     })
   }, [rows, minSample])
 
-  if (loading) return <p>Loading…</p>
-  if (error) return <p>Error: {error}</p>
+  if (loading) {
+    return (
+      <>
+        <h1>Suggestions</h1>
+        <LoadingState />
+      </>
+    )
+  }
+  if (error) {
+    return (
+      <>
+        <h1>Suggestions</h1>
+        <ErrorState message={error} />
+      </>
+    )
+  }
 
   return (
     <>

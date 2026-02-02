@@ -3,6 +3,7 @@ import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
+import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
@@ -73,8 +74,22 @@ export default function TrainingStatus() {
     })
   }, [rows, marketTypeFilter, symbolSearch])
 
-  if (loading) return <p>Loading…</p>
-  if (error) return <ErrorState message={error} />
+  if (loading) {
+    return (
+      <>
+        <h1>Training Status</h1>
+        <LoadingState />
+      </>
+    )
+  }
+  if (error) {
+    return (
+      <>
+        <h1>Training Status</h1>
+        <ErrorState message={error} />
+      </>
+    )
+  }
 
   return (
     <>

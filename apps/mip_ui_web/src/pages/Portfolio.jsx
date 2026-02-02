@@ -4,6 +4,7 @@ import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
+import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
 
@@ -51,8 +52,22 @@ export default function Portfolio() {
     return () => { cancelled = true }
   }, [portfolioId])
 
-  if (loading) return <p>Loading…</p>
-  if (error) return <ErrorState message={error} />
+  if (loading) {
+    return (
+      <>
+        <h1>{portfolioId ? 'Portfolio' : 'Portfolios'}</h1>
+        <LoadingState />
+      </>
+    )
+  }
+  if (error) {
+    return (
+      <>
+        <h1>{portfolioId ? 'Portfolio' : 'Portfolios'}</h1>
+        <ErrorState message={error} />
+      </>
+    )
+  }
 
 
   if (portfolioId && portfolio) {

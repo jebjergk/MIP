@@ -145,6 +145,7 @@ export default function Portfolio() {
           const tradesTotal = snapshot.trades_total ?? cards.trades_total ?? 0
           const lastTradeTs = snapshot.last_trade_ts ?? cards.last_trade_ts ?? null
           const riskGate = snapshot.risk_gate || {}
+          const riskStrategy = snapshot.risk_strategy || null
           const riskLabel = riskGate.risk_label || 'NORMAL'
           const mode = riskGate.mode || 'ALLOW_ENTRIES'
           const entriesAllowed = riskGate.entries_allowed !== false
@@ -288,6 +289,31 @@ export default function Portfolio() {
                     <span className={riskLabel === 'DEFENSIVE' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>🛑 Defensive</span>
                     {explainMode && <InfoTooltip scope="risk_gate" entryKey="mode" variant="short" />}
                   </h3>
+                  {riskStrategy && (
+                    <div className="risk-strategy-block">
+                      <p className="risk-strategy-summary">{riskStrategy.summary}</p>
+                      {Array.isArray(riskStrategy.rules) && riskStrategy.rules.length > 0 && (
+                        <div className="risk-strategy-rules" role="list">
+                          {riskStrategy.rules.map((r) => (
+                            <div key={r.key} className="risk-strategy-rule" role="listitem">
+                              <span className="risk-strategy-rule-label" title={r.tooltip ?? undefined}>{r.label}</span>
+                              <span className="risk-strategy-rule-value">{r.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {riskStrategy.state && (
+                        <div className="risk-strategy-state">
+                          <span className={`risk-strategy-chip risk-strategy-chip--${(riskStrategy.state.state_label || 'SAFE').toLowerCase()}`}>
+                            {riskStrategy.state.state_label ?? 'SAFE'}
+                          </span>
+                          {riskStrategy.state.reason_text && (
+                            <span className="risk-strategy-reason">{riskStrategy.state.reason_text}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <p className="risk-gate-subtext">
                     {mode === 'ALLOW_EXITS_ONLY' ? 'Exits only' : 'Entries allowed'}
                   </p>

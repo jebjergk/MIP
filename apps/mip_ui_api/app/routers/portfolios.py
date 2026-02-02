@@ -182,6 +182,134 @@ def _normalize_risk_gate(risk_gate_row: dict | None, risk_state_row: dict | None
     }
 
 
+def _format_pct(value) -> str | None:
+    """Format a decimal fraction as percentage string (e.g. 0.1 -> '10%')."""
+    if value is None:
+        return None
+    try:
+        n = float(value)
+        return f"{round(n * 100)}%"
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_risk_strategy(
+    profile_row: dict | None,
+    risk_gate_normalized: dict,
+) -> dict:
+    """
+    Build render-ready risk_strategy from PORTFOLIO_PROFILE row and normalized risk_gate.
+    Only includes rules for which the profile has a non-null value.
+    """
+    state_label = "SAFE"
+    rl = risk_gate_normalized.get("risk_label")
+    if rl == "DEFENSIVE":
+        state_label = "STOPPED"
+    elif rl == "CAUTION":
+        state_label = "WARNING"
+    elif rl == "NORMAL":
+        state_label = "SAFE"
+
+    state = {
+        "state_label": state_label,
+        "reason_label": risk_gate_normalized.get("reason_code"),
+        "reason_text": risk_gate_normalized.get("reason_text") or "Portfolio is within safe limits.",
+    }
+
+    if not profile_row or _get(profile_row, "PROFILE_ID", "profile_id") is None:
+        return {
+            "profile_id": None,
+            "profile_name": None,
+            "summary": "No risk profile linked. Thresholds are not shown.",
+            "rules": [],
+            "state": state,
+        }
+
+    profile_id = _get(profile_row, "PROFILE_ID", "profile_id")
+    profile_name = _get(profile_row, "NAME", "name")
+    description = _get(profile_row, "DESCRIPTION", "description")
+    summary = (description and str(description).strip()) or (
+        "This profile sets limits on drawdown, bust level, and position size."
+    )
+
+    rules: list[dict] = []
+
+    # Drawdown stop
+    v = _get(profile_row, "DRAWDOWN_STOP_PCT", "drawdown_stop_pct")
+    if v is not None:
+        formatted = _format_pct(v)
+        if formatted:
+            rules.append({
+                "key": "drawdown_stop_pct",
+                "label": "Drawdown stop",
+                "value": formatted,
+                "tooltip": "Maximum loss from peak before new entries are paused.",
+            })
+
+    # Bust threshold
+    v = _get(profile_row, "BUST_EQUITY_PCT", "bust_equity_pct")
+    if v is not None:
+        formatted = _format_pct(v)
+        if formatted:
+            rules.append({
+                "key": "bust_equity_pct",
+                "label": "Bust threshold",
+                "value": formatted,
+                "tooltip": "Equity level (vs starting) that triggers bust; trading may be stopped.",
+            })
+
+    # Max positions
+    v = _get(profile_row, "MAX_POSITIONS", "max_positions")
+    if v is not None:
+        try:
+            n = int(float(v))
+            rules.append({
+                "key": "max_positions",
+                "label": "Max positions",
+                "value": str(n),
+                "tooltip": "Maximum number of open positions allowed.",
+            })
+        except (TypeError, ValueError):
+            pass
+
+    # Max position %
+    v = _get(profile_row, "MAX_POSITION_PCT", "max_position_pct")
+    if v is not None:
+        formatted = _format_pct(v)
+        if formatted:
+            rules.append({
+                "key": "max_position_pct",
+                "label": "Max position %",
+                "value": formatted,
+                "tooltip": "Maximum share of portfolio value in a single position.",
+            })
+
+    # Bust action (optional; human-readable)
+    v = _get(profile_row, "BUST_ACTION", "bust_action")
+    if v is not None and str(v).strip():
+        action_label = str(v).replace("_", " ").title()
+        if v == "ALLOW_EXITS_ONLY":
+            action_label = "Exits only"
+        elif v == "LIQUIDATE_NEXT_BAR":
+            action_label = "Liquidate next bar"
+        elif v == "LIQUIDATE_IMMEDIATE":
+            action_label = "Liquidate immediately"
+        rules.append({
+            "key": "bust_action",
+            "label": "Bust action",
+            "value": action_label,
+            "tooltip": "What the system does when the bust threshold is hit.",
+        })
+
+    return {
+        "profile_id": profile_id,
+        "profile_name": profile_name,
+        "summary": summary,
+        "rules": rules,
+        "state": state,
+    }
+
+
 # Snapshot semantics:
 # - pos_as_of_col: AS_OF_TS in V_PORTFOLIO_OPEN_POSITIONS_CANONICAL (latest bar snapshot)
 # - trade_ts_col: TRADE_TS in PORTFOLIO_TRADES
@@ -356,6 +484,29 @@ def get_portfolio_snapshot(
         rg_first = _first(risk_gate_rows)
         risk_gate_normalized = _normalize_risk_gate(rg_first, rs_first)
 
+        # Portfolio profile (for risk strategy: thresholds from PORTFOLIO_PROFILE)
+        profile_row = None
+        try:
+            cur.execute(
+                """
+                select prof.PROFILE_ID, prof.NAME, prof.DESCRIPTION,
+                       prof.DRAWDOWN_STOP_PCT, prof.BUST_EQUITY_PCT, prof.BUST_ACTION,
+                       prof.MAX_POSITIONS, prof.MAX_POSITION_PCT
+                from MIP.APP.PORTFOLIO p
+                left join MIP.APP.PORTFOLIO_PROFILE prof on prof.PROFILE_ID = p.PROFILE_ID
+                where p.PORTFOLIO_ID = %s
+                """,
+                (portfolio_id,),
+            )
+            row = cur.fetchone()
+            if row and cur.description:
+                cols = [d[0] for d in cur.description]
+                profile_row = dict(zip(cols, row))
+                profile_row = serialize_row(profile_row) if profile_row else None
+        except Exception:
+            pass
+        risk_strategy = _build_risk_strategy(profile_row, risk_gate_normalized)
+
         # --- Operator-clarity cards ---
         latest_daily = _first(daily)
 
@@ -415,6 +566,7 @@ def get_portfolio_snapshot(
             "risk_gate": risk_gate_normalized,
             "risk_gate_raw": risk_gate_rows,
             "risk_state": risk_state,
+            "risk_strategy": risk_strategy,
             "cards": cards,
         }
     finally:

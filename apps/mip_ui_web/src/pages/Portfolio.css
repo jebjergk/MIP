@@ -135,6 +135,77 @@
   font-weight: 600;
 }
 
+/* Risk Strategy (under Risk pillar header) */
+.risk-strategy-block {
+  margin: 0.75rem 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid #e8e8e8;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.risk-strategy-summary {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.risk-strategy-rules {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.risk-strategy-rule {
+  display: contents;
+}
+
+.risk-strategy-rule-label {
+  font-weight: 600;
+  color: #555;
+}
+
+.risk-strategy-rule-value {
+  color: #333;
+}
+
+.risk-strategy-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.risk-strategy-chip {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.risk-strategy-chip--safe {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.risk-strategy-chip--warning {
+  background: #fff8e1;
+  color: #f57c00;
+}
+
+.risk-strategy-chip--stopped {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.risk-strategy-reason {
+  font-size: 0.9rem;
+  color: #555;
+}
+
 .risk-gate-subtext {
   margin: 0 0 0.5rem 0;
   font-size: 0.9rem;

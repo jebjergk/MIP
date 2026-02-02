@@ -220,3 +220,12 @@ suggestions:
   no_trades_notice:
     short: This page does not execute or propose trades.
     long: "Suggestions are informational only. No trades are placed or proposed from this page. Use Training Status and Performance Summary for analysis; execution happens elsewhere."
+
+# Morning Brief page
+brief:
+  as_of_ts:
+    short: What is as-of time?
+    long: "As-of time is the timestamp of the data this brief was built from. It tells you how fresh the brief is—e.g. the latest bar or pipeline run that fed into signals, risk, and proposals."
+  pipeline_run_id:
+    short: What is pipeline run id?
+    long: "Pipeline run id is the unique identifier of the daily pipeline run that produced this brief. Use it to trace back to audit logs, order proposals, and the exact run that wrote this brief."

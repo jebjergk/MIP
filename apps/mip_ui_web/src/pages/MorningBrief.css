@@ -1,0 +1,61 @@
+.brief-summary-card {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.brief-summary-card h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.15rem;
+}
+
+.brief-summary-dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  align-items: baseline;
+}
+
+.brief-summary-dl dt {
+  margin: 0;
+  font-weight: 500;
+  color: #495057;
+}
+
+.brief-summary-dl dd {
+  margin: 0;
+}
+
+.brief-summary-dl dd code {
+  font-size: 0.9em;
+  background: #e9ecef;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.brief-json-details {
+  margin-top: 1rem;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.brief-json-details summary {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-weight: 500;
+  user-select: none;
+}
+
+.brief-json-pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  overflow: auto;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  border-top: 1px solid #dee2e6;
+  max-height: 24rem;
+}

@@ -3,16 +3,14 @@ import { Link } from 'react-router-dom'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { getGlossaryEntry } from '../data/glossary'
+import InfoTooltip from '../components/InfoTooltip'
+import './MorningBrief.css'
 
 export default function MorningBrief() {
-  const { explainMode } = useExplainMode()
-  const statusBadgeTitle = explainMode ? getGlossaryEntry('ui', 'status_badge')?.long : undefined
   const [portfolios, setPortfolios] = useState([])
   const [portfoliosLoading, setPortfoliosLoading] = useState(true)
   const [portfolioId, setPortfolioId] = useState('')
-  const [brief, setBrief] = useState(null)
+  const [briefResponse, setBriefResponse] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -32,18 +30,21 @@ export default function MorningBrief() {
     if (!id) return
     setLoading(true)
     setError(null)
-    setBrief(null)
+    setBriefResponse(null)
     try {
       const res = await fetch(`${API_BASE}/briefs/latest?portfolio_id=${id}`)
       if (!res.ok) throw new Error(res.statusText)
       const data = await res.json()
-      setBrief(data)
+      setBriefResponse(data)
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
   }
+
+  const found = briefResponse?.found === true
+  const brief = found ? briefResponse : null
 
   if (portfoliosLoading) return <p>Loading…</p>
   if (error && !portfolioId) {
@@ -94,17 +95,46 @@ export default function MorningBrief() {
         </button>
       </p>
       {error && <ErrorState message={error} />}
-      {!brief && !error && portfolioId && (
+      {!portfolioId && !loading && (
+        <EmptyState
+          title="Select a portfolio"
+          action="Choose a portfolio above and click Load latest brief."
+          explanation="Briefs are generated per portfolio by the daily pipeline."
+        />
+      )}
+      {portfolioId && !loading && !error && briefResponse == null && (
         <EmptyState
           title="No brief loaded"
-          action="Click Load latest brief above."
-          explanation="Select a portfolio and load to fetch its latest morning brief."
+          action="Click Load latest brief above to fetch the latest brief for this portfolio."
+          explanation="Briefs are generated per portfolio by the daily pipeline."
+        />
+      )}
+      {portfolioId && !loading && !error && briefResponse?.found === false && (
+        <EmptyState
+          title="No brief exists yet for this portfolio"
+          action={<>Run the daily pipeline for this portfolio, then load again.</>}
+          message={briefResponse?.message}
+          explanation="Briefs are written when the pipeline runs and writes morning briefs for each portfolio."
+          reasons={['Pipeline has not run yet for this portfolio.', 'No brief row in MIP.AGENT_OUT.MORNING_BRIEF.']}
         />
       )}
       {brief && (
         <>
-          <h2>Latest brief {brief.STATUS != null && <><span className="status-badge" title={statusBadgeTitle}>{brief.STATUS}</span></>}</h2>
-          <pre>{JSON.stringify(brief, null, 2)}</pre>
+          <section className="brief-summary-card" aria-label="Brief summary">
+            <h2>Brief Summary {brief.status != null && <><span className="status-badge" title={statusBadgeTitle}>{brief.status}</span></>}</h2>
+            <dl className="brief-summary-dl">
+              <dt>As-of <InfoTooltip scope="brief" key="as_of_ts" variant="short" /></dt>
+              <dd>{brief.as_of_ts ?? '—'}</dd>
+              <dt>Pipeline run id <InfoTooltip scope="brief" key="pipeline_run_id" variant="short" /></dt>
+              <dd><code>{brief.pipeline_run_id ?? '—'}</code></dd>
+              <dt>Agent name</dt>
+              <dd>{brief.agent_name ?? '—'}</dd>
+            </dl>
+            <details className="brief-json-details">
+              <summary>Full brief JSON</summary>
+              <pre className="brief-json-pre">{JSON.stringify(brief.brief_json ?? brief, null, 2)}</pre>
+            </details>
+          </section>
         </>
       )}
     </>

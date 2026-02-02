@@ -224,6 +224,65 @@ def get_performance_summary(
     return SummaryResponse(items=items)
 
 
+# --- Distribution: raw REALIZED_RETURN values for histogram (daily only; COMPLETED only) ---
+DISTRIBUTION_SQL = """
+select ro.REALIZED_RETURN
+from MIP.APP.RECOMMENDATION_LOG rl
+join MIP.APP.RECOMMENDATION_OUTCOMES ro on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+where rl.INTERVAL_MINUTES = 1440
+  and (%(market_type)s is null or rl.MARKET_TYPE = %(market_type)s)
+  and (%(symbol)s is null or rl.SYMBOL = %(symbol)s)
+  and (%(pattern_id)s is null or rl.PATTERN_ID = %(pattern_id)s)
+  and (%(horizon_bars)s is null or ro.HORIZON_BARS = %(horizon_bars)s)
+  and ro.EVAL_STATUS = 'COMPLETED'
+  and ro.REALIZED_RETURN is not null
+order by ro.CALCULATED_AT desc
+limit %(limit)s
+"""
+
+
+@router.get("/distribution")
+def get_performance_distribution(
+    market_type: str | None = Query(None, description="Market type (e.g. STOCK, ETF, FX)"),
+    symbol: str | None = Query(None, description="Symbol (ticker)"),
+    pattern_id: int | None = Query(None, description="Pattern ID"),
+    horizon_bars: int | None = Query(None, description="Horizon in bars (e.g. 5)"),
+    limit: int = Query(2000, ge=1, le=10000, description="Max number of points"),
+):
+    """
+    Raw REALIZED_RETURN values for a given (market_type, symbol, pattern_id, horizon_bars).
+    Daily bars only; EVAL_STATUS = 'COMPLETED'. Order: CALCULATED_AT desc.
+    Used for distribution/histogram charts. Returns array of decimals (e.g. 0.02 = 2%).
+    """
+    params = {
+        "market_type": market_type,
+        "symbol": symbol,
+        "pattern_id": pattern_id,
+        "horizon_bars": horizon_bars,
+        "limit": limit,
+    }
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(DISTRIBUTION_SQL, params)
+        rows = fetch_all(cur)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+    values: list[float] = []
+    for r in rows:
+        v = _get(r, "REALIZED_RETURN", "realized_return")
+        if v is not None:
+            try:
+                f = float(v)
+                values.append(f)
+            except (TypeError, ValueError):
+                pass
+    return {"values": values}
+
+
 # --- Suggestions: all pairs with per-horizon outcomes (daily only) ---
 SUGGESTIONS_RECS_SQL = """
 select

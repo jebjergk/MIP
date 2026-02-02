@@ -444,3 +444,174 @@
   background: #f5f5f5;
   font-weight: 600;
 }
+
+/* Evidence drawer: sections + charts */
+.suggestion-drawer-evidence .suggestion-drawer-body {
+  max-width: 720px;
+}
+
+.evidence-section {
+  margin-bottom: 1.5rem;
+}
+
+.evidence-section h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+  color: #333;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.evidence-explanations .evidence-what,
+.evidence-explanations .evidence-why,
+.evidence-explanations .evidence-how {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: #fafafa;
+  border-radius: 6px;
+  border-left: 3px solid #1976d2;
+}
+
+.evidence-explanations .evidence-why { border-left-color: #2e7d32; }
+.evidence-explanations .evidence-how { border-left-color: #7b1fa2; }
+
+.evidence-explanations p {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: #333;
+}
+
+.evidence-charts {
+  padding: 0.5rem 0;
+}
+
+.evidence-horizon-chart,
+.evidence-pct-chart,
+.evidence-dist-chart {
+  margin-bottom: 1rem;
+}
+
+.evidence-chart-label {
+  display: block;
+  font-size: 0.85rem;
+  color: #555;
+  margin-bottom: 0.25rem;
+}
+
+.evidence-horizon-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.evidence-horizon-btn {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.evidence-horizon-btn:hover {
+  background: #f5f5f5;
+  border-color: #999;
+}
+
+.evidence-horizon-btn.active {
+  background: #1976d2;
+  color: #fff;
+  border-color: #1976d2;
+}
+
+.evidence-empty {
+  font-size: 0.9rem;
+  color: #666;
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+
+.evidence-dist-legend {
+  font-size: 0.85rem;
+  color: #555;
+  margin: 0.25rem 0 0 0;
+}
+
+.evidence-dist-legend span { margin-right: 1rem; }
+
+.evidence-confidence {
+  padding: 0.75rem;
+  background: #f5f5f5;
+  border-radius: 6px;
+  margin-top: 1rem;
+}
+
+.evidence-maturity-bar-wrap {
+  height: 10px;
+  background: #e0e0e0;
+  border-radius: 5px;
+  overflow: hidden;
+  margin: 0.35rem 0;
+  max-width: 200px;
+}
+
+.evidence-maturity-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #90caf9, #1565c0);
+  border-radius: 5px;
+  transition: width 0.2s ease;
+}
+
+.evidence-maturity-label {
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.evidence-coverage {
+  font-size: 0.9rem;
+  margin: 0.35rem 0 0 0;
+  color: #555;
+}
+
+.evidence-reasons {
+  margin: 0.5rem 0 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.9rem;
+  color: #444;
+  line-height: 1.4;
+}
+
+.evidence-reasons li { margin-bottom: 0.2rem; }
+
+/* Sparkline-like horizon strip in list row */
+.suggestion-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 28px;
+  margin-top: 0.35rem;
+}
+
+.suggestion-sparkline-bar {
+  flex: 1;
+  min-width: 4px;
+  max-width: 24px;
+  background: #bdbdbd;
+  border-radius: 2px 2px 0 0;
+  transition: background 0.15s ease;
+}
+
+.suggestion-sparkline-bar.has-value {
+  background: #757575;
+}
+
+.suggestion-sparkline-bar.positive {
+  background: #4caf50;
+}
+
+.suggestion-sparkline-bar.negative {
+  background: #f44336;
+}

@@ -6,7 +6,9 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
+import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
+import { RUNS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './AuditViewer.css'
 
 export default function AuditViewer() {
@@ -17,6 +19,11 @@ export default function AuditViewer() {
   const [runDetail, setRunDetail] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const { setContext } = useExplainCenter()
+
+  useEffect(() => {
+    setContext(RUNS_EXPLAIN_CONTEXT)
+  }, [setContext])
 
   useEffect(() => {
     let cancelled = false

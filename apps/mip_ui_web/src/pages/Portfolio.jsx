@@ -6,7 +6,9 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
+import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
+import { PORTFOLIO_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Portfolio.css'
 
 export default function Portfolio() {
@@ -19,6 +21,11 @@ export default function Portfolio() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [lookbackDays, setLookbackDays] = useState(30)
+  const { setContext } = useExplainCenter()
+
+  useEffect(() => {
+    setContext(PORTFOLIO_EXPLAIN_CONTEXT)
+  }, [setContext])
 
   useEffect(() => {
     let cancelled = false

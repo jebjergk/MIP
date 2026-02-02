@@ -16,7 +16,10 @@ import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
+import { useExplainCenter } from '../context/ExplainCenterContext'
+import { useExplainSection } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
+import { SUGGESTIONS_EXPLAIN_CONTEXT, buildSuggestionsEvidenceContext } from '../data/explainContexts'
 import './Suggestions.css'
 
 const SCOPE_SUG = 'suggestions'
@@ -191,6 +194,20 @@ export default function Suggestions() {
   const [distributionError, setDistributionError] = useState(null)
   const [liveMetrics, setLiveMetrics] = useState(null)
   const [refreshingSummary, setRefreshingSummary] = useState(false)
+  const { setContext } = useExplainCenter()
+  const openExplainSuggestions = useExplainSection(SUGGESTIONS_EXPLAIN_CONTEXT)
+
+  useEffect(() => {
+    setContext(SUGGESTIONS_EXPLAIN_CONTEXT)
+  }, [setContext])
+
+  useEffect(() => {
+    if (selectedItem != null && selectedHorizon != null) {
+      setContext(buildSuggestionsEvidenceContext(selectedItem, selectedHorizon))
+    } else {
+      setContext(SUGGESTIONS_EXPLAIN_CONTEXT)
+    }
+  }, [selectedItem, selectedHorizon, setContext])
 
   useEffect(() => {
     if (!selectedItem) return
@@ -371,7 +388,8 @@ export default function Suggestions() {
         <InfoTooltip scope={SCOPE_SUG} key="early_signal" variant="short" />
         , horizons ≥ {MIN_HORIZONS_REQUIRED}
         <InfoTooltip scope={SCOPE_SUG} key="min_horizons_required" variant="short" />
-        .
+        .{' '}
+        <button type="button" className="suggestions-explain-this" onClick={openExplainSuggestions} aria-label="Open Explain Center">Explain this</button>
       </p>
 
       <label className="suggestions-toggle-early">

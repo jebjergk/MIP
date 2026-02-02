@@ -6,7 +6,9 @@ import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
+import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
+import { TODAY_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Today.css'
 
 const SCOPE_TODAY = 'today'
@@ -25,6 +27,11 @@ export default function Today() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const { setContext } = useExplainCenter()
+
+  useEffect(() => {
+    setContext(TODAY_EXPLAIN_CONTEXT)
+  }, [setContext])
 
   useEffect(() => {
     let cancelled = false

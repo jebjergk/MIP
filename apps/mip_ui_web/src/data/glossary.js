@@ -7,9 +7,10 @@ import glossaryData from './UX_METRIC_GLOSSARY.json'
 
 /**
  * Get glossary entry by scope and key (backward compatible).
+ * When entry has what/why/how/next (plain-language rules), they are included.
  * @param {string} scope - e.g. 'audit', 'portfolio', 'risk_gate', 'signals', 'proposals', 'positions', 'trades', 'ui'
  * @param {string} key - e.g. 'run_status', 'total_return'
- * @returns {{ short: string, long: string } | null}
+ * @returns {{ short: string, long: string, what?: string, why?: string, how?: string, next?: string, calc?: string } | null}
  */
 export function getGlossaryEntry(scope, key) {
   if (!scope || !key) return null
@@ -17,16 +18,23 @@ export function getGlossaryEntry(scope, key) {
   if (!scopeData) return null
   const entry = scopeData[key]
   if (!entry || typeof entry.short !== 'string') return null
-  return {
+  const out = {
     short: entry.short,
     long: entry.long ?? entry.short,
   }
+  if (typeof entry.what === 'string') out.what = entry.what
+  if (typeof entry.why === 'string') out.why = entry.why
+  if (typeof entry.how === 'string') out.how = entry.how
+  if (typeof entry.next === 'string') out.next = entry.next
+  if (typeof entry.calc === 'string') out.calc = entry.calc
+  return out
 }
 
 /**
  * Get glossary entry by dot-key (e.g. "audit.has_new_bars", "portfolio.max_drawdown").
+ * Returns same shape as getGlossaryEntry (short, long, optional what/why/how/next/calc).
  * @param {string} dotKey - e.g. 'audit.has_new_bars', 'portfolio.total_return', 'ui.status_badge'
- * @returns {{ short: string, long: string } | null}
+ * @returns {{ short: string, long: string, what?: string, why?: string, how?: string, next?: string, calc?: string } | null}
  */
 export function getGlossaryEntryByDotKey(dotKey) {
   if (!dotKey || typeof dotKey !== 'string') return null

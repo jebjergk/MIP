@@ -6,6 +6,20 @@
   margin-bottom: 1rem;
 }
 
+.suggestions-explain-this {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #1565c0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+}
+
+.suggestions-explain-this:hover {
+  text-decoration: underline;
+}
+
 .suggestions-filters {
   margin-bottom: 0.75rem;
 }

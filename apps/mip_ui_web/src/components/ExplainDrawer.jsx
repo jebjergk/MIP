@@ -7,7 +7,7 @@ import './ExplainDrawer.css'
 function resolveFieldDisplay(field, glossary) {
   if (field.glossaryKey && glossary) {
     return {
-      label: glossary.short ? field.label : field.label,
+      label: field.label,
       meaning: glossary.long ?? glossary.short ?? field.meaning,
       calc: field.calc ?? (glossary.calc || null),
     }

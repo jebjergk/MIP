@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { API_BASE } from '../App'
 import LoadingState from '../components/LoadingState'
+import { useExplainCenter } from '../context/ExplainCenterContext'
+import { DEBUG_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Debug.css'
 
 function previewFromData(data, isError = false) {
@@ -31,6 +33,11 @@ function previewFromData(data, isError = false) {
 export default function Debug() {
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
+  const { setContext } = useExplainCenter()
+
+  useEffect(() => {
+    setContext(DEBUG_EXPLAIN_CONTEXT)
+  }, [setContext])
 
   useEffect(() => {
     let cancelled = false

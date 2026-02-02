@@ -5,6 +5,10 @@ audit:
   run_status:
     short: Whether this pipeline run finished successfully, failed, or was skipped.
     long: "Run status tells you the outcome of one automated pipeline run. SUCCESS means all steps completed; FAILED means something broke; SKIPPED means the run did not execute (e.g. no new data). Use it to quickly see if you need to investigate."
+    what: "Run status is the outcome of one pipeline run: SUCCESS, FAIL, RUNNING, or a skip reason (e.g. no new bars)."
+    why: "So you can see at a glance whether the pipeline ran and whether you need to look at logs or data."
+    how: "Read from MIP.APP.MIP_AUDIT_LOG; the completion row for each RUN_ID carries the final status."
+    next: "Open the run detail to see the timeline and interpreted summary."
   has_new_bars:
     short: Whether new market data was available for this run.
     long: "Has new bars indicates if the system had fresh price/candle data for the run. If false, the run may have skipped trading steps because there was nothing new to act on. Check this when a run seems to do nothing."

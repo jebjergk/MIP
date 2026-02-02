@@ -82,6 +82,22 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.home-explain-this {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #1565c0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  margin-left: 0.25rem;
+}
+
+.home-explain-this:hover {
+  text-decoration: underline;
 }
 
 /* Quick actions: cards */

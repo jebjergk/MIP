@@ -6,7 +6,9 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
+import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
+import { TRAINING_STATUS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
@@ -42,6 +44,11 @@ export default function TrainingStatus() {
   const [marketTypeFilter, setMarketTypeFilter] = useState('')
   const [symbolSearch, setSymbolSearch] = useState('')
   const [patternIdFilter, setPatternIdFilter] = useState('')
+  const { setContext } = useExplainCenter()
+
+  useEffect(() => {
+    setContext(TRAINING_STATUS_EXPLAIN_CONTEXT)
+  }, [setContext])
 
   useEffect(() => {
     if (appliedUrlRef.current) return

@@ -5,6 +5,8 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
+import { useExplainCenter } from '../context/ExplainCenterContext'
+import { MORNING_BRIEF_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './MorningBrief.css'
 
 export default function MorningBrief() {
@@ -14,6 +16,11 @@ export default function MorningBrief() {
   const [briefResponse, setBriefResponse] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const { setContext } = useExplainCenter()
+
+  useEffect(() => {
+    setContext(MORNING_BRIEF_EXPLAIN_CONTEXT)
+  }, [setContext])
 
   useEffect(() => {
     let cancelled = false

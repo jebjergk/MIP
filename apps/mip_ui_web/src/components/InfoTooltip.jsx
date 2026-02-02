@@ -35,8 +35,22 @@ export default function InfoTooltip({ scope, key: glossaryKey, entryKey, variant
 
   if (!explainMode || !entry) return null
 
+  const hasStructured = entry.what || entry.why || entry.how
   const displayText = variant === 'long' ? entry.long : entry.short
-  const usePopover = variant === 'long' && entry.long.length > 120
+  const usePopover = variant === 'long' && (entry.long.length > 120 || hasStructured)
+
+  const popoverContent = usePopover && showLong && (hasStructured ? (
+    <span ref={popoverRef} className="info-tooltip-popover info-tooltip-popover--structured" role="tooltip" onMouseEnter={() => setShowLong(true)} onMouseLeave={() => setShowLong(false)}>
+      {entry.what && <><strong>What:</strong> {entry.what}<br /></>}
+      {entry.why && <><strong>Why:</strong> {entry.why}<br /></>}
+      {entry.how && <><strong>How:</strong> {entry.how}<br /></>}
+      {entry.next && <><strong>Next:</strong> {entry.next}</>}
+    </span>
+  ) : (
+    <span ref={popoverRef} className="info-tooltip-popover" role="tooltip" onMouseEnter={() => setShowLong(true)} onMouseLeave={() => setShowLong(false)}>
+      {entry.long}
+    </span>
+  ))
 
   return (
     <span className="info-tooltip-wrap" ref={anchorRef}>
@@ -53,17 +67,7 @@ export default function InfoTooltip({ scope, key: glossaryKey, entryKey, variant
       >
         ?
       </span>
-      {usePopover && showLong && (
-        <span
-          ref={popoverRef}
-          className="info-tooltip-popover"
-          role="tooltip"
-          onMouseEnter={() => setShowLong(true)}
-          onMouseLeave={() => setShowLong(false)}
-        >
-          {entry.long}
-        </span>
-      )}
+      {usePopover && showLong && popoverContent}
     </span>
   )
 }

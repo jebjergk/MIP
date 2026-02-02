@@ -355,6 +355,24 @@
       "long": "Pipeline run id is the unique identifier of the daily pipeline run that produced this brief. Use it to trace back to audit logs, order proposals, and the exact run that wrote this brief."
     }
   },
+  "home": {
+    "hero_headline": {
+      "short": "Brand and product name for the platform.",
+      "long": "Market Intelligence Platform is the name of this system. It combines daily-bar research, outcomes-based learning, and explainable suggestions for symbol/pattern candidates."
+    },
+    "hero_subtext": {
+      "short": "Three pillars: daily-bar research, outcomes-based learning, explainable suggestions.",
+      "long": "Daily-bar research means analysis on daily candles; outcomes-based learning means the system learns from realized returns and hit rates; explainable suggestions means ranked candidates with clear metrics and tooltips, not black-box signals."
+    },
+    "quick_actions": {
+      "short": "Shortcuts to key views: Portfolio, Morning Brief, Training Status, Suggestions.",
+      "long": "Quick actions take you directly to the most used pages: view a portfolio (default portfolio 1), read the latest morning brief, open training status by symbol/pattern, or open the ranked suggestions list."
+    },
+    "system_at_a_glance": {
+      "short": "Summary of last pipeline run, new evaluations since run, and latest brief timestamp.",
+      "long": "System at a glance shows live metrics: when the last pipeline run completed and its status, how many new outcome evaluations were added since that run, and when the latest morning brief was generated. Helps you see if data is fresh."
+    }
+  },
   "today": {
     "today_overview": {
       "short": "Single view: system status, portfolio situation, and today's candidates from evaluated history.",

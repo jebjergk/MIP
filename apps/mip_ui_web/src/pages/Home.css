@@ -1,72 +1,188 @@
-.home-tagline {
-  margin: 0 0 1rem 0;
-  color: #555;
+/* Home: hero banner, quick actions, system at a glance */
+
+/* Hero: wide banner (not full-screen), dark gradient overlay */
+.home-hero {
+  position: relative;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto 2rem;
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.home-dashboard {
-  margin: 1rem 0;
-  padding: 1rem;
-  background: #f8f9fa;
-  border: 1px solid #e9ecef;
-  border-radius: 8px;
+.home-hero-bg {
+  position: absolute;
+  inset: 0;
+  background-image: url('/mip-splash.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
-.home-dashboard h2 {
-  margin: 0 0 0.75rem 0;
+.home-hero--loading {
+  background-color: #1a237e;
+}
+
+.home-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.5) 0%,
+    rgba(0, 0, 0, 0.6) 50%,
+    rgba(0, 0, 0, 0.75) 100%
+  );
+  pointer-events: none;
+}
+
+.home-hero-content {
+  position: relative;
+  z-index: 1;
+  padding: 2rem 2.5rem;
+  text-align: center;
+  max-width: 800px;
+}
+
+.home-hero-title {
+  margin: 0 0 0.5rem;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.home-hero-subtext {
+  margin: 0;
+  font-size: clamp(0.85rem, 2vw, 1rem);
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Section titles */
+.home-section-title {
+  margin: 0 0 1rem;
   font-size: 1.15rem;
+  font-weight: 600;
+  color: #333;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
-.home-facts {
+/* Quick actions: cards */
+.home-quick-actions {
+  margin-bottom: 2rem;
+}
+
+.home-quick-actions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.75rem 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
 }
 
-.home-fact {
+.home-card {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.35rem;
+  padding: 1.25rem;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.home-fact-label {
+.home-card--link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.home-card--link:hover {
+  border-color: #1565c0;
+  box-shadow: 0 2px 8px rgba(21, 101, 192, 0.12);
+}
+
+.home-card-title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: #1565c0;
+}
+
+.home-card--link:hover .home-card-title {
+  text-decoration: underline;
+}
+
+.home-card-desc {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.home-card-label {
   font-size: 0.85rem;
   color: #666;
   font-weight: 500;
 }
 
-.home-fact-value {
+.home-card-value {
   font-size: 1rem;
   color: #333;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
-.home-fact-value--ok {
+/* System at a glance */
+.home-glance {
+  margin-bottom: 2rem;
+}
+
+.home-glance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.home-glance-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.home-glance-badge--success {
+  background: #e8f5e9;
   color: #2e7d32;
-  font-weight: 500;
 }
 
-.home-fact-value--down {
+.home-glance-badge--fail {
+  background: #ffebee;
   color: #c62828;
-  font-weight: 500;
 }
 
-.home-fact-value--unknown {
-  color: #757575;
+.home-glance-badge--running {
+  background: #e3f2fd;
+  color: #1565c0;
 }
 
-.home-quick-links {
-  margin: 1.5rem 0;
-}
-
-.home-quick-links h2 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.1rem;
-}
-
-.home-quick-links ul {
-  margin: 0;
-  padding-left: 1.25rem;
-}
-
-.home-quick-links li {
-  margin: 0.25rem 0;
+.home-glance-badge--skipped_no_new_bars,
+.home-glance-badge--skip_rate_limit,
+.home-glance-badge--success_with_skips {
+  background: #fff8e1;
+  color: #f57c00;
 }

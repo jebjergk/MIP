@@ -2,136 +2,138 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
-import ErrorState from '../components/ErrorState'
+import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
+import { relativeTime } from '../components/LiveHeader'
 import './Home.css'
 
-/** After this many ms we show the dashboard with whatever facts we have (partial is OK). */
-const DASHBOARD_MAX_WAIT_MS = 5000
+const DEFAULT_PORTFOLIO_ID = 1
 
 export default function Home() {
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [facts, setFacts] = useState({
-    snowflakeOk: null,
-    snowflakeMessage: null,
-    portfoliosCount: null,
-    latestBriefTs: null,
-    latestRunTs: null,
-  })
+  const [liveMetrics, setLiveMetrics] = useState(null)
 
   useEffect(() => {
     let cancelled = false
-
-    const mergeFacts = (partial) => {
-      if (!cancelled) setFacts((prev) => ({ ...prev, ...partial }))
-    }
-
-    const stopLoading = () => {
-      if (!cancelled) setLoading(false)
-    }
-
-    const p1 = fetch(`${API_BASE}/status`)
-      .then((r) => (r.ok ? r.json() : {}))
-      .then((d) => mergeFacts({ snowflakeOk: !!d.snowflake_ok, snowflakeMessage: d.snowflake_message ?? null }))
-      .catch(() => mergeFacts({ snowflakeOk: false, snowflakeMessage: 'Not reachable' }))
-
-    const p2 = fetch(`${API_BASE}/portfolios`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list) => mergeFacts({ portfoliosCount: Array.isArray(list) ? list.length : 0 }))
-      .catch(() => mergeFacts({ portfoliosCount: null }))
-
-    const p3 = fetch(`${API_BASE}/briefs/latest?portfolio_id=1`)
-      .then((r) => (r.ok ? r.json() : { found: false }))
-      .then((d) => mergeFacts({ latestBriefTs: d.found ? d.as_of_ts : null }))
-      .catch(() => mergeFacts({ latestBriefTs: null }))
-
-    const p4 = fetch(`${API_BASE}/runs?limit=1`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list) => {
-        const first = Array.isArray(list) && list.length ? list[0] : null
-        mergeFacts({ latestRunTs: first?.completed_at ?? first?.started_at ?? null })
+    fetch(`${API_BASE}/live/metrics?portfolio_id=${DEFAULT_PORTFOLIO_ID}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((data) => {
+        if (!cancelled) setLiveMetrics(data)
       })
-      .catch(() => mergeFacts({ latestRunTs: null }))
-
-    // Show dashboard after 5s with whatever we have, or as soon as all four finish.
-    const stopWaitingTimer = setTimeout(stopLoading, DASHBOARD_MAX_WAIT_MS)
-    Promise.allSettled([p1, p2, p3, p4]).then(stopLoading)
-
-    return () => {
-      cancelled = true
-      clearTimeout(stopWaitingTimer)
-    }
+      .catch(() => {
+        if (!cancelled) setLiveMetrics(null)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
   }, [])
 
   if (loading) {
     return (
       <>
-        <h1>MIP UI</h1>
-        <LoadingState message="Checking system status…" />
+        <div className="home-hero home-hero--loading" aria-hidden="true">
+          <div className="home-hero-overlay" />
+          <div className="home-hero-content">
+            <h1 className="home-hero-title">Market Intelligence Platform</h1>
+            <p className="home-hero-subtext">Daily-bar research • outcomes-based learning • explainable suggestions</p>
+          </div>
+        </div>
+        <LoadingState message="Loading…" />
       </>
     )
   }
 
-  if (error) {
-    return (
-      <>
-        <h1>MIP UI</h1>
-        <ErrorState message={error} />
-        <section className="home-quick-links" aria-label="Quick links">
-          <h2>Quick links</h2>
-          <ul>
-            <li><Link to="/runs">Runs</Link></li>
-            <li><Link to="/portfolios">Portfolios</Link></li>
-            <li><Link to="/brief">Morning Brief</Link></li>
-            <li><Link to="/training">Training Status</Link></li>
-            <li><Link to="/suggestions">Suggestions</Link></li>
-            <li><Link to="/debug">Debug</Link></li>
-          </ul>
-        </section>
-      </>
-    )
-  }
+  const lastRun = liveMetrics?.last_run
+  const lastBrief = liveMetrics?.last_brief
+  const outcomes = liveMetrics?.outcomes ?? {}
+  const sinceLastRun = outcomes.since_last_run ?? 0
 
   return (
     <>
-      <h1>MIP UI</h1>
-      <p className="home-tagline">Read-only view of pipeline runs, portfolios, morning briefs, and training status.</p>
-
-      <section className="home-dashboard" aria-label="System status">
-        <h2>Is the system alive?</h2>
-        <div className="home-facts">
-          <div className="home-fact">
-            <span className="home-fact-label">Snowflake</span>
-            <span className={`home-fact-value home-fact-value--${facts.snowflakeOk === true ? 'ok' : facts.snowflakeOk === false ? 'down' : 'unknown'}`}>
-              {facts.snowflakeOk === true ? 'OK' : facts.snowflakeOk === false ? (facts.snowflakeMessage || 'Not reachable') : '—'}
-            </span>
-          </div>
-          <div className="home-fact">
-            <span className="home-fact-label">Portfolios</span>
-            <span className="home-fact-value">{facts.portfoliosCount != null ? String(facts.portfoliosCount) : '—'}</span>
-          </div>
-          <div className="home-fact">
-            <span className="home-fact-label">Latest brief (portfolio 1)</span>
-            <span className="home-fact-value">{facts.latestBriefTs ?? '—'}</span>
-          </div>
-          <div className="home-fact">
-            <span className="home-fact-label">Latest run</span>
-            <span className="home-fact-value">{facts.latestRunTs ?? '—'}</span>
-          </div>
+      <section className="home-hero" aria-label="Hero">
+        <div className="home-hero-bg" role="img" aria-label="Market intelligence visual" />
+        <div className="home-hero-overlay" aria-hidden="true" />
+        <div className="home-hero-content">
+          <h1 className="home-hero-title">
+            Market Intelligence Platform
+            <InfoTooltip scope="home" entryKey="hero_headline" variant="short" />
+          </h1>
+          <p className="home-hero-subtext">
+            Daily-bar research • outcomes-based learning • explainable suggestions
+            <InfoTooltip scope="home" entryKey="hero_subtext" variant="short" />
+          </p>
         </div>
       </section>
 
-      <section className="home-quick-links" aria-label="Quick links">
-        <h2>Quick links</h2>
-        <ul>
-          <li><Link to="/runs">Runs</Link> — recent pipeline runs and run detail</li>
-          <li><Link to="/portfolios">Portfolios</Link> — list and detail</li>
-          <li><Link to="/brief">Morning Brief</Link> — latest brief per portfolio</li>
-          <li><Link to="/training">Training Status</Link> — training maturity</li>
-          <li><Link to="/suggestions">Suggestions</Link> — ranked symbol/pattern</li>
-          <li><Link to="/debug">Debug</Link> — route smoke checks</li>
-        </ul>
+      <section className="home-quick-actions" aria-label="Quick actions">
+        <h2 className="home-section-title">
+          Quick actions
+          <InfoTooltip scope="home" entryKey="quick_actions" variant="short" />
+        </h2>
+        <div className="home-quick-actions-grid">
+          <Link to={`/portfolios/${DEFAULT_PORTFOLIO_ID}`} className="home-card home-card--link">
+            <span className="home-card-title">View Portfolio</span>
+            <span className="home-card-desc">Portfolio {DEFAULT_PORTFOLIO_ID} — positions and trades</span>
+          </Link>
+          <Link to="/brief" className="home-card home-card--link">
+            <span className="home-card-title">View Latest Morning Brief</span>
+            <span className="home-card-desc">Latest brief per portfolio</span>
+          </Link>
+          <Link to="/training" className="home-card home-card--link">
+            <span className="home-card-title">Open Training Status</span>
+            <span className="home-card-desc">Maturity by symbol/pattern</span>
+          </Link>
+          <Link to="/suggestions" className="home-card home-card--link">
+            <span className="home-card-title">Open Suggestions</span>
+            <span className="home-card-desc">Ranked symbol/pattern candidates</span>
+          </Link>
+        </div>
+      </section>
+
+      <section className="home-glance" aria-label="System at a glance">
+        <h2 className="home-section-title">
+          System at a glance
+          <InfoTooltip scope="home" entryKey="system_at_a_glance" variant="short" />
+        </h2>
+        <div className="home-glance-grid">
+          <div className="home-card">
+            <span className="home-card-label">
+              Last pipeline run
+              <InfoTooltip scope="live" entryKey="last_pipeline_run" variant="short" />
+            </span>
+            <span className="home-card-value">
+              {lastRun ? (
+                <>
+                  {relativeTime(lastRun.completed_at ?? lastRun.started_at)}
+                  <span className={`home-glance-badge home-glance-badge--${(lastRun.status || '').toLowerCase()}`}>
+                    {lastRun.status ?? '—'}
+                  </span>
+                </>
+              ) : (
+                '—'
+              )}
+            </span>
+          </div>
+          <div className="home-card">
+            <span className="home-card-label">
+              New evaluations since last run
+              <InfoTooltip scope="live" entryKey="new_evaluations_since_last_run" variant="short" />
+            </span>
+            <span className="home-card-value">
+              {sinceLastRun > 0 ? `+${sinceLastRun}` : sinceLastRun === 0 ? '0' : '—'}
+            </span>
+          </div>
+          <div className="home-card">
+            <span className="home-card-label">
+              Latest brief (as-of)
+              <InfoTooltip scope="live" entryKey="data_freshness" variant="short" />
+            </span>
+            <span className="home-card-value">
+              {lastBrief?.found ? relativeTime(lastBrief.as_of_ts) : 'No brief yet'}
+            </span>
+          </div>
+        </div>
       </section>
 
       <EmptyState

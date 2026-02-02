@@ -1,4 +1,47 @@
-/* Audit Viewer / Runs: narrative + sections + timeline with tooltips */
+/* Audit Viewer / Runs: run summary + narrative + sections + timeline with tooltips */
+
+.audit-run-summary {
+  margin: 1rem 0;
+}
+
+.audit-run-summary h2 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.audit-run-summary-card {
+  border: 1px solid #c9d;
+  border-left: 4px solid #639;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #f8f4fc;
+}
+
+.audit-run-summary-headline {
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem 0;
+  color: #333;
+}
+
+.audit-run-summary-dl {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.audit-run-summary-dl dt {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  color: #333;
+}
+
+.audit-run-summary-dl dt:first-of-type {
+  margin-top: 0;
+}
+
+.audit-run-summary-dl dd {
+  margin: 0.2rem 0 0 0;
+  color: #444;
+}
 
 .audit-narrative {
   margin: 1rem 0;

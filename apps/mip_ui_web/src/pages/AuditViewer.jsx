@@ -64,6 +64,7 @@ export default function AuditViewer() {
   }
 
   if (runId && runDetail) {
+    const runSummary = runDetail.run_summary || null
     const sections = runDetail.sections || []
     const phases = runDetail.phases || []
     const timeline = runDetail.timeline || []
@@ -73,6 +74,30 @@ export default function AuditViewer() {
       <>
         <h1>Run: {runId}</h1>
         <p><Link to="/runs">← Back to runs</Link></p>
+
+        {/* Run summary: no-new-bars / skip behavior — above narrative and timeline */}
+        {runSummary && (
+          <section className="audit-run-summary" aria-label="Run summary">
+            <h2>Run summary <InfoTooltip scope="audit" key="run_status" variant="short" /></h2>
+            <div className="audit-run-summary-card">
+              <h3 className="audit-run-summary-headline">{runSummary.headline}</h3>
+              <dl className="audit-run-summary-dl">
+                <dt>What happened</dt>
+                <dd>{runSummary.what_happened}</dd>
+                <dt>Why</dt>
+                <dd>{runSummary.why}</dd>
+                <dt>Impact</dt>
+                <dd>{runSummary.impact}</dd>
+                {runSummary.next_check != null && runSummary.next_check !== '' && (
+                  <>
+                    <dt>Next check</dt>
+                    <dd>{runSummary.next_check}</dd>
+                  </>
+                )}
+              </dl>
+            </div>
+          </section>
+        )}
 
         {/* Top narrative: "What happened" (includes "no new bars" clearly when applicable) */}
         {interpretedNarrative && (

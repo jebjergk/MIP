@@ -262,6 +262,58 @@ def build_phases_and_sections(rows: list[dict]) -> tuple[list[dict], list[dict]]
     return phases, sections
 
 
+def _detect_run_no_new_bars(rows: list[dict]) -> bool:
+    """True if any pipeline step has SKIPPED_NO_NEW_BARS or reason NO_NEW_BARS."""
+    for r in rows:
+        if r.get("EVENT_TYPE") not in ("PIPELINE", "PIPELINE_STEP") and not r.get("DETAILS"):
+            continue
+        status = (r.get("STATUS") or "").upper()
+        details = _details(r)
+        reason = _get(details, "reason") or ""
+        if status == "SKIPPED_NO_NEW_BARS" or reason == "NO_NEW_BARS":
+            return True
+    return False
+
+
+def _detect_run_ingest_skip_or_rate_limit(rows: list[dict]) -> bool:
+    """True if ingestion completed with SKIP_RATE_LIMIT or SUCCESS_WITH_SKIPS."""
+    for r in rows:
+        if _step_name(r) != "ingestion":
+            continue
+        status = (r.get("STATUS") or "").upper()
+        if status in ("SKIP_RATE_LIMIT", "SUCCESS_WITH_SKIPS"):
+            return True
+    return False
+
+
+def build_run_summary(rows: list[dict]) -> dict | None:
+    """
+    Detect no-new-bars / skip behavior at run level and return a single structured summary
+    (headline, what_happened, why, impact, next_check) for display above the timeline.
+    Return None if no run-level skip pattern is detected.
+    """
+    if _detect_run_no_new_bars(rows):
+        return {
+            "headline": "No new bars — downstream steps skipped",
+            "what_happened": (
+                "Ingestion ran but there were no new market bars. Returns, recommendations, "
+                "evaluation, trust gating, portfolio simulation, and morning brief were skipped."
+            ),
+            "why": "Downstream steps were skipped to avoid duplicates and stale work when no new data is available.",
+            "impact": "No new recommendations, evaluations, or portfolio updates from this run.",
+            "next_check": "Run again after new market data is available, or check ingestion and data source.",
+        }
+    if _detect_run_ingest_skip_or_rate_limit(rows):
+        return {
+            "headline": "Ingest hit rate limit or partial success",
+            "what_happened": "Ingestion completed with skips or a rate limit; downstream may have been skipped if no new bars.",
+            "why": "The data provider may have throttled requests or some symbols were skipped.",
+            "impact": "Fewer bars than expected; downstream steps may have been skipped.",
+            "next_check": "Check ingestion logs and provider limits; consider spacing runs or reducing scope.",
+        }
+    return None
+
+
 def build_interpreted_narrative(rows: list[dict], sections: list[dict], narrative_bullets: list[str]) -> str:
     """
     Build a short paragraph for "What happened" that states clearly when there were no new bars.
@@ -292,9 +344,10 @@ def interpret_timeline(rows: list[dict]) -> dict:
       - timeline: raw rows (serializable)
       - summary_cards: legacy flat list
       - narrative_bullets: legacy flat list
-      - phases: [{ phase_key, phase_label, events }]
+      - phases: [{ phase_key, phase_label, events }] — ingest → returns → … → morning brief
       - sections: [{ headline, what_happened, why, impact, next_check, phase_key?, phase_label? }]
       - interpreted_narrative: short paragraph (no new bars stated clearly when applicable)
+      - run_summary: { headline, what_happened, why, impact, next_check } | null when no-new-bars/skip detected
     """
     summary_cards = []
     narrative_bullets = []
@@ -305,6 +358,7 @@ def interpret_timeline(rows: list[dict]) -> dict:
 
     phases, sections = build_phases_and_sections(rows)
     interpreted_narrative = build_interpreted_narrative(rows, sections, narrative_bullets)
+    run_summary = build_run_summary(rows)
 
     return {
         "timeline": rows,
@@ -313,4 +367,5 @@ def interpret_timeline(rows: list[dict]) -> dict:
         "phases": phases,
         "sections": sections,
         "interpreted_narrative": interpreted_narrative,
+        "run_summary": run_summary,
     }

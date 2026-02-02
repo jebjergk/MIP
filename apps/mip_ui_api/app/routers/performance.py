@@ -224,16 +224,18 @@ def get_performance_summary(
     return SummaryResponse(items=items)
 
 
-# --- Distribution: raw REALIZED_RETURN values for histogram (daily only; COMPLETED only) ---
+# --- Distribution: bounded array of REALIZED_RETURN for histogram (daily only; COMPLETED only) ---
+# Rules: rl.INTERVAL_MINUTES = 1440, ro.EVAL_STATUS = 'COMPLETED'; filter by market_type, symbol, pattern_id, horizon_bars.
+# Order: ro.CALCULATED_AT desc (stable recency), then limit.
 DISTRIBUTION_SQL = """
 select ro.REALIZED_RETURN
 from MIP.APP.RECOMMENDATION_LOG rl
 join MIP.APP.RECOMMENDATION_OUTCOMES ro on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
 where rl.INTERVAL_MINUTES = 1440
-  and (%(market_type)s is null or rl.MARKET_TYPE = %(market_type)s)
-  and (%(symbol)s is null or rl.SYMBOL = %(symbol)s)
-  and (%(pattern_id)s is null or rl.PATTERN_ID = %(pattern_id)s)
-  and (%(horizon_bars)s is null or ro.HORIZON_BARS = %(horizon_bars)s)
+  and rl.MARKET_TYPE = %(market_type)s
+  and rl.SYMBOL = %(symbol)s
+  and rl.PATTERN_ID = %(pattern_id)s
+  and ro.HORIZON_BARS = %(horizon_bars)s
   and ro.EVAL_STATUS = 'COMPLETED'
   and ro.REALIZED_RETURN is not null
 order by ro.CALCULATED_AT desc
@@ -241,18 +243,27 @@ limit %(limit)s
 """
 
 
-@router.get("/distribution")
+class DistributionResponse(BaseModel):
+    market_type: str
+    symbol: str
+    pattern_id: int
+    horizon_bars: int
+    n: int
+    realized_returns: list[float] = Field(default_factory=list, description="Bounded array of REALIZED_RETURN (decimal, e.g. 0.02 = 2%)")
+
+
+@router.get("/distribution", response_model=DistributionResponse)
 def get_performance_distribution(
-    market_type: str | None = Query(None, description="Market type (e.g. STOCK, ETF, FX)"),
-    symbol: str | None = Query(None, description="Symbol (ticker)"),
-    pattern_id: int | None = Query(None, description="Pattern ID"),
-    horizon_bars: int | None = Query(None, description="Horizon in bars (e.g. 5)"),
-    limit: int = Query(2000, ge=1, le=10000, description="Max number of points"),
+    market_type: str = Query(..., description="Market type (e.g. STOCK, ETF, FX)"),
+    symbol: str = Query(..., description="Symbol (ticker)"),
+    pattern_id: int = Query(..., description="Pattern ID"),
+    horizon_bars: int = Query(..., description="Horizon in bars (e.g. 1, 3, 5, 10, 20)"),
+    limit: int = Query(2000, ge=1, le=5000, description="Max number of points (default 2000, max 5000)"),
 ):
     """
-    Raw REALIZED_RETURN values for a given (market_type, symbol, pattern_id, horizon_bars).
-    Daily bars only; EVAL_STATUS = 'COMPLETED'. Order: CALCULATED_AT desc.
-    Used for distribution/histogram charts. Returns array of decimals (e.g. 0.02 = 2%).
+    Bounded array of REALIZED_RETURN values for (market_type, symbol, pattern_id, horizon_bars).
+    Daily bars only; EVAL_STATUS = 'COMPLETED'. Order: CALCULATED_AT desc. Used for distribution/histogram charts.
+    For an item from /performance/summary, returns a non-empty array for at least one horizon when data exists.
     """
     params = {
         "market_type": market_type,
@@ -271,16 +282,22 @@ def get_performance_distribution(
     finally:
         conn.close()
 
-    values: list[float] = []
+    realized_returns: list[float] = []
     for r in rows:
         v = _get(r, "REALIZED_RETURN", "realized_return")
         if v is not None:
             try:
-                f = float(v)
-                values.append(f)
+                realized_returns.append(float(v))
             except (TypeError, ValueError):
                 pass
-    return {"values": values}
+    return DistributionResponse(
+        market_type=market_type,
+        symbol=symbol,
+        pattern_id=pattern_id,
+        horizon_bars=horizon_bars,
+        n=len(realized_returns),
+        realized_returns=realized_returns,
+    )
 
 
 # --- Suggestions: all pairs with per-horizon outcomes (daily only) ---

@@ -182,7 +182,7 @@ export default function Suggestions() {
     fetch(`${API_BASE}/performance/distribution?${params}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((data) => {
-        if (!cancelled) setDistributionValues(data.values ?? [])
+        if (!cancelled) setDistributionValues(data.realized_returns ?? [])
       })
       .catch((e) => {
         if (!cancelled) setDistributionError(e.message)

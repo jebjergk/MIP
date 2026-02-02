@@ -6,7 +6,8 @@
   font-size: 0.8rem;
   color: #37474f;
   padding: 0.25rem 0.5rem;
-  margin-bottom: 0.25rem;
+  margin: 0;
+  min-width: 0;
 }
 
 .live-header-label {

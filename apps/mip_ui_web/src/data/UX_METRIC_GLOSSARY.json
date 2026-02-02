@@ -106,6 +106,10 @@
     }
   },
   "positions": {
+    "snapshot": {
+      "short": "Positions are current holdings (snapshot as of a point in time).",
+      "long": "A position snapshot is the set of open holdings at a given time (e.g. latest bar). It shows what you hold now, not the full history. The snapshot uses only open positions from the canonical view."
+    },
     "symbol": {
       "short": "The ticker or identifier for the holding (e.g. stock or asset).",
       "long": "Symbol is the market identifier for the asset you hold—like a stock ticker. It tells you which asset this position is for."
@@ -120,6 +124,10 @@
     }
   },
   "trades": {
+    "event": {
+      "short": "Trades are execution history (events) in the snapshot time window.",
+      "long": "Trades are discrete buy/sell events. The list shown is aligned to the same run as the position snapshot so you see the executions that led to (or from) the current holdings."
+    },
     "symbol": {
       "short": "The ticker or identifier for the asset that was traded.",
       "long": "Symbol is the market identifier for the asset that was bought or sold in this trade."

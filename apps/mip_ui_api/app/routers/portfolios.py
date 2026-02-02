@@ -74,54 +74,109 @@ def _first(d: list) -> dict | None:
     return d[0] if d else None
 
 
+# Snapshot semantics:
+# - pos_as_of_col: AS_OF_TS in V_PORTFOLIO_OPEN_POSITIONS_CANONICAL (latest bar snapshot)
+# - trade_ts_col: TRADE_TS in PORTFOLIO_TRADES
+# - run_id_col: RUN_ID in both tables
+# - open_filter: use canonical view (IS_OPEN) so we return only open positions
+
+
 @router.get("/{portfolio_id}/snapshot")
 def get_portfolio_snapshot(portfolio_id: int, run_id: str | None = None):
-    """Combined read: positions, trades, daily, KPIs, risk + operator-clarity cards (optional run_id filter)."""
+    """
+    Combined read: latest open positions (canonical view), trades aligned to same run, daily, KPIs, risk + cards.
+    Positions: from V_PORTFOLIO_OPEN_POSITIONS_CANONICAL (only open; snapshot = max(AS_OF_TS)).
+    Trades: same RUN_ID as snapshot (run_id param, or PORTFOLIO.LAST_SIMULATION_RUN_ID, or latest from PORTFOLIO_DAILY).
+    """
     conn = get_connection()
     try:
         cur = conn.cursor()
 
-        # Positions
-        cur.execute(
-            """
-            select * from MIP.APP.PORTFOLIO_POSITIONS
-            where PORTFOLIO_ID = %s and (%s is null or RUN_ID = %s)
-            order by ENTRY_TS desc
-            """,
-            (portfolio_id, run_id, run_id),
-        )
-        positions = serialize_rows(fetch_all(cur))
+        # Resolve effective run for trades/daily/kpis (run_id param, or latest from portfolio)
+        effective_run_id = run_id
+        if effective_run_id is None:
+            cur.execute(
+                "select LAST_SIMULATION_RUN_ID from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s",
+                (portfolio_id,),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                effective_run_id = row[0]
+            else:
+                cur.execute(
+                    """
+                    select RUN_ID from MIP.APP.PORTFOLIO_DAILY
+                    where PORTFOLIO_ID = %s
+                    order by TS desc
+                    limit 1
+                    """,
+                    (portfolio_id,),
+                )
+                r = cur.fetchone()
+                if r and r[0]:
+                    effective_run_id = r[0]
 
-        # Trades
+        # Open positions: latest snapshot, only open (canonical view uses AS_OF_TS + IS_OPEN)
+        positions = []
+        snapshot_ts = None
+        try:
+            cur.execute(
+                """
+                select PORTFOLIO_ID, RUN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES,
+                       ENTRY_TS, ENTRY_PRICE, QUANTITY, COST_BASIS, ENTRY_SCORE,
+                       ENTRY_INDEX, HOLD_UNTIL_INDEX, AS_OF_TS, CURRENT_BAR_INDEX, IS_OPEN, OPEN_POSITIONS
+                from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+                where PORTFOLIO_ID = %s
+                order by ENTRY_TS desc
+                """,
+                (portfolio_id,),
+            )
+            positions = serialize_rows(fetch_all(cur))
+            if positions:
+                snapshot_ts = positions[0].get("AS_OF_TS") or positions[0].get("as_of_ts")
+        except Exception:
+            # Fallback: raw positions for effective run (no open filter) if canonical view not granted
+            if effective_run_id:
+                cur.execute(
+                    """
+                    select * from MIP.APP.PORTFOLIO_POSITIONS
+                    where PORTFOLIO_ID = %s and RUN_ID = %s
+                    order by ENTRY_TS desc
+                    """,
+                    (portfolio_id, effective_run_id),
+                )
+                positions = serialize_rows(fetch_all(cur))
+
+        # Trades: aligned to same run (trade_ts_col = TRADE_TS, run_id_col = RUN_ID)
         cur.execute(
             """
             select * from MIP.APP.PORTFOLIO_TRADES
             where PORTFOLIO_ID = %s and (%s is null or RUN_ID = %s)
             order by TRADE_TS desc
             """,
-            (portfolio_id, run_id, run_id),
+            (portfolio_id, effective_run_id, effective_run_id),
         )
         trades = serialize_rows(fetch_all(cur))
 
-        # Daily
+        # Daily: same run
         cur.execute(
             """
             select * from MIP.APP.PORTFOLIO_DAILY
             where PORTFOLIO_ID = %s and (%s is null or RUN_ID = %s)
             order by TS desc
             """,
-            (portfolio_id, run_id, run_id),
+            (portfolio_id, effective_run_id, effective_run_id),
         )
         daily = serialize_rows(fetch_all(cur))
 
-        # KPIs
+        # KPIs: same run
         cur.execute(
             """
             select * from MIP.MART.V_PORTFOLIO_RUN_KPIS
             where PORTFOLIO_ID = %s and (%s is null or RUN_ID = %s)
             order by TO_TS desc
             """,
-            (portfolio_id, run_id, run_id),
+            (portfolio_id, effective_run_id, effective_run_id),
         )
         kpis = serialize_rows(fetch_all(cur))
 
@@ -162,8 +217,10 @@ def get_portfolio_snapshot(portfolio_id: int, run_id: str | None = None):
                     "cash": None,
                     "exposure": None,
                     "total_equity": fe,
-                    "as_of_ts": latest_kpi.get("TO_TS") or latest_kpi.get("to_ts"),
+                    "as_of_ts": snapshot_ts or latest_kpi.get("TO_TS") or latest_kpi.get("to_ts"),
                 }
+            elif snapshot_ts is not None:
+                cash_and_exposure = {"cash": None, "exposure": None, "total_equity": None, "as_of_ts": snapshot_ts}
 
         entries_blocked = None
         block_reason = None
@@ -183,6 +240,8 @@ def get_portfolio_snapshot(portfolio_id: int, run_id: str | None = None):
             "open_positions": positions,
             "recent_trades": trades[:20],
             "risk_gate_status": risk_gate_status,
+            "snapshot_ts": snapshot_ts,
+            "run_id": effective_run_id,
         }
 
         return {

@@ -140,6 +140,11 @@ export default function Portfolio() {
             <>
               <h2>Portfolio Overview</h2>
               <p className="portfolio-overview-intro">Where do we stand right now? Snapshot as of last simulation run.</p>
+              <p className="portfolio-overview-semantics">
+                Positions are current holdings (snapshot); trades are execution history (events).
+                <InfoTooltip scope="positions" entryKey="snapshot" variant="short" />
+                <InfoTooltip scope="trades" entryKey="event" variant="short" />
+              </p>
 
               <section className="portfolio-cards" aria-label="Portfolio snapshot cards">
                 {/* Cash & Exposure */}

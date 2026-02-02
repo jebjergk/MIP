@@ -12,6 +12,10 @@ select count(*) as positions
 from MIP.APP.PORTFOLIO_POSITIONS
 where portfolio_id = 1;
 
+select max(trade_ts) 
+from MIP.APP.PORTFOLIO_TRADES
+where portfolio_id = 1 limit 1;
+
 select count(*) as trades
 from MIP.APP.PORTFOLIO_TRADES
 where portfolio_id = 1;

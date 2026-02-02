@@ -1,9 +1,19 @@
 /* Portfolio Overview: operator clarity cards — "where do we stand right now?" */
 
 .portfolio-overview-intro {
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.5rem 0;
   font-size: 0.95rem;
   color: #444;
+}
+
+.portfolio-overview-semantics {
+  margin: 0 0 1rem 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.portfolio-overview-semantics .info-tooltip-wrap {
+  margin-left: 0.2rem;
 }
 
 .portfolio-cards {

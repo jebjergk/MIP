@@ -273,16 +273,16 @@
   },
   "suggestions": {
     "rank_score": {
-      "short": "Deterministic rank score (maturity + sample); higher is better.",
-      "long": "Rank score is the maturity score (0–100) used to order suggestions. Only rows that meet the minimum sample size are shown. Higher score means more data and more reliable metrics."
+      "short": "Deterministic rank score (outcomes × win rate); higher is better.",
+      "long": "Rank score orders suggestions by evaluated outcome history: more outcomes and higher share of positive returns rank higher. Only rows that meet the minimum outcomes count are shown. Research guidance only."
     },
     "min_sample": {
-      "short": "Minimum number of recommendations required to appear in suggestions.",
-      "long": "Minimum sample is the least number of recommendations a symbol/pattern must have to be listed. It filters out very new or thin data so rankings are meaningful."
+      "short": "Minimum number of evaluated outcomes required to appear in suggestions.",
+      "long": "Minimum sample is the least number of evaluated outcomes a symbol/pattern must have to be listed. It filters out very new or thin data so rankings are meaningful."
     },
     "explanation_summary": {
-      "short": "Plain-English summary of why this row is ranked here (no LLM).",
-      "long": "The explanation is a fixed template filled with this row's numbers—recommendations, coverage, maturity stage, and how many horizons have positive average outcomes. It is deterministic, not AI-generated."
+      "short": "Plain-English summary from evaluated history (no LLM).",
+      "long": "The explanation is a fixed template filled with this row's numbers—evaluated signals, pct positive, and strongest horizon. It is deterministic: evaluated history → human-readable insights."
     },
     "no_trades_notice": {
       "short": "This page does not execute or propose trades.",

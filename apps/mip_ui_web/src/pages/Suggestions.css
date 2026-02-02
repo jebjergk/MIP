@@ -119,3 +119,32 @@
   color: #666;
   font-style: italic;
 }
+
+.suggestion-horizons-details {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.suggestion-horizons-details summary {
+  cursor: pointer;
+  color: #555;
+}
+
+.suggestion-horizons-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.suggestion-horizons-table th,
+.suggestion-horizons-table td {
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  border: 1px solid #e0e0e0;
+}
+
+.suggestion-horizons-table th {
+  background: #f5f5f5;
+  font-weight: 600;
+}

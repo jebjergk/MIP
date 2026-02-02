@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -8,18 +8,14 @@ import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './Suggestions.css'
 
-const SCOPE_TS = 'training_status'
 const SCOPE_SUG = 'suggestions'
+const SCOPE_PERF = 'performance'
 
-const MIN_SAMPLE = 10
-
-function get(row, k) {
-  return row[k] ?? row[k?.toUpperCase()]
-}
+const DEFAULT_MIN_SAMPLE = 10
 
 function formatPct(n) {
   if (n == null || Number.isNaN(n)) return '—'
-  return `${(Number(n) * 100).toFixed(1)}%`
+  return `${Number(n).toFixed(1)}%`
 }
 
 function formatNum(n) {
@@ -28,49 +24,18 @@ function formatNum(n) {
   return Number.isInteger(x) ? String(x) : x.toFixed(4)
 }
 
-function stageGlossaryKey(stage) {
-  if (!stage) return 'maturity_stage'
-  const s = String(stage).toUpperCase()
-  if (s === 'INSUFFICIENT') return 'stage_insufficient'
-  if (s === 'WARMING_UP') return 'stage_warming_up'
-  if (s === 'LEARNING') return 'stage_learning'
-  if (s === 'CONFIDENT') return 'stage_confident'
-  return 'maturity_stage'
-}
-
-/** Count how many of avg_outcome_h1..h20 are present and positive. */
-function countPositiveHorizons(row) {
-  let count = 0
-  for (const h of ['avg_outcome_h1', 'avg_outcome_h3', 'avg_outcome_h5', 'avg_outcome_h10', 'avg_outcome_h20']) {
-    const v = get(row, h)
-    if (v != null && !Number.isNaN(Number(v)) && Number(v) > 0) count++
-  }
-  return count
-}
-
-/** Deterministic plain-English explanation (no LLM). */
-function buildExplanation(row) {
-  const symbol = get(row, 'symbol') ?? 'Symbol'
-  const patternId = get(row, 'pattern_id') ?? '—'
-  const recs = get(row, 'recs_total')
-  const coverage = get(row, 'coverage_ratio')
-  const stage = get(row, 'maturity_stage') ?? '—'
-  const positiveHorizons = countPositiveHorizons(row)
-  const recsStr = recs != null ? String(recs) : 'some'
-  const coverageStr = coverage != null ? formatPct(coverage) : '—'
-  return `${symbol} (pattern ${patternId}) has ${recsStr} recommendations and ${coverageStr} outcome coverage. Maturity: ${stage}. Average outcomes are positive for ${positiveHorizons} of 5 horizons.`
-}
-
 export default function Suggestions() {
   const { explainMode } = useExplainMode()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [minSample, setMinSample] = useState(MIN_SAMPLE)
+  const [minSample, setMinSample] = useState(DEFAULT_MIN_SAMPLE)
 
   useEffect(() => {
     let cancelled = false
-    fetch(`${API_BASE}/training/status`)
+    setLoading(true)
+    setError(null)
+    fetch(`${API_BASE}/performance/suggestions?min_sample=${encodeURIComponent(minSample)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((d) => {
         if (!cancelled) setData(d)
@@ -82,23 +47,10 @@ export default function Suggestions() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [minSample])
 
-  const rows = data?.rows ?? []
-  const ranked = useMemo(() => {
-    const filtered = rows.filter((r) => {
-      const n = get(r, 'recs_total')
-      return n != null && Number(n) >= minSample
-    })
-    return [...filtered].sort((a, b) => {
-      const sa = Number(get(a, 'maturity_score')) || 0
-      const sb = Number(get(b, 'maturity_score')) || 0
-      if (sb !== sa) return sb - sa
-      const ra = Number(get(a, 'recs_total')) || 0
-      const rb = Number(get(b, 'recs_total')) || 0
-      return rb - ra
-    })
-  }, [rows, minSample])
+  const suggestions = data?.suggestions ?? []
+  const totalFiltered = data?.suggestions?.length ?? 0
 
   if (loading) {
     return (
@@ -122,7 +74,7 @@ export default function Suggestions() {
       <h1>Suggestions</h1>
       {explainMode && (
         <p className="suggestions-intro">
-          Ranked symbol/pattern by data maturity (deterministic score). Minimum sample filter applied. Informational only—no trade execution.
+          Ranked symbol/pattern by evaluated outcome history (deterministic score). Minimum sample filter applied. Research guidance only—no trade execution.
           <InfoTooltip scope={SCOPE_SUG} key="no_trades_notice" variant="short" />
         </p>
       )}
@@ -136,70 +88,105 @@ export default function Suggestions() {
             min={1}
             max={500}
             value={minSample}
-            onChange={(e) => setMinSample(Math.max(1, parseInt(e.target.value, 10) || MIN_SAMPLE))}
+            onChange={(e) => setMinSample(Math.max(1, parseInt(e.target.value, 10) || DEFAULT_MIN_SAMPLE))}
             aria-label="Minimum sample size"
           />
         </label>
       </section>
 
       <p className="suggestions-count">
-        Showing {ranked.length} of {rows.length} rows (min sample ≥ {minSample}).
+        Showing {totalFiltered} suggestion{totalFiltered !== 1 ? 's' : ''} (min outcomes ≥ {minSample}).
       </p>
 
       <div className="suggestions-list">
-        {ranked.map((row, i) => {
-          const stage = get(row, 'maturity_stage')
-          const stageKey = stageGlossaryKey(stage)
-          const stageTitle = explainMode ? (getGlossaryEntry(SCOPE_TS, stageKey)?.short ?? stage) : undefined
-          const explanation = buildExplanation(row)
-          return (
-            <article key={i} className="suggestion-card" data-rank={i + 1}>
-              <div className="suggestion-header">
-                <span className="suggestion-rank">#{i + 1}</span>
-                <span className="suggestion-symbol">{get(row, 'symbol') ?? '—'}</span>
-                <span className="suggestion-pattern">pattern {get(row, 'pattern_id') ?? '—'}</span>
-                <span className="suggestion-market">{get(row, 'market_type') ?? '—'}</span>
-                <span
-                  className={`suggestion-stage suggestion-stage-${(stage || '').toLowerCase().replace('_', '-')}`}
-                  title={stageTitle}
-                >
-                  {stage ?? '—'}
-                </span>
-                <InfoTooltip scope={SCOPE_TS} key={stageKey} variant="short" />
-                <span className="suggestion-score" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'rank_score')?.short : undefined}>
-                  Score: {formatNum(get(row, 'maturity_score'))}
-                </span>
-                <InfoTooltip scope={SCOPE_SUG} key="rank_score" variant="short" />
-              </div>
-              <div className="suggestion-metrics">
-                <span title={explainMode ? getGlossaryEntry(SCOPE_TS, 'recs_total')?.short : undefined}>
-                  Sample: {formatNum(get(row, 'recs_total'))}
-                </span>
-                <InfoTooltip scope={SCOPE_TS} key="recs_total" variant="short" />
-                <span title={explainMode ? getGlossaryEntry(SCOPE_TS, 'coverage_ratio')?.short : undefined}>
-                  Coverage: {formatPct(get(row, 'coverage_ratio'))}
-                </span>
-                <InfoTooltip scope={SCOPE_TS} key="coverage_ratio" variant="short" />
-                <span title={explainMode ? getGlossaryEntry(SCOPE_TS, 'horizons_covered')?.short : undefined}>
-                  Horizons: {formatNum(get(row, 'horizons_covered'))}
-                </span>
-                <InfoTooltip scope={SCOPE_TS} key="horizons_covered" variant="short" />
-              </div>
-              <p className="suggestion-explanation" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'explanation_summary')?.short : undefined}>
-                {explanation}
-                <InfoTooltip scope={SCOPE_SUG} key="explanation_summary" variant="short" />
-              </p>
-            </article>
-          )
-        })}
+        {suggestions.map((row, i) => (
+          <article key={`${row.symbol}-${row.pattern_id}-${row.market_type}`} className="suggestion-card" data-rank={i + 1}>
+            <div className="suggestion-header">
+              <span className="suggestion-rank">#{i + 1}</span>
+              <span className="suggestion-symbol">{row.symbol ?? '—'}</span>
+              <span className="suggestion-pattern">pattern {row.pattern_id ?? '—'}</span>
+              <span className="suggestion-market">{row.market_type ?? '—'}</span>
+              <span
+                className="suggestion-score"
+                title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'rank_score')?.short : undefined}
+              >
+                Score: {formatNum(row.rank_score)}
+              </span>
+              <InfoTooltip scope={SCOPE_SUG} key="rank_score" variant="short" />
+            </div>
+            <div className="suggestion-metrics">
+              <span title={explainMode ? getGlossaryEntry('training_status', 'recs_total')?.short : undefined}>
+                Recs: {formatNum(row.n_recs)}
+              </span>
+              <InfoTooltip scope="training_status" key="recs_total" variant="short" />
+              <span title={explainMode ? getGlossaryEntry(SCOPE_PERF, 'mean_outcome')?.short : undefined}>
+                Outcomes: {formatNum(row.n_outcomes)}
+              </span>
+              <InfoTooltip scope={SCOPE_PERF} key="mean_outcome" variant="short" />
+              <span title={explainMode ? getGlossaryEntry(SCOPE_PERF, 'pct_positive')?.short : undefined}>
+                Positive: {row.pct_positive != null ? `${row.pct_positive}%` : '—'}
+              </span>
+              <InfoTooltip scope={SCOPE_PERF} key="pct_positive" variant="short" />
+              {row.best_horizon_bars != null && (
+                <>
+                  <span title={explainMode ? getGlossaryEntry('training_status', 'horizons_covered')?.short : undefined}>
+                    Best H: {row.best_horizon_bars} bars
+                  </span>
+                  <InfoTooltip scope="training_status" key="horizons_covered" variant="short" />
+                </>
+              )}
+              {row.best_mean_outcome != null && (
+                <>
+                  <span title={explainMode ? getGlossaryEntry(SCOPE_PERF, 'mean_outcome')?.short : undefined}>
+                    Best mean: {row.best_mean_outcome}%
+                  </span>
+                  <InfoTooltip scope={SCOPE_PERF} key="mean_outcome" variant="short" />
+                </>
+              )}
+            </div>
+            <p className="suggestion-explanation" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'explanation_summary')?.short : undefined}>
+              {row.explanation ?? '—'}
+              <InfoTooltip scope={SCOPE_SUG} key="explanation_summary" variant="short" />
+            </p>
+            {row.horizons?.length > 0 && (
+              <details className="suggestion-horizons-details">
+                <summary>Per-horizon metrics</summary>
+                <table className="suggestion-horizons-table">
+                  <thead>
+                    <tr>
+                      <th>Horizon <InfoTooltip scope={SCOPE_PERF} key="mean_outcome" variant="short" /></th>
+                      <th>N <InfoTooltip scope="training_status" key="recs_total" variant="short" /></th>
+                      <th>Mean <InfoTooltip scope={SCOPE_PERF} key="mean_outcome" variant="short" /></th>
+                      <th>% pos <InfoTooltip scope={SCOPE_PERF} key="pct_positive" variant="short" /></th>
+                      <th>Min <InfoTooltip scope={SCOPE_PERF} key="min_outcome" variant="short" /></th>
+                      <th>Max <InfoTooltip scope={SCOPE_PERF} key="max_outcome" variant="short" /></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {row.horizons.map((h, j) => (
+                      <tr key={j}>
+                        <td>{h.horizon_bars} bars</td>
+                        <td>{formatNum(h.n_outcomes)}</td>
+                        <td>{h.mean_outcome != null ? `${(Number(h.mean_outcome) * 100).toFixed(2)}%` : '—'}</td>
+                        <td>{h.pct_positive != null ? `${(Number(h.pct_positive) * 100).toFixed(1)}%` : '—'}</td>
+                        <td>{h.min_outcome != null ? `${(Number(h.min_outcome) * 100).toFixed(2)}%` : '—'}</td>
+                        <td>{h.max_outcome != null ? `${(Number(h.max_outcome) * 100).toFixed(2)}%` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            )}
+          </article>
+        ))}
       </div>
 
-      {ranked.length === 0 && (
+      {suggestions.length === 0 && (
         <EmptyState
           title="No suggestions match"
-          action="Lower the min sample above or run more pipelines to generate recommendations."
-          explanation={rows.length === 0 ? 'Training data is empty. Run the pipeline to populate recommendations and outcomes.' : 'No symbol/pattern rows meet the minimum sample size for the current filter.'}
-          reasons={rows.length === 0 ? ['Pipeline has not run yet.', 'No data in MIP.APP.RECOMMENDATION_LOG / RECOMMENDATION_OUTCOMES.'] : ['Min sample filter is too high.', 'Try a lower min sample value.']}
+          action="Lower the min sample above or run more pipelines to generate recommendations and outcomes."
+          explanation="No symbol/pattern pairs meet the minimum outcomes count. Suggestions are built from evaluated history (RECOMMENDATION_LOG + RECOMMENDATION_OUTCOMES)."
+          reasons={['Pipeline has not run yet.', 'No data in MIP.APP.RECOMMENDATION_LOG / RECOMMENDATION_OUTCOMES.', 'Min sample filter is too high.']}
         />
       )}
     </>

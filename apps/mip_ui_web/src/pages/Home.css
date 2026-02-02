@@ -1,0 +1,72 @@
+.home-tagline {
+  margin: 0 0 1rem 0;
+  color: #555;
+}
+
+.home-dashboard {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.home-dashboard h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.15rem;
+}
+
+.home-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+
+.home-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.home-fact-label {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.home-fact-value {
+  font-size: 1rem;
+  color: #333;
+}
+
+.home-fact-value--ok {
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.home-fact-value--down {
+  color: #c62828;
+  font-weight: 500;
+}
+
+.home-fact-value--unknown {
+  color: #757575;
+}
+
+.home-quick-links {
+  margin: 1.5rem 0;
+}
+
+.home-quick-links h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+}
+
+.home-quick-links ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.home-quick-links li {
+  margin: 0.25rem 0;
+}

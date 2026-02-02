@@ -1,19 +1,157 @@
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
+import ErrorState from '../components/ErrorState'
+import LoadingState from '../components/LoadingState'
+import './Home.css'
+
+const DASHBOARD_TIMEOUT_MS = 5000
+
+function timeout(ms) {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Dashboard timeout')), ms)
+  })
+}
 
 export default function Home() {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [facts, setFacts] = useState({
+    snowflakeOk: null,
+    snowflakeMessage: null,
+    portfoliosCount: null,
+    latestBriefTs: null,
+    latestRunTs: null,
+  })
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadDashboard() {
+      const statusPromise = fetch(`${API_BASE}/status`)
+        .then((r) => (r.ok ? r.json() : {}))
+        .then((d) => ({ snowflakeOk: !!d.snowflake_ok, snowflakeMessage: d.snowflake_message ?? null }))
+        .catch(() => ({ snowflakeOk: false, snowflakeMessage: 'Not reachable' }))
+
+      const portfoliosPromise = fetch(`${API_BASE}/portfolios`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((list) => ({ portfoliosCount: Array.isArray(list) ? list.length : 0 }))
+        .catch(() => ({ portfoliosCount: null }))
+
+      const briefPromise = fetch(`${API_BASE}/briefs/latest?portfolio_id=1`)
+        .then((r) => (r.ok ? r.json() : { found: false }))
+        .then((d) => ({ latestBriefTs: d.found ? d.as_of_ts : null }))
+        .catch(() => ({ latestBriefTs: null }))
+
+      const runsPromise = fetch(`${API_BASE}/runs?limit=1`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((list) => {
+          const first = Array.isArray(list) && list.length ? list[0] : null
+          return { latestRunTs: first?.completed_at ?? first?.started_at ?? null }
+        })
+        .catch(() => ({ latestRunTs: null }))
+
+      try {
+        const results = await Promise.race([
+          Promise.allSettled([statusPromise, portfoliosPromise, briefPromise, runsPromise]),
+          timeout(DASHBOARD_TIMEOUT_MS),
+        ])
+
+        if (cancelled) return
+
+        const [status, portfolios, brief, runs] = results.map((r) => (r.status === 'fulfilled' ? r.value : {}))
+        setFacts({
+          snowflakeOk: status.snowflakeOk ?? null,
+          snowflakeMessage: status.snowflakeMessage ?? null,
+          portfoliosCount: portfolios.portfoliosCount ?? null,
+          latestBriefTs: brief.latestBriefTs ?? null,
+          latestRunTs: runs.latestRunTs ?? null,
+        })
+        setError(null)
+      } catch (e) {
+        if (!cancelled) {
+          setError(e.message === 'Dashboard timeout' ? 'Dashboard timed out (5s). Check network or API.' : e.message)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    loadDashboard()
+    return () => { cancelled = true }
+  }, [])
+
+  if (loading) {
+    return (
+      <>
+        <h1>MIP UI</h1>
+        <LoadingState message="Checking system status…" />
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <h1>MIP UI</h1>
+        <ErrorState message={error} />
+        <section className="home-quick-links" aria-label="Quick links">
+          <h2>Quick links</h2>
+          <ul>
+            <li><Link to="/runs">Runs</Link></li>
+            <li><Link to="/portfolios">Portfolios</Link></li>
+            <li><Link to="/brief">Morning Brief</Link></li>
+            <li><Link to="/training">Training Status</Link></li>
+            <li><Link to="/suggestions">Suggestions</Link></li>
+            <li><Link to="/debug">Debug</Link></li>
+          </ul>
+        </section>
+      </>
+    )
+  }
+
   return (
     <>
       <h1>MIP UI</h1>
-      <p>Read-only view of pipeline runs, portfolios, morning briefs, and training status.</p>
-      <ul>
-        <li><Link to="/runs">Runs</Link> — recent pipeline runs and run detail (timeline + narrative)</li>
-        <li><Link to="/portfolios">Portfolios</Link> — list and detail (header, snapshot)</li>
-        <li><Link to="/brief">Morning Brief</Link> — latest brief per portfolio</li>
-        <li><Link to="/training">Training Status</Link> — training status (first draft)</li>
-        <li><Link to="/suggestions">Suggestions</Link> — ranked symbol/pattern recommendations</li>
-        <li><Link to="/debug">Debug</Link> — route smoke checks (API health)</li>
-      </ul>
+      <p className="home-tagline">Read-only view of pipeline runs, portfolios, morning briefs, and training status.</p>
+
+      <section className="home-dashboard" aria-label="System status">
+        <h2>Is the system alive?</h2>
+        <div className="home-facts">
+          <div className="home-fact">
+            <span className="home-fact-label">Snowflake</span>
+            <span className={`home-fact-value home-fact-value--${facts.snowflakeOk === true ? 'ok' : facts.snowflakeOk === false ? 'down' : 'unknown'}`}>
+              {facts.snowflakeOk === true ? 'OK' : facts.snowflakeOk === false ? (facts.snowflakeMessage || 'Not reachable') : '—'}
+            </span>
+          </div>
+          <div className="home-fact">
+            <span className="home-fact-label">Portfolios</span>
+            <span className="home-fact-value">{facts.portfoliosCount != null ? String(facts.portfoliosCount) : '—'}</span>
+          </div>
+          <div className="home-fact">
+            <span className="home-fact-label">Latest brief (portfolio 1)</span>
+            <span className="home-fact-value">{facts.latestBriefTs ?? '—'}</span>
+          </div>
+          <div className="home-fact">
+            <span className="home-fact-label">Latest run</span>
+            <span className="home-fact-value">{facts.latestRunTs ?? '—'}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="home-quick-links" aria-label="Quick links">
+        <h2>Quick links</h2>
+        <ul>
+          <li><Link to="/runs">Runs</Link> — recent pipeline runs and run detail</li>
+          <li><Link to="/portfolios">Portfolios</Link> — list and detail</li>
+          <li><Link to="/brief">Morning Brief</Link> — latest brief per portfolio</li>
+          <li><Link to="/training">Training Status</Link> — training maturity</li>
+          <li><Link to="/suggestions">Suggestions</Link> — ranked symbol/pattern</li>
+          <li><Link to="/debug">Debug</Link> — route smoke checks</li>
+        </ul>
+      </section>
+
       <EmptyState
         title="Seeing empty pages?"
         action={<>Run the daily pipeline in Snowflake, then check <Link to="/runs">Runs</Link>.</>}

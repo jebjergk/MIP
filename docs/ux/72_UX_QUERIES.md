@@ -220,9 +220,22 @@ Backend adds maturity_score (0–100), maturity_stage (INSUFFICIENT / WARMING_UP
 
 ## Performance summary (GET /performance/summary)
 
-Query params (all optional): :market_type, :symbol, :pattern_id. Filter strictly to daily bars: rl.INTERVAL_MINUTES = 1440. Join MIP.APP.RECOMMENDATION_LOG rl and MIP.APP.RECOMMENDATION_OUTCOMES ro on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID. Only include evaluated rows: ro.EVAL_STATUS = 'COMPLETED' (non-COMPLETED excluded). Use REALIZED_RETURN as the numeric outcome. Null-safe HIT_FLAG: coalesce(ro.HIT_FLAG, false).
+Read-only. Query params (all optional): :market_type, :symbol, :pattern_id.
 
-Canonical SQL – by-horizon (one row per market_type, symbol, pattern_id, interval_minutes, horizon_bars):
+**Rules:**
+
+- Daily bars only: `rl.INTERVAL_MINUTES = 1440`
+- Join: `MIP.APP.RECOMMENDATION_LOG rl` and `MIP.APP.RECOMMENDATION_OUTCOMES ro` on `ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID`
+- Include only completed evaluations: `ro.EVAL_STATUS = 'COMPLETED'`
+- Outcome metric: `ro.REALIZED_RETURN`
+- Null-safe HIT_FLAG: `coalesce(ro.HIT_FLAG, false)`
+
+**Return shape:** Grouped by item key `(market_type, symbol, pattern_id, interval_minutes)`, then horizons.
+
+- Item fields: `recs_total` = count(distinct rl.RECOMMENDATION_ID), `outcomes_total` = count(*), `horizons_covered` = count(distinct ro.HORIZON_BARS), `last_recommendation_ts` = max(rl.TS)
+- `by_horizon[]`: `horizon_bars`, `n`, `mean_realized_return` = avg(ro.REALIZED_RETURN), `pct_positive` = avg(case when ro.REALIZED_RETURN > 0 then 1 else 0 end), `pct_hit` = avg(case when coalesce(ro.HIT_FLAG, false) then 1 else 0 end), `min_realized_return`, `max_realized_return`
+
+**Canonical SQL – triple-level** (recs_total, last_recommendation_ts per item):
 
 ```sql
 select
@@ -231,9 +244,24 @@ select
   rl.PATTERN_ID as pattern_id,
   rl.INTERVAL_MINUTES as interval_minutes,
   count(distinct rl.RECOMMENDATION_ID) as recs_total,
-  count(*) as outcomes_total,
-  count(distinct ro.HORIZON_BARS) as horizons_covered,
-  max(rl.TS) as last_recommendation_ts,
+  max(rl.TS) as last_recommendation_ts
+from MIP.APP.RECOMMENDATION_LOG rl
+where rl.INTERVAL_MINUTES = 1440
+  and (:market_type is null or rl.MARKET_TYPE = :market_type)
+  and (:symbol is null or rl.SYMBOL = :symbol)
+  and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID;
+```
+
+**Canonical SQL – by-horizon** (one row per market_type, symbol, pattern_id, horizon_bars; join to OUTCOMES, EVAL_STATUS = 'COMPLETED'):
+
+```sql
+select
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  rl.INTERVAL_MINUTES as interval_minutes,
   ro.HORIZON_BARS as horizon_bars,
   count(*) as n,
   avg(ro.REALIZED_RETURN) as mean_realized_return,
@@ -249,28 +277,8 @@ where rl.INTERVAL_MINUTES = 1440
   and (:symbol is null or rl.SYMBOL = :symbol)
   and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
   and ro.EVAL_STATUS = 'COMPLETED'
-group by
-  rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES,
-  ro.HORIZON_BARS
-order by
-  rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS;
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES, ro.HORIZON_BARS
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS;
 ```
 
-Triple-level (recs_total, last_recommendation_ts per triple) – for aggregation when building items:
-
-```sql
-select
-  rl.MARKET_TYPE as market_type,
-  rl.SYMBOL as symbol,
-  rl.PATTERN_ID as pattern_id,
-  rl.INTERVAL_MINUTES as interval_minutes,
-  count(*) as recs_total,
-  max(rl.TS) as last_recommendation_ts
-from MIP.APP.RECOMMENDATION_LOG rl
-where rl.INTERVAL_MINUTES = 1440
-  and (:market_type is null or rl.MARKET_TYPE = :market_type)
-  and (:symbol is null or rl.SYMBOL = :symbol)
-  and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
-group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES
-order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID;
-```
+Backend builds items from the two queries above: triple-level gives recs_total and last_recommendation_ts; by-horizon gives outcomes_total (sum of n), horizons_covered (distinct horizon_bars), and by_horizon[] with horizons 1/3/5/10/20 where present.

@@ -44,14 +44,14 @@ class SummaryResponse(BaseModel):
 
 
 # Daily bars only (INTERVAL_MINUTES = 1440). Optional filters: pass None to skip.
-# Triple-level: recs_total, last_recommendation_ts, interval_minutes
+# Triple-level: recs_total = count(distinct RECOMMENDATION_ID), last_recommendation_ts, interval_minutes
 SUMMARY_RECS_SQL = """
 select
   rl.MARKET_TYPE as market_type,
   rl.SYMBOL as symbol,
   rl.PATTERN_ID as pattern_id,
   rl.INTERVAL_MINUTES as interval_minutes,
-  count(*) as recs_total,
+  count(distinct rl.RECOMMENDATION_ID) as recs_total,
   max(rl.TS) as last_recommendation_ts
 from MIP.APP.RECOMMENDATION_LOG rl
 where rl.INTERVAL_MINUTES = 1440

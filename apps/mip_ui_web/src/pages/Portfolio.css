@@ -45,6 +45,25 @@
   color: #666;
 }
 
+/* Positions that closed on the latest bar — distinct from still-open */
+.portfolio-position-closed-this-bar {
+  background-color: #fff8e1;
+  color: #5d4037;
+}
+
+.portfolio-position-closed-this-bar td {
+  border-top: 1px solid #ffe0b2;
+}
+
+/* Trades from the latest run */
+.portfolio-trade-from-last-run {
+  background-color: #e8f5e9;
+}
+
+.portfolio-trade-from-last-run td {
+  border-top: 1px solid #c8e6c9;
+}
+
 .portfolio-card-trades {
   border-left: 4px solid #6a1b9a;
 }

@@ -141,6 +141,7 @@ export default function Portfolio() {
           const cards = snapshot.cards || {}
           const cashExposure = cards.cash_and_exposure
           const openPositions = cards.open_positions ?? snapshot.positions ?? []
+          const closedThisBarPositions = cards.closed_this_bar_positions ?? snapshot.closed_this_bar_positions ?? []
           const tradesList = Array.isArray(snapshot.trades) ? snapshot.trades : (cards.recent_trades ?? [])
           const tradesTotal = snapshot.trades_total ?? cards.trades_total ?? 0
           const lastTradeTs = snapshot.last_trade_ts ?? cards.last_trade_ts ?? null
@@ -270,7 +271,7 @@ export default function Portfolio() {
                         </thead>
                         <tbody>
                           {tradesList.slice(0, 20).map((t, i) => (
-                            <tr key={i}>
+                            <tr key={i} className={t.from_last_run ? 'portfolio-trade-from-last-run' : undefined} title={t.from_last_run ? 'From latest run' : undefined}>
                               <td>{t.SYMBOL ?? t.symbol}</td>
                               <td>{t.SIDE ?? t.side}</td>
                               <td>{t.QUANTITY ?? t.quantity}</td>

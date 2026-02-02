@@ -143,13 +143,17 @@ def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
         key_to_ts = {}
         # Normalize key components to int so lookup matches (DB may return Decimal)
         for r in rows:
-            if len(r) >= 5:
+            s_ = r.get("SYMBOL") or r.get("symbol")
+            m_ = r.get("MARKET_TYPE") or r.get("market_type")
+            i_ = r.get("INTERVAL_MINUTES") or r.get("interval_minutes")
+            b_ = r.get("BAR_INDEX") or r.get("bar_index")
+            ts_ = r.get("TS") or r.get("ts")
+            if s_ is not None and b_ is not None and ts_ is not None:
                 try:
-                    k = (r[0], r[1], int(float(r[2])), int(float(r[3])))
-                    ts = r[4]
-                    if hasattr(ts, "isoformat"):
-                        ts = ts.isoformat()
-                    key_to_ts[k] = ts
+                    k = (s_, m_, int(float(i_ or 1440)), int(float(b_)))
+                    if hasattr(ts_, "isoformat"):
+                        ts_ = ts_.isoformat()
+                    key_to_ts[k] = ts_
                 except (TypeError, ValueError):
                     pass
         for row in positions:
@@ -184,24 +188,34 @@ def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
                 """,
                 params2,
             )
-            for r in fetch_all(cur):
-                if len(r) >= 4:
+            fallback_rows = fetch_all(cur)
+            key2_to_ts = {}
+            for r in fallback_rows:
+                s_ = r.get("SYMBOL") or r.get("symbol")
+                i_ = r.get("INTERVAL_MINUTES") or r.get("interval_minutes")
+                b_ = r.get("BAR_INDEX") or r.get("bar_index")
+                ts_ = r.get("TS") or r.get("ts")
+                if s_ is not None and b_ is not None and ts_ is not None:
                     try:
-                        k2 = (r[0], int(float(r[1])), int(float(r[2])))
-                        ts = r[3]
-                        if hasattr(ts, "isoformat"):
-                            ts = ts.isoformat()
-                        for row in positions:
-                            if row.get("hold_until_ts"):
-                                continue
-                            s = _get(row, "SYMBOL", "symbol")
-                            i = int(float(_get(row, "INTERVAL_MINUTES", "interval_minutes") or 1440))
-                            h = _get(row, "HOLD_UNTIL_INDEX", "hold_until_index")
-                            if h is not None and (s, i, int(float(h))) == k2:
-                                row["hold_until_ts"] = ts
-                                break
+                        k2 = (s_, int(float(i_ or 1440)), int(float(b_)))
+                        if hasattr(ts_, "isoformat"):
+                            ts_ = ts_.isoformat()
+                        key2_to_ts[k2] = ts_
                     except (TypeError, ValueError):
                         pass
+            for row in positions:
+                if row.get("hold_until_ts"):
+                    continue
+                try:
+                    s = _get(row, "SYMBOL", "symbol")
+                    i = int(float(_get(row, "INTERVAL_MINUTES", "interval_minutes") or 1440))
+                    h = _get(row, "HOLD_UNTIL_INDEX", "hold_until_index")
+                    if h is not None and s is not None:
+                        k2 = (s, i, int(float(h)))
+                        if k2 in key2_to_ts:
+                            row["hold_until_ts"] = key2_to_ts[k2]
+                except (TypeError, ValueError):
+                    pass
     except Exception:
         pass
     return positions
@@ -597,6 +611,48 @@ def get_portfolio_snapshot(
         rg_first = _first(risk_gate_rows)
         risk_gate_normalized = _normalize_risk_gate(rg_first, rs_first)
 
+        # Current bar index: from canonical positions or from risk gate (when no open positions)
+        current_bar_index = None
+        if positions:
+            current_bar_index = positions[0].get("CURRENT_BAR_INDEX") or positions[0].get("current_bar_index")
+        if current_bar_index is None and rg_first:
+            current_bar_index = rg_first.get("CURRENT_BAR_INDEX") or rg_first.get("current_bar_index")
+        if current_bar_index is not None:
+            try:
+                current_bar_index = int(float(current_bar_index))
+            except (TypeError, ValueError):
+                current_bar_index = None
+
+        # Positions that closed on the latest bar (hold_until reached this bar) — show in UI with different color
+        closed_this_bar_positions = []
+        if current_bar_index is not None:
+            try:
+                cur.execute(
+                    """
+                    select PORTFOLIO_ID, RUN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES,
+                           ENTRY_TS, ENTRY_PRICE, QUANTITY, COST_BASIS, ENTRY_SCORE,
+                           ENTRY_INDEX, HOLD_UNTIL_INDEX, CREATED_AT
+                    from MIP.APP.PORTFOLIO_POSITIONS
+                    where PORTFOLIO_ID = %s and HOLD_UNTIL_INDEX = %s
+                    order by ENTRY_TS desc
+                    """,
+                    (portfolio_id, current_bar_index),
+                )
+                closed_this_bar_positions = serialize_rows(fetch_all(cur))
+                closed_this_bar_positions = _enrich_positions_side(closed_this_bar_positions)
+                closed_this_bar_positions = _enrich_positions_hold_until_ts(closed_this_bar_positions, cur)
+                for row in closed_this_bar_positions:
+                    row["closed_this_bar"] = True
+            except Exception:
+                pass
+
+        # Mark trades from the latest run for UI highlighting
+        for t in trades:
+            t["from_last_run"] = (
+                effective_run_id is not None
+                and str(t.get("RUN_ID") or t.get("run_id") or "") == str(effective_run_id)
+            )
+
         # Portfolio profile (for risk strategy: thresholds from PORTFOLIO_PROFILE)
         # Only show the profile actually linked to this portfolio; no fallback to avoid showing wrong thresholds.
         profile_row = None
@@ -657,19 +713,10 @@ def get_portfolio_snapshot(
             "what_to_do_now": risk_gate_normalized["what_to_do_now"],
         }
 
-        # Snapshot bar context: "as of date" and "current bar index" (from canonical positions when available)
-        current_bar_index = None
-        if positions:
-            current_bar_index = positions[0].get("CURRENT_BAR_INDEX") or positions[0].get("current_bar_index")
-            if current_bar_index is not None:
-                try:
-                    current_bar_index = int(float(current_bar_index))
-                except (TypeError, ValueError):
-                    current_bar_index = None
-
         cards = {
             "cash_and_exposure": cash_and_exposure,
             "open_positions": positions,
+            "closed_this_bar_positions": closed_this_bar_positions,
             "recent_trades": trades[:20],
             "risk_gate_status": risk_gate_status,
             "snapshot_ts": snapshot_ts,
@@ -683,6 +730,7 @@ def get_portfolio_snapshot(
 
         return {
             "positions": positions,
+            "closed_this_bar_positions": closed_this_bar_positions,
             "trades": trades,
             "trades_total": trades_total,
             "last_trade_ts": last_trade_ts,

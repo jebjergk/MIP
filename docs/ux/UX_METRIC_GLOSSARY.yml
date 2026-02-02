@@ -46,12 +46,27 @@ portfolio:
     long: "Portfolio status describes whether the portfolio is active (running), closed (manually stopped), or bust (hit a loss limit and stopped). Use it to see if the portfolio is still trading."
 
 risk_gate:
+  mode:
+    short: "Current risk gate mode: Normal (full trading), Caution (warn), or Defensive (exits only)."
+    long: "Risk gate mode tells you what the system allows right now. Normal means full trading; Caution means new positions allowed but be careful; Defensive means only closing or reducing positions, no new entries. The mode is derived from risk state and drawdown rules."
   entries_blocked:
     short: Whether new positions are currently allowed or blocked.
     long: "Entries blocked means the system is not allowed to open new positions right now. It's a safety switch—often turned on after a big drawdown or when risk limits are hit. Existing positions may still be closed."
+  entries_allowed:
+    short: Whether opening new positions is allowed.
+    long: "Entries allowed means the risk gate permits opening new positions. When false (Defensive mode), only closing or reducing positions is allowed. Use this with the permission matrix to see what you can do."
+  exits_allowed:
+    short: Closing or reducing positions is always allowed when the gate is active.
+    long: "Exits allowed means you can always close or reduce existing positions, even when new entries are blocked. The gate never prevents unwinding risk—only adding new exposure."
   allow_exits_only:
     short: Only closing positions is allowed; no new buys.
     long: "Allow exits only means the portfolio can only close or reduce positions, not open new ones. It's a middle ground between full trading and a complete stop, used to reduce risk while letting the system unwind."
+  reason_text:
+    short: Plain-language reason for the current gate state.
+    long: "Reason text explains in one sentence why the risk gate is in its current mode—e.g. within limits, drawdown hit, or safety pause. Use it to understand what triggered the state."
+  what_to_do_now:
+    short: Actionable steps recommended for the current gate.
+    long: "What to do now lists concrete steps the system recommends for the current risk gate mode—e.g. use Suggestions, avoid opening many positions, or wait and close only. Follow these to stay aligned with risk policy."
   stop_reason:
     short: Why trading was limited or stopped (e.g. drawdown, flat rule).
     long: "Stop reason explains why the risk gate is on—for example drawdown limit hit, or a rule that says no new entries until the portfolio is flat. Use it to understand what triggered the restriction."

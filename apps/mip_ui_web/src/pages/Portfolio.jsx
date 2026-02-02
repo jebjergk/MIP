@@ -21,6 +21,7 @@ export default function Portfolio() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [lookbackDays, setLookbackDays] = useState(30)
+  const [showRestartModal, setShowRestartModal] = useState(false)
   const { setContext } = useExplainCenter()
 
   useEffect(() => {
@@ -142,10 +143,13 @@ export default function Portfolio() {
           const tradesList = Array.isArray(snapshot.trades) ? snapshot.trades : (cards.recent_trades ?? [])
           const tradesTotal = snapshot.trades_total ?? cards.trades_total ?? 0
           const lastTradeTs = snapshot.last_trade_ts ?? cards.last_trade_ts ?? null
-          const riskGateStatus = cards.risk_gate_status || {}
-          const entriesBlocked = riskGateStatus.entries_blocked ?? false
-          const summary = riskGateStatus.summary ?? (entriesBlocked ? 'Entries blocked but exits allowed.' : 'Trading allowed.')
-          const stopReason = riskGateStatus.stop_reason
+          const riskGate = snapshot.risk_gate || {}
+          const riskLabel = riskGate.risk_label || 'NORMAL'
+          const mode = riskGate.mode || 'ALLOW_ENTRIES'
+          const entriesAllowed = riskGate.entries_allowed !== false
+          const exitsAllowed = riskGate.exits_allowed !== false
+          const reasonText = riskGate.reason_text ?? 'Portfolio is within safe limits.'
+          const whatToDoNow = Array.isArray(riskGate.what_to_do_now) ? riskGate.what_to_do_now : []
 
           return (
             <>
@@ -177,7 +181,7 @@ export default function Portfolio() {
                 </div>
 
                 {/* Open Positions */}
-                <div className="portfolio-card portfolio-card-positions">
+                <div id="portfolio-positions" className="portfolio-card portfolio-card-positions">
                   <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" key="symbol" variant="short" /></h3>
                   {Array.isArray(openPositions) && openPositions.length > 0 ? (
                     <table className="portfolio-card-table">
@@ -266,21 +270,58 @@ export default function Portfolio() {
                   )}
                 </div>
 
-                {/* Risk Gate Status */}
+                {/* Risk Gate panel */}
                 <div className="portfolio-card portfolio-card-risk-gate">
-                  <h3 className="portfolio-card-title">Risk Gate Status <InfoTooltip scope="risk_gate" key="entries_blocked" variant="short" /></h3>
-                  <p className="portfolio-card-risk-summary">
-                    <strong>{summary}</strong>
-                    {entriesBlocked && ' '}
-                    {entriesBlocked && <InfoTooltip scope="risk_gate" key="allow_exits_only" variant="short" />}
+                  <h3 className="portfolio-card-title risk-gate-headline" title={explainMode ? (getGlossaryEntry('risk_gate', 'mode')?.short ?? '') : undefined}>
+                    Risk Gate:{' '}
+                    <span className={riskLabel === 'NORMAL' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>✅ Normal</span>
+                    {' / '}
+                    <span className={riskLabel === 'CAUTION' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>⚠️ Caution</span>
+                    {' / '}
+                    <span className={riskLabel === 'DEFENSIVE' ? 'risk-gate-mode risk-gate-mode--current' : 'risk-gate-mode'}>🛑 Defensive</span>
+                    {explainMode && <InfoTooltip scope="risk_gate" entryKey="mode" variant="short" />}
+                  </h3>
+                  <p className="risk-gate-subtext">
+                    {mode === 'ALLOW_EXITS_ONLY' ? 'Exits only' : 'Entries allowed'}
                   </p>
-                  {stopReason != null && String(stopReason) !== '' && (
-                    <dl className="portfolio-card-dl">
-                      <dt>Stop reason <InfoTooltip scope="risk_gate" key="stop_reason" variant="short" /></dt>
-                      <dd>{String(stopReason)}</dd>
-                    </dl>
+                  <dl className="portfolio-card-dl risk-gate-matrix">
+                    <dt>Open new positions <InfoTooltip scope="risk_gate" key="entries_allowed" variant="short" /></dt>
+                    <dd>{entriesAllowed ? 'Allowed' : 'Blocked'}</dd>
+                    <dt>Close/reduce positions <InfoTooltip scope="risk_gate" entryKey="exits_allowed" variant="short" /></dt>
+                    <dd>Allowed</dd>
+                  </dl>
+                  <p className="risk-gate-reason" title={explainMode ? (getGlossaryEntry('risk_gate', 'reason_text')?.short ?? '') : undefined}>
+                    {reasonText}
+                    {explainMode && <InfoTooltip scope="risk_gate" entryKey="reason_text" variant="short" />}
+                  </p>
+                  {whatToDoNow.length > 0 && (
+                    <div className="risk-gate-what-to-do" title={explainMode ? (getGlossaryEntry('risk_gate', 'what_to_do_now')?.short ?? '') : undefined}>
+                      <span className="risk-gate-what-to-do-label">What to do now</span>
+                      {explainMode && <InfoTooltip scope="risk_gate" entryKey="what_to_do_now" variant="short" />}
+                      <ul className="risk-gate-bullets">
+                        {whatToDoNow.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
+                  <div className="risk-gate-actions">
+                    <Link to="/suggestions" className="risk-gate-link">Open Suggestions</Link>
+                    <a href="#portfolio-positions" className="risk-gate-link">View Positions</a>
+                    <button type="button" className="risk-gate-link risk-gate-link--button" onClick={() => setShowRestartModal(true)}>How to restart episode</button>
+                  </div>
                 </div>
+                {showRestartModal && (
+                  <div className="risk-gate-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="restart-modal-title">
+                    <div className="risk-gate-modal">
+                      <h4 id="restart-modal-title">How to restart a portfolio episode</h4>
+                      <p>Run the script:</p>
+                      <code className="risk-gate-modal-script">MIP/SQL/scripts/restart_portfolio_episode.sql</code>
+                      <p>See <strong>Restarting a portfolio episode</strong> in the Runbook (docs/ux/73_UX_RUNBOOK.md) for full steps.</p>
+                      <button type="button" className="risk-gate-modal-close" onClick={() => setShowRestartModal(false)}>Close</button>
+                    </div>
+                  </div>
+                )}
               </section>
             </>
           )

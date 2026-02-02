@@ -110,3 +110,132 @@
 .portfolio-card-risk-summary strong {
   color: #333;
 }
+
+/* Risk Gate panel */
+.risk-gate-headline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.risk-gate-mode {
+  opacity: 0.5;
+}
+
+.risk-gate-mode--current {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.risk-gate-subtext {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.risk-gate-matrix {
+  margin-bottom: 0.5rem;
+}
+
+.risk-gate-reason {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: #333;
+}
+
+.risk-gate-what-to-do {
+  margin: 0 0 0.75rem 0;
+}
+
+.risk-gate-what-to-do-label {
+  font-weight: 600;
+  margin-right: 0.25rem;
+}
+
+.risk-gate-bullets {
+  margin: 0.25rem 0 0 1rem;
+  padding: 0;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.risk-gate-bullets li {
+  margin-bottom: 0.2rem;
+}
+
+.risk-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.risk-gate-link {
+  font-size: 0.9rem;
+  color: #1565c0;
+  text-decoration: none;
+}
+
+.risk-gate-link:hover {
+  text-decoration: underline;
+}
+
+.risk-gate-link--button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: #1565c0;
+}
+
+.risk-gate-link--button:hover {
+  text-decoration: underline;
+}
+
+/* Restart episode modal */
+.risk-gate-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.risk-gate-modal {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.25rem;
+  max-width: 420px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.risk-gate-modal h4 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+}
+
+.risk-gate-modal p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.risk-gate-modal-script {
+  display: block;
+  margin: 0.5rem 0 1rem 0;
+  padding: 0.5rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.risk-gate-modal-close {
+  margin-top: 1rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}

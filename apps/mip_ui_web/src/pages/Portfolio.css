@@ -39,6 +39,12 @@
   border-left: 4px solid #1565c0;
 }
 
+.portfolio-positions-as-of {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  color: #666;
+}
+
 .portfolio-card-trades {
   border-left: 4px solid #6a1b9a;
 }

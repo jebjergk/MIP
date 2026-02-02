@@ -185,6 +185,12 @@ export default function Portfolio() {
                 {/* Open Positions — sorted by hold-until bar ascending (next to close first) */}
                 <div id="portfolio-positions" className="portfolio-card portfolio-card-positions">
                   <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" entryKey="symbol" variant="short" /></h3>
+                  {(cards.as_of_ts != null || cards.current_bar_index != null) && (
+                    <p className="portfolio-positions-as-of" title="Snapshot date and current bar index (daily bars)">
+                      {cards.as_of_ts != null && <span>As of {String(cards.as_of_ts).slice(0, 10)}</span>}
+                      {cards.current_bar_index != null && <span>{cards.as_of_ts != null ? ' · ' : ''}Bar {cards.current_bar_index}</span>}
+                    </p>
+                  )}
                   {Array.isArray(openPositions) && openPositions.length > 0 ? (
                     <div className="portfolio-card-table-wrap">
                       <table className="portfolio-card-table">
@@ -195,6 +201,7 @@ export default function Portfolio() {
                             <th>Quantity <InfoTooltip scope="positions" entryKey="quantity" variant="short" /></th>
                             <th>Cost basis <InfoTooltip scope="positions" entryKey="cost_basis" variant="short" /></th>
                             <th title="Bar index when this position is scheduled to close (next to close first)">Hold until (bar)</th>
+                            <th title="Calendar date when this position is scheduled to close">Hold until (date)</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -212,6 +219,7 @@ export default function Portfolio() {
                                 <td>{pos.QUANTITY ?? pos.quantity}</td>
                                 <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
                                 <td>{pos.HOLD_UNTIL_INDEX ?? pos.hold_until_index ?? '—'}</td>
+                                <td>{pos.hold_until_ts ? String(pos.hold_until_ts).slice(0, 10) : '—'}</td>
                               </tr>
                             ))}
                         </tbody>

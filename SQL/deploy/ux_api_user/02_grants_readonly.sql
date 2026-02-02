@@ -51,3 +51,4 @@ grant select on view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS   to role MIP_UI_API_R
 grant select on view MIP.MART.V_PORTFOLIO_RUN_KPIS          to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PORTFOLIO_RUN_EVENTS        to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_BAR_INDEX to role MIP_UI_API_ROLE;

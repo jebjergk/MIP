@@ -15,8 +15,12 @@ where portfolio_id = 1;
 desc table MIP.APP.recommendation_outcomes;
  limit 1;
 
-select count(*) as trades
-from MIP.APP.PORTFOLIO_TRADES
+select *
+from MIP.APP.PORTFOLIO
+where portfolio_id = 1;
+
+select *
+from MIP.APP.PORTFOLIO_PROFILE
 where portfolio_id = 1;
 
 select

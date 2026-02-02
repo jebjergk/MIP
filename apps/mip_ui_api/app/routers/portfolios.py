@@ -74,6 +74,89 @@ def _first(d: list) -> dict | None:
     return d[0] if d else None
 
 
+def _get(row: dict | None, *keys: str):
+    """First value from row for any of the given keys (case-insensitive fallback)."""
+    if not row:
+        return None
+    for k in keys:
+        v = row.get(k)
+        if v is not None:
+            return v
+        # Try lowercase
+        v = row.get(k.lower()) if isinstance(k, str) else None
+        if v is not None:
+            return v
+    return None
+
+
+def _normalize_risk_gate(risk_gate_row: dict | None, risk_state_row: dict | None) -> dict:
+    """
+    Build normalized risk_gate object from V_PORTFOLIO_RISK_GATE / V_PORTFOLIO_RISK_STATE.
+    Deterministic mapping; no raw codes exposed. Plain-language labels and what_to_do_now bullets.
+    """
+    # Prefer risk_state (has ALLOWED_ACTIONS, STOP_REASON); fallback to risk_gate
+    r = risk_state_row or risk_gate_row or {}
+    entries_blocked = _get(r, "ENTRIES_BLOCKED", "entries_blocked")
+    entries_blocked = bool(entries_blocked) if entries_blocked is not None else False
+    allowed_actions = _get(r, "ALLOWED_ACTIONS", "allowed_actions") or "ALLOW_ENTRIES"
+    risk_status = _get(r, "RISK_STATUS", "risk_status") or "OK"
+    block_reason = _get(r, "BLOCK_REASON", "block_reason")
+    stop_reason = _get(r, "STOP_REASON", "stop_reason")
+
+    entries_allowed = not entries_blocked
+    exits_allowed = True
+    mode = allowed_actions if allowed_actions in ("ALLOW_ENTRIES", "ALLOW_EXITS_ONLY") else "ALLOW_ENTRIES"
+
+    if entries_blocked or (allowed_actions == "ALLOW_EXITS_ONLY"):
+        risk_label = "DEFENSIVE"
+    elif risk_status == "WARN":
+        risk_label = "CAUTION"
+    else:
+        risk_label = "NORMAL"
+
+    reason_code = block_reason if block_reason is not None else (stop_reason if stop_reason is not None else None)
+
+    if reason_code == "DRAWDOWN_STOP_ACTIVE":
+        reason_text = "We hit the portfolio loss limit, so we pause new entries."
+    elif reason_code == "ALLOW_EXITS_ONLY":
+        reason_text = "Safety mode: you can exit positions, but not open new ones."
+    else:
+        reason_text = "Portfolio is within safe limits."
+
+    what_to_do_now = []
+    if risk_label == "NORMAL":
+        what_to_do_now.append("You can open new positions normally.")
+        what_to_do_now.append("Use Suggestions to focus on the strongest ideas.")
+    elif risk_label == "CAUTION":
+        what_to_do_now.append("New positions are allowed, but be cautious.")
+        what_to_do_now.append("Prefer higher maturity signals (more tested).")
+        what_to_do_now.append("Avoid opening many new positions at once.")
+    else:
+        what_to_do_now.append("Do not open new positions (paused for safety).")
+        what_to_do_now.append("You can still close or reduce existing positions.")
+        what_to_do_now.append("Wait for the portfolio to stabilize, or restart the episode if needed.")
+        if reason_code == "DRAWDOWN_STOP_ACTIVE":
+            what_to_do_now.append("This was triggered by drawdown protection.")
+
+    debug = {
+        "block_reason": block_reason,
+        "stop_reason": stop_reason,
+        "entries_blocked": entries_blocked,
+    }
+
+    return {
+        "risk_label": risk_label,
+        "risk_status": risk_status,
+        "entries_allowed": entries_allowed,
+        "exits_allowed": exits_allowed,
+        "mode": mode,
+        "reason_code": reason_code,
+        "reason_text": reason_text,
+        "what_to_do_now": what_to_do_now,
+        "debug": debug,
+    }
+
+
 # Snapshot semantics:
 # - pos_as_of_col: AS_OF_TS in V_PORTFOLIO_OPEN_POSITIONS_CANONICAL (latest bar snapshot)
 # - trade_ts_col: TRADE_TS in PORTFOLIO_TRADES
@@ -242,9 +325,13 @@ def get_portfolio_snapshot(
         )
         risk_state = serialize_rows(fetch_all(cur))
 
+        # Normalized risk_gate (plain-language; no raw codes to UI)
+        rs_first = _first(risk_state)
+        rg_first = _first(risk_gate_rows)
+        risk_gate_normalized = _normalize_risk_gate(rg_first, rs_first)
+
         # --- Operator-clarity cards ---
         latest_daily = _first(daily)
-        rg = _first(risk_gate_rows)
 
         cash_and_exposure = None
         if latest_daily:
@@ -270,17 +357,13 @@ def get_portfolio_snapshot(
             elif snapshot_ts is not None:
                 cash_and_exposure = {"cash": None, "exposure": None, "total_equity": None, "as_of_ts": snapshot_ts}
 
-        entries_blocked = None
-        block_reason = None
-        if rg:
-            entries_blocked = rg.get("ENTRIES_BLOCKED") if rg.get("ENTRIES_BLOCKED") is not None else rg.get("entries_blocked")
-            block_reason = rg.get("BLOCK_REASON") or rg.get("block_reason") or rg.get("STOP_REASON") or rg.get("stop_reason")
-
         risk_gate_status = {
-            "entries_blocked": bool(entries_blocked),
-            "exits_allowed": True,
-            "summary": "Entries blocked but exits allowed." if entries_blocked else "Trading allowed.",
-            "stop_reason": block_reason,
+            "entries_blocked": not risk_gate_normalized["entries_allowed"],
+            "exits_allowed": risk_gate_normalized["exits_allowed"],
+            "summary": risk_gate_normalized["reason_text"],
+            "stop_reason": risk_gate_normalized["reason_code"],
+            "risk_label": risk_gate_normalized["risk_label"],
+            "what_to_do_now": risk_gate_normalized["what_to_do_now"],
         }
 
         cards = {
@@ -303,7 +386,8 @@ def get_portfolio_snapshot(
             "lookback_days": lookback_days,
             "daily": daily,
             "kpis": kpis,
-            "risk_gate": risk_gate_rows,
+            "risk_gate": risk_gate_normalized,
+            "risk_gate_raw": risk_gate_rows,
             "risk_state": risk_state,
             "cards": cards,
         }

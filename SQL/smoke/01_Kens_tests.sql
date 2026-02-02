@@ -18,3 +18,5 @@ desc table MIP.APP.recommendation_outcomes;
 select count(*) as trades
 from MIP.APP.PORTFOLIO_TRADES
 where portfolio_id = 1;
+
+select * from MIP.MART.V_PORTFOLIO_RISK_GATE;

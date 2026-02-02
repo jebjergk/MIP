@@ -412,7 +412,7 @@ def get_portfolio_snapshot(
 ):
     """
     Combined read: latest open positions (canonical view), trades by lookback, daily, KPIs, risk + cards.
-    Positions: from V_PORTFOLIO_OPEN_POSITIONS_CANONICAL (only open); fallback to raw positions for effective run if empty.
+    Positions: only from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL (single source of truth for open vs closed).
     Trades: trade_ts_col=TRADE_TS, run_id_col=RUN_ID. Filter by lookback_days (default 30); return trades_total, last_trade_ts.
     """
     conn = get_connection()
@@ -443,8 +443,8 @@ def get_portfolio_snapshot(
                 if r and r[0]:
                     effective_run_id = r[0]
 
-        # Open positions: all positions still open as of latest bar (HOLD_UNTIL_INDEX not reached), from any run.
-        # So you see everything you still possess, including positions opened in earlier runs.
+        # Open positions: only from canonical view (IS_OPEN = true by definition there).
+        # MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL is the single source of truth for which positions are open.
         positions = []
         snapshot_ts = None
         try:
@@ -464,39 +464,7 @@ def get_portfolio_snapshot(
                 snapshot_ts = positions[0].get("AS_OF_TS") or positions[0].get("as_of_ts")
         except Exception:
             pass
-        # Fallback: when canonical returns 0 or view fails, show latest run's positions so UI isn't blank
-        if not positions and effective_run_id:
-            cur.execute(
-                """
-                select * from MIP.APP.PORTFOLIO_POSITIONS
-                where PORTFOLIO_ID = %s and RUN_ID = %s
-                order by ENTRY_TS desc
-                """,
-                (portfolio_id, effective_run_id),
-            )
-            positions = serialize_rows(fetch_all(cur))
-        # Second fallback: if still no positions (e.g. effective run has no rows), use latest run that has any positions
-        if not positions:
-            cur.execute(
-                """
-                select RUN_ID from MIP.APP.PORTFOLIO_POSITIONS
-                where PORTFOLIO_ID = %s
-                order by RUN_ID desc
-                limit 1
-                """,
-                (portfolio_id,),
-            )
-            row = cur.fetchone()
-            if row and row[0]:
-                cur.execute(
-                    """
-                    select * from MIP.APP.PORTFOLIO_POSITIONS
-                    where PORTFOLIO_ID = %s and RUN_ID = %s
-                    order by ENTRY_TS desc
-                    """,
-                    (portfolio_id, row[0]),
-                )
-                positions = serialize_rows(fetch_all(cur))
+        # No fallback to PORTFOLIO_POSITIONS: that table has no IS_OPEN filter and would show closed positions.
         positions = _enrich_positions_side(positions)
         positions = _enrich_positions_hold_until_ts(positions, cur)
 

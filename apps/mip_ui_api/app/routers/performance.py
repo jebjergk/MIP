@@ -1,8 +1,9 @@
 """
 Performance summary: outcomes-based stats per (market_type, symbol, pattern_id).
-GET /performance/summary — bridge to Suggestions.
+GET /performance/summary — items[] grouped by triple; optional filters; daily bars only.
 GET /performance/suggestions — ranked symbol/pattern pairs with deterministic narratives.
 Uses MIP.APP.RECOMMENDATION_LOG (daily bars only) + MIP.APP.RECOMMENDATION_OUTCOMES.
+No writes.
 """
 from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Query
@@ -11,108 +12,156 @@ from app.db import get_connection, fetch_all
 
 router = APIRouter(prefix="/performance", tags=["performance"])
 
-# Daily bars only (INTERVAL_MINUTES = 1440)
-# Aggregate by HORIZON_BARS: n_outcomes, mean_outcome, pct_positive, min/max, last_recommendation_ts per horizon
-SUMMARY_SQL = """
+# Daily bars only (INTERVAL_MINUTES = 1440). Optional filters: pass None to skip.
+# Recs per (market_type, symbol, pattern_id)
+SUMMARY_RECS_SQL = """
 select
+  r.MARKET_TYPE as market_type,
+  r.SYMBOL as symbol,
+  r.PATTERN_ID as pattern_id,
+  count(*) as recs_total,
+  max(r.TS) as last_recommendation_ts
+from MIP.APP.RECOMMENDATION_LOG r
+where r.INTERVAL_MINUTES = 1440
+  and (%(market_type)s is null or r.MARKET_TYPE = %(market_type)s)
+  and (%(symbol)s is null or r.SYMBOL = %(symbol)s)
+  and (%(pattern_id)s is null or r.PATTERN_ID = %(pattern_id)s)
+group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
+order by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
+"""
+
+# Outcomes per (market_type, symbol, pattern_id, horizon_bars); daily only; optional filters
+SUMMARY_BY_HORIZON_SQL = """
+select
+  r.MARKET_TYPE as market_type,
+  r.SYMBOL as symbol,
+  r.PATTERN_ID as pattern_id,
   o.HORIZON_BARS as horizon_bars,
-  count(*) as n_outcomes,
+  count(*) as n,
   avg(o.REALIZED_RETURN) as mean_outcome,
   sum(case when o.REALIZED_RETURN > 0 then 1 else 0 end)::float / nullif(count(*), 0) as pct_positive,
   min(o.REALIZED_RETURN) as min_outcome,
-  max(o.REALIZED_RETURN) as max_outcome,
-  max(r.TS) as last_recommendation_ts
+  max(o.REALIZED_RETURN) as max_outcome
 from MIP.APP.RECOMMENDATION_LOG r
 join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
-where r.MARKET_TYPE = %(market_type)s
-  and r.SYMBOL = %(symbol)s
-  and r.PATTERN_ID = %(pattern_id)s
-  and r.INTERVAL_MINUTES = 1440
+where r.INTERVAL_MINUTES = 1440
+  and (%(market_type)s is null or r.MARKET_TYPE = %(market_type)s)
+  and (%(symbol)s is null or r.SYMBOL = %(symbol)s)
+  and (%(pattern_id)s is null or r.PATTERN_ID = %(pattern_id)s)
   and o.EVAL_STATUS = 'SUCCESS'
   and o.REALIZED_RETURN is not null
-group by o.HORIZON_BARS
-order by o.HORIZON_BARS
-"""
-
-# Total recommendation count for the triple (daily only)
-N_RECS_SQL = """
-select count(*) as n_recs
-from MIP.APP.RECOMMENDATION_LOG r
-where r.MARKET_TYPE = %(market_type)s
-  and r.SYMBOL = %(symbol)s
-  and r.PATTERN_ID = %(pattern_id)s
-  and r.INTERVAL_MINUTES = 1440
-"""
-
-# Overall last recommendation timestamp (daily only)
-LAST_TS_SQL = """
-select max(r.TS) as last_recommendation_ts
-from MIP.APP.RECOMMENDATION_LOG r
-where r.MARKET_TYPE = %(market_type)s
-  and r.SYMBOL = %(symbol)s
-  and r.PATTERN_ID = %(pattern_id)s
-  and r.INTERVAL_MINUTES = 1440
+group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, o.HORIZON_BARS
+order by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, o.HORIZON_BARS
 """
 
 
-def _serialize_horizon(row: dict) -> dict:
-    """Serialize one horizon row: isoformat timestamps, float-safe numbers."""
-    out = {}
-    for k, v in row.items():
-        if hasattr(v, "isoformat"):
-            out[k] = v.isoformat()
-        elif hasattr(v, "__float__") and v is not None and not isinstance(v, (int, bool)):
-            try:
-                out[k] = float(v)
-            except (TypeError, ValueError):
-                out[k] = v
-        else:
-            out[k] = v
+def _get(row: dict, *keys) -> any:
+    """First value found for any of the keys (case-insensitive)."""
+    for k in keys:
+        if k in row and row[k] is not None:
+            return row[k]
+        k_upper = k.upper() if isinstance(k, str) else k
+        if k_upper in row and row[k_upper] is not None:
+            return row[k_upper]
+    return None
+
+
+def _serialize_by_horizon_row(row: dict) -> dict:
+    """One by_horizon element: horizon_bars, n, mean_outcome, pct_positive, min_outcome, max_outcome."""
+    hb = _get(row, "horizon_bars", "HORIZON_BARS")
+    n = _get(row, "n", "N")
+    mean_o = _get(row, "mean_outcome", "MEAN_OUTCOME")
+    pct = _get(row, "pct_positive", "PCT_POSITIVE")
+    min_o = _get(row, "min_outcome", "MIN_OUTCOME")
+    max_o = _get(row, "max_outcome", "MAX_OUTCOME")
+    out = {
+        "horizon_bars": int(hb) if hb is not None else None,
+        "n": int(n) if n is not None else None,
+        "mean_outcome": float(mean_o) if mean_o is not None else None,
+        "pct_positive": float(pct) if pct is not None else None,
+        "min_outcome": float(min_o) if min_o is not None else None,
+        "max_outcome": float(max_o) if max_o is not None else None,
+    }
     return out
 
 
 @router.get("/summary")
 def get_performance_summary(
-    market_type: str = Query(..., description="Market type (e.g. STOCK, ETF, FX)"),
-    symbol: str = Query(..., description="Symbol (ticker)"),
-    pattern_id: int = Query(..., description="Pattern ID"),
+    market_type: str | None = Query(None, description="Market type (e.g. STOCK, ETF, FX)"),
+    symbol: str | None = Query(None, description="Symbol (ticker)"),
+    pattern_id: int | None = Query(None, description="Pattern ID"),
 ):
     """
-    Outcomes-powered performance summary for one (market_type, symbol, pattern_id).
-    Aggregates from RECOMMENDATION_LOG (daily bars only) and RECOMMENDATION_OUTCOMES by HORIZON_BARS.
-    Returns: n_recs, and per horizon: n_outcomes, mean_outcome, pct_positive, min_outcome, max_outcome, last_recommendation_ts.
+    Outcomes-based performance summary. Items grouped by (market_type, symbol, pattern_id).
+    Uses MIP.APP.RECOMMENDATION_LOG and MIP.APP.RECOMMENDATION_OUTCOMES only; daily bars (INTERVAL_MINUTES = 1440).
+    Optional query params filter which triples are returned. No writes.
     """
     params = {"market_type": market_type, "symbol": symbol, "pattern_id": pattern_id}
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(SUMMARY_SQL, params)
+        cur.execute(SUMMARY_RECS_SQL, params)
+        recs_rows = fetch_all(cur)
+        cur.execute(SUMMARY_BY_HORIZON_SQL, params)
         horizon_rows = fetch_all(cur)
-        cur.execute(N_RECS_SQL, params)
-        n_recs_row = cur.fetchone()
-        n_recs = n_recs_row[0] if n_recs_row and n_recs_row[0] is not None else 0
-        cur.execute(LAST_TS_SQL, params)
-        ts_row = cur.fetchone()
-        last_ts = ts_row[0] if ts_row and ts_row[0] is not None else None
-        horizons = [_serialize_horizon(d) for d in horizon_rows]
-        for h in horizons:
-            ts = h.get("last_recommendation_ts")
-            if ts is not None and hasattr(ts, "isoformat"):
-                h["last_recommendation_ts"] = ts.isoformat()
-        if last_ts is not None and hasattr(last_ts, "isoformat"):
-            last_ts = last_ts.isoformat()
-        return {
-            "market_type": market_type,
-            "symbol": symbol,
-            "pattern_id": pattern_id,
-            "n_recs": n_recs,
-            "last_recommendation_ts": last_ts,
-            "horizons": horizons,
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:
         conn.close()
+
+    # Key by (market_type, symbol, pattern_id)
+    def key(r):
+        return (
+            _get(r, "market_type", "MARKET_TYPE"),
+            _get(r, "symbol", "SYMBOL"),
+            _get(r, "pattern_id", "PATTERN_ID"),
+        )
+
+    recs_by_key = {}
+    for r in recs_rows:
+        k = key(r)
+        recs_by_key[k] = {
+            "recs_total": int(_get(r, "recs_total", "RECS_TOTAL") or 0),
+            "last_recommendation_ts": _get(r, "last_recommendation_ts", "LAST_RECOMMENDATION_TS"),
+        }
+
+    horizons_by_key = defaultdict(list)
+    for r in horizon_rows:
+        k = key(r)
+        horizons_by_key[k].append(_serialize_by_horizon_row(r))
+
+    items = []
+    seen = set()
+    for r in recs_rows:
+        k = key(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        mt, sy, pid = k
+        recs_info = recs_by_key.get(k, {})
+        recs_total = recs_info.get("recs_total", 0)
+        last_ts = recs_info.get("last_recommendation_ts")
+        by_horizon = horizons_by_key.get(k, [])
+        by_horizon.sort(key=lambda h: (h["horizon_bars"] or 0))
+        outcomes_total = sum((h.get("n") or 0) for h in by_horizon)
+        horizons_covered = sorted({h["horizon_bars"] for h in by_horizon if h.get("horizon_bars") is not None})
+
+        # Serialize timestamp for JSON
+        if last_ts is not None and hasattr(last_ts, "isoformat"):
+            last_ts = last_ts.isoformat()
+
+        items.append({
+            "market_type": mt,
+            "symbol": sy,
+            "pattern_id": pid,
+            "recs_total": recs_total,
+            "outcomes_total": outcomes_total,
+            "horizons_covered": horizons_covered,
+            "last_recommendation_ts": last_ts,
+            "by_horizon": by_horizon,
+        })
+    items.sort(key=lambda x: (x["market_type"] or "", x["symbol"] or "", x["pattern_id"] or 0))
+    return {"items": items}
 
 
 # --- Suggestions: all pairs with per-horizon outcomes (daily only) ---

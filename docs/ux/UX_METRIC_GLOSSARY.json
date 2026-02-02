@@ -52,9 +52,25 @@
     }
   },
   "risk_gate": {
+    "risk_gate": {
+      "short": "The rule that controls whether you can open new positions or only close them.",
+      "long": "The risk gate is a safety layer that limits what the portfolio can do. It has three modes—Normal, Caution, and Defensive—and tells you clearly what is allowed and what to do next.",
+      "what": "The risk gate is the rule set that decides whether opening new positions is allowed or only closing/reducing positions is allowed. It reflects current risk state and drawdown limits.",
+      "why": "So you know at a glance what the system will and won't do—whether you can add risk or should only reduce it—without reading raw codes or logs.",
+      "how": "The API normalizes risk state and risk gate views (e.g. V_PORTFOLIO_RISK_STATE, V_PORTFOLIO_RISK_GATE) into a single plain-language object: mode, entries_allowed, exits_allowed, reason_text, and what_to_do_now.",
+      "next": "Use the permission matrix and What to do now on the Portfolio Risk Gate panel to decide your next action."
+    },
     "mode": {
       "short": "Current risk gate mode: Normal (full trading), Caution (warn), or Defensive (exits only).",
       "long": "Risk gate mode tells you what the system allows right now. Normal means full trading; Caution means new positions allowed but be careful; Defensive means only closing or reducing positions, no new entries. The mode is derived from risk state and drawdown rules."
+    },
+    "risk_status": {
+      "short": "Raw risk status from the system (e.g. OK, WARN) before it is turned into a mode.",
+      "long": "Risk status is the underlying signal—OK, WARN, or similar—that the system uses to decide the gate mode. OK usually means Normal; WARN can mean Caution; combined with entries blocked it becomes Defensive.",
+      "what": "Risk status is the internal state (e.g. OK, WARN) that indicates whether the portfolio is within safe limits or approaching them.",
+      "why": "So the UI can show a human-friendly mode (Normal / Caution / Defensive) while the system still uses a simple status for logic.",
+      "how": "Read from risk state or risk gate views; the normalized object maps risk_status and entries_blocked into risk_label and mode.",
+      "next": "Look at the headline Risk Gate: Normal / Caution / Defensive to see how your status is presented."
     },
     "entries_blocked": {
       "short": "Whether new positions are currently allowed or blocked.",
@@ -62,11 +78,27 @@
     },
     "entries_allowed": {
       "short": "Whether opening new positions is allowed.",
-      "long": "Entries allowed means the risk gate permits opening new positions. When false (Defensive mode), only closing or reducing positions is allowed. Use this with the permission matrix to see what you can do."
+      "long": "Entries allowed means the risk gate permits opening new positions. When false (Defensive mode), only closing or reducing positions is allowed. Use this with the permission matrix to see what you can do.",
+      "what": "Entries allowed is a yes/no: you are either allowed to open new positions (buy, add) or you are not. When not allowed, only closing or reducing positions is permitted.",
+      "why": "So you know immediately whether you can add exposure or must limit yourself to reducing it. No guessing from raw codes.",
+      "how": "Derived from risk state or risk gate (e.g. NOT entries_blocked, or allowed_actions = ALLOW_ENTRIES). The Portfolio panel shows it as Open new positions: Allowed or Blocked.",
+      "next": "If Allowed, you can use Suggestions to open new positions. If Blocked, follow What to do now and only close or reduce."
     },
     "exits_allowed": {
       "short": "Closing or reducing positions is always allowed when the gate is active.",
-      "long": "Exits allowed means you can always close or reduce existing positions, even when new entries are blocked. The gate never prevents unwinding risk—only adding new exposure."
+      "long": "Exits allowed means you can always close or reduce existing positions, even when new entries are blocked. The gate never prevents unwinding risk—only adding new exposure.",
+      "what": "Exits allowed means you can close or reduce existing positions at any time. The risk gate never blocks unwinding—only adding new risk.",
+      "why": "So you know you can always reduce exposure when the gate is on. The system will not trap you in positions when you need to cut risk.",
+      "how": "The normalized risk gate sets exits_allowed to true whenever the gate is in use. The UI shows Close/reduce positions: Allowed.",
+      "next": "Use View Positions and your broker or simulator to close or reduce positions when the gate is Defensive or Caution."
+    },
+    "drawdown_stop": {
+      "short": "A limit that pauses new entries when the portfolio has lost too much from a peak.",
+      "long": "Drawdown stop is a safety rule: when the portfolio's value has fallen too far from its high (e.g. past a set percentage), the system stops allowing new positions and may switch to Defensive mode. You can still close or reduce.",
+      "what": "Drawdown stop is the rule that says 'no new entries when loss from peak exceeds X.' It protects the portfolio from adding risk after a big drop.",
+      "why": "So losses don't snowball. Once the portfolio has hit the limit, the system stops adding exposure until conditions improve or you restart.",
+      "how": "Computed from portfolio equity vs peak; when the drop exceeds the configured threshold, entries are blocked and reason may reference drawdown (e.g. DRAWDOWN_STOP_ACTIVE).",
+      "next": "If the reason mentions drawdown, check max drawdown and equity. You can close positions or restart the episode (see Runbook) when appropriate."
     },
     "allow_exits_only": {
       "short": "Only closing positions is allowed; no new buys.",
@@ -78,7 +110,19 @@
     },
     "what_to_do_now": {
       "short": "Actionable steps recommended for the current gate.",
-      "long": "What to do now lists concrete steps the system recommends for the current risk gate mode—e.g. use Suggestions, avoid opening many positions, or wait and close only. Follow these to stay aligned with risk policy."
+      "long": "What to do now lists concrete steps the system recommends for the current risk gate mode—e.g. use Suggestions, avoid opening many positions, or wait and close only. Follow these to stay aligned with risk policy.",
+      "what": "What to do now is a short list of recommended actions for the current risk gate mode—e.g. you can open positions normally, or only close them, or be cautious with new ones.",
+      "why": "So you have clear next steps instead of guessing. Each mode has different guidance to keep you aligned with risk policy.",
+      "how": "Built by the API from the normalized risk gate: one set of bullets for Normal, another for Caution, another for Defensive (and drawdown-specific lines when applicable).",
+      "next": "Follow the bullets on the Risk Gate panel; use Open Suggestions or View Positions as needed, and see the Runbook to restart an episode if required."
+    },
+    "defensive_mode": {
+      "short": "Gate mode where only closing or reducing positions is allowed; no new entries.",
+      "long": "Defensive mode means the risk gate has turned on: you cannot open new positions, only close or reduce existing ones. It is used after a drawdown stop or when risk limits say no new exposure.",
+      "what": "Defensive mode is the risk gate state where entries are blocked and only exits (close or reduce) are allowed. The headline shows Defensive with a stop icon.",
+      "why": "So you know the system has paused new risk and you must limit yourself to unwinding. It protects the portfolio from adding exposure when conditions are bad.",
+      "how": "Set when entries_blocked is true or allowed_actions is ALLOW_EXITS_ONLY; the UI displays Risk Gate: Defensive and Exits only, with What to do now bullets.",
+      "next": "Do not open new positions. Use View Positions to close or reduce. See How to restart episode in the Risk Gate panel if you need to start a new episode."
     },
     "stop_reason": {
       "short": "Why trading was limited or stopped (e.g. drawdown, flat rule).",

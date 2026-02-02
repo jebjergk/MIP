@@ -3,6 +3,9 @@ import { NavLink, Outlet } from 'react-router-dom'
 import StatusBanner from './StatusBanner'
 import LiveHeader from './LiveHeader'
 import ExplainModeToggle from './ExplainModeToggle'
+import ExplainDrawer from './ExplainDrawer'
+import { useExplainMode } from '../context/ExplainModeContext'
+import { useExplainCenter } from '../context/ExplainCenterContext'
 import './AppLayout.css'
 
 const SIDEBAR_WIDTH = 220
@@ -19,6 +22,8 @@ const NAV_ITEMS = [
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { explainMode } = useExplainMode()
+  const { open: openExplainDrawer } = useExplainCenter()
 
   const closeSidebar = () => setSidebarOpen(false)
 
@@ -85,6 +90,16 @@ export default function AppLayout() {
             <LiveHeader />
           </div>
           <div className="app-layout-topbar-right">
+            {explainMode && (
+              <button
+                type="button"
+                className="explain-center-btn"
+                onClick={openExplainDrawer}
+                aria-label="Open Explain Center"
+              >
+                Explain
+              </button>
+            )}
             <ExplainModeToggle />
           </div>
         </header>
@@ -92,6 +107,7 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <ExplainDrawer />
     </div>
   )
 }

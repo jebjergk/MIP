@@ -6,11 +6,14 @@ use database MIP;
 
 create or replace view MIP.MART.V_PORTFOLIO_RUN_KPIS as
 with daily_dedup as (
-    select *
-    from MIP.APP.PORTFOLIO_DAILY
+    select d.*
+    from MIP.APP.PORTFOLIO_DAILY d
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
+      on e.PORTFOLIO_ID = d.PORTFOLIO_ID
+    where e.EPISODE_ID is null or d.TS >= e.START_TS
     qualify row_number() over (
-        partition by PORTFOLIO_ID, RUN_ID, TS
-        order by CREATED_AT desc, TS desc
+        partition by d.PORTFOLIO_ID, d.RUN_ID, d.TS
+        order by d.CREATED_AT desc, d.TS desc
     ) = 1
 ),
 daily_base as (

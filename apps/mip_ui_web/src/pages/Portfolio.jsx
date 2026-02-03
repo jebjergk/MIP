@@ -88,9 +88,15 @@ export default function Portfolio() {
 
 
   if (portfolioId && portfolio) {
+    const activeEpisode = snapshot?.active_episode
+    const episodeLabel = activeEpisode
+      ? `Episode ${activeEpisode.episode_id ?? activeEpisode.EPISODE_ID ?? '—'} since ${(activeEpisode.start_ts ?? activeEpisode.START_TS ?? '').slice(0, 10)}`
+      : null
+
     return (
       <>
         <h1>Portfolio: {portfolio.NAME}</h1>
+        {episodeLabel && <p className="portfolio-episode-header">{episodeLabel}</p>}
         <p><Link to="/portfolios">← Back to list</Link></p>
         <h2>Header</h2>
         <div className="kpi-cards">

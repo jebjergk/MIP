@@ -53,7 +53,7 @@ select PORTFOLIO_ID, PROFILE_ID, NAME, STATUS, STARTING_CASH, FINAL_EQUITY,
   from MIP.APP.PORTFOLIO
  where PORTFOLIO_ID = $reset_portfolio_id;
 
- 
+
 
 -- =============================================================================
 -- PHASE 2 – DESTRUCTIVE RESET (run only after confirming Phase 0)
@@ -85,6 +85,11 @@ update MIP.APP.PORTFOLIO
  where PORTFOLIO_ID = $reset_portfolio_id;
 
 commit;
+
+-- Start a new episode so KPIs/risk are scoped from this reset (requires 168_portfolio_episode.sql).
+-- Uncomment and run if PORTFOLIO_EPISODE is deployed:
+-- set reset_profile_id = (select PROFILE_ID from MIP.APP.PORTFOLIO where PORTFOLIO_ID = $reset_portfolio_id);
+-- call MIP.APP.SP_START_PORTFOLIO_EPISODE($reset_portfolio_id, $reset_profile_id, 'MANUAL_RESET');
 
 -- =============================================================================
 -- PHASE 3 – POST-RESET SMOKE CHECKS (expect 0 rows in child tables, clean header)

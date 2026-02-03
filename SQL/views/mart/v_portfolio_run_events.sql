@@ -16,8 +16,11 @@ with daily as (
     from MIP.APP.PORTFOLIO_DAILY d
     join MIP.APP.PORTFOLIO p
       on p.PORTFOLIO_ID = d.PORTFOLIO_ID
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
+      on e.PORTFOLIO_ID = d.PORTFOLIO_ID
     left join MIP.APP.PORTFOLIO_PROFILE prof
       on prof.PROFILE_ID = p.PROFILE_ID
+    where e.EPISODE_ID is null or d.TS >= e.START_TS
 ),
 stop_events as (
     select

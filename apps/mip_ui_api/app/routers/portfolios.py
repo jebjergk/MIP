@@ -661,6 +661,28 @@ def get_portfolio_snapshot(
             "lookback_days": lookback_days,
         }
 
+        # Active episode (for evolution timeline; KPIs/risk are already episode-scoped via MART views)
+        active_episode = None
+        try:
+            cur.execute(
+                """
+                select EPISODE_ID, PROFILE_ID, START_TS, 'ACTIVE' as STATUS
+                from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE
+                where PORTFOLIO_ID = %s
+                """,
+                (portfolio_id,),
+            )
+            row = cur.fetchone()
+            if row and cur.description:
+                cols = [d[0] for d in cur.description]
+                active_episode = dict(zip(cols, row))
+                st = active_episode.get("START_TS")
+                if st is not None and hasattr(st, "isoformat"):
+                    active_episode["start_ts"] = st.isoformat()
+                active_episode = serialize_row(active_episode)
+        except Exception:
+            pass
+
         return {
             "positions": open_positions_filtered,
             "closed_this_bar_positions": closed_this_bar_positions,
@@ -675,6 +697,107 @@ def get_portfolio_snapshot(
             "risk_state": risk_state,
             "risk_strategy": risk_strategy,
             "cards": cards,
+            "active_episode": active_episode,
         }
+    finally:
+        conn.close()
+
+
+@router.get("/{portfolio_id}/episodes")
+def get_portfolio_episodes(portfolio_id: int):
+    """
+    List episodes (profile generations) for a portfolio, most recent first.
+    Each episode includes summary stats over its window (total_return, max_drawdown, win_days, loss_days, trades_count).
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select EPISODE_ID, PORTFOLIO_ID, PROFILE_ID, START_TS, END_TS, STATUS, END_REASON, CREATED_AT
+            from MIP.APP.PORTFOLIO_EPISODE
+            where PORTFOLIO_ID = %s
+            order by START_TS desc
+            """,
+            (portfolio_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return []
+        columns = [d[0] for d in cur.description]
+        episodes = []
+        for row in rows:
+            ep = serialize_row(dict(zip(columns, row)))
+            start_ts = ep.get("START_TS") or ep.get("start_ts")
+            end_ts = ep.get("END_TS") or ep.get("end_ts")
+            if start_ts and hasattr(start_ts, "isoformat"):
+                ep["start_ts"] = start_ts.isoformat()
+            if end_ts and hasattr(end_ts, "isoformat"):
+                ep["end_ts"] = end_ts.isoformat()
+
+            # Summary stats over episode window: PORTFOLIO_DAILY and PORTFOLIO_TRADES
+            try:
+                cur.execute(
+                    """
+                    select
+                        count(*) as trading_days,
+                        max_by(TOTAL_EQUITY, TS) as final_equity,
+                        max(DRAWDOWN) as max_drawdown,
+                        count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) > 0) as win_days,
+                        count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) < 0) as loss_days
+                    from (
+                        select TS, TOTAL_EQUITY, DRAWDOWN,
+                            lag(TOTAL_EQUITY) over (order by TS) as PREV_TOTAL_EQUITY
+                        from MIP.APP.PORTFOLIO_DAILY
+                        where PORTFOLIO_ID = %s
+                          and TS >= %s
+                          and (%s is null or TS <= %s)
+                    )
+                    """,
+                    (portfolio_id, start_ts, end_ts, end_ts),
+                )
+                daily_row = cur.fetchone()
+                p = cur.description
+                if daily_row and p:
+                    start_cash = None
+                    cur.execute(
+                        "select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s",
+                        (portfolio_id,),
+                    )
+                    pc = cur.fetchone()
+                    if pc and pc[0] is not None:
+                        start_cash = float(pc[0])
+                    final_equity = daily_row[1] if len(daily_row) > 1 else None
+                    total_return = None
+                    if start_cash and final_equity and start_cash != 0:
+                        total_return = (float(final_equity) / start_cash) - 1
+                    ep["total_return"] = total_return
+                    ep["max_drawdown"] = daily_row[2] if len(daily_row) > 2 else None
+                    ep["win_days"] = int(daily_row[3]) if len(daily_row) > 3 and daily_row[3] is not None else None
+                    ep["loss_days"] = int(daily_row[4]) if len(daily_row) > 4 and daily_row[4] is not None else None
+                else:
+                    ep["total_return"] = None
+                    ep["max_drawdown"] = None
+                    ep["win_days"] = None
+                    ep["loss_days"] = None
+
+                cur.execute(
+                    """
+                    select count(*) from MIP.APP.PORTFOLIO_TRADES
+                    where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
+                    """,
+                    (portfolio_id, start_ts, end_ts, end_ts),
+                )
+                tc = cur.fetchone()
+                ep["trades_count"] = int(tc[0]) if tc and tc[0] is not None else 0
+            except Exception:
+                ep["total_return"] = None
+                ep["max_drawdown"] = None
+                ep["win_days"] = None
+                ep["loss_days"] = None
+                ep["trades_count"] = None
+
+            episodes.append(ep)
+        return episodes
     finally:
         conn.close()

@@ -1,6 +1,22 @@
+import json
+
 from fastapi import APIRouter
 
 from app.db import get_connection, serialize_row
+
+
+def _parse_json(value):
+    """Parse JSON value - handles string, dict, or None."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 router = APIRouter(prefix="/briefs", tags=["briefs"])
 
@@ -279,8 +295,9 @@ def get_latest_brief(portfolio_id: int):
         columns = [d[0].lower() for d in cur.description]
         data = serialize_row(dict(zip(columns, row)))
 
-        brief_json = data.get("brief_json") or {}
-        prev_brief_json = data.get("prev_brief_json")
+        # Parse JSON fields (Snowflake VARIANT can come back as string or dict)
+        brief_json = _parse_json(data.get("brief_json"))
+        prev_brief_json = _parse_json(data.get("prev_brief_json")) if data.get("prev_brief_json") else None
 
         # Build risk gate dict
         risk_gate = {

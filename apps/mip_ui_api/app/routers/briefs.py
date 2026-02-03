@@ -101,11 +101,13 @@ def _build_risk(brief_json: dict, risk_gate: dict, profile: dict) -> dict:
     """Build risk & guardrails section."""
     risk = brief_json.get("risk", {}).get("latest", {}) or {}
 
-    # Profile thresholds (use `or` to handle None values from DB)
-    drawdown_stop_pct = (profile.get("drawdown_stop_pct") if profile else None) or 0.10
-    max_positions = profile.get("max_positions") if profile else None
-    max_position_pct = profile.get("max_position_pct") if profile else None
-    bust_equity_pct = profile.get("bust_equity_pct") if profile else None
+    # Profile thresholds - NO hardcoded defaults, show actual DB values
+    profile = profile or {}
+    drawdown_stop_pct = profile.get("drawdown_stop_pct")
+    max_positions = profile.get("max_positions")
+    max_position_pct = profile.get("max_position_pct")
+    bust_equity_pct = profile.get("bust_equity_pct")
+    profile_name = profile.get("name")
 
     # Current state
     max_drawdown = risk.get("max_drawdown")
@@ -119,11 +121,15 @@ def _build_risk(brief_json: dict, risk_gate: dict, profile: dict) -> dict:
         actions.append("Wait for positions to close before new entries.")
     if risk_status == "WARN":
         actions.append("Consider reducing position sizes or taking profits.")
-    if max_drawdown and drawdown_stop_pct and max_drawdown >= drawdown_stop_pct * 0.8:
+    if max_drawdown is not None and drawdown_stop_pct is not None and max_drawdown >= drawdown_stop_pct * 0.8:
         remaining = (drawdown_stop_pct - max_drawdown) * 100
         actions.append(f"Drawdown within {remaining:.1f}% of stop threshold.")
     if not actions:
         actions.append("No immediate actions required.")
+
+    # Warning if profile not configured
+    if drawdown_stop_pct is None:
+        actions.insert(0, "Warning: Portfolio profile not configured. Risk thresholds unknown.")
 
     return {
         "current_state": {
@@ -135,13 +141,14 @@ def _build_risk(brief_json: dict, risk_gate: dict, profile: dict) -> dict:
             "drawdown_stop_ts": risk.get("drawdown_stop_ts"),
         },
         "thresholds": {
+            "profile_name": profile_name,
             "drawdown_stop_pct": drawdown_stop_pct,
-            "drawdown_stop_label": f"{drawdown_stop_pct*100:.0f}%" if drawdown_stop_pct is not None else "—",
+            "drawdown_stop_label": f"{drawdown_stop_pct*100:.0f}%" if drawdown_stop_pct is not None else "Not configured",
             "max_positions": max_positions,
             "max_position_pct": max_position_pct,
-            "max_position_pct_label": f"{max_position_pct*100:.0f}%" if max_position_pct is not None else None,
+            "max_position_pct_label": f"{max_position_pct*100:.0f}%" if max_position_pct is not None else "Not configured",
             "bust_equity_pct": bust_equity_pct,
-            "bust_equity_pct_label": f"{bust_equity_pct*100:.0f}%" if bust_equity_pct is not None else None,
+            "bust_equity_pct_label": f"{bust_equity_pct*100:.0f}%" if bust_equity_pct is not None else "Not configured",
         },
         "actions": actions,
     }
@@ -268,7 +275,8 @@ def get_latest_brief(portfolio_id: int):
                 "found": False,
                 "message": "No brief exists yet for this portfolio.",
             }
-        columns = [d[0] for d in cur.description]
+        # Lowercase column names for consistent key access
+        columns = [d[0].lower() for d in cur.description]
         data = serialize_row(dict(zip(columns, row)))
 
         brief_json = data.get("brief_json") or {}

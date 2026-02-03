@@ -142,6 +142,7 @@ function OpportunitiesSection({ opportunities }) {
 // Risk & Guardrails Section
 function RiskSection({ risk }) {
   const { current_state, thresholds, actions } = risk
+  const profileMissing = !thresholds.profile_name
   return (
     <section className="brief-card risk-section" aria-label="Risk & Guardrails">
       <h2>Risk &amp; Guardrails</h2>
@@ -163,8 +164,16 @@ function RiskSection({ risk }) {
             <dd>{current_state.entries_blocked ? 'Yes' : 'No'}</dd>
           </dl>
         </div>
-        <div className="risk-thresholds">
-          <h3>Profile Thresholds</h3>
+        <div className={`risk-thresholds ${profileMissing ? 'profile-missing' : ''}`}>
+          <h3>
+            Profile Thresholds
+            {thresholds.profile_name && (
+              <span className="profile-name-badge">{thresholds.profile_name}</span>
+            )}
+          </h3>
+          {profileMissing && (
+            <p className="profile-warning">Profile not configured for this portfolio.</p>
+          )}
           <dl className="risk-dl">
             <dt>Drawdown Stop</dt>
             <dd>{thresholds.drawdown_stop_label || '—'}</dd>

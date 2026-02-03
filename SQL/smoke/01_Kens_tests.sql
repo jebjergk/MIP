@@ -18,6 +18,10 @@ select * from mip.app.portfolio_profile;
 
 select * from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL;
 
+SELECT p.PORTFOLIO_ID, p.NAME, p.PROFILE_ID, pp.NAME as PROFILE_NAME, pp.DRAWDOWN_STOP_PCT
+FROM MIP.APP.PORTFOLIO p
+LEFT JOIN MIP.APP.PORTFOLIO_PROFILE pp ON pp.PROFILE_ID = p.PROFILE_ID
+WHERE p.PORTFOLIO_ID = 2;
 
 select * from mip.app.portfolio_trades order by trade_ts desc;
   select * from MIP.APP.PORTFOLIO_POSITIONS order by hold_until_index;

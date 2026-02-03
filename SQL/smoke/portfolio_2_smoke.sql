@@ -6,7 +6,7 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -- 1) All portfolios (expect at least 2; second named PORTFOLIO_2_LOW_RISK)
-select * from MIP.APP.PORTFOLIO order by PORTFOLIO_ID;
+select * from MIP.APP.PORTFOLIO_profile;
 
 -- 2) ACTIVE episodes for both portfolios (expect one row per active portfolio)
 select * from MIP.APP.PORTFOLIO_EPISODE
@@ -14,7 +14,7 @@ where STATUS = 'ACTIVE'
 order by PORTFOLIO_ID;
 
 -- 3) Portfolio #2 active episode must have PROFILE_ID = 2 (LOW_RISK)
-select EPISODE_ID, PORTFOLIO_ID, PROFILE_ID, START_TS, STATUS
+select EPISODE_ID, e.PORTFOLIO_ID, e.PROFILE_ID, START_TS, e.STATUS
 from MIP.APP.PORTFOLIO_EPISODE e
 join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = e.PORTFOLIO_ID
 where p.NAME = 'PORTFOLIO_2_LOW_RISK' and e.STATUS = 'ACTIVE';

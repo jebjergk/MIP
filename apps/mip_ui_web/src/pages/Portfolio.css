@@ -1,5 +1,38 @@
 /* Portfolio Overview: operator clarity cards — "where do we stand right now?" */
 
+/* Freshness header */
+.portfolio-freshness-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.portfolio-freshness-header .freshness-badge {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.portfolio-freshness-header .freshness-badge.freshness-current {
+  background: #198754;
+  color: white;
+}
+
+.portfolio-freshness-header .freshness-badge.freshness-stale {
+  background: #ff9800;
+  color: white;
+}
+
+.portfolio-freshness-header .freshness-text {
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
 .portfolio-overview-intro {
   margin: 0 0 0.5rem 0;
   font-size: 0.95rem;

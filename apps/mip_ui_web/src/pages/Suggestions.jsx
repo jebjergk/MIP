@@ -19,6 +19,7 @@ import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import { useExplainSection } from '../context/ExplainCenterContext'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
+import { useFreshness, relativeTime as relTime } from '../context/FreshnessContext'
 import { getGlossaryEntry } from '../data/glossary'
 import { SUGGESTIONS_EXPLAIN_CONTEXT, buildSuggestionsEvidenceContext } from '../data/explainContexts'
 import './Suggestions.css'
@@ -185,6 +186,7 @@ function buildHistogramBins(values, numBins = 20) {
 export default function Suggestions() {
   const { explainMode } = useExplainMode()
   const defaultPortfolioId = useDefaultPortfolioId()
+  const { latestRunId, latestRunTs } = useFreshness()
   const [summaryData, setSummaryData] = useState(null)
   const [trainingData, setTrainingData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -407,6 +409,16 @@ export default function Suggestions() {
   return (
     <>
       <h1>Suggestions</h1>
+
+      {/* Freshness header */}
+      {latestRunTs && (
+        <div className="suggestions-freshness-header">
+          <span className="freshness-badge freshness-current">CURRENT</span>
+          <span className="freshness-text">
+            Data from pipeline run {relTime(latestRunTs)}
+          </span>
+        </div>
+      )}
 
       {hasFilters && (
         <div className="suggestions-filter-banner" role="status">

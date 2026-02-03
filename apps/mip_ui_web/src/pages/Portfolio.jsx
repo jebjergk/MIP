@@ -10,6 +10,7 @@ import EpisodeCard from '../components/EpisodeCard'
 import PortfolioMiniGridCharts from '../components/PortfolioMiniGridCharts'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter, useExplainSection } from '../context/ExplainCenterContext'
+import { useFreshness, relativeTime } from '../context/FreshnessContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
 import { PORTFOLIO_EXPLAIN_CONTEXT, RISK_GATE_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Portfolio.css'
@@ -17,6 +18,7 @@ import './Portfolio.css'
 export default function Portfolio() {
   const { portfolioId } = useParams()
   const { explainMode } = useExplainMode()
+  const { latestRunId, latestRunTs, isStale } = useFreshness()
   const statusBadgeTitle = explainMode ? getGlossaryEntryByDotKey('ui.status_badge')?.long : undefined
   const [portfolios, setPortfolios] = useState([])
   const [portfolio, setPortfolio] = useState(null)
@@ -130,11 +132,36 @@ export default function Portfolio() {
     const activeHeaderLine = activeEp && activeSince
       ? `Active since ${activeSince} · Profile ${activeProfileId ?? '—'} · ${gateState}`
       : null
+    
+    // Freshness check
+    const portfolioRunId = portfolio.LAST_SIMULATION_RUN_ID || portfolio.last_simulation_run_id
+    const portfolioRunTs = portfolio.LAST_SIMULATED_AT || portfolio.last_simulated_at
+    const portfolioIsStale = isStale(portfolioRunId)
 
     return (
       <>
         <h1>Portfolio: {portfolio.NAME}</h1>
         {episodeLabel && <p className="portfolio-episode-header">{episodeLabel}</p>}
+        
+        {/* Freshness header */}
+        <div className="portfolio-freshness-header">
+          {portfolioIsStale ? (
+            <>
+              <span className="freshness-badge freshness-stale">STALE</span>
+              <span className="freshness-text">
+                Last run: {relativeTime(portfolioRunTs)} · A newer pipeline run is available
+              </span>
+            </>
+          ) : portfolioRunTs ? (
+            <>
+              <span className="freshness-badge freshness-current">CURRENT</span>
+              <span className="freshness-text">
+                Last run: {relativeTime(portfolioRunTs)}
+              </span>
+            </>
+          ) : null}
+        </div>
+        
         <p><Link to="/portfolios">← Back to list</Link></p>
 
         {activeEp && (

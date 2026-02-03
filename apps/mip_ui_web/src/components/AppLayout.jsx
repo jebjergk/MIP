@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { to: '/brief', label: 'Morning Brief' },
   { to: '/training', label: 'Training Status' },
   { to: '/suggestions', label: 'Suggestions' },
+  { to: '/signals', label: 'Signals' },
   { to: '/debug', label: 'Debug' },
 ]
 

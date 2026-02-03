@@ -563,6 +563,28 @@ export default function MorningBrief() {
 
       {brief && (
         <div className="brief-content">
+          {/* Stale brief banner with Load latest CTA */}
+          {brief.is_stale && (
+            <div className="stale-brief-banner" role="alert">
+              <div className="stale-banner-icon">⚠️</div>
+              <div className="stale-banner-content">
+                <p className="stale-banner-title">You are viewing an older brief</p>
+                <p className="stale-banner-text">
+                  This brief was generated from pipeline run <code>{brief.pipeline_run_id?.slice(0, 8) || '—'}</code>.
+                  {brief.stale_reason && ` ${brief.stale_reason}`}
+                </p>
+              </div>
+              <button 
+                type="button" 
+                className="stale-banner-btn"
+                onClick={loadBrief}
+                disabled={loading}
+              >
+                {loading ? 'Loading…' : 'Load Latest Brief'}
+              </button>
+            </div>
+          )}
+          
           <ExecutiveSummary 
             brief={brief} 
             onShowTrades={() => setShowTradesModal(true)}

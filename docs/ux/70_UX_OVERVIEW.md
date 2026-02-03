@@ -47,6 +47,49 @@ Get the local UX running in a few steps:
 | **Morning Brief** | Latest brief per portfolio. | `MIP.AGENT_OUT.MORNING_BRIEF`. |
 | **Training Status** | First-draft view of training state (e.g. row counts, last run). | `MIP.MART.V_TRAINING_LEADERBOARD` and/or training-related audit/tables; minimal. |
 
+## Freshness model: AS_OF vs GENERATED_AT
+
+The UX distinguishes between two timestamps to help users understand data currency:
+
+| Timestamp | Meaning | Example field |
+|-----------|---------|---------------|
+| **AS_OF_TS** | Market date/time the data represents. | `MORNING_BRIEF.AS_OF_TS` — the trading day the brief covers. |
+| **CREATED_AT / GENERATED_AT** | System time when the data was produced. | `MORNING_BRIEF.CREATED_AT` — when the brief row was written. |
+
+### Staleness detection
+
+A brief (or portfolio snapshot) is considered **STALE** when:
+- Its `pipeline_run_id` differs from `latest_success_run_id` (from `/api/status`)
+- Or its `created_at` is older than the latest pipeline run time
+
+The UI shows:
+- **CURRENT** badge (green): Data is from the latest pipeline run
+- **STALE** badge (orange): Data is from an older pipeline run
+
+### Why staleness matters
+
+When a brief is stale:
+1. Drill-down links (e.g., "View in Signals") may not match current data
+2. Opportunity recommendations may have been superseded
+3. Risk gate state may have changed
+
+The UI shows a banner on stale briefs with a **"Load Latest Brief"** button.
+
+### API endpoints for freshness
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/status` | `latest_success_run_id`, `latest_success_ts` |
+| `GET /signals/latest-run` | Same info, dedicated endpoint |
+
+### Pages with freshness indicators
+
+| Page | Freshness display |
+|------|-------------------|
+| Morning Brief | CURRENT/STALE badge + "Load Latest Brief" CTA |
+| Portfolio | CURRENT/STALE badge + last run timestamp |
+| Suggestions | CURRENT badge + data freshness timestamp |
+
 ## Out of scope (v1)
 
 - Trading approvals or any write to Snowflake from the UI/API.

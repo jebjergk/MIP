@@ -48,6 +48,67 @@
 
 .brief-controls button:disabled {
   background: #6c757d;
+}
+
+/* Stale Brief Banner */
+.stale-brief-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, #fff3cd 0%, #ffe9a0 100%);
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+}
+
+.stale-brief-banner .stale-banner-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.stale-brief-banner .stale-banner-content {
+  flex: 1;
+}
+
+.stale-brief-banner .stale-banner-title {
+  margin: 0 0 0.25rem 0;
+  font-weight: 600;
+  color: #856404;
+}
+
+.stale-brief-banner .stale-banner-text {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #856404;
+}
+
+.stale-brief-banner .stale-banner-text code {
+  background: rgba(0,0,0,0.08);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.85rem;
+}
+
+.stale-brief-banner .stale-banner-btn {
+  padding: 0.5rem 1rem;
+  background: #856404;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stale-brief-banner .stale-banner-btn:hover:not(:disabled) {
+  background: #6a5003;
+}
+
+.stale-brief-banner .stale-banner-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
   cursor: not-allowed;
 }
 

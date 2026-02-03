@@ -49,7 +49,7 @@ begin
     select e.EPISODE_ID, e.PROFILE_ID,
            coalesce(e.START_EQUITY, (select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID)),
            e.START_TS
-      into v_episode_id, v_profile_id, v_start_equity, v_start_ts
+      into :v_episode_id, :v_profile_id, :v_start_equity, :v_start_ts
       from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
      where e.PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
@@ -61,7 +61,7 @@ begin
            PROFIT_TARGET_PCT,
            CRYSTALLIZE_MODE,
            COOLDOWN_DAYS
-      into v_crystallize_enabled, v_profit_target_pct, v_crystallize_mode, v_cooldown_days
+      into :v_crystallize_enabled, :v_profit_target_pct, :v_crystallize_mode, :v_cooldown_days
       from MIP.APP.PORTFOLIO_PROFILE
      where PROFILE_ID = :v_profile_id;
 
@@ -79,7 +79,7 @@ begin
         coalesce(sum(case when daily.DAILY_PNL > 0 then 1 else 0 end), 0),
         coalesce(sum(case when daily.DAILY_PNL < 0 then 1 else 0 end), 0),
         coalesce(max(daily.DRAWDOWN), 0)
-      into v_win_days, v_loss_days, v_max_dd_pct
+      into :v_win_days, :v_loss_days, :v_max_dd_pct
       from (
         select TS, TOTAL_EQUITY, DRAWDOWN,
             lag(TOTAL_EQUITY) over (order by TS) as PREV_TOTAL_EQUITY,
@@ -91,7 +91,7 @@ begin
       ) daily;
 
     select count(*)
-      into v_trades_count
+      into :v_trades_count
       from MIP.APP.PORTFOLIO_TRADES
      where PORTFOLIO_ID = :P_PORTFOLIO_ID
        and TRADE_TS >= :v_start_ts
@@ -178,7 +178,7 @@ begin
     if (v_crystallize_mode = 'REBASE') then
         v_next_start_equity := P_FINAL_EQUITY;
     else
-        select STARTING_CASH into v_baseline_cash from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+        select STARTING_CASH into :v_baseline_cash from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID;
         v_next_start_equity := v_baseline_cash;
     end if;
 

@@ -407,7 +407,198 @@
   color: #666;
 }
 
-/* Portfolio list: health dot */
+/* Portfolio Control Tower */
+.control-tower-intro {
+  font-size: 0.9rem;
+  color: #666;
+  margin: 0 0 1rem 0;
+}
+
+.control-tower-intro strong {
+  color: #333;
+}
+
+.control-tower-table-wrap {
+  overflow-x: auto;
+  margin: 0 -0.5rem;
+  padding: 0 0.5rem;
+}
+
+.control-tower-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.control-tower-table thead {
+  background: linear-gradient(to bottom, #f8f9fa, #f1f3f4);
+  border-bottom: 2px solid #dee2e6;
+}
+
+.control-tower-table th {
+  padding: 0.75rem 0.6rem;
+  text-align: left;
+  font-weight: 600;
+  color: #495057;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.control-tower-table td {
+  padding: 0.65rem 0.6rem;
+  border-bottom: 1px solid #e9ecef;
+  vertical-align: middle;
+}
+
+.control-tower-row {
+  transition: background 0.15s;
+  border-left: 3px solid transparent;
+}
+
+.control-tower-row:hover {
+  background: #f8f9fa;
+}
+
+/* Subtle left border by gate state */
+.control-tower-row--gate-safe {
+  border-left-color: #2e7d32;
+}
+
+.control-tower-row--gate-caution {
+  border-left-color: #f9a825;
+}
+
+.control-tower-row--gate-stopped {
+  border-left-color: #c62828;
+}
+
+/* Column widths */
+.col-name {
+  font-weight: 500;
+}
+
+.col-name a {
+  color: #1565c0;
+  text-decoration: none;
+}
+
+.col-name a:hover {
+  text-decoration: underline;
+}
+
+.col-id {
+  color: #6c757d;
+  font-size: 0.85rem;
+}
+
+.col-gate,
+.col-health {
+  white-space: nowrap;
+}
+
+.col-equity,
+.col-paidout {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.col-episode {
+  font-size: 0.85rem;
+  color: #555;
+}
+
+/* Traffic lights (shared for Gate and Health) */
+.traffic-light {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.08);
+}
+
+/* Gate colors */
+.traffic-light--safe {
+  background: #2e7d32;
+  box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.2);
+}
+
+.traffic-light--caution {
+  background: #f9a825;
+  box-shadow: 0 0 0 2px rgba(249, 168, 37, 0.2);
+}
+
+.traffic-light--stopped {
+  background: #c62828;
+  box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.2);
+}
+
+/* Health colors */
+.traffic-light--ok {
+  background: #2e7d32;
+  box-shadow: 0 0 0 2px rgba(46, 125, 50, 0.2);
+}
+
+.traffic-light--stale {
+  background: #f9a825;
+  box-shadow: 0 0 0 2px rgba(249, 168, 37, 0.2);
+}
+
+.traffic-light--broken {
+  background: #c62828;
+  box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.2);
+}
+
+.traffic-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+/* Paid out column */
+.paidout-value {
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.paidout-zero {
+  color: #adb5bd;
+}
+
+/* Status chip */
+.status-chip {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.status-chip--active {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.status-chip--inactive,
+.status-chip--paused {
+  background: #f5f5f5;
+  color: #757575;
+}
+
+.status-chip--bust {
+  background: #ffebee;
+  color: #c62828;
+}
+
+/* Legacy styles (keep for compatibility) */
 .portfolio-list-dot {
   display: inline-block;
   width: 10px;
@@ -420,7 +611,6 @@
   background: #2e7d32;
 }
 
-/* Portfolio list: gate state traffic light (SAFE / CAUTION / STOPPED) */
 .portfolio-list-dot--gate-safe {
   background: #2e7d32;
 }

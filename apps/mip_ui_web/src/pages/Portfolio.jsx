@@ -637,52 +637,81 @@ export default function Portfolio() {
 
   return (
     <>
-      <h1>Portfolios</h1>
-      <table className="runs-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>ID</th>
-            <th>Status <InfoTooltip scope="portfolio" key="status" variant="short" /></th>
-            <th title="Gate state: SAFE = green, CAUTION = yellow, STOPPED = red">Gate</th>
-            <th title="Active episode: green = active">Health</th>
-            <th>Active episode</th>
-          </tr>
-        </thead>
-        <tbody>
-          {portfolios.map((p) => {
-            const gateState = (p.GATE_STATE ?? p.gate_state ?? 'SAFE').toUpperCase()
-            const gateTitle = gateState === 'STOPPED' ? 'Entries blocked' : gateState === 'CAUTION' ? 'Caution' : 'Safe'
-            const ep = p.active_episode
-            const episodeLabel = ep
-              ? `#${ep.episode_id ?? ep.EPISODE_ID ?? '—'} since ${(ep.start_ts ?? ep.START_TS ?? '').toString().slice(0, 10)}`
-              : '—'
-            return (
-              <tr key={p.PORTFOLIO_ID ?? p.portfolio_id}>
-                <td><Link to={`/portfolios/${p.PORTFOLIO_ID ?? p.portfolio_id}`}>{p.NAME ?? p.name}</Link></td>
-                <td>{p.PORTFOLIO_ID ?? p.portfolio_id}</td>
-                <td><span className="status-badge" title={statusBadgeTitle}>{p.STATUS ?? p.status}</span></td>
-                <td>
-                  <span
-                    className={`portfolio-list-dot portfolio-list-dot--gate portfolio-list-dot--gate-${gateState.toLowerCase()}`}
-                    title={gateTitle}
-                    aria-label={gateTitle}
-                  />
-                  <span className="portfolio-list-gate-label">{gateState}</span>
-                </td>
-                <td>
-                  <span
-                    className={`portfolio-list-dot portfolio-list-dot--${(p.STATUS || '').toLowerCase()}`}
-                    title={p.STATUS === 'ACTIVE' ? 'Active' : p.STATUS || '—'}
-                    aria-hidden
-                  />
-                </td>
-                <td>{episodeLabel}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      <h1>Portfolio Control Tower</h1>
+      <p className="control-tower-intro">
+        Monitor all portfolios at a glance. <strong>Gate</strong> = risk regime (entries allowed?). <strong>Health</strong> = data freshness.
+      </p>
+      <div className="control-tower-table-wrap">
+        <table className="control-tower-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th className="col-id">ID</th>
+              <th className="col-gate" title="Risk regime: SAFE = entries allowed, CAUTION = approaching threshold, STOPPED = entries blocked">Gate</th>
+              <th className="col-health" title="Data freshness: OK = recent run, STALE = older than 24h, BROKEN = very old or failed">Health</th>
+              <th className="col-equity" title="Latest total equity from last simulation">Equity</th>
+              <th className="col-paidout" title="Cumulative profits withdrawn across all episodes">Paid Out</th>
+              <th className="col-episode">Active Episode</th>
+              <th className="col-status">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {portfolios.map((p) => {
+              const gateState = (p.GATE_STATE ?? p.gate_state ?? 'SAFE').toUpperCase()
+              const gateTooltip = p.gate_tooltip ?? (gateState === 'STOPPED' ? 'Entries blocked' : gateState === 'CAUTION' ? 'Approaching threshold' : 'Entries allowed')
+              const healthState = (p.health_state ?? 'OK').toUpperCase()
+              const healthReason = p.health_reason ?? ''
+              const ep = p.active_episode
+              const episodeLabel = ep
+                ? `#${ep.episode_id ?? '—'} since ${(ep.start_ts ?? '').toString().slice(0, 10)}`
+                : '—'
+              const equity = p.latest_equity ?? p.FINAL_EQUITY ?? p.final_equity ?? 0
+              const paidOut = p.total_paid_out ?? p.TOTAL_PAID_OUT ?? 0
+              const status = p.STATUS ?? p.status ?? 'ACTIVE'
+              
+              return (
+                <tr
+                  key={p.PORTFOLIO_ID ?? p.portfolio_id}
+                  className={`control-tower-row control-tower-row--gate-${gateState.toLowerCase()}`}
+                >
+                  <td className="col-name">
+                    <Link to={`/portfolios/${p.PORTFOLIO_ID ?? p.portfolio_id}`}>{p.NAME ?? p.name}</Link>
+                  </td>
+                  <td className="col-id">{p.PORTFOLIO_ID ?? p.portfolio_id}</td>
+                  <td className="col-gate">
+                    <span
+                      className={`traffic-light traffic-light--${gateState.toLowerCase()}`}
+                      title={gateTooltip}
+                    />
+                    <span className="traffic-label">{gateState}</span>
+                  </td>
+                  <td className="col-health">
+                    <span
+                      className={`traffic-light traffic-light--${healthState.toLowerCase()}`}
+                      title={healthReason}
+                    />
+                    <span className="traffic-label">{healthState}</span>
+                  </td>
+                  <td className="col-equity">
+                    €{Number(equity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </td>
+                  <td className="col-paidout">
+                    {paidOut > 0 ? (
+                      <span className="paidout-value">€{Number(paidOut).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                    ) : (
+                      <span className="paidout-zero">—</span>
+                    )}
+                  </td>
+                  <td className="col-episode">{episodeLabel}</td>
+                  <td className="col-status">
+                    <span className={`status-chip status-chip--${status.toLowerCase()}`}>{status}</span>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </>
   )
 }

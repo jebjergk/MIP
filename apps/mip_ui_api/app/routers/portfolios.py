@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -7,30 +7,103 @@ from app.db import get_connection, fetch_all, serialize_rows, serialize_row
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
 
+def _compute_health_state(last_run_ts, outcomes_updated_ts, stale_hours: int = 24):
+    """
+    Compute health state based on freshness thresholds.
+    - OK: last run within threshold AND outcomes updated within threshold
+    - STALE: data is older than threshold
+    - BROKEN: no data or very old
+    """
+    now = datetime.utcnow()
+    threshold = timedelta(hours=stale_hours)
+    broken_threshold = timedelta(hours=stale_hours * 3)  # 72h for BROKEN
+    
+    # Parse timestamps if needed
+    if last_run_ts and isinstance(last_run_ts, str):
+        try:
+            last_run_ts = datetime.fromisoformat(last_run_ts.replace('Z', '+00:00').replace('+00:00', ''))
+        except ValueError:
+            last_run_ts = None
+    if outcomes_updated_ts and isinstance(outcomes_updated_ts, str):
+        try:
+            outcomes_updated_ts = datetime.fromisoformat(outcomes_updated_ts.replace('Z', '+00:00').replace('+00:00', ''))
+        except ValueError:
+            outcomes_updated_ts = None
+    
+    # No run data at all
+    if last_run_ts is None:
+        return {
+            "health_state": "BROKEN",
+            "health_reason": "No pipeline run recorded",
+        }
+    
+    run_age = now - last_run_ts
+    
+    # Check if BROKEN (very old)
+    if run_age > broken_threshold:
+        return {
+            "health_state": "BROKEN",
+            "health_reason": f"Last run {run_age.days}d ago (threshold: {broken_threshold.days}d)",
+        }
+    
+    # Check if STALE
+    if run_age > threshold:
+        return {
+            "health_state": "STALE",
+            "health_reason": f"Last run {run_age.total_seconds() / 3600:.0f}h ago",
+        }
+    
+    # OK - within threshold
+    return {
+        "health_state": "OK",
+        "health_reason": f"Last run {run_age.total_seconds() / 3600:.0f}h ago",
+    }
+
+
 @router.get("")
 def list_portfolios():
-    """Portfolio list: PORTFOLIO_ID, NAME, STATUS, gate_state (SAFE/CAUTION/STOPPED), active_episode (id, start_ts, profile_id), etc."""
+    """
+    Portfolio Control Tower: list all portfolios with gate state, health state, equity, and cumulative paid out.
+    
+    Gate: Risk regime (SAFE/CAUTION/STOPPED) based on drawdown and risk gate.
+    Health: System/data freshness (OK/STALE/BROKEN) based on last run timestamps.
+    """
     sql = """
+    with episode_payouts as (
+        select
+            r.PORTFOLIO_ID,
+            sum(coalesce(r.DISTRIBUTION_AMOUNT, 0)) as total_paid_out
+        from MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+        group by r.PORTFOLIO_ID
+    )
     select
         p.PORTFOLIO_ID,
         p.NAME,
         p.STATUS,
         p.LAST_SIMULATED_AT,
+        p.LAST_SIMULATION_RUN_ID,
         p.PROFILE_ID,
         p.STARTING_CASH,
         p.FINAL_EQUITY,
         p.TOTAL_RETURN,
+        p.MAX_DRAWDOWN,
+        -- Gate state from risk gate view
         case
             when coalesce(g.ENTRIES_BLOCKED, false) then 'STOPPED'
             when g.RISK_STATUS = 'WARN' then 'CAUTION'
             else 'SAFE'
         end as GATE_STATE,
+        g.BLOCK_REASON as GATE_REASON,
+        -- Active episode
         e.EPISODE_ID as ACTIVE_EPISODE_ID,
         e.START_TS as ACTIVE_EPISODE_START_TS,
-        e.PROFILE_ID as ACTIVE_EPISODE_PROFILE_ID
+        e.PROFILE_ID as ACTIVE_EPISODE_PROFILE_ID,
+        -- Cumulative paid out
+        coalesce(ep.total_paid_out, 0) as TOTAL_PAID_OUT
     from MIP.APP.PORTFOLIO p
     left join MIP.MART.V_PORTFOLIO_RISK_GATE g on g.PORTFOLIO_ID = p.PORTFOLIO_ID
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e on e.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join episode_payouts ep on ep.PORTFOLIO_ID = p.PORTFOLIO_ID
     order by p.PORTFOLIO_ID
     """
     conn = get_connection()
@@ -39,7 +112,10 @@ def list_portfolios():
         cur.execute(sql)
         rows = fetch_all(cur)
         rows = serialize_rows(rows)
+        
+        result = []
         for row in rows:
+            # Active episode
             ep_id = row.get("ACTIVE_EPISODE_ID") or row.get("active_episode_id")
             ep_ts = row.get("ACTIVE_EPISODE_START_TS") or row.get("active_episode_start_ts")
             ep_prof = row.get("ACTIVE_EPISODE_PROFILE_ID") or row.get("active_episode_profile_id")
@@ -51,7 +127,30 @@ def list_portfolios():
                 }
             else:
                 row["active_episode"] = None
-        return rows
+            
+            # Health state based on last run timestamp
+            last_run_ts = row.get("LAST_SIMULATED_AT") or row.get("last_simulated_at")
+            health = _compute_health_state(last_run_ts, None)
+            row["health_state"] = health["health_state"]
+            row["health_reason"] = health["health_reason"]
+            
+            # Gate tooltip
+            gate_state = (row.get("GATE_STATE") or row.get("gate_state") or "SAFE").upper()
+            gate_reason = row.get("GATE_REASON") or row.get("gate_reason")
+            if gate_state == "STOPPED":
+                row["gate_tooltip"] = f"Entries blocked: {gate_reason or 'drawdown stop active'}. Only exits allowed."
+            elif gate_state == "CAUTION":
+                row["gate_tooltip"] = "Drawdown approaching threshold. Consider reducing exposure."
+            else:
+                row["gate_tooltip"] = "Portfolio operating normally. Entries allowed."
+            
+            # Ensure numeric fields are present
+            row["latest_equity"] = row.get("FINAL_EQUITY") or row.get("final_equity") or 0
+            row["total_paid_out"] = row.get("TOTAL_PAID_OUT") or row.get("total_paid_out") or 0
+            
+            result.append(row)
+        
+        return result
     finally:
         conn.close()
 

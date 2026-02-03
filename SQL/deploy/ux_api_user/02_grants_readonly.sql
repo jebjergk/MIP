@@ -23,6 +23,8 @@ grant select on table MIP.APP.PORTFOLIO_PROFILE     to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_TRADES      to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_POSITIONS   to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_DAILY       to role MIP_UI_API_ROLE;
+-- If PORTFOLIO_RISK_OVERRIDE exists (from 161_app_portfolio_risk_override.sql), uncomment:
+-- grant select on table MIP.APP.PORTFOLIO_RISK_OVERRIDE to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.MIP_AUDIT_LOG         to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.RECOMMENDATION_LOG    to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.RECOMMENDATION_OUTCOMES to role MIP_UI_API_ROLE;

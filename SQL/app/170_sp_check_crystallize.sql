@@ -41,29 +41,52 @@ declare
     v_loss_days number;
     v_max_dd_pct number(18,6);
     v_trades_count number;
+    c_ep cursor for
+        select EPISODE_ID, PROFILE_ID, START_EQUITY, START_TS
+          from MIP.APP.PORTFOLIO_EPISODE
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID and STATUS = 'ACTIVE';
+    c_prof cursor for
+        select coalesce(CRYSTALLIZE_ENABLED, false), PROFIT_TARGET_PCT, CRYSTALLIZE_MODE, COOLDOWN_DAYS
+          from MIP.APP.PORTFOLIO_PROFILE
+         where PROFILE_ID = :v_profile_id;
+    c_daily cursor for
+        select
+            coalesce(sum(case when daily.DAILY_PNL > 0 then 1 else 0 end), 0),
+            coalesce(sum(case when daily.DAILY_PNL < 0 then 1 else 0 end), 0),
+            coalesce(max(daily.DRAWDOWN), 0)
+          from (
+            select TS, TOTAL_EQUITY, DRAWDOWN,
+                (TOTAL_EQUITY - lag(TOTAL_EQUITY) over (order by TS)) as DAILY_PNL
+            from MIP.APP.PORTFOLIO_DAILY
+            where PORTFOLIO_ID = :P_PORTFOLIO_ID and TS >= :v_start_ts and TS <= :v_ended_ts
+          ) daily;
+    c_trades cursor for
+        select count(*) from MIP.APP.PORTFOLIO_TRADES
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID and TRADE_TS >= :v_start_ts and TRADE_TS <= :v_ended_ts;
+    c_baseline cursor for
+        select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 begin
     if (P_FINAL_EQUITY is null) then
         return false;
     end if;
 
-    select e.EPISODE_ID, e.PROFILE_ID,
-           coalesce(e.START_EQUITY, (select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID)),
-           e.START_TS
-      into :v_episode_id, :v_profile_id, :v_start_equity, :v_start_ts
-      from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
-     where e.PORTFOLIO_ID = :P_PORTFOLIO_ID;
+    open c_ep;
+    fetch c_ep into v_episode_id, v_profile_id, v_start_equity, v_start_ts;
+    close c_ep;
+
+    if (v_start_equity is null) then
+        open c_baseline;
+        fetch c_baseline into v_start_equity;
+        close c_baseline;
+    end if;
 
     if (v_episode_id is null or v_start_equity is null or v_start_equity <= 0) then
         return false;
     end if;
 
-    select coalesce(CRYSTALLIZE_ENABLED, false),
-           PROFIT_TARGET_PCT,
-           CRYSTALLIZE_MODE,
-           COOLDOWN_DAYS
-      into :v_crystallize_enabled, :v_profit_target_pct, :v_crystallize_mode, :v_cooldown_days
-      from MIP.APP.PORTFOLIO_PROFILE
-     where PROFILE_ID = :v_profile_id;
+    open c_prof;
+    fetch c_prof into v_crystallize_enabled, v_profit_target_pct, v_crystallize_mode, v_cooldown_days;
+    close c_prof;
 
     if (not v_crystallize_enabled or v_profit_target_pct is null) then
         return false;
@@ -75,27 +98,13 @@ begin
     end if;
 
     -- Episode-scoped stats from PORTFOLIO_DAILY and PORTFOLIO_TRADES (full episode window)
-    select
-        coalesce(sum(case when daily.DAILY_PNL > 0 then 1 else 0 end), 0),
-        coalesce(sum(case when daily.DAILY_PNL < 0 then 1 else 0 end), 0),
-        coalesce(max(daily.DRAWDOWN), 0)
-      into :v_win_days, :v_loss_days, :v_max_dd_pct
-      from (
-        select TS, TOTAL_EQUITY, DRAWDOWN,
-            lag(TOTAL_EQUITY) over (order by TS) as PREV_TOTAL_EQUITY,
-            (TOTAL_EQUITY - lag(TOTAL_EQUITY) over (order by TS)) as DAILY_PNL
-        from MIP.APP.PORTFOLIO_DAILY
-        where PORTFOLIO_ID = :P_PORTFOLIO_ID
-          and TS >= :v_start_ts
-          and TS <= :v_ended_ts
-      ) daily;
+    open c_daily;
+    fetch c_daily into v_win_days, v_loss_days, v_max_dd_pct;
+    close c_daily;
 
-    select count(*)
-      into :v_trades_count
-      from MIP.APP.PORTFOLIO_TRADES
-     where PORTFOLIO_ID = :P_PORTFOLIO_ID
-       and TRADE_TS >= :v_start_ts
-       and TRADE_TS <= :v_ended_ts;
+    open c_trades;
+    fetch c_trades into v_trades_count;
+    close c_trades;
 
     -- Emit event
     call MIP.APP.SP_LOG_EVENT(
@@ -178,7 +187,9 @@ begin
     if (v_crystallize_mode = 'REBASE') then
         v_next_start_equity := P_FINAL_EQUITY;
     else
-        select STARTING_CASH into :v_baseline_cash from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+        open c_baseline;
+        fetch c_baseline into v_baseline_cash;
+        close c_baseline;
         v_next_start_equity := v_baseline_cash;
     end if;
 

@@ -8,6 +8,7 @@ create or replace view MIP.MART.V_PORTFOLIO_RISK_STATE as
 with profile_actions as (
     select
         p.PORTFOLIO_ID,
+        p.BUST_AT,
         coalesce(prof.BUST_ACTION, 'ALLOW_EXITS_ONLY') as BUST_ACTION
     from MIP.APP.PORTFOLIO p
     left join MIP.APP.PORTFOLIO_PROFILE prof
@@ -25,19 +26,19 @@ select
     g.MAX_DRAWDOWN,
     iff(
         coalesce(g.ENTRIES_BLOCKED, false)
-        or pa.BUST_ACTION = 'ALLOW_EXITS_ONLY',
+        or (pa.BUST_AT is not null and pa.BUST_ACTION = 'ALLOW_EXITS_ONLY'),
         true,
         false
     ) as ENTRIES_BLOCKED,
     case
         when coalesce(g.ENTRIES_BLOCKED, false)
-          or pa.BUST_ACTION = 'ALLOW_EXITS_ONLY'
+          or (pa.BUST_AT is not null and pa.BUST_ACTION = 'ALLOW_EXITS_ONLY')
         then 'ALLOW_EXITS_ONLY'
         else 'ALLOW_ENTRIES'
     end as ALLOWED_ACTIONS,
     case
         when coalesce(g.ENTRIES_BLOCKED, false) then g.BLOCK_REASON
-        when pa.BUST_ACTION = 'ALLOW_EXITS_ONLY' then 'ALLOW_EXITS_ONLY'
+        when pa.BUST_AT is not null and pa.BUST_ACTION = 'ALLOW_EXITS_ONLY' then 'ALLOW_EXITS_ONLY'
         else null
     end as STOP_REASON,
     g.BLOCK_REASON,

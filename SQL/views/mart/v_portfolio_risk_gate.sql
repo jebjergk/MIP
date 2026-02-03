@@ -86,7 +86,7 @@ select
         else null
     end as BLOCK_REASON,
     case
-        when lk.MAX_DRAWDOWN is null then 'WARN'
+        when lk.MAX_DRAWDOWN is null then 'OK'   /* no run data (e.g. after reset) = no drawdown yet */
         when lk.MAX_DRAWDOWN >= p.DRAWDOWN_STOP_PCT then 'WARN'
         else 'OK'
     end as RISK_STATUS

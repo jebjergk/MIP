@@ -8,7 +8,7 @@ select * from mip.app.mip_audit_log where event_ts::date = '2026-02-01' order by
 
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
-
+delete from MIP.APP.PORTFOLIO where portfolio_id = 101;
 select * from MIP.MART.V_BAR_INDEX where bar_index = 57 order by ts desc;
 
 select * from mip.app.portfolio_profile;

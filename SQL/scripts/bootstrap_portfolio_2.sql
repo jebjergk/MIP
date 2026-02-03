@@ -9,7 +9,13 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -- Step 1: Insert Portfolio #2 if missing (match by name to avoid duplicates).
+-- Explicit PORTFOLIO_ID = 2 so the second portfolio gets id 2; Snowflake autoincrement
+-- can otherwise produce large gaps (e.g. 201). If you already ran this and got 201,
+-- delete that portfolio (and its episode) then re-run to get id 2:
+--   delete from MIP.APP.PORTFOLIO_EPISODE where PORTFOLIO_ID = 201;
+--   delete from MIP.APP.PORTFOLIO where PORTFOLIO_ID = 201;
 insert into MIP.APP.PORTFOLIO (
+    PORTFOLIO_ID,
     PROFILE_ID,
     NAME,
     BASE_CURRENCY,
@@ -18,6 +24,7 @@ insert into MIP.APP.PORTFOLIO (
     NOTES
 )
 select
+    2,                              -- PORTFOLIO_ID = 2 (second portfolio)
     2,                              -- PROFILE_ID = LOW_RISK
     'PORTFOLIO_2_LOW_RISK',
     'USD',

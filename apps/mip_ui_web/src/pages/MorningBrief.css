@@ -751,6 +751,74 @@
   color: #6c757d;
 }
 
+/* Verification badges */
+.verification-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  height: 1.1em;
+  margin-left: 0.3em;
+  font-size: 0.75em;
+  font-weight: bold;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.verification-badge.verified {
+  background: #198754;
+  color: white;
+}
+
+.verification-badge.mismatch {
+  background: #ffc107;
+  color: #212529;
+}
+
+.verification-badge.unverified {
+  background: #6c757d;
+  color: white;
+}
+
+/* Modal verification banners */
+.modal-verification {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.modal-verification.verified {
+  background: #d1e7dd;
+  color: #0f5132;
+  border: 1px solid #badbcc;
+}
+
+.modal-verification.mismatch {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffecb5;
+}
+
+.modal-verification.unverified {
+  background: #f8d7da;
+  color: #842029;
+  border: 1px solid #f5c2c7;
+}
+
+.modal-verification .verification-icon {
+  font-size: 1.1em;
+}
+
+.trade-run-id {
+  font-family: monospace;
+  font-size: 0.85em;
+  color: #6c757d;
+}
+
 /* Modal styles */
 .modal-backdrop {
   position: fixed;

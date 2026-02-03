@@ -22,8 +22,103 @@ def _parse_json(value):
 router = APIRouter(prefix="/briefs", tags=["briefs"])
 
 
-def _build_summary(brief_json: dict, risk_gate: dict) -> dict:
-    """Build executive summary from brief data and risk gate state."""
+def _get_verified_trades(cur, portfolio_id: int, run_id: str, brief_executed_count: int) -> dict:
+    """
+    Query PORTFOLIO_TRADES to get verified trade data for this run.
+    Returns verification status and actual trade rows.
+    
+    Returns:
+    - verification_status: VERIFIED, MISMATCH, EMPTY, UNVERIFIABLE
+    - verified_count: int
+    - verified_trades_preview: list of trade dicts
+    """
+    if not run_id:
+        return {
+            "verification_status": "UNVERIFIABLE",
+            "verified_count": 0,
+            "verified_trades_preview": [],
+        }
+    
+    try:
+        # Query actual trades from PORTFOLIO_TRADES for this run
+        cur.execute("""
+            select
+                TRADE_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                SIDE,
+                QUANTITY,
+                PRICE,
+                NOTIONAL,
+                TRADE_TS,
+                RUN_ID
+            from MIP.APP.PORTFOLIO_TRADES
+            where PORTFOLIO_ID = %s
+              and RUN_ID = %s
+            order by TRADE_TS desc
+            limit 10
+        """, (portfolio_id, run_id))
+        
+        rows = cur.fetchall()
+        columns = [d[0].lower() for d in cur.description]
+        
+        # Get total count for this run
+        cur.execute("""
+            select count(*) as cnt
+            from MIP.APP.PORTFOLIO_TRADES
+            where PORTFOLIO_ID = %s
+              and RUN_ID = %s
+        """, (portfolio_id, run_id))
+        count_row = cur.fetchone()
+        verified_count = count_row[0] if count_row else 0
+        
+        # Build preview list
+        verified_trades_preview = []
+        for row in rows:
+            trade = dict(zip(columns, row))
+            verified_trades_preview.append({
+                "trade_id": trade.get("trade_id"),
+                "symbol": trade.get("symbol"),
+                "market_type": trade.get("market_type"),
+                "side": trade.get("side"),
+                "quantity": float(trade.get("quantity")) if trade.get("quantity") is not None else None,
+                "price": float(trade.get("price")) if trade.get("price") is not None else None,
+                "notional": float(trade.get("notional")) if trade.get("notional") is not None else None,
+                "trade_ts": trade.get("trade_ts").isoformat() if hasattr(trade.get("trade_ts"), 'isoformat') else trade.get("trade_ts"),
+                "run_id": trade.get("run_id"),
+            })
+        
+        # Determine verification status
+        if verified_count > 0:
+            if verified_count == brief_executed_count:
+                verification_status = "VERIFIED"
+            else:
+                verification_status = "MISMATCH"
+        else:
+            verification_status = "EMPTY"
+        
+        return {
+            "verification_status": verification_status,
+            "verified_count": verified_count,
+            "verified_trades_preview": verified_trades_preview,
+        }
+    except Exception:
+        return {
+            "verification_status": "UNVERIFIABLE",
+            "verified_count": 0,
+            "verified_trades_preview": [],
+        }
+
+
+def _build_summary(brief_json: dict, risk_gate: dict, verified_trades: dict = None) -> dict:
+    """
+    Build executive summary from brief data and risk gate state.
+    
+    verified_trades dict contains:
+    - verified_count: int (count from PORTFOLIO_TRADES)
+    - verified_trades_preview: list (actual trades from PORTFOLIO_TRADES)
+    - verification_status: str (VERIFIED, UNVERIFIABLE, EMPTY)
+    """
     risk = brief_json.get("risk", {}).get("latest", {}) or {}
     proposals = brief_json.get("proposals", {}).get("summary", {}) or {}
     signals = brief_json.get("signals", {}) or {}
@@ -44,24 +139,60 @@ def _build_summary(brief_json: dict, risk_gate: dict) -> dict:
         status = "SAFE"
         status_explanation = "Portfolio operating normally. Entries allowed."
 
-    # Get executed trades from proposals
-    executed_trades = brief_json.get("proposals", {}).get("executed_trades", []) or []
-    executed_count = proposals.get("executed", 0) or len(executed_trades)
+    # Get executed from brief record (for comparison/fallback)
+    brief_executed_trades = brief_json.get("proposals", {}).get("executed_trades", []) or []
+    brief_executed_count = proposals.get("executed", 0) or len(brief_executed_trades)
 
-    # Build preview (limit to 10)
-    executed_trades_preview = []
-    for trade in executed_trades[:10]:
-        executed_trades_preview.append({
-            "trade_id": trade.get("trade_id"),
-            "symbol": trade.get("symbol"),
-            "market_type": trade.get("market_type"),
-            "side": trade.get("side"),
-            "quantity": trade.get("quantity"),
-            "price": trade.get("price"),
-            "notional": trade.get("notional"),
-            "trade_ts": trade.get("trade_ts"),
-            "score": trade.get("score"),
-        })
+    # Use verified trades if available, otherwise use brief record
+    verified_trades = verified_trades or {}
+    verification_status = verified_trades.get("verification_status", "UNVERIFIABLE")
+    verified_count = verified_trades.get("verified_count", 0)
+    verified_trades_preview = verified_trades.get("verified_trades_preview", [])
+
+    # Determine what to display
+    if verification_status == "VERIFIED":
+        # We have actual trade rows from PORTFOLIO_TRADES
+        executed_count = verified_count
+        executed_trades_preview = verified_trades_preview
+        executed_source = "MIP.APP.PORTFOLIO_TRADES"
+        executed_label = "trades"  # We have actual trades
+        executed_note = None
+    elif verification_status == "MISMATCH":
+        # Brief says X trades but PORTFOLIO_TRADES shows different count
+        # Trust the actual trades table
+        executed_count = verified_count
+        executed_trades_preview = verified_trades_preview
+        executed_source = "MIP.APP.PORTFOLIO_TRADES (brief record shows different count)"
+        executed_label = "trades"
+        executed_note = f"Brief record shows {brief_executed_count}, but trade table shows {verified_count}"
+    elif verification_status == "EMPTY" and brief_executed_count > 0:
+        # Trade history is empty but brief says there were executions
+        # This likely means a reset occurred
+        executed_count = brief_executed_count
+        # Build preview from brief record
+        executed_trades_preview = []
+        for trade in brief_executed_trades[:10]:
+            executed_trades_preview.append({
+                "trade_id": trade.get("trade_id"),
+                "symbol": trade.get("symbol"),
+                "market_type": trade.get("market_type"),
+                "side": trade.get("side"),
+                "quantity": trade.get("quantity"),
+                "price": trade.get("price"),
+                "notional": trade.get("notional"),
+                "trade_ts": trade.get("trade_ts"),
+                "score": trade.get("score"),
+            })
+        executed_source = "Brief record (trade history cleared by reset)"
+        executed_label = "actions"  # Not verified as trades
+        executed_note = "trade history cleared by reset"
+    else:
+        # No verified trades, no brief record, or can't verify
+        executed_count = 0
+        executed_trades_preview = []
+        executed_source = "No data"
+        executed_label = "trades"
+        executed_note = "no trades recorded" if verification_status != "UNVERIFIABLE" else "unverifiable"
 
     return {
         "status": status,
@@ -69,10 +200,15 @@ def _build_summary(brief_json: dict, risk_gate: dict) -> dict:
         "entries_allowed": not entries_blocked,
         "new_suggestions_today": len(trusted_now),
         "explanation": status_explanation,
+        # Executed info
         "executed_count": executed_count,
-        "rejected_count": proposals.get("rejected", 0),
+        "executed_label": executed_label,  # "trades" or "actions"
         "executed_trades_preview": executed_trades_preview,
-        "executed_trades_source": "MIP.APP.PORTFOLIO_TRADES for this run",
+        "executed_trades_source": executed_source,
+        "executed_trades_note": executed_note,  # Optional warning/explanation
+        "verification_status": verification_status,  # VERIFIED, MISMATCH, EMPTY, UNVERIFIABLE
+        "brief_record_count": brief_executed_count,  # What the brief record says
+        "rejected_count": proposals.get("rejected", 0),
     }
 
 
@@ -385,14 +521,23 @@ def get_latest_brief(portfolio_id: int):
             "name": data.get("profile_name"),
         }
 
-        # Build summary with reset awareness
-        summary = _build_summary(brief_json, risk_gate)
+        # Get brief record's executed count for comparison
+        proposals = brief_json.get("proposals", {}).get("summary", {}) or {}
+        brief_executed_trades = brief_json.get("proposals", {}).get("executed_trades", []) or []
+        brief_executed_count = proposals.get("executed", 0) or len(brief_executed_trades)
+
+        # Verify executed trades against actual PORTFOLIO_TRADES table
+        verified_trades = _get_verified_trades(cur, portfolio_id, pipeline_run_id, brief_executed_count)
+
+        # Build summary with verified trades info
+        summary = _build_summary(brief_json, risk_gate, verified_trades)
         
-        # Handle executed trades with reset awareness
-        if is_before_reset and summary.get("executed_count", 0) > 0:
-            summary["executed_trades_note"] = "from brief record (trade history may have been cleared by reset)"
-        elif summary.get("executed_count", 0) == 0 and is_before_reset:
-            summary["executed_trades_note"] = "trade history cleared by reset"
+        # Add reset context if applicable
+        if is_before_reset:
+            if summary.get("verification_status") == "EMPTY":
+                summary["executed_trades_note"] = "trade history cleared by reset"
+            elif summary.get("executed_count", 0) > 0:
+                summary["executed_trades_note"] = (summary.get("executed_trades_note") or "") + " (brief from before reset)"
 
         return {
             "found": True,

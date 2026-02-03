@@ -282,3 +282,123 @@ order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS;
 ```
 
 Backend builds items from the two queries above: triple-level gives recs_total and last_recommendation_ts; by-horizon gives outcomes_total (sum of n), horizons_covered (distinct horizon_bars), and by_horizon[] with horizons 1/3/5/10/20 where present.
+
+## Signals Explorer (GET /signals)
+
+Canonical signal/recommendation rows for drill-down from Morning Brief opportunities. Used by the `/signals` page.
+
+**Route:** `GET /signals`
+
+**Query params** (all optional):
+| Param | Type | Description |
+|-------|------|-------------|
+| `symbol` | string | Filter by symbol (e.g., AAPL) |
+| `market_type` | string | Filter by market type (STOCK, FX) |
+| `pattern_id` | string | Filter by pattern ID |
+| `horizon_bars` | int | Filter by horizon bars |
+| `run_id` | string | Filter by pipeline run ID |
+| `as_of_ts` | string | Filter by as-of timestamp (ISO format) |
+| `trust_label` | string | Filter by trust label (TRUSTED, WATCH, UNTRUSTED) |
+| `limit` | int | Max rows to return (default 100, max 500) |
+| `include_fallback` | bool | Include fallback results if primary query returns 0 (default true) |
+
+**Response shape:**
+```json
+{
+  "signals": [
+    {
+      "recommendation_id": "...",
+      "run_id": "...",
+      "signal_ts": "2026-01-15T16:00:00",
+      "symbol": "AAPL",
+      "market_type": "STOCK",
+      "interval_minutes": 1440,
+      "pattern_id": "AAPL_2",
+      "score": 0.85,
+      "details": {...},
+      "trust_label": "TRUSTED",
+      "recommended_action": "BUY",
+      "is_eligible": true,
+      "gating_reason": null
+    }
+  ],
+  "count": 1,
+  "query_type": "primary",
+  "filters_applied": { "symbol": "AAPL" },
+  "fallback_used": false,
+  "fallback_reason": null
+}
+```
+
+**Fallback logic** (when `include_fallback=true` and primary returns 0):
+1. Drop `run_id` filter, keep other filters → `query_type: "fallback_no_run_id"`
+2. Drop `as_of_ts` filter, use 7-day window → `query_type: "fallback_7day_window"`
+3. Keep symbol only, 30-day window → `query_type: "fallback_symbol_only"`
+4. If still 0 → `query_type: "no_results"` with helpful message
+
+**Canonical SQL:**
+```sql
+select
+    s.RECOMMENDATION_ID,
+    s.RUN_ID,
+    s.TS as signal_ts,
+    s.SYMBOL,
+    s.MARKET_TYPE,
+    s.INTERVAL_MINUTES,
+    s.PATTERN_ID,
+    s.SCORE,
+    s.DETAILS,
+    s.TRUST_LABEL,
+    s.RECOMMENDED_ACTION,
+    s.IS_ELIGIBLE,
+    s.GATING_REASON
+from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+where s.INTERVAL_MINUTES = 1440
+  and (:symbol is null or s.SYMBOL = :symbol)
+  and (:market_type is null or s.MARKET_TYPE = :market_type)
+  and (:pattern_id is null or s.PATTERN_ID = :pattern_id)
+  and (:run_id is null or s.RUN_ID = :run_id)
+  and (:trust_label is null or s.TRUST_LABEL = :trust_label)
+order by s.TS desc, s.SCORE desc
+limit :limit;
+```
+
+**Example queries:**
+
+```bash
+# All signals for a symbol
+GET /signals?symbol=AAPL
+
+# Filter by Morning Brief context (from opportunity link)
+GET /signals?symbol=AAPL&pattern_id=AAPL_2&run_id=abc123&from=brief
+
+# Trusted signals only
+GET /signals?trust_label=TRUSTED&limit=50
+```
+
+## Latest Pipeline Run (GET /signals/latest-run)
+
+Returns the latest successful pipeline run info, used to determine if a Morning Brief is stale.
+
+**Route:** `GET /signals/latest-run`
+
+**Response shape:**
+```json
+{
+  "found": true,
+  "latest_run_id": "abc-123-def",
+  "latest_run_ts": "2026-01-15T16:30:00"
+}
+```
+
+**Canonical SQL:**
+```sql
+select
+    LAST_SIMULATION_RUN_ID as run_id,
+    LAST_SIMULATED_AT as run_ts
+from MIP.APP.PORTFOLIO
+where STATUS = 'ACTIVE'
+  and LAST_SIMULATION_RUN_ID is not null
+order by LAST_SIMULATED_AT desc
+limit 1;
+```

@@ -133,6 +133,23 @@ Use a single run identifier (e.g. from `MIP_AUDIT_LOG` after a pipeline run). Re
    - KPI summary: `MIP.MART.V_PORTFOLIO_RUN_KPIS` where `RUN_ID = :run_id`.  
    See [MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md](MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md) for the exact queries.
 
+## Morning Brief drill-down
+
+The Morning Brief page shows opportunities (signal-based recommendations). Each opportunity card has a "View in Signals" link that navigates to the **Signals Explorer** page (`/signals`) with pre-filled filters.
+
+**Deep-link parameters:**
+- `portfolioId` — Portfolio context
+- `asOf` — Brief's as-of timestamp (market date)
+- `pipelineRunId` — Brief's pipeline run ID
+- `symbol` — Symbol from the opportunity
+- `market_type` — Market type (STOCK, FX)
+- `pattern_id` — Pattern ID
+- `from=brief` — Indicates navigation from Morning Brief
+
+The Signals Explorer automatically applies fallback logic if the exact filters return no rows (e.g., drops `run_id` filter, expands time window). See [72_UX_QUERIES.md](72_UX_QUERIES.md) "Signals Explorer (GET /signals)" for the full API contract.
+
+**Staleness indicator:** The Morning Brief displays a **CURRENT** (green) or **STALE** (orange) badge based on whether the brief's `pipeline_run_id` matches the latest pipeline run.
+
 ## Validating briefs
 
 1. **Latest brief per portfolio**  

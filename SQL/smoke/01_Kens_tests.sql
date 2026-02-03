@@ -11,7 +11,7 @@ call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
 select * from MIP.MART.V_BAR_INDEX where bar_index = 57 order by ts desc;
 
-select * from mip.app.portfollo;
+select * from mip.app.portfolio;
 
 select * from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL;
 

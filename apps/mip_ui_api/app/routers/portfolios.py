@@ -714,22 +714,23 @@ def get_portfolio_episodes(portfolio_id: int):
         cur = conn.cursor()
         cur.execute(
             """
-            select EPISODE_ID, PORTFOLIO_ID, PROFILE_ID, START_TS, END_TS, STATUS, END_REASON, CREATED_AT
-            from MIP.APP.PORTFOLIO_EPISODE
-            where PORTFOLIO_ID = %s
-            order by START_TS desc
+            select e.EPISODE_ID, e.PORTFOLIO_ID, e.PROFILE_ID, e.START_TS, e.END_TS, e.STATUS, e.END_REASON, e.CREATED_AT,
+                   p.NAME as PROFILE_NAME
+            from MIP.APP.PORTFOLIO_EPISODE e
+            left join MIP.APP.PORTFOLIO_PROFILE p on p.PROFILE_ID = e.PROFILE_ID
+            where e.PORTFOLIO_ID = %s
+            order by e.START_TS desc
             """,
             (portfolio_id,),
         )
         rows = fetch_all(cur)
         if not rows:
             return []
-        columns = [d[0] for d in cur.description]
         episodes = []
         for row in rows:
-            ep = serialize_row(dict(zip(columns, row)))
-            start_ts = ep.get("START_TS") or ep.get("start_ts")
-            end_ts = ep.get("END_TS") or ep.get("end_ts")
+            start_ts = row.get("START_TS")
+            end_ts = row.get("END_TS")
+            ep = {**row}
             if start_ts and hasattr(start_ts, "isoformat"):
                 ep["start_ts"] = start_ts.isoformat()
             if end_ts and hasattr(end_ts, "isoformat"):
@@ -767,6 +768,7 @@ def get_portfolio_episodes(portfolio_id: int):
                     pc = cur.fetchone()
                     if pc and pc[0] is not None:
                         start_cash = float(pc[0])
+                        ep["start_equity"] = start_cash
                     final_equity = daily_row[1] if len(daily_row) > 1 else None
                     total_return = None
                     if start_cash and final_equity and start_cash != 0:
@@ -780,6 +782,11 @@ def get_portfolio_episodes(portfolio_id: int):
                     ep["max_drawdown"] = None
                     ep["win_days"] = None
                     ep["loss_days"] = None
+                if ep.get("start_equity") is None:
+                    cur.execute("select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s", (portfolio_id,))
+                    sc = cur.fetchone()
+                    if sc and sc[0] is not None:
+                        ep["start_equity"] = float(sc[0])
 
                 cur.execute(
                     """
@@ -797,7 +804,183 @@ def get_portfolio_episodes(portfolio_id: int):
                 ep["loss_days"] = None
                 ep["trades_count"] = None
 
-            episodes.append(ep)
+            episodes.append(serialize_row(ep))
         return episodes
+    finally:
+        conn.close()
+
+
+@router.get("/{portfolio_id}/episodes/{episode_id}")
+def get_episode_detail(portfolio_id: int, episode_id: int):
+    """
+    Episode analytics for the timeline card: equity series, drawdown series,
+    trades per day, regime strip, thresholds, and events.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            select e.EPISODE_ID, e.PORTFOLIO_ID, e.PROFILE_ID, e.START_TS, e.END_TS, e.STATUS, e.END_REASON,
+                   p.NAME as PROFILE_NAME, p.DRAWDOWN_STOP_PCT, p.BUST_EQUITY_PCT,
+                   port.STARTING_CASH, port.BUST_AT
+            from MIP.APP.PORTFOLIO_EPISODE e
+            join MIP.APP.PORTFOLIO_PROFILE p on p.PROFILE_ID = e.PROFILE_ID
+            join MIP.APP.PORTFOLIO port on port.PORTFOLIO_ID = e.PORTFOLIO_ID
+            where e.PORTFOLIO_ID = %s and e.EPISODE_ID = %s
+            """,
+            (portfolio_id, episode_id),
+        )
+        row = cur.fetchone()
+        if not row or not cur.description:
+            raise HTTPException(status_code=404, detail="Episode not found")
+        cols = [d[0] for d in cur.description]
+        ep = dict(zip(cols, row))
+        start_ts = ep.get("START_TS")
+        end_ts = ep.get("END_TS")
+        if start_ts is None:
+            raise HTTPException(status_code=404, detail="Episode missing START_TS")
+        drawdown_stop_pct = float(ep["DRAWDOWN_STOP_PCT"]) if ep.get("DRAWDOWN_STOP_PCT") is not None else 0.10
+        bust_equity_pct = float(ep["BUST_EQUITY_PCT"]) if ep.get("BUST_EQUITY_PCT") is not None else None
+        start_equity = float(ep["STARTING_CASH"]) if ep.get("STARTING_CASH") is not None else None
+
+        # Equity series: PORTFOLIO_DAILY in window
+        cur.execute(
+            """
+            select TS, TOTAL_EQUITY, PEAK_EQUITY, DRAWDOWN, OPEN_POSITIONS
+            from MIP.APP.PORTFOLIO_DAILY
+            where PORTFOLIO_ID = %s and TS >= %s and (%s is null or TS <= %s)
+            order by TS
+            """,
+            (portfolio_id, start_ts, end_ts, end_ts),
+        )
+        daily_rows = fetch_all(cur)
+        equity_series = []
+        drawdown_series = []
+        regime_per_day = []
+        drawdown_stop_ts = None
+        for r in daily_rows:
+            ts = r.get("TS")
+            te = r.get("TOTAL_EQUITY")
+            pe = r.get("PEAK_EQUITY")
+            dd = r.get("DRAWDOWN")
+            if ts is not None:
+                tss = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                if te is not None:
+                    equity_series.append({"ts": tss, "equity": float(te)})
+                dd_pct = (-float(dd) * 100) if dd is not None else None
+                drawdown_series.append({
+                    "ts": tss,
+                    "drawdown_pct": dd_pct,
+                    "high_watermark_equity": float(pe) if pe is not None else None,
+                })
+                gate = "STOPPED" if (dd is not None and float(dd) >= drawdown_stop_pct) else "SAFE"
+                regime_per_day.append({"ts": tss, "gate_state": gate})
+                if drawdown_stop_ts is None and dd is not None and float(dd) >= drawdown_stop_pct:
+                    drawdown_stop_ts = tss
+
+        # Trades per day
+        cur.execute(
+            """
+            select date_trunc('day', TRADE_TS) as day_ts, count(*) as trades_count
+            from MIP.APP.PORTFOLIO_TRADES
+            where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
+            group by date_trunc('day', TRADE_TS)
+            order by day_ts
+            """,
+            (portfolio_id, start_ts, end_ts, end_ts),
+        )
+        trade_rows = fetch_all(cur)
+        trades_per_day = []
+        for r in trade_rows:
+            day_ts = r.get("day_ts") or r.get("DAY_TS")
+            cnt = r.get("trades_count") or r.get("TRADES_COUNT")
+            if day_ts is not None:
+                tss = day_ts.isoformat() if hasattr(day_ts, "isoformat") else str(day_ts)
+                trades_per_day.append({"ts": tss, "trades_count": int(cnt) if cnt is not None else 0})
+
+        # Events: entries_blocked (drawdown_stop), drawdown_stop, bust, episode_ended
+        events = []
+        if drawdown_stop_ts:
+            events.append({"ts": drawdown_stop_ts, "type": "entries_blocked"})
+            events.append({"ts": drawdown_stop_ts, "type": "drawdown_stop_triggered"})
+        bust_at = ep.get("BUST_AT")
+        if bust_at is not None and (end_ts is None or bust_at <= end_ts) and bust_at >= start_ts:
+            bust_ts = bust_at.isoformat() if hasattr(bust_at, "isoformat") else str(bust_at)
+            events.append({"ts": bust_ts, "type": "bust_triggered"})
+        if end_ts is not None:
+            end_ts_str = end_ts.isoformat() if hasattr(end_ts, "isoformat") else str(end_ts)
+            events.append({"ts": end_ts_str, "type": "episode_ended"})
+        events.sort(key=lambda x: x["ts"])
+
+        # Thresholds
+        thresholds = {
+            "drawdown_stop_pct": drawdown_stop_pct * 100 if drawdown_stop_pct is not None else None,
+            "bust_threshold_pct": bust_equity_pct * 100 if bust_equity_pct is not None else None,
+            "start_equity": start_equity,
+        }
+
+        # Summary stats (reuse logic from list)
+        final_equity = None
+        max_drawdown = None
+        win_days = None
+        loss_days = None
+        peak_open = None
+        if daily_rows:
+            final_equity = daily_rows[-1].get("TOTAL_EQUITY")
+            if final_equity is not None:
+                final_equity = float(final_equity)
+            max_dd = max((float(r["DRAWDOWN"]) for r in daily_rows if r.get("DRAWDOWN") is not None), default=None)
+            max_drawdown = max_dd * 100 if max_dd is not None else None
+            prev = None
+            wins = losses = 0
+            for r in daily_rows:
+                te = r.get("TOTAL_EQUITY")
+                if prev is not None and te is not None:
+                    if float(te) > float(prev):
+                        wins += 1
+                    elif float(te) < float(prev):
+                        losses += 1
+                prev = te
+            win_days = wins
+            loss_days = losses
+            peak_open = max((r.get("OPEN_POSITIONS") or 0) for r in daily_rows)
+            if isinstance(peak_open, (int, float)):
+                peak_open = int(peak_open)
+        cur.execute(
+            "select count(*) from MIP.APP.PORTFOLIO_TRADES where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)",
+            (portfolio_id, start_ts, end_ts, end_ts),
+        )
+        tc = cur.fetchone()
+        trades_count = int(tc[0]) if tc and tc[0] is not None else 0
+
+        start_ts_str = start_ts.isoformat() if hasattr(start_ts, "isoformat") else str(start_ts)
+        end_ts_str = end_ts.isoformat() if hasattr(end_ts, "isoformat") else str(end_ts) if end_ts else None
+
+        return serialize_row({
+            "episode_id": episode_id,
+            "portfolio_id": portfolio_id,
+            "profile_id": ep.get("PROFILE_ID"),
+            "profile_name": ep.get("PROFILE_NAME"),
+            "start_ts": start_ts_str,
+            "end_ts": end_ts_str,
+            "status": ep.get("STATUS"),
+            "end_reason": ep.get("END_REASON"),
+            "equity_series": equity_series,
+            "drawdown_series": drawdown_series,
+            "trades_per_day": trades_per_day,
+            "regime_per_day": regime_per_day,
+            "thresholds": thresholds,
+            "events": events,
+            "start_equity": start_equity,
+            "end_equity": final_equity,
+            "total_return": (final_equity / start_equity - 1) if (start_equity and final_equity and start_equity != 0) else None,
+            "max_drawdown": max_drawdown,
+            "trades_count": trades_count,
+            "win_days": win_days,
+            "loss_days": loss_days,
+            "peak_open_symbols": peak_open,
+        })
     finally:
         conn.close()

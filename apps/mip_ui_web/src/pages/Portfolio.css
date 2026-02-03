@@ -357,3 +357,10 @@
 .risk-gate-explain-this:hover {
   background: #e3f2fd;
 }
+
+/* Episodes section */
+.episode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}

@@ -5,6 +5,7 @@ import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
+import EpisodeCard from '../components/EpisodeCard'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter, useExplainSection } from '../context/ExplainCenterContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
@@ -22,6 +23,7 @@ export default function Portfolio() {
   const [error, setError] = useState(null)
   const [lookbackDays, setLookbackDays] = useState(30)
   const [showRestartModal, setShowRestartModal] = useState(false)
+  const [episodes, setEpisodes] = useState([])
   const { setContext } = useExplainCenter()
   const openExplainRiskGate = useExplainSection(RISK_GATE_EXPLAIN_CONTEXT)
 
@@ -57,6 +59,7 @@ export default function Portfolio() {
         } else {
           setPortfolio(null)
           setSnapshot(null)
+          setEpisodes([])
         }
       } catch (e) {
         if (!cancelled) setError(e.message)
@@ -388,6 +391,23 @@ export default function Portfolio() {
                   </div>
                 )}
               </section>
+
+              {episodes.length > 0 && (
+                <section className="episode-list-section" aria-label="Episode timeline">
+                  <h2>Episodes</h2>
+                  <p className="portfolio-overview-intro">Profile generations and resets. Expand a card to see equity, drawdown, trades per day, and risk regime.</p>
+                  <div className="episode-list">
+                    {episodes.map((ep) => (
+                      <EpisodeCard
+                        key={ep.episode_id ?? ep.EPISODE_ID}
+                        episode={ep}
+                        portfolioId={Number(portfolioId)}
+                        isActive={ep.status === 'ACTIVE' || ep.STATUS === 'ACTIVE'}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
             </>
           )
         })()}

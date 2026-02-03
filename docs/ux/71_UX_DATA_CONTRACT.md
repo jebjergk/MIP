@@ -94,3 +94,70 @@ Data contract for the read-only UX: object names, schemas (column list and types
 - **Grain**: One proposal per PROPOSAL_ID.
 - **Key columns**: PROPOSAL_ID, RUN_ID (varchar 64), RUN_ID_VARCHAR (varchar 64 canonical run key), PORTFOLIO_ID, PROPOSED_AT, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, SIDE, TARGET_WEIGHT, RECOMMENDATION_ID, SIGNAL_TS, STATUS, VALIDATION_ERRORS, APPROVED_AT, EXECUTED_AT, etc.
 - **Source**: `MIP/SQL/app/187_agent_out_order_proposals.sql`.
+
+---
+
+## Executed Fields: Truthfulness and Verification
+
+The Morning Brief displays an "Executed: N trades" (or "actions") count. This section defines the canonical source and verification semantics.
+
+### Canonical Source
+
+**Primary source**: `MIP.APP.PORTFOLIO_TRADES` (trade ledger)  
+**Fallback source**: `MORNING_BRIEF.BRIEF:proposals.executed_trades[]` (brief record)
+
+### Verification Status
+
+The API returns a `verification_status` field indicating the data quality:
+
+| Status | Meaning | UI Display |
+|--------|---------|------------|
+| `VERIFIED` | Count matches rows in PORTFOLIO_TRADES for this RUN_ID | "N trades" with ✓ badge |
+| `MISMATCH` | Brief record differs from actual trade table | "N trades" with ⚠ badge + note |
+| `EMPTY` | PORTFOLIO_TRADES has no rows for this run (possibly reset) | "N actions (from brief record)" with ? badge |
+| `UNVERIFIABLE` | No RUN_ID or query failed | "— (unverifiable)" |
+
+### Query Logic
+
+1. Query `PORTFOLIO_TRADES WHERE PORTFOLIO_ID = :pid AND RUN_ID = :run_id`
+2. Compare count to `brief_json.proposals.summary.executed`
+3. Return verification status and actual rows (or brief record as fallback)
+
+### API Response Fields
+
+```json
+{
+  "summary": {
+    "executed_count": 3,
+    "executed_label": "trades",  // or "actions"
+    "executed_trades_preview": [...],  // up to 10 rows
+    "executed_trades_source": "MIP.APP.PORTFOLIO_TRADES",
+    "executed_trades_note": null,  // or "trade history cleared by reset"
+    "verification_status": "VERIFIED",  // VERIFIED | MISMATCH | EMPTY | UNVERIFIABLE
+    "brief_record_count": 3  // what the brief JSON says
+  }
+}
+```
+
+### Reset Boundary Handling
+
+After a portfolio reset (new episode), the trade history is cleared. The API handles this by:
+
+1. Detecting `as_of_ts < episode_start_ts` (brief is from before reset)
+2. If `verification_status == "EMPTY"` and `brief_record_count > 0`:
+   - Show "N actions (from brief record)"
+   - Note: "trade history cleared by reset"
+3. UI shows a ? badge indicating data cannot be verified
+
+### UI Behavior
+
+- **Clickable "Executed" link**: Opens a modal/drawer showing the actual trade rows
+- **Verification badge**: ✓ (green) = verified, ⚠ (yellow) = mismatch, ? (gray) = unverified
+- **Modal header**: Shows verification status banner explaining the data source
+- **Empty state**: If no rows, explains why (reset, unverifiable, etc.)
+
+### Design Principles
+
+1. **Never claim trades happened unless we can show the rows**
+2. **Distinguish "trades" (verified ledger entries) from "actions" (brief record only)**
+3. **Provide audit trail**: clicking shows proof or explains why proof is unavailable

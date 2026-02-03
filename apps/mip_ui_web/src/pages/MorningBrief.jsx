@@ -50,7 +50,7 @@ function DeltaIndicator({ value, format = 'number', invert = false }) {
 }
 
 // Executed Trades Modal
-function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
+function ExecutedTradesModal({ trades, source, portfolioId, verificationStatus, briefRecordCount, executedLabel, onClose }) {
   useEffect(() => {
     const handleEsc = (e) => {
       if (e.key === 'Escape') onClose()
@@ -59,17 +59,47 @@ function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
     return () => document.removeEventListener('keydown', handleEsc)
   }, [onClose])
 
+  const label = executedLabel === 'actions' ? 'Actions' : 'Trades'
+  const isVerified = verificationStatus === 'VERIFIED'
+  const isMismatch = verificationStatus === 'MISMATCH'
+  const isEmpty = verificationStatus === 'EMPTY'
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-content executed-trades-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Executed Trades ({trades.length})</h2>
+          <h2>Executed {label} ({trades.length})</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
+        
+        {/* Verification status banner */}
+        {isVerified && (
+          <div className="modal-verification verified">
+            <span className="verification-icon">✓</span>
+            <span>Verified: {trades.length} trade{trades.length !== 1 ? 's' : ''} found in PORTFOLIO_TRADES</span>
+          </div>
+        )}
+        {isMismatch && (
+          <div className="modal-verification mismatch">
+            <span className="verification-icon">⚠</span>
+            <span>Brief record shows {briefRecordCount} but trade table shows {trades.length}</span>
+          </div>
+        )}
+        {isEmpty && briefRecordCount > 0 && (
+          <div className="modal-verification unverified">
+            <span className="verification-icon">?</span>
+            <span>Trade history unavailable. Showing {briefRecordCount} action{briefRecordCount !== 1 ? 's' : ''} from brief record (may have been cleared by reset).</span>
+          </div>
+        )}
+        
         <p className="modal-source">Source: {source}</p>
         <div className="modal-body">
           {trades.length === 0 ? (
-            <p className="no-trades">No executed trades in this brief.</p>
+            <p className="no-trades">
+              {isEmpty && briefRecordCount > 0 
+                ? `The brief recorded ${briefRecordCount} action${briefRecordCount !== 1 ? 's' : ''}, but trade history is unavailable (possibly cleared by portfolio reset).`
+                : 'No executed trades in this brief.'}
+            </p>
           ) : (
             <table className="trades-table">
               <thead>
@@ -80,7 +110,7 @@ function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
                   <th>Qty</th>
                   <th>Price</th>
                   <th>Notional</th>
-                  <th>Score</th>
+                  {!isEmpty && <th>Run ID</th>}
                 </tr>
               </thead>
               <tbody>
@@ -90,9 +120,9 @@ function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
                     <td className="trade-symbol">{trade.symbol}</td>
                     <td className={`trade-side ${(trade.side || '').toLowerCase()}`}>{trade.side}</td>
                     <td>{trade.quantity != null ? trade.quantity.toLocaleString() : '—'}</td>
-                    <td>{trade.price != null ? `$${trade.price.toLocaleString()}` : '—'}</td>
-                    <td>{trade.notional != null ? `$${trade.notional.toLocaleString()}` : '—'}</td>
-                    <td>{trade.score != null ? trade.score.toFixed(2) : '—'}</td>
+                    <td>{trade.price != null ? `$${Number(trade.price).toLocaleString()}` : '—'}</td>
+                    <td>{trade.notional != null ? `$${Number(trade.notional).toLocaleString()}` : '—'}</td>
+                    {!isEmpty && <td className="trade-run-id">{trade.run_id ? trade.run_id.slice(0, 8) : '—'}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -141,11 +171,35 @@ function ResetWarningBanner({ warning }) {
   )
 }
 
+// Verification badge for executed trades
+function VerificationBadge({ status }) {
+  if (status === 'VERIFIED') {
+    return <span className="verification-badge verified" title="Count verified against PORTFOLIO_TRADES">✓</span>
+  }
+  if (status === 'MISMATCH') {
+    return <span className="verification-badge mismatch" title="Brief record differs from trade table">⚠</span>
+  }
+  if (status === 'EMPTY' || status === 'UNVERIFIABLE') {
+    return <span className="verification-badge unverified" title="Trade history unavailable">?</span>
+  }
+  return null
+}
+
 // Executive Summary Section
 function ExecutiveSummary({ brief, onShowTrades }) {
   const { summary, as_of_ts, created_at, pipeline_run_id, is_stale, stale_reason, is_before_reset, reset_warning } = brief
-  const hasExecutedTrades = summary.executed_count > 0
-  const executedTradesNote = summary.executed_trades_note
+  const hasExecuted = summary.executed_count > 0
+  const executedLabel = summary.executed_label || 'trades'  // "trades" or "actions"
+  const executedNote = summary.executed_trades_note
+  const verificationStatus = summary.verification_status || 'UNVERIFIABLE'
+  
+  // Determine what text to show
+  const executedText = hasExecuted
+    ? `${summary.executed_count} ${executedLabel === 'actions' ? 'action' : 'trade'}${summary.executed_count !== 1 ? 's' : ''}`
+    : executedNote ? `— (${executedNote})` : '0 trades'
+  
+  // Show clickable only if we have data to show
+  const isClickable = hasExecuted || (verificationStatus === 'EMPTY' && summary.brief_record_count > 0)
 
   return (
     <section className="brief-card executive-summary" aria-label="Executive Summary">
@@ -182,19 +236,20 @@ function ExecutiveSummary({ brief, onShowTrades }) {
         <span className="meta-item">
           <strong>Run ID:</strong> <code>{pipeline_run_id ? (pipeline_run_id.length > 12 ? `${pipeline_run_id.slice(0, 8)}...` : pipeline_run_id) : '—'}</code>
         </span>
-        {hasExecutedTrades ? (
+        {isClickable ? (
           <button 
             type="button" 
             className="meta-item executed-link"
             onClick={onShowTrades}
-            title={executedTradesNote || "Click to see executed trades"}
+            title={executedNote || summary.executed_trades_source || "Click to see details"}
           >
-            <strong>Executed:</strong> {summary.executed_count} trade{summary.executed_count !== 1 ? 's' : ''}
-            {executedTradesNote && <span className="executed-note"> ({executedTradesNote})</span>}
+            <strong>Executed:</strong> {executedText}
+            <VerificationBadge status={verificationStatus} />
+            {executedNote && <span className="executed-note"> ({executedNote})</span>}
           </button>
         ) : (
           <span className="meta-item">
-            <strong>Executed:</strong> {executedTradesNote ? `— (${executedTradesNote})` : '0 trades'}
+            <strong>Executed:</strong> {executedText}
           </span>
         )}
       </div>
@@ -606,6 +661,9 @@ export default function MorningBrief() {
           trades={brief.summary.executed_trades_preview || []}
           source={brief.summary.executed_trades_source || 'Portfolio trades'}
           portfolioId={brief.portfolio_id}
+          verificationStatus={brief.summary.verification_status || 'UNVERIFIABLE'}
+          briefRecordCount={brief.summary.brief_record_count || 0}
+          executedLabel={brief.summary.executed_label || 'trades'}
           onClose={() => setShowTradesModal(false)}
         />
       )}

@@ -63,8 +63,10 @@ def _build_opportunities(brief_json: dict) -> list:
     for sig in trusted_now:
         reason = sig.get("reason", {}) or {}
         pattern_id = sig.get("pattern_id", "")
+        # Convert to string in case it's an int
+        pattern_id_str = str(pattern_id) if pattern_id else ""
         # Extract symbol from pattern_id (format: SYMBOL_MARKETTYPE_INTERVAL or similar)
-        symbol = pattern_id.split("_")[0] if pattern_id else "—"
+        symbol = pattern_id_str.split("_")[0] if pattern_id_str and "_" in pattern_id_str else pattern_id_str or "—"
 
         # Determine side from pattern or default
         # Patterns typically indicate direction in name or we infer from return
@@ -72,7 +74,7 @@ def _build_opportunities(brief_json: dict) -> list:
         side = "BUY" if avg_return >= 0 else "SELL"
 
         opportunities.append({
-            "pattern_id": pattern_id,
+            "pattern_id": pattern_id_str,
             "symbol": symbol,
             "side": side,
             "market_type": sig.get("market_type", "—"),

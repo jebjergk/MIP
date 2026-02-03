@@ -101,15 +101,15 @@ def _build_risk(brief_json: dict, risk_gate: dict, profile: dict) -> dict:
     """Build risk & guardrails section."""
     risk = brief_json.get("risk", {}).get("latest", {}) or {}
 
-    # Profile thresholds
-    drawdown_stop_pct = profile.get("drawdown_stop_pct", 0.10) if profile else 0.10
+    # Profile thresholds (use `or` to handle None values from DB)
+    drawdown_stop_pct = (profile.get("drawdown_stop_pct") if profile else None) or 0.10
     max_positions = profile.get("max_positions") if profile else None
     max_position_pct = profile.get("max_position_pct") if profile else None
     bust_equity_pct = profile.get("bust_equity_pct") if profile else None
 
     # Current state
     max_drawdown = risk.get("max_drawdown")
-    risk_status = risk.get("risk_status", "OK")
+    risk_status = risk.get("risk_status") or "OK"
     entries_blocked = risk_gate.get("entries_blocked", False) if risk_gate else False
     open_positions = risk_gate.get("open_positions", 0) if risk_gate else 0
 
@@ -129,19 +129,19 @@ def _build_risk(brief_json: dict, risk_gate: dict, profile: dict) -> dict:
         "current_state": {
             "risk_status": risk_status,
             "max_drawdown": max_drawdown,
-            "max_drawdown_pct": f"{max_drawdown*100:.2f}%" if max_drawdown else "—",
+            "max_drawdown_pct": f"{max_drawdown*100:.2f}%" if max_drawdown is not None else "—",
             "entries_blocked": entries_blocked,
             "open_positions": open_positions,
             "drawdown_stop_ts": risk.get("drawdown_stop_ts"),
         },
         "thresholds": {
             "drawdown_stop_pct": drawdown_stop_pct,
-            "drawdown_stop_label": f"{drawdown_stop_pct*100:.0f}%",
+            "drawdown_stop_label": f"{drawdown_stop_pct*100:.0f}%" if drawdown_stop_pct is not None else "—",
             "max_positions": max_positions,
             "max_position_pct": max_position_pct,
-            "max_position_pct_label": f"{max_position_pct*100:.0f}%" if max_position_pct else None,
+            "max_position_pct_label": f"{max_position_pct*100:.0f}%" if max_position_pct is not None else None,
             "bust_equity_pct": bust_equity_pct,
-            "bust_equity_pct_label": f"{bust_equity_pct*100:.0f}%" if bust_equity_pct else None,
+            "bust_equity_pct_label": f"{bust_equity_pct*100:.0f}%" if bust_equity_pct is not None else None,
         },
         "actions": actions,
     }

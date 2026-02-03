@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../App'
 import InfoTooltip from './InfoTooltip'
 import { useExplainMode } from '../context/ExplainModeContext'
+import { useDefaultPortfolioId } from '../context/PortfolioContext'
 import './LiveHeader.css'
 
-const DEFAULT_PORTFOLIO_ID = 1
 const POLL_INTERVAL_MS = 60_000
 
 /** Human-readable relative time (e.g. "2 min ago", "1 hour ago"). */
@@ -26,6 +26,7 @@ function relativeTime(isoOrDate) {
 
 export default function LiveHeader() {
   const { explainMode } = useExplainMode()
+  const defaultPortfolioId = useDefaultPortfolioId()
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -33,7 +34,7 @@ export default function LiveHeader() {
   const [tick, setTick] = useState(0)
 
   const fetchMetrics = useCallback(() => {
-    fetch(`${API_BASE}/live/metrics?portfolio_id=${DEFAULT_PORTFOLIO_ID}`)
+    fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((data) => {
         setMetrics(data)
@@ -45,7 +46,7 @@ export default function LiveHeader() {
         setMetrics(null)
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [defaultPortfolioId])
 
   useEffect(() => {
     fetchMetrics()

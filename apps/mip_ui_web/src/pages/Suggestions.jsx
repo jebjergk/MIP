@@ -18,6 +18,7 @@ import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import { useExplainSection } from '../context/ExplainCenterContext'
+import { useDefaultPortfolioId } from '../context/PortfolioContext'
 import { getGlossaryEntry } from '../data/glossary'
 import { SUGGESTIONS_EXPLAIN_CONTEXT, buildSuggestionsEvidenceContext } from '../data/explainContexts'
 import './Suggestions.css'
@@ -183,6 +184,7 @@ function buildHistogramBins(values, numBins = 20) {
 
 export default function Suggestions() {
   const { explainMode } = useExplainMode()
+  const defaultPortfolioId = useDefaultPortfolioId()
   const [summaryData, setSummaryData] = useState(null)
   const [trainingData, setTrainingData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -276,7 +278,7 @@ export default function Suggestions() {
   useEffect(() => {
     let cancelled = false
     const fetchLive = () => {
-      fetch(`${API_BASE}/live/metrics?portfolio_id=1`)
+      fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
         .then((data) => {
           if (!cancelled) setLiveMetrics(data)
@@ -286,7 +288,7 @@ export default function Suggestions() {
     fetchLive()
     const interval = setInterval(fetchLive, 60_000)
     return () => { cancelled = true; clearInterval(interval) }
-  }, [])
+  }, [defaultPortfolioId])
 
   const refetchSummary = useCallback(() => {
     setRefreshingSummary(true)

@@ -7,12 +7,12 @@ import LoadingState from '../components/LoadingState'
 import { relativeTime } from '../components/LiveHeader'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import { useExplainSection } from '../context/ExplainCenterContext'
+import { useDefaultPortfolioId } from '../context/PortfolioContext'
 import { HOME_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Home.css'
 
-const DEFAULT_PORTFOLIO_ID = 1
-
 export default function Home() {
+  const defaultPortfolioId = useDefaultPortfolioId()
   const [loading, setLoading] = useState(true)
   const [liveMetrics, setLiveMetrics] = useState(null)
   const { setContext } = useExplainCenter()
@@ -25,7 +25,7 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false
-    fetch(`${API_BASE}/live/metrics?portfolio_id=${DEFAULT_PORTFOLIO_ID}`)
+    fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((data) => {
         if (!cancelled) setLiveMetrics(data)
@@ -37,7 +37,7 @@ export default function Home() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [defaultPortfolioId])
 
   if (loading) {
     return (
@@ -83,10 +83,16 @@ export default function Home() {
           <button type="button" className="home-explain-this" onClick={openExplainQuickActions} aria-label="Open Explain Center for this section">Explain this</button>
         </h2>
         <div className="home-quick-actions-grid">
-          <Link to={`/portfolios/${DEFAULT_PORTFOLIO_ID}`} className="home-card home-card--link">
-            <span className="home-card-title">View Portfolio</span>
-            <span className="home-card-desc">Portfolio {DEFAULT_PORTFOLIO_ID} — positions and trades</span>
+          <Link to="/portfolios" className="home-card home-card--link">
+            <span className="home-card-title">View Portfolios</span>
+            <span className="home-card-desc">All portfolios — positions, trades, episodes</span>
           </Link>
+          {defaultPortfolioId != null && (
+            <Link to={`/portfolios/${defaultPortfolioId}`} className="home-card home-card--link">
+              <span className="home-card-title">Default portfolio</span>
+              <span className="home-card-desc">Portfolio {defaultPortfolioId} — quick link</span>
+            </Link>
+          )}
           <Link to="/brief" className="home-card home-card--link">
             <span className="home-card-title">View Latest Morning Brief</span>
             <span className="home-card-desc">Latest brief per portfolio</span>

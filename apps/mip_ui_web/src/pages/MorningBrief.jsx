@@ -6,12 +6,12 @@ import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
 import { useExplainCenter } from '../context/ExplainCenterContext'
+import { usePortfolios } from '../context/PortfolioContext'
 import { MORNING_BRIEF_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './MorningBrief.css'
 
 export default function MorningBrief() {
-  const [portfolios, setPortfolios] = useState([])
-  const [portfoliosLoading, setPortfoliosLoading] = useState(true)
+  const { portfolios, defaultPortfolioId, loading: portfoliosLoading, error: portfoliosError } = usePortfolios()
   const [portfolioId, setPortfolioId] = useState('')
   const [briefResponse, setBriefResponse] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -22,16 +22,11 @@ export default function MorningBrief() {
     setContext(MORNING_BRIEF_EXPLAIN_CONTEXT)
   }, [setContext])
 
+  // Default selected portfolio to first active when list is ready
   useEffect(() => {
-    let cancelled = false
-    setPortfoliosLoading(true)
-    fetch(`${API_BASE}/portfolios`)
-      .then((r) => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
-      .then((list) => { if (!cancelled) setPortfolios(list) })
-      .catch((e) => { if (!cancelled) setError(e.message) })
-      .finally(() => { if (!cancelled) setPortfoliosLoading(false) })
-    return () => { cancelled = true }
-  }, [])
+    if (portfoliosLoading || defaultPortfolioId == null || portfolioId !== '') return
+    setPortfolioId(String(defaultPortfolioId))
+  }, [defaultPortfolioId, portfoliosLoading, portfolioId])
 
   const loadBrief = async () => {
     const id = portfolioId.trim()
@@ -62,11 +57,11 @@ export default function MorningBrief() {
       </>
     )
   }
-  if (error && !portfolioId) {
+  if ((error || portfoliosError) && !portfolioId) {
     return (
       <>
         <h1>Morning Brief</h1>
-        <ErrorState message={error} />
+        <ErrorState message={error || portfoliosError} />
       </>
     )
   }
@@ -97,11 +92,15 @@ export default function MorningBrief() {
             onChange={(e) => setPortfolioId(e.target.value)}
           >
             <option value="">Select…</option>
-            {portfolios.map((p) => (
-              <option key={p.PORTFOLIO_ID} value={p.PORTFOLIO_ID}>
-                {p.NAME} ({p.PORTFOLIO_ID})
-              </option>
-            ))}
+            {portfolios.map((p) => {
+              const id = p.PORTFOLIO_ID ?? p.portfolio_id
+              const name = p.NAME ?? p.name
+              return (
+                <option key={id} value={id}>
+                  {name != null ? `${name} (${id})` : id}
+                </option>
+              )
+            })}
           </select>
         </label>
         {' '}

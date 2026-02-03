@@ -74,7 +74,7 @@ flowchart LR
 | **PATTERN_DEFINITION** | Pattern config | PATTERN_ID, NAME, PARAMS_JSON, IS_ACTIVE | One pattern | Bootstrap/seed |
 | **RECOMMENDATION_LOG** | Emitted recommendations | RECOMMENDATION_ID, PATTERN_ID, SYMBOL, TS, SCORE | One rec per symbol/ts | SP_GENERATE_MOMENTUM_RECS |
 | **RECOMMENDATION_OUTCOMES** | Evaluation results | RECOMMENDATION_ID, HORIZON_BARS, REALIZED_RETURN, HIT_FLAG, EVAL_STATUS | One outcome per rec/horizon | SP_EVALUATE_RECOMMENDATIONS |
-| **PORTFOLIO** | Portfolio config | PORTFOLIO_ID, PROFILE_ID, STARTING_CASH, STATUS | One portfolio | Bootstrap/simulation |
+| **PORTFOLIO** | Portfolio config | PORTFOLIO_ID, PROFILE_ID, STARTING_CASH, STATUS | One row per portfolio; multiple active supported | Bootstrap/simulation |
 | **PORTFOLIO_POSITIONS** | Holdings per run | PORTFOLIO_ID, RUN_ID, SYMBOL, ENTRY_TS, QUANTITY | One position per symbol/entry | SP_RUN_PORTFOLIO_SIMULATION |
 | **PORTFOLIO_TRADES** | Trades per run | TRADE_ID, PORTFOLIO_ID, RUN_ID, SYMBOL, SIDE, PRICE, QUANTITY | One trade per event | SP_RUN_PORTFOLIO_SIMULATION, SP_VALIDATE_AND_EXECUTE_PROPOSALS |
 | **PORTFOLIO_DAILY** | Daily equity series | PORTFOLIO_ID, RUN_ID, TS, TOTAL_EQUITY, CASH | One row per day per run | SP_RUN_PORTFOLIO_SIMULATION |

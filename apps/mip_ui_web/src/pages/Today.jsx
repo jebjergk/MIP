@@ -7,6 +7,7 @@ import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
+import { usePortfolios } from '../context/PortfolioContext'
 import { getGlossaryEntry } from '../data/glossary'
 import { TODAY_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Today.css'
@@ -21,13 +22,21 @@ function get(obj, k) {
 }
 
 export default function Today() {
-  const [searchParams] = useSearchParams()
-  const portfolioId = searchParams.get('portfolio_id') ? parseInt(searchParams.get('portfolio_id'), 10) : null
+  const [searchParams, setSearchParams] = useSearchParams()
+  const portfolioIdParam = searchParams.get('portfolio_id')
+  const portfolioId = portfolioIdParam ? parseInt(portfolioIdParam, 10) : null
+  const { portfolios, defaultPortfolioId, loading: portfoliosLoading } = usePortfolios()
   const { explainMode } = useExplainMode()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const { setContext } = useExplainCenter()
+
+  // When no portfolio in URL and we have a default, set it so multi-portfolio UX works without manual ?portfolio_id=
+  useEffect(() => {
+    if (portfolioIdParam != null || portfoliosLoading || defaultPortfolioId == null) return
+    setSearchParams({ portfolio_id: String(defaultPortfolioId) }, { replace: true })
+  }, [defaultPortfolioId, portfolioIdParam, portfoliosLoading, setSearchParams])
 
   useEffect(() => {
     setContext(TODAY_EXPLAIN_CONTEXT)
@@ -83,11 +92,34 @@ export default function Today() {
         </p>
       )}
 
-      {/* Top: status one-liner (banner is in nav) */}
+      {/* Top: status one-liner and portfolio selector for multi-portfolio */}
       <section className="today-status-line" aria-label="System status">
         <span className={`today-status-dot ${snowflakeOk ? 'today-status-dot--ok' : 'today-status-dot--degraded'}`} aria-hidden="true" />
         <span className="today-status-message">{statusMessage}</span>
         <InfoTooltip scope="ui" entryKey="system_status" variant="short" />
+        {portfolios.length > 0 && (
+          <label className="today-portfolio-picker">
+            <span className="today-portfolio-picker-label">Portfolio:</span>
+            <select
+              value={portfolioId != null ? String(portfolioId) : ''}
+              onChange={(e) => {
+                const v = e.target.value
+                setSearchParams(v ? { portfolio_id: v } : {})
+              }}
+              aria-label="Select portfolio"
+            >
+              <option value="">—</option>
+              {portfolios.map((p) => {
+                const id = p.PORTFOLIO_ID ?? p.portfolio_id
+                return (
+                  <option key={id} value={String(id)}>
+                    {p.NAME ?? p.name ?? id}
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+        )}
       </section>
 
       {!snowflakeOk && (
@@ -100,13 +132,13 @@ export default function Today() {
         {/* Left: Portfolio situation */}
         <section className="today-portfolio" aria-label="Portfolio situation">
           <h2>Portfolio situation</h2>
-          {portfolioId == null ? (
+          {portfolioId == null && !portfoliosLoading ? (
             <EmptyState
               title="No portfolio selected"
-              explanation="Add ?portfolio_id=1 to the URL to see risk state, KPIs, and recent events for that portfolio."
-              reasons={['Use /today?portfolio_id=1 (or your portfolio ID) to load portfolio section.']}
+              explanation="Select a portfolio from the dropdown below or add ?portfolio_id=<id> to the URL. When portfolios exist, the first active one is selected by default."
+              reasons={['Use the portfolio selector below or /today?portfolio_id=<id> to load a specific portfolio.']}
             />
-          ) : !portfolio ? (
+          ) : portfolioId != null && !portfolio ? (
             <EmptyState
               title="No portfolio data"
               explanation="Risk state and events could not be loaded for this portfolio."
@@ -211,7 +243,7 @@ export default function Today() {
       <section className="today-brief" aria-label="Latest brief">
         <h2>Latest brief <InfoTooltip scope={SCOPE_TODAY} entryKey="latest_brief" variant="short" /></h2>
         {portfolioId == null ? (
-          <p className="today-empty-inline">Select a portfolio (?portfolio_id=1) to see the latest brief.</p>
+          <p className="today-empty-inline">Select a portfolio above to see the latest brief.</p>
         ) : !brief ? (
           <EmptyState
             title="No brief"

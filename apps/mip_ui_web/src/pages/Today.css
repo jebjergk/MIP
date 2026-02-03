@@ -33,6 +33,25 @@
   color: #333;
 }
 
+.today-portfolio-picker {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.today-portfolio-picker-label {
+  font-weight: 500;
+  color: #555;
+}
+
+.today-portfolio-picker select {
+  font-size: 0.9rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
 .today-degraded-notice {
   padding: 1rem;
   background: #fff3e0;

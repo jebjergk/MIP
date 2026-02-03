@@ -139,7 +139,6 @@ begin
         select PORTFOLIO_ID
           from MIP.APP.PORTFOLIO
          where STATUS = 'ACTIVE'
-           and PORTFOLIO_ID > 0
          order by PORTFOLIO_ID
     );
 

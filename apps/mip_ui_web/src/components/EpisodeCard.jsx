@@ -1,113 +1,13 @@
 import { useState, useEffect } from 'react'
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  ReferenceLine,
-} from 'recharts'
 import { API_BASE } from '../App'
 import LoadingState from './LoadingState'
+import PortfolioMiniGridCharts, { GATE_LABELS } from './PortfolioMiniGridCharts'
 import './EpisodeCard.css'
-
-const GATE_LABELS = { SAFE: 'SAFE', CAUTION: 'CAUTION', STOPPED: 'STOPPED' }
-const GATE_COLORS = { SAFE: '#2e7d32', CAUTION: '#f9a825', STOPPED: '#c62828' }
 
 function formatTs(ts) {
   if (!ts) return '—'
   const s = String(ts)
   return s.slice(0, 10)
-}
-
-function EquityChart({ data, startEquity, bustPct, events, thresholds }) {
-  if (!Array.isArray(data) || data.length === 0) return <p className="episode-chart-empty">No equity data</p>
-  const bustLine = thresholds?.bust_threshold_pct != null && thresholds?.start_equity != null
-    ? (thresholds.start_equity * (thresholds.bust_threshold_pct / 100)) : null
-  return (
-    <ResponsiveContainer width="100%" height={160}>
-      <LineChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-        <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={(v) => formatTs(v)} />
-        <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => (v / 1000).toFixed(0) + 'k'} width={36} />
-        <Tooltip formatter={(v) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), 'Equity']} labelFormatter={formatTs} />
-        {bustLine != null && <ReferenceLine y={bustLine} stroke="#c62828" strokeDasharray="2 2" />}
-        <Line type="monotone" dataKey="equity" stroke="#1565c0" strokeWidth={2} dot={false} name="Equity" />
-      </LineChart>
-    </ResponsiveContainer>
-  )
-}
-
-function DrawdownChart({ data, drawdownStopPct, firstBreachTs }) {
-  if (!Array.isArray(data) || data.length === 0) return <p className="episode-chart-empty">No drawdown data</p>
-  const refVal = drawdownStopPct != null ? -Math.abs(Number(drawdownStopPct)) : null
-  return (
-    <ResponsiveContainer width="100%" height={160}>
-      <LineChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-        <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={(v) => formatTs(v)} />
-        <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => v + '%'} width={40} domain={['auto', 0]} />
-        <Tooltip formatter={(v) => [v != null ? Number(v).toFixed(2) + '%' : '—', 'Drawdown']} labelFormatter={formatTs} />
-        {refVal != null && <ReferenceLine y={refVal} stroke="#c62828" strokeDasharray="2 2" />}
-        <Line type="monotone" dataKey="drawdown_pct" stroke="#6a1b9a" strokeWidth={2} dot={false} name="Drawdown %" />
-      </LineChart>
-    </ResponsiveContainer>
-  )
-}
-
-function TradesPerDayChart({ data }) {
-  if (!Array.isArray(data) || data.length === 0) return <p className="episode-chart-empty">No trades in episode</p>
-  return (
-    <ResponsiveContainer width="100%" height={160}>
-      <BarChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-        <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={(v) => formatTs(v)} />
-        <YAxis tick={{ fontSize: 10 }} width={28} />
-        <Tooltip formatter={(v) => [v, 'Trades']} labelFormatter={formatTs} />
-        <Bar dataKey="trades_count" fill="#2e7d32" radius={[2, 2, 0, 0]} name="Trades" />
-      </BarChart>
-    </ResponsiveContainer>
-  )
-}
-
-function RiskRegimeStrip({ data }) {
-  if (!Array.isArray(data) || data.length === 0) return <p className="episode-chart-empty">No regime data</p>
-  const segments = []
-  let prev = null
-  for (let i = 0; i < data.length; i++) {
-    const g = data[i].gate_state || 'SAFE'
-    if (g !== prev) {
-      segments.push({ start: i, end: i, state: g })
-      prev = g
-    } else {
-      segments[segments.length - 1].end = i
-    }
-  }
-  return (
-    <div className="episode-regime-strip" title="Risk state by day (SAFE / STOPPED)">
-      <div className="episode-regime-strip-inner">
-        {segments.map((seg, i) => (
-          <div
-            key={i}
-            className="episode-regime-segment"
-            style={{
-              width: `${((seg.end - seg.start + 1) / data.length) * 100}%`,
-              backgroundColor: GATE_COLORS[seg.state] || '#9e9e9e',
-            }}
-            title={`${formatTs(data[seg.start].ts)} – ${GATE_LABELS[seg.state] || seg.state}`}
-          />
-        ))}
-      </div>
-      <div className="episode-regime-legend">
-        <span style={{ color: GATE_COLORS.SAFE }}>SAFE</span>
-        <span style={{ color: GATE_COLORS.STOPPED }}>STOPPED</span>
-      </div>
-    </div>
-  )
 }
 
 export default function EpisodeCard({ episode, portfolioId, isActive }) {
@@ -200,34 +100,18 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
           {loading && <LoadingState />}
           {error && <p className="episode-chart-error">{error}</p>}
           {detail && !loading && !error && (
-            <div className="episode-charts-grid">
-              <div className="episode-chart-cell" title="Equity over time; horizontal line = bust threshold if set">
-                <h4 className="episode-chart-title">Equity</h4>
-                <EquityChart
-                  data={detail.equity_series || []}
-                  startEquity={detail.thresholds?.start_equity}
-                  bustPct={detail.thresholds?.bust_threshold_pct}
-                  events={detail.events}
-                  thresholds={detail.thresholds}
-                />
-              </div>
-              <div className="episode-chart-cell" title="Drawdown %; line = drawdown stop threshold">
-                <h4 className="episode-chart-title">Drawdown</h4>
-                <DrawdownChart
-                  data={detail.drawdown_series || []}
-                  drawdownStopPct={detail.thresholds?.drawdown_stop_pct}
-                  firstBreachTs={detail.events?.find((e) => e.type === 'drawdown_stop_triggered')?.ts}
-                />
-              </div>
-              <div className="episode-chart-cell" title="Trades per day">
-                <h4 className="episode-chart-title">Trades per day</h4>
-                <TradesPerDayChart data={detail.trades_per_day || []} />
-              </div>
-              <div className="episode-chart-cell" title="Risk regime by day (SAFE / STOPPED)">
-                <h4 className="episode-chart-title">Risk regime</h4>
-                <RiskRegimeStrip data={detail.regime_per_day || []} />
-              </div>
-            </div>
+            <PortfolioMiniGridCharts
+              titlePrefix={`Episode #${episodeId}`}
+              dateRange={{ start_ts: detail.start_ts, end_ts: detail.end_ts }}
+              series={{
+                equity: detail.equity_series ?? [],
+                drawdown: detail.drawdown_series ?? [],
+                tradesPerDay: detail.trades_per_day ?? [],
+                regime: detail.regime_per_day ?? [],
+              }}
+              thresholds={detail.thresholds ?? {}}
+              events={detail.events ?? []}
+            />
           )}
         </div>
       )}

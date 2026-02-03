@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import EpisodeCard from '../components/EpisodeCard'
+import PortfolioMiniGridCharts from '../components/PortfolioMiniGridCharts'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter, useExplainSection } from '../context/ExplainCenterContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
@@ -24,6 +25,7 @@ export default function Portfolio() {
   const [lookbackDays, setLookbackDays] = useState(30)
   const [showRestartModal, setShowRestartModal] = useState(false)
   const [episodes, setEpisodes] = useState([])
+  const [activeAnalytics, setActiveAnalytics] = useState(null)
   const { setContext } = useExplainCenter()
   const openExplainRiskGate = useExplainSection(RISK_GATE_EXPLAIN_CONTEXT)
 
@@ -55,11 +57,26 @@ export default function Portfolio() {
           const snapUrl = `${API_BASE}/portfolios/${portfolioId}/snapshot?${params.toString()}`
           const snapRes = await fetch(snapUrl)
           if (!snapRes.ok) throw new Error(snapRes.statusText)
-          if (!cancelled) setSnapshot(await snapRes.json())
+          const snapData = await snapRes.json()
+          if (!cancelled) setSnapshot(snapData)
+          const epRes = await fetch(`${API_BASE}/portfolios/${portfolioId}/episodes`)
+          if (epRes.ok) {
+            const epList = await epRes.json()
+            if (!cancelled) setEpisodes(Array.isArray(epList) ? epList : [])
+          } else if (!cancelled) setEpisodes([])
+          const activeEp = snapData?.active_episode
+          const activeEpisodeId = activeEp?.episode_id ?? activeEp?.EPISODE_ID
+          if (activeEpisodeId && !cancelled) {
+            fetch(`${API_BASE}/portfolios/${portfolioId}/episodes/${activeEpisodeId}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(data => { if (!cancelled) setActiveAnalytics(data) })
+              .catch(() => { if (!cancelled) setActiveAnalytics(null) })
+          } else if (!cancelled) setActiveAnalytics(null)
         } else {
           setPortfolio(null)
           setSnapshot(null)
           setEpisodes([])
+          setActiveAnalytics(null)
         }
       } catch (e) {
         if (!cancelled) setError(e.message)
@@ -96,11 +113,49 @@ export default function Portfolio() {
       ? `Episode ${activeEpisode.episode_id ?? activeEpisode.EPISODE_ID ?? '—'} since ${(activeEpisode.start_ts ?? activeEpisode.START_TS ?? '').slice(0, 10)}`
       : null
 
+    const activeEp = snapshot?.active_episode
+    const activeSince = (activeEp?.start_ts ?? activeEp?.START_TS ?? '').slice(0, 10)
+    const activeProfileId = activeEp?.profile_id ?? activeEp?.PROFILE_ID
+    const riskLabel = snapshot?.risk_gate?.risk_label ?? 'NORMAL'
+    const gateState = riskLabel === 'NORMAL' ? 'SAFE' : riskLabel === 'CAUTION' ? 'CAUTION' : 'STOPPED'
+    const explainSentence = snapshot?.risk_gate?.reason_text ?? 'Portfolio is within safe limits.'
+    const activeHeaderLine = activeEp && activeSince
+      ? `Active since ${activeSince} · Profile ${activeProfileId ?? '—'} · ${gateState}`
+      : null
+
     return (
       <>
         <h1>Portfolio: {portfolio.NAME}</h1>
         {episodeLabel && <p className="portfolio-episode-header">{episodeLabel}</p>}
         <p><Link to="/portfolios">← Back to list</Link></p>
+
+        {activeEp && (
+          <section className="portfolio-active-period" aria-label="Active period dashboard">
+            {(activeHeaderLine || explainSentence) && (
+              <>
+                {activeHeaderLine && <p className="mini-grid-header-line">{activeHeaderLine}</p>}
+                {explainSentence && <p className="mini-grid-explain">{explainSentence}</p>}
+              </>
+            )}
+            {activeAnalytics ? (
+              <PortfolioMiniGridCharts
+                titlePrefix=""
+                dateRange={{ start_ts: activeEp.start_ts ?? activeEp.START_TS, end_ts: null }}
+                series={{
+                  equity: activeAnalytics.equity_series ?? [],
+                  drawdown: activeAnalytics.drawdown_series ?? [],
+                  tradesPerDay: activeAnalytics.trades_per_day ?? [],
+                  regime: activeAnalytics.regime_per_day ?? [],
+                }}
+                thresholds={activeAnalytics.thresholds ?? {}}
+                events={activeAnalytics.events ?? []}
+              />
+            ) : (
+              <p className="portfolio-active-period-loading">Loading analytics…</p>
+            )}
+          </section>
+        )}
+
         <h2>Header</h2>
         <div className="kpi-cards">
           {portfolio.STARTING_CASH != null && (
@@ -438,6 +493,7 @@ export default function Portfolio() {
             <th>Name</th>
             <th>ID</th>
             <th>Status <InfoTooltip scope="portfolio" key="status" variant="short" /></th>
+            <th title="Portfolio status: green = active">Health</th>
           </tr>
         </thead>
         <tbody>
@@ -446,6 +502,13 @@ export default function Portfolio() {
               <td><Link to={`/portfolios/${p.PORTFOLIO_ID}`}>{p.NAME}</Link></td>
               <td>{p.PORTFOLIO_ID}</td>
               <td><span className="status-badge" title={statusBadgeTitle}>{p.STATUS}</span></td>
+              <td>
+                <span
+                  className={`portfolio-list-dot portfolio-list-dot--${(p.STATUS || '').toLowerCase()}`}
+                  title={p.STATUS === 'ACTIVE' ? 'Active' : p.STATUS || '—'}
+                  aria-hidden
+                />
+              </td>
             </tr>
           ))}
         </tbody>

@@ -1,0 +1,101 @@
+/* PortfolioMiniGridCharts: reusable 2x2 mini grid */
+
+.portfolio-mini-grid {
+  margin: 0;
+  padding: 0;
+}
+
+.mini-grid-header {
+  margin-bottom: 0.75rem;
+}
+
+.mini-grid-header-line {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.mini-grid-title {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.mini-grid-dates {
+  font-weight: 400;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.mini-grid-explain {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #555;
+  line-height: 1.35;
+}
+
+.mini-grid-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.mini-grid-cell {
+  min-width: 0;
+  min-height: 180px;
+}
+
+.mini-grid-chart-title {
+  font-size: 0.8rem;
+  margin: 0 0 0.25rem 0;
+  color: #666;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.mini-grid-chart-q {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #e0e0e0;
+  color: #666;
+  font-size: 0.7rem;
+  cursor: help;
+}
+
+.mini-grid-empty {
+  font-size: 0.875rem;
+  color: #888;
+  margin: 0.5rem 0;
+}
+
+.mini-grid-regime-wrap {
+  margin-top: 0.25rem;
+}
+
+.mini-grid-regime-strip {
+  display: flex;
+  height: 24px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mini-grid-regime-segment {
+  min-width: 2px;
+  transition: width 0.15s ease;
+}
+
+.mini-grid-regime-legend {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: #666;
+}

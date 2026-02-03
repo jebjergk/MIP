@@ -358,6 +358,35 @@
   background: #e3f2fd;
 }
 
+/* Active period mini-grid (top of portfolio detail) */
+.portfolio-active-period {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fafafa;
+  border-left: 4px solid #1565c0;
+}
+
+.portfolio-active-period-loading {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.875rem;
+  color: #666;
+}
+
+/* Portfolio list: health dot */
+.portfolio-list-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9e9e9e;
+}
+
+.portfolio-list-dot--active {
+  background: #2e7d32;
+}
+
 /* Episodes section */
 .episode-list {
   display: flex;

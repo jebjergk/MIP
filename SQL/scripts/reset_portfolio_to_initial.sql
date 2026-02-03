@@ -45,10 +45,6 @@ select 'PORTFOLIO_TRADES', count(*)
 union all
 select 'PORTFOLIO_DAILY', count(*)
   from MIP.APP.PORTFOLIO_DAILY
- where PORTFOLIO_ID = $reset_portfolio_id
-union all
-select 'PORTFOLIO_RISK_OVERRIDE', count(*)  -- comment out if table does not exist
-  from MIP.APP.PORTFOLIO_RISK_OVERRIDE
  where PORTFOLIO_ID = $reset_portfolio_id;
 
 -- Current portfolio header (before reset):
@@ -59,7 +55,7 @@ select PORTFOLIO_ID, PROFILE_ID, NAME, STATUS, STARTING_CASH, FINAL_EQUITY,
 
 -- =============================================================================
 -- PHASE 2 – DESTRUCTIVE RESET (run only after confirming Phase 0)
--- Order: POSITIONS -> TRADES -> DAILY -> risk override -> PORTFOLIO update
+-- Order: POSITIONS -> TRADES -> DAILY -> PORTFOLIO update
 -- =============================================================================
 
 begin;
@@ -71,9 +67,6 @@ delete from MIP.APP.PORTFOLIO_TRADES
  where PORTFOLIO_ID = $reset_portfolio_id;
 
 delete from MIP.APP.PORTFOLIO_DAILY
- where PORTFOLIO_ID = $reset_portfolio_id;
-
-delete from MIP.APP.PORTFOLIO_RISK_OVERRIDE  -- comment out if table does not exist
  where PORTFOLIO_ID = $reset_portfolio_id;
 
 update MIP.APP.PORTFOLIO

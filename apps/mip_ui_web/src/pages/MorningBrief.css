@@ -127,6 +127,21 @@
   cursor: help;
 }
 
+/* Current Badge */
+.current-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  background: #198754;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: help;
+}
+
 /* Reset Warning Banner */
 .reset-warning-banner {
   display: flex;
@@ -269,6 +284,22 @@
   font-weight: 700;
   font-size: 1.1rem;
   color: #212529;
+}
+
+.opp-symbol-title {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #212529;
+  flex: 1;
+}
+
+.opp-pattern {
+  font-family: monospace;
+  font-size: 0.75rem;
+  color: #6c757d;
+  background: #e9ecef;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
 }
 
 .opp-side {

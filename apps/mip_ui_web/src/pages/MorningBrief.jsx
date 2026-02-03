@@ -117,7 +117,16 @@ function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
 function StaleBadge({ reason }) {
   return (
     <span className="stale-badge" title={reason || 'Brief is from an older pipeline run'}>
-      Stale
+      STALE
+    </span>
+  )
+}
+
+// Current badge component  
+function CurrentBadge() {
+  return (
+    <span className="current-badge" title="Brief is from the latest pipeline run">
+      CURRENT
     </span>
   )
 }
@@ -142,7 +151,7 @@ function ExecutiveSummary({ brief, onShowTrades }) {
     <section className="brief-card executive-summary" aria-label="Executive Summary">
       <div className="summary-title-row">
         <h2>Executive Summary</h2>
-        {is_stale && <StaleBadge reason={stale_reason} />}
+        {is_stale ? <StaleBadge reason={stale_reason} /> : <CurrentBadge />}
       </div>
       
       {is_before_reset && reset_warning && (
@@ -193,44 +202,44 @@ function ExecutiveSummary({ brief, onShowTrades }) {
   )
 }
 
-// Build URL for Suggestions page with filters
-function buildSuggestionsUrl(opportunity, portfolioId, asOfTs) {
+// Build URL for Signals Explorer page with filters
+function buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId) {
   const params = new URLSearchParams()
   if (portfolioId) params.set('portfolioId', String(portfolioId))
   if (asOfTs) params.set('asOf', asOfTs)
+  if (pipelineRunId) params.set('pipelineRunId', pipelineRunId)
   if (opportunity.market_type) params.set('market_type', opportunity.market_type)
   if (opportunity.symbol && opportunity.symbol !== '—') params.set('symbol', opportunity.symbol)
   if (opportunity.pattern_id) params.set('pattern_id', String(opportunity.pattern_id))
   if (opportunity.horizon_bars) params.set('horizon_bars', String(opportunity.horizon_bars))
-  if (opportunity.interval_minutes) params.set('interval_minutes', String(opportunity.interval_minutes))
-  if (opportunity.side) params.set('side', opportunity.side)
-  if (opportunity.confidence) params.set('confidence', opportunity.confidence)
+  if (opportunity.trust_label) params.set('trust_label', opportunity.trust_label)
   params.set('from', 'brief')
   const query = params.toString()
-  return query ? `/suggestions?${query}` : '/suggestions'
+  return query ? `/signals?${query}` : '/signals'
 }
 
 // Opportunity Card component
-function OpportunityCard({ opportunity, portfolioId, asOfTs }) {
-  const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why } = opportunity
-  const suggestionsUrl = buildSuggestionsUrl(opportunity, portfolioId, asOfTs)
+function OpportunityCard({ opportunity, portfolioId, asOfTs, pipelineRunId }) {
+  const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why, pattern_id } = opportunity
+  const signalsUrl = buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId)
+  const displaySymbol = symbol && symbol !== '—' ? symbol : `Pattern ${pattern_id}`
   
   return (
     <div className="opportunity-card">
       <div className="opp-header">
-        <span className="opp-symbol">{symbol}</span>
-        <span className={`opp-side ${side.toLowerCase()}`}>{side}</span>
+        <span className="opp-symbol-title">{displaySymbol} — {side}</span>
         <span className={`opp-confidence confidence-${confidence.toLowerCase()}`}>{confidence}</span>
       </div>
       <div className="opp-details">
         <span className="opp-market">{market_type}</span>
+        {pattern_id && <span className="opp-pattern">Pattern {pattern_id}</span>}
         {horizon_bars && <span className="opp-horizon">{horizon_bars} bar{horizon_bars !== 1 ? 's' : ''} horizon</span>}
         {interval_minutes && <span className="opp-interval">{interval_minutes}min</span>}
       </div>
       <p className="opp-why">{why}</p>
       <div className="opp-actions">
-        <Link to={suggestionsUrl} className="opp-link">
-          Open in Suggestions →
+        <Link to={signalsUrl} className="opp-link">
+          View in Signals →
         </Link>
       </div>
     </div>
@@ -238,7 +247,7 @@ function OpportunityCard({ opportunity, portfolioId, asOfTs }) {
 }
 
 // Opportunities Section
-function OpportunitiesSection({ opportunities, portfolioId, asOfTs }) {
+function OpportunitiesSection({ opportunities, portfolioId, asOfTs, pipelineRunId }) {
   if (!opportunities || opportunities.length === 0) {
     return (
       <section className="brief-card opportunities-section" aria-label="Opportunities">
@@ -263,6 +272,7 @@ function OpportunitiesSection({ opportunities, portfolioId, asOfTs }) {
             opportunity={opp} 
             portfolioId={portfolioId}
             asOfTs={asOfTs}
+            pipelineRunId={pipelineRunId}
           />
         ))}
       </div>
@@ -561,6 +571,7 @@ export default function MorningBrief() {
             opportunities={brief.opportunities} 
             portfolioId={brief.portfolio_id}
             asOfTs={brief.as_of_ts}
+            pipelineRunId={brief.pipeline_run_id}
           />
           <RiskSection risk={brief.risk} />
           <DeltasSection deltas={brief.deltas} />

@@ -6,6 +6,7 @@ import AuditViewer from './pages/AuditViewer'
 import MorningBrief from './pages/MorningBrief'
 import TrainingStatus from './pages/TrainingStatus'
 import Suggestions from './pages/Suggestions'
+import Signals from './pages/Signals'
 import Debug from './pages/Debug'
 import AppLayout from './components/AppLayout'
 
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/brief" element={<MorningBrief />} />
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/suggestions" element={<Suggestions />} />
+        <Route path="/signals" element={<Signals />} />
         <Route path="/debug" element={<Debug />} />
       </Route>
     </Routes>

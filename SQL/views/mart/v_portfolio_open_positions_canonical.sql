@@ -1,5 +1,7 @@
 -- v_portfolio_open_positions_canonical.sql
--- Purpose: Canonical single source of truth for open positions used by all procedures
+-- Purpose: Canonical single source of truth for open positions used by all procedures.
+-- When an active episode exists, only positions opened in that episode (ENTRY_TS >= START_TS)
+-- are considered "open"; otherwise all open-by-bar positions are included (no episode scoping).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -31,9 +33,33 @@ positions_with_state as (
         p.HOLD_UNTIL_INDEX,
         b.AS_OF_TS,
         b.CURRENT_BAR_INDEX,
-        p.HOLD_UNTIL_INDEX >= b.CURRENT_BAR_INDEX as IS_OPEN
+        p.HOLD_UNTIL_INDEX >= b.CURRENT_BAR_INDEX as IS_OPEN,
+        e.START_TS as EPISODE_START_TS
     from MIP.APP.PORTFOLIO_POSITIONS p
     cross join latest_bar b
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
+      on e.PORTFOLIO_ID = p.PORTFOLIO_ID
+),
+open_in_window as (
+    select
+        PORTFOLIO_ID,
+        RUN_ID,
+        SYMBOL,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        ENTRY_TS,
+        ENTRY_PRICE,
+        QUANTITY,
+        COST_BASIS,
+        ENTRY_SCORE,
+        ENTRY_INDEX,
+        HOLD_UNTIL_INDEX,
+        AS_OF_TS,
+        CURRENT_BAR_INDEX,
+        IS_OPEN
+    from positions_with_state
+    where IS_OPEN
+      and (EPISODE_START_TS is null or ENTRY_TS >= EPISODE_START_TS)
 )
 select
     PORTFOLIO_ID,
@@ -52,5 +78,4 @@ select
     CURRENT_BAR_INDEX,
     IS_OPEN,
     count_if(IS_OPEN) over (partition by PORTFOLIO_ID) as OPEN_POSITIONS
-from positions_with_state
-where IS_OPEN;
+from open_in_window;

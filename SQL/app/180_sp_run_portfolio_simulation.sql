@@ -60,10 +60,13 @@ declare
     v_fee_bps number(18,8);
     v_min_fee number(18,8);
     v_spread_bps number(18,8);
+    v_last_sim_run_id string;
+    v_effective_from_ts timestamp_ntz;
 begin
     select
         p.STARTING_CASH,
         p.PROFILE_ID,
+        p.LAST_SIMULATION_RUN_ID,
         prof.MAX_POSITIONS,
         prof.MAX_POSITION_PCT,
         prof.BUST_EQUITY_PCT,
@@ -71,6 +74,7 @@ begin
         prof.DRAWDOWN_STOP_PCT
       into v_starting_cash,
            v_profile_id,
+           v_last_sim_run_id,
            v_max_positions,
            v_max_position_pct,
            v_bust_equity_pct,
@@ -81,6 +85,14 @@ begin
         on prof.PROFILE_ID = p.PROFILE_ID
      where p.PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
+    -- After a hard reset, LAST_SIMULATION_RUN_ID is null. Do not backfill: simulate only from
+    -- the start of the last day so the pipeline does not repopulate positions/trades/daily.
+    if (v_last_sim_run_id is null) then
+        v_effective_from_ts := date_trunc('day', P_TO_TS);
+    else
+        v_effective_from_ts := P_FROM_TS;
+    end if;
+
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',
         'START',
@@ -90,6 +102,7 @@ begin
             'portfolio_id', :P_PORTFOLIO_ID,
             'from_ts', :P_FROM_TS,
             'to_ts', :P_TO_TS,
+            'effective_from_ts', :v_effective_from_ts,
             'profile_id', :v_profile_id,
             'max_positions', :v_max_positions,
             'max_position_pct', :v_max_position_pct,
@@ -205,7 +218,7 @@ begin
      and exit_bar.INTERVAL_MINUTES = s.INTERVAL_MINUTES
      and exit_bar.BAR_INDEX = entry_bar.BAR_INDEX + s.HORIZON_BARS
     where s.INTERVAL_MINUTES = 1440
-      and s.TS between :P_FROM_TS and :P_TO_TS
+      and s.TS between :v_effective_from_ts and :P_TO_TS
       and exit_bar.TS <= :P_TO_TS;
 
     v_bar_sql := '
@@ -216,7 +229,7 @@ begin
         qualify row_number() over (partition by TS order by BAR_INDEX) = 1
         order by TS
     ';
-    v_bar_rs := (execute immediate :v_bar_sql using (P_FROM_TS, P_TO_TS));
+    v_bar_rs := (execute immediate :v_bar_sql using (v_effective_from_ts, P_TO_TS));
 
     for bar_row in v_bar_rs do
         v_bar_ts := bar_row.TS;
@@ -577,7 +590,7 @@ begin
     select TS, BAR_INDEX
     from MIP.MART.V_BAR_INDEX
     where INTERVAL_MINUTES = 1440
-      and TS between :P_FROM_TS and :P_TO_TS
+      and TS between :v_effective_from_ts and :P_TO_TS
     qualify row_number() over (partition by TS order by BAR_INDEX) = 1;
 
     create or replace temporary table TEMP_POSITION_DAYS as

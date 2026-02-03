@@ -53,6 +53,8 @@ select PORTFOLIO_ID, PROFILE_ID, NAME, STATUS, STARTING_CASH, FINAL_EQUITY,
   from MIP.APP.PORTFOLIO
  where PORTFOLIO_ID = $reset_portfolio_id;
 
+ 
+
 -- =============================================================================
 -- PHASE 2 – DESTRUCTIVE RESET (run only after confirming Phase 0)
 -- Order: POSITIONS -> TRADES -> DAILY -> PORTFOLIO update
@@ -95,6 +97,7 @@ union all
 select 'PORTFOLIO_TRADES (expect 0)', count(*)
   from MIP.APP.PORTFOLIO_TRADES
  where PORTFOLIO_ID = $reset_portfolio_id
+
 union all
 select 'PORTFOLIO_DAILY (expect 0)', count(*)
   from MIP.APP.PORTFOLIO_DAILY

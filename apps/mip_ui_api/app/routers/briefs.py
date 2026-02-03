@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 from fastapi import APIRouter
 
@@ -242,8 +243,12 @@ def get_latest_brief(portfolio_id: int):
     """
     Latest morning brief for portfolio from MIP.AGENT_OUT.MORNING_BRIEF.
     Returns normalized structure with summary, opportunities, risk, deltas, and raw_json.
+    
+    Selection: Latest by CREATED_AT (not AS_OF_TS).
+    Staleness: Brief is stale if RUN_ID differs from portfolio's LAST_SIMULATION_RUN_ID.
+    Reset boundary: Warning if brief is from before active episode START_TS.
     """
-    # Main query to get brief + risk gate state + profile thresholds
+    # Main query to get brief + risk gate state + profile thresholds + episode info
     sql = """
     with latest_brief as (
         select
@@ -253,16 +258,18 @@ def get_latest_brief(portfolio_id: int):
                 try_cast(get_path(mb.BRIEF, 'attribution.as_of_ts')::varchar as timestamp_ntz),
                 mb.AS_OF_TS
             ) as as_of_ts,
+            coalesce(mb.CREATED_AT, mb.AS_OF_TS) as created_at,
             coalesce(
                 get_path(mb.BRIEF, 'attribution.pipeline_run_id')::varchar,
-                mb.PIPELINE_RUN_ID
+                mb.PIPELINE_RUN_ID,
+                mb.RUN_ID
             ) as pipeline_run_id,
             mb.AGENT_NAME,
             mb.BRIEF
         from MIP.AGENT_OUT.MORNING_BRIEF mb
         where mb.PORTFOLIO_ID = %s
           and coalesce(mb.AGENT_NAME, '') = 'MORNING_BRIEF'
-        order by mb.AS_OF_TS desc
+        order by coalesce(mb.CREATED_AT, mb.AS_OF_TS) desc
         limit 1
     ),
     prev_brief as (
@@ -273,12 +280,13 @@ def get_latest_brief(portfolio_id: int):
         from MIP.AGENT_OUT.MORNING_BRIEF mb
         where mb.PORTFOLIO_ID = %s
           and coalesce(mb.AGENT_NAME, '') = 'MORNING_BRIEF'
-        order by mb.AS_OF_TS desc
+        order by coalesce(mb.CREATED_AT, mb.AS_OF_TS) desc
         limit 1 offset 1
     )
     select
         lb.PORTFOLIO_ID as portfolio_id,
         lb.as_of_ts,
+        lb.created_at,
         lb.pipeline_run_id,
         lb.AGENT_NAME as agent_name,
         lb.BRIEF as brief_json,
@@ -293,7 +301,13 @@ def get_latest_brief(portfolio_id: int):
         pp.BUST_EQUITY_PCT as bust_equity_pct,
         pp.NAME as profile_name,
         pb.AS_OF_TS as prev_as_of_ts,
-        pb.BRIEF as prev_brief_json
+        pb.BRIEF as prev_brief_json,
+        -- Portfolio's latest run info for staleness check
+        p.LAST_SIMULATION_RUN_ID as latest_run_id,
+        p.LAST_SIMULATED_AT as latest_run_ts,
+        -- Active episode info for reset boundary check
+        e.EPISODE_ID as episode_id,
+        e.START_TS as episode_start_ts
     from latest_brief lb
     left join MIP.MART.V_PORTFOLIO_RISK_GATE rg
         on rg.PORTFOLIO_ID = lb.PORTFOLIO_ID
@@ -303,6 +317,8 @@ def get_latest_brief(portfolio_id: int):
         on pp.PROFILE_ID = p.PROFILE_ID
     left join prev_brief pb
         on pb.PORTFOLIO_ID = lb.PORTFOLIO_ID
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
+        on e.PORTFOLIO_ID = lb.PORTFOLIO_ID
     """
     conn = get_connection()
     try:
@@ -322,6 +338,36 @@ def get_latest_brief(portfolio_id: int):
         brief_json = _parse_json(data.get("brief_json"))
         prev_brief_json = _parse_json(data.get("prev_brief_json")) if data.get("prev_brief_json") else None
 
+        # Timestamps
+        as_of_ts = data.get("as_of_ts")
+        created_at = data.get("created_at")
+        pipeline_run_id = data.get("pipeline_run_id")
+
+        # Staleness check: brief is stale if RUN_ID differs from portfolio's LAST_SIMULATION_RUN_ID
+        latest_run_id = data.get("latest_run_id")
+        latest_run_ts = data.get("latest_run_ts")
+        is_stale = False
+        stale_reason = None
+        if latest_run_id and pipeline_run_id and str(pipeline_run_id) != str(latest_run_id):
+            is_stale = True
+            stale_reason = f"Brief from run {pipeline_run_id[:8]}... but latest run is {latest_run_id[:8]}..."
+
+        # Reset boundary check: brief is from before reset if as_of_ts < episode_start_ts
+        episode_id = data.get("episode_id")
+        episode_start_ts = data.get("episode_start_ts")
+        is_before_reset = False
+        reset_warning = None
+        if episode_start_ts and as_of_ts:
+            # Compare timestamps - need to handle string/datetime comparison
+            try:
+                ep_start = episode_start_ts if isinstance(episode_start_ts, datetime) else datetime.fromisoformat(str(episode_start_ts).replace('Z', '+00:00'))
+                brief_ts = as_of_ts if isinstance(as_of_ts, datetime) else datetime.fromisoformat(str(as_of_ts).replace('Z', '+00:00'))
+                if brief_ts < ep_start:
+                    is_before_reset = True
+                    reset_warning = "This brief is from before the last portfolio reset. Trades and events may have been cleared."
+            except (ValueError, TypeError):
+                pass  # If comparison fails, don't show warning
+
         # Build risk gate dict
         risk_gate = {
             "entries_blocked": data.get("entries_blocked", False),
@@ -339,13 +385,34 @@ def get_latest_brief(portfolio_id: int):
             "name": data.get("profile_name"),
         }
 
+        # Build summary with reset awareness
+        summary = _build_summary(brief_json, risk_gate)
+        
+        # Handle executed trades with reset awareness
+        if is_before_reset and summary.get("executed_count", 0) > 0:
+            summary["executed_trades_note"] = "from brief record (trade history may have been cleared by reset)"
+        elif summary.get("executed_count", 0) == 0 and is_before_reset:
+            summary["executed_trades_note"] = "trade history cleared by reset"
+
         return {
             "found": True,
             "portfolio_id": data.get("portfolio_id"),
-            "as_of_ts": data.get("as_of_ts"),
-            "pipeline_run_id": data.get("pipeline_run_id"),
+            "as_of_ts": as_of_ts,
+            "created_at": created_at,
+            "pipeline_run_id": pipeline_run_id,
             "agent_name": data.get("agent_name"),
-            "summary": _build_summary(brief_json, risk_gate),
+            # Staleness info
+            "is_stale": is_stale,
+            "stale_reason": stale_reason,
+            "latest_run_id": latest_run_id,
+            "latest_run_ts": latest_run_ts,
+            # Reset boundary info
+            "is_before_reset": is_before_reset,
+            "reset_warning": reset_warning,
+            "episode_id": episode_id,
+            "episode_start_ts": episode_start_ts,
+            # Content
+            "summary": summary,
             "opportunities": _build_opportunities(brief_json),
             "risk": _build_risk(brief_json, risk_gate, profile),
             "deltas": _build_deltas(brief_json, prev_brief_json),

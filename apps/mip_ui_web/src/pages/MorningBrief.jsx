@@ -113,14 +113,42 @@ function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
   )
 }
 
+// Stale badge component
+function StaleBadge({ reason }) {
+  return (
+    <span className="stale-badge" title={reason || 'Brief is from an older pipeline run'}>
+      Stale
+    </span>
+  )
+}
+
+// Reset warning banner
+function ResetWarningBanner({ warning }) {
+  return (
+    <div className="reset-warning-banner" role="alert">
+      <span className="warning-icon">⚠️</span>
+      <span className="warning-text">{warning}</span>
+    </div>
+  )
+}
+
 // Executive Summary Section
 function ExecutiveSummary({ brief, onShowTrades }) {
-  const { summary, as_of_ts, pipeline_run_id } = brief
+  const { summary, as_of_ts, created_at, pipeline_run_id, is_stale, stale_reason, is_before_reset, reset_warning } = brief
   const hasExecutedTrades = summary.executed_count > 0
+  const executedTradesNote = summary.executed_trades_note
 
   return (
     <section className="brief-card executive-summary" aria-label="Executive Summary">
-      <h2>Executive Summary</h2>
+      <div className="summary-title-row">
+        <h2>Executive Summary</h2>
+        {is_stale && <StaleBadge reason={stale_reason} />}
+      </div>
+      
+      {is_before_reset && reset_warning && (
+        <ResetWarningBanner warning={reset_warning} />
+      )}
+
       <div className="summary-header">
         <StatusBadge status={summary.status} />
         <span className="entries-badge">
@@ -137,23 +165,27 @@ function ExecutiveSummary({ brief, onShowTrades }) {
       <p className="summary-explanation">{summary.explanation}</p>
       <div className="summary-meta">
         <span className="meta-item">
-          <strong>As of:</strong> {as_of_ts ? new Date(as_of_ts).toLocaleString() : '—'}
+          <strong>As of (market date):</strong> {as_of_ts ? new Date(as_of_ts).toLocaleString() : '—'}
         </span>
         <span className="meta-item">
-          <strong>Run ID:</strong> <code>{pipeline_run_id || '—'}</code>
+          <strong>Generated at:</strong> {created_at ? new Date(created_at).toLocaleString() : '—'}
+        </span>
+        <span className="meta-item">
+          <strong>Run ID:</strong> <code>{pipeline_run_id ? (pipeline_run_id.length > 12 ? `${pipeline_run_id.slice(0, 8)}...` : pipeline_run_id) : '—'}</code>
         </span>
         {hasExecutedTrades ? (
           <button 
             type="button" 
             className="meta-item executed-link"
             onClick={onShowTrades}
-            title="Click to see executed trades"
+            title={executedTradesNote || "Click to see executed trades"}
           >
             <strong>Executed:</strong> {summary.executed_count} trade{summary.executed_count !== 1 ? 's' : ''}
+            {executedTradesNote && <span className="executed-note"> ({executedTradesNote})</span>}
           </button>
         ) : (
           <span className="meta-item">
-            <strong>Executed:</strong> 0 trades
+            <strong>Executed:</strong> {executedTradesNote ? `— (${executedTradesNote})` : '0 trades'}
           </span>
         )}
       </div>

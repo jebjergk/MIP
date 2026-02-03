@@ -9,26 +9,49 @@ router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
 @router.get("")
 def list_portfolios():
-    """Portfolio list: PORTFOLIO_ID, NAME, STATUS, LAST_SIMULATED_AT, etc."""
+    """Portfolio list: PORTFOLIO_ID, NAME, STATUS, gate_state (SAFE/CAUTION/STOPPED), active_episode (id, start_ts, profile_id), etc."""
     sql = """
     select
-        PORTFOLIO_ID,
-        NAME,
-        STATUS,
-        LAST_SIMULATED_AT,
-        PROFILE_ID,
-        STARTING_CASH,
-        FINAL_EQUITY,
-        TOTAL_RETURN
-    from MIP.APP.PORTFOLIO
-    order by PORTFOLIO_ID
+        p.PORTFOLIO_ID,
+        p.NAME,
+        p.STATUS,
+        p.LAST_SIMULATED_AT,
+        p.PROFILE_ID,
+        p.STARTING_CASH,
+        p.FINAL_EQUITY,
+        p.TOTAL_RETURN,
+        case
+            when coalesce(g.ENTRIES_BLOCKED, false) then 'STOPPED'
+            when g.RISK_STATUS = 'WARN' then 'CAUTION'
+            else 'SAFE'
+        end as GATE_STATE,
+        e.EPISODE_ID as ACTIVE_EPISODE_ID,
+        e.START_TS as ACTIVE_EPISODE_START_TS,
+        e.PROFILE_ID as ACTIVE_EPISODE_PROFILE_ID
+    from MIP.APP.PORTFOLIO p
+    left join MIP.MART.V_PORTFOLIO_RISK_GATE g on g.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e on e.PORTFOLIO_ID = p.PORTFOLIO_ID
+    order by p.PORTFOLIO_ID
     """
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute(sql)
         rows = fetch_all(cur)
-        return serialize_rows(rows)
+        rows = serialize_rows(rows)
+        for row in rows:
+            ep_id = row.get("ACTIVE_EPISODE_ID") or row.get("active_episode_id")
+            ep_ts = row.get("ACTIVE_EPISODE_START_TS") or row.get("active_episode_start_ts")
+            ep_prof = row.get("ACTIVE_EPISODE_PROFILE_ID") or row.get("active_episode_profile_id")
+            if ep_id is not None or ep_ts is not None or ep_prof is not None:
+                row["active_episode"] = {
+                    "episode_id": ep_id,
+                    "start_ts": ep_ts if isinstance(ep_ts, str) else (ep_ts.isoformat() if hasattr(ep_ts, "isoformat") else ep_ts),
+                    "profile_id": ep_prof,
+                }
+            else:
+                row["active_episode"] = None
+        return rows
     finally:
         conn.close()
 

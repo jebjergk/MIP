@@ -58,3 +58,12 @@ All portfolio-specific data is keyed by `portfolio_id`; the API does not assume 
 - **Portfolio (detail)**: Route `/portfolios/:portfolioId` and “Back to list”; list shows all portfolios.
 
 Multiple active portfolios are supported: list, default (first active), and per-page selectors where needed.
+
+---
+
+## 6. Adding a second portfolio (Portfolio #2)
+
+- **Bootstrap script**: `MIP/SQL/scripts/bootstrap_portfolio_2.sql` creates a second portfolio named `PORTFOLIO_2_LOW_RISK` (PROFILE_ID = 2, LOW_RISK), starting cash 100000, STATUS ACTIVE, and starts its initial ACTIVE episode. Idempotent: safe to rerun.
+- **Pipeline**: No config change needed; `SP_PIPELINE_RUN_PORTFOLIOS` and `SP_PIPELINE_WRITE_MORNING_BRIEFS` select all `STATUS = 'ACTIVE'` portfolios.
+- **Smoke (SQL)**: `MIP/SQL/smoke/portfolio_2_smoke.sql` — run after bootstrap; confirms two portfolios and Portfolio #2 active episode with PROFILE_ID = 2.
+- **Smoke (API)**: After bootstrap, `GET /portfolios` returns two rows; each row includes `gate_state` (SAFE/CAUTION/STOPPED) and `active_episode` (episode_id, start_ts, profile_id). `GET /portfolios/{p2}/snapshot` returns that portfolio’s snapshot including active_episode and risk/profile.

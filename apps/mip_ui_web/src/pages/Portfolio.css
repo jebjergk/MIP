@@ -387,6 +387,25 @@
   background: #2e7d32;
 }
 
+/* Portfolio list: gate state traffic light (SAFE / CAUTION / STOPPED) */
+.portfolio-list-dot--gate-safe {
+  background: #2e7d32;
+}
+
+.portfolio-list-dot--gate-caution {
+  background: #f9a825;
+}
+
+.portfolio-list-dot--gate-stopped {
+  background: #c62828;
+}
+
+.portfolio-list-gate-label {
+  margin-left: 0.35rem;
+  font-size: 0.85rem;
+  color: #333;
+}
+
 /* Cumulative Performance (timeline) */
 .portfolio-cumulative-performance {
   margin: 2rem 0 1rem;

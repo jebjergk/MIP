@@ -567,24 +567,43 @@ export default function Portfolio() {
             <th>Name</th>
             <th>ID</th>
             <th>Status <InfoTooltip scope="portfolio" key="status" variant="short" /></th>
-            <th title="Portfolio status: green = active">Health</th>
+            <th title="Gate state: SAFE = green, CAUTION = yellow, STOPPED = red">Gate</th>
+            <th title="Active episode: green = active">Health</th>
+            <th>Active episode</th>
           </tr>
         </thead>
         <tbody>
-          {portfolios.map((p) => (
-            <tr key={p.PORTFOLIO_ID}>
-              <td><Link to={`/portfolios/${p.PORTFOLIO_ID}`}>{p.NAME}</Link></td>
-              <td>{p.PORTFOLIO_ID}</td>
-              <td><span className="status-badge" title={statusBadgeTitle}>{p.STATUS}</span></td>
-              <td>
-                <span
-                  className={`portfolio-list-dot portfolio-list-dot--${(p.STATUS || '').toLowerCase()}`}
-                  title={p.STATUS === 'ACTIVE' ? 'Active' : p.STATUS || '—'}
-                  aria-hidden
-                />
-              </td>
-            </tr>
-          ))}
+          {portfolios.map((p) => {
+            const gateState = (p.GATE_STATE ?? p.gate_state ?? 'SAFE').toUpperCase()
+            const gateTitle = gateState === 'STOPPED' ? 'Entries blocked' : gateState === 'CAUTION' ? 'Caution' : 'Safe'
+            const ep = p.active_episode
+            const episodeLabel = ep
+              ? `#${ep.episode_id ?? ep.EPISODE_ID ?? '—'} since ${(ep.start_ts ?? ep.START_TS ?? '').toString().slice(0, 10)}`
+              : '—'
+            return (
+              <tr key={p.PORTFOLIO_ID ?? p.portfolio_id}>
+                <td><Link to={`/portfolios/${p.PORTFOLIO_ID ?? p.portfolio_id}`}>{p.NAME ?? p.name}</Link></td>
+                <td>{p.PORTFOLIO_ID ?? p.portfolio_id}</td>
+                <td><span className="status-badge" title={statusBadgeTitle}>{p.STATUS ?? p.status}</span></td>
+                <td>
+                  <span
+                    className={`portfolio-list-dot portfolio-list-dot--gate portfolio-list-dot--gate-${gateState.toLowerCase()}`}
+                    title={gateTitle}
+                    aria-label={gateTitle}
+                  />
+                  <span className="portfolio-list-gate-label">{gateState}</span>
+                </td>
+                <td>
+                  <span
+                    className={`portfolio-list-dot portfolio-list-dot--${(p.STATUS || '').toLowerCase()}`}
+                    title={p.STATUS === 'ACTIVE' ? 'Active' : p.STATUS || '—'}
+                    aria-hidden
+                  />
+                </td>
+                <td>{episodeLabel}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </>

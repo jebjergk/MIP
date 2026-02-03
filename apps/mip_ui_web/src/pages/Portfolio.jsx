@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine } from 'recharts'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
@@ -25,6 +26,7 @@ export default function Portfolio() {
   const [lookbackDays, setLookbackDays] = useState(30)
   const [showRestartModal, setShowRestartModal] = useState(false)
   const [episodes, setEpisodes] = useState([])
+  const [timeline, setTimeline] = useState(null)
   const [activeAnalytics, setActiveAnalytics] = useState(null)
   const { setContext } = useExplainCenter()
   const openExplainRiskGate = useExplainSection(RISK_GATE_EXPLAIN_CONTEXT)
@@ -64,6 +66,11 @@ export default function Portfolio() {
             const epList = await epRes.json()
             if (!cancelled) setEpisodes(Array.isArray(epList) ? epList : [])
           } else if (!cancelled) setEpisodes([])
+          const tlRes = await fetch(`${API_BASE}/portfolios/${portfolioId}/timeline`)
+          if (tlRes.ok) {
+            const tlData = await tlRes.json()
+            if (!cancelled) setTimeline(tlData)
+          } else if (!cancelled) setTimeline(null)
           const activeEp = snapData?.active_episode
           const activeEpisodeId = activeEp?.episode_id ?? activeEp?.EPISODE_ID
           if (activeEpisodeId && !cancelled) {
@@ -76,6 +83,7 @@ export default function Portfolio() {
           setPortfolio(null)
           setSnapshot(null)
           setEpisodes([])
+          setTimeline(null)
           setActiveAnalytics(null)
         }
       } catch (e) {
@@ -446,6 +454,72 @@ export default function Portfolio() {
                   </div>
                 )}
               </section>
+
+              {/* Cumulative Performance: paid out + realized P&L across episodes */}
+              {(timeline && (timeline.per_episode?.length > 0 || (timeline.cumulative_series?.length > 0))) && (
+                <section className="portfolio-cumulative-performance" aria-label="Cumulative performance">
+                  <h2>Cumulative Performance</h2>
+                  <div className="portfolio-cumulative-kpi">
+                    <span className="kpi-label" title="Profits withdrawn at the end of episodes (crystallized gains).">
+                      Total paid out
+                    </span>
+                    <span className="kpi-value">
+                      €{Number(timeline.total_paid_out_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  {timeline.cumulative_series?.length > 0 && (
+                    <div className="portfolio-cumulative-chart">
+                      <ResponsiveContainer width="100%" height={220}>
+                        <LineChart
+                          data={timeline.cumulative_series.map((p) => ({
+                            ts: p.ts,
+                            paid_out: p.cum_distributed_amount,
+                            realized_pnl: p.cum_realized_pnl,
+                          }))}
+                          margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                          <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={(v) => String(v).slice(0, 10)} />
+                          <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => (Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }))} width={48} />
+                          <Tooltip
+                            formatter={(v, name) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), name]}
+                            labelFormatter={(v) => String(v).slice(0, 10)}
+                          />
+                          <ReferenceLine y={0} stroke="#666" strokeDasharray="2 2" />
+                          <Line type="monotone" dataKey="paid_out" stroke="#2e7d32" strokeWidth={2} dot={false} name="Paid out" />
+                          <Line type="monotone" dataKey="realized_pnl" stroke="#1565c0" strokeWidth={2} dot={false} name="Realized P&L" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                      <p className="portfolio-cumulative-chart-legend">
+                        <span className="legend-dot" style={{ background: '#2e7d32' }} /> Paid out
+                        <span className="legend-dot" style={{ background: '#1565c0' }} /> Realized P&L
+                      </p>
+                    </div>
+                  )}
+                  {timeline.per_episode?.length > 0 && (
+                    <div className="portfolio-cumulative-bars">
+                      <h4>P&L by episode</h4>
+                      <ResponsiveContainer width="100%" height={120}>
+                        <BarChart
+                          data={timeline.per_episode.map((ep, i) => ({
+                            episode_id: ep.episode_id,
+                            name: `Ep. ${ep.episode_id}`,
+                            pnl: ep.realized_pnl ?? 0,
+                          }))}
+                          margin={{ top: 4, right: 8, left: 0, bottom: 4 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                          <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                          <YAxis tick={{ fontSize: 10 }} width={48} tickFormatter={(v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+                          <Tooltip formatter={(v) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), 'P&L']} />
+                          <ReferenceLine y={0} stroke="#666" />
+                          <Bar dataKey="pnl" fill="#1565c0" fillOpacity={0.8} name="P&L" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </section>
+              )}
 
               {episodes.length > 0 && (
                 <section className="episode-list-section" aria-label="Episode timeline">

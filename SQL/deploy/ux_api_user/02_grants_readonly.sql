@@ -24,6 +24,7 @@ grant select on table MIP.APP.PORTFOLIO_TRADES      to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_POSITIONS   to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_DAILY       to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PORTFOLIO_EPISODE     to role MIP_UI_API_ROLE;
+grant select on table MIP.APP.PORTFOLIO_EPISODE_RESULTS to role MIP_UI_API_ROLE;
 -- If PORTFOLIO_RISK_OVERRIDE exists (from 161_app_portfolio_risk_override.sql), uncomment:
 -- grant select on table MIP.APP.PORTFOLIO_RISK_OVERRIDE to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.MIP_AUDIT_LOG         to role MIP_UI_API_ROLE;
@@ -54,5 +55,6 @@ grant select on view MIP.MART.V_TRUSTED_SIGNALS             to role MIP_UI_API_R
 grant select on view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS   to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PORTFOLIO_RUN_KPIS          to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PORTFOLIO_RUN_EVENTS        to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_PORTFOLIO_EPISODE_RESULTS  to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_BAR_INDEX to role MIP_UI_API_ROLE;

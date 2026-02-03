@@ -736,6 +736,18 @@ begin
            UPDATED_AT = :v_last_simulated_at
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
+    -- Post-step: check profile-driven crystallization (profit target); end episode, write results, start next.
+    call MIP.APP.SP_CHECK_CRYSTALLIZE(
+        :P_PORTFOLIO_ID,
+        :v_run_id,
+        :v_final_equity,
+        :P_TO_TS,
+        :v_win_days,
+        :v_loss_days,
+        :v_max_drawdown,
+        :v_trade_count
+    );
+
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',
         'SUCCESS',

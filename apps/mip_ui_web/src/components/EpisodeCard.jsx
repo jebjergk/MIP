@@ -28,6 +28,8 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
   const winDays = episode?.win_days ?? episode?.win_days
   const lossDays = episode?.loss_days ?? episode?.loss_days
   const gateChip = isActive ? (episode?.risk_status ?? 'SAFE') : (endReason === 'DRAWDOWN_STOP' || endReason === 'MANUAL_RESET' ? 'STOPPED' : 'SAFE')
+  const distributionAmount = episode?.distribution_amount ?? episode?.DISTRIBUTION_AMOUNT
+  const hasPaidOut = distributionAmount != null && Number(distributionAmount) > 0
 
   useEffect(() => {
     if (!expanded || !portfolioId || !episodeId || detail != null) return
@@ -54,9 +56,16 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
     return () => { cancelled = true }
   }, [expanded, portfolioId, episodeId, detail])
 
-  const explainLine = endReason
-    ? `Ended: ${endReason === 'MANUAL_RESET' ? 'Manual reset' : endReason === 'DRAWDOWN_STOP' ? 'Drawdown stop' : endReason}. Profile: ${profileName}.`
-    : `Active. Profile: ${profileName}.`
+  const reasonText = !endReason
+    ? 'Active'
+    : endReason === 'MANUAL_RESET'
+      ? 'Manual reset'
+      : endReason === 'DRAWDOWN_STOP'
+        ? 'Drawdown stop'
+        : endReason === 'PROFIT_TARGET_HIT'
+          ? (hasPaidOut ? `Profit crystallized; paid out €${Number(distributionAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'Profit target hit')
+          : endReason
+  const explainLine = endReason ? `Ended: ${reasonText}. Profile: ${profileName}.` : `Active. Profile: ${profileName}.`
 
   return (
     <div className={`episode-card ${expanded ? 'episode-card--expanded' : ''}`}>
@@ -76,6 +85,11 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
         <span className={`episode-card-chip episode-card-chip--gate episode-card-chip--${String(gateChip || 'safe').toLowerCase()}`} title="Gate state">
           {GATE_LABELS[gateChip] || gateChip}
         </span>
+        {hasPaidOut && (
+          <span className="episode-card-chip episode-card-chip--paidout" title="Profits withdrawn at end of episode">
+            Paid out: €{Number(distributionAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </span>
+        )}
         <span className="episode-card-profile">{profileName}</span>
       </button>
       <p className="episode-card-explain">{explainLine}</p>

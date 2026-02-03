@@ -707,7 +707,7 @@ def get_portfolio_snapshot(
 def get_portfolio_episodes(portfolio_id: int):
     """
     List episodes (profile generations) for a portfolio, most recent first.
-    Each episode includes summary stats over its window (total_return, max_drawdown, win_days, loss_days, trades_count).
+    Each episode includes summary stats, distribution_amount, distribution_mode from PORTFOLIO_EPISODE_RESULTS when present.
     """
     conn = get_connection()
     try:
@@ -715,9 +715,15 @@ def get_portfolio_episodes(portfolio_id: int):
         cur.execute(
             """
             select e.EPISODE_ID, e.PORTFOLIO_ID, e.PROFILE_ID, e.START_TS, e.END_TS, e.STATUS, e.END_REASON, e.CREATED_AT,
-                   p.NAME as PROFILE_NAME
+                   e.START_EQUITY,
+                   p.NAME as PROFILE_NAME,
+                   r.END_EQUITY as RESULT_END_EQUITY, r.REALIZED_PNL, r.RETURN_PCT, r.MAX_DRAWDOWN_PCT,
+                   r.TRADES_COUNT, r.WIN_DAYS, r.LOSS_DAYS,
+                   r.DISTRIBUTION_AMOUNT, r.DISTRIBUTION_MODE, r.ENDED_AT_TS
             from MIP.APP.PORTFOLIO_EPISODE e
             left join MIP.APP.PORTFOLIO_PROFILE p on p.PROFILE_ID = e.PROFILE_ID
+            left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+              on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
             where e.PORTFOLIO_ID = %s
             order by e.START_TS desc
             """,
@@ -735,77 +741,150 @@ def get_portfolio_episodes(portfolio_id: int):
                 ep["start_ts"] = start_ts.isoformat()
             if end_ts and hasattr(end_ts, "isoformat"):
                 ep["end_ts"] = end_ts.isoformat()
-
-            # Summary stats over episode window: PORTFOLIO_DAILY and PORTFOLIO_TRADES
-            try:
-                cur.execute(
-                    """
-                    select
-                        count(*) as trading_days,
-                        max_by(TOTAL_EQUITY, TS) as final_equity,
-                        max(DRAWDOWN) as max_drawdown,
-                        count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) > 0) as win_days,
-                        count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) < 0) as loss_days
-                    from (
-                        select TS, TOTAL_EQUITY, DRAWDOWN,
-                            lag(TOTAL_EQUITY) over (order by TS) as PREV_TOTAL_EQUITY
-                        from MIP.APP.PORTFOLIO_DAILY
-                        where PORTFOLIO_ID = %s
-                          and TS >= %s
-                          and (%s is null or TS <= %s)
-                    )
-                    """,
-                    (portfolio_id, start_ts, end_ts, end_ts),
-                )
-                daily_row = cur.fetchone()
-                p = cur.description
-                if daily_row and p:
-                    start_cash = None
-                    cur.execute(
-                        "select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s",
-                        (portfolio_id,),
-                    )
-                    pc = cur.fetchone()
-                    if pc and pc[0] is not None:
-                        start_cash = float(pc[0])
-                        ep["start_equity"] = start_cash
-                    final_equity = daily_row[1] if len(daily_row) > 1 else None
-                    total_return = None
-                    if start_cash and final_equity and start_cash != 0:
-                        total_return = (float(final_equity) / start_cash) - 1
-                    ep["total_return"] = total_return
-                    ep["max_drawdown"] = daily_row[2] if len(daily_row) > 2 else None
-                    ep["win_days"] = int(daily_row[3]) if len(daily_row) > 3 and daily_row[3] is not None else None
-                    ep["loss_days"] = int(daily_row[4]) if len(daily_row) > 4 and daily_row[4] is not None else None
-                else:
-                    ep["total_return"] = None
-                    ep["max_drawdown"] = None
-                    ep["win_days"] = None
-                    ep["loss_days"] = None
-                if ep.get("start_equity") is None:
-                    cur.execute("select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s", (portfolio_id,))
-                    sc = cur.fetchone()
-                    if sc and sc[0] is not None:
-                        ep["start_equity"] = float(sc[0])
-
-                cur.execute(
-                    """
-                    select count(*) from MIP.APP.PORTFOLIO_TRADES
-                    where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
-                    """,
-                    (portfolio_id, start_ts, end_ts, end_ts),
-                )
-                tc = cur.fetchone()
-                ep["trades_count"] = int(tc[0]) if tc and tc[0] is not None else 0
-            except Exception:
+            # Prefer persisted results; map to response shape
+            if row.get("RETURN_PCT") is not None:
+                ep["total_return"] = float(row["RETURN_PCT"]) if row.get("RETURN_PCT") is not None else None
+                ep["max_drawdown"] = float(row["MAX_DRAWDOWN_PCT"]) if row.get("MAX_DRAWDOWN_PCT") is not None else None
+                ep["win_days"] = int(row["WIN_DAYS"]) if row.get("WIN_DAYS") is not None else None
+                ep["loss_days"] = int(row["LOSS_DAYS"]) if row.get("LOSS_DAYS") is not None else None
+                ep["trades_count"] = int(row["TRADES_COUNT"]) if row.get("TRADES_COUNT") is not None else None
+                ep["start_equity"] = float(row["START_EQUITY"]) if row.get("START_EQUITY") is not None else None
+            else:
                 ep["total_return"] = None
                 ep["max_drawdown"] = None
                 ep["win_days"] = None
                 ep["loss_days"] = None
                 ep["trades_count"] = None
+                ep["start_equity"] = float(row["START_EQUITY"]) if row.get("START_EQUITY") is not None else None
+            ep["distribution_amount"] = float(row["DISTRIBUTION_AMOUNT"]) if row.get("DISTRIBUTION_AMOUNT") is not None else None
+            ep["distribution_mode"] = row.get("DISTRIBUTION_MODE")
+
+            # Fallback: compute from daily/trades when no results row
+            if ep.get("total_return") is None and start_ts is not None:
+                try:
+                    cur.execute(
+                        """
+                        select
+                            max_by(TOTAL_EQUITY, TS) as final_equity,
+                            max(DRAWDOWN) as max_drawdown,
+                            count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) > 0) as win_days,
+                            count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) < 0) as loss_days
+                        from (
+                            select TS, TOTAL_EQUITY, DRAWDOWN,
+                                lag(TOTAL_EQUITY) over (order by TS) as PREV_TOTAL_EQUITY
+                            from MIP.APP.PORTFOLIO_DAILY
+                            where PORTFOLIO_ID = %s and TS >= %s and (%s is null or TS <= %s)
+                        )
+                        """,
+                        (portfolio_id, start_ts, end_ts, end_ts),
+                    )
+                    daily_row = cur.fetchone()
+                    if daily_row and cur.description:
+                        cols = [d[0] for d in cur.description]
+                        d = dict(zip(cols, daily_row))
+                        start_cash = ep.get("start_equity")
+                        if start_cash is None:
+                            cur.execute(
+                                "select STARTING_CASH from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s",
+                                (portfolio_id,),
+                            )
+                            sc = cur.fetchone()
+                            start_cash = float(sc[0]) if sc and sc[0] is not None else None
+                            ep["start_equity"] = start_cash
+                        final_equity = d.get("FINAL_EQUITY")
+                        if start_cash and final_equity and start_cash != 0:
+                            ep["total_return"] = (float(final_equity) / start_cash) - 1
+                        ep["max_drawdown"] = d.get("MAX_DRAWDOWN")
+                        ep["win_days"] = int(d["WIN_DAYS"]) if d.get("WIN_DAYS") is not None else None
+                        ep["loss_days"] = int(d["LOSS_DAYS"]) if d.get("LOSS_DAYS") is not None else None
+                    cur.execute(
+                        """
+                        select count(*) from MIP.APP.PORTFOLIO_TRADES
+                        where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
+                        """,
+                        (portfolio_id, start_ts, end_ts, end_ts),
+                    )
+                    tc = cur.fetchone()
+                    ep["trades_count"] = int(tc[0]) if tc and tc[0] is not None else 0
+                except Exception:
+                    pass
 
             episodes.append(serialize_row(ep))
         return episodes
+    finally:
+        conn.close()
+
+
+@router.get("/{portfolio_id}/timeline")
+def get_portfolio_timeline(portfolio_id: int):
+    """
+    Cumulative evolution timeline: per-episode results and cumulative series for charts.
+    Returns total_paid_out_amount (sum of distribution_amount), per_episode list, and cumulative_series.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select e.EPISODE_ID, e.START_TS, e.END_TS, e.END_REASON,
+                   r.REALIZED_PNL, r.RETURN_PCT, r.DISTRIBUTION_AMOUNT
+            from MIP.APP.PORTFOLIO_EPISODE e
+            left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+              on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+            where e.PORTFOLIO_ID = %s
+            order by e.START_TS asc
+            """,
+            (portfolio_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return {
+                "per_episode": [],
+                "cumulative_series": [],
+                "total_paid_out_amount": 0.0,
+                "total_paid_out_series": [],
+            }
+
+        total_paid_out = 0.0
+        cum_distributed = 0.0
+        cum_realized_pnl = 0.0
+        per_episode = []
+        cumulative_series = []
+        total_paid_out_series = []
+
+        for row in rows:
+            dist = float(row["DISTRIBUTION_AMOUNT"] or 0)
+            realized = float(row["REALIZED_PNL"] or 0)
+            total_paid_out += dist
+            cum_distributed += dist
+            cum_realized_pnl += realized
+            start_ts = row.get("START_TS")
+            end_ts = row.get("END_TS")
+            per_episode.append({
+                "episode_id": row["EPISODE_ID"],
+                "start_ts": start_ts.isoformat() if start_ts and hasattr(start_ts, "isoformat") else None,
+                "end_ts": end_ts.isoformat() if end_ts and hasattr(end_ts, "isoformat") else None,
+                "return_pct": float(row["RETURN_PCT"]) if row.get("RETURN_PCT") is not None else None,
+                "realized_pnl": float(row["REALIZED_PNL"]) if row.get("REALIZED_PNL") is not None else None,
+                "distribution_amount": float(row["DISTRIBUTION_AMOUNT"]) if row.get("DISTRIBUTION_AMOUNT") is not None else None,
+                "end_reason": row.get("END_REASON"),
+            })
+            ts = end_ts if end_ts else start_ts
+            if ts:
+                point_ts = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                cumulative_series.append({
+                    "ts": point_ts,
+                    "cum_distributed_amount": cum_distributed,
+                    "cum_realized_pnl": cum_realized_pnl,
+                })
+                total_paid_out_series.append({"ts": point_ts, "cum_distributed_amount": cum_distributed})
+
+        return {
+            "per_episode": per_episode,
+            "cumulative_series": cumulative_series,
+            "total_paid_out_amount": total_paid_out,
+            "total_paid_out_series": total_paid_out_series,
+        }
     finally:
         conn.close()
 

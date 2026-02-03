@@ -585,3 +585,153 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* Executed trades link button */
+.executed-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #0d6efd;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.executed-link:hover {
+  text-decoration-style: solid;
+  color: #0a58ca;
+}
+
+/* Modal styles */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  max-width: 800px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #6c757d;
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #212529;
+}
+
+.modal-source {
+  margin: 0;
+  padding: 0.5rem 1.25rem;
+  background: #f8f9fa;
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
+.modal-body {
+  padding: 1rem 1.25rem;
+  overflow: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid #e9ecef;
+  text-align: right;
+}
+
+.view-all-link {
+  color: #0d6efd;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.view-all-link:hover {
+  text-decoration: underline;
+}
+
+/* Trades table */
+.trades-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.trades-table th,
+.trades-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.trades-table th {
+  background: #f8f9fa;
+  font-weight: 600;
+  color: #495057;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.trades-table tbody tr:hover {
+  background: #f8f9fa;
+}
+
+.trade-symbol {
+  font-weight: 600;
+}
+
+.trade-side {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+.trade-side.buy {
+  color: #198754;
+}
+
+.trade-side.sell {
+  color: #dc3545;
+}
+
+.no-trades {
+  text-align: center;
+  padding: 2rem;
+  color: #6c757d;
+}

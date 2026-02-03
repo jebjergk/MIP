@@ -14,7 +14,7 @@ delete from MIP.APP.PORTFOLIO_EPISODE where portfolio_id = 101;
 
 select * from MIP.MART.V_BAR_INDEX where bar_index = 57 order by ts desc;
 
-select * from mip.app.portfolio_profile;
+select * from mip.app.portfolio_trades;
 
 select * from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL;
 

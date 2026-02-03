@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   BarChart,
   Bar,
@@ -199,6 +199,20 @@ export default function Suggestions() {
   const { setContext } = useExplainCenter()
   const openExplainSuggestions = useExplainSection(SUGGESTIONS_EXPLAIN_CONTEXT)
 
+  // URL query params for deep-linking from Morning Brief
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const filterFromBrief = searchParams.get('from') === 'brief'
+  const filterSymbol = searchParams.get('symbol')
+  const filterPatternId = searchParams.get('pattern_id')
+  const filterMarketType = searchParams.get('market_type')
+  const hasFilters = filterFromBrief || filterSymbol || filterPatternId || filterMarketType
+
+  const clearFilters = useCallback(() => {
+    setSearchParams({})
+    navigate('/suggestions', { replace: true })
+  }, [setSearchParams, navigate])
+
   useEffect(() => {
     setContext(SUGGESTIONS_EXPLAIN_CONTEXT)
   }, [setContext])
@@ -352,7 +366,22 @@ export default function Suggestions() {
     return { strongCandidates: strong, earlyCandidates: early }
   }, [summaryData, trainingByKey])
 
-  const displayList = showEarlySignals ? [...strongCandidates, ...earlyCandidates] : strongCandidates
+  // Apply URL param filters
+  const filteredList = useMemo(() => {
+    let list = showEarlySignals ? [...strongCandidates, ...earlyCandidates] : strongCandidates
+    if (filterSymbol) {
+      list = list.filter((item) => item.symbol?.toLowerCase() === filterSymbol.toLowerCase())
+    }
+    if (filterPatternId) {
+      list = list.filter((item) => String(item.pattern_id) === filterPatternId)
+    }
+    if (filterMarketType) {
+      list = list.filter((item) => item.market_type?.toLowerCase() === filterMarketType.toLowerCase())
+    }
+    return list
+  }, [strongCandidates, earlyCandidates, showEarlySignals, filterSymbol, filterPatternId, filterMarketType])
+
+  const displayList = filteredList
   const hasStrong = strongCandidates.length > 0
   const hasEarly = earlyCandidates.length > 0
   const showEmptyState = displayList.length === 0
@@ -378,6 +407,23 @@ export default function Suggestions() {
   return (
     <>
       <h1>Suggestions</h1>
+
+      {hasFilters && (
+        <div className="suggestions-filter-banner" role="status">
+          <span className="filter-icon">🔍</span>
+          <span className="filter-text">
+            {filterFromBrief && 'Filtered from Morning Brief. '}
+            {filterSymbol && `Symbol: ${filterSymbol}. `}
+            {filterPatternId && `Pattern: ${filterPatternId}. `}
+            {filterMarketType && `Market: ${filterMarketType}. `}
+            {displayList.length === 0 && 'No matching candidates found.'}
+          </span>
+          <button type="button" className="filter-clear-btn" onClick={clearFilters}>
+            Clear filters
+          </button>
+        </div>
+      )}
+
       <p className="suggestions-intro">
         Ranked symbol/pattern candidates from evaluated outcome history (deterministic score). Explain mode on—tooltips on every metric.
         <InfoTooltip scope={SCOPE_SUG} key="no_trades_notice" variant="short" />

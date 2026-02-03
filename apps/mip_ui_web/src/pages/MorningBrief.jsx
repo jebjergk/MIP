@@ -49,9 +49,75 @@ function DeltaIndicator({ value, format = 'number', invert = false }) {
   )
 }
 
+// Executed Trades Modal
+function ExecutedTradesModal({ trades, source, portfolioId, onClose }) {
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleEsc)
+    return () => document.removeEventListener('keydown', handleEsc)
+  }, [onClose])
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-content executed-trades-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Executed Trades ({trades.length})</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <p className="modal-source">Source: {source}</p>
+        <div className="modal-body">
+          {trades.length === 0 ? (
+            <p className="no-trades">No executed trades in this brief.</p>
+          ) : (
+            <table className="trades-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Symbol</th>
+                  <th>Side</th>
+                  <th>Qty</th>
+                  <th>Price</th>
+                  <th>Notional</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trades.map((trade, idx) => (
+                  <tr key={trade.trade_id || idx}>
+                    <td>{trade.trade_ts ? new Date(trade.trade_ts).toLocaleString() : '—'}</td>
+                    <td className="trade-symbol">{trade.symbol}</td>
+                    <td className={`trade-side ${(trade.side || '').toLowerCase()}`}>{trade.side}</td>
+                    <td>{trade.quantity != null ? trade.quantity.toLocaleString() : '—'}</td>
+                    <td>{trade.price != null ? `$${trade.price.toLocaleString()}` : '—'}</td>
+                    <td>{trade.notional != null ? `$${trade.notional.toLocaleString()}` : '—'}</td>
+                    <td>{trade.score != null ? trade.score.toFixed(2) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="modal-footer">
+          <Link 
+            to={`/portfolios/${portfolioId}`} 
+            className="view-all-link"
+            onClick={onClose}
+          >
+            View all trades in Portfolio →
+          </Link>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Executive Summary Section
-function ExecutiveSummary({ brief }) {
+function ExecutiveSummary({ brief, onShowTrades }) {
   const { summary, as_of_ts, pipeline_run_id } = brief
+  const hasExecutedTrades = summary.executed_count > 0
+
   return (
     <section className="brief-card executive-summary" aria-label="Executive Summary">
       <h2>Executive Summary</h2>
@@ -76,9 +142,18 @@ function ExecutiveSummary({ brief }) {
         <span className="meta-item">
           <strong>Run ID:</strong> <code>{pipeline_run_id || '—'}</code>
         </span>
-        {summary.executed_count > 0 && (
-          <span className="meta-item">
+        {hasExecutedTrades ? (
+          <button 
+            type="button" 
+            className="meta-item executed-link"
+            onClick={onShowTrades}
+            title="Click to see executed trades"
+          >
             <strong>Executed:</strong> {summary.executed_count} trade{summary.executed_count !== 1 ? 's' : ''}
+          </button>
+        ) : (
+          <span className="meta-item">
+            <strong>Executed:</strong> 0 trades
           </span>
         )}
       </div>
@@ -86,9 +161,28 @@ function ExecutiveSummary({ brief }) {
   )
 }
 
+// Build URL for Suggestions page with filters
+function buildSuggestionsUrl(opportunity, portfolioId, asOfTs) {
+  const params = new URLSearchParams()
+  if (portfolioId) params.set('portfolioId', String(portfolioId))
+  if (asOfTs) params.set('asOf', asOfTs)
+  if (opportunity.market_type) params.set('market_type', opportunity.market_type)
+  if (opportunity.symbol && opportunity.symbol !== '—') params.set('symbol', opportunity.symbol)
+  if (opportunity.pattern_id) params.set('pattern_id', String(opportunity.pattern_id))
+  if (opportunity.horizon_bars) params.set('horizon_bars', String(opportunity.horizon_bars))
+  if (opportunity.interval_minutes) params.set('interval_minutes', String(opportunity.interval_minutes))
+  if (opportunity.side) params.set('side', opportunity.side)
+  if (opportunity.confidence) params.set('confidence', opportunity.confidence)
+  params.set('from', 'brief')
+  const query = params.toString()
+  return query ? `/suggestions?${query}` : '/suggestions'
+}
+
 // Opportunity Card component
-function OpportunityCard({ opportunity }) {
-  const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why, pattern_id } = opportunity
+function OpportunityCard({ opportunity, portfolioId, asOfTs }) {
+  const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why } = opportunity
+  const suggestionsUrl = buildSuggestionsUrl(opportunity, portfolioId, asOfTs)
+  
   return (
     <div className="opportunity-card">
       <div className="opp-header">
@@ -103,8 +197,8 @@ function OpportunityCard({ opportunity }) {
       </div>
       <p className="opp-why">{why}</p>
       <div className="opp-actions">
-        <Link to={`/signals?pattern=${encodeURIComponent(pattern_id)}`} className="opp-link">
-          Open in Signals →
+        <Link to={suggestionsUrl} className="opp-link">
+          Open in Suggestions →
         </Link>
       </div>
     </div>
@@ -112,7 +206,7 @@ function OpportunityCard({ opportunity }) {
 }
 
 // Opportunities Section
-function OpportunitiesSection({ opportunities }) {
+function OpportunitiesSection({ opportunities, portfolioId, asOfTs }) {
   if (!opportunities || opportunities.length === 0) {
     return (
       <section className="brief-card opportunities-section" aria-label="Opportunities">
@@ -132,7 +226,12 @@ function OpportunitiesSection({ opportunities }) {
       <h2>Opportunities ({opportunities.length})</h2>
       <div className="opportunities-grid">
         {opportunities.map((opp, idx) => (
-          <OpportunityCard key={opp.pattern_id || idx} opportunity={opp} />
+          <OpportunityCard 
+            key={opp.pattern_id || idx} 
+            opportunity={opp} 
+            portfolioId={portfolioId}
+            asOfTs={asOfTs}
+          />
         ))}
       </div>
     </section>
@@ -298,6 +397,7 @@ export default function MorningBrief() {
   const [briefResponse, setBriefResponse] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [showTradesModal, setShowTradesModal] = useState(false)
   const { setContext } = useExplainCenter()
 
   useEffect(() => {
@@ -421,12 +521,28 @@ export default function MorningBrief() {
 
       {brief && (
         <div className="brief-content">
-          <ExecutiveSummary brief={brief} />
-          <OpportunitiesSection opportunities={brief.opportunities} />
+          <ExecutiveSummary 
+            brief={brief} 
+            onShowTrades={() => setShowTradesModal(true)}
+          />
+          <OpportunitiesSection 
+            opportunities={brief.opportunities} 
+            portfolioId={brief.portfolio_id}
+            asOfTs={brief.as_of_ts}
+          />
           <RiskSection risk={brief.risk} />
           <DeltasSection deltas={brief.deltas} />
           <RawJsonPanel rawJson={brief.raw_json} />
         </div>
+      )}
+
+      {showTradesModal && brief && (
+        <ExecutedTradesModal
+          trades={brief.summary.executed_trades_preview || []}
+          source={brief.summary.executed_trades_source || 'Portfolio trades'}
+          portfolioId={brief.portfolio_id}
+          onClose={() => setShowTradesModal(false)}
+        />
       )}
     </>
   )

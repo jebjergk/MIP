@@ -43,14 +43,35 @@ def _build_summary(brief_json: dict, risk_gate: dict) -> dict:
         status = "SAFE"
         status_explanation = "Portfolio operating normally. Entries allowed."
 
+    # Get executed trades from proposals
+    executed_trades = brief_json.get("proposals", {}).get("executed_trades", []) or []
+    executed_count = proposals.get("executed", 0) or len(executed_trades)
+
+    # Build preview (limit to 10)
+    executed_trades_preview = []
+    for trade in executed_trades[:10]:
+        executed_trades_preview.append({
+            "trade_id": trade.get("trade_id"),
+            "symbol": trade.get("symbol"),
+            "market_type": trade.get("market_type"),
+            "side": trade.get("side"),
+            "quantity": trade.get("quantity"),
+            "price": trade.get("price"),
+            "notional": trade.get("notional"),
+            "trade_ts": trade.get("trade_ts"),
+            "score": trade.get("score"),
+        })
+
     return {
         "status": status,
         "status_label": {"SAFE": "Safe", "CAUTION": "Caution", "STOPPED": "Stopped"}.get(status, status),
         "entries_allowed": not entries_blocked,
         "new_suggestions_today": len(trusted_now),
         "explanation": status_explanation,
-        "executed_count": proposals.get("executed", 0),
+        "executed_count": executed_count,
         "rejected_count": proposals.get("rejected", 0),
+        "executed_trades_preview": executed_trades_preview,
+        "executed_trades_source": "MIP.APP.PORTFOLIO_TRADES for this run",
     }
 
 

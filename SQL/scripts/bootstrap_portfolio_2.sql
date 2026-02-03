@@ -13,7 +13,7 @@ use database MIP;
 -- can otherwise produce large gaps (e.g. 201). If you already ran this and got 201,
 -- delete that portfolio (and its episode) then re-run to get id 2:
 --   delete from MIP.APP.PORTFOLIO_EPISODE where PORTFOLIO_ID = 201;
---   delete from MIP.APP.PORTFOLIO where PORTFOLIO_ID = 201;
+--   delete from MIP.APP.PORTFOLIOaber  where PORTFOLIO_ID = 201;
 insert into MIP.APP.PORTFOLIO (
     PORTFOLIO_ID,
     PROFILE_ID,

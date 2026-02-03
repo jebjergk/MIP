@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine, Cell } from 'recharts'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
@@ -486,16 +486,37 @@ export default function Portfolio() {
               {(timeline && (timeline.per_episode?.length > 0 || (timeline.cumulative_series?.length > 0))) && (
                 <section className="portfolio-cumulative-performance" aria-label="Cumulative performance">
                   <h2>Cumulative Performance</h2>
-                  <div className="portfolio-cumulative-kpi">
-                    <span className="kpi-label" title="Profits withdrawn at the end of episodes (crystallized gains).">
-                      Total paid out
-                    </span>
-                    <span className="kpi-value">
-                      €{Number(timeline.total_paid_out_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
+                  <p className="cumulative-intro">Your investment journey across all episodes. Click a bar to jump to that episode.</p>
+                  
+                  {/* KPI tiles row */}
+                  <div className="cumulative-kpi-row">
+                    <div className="cumulative-kpi-tile cumulative-kpi-tile--paidout">
+                      <span className="cumulative-kpi-icon">💰</span>
+                      <span className="cumulative-kpi-label">Total Paid Out</span>
+                      <span className="cumulative-kpi-value">
+                        €{Number(timeline.total_paid_out_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="cumulative-kpi-hint">Profits withdrawn at episode ends</span>
+                    </div>
+                    <div className="cumulative-kpi-tile cumulative-kpi-tile--pnl">
+                      <span className="cumulative-kpi-icon">📈</span>
+                      <span className="cumulative-kpi-label">Total Realized P&L</span>
+                      <span className={`cumulative-kpi-value ${(timeline.total_realized_pnl ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+                        €{Number(timeline.total_realized_pnl ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="cumulative-kpi-hint">Cumulative profit/loss across episodes</span>
+                    </div>
+                    <div className="cumulative-kpi-tile cumulative-kpi-tile--episodes">
+                      <span className="cumulative-kpi-icon">🔄</span>
+                      <span className="cumulative-kpi-label">Episodes</span>
+                      <span className="cumulative-kpi-value">{timeline.episode_count ?? timeline.per_episode?.length ?? 0}</span>
+                      <span className="cumulative-kpi-hint">Profile generations</span>
+                    </div>
                   </div>
+
                   {timeline.cumulative_series?.length > 0 && (
                     <div className="portfolio-cumulative-chart">
+                      <h4 className="chart-section-title">Cumulative Growth Over Time</h4>
                       <ResponsiveContainer width="100%" height={220}>
                         <LineChart
                           data={timeline.cumulative_series.map((p) => ({
@@ -509,7 +530,7 @@ export default function Portfolio() {
                           <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={(v) => String(v).slice(0, 10)} />
                           <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => (Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }))} width={48} />
                           <Tooltip
-                            formatter={(v, name) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), name]}
+                            formatter={(v, name) => [`€${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, name]}
                             labelFormatter={(v) => String(v).slice(0, 10)}
                           />
                           <ReferenceLine y={0} stroke="#666" strokeDasharray="2 2" />
@@ -525,24 +546,49 @@ export default function Portfolio() {
                   )}
                   {timeline.per_episode?.length > 0 && (
                     <div className="portfolio-cumulative-bars">
-                      <h4>P&L by episode</h4>
-                      <ResponsiveContainer width="100%" height={120}>
+                      <h4 className="chart-section-title">P&L by Episode</h4>
+                      <ResponsiveContainer width="100%" height={140}>
                         <BarChart
-                          data={timeline.per_episode.map((ep, i) => ({
+                          data={timeline.per_episode.map((ep) => ({
                             episode_id: ep.episode_id,
                             name: `Ep. ${ep.episode_id}`,
                             pnl: ep.realized_pnl ?? 0,
+                            lifecycle: ep.lifecycle_label ?? (ep.status === 'ACTIVE' ? 'Active' : 'Ended'),
+                            status: ep.status,
                           }))}
                           margin={{ top: 4, right: 8, left: 0, bottom: 4 }}
                         >
                           <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                           <XAxis dataKey="name" tick={{ fontSize: 9 }} />
                           <YAxis tick={{ fontSize: 10 }} width={48} tickFormatter={(v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })} />
-                          <Tooltip formatter={(v) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), 'P&L']} />
+                          <Tooltip
+                            formatter={(v, name, props) => [`€${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, props.payload.lifecycle]}
+                            labelFormatter={(v) => v}
+                          />
                           <ReferenceLine y={0} stroke="#666" />
-                          <Bar dataKey="pnl" fill="#1565c0" fillOpacity={0.8} name="P&L" />
+                          <Bar
+                            dataKey="pnl"
+                            name="P&L"
+                            onClick={(data) => {
+                              const epId = data?.episode_id
+                              if (epId) {
+                                const el = document.getElementById(`episode-card-${epId}`)
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                              }
+                            }}
+                            cursor="pointer"
+                          >
+                            {timeline.per_episode.map((ep) => {
+                              const pnl = ep.realized_pnl ?? 0
+                              const isActive = ep.status === 'ACTIVE'
+                              let fill = pnl >= 0 ? '#2e7d32' : '#c62828'
+                              if (isActive) fill = '#1565c0'
+                              return <Cell key={ep.episode_id} fill={fill} />
+                            })}
+                          </Bar>
                         </BarChart>
                       </ResponsiveContainer>
+                      <p className="bar-chart-hint">Click a bar to scroll to that episode card below.</p>
                     </div>
                   )}
                 </section>
@@ -553,14 +599,18 @@ export default function Portfolio() {
                   <h2>Episodes</h2>
                   <p className="portfolio-overview-intro">Profile generations and resets. Expand a card to see equity, drawdown, trades per day, and risk regime.</p>
                   <div className="episode-list">
-                    {episodes.map((ep) => (
-                      <EpisodeCard
-                        key={ep.episode_id ?? ep.EPISODE_ID}
-                        episode={ep}
-                        portfolioId={Number(portfolioId)}
-                        isActive={ep.status === 'ACTIVE' || ep.STATUS === 'ACTIVE'}
-                      />
-                    ))}
+                    {episodes.map((ep) => {
+                      const epId = ep.episode_id ?? ep.EPISODE_ID
+                      return (
+                        <div key={epId} id={`episode-card-${epId}`}>
+                          <EpisodeCard
+                            episode={ep}
+                            portfolioId={Number(portfolioId)}
+                            isActive={ep.status === 'ACTIVE' || ep.STATUS === 'ACTIVE'}
+                          />
+                        </div>
+                      )
+                    })}
                   </div>
                 </section>
               )}

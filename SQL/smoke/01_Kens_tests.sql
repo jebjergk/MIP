@@ -14,6 +14,8 @@ delete from MIP.APP.PORTFOLIO_EPISODE where portfolio_id = 101;
 
 select * from MIP.MART.V_BAR_INDEX where bar_index = 57 order by ts desc;
 
+update mip.app.portfolio_profile set crystalize_enabled = true, 
+
 select * from mip.app.portfolio_trades;
 
 select * from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL;
@@ -23,5 +25,5 @@ FROM MIP.APP.PORTFOLIO p
 LEFT JOIN MIP.APP.PORTFOLIO_PROFILE pp ON pp.PROFILE_ID = p.PROFILE_ID
 WHERE p.PORTFOLIO_ID = 2;
 
-select * from mip.app.portfolio_trades order by trade_ts desc;
+select * from mip.app.portfolio_profile;
   select * from MIP.APP.PORTFOLIO_POSITIONS order by hold_until_index;

@@ -849,8 +849,10 @@ def get_portfolio_timeline(portfolio_id: int):
         cur = conn.cursor()
         cur.execute(
             """
-            select e.EPISODE_ID, e.START_TS, e.END_TS, e.END_REASON,
-                   r.REALIZED_PNL, r.RETURN_PCT, r.DISTRIBUTION_AMOUNT
+            select e.EPISODE_ID, e.START_TS, e.END_TS, e.STATUS, e.END_REASON,
+                   r.START_EQUITY, r.END_EQUITY, r.REALIZED_PNL, r.RETURN_PCT,
+                   r.MAX_DRAWDOWN_PCT, r.TRADES_COUNT, r.WIN_DAYS, r.LOSS_DAYS,
+                   r.DISTRIBUTION_AMOUNT, r.DISTRIBUTION_MODE
             from MIP.APP.PORTFOLIO_EPISODE e
             left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
               on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
@@ -866,9 +868,12 @@ def get_portfolio_timeline(portfolio_id: int):
                 "cumulative_series": [],
                 "total_paid_out_amount": 0.0,
                 "total_paid_out_series": [],
+                "total_realized_pnl": 0.0,
+                "episode_count": 0,
             }
 
         total_paid_out = 0.0
+        total_realized_pnl = 0.0
         cum_distributed = 0.0
         cum_realized_pnl = 0.0
         per_episode = []
@@ -879,18 +884,43 @@ def get_portfolio_timeline(portfolio_id: int):
             dist = float(row["DISTRIBUTION_AMOUNT"] or 0)
             realized = float(row["REALIZED_PNL"] or 0)
             total_paid_out += dist
+            total_realized_pnl += realized
             cum_distributed += dist
             cum_realized_pnl += realized
             start_ts = row.get("START_TS")
             end_ts = row.get("END_TS")
+            status = row.get("STATUS") or "ENDED"
+            end_reason = row.get("END_REASON")
+            
+            # Compute lifecycle status label
+            if status == "ACTIVE":
+                lifecycle_label = "Active"
+            elif end_reason == "PROFIT_TARGET_HIT":
+                lifecycle_label = "Crystallized"
+            elif end_reason == "DRAWDOWN_STOP":
+                lifecycle_label = "Stopped"
+            elif end_reason == "MANUAL_RESET":
+                lifecycle_label = "Reset"
+            else:
+                lifecycle_label = "Ended"
+            
             per_episode.append({
                 "episode_id": row["EPISODE_ID"],
                 "start_ts": start_ts.isoformat() if start_ts and hasattr(start_ts, "isoformat") else None,
                 "end_ts": end_ts.isoformat() if end_ts and hasattr(end_ts, "isoformat") else None,
+                "status": status,
+                "end_reason": end_reason,
+                "lifecycle_label": lifecycle_label,
+                "start_equity": float(row["START_EQUITY"]) if row.get("START_EQUITY") is not None else None,
+                "end_equity": float(row["END_EQUITY"]) if row.get("END_EQUITY") is not None else None,
                 "return_pct": float(row["RETURN_PCT"]) if row.get("RETURN_PCT") is not None else None,
+                "max_drawdown_pct": float(row["MAX_DRAWDOWN_PCT"]) if row.get("MAX_DRAWDOWN_PCT") is not None else None,
                 "realized_pnl": float(row["REALIZED_PNL"]) if row.get("REALIZED_PNL") is not None else None,
                 "distribution_amount": float(row["DISTRIBUTION_AMOUNT"]) if row.get("DISTRIBUTION_AMOUNT") is not None else None,
-                "end_reason": row.get("END_REASON"),
+                "distribution_mode": row.get("DISTRIBUTION_MODE"),
+                "trades_count": int(row["TRADES_COUNT"]) if row.get("TRADES_COUNT") is not None else 0,
+                "win_days": int(row["WIN_DAYS"]) if row.get("WIN_DAYS") is not None else 0,
+                "loss_days": int(row["LOSS_DAYS"]) if row.get("LOSS_DAYS") is not None else 0,
             })
             ts = end_ts if end_ts else start_ts
             if ts:
@@ -899,6 +929,7 @@ def get_portfolio_timeline(portfolio_id: int):
                     "ts": point_ts,
                     "cum_distributed_amount": cum_distributed,
                     "cum_realized_pnl": cum_realized_pnl,
+                    "episode_id": row["EPISODE_ID"],
                 })
                 total_paid_out_series.append({"ts": point_ts, "cum_distributed_amount": cum_distributed})
 
@@ -907,6 +938,8 @@ def get_portfolio_timeline(portfolio_id: int):
             "cumulative_series": cumulative_series,
             "total_paid_out_amount": total_paid_out,
             "total_paid_out_series": total_paid_out_series,
+            "total_realized_pnl": total_realized_pnl,
+            "episode_count": len(per_episode),
         }
     finally:
         conn.close()

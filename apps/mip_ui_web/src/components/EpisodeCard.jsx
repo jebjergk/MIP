@@ -10,6 +10,52 @@ function formatTs(ts) {
   return s.slice(0, 10)
 }
 
+function formatDuration(startTs, endTs) {
+  if (!startTs) return '—'
+  const start = new Date(startTs)
+  const end = endTs ? new Date(endTs) : new Date()
+  const days = Math.ceil((end - start) / (1000 * 60 * 60 * 24))
+  if (days < 1) return '< 1 day'
+  if (days === 1) return '1 day'
+  return `${days} days`
+}
+
+// Lifecycle badge component
+function LifecycleBadge({ endReason, status, distributionAmount }) {
+  if (status === 'ACTIVE') {
+    return <span className="lifecycle-badge lifecycle-badge--active">● Active</span>
+  }
+  if (endReason === 'PROFIT_TARGET_HIT') {
+    return (
+      <span className="lifecycle-badge lifecycle-badge--crystallized" title="Profit target hit, gains crystallized">
+        ✓ Crystallized
+      </span>
+    )
+  }
+  if (endReason === 'DRAWDOWN_STOP') {
+    return (
+      <span className="lifecycle-badge lifecycle-badge--stopped" title="Drawdown stop triggered">
+        ⚠ Stopped
+      </span>
+    )
+  }
+  if (endReason === 'MANUAL_RESET') {
+    return (
+      <span className="lifecycle-badge lifecycle-badge--reset" title="Manually reset by user">
+        ↺ Reset
+      </span>
+    )
+  }
+  if (endReason === 'BUST') {
+    return (
+      <span className="lifecycle-badge lifecycle-badge--bust" title="Bust threshold hit">
+        ✕ Bust
+      </span>
+    )
+  }
+  return <span className="lifecycle-badge lifecycle-badge--ended">Ended</span>
+}
+
 export default function EpisodeCard({ episode, portfolioId, isActive }) {
   const [expanded, setExpanded] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -56,19 +102,28 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
     return () => { cancelled = true }
   }, [expanded, portfolioId, episodeId, detail])
 
-  const reasonText = !endReason
-    ? 'Active'
-    : endReason === 'MANUAL_RESET'
-      ? 'Manual reset'
-      : endReason === 'DRAWDOWN_STOP'
-        ? 'Drawdown stop'
-        : endReason === 'PROFIT_TARGET_HIT'
-          ? (hasPaidOut ? `Profit crystallized; paid out €${Number(distributionAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'Profit target hit')
-          : endReason
-  const explainLine = endReason ? `Ended: ${reasonText}. Profile: ${profileName}.` : `Active. Profile: ${profileName}.`
+  const duration = formatDuration(startTs, endTs)
+  
+  // Build story/narrative text
+  let storyText = ''
+  if (!endReason) {
+    storyText = `Active episode running for ${duration}. Profile: ${profileName}.`
+  } else if (endReason === 'PROFIT_TARGET_HIT') {
+    storyText = hasPaidOut
+      ? `Ran for ${duration}. Profit target achieved — €${Number(distributionAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })} crystallized and withdrawn.`
+      : `Ran for ${duration}. Profit target achieved.`
+  } else if (endReason === 'DRAWDOWN_STOP') {
+    storyText = `Ran for ${duration}. Drawdown protection triggered — entries blocked to prevent further losses.`
+  } else if (endReason === 'MANUAL_RESET') {
+    storyText = `Ran for ${duration}. Manually reset by user.`
+  } else if (endReason === 'BUST') {
+    storyText = `Ran for ${duration}. Bust threshold hit — portfolio liquidated.`
+  } else {
+    storyText = `Ran for ${duration}. Ended: ${endReason}. Profile: ${profileName}.`
+  }
 
   return (
-    <div className={`episode-card ${expanded ? 'episode-card--expanded' : ''}`}>
+    <div className={`episode-card ${expanded ? 'episode-card--expanded' : ''} ${isActive ? 'episode-card--active' : ''}`}>
       <button
         type="button"
         className="episode-card-header"
@@ -79,20 +134,16 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
         <span className="episode-card-dates" title="Date range">
           {formatTs(startTs)} → {endTs ? formatTs(endTs) : 'now'}
         </span>
-        <span className={`episode-card-chip episode-card-chip--${(status || '').toLowerCase()}`}>
-          {status || '—'}
-        </span>
-        <span className={`episode-card-chip episode-card-chip--gate episode-card-chip--${String(gateChip || 'safe').toLowerCase()}`} title="Gate state">
-          {GATE_LABELS[gateChip] || gateChip}
-        </span>
+        <LifecycleBadge endReason={endReason} status={status} distributionAmount={distributionAmount} />
         {hasPaidOut && (
           <span className="episode-card-chip episode-card-chip--paidout" title="Profits withdrawn at end of episode">
-            Paid out: €{Number(distributionAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            💰 €{Number(distributionAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </span>
         )}
         <span className="episode-card-profile">{profileName}</span>
+        <span className="episode-card-expand-icon">{expanded ? '▼' : '▶'}</span>
       </button>
-      <p className="episode-card-explain">{explainLine}</p>
+      <p className="episode-card-story">{storyText}</p>
       <dl className="episode-card-stats">
         <dt>Start equity</dt>
         <dd>{episode?.start_equity != null ? Number(episode.start_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : (detail?.start_equity != null ? Number(detail.start_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—')}</dd>

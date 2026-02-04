@@ -97,18 +97,27 @@ export const RISK_GATE_EXPLAIN_CONTEXT = {
 
 export const RUNS_EXPLAIN_CONTEXT = {
   id: 'runs',
-  title: 'Runs (Audit)',
-  what: 'Lists recent pipeline runs and lets you drill into a run to see its timeline and interpreted summary.',
-  why: 'So you can confirm the pipeline ran, see success or failure, and understand what each step did.',
-  how: 'Runs are read from MIP_AUDIT_LOG (EVENT_TYPE=PIPELINE, EVENT_NAME=SP_RUN_DAILY_PIPELINE). Steps and details come from the same table; the audit interpreter turns DETAILS JSON into narrative.',
+  title: 'Run Explorer',
+  what: 'Two-pane explorer for pipeline runs. Left pane lists runs with filters; right pane shows selected run details including step timeline, error panel, and debug SQL.',
+  why: 'So you can confirm the pipeline ran, diagnose failures without SQL digging, see which step failed and what was skipped, and copy error details for debugging.',
+  how: 'Runs are read from MIP_AUDIT_LOG (EVENT_TYPE=PIPELINE, EVENT_NAME=SP_RUN_DAILY_PIPELINE). Steps come from PIPELINE_STEP events. Error details include SQLSTATE, query ID, and context. Debug SQL is auto-generated for the selected run.',
   sources: [
-    { object: 'MIP.APP.MIP_AUDIT_LOG', purpose: 'Pipeline runs and steps; RUN_ID, EVENT_TS, STATUS, DETAILS.' },
+    { object: 'MIP.APP.MIP_AUDIT_LOG', purpose: 'Pipeline runs and steps; RUN_ID, EVENT_TS, STATUS, ERROR_MESSAGE, ERROR_SQLSTATE, ERROR_QUERY_ID, DURATION_MS, DETAILS.' },
+    { object: 'INFORMATION_SCHEMA.QUERY_HISTORY', purpose: 'Query details for failed queries (via ERROR_QUERY_ID).' },
   ],
   fields: [
-    { key: 'run_id', label: 'Run ID', meaning: 'Unique identifier for the pipeline run.' },
+    { key: 'run_id', label: 'Run ID', meaning: 'Unique identifier for the pipeline run. Click to copy.' },
     { key: 'started_at', label: 'Started at', meaning: 'When the run started.' },
     { key: 'completed_at', label: 'Completed at', meaning: 'When the run finished.' },
     { key: 'status', label: 'Status', meaning: 'Outcome: SUCCESS, FAIL, RUNNING, or skip reason.', glossaryKey: 'audit.run_status' },
+    { key: 'duration_ms', label: 'Duration', meaning: 'Time taken for a step in milliseconds.' },
+    { key: 'error_message', label: 'Error Message', meaning: 'The SQLERRM captured when a step failed.' },
+    { key: 'error_sqlstate', label: 'SQLSTATE', meaning: 'SQL error state code from Snowflake (e.g., 02000 for no data).' },
+    { key: 'error_query_id', label: 'Query ID', meaning: 'Snowflake query ID of the failed statement. Use to look up in QUERY_HISTORY.' },
+    { key: 'step_timeline', label: 'Step Timeline', meaning: 'Ordered list of pipeline steps. Click a step to see its details.' },
+    { key: 'debug_sql', label: 'Debug SQL', meaning: 'Pre-generated SQL queries to investigate this run in Snowflake.' },
+    { key: 'run_explorer', label: 'Run Explorer', meaning: 'Interactive view for exploring pipeline runs and diagnosing issues.' },
+    { key: 'error_details', label: 'Error Details', meaning: 'Full error information including message, SQLSTATE, and query ID for failed steps.' },
   ],
 }
 

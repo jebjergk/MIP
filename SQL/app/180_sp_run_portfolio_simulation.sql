@@ -798,6 +798,8 @@ begin
     );
 exception
     when other then
+        let v_error_query_id string := last_query_id();
+        
         call MIP.APP.SP_LOG_EVENT(
             'PORTFOLIO_SIM',
             'FAIL',
@@ -809,14 +811,28 @@ exception
             ),
             :sqlerrm,
             :v_run_id,
-            null
+            null,
+            null,                    -- P_ROOT_RUN_ID
+            null,                    -- P_EVENT_RUN_ID
+            :sqlstate,               -- P_ERROR_SQLSTATE
+            :v_error_query_id,       -- P_ERROR_QUERY_ID
+            object_construct(        -- P_ERROR_CONTEXT
+                'proc_name', 'SP_RUN_PORTFOLIO_SIMULATION',
+                'portfolio_id', :P_PORTFOLIO_ID,
+                'run_id', :v_run_id,
+                'from_ts', :P_FROM_TS,
+                'to_ts', :P_TO_TS
+            ),
+            null                     -- P_DURATION_MS (not tracked at this level)
         );
 
         return object_construct(
             'status', 'ERROR',
             'run_id', :v_run_id,
             'portfolio_id', :P_PORTFOLIO_ID,
-            'error', :sqlerrm
+            'error', :sqlerrm,
+            'sqlstate', :sqlstate,
+            'query_id', :v_error_query_id
         );
 end;
 $$;

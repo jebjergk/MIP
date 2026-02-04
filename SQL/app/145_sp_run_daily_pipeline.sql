@@ -118,6 +118,8 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
+            let v_ingest_error_query_id string := last_query_id();
+            let v_ingest_duration_ms number := timestampdiff(millisecond, v_step_start, v_step_end);
             call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
                 'INGESTION',
@@ -131,17 +133,31 @@ begin
                     'completed_at', :v_step_end,
                     'requested_to_ts', :v_requested_to_ts
                 ),
-                :sqlerrm
+                :sqlerrm,
+                :sqlstate,
+                :v_ingest_error_query_id,
+                object_construct(
+                    'proc_name', 'SP_RUN_DAILY_PIPELINE',
+                    'step', 'ingestion',
+                    'run_id', :v_run_id
+                ),
+                :v_ingest_duration_ms
             );
             call MIP.APP.SP_LOG_EVENT(
                 'PIPELINE',
                 'SP_RUN_DAILY_PIPELINE',
                 'FAIL',
                 null,
-                object_construct('from_ts', :v_from_ts, 'requested_to_ts', :v_requested_to_ts),
+                object_construct('from_ts', :v_from_ts, 'requested_to_ts', :v_requested_to_ts, 'failed_step', 'ingestion'),
                 :sqlerrm,
                 :v_run_id,
-                null
+                null,
+                null,
+                null,
+                :sqlstate,
+                :v_ingest_error_query_id,
+                object_construct('step', 'ingestion'),
+                :v_ingest_duration_ms
             );
             raise;
     end;
@@ -588,6 +604,8 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
+            let v_sim_error_query_id string := last_query_id();
+            let v_sim_duration_ms number := timestampdiff(millisecond, v_step_start, v_step_end);
             call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
                 'PORTFOLIO_SIMULATION',
@@ -600,9 +618,19 @@ begin
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'from_ts', :v_from_ts,
-                    'to_ts', :v_effective_to_ts
+                    'to_ts', :v_effective_to_ts,
+                    'portfolio_count', :v_portfolio_count
                 ),
-                :sqlerrm
+                :sqlerrm,
+                :sqlstate,
+                :v_sim_error_query_id,
+                object_construct(
+                    'proc_name', 'SP_RUN_DAILY_PIPELINE',
+                    'step', 'portfolio_simulation',
+                    'run_id', :v_run_id,
+                    'portfolio_count', :v_portfolio_count
+                ),
+                :v_sim_duration_ms
             );
             raise;
     end;
@@ -1073,6 +1101,7 @@ begin
     return :v_summary;
 exception
     when other then
+        let v_error_query_id string := last_query_id();
         call MIP.APP.SP_LOG_EVENT(
             'PIPELINE',
             'SP_RUN_DAILY_PIPELINE',
@@ -1081,7 +1110,18 @@ exception
             object_construct('from_ts', :v_from_ts, 'requested_to_ts', :v_requested_to_ts),
             :sqlerrm,
             :v_run_id,
-            null
+            null,
+            null,                    -- P_ROOT_RUN_ID
+            null,                    -- P_EVENT_RUN_ID
+            :sqlstate,               -- P_ERROR_SQLSTATE
+            :v_error_query_id,       -- P_ERROR_QUERY_ID
+            object_construct(        -- P_ERROR_CONTEXT
+                'proc_name', 'SP_RUN_DAILY_PIPELINE',
+                'run_id', :v_run_id,
+                'from_ts', :v_from_ts,
+                'requested_to_ts', :v_requested_to_ts
+            ),
+            null                     -- P_DURATION_MS
         );
         raise;
 end;

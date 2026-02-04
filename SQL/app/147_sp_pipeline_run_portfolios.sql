@@ -25,6 +25,8 @@ declare
     v_rows_after number;
     v_status string;
     v_audit_status string;
+    v_duration_ms number;
+    v_error_query_id string;
 begin
     v_step_start := current_timestamp();
 
@@ -53,6 +55,7 @@ begin
         end if;
 
         v_step_end := current_timestamp();
+        v_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
 
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :P_PARENT_RUN_ID,
@@ -72,13 +75,20 @@ begin
                 'daily_rows', :v_rows_after,
                 'simulation', :v_sim_result
             ),
-            null
+            null,  -- P_ERROR_MESSAGE
+            null,  -- P_ERROR_SQLSTATE
+            null,  -- P_ERROR_QUERY_ID
+            null,  -- P_ERROR_CONTEXT
+            :v_duration_ms
         );
 
         return :v_sim_result;
     exception
         when other then
             v_step_end := current_timestamp();
+            v_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
+            v_error_query_id := last_query_id();
+            
             call MIP.APP.SP_AUDIT_LOG_STEP(
                 :P_PARENT_RUN_ID,
                 'PORTFOLIO_SIMULATION',
@@ -94,7 +104,16 @@ begin
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),
-                :sqlerrm
+                :sqlerrm,                -- P_ERROR_MESSAGE
+                :sqlstate,               -- P_ERROR_SQLSTATE
+                :v_error_query_id,       -- P_ERROR_QUERY_ID
+                object_construct(        -- P_ERROR_CONTEXT
+                    'proc_name', 'SP_PIPELINE_RUN_PORTFOLIO',
+                    'portfolio_id', :P_PORTFOLIO_ID,
+                    'run_id', :v_run_id,
+                    'parent_run_id', :P_PARENT_RUN_ID
+                ),
+                :v_duration_ms
             );
             raise;
     end;

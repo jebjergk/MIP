@@ -23,6 +23,57 @@
     "skip_reasons": {
       "short": "Why a run or step did not execute (e.g. no new data, rate limit).",
       "long": "Skip reasons explain why a run or step was not executed. Common reasons include no new bars (no new data), rate limit (too soon since last run), or other business rules. Use these to debug why nothing ran."
+    },
+    "error_message": {
+      "short": "The error message captured when a step failed (SQLERRM).",
+      "long": "Error message contains the actual error text from Snowflake when a pipeline step fails. This is the SQLERRM value captured in the exception handler. Use it to understand what went wrong without querying the database.",
+      "what": "The SQLERRM text from a failed SQL statement.",
+      "why": "So you can see the actual error without running SQL queries.",
+      "how": "Captured in exception handlers and stored in MIP_AUDIT_LOG.ERROR_MESSAGE."
+    },
+    "error_sqlstate": {
+      "short": "SQL error state code from Snowflake (e.g., 02000, P0001).",
+      "long": "SQLSTATE is a 5-character code that categorizes the type of error. For example, 02000 means 'no data', P0001 means 'raise_exception'. Use it to programmatically handle error types or to search for similar errors.",
+      "what": "A 5-character SQL standard error code.",
+      "why": "Helps categorize errors and search for similar issues.",
+      "how": "Captured from :sqlstate in exception handlers and stored in MIP_AUDIT_LOG.ERROR_SQLSTATE."
+    },
+    "error_query_id": {
+      "short": "Snowflake query ID of the failed statement.",
+      "long": "Query ID is the unique identifier Snowflake assigns to every query. When a step fails, we capture the query ID so you can look up the exact statement in QUERY_HISTORY. Use it to see the full SQL, execution plan, and detailed error info.",
+      "what": "The Snowflake QUERY_ID for the failed statement.",
+      "why": "Lets you look up the exact query in Snowflake's QUERY_HISTORY.",
+      "how": "Captured from last_query_id() in exception handlers and stored in MIP_AUDIT_LOG.ERROR_QUERY_ID.",
+      "next": "Copy the query ID and use it in: SELECT * FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY()) WHERE QUERY_ID = '<query_id>';"
+    },
+    "duration_ms": {
+      "short": "Time taken to execute this step in milliseconds.",
+      "long": "Duration in milliseconds shows how long a pipeline step took to execute. Use it to identify slow steps or to track performance over time. Calculated as the difference between started_at and completed_at.",
+      "what": "Execution time in milliseconds.",
+      "why": "Helps identify slow steps and track performance."
+    },
+    "step_timeline": {
+      "short": "Ordered list of pipeline steps showing status and duration.",
+      "long": "The step timeline shows all pipeline steps in execution order. Each step shows its name, status (success/fail/skip), and duration. Failed steps are highlighted in red. Click a step to see its full details including error information.",
+      "what": "Visual timeline of all steps in a pipeline run.",
+      "why": "Quickly see which steps ran, which failed, and how long each took."
+    },
+    "debug_sql": {
+      "short": "Pre-generated SQL queries to investigate this run in Snowflake.",
+      "long": "Debug SQL provides ready-to-use queries for investigating a run directly in Snowflake. Includes queries for all events, failed steps, and query history lookup. Copy and paste into Snowflake to get more details.",
+      "what": "Generated SQL for debugging in Snowflake.",
+      "why": "Saves time when you need to dig deeper than the UI shows.",
+      "next": "Click 'Show Debug SQL', select a query type, and copy the SQL to Snowflake."
+    },
+    "error_details": {
+      "short": "Full error information including message, SQLSTATE, and query ID.",
+      "long": "Error details combines all captured error information for failed steps: the error message, SQLSTATE code, and query ID. Use these to diagnose issues without manually querying the audit log.",
+      "what": "Combined error message, SQLSTATE, and query ID for failed steps.",
+      "why": "One place to see everything you need to debug a failure."
+    },
+    "run_explorer": {
+      "short": "Interactive two-pane view for exploring pipeline runs.",
+      "long": "The Run Explorer provides a left pane with filterable run list and a right pane with detailed run information. Select a run to see its summary, step timeline, error panel, and debug SQL. Failed steps are automatically highlighted."
     }
   },
   "portfolio": {

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
@@ -11,270 +11,692 @@ import { getGlossaryEntry } from '../data/glossary'
 import { RUNS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './AuditViewer.css'
 
-export default function AuditViewer() {
-  const { runId } = useParams()
+// Status badge component with color coding
+function StatusBadge({ status, showTooltip = false }) {
   const { explainMode } = useExplainMode()
-  const statusBadgeTitle = explainMode ? getGlossaryEntry('ui', 'status_badge')?.long : undefined
-  const [runs, setRuns] = useState([])
-  const [runDetail, setRunDetail] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const statusBadgeTitle = explainMode && showTooltip ? getGlossaryEntry('ui', 'status_badge')?.long : undefined
+  
+  const statusClass = status?.toUpperCase()?.includes('FAIL') || status?.toUpperCase()?.includes('ERROR')
+    ? 'status-badge--error'
+    : status?.toUpperCase()?.includes('SKIP') || status?.toUpperCase()?.includes('RUNNING')
+    ? 'status-badge--warning'
+    : status?.toUpperCase()?.includes('SUCCESS')
+    ? 'status-badge--success'
+    : ''
+  
+  return (
+    <span className={`status-badge ${statusClass}`} title={statusBadgeTitle}>
+      {status ?? '—'}
+    </span>
+  )
+}
+
+// Copy button component
+function CopyButton({ text, label = 'Copy' }) {
+  const [copied, setCopied] = useState(false)
+  
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }, [text])
+  
+  return (
+    <button 
+      className="copy-button" 
+      onClick={handleCopy}
+      title={copied ? 'Copied!' : `Copy ${label}`}
+    >
+      {copied ? '✓ Copied' : label}
+    </button>
+  )
+}
+
+// Run list filters component
+function RunFilters({ filters, setFilters, onSearch }) {
+  const { explainMode } = useExplainMode()
+  
+  return (
+    <div className="run-filters">
+      <div className="run-filters__row">
+        <select 
+          value={filters.status} 
+          onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+          className="run-filters__select"
+          title={explainMode ? 'Filter runs by their final status' : undefined}
+        >
+          <option value="">All statuses</option>
+          <option value="FAIL">Failed</option>
+          <option value="SUCCESS">Success</option>
+          <option value="SUCCESS_WITH_SKIPS">Success with skips</option>
+          <option value="RUNNING">Running</option>
+        </select>
+        <input
+          type="date"
+          value={filters.fromDate}
+          onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+          className="run-filters__date"
+          title={explainMode ? 'Filter runs started after this date' : undefined}
+        />
+        <input
+          type="date"
+          value={filters.toDate}
+          onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+          className="run-filters__date"
+          title={explainMode ? 'Filter runs started before this date' : undefined}
+        />
+      </div>
+      <button onClick={onSearch} className="run-filters__search">
+        Apply Filters
+      </button>
+    </div>
+  )
+}
+
+// Run list item component
+function RunListItem({ run, isSelected, onClick }) {
+  const { explainMode } = useExplainMode()
+  
+  const formatTime = (ts) => {
+    if (!ts) return '—'
+    const d = new Date(ts)
+    return d.toLocaleString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+  
+  return (
+    <div 
+      className={`run-list-item ${isSelected ? 'run-list-item--selected' : ''} ${run.has_errors ? 'run-list-item--error' : ''}`}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      title={explainMode ? 'Click to view run details' : undefined}
+    >
+      <div className="run-list-item__header">
+        <StatusBadge status={run.status} showTooltip />
+        <span className="run-list-item__time">{formatTime(run.started_at)}</span>
+      </div>
+      <div className="run-list-item__id" title={run.run_id}>
+        {run.run_id?.slice(0, 8)}...
+      </div>
+      {run.summary_hint && (
+        <div className="run-list-item__hint">{run.summary_hint}</div>
+      )}
+      {run.error_count > 0 && (
+        <div className="run-list-item__errors">
+          {run.error_count} error{run.error_count > 1 ? 's' : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Step timeline component
+function StepTimeline({ steps, selectedStep, onSelectStep }) {
+  const { explainMode } = useExplainMode()
+  
+  if (!steps || steps.length === 0) {
+    return <p className="step-timeline__empty">No steps recorded.</p>
+  }
+  
+  return (
+    <div className="step-timeline" title={explainMode ? 'Pipeline execution steps in order' : undefined}>
+      {steps.map((step, i) => {
+        const isSelected = selectedStep === i
+        const isFailed = step.status?.toUpperCase()?.includes('FAIL') || step.status?.toUpperCase()?.includes('ERROR')
+        const isSkipped = step.status?.toUpperCase()?.includes('SKIP')
+        
+        return (
+          <div 
+            key={i}
+            className={`step-timeline__item ${isSelected ? 'step-timeline__item--selected' : ''} ${isFailed ? 'step-timeline__item--failed' : ''} ${isSkipped ? 'step-timeline__item--skipped' : ''}`}
+            onClick={() => onSelectStep(i)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectStep(i); } }}
+          >
+            <div className="step-timeline__indicator">
+              {isFailed ? '✗' : isSkipped ? '○' : '✓'}
+            </div>
+            <div className="step-timeline__content">
+              <div className="step-timeline__name">{step.step_name || step.event_name}</div>
+              <div className="step-timeline__meta">
+                <StatusBadge status={step.status} />
+                {step.duration_ms != null && (
+                  <span className="step-timeline__duration">{(step.duration_ms / 1000).toFixed(1)}s</span>
+                )}
+                {step.portfolio_id != null && (
+                  <span className="step-timeline__portfolio">Portfolio {step.portfolio_id}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Step detail panel
+function StepDetail({ step }) {
+  const { explainMode } = useExplainMode()
+  
+  if (!step) {
+    return (
+      <div className="step-detail step-detail--empty">
+        <p>Select a step to view details</p>
+      </div>
+    )
+  }
+  
+  const isFailed = step.status?.toUpperCase()?.includes('FAIL') || step.status?.toUpperCase()?.includes('ERROR')
+  
+  return (
+    <div className={`step-detail ${isFailed ? 'step-detail--failed' : ''}`}>
+      <h4>{step.step_name || step.event_name}</h4>
+      <dl className="step-detail__dl">
+        <dt title={explainMode ? 'Final status of this step' : undefined}>Status</dt>
+        <dd><StatusBadge status={step.status} /></dd>
+        
+        {step.duration_ms != null && (
+          <>
+            <dt title={explainMode ? 'Time taken to execute this step' : undefined}>Duration</dt>
+            <dd>{(step.duration_ms / 1000).toFixed(2)}s ({step.duration_ms}ms)</dd>
+          </>
+        )}
+        
+        {step.rows_affected != null && (
+          <>
+            <dt title={explainMode ? 'Number of database rows affected' : undefined}>Rows Affected</dt>
+            <dd>{step.rows_affected}</dd>
+          </>
+        )}
+        
+        {step.portfolio_id != null && (
+          <>
+            <dt>Portfolio ID</dt>
+            <dd>{step.portfolio_id}</dd>
+          </>
+        )}
+        
+        {step.started_at && (
+          <>
+            <dt>Started</dt>
+            <dd>{step.started_at}</dd>
+          </>
+        )}
+        
+        {step.completed_at && (
+          <>
+            <dt>Completed</dt>
+            <dd>{step.completed_at}</dd>
+          </>
+        )}
+      </dl>
+      
+      {isFailed && step.error_message && (
+        <div className="step-detail__error">
+          <h5>Error Details</h5>
+          <div className="step-detail__error-message">
+            <code>{step.error_message}</code>
+            <CopyButton text={step.error_message} label="Copy Error" />
+          </div>
+          {step.error_sqlstate && (
+            <div className="step-detail__error-meta">
+              <span>SQLSTATE: <code>{step.error_sqlstate}</code></span>
+              <CopyButton text={step.error_sqlstate} label="Copy" />
+            </div>
+          )}
+          {step.error_query_id && (
+            <div className="step-detail__error-meta">
+              <span>Query ID: <code>{step.error_query_id}</code></span>
+              <CopyButton text={step.error_query_id} label="Copy" />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Error panel component
+function ErrorPanel({ errors, debugSql }) {
+  const { explainMode } = useExplainMode()
+  const [showDebugSql, setShowDebugSql] = useState(false)
+  const [selectedDebugQuery, setSelectedDebugQuery] = useState('all_events')
+  
+  if (!errors || errors.length === 0) {
+    return null
+  }
+  
+  return (
+    <div className="error-panel">
+      <h3 className="error-panel__title">
+        Errors ({errors.length})
+        <InfoTooltip scope="audit" entry="error_details" variant="short" />
+      </h3>
+      
+      {errors.map((error, i) => (
+        <div key={i} className="error-panel__item">
+          <div className="error-panel__header">
+            <span className="error-panel__event">{error.event_name}</span>
+            <span className="error-panel__time">{error.event_ts}</span>
+          </div>
+          <div className="error-panel__message">
+            <code>{error.error_message}</code>
+            <CopyButton text={error.error_message} label="Copy" />
+          </div>
+          <div className="error-panel__meta">
+            {error.error_sqlstate && (
+              <span title={explainMode ? 'SQL error state code from Snowflake' : undefined}>
+                SQLSTATE: <code>{error.error_sqlstate}</code>
+              </span>
+            )}
+            {error.error_query_id && (
+              <span title={explainMode ? 'Snowflake query ID - use to look up in QUERY_HISTORY' : undefined}>
+                Query ID: <code>{error.error_query_id}</code>
+                <CopyButton text={error.error_query_id} label="Copy" />
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+      
+      {debugSql && (
+        <div className="error-panel__debug">
+          <button 
+            className="error-panel__debug-toggle"
+            onClick={() => setShowDebugSql(!showDebugSql)}
+          >
+            {showDebugSql ? '▼ Hide Debug SQL' : '▶ Show Debug SQL'}
+          </button>
+          
+          {showDebugSql && (
+            <div className="error-panel__debug-content">
+              <div className="error-panel__debug-tabs">
+                {Object.keys(debugSql).map((key) => (
+                  <button
+                    key={key}
+                    className={`error-panel__debug-tab ${selectedDebugQuery === key ? 'error-panel__debug-tab--active' : ''}`}
+                    onClick={() => setSelectedDebugQuery(key)}
+                  >
+                    {key.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+              <div className="error-panel__debug-sql">
+                <pre>{debugSql[selectedDebugQuery]}</pre>
+                <CopyButton text={debugSql[selectedDebugQuery]} label="Copy SQL" />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Run summary cards
+function RunSummaryCards({ runDetail }) {
+  const { explainMode } = useExplainMode()
+  
+  if (!runDetail) return null
+  
+  const timeline = runDetail.timeline || []
+  const firstEvent = timeline[0]
+  const lastEvent = timeline[timeline.length - 1]
+  
+  const startedAt = firstEvent?.EVENT_TS
+  const completedAt = lastEvent?.EVENT_TS
+  const status = lastEvent?.STATUS
+  const totalDurationMs = runDetail.total_duration_ms
+  
+  // Extract as_of_ts from details
+  let asOfTs = null
+  for (const event of timeline) {
+    const details = event.DETAILS
+    if (details?.effective_to_ts) {
+      asOfTs = details.effective_to_ts
+      break
+    }
+  }
+  
+  // Count portfolios
+  const portfolioIds = new Set()
+  for (const step of runDetail.steps || []) {
+    if (step.portfolio_id) {
+      portfolioIds.add(step.portfolio_id)
+    }
+  }
+  
+  return (
+    <div className="run-summary-cards">
+      <div className="run-summary-card" title={explainMode ? 'Final status of the pipeline run' : undefined}>
+        <div className="run-summary-card__label">Status</div>
+        <div className="run-summary-card__value">
+          <StatusBadge status={status} showTooltip />
+        </div>
+      </div>
+      
+      <div className="run-summary-card" title={explainMode ? 'Total time from start to finish' : undefined}>
+        <div className="run-summary-card__label">Duration</div>
+        <div className="run-summary-card__value">
+          {totalDurationMs != null ? `${(totalDurationMs / 1000).toFixed(1)}s` : '—'}
+        </div>
+      </div>
+      
+      <div className="run-summary-card" title={explainMode ? 'Market data timestamp the pipeline processed up to' : undefined}>
+        <div className="run-summary-card__label">As-of</div>
+        <div className="run-summary-card__value run-summary-card__value--small">
+          {asOfTs ? new Date(asOfTs).toLocaleString() : '—'}
+        </div>
+      </div>
+      
+      <div className="run-summary-card" title={explainMode ? 'Number of portfolios processed' : undefined}>
+        <div className="run-summary-card__label">Portfolios</div>
+        <div className="run-summary-card__value">
+          {portfolioIds.size || '—'}
+        </div>
+      </div>
+      
+      {runDetail.error_count > 0 && (
+        <div className="run-summary-card run-summary-card--error" title={explainMode ? 'Number of failed steps' : undefined}>
+          <div className="run-summary-card__label">Errors</div>
+          <div className="run-summary-card__value">{runDetail.error_count}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Main Run Explorer component
+export default function AuditViewer() {
+  const { runId: urlRunId } = useParams()
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { explainMode } = useExplainMode()
   const { setContext } = useExplainCenter()
+  
+  // State
+  const [runs, setRuns] = useState([])
+  const [selectedRunId, setSelectedRunId] = useState(urlRunId || null)
+  const [runDetail, setRunDetail] = useState(null)
+  const [selectedStep, setSelectedStep] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [filters, setFilters] = useState({
+    status: searchParams.get('status') || '',
+    fromDate: searchParams.get('from') || '',
+    toDate: searchParams.get('to') || '',
+  })
 
   useEffect(() => {
     setContext(RUNS_EXPLAIN_CONTEXT)
   }, [setContext])
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      setError(null)
-      try {
-        if (runId) {
-          const res = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}`)
-          if (!res.ok) throw new Error(res.statusText)
-          const data = await res.json()
-          if (!cancelled) setRunDetail(data)
-        } else {
-          const res = await fetch(`${API_BASE}/runs?limit=30`)
-          if (!res.ok) throw new Error(res.statusText)
-          const data = await res.json()
-          if (!cancelled) setRuns(data)
-        }
-      } catch (e) {
-        if (!cancelled) setError(e.message)
-      } finally {
-        if (!cancelled) setLoading(false)
+  // Load runs list
+  const loadRuns = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams()
+      params.set('limit', '50')
+      if (filters.status) params.set('status', filters.status)
+      if (filters.fromDate) params.set('from_ts', new Date(filters.fromDate).toISOString())
+      if (filters.toDate) params.set('to_ts', new Date(filters.toDate).toISOString())
+      
+      const res = await fetch(`${API_BASE}/runs?${params}`)
+      if (!res.ok) throw new Error(res.statusText)
+      const data = await res.json()
+      setRuns(data)
+      
+      // Auto-select first run if none selected
+      if (!selectedRunId && data.length > 0) {
+        setSelectedRunId(data[0].run_id)
       }
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
     }
-    load()
-    return () => { cancelled = true }
-  }, [runId])
+  }, [filters, selectedRunId])
 
-  if (loading) {
+  // Load run detail
+  const loadRunDetail = useCallback(async (runId) => {
+    if (!runId) {
+      setRunDetail(null)
+      return
+    }
+    setDetailLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/runs/${encodeURIComponent(runId)}`)
+      if (!res.ok) throw new Error(res.statusText)
+      const data = await res.json()
+      setRunDetail(data)
+      setSelectedStep(null)
+      
+      // Auto-select failed step if exists
+      if (data.failed_step) {
+        const failedIndex = (data.steps || []).findIndex(
+          s => s.event_ts === data.failed_step.event_ts && s.step_name === data.failed_step.step_name
+        )
+        if (failedIndex >= 0) {
+          setSelectedStep(failedIndex)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load run detail:', e)
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [])
+
+  // Initial load
+  useEffect(() => {
+    loadRuns()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load detail when selection changes
+  useEffect(() => {
+    loadRunDetail(selectedRunId)
+  }, [selectedRunId, loadRunDetail])
+
+  // Update URL when selection changes
+  useEffect(() => {
+    if (selectedRunId && selectedRunId !== urlRunId) {
+      navigate(`/runs/${encodeURIComponent(selectedRunId)}`, { replace: true })
+    }
+  }, [selectedRunId, urlRunId, navigate])
+
+  // Handle filter search
+  const handleSearch = () => {
+    const params = new URLSearchParams()
+    if (filters.status) params.set('status', filters.status)
+    if (filters.fromDate) params.set('from', filters.fromDate)
+    if (filters.toDate) params.set('to', filters.toDate)
+    setSearchParams(params)
+    loadRuns()
+  }
+
+  // Handle run selection
+  const handleSelectRun = (runId) => {
+    setSelectedRunId(runId)
+  }
+
+  if (loading && runs.length === 0) {
     return (
-      <>
-        <h1>{runId ? `Run: ${runId}` : 'Runs'}</h1>
+      <div className="run-explorer">
+        <h1>Run Explorer</h1>
         <LoadingState />
-      </>
+      </div>
     )
   }
-  if (error) {
+
+  if (error && runs.length === 0) {
     return (
-      <>
-        <h1>{runId ? `Run: ${runId}` : 'Runs'}</h1>
-        {runId && <p><Link to="/runs">← Back to runs</Link></p>}
+      <div className="run-explorer">
+        <h1>Run Explorer</h1>
         <ErrorState message={error} />
-      </>
-    )
-  }
-
-  if (runId && runDetail) {
-    const runSummary = runDetail.run_summary || null
-    const sections = runDetail.sections || []
-    const phases = runDetail.phases || []
-    const timeline = runDetail.timeline || []
-    const interpretedNarrative = runDetail.interpreted_narrative
-
-    return (
-      <>
-        <h1>Run: {runId}</h1>
-        <p><Link to="/runs">← Back to runs</Link></p>
-
-        {/* Run summary: no-new-bars / skip behavior — above narrative and timeline */}
-        {runSummary && (
-          <section className="audit-run-summary" aria-label="Run summary">
-            <h2>Run summary <InfoTooltip scope="audit" key="run_status" variant="short" /></h2>
-            <div className="audit-run-summary-card">
-              <h3 className="audit-run-summary-headline">{runSummary.headline}</h3>
-              <dl className="audit-run-summary-dl">
-                <dt>What happened</dt>
-                <dd>{runSummary.what_happened}</dd>
-                <dt>Why</dt>
-                <dd>{runSummary.why}</dd>
-                <dt>Impact</dt>
-                <dd>{runSummary.impact}</dd>
-                {runSummary.next_check != null && runSummary.next_check !== '' && (
-                  <>
-                    <dt>Next check</dt>
-                    <dd>{runSummary.next_check}</dd>
-                  </>
-                )}
-              </dl>
-            </div>
-          </section>
-        )}
-
-        {/* Top narrative: "What happened" (includes "no new bars" clearly when applicable) */}
-        {interpretedNarrative && (
-          <section className="audit-narrative" aria-label="What happened">
-            <h2>What happened <InfoTooltip scope="audit" key="run_status" variant="short" /></h2>
-            <p className="audit-narrative-text">{interpretedNarrative}</p>
-          </section>
-        )}
-
-        {/* What happened and why — structured sections */}
-        {sections.length > 0 && (
-          <section className="audit-what-happened" aria-label="What happened and why">
-            <h2>What happened and why <InfoTooltip scope="audit" key="run_status" variant="short" /></h2>
-            <div className="audit-sections">
-              {sections.map((sec, i) => (
-                <div key={i} className="audit-section-card" data-phase={sec.phase_key}>
-                  <h3 className="audit-section-headline">{sec.headline}</h3>
-                  {sec.phase_label && <span className="audit-section-phase">{sec.phase_label}</span>}
-                  <dl className="audit-section-dl">
-                    <dt>What happened</dt>
-                    <dd>{sec.what_happened}</dd>
-                    <dt>Why</dt>
-                    <dd>{sec.why}</dd>
-                    <dt>Impact</dt>
-                    <dd>{sec.impact}</dd>
-                    {sec.next_check != null && sec.next_check !== '' && (
-                      <>
-                        <dt>Next check</dt>
-                        <dd>{sec.next_check}</dd>
-                      </>
-                    )}
-                  </dl>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Phases (grouped steps) */}
-        {phases.length > 0 && (
-          <section className="audit-phases" aria-label="Pipeline phases">
-            <h3>Pipeline phases</h3>
-            <ul className="audit-phases-list">
-              {phases.map((p, i) => (
-                <li key={i}>
-                  <strong>{p.phase_label}</strong>
-                  <ul>
-                    {(p.events || []).map((ev, j) => (
-                      <li key={j}>
-                        <span className="status-badge" title={statusBadgeTitle}>{ev.status}</span>
-                        {ev.duration_seconds != null && ` (${ev.duration_seconds.toFixed(1)}s)`}
-                        {ev.portfolio_count != null && ` — ${ev.portfolio_count} portfolio(s)`}
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {/* Legacy summary cards (compact) */}
-        <h3>Summary cards <InfoTooltip scope="audit" key="run_status" variant="short" /></h3>
-        <ul>
-          {(runDetail.summary_cards || []).map((c, i) => (
-            <li key={i}>
-              {c.step_name}: <span className="status-badge" title={statusBadgeTitle}>{c.status}</span>
-              {c.duration_seconds != null && ` (${c.duration_seconds.toFixed(1)}s)`}
-              {c.portfolio_count != null && ` — ${c.portfolio_count} portfolio(s)`}
-            </li>
-          ))}
-        </ul>
-
-        <h3>Narrative bullets</h3>
-        <ul>
-          {(runDetail.narrative_bullets || []).map((b, i) => (
-            <li key={i}>{b}</li>
-          ))}
-        </ul>
-
-        {/* Raw timeline with tooltips */}
-        <h3>Timeline (raw) <InfoTooltip scope="audit" key="latest_ts" variant="short" /></h3>
-        <div className="audit-timeline-wrap">
-          <table className="audit-timeline-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Type</th>
-                <th>Event</th>
-                <th>Status</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {timeline.slice(0, 50).map((row, i) => {
-                const details = typeof row.DETAILS === 'string' ? row.DETAILS : (row.DETAILS ? JSON.stringify(row.DETAILS) : '')
-                const tooltip = [
-                  row.EVENT_TS,
-                  row.EVENT_TYPE,
-                  row.EVENT_NAME,
-                  row.STATUS,
-                  row.ERROR_MESSAGE ? `Error: ${row.ERROR_MESSAGE}` : '',
-                  details ? `DETAILS: ${details.slice(0, 200)}${details.length > 200 ? '…' : ''}` : ''
-                ].filter(Boolean).join(' | ')
-                return (
-                  <tr key={i} className="audit-timeline-row" title={tooltip}>
-                    <td>{row.EVENT_TS}</td>
-                    <td>{row.EVENT_TYPE}</td>
-                    <td>{row.EVENT_NAME}</td>
-                    <td><span className="status-badge" title={statusBadgeTitle}>{row.STATUS}</span></td>
-                    <td className="audit-timeline-details">{details ? '✓' : '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-          {timeline.length > 50 && <p className="audit-timeline-more">Showing first 50 of {timeline.length} events.</p>}
-        </div>
-      </>
-    )
-  }
-
-  if (runs.length === 0) {
-    return (
-      <>
-        <h1>Runs</h1>
-        <EmptyState
-          title="No runs yet"
-          action="Run pipeline in Snowflake (SP_RUN_DAILY_PIPELINE)."
-          explanation="Pipeline runs appear here after the daily pipeline executes. Trigger it in Snowflake, then refresh."
-          reasons={['Pipeline has not run yet.', 'MIP_AUDIT_LOG may be empty.']}
-        />
-      </>
+      </div>
     )
   }
 
   return (
-    <>
-      <h1>Runs</h1>
-      <p>Recent pipeline runs. Click a run to see timeline and interpreted summary.</p>
-      <table className="runs-table">
-        <thead>
-          <tr>
-            <th>Started</th>
-            <th>Completed</th>
-            <th>Run ID</th>
-            <th>Status <InfoTooltip scope="audit" key="run_status" variant="short" /></th>
-            <th>Summary</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((r) => (
-            <tr
-              key={r.run_id}
-              className="runs-table-row-clickable"
-              onClick={() => navigate(`/runs/${encodeURIComponent(r.run_id)}`)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/runs/${encodeURIComponent(r.run_id)}`); } }}
-              aria-label={`View run ${r.run_id}`}
-            >
-              <td>{r.started_at ?? '—'}</td>
-              <td>{r.completed_at ?? '—'}</td>
-              <td><Link to={`/runs/${encodeURIComponent(r.run_id)}`} onClick={(e) => e.stopPropagation()}>{r.run_id?.slice(0, 12)}{(r.run_id?.length || 0) > 12 ? '…' : ''}</Link></td>
-              <td><span className="status-badge" title={statusBadgeTitle}>{r.status ?? '—'}</span></td>
-              <td>{r.summary_hint ?? '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
+    <div className="run-explorer">
+      <h1>Run Explorer <InfoTooltip scope="audit" entry="run_explorer" variant="short" /></h1>
+      
+      <div className="run-explorer__layout">
+        {/* Left pane: Run list with filters */}
+        <div className="run-explorer__left">
+          <RunFilters 
+            filters={filters} 
+            setFilters={setFilters} 
+            onSearch={handleSearch}
+          />
+          
+          <div className="run-list">
+            {runs.length === 0 ? (
+              <EmptyState
+                title="No runs found"
+                action="Adjust filters or run the pipeline."
+                explanation="Pipeline runs appear here after SP_RUN_DAILY_PIPELINE executes."
+                reasons={['No runs match filters.', 'Pipeline has not run yet.']}
+              />
+            ) : (
+              runs.map((run) => (
+                <RunListItem
+                  key={run.run_id}
+                  run={run}
+                  isSelected={selectedRunId === run.run_id}
+                  onClick={() => handleSelectRun(run.run_id)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+        
+        {/* Right pane: Run detail */}
+        <div className="run-explorer__right">
+          {detailLoading ? (
+            <LoadingState />
+          ) : !runDetail ? (
+            <div className="run-explorer__empty">
+              <p>Select a run to view details</p>
+            </div>
+          ) : (
+            <>
+              {/* Run ID header */}
+              <div className="run-detail-header">
+                <h2 title={selectedRunId}>
+                  Run: {selectedRunId?.slice(0, 12)}...
+                  <CopyButton text={selectedRunId} label="Copy ID" />
+                </h2>
+              </div>
+              
+              {/* Summary cards */}
+              <RunSummaryCards runDetail={runDetail} />
+              
+              {/* Run summary narrative */}
+              {runDetail.run_summary && (
+                <section className="run-summary-narrative">
+                  <h3>{runDetail.run_summary.headline}</h3>
+                  <dl>
+                    <dt>What happened</dt>
+                    <dd>{runDetail.run_summary.what_happened}</dd>
+                    <dt>Why</dt>
+                    <dd>{runDetail.run_summary.why}</dd>
+                    <dt>Impact</dt>
+                    <dd>{runDetail.run_summary.impact}</dd>
+                    {runDetail.run_summary.next_check && (
+                      <>
+                        <dt>Next check</dt>
+                        <dd>{runDetail.run_summary.next_check}</dd>
+                      </>
+                    )}
+                  </dl>
+                </section>
+              )}
+              
+              {/* Error panel (if errors exist) */}
+              <ErrorPanel 
+                errors={runDetail.errors} 
+                debugSql={runDetail.debug_sql}
+              />
+              
+              {/* Step timeline */}
+              <section className="run-steps-section">
+                <h3>
+                  Step Timeline 
+                  <InfoTooltip scope="audit" entry="step_timeline" variant="short" />
+                </h3>
+                <div className="run-steps-layout">
+                  <StepTimeline 
+                    steps={runDetail.steps} 
+                    selectedStep={selectedStep}
+                    onSelectStep={setSelectedStep}
+                  />
+                  <StepDetail 
+                    step={selectedStep != null ? runDetail.steps[selectedStep] : null} 
+                  />
+                </div>
+              </section>
+              
+              {/* Raw timeline (collapsed by default) */}
+              <details className="raw-timeline-section">
+                <summary>Raw Timeline ({runDetail.timeline?.length || 0} events)</summary>
+                <div className="raw-timeline-wrap">
+                  <table className="raw-timeline-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Event</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(runDetail.timeline || []).slice(0, 100).map((row, i) => {
+                        const isFailed = row.STATUS?.toUpperCase()?.includes('FAIL') || row.STATUS?.toUpperCase()?.includes('ERROR')
+                        return (
+                          <tr key={i} className={isFailed ? 'raw-timeline-row--failed' : ''}>
+                            <td>{row.EVENT_TS}</td>
+                            <td>{row.EVENT_TYPE}</td>
+                            <td>{row.EVENT_NAME}</td>
+                            <td><StatusBadge status={row.STATUS} /></td>
+                            <td>{row.DURATION_MS != null ? `${row.DURATION_MS}ms` : '—'}</td>
+                            <td className="raw-timeline-error">
+                              {row.ERROR_MESSAGE ? (
+                                <span title={row.ERROR_MESSAGE}>
+                                  {row.ERROR_MESSAGE.slice(0, 50)}{row.ERROR_MESSAGE.length > 50 ? '...' : ''}
+                                </span>
+                              ) : '—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  {(runDetail.timeline?.length || 0) > 100 && (
+                    <p className="raw-timeline-more">Showing first 100 of {runDetail.timeline.length} events.</p>
+                  )}
+                </div>
+              </details>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }

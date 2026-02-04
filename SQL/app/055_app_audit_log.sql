@@ -23,12 +23,22 @@ create table if not exists MIP.APP.MIP_AUDIT_LOG (
     ROWS_AFFECTED     number,
     DETAILS           variant,
     ERROR_MESSAGE     string,
+    ERROR_SQLSTATE    string,                                      -- SQL error state code
+    ERROR_QUERY_ID    string,                                      -- Query ID that caused the error
+    ERROR_CONTEXT     variant,                                     -- Additional error context (JSON)
+    DURATION_MS       number,                                      -- Step duration in milliseconds
     INVOKED_BY_USER   string        default current_user(),
     INVOKED_BY_ROLE   string        default current_role(),
     INVOKED_WAREHOUSE string        default current_warehouse(),
     QUERY_ID          string        default last_query_id(),
     SESSION_ID        string        default current_session()
 );
+
+-- Migration: add new columns if they don't exist (idempotent)
+alter table MIP.APP.MIP_AUDIT_LOG add column if not exists ERROR_SQLSTATE string;
+alter table MIP.APP.MIP_AUDIT_LOG add column if not exists ERROR_QUERY_ID string;
+alter table MIP.APP.MIP_AUDIT_LOG add column if not exists ERROR_CONTEXT variant;
+alter table MIP.APP.MIP_AUDIT_LOG add column if not exists DURATION_MS number;
 
 create or replace procedure MIP.APP.SP_LOG_EVENT(
     P_EVENT_TYPE string,
@@ -40,7 +50,11 @@ create or replace procedure MIP.APP.SP_LOG_EVENT(
     P_RUN_ID string default null,
     P_PARENT_RUN_ID string default null,
     P_ROOT_RUN_ID string default null,
-    P_EVENT_RUN_ID string default null
+    P_EVENT_RUN_ID string default null,
+    P_ERROR_SQLSTATE string default null,
+    P_ERROR_QUERY_ID string default null,
+    P_ERROR_CONTEXT variant default null,
+    P_DURATION_MS number default null
 )
 returns varchar
 language sql
@@ -97,7 +111,11 @@ begin
         STATUS,
         ROWS_AFFECTED,
         DETAILS,
-        ERROR_MESSAGE
+        ERROR_MESSAGE,
+        ERROR_SQLSTATE,
+        ERROR_QUERY_ID,
+        ERROR_CONTEXT,
+        DURATION_MS
     )
     select
         CURRENT_TIMESTAMP(),
@@ -108,7 +126,11 @@ begin
         :P_STATUS,
         :P_ROWS_AFFECTED,
         :v_details,
-        :P_ERROR_MESSAGE;
+        :P_ERROR_MESSAGE,
+        :P_ERROR_SQLSTATE,
+        :P_ERROR_QUERY_ID,
+        :P_ERROR_CONTEXT,
+        :P_DURATION_MS;
 
     return v_run_id;
 end;
@@ -120,7 +142,11 @@ create or replace procedure MIP.APP.SP_AUDIT_LOG_STEP(
     P_STATUS string,
     P_ROWS_AFFECTED number,
     P_DETAILS variant,
-    P_ERROR_MESSAGE string default null
+    P_ERROR_MESSAGE string default null,
+    P_ERROR_SQLSTATE string default null,
+    P_ERROR_QUERY_ID string default null,
+    P_ERROR_CONTEXT variant default null,
+    P_DURATION_MS number default null
 )
 returns string
 language sql
@@ -191,7 +217,11 @@ begin
         STATUS,
         ROWS_AFFECTED,
         DETAILS,
-        ERROR_MESSAGE
+        ERROR_MESSAGE,
+        ERROR_SQLSTATE,
+        ERROR_QUERY_ID,
+        ERROR_CONTEXT,
+        DURATION_MS
     )
     select
         CURRENT_TIMESTAMP(),
@@ -202,7 +232,11 @@ begin
         :P_STATUS,
         :P_ROWS_AFFECTED,
         :v_details,
-        :P_ERROR_MESSAGE;
+        :P_ERROR_MESSAGE,
+        :P_ERROR_SQLSTATE,
+        :P_ERROR_QUERY_ID,
+        :P_ERROR_CONTEXT,
+        :P_DURATION_MS;
 
     return v_new_run_id;
 end;

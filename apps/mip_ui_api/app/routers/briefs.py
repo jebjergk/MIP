@@ -381,7 +381,8 @@ def get_latest_brief(portfolio_id: int):
     Returns normalized structure with summary, opportunities, risk, deltas, and raw_json.
     
     Selection: Latest by CREATED_AT (not AS_OF_TS).
-    Staleness: Brief is stale if RUN_ID differs from portfolio's LAST_SIMULATION_RUN_ID.
+    Staleness: Brief is stale if its pipeline_run_id differs from the latest successful pipeline run.
+              (NOT from PORTFOLIO.LAST_SIMULATION_RUN_ID, which is set by a different procedure.)
     Reset boundary: Warning if brief is from before active episode START_TS.
     """
     # Main query to get brief + risk gate state + profile thresholds + episode info
@@ -418,6 +419,19 @@ def get_latest_brief(portfolio_id: int):
           and coalesce(mb.AGENT_NAME, '') = 'MORNING_BRIEF'
         order by coalesce(mb.CREATED_AT, mb.AS_OF_TS) desc
         limit 1 offset 1
+    ),
+    latest_pipeline_run as (
+        -- Get the latest successful pipeline run (SUCCESS or SUCCESS_WITH_SKIPS)
+        -- This is the correct source for staleness check, not PORTFOLIO.LAST_SIMULATION_RUN_ID
+        select 
+            RUN_ID,
+            EVENT_TS
+        from MIP.APP.MIP_AUDIT_LOG
+        where EVENT_TYPE = 'PIPELINE'
+          and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+          and STATUS in ('SUCCESS', 'SUCCESS_WITH_SKIPS')
+        order by EVENT_TS desc
+        limit 1
     )
     select
         lb.PORTFOLIO_ID as portfolio_id,
@@ -438,9 +452,9 @@ def get_latest_brief(portfolio_id: int):
         pp.NAME as profile_name,
         pb.AS_OF_TS as prev_as_of_ts,
         pb.BRIEF as prev_brief_json,
-        -- Portfolio's latest run info for staleness check
-        p.LAST_SIMULATION_RUN_ID as latest_run_id,
-        p.LAST_SIMULATED_AT as latest_run_ts,
+        -- Latest pipeline run for staleness check (from audit log, not PORTFOLIO table)
+        lpr.RUN_ID as latest_run_id,
+        lpr.EVENT_TS as latest_run_ts,
         -- Active episode info for reset boundary check
         e.EPISODE_ID as episode_id,
         e.START_TS as episode_start_ts
@@ -455,6 +469,7 @@ def get_latest_brief(portfolio_id: int):
         on pb.PORTFOLIO_ID = lb.PORTFOLIO_ID
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
         on e.PORTFOLIO_ID = lb.PORTFOLIO_ID
+    cross join latest_pipeline_run lpr
     """
     conn = get_connection()
     try:

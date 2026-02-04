@@ -117,13 +117,118 @@ WHERE p.PORTFOLIO_ID = 2;
 select * from mip.app.portfolio_profile;
   select * from MIP.APP.PORTFOLIO_POSITIONS order by hold_until_index;
 
-  select
-  portfolio_id,
-  as_of_ts,
-  pipeline_run_id,
-  created_at
+-- =============================================================================
+-- DIAGNOSTIC: Morning Brief staleness debugging
+-- =============================================================================
+
+-- 1. Check what LAST_SIMULATION_RUN_ID is for each portfolio
+select 
+    PORTFOLIO_ID,
+    NAME,
+    LAST_SIMULATION_RUN_ID,
+    LAST_SIMULATED_AT
+from MIP.APP.PORTFOLIO
+where STATUS = 'ACTIVE'
+order by PORTFOLIO_ID;
+
+-- 2. Check the latest briefs and compare to LAST_SIMULATION_RUN_ID
+select 
+    mb.PORTFOLIO_ID,
+    p.NAME,
+    mb.AS_OF_TS,
+    coalesce(mb.CREATED_AT, mb.AS_OF_TS) as CREATED_AT,
+    mb.PIPELINE_RUN_ID as BRIEF_RUN_ID,
+    p.LAST_SIMULATION_RUN_ID as PORTFOLIO_LATEST_RUN_ID,
+    case 
+        when mb.PIPELINE_RUN_ID = p.LAST_SIMULATION_RUN_ID then 'CURRENT'
+        else 'STALE'
+    end as STALENESS,
+    case 
+        when mb.PIPELINE_RUN_ID = p.LAST_SIMULATION_RUN_ID then null
+        else 'Brief run ' || left(mb.PIPELINE_RUN_ID, 8) || ' != portfolio run ' || left(p.LAST_SIMULATION_RUN_ID, 8)
+    end as STALE_REASON
+from MIP.AGENT_OUT.MORNING_BRIEF mb
+join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = mb.PORTFOLIO_ID
+where coalesce(mb.AGENT_NAME, '') = 'MORNING_BRIEF'
+qualify row_number() over (partition by mb.PORTFOLIO_ID order by coalesce(mb.CREATED_AT, mb.AS_OF_TS) desc) = 1
+order by mb.PORTFOLIO_ID;
+
+-- 3. Check if a brief exists for the latest run (9b46c00d...)
+select 
+    PORTFOLIO_ID,
+    AS_OF_TS,
+    PIPELINE_RUN_ID,
+    CREATED_AT
 from MIP.AGENT_OUT.MORNING_BRIEF
-where portfolio_id = 2
-order by created_at desc
+where PIPELINE_RUN_ID like '9b46c00d%'
+   or PIPELINE_RUN_ID like '9b%'
+order by CREATED_AT desc;
+
+-- 4. Check recent briefs for all portfolios
+select
+    PORTFOLIO_ID,
+    AS_OF_TS,
+    PIPELINE_RUN_ID,
+    CREATED_AT,
+    AGENT_NAME
+from MIP.AGENT_OUT.MORNING_BRIEF
+order by coalesce(CREATED_AT, AS_OF_TS) desc
 limit 20;
 
+-- 5. Check recent audit log for MORNING_BRIEF step
+select 
+    RUN_ID,
+    EVENT_NAME,
+    STATUS,
+    EVENT_TS,
+    DETAILS
+from MIP.APP.MIP_AUDIT_LOG
+where EVENT_NAME = 'MORNING_BRIEF'
+order by EVENT_TS desc
+limit 10;
+
+-- 6. Check the FULL audit log for a specific run (replace with actual run_id)
+-- Use this to see what happened with run 9b46c00d...
+select 
+    RUN_ID,
+    EVENT_TYPE,
+    EVENT_NAME,
+    STATUS,
+    EVENT_TS,
+    left(DETAILS::string, 300) as DETAILS_PREVIEW
+from MIP.APP.MIP_AUDIT_LOG
+where RUN_ID like '9b46c00d%'
+order by EVENT_TS;
+
+-- 7. Check the most recent pipeline runs and their root status
+select 
+    RUN_ID,
+    EVENT_NAME,
+    STATUS,
+    EVENT_TS,
+    DETAILS:pipeline_status_reason::string as STATUS_REASON,
+    DETAILS:has_new_bars::boolean as HAS_NEW_BARS
+from MIP.APP.MIP_AUDIT_LOG
+where EVENT_TYPE = 'PIPELINE'
+  and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+order by EVENT_TS desc
+limit 10;
+
+-- 8. Check if SP_RUN_DAILY_PIPELINE was redeployed with the new brief-always-write logic
+-- (should show LAST_ALTERED after your deployment)
+SELECT 
+    PROCEDURE_NAME,
+    LAST_ALTERED,
+    CREATED
+FROM MIP.INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_SCHEMA = 'APP'
+  AND PROCEDURE_NAME = 'SP_RUN_DAILY_PIPELINE';
+
+select 
+    PORTFOLIO_ID,
+    NAME,
+    LAST_SIMULATION_RUN_ID,
+    LAST_SIMULATED_AT
+from MIP.APP.PORTFOLIO
+where STATUS = 'ACTIVE'
+order by PORTFOLIO_ID;

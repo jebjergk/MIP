@@ -6,6 +6,17 @@ use database MIP;
 -- Run this FIRST to find the culprit procedure
 -- =============================================================================
 
+update MIP.APP.PORTFOLIO_PROFILE
+set
+  CRYSTALLIZE_ENABLED = true,
+  PROFIT_TARGET_PCT = 0.05,
+  CRYSTALLIZE_MODE = 'WITHDRAW_PROFITS',
+  COOLDOWN_DAYS = 2,
+  MAX_EPISODE_DAYS = 30,
+  TAKE_PROFIT_ON = 'EOD'
+where PROFILE_ID = 2;
+
+
 SELECT 
     QUERY_ID, 
     QUERY_TEXT, 
@@ -105,3 +116,14 @@ WHERE p.PORTFOLIO_ID = 2;
 
 select * from mip.app.portfolio_profile;
   select * from MIP.APP.PORTFOLIO_POSITIONS order by hold_until_index;
+
+  select
+  portfolio_id,
+  as_of_ts,
+  pipeline_run_id,
+  created_at
+from MIP.AGENT_OUT.MORNING_BRIEF
+where portfolio_id = 2
+order by created_at desc
+limit 20;
+

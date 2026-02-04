@@ -128,18 +128,19 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 "run_events": _serialize_rows(run_events_rows),
             }
 
-        # --- Brief: latest for portfolio ---
+        # --- Brief: latest for portfolio (ordered by CREATED_AT, not AS_OF_TS) ---
         if portfolio_id is not None:
             cur.execute(
                 """
                 select
                   mb.PORTFOLIO_ID as portfolio_id,
                   coalesce(try_cast(mb.BRIEF:as_of_ts::varchar as timestamp_ntz), mb.AS_OF_TS) as as_of_ts,
+                  coalesce(mb.CREATED_AT, mb.AS_OF_TS) as created_at,
                   coalesce(get_path(mb.BRIEF, 'attribution.pipeline_run_id')::varchar, mb.BRIEF:pipeline_run_id::string) as pipeline_run_id,
                   mb.BRIEF as brief_json
                 from MIP.AGENT_OUT.MORNING_BRIEF mb
                 where mb.PORTFOLIO_ID = %s and coalesce(mb.AGENT_NAME, '') = 'MORNING_BRIEF'
-                order by mb.AS_OF_TS desc
+                order by coalesce(mb.CREATED_AT, mb.AS_OF_TS) desc, mb.PIPELINE_RUN_ID desc
                 limit 1
                 """,
                 (portfolio_id,),
@@ -150,6 +151,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 br = dict(zip(cols, brief_row))
                 brief = {
                     "as_of_ts": br.get("as_of_ts").isoformat() if hasattr(br.get("as_of_ts"), "isoformat") else br.get("as_of_ts"),
+                    "created_at": br.get("created_at").isoformat() if hasattr(br.get("created_at"), "isoformat") else br.get("created_at"),
                     "pipeline_run_id": br.get("pipeline_run_id"),
                     "brief_json": br.get("brief_json"),
                 }

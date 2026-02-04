@@ -20,8 +20,13 @@ create table if not exists MIP.AGENT_OUT.MORNING_BRIEF (
     AGENT_NAME      varchar(128),
     STATUS          varchar(64),
     BRIEF_JSON      variant,
-    CREATED_AT      timestamp_ntz,
+    CREATED_AT      timestamp_ntz default current_timestamp(),  -- When brief was generated (for "latest" selection)
+    UPDATED_AT      timestamp_ntz,                              -- When brief was last updated
     SIGNAL_RUN_ID   varchar(64),             -- nullable; populate if available; not used for joins
     constraint PK_MORNING_BRIEF primary key (BRIEF_ID),
     constraint UQ_MORNING_BRIEF_AS_OF_RUN_AGENT unique (PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME)
 );
+
+-- Migration: Add default to CREATED_AT for existing deployments
+alter table MIP.AGENT_OUT.MORNING_BRIEF alter column CREATED_AT set default current_timestamp();
+alter table MIP.AGENT_OUT.MORNING_BRIEF add column if not exists UPDATED_AT timestamp_ntz;

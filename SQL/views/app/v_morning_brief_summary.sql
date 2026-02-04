@@ -1,5 +1,6 @@
 -- v_morning_brief_summary.sql
 -- Purpose: Summary view over MORNING_BRIEF for Streamlit/ops without inspecting JSON.
+-- Note: Use CREATED_AT (not AS_OF_TS) for "latest brief" selection.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -7,6 +8,7 @@ use database MIP;
 create or replace view MIP.AGENT_OUT.V_MORNING_BRIEF_SUMMARY (
     PORTFOLIO_ID,
     AS_OF_TS,
+    CREATED_AT,
     RUN_ID,
     AGENT_NAME,
     PIPELINE_RUN_ID,
@@ -18,6 +20,7 @@ create or replace view MIP.AGENT_OUT.V_MORNING_BRIEF_SUMMARY (
 select
     mb.PORTFOLIO_ID,
     mb.AS_OF_TS,
+    coalesce(mb.CREATED_AT, mb.AS_OF_TS) as CREATED_AT,
     mb.RUN_ID,
     coalesce(mb.AGENT_NAME, '') as AGENT_NAME,
     mb.BRIEF:pipeline_run_id::string as PIPELINE_RUN_ID,

@@ -348,18 +348,44 @@ begin
             ),
             null
         );
+        -- Morning briefs are ALWAYS written, even when skipping other steps (Part C requirement).
+        -- This ensures "latest brief" logic always has a deterministic brief per run.
+        v_brief_start := current_timestamp();
+        v_brief_results := array_construct();
+        v_brief_count := 0;
+        v_portfolios := (
+            select PORTFOLIO_ID
+              from MIP.APP.PORTFOLIO
+             where STATUS = 'ACTIVE'
+             order by PORTFOLIO_ID
+        );
+        for rec in v_portfolios do
+            v_portfolio_id := rec.PORTFOLIO_ID;
+            v_brief_count := v_brief_count + 1;
+            v_brief_run_result := (call MIP.APP.SP_PIPELINE_WRITE_MORNING_BRIEF(
+                :v_portfolio_id,
+                :v_effective_to_ts,
+                :v_run_id,
+                :v_run_id
+            ));
+            v_brief_results := array_append(:v_brief_results, :v_brief_run_result);
+        end for;
+        v_brief_end := current_timestamp();
+        
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'MORNING_BRIEF',
-            'SKIPPED_NO_NEW_BARS',
-            null,
+            'SUCCESS_NO_NEW_BARS',
+            :v_brief_count,
             object_construct(
                 'step_name', 'morning_brief',
                 'scope', 'AGG',
                 'scope_key', null,
-                'started_at', :v_step_start,
-                'completed_at', :v_step_end,
-                'reason', 'NO_NEW_BARS'
+                'started_at', :v_brief_start,
+                'completed_at', :v_brief_end,
+                'reason', 'NO_NEW_BARS_BRIEF_WRITTEN',
+                'portfolio_count', :v_brief_count,
+                'results', :v_brief_results
             ),
             null
         );
@@ -425,7 +451,7 @@ begin
             'recommendations', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
-            'morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS')
         );
         call MIP.APP.SP_LOG_EVENT(

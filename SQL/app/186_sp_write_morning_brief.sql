@@ -55,23 +55,53 @@ begin
     end if;
 
     -- Fetch BRIEF from view (content only); procedure overwrites attribution keys.
-    select BRIEF
-      into :v_brief
-      from MIP.MART.V_MORNING_BRIEF_JSON
-     where PORTFOLIO_ID = :v_portfolio_id
-     limit 1;
+    -- If no content, write an empty brief with explanation (never skip brief write).
+    begin
+        select BRIEF
+          into :v_brief
+          from MIP.MART.V_MORNING_BRIEF_JSON
+         where PORTFOLIO_ID = :v_portfolio_id
+         limit 1;
+    exception
+        when other then
+            v_brief := null;
+    end;
+    
     if (v_brief is null) then
+        -- Build empty brief structure with explanation
+        v_brief := object_construct(
+            'portfolio_id', :v_portfolio_id,
+            'as_of_ts', to_varchar(:v_as_of_ts),
+            'pipeline_run_id', :v_run_id,
+            'status', 'EMPTY',
+            'summary', object_construct(
+                'headline', 'No brief content available',
+                'explanation', 'No opportunities or data available for this run. This may be due to: no new market bars, no eligible signals, or entry gate blocked.'
+            ),
+            'opportunities', array_construct(),
+            'signals', object_construct(
+                'trusted_now', array_construct(),
+                'watch_negative', array_construct()
+            ),
+            'proposals', object_construct(
+                'summary', object_construct('total', 0, 'proposed', 0, 'approved', 0, 'rejected', 0, 'executed', 0),
+                'proposed_trades', array_construct(),
+                'executed_trades', array_construct()
+            ),
+            'risk', object_construct(),
+            'portfolio', object_construct(),
+            'attribution', object_construct('pipeline_run_id', :v_run_id)
+        );
         call MIP.APP.SP_LOG_EVENT(
             'VALIDATION',
             'SP_WRITE_MORNING_BRIEF',
-            'FAIL',
+            'INFO',
             null,
-            object_construct('portfolio_id', :v_portfolio_id, 'reason', 'NO_BRIEF_CONTENT'),
-            'No brief content for portfolio',
+            object_construct('portfolio_id', :v_portfolio_id, 'reason', 'EMPTY_BRIEF_WRITTEN', 'run_id', :v_run_id),
+            'Writing empty brief (no content available)',
             :v_run_id,
             null
         );
-        raise exc_no_brief;
     end if;
 
     -- Attribution overwrite: attribution = pipeline fields only (pipeline_run_id); as_of_ts at BRIEF root only.
@@ -184,7 +214,8 @@ begin
             :v_run_id::varchar as run_id,
             :v_agent_name::varchar(128) as agent_name,
             :v_brief::variant as brief,
-            :v_run_id::varchar as pipeline_run_id
+            :v_run_id::varchar as pipeline_run_id,
+            current_timestamp() as created_at
     ) as source
     on target.PORTFOLIO_ID = source.portfolio_id
    and target.AS_OF_TS = source.as_of_ts
@@ -200,14 +231,16 @@ begin
         AS_OF_TS,
         BRIEF,
         PIPELINE_RUN_ID,
-        AGENT_NAME
+        AGENT_NAME,
+        CREATED_AT
     ) values (
         source.portfolio_id,
         source.run_id,
         source.as_of_ts,
         source.brief,
         source.pipeline_run_id,
-        source.agent_name
+        source.agent_name,
+        source.created_at
     );
 
     return object_construct(

@@ -15,6 +15,8 @@ execute as caller
 as
 $$
 declare
+    -- Copy parameters to local variables to avoid binding issues with nested exception handlers
+    v_portfolio_id number := :P_PORTFOLIO_ID;
     v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
     v_check_results array := array_construct();
     v_check_result variant;
@@ -28,7 +30,7 @@ declare
 begin
     -- Set session variables for check scripts
     execute immediate 'alter session set v_run_id = ''' || coalesce(:v_run_id, 'null') || '''';
-    execute immediate 'alter session set v_portfolio_id = ' || coalesce(:P_PORTFOLIO_ID::string, 'null');
+    execute immediate 'alter session set v_portfolio_id = ' || coalesce(:v_portfolio_id::string, 'null');
 
     -- Check 1: Run Scoping Validation
     begin
@@ -46,7 +48,7 @@ begin
                 and a.EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
               where p.RUN_ID_VARCHAR is not null
                 and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
-                and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
                 and a.RUN_ID is null;
 
             -- SIGNAL_RUN_ID is optional/legacy; no production fail on linkage
@@ -58,7 +60,7 @@ begin
               join MIP.AGENT_OUT.ORDER_PROPOSALS p
                 on p.PROPOSAL_ID = t.PROPOSAL_ID
               where (:P_RUN_ID is null or to_varchar(t.RUN_ID) = :P_RUN_ID)
-                and (:P_PORTFOLIO_ID is null or t.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                and (:v_portfolio_id is null or t.PORTFOLIO_ID = :v_portfolio_id)
                 and (
                     to_varchar(t.RUN_ID) != p.RUN_ID_VARCHAR
                     or t.RUN_ID is null
@@ -120,7 +122,7 @@ begin
             on g.PORTFOLIO_ID = p.PORTFOLIO_ID
           where p.SIDE = 'BUY'
             and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
-            and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+            and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
             and g.ENTRIES_BLOCKED = true
             and p.PROPOSED_AT >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days');
         
@@ -164,7 +166,7 @@ begin
             on s.RECOMMENDATION_ID = p.RECOMMENDATION_ID
           where p.STATUS in ('APPROVED', 'EXECUTED')
             and (:P_RUN_ID is null or p.RUN_ID = :P_RUN_ID)
-            and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+            and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
             and (s.RECOMMENDATION_ID is null or s.IS_ELIGIBLE = false);
         
         if (v_check_result > 0) then
@@ -206,7 +208,7 @@ begin
               select RUN_ID_VARCHAR, PORTFOLIO_ID, RECOMMENDATION_ID, count(*) as proposal_count
               from MIP.AGENT_OUT.ORDER_PROPOSALS
               where (:P_RUN_ID is null or RUN_ID_VARCHAR = :P_RUN_ID)
-                and (:P_PORTFOLIO_ID is null or PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                and (:v_portfolio_id is null or PORTFOLIO_ID = :v_portfolio_id)
                 and RECOMMENDATION_ID is not null
               group by RUN_ID_VARCHAR, PORTFOLIO_ID, RECOMMENDATION_ID
               having count(*) > 1
@@ -254,7 +256,7 @@ begin
               into v_briefs_without_run_id
               from MIP.AGENT_OUT.MORNING_BRIEF mb
               where (:P_RUN_ID is null or mb.PIPELINE_RUN_ID = :P_RUN_ID)
-                and (:P_PORTFOLIO_ID is null or mb.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
                 and mb.PIPELINE_RUN_ID is null;
 
             -- Check for proposal/execution count mismatches
@@ -269,7 +271,7 @@ begin
                           mb.BRIEF:proposals:summary:executed::number as brief_executed_count
                       from MIP.AGENT_OUT.MORNING_BRIEF mb
                       where (:P_RUN_ID is null or mb.PIPELINE_RUN_ID = :P_RUN_ID)
-                        and (:P_PORTFOLIO_ID is null or mb.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                        and (:v_portfolio_id is null or mb.PORTFOLIO_ID = :v_portfolio_id)
                   ),
                   actual_proposals as (
                       select
@@ -279,7 +281,7 @@ begin
                           count_if(p.STATUS = 'EXECUTED') as actual_executed_count
                       from MIP.AGENT_OUT.ORDER_PROPOSALS p
                       where (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
-                        and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                        and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
                       group by p.RUN_ID_VARCHAR, p.PORTFOLIO_ID
                   )
                   select bp.*

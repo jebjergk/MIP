@@ -1,6 +1,72 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
+-- =============================================================================
+-- DIAGNOSTIC: Find procedures with :P_PORTFOLIO_ID in exception blocks
+-- Run this FIRST to find the culprit procedure
+-- =============================================================================
+SELECT 
+    PROCEDURE_NAME,
+    ARGUMENT_SIGNATURE,
+    CREATED,
+    LAST_ALTERED
+FROM MIP.INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_SCHEMA = 'APP'
+  AND PROCEDURE_DEFINITION LIKE '%:P_PORTFOLIO_ID%'
+  AND PROCEDURE_DEFINITION LIKE '%exception%'
+ORDER BY PROCEDURE_NAME;
+
+-- Find the exact failing query from history
+SELECT 
+    QUERY_ID, 
+    QUERY_TEXT, 
+    ERROR_MESSAGE, 
+    START_TIME,
+    USER_NAME,
+    QUERY_TYPE
+FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(RESULT_LIMIT => 100))
+WHERE ERROR_MESSAGE LIKE '%P_PORTFOLIO_ID%'
+   OR ERROR_MESSAGE LIKE '%Bind variable%'
+ORDER BY START_TIME DESC
+LIMIT 10;
+
+-- Check when procedures were last modified (compare to your last deployment)
+SELECT 
+    PROCEDURE_NAME,
+    ARGUMENT_SIGNATURE,
+    LAST_ALTERED,
+    CREATED
+FROM MIP.INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_SCHEMA = 'APP'
+  AND PROCEDURE_NAME IN (
+      'SP_RUN_PORTFOLIO_SIMULATION',
+      'SP_PIPELINE_RUN_PORTFOLIO',
+      'SP_PIPELINE_RUN_PORTFOLIOS',
+      'SP_PIPELINE_WRITE_MORNING_BRIEF',
+      'SP_PIPELINE_WRITE_MORNING_BRIEFS',
+      'SP_WRITE_MORNING_BRIEF',
+      'SP_MONITOR_AUTONOMY_SAFETY',
+      'SP_RUN_INTEGRITY_CHECKS'
+  )
+ORDER BY PROCEDURE_NAME, ARGUMENT_SIGNATURE;
+
+-- Verify the fix is deployed: These should all have "v_portfolio_id number" in declare
+-- If you see ":P_PORTFOLIO_ID" AFTER the initial declaration, the fix is not deployed
+SELECT 
+    PROCEDURE_NAME,
+    CASE 
+        WHEN PROCEDURE_DEFINITION LIKE '%v_portfolio_id number := :P_PORTFOLIO_ID%' 
+        THEN 'FIXED (has local variable copy)'
+        ELSE 'NOT FIXED (still using :P_PORTFOLIO_ID directly)'
+    END as FIX_STATUS
+FROM MIP.INFORMATION_SCHEMA.PROCEDURES
+WHERE PROCEDURE_SCHEMA = 'APP'
+  AND PROCEDURE_DEFINITION LIKE '%:P_PORTFOLIO_ID%'
+  AND PROCEDURE_DEFINITION LIKE '%exception%'
+ORDER BY PROCEDURE_NAME;
+
+-- =============================================================================
+
 ALTER GIT REPOSITORY MIP.APP.MIP FETCH;
 select * from mip.app.mip_audit_log order by event_ts desc;
 

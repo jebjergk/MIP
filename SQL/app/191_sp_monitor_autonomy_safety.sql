@@ -14,6 +14,8 @@ execute as caller
 as
 $$
 declare
+    -- Copy parameters to local variables to avoid binding issues with nested exception handlers
+    v_portfolio_id number := :P_PORTFOLIO_ID;
     v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
     v_safety_checks array := array_construct();
     v_check_result variant;
@@ -32,7 +34,7 @@ begin
             on g.PORTFOLIO_ID = p.PORTFOLIO_ID
           where p.SIDE = 'BUY'
             and (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
-            and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+            and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
             and g.ENTRIES_BLOCKED = true
             and p.PROPOSED_AT >= coalesce(g.DRAWDOWN_STOP_TS, current_timestamp() - interval '7 days')
             and p.STATUS in ('APPROVED', 'EXECUTED');
@@ -75,7 +77,7 @@ begin
             and a.EVENT_TYPE = 'PIPELINE'
           where p.RUN_ID is not null
             and (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
-            and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+            and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
             and a.RUN_ID is null;
 
         if (v_check_result > 0) then
@@ -115,7 +117,7 @@ begin
               select RUN_ID, PORTFOLIO_ID, RECOMMENDATION_ID, count(*) as proposal_count
               from MIP.AGENT_OUT.ORDER_PROPOSALS
               where (:P_RUN_ID is null or RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
-                and (:P_PORTFOLIO_ID is null or PORTFOLIO_ID = :P_PORTFOLIO_ID)
+                and (:v_portfolio_id is null or PORTFOLIO_ID = :v_portfolio_id)
                 and RECOMMENDATION_ID is not null
               group by RUN_ID, PORTFOLIO_ID, RECOMMENDATION_ID
               having count(*) > 1
@@ -158,7 +160,7 @@ begin
             on s.RECOMMENDATION_ID = p.RECOMMENDATION_ID
           where p.STATUS in ('APPROVED', 'EXECUTED')
             and (:P_RUN_ID is null or p.RUN_ID = try_to_number(replace(:P_RUN_ID, 'T', '')))
-            and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID)
+            and (:v_portfolio_id is null or p.PORTFOLIO_ID = :v_portfolio_id)
             and (s.RECOMMENDATION_ID is null or s.IS_ELIGIBLE = false);
 
         if (v_check_result > 0) then

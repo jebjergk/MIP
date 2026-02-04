@@ -22,6 +22,10 @@ execute as caller
 as
 $$
 declare
+    -- Copy parameters to local variables to avoid binding issues with exception handlers
+    v_portfolio_id number := :P_PORTFOLIO_ID;
+    v_as_of_ts timestamp_ntz := :P_AS_OF_TS;
+    v_run_id varchar := :P_RUN_ID;
     exc_no_brief exception;
     v_brief variant;
     v_attr variant;
@@ -36,25 +40,25 @@ declare
     v_agent_name varchar := coalesce(nullif(trim(:P_AGENT_NAME), ''), 'MORNING_BRIEF');
 begin
     -- Guard: do not write for invalid portfolio (e.g. test portfolio_id=0).
-    if (:P_PORTFOLIO_ID is null or :P_PORTFOLIO_ID <= 0) then
+    if (:v_portfolio_id is null or :v_portfolio_id <= 0) then
         call MIP.APP.SP_LOG_EVENT(
             'VALIDATION',
             'SP_WRITE_MORNING_BRIEF',
             'SKIP_INVALID_PORTFOLIO',
             null,
-            object_construct('portfolio_id', :P_PORTFOLIO_ID, 'reason', 'PORTFOLIO_ID_LE_ZERO'),
+            object_construct('portfolio_id', :v_portfolio_id, 'reason', 'PORTFOLIO_ID_LE_ZERO'),
             'Portfolio ID must be positive',
-            :P_RUN_ID,
+            :v_run_id,
             null
         );
-        return object_construct('status', 'SKIP_INVALID_PORTFOLIO', 'portfolio_id', :P_PORTFOLIO_ID);
+        return object_construct('status', 'SKIP_INVALID_PORTFOLIO', 'portfolio_id', :v_portfolio_id);
     end if;
 
     -- Fetch BRIEF from view (content only); procedure overwrites attribution keys.
     select BRIEF
       into :v_brief
       from MIP.MART.V_MORNING_BRIEF_JSON
-     where PORTFOLIO_ID = :P_PORTFOLIO_ID
+     where PORTFOLIO_ID = :v_portfolio_id
      limit 1;
     if (v_brief is null) then
         call MIP.APP.SP_LOG_EVENT(
@@ -62,9 +66,9 @@ begin
             'SP_WRITE_MORNING_BRIEF',
             'FAIL',
             null,
-            object_construct('portfolio_id', :P_PORTFOLIO_ID, 'reason', 'NO_BRIEF_CONTENT'),
+            object_construct('portfolio_id', :v_portfolio_id, 'reason', 'NO_BRIEF_CONTENT'),
             'No brief content for portfolio',
-            :P_RUN_ID,
+            :v_run_id,
             null
         );
         raise exc_no_brief;
@@ -75,13 +79,13 @@ begin
     v_attr := object_delete(v_attr, 'latest_run_id');
     v_attr := object_delete(v_attr, 'pipeline_run_id');
     v_attr := object_delete(v_attr, 'as_of_ts');   -- ensure attribution never contains as_of_ts
-    v_attr := object_insert(v_attr, 'pipeline_run_id', :P_RUN_ID);
+    v_attr := object_insert(v_attr, 'pipeline_run_id', :v_run_id);
     v_brief := object_delete(v_brief, 'attribution');
     v_brief := object_insert(v_brief, 'attribution', v_attr);
     v_brief := object_delete(v_brief, 'pipeline_run_id');
-    v_brief := object_insert(v_brief, 'pipeline_run_id', :P_RUN_ID);
+    v_brief := object_insert(v_brief, 'pipeline_run_id', :v_run_id);
     v_brief := object_delete(v_brief, 'as_of_ts');
-    v_brief := object_insert(v_brief, 'as_of_ts', to_varchar(:P_AS_OF_TS));  -- canonical at root
+    v_brief := object_insert(v_brief, 'as_of_ts', to_varchar(:v_as_of_ts));  -- canonical at root
 
     -- MED-003: Morning brief consistency validation (optional; use extracted counts from v_brief)
     begin
@@ -106,24 +110,24 @@ begin
       into :v_actual_proposed_count,
            :v_actual_executed_proposals
       from MIP.AGENT_OUT.ORDER_PROPOSALS
-     where PORTFOLIO_ID = :P_PORTFOLIO_ID
-       and RUN_ID_VARCHAR = :P_RUN_ID
-       and PROPOSED_AT >= :P_AS_OF_TS - interval '1 day'
-       and PROPOSED_AT <= :P_AS_OF_TS + interval '1 hour';
+     where PORTFOLIO_ID = :v_portfolio_id
+       and RUN_ID_VARCHAR = :v_run_id
+       and PROPOSED_AT >= :v_as_of_ts - interval '1 day'
+       and PROPOSED_AT <= :v_as_of_ts + interval '1 hour';
 
     select count(*)
       into :v_actual_executed_trades
       from MIP.APP.PORTFOLIO_TRADES
-     where PORTFOLIO_ID = :P_PORTFOLIO_ID
-       and TRADE_TS >= :P_AS_OF_TS - interval '1 day'
-       and TRADE_TS <= :P_AS_OF_TS + interval '1 hour';
+     where PORTFOLIO_ID = :v_portfolio_id
+       and TRADE_TS >= :v_as_of_ts - interval '1 day'
+       and TRADE_TS <= :v_as_of_ts + interval '1 hour';
 
     v_actual_executed_proposals := coalesce(:v_actual_executed_trades, :v_actual_executed_proposals);
 
     begin
         select RISK_STATUS into :v_gate_risk_status
           from MIP.MART.V_PORTFOLIO_RISK_GATE
-         where PORTFOLIO_ID = :P_PORTFOLIO_ID
+         where PORTFOLIO_ID = :v_portfolio_id
          limit 1;
     exception
         when other then v_gate_risk_status := null;
@@ -155,8 +159,8 @@ begin
             'WARN',
             null,
             object_construct(
-                'portfolio_id', :P_PORTFOLIO_ID,
-                'pipeline_run_id', :P_RUN_ID,
+                'portfolio_id', :v_portfolio_id,
+                'pipeline_run_id', :v_run_id,
                 'warnings', :v_validation_warnings,
                 'brief_proposed', :v_brief_proposed_count,
                 'actual_proposed', :v_actual_proposed_count,
@@ -167,7 +171,7 @@ begin
                 'gate_risk_status', :v_gate_risk_status
             ),
             null,
-            :P_RUN_ID,
+            :v_run_id,
             null
         );
     end if;
@@ -175,12 +179,12 @@ begin
     merge into MIP.AGENT_OUT.MORNING_BRIEF as target
     using (
         select
-            :P_PORTFOLIO_ID::number as portfolio_id,
-            :P_AS_OF_TS::timestamp_ntz as as_of_ts,
-            :P_RUN_ID::varchar as run_id,
+            :v_portfolio_id::number as portfolio_id,
+            :v_as_of_ts::timestamp_ntz as as_of_ts,
+            :v_run_id::varchar as run_id,
             :v_agent_name::varchar(128) as agent_name,
             :v_brief::variant as brief,
-            :P_RUN_ID::varchar as pipeline_run_id
+            :v_run_id::varchar as pipeline_run_id
     ) as source
     on target.PORTFOLIO_ID = source.portfolio_id
    and target.AS_OF_TS = source.as_of_ts
@@ -207,9 +211,9 @@ begin
     );
 
     return object_construct(
-        'portfolio_id', :P_PORTFOLIO_ID,
-        'as_of_ts', :P_AS_OF_TS,
-        'run_id', :P_RUN_ID,
+        'portfolio_id', :v_portfolio_id,
+        'as_of_ts', :v_as_of_ts,
+        'run_id', :v_run_id,
         'agent_name', :v_agent_name,
         'validation_warnings', :v_validation_warnings,
         'validation_status', case

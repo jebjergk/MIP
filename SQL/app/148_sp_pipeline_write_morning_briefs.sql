@@ -17,6 +17,10 @@ execute as caller
 as
 $$
 declare
+    -- Copy parameters to local variables to avoid binding issues with exception handlers
+    v_portfolio_id number := :P_PORTFOLIO_ID;
+    v_as_of_ts timestamp_ntz := :P_AS_OF_TS;
+    v_parent_run_id string := :P_PARENT_RUN_ID;
     v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
     v_step_start timestamp_ntz;
     v_step_end timestamp_ntz;
@@ -31,49 +35,49 @@ begin
         select count(*)
           into :v_rows_before
           from MIP.AGENT_OUT.MORNING_BRIEF
-         where PORTFOLIO_ID = :P_PORTFOLIO_ID
+         where PORTFOLIO_ID = :v_portfolio_id
            and RUN_ID = :v_run_id
-           and AS_OF_TS = :P_AS_OF_TS;
+           and AS_OF_TS = :v_as_of_ts;
 
         if (v_run_id is not null) then
             v_propose_result := (call MIP.APP.SP_AGENT_PROPOSE_TRADES(
-                :P_PORTFOLIO_ID,
+                :v_portfolio_id,
                 :v_run_id,
-                :P_PARENT_RUN_ID
+                :v_parent_run_id
             ));
 
             v_validate_result := (call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
-                :P_PORTFOLIO_ID,
+                :v_portfolio_id,
                 :v_run_id,
-                :P_PARENT_RUN_ID
+                :v_parent_run_id
             ));
         else
             v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_RUN_ID');
             v_validate_result := object_construct('status', 'SKIPPED', 'reason', 'NO_RUN_ID');
         end if;
 
-        call MIP.APP.SP_WRITE_MORNING_BRIEF(:P_PORTFOLIO_ID, :P_AS_OF_TS, :v_run_id, 'MORNING_BRIEF');
+        call MIP.APP.SP_WRITE_MORNING_BRIEF(:v_portfolio_id, :v_as_of_ts, :v_run_id, 'MORNING_BRIEF');
 
         select count(*)
           into :v_rows_after
           from MIP.AGENT_OUT.MORNING_BRIEF
-         where PORTFOLIO_ID = :P_PORTFOLIO_ID
+         where PORTFOLIO_ID = :v_portfolio_id
            and RUN_ID = :v_run_id
-           and AS_OF_TS = :P_AS_OF_TS;
+           and AS_OF_TS = :v_as_of_ts;
 
         v_step_end := current_timestamp();
 
         call MIP.APP.SP_AUDIT_LOG_STEP(
-            :P_PARENT_RUN_ID,
+            :v_parent_run_id,
             'MORNING_BRIEF',
             'SUCCESS',
             :v_rows_after,
             object_construct(
                 'step_name', 'morning_brief',
                 'scope', 'PORTFOLIO',
-                'scope_key', to_varchar(:P_PORTFOLIO_ID),
-                'portfolio_id', :P_PORTFOLIO_ID,
-                'as_of_ts', :P_AS_OF_TS,
+                'scope_key', to_varchar(:v_portfolio_id),
+                'portfolio_id', :v_portfolio_id,
+                'as_of_ts', :v_as_of_ts,
                 'run_id', :v_run_id,
                 'started_at', :v_step_start,
                 'completed_at', :v_step_end,
@@ -86,8 +90,8 @@ begin
         );
 
         return object_construct(
-            'portfolio_id', :P_PORTFOLIO_ID,
-            'as_of_ts', :P_AS_OF_TS,
+            'portfolio_id', :v_portfolio_id,
+            'as_of_ts', :v_as_of_ts,
             'run_id', :v_run_id,
             'rows_before', :v_rows_before,
             'rows_after', :v_rows_after,
@@ -98,15 +102,15 @@ begin
         when other then
             v_step_end := current_timestamp();
             call MIP.APP.SP_AUDIT_LOG_STEP(
-                :P_PARENT_RUN_ID,
+                :v_parent_run_id,
                 'MORNING_BRIEF',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'morning_brief',
                     'scope', 'PORTFOLIO',
-                    'scope_key', to_varchar(:P_PORTFOLIO_ID),
-                    'portfolio_id', :P_PORTFOLIO_ID,
+                    'scope_key', to_varchar(:v_portfolio_id),
+                    'portfolio_id', :v_portfolio_id,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),

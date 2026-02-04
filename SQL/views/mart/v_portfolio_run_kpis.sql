@@ -8,7 +8,21 @@ create or replace view MIP.MART.V_PORTFOLIO_RUN_KPIS as
 with daily_dedup as (
     -- Filter PORTFOLIO_DAILY to only include rows for the active episode.
     -- Uses EPISODE_ID column if populated, otherwise falls back to timestamp comparison.
-    select d.*
+    select
+        d.PORTFOLIO_ID,
+        d.RUN_ID,
+        d.EPISODE_ID,
+        d.TS,
+        d.CASH,
+        d.EQUITY_VALUE,
+        d.TOTAL_EQUITY,
+        d.OPEN_POSITIONS,
+        d.DAILY_PNL,
+        d.DAILY_RETURN,
+        d.PEAK_EQUITY,
+        d.DRAWDOWN,
+        d.STATUS,
+        d.CREATED_AT
     from MIP.APP.PORTFOLIO_DAILY d
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
       on e.PORTFOLIO_ID = d.PORTFOLIO_ID

@@ -92,6 +92,12 @@ declare
     v_agent_brief_status string;
     v_agent_brief_start timestamp_ntz;
     v_agent_brief_end timestamp_ntz;
+    -- Error capture variables (used in exception handlers)
+    v_ingest_error_query_id string;
+    v_ingest_duration_ms number;
+    v_sim_error_query_id string;
+    v_sim_duration_ms number;
+    v_error_query_id string;
 begin
     execute immediate 'alter session set query_tag = ''' || v_run_id || '''';
 
@@ -118,8 +124,8 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            let v_ingest_error_query_id string := last_query_id();
-            let v_ingest_duration_ms number := timestampdiff(millisecond, v_step_start, v_step_end);
+            v_ingest_error_query_id := last_query_id();
+            v_ingest_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
             call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
                 'INGESTION',
@@ -604,8 +610,8 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            let v_sim_error_query_id string := last_query_id();
-            let v_sim_duration_ms number := timestampdiff(millisecond, v_step_start, v_step_end);
+            v_sim_error_query_id := last_query_id();
+            v_sim_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
             call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
                 'PORTFOLIO_SIMULATION',
@@ -1101,7 +1107,7 @@ begin
     return :v_summary;
 exception
     when other then
-        let v_error_query_id string := last_query_id();
+        v_error_query_id := last_query_id();
         call MIP.APP.SP_LOG_EVENT(
             'PIPELINE',
             'SP_RUN_DAILY_PIPELINE',

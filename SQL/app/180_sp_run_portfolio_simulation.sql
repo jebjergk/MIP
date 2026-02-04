@@ -62,6 +62,7 @@ declare
     v_spread_bps number(18,8);
     v_last_sim_run_id string;
     v_effective_from_ts timestamp_ntz;
+    v_error_query_id string;
 begin
     select
         p.STARTING_CASH,
@@ -798,7 +799,7 @@ begin
     );
 exception
     when other then
-        let v_error_query_id string := last_query_id();
+        v_error_query_id := last_query_id();
         
         call MIP.APP.SP_LOG_EVENT(
             'PORTFOLIO_SIM',

@@ -15,6 +15,10 @@ execute as caller
 as
 $$
 declare
+    -- Copy parameters to local variables to avoid binding issues with exception handlers
+    v_portfolio_id number := :P_PORTFOLIO_ID;
+    v_from_ts timestamp_ntz := :P_FROM_TS;
+    v_to_ts timestamp_ntz := :P_TO_TS;
     v_run_id string := uuid_string();
     v_starting_cash number(18,2);
     v_profile_id number;
@@ -84,14 +88,14 @@ begin
       from MIP.APP.PORTFOLIO p
       left join MIP.APP.PORTFOLIO_PROFILE prof
         on prof.PROFILE_ID = p.PROFILE_ID
-     where p.PORTFOLIO_ID = :P_PORTFOLIO_ID;
+     where p.PORTFOLIO_ID = :v_portfolio_id;
 
     -- After a hard reset, LAST_SIMULATION_RUN_ID is null. Do not backfill: simulate only from
     -- the start of the last day so the pipeline does not repopulate positions/trades/daily.
     if (v_last_sim_run_id is null) then
-        v_effective_from_ts := date_trunc('day', P_TO_TS);
+        v_effective_from_ts := date_trunc('day', v_to_ts);
     else
-        v_effective_from_ts := P_FROM_TS;
+        v_effective_from_ts := v_from_ts;
     end if;
 
     call MIP.APP.SP_LOG_EVENT(
@@ -100,9 +104,9 @@ begin
         'INFO',
         null,
         object_construct(
-            'portfolio_id', :P_PORTFOLIO_ID,
-            'from_ts', :P_FROM_TS,
-            'to_ts', :P_TO_TS,
+            'portfolio_id', :v_portfolio_id,
+            'from_ts', :v_from_ts,
+            'to_ts', :v_to_ts,
             'effective_from_ts', :v_effective_from_ts,
             'profile_id', :v_profile_id,
             'max_positions', :v_max_positions,
@@ -123,7 +127,7 @@ begin
             'ERROR',
             null,
             object_construct(
-                'portfolio_id', :P_PORTFOLIO_ID,
+                'portfolio_id', :v_portfolio_id,
                 'reason', 'PORTFOLIO_NOT_FOUND'
             ),
             'Portfolio not found',
@@ -134,7 +138,7 @@ begin
         return object_construct(
             'status', 'ERROR',
             'message', 'Portfolio not found',
-            'portfolio_id', :P_PORTFOLIO_ID,
+            'portfolio_id', :v_portfolio_id,
             'run_id', :v_run_id
         );
     end if;
@@ -219,8 +223,8 @@ begin
      and exit_bar.INTERVAL_MINUTES = s.INTERVAL_MINUTES
      and exit_bar.BAR_INDEX = entry_bar.BAR_INDEX + s.HORIZON_BARS
     where s.INTERVAL_MINUTES = 1440
-      and s.TS between :v_effective_from_ts and :P_TO_TS
-      and exit_bar.TS <= :P_TO_TS;
+      and s.TS between :v_effective_from_ts and :v_to_ts
+      and exit_bar.TS <= :v_to_ts;
 
     v_bar_sql := '
         select TS, BAR_INDEX
@@ -230,7 +234,7 @@ begin
         qualify row_number() over (partition by TS order by BAR_INDEX) = 1
         order by TS
     ';
-    v_bar_rs := (execute immediate :v_bar_sql using (v_effective_from_ts, P_TO_TS));
+    v_bar_rs := (execute immediate :v_bar_sql using (v_effective_from_ts, v_to_ts));
 
     for bar_row in v_bar_rs do
         v_bar_ts := bar_row.TS;
@@ -284,7 +288,7 @@ begin
                     merge into MIP.APP.PORTFOLIO_TRADES as target
                     using (
                         select
-                            :P_PORTFOLIO_ID as PORTFOLIO_ID,
+                            :v_portfolio_id as PORTFOLIO_ID,
                             :v_run_id as RUN_ID,
                             :v_position_symbol as SYMBOL,
                             :v_position_market_type as MARKET_TYPE,
@@ -472,7 +476,7 @@ begin
                                 merge into MIP.APP.PORTFOLIO_TRADES as target
                                 using (
                                     select
-                                        :P_PORTFOLIO_ID as PORTFOLIO_ID,
+                                        :v_portfolio_id as PORTFOLIO_ID,
                                         :v_run_id as RUN_ID,
                                         :v_signal_symbol as SYMBOL,
                                         :v_signal_market_type as MARKET_TYPE,
@@ -549,7 +553,7 @@ begin
                                     HOLD_UNTIL_INDEX
                                 )
                                 values (
-                                    :P_PORTFOLIO_ID,
+                                    :v_portfolio_id,
                                     :v_run_id,
                                     :v_signal_symbol,
                                     :v_signal_market_type,
@@ -591,7 +595,7 @@ begin
     select TS, BAR_INDEX
     from MIP.MART.V_BAR_INDEX
     where INTERVAL_MINUTES = 1440
-      and TS between :v_effective_from_ts and :P_TO_TS
+      and TS between :v_effective_from_ts and :v_to_ts
     qualify row_number() over (partition by TS order by BAR_INDEX) = 1;
 
     create or replace temporary table TEMP_POSITION_DAYS as
@@ -604,7 +608,7 @@ begin
     from MIP.APP.PORTFOLIO_POSITIONS p
     join TEMP_DAY_SPINE d
       on d.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
-    where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+    where p.PORTFOLIO_ID = :v_portfolio_id
       and p.RUN_ID = :v_run_id
       and p.INTERVAL_MINUTES = 1440;
 
@@ -664,7 +668,7 @@ begin
         from daily_base
     )
     select
-        :P_PORTFOLIO_ID,
+        :v_portfolio_id,
         :v_run_id,
         TS,
         CASH,
@@ -714,7 +718,7 @@ begin
             DRAWDOWN,
             row_number() over (order by TS desc) as rn
         from MIP.APP.PORTFOLIO_DAILY
-        where PORTFOLIO_ID = :P_PORTFOLIO_ID
+        where PORTFOLIO_ID = :v_portfolio_id
           and RUN_ID = :v_run_id
       ) run_daily;
 
@@ -735,14 +739,14 @@ begin
            LOSS_DAYS = :v_loss_days,
            BUST_AT = :v_bust_at,
            UPDATED_AT = :v_last_simulated_at
-     where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+     where PORTFOLIO_ID = :v_portfolio_id;
 
     -- Post-step: check profile-driven crystallization (profit target); end episode, write results, start next.
     call MIP.APP.SP_CHECK_CRYSTALLIZE(
-        :P_PORTFOLIO_ID,
+        :v_portfolio_id,
         :v_run_id,
         :v_final_equity,
-        :P_TO_TS,
+        :v_to_ts,
         :v_win_days,
         :v_loss_days,
         :v_max_drawdown,
@@ -755,7 +759,7 @@ begin
         'SUCCESS',
         :v_daily_count,
         object_construct(
-            'portfolio_id', :P_PORTFOLIO_ID,
+            'portfolio_id', :v_portfolio_id,
             'run_id', :v_run_id,
             'trades', :v_trade_count,
             'trade_candidates', :v_trade_candidates,
@@ -781,7 +785,7 @@ begin
     return object_construct(
         'status', 'OK',
         'run_id', :v_run_id,
-        'portfolio_id', :P_PORTFOLIO_ID,
+        'portfolio_id', :v_portfolio_id,
         'trades', :v_trade_count,
         'trade_candidates', :v_trade_candidates,
         'trade_inserted', :v_trade_inserted,
@@ -807,7 +811,7 @@ exception
             'ERROR',
             null,
             object_construct(
-                'portfolio_id', :P_PORTFOLIO_ID,
+                'portfolio_id', :v_portfolio_id,
                 'run_id', :v_run_id
             ),
             :sqlerrm,
@@ -819,10 +823,10 @@ exception
             :v_error_query_id,       -- P_ERROR_QUERY_ID
             object_construct(        -- P_ERROR_CONTEXT
                 'proc_name', 'SP_RUN_PORTFOLIO_SIMULATION',
-                'portfolio_id', :P_PORTFOLIO_ID,
+                'portfolio_id', :v_portfolio_id,
                 'run_id', :v_run_id,
-                'from_ts', :P_FROM_TS,
-                'to_ts', :P_TO_TS
+                'from_ts', :v_from_ts,
+                'to_ts', :v_to_ts
             ),
             null                     -- P_DURATION_MS (not tracked at this level)
         );
@@ -830,7 +834,7 @@ exception
         return object_construct(
             'status', 'ERROR',
             'run_id', :v_run_id,
-            'portfolio_id', :P_PORTFOLIO_ID,
+            'portfolio_id', :v_portfolio_id,
             'error', :sqlerrm,
             'sqlstate', :sqlstate,
             'query_id', :v_error_query_id

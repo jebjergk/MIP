@@ -185,6 +185,40 @@ function VerificationBadge({ status }) {
   return null
 }
 
+// Portfolio Actions Section (ground truth from actual tables)
+function PortfolioActionsCard({ actions }) {
+  if (!actions) return null
+  
+  return (
+    <section className="brief-card portfolio-actions-card" aria-label="Portfolio Actions">
+      <h2>Portfolio State (Live)</h2>
+      <p className="card-subtitle">Current state from portfolio tables, not brief record</p>
+      <div className="actions-grid">
+        <div className="action-item">
+          <span className="action-label">Open Positions</span>
+          <span className="action-value">{actions.open_positions ?? 0}</span>
+        </div>
+        <div className="action-item">
+          <span className="action-label">Trades This Run</span>
+          <span className="action-value">{actions.trades_this_run ?? 0}</span>
+        </div>
+        <div className="action-item">
+          <span className="action-label">Last Trade</span>
+          <span className="action-value">
+            {actions.last_trade_ts ? new Date(actions.last_trade_ts).toLocaleString() : '—'}
+          </span>
+        </div>
+        <div className="action-item">
+          <span className="action-label">Last Simulation Run</span>
+          <span className="action-value">
+            <code>{actions.last_simulation_run_id ? actions.last_simulation_run_id.slice(0, 8) + '...' : '—'}</code>
+          </span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 // Executive Summary Section
 function ExecutiveSummary({ brief, onShowTrades }) {
   const { summary, as_of_ts, created_at, pipeline_run_id, is_stale, stale_reason, is_before_reset, reset_warning } = brief
@@ -644,6 +678,7 @@ export default function MorningBrief() {
             brief={brief} 
             onShowTrades={() => setShowTradesModal(true)}
           />
+          <PortfolioActionsCard actions={brief.portfolio_actions} />
           <OpportunitiesSection 
             opportunities={brief.opportunities} 
             portfolioId={brief.portfolio_id}

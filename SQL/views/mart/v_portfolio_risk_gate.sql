@@ -1,20 +1,43 @@
 -- v_portfolio_risk_gate.sql
 -- Purpose: Canonical entry gate based on latest portfolio simulation KPIs and open positions
+--
+-- Run anchor priority (robust fallback when PORTFOLIO_DAILY is empty after reset):
+--   1. PORTFOLIO.LAST_SIMULATION_RUN_ID (if not null)
+--   2. Latest RUN_ID from PORTFOLIO_DAILY by TS
+--   3. Latest RUN_ID from PORTFOLIO_TRADES by TRADE_TS
+--   4. Latest RUN_ID from PORTFOLIO_POSITIONS by ENTRY_TS
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace view MIP.MART.V_PORTFOLIO_RISK_GATE as
-with latest_run as (
+with run_anchor as (
+    -- Robust run anchor: try multiple sources in priority order
     select
-        PORTFOLIO_ID,
-        RUN_ID,
-        TO_TS,
-        row_number() over (
-            partition by PORTFOLIO_ID
-            order by TO_TS desc
-        ) as RN
-    from MIP.MART.V_PORTFOLIO_RUN_KPIS
+        p.PORTFOLIO_ID,
+        coalesce(
+            -- 1. Portfolio's last simulation run (most authoritative)
+            p.LAST_SIMULATION_RUN_ID,
+            -- 2. Latest from PORTFOLIO_DAILY
+            (select RUN_ID from MIP.APP.PORTFOLIO_DAILY d 
+             where d.PORTFOLIO_ID = p.PORTFOLIO_ID 
+             order by d.TS desc limit 1),
+            -- 3. Latest from PORTFOLIO_TRADES
+            (select RUN_ID from MIP.APP.PORTFOLIO_TRADES t 
+             where t.PORTFOLIO_ID = p.PORTFOLIO_ID 
+             order by t.TRADE_TS desc limit 1),
+            -- 4. Latest from PORTFOLIO_POSITIONS
+            (select RUN_ID from MIP.APP.PORTFOLIO_POSITIONS pos 
+             where pos.PORTFOLIO_ID = p.PORTFOLIO_ID 
+             order by pos.ENTRY_TS desc limit 1)
+        ) as LATEST_RUN_ID,
+        coalesce(
+            p.LAST_SIMULATED_AT,
+            (select max(TS) from MIP.APP.PORTFOLIO_DAILY d where d.PORTFOLIO_ID = p.PORTFOLIO_ID),
+            (select max(TRADE_TS) from MIP.APP.PORTFOLIO_TRADES t where t.PORTFOLIO_ID = p.PORTFOLIO_ID),
+            (select max(ENTRY_TS) from MIP.APP.PORTFOLIO_POSITIONS pos where pos.PORTFOLIO_ID = p.PORTFOLIO_ID)
+        ) as AS_OF_TS
+    from MIP.APP.PORTFOLIO p
 ),
 latest_kpis as (
     select
@@ -23,10 +46,9 @@ latest_kpis as (
         k.TO_TS,
         k.MAX_DRAWDOWN
     from MIP.MART.V_PORTFOLIO_RUN_KPIS k
-    join latest_run lr
-      on lr.PORTFOLIO_ID = k.PORTFOLIO_ID
-     and lr.RUN_ID = k.RUN_ID
-    where lr.RN = 1
+    join run_anchor ra
+      on ra.PORTFOLIO_ID = k.PORTFOLIO_ID
+     and ra.LATEST_RUN_ID = k.RUN_ID
 ),
 run_events as (
     select
@@ -35,10 +57,9 @@ run_events as (
         e.DRAWDOWN_STOP_TS,
         e.FIRST_FLAT_NO_POSITIONS_TS
     from MIP.MART.V_PORTFOLIO_RUN_EVENTS e
-    join latest_run lr
-      on lr.PORTFOLIO_ID = e.PORTFOLIO_ID
-     and lr.RUN_ID = e.RUN_ID
-    where lr.RN = 1
+    join run_anchor ra
+      on ra.PORTFOLIO_ID = e.PORTFOLIO_ID
+     and ra.LATEST_RUN_ID = e.RUN_ID
 ),
 profiles as (
     select
@@ -59,8 +80,8 @@ open_positions as (
 )
 select
     p.PORTFOLIO_ID,
-    lk.RUN_ID as LATEST_RUN_ID,
-    op.AS_OF_TS,
+    coalesce(ra.LATEST_RUN_ID, lk.RUN_ID) as LATEST_RUN_ID,
+    coalesce(op.AS_OF_TS, ra.AS_OF_TS) as AS_OF_TS,
     op.CURRENT_BAR_INDEX,
     coalesce(op.OPEN_POSITIONS, 0) as OPEN_POSITIONS,
     re.DRAWDOWN_STOP_TS,
@@ -72,7 +93,7 @@ select
         and coalesce(op.OPEN_POSITIONS, 0) > 0
         and (
             re.FIRST_FLAT_NO_POSITIONS_TS is null
-            or re.FIRST_FLAT_NO_POSITIONS_TS > op.AS_OF_TS
+            or re.FIRST_FLAT_NO_POSITIONS_TS > coalesce(op.AS_OF_TS, ra.AS_OF_TS)
         )
     ) as ENTRIES_BLOCKED,
     case
@@ -80,7 +101,7 @@ select
          and coalesce(op.OPEN_POSITIONS, 0) > 0
          and (
              re.FIRST_FLAT_NO_POSITIONS_TS is null
-             or re.FIRST_FLAT_NO_POSITIONS_TS > op.AS_OF_TS
+             or re.FIRST_FLAT_NO_POSITIONS_TS > coalesce(op.AS_OF_TS, ra.AS_OF_TS)
          )
         then 'DRAWDOWN_STOP_ACTIVE'
         else null
@@ -91,10 +112,12 @@ select
         else 'OK'
     end as RISK_STATUS
 from profiles p
+left join run_anchor ra
+  on ra.PORTFOLIO_ID = p.PORTFOLIO_ID
 left join latest_kpis lk
   on lk.PORTFOLIO_ID = p.PORTFOLIO_ID
 left join run_events re
   on re.PORTFOLIO_ID = p.PORTFOLIO_ID
- and re.RUN_ID = lk.RUN_ID
+ and re.RUN_ID = coalesce(ra.LATEST_RUN_ID, lk.RUN_ID)
 left join open_positions op
   on op.PORTFOLIO_ID = p.PORTFOLIO_ID;

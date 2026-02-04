@@ -556,6 +556,56 @@ def get_latest_brief(portfolio_id: int):
             elif summary.get("executed_count", 0) > 0:
                 summary["executed_trades_note"] = (summary.get("executed_trades_note") or "") + " (brief from before reset)"
 
+        # Portfolio actions: current state from actual portfolio tables (not brief record)
+        # This provides ground truth for "what actually happened" vs brief content
+        portfolio_actions = None
+        try:
+            # Get open positions count from canonical view
+            cur.execute("""
+                select count(*) as open_positions
+                from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+                where PORTFOLIO_ID = %s
+            """, (portfolio_id,))
+            pos_row = cur.fetchone()
+            open_positions = pos_row[0] if pos_row else 0
+            
+            # Get trades count for latest run
+            cur.execute("""
+                select 
+                    count(*) as trades_today,
+                    max(TRADE_TS) as last_trade_ts
+                from MIP.APP.PORTFOLIO_TRADES
+                where PORTFOLIO_ID = %s
+                  and RUN_ID = %s
+            """, (portfolio_id, pipeline_run_id))
+            trades_row = cur.fetchone()
+            trades_today = trades_row[0] if trades_row else 0
+            last_trade_ts = trades_row[1] if trades_row and len(trades_row) > 1 else None
+            if last_trade_ts and hasattr(last_trade_ts, 'isoformat'):
+                last_trade_ts = last_trade_ts.isoformat()
+            
+            # Get latest simulation run from portfolio
+            cur.execute("""
+                select LAST_SIMULATION_RUN_ID, LAST_SIMULATED_AT
+                from MIP.APP.PORTFOLIO
+                where PORTFOLIO_ID = %s
+            """, (portfolio_id,))
+            port_row = cur.fetchone()
+            last_sim_run_id = port_row[0] if port_row else None
+            last_sim_at = port_row[1] if port_row and len(port_row) > 1 else None
+            if last_sim_at and hasattr(last_sim_at, 'isoformat'):
+                last_sim_at = last_sim_at.isoformat()
+            
+            portfolio_actions = {
+                "open_positions": open_positions,
+                "trades_this_run": trades_today,
+                "last_trade_ts": last_trade_ts,
+                "last_simulation_run_id": last_sim_run_id,
+                "last_simulated_at": last_sim_at,
+            }
+        except Exception:
+            portfolio_actions = None
+
         return {
             "found": True,
             "portfolio_id": data.get("portfolio_id"),
@@ -579,6 +629,8 @@ def get_latest_brief(portfolio_id: int):
             "risk": _build_risk(brief_json, risk_gate, profile),
             "deltas": _build_deltas(brief_json, prev_brief_json),
             "raw_json": brief_json,
+            # Portfolio actions (ground truth from actual tables)
+            "portfolio_actions": portfolio_actions,
         }
     finally:
         conn.close()

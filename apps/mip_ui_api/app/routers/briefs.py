@@ -503,17 +503,19 @@ def get_latest_brief(portfolio_id: int):
             is_stale = True
             stale_reason = f"Brief from run {pipeline_run_id[:8]}... but latest run is {latest_run_id[:8]}..."
 
-        # Reset boundary check: brief is from before reset if as_of_ts < episode_start_ts
+        # Reset boundary check: brief is from before reset if CREATED_AT < episode_start_ts
+        # Note: Use CREATED_AT (when brief was generated), not AS_OF_TS (market date).
+        # A brief generated after reset is current even if it covers a pre-reset market date.
         episode_id = data.get("episode_id")
         episode_start_ts = data.get("episode_start_ts")
         is_before_reset = False
         reset_warning = None
-        if episode_start_ts and as_of_ts:
+        if episode_start_ts and created_at:
             # Compare timestamps - need to handle string/datetime comparison
             try:
                 ep_start = episode_start_ts if isinstance(episode_start_ts, datetime) else datetime.fromisoformat(str(episode_start_ts).replace('Z', '+00:00'))
-                brief_ts = as_of_ts if isinstance(as_of_ts, datetime) else datetime.fromisoformat(str(as_of_ts).replace('Z', '+00:00'))
-                if brief_ts < ep_start:
+                brief_generated = created_at if isinstance(created_at, datetime) else datetime.fromisoformat(str(created_at).replace('Z', '+00:00'))
+                if brief_generated < ep_start:
                     is_before_reset = True
                     reset_warning = "This brief is from before the last portfolio reset. Trades and events may have been cleared."
             except (ValueError, TypeError):

@@ -224,6 +224,17 @@ FROM MIP.INFORMATION_SCHEMA.PROCEDURES
 WHERE PROCEDURE_SCHEMA = 'APP'
   AND PROCEDURE_NAME = 'SP_RUN_DAILY_PIPELINE';
 
+-- 9. Check active episode start dates (for reset warning logic)
+select 
+    PORTFOLIO_ID,
+    EPISODE_ID,
+    STATUS,
+    START_TS,
+    START_EQUITY
+from MIP.APP.PORTFOLIO_EPISODE
+where STATUS = 'ACTIVE'
+order by PORTFOLIO_ID;
+
 select 
     PORTFOLIO_ID,
     NAME,

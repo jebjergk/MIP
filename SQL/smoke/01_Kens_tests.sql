@@ -5,6 +5,18 @@ use database MIP;
 -- DIAGNOSTIC: Find procedures with :P_PORTFOLIO_ID in exception blocks
 -- Run this FIRST to find the culprit procedure
 -- =============================================================================
+
+SELECT 
+    QUERY_ID, 
+    QUERY_TEXT, 
+    ERROR_MESSAGE, 
+    START_TIME
+FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(RESULT_LIMIT => 500))
+WHERE ERROR_MESSAGE IS NOT NULL
+  AND START_TIME > DATEADD(hour, -1, CURRENT_TIMESTAMP())
+ORDER BY START_TIME DESC
+LIMIT 20;
+
 SELECT 
     PROCEDURE_NAME,
     ARGUMENT_SIGNATURE,

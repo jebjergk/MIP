@@ -1,0 +1,213 @@
+/* Audit Viewer / Runs: run summary + narrative + sections + timeline with tooltips */
+
+.audit-run-summary {
+  margin: 1rem 0;
+}
+
+.audit-run-summary h2 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.audit-run-summary-card {
+  border: 1px solid #c9d;
+  border-left: 4px solid #639;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #f8f4fc;
+}
+
+.audit-run-summary-headline {
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem 0;
+  color: #333;
+}
+
+.audit-run-summary-dl {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.audit-run-summary-dl dt {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  color: #333;
+}
+
+.audit-run-summary-dl dt:first-of-type {
+  margin-top: 0;
+}
+
+.audit-run-summary-dl dd {
+  margin: 0.2rem 0 0 0;
+  color: #444;
+}
+
+.audit-narrative {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.audit-narrative h2 {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.audit-narrative-text {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: #333;
+}
+
+.audit-what-happened {
+  margin: 1rem 0;
+}
+
+.audit-what-happened h2 {
+  font-size: 1.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.audit-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.audit-section-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.audit-section-card[data-phase] {
+  border-left: 4px solid #0066cc;
+}
+
+.audit-section-headline {
+  font-size: 1rem;
+  margin: 0 0 0.25rem 0;
+}
+
+.audit-section-phase {
+  font-size: 0.85rem;
+  color: #555;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.audit-section-dl {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.audit-section-dl dt {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  color: #333;
+}
+
+.audit-section-dl dt:first-of-type {
+  margin-top: 0;
+}
+
+.audit-section-dl dd {
+  margin: 0.2rem 0 0 0;
+  color: #444;
+}
+
+.audit-phases {
+  margin: 1rem 0;
+}
+
+.audit-phases h3 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.audit-phases-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.audit-phases-list > li {
+  margin-bottom: 0.75rem;
+}
+
+.audit-phases-list > li > ul {
+  margin: 0.25rem 0 0 1rem;
+  padding-left: 0;
+  list-style: disc;
+}
+
+.audit-timeline-wrap {
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.audit-timeline-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.audit-timeline-table th,
+.audit-timeline-table td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border: 1px solid #ddd;
+}
+
+.audit-timeline-table th {
+  background: #f0f0f0;
+}
+
+.audit-timeline-row {
+  cursor: help;
+}
+
+.audit-timeline-row:hover {
+  background: #f5f5f5;
+}
+
+.audit-timeline-details {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.audit-timeline-more {
+  font-size: 0.85rem;
+  color: #666;
+  margin: 0.25rem 0 0 0;
+}
+
+/* Runs list: clickable rows */
+.runs-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.runs-table th,
+.runs-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border: 1px solid #ddd;
+}
+
+.runs-table th {
+  background: #f0f0f0;
+}
+
+.runs-table-row-clickable {
+  cursor: pointer;
+}
+
+.runs-table-row-clickable:hover {
+  background: #f0f7ff;
+}

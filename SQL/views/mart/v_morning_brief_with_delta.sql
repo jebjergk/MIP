@@ -5,7 +5,12 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace view MIP.MART.V_MORNING_BRIEF_WITH_DELTA as
-with ordered as (
+with portfolio_scope as (
+    select PORTFOLIO_ID
+    from MIP.APP.PORTFOLIO
+    where STATUS = 'ACTIVE'
+),
+ordered as (
     select
         as_of_ts,
         portfolio_id,
@@ -16,10 +21,11 @@ with ordered as (
             order by as_of_ts desc
         ) as rn
     from MIP.AGENT_OUT.MORNING_BRIEF
-    where portfolio_id = 1
+    where portfolio_id in (select PORTFOLIO_ID from portfolio_scope)
 ),
 curr as (
     select
+        portfolio_id,
         as_of_ts,
         run_id,
         brief
@@ -28,6 +34,7 @@ curr as (
 ),
 prev as (
     select
+        portfolio_id,
         as_of_ts,
         run_id,
         brief
@@ -36,6 +43,7 @@ prev as (
 ),
 curr_trusted as (
     select
+        curr.portfolio_id,
         object_construct(
             'pattern_id', value:pattern_id,
             'market_type', value:market_type,
@@ -47,6 +55,7 @@ curr_trusted as (
 ),
 prev_trusted as (
     select
+        prev.portfolio_id,
         object_construct(
             'pattern_id', value:pattern_id,
             'market_type', value:market_type,
@@ -58,28 +67,29 @@ prev_trusted as (
 ),
 trusted_added as (
     select
-        array_agg(signal_key) as items
-    from (
-        select c.signal_key
-        from curr_trusted c
-        left join prev_trusted p
-            on to_json(c.signal_key) = to_json(p.signal_key)
-        where p.signal_key is null
-    )
+        c.portfolio_id,
+        array_agg(c.signal_key) as items
+    from curr_trusted c
+    left join prev_trusted p
+        on p.portfolio_id = c.portfolio_id
+       and to_json(c.signal_key) = to_json(p.signal_key)
+    where p.signal_key is null
+    group by c.portfolio_id
 ),
 trusted_removed as (
     select
-        array_agg(signal_key) as items
-    from (
-        select p.signal_key
-        from prev_trusted p
-        left join curr_trusted c
-            on to_json(c.signal_key) = to_json(p.signal_key)
-        where c.signal_key is null
-    )
+        p.portfolio_id,
+        array_agg(p.signal_key) as items
+    from prev_trusted p
+    left join curr_trusted c
+        on c.portfolio_id = p.portfolio_id
+       and to_json(c.signal_key) = to_json(p.signal_key)
+    where c.signal_key is null
+    group by p.portfolio_id
 ),
 curr_watch as (
     select
+        curr.portfolio_id,
         object_construct(
             'pattern_id', value:pattern_id,
             'market_type', value:market_type,
@@ -91,6 +101,7 @@ curr_watch as (
 ),
 prev_watch as (
     select
+        prev.portfolio_id,
         object_construct(
             'pattern_id', value:pattern_id,
             'market_type', value:market_type,
@@ -102,28 +113,29 @@ prev_watch as (
 ),
 watch_negative_added as (
     select
-        array_agg(signal_key) as items
-    from (
-        select c.signal_key
-        from curr_watch c
-        left join prev_watch p
-            on to_json(c.signal_key) = to_json(p.signal_key)
-        where p.signal_key is null
-    )
+        c.portfolio_id,
+        array_agg(c.signal_key) as items
+    from curr_watch c
+    left join prev_watch p
+        on p.portfolio_id = c.portfolio_id
+       and to_json(c.signal_key) = to_json(p.signal_key)
+    where p.signal_key is null
+    group by c.portfolio_id
 ),
 watch_negative_removed as (
     select
-        array_agg(signal_key) as items
-    from (
-        select p.signal_key
-        from prev_watch p
-        left join curr_watch c
-            on to_json(c.signal_key) = to_json(p.signal_key)
-        where c.signal_key is null
-    )
+        p.portfolio_id,
+        array_agg(p.signal_key) as items
+    from prev_watch p
+    left join curr_watch c
+        on c.portfolio_id = p.portfolio_id
+       and to_json(c.signal_key) = to_json(p.signal_key)
+    where c.signal_key is null
+    group by p.portfolio_id
 ),
 risk_changes as (
     select
+        curr.portfolio_id,
         object_construct(
             'total_return', object_construct(
                 'curr', curr.brief:risk:latest:total_return::float,
@@ -170,21 +182,35 @@ risk_changes as (
         ) as item
     from curr
     left join prev
-        on true
+        on prev.portfolio_id = curr.portfolio_id
 )
 select
+    curr.portfolio_id,
     current_timestamp() as as_of_ts,
     object_construct(
-        'curr', (select brief from curr),
+        'curr', curr.brief,
         'prev_meta', object_construct(
-            'prev_as_of_ts', (select as_of_ts from prev),
-            'prev_run_id', (select run_id from prev)
+            'prev_as_of_ts', prev.as_of_ts,
+            'prev_run_id', prev.run_id
         ),
         'delta', object_construct(
-            'trusted_added', coalesce((select items from trusted_added), array_construct()),
-            'trusted_removed', coalesce((select items from trusted_removed), array_construct()),
-            'watch_negative_added', coalesce((select items from watch_negative_added), array_construct()),
-            'watch_negative_removed', coalesce((select items from watch_negative_removed), array_construct()),
-            'risk_changes', (select item from risk_changes)
+            'trusted_added', coalesce(ta.items, array_construct()),
+            'trusted_removed', coalesce(tr.items, array_construct()),
+            'watch_negative_added', coalesce(wa.items, array_construct()),
+            'watch_negative_removed', coalesce(wr.items, array_construct()),
+            'risk_changes', rc.item
         )
-    ) as brief;
+    ) as brief
+from curr
+left join prev
+    on prev.portfolio_id = curr.portfolio_id
+left join trusted_added ta
+    on ta.portfolio_id = curr.portfolio_id
+left join trusted_removed tr
+    on tr.portfolio_id = curr.portfolio_id
+left join watch_negative_added wa
+    on wa.portfolio_id = curr.portfolio_id
+left join watch_negative_removed wr
+    on wr.portfolio_id = curr.portfolio_id
+left join risk_changes rc
+    on rc.portfolio_id = curr.portfolio_id;

@@ -1,0 +1,404 @@
+# UX canonical read-only queries
+
+Canonical read-only queries for the UX. Queries only; no app code. Replace `:run_id`, `:portfolio_id`, `:limit` with actual values or bind parameters.
+
+## Recent pipeline runs
+
+From `MIP_AUDIT_LOG`; pipeline root events only.
+
+```sql
+select
+    EVENT_TS,
+    RUN_ID,
+    STATUS,
+    ROWS_AFFECTED,
+    DETAILS
+from MIP.APP.MIP_AUDIT_LOG
+where EVENT_TYPE = 'PIPELINE'
+  and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+order by EVENT_TS desc
+limit :limit;
+```
+
+## Run timeline by RUN_ID
+
+Audit rows for a given run (root + steps).
+
+```sql
+select
+    EVENT_TS,
+    EVENT_TYPE,
+    EVENT_NAME,
+    STATUS,
+    ROWS_AFFECTED,
+    ERROR_MESSAGE,
+    DETAILS
+from MIP.APP.MIP_AUDIT_LOG
+where RUN_ID = :run_id
+   or PARENT_RUN_ID = :run_id
+order by EVENT_TS;
+```
+
+## Portfolio list
+
+```sql
+select
+    PORTFOLIO_ID,
+    NAME,
+    STATUS,
+    LAST_SIMULATED_AT,
+    PROFILE_ID,
+    STARTING_CASH,
+    FINAL_EQUITY,
+    TOTAL_RETURN
+from MIP.APP.PORTFOLIO
+order by PORTFOLIO_ID;
+```
+
+## Portfolio header (single portfolio)
+
+All columns from `MIP.APP.PORTFOLIO` for one portfolio.
+
+```sql
+select
+    PORTFOLIO_ID,
+    PROFILE_ID,
+    NAME,
+    BASE_CURRENCY,
+    STARTING_CASH,
+    LAST_SIMULATION_RUN_ID,
+    LAST_SIMULATED_AT,
+    FINAL_EQUITY,
+    TOTAL_RETURN,
+    MAX_DRAWDOWN,
+    WIN_DAYS,
+    LOSS_DAYS,
+    STATUS,
+    BUST_AT,
+    NOTES,
+    CREATED_AT,
+    UPDATED_AT
+from MIP.APP.PORTFOLIO
+where PORTFOLIO_ID = :portfolio_id;
+```
+
+## Portfolio snapshot – positions
+
+Optional filter by `run_id` for a specific run.
+
+```sql
+select *
+from MIP.APP.PORTFOLIO_POSITIONS
+where PORTFOLIO_ID = :portfolio_id
+  and (:run_id is null or RUN_ID = :run_id)
+order by ENTRY_TS desc;
+```
+
+## Portfolio snapshot – trades
+
+```sql
+select *
+from MIP.APP.PORTFOLIO_TRADES
+where PORTFOLIO_ID = :portfolio_id
+  and (:run_id is null or RUN_ID = :run_id)
+order by TRADE_TS desc;
+```
+
+## Portfolio snapshot – daily
+
+```sql
+select *
+from MIP.APP.PORTFOLIO_DAILY
+where PORTFOLIO_ID = :portfolio_id
+  and (:run_id is null or RUN_ID = :run_id)
+order by TS desc;
+```
+
+## Portfolio snapshot – run KPIs
+
+```sql
+select *
+from MIP.MART.V_PORTFOLIO_RUN_KPIS
+where PORTFOLIO_ID = :portfolio_id
+  and (:run_id is null or RUN_ID = :run_id)
+order by TO_TS desc;
+```
+
+## Portfolio snapshot – risk (gate)
+
+```sql
+select *
+from MIP.MART.V_PORTFOLIO_RISK_GATE
+where PORTFOLIO_ID = :portfolio_id;
+```
+
+## Portfolio snapshot – risk (state)
+
+```sql
+select *
+from MIP.MART.V_PORTFOLIO_RISK_STATE
+where PORTFOLIO_ID = :portfolio_id;
+```
+
+## Latest morning brief by portfolio_id
+
+```sql
+select *
+from MIP.AGENT_OUT.MORNING_BRIEF
+where PORTFOLIO_ID = :portfolio_id
+  and coalesce(AGENT_NAME, '') = 'MORNING_BRIEF'
+order by AS_OF_TS desc
+limit 1;
+```
+
+## Training Status v1 (daily only, INTERVAL_MINUTES = 1440)
+
+Per (market_type, symbol, pattern_id, interval_minutes) from MIP.APP.RECOMMENDATION_LOG and MIP.APP.RECOMMENDATION_OUTCOMES only. Optional join to MIP.APP.PATTERN_DEFINITION (labels) and MIP.APP.TRAINING_GATE_PARAMS (MIN_SIGNALS threshold). No placeholders required for base query; use :market_type only if filtering by market.
+
+```sql
+with recs as (
+  select
+    r.MARKET_TYPE,
+    r.SYMBOL,
+    r.PATTERN_ID,
+    r.INTERVAL_MINUTES,
+    count(*) as recs_total,
+    max(r.TS) as as_of_ts
+  from MIP.APP.RECOMMENDATION_LOG r
+  where r.INTERVAL_MINUTES = 1440
+  group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
+),
+outcomes_agg as (
+  select
+    r.MARKET_TYPE,
+    r.SYMBOL,
+    r.PATTERN_ID,
+    r.INTERVAL_MINUTES,
+    count(*) as outcomes_total,
+    count(distinct o.HORIZON_BARS) as horizons_covered,
+    avg(case when o.HORIZON_BARS = 1 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h1,
+    avg(case when o.HORIZON_BARS = 3 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h3,
+    avg(case when o.HORIZON_BARS = 5 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h5,
+    avg(case when o.HORIZON_BARS = 10 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h10,
+    avg(case when o.HORIZON_BARS = 20 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h20
+  from MIP.APP.RECOMMENDATION_LOG r
+  join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+  where r.INTERVAL_MINUTES = 1440
+  group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
+)
+select
+  recs.MARKET_TYPE as market_type,
+  recs.SYMBOL as symbol,
+  recs.PATTERN_ID as pattern_id,
+  recs.INTERVAL_MINUTES as interval_minutes,
+  recs.as_of_ts as as_of_ts,
+  recs.recs_total as recs_total,
+  coalesce(o.outcomes_total, 0) as outcomes_total,
+  coalesce(o.horizons_covered, 0) as horizons_covered,
+  case when recs.recs_total > 0 and (recs.recs_total * 5) > 0
+    then least(1.0, coalesce(o.outcomes_total, 0)::float / (recs.recs_total * 5))
+    else 0.0 end as coverage_ratio,
+  o.avg_outcome_h1 as avg_outcome_h1,
+  o.avg_outcome_h3 as avg_outcome_h3,
+  o.avg_outcome_h5 as avg_outcome_h5,
+  o.avg_outcome_h10 as avg_outcome_h10,
+  o.avg_outcome_h20 as avg_outcome_h20
+from recs
+left join outcomes_agg o
+  on o.MARKET_TYPE = recs.MARKET_TYPE and o.SYMBOL = recs.SYMBOL
+  and o.PATTERN_ID = recs.PATTERN_ID and o.INTERVAL_MINUTES = recs.INTERVAL_MINUTES
+order by recs.MARKET_TYPE, recs.SYMBOL, recs.PATTERN_ID;
+```
+
+Optional filter by market (use placeholder only when needed):
+
+```sql
+-- Add to the recs CTE and outcomes_agg CTE: and r.MARKET_TYPE = :market_type
+```
+
+Backend adds maturity_score (0–100), maturity_stage (INSUFFICIENT / WARMING_UP / LEARNING / CONFIDENT), and reasons[] from deterministic scoring (sample 0–30, coverage 0–40, horizons 0–30; stage thresholds &lt;25, 25–49, 50–74, ≥75).
+
+## Performance summary (GET /performance/summary)
+
+Read-only. Query params (all optional): :market_type, :symbol, :pattern_id.
+
+**Rules:**
+
+- Daily bars only: `rl.INTERVAL_MINUTES = 1440`
+- Join: `MIP.APP.RECOMMENDATION_LOG rl` and `MIP.APP.RECOMMENDATION_OUTCOMES ro` on `ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID`
+- Include only completed evaluations: `ro.EVAL_STATUS = 'COMPLETED'`
+- Outcome metric: `ro.REALIZED_RETURN`
+- Null-safe HIT_FLAG: `coalesce(ro.HIT_FLAG, false)`
+
+**Return shape:** Grouped by item key `(market_type, symbol, pattern_id, interval_minutes)`, then horizons.
+
+- Item fields: `recs_total` = count(distinct rl.RECOMMENDATION_ID), `outcomes_total` = count(*), `horizons_covered` = count(distinct ro.HORIZON_BARS), `last_recommendation_ts` = max(rl.TS)
+- `by_horizon[]`: `horizon_bars`, `n`, `mean_realized_return` = avg(ro.REALIZED_RETURN), `pct_positive` = avg(case when ro.REALIZED_RETURN > 0 then 1 else 0 end), `pct_hit` = avg(case when coalesce(ro.HIT_FLAG, false) then 1 else 0 end), `min_realized_return`, `max_realized_return`
+
+**Canonical SQL – triple-level** (recs_total, last_recommendation_ts per item):
+
+```sql
+select
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  rl.INTERVAL_MINUTES as interval_minutes,
+  count(distinct rl.RECOMMENDATION_ID) as recs_total,
+  max(rl.TS) as last_recommendation_ts
+from MIP.APP.RECOMMENDATION_LOG rl
+where rl.INTERVAL_MINUTES = 1440
+  and (:market_type is null or rl.MARKET_TYPE = :market_type)
+  and (:symbol is null or rl.SYMBOL = :symbol)
+  and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID;
+```
+
+**Canonical SQL – by-horizon** (one row per market_type, symbol, pattern_id, horizon_bars; join to OUTCOMES, EVAL_STATUS = 'COMPLETED'):
+
+```sql
+select
+  rl.MARKET_TYPE as market_type,
+  rl.SYMBOL as symbol,
+  rl.PATTERN_ID as pattern_id,
+  rl.INTERVAL_MINUTES as interval_minutes,
+  ro.HORIZON_BARS as horizon_bars,
+  count(*) as n,
+  avg(ro.REALIZED_RETURN) as mean_realized_return,
+  avg(case when ro.REALIZED_RETURN > 0 then 1 else 0 end) as pct_positive,
+  avg(case when coalesce(ro.HIT_FLAG, false) then 1 else 0 end) as pct_hit,
+  min(ro.REALIZED_RETURN) as min_realized_return,
+  max(ro.REALIZED_RETURN) as max_realized_return
+from MIP.APP.RECOMMENDATION_LOG rl
+join MIP.APP.RECOMMENDATION_OUTCOMES ro
+  on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+where rl.INTERVAL_MINUTES = 1440
+  and (:market_type is null or rl.MARKET_TYPE = :market_type)
+  and (:symbol is null or rl.SYMBOL = :symbol)
+  and (:pattern_id is null or rl.PATTERN_ID = :pattern_id)
+  and ro.EVAL_STATUS = 'COMPLETED'
+group by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, rl.INTERVAL_MINUTES, ro.HORIZON_BARS
+order by rl.MARKET_TYPE, rl.SYMBOL, rl.PATTERN_ID, ro.HORIZON_BARS;
+```
+
+Backend builds items from the two queries above: triple-level gives recs_total and last_recommendation_ts; by-horizon gives outcomes_total (sum of n), horizons_covered (distinct horizon_bars), and by_horizon[] with horizons 1/3/5/10/20 where present.
+
+## Signals Explorer (GET /signals)
+
+Canonical signal/recommendation rows for drill-down from Morning Brief opportunities. Used by the `/signals` page.
+
+**Route:** `GET /signals`
+
+**Query params** (all optional):
+| Param | Type | Description |
+|-------|------|-------------|
+| `symbol` | string | Filter by symbol (e.g., AAPL) |
+| `market_type` | string | Filter by market type (STOCK, FX) |
+| `pattern_id` | string | Filter by pattern ID |
+| `horizon_bars` | int | Filter by horizon bars |
+| `run_id` | string | Filter by pipeline run ID |
+| `as_of_ts` | string | Filter by as-of timestamp (ISO format) |
+| `trust_label` | string | Filter by trust label (TRUSTED, WATCH, UNTRUSTED) |
+| `limit` | int | Max rows to return (default 100, max 500) |
+| `include_fallback` | bool | Include fallback results if primary query returns 0 (default true) |
+
+**Response shape:**
+```json
+{
+  "signals": [
+    {
+      "recommendation_id": "...",
+      "run_id": "...",
+      "signal_ts": "2026-01-15T16:00:00",
+      "symbol": "AAPL",
+      "market_type": "STOCK",
+      "interval_minutes": 1440,
+      "pattern_id": "AAPL_2",
+      "score": 0.85,
+      "details": {...},
+      "trust_label": "TRUSTED",
+      "recommended_action": "BUY",
+      "is_eligible": true,
+      "gating_reason": null
+    }
+  ],
+  "count": 1,
+  "query_type": "primary",
+  "filters_applied": { "symbol": "AAPL" },
+  "fallback_used": false,
+  "fallback_reason": null
+}
+```
+
+**Fallback logic** (when `include_fallback=true` and primary returns 0):
+1. Drop `run_id` filter, keep other filters → `query_type: "fallback_no_run_id"`
+2. Drop `as_of_ts` filter, use 7-day window → `query_type: "fallback_7day_window"`
+3. Keep symbol only, 30-day window → `query_type: "fallback_symbol_only"`
+4. If still 0 → `query_type: "no_results"` with helpful message
+
+**Canonical SQL:**
+```sql
+select
+    s.RECOMMENDATION_ID,
+    s.RUN_ID,
+    s.TS as signal_ts,
+    s.SYMBOL,
+    s.MARKET_TYPE,
+    s.INTERVAL_MINUTES,
+    s.PATTERN_ID,
+    s.SCORE,
+    s.DETAILS,
+    s.TRUST_LABEL,
+    s.RECOMMENDED_ACTION,
+    s.IS_ELIGIBLE,
+    s.GATING_REASON
+from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+where s.INTERVAL_MINUTES = 1440
+  and (:symbol is null or s.SYMBOL = :symbol)
+  and (:market_type is null or s.MARKET_TYPE = :market_type)
+  and (:pattern_id is null or s.PATTERN_ID = :pattern_id)
+  and (:run_id is null or s.RUN_ID = :run_id)
+  and (:trust_label is null or s.TRUST_LABEL = :trust_label)
+order by s.TS desc, s.SCORE desc
+limit :limit;
+```
+
+**Example queries:**
+
+```bash
+# All signals for a symbol
+GET /signals?symbol=AAPL
+
+# Filter by Morning Brief context (from opportunity link)
+GET /signals?symbol=AAPL&pattern_id=AAPL_2&run_id=abc123&from=brief
+
+# Trusted signals only
+GET /signals?trust_label=TRUSTED&limit=50
+```
+
+## Latest Pipeline Run (GET /signals/latest-run)
+
+Returns the latest successful pipeline run info, used to determine if a Morning Brief is stale.
+
+**Route:** `GET /signals/latest-run`
+
+**Response shape:**
+```json
+{
+  "found": true,
+  "latest_run_id": "abc-123-def",
+  "latest_run_ts": "2026-01-15T16:30:00"
+}
+```
+
+**Canonical SQL:**
+```sql
+select
+    LAST_SIMULATION_RUN_ID as run_id,
+    LAST_SIMULATED_AT as run_ts
+from MIP.APP.PORTFOLIO
+where STATUS = 'ACTIVE'
+  and LAST_SIMULATION_RUN_ID is not null
+order by LAST_SIMULATED_AT desc
+limit 1;
+```

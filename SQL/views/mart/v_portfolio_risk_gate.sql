@@ -54,7 +54,7 @@ open_positions as (
         max(AS_OF_TS) as AS_OF_TS,
         max(CURRENT_BAR_INDEX) as CURRENT_BAR_INDEX,
         max(OPEN_POSITIONS) as OPEN_POSITIONS
-    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS
+    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
     group by PORTFOLIO_ID
 )
 select
@@ -86,7 +86,7 @@ select
         else null
     end as BLOCK_REASON,
     case
-        when lk.MAX_DRAWDOWN is null then 'WARN'
+        when lk.MAX_DRAWDOWN is null then 'OK'   /* no run data (e.g. after reset) = no drawdown yet */
         when lk.MAX_DRAWDOWN >= p.DRAWDOWN_STOP_PCT then 'WARN'
         else 'OK'
     end as RISK_STATUS

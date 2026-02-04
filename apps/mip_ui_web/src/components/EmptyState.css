@@ -1,0 +1,33 @@
+.empty-state {
+  padding: 1rem;
+  margin: 0.5rem 0;
+  background: #f8f8f8;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+}
+
+.empty-state-title {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+}
+
+.empty-state-action {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.95rem;
+}
+
+.empty-state-explanation {
+  margin: 0.25rem 0;
+  font-size: 0.95rem;
+  color: #444;
+}
+
+.empty-state-reasons {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.empty-state-reasons strong {
+  color: #333;
+}

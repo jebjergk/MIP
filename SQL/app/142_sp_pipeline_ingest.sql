@@ -4,7 +4,9 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace procedure MIP.APP.SP_PIPELINE_INGEST()
+create or replace procedure MIP.APP.SP_PIPELINE_INGEST(
+    P_PARENT_RUN_ID string default null
+)
 returns variant
 language sql
 execute as caller
@@ -44,25 +46,15 @@ begin
             else 'SUCCESS'
         end;
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
-            :v_run_id,
-            'PIPELINE_STEP',
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :P_PARENT_RUN_ID,
             'INGESTION',
             :v_audit_status,
             :v_rows_delta,
             object_construct(
                 'step_name', 'ingestion',
+                'scope', 'AGG',
+                'scope_key', null,
                 'started_at', :v_step_start,
                 'completed_at', :v_step_end,
                 'rows_before', :v_rows_before,
@@ -70,7 +62,8 @@ begin
                 'rows_delta', :v_rows_delta,
                 'ingest_result', :v_ingest_result
             ),
-            null;
+            null
+        );
 
         return object_construct(
             'status', :v_audit_status,
@@ -84,29 +77,20 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
-                :v_run_id,
-                'PIPELINE_STEP',
+            call MIP.APP.SP_AUDIT_LOG_STEP(
+                :P_PARENT_RUN_ID,
                 'INGESTION',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'ingestion',
+                    'scope', 'AGG',
+                    'scope_key', null,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
 end;

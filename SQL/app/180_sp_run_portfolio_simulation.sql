@@ -56,10 +56,17 @@ declare
     v_loss_days number;
     v_bust_at timestamp_ntz;
     v_last_simulated_at timestamp_ntz;
+    v_slippage_bps number(18,8);
+    v_fee_bps number(18,8);
+    v_min_fee number(18,8);
+    v_spread_bps number(18,8);
+    v_last_sim_run_id string;
+    v_effective_from_ts timestamp_ntz;
 begin
     select
         p.STARTING_CASH,
         p.PROFILE_ID,
+        p.LAST_SIMULATION_RUN_ID,
         prof.MAX_POSITIONS,
         prof.MAX_POSITION_PCT,
         prof.BUST_EQUITY_PCT,
@@ -67,6 +74,7 @@ begin
         prof.DRAWDOWN_STOP_PCT
       into v_starting_cash,
            v_profile_id,
+           v_last_sim_run_id,
            v_max_positions,
            v_max_position_pct,
            v_bust_equity_pct,
@@ -77,6 +85,14 @@ begin
         on prof.PROFILE_ID = p.PROFILE_ID
      where p.PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
+    -- After a hard reset, LAST_SIMULATION_RUN_ID is null. Do not backfill: simulate only from
+    -- the start of the last day so the pipeline does not repopulate positions/trades/daily.
+    if (v_last_sim_run_id is null) then
+        v_effective_from_ts := date_trunc('day', P_TO_TS);
+    else
+        v_effective_from_ts := P_FROM_TS;
+    end if;
+
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',
         'START',
@@ -86,6 +102,7 @@ begin
             'portfolio_id', :P_PORTFOLIO_ID,
             'from_ts', :P_FROM_TS,
             'to_ts', :P_TO_TS,
+            'effective_from_ts', :v_effective_from_ts,
             'profile_id', :v_profile_id,
             'max_positions', :v_max_positions,
             'max_position_pct', :v_max_position_pct,
@@ -129,6 +146,17 @@ begin
     v_cash := v_starting_cash;
     v_total_equity := v_starting_cash;
     v_peak_equity := v_starting_cash;
+
+    select
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE end)), 2),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE end)), 1),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'MIN_FEE' then CONFIG_VALUE end)), 0),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0)
+      into v_slippage_bps,
+           v_fee_bps,
+           v_min_fee,
+           v_spread_bps
+      from MIP.APP.APP_CONFIG;
 
     create or replace temporary table TEMP_POSITIONS (
         SYMBOL string,
@@ -190,7 +218,7 @@ begin
      and exit_bar.INTERVAL_MINUTES = s.INTERVAL_MINUTES
      and exit_bar.BAR_INDEX = entry_bar.BAR_INDEX + s.HORIZON_BARS
     where s.INTERVAL_MINUTES = 1440
-      and s.TS between :P_FROM_TS and :P_TO_TS
+      and s.TS between :v_effective_from_ts and :P_TO_TS
       and exit_bar.TS <= :P_TO_TS;
 
     v_bar_sql := '
@@ -201,7 +229,7 @@ begin
         qualify row_number() over (partition by TS order by BAR_INDEX) = 1
         order by TS
     ';
-    v_bar_rs := (execute immediate :v_bar_sql using (P_FROM_TS, P_TO_TS));
+    v_bar_rs := (execute immediate :v_bar_sql using (v_effective_from_ts, P_TO_TS));
 
     for bar_row in v_bar_rs do
         v_bar_ts := bar_row.TS;
@@ -215,13 +243,16 @@ begin
         for position_row in v_position_rs do
             declare
                 v_sell_price number(18,8);
+                v_sell_exec_price number(18,8);
                 v_sell_notional number(18,8);
+                v_sell_fee number(18,8);
                 v_sell_pnl number(18,8);
                 v_position_symbol string;
                 v_position_market_type string;
                 v_position_entry_ts timestamp_ntz;
                 v_position_entry_price number(18,8);
                 v_position_qty number(18,8);
+                v_position_cost_basis number(18,8);
                 v_position_entry_score number(18,10);
             begin
                 v_position_symbol := position_row.SYMBOL;
@@ -229,6 +260,7 @@ begin
                 v_position_entry_ts := position_row.ENTRY_TS;
                 v_position_entry_price := position_row.ENTRY_PRICE;
                 v_position_qty := position_row.QUANTITY;
+                v_position_cost_basis := position_row.COST_BASIS;
                 v_position_entry_score := position_row.ENTRY_SCORE;
 
                 select CLOSE
@@ -240,9 +272,11 @@ begin
                    and TS = :v_bar_ts;
 
                 if (v_sell_price is not null) then
-                    v_sell_notional := v_sell_price * v_position_qty;
-                    v_sell_pnl := (v_sell_price - v_position_entry_price) * v_position_qty;
-                    v_cash := v_cash + v_sell_notional;
+                    v_sell_exec_price := v_sell_price * (1 - ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                    v_sell_notional := v_sell_exec_price * v_position_qty;
+                    v_sell_fee := greatest(coalesce(v_min_fee, 0), abs(v_sell_notional) * v_fee_bps / 10000);
+                    v_sell_pnl := v_sell_notional - v_sell_fee - v_position_cost_basis;
+                    v_cash := v_cash + v_sell_notional - v_sell_fee;
                     v_trade_candidates := v_trade_candidates + 1;
                     v_trade_day := date_trunc('day', v_bar_ts);
 
@@ -256,7 +290,7 @@ begin
                             1440 as INTERVAL_MINUTES,
                             :v_bar_ts as TRADE_TS,
                             'SELL' as SIDE,
-                            :v_sell_price as PRICE,
+                            :v_sell_exec_price as PRICE,
                             :v_position_qty as QUANTITY,
                             :v_sell_notional as NOTIONAL,
                             :v_sell_pnl as REALIZED_PNL,
@@ -371,9 +405,12 @@ begin
             for rec in v_signal_rs do
                 declare
                     v_buy_price number(18,8);
+                    v_buy_exec_price number(18,8);
                     v_target_value number(18,8);
                     v_buy_qty number(18,8);
-                    v_buy_cost number(18,8);
+                    v_buy_notional number(18,8);
+                    v_buy_fee number(18,8);
+                    v_total_cost number(18,8);
                     v_signal_symbol string;
                     v_signal_market_type string;
                     v_signal_entry_ts timestamp_ntz;
@@ -398,9 +435,12 @@ begin
                             v_buy_price := rec.ENTRY_PRICE;
                             v_target_value := least(v_max_position_value, v_cash);
                             v_buy_qty := v_target_value / nullif(v_buy_price, 0);
-                            v_buy_cost := v_buy_qty * v_buy_price;
+                            v_buy_exec_price := v_buy_price * (1 + ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
+                            v_buy_notional := v_buy_qty * v_buy_exec_price;
+                            v_buy_fee := greatest(coalesce(v_min_fee, 0), abs(v_buy_notional) * v_fee_bps / 10000);
+                            v_total_cost := v_buy_notional + v_buy_fee;
 
-                            if (v_buy_qty > 0 and v_buy_cost <= v_cash) then
+                            if (v_buy_qty > 0 and v_total_cost <= v_cash) then
                                 insert into TEMP_POSITIONS (
                                     SYMBOL,
                                     MARKET_TYPE,
@@ -416,15 +456,15 @@ begin
                                     :v_signal_symbol,
                                     :v_signal_market_type,
                                     :v_signal_entry_ts,
-                                    :v_buy_price,
+                                    :v_buy_exec_price,
                                     :v_buy_qty,
-                                    :v_buy_cost,
+                                    :v_total_cost,
                                     :v_signal_score,
                                     :v_signal_entry_index,
                                     :v_signal_hold_until_index
                                 );
 
-                                v_cash := v_cash - v_buy_cost;
+                                v_cash := v_cash - v_total_cost;
                                 v_trade_candidates := v_trade_candidates + 1;
                                 v_trade_day := date_trunc('day', v_signal_entry_ts);
 
@@ -438,9 +478,9 @@ begin
                                         1440 as INTERVAL_MINUTES,
                                         :v_signal_entry_ts as TRADE_TS,
                                         'BUY' as SIDE,
-                                        :v_buy_price as PRICE,
+                                        :v_buy_exec_price as PRICE,
                                         :v_buy_qty as QUANTITY,
-                                        :v_buy_cost as NOTIONAL,
+                                        :v_buy_notional as NOTIONAL,
                                         null as REALIZED_PNL,
                                         :v_cash as CASH_AFTER,
                                         :v_signal_score as SCORE,
@@ -514,9 +554,9 @@ begin
                                     :v_signal_market_type,
                                     1440,
                                     :v_signal_entry_ts,
-                                    :v_buy_price,
+                                    :v_buy_exec_price,
                                     :v_buy_qty,
-                                    :v_buy_cost,
+                                    :v_total_cost,
                                     :v_signal_score,
                                     :v_signal_entry_index,
                                     :v_signal_hold_until_index
@@ -550,7 +590,7 @@ begin
     select TS, BAR_INDEX
     from MIP.MART.V_BAR_INDEX
     where INTERVAL_MINUTES = 1440
-      and TS between :P_FROM_TS and :P_TO_TS
+      and TS between :v_effective_from_ts and :P_TO_TS
     qualify row_number() over (partition by TS order by BAR_INDEX) = 1;
 
     create or replace temporary table TEMP_POSITION_DAYS as
@@ -695,6 +735,18 @@ begin
            BUST_AT = :v_bust_at,
            UPDATED_AT = :v_last_simulated_at
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
+    -- Post-step: check profile-driven crystallization (profit target); end episode, write results, start next.
+    call MIP.APP.SP_CHECK_CRYSTALLIZE(
+        :P_PORTFOLIO_ID,
+        :v_run_id,
+        :v_final_equity,
+        :P_TO_TS,
+        :v_win_days,
+        :v_loss_days,
+        :v_max_drawdown,
+        :v_trade_count
+    );
 
     call MIP.APP.SP_LOG_EVENT(
         'PORTFOLIO_SIM',

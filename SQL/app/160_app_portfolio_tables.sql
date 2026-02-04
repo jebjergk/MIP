@@ -90,6 +90,18 @@ create table if not exists MIP.APP.PORTFOLIO (
         references MIP.APP.PORTFOLIO_PROFILE(PROFILE_ID)
 );
 
+-- Backfill missing PORTFOLIO_ID for legacy tables
+alter table if exists MIP.APP.PORTFOLIO
+    add column if not exists PORTFOLIO_ID number;
+
+-- Ensure BUST_AT exists (required by V_PORTFOLIO_RISK_STATE)
+alter table if exists MIP.APP.PORTFOLIO
+    add column if not exists BUST_AT timestamp_ntz;
+
+update MIP.APP.PORTFOLIO
+   set PORTFOLIO_ID = seq4()
+ where PORTFOLIO_ID is null;
+
 -----------------------------
 -- 2. PORTFOLIO_POSITIONS
 -----------------------------

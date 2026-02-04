@@ -6,7 +6,8 @@ use database MIP;
 
 create or replace procedure MIP.APP.SP_PIPELINE_GENERATE_RECOMMENDATIONS(
     P_MARKET_TYPE string,
-    P_INTERVAL_MINUTES number
+    P_INTERVAL_MINUTES number,
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -26,12 +27,20 @@ declare
     v_pattern_count number := 0;
     v_min_return number := 0.0;
     v_skip_reason string;
+    v_effective_cap timestamp_ntz;
 begin
+    -- Use effective_to_ts override when present (replay/time-travel)
+    select EFFECTIVE_TO_TS into :v_effective_cap
+      from MIP.APP.RUN_SCOPE_OVERRIDE
+     where RUN_ID = :v_run_id
+     limit 1;
+
     select max(TS)
       into :v_latest_market_bars_ts
       from MIP.MART.MARKET_BARS
      where MARKET_TYPE = :P_MARKET_TYPE
-       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES;
+       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES
+       and (:v_effective_cap is null or TS <= :v_effective_cap);
 
     select max(TS)
       into :v_latest_returns_ts
@@ -94,25 +103,15 @@ begin
             end if;
         end if;
 
-        insert into MIP.APP.MIP_AUDIT_LOG (
-            EVENT_TS,
-            RUN_ID,
-            EVENT_TYPE,
-            EVENT_NAME,
-            STATUS,
-            ROWS_AFFECTED,
-            DETAILS,
-            ERROR_MESSAGE
-        )
-        select
-            current_timestamp(),
-            :v_run_id,
-            'PIPELINE_STEP',
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :P_PARENT_RUN_ID,
             'RECOMMENDATIONS',
             'SUCCESS',
             :v_inserted_count,
             object_construct(
                 'step_name', 'recommendations',
+                'scope', 'MARKET_TYPE',
+                'scope_key', :P_MARKET_TYPE,
                 'market_type', :P_MARKET_TYPE,
                 'interval_minutes', :P_INTERVAL_MINUTES,
                 'started_at', :v_step_start,
@@ -129,7 +128,8 @@ begin
                 'pattern_count', :v_pattern_count,
                 'skip_reason', :v_skip_reason
             ),
-            null;
+            null
+        );
 
         return object_construct(
             'status', 'SUCCESS',
@@ -149,32 +149,23 @@ begin
     exception
         when other then
             v_step_end := current_timestamp();
-            insert into MIP.APP.MIP_AUDIT_LOG (
-                EVENT_TS,
-                RUN_ID,
-                EVENT_TYPE,
-                EVENT_NAME,
-                STATUS,
-                ROWS_AFFECTED,
-                DETAILS,
-                ERROR_MESSAGE
-            )
-            select
-                current_timestamp(),
-                :v_run_id,
-                'PIPELINE_STEP',
+            call MIP.APP.SP_AUDIT_LOG_STEP(
+                :P_PARENT_RUN_ID,
                 'RECOMMENDATIONS',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'recommendations',
+                    'scope', 'MARKET_TYPE',
+                    'scope_key', :P_MARKET_TYPE,
                     'market_type', :P_MARKET_TYPE,
                     'interval_minutes', :P_INTERVAL_MINUTES,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end,
                     'min_return', :v_min_return
                 ),
-                :sqlerrm;
+                :sqlerrm
+            );
             raise;
     end;
 end;

@@ -1,0 +1,71 @@
+.live-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: #37474f;
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.live-header-label {
+  font-weight: 600;
+  color: #1565c0;
+}
+
+.live-header-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.live-header-item--pulse {
+  animation: live-header-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-header-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.live-header-badge {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.7rem;
+  border-radius: 3px;
+  font-weight: 500;
+  margin-left: 0.25rem;
+}
+
+.live-header-badge--success {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.live-header-badge--fail {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.live-header-badge--running {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.live-header-badge--skipped_no_new_bars,
+.live-header-badge--skip_rate_limit,
+.live-header-badge--success_with_skips {
+  background: #fff8e1;
+  color: #f57c00;
+}
+
+.live-header-meta {
+  color: #78909c;
+}
+
+.live-header-error {
+  color: #c62828;
+  font-size: 0.75rem;
+}

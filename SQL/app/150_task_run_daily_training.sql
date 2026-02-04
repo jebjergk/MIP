@@ -9,7 +9,7 @@ use database MIP;
 
 create or replace task MIP.APP.TASK_RUN_DAILY_PIPELINE
     warehouse = MIP_WH_XS
-    schedule = 'USING CRON 0 7 * * * Europe/Berlin'
+    schedule = 'USING CRON 0 7 * * TUE-SAT Europe/Berlin'
 as
     call MIP.APP.SP_RUN_DAILY_PIPELINE();
 

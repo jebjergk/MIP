@@ -1,0 +1,189 @@
+/* Episode Card: header + stats + 2x2 chart grid */
+
+.episode-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 0;
+  background: #fafafa;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+.episode-card--expanded {
+  border-left: 4px solid #1565c0;
+}
+
+.episode-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.episode-card-header:hover {
+  background: #f0f0f0;
+}
+
+.episode-card-id {
+  font-weight: 600;
+  color: #1565c0;
+}
+
+.episode-card-dates {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.episode-card-chip {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.episode-card-chip--active {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.episode-card-chip--ended {
+  background: #f5f5f5;
+  color: #616161;
+}
+
+.episode-card-chip--gate {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.episode-card-chip--gate.episode-card-chip--safe {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.episode-card-chip--gate.episode-card-chip--caution {
+  background: #fff8e1;
+  color: #f9a825;
+}
+
+.episode-card-chip--gate.episode-card-chip--stopped {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.episode-card-chip--paidout {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.episode-card-profile {
+  font-size: 0.875rem;
+  color: #666;
+  margin-left: auto;
+}
+
+.episode-card-explain {
+  margin: 0 1rem 0.75rem;
+  font-size: 0.875rem;
+  color: #555;
+  line-height: 1.4;
+}
+
+.episode-card-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.25rem 1.5rem;
+  margin: 0 1rem 1rem;
+  font-size: 0.875rem;
+}
+
+.episode-card-stats dt {
+  font-weight: 600;
+  color: #555;
+  margin: 0;
+}
+
+.episode-card-stats dd {
+  margin: 0;
+  color: #333;
+}
+
+.episode-card-charts {
+  border-top: 1px solid #e8e8e8;
+  padding: 1rem;
+  background: #fff;
+  min-height: 120px;
+}
+
+.episode-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.episode-chart-cell {
+  min-width: 0;
+  min-height: 180px;
+}
+
+.episode-chart-title {
+  font-size: 0.8rem;
+  margin: 0 0 0.25rem 0;
+  color: #666;
+  font-weight: 600;
+}
+
+.episode-chart-empty,
+.episode-chart-error {
+  font-size: 0.875rem;
+  color: #888;
+  margin: 0.5rem 0;
+}
+
+.episode-chart-error {
+  color: #c62828;
+}
+
+/* Risk regime strip */
+.episode-regime-strip {
+  margin-top: 0.25rem;
+}
+
+.episode-regime-strip-inner {
+  display: flex;
+  height: 24px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.episode-regime-segment {
+  min-width: 2px;
+  transition: width 0.15s ease;
+}
+
+.episode-regime-legend {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  color: #666;
+}
+
+/* Section title */
+.episode-list-section {
+  margin: 2rem 0 1rem;
+}
+
+.episode-list-section h2 {
+  font-size: 1.25rem;
+  margin: 0 0 0.75rem 0;
+  color: #333;
+}

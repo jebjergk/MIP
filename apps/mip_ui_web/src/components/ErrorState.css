@@ -1,0 +1,28 @@
+.error-state {
+  padding: 1rem;
+  margin: 0.5rem 0;
+  background: #ffebee;
+  border: 1px solid #ffcdd2;
+  border-radius: 6px;
+}
+
+.error-state-message {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+  color: #c62828;
+}
+
+.error-state-action {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.95rem;
+}
+
+.error-state-action a,
+.error-state-link {
+  font-weight: 600;
+  color: #b71c1c;
+}
+
+.error-state-link:hover {
+  text-decoration: underline;
+}

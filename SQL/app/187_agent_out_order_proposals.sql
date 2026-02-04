@@ -8,7 +8,7 @@ create schema if not exists MIP.AGENT_OUT;
 
 create table if not exists MIP.AGENT_OUT.ORDER_PROPOSALS (
     PROPOSAL_ID        number identity,
-    RUN_ID             number,
+    RUN_ID             varchar(64),
     PORTFOLIO_ID       number,
     PROPOSED_AT        timestamp_ntz default current_timestamp(),
     SYMBOL             varchar,
@@ -33,3 +33,7 @@ create table if not exists MIP.AGENT_OUT.ORDER_PROPOSALS (
 
 alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
     add column if not exists INTERVAL_MINUTES number;
+
+-- Canonical run key: pipeline RUN_ID (UUID string). Scoping uses RUN_ID_VARCHAR only; SIGNAL_RUN_ID is optional/legacy linkage.
+alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
+    add column if not exists RUN_ID_VARCHAR varchar(64);

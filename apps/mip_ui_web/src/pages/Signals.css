@@ -1,0 +1,307 @@
+/* Signals Explorer page styles */
+
+.page-description {
+  color: #6c757d;
+  margin-bottom: 1.5rem;
+}
+
+/* From Brief banner */
+.signals-from-brief-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+  border: 1px solid #90caf9;
+  border-radius: 8px;
+}
+
+.signals-from-brief-banner .banner-icon {
+  font-size: 1.25rem;
+}
+
+.signals-from-brief-banner .banner-text {
+  flex: 1;
+  font-size: 0.9rem;
+  color: #1565c0;
+  font-weight: 500;
+}
+
+.signals-from-brief-banner .banner-clear-btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  color: #1565c0;
+  background: white;
+  border: 1px solid #90caf9;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.signals-from-brief-banner .banner-clear-btn:hover {
+  background: #1565c0;
+  color: white;
+}
+
+/* Fallback banner */
+.signals-fallback-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #fff3cd 0%, #ffe9a0 100%);
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+}
+
+.signals-fallback-banner .fallback-icon {
+  font-size: 1.5rem;
+}
+
+.signals-fallback-banner .fallback-content {
+  flex: 1;
+}
+
+.signals-fallback-banner .fallback-reason {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  color: #856404;
+  font-weight: 500;
+}
+
+.signals-fallback-banner .fallback-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.signals-fallback-banner .fallback-btn {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  color: #856404;
+  background: white;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.signals-fallback-banner .fallback-btn:hover {
+  background: #856404;
+  color: white;
+  border-color: #856404;
+}
+
+/* Active filters */
+.signals-active-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.signals-active-filters .filters-label {
+  font-size: 0.85rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+.filter-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  background: #e9ecef;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.filter-badge .filter-label {
+  color: #6c757d;
+}
+
+.filter-badge .filter-value {
+  color: #212529;
+  font-weight: 500;
+}
+
+.filter-badge .filter-clear {
+  background: none;
+  border: none;
+  color: #6c757d;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.filter-badge .filter-clear:hover {
+  color: #dc3545;
+}
+
+.clear-all-btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color: #dc3545;
+  background: none;
+  border: 1px solid #dc3545;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.clear-all-btn:hover {
+  background: #dc3545;
+  color: white;
+}
+
+/* Results count */
+.signals-count {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: #6c757d;
+}
+
+.query-type-badge {
+  padding: 0.2rem 0.5rem;
+  background: #e9ecef;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+}
+
+/* Signals table */
+.signals-table-container {
+  overflow-x: auto;
+  margin-bottom: 1.5rem;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+}
+
+.signals-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.signals-table th,
+.signals-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.signals-table th {
+  background: #f8f9fa;
+  font-weight: 600;
+  color: #495057;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  position: sticky;
+  top: 0;
+}
+
+.signals-table tbody tr:hover {
+  background: #f8f9fa;
+}
+
+.signal-row.signal-ineligible {
+  opacity: 0.6;
+}
+
+.signal-symbol {
+  font-weight: 600;
+  color: #212529;
+}
+
+.signal-market {
+  color: #6c757d;
+  font-size: 0.85rem;
+}
+
+.signal-pattern {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.signal-score {
+  font-weight: 500;
+}
+
+.signal-trust {
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.signal-trust.trust-trusted {
+  color: #198754;
+}
+
+.signal-trust.trust-watch {
+  color: #ffc107;
+}
+
+.signal-trust.trust-untrusted {
+  color: #dc3545;
+}
+
+.signal-action {
+  font-size: 0.85rem;
+}
+
+.signal-eligible {
+  font-size: 0.85rem;
+}
+
+.signal-ts {
+  font-size: 0.8rem;
+  color: #6c757d;
+  white-space: nowrap;
+}
+
+/* Navigation links */
+.signals-nav {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 1rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.signals-nav .nav-link {
+  color: #0d6efd;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.signals-nav .nav-link:hover {
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .signals-active-filters {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .signals-fallback-banner {
+    flex-direction: column;
+  }
+  
+  .signals-table {
+    font-size: 0.8rem;
+  }
+  
+  .signals-table th,
+  .signals-table td {
+    padding: 0.5rem;
+  }
+}

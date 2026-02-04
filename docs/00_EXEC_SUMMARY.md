@@ -5,7 +5,7 @@
 - **Outputs are structured analytics tables and views** (e.g., `MIP.MART.MARKET_RETURNS`, `MIP.APP.RECOMMENDATION_LOG`, `MIP.APP.RECOMMENDATION_OUTCOMES`, portfolio KPIs in `MIP.MART`, and persisted morning briefs in `MIP.AGENT_OUT.MORNING_BRIEF`).【F:SQL/mart/010_mart_market_bars.sql†L1-L107】【F:SQL/app/050_app_core_tables.sql†L194-L239】【F:SQL/views/mart/v_portfolio_run_kpis.sql†L1-L122】【F:SQL/app/185_agent_out_morning_brief.sql†L1-L17】
 
 ## What MIP is not
-- **Not a trading system or broker**: there is no order execution or trade placement in the repository; the pipeline focuses on data ingestion, analytics, and evaluation (plus paper portfolio simulation).【F:SQL/app/145_sp_run_daily_pipeline.sql†L1-L108】【F:SQL/app/180_sp_run_portfolio_simulation.sql†L1-L120】
+- **Not a live trading system or broker**: there is no external order routing or broker integration in the repository. Order execution is simulated in Snowflake via `SP_VALIDATE_AND_EXECUTE_PROPOSALS`, which writes paper trades into portfolio tables for analytics and reporting.【F:SQL/app/145_sp_run_daily_pipeline.sql†L1-L108】【F:SQL/app/189_sp_validate_and_execute_proposals.sql†L1-L177】【F:SQL/app/160_app_portfolio_tables.sql†L111-L150】
 - **Not real-time**: the scheduled task runs once per day, and the default seed universe uses **daily bars (`INTERVAL_MINUTES=1440`)** for STOCK, ETF, and FX markets.【F:SQL/app/050_app_core_tables.sql†L10-L83】
 
 ## Current scope

@@ -125,13 +125,16 @@ def _log_event(
     error_message: str | None,
     run_id: str,
 ) -> None:
+    d = dict(details) if details else {}
+    d.setdefault("scope", "AGG")
+    d.setdefault("step_name", "ingestion")
     sql = f"""
         call MIP.APP.SP_LOG_EVENT(
             {_sql_literal(event_type)},
             {_sql_literal(event_name)},
             {_sql_literal(status)},
             {rows_affected if rows_affected is not None else 'null'},
-            {_variant_literal(details)},
+            {_variant_literal(d)},
             {_sql_literal(error_message)},
             {_sql_literal(run_id)},
             null

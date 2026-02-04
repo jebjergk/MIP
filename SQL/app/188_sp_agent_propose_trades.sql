@@ -1,12 +1,13 @@
 -- 188_sp_agent_propose_trades.sql
--- Purpose: Deterministic agent proposal generator for eligible signals
+-- Purpose: Deterministic agent proposal generator. Uses V_TRUSTED_SIGNALS_LATEST_TS (trusted-gate v1).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace procedure MIP.APP.SP_AGENT_PROPOSE_TRADES(
     P_PORTFOLIO_ID number,
-    P_RUN_ID number
+    P_RUN_ID string,   -- pipeline run id for deterministic tie-back to recommendations
+    P_PARENT_RUN_ID string default null
 )
 returns variant
 language sql
@@ -21,11 +22,12 @@ declare
     v_open_positions number := 0;
     v_remaining_capacity number := 0;
     v_entries_blocked boolean := false;
-    v_block_reason string;
+    v_stop_reason string;
+    v_allowed_actions string;
     v_inserted_count number := 0;
     v_selected_count number := 0;
     v_target_weight float := 0.05;
-    v_run_id_string string := to_varchar(:P_RUN_ID);
+    v_run_id_string string := :P_RUN_ID;
     v_current_bar_index number := 0;
     v_max_new_stock number := 0;
     v_max_new_fx number := 0;
@@ -35,6 +37,9 @@ declare
     v_selected_stock number := 0;
     v_selected_fx number := 0;
     v_selected_etf number := 0;
+    v_candidate_count_raw number := 0;
+    v_candidate_count_trusted number := 0;
+    v_trusted_rejected_count number := 0;
 begin
     select
         p.PROFILE_ID,
@@ -87,7 +92,7 @@ begin
 
     select count(*)
       into :v_open_positions
-      from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
+      from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
      where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
        and p.CURRENT_BAR_INDEX = :v_current_bar_index;
 
@@ -95,16 +100,33 @@ begin
 
     select
         coalesce(max(ENTRIES_BLOCKED), false),
-        max(BLOCK_REASON)
+        max(STOP_REASON),
+        max(ALLOWED_ACTIONS)
       into :v_entries_blocked,
-           :v_block_reason
-      from MIP.MART.V_PORTFOLIO_RISK_GATE
+           :v_stop_reason,
+           :v_allowed_actions
+      from MIP.MART.V_PORTFOLIO_RISK_STATE
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
     if (v_entries_blocked) then
+        select count(*)
+          into :v_candidate_count_raw
+          from MIP.MART.V_SIGNALS_LATEST_TS
+         where RUN_ID = :v_run_id_string;
+
+        select count(*)
+          into :v_candidate_count_trusted
+          from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+         where RUN_ID = :v_run_id_string;
+
+        v_candidate_count := :v_candidate_count_trusted;
+        v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
+        v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
+
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -114,16 +136,23 @@ begin
         select
             current_timestamp(),
             :v_run_id_string,
+            :P_PARENT_RUN_ID,
             'AGENT',
             'SP_AGENT_PROPOSE_TRADES',
             'SKIP_ENTRIES_BLOCKED',
             0,
             object_construct(
                 'entries_blocked', :v_entries_blocked,
-                'block_reason', :v_block_reason,
+                'stop_reason', :v_stop_reason,
+                'allowed_actions', :v_allowed_actions,
                 'max_positions', :v_max_positions,
                 'open_positions', :v_open_positions,
-                'remaining_capacity', :v_remaining_capacity
+                'remaining_capacity', :v_remaining_capacity,
+                'candidate_count', :v_candidate_count,
+                'proposed_count', :v_selected_count,
+                'candidate_count_raw', :v_candidate_count_raw,
+                'candidate_count_trusted', :v_candidate_count_trusted,
+                'trusted_rejected_count', :v_trusted_rejected_count
             );
 
         return object_construct(
@@ -131,33 +160,37 @@ begin
             'run_id', :P_RUN_ID,
             'portfolio_id', :P_PORTFOLIO_ID,
             'entries_blocked', :v_entries_blocked,
-            'block_reason', :v_block_reason,
+            'stop_reason', :v_stop_reason,
+            'allowed_actions', :v_allowed_actions,
             'max_positions', :v_max_positions,
             'open_positions', :v_open_positions,
             'remaining_capacity', :v_remaining_capacity,
-            'proposal_candidates', 0,
-            'proposal_selected', 0,
+            'proposal_candidates', :v_candidate_count,
+            'proposal_selected', :v_selected_count,
             'proposal_inserted', 0,
             'target_weight', :v_target_weight
         );
     end if;
 
     select count(*)
-      into :v_candidate_count
-      from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY
-     where IS_ELIGIBLE = true
-       and TRUST_LABEL = 'TRUSTED'
-       and (
-           RUN_ID = :v_run_id_string
-           or try_to_number(replace(RUN_ID, 'T', '')) = :P_RUN_ID
-       );
+      into :v_candidate_count_raw
+      from MIP.MART.V_SIGNALS_LATEST_TS
+     where RUN_ID = :v_run_id_string;
 
+    select count(*)
+      into :v_candidate_count_trusted
+      from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
+     where RUN_ID = :v_run_id_string;
+
+    v_candidate_count := :v_candidate_count_trusted;
+    v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
     v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
 
     if (v_candidate_count = 0 or v_remaining_capacity = 0) then
         insert into MIP.APP.MIP_AUDIT_LOG (
             EVENT_TS,
             RUN_ID,
+            PARENT_RUN_ID,
             EVENT_TYPE,
             EVENT_NAME,
             STATUS,
@@ -167,6 +200,7 @@ begin
         select
             current_timestamp(),
             :v_run_id_string,
+            :P_PARENT_RUN_ID,
             'AGENT',
             'SP_AGENT_PROPOSE_TRADES',
             'INFO',
@@ -176,7 +210,10 @@ begin
                 'open_positions', :v_open_positions,
                 'remaining_capacity', :v_remaining_capacity,
                 'candidate_count', :v_candidate_count,
-                'proposed_count', :v_selected_count
+                'proposed_count', :v_selected_count,
+                'candidate_count_raw', :v_candidate_count_raw,
+                'candidate_count_trusted', :v_candidate_count_trusted,
+                'trusted_rejected_count', :v_trusted_rejected_count
             );
 
         return object_construct(
@@ -212,13 +249,8 @@ begin
                     when s.MARKET_TYPE = 'FX' then 'FX'
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE = true
-              and s.TRUST_LABEL = 'TRUSTED'
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
-              )
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            where s.RUN_ID = :v_run_id_string
         ),
         deduped_candidates as (
             select
@@ -248,7 +280,7 @@ begin
         with held_symbols as (
             select distinct
                 p.SYMBOL
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),
@@ -257,13 +289,8 @@ begin
                 s.RECOMMENDATION_ID,
                 s.SYMBOL,
                 s.SCORE
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE = true
-              and s.TRUST_LABEL = 'TRUSTED'
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
-              )
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            where s.RUN_ID = :v_run_id_string
         ),
         deduped_candidates as (
             select
@@ -296,7 +323,7 @@ begin
         with held_symbols as (
             select distinct
                 p.SYMBOL
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS p
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),
@@ -307,13 +334,8 @@ begin
                     when s.MARKET_TYPE = 'FX' then 'FX'
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
-            from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
-            where s.IS_ELIGIBLE = true
-              and s.TRUST_LABEL = 'TRUSTED'
-              and (
-                  s.RUN_ID = :v_run_id_string
-                  or try_to_number(replace(s.RUN_ID, 'T', '')) = :P_RUN_ID
-              )
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            where s.RUN_ID = :v_run_id_string
         ),
         deduped_candidates as (
             select
@@ -426,18 +448,15 @@ begin
             from final_selected f
         )
         select
-            :P_RUN_ID as RUN_ID,
+            :P_RUN_ID as RUN_ID_VARCHAR,
             :P_PORTFOLIO_ID as PORTFOLIO_ID,
             s.SYMBOL,
             s.MARKET_TYPE,
             s.INTERVAL_MINUTES,
-            case s.RECOMMENDED_ACTION
-                when 'DISABLE' then 'SELL'
-                else 'BUY'
-            end as SIDE,
+            'BUY' as SIDE,
             :v_target_weight as TARGET_WEIGHT,
             s.RECOMMENDATION_ID,
-            s.TS as SIGNAL_TS,
+            s.SIGNAL_TS,
             s.PATTERN_ID as SIGNAL_PATTERN_ID,
             s.INTERVAL_MINUTES as SIGNAL_INTERVAL_MINUTES,
             s.RUN_ID as SIGNAL_RUN_ID,
@@ -445,14 +464,15 @@ begin
             object_construct(
                 'recommendation_id', s.RECOMMENDATION_ID,
                 'pattern_id', s.PATTERN_ID,
-                'ts', s.TS,
+                'ts', s.SIGNAL_TS,
                 'score', s.SCORE,
                 'interval_minutes', s.INTERVAL_MINUTES,
                 'run_id', s.RUN_ID,
-                'trust_label', s.TRUST_LABEL,
-                'recommended_action', s.RECOMMENDED_ACTION,
+                'trust_label', 'TRUSTED',
+                'recommended_action', 'ENABLE',
                 'held_priority', s.HELD_PRIORITY,
-                'market_type_group', s.MARKET_TYPE_GROUP
+                'market_type_group', s.MARKET_TYPE_GROUP,
+                'trust_reason', s.TRUST_REASON
             ) as SOURCE_SIGNALS,
             object_construct(
                 'strategy', 'diversified_capacity_aware_top_n',
@@ -470,11 +490,11 @@ begin
         where s.SELECTION_RANK <= :v_remaining_capacity
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
-   and target.RUN_ID = source.RUN_ID
+   and target.RUN_ID_VARCHAR = source.RUN_ID_VARCHAR
    and target.RECOMMENDATION_ID = source.RECOMMENDATION_ID
     when not matched then
         insert (
-            RUN_ID,
+            RUN_ID_VARCHAR,
             PORTFOLIO_ID,
             SYMBOL,
             MARKET_TYPE,
@@ -492,7 +512,7 @@ begin
             STATUS
         )
         values (
-            source.RUN_ID,
+            source.RUN_ID_VARCHAR,
             source.PORTFOLIO_ID,
             source.SYMBOL,
             source.MARKET_TYPE,
@@ -529,7 +549,7 @@ begin
             s.MARKET_TYPE
         from MIP.AGENT_OUT.ORDER_PROPOSALS s
         where s.PORTFOLIO_ID = :P_PORTFOLIO_ID
-          and s.RUN_ID = :P_RUN_ID
+          and s.RUN_ID_VARCHAR = :P_RUN_ID
           and s.STATUS = 'PROPOSED'
     ) selected_counts;
 
@@ -538,6 +558,7 @@ begin
     insert into MIP.APP.MIP_AUDIT_LOG (
         EVENT_TS,
         RUN_ID,
+        PARENT_RUN_ID,
         EVENT_TYPE,
         EVENT_NAME,
         STATUS,
@@ -547,6 +568,7 @@ begin
     select
         current_timestamp(),
         :v_run_id_string,
+        :P_PARENT_RUN_ID,
         'AGENT',
         'SP_AGENT_PROPOSE_TRADES',
         'INFO',
@@ -557,6 +579,9 @@ begin
             'remaining_capacity', :v_remaining_capacity,
             'candidate_count', :v_candidate_count,
             'proposed_count', :v_selected_count,
+            'candidate_count_raw', :v_candidate_count_raw,
+            'candidate_count_trusted', :v_candidate_count_trusted,
+            'trusted_rejected_count', :v_trusted_rejected_count,
             'picked_by_market_type', object_construct(
                 'STOCK', :v_selected_stock,
                 'FX', :v_selected_fx,

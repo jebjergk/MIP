@@ -1,0 +1,398 @@
+# UX Metric Glossary — plain-language explanations for non-traders.
+# Used by InfoTooltip across the app. short = one line; long = what/why/how to read.
+
+audit:
+  run_status:
+    short: Whether this pipeline run finished successfully, failed, or was skipped.
+    long: "Run status tells you the outcome of one automated pipeline run. SUCCESS means all steps completed; FAILED means something broke; SKIPPED means the run did not execute (e.g. no new data). Use it to quickly see if you need to investigate."
+    what: "Run status is the outcome of one pipeline run: SUCCESS, FAIL, RUNNING, or a skip reason (e.g. no new bars)."
+    why: "So you can see at a glance whether the pipeline ran and whether you need to look at logs or data."
+    how: "Read from MIP.APP.MIP_AUDIT_LOG; the completion row for each RUN_ID carries the final status."
+    next: "Open the run detail to see the timeline and interpreted summary."
+  has_new_bars:
+    short: Whether new market data was available for this run.
+    long: "Has new bars indicates if the system had fresh price/candle data for the run. If false, the run may have skipped trading steps because there was nothing new to act on. Check this when a run seems to do nothing."
+  rate_limit:
+    short: A cap on how often the system can run to avoid overloading.
+    long: "Rate limit is a safety setting that prevents the pipeline from running too frequently. If you see rate limit in skip reasons, the run was postponed until the next allowed time. This protects systems and data feeds."
+  latest_ts:
+    short: The most recent timestamp recorded for this run or step.
+    long: "Latest timestamp (latest_ts) is when the last relevant event or data point occurred. It helps you see how fresh the run's inputs were and align events in time order."
+  skip_reasons:
+    short: Why a run or step did not execute (e.g. no new data, rate limit).
+    long: "Skip reasons explain why a run or step was not executed. Common reasons include no new bars (no new data), rate limit (too soon since last run), or other business rules. Use these to debug why nothing ran."
+
+portfolio:
+  starting_cash:
+    short: Cash balance at the start of the simulation or period.
+    long: "Starting cash is the amount of money the portfolio had at the beginning of the run or period. It's the baseline for measuring gains and losses. Compare with final equity to see total return."
+  final_equity:
+    short: Total portfolio value (cash + positions) at the end of the period.
+    long: "Final equity is the total value of the portfolio at the end of the run—cash plus the value of any open positions. It's the number that matters for seeing how much the strategy made or lost."
+  total_return:
+    short: Overall gain or loss as a percentage from start to end.
+    long: "Total return is the percentage change from starting value to final value. Positive means the portfolio grew; negative means it shrank. It's the main headline number for performance."
+  max_drawdown:
+    short: Largest peak-to-trough drop in value during the period.
+    long: "Max drawdown is the biggest drop from a previous high to a low during the period. It shows the worst loss an investor would have seen. Lower is better; it's a key risk measure."
+  win_days:
+    short: Number of days where the portfolio made money.
+    long: "Win days counts how many trading days ended with a profit. It doesn't tell you how much was made, but it gives a sense of how often the strategy is right."
+  loss_days:
+    short: Number of days where the portfolio lost money.
+    long: "Loss days counts how many trading days ended with a loss. Used together with win days, it helps you see the balance of good vs bad days."
+  status:
+    short: Current state of the portfolio (e.g. active, closed, bust).
+    long: "Portfolio status describes whether the portfolio is active (running), closed (manually stopped), or bust (hit a loss limit and stopped). Use it to see if the portfolio is still trading."
+
+risk_gate:
+  risk_gate:
+    short: "The rule that controls whether you can open new positions or only close them."
+    long: "The risk gate is a safety layer that limits what the portfolio can do. It has three modes—Normal, Caution, and Defensive—and tells you clearly what is allowed and what to do next."
+    what: "The risk gate is the rule set that decides whether opening new positions is allowed or only closing/reducing positions is allowed. It reflects current risk state and drawdown limits."
+    why: "So you know at a glance what the system will and won't do—whether you can add risk or should only reduce it—without reading raw codes or logs."
+    how: "The API normalizes risk state and risk gate views (e.g. V_PORTFOLIO_RISK_STATE, V_PORTFOLIO_RISK_GATE) into a single plain-language object: mode, entries_allowed, exits_allowed, reason_text, and what_to_do_now."
+    next: "Use the permission matrix and What to do now on the Portfolio Risk Gate panel to decide your next action."
+  mode:
+    short: "Current risk gate mode: Normal (full trading), Caution (warn), or Defensive (exits only)."
+    long: "Risk gate mode tells you what the system allows right now. Normal means full trading; Caution means new positions allowed but be careful; Defensive means only closing or reducing positions, no new entries. The mode is derived from risk state and drawdown rules."
+  risk_status:
+    short: "Raw risk status from the system (e.g. OK, WARN) before it is turned into a mode."
+    long: "Risk status is the underlying signal—OK, WARN, or similar—that the system uses to decide the gate mode. OK usually means Normal; WARN can mean Caution; combined with entries blocked it becomes Defensive."
+    what: "Risk status is the internal state (e.g. OK, WARN) that indicates whether the portfolio is within safe limits or approaching them."
+    why: "So the UI can show a human-friendly mode (Normal / Caution / Defensive) while the system still uses a simple status for logic."
+    how: "Read from risk state or risk gate views; the normalized object maps risk_status and entries_blocked into risk_label and mode."
+    next: "Look at the headline Risk Gate: Normal / Caution / Defensive to see how your status is presented."
+  entries_blocked:
+    short: Whether new positions are currently allowed or blocked.
+    long: "Entries blocked means the system is not allowed to open new positions right now. It's a safety switch—often turned on after a big drawdown or when risk limits are hit. Existing positions may still be closed."
+  entries_allowed:
+    short: Whether opening new positions is allowed.
+    long: "Entries allowed means the risk gate permits opening new positions. When false (Defensive mode), only closing or reducing positions is allowed. Use this with the permission matrix to see what you can do."
+    what: "Entries allowed is a yes/no: you are either allowed to open new positions (buy, add) or you are not. When not allowed, only closing or reducing positions is permitted."
+    why: "So you know immediately whether you can add exposure or must limit yourself to reducing it. No guessing from raw codes."
+    how: "Derived from risk state or risk gate (e.g. NOT entries_blocked, or allowed_actions = ALLOW_ENTRIES). The Portfolio panel shows it as Open new positions: Allowed or Blocked."
+    next: "If Allowed, you can use Suggestions to open new positions. If Blocked, follow What to do now and only close or reduce."
+  exits_allowed:
+    short: Closing or reducing positions is always allowed when the gate is active.
+    long: "Exits allowed means you can always close or reduce existing positions, even when new entries are blocked. The gate never prevents unwinding risk—only adding new exposure."
+    what: "Exits allowed means you can close or reduce existing positions at any time. The risk gate never blocks unwinding—only adding new risk."
+    why: "So you know you can always reduce exposure when the gate is on. The system will not trap you in positions when you need to cut risk."
+    how: "The normalized risk gate sets exits_allowed to true whenever the gate is in use. The UI shows Close/reduce positions: Allowed."
+    next: "Use View Positions and your broker or simulator to close or reduce positions when the gate is Defensive or Caution."
+  drawdown_stop:
+    short: "A limit that pauses new entries when the portfolio has lost too much from a peak."
+    long: "Drawdown stop is a safety rule: when the portfolio's value has fallen too far from its high (e.g. past a set percentage), the system stops allowing new positions and may switch to Defensive mode. You can still close or reduce."
+    what: "Drawdown stop is the rule that says 'no new entries when loss from peak exceeds X.' It protects the portfolio from adding risk after a big drop."
+    why: "So losses don't snowball. Once the portfolio has hit the limit, the system stops adding exposure until conditions improve or you restart."
+    how: "Computed from portfolio equity vs peak; when the drop exceeds the configured threshold, entries are blocked and reason may reference drawdown (e.g. DRAWDOWN_STOP_ACTIVE)."
+    next: "If the reason mentions drawdown, check max drawdown and equity. You can close positions or restart the episode (see Runbook) when appropriate."
+  allow_exits_only:
+    short: Only closing positions is allowed; no new buys.
+    long: "Allow exits only means the portfolio can only close or reduce positions, not open new ones. It's a middle ground between full trading and a complete stop, used to reduce risk while letting the system unwind."
+  reason_text:
+    short: Plain-language reason for the current gate state.
+    long: "Reason text explains in one sentence why the risk gate is in its current mode—e.g. within limits, drawdown hit, or safety pause. Use it to understand what triggered the state."
+  what_to_do_now:
+    short: Actionable steps recommended for the current gate.
+    long: "What to do now lists concrete steps the system recommends for the current risk gate mode—e.g. use Suggestions, avoid opening many positions, or wait and close only. Follow these to stay aligned with risk policy."
+    what: "What to do now is a short list of recommended actions for the current risk gate mode—e.g. you can open positions normally, or only close them, or be cautious with new ones."
+    why: "So you have clear next steps instead of guessing. Each mode has different guidance to keep you aligned with risk policy."
+    how: "Built by the API from the normalized risk gate: one set of bullets for Normal, another for Caution, another for Defensive (and drawdown-specific lines when applicable)."
+    next: "Follow the bullets on the Risk Gate panel; use Open Suggestions or View Positions as needed, and see the Runbook to restart an episode if required."
+  defensive_mode:
+    short: "Gate mode where only closing or reducing positions is allowed; no new entries."
+    long: "Defensive mode means the risk gate has turned on: you cannot open new positions, only close or reduce existing ones. It is used after a drawdown stop or when risk limits say no new exposure."
+    what: "Defensive mode is the risk gate state where entries are blocked and only exits (close or reduce) are allowed. The headline shows Defensive with a stop icon."
+    why: "So you know the system has paused new risk and you must limit yourself to unwinding. It protects the portfolio from adding exposure when conditions are bad."
+    how: "Set when entries_blocked is true or allowed_actions is ALLOW_EXITS_ONLY; the UI displays Risk Gate: Defensive and Exits only, with What to do now bullets."
+    next: "Do not open new positions. Use View Positions to close or reduce. See How to restart episode in the Risk Gate panel if you need to start a new episode."
+  stop_reason:
+    short: Why trading was limited or stopped (e.g. drawdown, flat rule).
+    long: "Stop reason explains why the risk gate is on—for example drawdown limit hit, or a rule that says no new entries until the portfolio is flat. Use it to understand what triggered the restriction."
+
+signals:
+  eligible_signals:
+    short: Number of signals that passed filters and could be acted on.
+    long: "Eligible signals are recommendations that passed all checks (time, score, pattern) and could be used for trading. Not all become trades; this is the pool of candidates."
+  filtered_by_threshold:
+    short: Signals removed because they didn't meet a score or quality bar.
+    long: "Filtered by threshold means some signals were excluded because their score or strength was below a set bar. It's a quality filter so only stronger signals are considered."
+  trusted_signals:
+    short: Signals that passed trust and safety checks.
+    long: "Trusted signals are those that passed both quality and policy checks (e.g. risk, consistency). The system only trades on trusted signals to reduce bad or risky trades."
+
+proposals:
+  proposed_count:
+    short: Number of orders the system suggested.
+    long: "Proposed count is how many order suggestions were generated in this run. Not all get approved or executed; this is the first step in the pipeline."
+  approved_count:
+    short: Number of proposed orders that were approved.
+    long: "Approved count is how many of the proposed orders passed validation and were okayed. Approval can be automatic or manual depending on configuration."
+  executed_count:
+    short: Number of orders that were actually filled in the market.
+    long: "Executed count is how many orders were actually filled. It can be lower than approved if the market moved or orders were cancelled. This is the real trading outcome."
+
+# Positions table (non-trader friendly)
+positions:
+  symbol:
+    short: The ticker or identifier for the holding (e.g. stock or asset).
+    long: "Symbol is the market identifier for the asset you hold—like a stock ticker. It tells you which asset this position is for."
+  side:
+    short: "Long = you own the asset; Short = you owe it (sold borrowed); Flat = no position."
+    long: "Side describes the direction of the position. Long means you own the asset (bought it). Short means you sold it (borrowed) and owe it—you profit if the price falls. Flat means no exposure."
+  quantity:
+    short: How many units of the asset you hold.
+    long: "Quantity is the number of shares or units you own in this position. It's used with price to see current value."
+  cost_basis:
+    short: Total amount you paid for this position (used to figure gain/loss).
+    long: "Cost basis is the total amount originally paid for this position. When you sell, it's compared to the sale amount to calculate your gain or loss."
+
+# Trades table (non-trader friendly)
+trades:
+  symbol:
+    short: The ticker or identifier for the asset that was traded.
+    long: "Symbol is the market identifier for the asset that was bought or sold in this trade."
+  side:
+    short: Whether the trade was a buy or a sell.
+    long: "Side tells you the direction: BUY means you added to the position; SELL means you reduced or closed it. It's the basic action of the trade."
+  quantity:
+    short: How many units were bought or sold in this trade.
+    long: "Quantity is the number of shares or units traded. Together with price it determines the size of the trade."
+  price:
+    short: Price per unit at which the trade was filled.
+    long: "Price is the per-unit execution price—what you actually paid or received for each share or unit. It's used with quantity to get the total value."
+  notional:
+    short: Total value of the trade (quantity × price).
+    long: "Notional is the total dollar value of the trade—quantity times price. It's how much money actually moved in this trade."
+  realized_pnl:
+    short: Profit or loss locked in when the trade closed part of a position.
+    long: "Realized P&L is the profit or loss that was locked in when this trade closed or reduced a position. Positive means a gain; negative means a loss."
+
+# Generic / UI
+ui:
+  status_badge:
+    short: A label showing the current state of a run, portfolio, or step.
+    long: "Status badges show at a glance whether something succeeded, failed, is pending, or was skipped. Hover for more detail on what that status means in this context."
+  system_status:
+    short: API and Snowflake data backend health.
+    long: "Green means the API and Snowflake data backend are both reachable. Yellow means the API is up but Snowflake (where portfolios, briefs, and training data live) is not reachable—check credentials and network. Red means the API itself is not reachable—the server may be down or unreachable."
+
+# Training Status v1 (maturity, sample size, coverage, horizons)
+training_status:
+  market_type:
+    short: Asset class or market (e.g. STOCK, ETF, FX).
+    long: "Market type is the category of assets this row applies to—stocks, ETFs, or forex. It lets you filter and compare training quality by market."
+  symbol:
+    short: Ticker or identifier for the asset (e.g. AAPL, SPY).
+    long: "Symbol is the ticker or code for the asset—like a stock symbol. Use it to find a specific asset's training status."
+  pattern_id:
+    short: Identifier for the signal pattern used.
+    long: "Pattern ID is the internal ID of the recommendation pattern. Different patterns can have different maturity and performance."
+  interval_minutes:
+    short: Bar interval in minutes (e.g. 1440 = daily).
+    long: "Interval minutes is the timeframe of the bars—e.g. 1440 means daily bars. Training status here is for daily (1440) only."
+  as_of_ts:
+    short: Timestamp of the latest data used for this row.
+    long: "As-of timestamp is when the most recent recommendation or outcome data was recorded. It tells you how fresh this status is."
+  recs_total:
+    short: Number of recommendations (sample size) for this group.
+    long: "Sample size (recs_total) is how many recommendations were generated for this market/symbol/pattern. More recommendations usually mean a more reliable maturity score."
+  outcomes_total:
+    short: Number of evaluated outcomes across horizons.
+    long: "Outcomes total is how many recommendation outcomes were evaluated (e.g. did the trade hit or miss). It feeds into coverage and horizon metrics."
+  horizons_covered:
+    short: How many time windows (1, 3, 5, 10, 20 bars) have outcome data.
+    long: "Horizons covered is the number of evaluation windows (1, 3, 5, 10, 20 bars) that have outcome data. All five means full horizon completeness."
+  coverage_ratio:
+    short: Share of possible outcomes that were evaluated (0–1).
+    long: "Coverage ratio is the fraction of possible outcomes that were actually evaluated. 1.0 means every recommendation has outcomes for all horizons; lower means some are still pending."
+  avg_outcome_h1:
+    short: Average realized return over 1-bar horizon (null if missing).
+    long: "Avg outcome H1 is the average return realized when holding for 1 bar after the signal. It's one of five horizon windows used to judge pattern quality."
+  avg_outcome_h3:
+    short: Average realized return over 3-bar horizon (null if missing).
+    long: "Avg outcome H3 is the average return over a 3-bar holding period. Used with other horizons to see how the pattern performs at different time windows."
+  avg_outcome_h5:
+    short: Average realized return over 5-bar horizon (null if missing).
+    long: "Avg outcome H5 is the average return over a 5-bar horizon. Part of the five horizon metrics that feed into maturity."
+  avg_outcome_h10:
+    short: Average realized return over 10-bar horizon (null if missing).
+    long: "Avg outcome H10 is the average return over a 10-bar holding period. Longer horizons can show different behavior than short ones."
+  avg_outcome_h20:
+    short: Average realized return over 20-bar horizon (null if missing).
+    long: "Avg outcome H20 is the average return over a 20-bar horizon. The longest window in the standard set; null if not yet evaluated."
+  maturity_score:
+    short: Overall data-quality score 0–100 (sample + coverage + horizons).
+    long: "Maturity score is a 0–100 number combining how much data you have (sample size), how complete outcomes are (coverage), and how many time windows have data (horizons). Higher means more reliable."
+  maturity_stage:
+    short: Label for maturity band (INSUFFICIENT / WARMING_UP / LEARNING / CONFIDENT).
+    long: "Maturity stage is a simple label: INSUFFICIENT (score &lt;25), WARMING_UP (25–49), LEARNING (50–74), CONFIDENT (75+). It tells you at a glance if the data is enough to trust."
+  reasons:
+    short: Plain-language explanations for the score (what happened and why).
+    long: "Reasons are short explanations for why the maturity score is what it is—e.g. not enough recommendations yet, or all horizons have data. Use them to understand and act."
+  stage_insufficient:
+    short: Score &lt;25 — not enough data to be reliable.
+    long: "INSUFFICIENT means the maturity score is under 25. There isn't enough recommendation or outcome data yet to trust this row. Run more pipelines or wait for more data."
+  stage_warming_up:
+    short: Score 25–49 — data is building; confidence is growing.
+    long: "WARMING_UP means the score is between 25 and 49. Data is accumulating and the score is becoming more meaningful, but it's not yet strong enough to rely on fully."
+  stage_learning:
+    short: Score 50–74 — enough data to learn from; score is meaningful.
+    long: "LEARNING means the score is between 50 and 74. There's enough data to draw conclusions and the maturity score is a useful signal. Good for monitoring and tuning."
+  stage_confident:
+    short: Score 75+ — strong data coverage and outcome completeness.
+    long: "CONFIDENT means the score is 75 or higher. Data coverage and outcome completeness are strong. This row's metrics are reliable for decision-making."
+  filter_market_type:
+    short: Filter rows by market (STOCK, ETF, FX).
+    long: "Market type filter limits the table to one asset class. Use it to focus on stocks, ETFs, or forex."
+  filter_symbol:
+    short: Search by symbol (ticker) — partial match.
+    long: "Symbol search filters rows by ticker. Type part of a symbol to narrow the list; matching is case-insensitive."
+
+# Performance summary (outcomes by horizon)
+performance:
+  horizon_bars:
+    short: Holding period in bars (e.g. 1, 3, 5, 10, 20) after the signal; for daily data, 1 bar = 1 day.
+    long: "Horizon bars is how many bars (e.g. days for daily data) the outcome was measured over. 1 = one bar hold; 5 = five bars. For daily data, horizon is in days. Different horizons can show different performance."
+  horizon_days:
+    short: "Horizon in days (for daily data, same as horizon_bars)."
+    long: "For daily bars, horizon in days is the same as horizon_bars: 1 bar = 1 day, 5 bars = 5 days. Used in plain-language explanations."
+  n:
+    short: Number of evaluated outcomes for this horizon.
+    long: "N is the count of outcomes (successful evaluations) for this horizon. Higher N means the mean and pct positive are based on more data."
+  mean_outcome:
+    short: Average realized return for that horizon.
+    long: "Mean outcome is the average return realized when holding for this many bars after the signal. Positive means the pattern tended to make money over that horizon."
+  mean_realized_return:
+    short: Average realized return over this horizon (decimal, e.g. 0.02 = 2%).
+    long: "Mean realized return is the average return actually achieved when holding for this many bars after the signal. It uses REALIZED_RETURN from evaluated outcomes. Positive means the pattern tended to make money over this horizon; the value is in decimal form (e.g. 0.02 = 2%)."
+  realized_return:
+    short: Return from entry price to exit price over the chosen horizon (decimal).
+    long: "Realized return is the actual return from the entry price to the exit price at the chosen horizon. It is computed from completed evaluations only. Shown in decimal form (e.g. 0.02 = 2%)."
+  pct_positive:
+    short: Share of outcomes that had positive return (0–1 as decimal, shown as 0–100%).
+    long: "Pct positive is the fraction of evaluated outcomes where the return was positive. Higher means the pattern wins more often over this horizon."
+  pct_hit:
+    short: Share of outcomes where HIT_FLAG was true (target hit).
+    long: "Pct hit is the fraction of evaluated outcomes where the hit flag was true—i.e. the outcome met the pattern's target or success criterion. It is stored as 0–1 and shown as 0–100%."
+  hit_rate:
+    short: "Hit rate: how often the move exceeded the minimum threshold (same as pct_hit)."
+    long: "Hit rate shows how often the realized move exceeded the pattern's minimum threshold (HIT_FLAG = true). It is the same as pct_hit: the fraction of outcomes that met the success criterion."
+  min_outcome:
+    short: Smallest realized return in the sample.
+    long: "Min outcome is the worst single outcome over this horizon. It shows the downside risk in the sample."
+  max_outcome:
+    short: Largest realized return in the sample.
+    long: "Max outcome is the best single outcome over this horizon. Together with min, it shows the range of results."
+  last_recommendation_ts:
+    short: Timestamp of the most recent recommendation for this symbol/pattern.
+    long: "Last recommendation timestamp is when the latest signal was generated. It tells you how fresh the data is for this row."
+
+# Suggestions page (ranked symbol/pattern, no execution)
+suggestions:
+  rank_score:
+    short: Deterministic rank score (maturity + sample); higher is better.
+    long: "Rank score is the maturity score (0–100) used to order suggestions. Only rows that meet the minimum sample size are shown. Higher score means more data and more reliable metrics."
+  suggestion_score:
+    short: "Transparent score: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Uses horizon 5 if present; else best of {3,5,10}."
+    long: "Suggestion score is computed as: require recs_total ≥ 10 and horizons_covered ≥ 3; then score = 0.6 × maturity_score (from Training Status or a proxy) + 0.2 × (mean_realized_return × 1000) + 0.2 × (pct_positive × 100). We use horizon 5 when present; otherwise we choose the best available horizon from {3, 5, 10} by pct_positive (then mean return). No magic—formula is deterministic and shown in the tooltip."
+  suggestion_score_formula:
+    short: "Score = 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Horizon: 5 if present, else best of {3,5,10}. Requires recs ≥ 10, horizons ≥ 3."
+    long: "The suggestion score uses: (1) maturity_score from Training Status if available, else a proxy from recs_total and horizons_covered; (2) performance at one horizon—we use horizon 5 when present, otherwise the best available of {3, 5, 10} by pct_positive (then mean return). Formula: 0.6×maturity + 0.2×(mean_return×1000) + 0.2×(pct_positive×100). Minimum: recs_total ≥ 10 and at least 3 distinct horizons (e.g. 1, 3, 5, 10, 20) must have outcome data."
+  why_this_is_shown:
+    short: Plain-English reason this candidate appears in the list (deterministic, no LLM).
+    long: "Why this is shown is a fixed template filled with this row's numbers: that it meets the minimums (recs_total ≥ 10, horizons_covered ≥ 3), its maturity score and stage, and its 5-bar mean return and pct positive. It explains why this symbol/pattern is ranked and shown."
+  min_sample:
+    short: Minimum number of recommendations required to appear in suggestions.
+    long: "Minimum sample is the least number of recommendations a symbol/pattern must have to be listed. It filters out very new or thin data so rankings are meaningful."
+  min_recs_required:
+    short: recs_total ≥ 10 required for a symbol/pattern to appear in the ranked list.
+    long: "Minimum recs required means at least 10 recommendations must exist for this market_type/symbol/pattern_id (daily bars) before the row is shown. This avoids ranking on too little data."
+  min_horizons_required:
+    short: At least 3 distinct horizons (e.g. 1, 3, 5, 10, 20 bars) must have outcome data.
+    long: "Minimum horizons required means at least 3 of the standard evaluation windows (1, 3, 5, 10, 20 bars) must have evaluated outcomes. This ensures the score uses meaningful horizon coverage."
+  what_history_suggests:
+    short: Two-line plain-English summary from evaluated history (template-based, no LLM).
+    long: "What history suggests is a fixed template: line 1 = sample size and pct positive at the strongest horizon; line 2 = mean return at that horizon. It summarizes what the data shows—deterministic, not AI-generated."
+  how_to_interpret:
+    short: How to read the horizon table and use this for research (no trading advice).
+    long: "How to interpret: each row is one holding period (1, 3, 5, 10, 20 bars). N = outcome count; mean = average return; pct positive = share of wins. Use this to see which horizon performed best. Research guidance only—not execution advice."
+  horizon_strip:
+    short: Mini strip showing pct_positive or mean_outcome for horizons 1, 3, 5, 10, 20.
+    long: "The horizon strip shows a compact view of performance across the five standard horizons. Each cell is either pct_positive (share of positive returns) or mean_outcome (average return). Green shades = better; red = worse. Helps compare at a glance."
+  explanation_summary:
+    short: Plain-English summary of why this row is ranked here (no LLM).
+    long: "The explanation is a fixed template filled with this row's numbers—recommendations, coverage, maturity stage, and how many horizons have positive average outcomes. It is deterministic, not AI-generated."
+  no_trades_notice:
+    short: This page does not execute or propose trades.
+    long: "Suggestions are informational only. No trades are placed or proposed from this page. Use Training Status and Performance Summary for analysis; execution happens elsewhere."
+  detail_drawer:
+    short: Click a candidate to open the detail drawer with full horizon table and how to interpret.
+    long: "The detail drawer shows the full per-horizon table (N, mean, pct positive, min, max) and short text on how to interpret the numbers. Close by clicking outside or the close control."
+  sample_size:
+    short: Number of recommendations (recs_total) for this symbol/pattern—the sample size.
+    long: "Sample size is recs_total: how many recommendations were generated for this market_type/symbol/pattern_id. Shown so you know how much history the suggestion is based on."
+
+# Morning Brief page
+brief:
+  as_of_ts:
+    short: What is as-of time?
+    long: "As-of time is the timestamp of the data this brief was built from. It tells you how fresh the brief is—e.g. the latest bar or pipeline run that fed into signals, risk, and proposals."
+  pipeline_run_id:
+    short: What is pipeline run id?
+    long: "Pipeline run id is the unique identifier of the daily pipeline run that produced this brief. Use it to trace back to audit logs, order proposals, and the exact run that wrote this brief."
+
+# Today page (composition view)
+today:
+  today_overview:
+    short: "Single view: system status, portfolio situation, and today's candidates from evaluated history."
+    long: "Today composes the most important information into one page: is the system alive, what is the portfolio risk state, what are the top things to look at today (ranked by maturity and outcome history). Research guidance only—no auto-trading."
+  today_score:
+    short: Deterministic score combining maturity and outcome performance for ranking today's candidates.
+    long: "Today score ranks candidates: a blend of data maturity (0–100) and outcome history (mean return and pct positive at 5-bar horizon). Higher score means stronger data and better historical performance. Used only to order the list."
+  why_this_is_shown:
+    short: Plain-English reason this candidate appears in today's list (deterministic, no LLM).
+    long: "Why it's shown is a fixed template: ranked by data maturity and outcome history, with 5-bar horizon mean return and pct positive. It explains why this symbol/pattern is in today's top candidates."
+  candidate:
+    short: A symbol/pattern pair from today's eligible signals, ranked by maturity and outcome history.
+    long: "A candidate is a symbol and pattern that appeared in today's eligible signals (V_SIGNALS_ELIGIBLE_TODAY, daily bars). It is enriched with maturity metrics and outcome performance, then ranked. Shown only if maturity stage is not INSUFFICIENT and minimum sample is met."
+  recent_events:
+    short: Run-level portfolio events (e.g. drawdown stop, first flat).
+    long: "Recent events come from V_PORTFOLIO_RUN_EVENTS: markers like drawdown stop and first time flat (no positions) after a stop. They help you see what happened in recent simulation runs."
+  latest_brief:
+    short: Most recent morning brief for the selected portfolio.
+    long: "Latest brief is the most recent morning brief written for this portfolio (from MORNING_BRIEF). It includes as_of_ts and pipeline_run_id. Expand to see the full brief JSON."
+
+# Home page (hero, quick actions, system at a glance)
+home:
+  hero_headline:
+    short: "Brand and product name for the platform."
+    long: "Market Intelligence Platform is the name of this system. It combines daily-bar research, outcomes-based learning, and explainable suggestions for symbol/pattern candidates."
+  hero_subtext:
+    short: "Three pillars: daily-bar research, outcomes-based learning, explainable suggestions."
+    long: "Daily-bar research means analysis on daily candles; outcomes-based learning means the system learns from realized returns and hit rates; explainable suggestions means ranked candidates with clear metrics and tooltips, not black-box signals."
+  quick_actions:
+    short: "Shortcuts to key views: Portfolio, Morning Brief, Training Status, Suggestions."
+    long: "Quick actions take you directly to the most used pages: view a portfolio (default portfolio 1), read the latest morning brief, open training status by symbol/pattern, or open the ranked suggestions list."
+  system_at_a_glance:
+    short: "Summary of last pipeline run, new evaluations since run, and latest brief timestamp."
+    long: "System at a glance shows live metrics: when the last pipeline run completed and its status, how many new outcome evaluations were added since that run, and when the latest morning brief was generated. Helps you see if data is fresh."
+
+# Live metrics (header + Suggestions)
+live:
+  last_pipeline_run:
+    short: "When the last daily pipeline run completed (or started if not yet completed)."
+    long: "Last pipeline run is the most recent SP_RUN_DAILY_PIPELINE execution from the audit log. It shows how fresh the system is—new recommendations and outcomes are produced by pipeline runs."
+  new_evaluations_since_last_run:
+    short: "Number of outcome rows (RECOMMENDATION_OUTCOMES) calculated after the last pipeline run completed."
+    long: "New evaluations since last run counts how many outcome records have CALCULATED_AT after the last run's completion time. It tells you how much new evidence has been added since the last full run (e.g. from backfills or async evaluation)."
+  data_freshness:
+    short: "How recently outcome data was last updated (max CALCULATED_AT)."
+    long: "Data freshness is when the most recent outcome row was calculated. It shows how up-to-date the suggestions and training data are. Outcomes are updated by the pipeline and by any async evaluation jobs."
+  calculated_at:
+    short: "When this outcome row was computed (plain language: time the evaluation was done)."
+    long: "Calculated at is the timestamp when the system computed this outcome—when the return was realized and recorded. It tells you how fresh each outcome is. Used to measure data freshness and to count new evaluations since the last pipeline run."
+  latest_brief:
+    short: Most recent morning brief for the selected portfolio (as_of_ts).
+    long: "Latest brief is the most recent morning brief for this portfolio. The as_of_ts shows when the brief was built. Shown in the live header when a brief exists."

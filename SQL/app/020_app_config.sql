@@ -27,11 +27,11 @@ using (
            'API key for AlphaVantage market data (set this manually)' as DESCRIPTION
     union all
     select 'DEFAULT_STOCK_SYMBOLS',
-           'AAPL,MSFT',
+           'AAPL,MSFT,JNJ,IWM,XLK,JPM,SPY,NVDA,META,KO,QQQ,PG,XOM,AMZN,GOOGL,TSLA,DIA,XLF',
            'Comma-separated list of stock symbols to ingest from AlphaVantage'
     union all
     select 'DEFAULT_FX_PAIRS',
-           'EUR/USD,USD/JPY',
+           'EUR/USD,USD/JPY,USD/CAD,AUD/USD,GBP/USD,USD/CHF',
            'Comma-separated list of FX pairs to ingest from AlphaVantage'
     union all
     select 'PATTERN_MIN_TRADES',
@@ -49,6 +49,22 @@ using (
     select 'SIM_MIN_SAMPLE_SIZE',
            '30',
            'Minimum sample size per pattern/market type/horizon before simulation readiness'
+    union all
+    select 'SLIPPAGE_BPS',
+           '2',
+           'Estimated slippage (bps) applied to trade price'
+    union all
+    select 'FEE_BPS',
+           '1',
+           'Transaction fee (bps) applied to trade notional'
+    union all
+    select 'MIN_FEE',
+           '0',
+           'Optional minimum fee per trade (absolute amount)'
+    union all
+    select 'SPREAD_BPS',
+           '0',
+           'Optional bid/ask spread (bps, applied half per side)'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

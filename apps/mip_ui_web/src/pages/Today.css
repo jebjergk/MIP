@@ -1,0 +1,260 @@
+/* Today page: one killer view — status, portfolio, insights, brief */
+
+.today-intro {
+  color: #555;
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+.today-status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.today-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.today-status-dot--ok {
+  background: #2e7d32;
+}
+
+.today-status-dot--degraded {
+  background: #ed6c02;
+}
+
+.today-status-message {
+  color: #333;
+}
+
+.today-portfolio-picker {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.today-portfolio-picker-label {
+  font-weight: 500;
+  color: #555;
+}
+
+.today-portfolio-picker select {
+  font-size: 0.9rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.today-degraded-notice {
+  padding: 1rem;
+  background: #fff3e0;
+  border: 1px solid #ffb74d;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.today-degraded-notice p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #333;
+}
+
+.today-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .today-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.today-portfolio h2,
+.today-insights h2,
+.today-brief h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.today-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+  margin-bottom: 0.75rem;
+}
+
+.today-card-risk {
+  border-left: 4px solid #c62828;
+}
+
+.today-card-events {
+  border-left: 4px solid #1565c0;
+}
+
+.today-card h3 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.today-risk-summary {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.95rem;
+}
+
+.today-risk-reason {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.today-events-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.9rem;
+}
+
+.today-events-list li {
+  margin-bottom: 0.25rem;
+}
+
+.today-empty-inline {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.today-insights-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.today-insight-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.today-insight-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.today-insight-rank {
+  font-weight: 700;
+  color: #666;
+}
+
+.today-insight-symbol {
+  font-weight: 600;
+}
+
+.today-insight-pattern,
+.today-insight-market {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.today-insight-stage {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.today-insight-stage--insufficient {
+  background: #ffcdd2;
+  color: #b71c1c;
+}
+
+.today-insight-stage--warming-up {
+  background: #ffe0b2;
+  color: #e65100;
+}
+
+.today-insight-stage--learning {
+  background: #bbdefb;
+  color: #0d47a1;
+}
+
+.today-insight-stage--confident {
+  background: #c8e6c9;
+  color: #1b5e20;
+}
+
+.today-insight-score {
+  font-weight: 500;
+  margin-left: auto;
+}
+
+.today-insight-maturity-bar {
+  height: 6px;
+  background: #e0e0e0;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.today-insight-maturity-fill {
+  height: 100%;
+  background: #2e7d32;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.today-insight-what,
+.today-insight-why {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.9rem;
+  color: #333;
+  line-height: 1.4;
+}
+
+.today-insight-why {
+  color: #555;
+}
+
+.today-brief {
+  margin-top: 1.5rem;
+}
+
+.today-brief-details {
+  font-size: 0.95rem;
+}
+
+.today-brief-details summary {
+  cursor: pointer;
+  color: #1565c0;
+  padding: 0.5rem 0;
+}
+
+.today-brief-json {
+  margin: 0.5rem 0 0 0;
+  padding: 1rem;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

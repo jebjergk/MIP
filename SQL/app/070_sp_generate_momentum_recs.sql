@@ -56,6 +56,9 @@ begin
         'START',
         null,
         object_construct(
+            'scope', 'MARKET_TYPE',
+            'scope_key', :P_MARKET_TYPE,
+            'step_name', 'recommendations',
             'market_type', :P_MARKET_TYPE,
             'interval_minutes', :P_INTERVAL_MINUTES,
             'min_return', :P_MIN_RETURN,
@@ -563,6 +566,9 @@ begin
         'SUCCESS',
         :v_inserted,
         object_construct(
+            'scope', 'MARKET_TYPE',
+            'scope_key', :P_MARKET_TYPE,
+            'step_name', 'recommendations',
             'patterns_processed', :v_patterns_processed,
             'market_type', :P_MARKET_TYPE,
             'interval_minutes', :P_INTERVAL_MINUTES,
@@ -583,6 +589,9 @@ exception
             'FAIL',
             :v_inserted,
             object_construct(
+                'scope', 'MARKET_TYPE',
+                'scope_key', :P_MARKET_TYPE,
+                'step_name', 'recommendations',
                 'patterns_processed', :v_patterns_processed,
                 'market_type', :P_MARKET_TYPE,
                 'interval_minutes', :P_INTERVAL_MINUTES

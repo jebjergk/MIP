@@ -1,0 +1,518 @@
+/* Portfolio Overview: operator clarity cards — "where do we stand right now?" */
+
+/* Freshness header */
+.portfolio-freshness-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.portfolio-freshness-header .freshness-badge {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.portfolio-freshness-header .freshness-badge.freshness-current {
+  background: #198754;
+  color: white;
+}
+
+.portfolio-freshness-header .freshness-badge.freshness-stale {
+  background: #ff9800;
+  color: white;
+}
+
+.portfolio-freshness-header .freshness-text {
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.portfolio-overview-intro {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: #444;
+}
+
+.portfolio-overview-semantics {
+  margin: 0 0 1rem 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.portfolio-overview-semantics .info-tooltip-wrap {
+  margin-left: 0.2rem;
+}
+
+.portfolio-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.portfolio-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+  min-width: 0; /* allow grid item to shrink so overflow scroll works */
+}
+
+.portfolio-card-cash-exposure {
+  border-left: 4px solid #2e7d32;
+}
+
+.portfolio-card-positions {
+  border-left: 4px solid #1565c0;
+}
+
+.portfolio-positions-as-of {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  color: #666;
+}
+
+/* Positions that closed on the latest bar — distinct from still-open */
+.portfolio-position-closed-this-bar {
+  background-color: #fff8e1;
+  color: #5d4037;
+}
+
+.portfolio-position-closed-this-bar td {
+  border-top: 1px solid #ffe0b2;
+}
+
+/* Trades from the latest run */
+.portfolio-trade-from-last-run {
+  background-color: #e8f5e9;
+}
+
+.portfolio-trade-from-last-run td {
+  border-top: 1px solid #c8e6c9;
+}
+
+.portfolio-card-trades {
+  border-left: 4px solid #6a1b9a;
+}
+
+.portfolio-card-risk-gate {
+  border-left: 4px solid #c62828;
+}
+
+.portfolio-card-title {
+  font-size: 1rem;
+  margin: 0 0 0.75rem 0;
+  color: #333;
+}
+
+.portfolio-card-dl {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.portfolio-card-dl dt {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  color: #555;
+}
+
+.portfolio-card-dl dt:first-of-type {
+  margin-top: 0;
+}
+
+.portfolio-card-dl dd {
+  margin: 0.15rem 0 0 0;
+  color: #333;
+}
+
+.portfolio-card-meta {
+  font-size: 0.8rem;
+  color: #666;
+  margin-top: 0.5rem;
+}
+
+.portfolio-card-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.portfolio-card-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.portfolio-card-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.portfolio-card-table th,
+.portfolio-card-table td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.portfolio-card-table th {
+  font-weight: 600;
+  color: #555;
+}
+
+.portfolio-card-risk-summary {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.portfolio-card-risk-summary strong {
+  color: #333;
+}
+
+/* Risk Gate panel */
+.risk-gate-headline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.risk-gate-mode {
+  opacity: 0.5;
+}
+
+.risk-gate-mode--current {
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* Risk Strategy (under Risk pillar header) */
+.risk-strategy-block {
+  margin: 0.75rem 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid #e8e8e8;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.risk-strategy-summary {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.risk-strategy-rules {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.risk-strategy-rule {
+  display: contents;
+}
+
+.risk-strategy-rule-label {
+  font-weight: 600;
+  color: #555;
+}
+
+.risk-strategy-rule-value {
+  color: #333;
+}
+
+.risk-strategy-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.risk-strategy-chip {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.risk-strategy-chip--safe {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.risk-strategy-chip--warning {
+  background: #fff8e1;
+  color: #f57c00;
+}
+
+.risk-strategy-chip--stopped {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.risk-strategy-reason {
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.risk-gate-subtext {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.risk-gate-matrix {
+  margin-bottom: 0.5rem;
+}
+
+.risk-gate-reason {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: #333;
+}
+
+.risk-gate-what-to-do {
+  margin: 0 0 0.75rem 0;
+}
+
+.risk-gate-what-to-do-label {
+  font-weight: 600;
+  margin-right: 0.25rem;
+}
+
+.risk-gate-bullets {
+  margin: 0.25rem 0 0 1rem;
+  padding: 0;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.risk-gate-bullets li {
+  margin-bottom: 0.2rem;
+}
+
+.risk-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.risk-gate-link {
+  font-size: 0.9rem;
+  color: #1565c0;
+  text-decoration: none;
+}
+
+.risk-gate-link:hover {
+  text-decoration: underline;
+}
+
+.risk-gate-link--button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: #1565c0;
+}
+
+.risk-gate-link--button:hover {
+  text-decoration: underline;
+}
+
+/* Restart episode modal */
+.risk-gate-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.risk-gate-modal {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.25rem;
+  max-width: 420px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.risk-gate-modal h4 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+}
+
+.risk-gate-modal p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.risk-gate-modal-script {
+  display: block;
+  margin: 0.5rem 0 1rem 0;
+  padding: 0.5rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.risk-gate-modal-close {
+  margin-top: 1rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.risk-gate-explain-this {
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  color: #1565c0;
+  background: transparent;
+  border: 1px solid #1565c0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.risk-gate-explain-this:hover {
+  background: #e3f2fd;
+}
+
+/* Active period mini-grid (top of portfolio detail) */
+.portfolio-active-period {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fafafa;
+  border-left: 4px solid #1565c0;
+}
+
+.portfolio-active-period-loading {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.875rem;
+  color: #666;
+}
+
+/* Portfolio list: health dot */
+.portfolio-list-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9e9e9e;
+}
+
+.portfolio-list-dot--active {
+  background: #2e7d32;
+}
+
+/* Portfolio list: gate state traffic light (SAFE / CAUTION / STOPPED) */
+.portfolio-list-dot--gate-safe {
+  background: #2e7d32;
+}
+
+.portfolio-list-dot--gate-caution {
+  background: #f9a825;
+}
+
+.portfolio-list-dot--gate-stopped {
+  background: #c62828;
+}
+
+.portfolio-list-gate-label {
+  margin-left: 0.35rem;
+  font-size: 0.85rem;
+  color: #333;
+}
+
+/* Cumulative Performance (timeline) */
+.portfolio-cumulative-performance {
+  margin: 2rem 0 1rem;
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.portfolio-cumulative-performance h2 {
+  font-size: 1.25rem;
+  margin: 0 0 0.75rem 0;
+  color: #333;
+}
+
+.portfolio-cumulative-kpi {
+  display: inline-flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border-radius: 6px;
+  border-left: 4px solid #2e7d32;
+}
+
+.portfolio-cumulative-kpi .kpi-label {
+  font-size: 0.85rem;
+  color: #555;
+  cursor: help;
+}
+
+.portfolio-cumulative-kpi .kpi-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #2e7d32;
+}
+
+.portfolio-cumulative-chart {
+  margin: 1rem 0;
+  min-height: 220px;
+}
+
+.portfolio-cumulative-chart-legend {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.portfolio-cumulative-chart-legend .legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.portfolio-cumulative-chart-legend span + span {
+  margin-left: 1rem;
+}
+
+.portfolio-cumulative-bars h4 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem 0;
+  color: #555;
+}
+
+.portfolio-cumulative-bars {
+  margin-top: 1rem;
+}
+
+/* Episodes section */
+.episode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}

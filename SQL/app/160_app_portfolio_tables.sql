@@ -108,6 +108,7 @@ update MIP.APP.PORTFOLIO
 create table if not exists MIP.APP.PORTFOLIO_POSITIONS (
     PORTFOLIO_ID     number        not null,
     RUN_ID           string        not null,
+    EPISODE_ID       number,                     -- Links position to episode lifecycle
     SYMBOL           string        not null,
     MARKET_TYPE      string        not null,
     INTERVAL_MINUTES number        not null,
@@ -127,6 +128,9 @@ create table if not exists MIP.APP.PORTFOLIO_POSITIONS (
     )
 );
 
+-- Add EPISODE_ID column if missing (migration for existing deployments)
+alter table MIP.APP.PORTFOLIO_POSITIONS add column if not exists EPISODE_ID number;
+
 -----------------------------
 -- 3. PORTFOLIO_TRADES
 -----------------------------
@@ -135,6 +139,7 @@ create table if not exists MIP.APP.PORTFOLIO_TRADES (
     PROPOSAL_ID      number,
     PORTFOLIO_ID     number        not null,
     RUN_ID           string        not null,
+    EPISODE_ID       number,                     -- Links trade to episode lifecycle
     SYMBOL           string        not null,
     MARKET_TYPE      string        not null,
     INTERVAL_MINUTES number        not null,
@@ -152,6 +157,8 @@ create table if not exists MIP.APP.PORTFOLIO_TRADES (
 
 alter table if exists MIP.APP.PORTFOLIO_TRADES
     add column if not exists PROPOSAL_ID number;
+alter table if exists MIP.APP.PORTFOLIO_TRADES
+    add column if not exists EPISODE_ID number;
 
 -----------------------------
 -- 4. PORTFOLIO_DAILY
@@ -159,6 +166,7 @@ alter table if exists MIP.APP.PORTFOLIO_TRADES
 create table if not exists MIP.APP.PORTFOLIO_DAILY (
     PORTFOLIO_ID     number        not null,
     RUN_ID           string        not null,
+    EPISODE_ID       number,                     -- Links daily snapshot to episode lifecycle
     TS               timestamp_ntz not null,
     CASH             number(18,2)  not null,
     EQUITY_VALUE     number(18,2)  not null,
@@ -172,6 +180,9 @@ create table if not exists MIP.APP.PORTFOLIO_DAILY (
     CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_DAILY primary key (PORTFOLIO_ID, RUN_ID, TS)
 );
+
+-- Add EPISODE_ID column if missing (migration for existing deployments)
+alter table MIP.APP.PORTFOLIO_DAILY add column if not exists EPISODE_ID number;
 
 -----------------------------
 -- 5. V_OPPORTUNITY_FEED

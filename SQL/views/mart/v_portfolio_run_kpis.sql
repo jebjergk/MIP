@@ -6,11 +6,18 @@ use database MIP;
 
 create or replace view MIP.MART.V_PORTFOLIO_RUN_KPIS as
 with daily_dedup as (
+    -- Filter PORTFOLIO_DAILY to only include rows for the active episode.
+    -- Uses EPISODE_ID column if populated, otherwise falls back to timestamp comparison.
     select d.*
     from MIP.APP.PORTFOLIO_DAILY d
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
       on e.PORTFOLIO_ID = d.PORTFOLIO_ID
-    where e.EPISODE_ID is null or d.TS >= e.START_TS
+    where (
+        -- Prefer EPISODE_ID match if column is populated
+        (d.EPISODE_ID is not null and d.EPISODE_ID = e.EPISODE_ID)
+        -- Fallback to timestamp comparison for legacy data
+        or (d.EPISODE_ID is null and (e.EPISODE_ID is null or d.TS >= e.START_TS))
+    )
     qualify row_number() over (
         partition by d.PORTFOLIO_ID, d.RUN_ID, d.TS
         order by d.CREATED_AT desc, d.TS desc
@@ -20,6 +27,7 @@ daily_base as (
     select
         d.PORTFOLIO_ID,
         d.RUN_ID,
+        d.EPISODE_ID,
         d.TS,
         d.CASH,
         d.EQUITY_VALUE,
@@ -87,6 +95,7 @@ agg as (
     select
         PORTFOLIO_ID,
         RUN_ID,
+        max(EPISODE_ID) as EPISODE_ID,
         min(TS) as FROM_TS,
         max(TS) as TO_TS,
         count(*) as TRADING_DAYS,
@@ -117,6 +126,7 @@ agg as (
 select
     PORTFOLIO_ID,
     RUN_ID,
+    EPISODE_ID,
     FROM_TS,
     TO_TS,
     TRADING_DAYS,

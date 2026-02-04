@@ -69,6 +69,7 @@ declare
     v_error_query_id string;
 begin
     -- Declare episode variables
+    let v_episode_id number;
     let v_episode_start_ts timestamp_ntz;
     
     select
@@ -93,11 +94,11 @@ begin
         on prof.PROFILE_ID = p.PROFILE_ID
      where p.PORTFOLIO_ID = :v_portfolio_id;
 
-    -- Get the active episode start timestamp (if any)
-    -- This is the floor for simulation: never process data before the current episode started
+    -- Get the active episode ID and start timestamp
+    -- This scopes all data to the current episode lifecycle
     begin
-        select START_TS
-          into :v_episode_start_ts
+        select EPISODE_ID, START_TS
+          into :v_episode_id, :v_episode_start_ts
           from MIP.APP.PORTFOLIO_EPISODE
          where PORTFOLIO_ID = :v_portfolio_id
            and STATUS = 'ACTIVE'
@@ -105,6 +106,7 @@ begin
          limit 1;
     exception
         when other then
+            v_episode_id := null;
             v_episode_start_ts := null;
     end;
 
@@ -133,6 +135,7 @@ begin
             'from_ts', :v_from_ts,
             'to_ts', :v_to_ts,
             'effective_from_ts', :v_effective_from_ts,
+            'episode_id', :v_episode_id,
             'episode_start_ts', :v_episode_start_ts,
             'profile_id', :v_profile_id,
             'max_positions', :v_max_positions,
@@ -316,6 +319,7 @@ begin
                         select
                             :v_portfolio_id as PORTFOLIO_ID,
                             :v_run_id as RUN_ID,
+                            :v_episode_id as EPISODE_ID,
                             :v_position_symbol as SYMBOL,
                             :v_position_market_type as MARKET_TYPE,
                             1440 as INTERVAL_MINUTES,
@@ -340,6 +344,7 @@ begin
                         insert (
                             PORTFOLIO_ID,
                             RUN_ID,
+                            EPISODE_ID,
                             SYMBOL,
                             MARKET_TYPE,
                             INTERVAL_MINUTES,
@@ -355,6 +360,7 @@ begin
                         values (
                             source.PORTFOLIO_ID,
                             source.RUN_ID,
+                            source.EPISODE_ID,
                             source.SYMBOL,
                             source.MARKET_TYPE,
                             source.INTERVAL_MINUTES,
@@ -504,6 +510,7 @@ begin
                                     select
                                         :v_portfolio_id as PORTFOLIO_ID,
                                         :v_run_id as RUN_ID,
+                                        :v_episode_id as EPISODE_ID,
                                         :v_signal_symbol as SYMBOL,
                                         :v_signal_market_type as MARKET_TYPE,
                                         1440 as INTERVAL_MINUTES,
@@ -528,6 +535,7 @@ begin
                                     insert (
                                         PORTFOLIO_ID,
                                         RUN_ID,
+                                        EPISODE_ID,
                                         SYMBOL,
                                         MARKET_TYPE,
                                         INTERVAL_MINUTES,
@@ -543,6 +551,7 @@ begin
                                     values (
                                         source.PORTFOLIO_ID,
                                         source.RUN_ID,
+                                        source.EPISODE_ID,
                                         source.SYMBOL,
                                         source.MARKET_TYPE,
                                         source.INTERVAL_MINUTES,
@@ -567,6 +576,7 @@ begin
                                 insert into MIP.APP.PORTFOLIO_POSITIONS (
                                     PORTFOLIO_ID,
                                     RUN_ID,
+                                    EPISODE_ID,
                                     SYMBOL,
                                     MARKET_TYPE,
                                     INTERVAL_MINUTES,
@@ -581,6 +591,7 @@ begin
                                 values (
                                     :v_portfolio_id,
                                     :v_run_id,
+                                    :v_episode_id,
                                     :v_signal_symbol,
                                     :v_signal_market_type,
                                     1440,
@@ -658,6 +669,7 @@ begin
     insert into MIP.APP.PORTFOLIO_DAILY (
         PORTFOLIO_ID,
         RUN_ID,
+        EPISODE_ID,
         TS,
         CASH,
         EQUITY_VALUE,
@@ -696,6 +708,7 @@ begin
     select
         :v_portfolio_id,
         :v_run_id,
+        :v_episode_id,
         TS,
         CASH,
         EQUITY_VALUE,

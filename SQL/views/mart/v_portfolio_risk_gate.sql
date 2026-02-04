@@ -121,3 +121,6 @@ left join run_events re
  and re.RUN_ID = coalesce(ra.LATEST_RUN_ID, lk.RUN_ID)
 left join open_positions op
   on op.PORTFOLIO_ID = p.PORTFOLIO_ID;
+
+  grant select on view MIP.MART.V_PORTFOLIO_RISK_GATE to role MIP_UI_API_ROLE;
+

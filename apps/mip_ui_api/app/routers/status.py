@@ -14,18 +14,29 @@ router = APIRouter(tags=["status"])
 
 
 def _get_latest_pipeline_run(conn):
-    """Get the latest successful pipeline run info for freshness checks."""
+    """
+    Get the latest successful pipeline run info for freshness checks.
+    
+    Uses the audit log as the source of truth (same as briefs.py staleness check).
+    This ensures consistency across the UI - the same run ID is considered "latest"
+    everywhere (briefs, portfolios, status badge).
+    
+    Note: We use audit log, NOT PORTFOLIO.LAST_SIMULATION_RUN_ID, because that field
+    is set by a different procedure (SP_RUN_PORTFOLIO_SIMULATION) with a different run ID.
+    """
     try:
         cur = conn.cursor()
-        # Get latest run from any active portfolio
+        # Get latest successful pipeline run from audit log
+        # This matches the staleness check in briefs.py
         cur.execute("""
-            select
-                LAST_SIMULATION_RUN_ID as run_id,
-                LAST_SIMULATED_AT as run_ts
-            from MIP.APP.PORTFOLIO
-            where STATUS = 'ACTIVE'
-              and LAST_SIMULATION_RUN_ID is not null
-            order by LAST_SIMULATED_AT desc
+            select 
+                RUN_ID as run_id,
+                EVENT_TS as run_ts
+            from MIP.APP.MIP_AUDIT_LOG
+            where EVENT_TYPE = 'PIPELINE'
+              and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+              and STATUS in ('SUCCESS', 'SUCCESS_WITH_SKIPS')
+            order by EVENT_TS desc
             limit 1
         """)
         row = cur.fetchone()

@@ -18,6 +18,8 @@ declare
     v_latest_market_bars_ts_before timestamp_ntz;
     v_latest_market_bars_ts_after timestamp_ntz;
     v_has_new_bars boolean := false;
+    v_has_unprocessed_data boolean := false;
+    v_last_successful_effective_to_ts timestamp_ntz;
     v_skip_downstream boolean := false;
     v_any_step_skipped_or_degraded boolean := false;
     v_pipeline_status_reason string;
@@ -183,13 +185,46 @@ begin
       into :v_latest_market_bars_ts_after
       from MIP.MART.MARKET_BARS;
     v_latest_market_bars_ts := :v_latest_market_bars_ts_after;
+    
+    -- Check if ingestion added new bars THIS run
     v_has_new_bars := (
         :v_latest_market_bars_ts_after is not null
         and :v_latest_market_bars_ts_before is not null
         and :v_latest_market_bars_ts_after > :v_latest_market_bars_ts_before
     );
+    
+    -- IDEMPOTENCY FIX: Also check if market data is newer than last SUCCESSFUL (non-skipped) pipeline run.
+    -- This allows re-runs after a failed first run to still process the data.
+    -- Without this, if run 1 ingests data but fails mid-way, run 2 sees no "new" bars and skips everything.
+    begin
+        select max(DETAILS:effective_to_ts::timestamp_ntz)
+          into :v_last_successful_effective_to_ts
+          from MIP.APP.MIP_AUDIT_LOG
+         where EVENT_TYPE = 'PIPELINE'
+           and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+           and STATUS = 'SUCCESS'  -- Only fully successful runs, not SUCCESS_WITH_SKIPS
+           and RUN_ID != :v_run_id;  -- Exclude current run
+    exception
+        when other then
+            v_last_successful_effective_to_ts := null;
+    end;
+    
+    -- We have unprocessed data if:
+    -- 1. New bars were ingested this run, OR
+    -- 2. Latest market data is newer than last successful run's effective_to_ts
+    v_has_unprocessed_data := (
+        :v_has_new_bars
+        or (
+            :v_latest_market_bars_ts_after is not null
+            and (
+                :v_last_successful_effective_to_ts is null
+                or :v_latest_market_bars_ts_after > :v_last_successful_effective_to_ts
+            )
+        )
+    );
+    
     v_skip_downstream := (
-        not :v_has_new_bars
+        not :v_has_unprocessed_data
         and :v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS')
     );
     if (:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS')) then
@@ -443,6 +478,8 @@ begin
             'effective_to_ts', :v_effective_to_ts,
             'latest_market_bars_ts', :v_latest_market_bars_ts,
             'has_new_bars', :v_has_new_bars,
+            'has_unprocessed_data', :v_has_unprocessed_data,
+            'last_successful_effective_to_ts', :v_last_successful_effective_to_ts,
             'latest_market_bars_ts_before', :v_latest_market_bars_ts_before,
             'latest_market_bars_ts_after', :v_latest_market_bars_ts_after,
             'pipeline_status_reason', :v_pipeline_status_reason,
@@ -1099,6 +1136,8 @@ begin
         'effective_to_ts', :v_effective_to_ts,
         'latest_market_bars_ts', :v_latest_market_bars_ts,
         'has_new_bars', :v_has_new_bars,
+        'has_unprocessed_data', :v_has_unprocessed_data,
+        'last_successful_effective_to_ts', :v_last_successful_effective_to_ts,
         'latest_market_bars_ts_before', :v_latest_market_bars_ts_before,
         'latest_market_bars_ts_after', :v_latest_market_bars_ts_after,
         'pipeline_status_reason', :v_pipeline_status_reason,

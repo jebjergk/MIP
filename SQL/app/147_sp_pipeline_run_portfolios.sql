@@ -17,6 +17,11 @@ execute as caller
 as
 $$
 declare
+    -- Copy parameters to local variables to avoid binding issues in nested blocks
+    v_portfolio_id number := :P_PORTFOLIO_ID;
+    v_from_ts timestamp_ntz := :P_FROM_TS;
+    v_to_ts timestamp_ntz := :P_TO_TS;
+    v_parent_run_id string := :P_PARENT_RUN_ID;
     v_run_id string := coalesce(:P_RUN_ID, nullif(current_query_tag(), ''), uuid_string());
     v_step_start timestamp_ntz;
     v_step_end timestamp_ntz;
@@ -32,9 +37,9 @@ begin
 
     begin
         v_sim_result := (call MIP.APP.SP_RUN_PORTFOLIO_SIMULATION(
-            :P_PORTFOLIO_ID,
-            :P_FROM_TS,
-            :P_TO_TS
+            :v_portfolio_id,
+            :v_from_ts,
+            :v_to_ts
         ));
 
         v_sim_run_id := v_sim_result:run_id::string;
@@ -48,7 +53,7 @@ begin
             select count(*)
               into :v_rows_after
               from MIP.APP.PORTFOLIO_DAILY
-             where PORTFOLIO_ID = :P_PORTFOLIO_ID
+             where PORTFOLIO_ID = :v_portfolio_id
                and RUN_ID = :v_sim_run_id;
         else
             v_rows_after := null;
@@ -58,18 +63,18 @@ begin
         v_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
 
         call MIP.APP.SP_AUDIT_LOG_STEP(
-            :P_PARENT_RUN_ID,
+            :v_parent_run_id,
             'PORTFOLIO_SIMULATION',
             :v_audit_status,
             :v_rows_after,
             object_construct(
                 'step_name', 'portfolio_simulation',
                 'scope', 'PORTFOLIO',
-                'scope_key', to_varchar(:P_PORTFOLIO_ID),
-                'portfolio_id', :P_PORTFOLIO_ID,
+                'scope_key', to_varchar(:v_portfolio_id),
+                'portfolio_id', :v_portfolio_id,
                 'portfolio_run_id', :v_sim_run_id,
-                'from_ts', :P_FROM_TS,
-                'to_ts', :P_TO_TS,
+                'from_ts', :v_from_ts,
+                'to_ts', :v_to_ts,
                 'started_at', :v_step_start,
                 'completed_at', :v_step_end,
                 'daily_rows', :v_rows_after,
@@ -90,17 +95,17 @@ begin
             v_error_query_id := last_query_id();
             
             call MIP.APP.SP_AUDIT_LOG_STEP(
-                :P_PARENT_RUN_ID,
+                :v_parent_run_id,
                 'PORTFOLIO_SIMULATION',
                 'FAIL',
                 null,
                 object_construct(
                     'step_name', 'portfolio_simulation',
                     'scope', 'PORTFOLIO',
-                    'scope_key', to_varchar(:P_PORTFOLIO_ID),
-                    'portfolio_id', :P_PORTFOLIO_ID,
-                    'from_ts', :P_FROM_TS,
-                    'to_ts', :P_TO_TS,
+                    'scope_key', to_varchar(:v_portfolio_id),
+                    'portfolio_id', :v_portfolio_id,
+                    'from_ts', :v_from_ts,
+                    'to_ts', :v_to_ts,
                     'started_at', :v_step_start,
                     'completed_at', :v_step_end
                 ),
@@ -109,9 +114,9 @@ begin
                 :v_error_query_id,       -- P_ERROR_QUERY_ID
                 object_construct(        -- P_ERROR_CONTEXT
                     'proc_name', 'SP_PIPELINE_RUN_PORTFOLIO',
-                    'portfolio_id', :P_PORTFOLIO_ID,
+                    'portfolio_id', :v_portfolio_id,
                     'run_id', :v_run_id,
-                    'parent_run_id', :P_PARENT_RUN_ID
+                    'parent_run_id', :v_parent_run_id
                 ),
                 :v_duration_ms
             );

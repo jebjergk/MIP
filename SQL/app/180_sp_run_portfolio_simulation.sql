@@ -68,6 +68,9 @@ declare
     v_effective_from_ts timestamp_ntz;
     v_error_query_id string;
 begin
+    -- Declare episode variables
+    let v_episode_start_ts timestamp_ntz;
+    
     select
         p.STARTING_CASH,
         p.PROFILE_ID,
@@ -90,11 +93,33 @@ begin
         on prof.PROFILE_ID = p.PROFILE_ID
      where p.PORTFOLIO_ID = :v_portfolio_id;
 
-    -- After a hard reset, LAST_SIMULATION_RUN_ID is null. Do not backfill: simulate only from
-    -- the start of the last day so the pipeline does not repopulate positions/trades/daily.
+    -- Get the active episode start timestamp (if any)
+    -- This is the floor for simulation: never process data before the current episode started
+    begin
+        select START_TS
+          into :v_episode_start_ts
+          from MIP.APP.PORTFOLIO_EPISODE
+         where PORTFOLIO_ID = :v_portfolio_id
+           and STATUS = 'ACTIVE'
+         order by START_TS desc
+         limit 1;
+    exception
+        when other then
+            v_episode_start_ts := null;
+    end;
+
+    -- Determine effective_from_ts with episode boundary awareness:
+    -- 1. If no last simulation run (fresh reset), use today only
+    -- 2. Otherwise, use the LATER of (episode start, requested from_ts)
+    -- This prevents re-processing historical data from before a reset
     if (v_last_sim_run_id is null) then
+        -- Fresh reset: only simulate today
         v_effective_from_ts := date_trunc('day', v_to_ts);
+    elseif (v_episode_start_ts is not null) then
+        -- Has active episode: use the later of episode start or requested from
+        v_effective_from_ts := greatest(:v_episode_start_ts, :v_from_ts);
     else
+        -- No episode tracking: use requested from
         v_effective_from_ts := v_from_ts;
     end if;
 
@@ -108,6 +133,7 @@ begin
             'from_ts', :v_from_ts,
             'to_ts', :v_to_ts,
             'effective_from_ts', :v_effective_from_ts,
+            'episode_start_ts', :v_episode_start_ts,
             'profile_id', :v_profile_id,
             'max_positions', :v_max_positions,
             'max_position_pct', :v_max_position_pct,

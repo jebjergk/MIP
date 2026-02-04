@@ -27,6 +27,8 @@ create table if not exists MIP.AGENT_OUT.MORNING_BRIEF (
     constraint UQ_MORNING_BRIEF_AS_OF_RUN_AGENT unique (PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME)
 );
 
--- Migration: Add default to CREATED_AT for existing deployments
-alter table MIP.AGENT_OUT.MORNING_BRIEF alter column CREATED_AT set default current_timestamp();
+-- Migration for existing deployments: add columns if missing.
+-- Note: Snowflake doesn't support ALTER COLUMN SET DEFAULT, so we rely on SP_WRITE_MORNING_BRIEF
+-- to always set CREATED_AT explicitly. The default in CREATE TABLE only applies to fresh deployments.
+alter table MIP.AGENT_OUT.MORNING_BRIEF add column if not exists CREATED_AT timestamp_ntz;
 alter table MIP.AGENT_OUT.MORNING_BRIEF add column if not exists UPDATED_AT timestamp_ntz;

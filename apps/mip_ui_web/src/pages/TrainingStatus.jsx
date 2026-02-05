@@ -5,6 +5,7 @@ import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
+import TrainingTimeline from '../components/TrainingTimeline'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
@@ -44,6 +45,7 @@ export default function TrainingStatus() {
   const [marketTypeFilter, setMarketTypeFilter] = useState('')
   const [symbolSearch, setSymbolSearch] = useState('')
   const [patternIdFilter, setPatternIdFilter] = useState('')
+  const [selectedRow, setSelectedRow] = useState(null)
   const { setContext } = useExplainCenter()
 
   useEffect(() => {
@@ -183,8 +185,23 @@ export default function TrainingStatus() {
               const score = get(row, 'maturity_score') != null ? Number(get(row, 'maturity_score')) : 0
               const stageKey = stageGlossaryKey(maturityStage)
               const stageTitle = explainMode ? (getGlossaryEntry(SCOPE, stageKey)?.short ?? maturityStage) : undefined
+              const rowKey = `${get(row, 'market_type')}-${get(row, 'symbol')}-${get(row, 'pattern_id')}`
+              const isSelected = selectedRow && 
+                selectedRow.symbol === get(row, 'symbol') && 
+                selectedRow.market_type === get(row, 'market_type') && 
+                selectedRow.pattern_id === get(row, 'pattern_id')
               return (
-                <tr key={i}>
+                <tr 
+                  key={rowKey}
+                  className={`training-row ${isSelected ? 'training-row-selected' : ''}`}
+                  onClick={() => setSelectedRow({
+                    symbol: get(row, 'symbol'),
+                    market_type: get(row, 'market_type'),
+                    pattern_id: get(row, 'pattern_id'),
+                  })}
+                  style={{ cursor: 'pointer' }}
+                  title="Click to view training timeline"
+                >
                   <td>{get(row, 'market_type') ?? '—'}</td>
                   <td>{get(row, 'symbol') ?? '—'}</td>
                   <td>{get(row, 'pattern_id') ?? '—'}</td>
@@ -227,6 +244,24 @@ export default function TrainingStatus() {
           explanation={rows.length === 0 ? 'Training status comes from recommendation and outcome data. Run the pipeline to populate it.' : 'Try a different market type or symbol search.'}
           reasons={rows.length === 0 ? ['Pipeline has not run yet.', 'No recommendations or outcomes in MIP.APP.'] : []}
         />
+      )}
+
+      {/* Training Timeline panel */}
+      {selectedRow && (
+        <TrainingTimeline
+          symbol={selectedRow.symbol}
+          marketType={selectedRow.market_type}
+          patternId={selectedRow.pattern_id}
+          horizonBars={5}
+          onClose={() => setSelectedRow(null)}
+        />
+      )}
+
+      {/* Hint text when no row is selected */}
+      {!selectedRow && filteredRows.length > 0 && (
+        <p className="training-timeline-hint">
+          Click on a row above to view its training timeline and confidence over time.
+        </p>
       )}
     </>
   )

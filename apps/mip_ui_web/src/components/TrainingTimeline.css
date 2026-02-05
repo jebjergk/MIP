@@ -1,0 +1,221 @@
+/* TrainingTimeline component styles */
+
+.training-timeline-panel {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.training-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.training-timeline-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #333;
+}
+
+.training-timeline-subtitle {
+  margin: 0.25rem 0 0 0;
+  font-size: 0.85rem;
+  color: #666;
+  font-style: italic;
+}
+
+.timeline-close-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.timeline-close-btn:hover {
+  color: #333;
+}
+
+/* Training Journey card (narrative) */
+.training-journey-card {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.training-journey-card h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #495057;
+}
+
+.training-journey-bullets {
+  margin: 0;
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
+.training-journey-bullets li {
+  font-size: 0.88rem;
+  color: #555;
+  margin-bottom: 0.35rem;
+  line-height: 1.4;
+}
+
+.training-journey-bullets li:last-child {
+  margin-bottom: 0;
+}
+
+/* Chart container */
+.training-timeline-chart {
+  margin: 0.75rem 0;
+}
+
+/* Tooltip */
+.timeline-tooltip {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-size: 0.85rem;
+}
+
+.timeline-tooltip-date {
+  margin: 0 0 0.35rem 0;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.35rem;
+}
+
+.timeline-tooltip-row {
+  margin: 0.2rem 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #555;
+}
+
+.timeline-tooltip-row span {
+  color: #888;
+}
+
+.timeline-tooltip-state {
+  margin: 0.4rem 0 0 0;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
+
+.timeline-tooltip-event {
+  margin: 0.3rem 0 0 0;
+  font-size: 0.75rem;
+  color: #666;
+  font-style: italic;
+  text-transform: capitalize;
+}
+
+/* Legend */
+.timeline-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legend-line {
+  display: inline-block;
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.legend-line--dashed {
+  background: none;
+  border-top: 2px dashed;
+  height: 0;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* UX note */
+.training-timeline-note {
+  margin: 0.75rem 0 0.5rem 0;
+  padding: 0.6rem 0.8rem;
+  background: #e3f2fd;
+  border-left: 3px solid #1565c0;
+  border-radius: 0 4px 4px 0;
+  font-size: 0.85rem;
+  color: #1565c0;
+  line-height: 1.4;
+}
+
+/* Meta info */
+.training-timeline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: #999;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #eee;
+}
+
+.training-timeline-meta span {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .training-timeline-panel {
+    padding: 0.75rem 1rem;
+  }
+
+  .training-timeline-header {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .timeline-close-btn {
+    align-self: flex-end;
+  }
+
+  .timeline-legend {
+    gap: 0.5rem;
+  }
+
+  .training-timeline-meta {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+}

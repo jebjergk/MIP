@@ -3,7 +3,9 @@ Training Status v1: per (market_type, symbol, pattern_id, interval_minutes) for 
 Uses MIP.APP.RECOMMENDATION_LOG, MIP.APP.RECOMMENDATION_OUTCOMES;
 optional MIP.APP.PATTERN_DEFINITION (labels), MIP.APP.TRAINING_GATE_PARAMS (thresholds).
 """
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.config import training_debug_enabled
 from app.db import get_connection, fetch_all, serialize_row, serialize_rows
@@ -13,6 +15,7 @@ from app.training_status import (
     score_training_status_row_debug,
     DEFAULT_MIN_SIGNALS,
 )
+from app.training_timeline import build_training_timeline
 
 router = APIRouter(prefix="/training", tags=["training"])
 
@@ -153,6 +156,39 @@ def get_training_status_debug():
             scoring = score_training_status_row_debug(recs, outcomes, horizons, min_signals)
             out.append({"raw": serialize_row(raw), "scoring": scoring})
         return {"min_signals": min_signals, "rows": out}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/timeline")
+def get_training_timeline(
+    symbol: str = Query(..., description="Symbol to query"),
+    market_type: str = Query(..., description="Market type (STOCK, ETF, FX)"),
+    pattern_id: Optional[int] = Query(None, description="Pattern ID (optional, defaults to pattern 1)"),
+    horizon_bars: Optional[int] = Query(None, description="Horizon bars (default 5)"),
+    rolling_window: Optional[int] = Query(None, description="Rolling window size for hit rate (default 20)"),
+    max_points: Optional[int] = Query(None, description="Max points to return (default 250)"),
+):
+    """
+    Training Timeline: time series of rolling hit rate and state transitions for a symbol.
+    
+    Returns confidence over time (evidence accumulation), derived from evaluated outcomes.
+    Includes narrative bullets explaining key turning points.
+    """
+    conn = get_connection()
+    try:
+        result = build_training_timeline(
+            conn,
+            symbol=symbol,
+            market_type=market_type,
+            pattern_id=pattern_id or 1,
+            horizon_bars=horizon_bars or 5,
+            rolling_window=rolling_window or 20,
+            max_points=max_points or 250,
+        )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

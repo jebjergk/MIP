@@ -125,3 +125,28 @@
   font-style: italic;
   margin-top: 0.5rem;
 }
+
+/* Row selection styling */
+.training-row:hover {
+  background: #f5f8fa;
+}
+
+.training-row-selected {
+  background: #e3f2fd !important;
+  border-left: 3px solid #1565c0;
+}
+
+.training-row-selected td:first-child {
+  padding-left: calc(0.5rem - 3px);
+}
+
+/* Timeline hint */
+.training-timeline-hint {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #f5f5f5;
+  border-radius: 6px;
+  color: #666;
+  font-size: 0.9rem;
+  text-align: center;
+}

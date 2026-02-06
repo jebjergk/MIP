@@ -483,3 +483,19 @@
   border-radius: 4px;
   cursor: pointer;
 }
+
+/* Portfolio link in events table */
+.mtd-portfolio-link {
+  color: #1976d2;
+  text-decoration: none;
+  font-weight: 500;
+  padding: 0.1rem 0.4rem;
+  background: #e3f2fd;
+  border-radius: 3px;
+  margin-left: 0.25rem;
+}
+
+.mtd-portfolio-link:hover {
+  background: #bbdefb;
+  text-decoration: underline;
+}

@@ -385,6 +385,7 @@ def get_detail(
             proposal_sql = """
                 select 
                     p.PROPOSAL_ID,
+                    p.PORTFOLIO_ID,
                     p.PROPOSED_AT,
                     p.SIDE,
                     p.TARGET_WEIGHT,
@@ -414,6 +415,7 @@ def get_detail(
                     "ts": chart_ts.isoformat() if hasattr(chart_ts, "isoformat") else str(chart_ts),
                     "proposed_at": proposed_at.isoformat() if hasattr(proposed_at, "isoformat") else str(proposed_at),
                     "proposal_id": row.get("PROPOSAL_ID"),
+                    "portfolio_id": row.get("PORTFOLIO_ID"),
                     "side": row.get("SIDE"),
                     "target_weight": float(row.get("TARGET_WEIGHT")) if row.get("TARGET_WEIGHT") is not None else None,
                     "status": row.get("STATUS"),
@@ -426,6 +428,7 @@ def get_detail(
             trade_sql = """
                 select 
                     t.TRADE_ID,
+                    t.PORTFOLIO_ID,
                     t.TRADE_TS,
                     t.SIDE,
                     t.QUANTITY,
@@ -450,6 +453,7 @@ def get_detail(
                     "type": "TRADE",
                     "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                     "trade_id": row.get("TRADE_ID"),
+                    "portfolio_id": row.get("PORTFOLIO_ID"),
                     "side": row.get("SIDE"),
                     "quantity": float(row.get("QUANTITY")) if row.get("QUANTITY") is not None else None,
                     "price": float(row.get("PRICE")) if row.get("PRICE") is not None else None,

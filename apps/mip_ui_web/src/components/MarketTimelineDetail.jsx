@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   ComposedChart,
   Line,
@@ -386,8 +387,22 @@ export default function MarketTimelineDetail({
                   <td><span className={`event-badge ${e.type?.toLowerCase()}`}>{e.type}</span></td>
                   <td>
                     {e.type === 'SIGNAL' && `Pattern ${e.pattern_id}, Score: ${e.score?.toFixed(4) || '—'}`}
-                    {e.type === 'PROPOSAL' && `${e.side} · Weight: ${e.target_weight?.toFixed(2) || '—'} · Status: ${e.status}`}
-                    {e.type === 'TRADE' && `${e.side} ${e.quantity} @ ${e.price?.toFixed(2)} ($${e.notional?.toFixed(0)})`}
+                    {e.type === 'PROPOSAL' && (
+                      <>
+                        {e.side} · Weight: {e.target_weight?.toFixed(2) || '—'} · Status: {e.status}
+                        {e.portfolio_id && (
+                          <> · <Link to={`/portfolio/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
+                        )}
+                      </>
+                    )}
+                    {e.type === 'TRADE' && (
+                      <>
+                        {e.side} {e.quantity} @ {e.price?.toFixed(2)} (${e.notional?.toFixed(0)})
+                        {e.portfolio_id && (
+                          <> · <Link to={`/portfolio/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
+                        )}
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

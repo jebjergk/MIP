@@ -270,12 +270,16 @@ begin
         )
     );
 
-    -- Phase 3.6: Strengthen position sizing validation - check total exposure before executing
+    -- Phase 3.6: Strengthen position sizing validation - check individual position size and total exposure
     declare
         v_total_exposure_pct float;
+        v_existing_exposure_pct float;
+        v_combined_exposure_pct float;
         v_open_positions_count number;
+        v_max_total_exposure_pct float;
+        v_oversized_count number;
     begin
-        -- Calculate total exposure from approved proposals
+        -- Calculate total exposure from approved proposals in this run
         select coalesce(sum(TARGET_WEIGHT), 0)
           into v_total_exposure_pct
           from MIP.AGENT_OUT.ORDER_PROPOSALS
@@ -284,15 +288,49 @@ begin
            and STATUS = 'APPROVED'
            and SIDE = 'BUY';
 
+        -- Calculate existing exposure from open positions
+        select coalesce(sum(WEIGHT), 0)
+          into v_existing_exposure_pct
+          from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
+        v_combined_exposure_pct := v_existing_exposure_pct + v_total_exposure_pct;
+
         -- Get current open positions count
         select count(*)
           into v_open_positions_count
           from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
          where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
-        -- Reject proposals if total exposure would exceed limits
-        if (v_total_exposure_pct > v_max_position_pct * 1.01) then
-            -- Allow 1% tolerance for rounding
+        -- Max total exposure = max_positions * max_position_pct (e.g., 5 positions * 10% = 50%)
+        -- Or use 100% as ceiling if that calculation is too low
+        v_max_total_exposure_pct := greatest(:v_max_positions * :v_max_position_pct, 1.0);
+
+        -- First: Reject any individual proposal that exceeds single position limit
+        select count(*)
+          into v_oversized_count
+          from MIP.AGENT_OUT.ORDER_PROPOSALS
+         where RUN_ID_VARCHAR = :P_RUN_ID
+           and PORTFOLIO_ID = :P_PORTFOLIO_ID
+           and STATUS = 'APPROVED'
+           and SIDE = 'BUY'
+           and TARGET_WEIGHT > :v_max_position_pct * 1.01;
+
+        if (v_oversized_count > 0) then
+            update MIP.AGENT_OUT.ORDER_PROPOSALS
+               set STATUS = 'REJECTED',
+                   VALIDATION_ERRORS = array_construct('EXCEEDS_SINGLE_POSITION_LIMIT'),
+                   APPROVED_AT = null
+             where RUN_ID_VARCHAR = :P_RUN_ID
+               and PORTFOLIO_ID = :P_PORTFOLIO_ID
+               and STATUS = 'APPROVED'
+               and SIDE = 'BUY'
+               and TARGET_WEIGHT > :v_max_position_pct * 1.01;
+        end if;
+
+        -- Second: Check if combined exposure would exceed total limit
+        if (v_combined_exposure_pct > v_max_total_exposure_pct * 1.01) then
+            -- Reject excess proposals (keep oldest approved ones up to limit)
             update MIP.AGENT_OUT.ORDER_PROPOSALS
                set STATUS = 'REJECTED',
                    VALIDATION_ERRORS = array_construct('TOTAL_EXPOSURE_EXCEEDS_LIMIT'),
@@ -300,7 +338,21 @@ begin
              where RUN_ID_VARCHAR = :P_RUN_ID
                and PORTFOLIO_ID = :P_PORTFOLIO_ID
                and STATUS = 'APPROVED'
-               and SIDE = 'BUY';
+               and SIDE = 'BUY'
+               and PROPOSAL_ID in (
+                   select PROPOSAL_ID
+                     from (
+                       select 
+                           PROPOSAL_ID,
+                           sum(TARGET_WEIGHT) over (order by APPROVED_AT rows unbounded preceding) as cumulative_weight
+                         from MIP.AGENT_OUT.ORDER_PROPOSALS
+                        where RUN_ID_VARCHAR = :P_RUN_ID
+                          and PORTFOLIO_ID = :P_PORTFOLIO_ID
+                          and STATUS = 'APPROVED'
+                          and SIDE = 'BUY'
+                     )
+                    where cumulative_weight + :v_existing_exposure_pct > :v_max_total_exposure_pct
+               );
 
             v_exposure_rejected := SQLROWCOUNT;
 
@@ -323,7 +375,10 @@ begin
                 'TOTAL_EXPOSURE_EXCEEDED',
                 :v_exposure_rejected,
                 object_construct(
-                    'total_exposure_pct', :v_total_exposure_pct,
+                    'new_exposure_pct', :v_total_exposure_pct,
+                    'existing_exposure_pct', :v_existing_exposure_pct,
+                    'combined_exposure_pct', :v_combined_exposure_pct,
+                    'max_total_exposure_pct', :v_max_total_exposure_pct,
                     'max_position_pct', :v_max_position_pct,
                     'open_positions', :v_open_positions_count,
                     'max_positions', :v_max_positions

@@ -50,6 +50,7 @@ grant select on view MIP.MART.V_PORTFOLIO_RISK_GATE         to role MIP_UI_API_R
 grant select on view MIP.MART.V_PORTFOLIO_RISK_STATE        to role MIP_UI_API_ROLE;
 grant select on view MIP.APP.V_SIGNALS_ELIGIBLE_TODAY       to role MIP_UI_API_ROLE;
 grant select on view MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE    to role MIP_UI_API_ROLE;
+grant select on view MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_SIGNAL_POLICY       to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_SIGNALS             to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS   to role MIP_UI_API_ROLE;

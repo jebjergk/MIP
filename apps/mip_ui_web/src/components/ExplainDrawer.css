@@ -102,6 +102,39 @@
   color: #455a64;
 }
 
+/* Formatted content (markdown-like) */
+.explain-formatted-content {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #455a64;
+}
+
+.explain-formatted-content p {
+  margin: 0 0 0.75rem;
+}
+
+.explain-formatted-content strong {
+  font-weight: 600;
+  color: #37474f;
+}
+
+.explain-formatted-content .explain-list {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.explain-formatted-content .explain-list li {
+  margin: 0.35rem 0;
+}
+
+.explain-formatted-content ul.explain-list {
+  list-style-type: disc;
+}
+
+.explain-formatted-content ol.explain-list {
+  list-style-type: decimal;
+}
+
 .explain-drawer-sources-badge {
   display: inline-block;
   padding: 0.35rem 0.6rem;

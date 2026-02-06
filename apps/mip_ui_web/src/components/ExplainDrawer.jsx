@@ -4,6 +4,71 @@ import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntryByDotKey } from '../data/glossary'
 import './ExplainDrawer.css'
 
+/**
+ * Simple markdown-like renderer for explain content.
+ * Supports: **bold**, bullet lists (-), numbered lists (1.), line breaks
+ */
+function FormattedContent({ text }) {
+  if (!text) return null
+  
+  // Split into paragraphs/blocks
+  const blocks = text.split('\n\n').filter(Boolean)
+  
+  return (
+    <div className="explain-formatted-content">
+      {blocks.map((block, blockIdx) => {
+        const lines = block.split('\n')
+        
+        // Check if this is a list block
+        const isBulletList = lines.every(line => line.trim().startsWith('-') || line.trim() === '')
+        const isNumberedList = lines.every(line => /^\d+\./.test(line.trim()) || line.trim() === '')
+        
+        if (isBulletList && lines.some(line => line.trim().startsWith('-'))) {
+          return (
+            <ul key={blockIdx} className="explain-list">
+              {lines.filter(line => line.trim().startsWith('-')).map((line, i) => (
+                <li key={i}>{formatInlineText(line.trim().slice(1).trim())}</li>
+              ))}
+            </ul>
+          )
+        }
+        
+        if (isNumberedList && lines.some(line => /^\d+\./.test(line.trim()))) {
+          return (
+            <ol key={blockIdx} className="explain-list">
+              {lines.filter(line => /^\d+\./.test(line.trim())).map((line, i) => (
+                <li key={i}>{formatInlineText(line.trim().replace(/^\d+\.\s*/, ''))}</li>
+              ))}
+            </ol>
+          )
+        }
+        
+        // Regular paragraph - may contain inline formatting
+        return (
+          <p key={blockIdx}>{formatInlineText(block.replace(/\n/g, ' '))}</p>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * Format inline text with **bold** support
+ */
+function formatInlineText(text) {
+  if (!text) return text
+  
+  // Split by **bold** markers
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>
+    }
+    return part
+  })
+}
+
 function resolveFieldDisplay(field, glossary) {
   if (field.glossaryKey && glossary) {
     return {
@@ -112,19 +177,19 @@ export default function ExplainDrawer() {
             {context.what && (
               <section className="explain-drawer-section">
                 <h3>What</h3>
-                <p>{context.what}</p>
+                <FormattedContent text={context.what} />
               </section>
             )}
             {context.why && (
               <section className="explain-drawer-section">
                 <h3>Why</h3>
-                <p>{context.why}</p>
+                <FormattedContent text={context.why} />
               </section>
             )}
             {context.how && (
               <section className="explain-drawer-section">
                 <h3>How</h3>
-                <p>{context.how}</p>
+                <FormattedContent text={context.how} />
               </section>
             )}
 

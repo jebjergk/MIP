@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+// Force reload - Feb 6 2026 - dual Y-axis with avg return line
 import {
   LineChart,
   Line,

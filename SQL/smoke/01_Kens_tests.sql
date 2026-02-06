@@ -40,6 +40,7 @@ order by 1;
 -- -----------------------------------------------------------------------------
 
 -- Show episode bounds and equity at start
+-- IMPORTANT: Filter by LAST_SIMULATION_RUN_ID to exclude stale data from prior runs
 select 
     e.PORTFOLIO_ID,
     e.EPISODE_ID,
@@ -47,36 +48,43 @@ select
     e.END_TS,
     e.STATUS,
     e.START_EQUITY,
-    -- First day equity in episode
+    p.LAST_SIMULATION_RUN_ID,
+    -- First day equity in episode (filtered by current run)
     (select min(d.TOTAL_EQUITY) 
      from MIP.APP.PORTFOLIO_DAILY d 
      where d.PORTFOLIO_ID = e.PORTFOLIO_ID 
        and d.TS >= e.START_TS 
        and (e.END_TS is null or d.TS <= e.END_TS)
+       and d.RUN_ID = p.LAST_SIMULATION_RUN_ID
     ) as FIRST_DAY_EQUITY,
-    -- Peak equity within episode (should be episode-local)
+    -- Peak equity within episode (filtered by current run)
     (select max(d.TOTAL_EQUITY) 
      from MIP.APP.PORTFOLIO_DAILY d 
      where d.PORTFOLIO_ID = e.PORTFOLIO_ID 
        and d.TS >= e.START_TS 
        and (e.END_TS is null or d.TS <= e.END_TS)
+       and d.RUN_ID = p.LAST_SIMULATION_RUN_ID
     ) as EPISODE_PEAK_EQUITY,
-    -- Current equity (latest in episode)
+    -- Current equity (latest in episode, filtered by current run)
     (select max_by(d.TOTAL_EQUITY, d.TS)
      from MIP.APP.PORTFOLIO_DAILY d 
      where d.PORTFOLIO_ID = e.PORTFOLIO_ID 
        and d.TS >= e.START_TS 
        and (e.END_TS is null or d.TS <= e.END_TS)
+       and d.RUN_ID = p.LAST_SIMULATION_RUN_ID
     ) as EPISODE_CURRENT_EQUITY
 from MIP.APP.PORTFOLIO_EPISODE e
+join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = e.PORTFOLIO_ID
 where e.STATUS = 'ACTIVE'
 order by e.PORTFOLIO_ID;
 
 -- Verify episode drawdown: should be (peak - current) / peak
 -- If no activity and equity flat, this should be 0 or very small
+-- IMPORTANT: Filter by LAST_SIMULATION_RUN_ID to exclude stale data from prior runs
 select 
     e.PORTFOLIO_ID,
     e.EPISODE_ID,
+    p.LAST_SIMULATION_RUN_ID,
     peak.PEAK_EQUITY as EPISODE_PEAK,
     current_eq.CURRENT_EQUITY,
     case 
@@ -86,12 +94,14 @@ select
     end as EPISODE_DRAWDOWN_PCT,
     trades.TRADE_COUNT as TRADES_IN_EPISODE
 from MIP.APP.PORTFOLIO_EPISODE e
+join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = e.PORTFOLIO_ID
 cross join lateral (
     select max(d.TOTAL_EQUITY) as PEAK_EQUITY
     from MIP.APP.PORTFOLIO_DAILY d 
     where d.PORTFOLIO_ID = e.PORTFOLIO_ID 
       and d.TS >= e.START_TS 
       and (e.END_TS is null or d.TS <= e.END_TS)
+      and d.RUN_ID = p.LAST_SIMULATION_RUN_ID  -- Filter to current run only
 ) peak
 cross join lateral (
     select max_by(d.TOTAL_EQUITY, d.TS) as CURRENT_EQUITY
@@ -99,6 +109,7 @@ cross join lateral (
     where d.PORTFOLIO_ID = e.PORTFOLIO_ID 
       and d.TS >= e.START_TS 
       and (e.END_TS is null or d.TS <= e.END_TS)
+      and d.RUN_ID = p.LAST_SIMULATION_RUN_ID  -- Filter to current run only
 ) current_eq
 cross join lateral (
     select count(*) as TRADE_COUNT
@@ -116,6 +127,7 @@ order by e.PORTFOLIO_ID;
 -- If episode drawdown breaches threshold, risk should not say SAFE
 -- -----------------------------------------------------------------------------
 
+-- IMPORTANT: Filter by LAST_SIMULATION_RUN_ID to exclude stale data from prior runs
 select 
     g.PORTFOLIO_ID,
     g.RISK_STATUS as RISK_GATE_STATUS,
@@ -138,7 +150,9 @@ select
     end as CONSISTENCY_CHECK
 from MIP.MART.V_PORTFOLIO_RISK_GATE g
 join (
-    select p.PORTFOLIO_ID, coalesce(prof.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT
+    select p.PORTFOLIO_ID, 
+           p.LAST_SIMULATION_RUN_ID,
+           coalesce(prof.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT
     from MIP.APP.PORTFOLIO p
     left join MIP.APP.PORTFOLIO_PROFILE prof on prof.PROFILE_ID = p.PROFILE_ID
 ) p on p.PORTFOLIO_ID = g.PORTFOLIO_ID
@@ -153,10 +167,12 @@ left join (
             end, 2
         ) as EPISODE_DRAWDOWN_PCT
     from MIP.APP.PORTFOLIO_EPISODE e
+    join MIP.APP.PORTFOLIO port on port.PORTFOLIO_ID = e.PORTFOLIO_ID
     join MIP.APP.PORTFOLIO_DAILY d 
       on d.PORTFOLIO_ID = e.PORTFOLIO_ID 
      and d.TS >= e.START_TS 
      and (e.END_TS is null or d.TS <= e.END_TS)
+     and d.RUN_ID = port.LAST_SIMULATION_RUN_ID  -- Filter to current run only
     where e.STATUS = 'ACTIVE'
     group by e.PORTFOLIO_ID
 ) ep_dd on ep_dd.PORTFOLIO_ID = g.PORTFOLIO_ID
@@ -222,3 +238,60 @@ cross join (
     where INTERVAL_MINUTES = 1440
 ) bars
 order by p.PORTFOLIO_ID;
+
+-- -----------------------------------------------------------------------------
+-- DIAGNOSTIC: Why is there drawdown with 0 trades?
+-- Check for open positions that would cause mark-to-market equity changes
+-- -----------------------------------------------------------------------------
+
+-- Open positions in each portfolio (these cause equity to fluctuate without trades)
+select 
+    PORTFOLIO_ID,
+    count(*) as OPEN_POSITION_COUNT,
+    sum(abs(QUANTITY)) as TOTAL_SHARES,
+    listagg(SYMBOL, ', ') within group (order by SYMBOL) as SYMBOLS
+from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+group by PORTFOLIO_ID
+order by PORTFOLIO_ID;
+
+-- Daily equity series for Portfolio 2 during the current episode
+-- Shows how mark-to-market causes equity changes without trades
+select 
+    d.TS,
+    d.CASH,
+    d.EQUITY_VALUE as POSITION_VALUE,
+    d.TOTAL_EQUITY,
+    d.OPEN_POSITIONS,
+    lag(d.TOTAL_EQUITY) over (order by d.TS) as PREV_EQUITY,
+    d.TOTAL_EQUITY - coalesce(lag(d.TOTAL_EQUITY) over (order by d.TS), d.TOTAL_EQUITY) as DAILY_CHANGE
+from MIP.APP.PORTFOLIO_DAILY d
+where d.PORTFOLIO_ID = 2
+  and d.TS >= (select START_TS from MIP.APP.PORTFOLIO_EPISODE where PORTFOLIO_ID = 2 and STATUS = 'ACTIVE')
+order by d.TS;
+
+-- DIAGNOSTIC: Check for duplicate RUN_IDs in PORTFOLIO_DAILY
+-- Multiple runs writing to same portfolio without cleanup causes phantom peaks
+select 
+    d.PORTFOLIO_ID,
+    d.TS,
+    d.RUN_ID,
+    d.CASH,
+    d.TOTAL_EQUITY,
+    p.LAST_SIMULATION_RUN_ID,
+    case when d.RUN_ID = p.LAST_SIMULATION_RUN_ID then 'CURRENT' else 'STALE RUN' end as RUN_STATUS
+from MIP.APP.PORTFOLIO_DAILY d
+join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = d.PORTFOLIO_ID
+where d.PORTFOLIO_ID = 2
+order by d.TS, d.RUN_ID;
+
+-- Count of rows per TS (should be 1 per date for each portfolio)
+select 
+    PORTFOLIO_ID,
+    TS,
+    count(*) as ROW_COUNT,
+    count(distinct RUN_ID) as DISTINCT_RUNS
+from MIP.APP.PORTFOLIO_DAILY
+where PORTFOLIO_ID in (1, 2)
+group by PORTFOLIO_ID, TS
+having count(*) > 1
+order by PORTFOLIO_ID, TS;

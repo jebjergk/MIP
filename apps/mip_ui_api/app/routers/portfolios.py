@@ -917,6 +917,7 @@ def get_portfolio_snapshot(
 
         # --- Episode-scoped risk state (Item 2 fix) ---
         # Compute risk state from episode-local drawdown for consistency with episode chart
+        # IMPORTANT: Filter by RUN_ID to avoid phantom peaks from stale simulation runs
         episode_risk_state = None
         if episode_start_ts is not None and profile_row:
             try:
@@ -927,15 +928,18 @@ def get_portfolio_snapshot(
                     ep_drawdown_stop_pct = 0.10  # Default 10%
                 
                 # Get episode-local peak and current equity to compute drawdown
+                # Filter by effective_run_id to exclude stale data from prior runs
                 cur.execute(
                     """
                     select 
                         max(TOTAL_EQUITY) as peak_equity,
                         max_by(TOTAL_EQUITY, TS) as current_equity
                     from MIP.APP.PORTFOLIO_DAILY
-                    where PORTFOLIO_ID = %s and TS >= %s
+                    where PORTFOLIO_ID = %s 
+                      and TS >= %s
+                      and (%s is null or RUN_ID = %s)
                     """,
-                    (portfolio_id, episode_start_ts),
+                    (portfolio_id, episode_start_ts, effective_run_id, effective_run_id),
                 )
                 row = cur.fetchone()
                 if row and row[0] is not None and row[1] is not None:
@@ -1230,7 +1234,7 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             select e.EPISODE_ID, e.PORTFOLIO_ID, e.PROFILE_ID, e.START_TS, e.END_TS, e.STATUS, e.END_REASON,
                    e.START_EQUITY as EPISODE_START_EQUITY,
                    p.NAME as PROFILE_NAME, p.DRAWDOWN_STOP_PCT, p.BUST_EQUITY_PCT,
-                   port.STARTING_CASH, port.BUST_AT
+                   port.STARTING_CASH, port.BUST_AT, port.LAST_SIMULATION_RUN_ID
             from MIP.APP.PORTFOLIO_EPISODE e
             join MIP.APP.PORTFOLIO_PROFILE p on p.PROFILE_ID = e.PROFILE_ID
             join MIP.APP.PORTFOLIO port on port.PORTFOLIO_ID = e.PORTFOLIO_ID
@@ -1245,6 +1249,7 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
         ep = dict(zip(cols, row))
         start_ts = ep.get("START_TS")
         end_ts = ep.get("END_TS")
+        current_run_id = ep.get("LAST_SIMULATION_RUN_ID")  # Filter to current run only
         if start_ts is None:
             raise HTTPException(status_code=404, detail="Episode missing START_TS")
         drawdown_stop_pct = float(ep["DRAWDOWN_STOP_PCT"]) if ep.get("DRAWDOWN_STOP_PCT") is not None else 0.10
@@ -1255,16 +1260,20 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
         )
 
         # Equity series: PORTFOLIO_DAILY in episode window
+        # IMPORTANT: Filter by RUN_ID to avoid phantom peaks from stale simulation runs
         # We fetch raw TOTAL_EQUITY and compute episode-local peak/drawdown in Python
         # to ensure drawdown is scoped to THIS episode only
         cur.execute(
             """
             select TS, TOTAL_EQUITY, OPEN_POSITIONS
             from MIP.APP.PORTFOLIO_DAILY
-            where PORTFOLIO_ID = %s and TS >= %s and (%s is null or TS <= %s)
+            where PORTFOLIO_ID = %s 
+              and TS >= %s 
+              and (%s is null or TS <= %s)
+              and (%s is null or RUN_ID = %s)
             order by TS
             """,
-            (portfolio_id, start_ts, end_ts, end_ts),
+            (portfolio_id, start_ts, end_ts, end_ts, current_run_id, current_run_id),
         )
         daily_rows = fetch_all(cur)
         

@@ -318,3 +318,16 @@ select CONFIG_KEY, CONFIG_VALUE
 from MIP.APP.APP_CONFIG
 where CONFIG_KEY in ('MIN_VOLUME', 'VOL_ADJ_THRESHOLD', 'PATTERN_MIN_TRADES')
 order by CONFIG_KEY;
+
+-- Option 1: Lower the minimum trades threshold
+update MIP.APP.APP_CONFIG 
+set CONFIG_VALUE = '10' 
+where CONFIG_KEY = 'PATTERN_MIN_TRADES';
+
+-- Option 2: Reset trade counts so patterns are treated as "new"
+update MIP.APP.PATTERN_DEFINITION
+set LAST_TRADE_COUNT = 0
+where PATTERN_ID in (2, 3);  -- STOCK_MOMENTUM_FAST and STOCK_MOMENTUM_SLOW
+
+-- Then re-run the pipeline
+call MIP.APP.SP_RUN_DAILY_PIPELINE();

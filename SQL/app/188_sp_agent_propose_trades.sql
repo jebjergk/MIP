@@ -583,13 +583,14 @@ begin
             'PROPOSED'
         );
 
-    v_inserted_count := SQLROWCOUNT;
-
+    -- Count proposals inserted for this run (SQLROWCOUNT not reliable after MERGE)
     select
+        count(*) as total_inserted,
         coalesce(sum(iff(market_type_group = 'STOCK', 1, 0)), 0) as stock_selected,
         coalesce(sum(iff(market_type_group = 'FX', 1, 0)), 0) as fx_selected,
         coalesce(sum(iff(market_type = 'ETF', 1, 0)), 0) as etf_selected
-      into :v_selected_stock,
+      into :v_inserted_count,
+           :v_selected_stock,
            :v_selected_fx,
            :v_selected_etf
       from (

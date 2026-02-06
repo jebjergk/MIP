@@ -231,66 +231,93 @@ export default function MarketTimelineDetail({
             />
             <Tooltip content={<ChartTooltip />} />
             
-            {/* High-Low range as area */}
+            {/* High-Low range as thin grey lines showing daily price range */}
             <Line
               type="monotone"
               dataKey="high"
-              stroke="#ccc"
+              stroke="#bbb"
               strokeWidth={1}
+              strokeDasharray="2 2"
               dot={false}
-              name="High"
+              name="Daily High"
+              legendType="none"
             />
             <Line
               type="monotone"
               dataKey="low"
-              stroke="#ccc"
+              stroke="#bbb"
               strokeWidth={1}
+              strokeDasharray="2 2"
               dot={false}
-              name="Low"
+              name="Daily Low"
+              legendType="none"
             />
             
-            {/* Close price as main line */}
+            {/* Close price as main blue line */}
             <Line
               type="monotone"
               dataKey="close"
               stroke="#1976d2"
               strokeWidth={2}
               dot={false}
-              name="Close"
+              name="Close Price"
             />
             
-            {/* Signal markers */}
+            {/* Signal markers - blue triangles pointing up below the price */}
             <Scatter
               dataKey="signalMarker"
               fill="#2196f3"
-              shape="triangle"
               name="Signal"
-            />
+            >
+              {chartData.map((entry, index) => (
+                entry.signalMarker != null ? (
+                  <circle key={`signal-${index}`} r={6} fill="#2196f3" stroke="#1565c0" strokeWidth={1} />
+                ) : null
+              ))}
+            </Scatter>
             
-            {/* Proposal markers */}
+            {/* Proposal markers - orange diamonds */}
             <Scatter
               dataKey="proposalMarker"
               fill="#ff9800"
-              shape="diamond"
               name="Proposal"
-            />
+            >
+              {chartData.map((entry, index) => (
+                entry.proposalMarker != null ? (
+                  <circle key={`proposal-${index}`} r={7} fill="#ff9800" stroke="#e65100" strokeWidth={2} />
+                ) : null
+              ))}
+            </Scatter>
             
-            {/* Trade markers */}
+            {/* Trade markers - green stars above the price */}
             <Scatter
               dataKey="tradeMarker"
               fill="#4caf50"
-              shape="star"
               name="Trade"
-            />
+            >
+              {chartData.map((entry, index) => (
+                entry.tradeMarker != null ? (
+                  <circle key={`trade-${index}`} r={8} fill="#4caf50" stroke="#2e7d32" strokeWidth={2} />
+                ) : null
+              ))}
+            </Scatter>
           </ComposedChart>
         </ResponsiveContainer>
       </div>
       
-      {/* Chart legend */}
+      {/* Chart legend - explains what each element means */}
       <div className="mtd-chart-legend">
-        <span className="legend-item"><span className="legend-dot signal"></span> Signal</span>
-        <span className="legend-item"><span className="legend-dot proposal"></span> Proposal</span>
-        <span className="legend-item"><span className="legend-dot trade"></span> Trade</span>
+        <div className="legend-section legend-price">
+          <span className="legend-title">Price:</span>
+          <span className="legend-item"><span className="legend-line blue"></span> Close price</span>
+          <span className="legend-item"><span className="legend-line grey dashed"></span> High/Low range</span>
+        </div>
+        <div className="legend-section legend-events">
+          <span className="legend-title">Events:</span>
+          <span className="legend-item"><span className="legend-dot signal"></span> Signal (pattern fired)</span>
+          <span className="legend-item"><span className="legend-dot proposal"></span> Proposal (order suggested)</span>
+          <span className="legend-item"><span className="legend-dot trade"></span> Trade (executed)</span>
+        </div>
       </div>
       
       {/* Narrative */}

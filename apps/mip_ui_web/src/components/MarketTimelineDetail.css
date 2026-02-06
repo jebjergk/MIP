@@ -117,34 +117,85 @@
 .mtd-chart-legend {
   display: flex;
   justify-content: center;
-  gap: 1.5rem;
+  gap: 2rem;
   margin-bottom: 1.5rem;
+  padding: 0.75rem 1rem;
+  background: #f8f9fa;
+  border-radius: 6px;
   font-size: 0.75rem;
   color: #666;
+}
+
+.mtd-chart-legend .legend-section {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.mtd-chart-legend .legend-title {
+  font-weight: 600;
+  color: #333;
+  margin-right: 0.25rem;
 }
 
 .mtd-chart-legend .legend-item {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.35rem;
 }
 
+/* Line legend items */
+.mtd-chart-legend .legend-line {
+  width: 20px;
+  height: 2px;
+}
+
+.mtd-chart-legend .legend-line.blue {
+  background: #1976d2;
+}
+
+.mtd-chart-legend .legend-line.grey {
+  background: #bbb;
+}
+
+.mtd-chart-legend .legend-line.dashed {
+  background: repeating-linear-gradient(
+    90deg,
+    #bbb 0px,
+    #bbb 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
+/* Dot legend items */
 .mtd-chart-legend .legend-dot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
+  border: 2px solid;
 }
 
 .mtd-chart-legend .legend-dot.signal {
   background: #2196f3;
+  border-color: #1565c0;
 }
 
 .mtd-chart-legend .legend-dot.proposal {
   background: #ff9800;
+  border-color: #e65100;
 }
 
 .mtd-chart-legend .legend-dot.trade {
   background: #4caf50;
+  border-color: #2e7d32;
+}
+
+@media (max-width: 768px) {
+  .mtd-chart-legend {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
 }
 
 /* Tooltip */

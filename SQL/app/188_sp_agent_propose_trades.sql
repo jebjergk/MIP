@@ -1,5 +1,9 @@
 -- 188_sp_agent_propose_trades.sql
 -- Purpose: Deterministic agent proposal generator. Uses V_TRUSTED_SIGNALS_LATEST_TS (trusted-gate v1).
+--
+-- IMPORTANT: Candidate selection uses V_SIGNALS_LATEST_TS and V_TRUSTED_SIGNALS_LATEST_TS
+-- which filter to signals at the LATEST bar date. No RUN_ID filter is applied since
+-- the views are already date-scoped.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -40,6 +44,11 @@ declare
     v_candidate_count_raw number := 0;
     v_candidate_count_trusted number := 0;
     v_trusted_rejected_count number := 0;
+    -- Diagnostic variables for enhanced logging
+    v_latest_bar_ts timestamp_ntz;
+    v_latest_rec_ts timestamp_ntz;
+    v_trusted_pattern_count number := 0;
+    v_no_candidates_reason string := null;
 begin
     select
         p.PROFILE_ID,
@@ -108,16 +117,21 @@ begin
       from MIP.MART.V_PORTFOLIO_RISK_STATE
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
+    -- Get diagnostic timestamps for logging
+    v_latest_bar_ts := (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440);
+    v_latest_rec_ts := (select max(TS) from MIP.APP.RECOMMENDATION_LOG where INTERVAL_MINUTES = 1440);
+    v_trusted_pattern_count := (select count(*) from MIP.MART.V_TRUSTED_PATTERN_HORIZONS);
+
     if (v_entries_blocked) then
+        -- Count raw signals at latest TS (no RUN_ID filter - views are already date-scoped)
         select count(*)
           into :v_candidate_count_raw
-          from MIP.MART.V_SIGNALS_LATEST_TS
-         where RUN_ID = :v_run_id_string;
+          from MIP.MART.V_SIGNALS_LATEST_TS;
 
+        -- Count trusted signals (pattern is trusted for at least one horizon)
         select count(*)
           into :v_candidate_count_trusted
-          from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-         where RUN_ID = :v_run_id_string;
+          from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
 
         v_candidate_count := :v_candidate_count_trusted;
         v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
@@ -152,7 +166,13 @@ begin
                 'proposed_count', :v_selected_count,
                 'candidate_count_raw', :v_candidate_count_raw,
                 'candidate_count_trusted', :v_candidate_count_trusted,
-                'trusted_rejected_count', :v_trusted_rejected_count
+                'trusted_rejected_count', :v_trusted_rejected_count,
+                'diagnostics', object_construct(
+                    'latest_bar_ts', :v_latest_bar_ts,
+                    'latest_rec_ts', :v_latest_rec_ts,
+                    'trusted_pattern_count', :v_trusted_pattern_count,
+                    'rec_ts_matches_bar_ts', :v_latest_rec_ts = :v_latest_bar_ts
+                )
             );
 
         return object_construct(
@@ -172,19 +192,38 @@ begin
         );
     end if;
 
+    -- Count raw signals at latest TS (no RUN_ID filter - views are already date-scoped)
     select count(*)
       into :v_candidate_count_raw
-      from MIP.MART.V_SIGNALS_LATEST_TS
-     where RUN_ID = :v_run_id_string;
+      from MIP.MART.V_SIGNALS_LATEST_TS;
 
+    -- Count trusted signals (pattern is trusted for at least one horizon)
     select count(*)
       into :v_candidate_count_trusted
-      from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS
-     where RUN_ID = :v_run_id_string;
+      from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
 
     v_candidate_count := :v_candidate_count_trusted;
     v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
     v_selected_count := least(:v_candidate_count, :v_remaining_capacity);
+
+    -- Determine reason if no candidates
+    if (v_candidate_count = 0) then
+        if (v_candidate_count_raw = 0) then
+            if (v_latest_rec_ts is null) then
+                v_no_candidates_reason := 'NO_RECOMMENDATIONS_IN_LOG';
+            elseif (v_latest_rec_ts != v_latest_bar_ts) then
+                v_no_candidates_reason := 'REC_TS_STALE';
+            else
+                v_no_candidates_reason := 'NO_SIGNALS_AT_LATEST_TS';
+            end if;
+        elseif (v_trusted_pattern_count = 0) then
+            v_no_candidates_reason := 'NO_TRUSTED_PATTERNS';
+        else
+            v_no_candidates_reason := 'SIGNALS_NOT_FROM_TRUSTED_PATTERNS';
+        end if;
+    elseif (v_remaining_capacity = 0) then
+        v_no_candidates_reason := 'MAX_POSITIONS_REACHED';
+    end if;
 
     if (v_candidate_count = 0 or v_remaining_capacity = 0) then
         insert into MIP.APP.MIP_AUDIT_LOG (
@@ -213,7 +252,14 @@ begin
                 'proposed_count', :v_selected_count,
                 'candidate_count_raw', :v_candidate_count_raw,
                 'candidate_count_trusted', :v_candidate_count_trusted,
-                'trusted_rejected_count', :v_trusted_rejected_count
+                'trusted_rejected_count', :v_trusted_rejected_count,
+                'no_candidates_reason', :v_no_candidates_reason,
+                'diagnostics', object_construct(
+                    'latest_bar_ts', :v_latest_bar_ts,
+                    'latest_rec_ts', :v_latest_rec_ts,
+                    'trusted_pattern_count', :v_trusted_pattern_count,
+                    'rec_ts_matches_bar_ts', :v_latest_rec_ts = :v_latest_bar_ts
+                )
             );
 
         return object_construct(
@@ -226,7 +272,14 @@ begin
             'proposal_candidates', :v_candidate_count,
             'proposal_selected', :v_selected_count,
             'proposal_inserted', 0,
-            'target_weight', :v_target_weight
+            'target_weight', :v_target_weight,
+            'no_candidates_reason', :v_no_candidates_reason,
+            'diagnostics', object_construct(
+                'latest_bar_ts', :v_latest_bar_ts,
+                'latest_rec_ts', :v_latest_rec_ts,
+                'trusted_pattern_count', :v_trusted_pattern_count,
+                'rec_ts_matches_bar_ts', :v_latest_rec_ts = :v_latest_bar_ts
+            )
         );
     end if;
 
@@ -250,7 +303,7 @@ begin
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
-            where s.RUN_ID = :v_run_id_string
+            -- No RUN_ID filter - view is already date-scoped to latest TS
         ),
         deduped_candidates as (
             select
@@ -290,7 +343,7 @@ begin
                 s.SYMBOL,
                 s.SCORE
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
-            where s.RUN_ID = :v_run_id_string
+            -- No RUN_ID filter - view is already date-scoped to latest TS
         ),
         deduped_candidates as (
             select
@@ -335,7 +388,7 @@ begin
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
-            where s.RUN_ID = :v_run_id_string
+            -- No RUN_ID filter - view is already date-scoped to latest TS
         ),
         deduped_candidates as (
             select

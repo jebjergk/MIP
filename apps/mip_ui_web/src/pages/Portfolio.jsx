@@ -30,6 +30,7 @@ export default function Portfolio() {
   const [episodes, setEpisodes] = useState([])
   const [timeline, setTimeline] = useState(null)
   const [activeAnalytics, setActiveAnalytics] = useState(null)
+  const [proposerDiagnostics, setProposerDiagnostics] = useState(null)
   const { setContext } = useExplainCenter()
   const openExplainRiskGate = useExplainSection(RISK_GATE_EXPLAIN_CONTEXT)
 
@@ -81,6 +82,11 @@ export default function Portfolio() {
               .then(data => { if (!cancelled) setActiveAnalytics(data) })
               .catch(() => { if (!cancelled) setActiveAnalytics(null) })
           } else if (!cancelled) setActiveAnalytics(null)
+          // Fetch proposer diagnostics for this portfolio
+          fetch(`${API_BASE}/market-timeline/diagnostics?portfolio_id=${portfolioId}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => { if (!cancelled) setProposerDiagnostics(data) })
+            .catch(() => { if (!cancelled) setProposerDiagnostics(null) })
         } else {
           setPortfolio(null)
           setSnapshot(null)
@@ -523,6 +529,111 @@ export default function Portfolio() {
                       <p>See <strong>Restarting a portfolio episode</strong> in the Runbook (docs/ux/73_UX_RUNBOOK.md) for full steps.</p>
                       <button type="button" className="risk-gate-modal-close" onClick={() => setShowRestartModal(false)}>Close</button>
                     </div>
+                  </div>
+                )}
+
+                {/* Proposer Diagnostics: why no proposals? */}
+                {proposerDiagnostics && (
+                  <div className="portfolio-card portfolio-card-proposer-diagnostics">
+                    <h3 className="portfolio-card-title">Proposer Diagnostics</h3>
+                    <p className="proposer-diagnostics-subtitle">
+                      Why proposals may be zero or low
+                    </p>
+                    
+                    {/* Current state summary */}
+                    <div className="proposer-diagnostics-summary">
+                      <div className="proposer-stat">
+                        <span className="proposer-stat-label">Raw Signals (latest bar)</span>
+                        <span className={`proposer-stat-value ${proposerDiagnostics.current_state?.candidate_count_raw > 0 ? 'positive' : 'zero'}`}>
+                          {proposerDiagnostics.current_state?.candidate_count_raw ?? 0}
+                        </span>
+                      </div>
+                      <div className="proposer-stat">
+                        <span className="proposer-stat-label">Trusted Signals</span>
+                        <span className={`proposer-stat-value ${proposerDiagnostics.current_state?.candidate_count_trusted > 0 ? 'positive' : 'zero'}`}>
+                          {proposerDiagnostics.current_state?.candidate_count_trusted ?? 0}
+                        </span>
+                      </div>
+                      <div className="proposer-stat">
+                        <span className="proposer-stat-label">Trusted Patterns</span>
+                        <span className={`proposer-stat-value ${proposerDiagnostics.current_state?.trusted_pattern_count > 0 ? 'positive' : 'zero'}`}>
+                          {proposerDiagnostics.current_state?.trusted_pattern_count ?? 0}
+                        </span>
+                      </div>
+                      <div className="proposer-stat">
+                        <span className="proposer-stat-label">Rec TS = Bar TS?</span>
+                        <span className={`proposer-stat-value ${proposerDiagnostics.current_state?.rec_ts_matches_bar_ts ? 'positive' : 'warning'}`}>
+                          {proposerDiagnostics.current_state?.rec_ts_matches_bar_ts ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {/* Latest proposer event */}
+                    {proposerDiagnostics.proposer_events?.length > 0 && (() => {
+                      const latest = proposerDiagnostics.proposer_events[0]
+                      return (
+                        <div className="proposer-latest-event">
+                          <h4>Latest Proposer Run</h4>
+                          <dl className="proposer-event-details">
+                            <dt>Status</dt>
+                            <dd className={latest.status === 'SUCCESS' ? 'positive' : 'neutral'}>{latest.status}</dd>
+                            <dt>Raw candidates</dt>
+                            <dd>{latest.candidate_count_raw ?? 0}</dd>
+                            <dt>Trusted candidates</dt>
+                            <dd>{latest.candidate_count_trusted ?? 0}</dd>
+                            <dt>Proposals inserted</dt>
+                            <dd>{latest.rows_affected ?? 0}</dd>
+                            {latest.no_candidates_reason && (
+                              <>
+                                <dt>Reason for zero</dt>
+                                <dd className="reason-code">{latest.no_candidates_reason.replace(/_/g, ' ')}</dd>
+                              </>
+                            )}
+                            {latest.entries_blocked && (
+                              <>
+                                <dt>Entries blocked</dt>
+                                <dd className="warning">{latest.stop_reason || 'Yes'}</dd>
+                              </>
+                            )}
+                          </dl>
+                          {latest.diagnostics && (
+                            <div className="proposer-diagnostics-extra">
+                              <span className="extra-label">Bar TS:</span> {latest.diagnostics.latest_bar_ts?.slice(0, 10) ?? '—'} | 
+                              <span className="extra-label"> Rec TS:</span> {latest.diagnostics.latest_rec_ts?.slice(0, 10) ?? '—'}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+                    
+                    {/* Recommendation freshness by market type */}
+                    {proposerDiagnostics.rec_freshness_by_market_type?.length > 0 && (
+                      <div className="proposer-rec-freshness">
+                        <h4>Recommendation Freshness by Market Type</h4>
+                        <table className="proposer-freshness-table">
+                          <thead>
+                            <tr>
+                              <th>Market Type</th>
+                              <th>Count</th>
+                              <th>Latest TS</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {proposerDiagnostics.rec_freshness_by_market_type.map((r, i) => (
+                              <tr key={i}>
+                                <td>{r.MARKET_TYPE || r.market_type}</td>
+                                <td>{r.CNT || r.cnt}</td>
+                                <td>{(r.MAX_TS || r.max_ts)?.slice?.(0, 10) || r.MAX_TS || r.max_ts}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    
+                    <p className="proposer-diagnostics-hint">
+                      <Link to="/market-timeline">View full Market Timeline →</Link>
+                    </p>
                   </div>
                 )}
               </section>

@@ -69,14 +69,20 @@ where r.INTERVAL_MINUTES = 1440
 
 -- ------------------------------------------------------------------------------
 -- D2: V_TRUSTED_SIGNALS_LATEST_TS
--- Today's trusted candidates: V_SIGNAL_OUTCOMES_BASE at latest signal_ts, restricted to
+-- Today's trusted candidates: RECOMMENDATION_LOG at latest bar TS, restricted to
 -- (pattern_id, market_type, interval_minutes, horizon_bars) in V_TRUSTED_PATTERN_HORIZONS.
 -- One row per (recommendation_id, horizon_bars); explainability fields from trusted horizon.
+--
+-- IMPORTANT: Uses RECOMMENDATION_LOG directly, NOT V_SIGNAL_OUTCOMES_BASE.
+-- New signals should be eligible even before outcomes are evaluated.
+-- Trust is based on the PATTERN's historical performance, not the individual signal's outcome.
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS as
-with latest as (
-    select max(SIGNAL_TS) as latest_ts
-    from MIP.MART.V_SIGNAL_OUTCOMES_BASE
+with latest_ts as (
+    -- Latest bar TS from MARKET_BARS (same as V_SIGNALS_LATEST_TS)
+    select max(TS) as TS
+    from MIP.MART.MARKET_BARS
+    where INTERVAL_MINUTES = 1440
 ),
 trusted_ph as (
     select
@@ -92,32 +98,35 @@ trusted_ph as (
     from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
 ),
 candidates as (
+    -- Join today's signals to trusted pattern/horizon combos
+    -- A signal is trusted if its pattern is trusted for at least one horizon
     select
-        o.RECOMMENDATION_ID,
-        o.PATTERN_ID,
-        o.SYMBOL,
-        o.MARKET_TYPE,
-        o.INTERVAL_MINUTES,
-        o.HORIZON_BARS,
-        o.SIGNAL_TS,
-        o.SCORE,
-        o.DETAILS,
-        coalesce(o.DETAILS:run_id::string, to_varchar(o.GENERATED_AT, 'YYYYMMDD"T"HH24MISS')) as RUN_ID,
-        l.latest_ts as LAST_SIGNAL_TS,
+        r.RECOMMENDATION_ID,
+        r.PATTERN_ID,
+        r.SYMBOL,
+        r.MARKET_TYPE,
+        r.INTERVAL_MINUTES,
+        t.HORIZON_BARS,
+        r.TS as SIGNAL_TS,
+        r.SCORE,
+        r.DETAILS,
+        r.GENERATED_AT,
+        coalesce(r.DETAILS:run_id::string, to_varchar(r.GENERATED_AT, 'YYYYMMDD"T"HH24MISS')) as RUN_ID,
+        lt.TS as LAST_SIGNAL_TS,
         t.N_SIGNALS,
         t.HIT_RATE_SUCCESS,
         t.AVG_RETURN_SUCCESS,
         t.SHARPE_LIKE_SUCCESS,
         t.CONFIDENCE,
         'GATE_PASS' as TRUST_REASON
-    from MIP.MART.V_SIGNAL_OUTCOMES_BASE o
+    from MIP.APP.RECOMMENDATION_LOG r
+    cross join latest_ts lt
     join trusted_ph t
-      on t.PATTERN_ID = o.PATTERN_ID
-     and t.MARKET_TYPE = o.MARKET_TYPE
-     and t.INTERVAL_MINUTES = o.INTERVAL_MINUTES
-     and t.HORIZON_BARS = o.HORIZON_BARS
-    join latest l
-      on o.SIGNAL_TS = l.latest_ts
+      on t.PATTERN_ID = r.PATTERN_ID
+     and t.MARKET_TYPE = r.MARKET_TYPE
+     and t.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+    where r.INTERVAL_MINUTES = 1440
+      and r.TS = lt.TS
 )
 select
     RECOMMENDATION_ID,

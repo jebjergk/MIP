@@ -787,3 +787,169 @@
   flex-direction: column;
   gap: 0;
 }
+
+/* ========================================
+   Proposer Diagnostics Card
+   ======================================== */
+.portfolio-card-proposer-diagnostics {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  border: 1px solid #e9ecef;
+  margin-top: 1rem;
+}
+
+.proposer-diagnostics-subtitle {
+  font-size: 0.8rem;
+  color: #6c757d;
+  margin: 0.25rem 0 0.75rem 0;
+}
+
+.proposer-diagnostics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+}
+
+.proposer-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 120px;
+}
+
+.proposer-stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+.proposer-stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #212529;
+}
+
+.proposer-stat-value.positive {
+  color: #2e7d32;
+}
+
+.proposer-stat-value.zero {
+  color: #c62828;
+}
+
+.proposer-stat-value.warning {
+  color: #e65100;
+}
+
+.proposer-latest-event {
+  margin: 0.75rem 0;
+}
+
+.proposer-latest-event h4 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem 0;
+  color: #495057;
+}
+
+.proposer-event-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.8rem;
+  padding: 0.5rem;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.proposer-event-details dt {
+  font-weight: 500;
+  color: #6c757d;
+}
+
+.proposer-event-details dd {
+  margin: 0;
+  color: #212529;
+}
+
+.proposer-event-details dd.positive {
+  color: #2e7d32;
+}
+
+.proposer-event-details dd.neutral {
+  color: #6c757d;
+}
+
+.proposer-event-details dd.reason-code {
+  color: #e65100;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.proposer-event-details dd.warning {
+  color: #c62828;
+}
+
+.proposer-diagnostics-extra {
+  font-size: 0.75rem;
+  color: #6c757d;
+  margin-top: 0.5rem;
+}
+
+.proposer-diagnostics-extra .extra-label {
+  font-weight: 500;
+}
+
+.proposer-rec-freshness {
+  margin: 0.75rem 0;
+}
+
+.proposer-rec-freshness h4 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem 0;
+  color: #495057;
+}
+
+.proposer-freshness-table {
+  width: 100%;
+  font-size: 0.8rem;
+  border-collapse: collapse;
+}
+
+.proposer-freshness-table th,
+.proposer-freshness-table td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.proposer-freshness-table th {
+  font-weight: 500;
+  color: #6c757d;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.proposer-diagnostics-hint {
+  font-size: 0.8rem;
+  margin: 0.75rem 0 0 0;
+  text-align: right;
+}
+
+.proposer-diagnostics-hint a {
+  color: #1976d2;
+  text-decoration: none;
+}
+
+.proposer-diagnostics-hint a:hover {
+  text-decoration: underline;
+}

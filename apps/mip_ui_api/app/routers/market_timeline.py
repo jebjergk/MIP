@@ -70,6 +70,31 @@ REASON_CODES = {
         "title": "Proposal rejected",
         "detail": "Proposal was generated but rejected during validation.",
     },
+    # New diagnostic reason codes from proposer
+    "NO_RECOMMENDATIONS_IN_LOG": {
+        "title": "No recommendations in log",
+        "detail": "RECOMMENDATION_LOG has no entries. Pipeline may not have generated any signals.",
+    },
+    "REC_TS_STALE": {
+        "title": "Recommendations are stale",
+        "detail": "Latest recommendation TS doesn't match latest bar TS. Recommendations may not have been generated for recent market data.",
+    },
+    "NO_SIGNALS_AT_LATEST_TS": {
+        "title": "No signals at latest bar",
+        "detail": "Recommendations exist but none at the latest bar timestamp. Check if patterns matched any data.",
+    },
+    "NO_TRUSTED_PATTERNS": {
+        "title": "No trusted patterns",
+        "detail": "No pattern/horizon combos have passed the training gate thresholds yet.",
+    },
+    "SIGNALS_NOT_FROM_TRUSTED_PATTERNS": {
+        "title": "Signals not from trusted patterns",
+        "detail": "Signals exist at latest TS but none are from patterns that have been trusted.",
+    },
+    "ENTRIES_BLOCKED_DRAWDOWN_STOP": {
+        "title": "Entries blocked (drawdown stop)",
+        "detail": "Portfolio has hit drawdown stop and entries are blocked until recovery or reset.",
+    },
 }
 
 
@@ -632,3 +657,127 @@ def _build_narrative(
         "reasons": reasons,
         "bullets": bullets,
     }
+
+
+# =============================================================================
+# GET /market-timeline/diagnostics
+# =============================================================================
+@router.get("/diagnostics")
+def get_diagnostics(
+    portfolio_id: Optional[int] = Query(None, description="Portfolio ID to check"),
+):
+    """
+    Get system-wide proposer diagnostics from the latest pipeline run.
+    
+    Returns:
+    - Latest proposer event details from audit log
+    - Candidate counts (raw, trusted, rejected)
+    - Reason for no proposals if applicable
+    - Timestamps for latest bars, recs, etc.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        
+        # Get latest proposer events from audit log
+        if portfolio_id:
+            cur.execute(
+                """
+                select 
+                    EVENT_TS,
+                    RUN_ID,
+                    STATUS,
+                    ROWS_AFFECTED,
+                    DETAILS
+                from MIP.APP.MIP_AUDIT_LOG
+                where EVENT_NAME = 'SP_AGENT_PROPOSE_TRADES'
+                  and DETAILS:portfolio_id = %s
+                order by EVENT_TS desc
+                limit 5
+                """,
+                (str(portfolio_id),),
+            )
+        else:
+            cur.execute(
+                """
+                select 
+                    EVENT_TS,
+                    RUN_ID,
+                    STATUS,
+                    ROWS_AFFECTED,
+                    DETAILS
+                from MIP.APP.MIP_AUDIT_LOG
+                where EVENT_NAME = 'SP_AGENT_PROPOSE_TRADES'
+                order by EVENT_TS desc
+                limit 10
+                """
+            )
+        
+        rows = fetch_all(cur)
+        events = []
+        for row in rows:
+            details = row.get("DETAILS") or row.get("details") or {}
+            if isinstance(details, str):
+                import json
+                try:
+                    details = json.loads(details)
+                except:
+                    details = {}
+            
+            events.append({
+                "event_ts": row.get("EVENT_TS") or row.get("event_ts"),
+                "run_id": row.get("RUN_ID") or row.get("run_id"),
+                "status": row.get("STATUS") or row.get("status"),
+                "rows_affected": row.get("ROWS_AFFECTED") or row.get("rows_affected"),
+                "candidate_count_raw": details.get("candidate_count_raw"),
+                "candidate_count_trusted": details.get("candidate_count_trusted"),
+                "trusted_rejected_count": details.get("trusted_rejected_count"),
+                "no_candidates_reason": details.get("no_candidates_reason"),
+                "remaining_capacity": details.get("remaining_capacity"),
+                "max_positions": details.get("max_positions"),
+                "open_positions": details.get("open_positions"),
+                "entries_blocked": details.get("entries_blocked"),
+                "stop_reason": details.get("stop_reason"),
+                "diagnostics": details.get("diagnostics"),
+            })
+        
+        # Get current candidate counts (live)
+        cur.execute("select count(*) from MIP.MART.V_SIGNALS_LATEST_TS")
+        raw_count = cur.fetchone()[0] or 0
+        
+        cur.execute("select count(*) from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS")
+        trusted_count = cur.fetchone()[0] or 0
+        
+        cur.execute("select count(*) from MIP.MART.V_TRUSTED_PATTERN_HORIZONS")
+        trusted_patterns = cur.fetchone()[0] or 0
+        
+        cur.execute("select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440")
+        latest_bar = cur.fetchone()[0]
+        
+        cur.execute("select max(TS) from MIP.APP.RECOMMENDATION_LOG where INTERVAL_MINUTES = 1440")
+        latest_rec = cur.fetchone()[0]
+        
+        # Recommendation freshness by market type
+        cur.execute(
+            """
+            select MARKET_TYPE, count(*) as cnt, max(TS) as max_ts
+            from MIP.APP.RECOMMENDATION_LOG
+            group by MARKET_TYPE
+            """
+        )
+        rec_freshness = serialize_rows(fetch_all(cur))
+        
+        return {
+            "proposer_events": events,
+            "current_state": {
+                "candidate_count_raw": raw_count,
+                "candidate_count_trusted": trusted_count,
+                "trusted_pattern_count": trusted_patterns,
+                "latest_bar_ts": latest_bar.isoformat() if hasattr(latest_bar, "isoformat") else str(latest_bar) if latest_bar else None,
+                "latest_rec_ts": latest_rec.isoformat() if hasattr(latest_rec, "isoformat") else str(latest_rec) if latest_rec else None,
+                "rec_ts_matches_bar_ts": latest_rec == latest_bar if latest_rec and latest_bar else False,
+            },
+            "rec_freshness_by_market_type": rec_freshness,
+        }
+    finally:
+        conn.close()

@@ -1,0 +1,674 @@
+# MIP User Guide
+
+**Market Intelligence Platform** - A complete guide to understanding and using the system.
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Understanding the Screens](#2-understanding-the-screens)
+   - [Home](#21-home)
+   - [Today](#22-today)
+   - [Portfolio](#23-portfolio)
+   - [Morning Brief](#24-morning-brief)
+   - [Signals](#25-signals)
+   - [Market Timeline](#26-market-timeline)
+   - [Suggestions](#27-suggestions)
+   - [Training Status](#28-training-status)
+   - [Audit Viewer](#29-audit-viewer-run-explorer)
+3. [How the Backend Works](#3-how-the-backend-works)
+   - [Pipeline Overview](#31-pipeline-overview)
+   - [Step-by-Step Breakdown](#32-step-by-step-breakdown)
+   - [Data Flow](#33-data-flow)
+4. [Key Concepts](#4-key-concepts)
+   - [Episodes](#41-episodes)
+   - [Run IDs](#42-run-ids)
+   - [Risk Gates](#43-risk-gates)
+   - [Trust Levels](#44-trust-levels)
+   - [Proposals vs Trades](#45-proposals-vs-trades)
+5. [Troubleshooting](#5-troubleshooting)
+6. [Glossary](#6-glossary)
+
+---
+
+## 1. Introduction
+
+MIP (Market Intelligence Platform) is a paper trading system that:
+
+1. **Collects market data** from financial APIs
+2. **Detects patterns** in price movements
+3. **Generates trading signals** based on those patterns
+4. **Evaluates signal quality** over time
+5. **Simulates portfolios** with risk management
+6. **Proposes and executes trades** (paper trading)
+7. **Generates daily briefs** summarizing opportunities
+
+The system runs automatically every day, but you can also trigger it manually. This guide explains what you see in the UI and how everything works behind the scenes.
+
+---
+
+## 2. Understanding the Screens
+
+### 2.1 Home
+
+**What it shows:** A quick overview of the system status and shortcuts to common actions.
+
+| Element | What it means |
+|---------|---------------|
+| **Last Pipeline Run** | When the system last processed data. Shows time ago (e.g., "2 hours ago") |
+| **New Evaluations** | How many signals were evaluated since the last run |
+| **Latest Brief** | When the last morning brief was generated |
+| **Quick Action Cards** | Shortcuts to Portfolios, Morning Brief, Training Status, and Suggestions |
+
+**When to use:** Start here to see if everything is running normally. If the "Last Pipeline Run" is old, something may be wrong.
+
+---
+
+### 2.2 Today
+
+**What it shows:** Everything you need to know about today's trading situation.
+
+| Section | What it means |
+|---------|---------------|
+| **System Status** | Is the database connection working? Green = OK |
+| **Portfolio Selector** | Switch between different portfolios |
+| **Risk Gate** | Are entries allowed? Shows SAFE, CAUTION, or STOPPED |
+| **Recent Run Events** | What happened in the last pipeline run |
+| **Today's Insights** | Ranked list of trading candidates for today |
+| **Latest Brief** | The most recent morning brief (collapsible) |
+
+**Today's Insights explained:**
+- **Symbol/Pattern**: Which stock and what pattern was detected
+- **Maturity Score**: How confident we are in this pattern (0-100%)
+- **Today Score**: How strong the signal is today
+- **Why Shown**: The reason this candidate appears
+
+---
+
+### 2.3 Portfolio
+
+**What it shows:** Detailed view of a trading portfolio's performance and current state.
+
+#### List View (all portfolios)
+
+| Column | What it means |
+|--------|---------------|
+| **Gate** | Risk status (SAFE/CAUTION/STOPPED) |
+| **Health** | Overall portfolio health indicator |
+| **Equity** | Current total value |
+| **Paid Out** | Money withdrawn/distributed |
+| **Active Episode** | Current trading period |
+| **Status** | ACTIVE, BUST, or STOPPED |
+
+#### Detail View (single portfolio)
+
+**Header Metrics:**
+
+| Metric | What it means |
+|--------|---------------|
+| **Starting Cash** | How much money the portfolio started with |
+| **Final Equity** | Current total value (cash + positions) |
+| **Total Return** | Percentage gain or loss |
+| **Max Drawdown** | Largest peak-to-trough decline (worst case scenario) |
+| **Win Days** | Days with positive returns |
+| **Loss Days** | Days with negative returns |
+| **Status** | Current state (ACTIVE, BUST, etc.) |
+
+**Charts:**
+
+| Chart | What it shows |
+|-------|---------------|
+| **Equity** | Portfolio value over time. Blue dot = current value. Red dashed line = bust threshold |
+| **Drawdown** | Current decline from peak. More negative = worse. Dotted line = warning threshold |
+| **Trades per Day** | Bar chart of trading activity |
+| **Risk Regime** | Color strip showing SAFE (green), CAUTION (yellow), STOPPED (red) over time |
+
+**Portfolio Snapshot Cards:**
+
+| Card | What it shows |
+|------|---------------|
+| **Cash & Exposure** | Cash on hand, invested amount, total equity |
+| **Open Positions** | Current holdings (stocks/assets owned) |
+| **Trades** | Recent trade history with lookback filter |
+| **Risk Gate** | Current risk controls and thresholds |
+
+---
+
+### 2.4 Morning Brief
+
+**What it shows:** A daily summary of opportunities, risks, and portfolio actions.
+
+**Key sections:**
+
+| Section | What it means |
+|---------|---------------|
+| **Executive Summary** | High-level status: Are entries allowed? How many suggestions? Any executed trades? |
+| **Portfolio Actions** | Live state from actual tables - open positions, trades this run, last simulation |
+| **Today's Proposals** | Suggested trades based on trusted signals (NOT yet executed) |
+| **Risk & Guardrails** | Current risk state, profile thresholds, allowed actions |
+| **Changes Since Last Brief** | What changed: equity, return, drawdown, positions, signal changes |
+
+**Important timestamps:**
+
+| Timestamp | What it means |
+|-----------|---------------|
+| **As-of Date** | The market date the brief covers (e.g., "Feb 4, 2026") |
+| **Generated At** | When the brief was actually created (could be later than as-of date) |
+
+**Staleness indicator:**
+- **CURRENT** (green): Brief matches the latest pipeline run
+- **STALE** (yellow): A newer pipeline run exists; brief may be outdated
+
+**Proposals vs Executed:**
+- **Proposals** = Suggestions that passed validation, ready to execute
+- **Executed** = Trades that were actually simulated in the portfolio
+
+---
+
+### 2.5 Signals
+
+**What it shows:** A searchable list of all trading signals generated by the system.
+
+| Column | What it means |
+|--------|---------------|
+| **Symbol** | The stock/asset (e.g., AAPL, GOOGL) |
+| **Market** | Type of asset (STOCK, ETF, FX) |
+| **Pattern** | Which pattern detected this signal |
+| **Score** | Signal strength (higher = stronger) |
+| **Trust** | Trust level (TRUSTED, WATCH, UNTRUSTED) |
+| **Action** | BUY or SELL |
+| **Eligible** | Can this signal be traded today? |
+| **Signal Time** | When the signal was generated |
+
+**Filters:**
+- Filter by symbol, market type, pattern, trust level, run ID, or date
+- Use "From Brief" to jump here with filters pre-set from the Morning Brief
+
+---
+
+### 2.6 Market Timeline
+
+**What it shows:** End-to-end view of what happened with each symbol - from signals to proposals to trades.
+
+**Main grid:**
+- Each card shows a symbol
+- **Counts**: How many signals, proposals, and trades for that symbol
+- **Trust badges**: Trust level for this symbol's patterns
+- **ACTION badge**: Shows if there's a proposal for today
+
+**Expanded detail view:**
+
+| Element | What it shows |
+|---------|---------------|
+| **OHLC Chart** | Price candlesticks with event overlays (signals, proposals, trades marked) |
+| **Decision Narrative** | AI-generated explanation of what happened |
+| **Trust Summary** | Trust levels by pattern for this symbol |
+| **Recent Events** | Table of signals, proposals, trades with timestamps |
+
+---
+
+### 2.7 Suggestions
+
+**What it shows:** Ranked list of trading opportunities based on historical performance.
+
+**Two categories:**
+
+| Category | Meaning |
+|----------|---------|
+| **Strong Candidates** | Patterns with 10+ recommendations (more reliable) |
+| **Early Signals** | Patterns with 3-9 recommendations (still learning) |
+
+**For each suggestion:**
+
+| Element | What it means |
+|---------|---------------|
+| **Rank** | Overall ranking based on suggestion score |
+| **Symbol/Pattern** | Which stock and pattern |
+| **Suggestion Score** | Combined score (higher = better opportunity) |
+| **Maturity Stage** | INSUFFICIENT → WARMING_UP → LEARNING → CONFIDENT |
+| **Maturity Score** | 0-100% confidence in this pattern |
+| **What History Suggests** | Summary of past performance |
+| **Horizon Strip** | Performance at different time horizons (1, 3, 5, 10, 20 bars) |
+
+**Evidence drawer:**
+Click any suggestion to see detailed charts and statistics about its historical performance.
+
+---
+
+### 2.8 Training Status
+
+**What it shows:** How well the system has learned each pattern for each symbol.
+
+| Column | What it means |
+|--------|---------------|
+| **Market Type** | STOCK, ETF, or FX |
+| **Symbol** | The asset |
+| **Pattern** | Pattern ID |
+| **Interval** | Time interval (1440 = daily) |
+| **Maturity** | Learning stage and score |
+| **Sample Size** | How many times this pattern was observed |
+| **Coverage** | What percentage of observations have been evaluated |
+| **Horizons** | Which forward periods have been measured |
+| **Avg Outcomes** | Average returns at each horizon (H1, H3, H5, H10, H20) |
+
+**Maturity stages:**
+
+| Stage | Meaning |
+|-------|---------|
+| **INSUFFICIENT** | Not enough data to draw conclusions |
+| **WARMING_UP** | Starting to gather data |
+| **LEARNING** | Building confidence |
+| **CONFIDENT** | Enough data for reliable predictions |
+
+---
+
+### 2.9 Audit Viewer (Run Explorer)
+
+**What it shows:** Detailed history of all pipeline runs, including errors.
+
+**Run list:**
+- Shows all pipeline runs with status, duration, and timestamp
+- Filter by status (SUCCESS, FAIL, etc.) or date range
+
+**Run detail:**
+
+| Section | What it shows |
+|---------|---------------|
+| **Summary Cards** | Status, duration, as-of date, portfolio count, error count |
+| **Run Narrative** | Plain English: what happened, why, impact, next steps |
+| **Error Panel** | If failed: error message, SQL query ID, debug SQL to investigate |
+| **Step Timeline** | Visual flow of each step (Ingestion → Returns → Recommendations → etc.) |
+| **Step Details** | Click any step to see specifics |
+
+---
+
+## 3. How the Backend Works
+
+### 3.1 Pipeline Overview
+
+The system runs a daily pipeline that processes data through these steps:
+
+```
+1. INGESTION      → Fetch market data from API
+2. RETURNS        → Calculate price returns
+3. RECOMMENDATIONS → Generate trading signals
+4. EVALUATION     → Measure signal quality
+5. SIMULATION     → Run portfolio paper trading
+6. PROPOSALS      → Create trade suggestions
+7. EXECUTION      → Execute approved trades (paper)
+8. MORNING BRIEF  → Generate daily summary
+```
+
+**When does it run?**
+- Automatically at 07:00 Europe/Berlin time
+- Can be triggered manually anytime
+
+**How long does it take?**
+- Usually 2-5 minutes depending on market data availability
+
+---
+
+### 3.2 Step-by-Step Breakdown
+
+#### Step 1: Ingestion
+
+**What happens:** Fetches OHLC (Open, High, Low, Close) price data from AlphaVantage API.
+
+**Tables affected:**
+- `MARKET_BARS` - Stores all price data
+
+**Key behavior:**
+- Checks if new data exists since last run
+- If rate-limited by API, may skip downstream steps
+- Tracks "new bars" to decide if full processing is needed
+
+#### Step 2: Returns Refresh
+
+**What happens:** Calculates daily returns from price data.
+
+**Tables affected:**
+- `MARKET_RETURNS` (view) - Shows percentage changes
+
+**Key behavior:**
+- Calculates simple returns: (today - yesterday) / yesterday
+- Calculates log returns: ln(today / yesterday)
+
+#### Step 3: Generate Recommendations
+
+**What happens:** Runs pattern detection algorithms to find trading signals.
+
+**Tables affected:**
+- `RECOMMENDATION_LOG` - Stores all detected signals
+
+**Key behavior:**
+- Scans each market type (STOCK, ETF, FX)
+- Applies momentum and reversal patterns
+- Generates a "score" for each signal
+
+#### Step 4: Evaluate Recommendations
+
+**What happens:** Measures how well past signals performed.
+
+**Tables affected:**
+- `RECOMMENDATION_OUTCOMES` - Stores evaluation results
+
+**Key behavior:**
+- For each past signal, checks: "What happened after?"
+- Measures returns at 1, 3, 5, 10, and 20 bars forward
+- Tracks "hit rate" (did it go the right direction?)
+
+#### Step 5: Portfolio Simulation
+
+**What happens:** Runs paper trading simulation for each active portfolio.
+
+**Tables affected:**
+- `PORTFOLIO_DAILY` - Daily equity snapshots
+- `PORTFOLIO_TRADES` - Simulated trades
+- `PORTFOLIO_POSITIONS` - Current holdings
+
+**Key behavior:**
+- Uses trusted signals to decide when to buy/sell
+- Applies risk rules (position limits, drawdown stops)
+- Updates portfolio metrics (equity, drawdown, etc.)
+
+#### Step 6: Trade Proposals
+
+**What happens:** Creates trade suggestions from eligible signals.
+
+**Tables affected:**
+- `ORDER_PROPOSALS` - Suggested trades
+
+**Key behavior:**
+- Filters for signals that are:
+  - From trusted patterns
+  - Within portfolio limits
+  - Not duplicating existing positions
+- Creates PROPOSED status entries
+
+#### Step 7: Execution
+
+**What happens:** Validates and executes approved proposals.
+
+**Tables affected:**
+- `ORDER_PROPOSALS` - Status updated to APPROVED/REJECTED/EXECUTED
+- `PORTFOLIO_TRADES` - New trades inserted
+- `PORTFOLIO_POSITIONS` - New positions created
+
+**Key behavior:**
+- Checks risk gate (entries blocked?)
+- Validates position limits
+- Executes as paper trades
+
+#### Step 8: Morning Brief
+
+**What happens:** Generates a JSON summary of the day.
+
+**Tables affected:**
+- `MORNING_BRIEF` - Stores the brief
+
+**Key behavior:**
+- Compiles opportunities, risks, and portfolio state
+- Calculates "deltas" (what changed since yesterday)
+- Persists with PIPELINE_RUN_ID for lineage
+
+---
+
+### 3.3 Data Flow
+
+```
+AlphaVantage API
+       ↓
+┌─────────────────┐
+│  MARKET_BARS    │  ← Raw price data
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│ MARKET_RETURNS  │  ← Calculated returns
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│RECOMMENDATION_  │  ← Generated signals
+│     LOG         │
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│RECOMMENDATION_  │  ← Evaluated performance
+│   OUTCOMES      │
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│V_TRUSTED_SIGNALS│  ← Trust classification
+└────────┬────────┘
+         ↓
+┌─────────────────────────────────────┐
+│  PORTFOLIO_DAILY / TRADES / POSITIONS │  ← Simulation results
+└────────┬────────────────────────────┘
+         ↓
+┌─────────────────┐
+│ORDER_PROPOSALS  │  ← Trade suggestions
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│ MORNING_BRIEF   │  ← Final output
+└─────────────────┘
+```
+
+---
+
+## 4. Key Concepts
+
+### 4.1 Episodes
+
+**What is an episode?**
+
+An episode is a lifecycle period for a portfolio. Think of it as a "trading season" with a clear start and end.
+
+**Episode states:**
+
+| State | Meaning |
+|-------|---------|
+| **ACTIVE** | Currently trading |
+| **ENDED** | Finished normally |
+| **CRYSTALLIZED** | Profit target hit, gains locked in |
+| **STOPPED** | Risk limits breached |
+| **BUST** | Lost too much, trading halted |
+
+**Why episodes matter:**
+- All portfolio data (trades, positions, equity) is scoped to the current episode
+- When you "reset" a portfolio, you end the current episode and start a new one
+- Historical episodes are preserved for analysis
+
+**Episode boundaries:**
+- **Start**: When the episode begins (usually a reset or new portfolio)
+- **End**: When a trigger occurs (profit target, drawdown stop, manual reset)
+
+---
+
+### 4.2 Run IDs
+
+**What is a Run ID?**
+
+A unique identifier that tracks every pipeline execution and simulation run.
+
+**Types of Run IDs:**
+
+| Type | Format | Example | Used for |
+|------|--------|---------|----------|
+| **Pipeline Run ID** | UUID | `05a39214-cc22-44ea-85e3-38e8b5116c06` | Tracking the overall pipeline |
+| **Simulation Run ID** | UUID | `1cb7388a-48f9-4674-8143-4271b209863d` | Portfolio simulation |
+| **Signal Run ID** | Timestamp | `20260204T170000` | Legacy signals (being phased out) |
+
+**Why Run IDs matter:**
+- Lets you trace any data back to when it was created
+- Enables "idempotency" - re-running won't create duplicates
+- Used for debugging issues
+
+---
+
+### 4.3 Risk Gates
+
+**What is a risk gate?**
+
+A safety mechanism that can block new trades when risk thresholds are breached.
+
+**Gate states:**
+
+| State | Color | Meaning |
+|-------|-------|---------|
+| **SAFE** | Green | Normal operation, entries allowed |
+| **CAUTION** | Yellow | Warning level, monitor closely |
+| **STOPPED** | Red | Entries blocked, only exits allowed |
+
+**What triggers STOPPED?**
+- **Drawdown stop**: Portfolio dropped too much from peak (e.g., 10%)
+- **Bust threshold**: Portfolio value fell below bust level (e.g., 60% of starting cash)
+
+**Profile thresholds:**
+Each portfolio profile defines its own risk limits:
+
+| Threshold | Meaning |
+|-----------|---------|
+| **Drawdown Stop %** | Max allowed decline from peak (e.g., 10%) |
+| **Bust Equity %** | Minimum value before bust (e.g., 60%) |
+| **Max Positions** | Maximum number of holdings |
+| **Max Position %** | Maximum size of any single position |
+
+---
+
+### 4.4 Trust Levels
+
+**What is trust?**
+
+A classification of how reliable a pattern is, based on historical performance.
+
+**Trust levels:**
+
+| Level | Meaning | Threshold |
+|-------|---------|-----------|
+| **TRUSTED** | Reliable, can trade | 30+ successes, 80%+ coverage, positive returns |
+| **WATCH** | Promising but needs more data | Some successes, monitoring |
+| **UNTRUSTED** | Not reliable, avoid | Negative returns or insufficient data |
+
+**How trust is calculated:**
+- System evaluates past signals: "Did the price move as predicted?"
+- Counts successes vs failures at each time horizon
+- Patterns that consistently work become TRUSTED
+
+**Why trust matters:**
+- Only TRUSTED patterns are used for actual trade proposals
+- WATCH patterns are monitored but not traded
+- UNTRUSTED patterns are ignored
+
+---
+
+### 4.5 Proposals vs Trades
+
+**Understanding the difference:**
+
+| Concept | What it is | Where to see it |
+|---------|------------|-----------------|
+| **Signal** | A pattern detection (raw opportunity) | Signals page |
+| **Proposal** | A suggested trade (passed filters) | Morning Brief, ORDER_PROPOSALS table |
+| **Trade** | An executed transaction (paper) | Portfolio page, PORTFOLIO_TRADES table |
+
+**The journey:**
+
+```
+SIGNAL → [Trust check] → [Eligibility check] → PROPOSAL → [Risk check] → TRADE
+```
+
+**Status progression:**
+
+| Status | Meaning |
+|--------|---------|
+| **PROPOSED** | Suggestion created, awaiting validation |
+| **APPROVED** | Passed all checks, ready to execute |
+| **REJECTED** | Failed validation (risk gate, limits, etc.) |
+| **EXECUTED** | Successfully traded (paper) |
+
+---
+
+## 5. Troubleshooting
+
+### "STALE" brief showing
+
+**Symptom:** Morning Brief shows "STALE" badge
+
+**Cause:** A newer pipeline run completed but the brief is from an older run
+
+**Solution:**
+1. Check Audit Viewer for recent pipeline runs
+2. If a run completed successfully, the brief should refresh
+3. If stuck, check if the brief write step failed
+
+---
+
+### No trades happening
+
+**Symptom:** Portfolio shows no trades despite active signals
+
+**Possible causes:**
+
+| Cause | How to check |
+|-------|--------------|
+| Risk gate STOPPED | Check Portfolio page - Risk Gate card |
+| No trusted patterns | Check Training Status for maturity |
+| No new market data | Check if pipeline shows "NO_NEW_BARS" |
+| Position limits full | Check Open Positions vs Max Positions |
+
+---
+
+### Wrong metrics (drawdown, win/loss days)
+
+**Symptom:** Metrics don't match expected values
+
+**Possible cause:** Historical data from before episode reset
+
+**Solution:**
+1. Run the episode cleanup migration
+2. Re-run the pipeline to refresh metrics
+
+---
+
+### Pipeline shows "SUCCESS_WITH_SKIPS"
+
+**Symptom:** Pipeline completed but with skips
+
+**Meaning:** Some steps were skipped, usually because:
+- No new market data available
+- Rate limit hit on API
+- Downstream steps not needed
+
+**This is normal** when there's no new data to process.
+
+---
+
+## 6. Glossary
+
+| Term | Definition |
+|------|------------|
+| **Bar** | A single OHLC price data point (Open, High, Low, Close) |
+| **Bust** | When portfolio value drops below the bust threshold |
+| **Crystallize** | Lock in gains when profit target is hit |
+| **Drawdown** | Decline from peak equity (expressed as %) |
+| **Episode** | A portfolio lifecycle period with defined start/end |
+| **Equity** | Total portfolio value (cash + positions) |
+| **Hit Rate** | Percentage of signals that went in the predicted direction |
+| **Horizon** | Forward time period for evaluation (1, 3, 5, 10, 20 bars) |
+| **Idempotent** | Can be run multiple times without creating duplicates |
+| **Maturity** | How well the system has learned a pattern |
+| **OHLC** | Open, High, Low, Close - standard price bar format |
+| **Pattern** | A price behavior that signals a trading opportunity |
+| **Pipeline** | The automated sequence of data processing steps |
+| **Position** | A holding in an asset (shares owned) |
+| **Proposal** | A suggested trade that passed initial filters |
+| **Risk Gate** | Safety mechanism controlling trade entries |
+| **Run ID** | Unique identifier for a pipeline or simulation execution |
+| **Signal** | A detected trading opportunity from pattern matching |
+| **Simulation** | Paper trading that doesn't use real money |
+| **Trust** | Reliability classification of a pattern |
+
+---
+
+*Last updated: February 2026*

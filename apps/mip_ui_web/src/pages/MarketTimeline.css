@@ -171,18 +171,16 @@
   background: linear-gradient(90deg, #fff3e0 0%, #fafafa 30%);
 }
 
-.market-timeline-tile.tile-today-actionable::after {
-  content: "ACTION";
-  position: absolute;
-  right: 3rem;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 0.6rem;
+/* Action badge - inline with trust badge */
+.tile-action-badge {
+  font-size: 0.65rem;
   font-weight: 700;
-  color: #e65100;
+  padding: 0.2rem 0.5rem;
+  border-radius: 10px;
+  text-transform: uppercase;
   background: #fff3e0;
-  padding: 0.15rem 0.4rem;
-  border-radius: 3px;
+  color: #e65100;
+  border: 1px solid #ffcc80;
   letter-spacing: 0.5px;
 }
 

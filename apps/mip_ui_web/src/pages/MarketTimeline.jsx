@@ -194,6 +194,12 @@ export default function MarketTimeline() {
                     <span className="tile-market-type">{sym.market_type}</span>
                   </div>
                   
+                  {hasTodayProposals && (
+                    <span className="tile-action-badge">
+                      ACTION
+                    </span>
+                  )}
+                  
                   {sym.trust_label && (
                     <span className={`tile-trust-badge trust-${sym.trust_label?.toLowerCase()}`}>
                       {sym.trust_label}

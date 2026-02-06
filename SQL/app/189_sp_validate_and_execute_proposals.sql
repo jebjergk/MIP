@@ -575,6 +575,61 @@ begin
 
     v_executed_count := SQLROWCOUNT;
 
+    -- Create positions for BUY trades
+    -- Position tracks what we hold and when to exit
+    insert into MIP.APP.PORTFOLIO_POSITIONS (
+        PORTFOLIO_ID,
+        RUN_ID,
+        EPISODE_ID,
+        SYMBOL,
+        MARKET_TYPE,
+        INTERVAL_MINUTES,
+        ENTRY_TS,
+        ENTRY_PRICE,
+        QUANTITY,
+        COST_BASIS,
+        ENTRY_SCORE,
+        ENTRY_INDEX,
+        HOLD_UNTIL_INDEX
+    )
+    select
+        t.PORTFOLIO_ID,
+        t.RUN_ID,
+        ae.EPISODE_ID,
+        t.SYMBOL,
+        t.MARKET_TYPE,
+        t.INTERVAL_MINUTES,
+        t.TRADE_TS as ENTRY_TS,
+        t.PRICE as ENTRY_PRICE,
+        t.QUANTITY,
+        t.NOTIONAL as COST_BASIS,
+        t.SCORE as ENTRY_SCORE,
+        bi.BAR_INDEX as ENTRY_INDEX,
+        bi.BAR_INDEX + coalesce(ts.HORIZON_BARS, 5) as HOLD_UNTIL_INDEX
+    from MIP.APP.PORTFOLIO_TRADES t
+    cross join (
+        select max(BAR_INDEX) as BAR_INDEX
+        from MIP.MART.V_BAR_INDEX
+        where INTERVAL_MINUTES = 1440
+    ) bi
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE ae
+      on ae.PORTFOLIO_ID = t.PORTFOLIO_ID
+    left join MIP.MART.V_TRUSTED_SIGNALS ts
+      on ts.SYMBOL = t.SYMBOL
+     and ts.MARKET_TYPE = t.MARKET_TYPE
+     and ts.IS_TRUSTED = true
+    where t.RUN_ID = :P_RUN_ID
+      and t.PORTFOLIO_ID = :P_PORTFOLIO_ID
+      and t.SIDE = 'BUY'
+      and not exists (
+          -- Don't create duplicate positions
+          select 1 from MIP.APP.PORTFOLIO_POSITIONS p
+          where p.PORTFOLIO_ID = t.PORTFOLIO_ID
+            and p.SYMBOL = t.SYMBOL
+            and p.ENTRY_TS = t.TRADE_TS
+      )
+    qualify row_number() over (partition by t.TRADE_ID order by ts.HORIZON_BARS) = 1;
+
     return object_construct(
         'status', 'SUCCESS',
         'run_id', :P_RUN_ID,

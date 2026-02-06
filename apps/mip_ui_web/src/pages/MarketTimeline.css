@@ -107,6 +107,7 @@
 
 /* Tile (symbol card) */
 .market-timeline-tile {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr auto auto auto;
   align-items: center;
@@ -158,6 +159,31 @@
 
 .market-timeline-tile.tile-inactive {
   border-left: 4px solid #e0e0e0;
+}
+
+/* Highlight for today's actionable proposals */
+.market-timeline-tile.tile-today-actionable {
+  background: linear-gradient(90deg, #fff8e1 0%, #fff 30%);
+  box-shadow: inset 0 0 0 1px rgba(255, 152, 0, 0.3);
+}
+
+.market-timeline-tile.tile-today-actionable:hover {
+  background: linear-gradient(90deg, #fff3e0 0%, #fafafa 30%);
+}
+
+.market-timeline-tile.tile-today-actionable::after {
+  content: "ACTION";
+  position: absolute;
+  right: 3rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #e65100;
+  background: #fff3e0;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
 }
 
 /* Tile header */

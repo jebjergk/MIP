@@ -179,7 +179,9 @@ def get_overview(
             select
                 p.SYMBOL,
                 p.MARKET_TYPE,
-                count(*) as proposal_count
+                count(*) as proposal_count,
+                count(case when p.PROPOSED_AT::date = current_date() 
+                           and p.STATUS in ('PROPOSED', 'APPROVED') then 1 end) as today_proposal_count
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
             where p.PROPOSED_AT >= %s
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}
@@ -221,6 +223,7 @@ def get_overview(
             s.MARKET_TYPE,
             coalesce(sc.signal_count, 0) as signal_count,
             coalesce(pc.proposal_count, 0) as proposal_count,
+            coalesce(pc.today_proposal_count, 0) as today_proposal_count,
             coalesce(tc.trade_count, 0) as trade_count,
             tl.latest_trust_label as trust_label,
             lb.latest_bar_ts,
@@ -265,6 +268,7 @@ def get_overview(
                 "market_type": row.get("MARKET_TYPE") or row.get("market_type"),
                 "signal_count": row.get("SIGNAL_COUNT") or row.get("signal_count") or 0,
                 "proposal_count": row.get("PROPOSAL_COUNT") or row.get("proposal_count") or 0,
+                "today_proposal_count": row.get("TODAY_PROPOSAL_COUNT") or row.get("today_proposal_count") or 0,
                 "trade_count": row.get("TRADE_COUNT") or row.get("trade_count") or 0,
                 "trust_label": row.get("TRUST_LABEL") or row.get("trust_label"),
                 "latest_bar_ts": row.get("LATEST_BAR_TS") or row.get("latest_bar_ts"),

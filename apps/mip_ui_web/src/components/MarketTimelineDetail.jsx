@@ -391,7 +391,7 @@ export default function MarketTimelineDetail({
                       <>
                         {e.side} · Weight: {e.target_weight?.toFixed(2) || '—'} · Status: {e.status}
                         {e.portfolio_id && (
-                          <> · <Link to={`/portfolio/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
+                          <> · <Link to={`/portfolios/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
                         )}
                       </>
                     )}
@@ -399,7 +399,7 @@ export default function MarketTimelineDetail({
                       <>
                         {e.side} {e.quantity} @ {e.price?.toFixed(2)} (${e.notional?.toFixed(0)})
                         {e.portfolio_id && (
-                          <> · <Link to={`/portfolio/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
+                          <> · <Link to={`/portfolios/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
                         )}
                       </>
                     )}

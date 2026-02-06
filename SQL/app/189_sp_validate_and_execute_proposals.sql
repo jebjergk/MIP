@@ -314,7 +314,7 @@ begin
                 ROWS_AFFECTED,
                 DETAILS
             )
-            values (
+            select
                 current_timestamp(),
                 :v_run_id_string,
                 :P_PARENT_RUN_ID,
@@ -327,8 +327,7 @@ begin
                     'max_position_pct', :v_max_position_pct,
                     'open_positions', :v_open_positions_count,
                     'max_positions', :v_max_positions
-                )
-            );
+                );
         end if;
 
         -- Also check position count limit
@@ -366,7 +365,7 @@ begin
                 ROWS_AFFECTED,
                 DETAILS
             )
-            values (
+            select
                 current_timestamp(),
                 :v_run_id_string,
                 :P_PARENT_RUN_ID,
@@ -378,8 +377,7 @@ begin
                     'open_positions', :v_open_positions_count,
                     'approved_count', :v_approved_count,
                     'max_positions', :v_max_positions
-                )
-            );
+                );
         end if;
     end;
 

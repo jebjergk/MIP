@@ -288,8 +288,8 @@ begin
            and STATUS = 'APPROVED'
            and SIDE = 'BUY';
 
-        -- Calculate existing exposure from open positions
-        select coalesce(sum(WEIGHT), 0)
+        -- Calculate existing exposure from open positions (cost_basis / total_equity)
+        select coalesce(sum(COST_BASIS) / nullif(:v_total_equity, 0), 0)
           into v_existing_exposure_pct
           from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
          where PORTFOLIO_ID = :P_PORTFOLIO_ID;

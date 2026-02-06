@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/training', label: 'Training Status' },
   { to: '/suggestions', label: 'Suggestions' },
   { to: '/signals', label: 'Signals' },
+  { to: '/market-timeline', label: 'Market Timeline' },
   { to: '/debug', label: 'Debug' },
 ]
 

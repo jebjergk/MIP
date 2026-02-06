@@ -8,6 +8,7 @@ import TrainingStatus from './pages/TrainingStatus'
 import Suggestions from './pages/Suggestions'
 import Signals from './pages/Signals'
 import Debug from './pages/Debug'
+import MarketTimeline from './pages/MarketTimeline'
 import AppLayout from './components/AppLayout'
 
 const API_BASE = '/api'
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/suggestions" element={<Suggestions />} />
         <Route path="/signals" element={<Signals />} />
+        <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/debug" element={<Debug />} />
       </Route>
     </Routes>

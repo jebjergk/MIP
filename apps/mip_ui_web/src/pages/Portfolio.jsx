@@ -126,37 +126,82 @@ export default function Portfolio() {
     const activeEp = snapshot?.active_episode
     const activeSince = (activeEp?.start_ts ?? activeEp?.START_TS ?? '').slice(0, 10)
     const activeProfileId = activeEp?.profile_id ?? activeEp?.PROFILE_ID
-    const riskLabel = snapshot?.risk_gate?.risk_label ?? 'NORMAL'
-    const gateState = riskLabel === 'NORMAL' ? 'SAFE' : riskLabel === 'CAUTION' ? 'CAUTION' : 'STOPPED'
-    const explainSentence = snapshot?.risk_gate?.reason_text ?? 'Portfolio is within safe limits.'
+    
+    // Item 2 fix: Use episode-scoped risk state for consistency with drawdown chart
+    // This ensures the risk label matches what the episode drawdown chart shows
+    const episodeRiskState = snapshot?.episode_risk_state
+    const riskLabel = episodeRiskState?.risk_label ?? snapshot?.risk_gate?.risk_label ?? 'NORMAL'
+    const episodeDrawdownBreached = episodeRiskState?.episode_drawdown_breached ?? false
+    
+    // Derive gate state from episode-scoped data when available
+    let gateState = 'SAFE'
+    if (episodeRiskState?.entries_blocked) {
+      gateState = 'STOPPED'
+    } else if (episodeDrawdownBreached || riskLabel === 'CAUTION') {
+      gateState = 'CAUTION'
+    } else if (riskLabel === 'DEFENSIVE') {
+      gateState = 'STOPPED'
+    }
+    
+    // Explain sentence: show episode-specific info if drawdown is high
+    let explainSentence = snapshot?.risk_gate?.reason_text ?? 'Portfolio is within safe limits.'
+    if (episodeRiskState && episodeDrawdownBreached && gateState !== 'STOPPED') {
+      const ddPct = episodeRiskState.episode_drawdown_pct?.toFixed(1) ?? '?'
+      const stopPct = episodeRiskState.episode_drawdown_stop_pct?.toFixed(1) ?? '?'
+      explainSentence = `Episode drawdown at ${ddPct}% (threshold: ${stopPct}%). Approaching risk limit.`
+    }
+    
     const activeHeaderLine = activeEp && activeSince
       ? `Active since ${activeSince} · Profile ${activeProfileId ?? '—'} · ${gateState}`
       : null
     
-    // Freshness check
-    const portfolioRunId = portfolio.LAST_SIMULATION_RUN_ID || portfolio.last_simulation_run_id
-    const portfolioRunTs = portfolio.LAST_SIMULATED_AT || portfolio.last_simulated_at
-    const portfolioIsStale = isStale(portfolioRunId)
+    // Freshness check (Item 3 fix: use market dates, not run IDs)
+    // portfolio_simulated_through_ts: latest market date the portfolio has data for
+    // pipeline_last_run_at: when the pipeline last ran successfully
+    // latest_available_bar_date: most recent trading day with data available
+    const portfolioSimulatedThrough = snapshot?.portfolio_simulated_through_ts
+    const pipelineLastRunAt = snapshot?.pipeline_last_run_at
+    const latestAvailableBarDate = snapshot?.latest_available_bar_date
+    
+    // Format the simulated-through date for display (just the date part)
+    const simulatedThroughDate = portfolioSimulatedThrough 
+      ? portfolioSimulatedThrough.slice(0, 10)
+      : null
+    
+    // Format pipeline run time (just the time part for same-day, or relative)
+    const pipelineRunTime = pipelineLastRunAt
+      ? new Date(pipelineLastRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : null
+    
+    // Determine if truly stale: portfolio simulated-through date < latest available bar date
+    // Only stale if there's a newer market date we haven't simulated through yet
+    const isTrulyStale = simulatedThroughDate && latestAvailableBarDate
+      ? simulatedThroughDate < latestAvailableBarDate
+      : false
+    
+    const hasFreshnessData = portfolioSimulatedThrough || pipelineLastRunAt
 
     return (
       <>
         <h1>Portfolio: {portfolio.NAME}</h1>
         {episodeLabel && <p className="portfolio-episode-header">{episodeLabel}</p>}
         
-        {/* Freshness header */}
+        {/* Freshness header (Item 3: informational, not misleading) */}
         <div className="portfolio-freshness-header">
-          {portfolioIsStale ? (
+          {isTrulyStale ? (
             <>
-              <span className="freshness-badge freshness-stale">STALE</span>
+              <span className="freshness-badge freshness-stale">PENDING UPDATE</span>
               <span className="freshness-text">
-                Last run: {relativeTime(portfolioRunTs)} · A newer pipeline run is available
+                Simulated through {simulatedThroughDate} · New market date available ({latestAvailableBarDate})
               </span>
             </>
-          ) : portfolioRunTs ? (
+          ) : hasFreshnessData ? (
             <>
               <span className="freshness-badge freshness-current">CURRENT</span>
               <span className="freshness-text">
-                Last run: {relativeTime(portfolioRunTs)}
+                {simulatedThroughDate && `Simulated through ${simulatedThroughDate}`}
+                {simulatedThroughDate && pipelineRunTime && ' · '}
+                {pipelineRunTime && `Pipeline ran at ${pipelineRunTime}`}
               </span>
             </>
           ) : null}

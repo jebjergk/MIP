@@ -840,6 +840,7 @@ def get_portfolio_snapshot(
 
         # Active episode (for evolution timeline; KPIs/risk are already episode-scoped via MART views)
         active_episode = None
+        episode_start_ts = None
         try:
             cur.execute(
                 """
@@ -854,11 +855,116 @@ def get_portfolio_snapshot(
                 cols = [d[0] for d in cur.description]
                 active_episode = dict(zip(cols, row))
                 st = active_episode.get("START_TS")
+                episode_start_ts = st  # Keep for episode risk calc
                 if st is not None and hasattr(st, "isoformat"):
                     active_episode["start_ts"] = st.isoformat()
                 active_episode = serialize_row(active_episode)
         except Exception:
             pass
+
+        # --- Freshness metadata (Item 3 fix) ---
+        # portfolio_simulated_through_ts: latest market date the portfolio has data for
+        # pipeline_last_run_at: when the pipeline last ran successfully
+        portfolio_simulated_through_ts = None
+        pipeline_last_run_at = None
+        try:
+            # Get the latest PORTFOLIO_DAILY.TS for this portfolio (the market date)
+            cur.execute(
+                "select max(TS) from MIP.APP.PORTFOLIO_DAILY where PORTFOLIO_ID = %s",
+                (portfolio_id,),
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                ts = row[0]
+                portfolio_simulated_through_ts = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            
+            # Get latest successful pipeline run timestamp from audit log
+            cur.execute(
+                """
+                select EVENT_TS 
+                from MIP.APP.MIP_AUDIT_LOG
+                where EVENT_TYPE = 'PIPELINE'
+                  and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+                  and STATUS in ('SUCCESS', 'SUCCESS_WITH_SKIPS')
+                order by EVENT_TS desc
+                limit 1
+                """
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                ts = row[0]
+                pipeline_last_run_at = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        except Exception:
+            pass
+        
+        # Get latest available bar date (to detect true staleness)
+        # This is the most recent trading day we have data for
+        latest_available_bar_date = None
+        try:
+            cur.execute(
+                """
+                select max(TS)::date as latest_bar_date
+                from MIP.MART.V_BAR_INDEX
+                where INTERVAL_MINUTES = 1440
+                """
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                d = row[0]
+                latest_available_bar_date = d.isoformat() if hasattr(d, "isoformat") else str(d)
+        except Exception:
+            pass
+
+        # --- Episode-scoped risk state (Item 2 fix) ---
+        # Compute risk state from episode-local drawdown for consistency with episode chart
+        episode_risk_state = None
+        if episode_start_ts is not None and profile_row:
+            try:
+                ep_drawdown_stop_pct = _get(profile_row, "DRAWDOWN_STOP_PCT", "drawdown_stop_pct")
+                if ep_drawdown_stop_pct is not None:
+                    ep_drawdown_stop_pct = float(ep_drawdown_stop_pct)
+                else:
+                    ep_drawdown_stop_pct = 0.10  # Default 10%
+                
+                # Get episode-local peak and current equity to compute drawdown
+                cur.execute(
+                    """
+                    select 
+                        max(TOTAL_EQUITY) as peak_equity,
+                        max_by(TOTAL_EQUITY, TS) as current_equity
+                    from MIP.APP.PORTFOLIO_DAILY
+                    where PORTFOLIO_ID = %s and TS >= %s
+                    """,
+                    (portfolio_id, episode_start_ts),
+                )
+                row = cur.fetchone()
+                if row and row[0] is not None and row[1] is not None:
+                    ep_peak = float(row[0])
+                    ep_current = float(row[1])
+                    if ep_peak > 0:
+                        ep_drawdown = (ep_peak - ep_current) / ep_peak
+                    else:
+                        ep_drawdown = 0.0
+                    
+                    # Determine episode risk state
+                    ep_entries_blocked = risk_gate_normalized.get("entries_allowed") is False
+                    ep_risk_label = risk_gate_normalized.get("risk_label", "NORMAL")
+                    
+                    # Override if episode drawdown indicates breach but gate says safe
+                    if ep_drawdown >= ep_drawdown_stop_pct and ep_risk_label == "NORMAL":
+                        ep_risk_label = "CAUTION"  # Drawdown high but gate not yet triggered
+                    
+                    episode_risk_state = {
+                        "episode_peak_equity": ep_peak,
+                        "episode_current_equity": ep_current,
+                        "episode_drawdown_pct": ep_drawdown * 100,
+                        "episode_drawdown_stop_pct": ep_drawdown_stop_pct * 100,
+                        "episode_drawdown_breached": ep_drawdown >= ep_drawdown_stop_pct,
+                        "risk_label": ep_risk_label,
+                        "entries_blocked": ep_entries_blocked,
+                    }
+            except Exception:
+                pass
 
         return {
             "positions": open_positions_filtered,
@@ -875,6 +981,12 @@ def get_portfolio_snapshot(
             "risk_strategy": risk_strategy,
             "cards": cards,
             "active_episode": active_episode,
+            # Freshness metadata (Item 3)
+            "portfolio_simulated_through_ts": portfolio_simulated_through_ts,
+            "pipeline_last_run_at": pipeline_last_run_at,
+            "latest_available_bar_date": latest_available_bar_date,
+            # Episode-scoped risk state (Item 2)
+            "episode_risk_state": episode_risk_state,
         }
     finally:
         conn.close()
@@ -1104,6 +1216,10 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
     """
     Episode analytics for the timeline card: equity series, drawdown series,
     trades per day, regime strip, thresholds, and events.
+    
+    IMPORTANT: Drawdown is computed using episode-local peak equity, NOT lifetime peak.
+    This ensures drawdown starts at 0 when an episode begins and only reflects
+    losses from the episode's own high watermark.
     """
     conn = get_connection()
     try:
@@ -1112,6 +1228,7 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
         cur.execute(
             """
             select e.EPISODE_ID, e.PORTFOLIO_ID, e.PROFILE_ID, e.START_TS, e.END_TS, e.STATUS, e.END_REASON,
+                   e.START_EQUITY as EPISODE_START_EQUITY,
                    p.NAME as PROFILE_NAME, p.DRAWDOWN_STOP_PCT, p.BUST_EQUITY_PCT,
                    port.STARTING_CASH, port.BUST_AT
             from MIP.APP.PORTFOLIO_EPISODE e
@@ -1132,12 +1249,17 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             raise HTTPException(status_code=404, detail="Episode missing START_TS")
         drawdown_stop_pct = float(ep["DRAWDOWN_STOP_PCT"]) if ep.get("DRAWDOWN_STOP_PCT") is not None else 0.10
         bust_equity_pct = float(ep["BUST_EQUITY_PCT"]) if ep.get("BUST_EQUITY_PCT") is not None else None
-        start_equity = float(ep["STARTING_CASH"]) if ep.get("STARTING_CASH") is not None else None
+        # Use episode start equity if available, fallback to portfolio starting cash
+        start_equity = float(ep["EPISODE_START_EQUITY"]) if ep.get("EPISODE_START_EQUITY") is not None else (
+            float(ep["STARTING_CASH"]) if ep.get("STARTING_CASH") is not None else None
+        )
 
-        # Equity series: PORTFOLIO_DAILY in window
+        # Equity series: PORTFOLIO_DAILY in episode window
+        # We fetch raw TOTAL_EQUITY and compute episode-local peak/drawdown in Python
+        # to ensure drawdown is scoped to THIS episode only
         cur.execute(
             """
-            select TS, TOTAL_EQUITY, PEAK_EQUITY, DRAWDOWN, OPEN_POSITIONS
+            select TS, TOTAL_EQUITY, OPEN_POSITIONS
             from MIP.APP.PORTFOLIO_DAILY
             where PORTFOLIO_ID = %s and TS >= %s and (%s is null or TS <= %s)
             order by TS
@@ -1145,29 +1267,51 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             (portfolio_id, start_ts, end_ts, end_ts),
         )
         daily_rows = fetch_all(cur)
+        
+        # Compute episode-local peak equity and drawdown
+        # Peak starts at episode start equity (or first day's equity)
         equity_series = []
         drawdown_series = []
         regime_per_day = []
         drawdown_stop_ts = None
+        episode_peak = start_equity  # Initialize with episode start equity
+        
         for r in daily_rows:
             ts = r.get("TS")
             te = r.get("TOTAL_EQUITY")
-            pe = r.get("PEAK_EQUITY")
-            dd = r.get("DRAWDOWN")
             if ts is not None:
                 tss = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
                 if te is not None:
-                    equity_series.append({"ts": tss, "equity": float(te)})
-                dd_pct = (-float(dd) * 100) if dd is not None else None
-                drawdown_series.append({
-                    "ts": tss,
-                    "drawdown_pct": dd_pct,
-                    "high_watermark_equity": float(pe) if pe is not None else None,
-                })
-                gate = "STOPPED" if (dd is not None and float(dd) >= drawdown_stop_pct) else "SAFE"
-                regime_per_day.append({"ts": tss, "gate_state": gate})
-                if drawdown_stop_ts is None and dd is not None and float(dd) >= drawdown_stop_pct:
-                    drawdown_stop_ts = tss
+                    te_float = float(te)
+                    equity_series.append({"ts": tss, "equity": te_float})
+                    
+                    # Update episode-local peak (running max within episode)
+                    if episode_peak is None or te_float > episode_peak:
+                        episode_peak = te_float
+                    
+                    # Compute episode-local drawdown
+                    if episode_peak and episode_peak > 0:
+                        episode_dd = (episode_peak - te_float) / episode_peak
+                    else:
+                        episode_dd = 0.0
+                    
+                    dd_pct = -episode_dd * 100  # Negative for display (loss)
+                    drawdown_series.append({
+                        "ts": tss,
+                        "drawdown_pct": dd_pct,
+                        "high_watermark_equity": episode_peak,
+                    })
+                    
+                    # Determine gate state based on episode-local drawdown
+                    gate = "STOPPED" if episode_dd >= drawdown_stop_pct else "SAFE"
+                    regime_per_day.append({"ts": tss, "gate_state": gate})
+                    
+                    if drawdown_stop_ts is None and episode_dd >= drawdown_stop_pct:
+                        drawdown_stop_ts = tss
+                else:
+                    # No equity data for this day
+                    drawdown_series.append({"ts": tss, "drawdown_pct": None, "high_watermark_equity": episode_peak})
+                    regime_per_day.append({"ts": tss, "gate_state": "SAFE"})
 
         # Trades per day
         cur.execute(
@@ -1210,7 +1354,7 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             "start_equity": start_equity,
         }
 
-        # Summary stats (reuse logic from list)
+        # Summary stats - compute from episode-local data
         final_equity = None
         max_drawdown = None
         win_days = None
@@ -1220,8 +1364,15 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             final_equity = daily_rows[-1].get("TOTAL_EQUITY")
             if final_equity is not None:
                 final_equity = float(final_equity)
-            max_dd = max((float(r["DRAWDOWN"]) for r in daily_rows if r.get("DRAWDOWN") is not None), default=None)
-            max_drawdown = max_dd * 100 if max_dd is not None else None
+            
+            # Compute episode-local max drawdown from our computed drawdown_series
+            # (already computed above using episode-local peak)
+            episode_drawdowns = [
+                abs(d["drawdown_pct"]) for d in drawdown_series 
+                if d.get("drawdown_pct") is not None
+            ]
+            max_drawdown = max(episode_drawdowns, default=None)  # Already in percentage
+            
             prev = None
             wins = losses = 0
             for r in daily_rows:

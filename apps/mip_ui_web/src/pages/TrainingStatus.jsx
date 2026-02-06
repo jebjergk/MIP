@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
-import TrainingTimeline from '../components/TrainingTimeline'
+import TrainingTimelineInline from '../components/TrainingTimelineInline'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
@@ -13,6 +13,7 @@ import { TRAINING_STATUS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
+const COLUMN_COUNT = 14 // Number of columns in the table
 
 function stageGlossaryKey(stage) {
   if (!stage) return 'maturity_stage'
@@ -35,6 +36,11 @@ function formatNum(n) {
   return Number.isInteger(x) ? String(x) : x.toFixed(4)
 }
 
+/** Generate a unique key for a row */
+function getRowKey(row, get) {
+  return `${get(row, 'market_type')}-${get(row, 'symbol')}-${get(row, 'pattern_id')}`
+}
+
 export default function TrainingStatus() {
   const { explainMode } = useExplainMode()
   const [searchParams] = useSearchParams()
@@ -45,7 +51,8 @@ export default function TrainingStatus() {
   const [marketTypeFilter, setMarketTypeFilter] = useState('')
   const [symbolSearch, setSymbolSearch] = useState('')
   const [patternIdFilter, setPatternIdFilter] = useState('')
-  const [selectedRow, setSelectedRow] = useState(null)
+  const [expandedRowId, setExpandedRowId] = useState(null)
+  const timelineCacheRef = useRef({}) // Cache for timeline data per row key
   const { setContext } = useExplainCenter()
 
   useEffect(() => {
@@ -98,6 +105,45 @@ export default function TrainingStatus() {
       return true
     })
   }, [rows, marketTypeFilter, symbolSearch, patternIdFilter])
+
+  // Collapse expanded row if it's no longer in filtered results
+  useEffect(() => {
+    if (expandedRowId) {
+      const stillExists = filteredRows.some((r) => getRowKey(r, get) === expandedRowId)
+      if (!stillExists) {
+        setExpandedRowId(null)
+      }
+    }
+  }, [filteredRows, expandedRowId])
+
+  // Keyboard handler for Esc to collapse
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && expandedRowId) {
+        setExpandedRowId(null)
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [expandedRowId])
+
+  // Toggle row expansion
+  const toggleRow = useCallback((rowKey) => {
+    setExpandedRowId((prev) => (prev === rowKey ? null : rowKey))
+  }, [])
+
+  // Handle keyboard toggle on row
+  const handleRowKeyDown = useCallback((e, rowKey) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      toggleRow(rowKey)
+    }
+  }, [toggleRow])
+
+  // Cache setter for timeline data
+  const setTimelineCache = useCallback((key, data) => {
+    timelineCacheRef.current[key] = data
+  }, [])
 
   if (loading) {
     return (
@@ -163,6 +209,7 @@ export default function TrainingStatus() {
         <table className="training-status-table">
           <thead>
             <tr>
+              <th className="training-expand-col" aria-label="Expand"></th>
               <th>Market type <InfoTooltip scope={SCOPE} key="market_type" variant="short" /></th>
               <th>Symbol <InfoTooltip scope={SCOPE} key="symbol" variant="short" /></th>
               <th>Pattern <InfoTooltip scope={SCOPE} key="pattern_id" variant="short" /></th>
@@ -180,57 +227,76 @@ export default function TrainingStatus() {
             </tr>
           </thead>
           <tbody>
-            {filteredRows.map((row, i) => {
+            {filteredRows.map((row) => {
               const maturityStage = get(row, 'maturity_stage')
               const score = get(row, 'maturity_score') != null ? Number(get(row, 'maturity_score')) : 0
               const stageKey = stageGlossaryKey(maturityStage)
               const stageTitle = explainMode ? (getGlossaryEntry(SCOPE, stageKey)?.short ?? maturityStage) : undefined
-              const rowKey = `${get(row, 'market_type')}-${get(row, 'symbol')}-${get(row, 'pattern_id')}`
-              const isSelected = selectedRow && 
-                selectedRow.symbol === get(row, 'symbol') && 
-                selectedRow.market_type === get(row, 'market_type') && 
-                selectedRow.pattern_id === get(row, 'pattern_id')
+              const rowKey = getRowKey(row, get)
+              const isExpanded = expandedRowId === rowKey
+              const cachedData = timelineCacheRef.current[rowKey]
+
               return (
-                <tr 
-                  key={rowKey}
-                  className={`training-row ${isSelected ? 'training-row-selected' : ''}`}
-                  onClick={() => setSelectedRow({
-                    symbol: get(row, 'symbol'),
-                    market_type: get(row, 'market_type'),
-                    pattern_id: get(row, 'pattern_id'),
-                  })}
-                  style={{ cursor: 'pointer' }}
-                  title="Click to view training timeline"
-                >
-                  <td>{get(row, 'market_type') ?? '—'}</td>
-                  <td>{get(row, 'symbol') ?? '—'}</td>
-                  <td>{get(row, 'pattern_id') ?? '—'}</td>
-                  <td>{get(row, 'interval_minutes') ?? '—'}</td>
-                  <td>{get(row, 'as_of_ts') ?? '—'}</td>
-                  <td className="training-maturity-cell">
-                    <span
-                      className={`training-maturity-badge training-stage-${(get(row, 'maturity_stage') || '').toLowerCase().replace('_', '-')}`}
-                      title={stageTitle}
-                    >
-                      {get(row, 'maturity_stage') ?? '—'}
-                    </span>
-                    <InfoTooltip scope={SCOPE} key={stageKey} variant="short" />
-                    <div className="training-progress-wrap" title={stageTitle}>
-                      <div className="training-progress-bar" style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
-                    </div>
-                    <span className="training-score-num" title={explainMode ? getGlossaryEntry(SCOPE, 'maturity_score')?.short : undefined}>
-                      {formatNum(get(row, 'maturity_score'))}
-                    </span>
-                  </td>
-                  <td>{formatNum(get(row, 'recs_total'))}</td>
-                  <td>{formatPct(get(row, 'coverage_ratio'))}</td>
-                  <td>{formatNum(get(row, 'horizons_covered'))}</td>
-                  <td>{formatNum(get(row, 'avg_outcome_h1'))}</td>
-                  <td>{formatNum(get(row, 'avg_outcome_h3'))}</td>
-                  <td>{formatNum(get(row, 'avg_outcome_h5'))}</td>
-                  <td>{formatNum(get(row, 'avg_outcome_h10'))}</td>
-                  <td>{formatNum(get(row, 'avg_outcome_h20'))}</td>
-                </tr>
+                <React.Fragment key={rowKey}>
+                  <tr 
+                    className={`training-row ${isExpanded ? 'training-row-expanded' : ''}`}
+                    onClick={() => toggleRow(rowKey)}
+                    onKeyDown={(e) => handleRowKeyDown(e, rowKey)}
+                    tabIndex={0}
+                    role="button"
+                    aria-expanded={isExpanded}
+                    aria-label={`${get(row, 'symbol')} training details. Press Enter to ${isExpanded ? 'collapse' : 'expand'}.`}
+                  >
+                    <td className="training-expand-cell">
+                      <span className={`training-expand-icon ${isExpanded ? 'training-expand-icon--open' : ''}`}>
+                        &#9658;
+                      </span>
+                    </td>
+                    <td>{get(row, 'market_type') ?? '—'}</td>
+                    <td className="training-symbol-cell">{get(row, 'symbol') ?? '—'}</td>
+                    <td>{get(row, 'pattern_id') ?? '—'}</td>
+                    <td>{get(row, 'interval_minutes') ?? '—'}</td>
+                    <td>{get(row, 'as_of_ts') ?? '—'}</td>
+                    <td className="training-maturity-cell">
+                      <span
+                        className={`training-maturity-badge training-stage-${(get(row, 'maturity_stage') || '').toLowerCase().replace('_', '-')}`}
+                        title={stageTitle}
+                      >
+                        {get(row, 'maturity_stage') ?? '—'}
+                      </span>
+                      <InfoTooltip scope={SCOPE} key={stageKey} variant="short" />
+                      <div className="training-progress-wrap" title={stageTitle}>
+                        <div className="training-progress-bar" style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
+                      </div>
+                      <span className="training-score-num" title={explainMode ? getGlossaryEntry(SCOPE, 'maturity_score')?.short : undefined}>
+                        {formatNum(get(row, 'maturity_score'))}
+                      </span>
+                    </td>
+                    <td>{formatNum(get(row, 'recs_total'))}</td>
+                    <td>{formatPct(get(row, 'coverage_ratio'))}</td>
+                    <td>{formatNum(get(row, 'horizons_covered'))}</td>
+                    <td>{formatNum(get(row, 'avg_outcome_h1'))}</td>
+                    <td>{formatNum(get(row, 'avg_outcome_h3'))}</td>
+                    <td>{formatNum(get(row, 'avg_outcome_h5'))}</td>
+                    <td>{formatNum(get(row, 'avg_outcome_h10'))}</td>
+                    <td>{formatNum(get(row, 'avg_outcome_h20'))}</td>
+                  </tr>
+                  {isExpanded && (
+                    <tr className="training-detail-row">
+                      <td colSpan={COLUMN_COUNT + 1} className="training-detail-cell">
+                        <TrainingTimelineInline
+                          symbol={get(row, 'symbol')}
+                          marketType={get(row, 'market_type')}
+                          patternId={get(row, 'pattern_id')}
+                          horizonBars={5}
+                          cachedData={cachedData}
+                          onDataLoaded={(data) => setTimelineCache(rowKey, data)}
+                          onClose={() => setExpandedRowId(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               )
             })}
           </tbody>
@@ -244,24 +310,6 @@ export default function TrainingStatus() {
           explanation={rows.length === 0 ? 'Training status comes from recommendation and outcome data. Run the pipeline to populate it.' : 'Try a different market type or symbol search.'}
           reasons={rows.length === 0 ? ['Pipeline has not run yet.', 'No recommendations or outcomes in MIP.APP.'] : []}
         />
-      )}
-
-      {/* Training Timeline panel */}
-      {selectedRow && (
-        <TrainingTimeline
-          symbol={selectedRow.symbol}
-          marketType={selectedRow.market_type}
-          patternId={selectedRow.pattern_id}
-          horizonBars={5}
-          onClose={() => setSelectedRow(null)}
-        />
-      )}
-
-      {/* Hint text when no row is selected */}
-      {!selectedRow && filteredRows.length > 0 && (
-        <p className="training-timeline-hint">
-          Click on a row above to view its training timeline and confidence over time.
-        </p>
       )}
     </>
   )

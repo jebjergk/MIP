@@ -405,10 +405,14 @@ def get_detail(
             
             cur.execute(proposal_sql, params)
             for row in fetch_all(cur):
-                ts = row.get("PROPOSED_AT")
+                # Use SIGNAL_TS for chart alignment (when signal fired), fall back to PROPOSED_AT
+                signal_ts = row.get("SIGNAL_TS")
+                proposed_at = row.get("PROPOSED_AT")
+                chart_ts = signal_ts if signal_ts else proposed_at
                 proposals.append({
                     "type": "PROPOSAL",
-                    "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "ts": chart_ts.isoformat() if hasattr(chart_ts, "isoformat") else str(chart_ts),
+                    "proposed_at": proposed_at.isoformat() if hasattr(proposed_at, "isoformat") else str(proposed_at),
                     "proposal_id": row.get("PROPOSAL_ID"),
                     "side": row.get("SIDE"),
                     "target_weight": float(row.get("TARGET_WEIGHT")) if row.get("TARGET_WEIGHT") is not None else None,

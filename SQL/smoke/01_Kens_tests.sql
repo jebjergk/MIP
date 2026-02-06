@@ -143,3 +143,178 @@ select * from signal_check
 union all select * from trusted_check
 union all select * from pattern_check
 order by STEP;
+
+-- =============================================================================
+-- RECOMMENDATION GENERATION DIAGNOSTICS
+-- Why are recommendations stale for STOCK/ETF?
+-- =============================================================================
+
+-- 8. Latest RECOMMENDATIONS audit events by market type
+-- Shows skip_reason for each market type
+select 
+    DETAILS:market_type::string as MARKET_TYPE,
+    EVENT_TS,
+    DETAILS:inserted_count::int as INSERTED,
+    DETAILS:skip_reason::string as SKIP_REASON,
+    DETAILS:latest_market_bars_ts::timestamp as BARS_TS,
+    DETAILS:latest_returns_ts::timestamp as RETURNS_TS,
+    DETAILS:existing_recs_at_latest_ts::int as ALREADY_EXISTS,
+    DETAILS:pattern_count::int as PATTERN_COUNT
+from MIP.APP.MIP_AUDIT_LOG
+where EVENT_NAME = 'RECOMMENDATIONS'
+  and DETAILS:scope::string = 'MARKET_TYPE'
+order by EVENT_TS desc
+limit 15;
+
+-- 9. Check MARKET_RETURNS freshness
+-- STOCK/ETF recs use MARKET_RETURNS as data source
+select 
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    count(*) as ROW_COUNT,
+    max(TS) as MAX_TS,
+    datediff('day', max(TS), current_date()) as DAYS_STALE
+from MIP.MART.MARKET_RETURNS
+where INTERVAL_MINUTES = 1440
+group by MARKET_TYPE, INTERVAL_MINUTES
+order by MARKET_TYPE;
+
+-- 10. Check MARKET_BARS freshness (compared to MARKET_RETURNS)
+-- FX recs use MARKET_BARS directly
+select 
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    count(*) as ROW_COUNT,
+    max(TS) as MAX_TS_BARS,
+    (select max(TS) from MIP.MART.MARKET_RETURNS r 
+     where r.MARKET_TYPE = b.MARKET_TYPE 
+       and r.INTERVAL_MINUTES = b.INTERVAL_MINUTES) as MAX_TS_RETURNS,
+    datediff('day', 
+        (select max(TS) from MIP.MART.MARKET_RETURNS r 
+         where r.MARKET_TYPE = b.MARKET_TYPE 
+           and r.INTERVAL_MINUTES = b.INTERVAL_MINUTES),
+        max(TS)
+    ) as RETURNS_BEHIND_BARS_DAYS
+from MIP.MART.MARKET_BARS b
+where INTERVAL_MINUTES = 1440
+group by MARKET_TYPE, INTERVAL_MINUTES
+order by MARKET_TYPE;
+
+-- 11. Check active patterns by market type
+-- If pattern_count = 0 for a market type, no recs will be generated
+select 
+    upper(coalesce(PARAMS_JSON:market_type::string, 'STOCK')) as MARKET_TYPE,
+    coalesce(PARAMS_JSON:interval_minutes::number, 1440) as INTERVAL_MINUTES,
+    count(*) as ACTIVE_PATTERN_COUNT
+from MIP.APP.PATTERN_DEFINITION
+where coalesce(IS_ACTIVE, 'N') = 'Y'
+  and coalesce(ENABLED, true)
+group by 1, 2
+order by 1;
+
+-- 12. Check if V_MARKET_RETURNS is a view that needs refresh or has issues
+-- Get the most recent returns for each market type
+select 
+    MARKET_TYPE,
+    max(TS) as LATEST_RETURN_TS,
+    count(*) as RETURNS_LAST_7_DAYS
+from MIP.MART.MARKET_RETURNS
+where TS >= dateadd(day, -7, current_date())
+  and INTERVAL_MINUTES = 1440
+group by MARKET_TYPE
+order by MARKET_TYPE;
+
+-- =============================================================================
+-- PATTERN THRESHOLD DIAGNOSTICS
+-- Why is everything FILTERED_BY_THRESHOLD?
+-- =============================================================================
+
+-- 13. Check active patterns and their thresholds
+select 
+    PATTERN_ID,
+    NAME,
+    PARAMS_JSON:market_type::string as MARKET_TYPE,
+    PARAMS_JSON:interval_minutes::number as INTERVAL_MINUTES,
+    PARAMS_JSON:min_return::float as MIN_RETURN,
+    PARAMS_JSON:min_zscore::float as MIN_ZSCORE,
+    PARAMS_JSON:slow_window::number as SLOW_WINDOW,
+    PARAMS_JSON:fast_window::number as FAST_WINDOW,
+    PARAMS_JSON:lookback_days::number as LOOKBACK_DAYS,
+    IS_ACTIVE,
+    ENABLED,
+    LAST_TRADE_COUNT
+from MIP.APP.PATTERN_DEFINITION
+where coalesce(IS_ACTIVE, 'N') = 'Y'
+  and coalesce(ENABLED, true)
+order by MARKET_TYPE, NAME;
+
+-- 14. Check today's returns to see what's passing thresholds
+-- How many symbols had positive returns today?
+select 
+    MARKET_TYPE,
+    count(*) as TOTAL_SYMBOLS,
+    count_if(RETURN_SIMPLE > 0) as POSITIVE_RETURNS,
+    count_if(RETURN_SIMPLE >= 0.002) as ABOVE_0_2_PCT,
+    count_if(RETURN_SIMPLE >= 0.005) as ABOVE_0_5_PCT,
+    count_if(RETURN_SIMPLE >= 0.01) as ABOVE_1_PCT,
+    avg(RETURN_SIMPLE) as AVG_RETURN,
+    max(RETURN_SIMPLE) as MAX_RETURN
+from MIP.MART.MARKET_RETURNS
+where TS = (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440)
+  and INTERVAL_MINUTES = 1440
+group by MARKET_TYPE
+order by MARKET_TYPE;
+
+-- 15. Check recent price trends - do any symbols have consecutive positive days?
+-- This checks the POSITIVE_LAG_COUNT requirement
+with recent_returns as (
+    select 
+        SYMBOL,
+        MARKET_TYPE,
+        TS,
+        RETURN_SIMPLE,
+        lag(RETURN_SIMPLE, 1) over (partition by SYMBOL, MARKET_TYPE order by TS) as LAG1,
+        lag(RETURN_SIMPLE, 2) over (partition by SYMBOL, MARKET_TYPE order by TS) as LAG2,
+        lag(RETURN_SIMPLE, 3) over (partition by SYMBOL, MARKET_TYPE order by TS) as LAG3
+    from MIP.MART.MARKET_RETURNS
+    where INTERVAL_MINUTES = 1440
+      and TS >= dateadd(day, -7, current_date())
+),
+at_latest as (
+    select *
+    from recent_returns
+    where TS = (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440)
+)
+select 
+    MARKET_TYPE,
+    count(*) as TOTAL,
+    count_if(LAG1 > 0) as HAS_1_POSITIVE_LAG,
+    count_if(LAG1 > 0 and LAG2 > 0) as HAS_2_POSITIVE_LAGS,
+    count_if(LAG1 > 0 and LAG2 > 0 and LAG3 > 0) as HAS_3_POSITIVE_LAGS,
+    count_if(RETURN_SIMPLE > 0 and LAG1 > 0 and LAG2 > 0) as MOMENTUM_CANDIDATES
+from at_latest
+group by MARKET_TYPE
+order by MARKET_TYPE;
+
+-- 16. Find actual momentum candidates at latest TS
+-- These would be the candidates before threshold filtering
+select 
+    SYMBOL,
+    MARKET_TYPE,
+    TS,
+    RETURN_SIMPLE,
+    CLOSE,
+    VOLUME
+from MIP.MART.MARKET_RETURNS
+where TS = (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440)
+  and INTERVAL_MINUTES = 1440
+  and RETURN_SIMPLE >= 0.002  -- 0.2% threshold
+  and VOLUME >= 1000
+order by RETURN_SIMPLE desc
+limit 20;
+
+-- 17. Check APP_CONFIG thresholds
+select CONFIG_KEY, CONFIG_VALUE
+from MIP.APP.APP_CONFIG
+where CONFIG_KEY in ('MIN_VOLUME', 'VOL_ADJ_THRESHOLD', 'PATTERN_MIN_TRADES')
+order by CONFIG_KEY;

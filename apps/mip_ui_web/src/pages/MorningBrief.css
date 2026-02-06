@@ -129,11 +129,17 @@
 }
 
 .brief-card h2 {
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.5rem 0;
   font-size: 1.15rem;
   color: #212529;
   border-bottom: 1px solid #e9ecef;
   padding-bottom: 0.5rem;
+}
+
+.brief-card .card-subtitle {
+  margin: -0.25rem 0 1rem 0;
+  font-size: 0.85rem;
+  color: #6c757d;
 }
 
 .brief-card h3 {
@@ -401,6 +407,52 @@
 .confidence-low {
   background: #6c757d;
   color: white;
+}
+
+/* Proposal status badges */
+.opp-status {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  margin-left: auto;
+  font-weight: 600;
+}
+
+.opp-status.status-executed {
+  background: #198754;
+  color: white;
+}
+
+.opp-status.status-approved {
+  background: #0d6efd;
+  color: white;
+}
+
+.opp-status.status-proposed {
+  background: #ffc107;
+  color: #212529;
+}
+
+.opp-status.status-rejected {
+  background: #dc3545;
+  color: white;
+}
+
+/* Proposal vs Pattern card styling */
+.opportunity-card.is-proposal {
+  border-left: 3px solid #0d6efd;
+}
+
+.opportunity-card.is-pattern {
+  border-left: 3px solid #6c757d;
+  opacity: 0.85;
+}
+
+.opp-weight {
+  background: #e9ecef;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-weight: 500;
 }
 
 .opp-details {

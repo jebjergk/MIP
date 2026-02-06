@@ -212,36 +212,108 @@ def _build_summary(brief_json: dict, risk_gate: dict, verified_trades: dict = No
     }
 
 
-def _build_opportunities(brief_json: dict) -> list:
-    """Build opportunities list from trusted signals."""
+def _build_opportunities(brief_json: dict, cur=None, portfolio_id: int = None, run_id: str = None) -> list:
+    """
+    Build opportunities list from actual proposals (ORDER_PROPOSALS).
+    Falls back to trusted signals if no proposals exist.
+    """
+    opportunities = []
+    
+    # First, try to get actual proposals from this run
+    if cur and portfolio_id and run_id:
+        try:
+            cur.execute("""
+                select 
+                    PROPOSAL_ID,
+                    SYMBOL,
+                    MARKET_TYPE,
+                    SIDE,
+                    TARGET_WEIGHT,
+                    STATUS,
+                    SIGNAL_PATTERN_ID,
+                    SOURCE_SIGNALS,
+                    RATIONALE,
+                    PROPOSED_AT
+                from MIP.AGENT_OUT.ORDER_PROPOSALS
+                where PORTFOLIO_ID = %s
+                  and RUN_ID_VARCHAR = %s
+                order by PROPOSED_AT desc
+                limit 10
+            """, (portfolio_id, run_id))
+            
+            rows = cur.fetchall()
+            columns = [d[0].lower() for d in cur.description]
+            
+            for row in rows:
+                proposal = dict(zip(columns, row))
+                source_signals = proposal.get("source_signals") or {}
+                if isinstance(source_signals, str):
+                    import json
+                    try:
+                        source_signals = json.loads(source_signals)
+                    except:
+                        source_signals = {}
+                
+                score = source_signals.get("score")
+                status = proposal.get("status", "PROPOSED")
+                
+                # Determine confidence from status and score
+                if status == "EXECUTED":
+                    confidence = "EXECUTED"
+                elif status == "APPROVED":
+                    confidence = "HIGH"
+                elif status == "REJECTED":
+                    confidence = "REJECTED"
+                else:
+                    confidence = "MEDIUM"
+                
+                # Format why message
+                weight_pct = (proposal.get("target_weight") or 0) * 100
+                why = f"{status}: {weight_pct:.1f}% position"
+                if score:
+                    why += f", score {score:.4f}"
+                
+                opportunities.append({
+                    "proposal_id": proposal.get("proposal_id"),
+                    "symbol": proposal.get("symbol", "—"),
+                    "side": proposal.get("side", "BUY"),
+                    "market_type": proposal.get("market_type", "—"),
+                    "pattern_id": proposal.get("signal_pattern_id"),
+                    "target_weight": proposal.get("target_weight"),
+                    "status": status,
+                    "why": why,
+                    "confidence": confidence,
+                    "is_proposal": True,
+                })
+            
+            if opportunities:
+                return opportunities
+        except Exception:
+            pass  # Fall through to trusted signals fallback
+    
+    # Fallback: use trusted signals from brief (legacy behavior)
     signals = brief_json.get("signals", {}) or {}
     trusted_now = signals.get("trusted_now", []) or []
-    opportunities = []
 
     for sig in trusted_now:
         reason = sig.get("reason", {}) or {}
         pattern_id = sig.get("pattern_id", "")
-        # Convert to string in case it's an int
         pattern_id_str = str(pattern_id) if pattern_id else ""
-        # Extract symbol from pattern_id (format: SYMBOL_MARKETTYPE_INTERVAL or similar)
-        symbol = pattern_id_str.split("_")[0] if pattern_id_str and "_" in pattern_id_str else pattern_id_str or "—"
 
-        # Determine side from pattern or default
-        # Patterns typically indicate direction in name or we infer from return
         avg_return = reason.get("avg_return", 0) or 0
         side = "BUY" if avg_return >= 0 else "SELL"
 
         opportunities.append({
             "pattern_id": pattern_id_str,
-            "symbol": symbol,
+            "symbol": "—",  # Patterns don't have specific symbols
             "side": side,
             "market_type": sig.get("market_type", "—"),
             "interval_minutes": sig.get("interval_minutes"),
             "horizon_bars": sig.get("horizon_bars"),
             "trust_label": sig.get("trust_label", "TRUSTED"),
-            "recommended_action": sig.get("recommended_action", "ENABLE"),
             "why": _format_why(reason),
             "confidence": _format_confidence(reason),
+            "is_proposal": False,
         })
 
     return opportunities
@@ -625,7 +697,7 @@ def get_latest_brief(portfolio_id: int):
             "episode_start_ts": episode_start_ts,
             # Content
             "summary": summary,
-            "opportunities": _build_opportunities(brief_json),
+            "opportunities": _build_opportunities(brief_json, cur, portfolio_id, pipeline_run_id),
             "risk": _build_risk(brief_json, risk_gate, profile),
             "deltas": _build_deltas(brief_json, prev_brief_json),
             "raw_json": brief_json,

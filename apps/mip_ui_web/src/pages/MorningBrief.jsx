@@ -309,26 +309,45 @@ function buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId) {
 
 // Opportunity Card component
 function OpportunityCard({ opportunity, portfolioId, asOfTs, pipelineRunId }) {
-  const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why, pattern_id } = opportunity
+  const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why, pattern_id, status, target_weight, is_proposal } = opportunity
   const signalsUrl = buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId)
-  const displaySymbol = symbol && symbol !== '—' ? symbol : `Pattern ${pattern_id}`
+  const displaySymbol = symbol && symbol !== '—' ? symbol : (pattern_id ? `Pattern ${pattern_id}` : '—')
+  
+  // For proposals, link to market timeline; for patterns, link to signals
+  const linkUrl = is_proposal && symbol && symbol !== '—' 
+    ? `/market-timeline?symbol=${symbol}&market_type=${market_type}`
+    : signalsUrl
+  const linkText = is_proposal ? 'View in Market Timeline →' : 'View in Signals →'
+  
+  // Status badge styling
+  const statusClass = status === 'EXECUTED' ? 'status-executed' 
+    : status === 'APPROVED' ? 'status-approved'
+    : status === 'REJECTED' ? 'status-rejected'
+    : 'status-proposed'
   
   return (
-    <div className="opportunity-card">
+    <div className={`opportunity-card ${is_proposal ? 'is-proposal' : 'is-pattern'}`}>
       <div className="opp-header">
-        <span className="opp-symbol-title">{displaySymbol} — {side}</span>
-        <span className={`opp-confidence confidence-${confidence.toLowerCase()}`}>{confidence}</span>
+        <span className="opp-symbol-title">
+          <strong>{displaySymbol}</strong> — {side}
+        </span>
+        {is_proposal && status && (
+          <span className={`opp-status ${statusClass}`}>{status}</span>
+        )}
+        {!is_proposal && (
+          <span className={`opp-confidence confidence-${(confidence || 'low').toLowerCase()}`}>{confidence}</span>
+        )}
       </div>
       <div className="opp-details">
         <span className="opp-market">{market_type}</span>
+        {target_weight && <span className="opp-weight">{(target_weight * 100).toFixed(1)}% weight</span>}
         {pattern_id && <span className="opp-pattern">Pattern {pattern_id}</span>}
-        {horizon_bars && <span className="opp-horizon">{horizon_bars} bar{horizon_bars !== 1 ? 's' : ''} horizon</span>}
-        {interval_minutes && <span className="opp-interval">{interval_minutes}min</span>}
+        {horizon_bars && <span className="opp-horizon">{horizon_bars} bar{horizon_bars !== 1 ? 's' : ''}</span>}
       </div>
       <p className="opp-why">{why}</p>
       <div className="opp-actions">
-        <Link to={signalsUrl} className="opp-link">
-          View in Signals →
+        <Link to={linkUrl} className="opp-link">
+          {linkText}
         </Link>
       </div>
     </div>
@@ -337,12 +356,15 @@ function OpportunityCard({ opportunity, portfolioId, asOfTs, pipelineRunId }) {
 
 // Opportunities Section
 function OpportunitiesSection({ opportunities, portfolioId, asOfTs, pipelineRunId }) {
+  const proposalCount = opportunities?.filter(o => o.is_proposal).length || 0
+  const patternCount = opportunities?.filter(o => !o.is_proposal).length || 0
+  
   if (!opportunities || opportunities.length === 0) {
     return (
       <section className="brief-card opportunities-section" aria-label="Opportunities">
-        <h2>Opportunities</h2>
+        <h2>Today's Proposals</h2>
         <div className="empty-opportunities">
-          <p className="empty-title">No suggestions today</p>
+          <p className="empty-title">No proposals today</p>
           <p className="empty-explanation">
             Likely reasons: no new bars, no eligible signals, or risk gate blocked entries.
           </p>
@@ -351,13 +373,18 @@ function OpportunitiesSection({ opportunities, portfolioId, asOfTs, pipelineRunI
     )
   }
 
+  const subtitle = proposalCount > 0 
+    ? `${proposalCount} proposal${proposalCount !== 1 ? 's' : ''} generated this run`
+    : `Showing ${patternCount} trusted pattern${patternCount !== 1 ? 's' : ''} (no proposals yet)`
+
   return (
     <section className="brief-card opportunities-section" aria-label="Opportunities">
-      <h2>Opportunities ({opportunities.length})</h2>
+      <h2>Today's Proposals ({opportunities.length})</h2>
+      <p className="card-subtitle">{subtitle}</p>
       <div className="opportunities-grid">
         {opportunities.map((opp, idx) => (
           <OpportunityCard 
-            key={opp.pattern_id || idx} 
+            key={opp.proposal_id || opp.pattern_id || idx} 
             opportunity={opp} 
             portfolioId={portfolioId}
             asOfTs={asOfTs}

@@ -399,3 +399,52 @@ CROSS JOIN (SELECT max(BAR_INDEX) as CURRENT_BAR_INDEX FROM MIP.MART.V_BAR_INDEX
 WHERE p.PORTFOLIO_ID = 1
 ORDER BY p.ENTRY_TS DESC
 LIMIT 10;
+
+-- Create positions for existing trades that are missing positions
+insert into MIP.APP.PORTFOLIO_POSITIONS (
+    PORTFOLIO_ID,
+    RUN_ID,
+    EPISODE_ID,
+    SYMBOL,
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    ENTRY_TS,
+    ENTRY_PRICE,
+    QUANTITY,
+    COST_BASIS,
+    ENTRY_SCORE,
+    ENTRY_INDEX,
+    HOLD_UNTIL_INDEX
+)
+select
+    t.PORTFOLIO_ID,
+    t.RUN_ID,
+    ae.EPISODE_ID,
+    t.SYMBOL,
+    t.MARKET_TYPE,
+    t.INTERVAL_MINUTES,
+    t.TRADE_TS as ENTRY_TS,
+    t.PRICE as ENTRY_PRICE,
+    t.QUANTITY,
+    t.NOTIONAL as COST_BASIS,
+    t.SCORE as ENTRY_SCORE,
+    bi.BAR_INDEX as ENTRY_INDEX,
+    bi.BAR_INDEX + 5 as HOLD_UNTIL_INDEX  -- Default 5 bar hold
+from MIP.APP.PORTFOLIO_TRADES t
+cross join (
+    select max(BAR_INDEX) as BAR_INDEX
+    from MIP.MART.V_BAR_INDEX
+    where INTERVAL_MINUTES = 1440
+) bi
+left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE ae
+  on ae.PORTFOLIO_ID = t.PORTFOLIO_ID
+where t.SIDE = 'BUY'
+  and not exists (
+      select 1 from MIP.APP.PORTFOLIO_POSITIONS p
+      where p.PORTFOLIO_ID = t.PORTFOLIO_ID
+        and p.SYMBOL = t.SYMBOL
+        and p.ENTRY_TS = t.TRADE_TS
+  );
+
+-- Verify positions now exist
+select * from MIP.APP.PORTFOLIO_POSITIONS where PORTFOLIO_ID = 2;

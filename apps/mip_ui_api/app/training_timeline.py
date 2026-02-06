@@ -87,6 +87,41 @@ where SYMBOL = %(symbol)s
 """
 
 
+# SQL to get pattern-level trust status (aggregated across all symbols)
+PATTERN_TRUST_SQL = """
+select
+    PATTERN_ID,
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    HORIZON_BARS,
+    N_SIGNALS,
+    HIT_RATE_SUCCESS,
+    AVG_RETURN_SUCCESS,
+    CONFIDENCE
+from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
+where PATTERN_ID = %(pattern_id)s
+  and MARKET_TYPE = %(market_type)s
+  and INTERVAL_MINUTES = 1440
+  and HORIZON_BARS = %(horizon_bars)s
+"""
+
+
+# SQL to get pattern stats aggregated across ALL symbols
+PATTERN_AGGREGATE_SQL = """
+select
+    count(*) as total_outcomes,
+    sum(case when HIT_FLAG then 1 else 0 end) as total_hits,
+    avg(case when EVAL_STATUS = 'SUCCESS' then REALIZED_RETURN end) as avg_return
+from MIP.APP.RECOMMENDATION_OUTCOMES o
+join MIP.APP.RECOMMENDATION_LOG r on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+where r.PATTERN_ID = %(pattern_id)s
+  and r.MARKET_TYPE = %(market_type)s
+  and r.INTERVAL_MINUTES = 1440
+  and o.HORIZON_BARS = %(horizon_bars)s
+  and o.EVAL_STATUS = 'SUCCESS'
+"""
+
+
 @dataclass
 class GateParams:
     """Thresholds from TRAINING_GATE_PARAMS."""
@@ -287,6 +322,82 @@ def generate_narrative(
     return bullets[:6]  # Cap at 6 bullets
 
 
+def get_pattern_trust_status(
+    conn,
+    pattern_id: int,
+    market_type: str,
+    horizon_bars: int,
+    params: GateParams,
+) -> dict[str, Any]:
+    """
+    Get pattern-level trust status (aggregated across all symbols).
+    This is what actually determines if signals can be traded.
+    """
+    cur = conn.cursor()
+    
+    # Check if pattern is in trusted patterns view
+    try:
+        cur.execute(PATTERN_TRUST_SQL, {
+            "pattern_id": pattern_id,
+            "market_type": market_type,
+            "horizon_bars": horizon_bars,
+        })
+        trust_row = cur.fetchone()
+        
+        if trust_row:
+            return {
+                "is_trusted": True,
+                "n_signals": int(trust_row[4]) if trust_row[4] else 0,
+                "hit_rate": float(trust_row[5]) if trust_row[5] else None,
+                "avg_return": float(trust_row[6]) if trust_row[6] else None,
+                "confidence": trust_row[7],
+                "reason": "Pattern meets trust thresholds across all symbols",
+            }
+    except Exception:
+        pass
+    
+    # Pattern not trusted - get aggregate stats to explain why
+    try:
+        cur.execute(PATTERN_AGGREGATE_SQL, {
+            "pattern_id": pattern_id,
+            "market_type": market_type,
+            "horizon_bars": horizon_bars,
+        })
+        agg_row = cur.fetchone()
+        
+        total_outcomes = int(agg_row[0]) if agg_row and agg_row[0] else 0
+        total_hits = int(agg_row[1]) if agg_row and agg_row[1] else 0
+        avg_return = float(agg_row[2]) if agg_row and agg_row[2] else None
+        hit_rate = total_hits / total_outcomes if total_outcomes > 0 else None
+        
+        # Determine reason not trusted
+        reasons = []
+        if total_outcomes < params.min_signals:
+            reasons.append(f"needs {params.min_signals - total_outcomes} more outcomes")
+        if hit_rate is not None and hit_rate < params.min_hit_rate:
+            reasons.append(f"hit rate {hit_rate*100:.1f}% < {params.min_hit_rate*100:.0f}% threshold")
+        if avg_return is not None and avg_return <= params.min_avg_return:
+            reasons.append(f"avg return too low")
+        
+        return {
+            "is_trusted": False,
+            "n_signals": total_outcomes,
+            "hit_rate": hit_rate,
+            "avg_return": avg_return,
+            "confidence": None,
+            "reason": "; ".join(reasons) if reasons else "Does not meet trust thresholds",
+        }
+    except Exception:
+        return {
+            "is_trusted": False,
+            "n_signals": 0,
+            "hit_rate": None,
+            "avg_return": None,
+            "confidence": None,
+            "reason": "Unable to determine pattern status",
+        }
+
+
 def build_training_timeline(
     conn,
     symbol: str,
@@ -305,18 +416,17 @@ def build_training_timeline(
         "market_type": "STOCK",
         "pattern_id": 1,
         "horizon_bars": 5,
-        "thresholds": {
-            "min_signals": 40,
-            "min_signals_bootstrap": 5,
-            "min_hit_rate": 0.55,
-            "min_avg_return": 0.0005
-        },
+        "thresholds": {...},
+        "pattern_trust": {...},  // NEW: pattern-level trust status
         "series": [...],
         "narrative": [...]
     }
     """
     # Get gate params
     params = get_gate_params(conn)
+    
+    # Get pattern-level trust status (what actually matters for trading)
+    pattern_trust = get_pattern_trust_status(conn, pattern_id, market_type, horizon_bars, params)
     
     # Get first signal date
     cur = conn.cursor()
@@ -350,6 +460,7 @@ def build_training_timeline(
                 "min_hit_rate": params.min_hit_rate,
                 "min_avg_return": params.min_avg_return,
             },
+            "pattern_trust": pattern_trust,
             "series": [],
             "narrative": [f"No evaluated outcomes yet for {symbol} — still observing."],
         }
@@ -426,6 +537,7 @@ def build_training_timeline(
             "min_hit_rate": params.min_hit_rate,
             "min_avg_return": params.min_avg_return,
         },
+        "pattern_trust": pattern_trust,
         "series": series,
         "narrative": narrative,
     }

@@ -196,10 +196,50 @@ export default function TrainingTimeline({
         {onClose && <button className="timeline-close-btn" onClick={onClose}>&times;</button>}
       </div>
 
-      {/* Narrative bullets */}
+      {/* Pattern Trust Status - THE KEY INFO */}
+      {data.pattern_trust && (
+        <div className={`pattern-trust-card ${data.pattern_trust.is_trusted ? 'trusted' : 'not-trusted'}`}>
+          <div className="pattern-trust-header">
+            <span className={`pattern-trust-badge ${data.pattern_trust.is_trusted ? 'trusted' : 'not-trusted'}`}>
+              {data.pattern_trust.is_trusted ? '✓ PATTERN TRUSTED' : '✗ PATTERN NOT TRUSTED'}
+            </span>
+            <span className="pattern-trust-label">
+              (Pattern {patternId} across all symbols)
+            </span>
+          </div>
+          <div className="pattern-trust-stats">
+            <span>
+              <strong>{data.pattern_trust.n_signals || 0}</strong> outcomes
+            </span>
+            {data.pattern_trust.hit_rate != null && (
+              <span>
+                <strong>{(data.pattern_trust.hit_rate * 100).toFixed(1)}%</strong> hit rate
+              </span>
+            )}
+            {data.pattern_trust.avg_return != null && (
+              <span>
+                <strong>{(data.pattern_trust.avg_return * 100).toFixed(3)}%</strong> avg return
+              </span>
+            )}
+            {data.pattern_trust.confidence && (
+              <span className={`confidence-badge ${data.pattern_trust.confidence.toLowerCase()}`}>
+                {data.pattern_trust.confidence} confidence
+              </span>
+            )}
+          </div>
+          <p className="pattern-trust-reason">
+            {data.pattern_trust.is_trusted 
+              ? 'Signals from this pattern CAN be traded because it meets thresholds across all symbols.'
+              : `Not tradeable: ${data.pattern_trust.reason}`
+            }
+          </p>
+        </div>
+      )}
+
+      {/* Narrative bullets - Symbol specific */}
       {data.narrative && data.narrative.length > 0 && (
         <div className="training-journey-card">
-          <h4>Training Journey</h4>
+          <h4>Training Journey (This Symbol Only)</h4>
           <ul className="training-journey-bullets">
             {data.narrative.map((bullet, i) => (
               <li key={i}>{bullet}</li>
@@ -274,19 +314,61 @@ export default function TrainingTimeline({
           </span>
           <span className="legend-item">
             <span className="legend-line legend-line--dashed" style={{ borderColor: '#2e7d32' }} />
-            Trusted threshold
+            Trusted threshold ({thresholdPct}%)
           </span>
-          <span className="legend-item legend-item--events">
+        </div>
+        <div className="timeline-legend timeline-legend--events">
+          <span className="legend-label">Event markers:</span>
+          <span className="legend-item">
+            <span className="legend-dot" style={{ background: '#1565c0' }} />
+            First outcome
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot" style={{ background: '#7b1fa2' }} />
+            Min signals reached
+          </span>
+          <span className="legend-item">
             <span className="legend-dot" style={{ background: '#2e7d32' }} />
-            Key events
+            Entered trusted
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot" style={{ background: '#f57c00' }} />
+            Entered watch
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot" style={{ background: '#c62828' }} />
+            Dropped / miss streak
           </span>
         </div>
       </div>
 
-      {/* UX coherence note */}
-      <p className="training-timeline-note">
-        Confidence increases as outcomes are evaluated. Opportunities may be shown even when evidence is still insufficient to act.
-      </p>
+      {/* How it works explanation */}
+      <details className="training-explainer">
+        <summary>How pattern trust works</summary>
+        <div className="training-explainer-content">
+          <div className="explainer-diagram">
+            <div className="explainer-level">
+              <span className="explainer-icon">🎯</span>
+              <div>
+                <strong>Pattern Level</strong> (used for trading decisions)
+                <p>Pattern {patternId} is evaluated across ALL symbols. If the combined performance meets thresholds, signals from ANY symbol using this pattern can be traded.</p>
+              </div>
+            </div>
+            <div className="explainer-arrow">↓</div>
+            <div className="explainer-level">
+              <span className="explainer-icon">📊</span>
+              <div>
+                <strong>Symbol Level</strong> (shown in chart above)
+                <p>{symbol} specifically has {data?.series?.length || 0} evaluated outcomes. This may be fewer than needed for individual trust, but the pattern overall may still be trusted.</p>
+              </div>
+            </div>
+          </div>
+          <p className="explainer-example">
+            <strong>Example:</strong> Pattern 2 might have 50 outcomes across 10 symbols (5 per symbol average). 
+            Even though each symbol alone has &lt;40 outcomes, the pattern total of 50 meets the threshold.
+          </p>
+        </div>
+      </details>
 
       {/* Meta info */}
       <div className="training-timeline-meta">

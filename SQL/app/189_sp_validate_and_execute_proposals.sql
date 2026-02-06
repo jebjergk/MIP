@@ -30,6 +30,8 @@ declare
     v_allowed_actions string;
     v_run_id_string string := :P_RUN_ID;
     v_buy_proposals_blocked number := 0;
+    v_exposure_rejected number := 0;
+    v_position_rejected number := 0;
     v_slippage_bps number(18,8);
     v_fee_bps number(18,8);
     v_min_fee number(18,8);
@@ -300,6 +302,8 @@ begin
                and STATUS = 'APPROVED'
                and SIDE = 'BUY';
 
+            v_exposure_rejected := SQLROWCOUNT;
+
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
@@ -310,20 +314,21 @@ begin
                 ROWS_AFFECTED,
                 DETAILS
             )
-            select
+            values (
                 current_timestamp(),
                 :v_run_id_string,
                 :P_PARENT_RUN_ID,
                 'AGENT',
                 'SP_VALIDATE_AND_EXECUTE_PROPOSALS',
                 'TOTAL_EXPOSURE_EXCEEDED',
-                SQLROWCOUNT,
+                :v_exposure_rejected,
                 object_construct(
                     'total_exposure_pct', :v_total_exposure_pct,
                     'max_position_pct', :v_max_position_pct,
                     'open_positions', :v_open_positions_count,
                     'max_positions', :v_max_positions
-                );
+                )
+            );
         end if;
 
         -- Also check position count limit
@@ -349,6 +354,8 @@ begin
                     ) > greatest(:v_max_positions - :v_open_positions_count, 0)
                );
 
+            v_position_rejected := SQLROWCOUNT;
+
             insert into MIP.APP.MIP_AUDIT_LOG (
                 EVENT_TS,
                 RUN_ID,
@@ -359,19 +366,20 @@ begin
                 ROWS_AFFECTED,
                 DETAILS
             )
-            select
+            values (
                 current_timestamp(),
                 :v_run_id_string,
                 :P_PARENT_RUN_ID,
                 'AGENT',
                 'SP_VALIDATE_AND_EXECUTE_PROPOSALS',
                 'POSITION_COUNT_EXCEEDED',
-                SQLROWCOUNT,
+                :v_position_rejected,
                 object_construct(
                     'open_positions', :v_open_positions_count,
                     'approved_count', :v_approved_count,
                     'max_positions', :v_max_positions
-                );
+                )
+            );
         end if;
     end;
 

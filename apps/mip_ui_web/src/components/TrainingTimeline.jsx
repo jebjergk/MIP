@@ -135,9 +135,21 @@ export default function TrainingTimeline({
       ...pt,
       // Convert to percentage for display
       hit_rate_pct: pt.rolling_hit_rate != null ? pt.rolling_hit_rate * 100 : null,
+      avg_return_pct: pt.rolling_avg_return != null ? pt.rolling_avg_return * 100 : null,
       date_label: pt.ts ? String(pt.ts).slice(0, 10) : '',
     }))
   }, [data])
+  
+  // Calculate Y-axis domain for avg return (auto-scale with some padding)
+  const avgReturnDomain = useMemo(() => {
+    if (!chartData.length) return [-1, 1]
+    const returns = chartData.map(d => d.avg_return_pct).filter(v => v != null)
+    if (!returns.length) return [-1, 1]
+    const min = Math.min(...returns)
+    const max = Math.max(...returns)
+    const padding = Math.max(0.5, (max - min) * 0.2)
+    return [Math.floor((min - padding) * 10) / 10, Math.ceil((max + padding) * 10) / 10]
+  }, [chartData])
 
   const thresholdPct = data?.thresholds?.min_hit_rate != null
     ? data.thresholds.min_hit_rate * 100
@@ -250,10 +262,10 @@ export default function TrainingTimeline({
 
       {/* Timeline chart */}
       <div className="training-timeline-chart">
-        <ResponsiveContainer width="100%" height={240}>
+        <ResponsiveContainer width="100%" height={280}>
           <LineChart
             data={chartData}
-            margin={{ top: 8, right: 16, left: 0, bottom: 4 }}
+            margin={{ top: 8, right: 50, left: 0, bottom: 4 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
             <XAxis
@@ -262,38 +274,55 @@ export default function TrainingTimeline({
               tickFormatter={(v) => v.slice(5)}
               interval="preserveStartEnd"
             />
+            {/* Left Y-axis for Hit Rate (0-100%) */}
             <YAxis
+              yAxisId="left"
               domain={[0, 100]}
               tick={{ fontSize: 10 }}
               tickFormatter={(v) => `${v}%`}
               width={44}
             />
+            {/* Right Y-axis for Avg Return (auto-scaled) */}
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              domain={avgReturnDomain}
+              tick={{ fontSize: 10 }}
+              tickFormatter={(v) => `${v.toFixed(1)}%`}
+              width={44}
+            />
             <Tooltip content={<TimelineTooltip />} />
             
-            {/* Trusted threshold line */}
+            {/* Trusted threshold line (hit rate) */}
             <ReferenceLine
+              yAxisId="left"
               y={thresholdPct}
               stroke="#2e7d32"
               strokeDasharray="5 5"
               strokeWidth={1.5}
-              label={{
-                value: `Trusted (${thresholdPct}%)`,
-                position: 'right',
-                fill: '#2e7d32',
-                fontSize: 10,
-              }}
             />
 
-            {/* 50% reference line */}
+            {/* 50% reference line (hit rate) */}
             <ReferenceLine
+              yAxisId="left"
               y={50}
               stroke="#9e9e9e"
+              strokeDasharray="2 2"
+              strokeWidth={1}
+            />
+            
+            {/* 0% reference line (avg return) */}
+            <ReferenceLine
+              yAxisId="right"
+              y={0}
+              stroke="#ff9800"
               strokeDasharray="2 2"
               strokeWidth={1}
             />
 
             {/* Hit rate line */}
             <Line
+              yAxisId="left"
               type="monotone"
               dataKey="hit_rate_pct"
               stroke="#1565c0"
@@ -303,6 +332,19 @@ export default function TrainingTimeline({
               connectNulls
               name="Rolling Hit Rate"
             />
+            
+            {/* Avg return line */}
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="avg_return_pct"
+              stroke="#ff9800"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: '#ff9800' }}
+              connectNulls
+              name="Rolling Avg Return"
+            />
           </LineChart>
         </ResponsiveContainer>
 
@@ -310,7 +352,11 @@ export default function TrainingTimeline({
         <div className="timeline-legend">
           <span className="legend-item">
             <span className="legend-line" style={{ background: '#1565c0' }} />
-            Rolling hit rate
+            Rolling hit rate (left axis)
+          </span>
+          <span className="legend-item">
+            <span className="legend-line" style={{ background: '#ff9800' }} />
+            Rolling avg return (right axis)
           </span>
           <span className="legend-item">
             <span className="legend-line legend-line--dashed" style={{ borderColor: '#2e7d32' }} />

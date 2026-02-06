@@ -76,6 +76,24 @@ order by rn
 """
 
 
+# SQL to count pending evaluations (waiting for future bars)
+PENDING_EVALUATIONS_SQL = """
+select 
+    count(*) as pending_count,
+    min(r.TS) as oldest_pending,
+    max(r.TS) as newest_pending
+from MIP.APP.RECOMMENDATION_LOG r
+join MIP.APP.RECOMMENDATION_OUTCOMES o
+  on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+where r.SYMBOL = %(symbol)s
+  and r.MARKET_TYPE = %(market_type)s
+  and r.PATTERN_ID = %(pattern_id)s
+  and r.INTERVAL_MINUTES = 1440
+  and o.HORIZON_BARS = %(horizon_bars)s
+  and o.EVAL_STATUS = 'INSUFFICIENT_FUTURE_DATA'
+"""
+
+
 # SQL to get first signal date (even if not yet evaluated)
 FIRST_SIGNAL_SQL = """
 select min(TS) as first_signal_ts
@@ -438,6 +456,25 @@ def build_training_timeline(
     first_signal_row = cur.fetchone()
     first_signal_ts = first_signal_row[0] if first_signal_row else None
     
+    # Get pending evaluations (waiting for future bars)
+    pending_info = {"count": 0, "oldest": None, "newest": None}
+    try:
+        cur.execute(PENDING_EVALUATIONS_SQL, {
+            "symbol": symbol,
+            "market_type": market_type,
+            "pattern_id": pattern_id,
+            "horizon_bars": horizon_bars,
+        })
+        pending_row = cur.fetchone()
+        if pending_row and pending_row[0]:
+            pending_info = {
+                "count": int(pending_row[0]),
+                "oldest": pending_row[1].isoformat() if hasattr(pending_row[1], 'isoformat') else str(pending_row[1]) if pending_row[1] else None,
+                "newest": pending_row[2].isoformat() if hasattr(pending_row[2], 'isoformat') else str(pending_row[2]) if pending_row[2] else None,
+            }
+    except Exception:
+        pass
+    
     # Get timeline series
     cur.execute(TIMELINE_SERIES_SQL, {
         "symbol": symbol,
@@ -449,6 +486,9 @@ def build_training_timeline(
     
     # Handle empty state
     if not rows:
+        narrative = [f"No evaluated outcomes yet for {symbol} — still observing."]
+        if pending_info["count"] > 0:
+            narrative.append(f"{pending_info['count']} signal(s) pending evaluation (waiting for {horizon_bars} more bars of data).")
         return {
             "symbol": symbol,
             "market_type": market_type,
@@ -461,8 +501,9 @@ def build_training_timeline(
                 "min_avg_return": params.min_avg_return,
             },
             "pattern_trust": pattern_trust,
+            "pending_evaluations": pending_info,
             "series": [],
-            "narrative": [f"No evaluated outcomes yet for {symbol} — still observing."],
+            "narrative": narrative,
         }
     
     # Build series with rolling stats
@@ -526,6 +567,10 @@ def build_training_timeline(
     # Generate narrative
     narrative = generate_narrative(series, first_signal_ts, params, symbol)
     
+    # Add pending info to narrative if any
+    if pending_info["count"] > 0:
+        narrative.append(f"{pending_info['count']} recent signal(s) pending evaluation (need {horizon_bars} more bars).")
+    
     return {
         "symbol": symbol,
         "market_type": market_type,
@@ -538,6 +583,7 @@ def build_training_timeline(
             "min_avg_return": params.min_avg_return,
         },
         "pattern_trust": pattern_trust,
+        "pending_evaluations": pending_info,
         "series": series,
         "narrative": narrative,
     }

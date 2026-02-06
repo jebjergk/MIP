@@ -370,12 +370,29 @@ export default function TrainingTimeline({
         </div>
       </details>
 
+      {/* Pending evaluations indicator */}
+      {data.pending_evaluations?.count > 0 && (
+        <div className="pending-evaluations-card">
+          <span className="pending-icon">⏳</span>
+          <div className="pending-text">
+            <strong>{data.pending_evaluations.count} signal{data.pending_evaluations.count !== 1 ? 's' : ''} pending evaluation</strong>
+            <p>
+              Recent signals from {data.pending_evaluations.oldest?.slice(0, 10)} to {data.pending_evaluations.newest?.slice(0, 10)} 
+              are waiting for {horizonBars} more bars of market data before outcomes can be measured.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Meta info */}
       <div className="training-timeline-meta">
         <span>Symbol: {data.symbol}</span>
         <span>Pattern: {data.pattern_id}</span>
         <span>Horizon: {data.horizon_bars} bars</span>
-        <span>Points: {data.series.length}</span>
+        <span>Evaluated: {data.series.length}</span>
+        {data.pending_evaluations?.count > 0 && (
+          <span className="pending-count">Pending: {data.pending_evaluations.count}</span>
+        )}
       </div>
     </div>
   )

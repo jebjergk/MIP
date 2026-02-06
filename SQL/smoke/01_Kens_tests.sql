@@ -448,3 +448,92 @@ where t.SIDE = 'BUY'
 
 -- Verify positions now exist
 select * from MIP.APP.PORTFOLIO_POSITIONS where PORTFOLIO_ID = 2;
+
+select 
+    MARKET_TYPE,
+    max(TS) as latest_bar_ts,
+    count(*) as total_bars
+from MIP.MART.MARKET_BARS 
+where INTERVAL_MINUTES = 1440
+group by MARKET_TYPE
+order by MARKET_TYPE;
+
+-- 2. When are the latest recommendations?
+select 
+    max(TS) as latest_rec_ts,
+    min(TS) as earliest_rec_ts,
+    count(*) as total_recs
+from MIP.APP.RECOMMENDATION_LOG
+where INTERVAL_MINUTES = 1440;
+
+-- 3. CORRECTED: When were outcomes last calculated?
+select 
+    max(ENTRY_TS) as latest_entry_evaluated,
+    max(CALCULATED_AT) as last_calculation_run,
+    count(*) as total_outcomes
+from MIP.APP.RECOMMENDATION_OUTCOMES
+where EVAL_STATUS = 'SUCCESS';
+
+-- 4. CORRECTED: Check pipeline evaluation history
+select 
+    EVENT_TS,
+    DETAILS:from_ts::string as from_ts,
+    DETAILS:to_ts::string as to_ts,
+    DETAILS:horizon_counts as horizon_counts
+from MIP.APP.MIP_AUDIT_LOG
+where EVENT_NAME = 'SP_EVALUATE_RECOMMENDATIONS'
+  and STATUS = 'SUCCESS'
+order by EVENT_TS desc
+limit 5;
+
+-- 5. Check if outcomes exist but aren't being shown in timeline
+-- (Maybe filter by symbol to see what's there)
+select 
+    r.SYMBOL,
+    count(*) as outcome_count,
+    max(o.ENTRY_TS) as latest_outcome,
+    avg(case when o.HIT_FLAG then 1 else 0 end) as hit_rate
+from MIP.APP.RECOMMENDATION_OUTCOMES o
+join MIP.APP.RECOMMENDATION_LOG r on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+where o.EVAL_STATUS = 'SUCCESS'
+  and o.HORIZON_BARS = 5
+group by r.SYMBOL
+order by latest_outcome desc
+limit 10;
+order by EVENT_TS desc
+limit 5;
+
+-- Check KO specifically
+select 
+    r.SYMBOL,
+    r.PATTERN_ID,
+    count(distinct r.RECOMMENDATION_ID) as total_recs,
+    count(distinct case when o.EVAL_STATUS = 'SUCCESS' then o.RECOMMENDATION_ID end) as evaluated_count,
+    min(r.TS) as first_rec,
+    max(r.TS) as last_rec,
+    max(o.ENTRY_TS) as last_evaluated_entry
+from MIP.APP.RECOMMENDATION_LOG r
+left join MIP.APP.RECOMMENDATION_OUTCOMES o 
+    on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+   and o.HORIZON_BARS = 5
+where r.SYMBOL in ('KO', 'JNJ', 'PG')
+  and r.INTERVAL_MINUTES = 1440
+group by r.SYMBOL, r.PATTERN_ID
+order by r.SYMBOL, r.PATTERN_ID;
+
+-- Also check: what patterns are trusted and generating proposals?
+select * from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
+where HORIZON_BARS = 5
+order by N_SIGNALS desc;
+
+-- Check all outcome statuses for KO
+select 
+    o.EVAL_STATUS,
+    count(*) as cnt,
+    max(o.ENTRY_TS) as latest_entry
+from MIP.APP.RECOMMENDATION_OUTCOMES o
+join MIP.APP.RECOMMENDATION_LOG r on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+where r.SYMBOL = 'KO'
+  and r.INTERVAL_MINUTES = 1440
+  and o.HORIZON_BARS = 5
+group by o.EVAL_STATUS;

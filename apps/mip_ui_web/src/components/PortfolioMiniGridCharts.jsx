@@ -37,15 +37,20 @@ function EquityChart({ data, thresholds, events }) {
   if (!Array.isArray(data) || data.length === 0) return <p className="mini-grid-empty">No equity data</p>
   const bustLine = thresholds?.bust_threshold_pct != null && thresholds?.start_equity != null
     ? (thresholds.start_equity * (thresholds.bust_threshold_pct / 100)) : null
+  const hasCash = data.some(d => d.cash != null)
   return (
     <ResponsiveContainer width="100%" height={160}>
       <LineChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
         <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={formatTs} />
         <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => (v / 1000).toFixed(0) + 'k'} width={36} />
-        <Tooltip formatter={(v) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), 'Equity']} labelFormatter={formatTs} />
+        <Tooltip
+          formatter={(v, name) => [Number(v).toLocaleString(undefined, { minimumFractionDigits: 2 }), name]}
+          labelFormatter={formatTs}
+        />
         {bustLine != null && <ReferenceLine y={bustLine} stroke="#c62828" strokeDasharray="2 2" />}
-        <Line type="monotone" dataKey="equity" stroke="#1565c0" strokeWidth={2} dot={false} name="Equity" />
+        <Line type="monotone" dataKey="equity" stroke="#1565c0" strokeWidth={2} dot={false} name="Total equity" />
+        {hasCash && <Line type="monotone" dataKey="cash" stroke="#2e7d32" strokeWidth={1.5} dot={false} strokeDasharray="4 3" name="Cash" />}
       </LineChart>
     </ResponsiveContainer>
   )
@@ -170,7 +175,7 @@ export default function PortfolioMiniGridCharts({
       )}
       <div className="mini-grid-grid">
         <div className="mini-grid-cell">
-          <ChartTitle title="Equity" tooltip="Equity over time. Dashed line = bust threshold if set." />
+          <ChartTitle title="Equity & Cash" tooltip="Total equity (solid blue) and available cash (dashed green) over time. Dashed red line = bust threshold if set." />
           <EquityChart data={equity} thresholds={thresholds} events={events} />
         </div>
         <div className="mini-grid-cell">

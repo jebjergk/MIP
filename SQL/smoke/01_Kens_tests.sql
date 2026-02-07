@@ -14,41 +14,24 @@ select * from mip.app.mip_audit_log where event_ts::date = '2026-02-01' order by
 call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
 
+-- Delete the 3 orphaned trades from run 1
+delete from MIP.APP.PORTFOLIO_TRADES
+ where PORTFOLIO_ID = 2
+   and TRADE_ID in (4504, 4505, 4506);
 
--- Check for duplicate proposals today
-select SYMBOL, PORTFOLIO_ID, RECOMMENDATION_ID, count(*) as cnt
-from MIP.AGENT_OUT.ORDER_PROPOSALS
-where PROPOSED_AT::date = current_date()
-group by SYMBOL, PORTFOLIO_ID, RECOMMENDATION_ID
-having count(*) > 1;
-
--- Delete the older duplicates (keep only latest per portfolio+recommendation)
-delete from MIP.AGENT_OUT.ORDER_PROPOSALS
-where PROPOSAL_ID in (
-    select PROPOSAL_ID from (
-        select PROPOSAL_ID,
-               row_number() over (
-                   partition by PORTFOLIO_ID, RECOMMENDATION_ID
-                   order by PROPOSED_AT desc
-               ) as rn
-        from MIP.AGENT_OUT.ORDER_PROPOSALS
-        where PROPOSED_AT::date = current_date()
-    )
-    where rn > 1
-);
-
+-- Fix CASH_AFTER for the remaining 3 trades
 MERGE INTO MIP.APP.PORTFOLIO_TRADES t
 USING (
     with ranked as (
-        select TRADE_ID, PORTFOLIO_ID, SIDE, NOTIONAL,
+        select TRADE_ID, SIDE, NOTIONAL,
                greatest(coalesce(0.50, 0), abs(NOTIONAL) * 2 / 10000) as FEE,
-               row_number() over (partition by PORTFOLIO_ID order by TRADE_TS, TRADE_ID) as rn
+               row_number() over (order by TRADE_TS, TRADE_ID) as rn
         from MIP.APP.PORTFOLIO_TRADES
-        where PORTFOLIO_ID = 1
+        where PORTFOLIO_ID = 2
     ),
     cumulative as (
         select TRADE_ID,
-               100000 - sum(
+               2000 - sum(
                    case when SIDE = 'BUY' then NOTIONAL + FEE
                         when SIDE = 'SELL' then -(NOTIONAL - FEE)
                         else 0
@@ -60,3 +43,9 @@ USING (
 ) c
 ON t.TRADE_ID = c.TRADE_ID
 WHEN MATCHED THEN UPDATE SET t.CASH_AFTER = c.NEW_CASH_AFTER;
+
+-- Verify: should show 3 trades with correct cumulative cash
+select TRADE_ID, SYMBOL, SIDE, NOTIONAL, CASH_AFTER
+from MIP.APP.PORTFOLIO_TRADES
+where PORTFOLIO_ID = 2
+order by TRADE_TS;

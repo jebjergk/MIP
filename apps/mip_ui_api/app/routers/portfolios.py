@@ -1318,7 +1318,9 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
                 tss = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
                 if te is not None:
                     te_float = float(te)
-                    equity_series.append({"ts": tss, "equity": te_float})
+                    cash_val = r.get("CASH")
+                    cash_float = float(cash_val) if cash_val is not None else None
+                    equity_series.append({"ts": tss, "equity": te_float, "cash": cash_float})
                     
                     # Update episode-local peak (running max within episode)
                     if episode_peak is None or te_float > episode_peak:

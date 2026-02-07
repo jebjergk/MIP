@@ -42,10 +42,13 @@ where STATUS = 'ACTIVE';
 -----------------------------
 -- SP_START_PORTFOLIO_EPISODE
 -----------------------------
+-- NOTE: This initial version is superseded by 169_portfolio_profile_crystallize_and_episode_results.sql
+-- which adds P_START_EQUITY parameter. Kept here for reference; 169 is authoritative.
 create or replace procedure MIP.APP.SP_START_PORTFOLIO_EPISODE(
-    P_PORTFOLIO_ID number,
-    P_PROFILE_ID    number,
-    P_END_REASON    varchar default 'MANUAL_RESET'
+    P_PORTFOLIO_ID   number,
+    P_PROFILE_ID     number,
+    P_END_REASON     varchar default 'MANUAL_RESET',
+    P_START_EQUITY   number default null
 )
 returns number
 language sql
@@ -55,7 +58,13 @@ $$
 declare
     v_end_ts timestamp_ntz := current_timestamp();
     v_new_episode_id number;
+    v_start_equity number(18,2) := :P_START_EQUITY;
 begin
+    if (v_start_equity is null) then
+        select STARTING_CASH into :v_start_equity
+          from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+    end if;
+
     -- Close existing ACTIVE episode for this portfolio
     update MIP.APP.PORTFOLIO_EPISODE
        set END_TS     = :v_end_ts,
@@ -71,7 +80,8 @@ begin
         START_TS,
         END_TS,
         STATUS,
-        END_REASON
+        END_REASON,
+        START_EQUITY
     )
     values (
         :P_PORTFOLIO_ID,
@@ -79,7 +89,8 @@ begin
         :v_end_ts,
         null,
         'ACTIVE',
-        null
+        null,
+        :v_start_equity
     );
 
     select EPISODE_ID

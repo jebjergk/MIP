@@ -614,9 +614,12 @@ begin
     ) bi
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE ae
       on ae.PORTFOLIO_ID = t.PORTFOLIO_ID
+    left join MIP.AGENT_OUT.ORDER_PROPOSALS op
+      on op.PROPOSAL_ID = t.PROPOSAL_ID
     left join MIP.MART.V_TRUSTED_SIGNALS ts
-      on ts.SYMBOL = t.SYMBOL
+      on ts.PATTERN_ID = op.SIGNAL_PATTERN_ID
      and ts.MARKET_TYPE = t.MARKET_TYPE
+     and ts.INTERVAL_MINUTES = t.INTERVAL_MINUTES
      and ts.IS_TRUSTED = true
     where t.RUN_ID = :P_RUN_ID
       and t.PORTFOLIO_ID = :P_PORTFOLIO_ID

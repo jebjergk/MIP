@@ -109,7 +109,28 @@
 .stale-brief-banner .stale-banner-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
-  cursor: not-allowed;
+}
+
+/* Pipeline failed variant - more urgent red styling */
+.stale-brief-banner.pipeline-failed {
+  background: linear-gradient(135deg, #fde8e8 0%, #fcc5c5 100%);
+  border-color: #e53e3e;
+}
+
+.stale-brief-banner.pipeline-failed .stale-banner-title {
+  color: #c53030;
+}
+
+.stale-brief-banner.pipeline-failed .stale-banner-text {
+  color: #9b2c2c;
+}
+
+.stale-brief-banner.pipeline-failed .stale-banner-btn {
+  background: #c53030;
+}
+
+.stale-brief-banner.pipeline-failed .stale-banner-btn:hover:not(:disabled) {
+  background: #9b2c2c;
 }
 
 /* Brief Content Grid */

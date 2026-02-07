@@ -681,13 +681,20 @@ export default function MorningBrief() {
         <div className="brief-content">
           {/* Stale brief banner with Load latest CTA */}
           {brief.is_stale && (
-            <div className="stale-brief-banner" role="alert">
-              <div className="stale-banner-icon">⚠️</div>
+            <div className={`stale-brief-banner ${brief.pipeline_failed ? 'pipeline-failed' : ''}`} role="alert">
+              <div className="stale-banner-icon">{brief.pipeline_failed ? '❌' : '⚠️'}</div>
               <div className="stale-banner-content">
-                <p className="stale-banner-title">You are viewing an older brief</p>
+                <p className="stale-banner-title">
+                  {brief.pipeline_failed 
+                    ? 'Today\'s pipeline failed — showing last successful brief'
+                    : 'You are viewing an older brief'}
+                </p>
                 <p className="stale-banner-text">
-                  This brief was generated from pipeline run <code>{brief.pipeline_run_id?.slice(0, 8) || '—'}</code>.
-                  {brief.stale_reason && ` ${brief.stale_reason}`}
+                  {brief.pipeline_failed 
+                    ? `The latest pipeline run (${brief.latest_run_status || 'FAIL'}) did not complete. This brief is from the last successful run.`
+                    : <>This brief was generated from pipeline run <code>{brief.pipeline_run_id?.slice(0, 8) || '—'}</code>.</>
+                  }
+                  {brief.stale_reason && !brief.pipeline_failed && ` ${brief.stale_reason}`}
                 </p>
               </div>
               <button 
@@ -696,7 +703,7 @@ export default function MorningBrief() {
                 onClick={loadBrief}
                 disabled={loading}
               >
-                {loading ? 'Loading…' : 'Load Latest Brief'}
+                {loading ? 'Loading…' : 'Refresh'}
               </button>
             </div>
           )}

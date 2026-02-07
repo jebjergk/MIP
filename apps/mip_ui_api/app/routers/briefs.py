@@ -493,15 +493,15 @@ def get_latest_brief(portfolio_id: int):
         limit 1 offset 1
     ),
     latest_pipeline_run as (
-        -- Get the latest successful pipeline run (SUCCESS or SUCCESS_WITH_SKIPS)
-        -- This is the correct source for staleness check, not PORTFOLIO.LAST_SIMULATION_RUN_ID
+        -- Get the latest pipeline run regardless of status
+        -- Used to detect if a newer run exists (even if it failed)
         select 
             RUN_ID,
-            EVENT_TS
+            EVENT_TS,
+            STATUS
         from MIP.APP.MIP_AUDIT_LOG
         where EVENT_TYPE = 'PIPELINE'
           and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
-          and STATUS in ('SUCCESS', 'SUCCESS_WITH_SKIPS')
         order by EVENT_TS desc
         limit 1
     )
@@ -527,6 +527,7 @@ def get_latest_brief(portfolio_id: int):
         -- Latest pipeline run for staleness check (from audit log, not PORTFOLIO table)
         lpr.RUN_ID as latest_run_id,
         lpr.EVENT_TS as latest_run_ts,
+        lpr.STATUS as latest_run_status,
         -- Active episode info for reset boundary check
         e.EPISODE_ID as episode_id,
         e.START_TS as episode_start_ts
@@ -566,14 +567,20 @@ def get_latest_brief(portfolio_id: int):
         created_at = data.get("created_at")
         pipeline_run_id = data.get("pipeline_run_id")
 
-        # Staleness check: brief is stale if RUN_ID differs from portfolio's LAST_SIMULATION_RUN_ID
+        # Staleness check: brief is stale if RUN_ID differs from latest pipeline run
         latest_run_id = data.get("latest_run_id")
         latest_run_ts = data.get("latest_run_ts")
+        latest_run_status = data.get("latest_run_status")
         is_stale = False
         stale_reason = None
+        pipeline_failed = False
         if latest_run_id and pipeline_run_id and str(pipeline_run_id) != str(latest_run_id):
             is_stale = True
-            stale_reason = f"Brief from run {pipeline_run_id[:8]}... but latest run is {latest_run_id[:8]}..."
+            if latest_run_status and latest_run_status not in ("SUCCESS", "SUCCESS_WITH_SKIPS"):
+                pipeline_failed = True
+                stale_reason = f"Latest pipeline run FAILED — this brief is from a previous successful run."
+            else:
+                stale_reason = f"Brief from run {pipeline_run_id[:8]}... but latest run is {latest_run_id[:8]}..."
 
         # Reset boundary check: brief is from before reset if CREATED_AT < episode_start_ts
         # Note: Use CREATED_AT (when brief was generated), not AS_OF_TS (market date).
@@ -688,8 +695,10 @@ def get_latest_brief(portfolio_id: int):
             # Staleness info
             "is_stale": is_stale,
             "stale_reason": stale_reason,
+            "pipeline_failed": pipeline_failed,
             "latest_run_id": latest_run_id,
             "latest_run_ts": latest_run_ts,
+            "latest_run_status": latest_run_status,
             # Reset boundary info
             "is_before_reset": is_before_reset,
             "reset_warning": reset_warning,

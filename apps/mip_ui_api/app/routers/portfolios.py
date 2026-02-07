@@ -795,6 +795,28 @@ def get_portfolio_snapshot(
             cash = latest_daily.get("CASH") or latest_daily.get("cash")
             equity_value = latest_daily.get("EQUITY_VALUE") or latest_daily.get("equity_value")
             total_equity = latest_daily.get("TOTAL_EQUITY") or latest_daily.get("total_equity")
+
+            # Override cash with latest CASH_AFTER from trades (most accurate source)
+            try:
+                cur.execute(
+                    """
+                    select CASH_AFTER
+                      from MIP.APP.PORTFOLIO_TRADES
+                     where PORTFOLIO_ID = %s
+                     order by TRADE_TS desc
+                     limit 1
+                    """,
+                    (portfolio_id,),
+                )
+                trade_row = cur.fetchone()
+                if trade_row and trade_row[0] is not None:
+                    cash = float(trade_row[0])
+                    # Recalculate total equity with accurate cash
+                    if equity_value is not None:
+                        total_equity = cash + float(equity_value)
+            except Exception:
+                pass  # Fall back to PORTFOLIO_DAILY cash
+
             cash_and_exposure = {
                 "cash": cash,
                 "exposure": equity_value,

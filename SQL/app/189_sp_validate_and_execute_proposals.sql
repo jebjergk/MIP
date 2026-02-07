@@ -272,8 +272,16 @@ begin
     );
 
     -- Use available CASH for position sizing, not total equity.
-    -- Total equity includes unrealized position value which is not secure money.
+    -- Priority: latest trade's CASH_AFTER (actual money after last trade),
+    -- then PORTFOLIO_DAILY cash, then starting cash as final fallback.
     v_available_cash := coalesce(
+        (
+            select CASH_AFTER
+              from MIP.APP.PORTFOLIO_TRADES
+             where PORTFOLIO_ID = :P_PORTFOLIO_ID
+             order by TRADE_TS desc
+             limit 1
+        ),
         (
             select CASH
               from MIP.APP.PORTFOLIO_DAILY

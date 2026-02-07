@@ -247,28 +247,33 @@ begin
     from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
     where p.PORTFOLIO_ID = :v_portfolio_id;
 
-    -- Adjust starting cash for existing positions' cost basis
-    -- Cash = starting_cash - total cost of open positions
-    let v_existing_cost number(18,2) := 0;
-    select coalesce(sum(COST_BASIS), 0) into :v_existing_cost from TEMP_POSITIONS;
-    v_cash := v_starting_cash - v_existing_cost;
-
-    -- Use latest known cash from PORTFOLIO_DAILY if available (more accurate)
+    -- Determine current cash balance. Priority:
+    -- 1. Latest CASH_AFTER from PORTFOLIO_TRADES (reflects actual money after last trade)
+    -- 2. Fallback: starting_cash - cost of all open positions
     begin
-        declare v_latest_cash number(18,2);
+        declare v_trade_cash number(18,2);
         begin
-            select CASH into :v_latest_cash
-              from MIP.APP.PORTFOLIO_DAILY
+            select CASH_AFTER into :v_trade_cash
+              from MIP.APP.PORTFOLIO_TRADES
              where PORTFOLIO_ID = :v_portfolio_id
-             order by TS desc
+             order by TRADE_TS desc
              limit 1;
-            if (v_latest_cash is not null) then
-                v_cash := v_latest_cash;
+            if (v_trade_cash is not null) then
+                v_cash := v_trade_cash;
             end if;
         exception
-            when other then null; -- No prior daily records; use calculated cash
+            when other then null; -- No trade records yet
         end;
     end;
+
+    -- If no trades exist, calculate cash from starting cash minus open position cost
+    if (v_cash = v_starting_cash) then
+        let v_existing_cost number(18,2) := 0;
+        select coalesce(sum(COST_BASIS), 0) into :v_existing_cost from TEMP_POSITIONS;
+        if (v_existing_cost > 0) then
+            v_cash := v_starting_cash - v_existing_cost;
+        end if;
+    end if;
 
     select count(*) into :v_open_positions from TEMP_POSITIONS;
 

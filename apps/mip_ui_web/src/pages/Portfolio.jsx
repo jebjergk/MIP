@@ -44,36 +44,40 @@ export default function Portfolio() {
       setLoading(true)
       setError(null)
       try {
-        const listRes = await fetch(`${API_BASE}/portfolios`)
-        if (!listRes.ok) throw new Error(listRes.statusText)
-        const list = await listRes.json()
-        if (cancelled) return
-        setPortfolios(list)
         if (portfolioId) {
-          const headerRes = await fetch(`${API_BASE}/portfolios/${portfolioId}`)
-          if (!headerRes.ok) throw new Error(headerRes.statusText)
-          const port = await headerRes.json()
+          // Fire ALL independent requests in parallel (was sequential before)
+          const snapParams = new URLSearchParams()
+          snapParams.set('lookback_days', String(lookbackDays))
+
+          const [list, port, snapData, epData, tlData, diagData] = await Promise.all([
+            // Portfolio list (for sidebar navigation)
+            fetch(`${API_BASE}/portfolios`)
+              .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json() }),
+            // Portfolio header
+            fetch(`${API_BASE}/portfolios/${portfolioId}`)
+              .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json() }),
+            // Snapshot (server resolves run_id internally — no need to wait for header)
+            fetch(`${API_BASE}/portfolios/${portfolioId}/snapshot?${snapParams.toString()}`)
+              .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json() }),
+            // Episodes (non-critical — fallback to empty on error)
+            fetch(`${API_BASE}/portfolios/${portfolioId}/episodes`)
+              .then(r => r.ok ? r.json() : []).catch(() => []),
+            // Timeline (non-critical — fallback to null on error)
+            fetch(`${API_BASE}/portfolios/${portfolioId}/timeline`)
+              .then(r => r.ok ? r.json() : null).catch(() => null),
+            // Proposer diagnostics (non-critical — fallback to null on error)
+            fetch(`${API_BASE}/market-timeline/diagnostics?portfolio_id=${portfolioId}`)
+              .then(r => r.ok ? r.json() : null).catch(() => null),
+          ])
           if (cancelled) return
+          setPortfolios(list)
           setPortfolio(port)
-          const runId = port.LAST_SIMULATION_RUN_ID ?? null
-          const params = new URLSearchParams()
-          if (runId) params.set('run_id', runId)
-          params.set('lookback_days', String(lookbackDays))
-          const snapUrl = `${API_BASE}/portfolios/${portfolioId}/snapshot?${params.toString()}`
-          const snapRes = await fetch(snapUrl)
-          if (!snapRes.ok) throw new Error(snapRes.statusText)
-          const snapData = await snapRes.json()
-          if (!cancelled) setSnapshot(snapData)
-          const epRes = await fetch(`${API_BASE}/portfolios/${portfolioId}/episodes`)
-          if (epRes.ok) {
-            const epList = await epRes.json()
-            if (!cancelled) setEpisodes(Array.isArray(epList) ? epList : [])
-          } else if (!cancelled) setEpisodes([])
-          const tlRes = await fetch(`${API_BASE}/portfolios/${portfolioId}/timeline`)
-          if (tlRes.ok) {
-            const tlData = await tlRes.json()
-            if (!cancelled) setTimeline(tlData)
-          } else if (!cancelled) setTimeline(null)
+          setSnapshot(snapData)
+          setEpisodes(Array.isArray(epData) ? epData : [])
+          setTimeline(tlData)
+          setProposerDiagnostics(diagData)
+
+          // Active episode analytics (depends on snapshot result)
           const activeEp = snapData?.active_episode
           const activeEpisodeId = activeEp?.episode_id ?? activeEp?.EPISODE_ID
           if (activeEpisodeId && !cancelled) {
@@ -82,17 +86,19 @@ export default function Portfolio() {
               .then(data => { if (!cancelled) setActiveAnalytics(data) })
               .catch(() => { if (!cancelled) setActiveAnalytics(null) })
           } else if (!cancelled) setActiveAnalytics(null)
-          // Fetch proposer diagnostics for this portfolio
-          fetch(`${API_BASE}/market-timeline/diagnostics?portfolio_id=${portfolioId}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(data => { if (!cancelled) setProposerDiagnostics(data) })
-            .catch(() => { if (!cancelled) setProposerDiagnostics(null) })
         } else {
-          setPortfolio(null)
-          setSnapshot(null)
-          setEpisodes([])
-          setTimeline(null)
-          setActiveAnalytics(null)
+          // No portfolioId — just fetch the list
+          const listRes = await fetch(`${API_BASE}/portfolios`)
+          if (!listRes.ok) throw new Error(listRes.statusText)
+          const list = await listRes.json()
+          if (!cancelled) {
+            setPortfolios(list)
+            setPortfolio(null)
+            setSnapshot(null)
+            setEpisodes([])
+            setTimeline(null)
+            setActiveAnalytics(null)
+          }
         }
       } catch (e) {
         if (!cancelled) setError(e.message)

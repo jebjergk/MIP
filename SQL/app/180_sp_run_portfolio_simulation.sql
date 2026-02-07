@@ -483,7 +483,9 @@ begin
             v_block_reason := 'DRAWDOWN_STOP';
         end if;
 
-        v_max_position_value := v_total_equity * v_max_position_pct;
+        -- Size positions from available CASH, not total equity.
+        -- Equity includes unrealized position value which is not secure.
+        v_max_position_value := v_cash * v_max_position_pct;
 
         if (not v_entries_blocked and v_open_positions < v_max_positions) then
             v_signal_sql := '
@@ -689,6 +691,8 @@ begin
       and TS between :v_effective_from_ts and :v_to_ts
     qualify row_number() over (partition by TS order by BAR_INDEX) = 1;
 
+    -- Include ALL positions for this portfolio (any RUN_ID) so equity
+    -- reflects mark-to-market of agent-created positions too.
     create or replace temporary table TEMP_POSITION_DAYS as
     select
         d.TS,
@@ -700,7 +704,6 @@ begin
     join TEMP_DAY_SPINE d
       on d.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
     where p.PORTFOLIO_ID = :v_portfolio_id
-      and p.RUN_ID = :v_run_id
       and p.INTERVAL_MINUTES = 1440;
 
     select count(*)

@@ -20,6 +20,7 @@ declare
     v_max_positions number;
     v_max_position_pct float;
     v_total_equity number(18,2);
+    v_available_cash number(18,2);
     v_rejected_count number := 0;
     v_approved_count number := 0;
     v_executed_count number := 0;
@@ -270,6 +271,23 @@ begin
         )
     );
 
+    -- Use available CASH for position sizing, not total equity.
+    -- Total equity includes unrealized position value which is not secure money.
+    v_available_cash := coalesce(
+        (
+            select CASH
+              from MIP.APP.PORTFOLIO_DAILY
+             where PORTFOLIO_ID = :P_PORTFOLIO_ID
+             order by TS desc
+             limit 1
+        ),
+        (
+            select STARTING_CASH
+              from MIP.APP.PORTFOLIO
+             where PORTFOLIO_ID = :P_PORTFOLIO_ID
+        )
+    );
+
     -- Phase 3.6: Strengthen position sizing validation - check individual position size and total exposure
     declare
         v_total_exposure_pct float;
@@ -465,7 +483,7 @@ begin
                 current_timestamp() as TRADE_TS,
                 p.SIDE,
                 lp.CLOSE as MID_PRICE,
-                :v_total_equity * p.TARGET_WEIGHT as NOTIONAL,
+                :v_available_cash * p.TARGET_WEIGHT as NOTIONAL,
                 p.SOURCE_SIGNALS:score::number as SCORE
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
             join TMP_PROPOSAL_VALIDATION v
@@ -522,9 +540,9 @@ begin
             NOTIONAL,
             REALIZED_PNL,
             case
-                when SIDE = 'BUY' then :v_total_equity - (NOTIONAL + FEE)
-                when SIDE = 'SELL' then :v_total_equity + (NOTIONAL - FEE)
-                else :v_total_equity
+                when SIDE = 'BUY' then :v_available_cash - (NOTIONAL + FEE)
+                when SIDE = 'SELL' then :v_available_cash + (NOTIONAL - FEE)
+                else :v_available_cash
             end as CASH_AFTER,
             SCORE
         from costed

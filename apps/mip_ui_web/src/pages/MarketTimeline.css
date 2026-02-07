@@ -171,6 +171,14 @@
   background: linear-gradient(90deg, #fff3e0 0%, #fafafa 30%);
 }
 
+/* Badges container - groups action + trust badges into one grid cell */
+.tile-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
 /* Action badge - inline with trust badge */
 .tile-action-badge {
   font-size: 0.65rem;

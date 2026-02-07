@@ -202,17 +202,16 @@ export default function MarketTimeline() {
                     <span className="tile-market-type">{sym.market_type}</span>
                   </div>
                   
-                  {hasTodayProposals && (
-                    <span className="tile-action-badge">
-                      ACTION
-                    </span>
-                  )}
-                  
-                  {sym.trust_label && (
-                    <span className={`tile-trust-badge trust-${sym.trust_label?.toLowerCase()}`}>
-                      {sym.trust_label}
-                    </span>
-                  )}
+                  <div className="tile-badges">
+                    {hasTodayProposals && (
+                      <span className="tile-action-badge">ACTION</span>
+                    )}
+                    {sym.trust_label && (
+                      <span className={`tile-trust-badge trust-${sym.trust_label?.toLowerCase()}`}>
+                        {sym.trust_label}
+                      </span>
+                    )}
+                  </div>
                   
                   <div className="tile-counts">
                     <span className={`count-badge count-signal ${hasSignals ? 'has-count' : ''}`}>

@@ -677,14 +677,15 @@ def get_portfolio_snapshot(
             )
         trades = serialize_rows(fetch_all(cur))
 
-        # Daily: same run
+        # Daily: latest record per day across all runs (preserves history)
         cur.execute(
             """
             select * from MIP.APP.PORTFOLIO_DAILY
-            where PORTFOLIO_ID = %s and (%s is null or RUN_ID = %s)
+            where PORTFOLIO_ID = %s
+            qualify row_number() over (partition by TS order by CREATED_AT desc nulls last, RUN_ID desc) = 1
             order by TS desc
             """,
-            (portfolio_id, effective_run_id, effective_run_id),
+            (portfolio_id,),
         )
         daily = serialize_rows(fetch_all(cur))
 
@@ -950,18 +951,21 @@ def get_portfolio_snapshot(
                     ep_drawdown_stop_pct = 0.10  # Default 10%
                 
                 # Get episode-local peak and current equity to compute drawdown
-                # Filter by effective_run_id to exclude stale data from prior runs
+                # Use latest record per day across all runs for complete picture
                 cur.execute(
                     """
                     select 
                         max(TOTAL_EQUITY) as peak_equity,
                         max_by(TOTAL_EQUITY, TS) as current_equity
-                    from MIP.APP.PORTFOLIO_DAILY
-                    where PORTFOLIO_ID = %s 
-                      and TS >= %s
-                      and (%s is null or RUN_ID = %s)
+                    from (
+                        select TS, TOTAL_EQUITY
+                        from MIP.APP.PORTFOLIO_DAILY
+                        where PORTFOLIO_ID = %s 
+                          and TS >= %s
+                        qualify row_number() over (partition by TS order by CREATED_AT desc nulls last, RUN_ID desc) = 1
+                    )
                     """,
-                    (portfolio_id, episode_start_ts, effective_run_id, effective_run_id),
+                    (portfolio_id, episode_start_ts),
                 )
                 row = cur.fetchone()
                 if row and row[0] is not None and row[1] is not None:
@@ -1282,20 +1286,20 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
         )
 
         # Equity series: PORTFOLIO_DAILY in episode window
-        # IMPORTANT: Filter by RUN_ID to avoid phantom peaks from stale simulation runs
-        # We fetch raw TOTAL_EQUITY and compute episode-local peak/drawdown in Python
-        # to ensure drawdown is scoped to THIS episode only
+        # Use latest record per day across ALL runs so history is preserved
+        # even when a newer run covers fewer days than the previous one.
+        # QUALIFY keeps only the most recent RUN_ID's record for each day.
         cur.execute(
             """
-            select TS, TOTAL_EQUITY, OPEN_POSITIONS
+            select TS, TOTAL_EQUITY, OPEN_POSITIONS, CASH, EQUITY_VALUE
             from MIP.APP.PORTFOLIO_DAILY
             where PORTFOLIO_ID = %s 
               and TS >= %s 
               and (%s is null or TS <= %s)
-              and (%s is null or RUN_ID = %s)
+            qualify row_number() over (partition by TS order by CREATED_AT desc nulls last, RUN_ID desc) = 1
             order by TS
             """,
-            (portfolio_id, start_ts, end_ts, end_ts, current_run_id, current_run_id),
+            (portfolio_id, start_ts, end_ts, end_ts),
         )
         daily_rows = fetch_all(cur)
         

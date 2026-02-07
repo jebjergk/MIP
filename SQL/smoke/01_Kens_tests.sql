@@ -36,3 +36,27 @@ where PROPOSAL_ID in (
     )
     where rn > 1
 );
+
+MERGE INTO MIP.APP.PORTFOLIO_TRADES t
+USING (
+    with ranked as (
+        select TRADE_ID, PORTFOLIO_ID, SIDE, NOTIONAL,
+               greatest(coalesce(0.50, 0), abs(NOTIONAL) * 2 / 10000) as FEE,
+               row_number() over (partition by PORTFOLIO_ID order by TRADE_TS, TRADE_ID) as rn
+        from MIP.APP.PORTFOLIO_TRADES
+        where PORTFOLIO_ID = 1
+    ),
+    cumulative as (
+        select TRADE_ID,
+               100000 - sum(
+                   case when SIDE = 'BUY' then NOTIONAL + FEE
+                        when SIDE = 'SELL' then -(NOTIONAL - FEE)
+                        else 0
+                   end
+               ) over (order by rn rows between unbounded preceding and current row) as NEW_CASH_AFTER
+        from ranked
+    )
+    select TRADE_ID, NEW_CASH_AFTER from cumulative
+) c
+ON t.TRADE_ID = c.TRADE_ID
+WHEN MATCHED THEN UPDATE SET t.CASH_AFTER = c.NEW_CASH_AFTER;

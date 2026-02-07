@@ -181,7 +181,7 @@ def get_overview(
                 p.MARKET_TYPE,
                 count(*) as proposal_count,
                 count(case when p.PROPOSED_AT::date = current_date() 
-                           and p.STATUS in ('PROPOSED', 'APPROVED') then 1 end) as today_proposal_count
+                           and p.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED') then 1 end) as today_proposal_count
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
             where p.PROPOSED_AT >= %s
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}

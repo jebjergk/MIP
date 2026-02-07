@@ -543,8 +543,11 @@ begin
         where s.SELECTION_RANK <= :v_remaining_capacity
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
-   and target.RUN_ID_VARCHAR = source.RUN_ID_VARCHAR
    and target.RECOMMENDATION_ID = source.RECOMMENDATION_ID
+    when matched and target.STATUS = 'PROPOSED' then update set
+        target.RUN_ID_VARCHAR = source.RUN_ID_VARCHAR,
+        target.RATIONALE = source.RATIONALE,
+        target.SOURCE_SIGNALS = source.SOURCE_SIGNALS
     when not matched then
         insert (
             RUN_ID_VARCHAR,

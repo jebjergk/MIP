@@ -225,6 +225,53 @@ begin
         CASH number(18,2)
     );
 
+    -- ============================================================
+    -- LOAD EXISTING OPEN POSITIONS into TEMP_POSITIONS
+    -- This ensures the simulation knows about agent-created positions
+    -- and uses their correct HOLD_UNTIL_INDEX (not recalculated).
+    -- ============================================================
+    insert into TEMP_POSITIONS (
+        SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_PRICE,
+        QUANTITY, COST_BASIS, ENTRY_SCORE, ENTRY_INDEX, HOLD_UNTIL_INDEX
+    )
+    select
+        p.SYMBOL,
+        p.MARKET_TYPE,
+        p.ENTRY_TS,
+        p.ENTRY_PRICE,
+        p.QUANTITY,
+        p.COST_BASIS,
+        p.ENTRY_SCORE,
+        p.ENTRY_INDEX,
+        p.HOLD_UNTIL_INDEX
+    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+    where p.PORTFOLIO_ID = :v_portfolio_id;
+
+    -- Adjust starting cash for existing positions' cost basis
+    -- Cash = starting_cash - total cost of open positions
+    let v_existing_cost number(18,2) := 0;
+    select coalesce(sum(COST_BASIS), 0) into :v_existing_cost from TEMP_POSITIONS;
+    v_cash := v_starting_cash - v_existing_cost;
+
+    -- Use latest known cash from PORTFOLIO_DAILY if available (more accurate)
+    begin
+        declare v_latest_cash number(18,2);
+        begin
+            select CASH into :v_latest_cash
+              from MIP.APP.PORTFOLIO_DAILY
+             where PORTFOLIO_ID = :v_portfolio_id
+             order by TS desc
+             limit 1;
+            if (v_latest_cash is not null) then
+                v_cash := v_latest_cash;
+            end if;
+        exception
+            when other then null; -- No prior daily records; use calculated cash
+        end;
+    end;
+
+    select count(*) into :v_open_positions from TEMP_POSITIONS;
+
     insert into TEMP_SIGNALS
     select
         s.RECOMMENDATION_ID,
@@ -253,7 +300,14 @@ begin
      and exit_bar.BAR_INDEX = entry_bar.BAR_INDEX + s.HORIZON_BARS
     where s.INTERVAL_MINUTES = 1440
       and s.TS between :v_effective_from_ts and :v_to_ts
-      and exit_bar.TS <= :v_to_ts;
+      and exit_bar.TS <= :v_to_ts
+      -- Exclude signals for symbols that already have open positions
+      -- (prevents simulation from re-entering agent-managed positions)
+      and not exists (
+          select 1 from TEMP_POSITIONS tp
+          where tp.SYMBOL = s.SYMBOL
+            and tp.MARKET_TYPE = s.MARKET_TYPE
+      );
 
     v_bar_sql := '
         select TS, BAR_INDEX

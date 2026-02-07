@@ -250,6 +250,12 @@ export default function Portfolio() {
               <span className="kpi-value">{Number(portfolio.STARTING_CASH).toLocaleString()}</span>
             </div>
           )}
+          {snapshot?.cards?.cash_and_exposure?.cash != null && (
+            <div className="kpi-card">
+              <span className="kpi-label">Current cash</span>
+              <span className="kpi-value">{Number(snapshot.cards.cash_and_exposure.cash).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+            </div>
+          )}
           {portfolio.FINAL_EQUITY != null && (
             <div className="kpi-card">
               <span className="kpi-label">Final equity <InfoTooltip scope="portfolio" key="final_equity" variant="short" /></span>

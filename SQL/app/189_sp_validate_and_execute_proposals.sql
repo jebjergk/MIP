@@ -533,6 +533,32 @@ begin
                 greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000) as FEE,
                 SCORE
             from priced
+        ),
+        -- Compute cumulative cash: each trade subtracts/adds from running balance
+        cumulative as (
+            select
+                PROPOSAL_ID,
+                PORTFOLIO_ID,
+                RUN_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                INTERVAL_MINUTES,
+                TRADE_TS,
+                SIDE,
+                PRICE,
+                QUANTITY,
+                NOTIONAL,
+                REALIZED_PNL,
+                FEE,
+                SCORE,
+                :v_available_cash - sum(
+                    case
+                        when SIDE = 'BUY' then NOTIONAL + FEE
+                        when SIDE = 'SELL' then -(NOTIONAL - FEE)
+                        else 0
+                    end
+                ) over (order by PROPOSAL_ID rows between unbounded preceding and current row) as CASH_AFTER
+            from costed
         )
         select
             PROPOSAL_ID,
@@ -547,13 +573,9 @@ begin
             QUANTITY,
             NOTIONAL,
             REALIZED_PNL,
-            case
-                when SIDE = 'BUY' then :v_available_cash - (NOTIONAL + FEE)
-                when SIDE = 'SELL' then :v_available_cash + (NOTIONAL - FEE)
-                else :v_available_cash
-            end as CASH_AFTER,
+            CASH_AFTER,
             SCORE
-        from costed
+        from cumulative
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
        and target.PROPOSAL_ID = source.PROPOSAL_ID

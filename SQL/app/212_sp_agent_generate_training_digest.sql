@@ -429,7 +429,15 @@ KEY DISTINCTION you MUST explain clearly:
 - If trust_label is WATCH: the symbol is being monitored but is NOT eligible for trading yet.
 - If trust_label is UNTRUSTED: the symbol fails trust criteria — no trading.
 - If trust_label is TRUSTED: the symbol passes performance rules and CAN trade (if portfolio has capacity).
-- Look at threshold_gaps to see exactly which criteria are met and which are not.
+
+CRITICAL RULE — NEVER CONTRADICT THE trust_label FIELD:
+- The trust.trust_label value is the DEFINITIVE answer to "is this symbol trusted?". It is computed by the trust policy engine.
+- The threshold_gaps section shows training gate thresholds which are a SEPARATE system from the trust policy. They may disagree.
+- If trust_label is TRUSTED, the symbol IS trusted — do NOT say "not trusted" or "not eligible" even if some threshold_gaps show unmet criteria. Those gaps relate to training maturity, not to the trust decision.
+- If trust_label is UNTRUSTED or WATCH, the symbol is NOT trusted — even if individual metrics look good.
+- In your headline and bullets: READ trust.trust_label FIRST, then describe threshold_gaps as additional context about training completeness.
+- Example: If trust_label=TRUSTED but signals_met=false, say: "AUD/USD is TRUSTED and eligible for trading. While the training signals count (22) has not yet reached the full training target (40), the trust policy has already approved this symbol based on its strong hit rate and returns."
+- NEVER write one sentence saying "eligible" and another saying "not eligible" for the same symbol. Pick the truth from trust_label and be consistent.
 
 Narrative quality rules (must follow):
 - Write as if talking to a portfolio manager who wants to know: "Can I trade this symbol? If not, why not? What needs to happen?"
@@ -440,15 +448,20 @@ Narrative quality rules (must follow):
   (c) the practical consequence for trading.
   Example: "Hit rate is 0.52 (52% of evaluated outcomes were profitable). The system requires at least 0.55 (55%) to trust this symbol for trading. Gap: 0.03 — roughly 2 more successful outcomes out of the next 10 would close this gap and make ' || :v_symbol || ' eligible for trade proposals."
 - Do NOT just list detector names. Explain what they mean for the user.
-- If the symbol is CONFIDENT but NOT TRUSTED, you MUST explain: "' || :v_symbol || ' has enough training data (CONFIDENT), but does not yet pass the performance checks needed for trust. Specifically: [list which threshold_gaps are not met]. Until these are met, no trade proposals will be generated for this symbol."
-- If the symbol IS TRUSTED, explain: "' || :v_symbol || ' is both CONFIDENT and TRUSTED — it is eligible for trade proposals. Whether trades actually happen depends on portfolio capacity and signal strength."
+- FIRST read trust.trust_label from the snapshot. This is the definitive answer. Then:
+  - If trust_label is TRUSTED: "' || :v_symbol || ' is TRUSTED and eligible for trade proposals. It has passed the performance checks. Whether trades actually happen depends on portfolio capacity and signal strength." Then optionally mention any remaining threshold_gaps as training completeness context (not as blockers).
+  - If trust_label is WATCH: "' || :v_symbol || ' is on the WATCH list — being monitored but NOT yet eligible for trading. Specifically: [cite the unmet threshold_gaps]. Once these are met, it may earn trust."
+  - If trust_label is UNTRUSTED: "' || :v_symbol || ' is UNTRUSTED — it does not pass performance rules. Specifically: [cite unmet gaps]. No trade proposals will be generated until trust is earned."
+- NEVER contradict yourself. If trust_label says TRUSTED, every sentence must be consistent with "this symbol CAN trade."
 - Prefer longer, explanatory bullets (2-3 sentences each). Users need reasoning, not just numbers.
-- waiting_for bullets must state the threshold, today''s value, the gap, AND what happens when met: "Waiting for hit_rate to reach 0.55 (today: 0.52, gap: 0.03). Once met, ' || :v_symbol || ' will be eligible for trust status, unlocking trade proposals."
+- waiting_for bullets must state the threshold, today''s value, the gap, AND what happens when met.
+  - If the symbol is NOT trusted: "Waiting for hit_rate to reach 0.55 (today: 0.52, gap: 0.03). Once met, ' || :v_symbol || ' will be eligible for trust status, unlocking trade proposals."
+  - If the symbol IS trusted: waiting_for should focus on remaining training milestones (e.g. signals count towards full maturity) or portfolio capacity, NOT on earning trust (since trust is already granted). Example: "Waiting for signals to reach 40 (today: 22, gap: 18). This is a training completeness target — ' || :v_symbol || ' is already TRUSTED and can trade while this builds up."
 
 Rules:
-- headline: 1-2 sentences. State the stage, what it means, and whether trading is possible. Example: "' || :v_symbol || ' is in LEARNING (score 62/100) — actively building evidence but not yet eligible for trading because hit rate is below threshold."
+- headline: 1-2 sentences. State the maturity stage, score, trust_label, and what it means for trading. Base the trading eligibility statement ONLY on trust.trust_label — never guess from threshold_gaps. Examples: If TRUSTED: "' || :v_symbol || ' is CONFIDENT (score 86/100) and TRUSTED — eligible for trade proposals." If WATCH: "' || :v_symbol || ' is LEARNING (score 62/100) and on WATCH — building evidence but not yet eligible for trading."
 - what_changed: 2-4 bullets. Each explains a change AND its consequence. If first run, explain current state thoroughly. If nothing changed, explain why AND what it means.
-- what_matters: 3-4 bullets. what_matters[0] MUST be a full explanation of the symbol''s trading readiness: list each threshold (signals, hit_rate, avg_return), whether met or not, and what the combined picture means. Include trust label and what it implies. Include at least one bullet explaining WHAT needs to happen next.
+- what_matters: 3-4 bullets. what_matters[0] MUST START with the trust_label verdict and be consistent with it throughout. If TRUSTED: "' || :v_symbol || ' is TRUSTED and eligible for trading. Here is where each metric stands: [list each threshold]. All required performance checks passed." If NOT trusted: "' || :v_symbol || ' is [trust_label] and NOT yet eligible. Here is where each metric stands: [list thresholds, highlighting unmet ones]." Include at least one bullet explaining WHAT needs to happen next.
 - waiting_for: 2-3 bullets. Each cites threshold, gap, AND what happens when reached.
 - where_to_look: 2-3 links. Valid routes: /training, /signals, /training?symbol=' || :v_symbol || '&market_type=' || :v_market_type || ', /market-timeline
 - journey: MUST be exactly 4 items: "Collecting evidence", "Evaluating outcomes", "Earning trust", "Trade-eligible". Mark the CURRENT stage with ">>" prefix.

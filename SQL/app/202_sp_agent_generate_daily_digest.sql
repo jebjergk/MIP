@@ -166,14 +166,25 @@ Produce a JSON object with exactly these keys:
   "where_to_look": [{"label": "page name", "route": "/path"}, ...]
 }
 
+Narrative quality rules (must follow):
+- Explain metrics like you are talking to a non-expert.
+- Whenever you mention a metric or label (e.g. saturation, capacity, trust, drawdown, freshness, proposal funnel), you MUST unpack it using snapshot values:
+  (a) what it means in plain language,
+  (b) what numbers it is made of (e.g. X of Y, counts, deltas),
+  (c) the operational implication ("so what").
+  Example: "80% saturation (4 of 5 position slots used) — only 1 slot left for new entries."
+- Avoid vague bullets. Prefer: "Because <fact>, <implication>. Today: <number>."
+- Do not say "no change" unless you also state the most likely reason present in the snapshot (e.g. NO_NEW_BARS, 0 trusted candidates, entries blocked, capacity full).
+- waiting_for bullets must be specific thresholds when available: "Waiting for <threshold> (today: A, target: B)."
+
 Rules:
 - headline: 1 sentence, reference concrete numbers from snapshot.
-- what_changed: 3-5 bullets about changes since prior snapshot. If nothing changed, say so and explain why.
-- what_matters: 2-4 bullets about the most important current state facts.
-- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching.
+- what_changed: 3-5 bullets about changes since prior snapshot. If nothing changed, say so and explain why using snapshot reasons.
+- what_matters: 2-4 bullets about the most important current state facts. what_matters[0] MUST unpack the headline metric(s) using snapshot components (X/Y, counts, deltas, etc.).
+- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching. Be specific with numbers when available.
 - where_to_look: 2-4 links. Valid routes: /signals, /training, /portfolios/' || :v_portfolio_id::string || ', /brief, /market-timeline, /suggestions
 - Every number you mention MUST appear in the snapshot data.
-- Return ONLY the raw JSON object. Do NOT wrap it in ```json or ``` or any markdown. Start your response with { and end with }.';
+- Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
 
         begin
             v_narrative_text := (
@@ -420,14 +431,25 @@ Produce a JSON object with exactly these keys:
   "where_to_look": [{"label": "page name", "route": "/path"}, ...]
 }
 
+Narrative quality rules (must follow):
+- Explain metrics like you are talking to a non-expert.
+- Whenever you mention a metric or label (e.g. saturation, capacity, trust, drawdown, freshness, proposal funnel), you MUST unpack it using snapshot values:
+  (a) what it means in plain language,
+  (b) what numbers it is made of (e.g. X of Y, counts, deltas),
+  (c) the operational implication ("so what").
+  Example: "System at 60% saturation (6 of 10 total slots used across 2 portfolios) — 4 slots remain for new entries."
+- Avoid vague bullets. Prefer: "Because <fact>, <implication>. Today: <number>."
+- Do not say "no change" unless you also state the most likely reason present in the snapshot (e.g. NO_NEW_BARS, 0 trusted candidates, entries blocked, capacity full).
+- waiting_for bullets must be specific thresholds when available: "Waiting for <threshold> (today: A, target: B)."
+
 Rules:
 - headline: 1 sentence, reference concrete numbers from snapshot. This is a GLOBAL digest covering all portfolios.
-- what_changed: 3-5 bullets about system-wide changes since prior snapshot. Mention portfolio names when relevant.
-- what_matters: 2-4 bullets about the most important current system-wide facts.
-- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching.
+- what_changed: 3-5 bullets about system-wide changes since prior snapshot. Mention portfolio names when relevant. If nothing changed, explain why using snapshot reasons.
+- what_matters: 2-4 bullets about the most important current system-wide facts. what_matters[0] MUST unpack the headline metric(s) using snapshot components (counts across portfolios, totals, slot usage, etc.).
+- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching. Be specific with numbers when available.
 - where_to_look: 2-4 links. Valid routes: /signals, /training, /digest, /brief, /market-timeline, /suggestions, /portfolios
 - Every number you mention MUST appear in the snapshot data.
-- Return ONLY the raw JSON object. Do NOT wrap it in ```json or ``` or any markdown. Start your response with { and end with }.';
+- Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
 
         v_model_name := 'mistral-large2';
         v_cortex_succeeded := false;

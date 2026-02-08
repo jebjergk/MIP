@@ -11,16 +11,13 @@ import './AppLayout.css'
 const SIDEBAR_WIDTH = 220
 const NAV_ITEMS = [
   { to: '/cockpit', label: 'Cockpit' },
-  { to: '/today', label: 'Today' },
   { to: '/home', label: 'Home' },
   { to: '/portfolios', label: 'Portfolio' },
   { to: '/runs', label: 'Runs (Audit)' },
-  { to: '/brief', label: 'Morning Brief' },
   { to: '/training', label: 'Training Status' },
   { to: '/suggestions', label: 'Suggestions' },
   { to: '/signals', label: 'Signals' },
   { to: '/market-timeline', label: 'Market Timeline' },
-  { to: '/digest', label: 'Daily Digest' },
   { to: '/debug', label: 'Debug' },
 ]
 

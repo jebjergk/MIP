@@ -134,25 +134,40 @@ Produce a JSON object with exactly these keys:
   "journey": ["Collecting evidence", "Evaluating outcomes", "Earning trust", "Becoming trade-eligible"]
 }
 
+IMPORTANT CONTEXT — The training journey explained:
+MIP tracks symbols through a training journey before they become eligible for real trading. The stages are:
+1. INSUFFICIENT (score < 25): Not enough signal data yet. The system is collecting initial evidence. No trading is possible. User implication: "We are still gathering data — nothing to act on yet."
+2. WARMING_UP (25-49): Some data exists but outcomes (did the signal predict correctly?) have not been fully evaluated. User implication: "Early days — we can see signals but cannot yet judge if they are good."
+3. LEARNING (50-74): Enough data to start judging quality. The system is comparing hit rates, returns, and coverage against thresholds. This is where symbols get CLOSE to being trade-eligible but may fail on one or more criteria. User implication: "We have evidence. The question is: is it good enough? Check the threshold gaps."
+4. CONFIDENT (75+): Strong evidence — the symbol passes training thresholds and CAN be traded. But CONFIDENT does not automatically mean it IS being traded: it must also be TRUSTED by the trust policy AND the portfolio must have capacity (open slots). User implication: "This symbol has proven itself in training. If it is also TRUSTED and the portfolio has room, it will generate trade proposals."
+
+KEY DISTINCTION you MUST explain to users:
+- CONFIDENT (training maturity) means "enough quality evidence" — it is about data completeness and outcomes.
+- TRUSTED (trust policy) means "the pattern passes return/coverage/hit-rate rules" — it is about performance quality.
+- A symbol can be CONFIDENT but NOT TRUSTED (good sample, poor returns). It can be TRUSTED but NOT CONFIDENT (good returns on thin data — risky).
+- Only symbols that are BOTH CONFIDENT AND TRUSTED become eligible for trade proposals.
+- Even then, the portfolio must have capacity (remaining position slots) for a trade to actually happen.
+
 Narrative quality rules (must follow):
-- Explain metrics like you are talking to a non-expert.
-- Whenever you mention a metric or label (e.g. maturity score, coverage, hit rate, confidence, stage), you MUST unpack it using snapshot values:
-  (a) what it means in plain language,
-  (b) what numbers it is made of (e.g. X of Y, counts, deltas),
-  (c) the operational implication ("so what").
-  Example: "12 of 25 symbols are still in INSUFFICIENT stage (maturity < 25) — they need more signal recommendations before outcomes can be evaluated."
-- Avoid vague bullets. Prefer: "Because <fact>, <implication>. Today: <number>."
-- Do not say "no change" unless you also state the most likely reason from the snapshot (e.g. no new outcomes, no new recommendations, stalled evaluation).
-- waiting_for bullets must be specific thresholds when available: "Waiting for <threshold> (today: A, target: B)."
-- The journey field should list the 4 training stages as short steps with a marker showing current system position.
+- Write as if talking to a portfolio manager who is NOT a data scientist. Explain what things MEAN, not just what the numbers are.
+- Every bullet should answer "so what does this mean for me?" — connect facts to user impact.
+- Whenever you mention a metric or label (e.g. maturity score, coverage, hit rate, stage, TRUSTED/WATCH/UNTRUSTED), you MUST:
+  (a) explain what it means in plain language,
+  (b) show the numbers behind it (e.g. X of Y, counts, deltas),
+  (c) state the practical consequence for trading ("so what").
+  Example: "12 of 25 symbols are still INSUFFICIENT (maturity < 25), meaning the system does not have enough signal history to judge them yet — no trading decisions can be based on these symbols until more data arrives."
+- When a detector fires, do NOT just name the detector. Explain what it means: "Training has stalled (0 new outcomes since last snapshot). This means the system is not learning anything new — either no new market bars arrived, or the evaluation pipeline has not run. Until new outcomes appear, no symbol will advance in training."
+- For "no change" situations, always explain WHY nothing changed AND what the consequence is: "Nothing changed because no new recommendations or outcomes were generated. This means the training picture is frozen — no symbol can advance stages or earn trust until fresh data flows in."
+- waiting_for bullets must be specific AND explain what happens when the threshold is reached: "Waiting for 50 more signal recommendations (today: 232, need: 282 to reach confident threshold) — once reached, these symbols will have enough evidence to be scored for trust eligibility."
+- Prefer longer, explanatory bullets over short telegraphic ones. 2-3 sentences per bullet is fine.
 
 Rules:
-- headline: 1 sentence, reference concrete numbers from snapshot. This covers ALL symbols.
-- what_changed: 3-5 bullets about training changes since prior snapshot. Name specific symbols when they advanced or regressed.
-- what_matters: 2-4 bullets. what_matters[0] MUST unpack the headline metric(s) using snapshot components (stage counts, totals, near-misses, etc.).
-- waiting_for: 2-3 bullets about thresholds symbols are approaching. Be specific with gap numbers.
+- headline: 1-2 sentences. Reference concrete numbers AND state the practical meaning. Example: "34 symbols in training — 12 are actively learning but none advanced today because no new outcomes arrived."
+- what_changed: 3-5 bullets. Each bullet MUST explain the change AND its consequence for the user. Name specific symbols from near_miss_symbols or top_confident_symbols. If nothing changed, explain why (stalled evaluation, no new bars, weekend) and what this means.
+- what_matters: 3-5 bullets. what_matters[0] MUST explain the overall training-to-trading pipeline using stage counts: how many symbols at each stage, how many are TRUSTED, and what this means for the user in terms of trade readiness. Include at least one bullet about the gap between CONFIDENT and TRUSTED counts (if they differ, explain why). Include at least one bullet about near-miss symbols (who is close and what they need).
+- waiting_for: 2-4 bullets. Each must cite a specific threshold AND explain what happens when it is reached ("Once X reaches Y, it becomes eligible for...").
 - where_to_look: 2-4 links. Valid routes: /training, /signals, /market-timeline, /digest, /brief
-- journey: MUST be exactly 4 items: "Collecting evidence (N symbols)", "Evaluating outcomes (N symbols)", "Earning trust (N symbols)", "Trade-eligible (N symbols)" using stage counts from snapshot.
+- journey: MUST be exactly 4 items using stage counts: "Collecting evidence (N symbols)", "Evaluating outcomes (N symbols)", "Earning trust (N symbols)", "Trade-eligible (N symbols)".
 - Every number you mention MUST appear in the snapshot data.
 - Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
 
@@ -392,7 +407,7 @@ PRIOR SYMBOL SNAPSHOT:
 
 Produce a JSON object with exactly these keys:
 {
-  "headline": "One sentence: where is ' || :v_symbol || ' on the training journey today",
+  "headline": "One sentence: where is ' || :v_symbol || ' on the training journey today and what it means for trading",
   "what_changed": ["bullet 1", "bullet 2", ...],
   "what_matters": ["bullet 1", "bullet 2", ...],
   "waiting_for": ["bullet 1", "bullet 2", ...],
@@ -400,24 +415,43 @@ Produce a JSON object with exactly these keys:
   "journey": ["step 1", "step 2", "step 3", "step 4"]
 }
 
+IMPORTANT CONTEXT — What the training stages mean for THIS symbol:
+The training journey determines whether ' || :v_symbol || ' can generate real trade proposals. The stages are:
+1. INSUFFICIENT (score < 25): Not enough signal data. The system needs more recommendations before it can even begin evaluating. User impact: "We cannot judge this symbol yet — it is too early."
+2. WARMING_UP (25-49): Some data exists but outcome evaluations are incomplete. User impact: "We have started collecting evidence but do not have enough evaluated outcomes to judge quality."
+3. LEARNING (50-74): Enough data to measure quality. The system is checking hit rate (% of correct predictions), average return, and coverage against thresholds. User impact: "We are actively judging this symbol. Check the threshold gaps to see what is still missing."
+4. CONFIDENT (75+): Training data is strong. BUT this does NOT automatically mean the symbol IS being traded. To actually trade, it must ALSO be TRUSTED (pass performance thresholds: hit_rate >= min_hit_rate, avg_return >= min_avg_return, enough coverage) AND the portfolio must have available capacity (open position slots).
+
+KEY DISTINCTION you MUST explain clearly:
+- CONFIDENT = "enough quality evidence" (data completeness). Check maturity score.
+- TRUSTED = "pattern passes performance rules" (return quality). Check trust.trust_label.
+- ' || :v_symbol || ' can ONLY generate trade proposals if it is BOTH CONFIDENT AND TRUSTED.
+- If trust_label is WATCH: the symbol is being monitored but is NOT eligible for trading yet.
+- If trust_label is UNTRUSTED: the symbol fails trust criteria — no trading.
+- If trust_label is TRUSTED: the symbol passes performance rules and CAN trade (if portfolio has capacity).
+- Look at threshold_gaps to see exactly which criteria are met and which are not.
+
 Narrative quality rules (must follow):
-- Explain metrics like you are talking to a non-expert.
-- Whenever you mention a metric (maturity, coverage, hit rate, signals gap, avg return), UNPACK it:
-  (a) what it means,
-  (b) what numbers behind it (e.g. X of Y, today vs threshold),
-  (c) the "so what" implication.
-  Example: "Hit rate is 0.52 (52% of evaluated outcomes were profitable) — just below the 0.55 threshold needed for trust. Gap: 0.03."
-- Avoid vague bullets. Prefer: "Because <fact>, <implication>. Today: <number>."
-- waiting_for bullets must cite specific thresholds: "Waiting for hit_rate >= 0.55 (today: 0.52, gap: 0.03)."
-- Use the threshold_gaps section to show exactly what is met and what is not.
+- Write as if talking to a portfolio manager who wants to know: "Can I trade this symbol? If not, why not? What needs to happen?"
+- Every bullet should answer "so what does this mean for me?" — connect facts to trading readiness.
+- Whenever you mention a metric (maturity, coverage, hit rate, signals gap, avg return, trust label), UNPACK it:
+  (a) what it means in plain language,
+  (b) the actual numbers (today vs threshold, gap),
+  (c) the practical consequence for trading.
+  Example: "Hit rate is 0.52 (52% of evaluated outcomes were profitable). The system requires at least 0.55 (55%) to trust this symbol for trading. Gap: 0.03 — roughly 2 more successful outcomes out of the next 10 would close this gap and make ' || :v_symbol || ' eligible for trade proposals."
+- Do NOT just list detector names. Explain what they mean for the user.
+- If the symbol is CONFIDENT but NOT TRUSTED, you MUST explain: "' || :v_symbol || ' has enough training data (CONFIDENT), but does not yet pass the performance checks needed for trust. Specifically: [list which threshold_gaps are not met]. Until these are met, no trade proposals will be generated for this symbol."
+- If the symbol IS TRUSTED, explain: "' || :v_symbol || ' is both CONFIDENT and TRUSTED — it is eligible for trade proposals. Whether trades actually happen depends on portfolio capacity and signal strength."
+- Prefer longer, explanatory bullets (2-3 sentences each). Users need reasoning, not just numbers.
+- waiting_for bullets must state the threshold, today''s value, the gap, AND what happens when met: "Waiting for hit_rate to reach 0.55 (today: 0.52, gap: 0.03). Once met, ' || :v_symbol || ' will be eligible for trust status, unlocking trade proposals."
 
 Rules:
-- headline: 1 sentence about this specific symbol. Reference its maturity stage and score.
-- what_changed: 2-4 bullets about changes since prior snapshot. If first run, explain current state.
-- what_matters: 2-3 bullets. what_matters[0] MUST explain "why not confident yet" or "why confident" using threshold_gaps.
-- waiting_for: 1-3 bullets with specific threshold gaps from snapshot.
+- headline: 1-2 sentences. State the stage, what it means, and whether trading is possible. Example: "' || :v_symbol || ' is in LEARNING (score 62/100) — actively building evidence but not yet eligible for trading because hit rate is below threshold."
+- what_changed: 2-4 bullets. Each explains a change AND its consequence. If first run, explain current state thoroughly. If nothing changed, explain why AND what it means.
+- what_matters: 3-4 bullets. what_matters[0] MUST be a full explanation of the symbol''s trading readiness: list each threshold (signals, hit_rate, avg_return), whether met or not, and what the combined picture means. Include trust label and what it implies. Include at least one bullet explaining WHAT needs to happen next.
+- waiting_for: 2-3 bullets. Each cites threshold, gap, AND what happens when reached.
 - where_to_look: 2-3 links. Valid routes: /training, /signals, /training?symbol=' || :v_symbol || '&market_type=' || :v_market_type || ', /market-timeline
-- journey: MUST be exactly 4 items: "Collecting evidence", "Evaluating outcomes", "Earning trust", "Trade-eligible". Mark the CURRENT stage with ">>" prefix. Example: ["Collecting evidence", ">> Evaluating outcomes", "Earning trust", "Trade-eligible"]
+- journey: MUST be exactly 4 items: "Collecting evidence", "Evaluating outcomes", "Earning trust", "Trade-eligible". Mark the CURRENT stage with ">>" prefix.
 - Every number you mention MUST appear in the snapshot data.
 - Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
 

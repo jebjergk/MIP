@@ -49,7 +49,7 @@ symbol_outcomes as (
         count(*) as OUTCOMES_TOTAL,
         count(distinct o.HORIZON_BARS) as HORIZONS_COVERED,
         sum(case when o.EVAL_STATUS = 'SUCCESS' then 1 else 0 end) as SUCCESS_COUNT,
-        sum(case when o.EVAL_STATUS = 'SUCCESS' and o.HIT = 1 then 1 else 0 end) as HIT_COUNT,
+        sum(case when o.EVAL_STATUS = 'SUCCESS' and o.HIT_FLAG then 1 else 0 end) as HIT_COUNT,
         avg(case when o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as AVG_RETURN,
         max(o.EVAL_TS) as LATEST_EVAL_TS,
         -- Per-horizon outcomes

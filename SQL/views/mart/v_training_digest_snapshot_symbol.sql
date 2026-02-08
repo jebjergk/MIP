@@ -51,7 +51,7 @@ symbol_outcomes as (
         sum(case when o.EVAL_STATUS = 'SUCCESS' then 1 else 0 end) as SUCCESS_COUNT,
         sum(case when o.EVAL_STATUS = 'SUCCESS' and o.HIT_FLAG then 1 else 0 end) as HIT_COUNT,
         avg(case when o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as AVG_RETURN,
-        max(o.EVAL_TS) as LATEST_EVAL_TS,
+        max(o.CALCULATED_AT) as LATEST_EVAL_TS,
         -- Per-horizon outcomes
         sum(case when o.HORIZON_BARS = 1 and o.EVAL_STATUS = 'SUCCESS' then 1 else 0 end) as H1_COUNT,
         avg(case when o.HORIZON_BARS = 1 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as H1_AVG_RETURN,

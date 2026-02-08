@@ -1,0 +1,662 @@
+/* UserGuide page styles — comprehensive training-material edition */
+
+.user-guide {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 0.5rem 3rem;
+  color: #1a1a2e;
+  line-height: 1.7;
+}
+
+.user-guide h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  color: #1a237e;
+}
+
+.user-guide .guide-subtitle {
+  color: #666;
+  font-size: 1.05rem;
+  margin: 0 0 2rem;
+}
+
+/* ── Table of contents ── */
+.guide-toc {
+  background: #f5f7ff;
+  border: 1px solid #dde2f5;
+  border-radius: 12px;
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 2.5rem;
+}
+
+.guide-toc h3 {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #555;
+}
+
+.guide-toc-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.guide-toc-col h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1a237e;
+}
+
+.guide-toc ol {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.guide-toc li {
+  margin-bottom: 0.25rem;
+}
+
+.guide-toc a {
+  color: #1a237e;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.guide-toc a:hover {
+  text-decoration: underline;
+}
+
+/* ── Part header ── */
+.guide-part-header {
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: linear-gradient(135deg, #1a237e, #3949ab);
+  padding: 0.8rem 1.25rem;
+  border-radius: 10px;
+  margin: 3rem 0 2rem;
+  text-align: center;
+}
+
+/* ── Sections ── */
+.guide-section {
+  margin-bottom: 3rem;
+  scroll-margin-top: 80px;
+}
+
+.guide-section h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1a237e;
+  margin: 0 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e8eaf6;
+}
+
+.guide-section h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #333;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.guide-section h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1a237e;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.guide-section h5 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #444;
+  margin: 1rem 0 0.5rem;
+}
+
+.guide-section p {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+}
+
+.guide-section ul,
+.guide-section ol {
+  font-size: 0.95rem;
+}
+
+.guide-section li {
+  margin-bottom: 0.4rem;
+}
+
+/* ── Page purpose subtitle ── */
+.guide-page-purpose {
+  background: #e8eaf6;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  color: #283593;
+  font-weight: 500;
+  margin-bottom: 1.5rem;
+}
+
+/* ── Page section blocks ── */
+.guide-page-section {
+  background: #fff;
+  border: 1px solid #e8eaf6;
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.guide-page-section h4 {
+  margin-top: 0;
+  border-bottom: 1px solid #e8eaf6;
+  padding-bottom: 0.4rem;
+}
+
+/* ── Pipeline flow diagram ── */
+.guide-pipeline-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: 1.5rem 0 2rem;
+  overflow-x: auto;
+  padding: 0.5rem 0;
+}
+
+.guide-pipeline-step {
+  flex: 1;
+  min-width: 130px;
+  text-align: center;
+  position: relative;
+}
+
+.guide-pipeline-step-box {
+  background: #fff;
+  border: 2px solid #c5cae9;
+  border-radius: 12px;
+  padding: 1rem 0.75rem;
+  position: relative;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.guide-pipeline-step-box:hover {
+  border-color: #5c6bc0;
+  box-shadow: 0 4px 12px rgba(92, 107, 192, 0.15);
+}
+
+.guide-pipeline-icon {
+  font-size: 1.8rem;
+  margin-bottom: 0.4rem;
+  display: block;
+}
+
+.guide-pipeline-label {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: #1a237e;
+  margin-bottom: 0.3rem;
+}
+
+.guide-pipeline-desc {
+  font-size: 0.75rem;
+  color: #666;
+  line-height: 1.4;
+}
+
+.guide-pipeline-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 35px;
+  flex-shrink: 0;
+  font-size: 1.4rem;
+  color: #7986cb;
+}
+
+/* ── Numbered steps ── */
+.guide-numbered-steps li {
+  margin-bottom: 0.75rem;
+}
+
+.guide-step-detail {
+  display: block;
+  font-size: 0.88rem;
+  color: #555;
+  margin-top: 0.15rem;
+}
+
+/* ── Training journey stages ── */
+.guide-stages {
+  display: flex;
+  gap: 0;
+  margin: 1.5rem 0 2rem;
+  overflow-x: auto;
+}
+
+.guide-stage {
+  flex: 1;
+  min-width: 160px;
+  padding: 1.25rem 1rem;
+  text-align: center;
+  position: relative;
+  border-top: 4px solid;
+}
+
+.guide-stage--insufficient { border-color: #ef5350; background: #fef2f2; }
+.guide-stage--warming { border-color: #ff9800; background: #fff8e1; }
+.guide-stage--learning { border-color: #42a5f5; background: #e3f2fd; }
+.guide-stage--confident { border-color: #66bb6a; background: #e8f5e9; }
+
+.guide-stage-score {
+  font-size: 0.75rem;
+  color: #888;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.guide-stage-name {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+
+.guide-stage--insufficient .guide-stage-name { color: #c62828; }
+.guide-stage--warming .guide-stage-name { color: #e65100; }
+.guide-stage--learning .guide-stage-name { color: #1565c0; }
+.guide-stage--confident .guide-stage-name { color: #2e7d32; }
+
+.guide-stage-desc {
+  font-size: 0.8rem;
+  color: #555;
+  line-height: 1.4;
+}
+
+.guide-stage-arrow {
+  position: absolute;
+  right: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.2rem;
+  color: #bbb;
+  z-index: 1;
+}
+
+/* ── Score breakdown ── */
+.guide-score-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.guide-score-item {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  position: relative;
+}
+
+.guide-score-weight {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #c5cae9;
+}
+
+.guide-score-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #1a237e;
+  margin-bottom: 0.3rem;
+}
+
+.guide-score-explain {
+  font-size: 0.85rem;
+  color: #555;
+  line-height: 1.5;
+  margin-bottom: 0.5rem;
+}
+
+.guide-score-example {
+  font-size: 0.85rem;
+  color: #333;
+  background: #f5f7ff;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+}
+
+/* ── Trust checklist ── */
+.guide-trust-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.guide-trust-item {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 1.25rem;
+  text-align: center;
+  transition: box-shadow 0.2s;
+}
+
+.guide-trust-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.guide-trust-icon {
+  font-size: 2.2rem;
+  margin-bottom: 0.4rem;
+  display: block;
+}
+
+.guide-trust-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #333;
+  margin-bottom: 0.3rem;
+}
+
+.guide-trust-threshold {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1a237e;
+  margin-bottom: 0.3rem;
+}
+
+.guide-trust-explain {
+  font-size: 0.82rem;
+  color: #666;
+  line-height: 1.4;
+}
+
+/* ── Outcome evaluation timeline ── */
+.guide-outcome-timeline {
+  position: relative;
+  padding: 1rem 0 1rem 2rem;
+  margin: 1.5rem 0;
+}
+
+.guide-outcome-timeline::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(to bottom, #c5cae9, #66bb6a);
+  border-radius: 2px;
+}
+
+.guide-timeline-event {
+  position: relative;
+  margin-bottom: 1.5rem;
+  padding-left: 1.5rem;
+}
+
+.guide-timeline-event::before {
+  content: '';
+  position: absolute;
+  left: -1.55rem;
+  top: 0.35rem;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 3px solid;
+  background: #fff;
+}
+
+.guide-timeline-event--signal::before { border-color: #5c6bc0; }
+.guide-timeline-event--eval::before { border-color: #42a5f5; }
+.guide-timeline-event--result::before { border-color: #66bb6a; }
+
+.guide-timeline-day {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.guide-timeline-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #333;
+  margin: 0.15rem 0;
+}
+
+.guide-timeline-desc {
+  font-size: 0.85rem;
+  color: #666;
+  line-height: 1.5;
+}
+
+/* ── Example box ── */
+.guide-example {
+  background: #f5f7ff;
+  border-left: 4px solid #5c6bc0;
+  border-radius: 0 8px 8px 0;
+  padding: 1rem 1.25rem;
+  margin: 1rem 0 1.5rem;
+}
+
+.guide-example-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #5c6bc0;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.guide-example p {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.guide-example p:last-child {
+  margin-bottom: 0;
+}
+
+.guide-example-numbers {
+  background: rgba(92, 107, 192, 0.08);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-family: 'Roboto Mono', Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+/* ── Key/value explanation rows ── */
+.guide-kv {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.5rem 1rem;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+.guide-kv--wide {
+  grid-template-columns: 170px 1fr;
+}
+
+.guide-kv dt {
+  font-weight: 600;
+  color: #1a237e;
+  padding-top: 0.15rem;
+}
+
+.guide-kv dd {
+  margin: 0;
+  color: #444;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #f0f0f0;
+  line-height: 1.6;
+}
+
+.guide-kv dd:last-child {
+  border-bottom: none;
+}
+
+/* ── Formula box ── */
+.guide-formula {
+  background: #263238;
+  color: #80cbc4;
+  font-family: 'Roboto Mono', Consolas, monospace;
+  font-size: 0.9rem;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  display: block;
+  margin: 0.75rem 0;
+}
+
+/* ── Callout ── */
+.guide-callout {
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  font-size: 0.9rem;
+}
+
+.guide-callout--warn {
+  background: #fff3e0;
+  border-color: #ffcc80;
+}
+
+.guide-callout strong {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+/* ── Metric/data tables ── */
+.guide-metric-table {
+  overflow-x: auto;
+  margin: 1rem 0 1.5rem;
+}
+
+.guide-metric-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.guide-metric-table thead th {
+  background: #e8eaf6;
+  color: #1a237e;
+  font-weight: 600;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid #c5cae9;
+  white-space: nowrap;
+}
+
+.guide-metric-table tbody td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.guide-metric-table tbody tr:hover {
+  background: #f5f7ff;
+}
+
+.guide-metric-table code {
+  background: #f5f5f5;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.guide-positive {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.guide-negative {
+  color: #c62828;
+  font-weight: 600;
+}
+
+/* ── Tile color swatch ── */
+.guide-tile-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  vertical-align: middle;
+  margin-right: 0.4rem;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .guide-toc-columns {
+    grid-template-columns: 1fr;
+  }
+  .guide-pipeline-flow {
+    flex-direction: column;
+    align-items: center;
+  }
+  .guide-pipeline-arrow {
+    transform: rotate(90deg);
+    width: auto;
+    height: 30px;
+  }
+  .guide-stages {
+    flex-direction: column;
+  }
+  .guide-stage-arrow {
+    display: none;
+  }
+  .guide-trust-checklist {
+    grid-template-columns: 1fr;
+  }
+  .guide-score-breakdown {
+    grid-template-columns: 1fr;
+  }
+  .guide-kv,
+  .guide-kv--wide {
+    grid-template-columns: 1fr;
+  }
+  .guide-kv dt {
+    padding-bottom: 0;
+    margin-bottom: 0.1rem;
+  }
+  .guide-kv dd {
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .guide-metric-table table {
+    font-size: 0.82rem;
+  }
+  .guide-metric-table thead th,
+  .guide-metric-table tbody td {
+    padding: 0.4rem 0.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .user-guide h1 {
+    font-size: 1.5rem;
+  }
+  .guide-section h2 {
+    font-size: 1.15rem;
+  }
+  .guide-page-section {
+    padding: 0.75rem 1rem;
+  }
+}

@@ -104,6 +104,23 @@
   font-weight: 500;
 }
 
+/* Nav divider line */
+.app-layout-nav-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0.75rem 0.75rem;
+}
+
+/* Guide link styled slightly differently */
+.app-layout-nav-link--guide {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.app-layout-nav-link--guide::before {
+  content: '\1F4D6  ';
+}
+
 /* Backdrop when sidebar is open on mobile */
 .app-layout-sidebar-backdrop {
   position: fixed;

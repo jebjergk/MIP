@@ -69,6 +69,16 @@ export default function AppLayout() {
                 {label}
               </NavLink>
             ))}
+            <div className="app-layout-nav-divider" />
+            <NavLink
+              to="/guide"
+              className={({ isActive }) =>
+                `app-layout-nav-link app-layout-nav-link--guide ${isActive ? 'app-layout-nav-link--active' : ''}`
+              }
+              onClick={closeSidebar}
+            >
+              User Guide
+            </NavLink>
           </nav>
         </div>
       </aside>

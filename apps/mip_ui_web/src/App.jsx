@@ -8,6 +8,7 @@ import Suggestions from './pages/Suggestions'
 import Signals from './pages/Signals'
 import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
+import UserGuide from './pages/UserGuide'
 import AppLayout from './components/AppLayout'
 
 const API_BASE = '/api'
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/signals" element={<Signals />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/debug" element={<Debug />} />
+        <Route path="/guide" element={<UserGuide />} />
         {/* Redirects for old routes */}
         <Route path="/today" element={<Navigate to="/cockpit" replace />} />
         <Route path="/brief" element={<Navigate to="/cockpit" replace />} />

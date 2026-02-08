@@ -526,7 +526,7 @@ begin
             'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
-            'daily_digest', object_construct('status', :v_digest_status, 'portfolio_count', :v_digest_result:portfolio_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
+            'daily_digest', object_construct('status', :v_digest_status, 'narrative_mode', :v_digest_result:narrative_mode, 'portfolio_count', :v_digest_result:portfolio_count, 'cortex_success_count', :v_digest_result:cortex_success_count, 'cortex_fallback_count', :v_digest_result:cortex_fallback_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS')
         );
         call MIP.APP.SP_LOG_EVENT(
@@ -1212,6 +1212,9 @@ begin
                 'portfolio_count', :v_digest_result:portfolio_count::number,
                 'snapshot_count', :v_digest_result:snapshot_count::number,
                 'narrative_count', :v_digest_result:narrative_count::number,
+                'narrative_mode', :v_digest_result:narrative_mode::string,
+                'cortex_success_count', :v_digest_result:cortex_success_count::number,
+                'cortex_fallback_count', :v_digest_result:cortex_fallback_count::number,
                 'results', :v_digest_result:results
             ),
             null
@@ -1245,9 +1248,12 @@ begin
         'morning_brief', :v_brief_result,
         'daily_digest', object_construct(
             'status', :v_digest_status,
+            'narrative_mode', :v_digest_result:narrative_mode,
             'portfolio_count', :v_digest_result:portfolio_count,
             'snapshot_count', :v_digest_result:snapshot_count,
-            'narrative_count', :v_digest_result:narrative_count
+            'narrative_count', :v_digest_result:narrative_count,
+            'cortex_success_count', :v_digest_result:cortex_success_count,
+            'cortex_fallback_count', :v_digest_result:cortex_fallback_count
         ),
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,

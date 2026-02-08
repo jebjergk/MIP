@@ -168,7 +168,7 @@ function SnapshotFacts({ snapshot }) {
 
 export default function Digest() {
   const { portfolioId: routePortfolioId } = useParams()
-  const { portfolios } = usePortfolios()
+  const { portfolios, defaultPortfolioId, loading: portfoliosLoading } = usePortfolios()
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(
     routePortfolioId ? Number(routePortfolioId) : null
   )
@@ -176,12 +176,13 @@ export default function Digest() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // Default to first portfolio if none selected
+  // Default to context's defaultPortfolioId when ready
   useEffect(() => {
-    if (!selectedPortfolioId && portfolios && portfolios.length > 0) {
-      setSelectedPortfolioId(portfolios[0].portfolio_id)
+    if (portfoliosLoading || selectedPortfolioId != null) return
+    if (defaultPortfolioId != null) {
+      setSelectedPortfolioId(defaultPortfolioId)
     }
-  }, [portfolios, selectedPortfolioId])
+  }, [defaultPortfolioId, portfoliosLoading, selectedPortfolioId])
 
   // Override from route param
   useEffect(() => {
@@ -232,7 +233,7 @@ export default function Digest() {
       </p>
 
       {/* Portfolio selector */}
-      {portfolios && portfolios.length > 1 && (
+      {portfolios && portfolios.length > 0 && (
         <div className="digest-controls">
           <label>
             Portfolio:
@@ -240,11 +241,15 @@ export default function Digest() {
               value={selectedPortfolioId || ''}
               onChange={(e) => setSelectedPortfolioId(Number(e.target.value))}
             >
-              {portfolios.map((p) => (
-                <option key={p.portfolio_id} value={p.portfolio_id}>
-                  {p.name || `Portfolio ${p.portfolio_id}`}
-                </option>
-              ))}
+              {portfolios.map((p) => {
+                const id = p.PORTFOLIO_ID ?? p.portfolio_id
+                const name = p.NAME ?? p.name
+                return (
+                  <option key={id} value={id}>
+                    {name || `Portfolio ${id}`}
+                  </option>
+                )
+              })}
             </select>
           </label>
         </div>

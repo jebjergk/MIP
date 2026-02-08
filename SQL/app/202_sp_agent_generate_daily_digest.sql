@@ -311,6 +311,25 @@ Rules:
         ));
     end for;
 
+    -- Compute top-level Cortex summary for audit visibility
+    let v_cortex_success_count number := 0;
+    let v_cortex_fallback_count number := 0;
+    let v_narrative_mode string := 'UNKNOWN';
+    begin
+        select
+            count_if(value:cortex_succeeded::boolean = true),
+            count_if(value:cortex_succeeded::boolean = false or value:cortex_succeeded is null)
+          into :v_cortex_success_count, :v_cortex_fallback_count
+          from table(flatten(input => :v_results));
+    exception
+        when other then null;
+    end;
+    v_narrative_mode := case
+        when :v_cortex_success_count > 0 and :v_cortex_fallback_count = 0 then 'CORTEX_AI'
+        when :v_cortex_success_count = 0 then 'DETERMINISTIC_FALLBACK'
+        else 'MIXED'
+    end;
+
     -- Step 7: Audit log
     call MIP.APP.SP_LOG_EVENT(
         'AGENT',
@@ -323,6 +342,9 @@ Rules:
             'portfolio_count', :v_portfolio_count,
             'snapshot_count', :v_snapshot_count,
             'narrative_count', :v_narrative_count,
+            'narrative_mode', :v_narrative_mode,
+            'cortex_success_count', :v_cortex_success_count,
+            'cortex_fallback_count', :v_cortex_fallback_count,
             'results', :v_results
         ),
         null,
@@ -335,6 +357,9 @@ Rules:
         'portfolio_count', :v_portfolio_count,
         'snapshot_count', :v_snapshot_count,
         'narrative_count', :v_narrative_count,
+        'narrative_mode', :v_narrative_mode,
+        'cortex_success_count', :v_cortex_success_count,
+        'cortex_fallback_count', :v_cortex_fallback_count,
         'results', :v_results
     );
 exception

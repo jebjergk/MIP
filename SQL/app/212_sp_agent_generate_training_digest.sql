@@ -298,7 +298,7 @@ Rules:
     -- ════════════════════════════════════════════════════════════
     -- PER-SYMBOL TRAINING DIGESTS
     -- ════════════════════════════════════════════════════════════
-    -- If P_SYMBOL is specified, do just that one; otherwise top 10 by maturity score
+    -- If P_SYMBOL is specified, do just that one; otherwise ALL symbols in training
     if (:P_SYMBOL is not null) then
         v_symbols := (
             select SYMBOL, MARKET_TYPE
@@ -309,10 +309,9 @@ Rules:
         );
     else
         v_symbols := (
-            select SYMBOL, MARKET_TYPE
+            select distinct SYMBOL, MARKET_TYPE
             from MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL
-            order by SNAPSHOT_JSON:maturity:score::float desc
-            limit 10
+            order by SYMBOL
         );
     end if;
 

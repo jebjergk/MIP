@@ -94,6 +94,11 @@ declare
     v_agent_brief_status string;
     v_agent_brief_start timestamp_ntz;
     v_agent_brief_end timestamp_ntz;
+    -- Daily digest variables
+    v_digest_result variant;
+    v_digest_status string;
+    v_digest_start timestamp_ntz;
+    v_digest_end timestamp_ntz;
     -- Error capture variables (used in exception handlers)
     v_ingest_error_query_id string;
     v_ingest_duration_ms number;
@@ -469,6 +474,38 @@ begin
             ),
             null
         );
+        -- Daily digest: ALWAYS generated (tells the story even on "nothing happened" days).
+        v_digest_start := current_timestamp();
+        v_digest_status := 'SKIPPED';
+        begin
+            v_digest_result := (call MIP.APP.SP_AGENT_GENERATE_DAILY_DIGEST(
+                :v_run_id,
+                :v_effective_to_ts,
+                null
+            ));
+            v_digest_status := coalesce(:v_digest_result:status::string, 'SUCCESS');
+        exception
+            when other then
+                v_digest_status := 'FAIL';
+                v_digest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
+        end;
+        v_digest_end := current_timestamp();
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'DAILY_DIGEST',
+            :v_digest_status,
+            :v_digest_result:snapshot_count::number,
+            object_construct(
+                'step_name', 'daily_digest',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_digest_start,
+                'completed_at', :v_digest_end,
+                'reason', 'DIGEST_ALWAYS_GENERATED',
+                'results', :v_digest_result
+            ),
+            null
+        );
         v_pipeline_status_reason := 'RATE_LIMIT';
         v_pipeline_root_status := 'SUCCESS_WITH_SKIPS';
         v_summary := object_construct(
@@ -489,6 +526,7 @@ begin
             'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
+            'daily_digest', object_construct('status', :v_digest_status, 'portfolio_count', :v_digest_result:portfolio_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS')
         );
         call MIP.APP.SP_LOG_EVENT(
@@ -1126,6 +1164,60 @@ begin
         v_any_step_skipped_or_degraded := true;
     end if;
 
+    -- [DAILY DIGEST] Generate daily intelligence digest (non-fatal: digest failure must not break pipeline)
+    v_digest_start := current_timestamp();
+    v_digest_status := 'SKIPPED';
+    begin
+        v_digest_result := (call MIP.APP.SP_AGENT_GENERATE_DAILY_DIGEST(
+            :v_run_id,
+            :v_effective_to_ts,
+            null   -- null = all active portfolios
+        ));
+        v_digest_status := coalesce(:v_digest_result:status::string, 'SUCCESS');
+    exception
+        when other then
+            v_digest_status := 'FAIL';
+            v_digest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
+            -- Non-fatal: log and continue
+            call MIP.APP.SP_AUDIT_LOG_STEP(
+                :v_run_id,
+                'DAILY_DIGEST',
+                'FAIL',
+                null,
+                object_construct(
+                    'step_name', 'daily_digest',
+                    'scope', 'AGG',
+                    'scope_key', null,
+                    'started_at', :v_digest_start,
+                    'completed_at', current_timestamp(),
+                    'error', :sqlerrm
+                ),
+                :sqlerrm
+            );
+    end;
+    v_digest_end := current_timestamp();
+
+    if (:v_digest_status != 'FAIL') then
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'DAILY_DIGEST',
+            :v_digest_status,
+            :v_digest_result:snapshot_count::number,
+            object_construct(
+                'step_name', 'daily_digest',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_digest_start,
+                'completed_at', :v_digest_end,
+                'portfolio_count', :v_digest_result:portfolio_count::number,
+                'snapshot_count', :v_digest_result:snapshot_count::number,
+                'narrative_count', :v_digest_result:narrative_count::number,
+                'results', :v_digest_result:results
+            ),
+            null
+        );
+    end if;
+
     v_pipeline_root_status := iff(:v_any_step_skipped_or_degraded, 'SUCCESS_WITH_SKIPS', 'SUCCESS');
     v_pipeline_status_reason := iff(:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS'), 'RATE_LIMIT', null);
 
@@ -1151,6 +1243,12 @@ begin
             'brief_id', :v_agent_brief_id
         ),
         'morning_brief', :v_brief_result,
+        'daily_digest', object_construct(
+            'status', :v_digest_status,
+            'portfolio_count', :v_digest_result:portfolio_count,
+            'snapshot_count', :v_digest_result:snapshot_count,
+            'narrative_count', :v_digest_result:narrative_count
+        ),
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,
         'proposals_approved', :v_approved_count,

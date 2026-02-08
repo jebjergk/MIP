@@ -256,7 +256,7 @@ begin
             select CASH_AFTER into :v_trade_cash
               from MIP.APP.PORTFOLIO_TRADES
              where PORTFOLIO_ID = :v_portfolio_id
-             order by TRADE_TS desc
+             order by TRADE_TS desc, TRADE_ID desc
              limit 1;
             if (v_trade_cash is not null) then
                 v_cash := v_trade_cash;

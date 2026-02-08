@@ -804,7 +804,7 @@ def get_portfolio_snapshot(
                     select CASH_AFTER
                       from MIP.APP.PORTFOLIO_TRADES
                      where PORTFOLIO_ID = %s
-                     order by TRADE_TS desc
+                     order by TRADE_TS desc, TRADE_ID desc
                      limit 1
                     """,
                     (portfolio_id,),

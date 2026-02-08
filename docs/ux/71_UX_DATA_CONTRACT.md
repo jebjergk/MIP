@@ -89,6 +89,32 @@ Data contract for the read-only UX: object names, schemas (column list and types
 - **Output fields**: market_type, symbol, pattern_id, interval_minutes, as_of_ts; recs_total, outcomes_total, horizons_covered, coverage_ratio; avg_outcome_h1, avg_outcome_h3, avg_outcome_h5, avg_outcome_h10, avg_outcome_h20 (null if missing); maturity_score (0–100), maturity_stage (INSUFFICIENT / WARMING_UP / LEARNING / CONFIDENT), reasons[] (plain-language). Exact SQL in [72_UX_QUERIES.md](72_UX_QUERIES.md).
 - **V_TRUSTED_SIGNAL_POLICY**, **V_SIGNAL_OUTCOME_KPIS** (MIP.MART): policy and outcome KPIs feeding trust classification.
 
+## MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
+
+- **Grain**: One snapshot per (PORTFOLIO_ID, AS_OF_TS, RUN_ID).
+- **Columns**: SNAPSHOT_ID (number identity), PORTFOLIO_ID (number), AS_OF_TS (timestamp_ntz), RUN_ID (varchar 64), SNAPSHOT_JSON (variant), SOURCE_FACTS_HASH (varchar 64), CREATED_AT (timestamp_ntz default current_timestamp()).
+- **Source**: `MIP/SQL/app/200_agent_out_daily_digest_snapshot.sql`.
+- **MERGE key**: (PORTFOLIO_ID, AS_OF_TS, RUN_ID) — idempotent; reruns update same row.
+- **SNAPSHOT_JSON top-level keys**: timestamps, gate, capacity, pipeline, signals, proposals, trades, training, kpis, exposure, portfolio_meta, detectors, prior_snapshot_ts.
+- **Detectors**: Array of `{detector, fired, severity, detail}` objects. Detectors: GATE_CHANGED, HEALTH_CHANGED, TRUST_CHANGED, NEAR_MISS, PROPOSAL_FUNNEL, NOTHING_HAPPENED, CAPACITY_STATE, CONFLICT_BLOCKED, KPI_MOVEMENT, TRAINING_PROGRESS.
+
+## MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
+
+- **Grain**: One narrative per (PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME).
+- **Columns**: NARRATIVE_ID (number identity), PORTFOLIO_ID (number), AS_OF_TS (timestamp_ntz), RUN_ID (varchar 64), AGENT_NAME (varchar 128 default 'DAILY_DIGEST'), NARRATIVE_TEXT (string), NARRATIVE_JSON (variant), MODEL_INFO (varchar 256), SOURCE_FACTS_HASH (varchar 64), CREATED_AT (timestamp_ntz default current_timestamp()).
+- **Source**: `MIP/SQL/app/201_agent_out_daily_digest_narrative.sql`.
+- **MERGE key**: (PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME) — idempotent.
+- **NARRATIVE_JSON keys**: headline (string), what_changed (array), what_matters (array), waiting_for (array), where_to_look (array of {label, route}).
+- **MODEL_INFO**: Cortex model name (e.g. 'mistral-large2') or 'DETERMINISTIC_FALLBACK' if Cortex was unavailable.
+- **SOURCE_FACTS_HASH**: Must match the corresponding snapshot's hash — proves narrative is grounded in deterministic facts.
+
+## MIP.MART.V_DAILY_DIGEST_SNAPSHOT
+
+- **Grain**: One row per active portfolio; deterministic snapshot assembled from canonical truth views.
+- **Output columns**: PORTFOLIO_ID (number), SNAPSHOT_JSON (variant).
+- **Source**: `MIP/SQL/views/mart/v_daily_digest_snapshot.sql`.
+- **Not persisted**: This is a view. The stored procedure materialises snapshots into `DAILY_DIGEST_SNAPSHOT`.
+
 ## MIP.AGENT_OUT.ORDER_PROPOSALS
 
 - **Grain**: One proposal per PROPOSAL_ID.

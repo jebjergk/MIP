@@ -402,3 +402,103 @@ where STATUS = 'ACTIVE'
 order by LAST_SIMULATED_AT desc
 limit 1;
 ```
+
+## Daily Intelligence Digest (GET /digest/latest, GET /digest)
+
+AI-generated narrative layer synthesising deterministic MIP facts into a daily story. The digest is grounded in a deterministic snapshot (Layer 1) and an AI narrative (Layer 2) produced by Snowflake Cortex.
+
+### GET /digest/latest?portfolio_id=:pid
+
+Latest digest for a portfolio. Returns narrative + snapshot + links.
+
+**Response shape:**
+```json
+{
+  "found": true,
+  "portfolio_id": 1,
+  "as_of_ts": "2026-02-08T...",
+  "run_id": "abc-123-...",
+  "snapshot_created_at": "2026-02-08T...",
+  "narrative_created_at": "2026-02-08T...",
+  "source_facts_hash": "sha256...",
+  "narrative": {
+    "headline": "Portfolio 1 held steady at $2,012 equity...",
+    "what_changed": ["Gate remained SAFE...", "..."],
+    "what_matters": ["Capacity at 3/5 slots..."],
+    "waiting_for": ["EUR/USD approaching trust threshold..."],
+    "where_to_look": [{"label": "Signals Explorer", "route": "/signals"}, ...]
+  },
+  "narrative_text": "raw text from Cortex",
+  "model_info": "mistral-large2",
+  "is_ai_narrative": true,
+  "snapshot": {
+    "gate": {"risk_status": "OK", "entries_blocked": false, ...},
+    "capacity": {"max_positions": 5, "open_positions": 3, ...},
+    "signals": {"total_signals": 12, "total_eligible": 4, ...},
+    "proposals": {"proposed_count": 2, ...},
+    "trades": {"trade_count": 1, ...},
+    "training": {"trusted_count": 8, ...},
+    "kpis": {"total_return": 0.015, ...},
+    "exposure": {"total_equity": 2012.50, ...},
+    "pipeline": {"latest_run_id": "...", ...},
+    "detectors": [{"detector": "CAPACITY_STATE", "fired": true, ...}, ...]
+  },
+  "links": {
+    "signals": "/signals",
+    "training": "/training",
+    "portfolio": "/portfolios/1",
+    "brief": "/brief",
+    "market_timeline": "/market-timeline",
+    "suggestions": "/suggestions",
+    "runs": "/runs"
+  }
+}
+```
+
+### GET /digest?portfolio_id=:pid&as_of_ts=:ts
+
+Historical digest lookup with date filter. Same response shape as `/digest/latest`.
+
+### Canonical SQL (latest digest)
+
+```sql
+select
+    s.PORTFOLIO_ID,
+    s.AS_OF_TS,
+    s.RUN_ID,
+    s.SNAPSHOT_JSON,
+    s.SOURCE_FACTS_HASH,
+    s.CREATED_AT          as SNAPSHOT_CREATED_AT,
+    n.NARRATIVE_TEXT,
+    n.NARRATIVE_JSON,
+    n.MODEL_INFO,
+    n.AGENT_NAME,
+    n.CREATED_AT          as NARRATIVE_CREATED_AT
+from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
+left join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
+    on  n.PORTFOLIO_ID = s.PORTFOLIO_ID
+    and n.AS_OF_TS     = s.AS_OF_TS
+    and n.RUN_ID       = s.RUN_ID
+where s.PORTFOLIO_ID = :portfolio_id
+order by s.CREATED_AT desc
+limit 1;
+```
+
+### Interest Detectors
+
+The snapshot includes an array of interest detectors — deterministic checks that identify notable changes. Each has `{detector, fired, severity, detail}`:
+
+| Detector | Severity | Description |
+|---|---|---|
+| `GATE_CHANGED` | HIGH | Risk gate status changed (OK/WARN) |
+| `HEALTH_CHANGED` | HIGH | Entries blocked/unblocked |
+| `TRUST_CHANGED` | MEDIUM | Patterns changed trust label (WATCH/TRUSTED) |
+| `NEAR_MISS` | MEDIUM | Symbols in WATCH close to eligibility |
+| `PROPOSAL_FUNNEL` | LOW | Funnel counts: signals → eligible → proposed → executed |
+| `NOTHING_HAPPENED` | LOW | No signals, no proposals, no trades (with reason) |
+| `CAPACITY_STATE` | HIGH/MEDIUM | Remaining position slots (HIGH if 0 remaining) |
+| `CONFLICT_BLOCKED` | MEDIUM | Strong signals blocked by portfolio rules |
+| `KPI_MOVEMENT` | MEDIUM | Significant return or drawdown change (>0.5%) |
+| `TRAINING_PROGRESS` | LOW | Trusted pattern count changed vs prior snapshot |
+
+The AI narrative prioritises fired detectors by severity when composing bullets.

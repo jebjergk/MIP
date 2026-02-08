@@ -235,6 +235,141 @@ prior_snapshot as (
     from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
 ),
 
+-- ===== PATTERN CATALOG + OBSERVATIONS =====
+-- Pattern definitions with raw params for LLM context
+pattern_catalog as (
+    select coalesce(
+        array_agg(
+            object_construct(
+                'pattern_id', pd.PATTERN_ID,
+                'name', pd.NAME,
+                'description', pd.DESCRIPTION,
+                'market_type', pd.PARAMS_JSON:market_type::string,
+                'interval_minutes', pd.PARAMS_JSON:interval_minutes::number,
+                'lookback_days', pd.PARAMS_JSON:lookback_days::number,
+                'params', pd.PARAMS_JSON
+            )
+        ) within group (order by pd.PATTERN_ID),
+        array_construct()
+    ) as PATTERNS
+    from MIP.APP.PATTERN_DEFINITION pd
+    where pd.IS_ACTIVE = 'Y'
+      and pd.ENABLED = true
+),
+
+-- Per-pattern signal observations for today
+pattern_obs_detail as (
+    select
+        s.PATTERN_ID,
+        pd.NAME as PATTERN_NAME,
+        s.MARKET_TYPE,
+        s.INTERVAL_MINUTES,
+        count(*) as SIGNALS_GENERATED,
+        count_if(s.IS_ELIGIBLE) as SIGNALS_ELIGIBLE,
+        count_if(s.TRUST_LABEL = 'TRUSTED') as SIGNALS_TRUSTED,
+        count_if(s.TRUST_LABEL = 'WATCH') as SIGNALS_WATCH,
+        count_if(s.TRUST_LABEL = 'UNTRUSTED') as SIGNALS_UNTRUSTED,
+        round(min(s.SCORE), 6) as MIN_SCORE,
+        round(max(s.SCORE), 6) as MAX_SCORE,
+        round(avg(s.SCORE), 6) as AVG_SCORE,
+        pd.PARAMS_JSON as PARAMS_JSON
+    from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+    join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = s.PATTERN_ID
+    group by s.PATTERN_ID, pd.NAME, s.MARKET_TYPE, s.INTERVAL_MINUTES, pd.PARAMS_JSON
+),
+
+-- Near-miss examples per pattern (WATCH signals closest to trust)
+pattern_near_miss_raw as (
+    select
+        s.PATTERN_ID,
+        s.SYMBOL,
+        s.MARKET_TYPE,
+        s.SCORE,
+        s.GATING_REASON:policy_reason as POLICY_REASON,
+        row_number() over (partition by s.PATTERN_ID order by s.SCORE desc) as rn
+    from MIP.APP.V_SIGNALS_ELIGIBLE_TODAY s
+    where s.TRUST_LABEL = 'WATCH'
+),
+pattern_near_miss as (
+    select
+        PATTERN_ID,
+        array_agg(
+            object_construct(
+                'symbol', SYMBOL,
+                'market_type', MARKET_TYPE,
+                'observed_score', round(SCORE, 6),
+                'trust_policy_metrics', POLICY_REASON
+            )
+        ) within group (order by rn) as NEAR_MISS_EXAMPLES
+    from pattern_near_miss_raw
+    where rn <= 3
+    group by PATTERN_ID
+),
+
+-- Aggregate pattern observations into single array
+pattern_obs_agg as (
+    select coalesce(
+        array_agg(
+            object_construct(
+                'pattern_id', pod.PATTERN_ID,
+                'pattern_name', pod.PATTERN_NAME,
+                'market_type', pod.MARKET_TYPE,
+                'interval_minutes', pod.INTERVAL_MINUTES,
+                'signals_generated', pod.SIGNALS_GENERATED,
+                'signals_eligible', pod.SIGNALS_ELIGIBLE,
+                'signals_trusted', pod.SIGNALS_TRUSTED,
+                'signals_watch', pod.SIGNALS_WATCH,
+                'signals_untrusted', pod.SIGNALS_UNTRUSTED,
+                'observed_score_range', object_construct(
+                    'min', pod.MIN_SCORE,
+                    'max', pod.MAX_SCORE,
+                    'avg', pod.AVG_SCORE
+                ),
+                'thresholds', object_construct(
+                    'min_return', pod.PARAMS_JSON:min_return::float,
+                    'min_zscore', pod.PARAMS_JSON:min_zscore::float,
+                    'fast_window', pod.PARAMS_JSON:fast_window::number,
+                    'slow_window', pod.PARAMS_JSON:slow_window::number,
+                    'lookback_days', pod.PARAMS_JSON:lookback_days::number
+                ),
+                'explain', object_construct(
+                    'zscore_basis', 'Per-symbol return distribution over '
+                        || coalesce(pod.PARAMS_JSON:lookback_days::string, '?')
+                        || ' lookback days of ' || pod.MARKET_TYPE
+                        || ' ' || pod.INTERVAL_MINUTES::string || '-min bars',
+                    'fast_window_means', 'Recent behavior: average over last '
+                        || coalesce(pod.PARAMS_JSON:fast_window::string, '?') || ' bars',
+                    'slow_window_means', 'Baseline: average over last '
+                        || coalesce(pod.PARAMS_JSON:slow_window::string, '?') || ' bars',
+                    'score_is', 'Observed return (close-to-close) of the triggering bar'
+                ),
+                'near_miss_examples', coalesce(pnm.NEAR_MISS_EXAMPLES, array_construct())
+            )
+        ) within group (order by pod.SIGNALS_GENERATED desc),
+        array_construct()
+    ) as PATTERN_OBS
+    from pattern_obs_detail pod
+    left join pattern_near_miss pnm on pnm.PATTERN_ID = pod.PATTERN_ID
+),
+
+-- Training gate thresholds (system-level trust gating params)
+-- Uses UNION ALL with defaults to guarantee exactly one row even if table is empty
+training_gate_thresholds as (
+    select MIN_SIGNALS, MIN_HIT_RATE, MIN_AVG_RETURN from (
+        select
+            coalesce(MIN_SIGNALS, 40) as MIN_SIGNALS,
+            coalesce(MIN_HIT_RATE, 0.55) as MIN_HIT_RATE,
+            coalesce(MIN_AVG_RETURN, 0.0005) as MIN_AVG_RETURN,
+            1 as PRIORITY
+        from MIP.APP.TRAINING_GATE_PARAMS
+        where IS_ACTIVE = true
+        union all
+        select 40, 0.55, 0.0005, 99
+    )
+    order by PRIORITY
+    limit 1
+),
+
 -- ===== INTEREST DETECTORS =====
 -- Each detector: name, fired (boolean), severity, detail (variant)
 
@@ -600,6 +735,13 @@ select
             'starting_cash', ps.STARTING_CASH,
             'drawdown_stop_pct', ps.DRAWDOWN_STOP_PCT
         ),
+        'patterns', coalesce(pc.PATTERNS, array_construct()),
+        'pattern_observations', coalesce(poa.PATTERN_OBS, array_construct()),
+        'training_thresholds', object_construct(
+            'min_signals', tgt.MIN_SIGNALS,
+            'min_hit_rate', tgt.MIN_HIT_RATE,
+            'min_avg_return', tgt.MIN_AVG_RETURN
+        ),
         'detectors', coalesce(det.DETECTORS, array_construct()),
         'prior_snapshot_ts', priors.PRIOR_AS_OF_TS
     ) as SNAPSHOT_JSON
@@ -635,6 +777,10 @@ left join exposure_ranked curr_exp
     on curr_exp.PORTFOLIO_ID = ps.PORTFOLIO_ID and curr_exp.rn = 1
 left join exposure_ranked prev_exp
     on prev_exp.PORTFOLIO_ID = ps.PORTFOLIO_ID and prev_exp.rn = 2
+-- Patterns + observations (system-wide, single rows)
+cross join pattern_catalog pc
+cross join pattern_obs_agg poa
+cross join training_gate_thresholds tgt
 -- Detectors
 left join detectors_agg det
     on det.PORTFOLIO_ID = ps.PORTFOLIO_ID

@@ -175,6 +175,23 @@ CRITICAL RULE — CONSISTENCY ON TRUST AND ELIGIBILITY:
 - NEVER contradict yourself: if one sentence says X patterns are trusted, every other sentence must be consistent with that.
 - When discussing why trades did or did not happen, check the proposal funnel data — not just trust counts.
 
+PATTERN CONTEXT — How signals are generated:
+The snapshot contains "patterns" (signal strategy definitions) and "pattern_observations" (what each pattern produced today).
+- Each pattern has params: fast_window (recent behavior window in bars), slow_window (baseline window in bars), lookback_days (history depth for statistics), min_return (minimum observed return to generate a signal), min_zscore (minimum z-score threshold for signal strength).
+- pattern_observations show per-pattern counts: signals_generated (how many raw signals the pattern produced), signals_trusted/signals_watch/signals_untrusted (how many passed each trust level), signals_eligible (how many can actually become trade proposals).
+- observed_score_range shows the min/max/avg observed return (score) of signals that DID fire. This tells you how strong today''s signals were.
+- near_miss_examples show WATCH signals (close to trust) with their observed scores and trust policy metrics.
+- thresholds show the pattern''s own gating parameters.
+- explain fields describe what each parameter means in plain language.
+- training_thresholds show system-level trust gating: min_signals, min_hit_rate, min_avg_return needed for a pattern to earn TRUSTED status.
+
+Pattern parameter explanation rules (must follow):
+- You may ONLY explain a parameter (e.g., min_zscore, min_return, fast_window, slow_window, lookback_days) if you also cite an observation from "pattern_observations" that shows it mattered today (a signal passed/failed/was near-miss).
+- When mentioning z-score, you MUST state its basis using snapshot fields (e.g., "relative to this symbol''s own return distribution over N lookback days of MARKET_TYPE bars").
+- When mentioning fast_window / slow_window, you MUST describe them as two time-perspectives AND tie them to an observation (e.g., "the fast window (last N bars) reacted but the baseline (last M bars) did not").
+- Never list raw PARAMS_JSON keys in isolation. Always pair parameter names with observed values and their practical meaning.
+- If pattern_observations is empty (no signals today), do NOT explain pattern parameters — there is nothing to explain.
+
 Produce a JSON object with exactly these keys:
 {
   "headline": "One sentence summary of what matters most today",
@@ -201,9 +218,9 @@ Narrative quality rules (must follow):
 Rules:
 - headline: 1-2 sentences. State the key fact AND its meaning for the portfolio.
 - what_changed: 3-5 bullets. Each explains a change, its cause, and its consequence. If nothing changed, explain why thoroughly (no new bars, market closed, data stale) and what the implication is.
-- what_matters: 3-5 bullets. what_matters[0] MUST give a complete picture of the portfolio state: gate, capacity, trade activity, and overall health. Include at least one bullet about the signal-to-trade pipeline (are signals flowing? are they converting to trades? if not, why?). Include at least one bullet explaining what the current drawdown/performance means.
+- what_matters: 3-5 bullets. what_matters[0] MUST unpack one key pattern gating outcome using observed vs required numbers from pattern_observations, if any signals exist. Example: "Momentum signals were filtered mainly by trust gates: for FX_MOMENTUM_DAILY, 12 signals generated but only 2 were trusted (10 blocked). The pattern requires a min z-score of 1.0 against 60-day lookback, and observed returns ranged from 0.001 to 0.004." If no signals, focus on portfolio state instead. Include at least one bullet about the signal-to-trade pipeline (are signals flowing? are they converting to trades? if not, why?). Include at least one bullet explaining what the current drawdown/performance means.
 - waiting_for: 2-4 bullets about what needs to happen next. Each must explain what the user can expect when the condition is met.
-- where_to_look: 2-4 links. Valid routes: /signals, /training, /portfolios/' || :v_portfolio_id::string || ', /brief, /market-timeline, /suggestions
+- where_to_look: 2-4 links. Valid routes: /signals, /training, /portfolios/' || :v_portfolio_id::string || ', /market-timeline, /suggestions, /cockpit
 - Every number you mention MUST appear in the snapshot data.
 - Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
 
@@ -459,6 +476,23 @@ CRITICAL RULE — CONSISTENCY ON TRUST AND ELIGIBILITY:
 - If a specific symbol appears in the snapshot as TRUSTED, describe it as eligible for trading. If UNTRUSTED or WATCH, describe it as not eligible.
 - NEVER write one sentence saying trading is possible and another saying it is not, for the same symbol or the same trust group.
 
+PATTERN CONTEXT — How signals are generated:
+The snapshot contains "patterns" (signal strategy definitions) and "pattern_observations" (what each pattern produced today).
+- Each pattern has params: fast_window (recent behavior window in bars), slow_window (baseline window in bars), lookback_days (history depth for statistics), min_return (minimum observed return to generate a signal), min_zscore (minimum z-score threshold for signal strength).
+- pattern_observations show per-pattern counts: signals_generated, signals_trusted/signals_watch/signals_untrusted, signals_eligible.
+- observed_score_range shows the min/max/avg observed return (score) of signals that DID fire.
+- near_miss_examples show WATCH signals (close to trust) with their observed scores and trust policy metrics.
+- thresholds show the pattern''s own gating parameters.
+- explain fields describe what each parameter means in plain language.
+- training_thresholds show system-level trust gating: min_signals, min_hit_rate, min_avg_return needed for a pattern to earn TRUSTED status.
+
+Pattern parameter explanation rules (must follow):
+- You may ONLY explain a parameter (e.g., min_zscore, min_return, fast_window, slow_window, lookback_days) if you also cite an observation from "pattern_observations" that shows it mattered today (a signal passed/failed/was near-miss).
+- When mentioning z-score, you MUST state its basis using snapshot fields (e.g., "relative to each symbol''s own return distribution over N lookback days").
+- When mentioning fast_window / slow_window, you MUST describe them as two time-perspectives AND tie them to an observation.
+- Never list raw PARAMS_JSON keys in isolation. Always pair parameter names with observed values and their practical meaning.
+- If pattern_observations is empty (no signals today), do NOT explain pattern parameters — there is nothing to explain.
+
 Produce a JSON object with exactly these keys:
 {
   "headline": "One sentence summary of the system-wide state today",
@@ -484,9 +518,9 @@ Narrative quality rules (must follow):
 Rules:
 - headline: 1-2 sentences. State the system state AND its meaning. Example: "All 2 portfolios running safely with 4 of 10 slots available — system is ready for opportunities but no new market data arrived today."
 - what_changed: 3-5 bullets. Each explains a change, names portfolios where relevant, and states the consequence. If nothing changed, explain why thoroughly and reassure the user.
-- what_matters: 3-5 bullets. what_matters[0] MUST give a complete system health picture: how many portfolios, gate statuses, total capacity, trade activity. Include at least one bullet about the signal pipeline (flowing or blocked, and why). Include at least one bullet comparing system state to prior (is it improving, stable, or degrading?).
+- what_matters: 3-5 bullets. what_matters[0] MUST unpack one key pattern gating outcome using observed vs required numbers from pattern_observations, if any signals exist. Example: "Across all patterns, 24 momentum signals were generated today — 14 from FX_MOMENTUM_DAILY and 10 from STOCK_MOMENTUM_FAST. Only 4 were eligible for trading because most patterns are still in WATCH trust status (they need min_hit_rate >= 0.55 but current rates range from 0.38 to 0.51)." If no signals today, focus on system health instead. Include at least one bullet about the signal pipeline (flowing or blocked, and why). Include at least one bullet comparing system state to prior (is it improving, stable, or degrading?).
 - waiting_for: 2-4 bullets. Each explains what needs to happen and what the user can expect when it does.
-- where_to_look: 2-4 links. Valid routes: /signals, /training, /digest, /brief, /market-timeline, /suggestions, /portfolios
+- where_to_look: 2-4 links. Valid routes: /signals, /training, /market-timeline, /suggestions, /portfolios, /cockpit
 - Every number you mention MUST appear in the snapshot data.
 - Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
 
@@ -588,7 +622,7 @@ Rules:
                 'where_to_look', array_construct(
                     object_construct('label', 'Signals Explorer', 'route', '/signals'),
                     object_construct('label', 'Training Status', 'route', '/training'),
-                    object_construct('label', 'Portfolio Digests', 'route', '/digest')
+                    object_construct('label', 'Cockpit', 'route', '/cockpit')
                 )
             );
             v_model_name := 'DETERMINISTIC_FALLBACK';

@@ -292,6 +292,7 @@ export default function TrainingStatus() {
                           scope="symbol"
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}
+                          patternId={get(row, 'pattern_id')}
                           compact
                         />
                         <TrainingTimelineInline

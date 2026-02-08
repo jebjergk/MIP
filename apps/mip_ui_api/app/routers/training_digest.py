@@ -53,12 +53,14 @@ def _format_response(data, scope="GLOBAL_TRAINING"):
     row_scope = data.get("scope") or scope
     symbol = data.get("symbol")
     market_type = data.get("market_type")
+    pattern_id = data.get("pattern_id")
 
     return {
         "found": True,
         "scope": row_scope,
         "symbol": symbol,
         "market_type": market_type,
+        "pattern_id": pattern_id,
         "as_of_ts": data.get("as_of_ts"),
         "run_id": data.get("run_id"),
         "snapshot_created_at": data.get("snapshot_created_at"),
@@ -90,6 +92,7 @@ def get_training_digest_latest():
         s.SCOPE,
         s.SYMBOL,
         s.MARKET_TYPE,
+        s.PATTERN_ID,
         s.AS_OF_TS,
         s.RUN_ID,
         s.SNAPSHOT_JSON,
@@ -105,6 +108,7 @@ def get_training_digest_latest():
         on  n.SCOPE         = s.SCOPE
         and n.SYMBOL is null and s.SYMBOL is null
         and n.MARKET_TYPE is null and s.MARKET_TYPE is null
+        and n.PATTERN_ID is null and s.PATTERN_ID is null
         and n.AS_OF_TS      = s.AS_OF_TS
         and n.RUN_ID        = s.RUN_ID
     where s.SCOPE = 'GLOBAL_TRAINING'
@@ -148,6 +152,7 @@ def get_training_digest(as_of_ts: str = Query(None)):
         s.SCOPE,
         s.SYMBOL,
         s.MARKET_TYPE,
+        s.PATTERN_ID,
         s.AS_OF_TS,
         s.RUN_ID,
         s.SNAPSHOT_JSON,
@@ -163,6 +168,7 @@ def get_training_digest(as_of_ts: str = Query(None)):
         on  n.SCOPE         = s.SCOPE
         and n.SYMBOL is null and s.SYMBOL is null
         and n.MARKET_TYPE is null and s.MARKET_TYPE is null
+        and n.PATTERN_ID is null and s.PATTERN_ID is null
         and n.AS_OF_TS      = s.AS_OF_TS
         and n.RUN_ID        = s.RUN_ID
     where {where_clause}
@@ -189,15 +195,31 @@ def get_training_digest(as_of_ts: str = Query(None)):
 def get_symbol_training_digest_latest(
     symbol: str = Query(..., description="Symbol to query"),
     market_type: str = Query(..., description="Market type (STOCK, ETF, FX)"),
+    pattern_id: int = Query(None, description="Pattern ID (required when symbol has multiple patterns)"),
 ):
     """
-    Latest per-symbol training digest.
+    Latest per-symbol training digest. When pattern_id is provided,
+    returns the digest for that specific pattern; otherwise the latest one.
     """
-    sql = """
+    conditions = [
+        "s.SCOPE = 'SYMBOL_TRAINING'",
+        "s.SYMBOL = %s",
+        "s.MARKET_TYPE = %s",
+    ]
+    params = [symbol, market_type]
+
+    if pattern_id is not None:
+        conditions.append("s.PATTERN_ID = %s")
+        params.append(pattern_id)
+
+    where_clause = " and ".join(conditions)
+
+    sql = f"""
     select
         s.SCOPE,
         s.SYMBOL,
         s.MARKET_TYPE,
+        s.PATTERN_ID,
         s.AS_OF_TS,
         s.RUN_ID,
         s.SNAPSHOT_JSON,
@@ -213,18 +235,17 @@ def get_symbol_training_digest_latest(
         on  n.SCOPE         = s.SCOPE
         and n.SYMBOL        = s.SYMBOL
         and n.MARKET_TYPE   = s.MARKET_TYPE
+        and coalesce(n.PATTERN_ID, -1) = coalesce(s.PATTERN_ID, -1)
         and n.AS_OF_TS      = s.AS_OF_TS
         and n.RUN_ID        = s.RUN_ID
-    where s.SCOPE = 'SYMBOL_TRAINING'
-      and s.SYMBOL = %s
-      and s.MARKET_TYPE = %s
+    where {where_clause}
     order by s.CREATED_AT desc
     limit 1
     """
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, (symbol, market_type))
+        cur.execute(sql, tuple(params))
         row = cur.fetchone()
         if not row:
             return {
@@ -242,6 +263,7 @@ def get_symbol_training_digest_latest(
 def get_symbol_training_digest(
     symbol: str = Query(...),
     market_type: str = Query(...),
+    pattern_id: int = Query(None),
     as_of_ts: str = Query(None),
 ):
     """
@@ -254,6 +276,10 @@ def get_symbol_training_digest(
     ]
     params = [symbol, market_type]
 
+    if pattern_id is not None:
+        conditions.append("s.PATTERN_ID = %s")
+        params.append(pattern_id)
+
     if as_of_ts is not None:
         conditions.append("s.AS_OF_TS::date = %s::date")
         params.append(as_of_ts)
@@ -265,6 +291,7 @@ def get_symbol_training_digest(
         s.SCOPE,
         s.SYMBOL,
         s.MARKET_TYPE,
+        s.PATTERN_ID,
         s.AS_OF_TS,
         s.RUN_ID,
         s.SNAPSHOT_JSON,
@@ -280,6 +307,7 @@ def get_symbol_training_digest(
         on  n.SCOPE         = s.SCOPE
         and n.SYMBOL        = s.SYMBOL
         and n.MARKET_TYPE   = s.MARKET_TYPE
+        and coalesce(n.PATTERN_ID, -1) = coalesce(s.PATTERN_ID, -1)
         and n.AS_OF_TS      = s.AS_OF_TS
         and n.RUN_ID        = s.RUN_ID
     where {where_clause}

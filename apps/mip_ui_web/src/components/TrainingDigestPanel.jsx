@@ -123,9 +123,10 @@ function DetectorPills({ detectors }) {
  *   scope: 'global' | 'symbol'
  *   symbol: string (for symbol scope)
  *   marketType: string (for symbol scope)
+ *   patternId: number (for symbol scope — identifies the specific pattern)
  *   compact: boolean (for inside expanders)
  */
-export default function TrainingDigestPanel({ scope = 'global', symbol, marketType, compact = false }) {
+export default function TrainingDigestPanel({ scope = 'global', symbol, marketType, patternId, compact = false }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -139,6 +140,9 @@ export default function TrainingDigestPanel({ scope = 'global', symbol, marketTy
     let url
     if (scope === 'symbol' && symbol && marketType) {
       url = `${API_BASE}/training/digest/symbol/latest?symbol=${encodeURIComponent(symbol)}&market_type=${encodeURIComponent(marketType)}`
+      if (patternId != null) {
+        url += `&pattern_id=${encodeURIComponent(patternId)}`
+      }
     } else {
       url = `${API_BASE}/training/digest/latest`
     }
@@ -152,7 +156,7 @@ export default function TrainingDigestPanel({ scope = 'global', symbol, marketTy
       .catch((err) => { if (!cancelled) { setError(err.message); setLoading(false) } })
 
     return () => { cancelled = true }
-  }, [scope, symbol, marketType])
+  }, [scope, symbol, marketType, patternId])
 
   if (loading) {
     return <div className={`td-panel ${compact ? 'td-panel--compact' : ''}`}>

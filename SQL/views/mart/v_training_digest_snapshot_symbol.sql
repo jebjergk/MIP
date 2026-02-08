@@ -1,6 +1,6 @@
 -- v_training_digest_snapshot_symbol.sql
--- Purpose: Per-symbol deterministic training snapshot for Training Journey Digest.
--- One row per (SYMBOL, MARKET_TYPE) with training facts, threshold gaps, stage info.
+-- Purpose: Per-symbol, per-pattern deterministic training snapshot for Training Journey Digest.
+-- One row per (SYMBOL, MARKET_TYPE, PATTERN_ID) with training facts, threshold gaps, stage info.
 --
 -- Sources: RECOMMENDATION_LOG, RECOMMENDATION_OUTCOMES, V_TRUSTED_SIGNAL_POLICY,
 --          V_SIGNAL_OUTCOME_KPIS, TRAINING_GATE_PARAMS.
@@ -11,6 +11,7 @@ use database MIP;
 create or replace view MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL (
     SYMBOL,
     MARKET_TYPE,
+    PATTERN_ID,
     SNAPSHOT_JSON
 ) as
 with
@@ -132,10 +133,11 @@ symbol_scored as (
     from symbol_maturity sm
 )
 
--- ===== FINAL: one row per (SYMBOL, MARKET_TYPE) =====
+-- ===== FINAL: one row per (SYMBOL, MARKET_TYPE, PATTERN_ID) =====
 select
     ss.SYMBOL,
     ss.MARKET_TYPE,
+    ss.PATTERN_ID,
     object_construct(
         'scope', 'SYMBOL_TRAINING',
         'symbol', ss.SYMBOL,

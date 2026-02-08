@@ -45,6 +45,7 @@ declare
     v_symbols           resultset;
     v_symbol            varchar;
     v_market_type       varchar;
+    v_pattern_id        number;
 begin
     -- ════════════════════════════════════════════════════════════
     -- GLOBAL TRAINING DIGEST
@@ -65,6 +66,7 @@ begin
                 'GLOBAL_TRAINING'::varchar    as scope,
                 null::varchar                 as symbol,
                 null::varchar                 as market_type,
+                null::number                  as pattern_id,
                 :v_as_of_ts::timestamp_ntz    as as_of_ts,
                 :v_run_id::varchar            as run_id,
                 :v_snapshot::variant           as snapshot_json,
@@ -73,15 +75,16 @@ begin
         on  target.SCOPE        = source.scope
         and target.SYMBOL is null and source.symbol is null
         and target.MARKET_TYPE is null and source.market_type is null
+        and target.PATTERN_ID is null and source.pattern_id is null
         and target.AS_OF_TS     = source.as_of_ts
         and target.RUN_ID       = source.run_id
         when matched then update set
             target.SNAPSHOT_JSON     = source.snapshot_json,
             target.SOURCE_FACTS_HASH = source.source_facts_hash
         when not matched then insert (
-            SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
+            SCOPE, SYMBOL, MARKET_TYPE, PATTERN_ID, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
         ) values (
-            source.scope, null, null, source.as_of_ts, source.run_id,
+            source.scope, null, null, null, source.as_of_ts, source.run_id,
             source.snapshot_json, source.source_facts_hash, current_timestamp()
         );
         v_snapshot_count := :v_snapshot_count + 1;
@@ -288,6 +291,7 @@ Rules:
                 'GLOBAL_TRAINING'::varchar       as scope,
                 null::varchar                    as symbol,
                 null::varchar                    as market_type,
+                null::number                     as pattern_id,
                 :v_as_of_ts::timestamp_ntz       as as_of_ts,
                 :v_run_id::varchar               as run_id,
                 :v_agent_name::varchar           as agent_name,
@@ -299,6 +303,7 @@ Rules:
         on  target.SCOPE        = source.scope
         and target.SYMBOL is null and source.symbol is null
         and target.MARKET_TYPE is null and source.market_type is null
+        and target.PATTERN_ID is null and source.pattern_id is null
         and target.AS_OF_TS     = source.as_of_ts
         and target.RUN_ID       = source.run_id
         and target.AGENT_NAME   = source.agent_name
@@ -308,10 +313,10 @@ Rules:
             target.MODEL_INFO        = source.model_info,
             target.SOURCE_FACTS_HASH = source.source_facts_hash
         when not matched then insert (
-            SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, AGENT_NAME,
+            SCOPE, SYMBOL, MARKET_TYPE, PATTERN_ID, AS_OF_TS, RUN_ID, AGENT_NAME,
             NARRATIVE_TEXT, NARRATIVE_JSON, MODEL_INFO, SOURCE_FACTS_HASH, CREATED_AT
         ) values (
-            source.scope, null, null, source.as_of_ts, source.run_id, source.agent_name,
+            source.scope, null, null, null, source.as_of_ts, source.run_id, source.agent_name,
             source.narrative_text, source.narrative_json, source.model_info,
             source.source_facts_hash, current_timestamp()
         );
@@ -337,51 +342,52 @@ Rules:
     -- ════════════════════════════════════════════════════════════
     -- PER-SYMBOL TRAINING DIGESTS
     -- ════════════════════════════════════════════════════════════
-    -- If P_SYMBOL is specified, do just that one; otherwise ALL symbols in training
+    -- If P_SYMBOL is specified, do just that one; otherwise ALL (symbol, market_type, pattern_id) combos
     if (:P_SYMBOL is not null) then
         v_symbols := (
-            select SYMBOL, MARKET_TYPE
+            select SYMBOL, MARKET_TYPE, PATTERN_ID
             from MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL
             where SYMBOL = :P_SYMBOL
               and (:P_MARKET_TYPE is null or MARKET_TYPE = :P_MARKET_TYPE)
-            limit 1
         );
     else
         v_symbols := (
-            select distinct SYMBOL, MARKET_TYPE
+            select SYMBOL, MARKET_TYPE, PATTERN_ID
             from MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL
-            order by SYMBOL
+            order by SYMBOL, MARKET_TYPE, PATTERN_ID
         );
     end if;
 
     for rec in v_symbols do
         v_symbol := rec.SYMBOL;
         v_market_type := rec.MARKET_TYPE;
+        v_pattern_id := rec.PATTERN_ID;
         v_cortex_succeeded := false;
 
         begin
             v_snapshot := (
                 select SNAPSHOT_JSON
                 from MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL
-                where SYMBOL = :v_symbol and MARKET_TYPE = :v_market_type
+                where SYMBOL = :v_symbol and MARKET_TYPE = :v_market_type and PATTERN_ID = :v_pattern_id
                 limit 1
             );
         exception when other then
             v_snapshot := object_construct(
                 'error', 'SNAPSHOT_VIEW_FAILED', 'message', :sqlerrm,
-                'symbol', :v_symbol, 'market_type', :v_market_type
+                'symbol', :v_symbol, 'market_type', :v_market_type, 'pattern_id', :v_pattern_id
             );
         end;
 
         v_facts_hash := (select sha2(to_varchar(:v_snapshot), 256));
 
-        -- MERGE symbol snapshot
+        -- MERGE symbol snapshot (keyed by symbol + market_type + pattern_id)
         merge into MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT as target
         using (
             select
                 'SYMBOL_TRAINING'::varchar    as scope,
                 :v_symbol::varchar            as symbol,
                 :v_market_type::varchar       as market_type,
+                :v_pattern_id::number         as pattern_id,
                 :v_as_of_ts::timestamp_ntz    as as_of_ts,
                 :v_run_id::varchar            as run_id,
                 :v_snapshot::variant           as snapshot_json,
@@ -390,26 +396,28 @@ Rules:
         on  target.SCOPE        = source.scope
         and target.SYMBOL       = source.symbol
         and target.MARKET_TYPE  = source.market_type
+        and target.PATTERN_ID   = source.pattern_id
         and target.AS_OF_TS     = source.as_of_ts
         and target.RUN_ID       = source.run_id
         when matched then update set
             target.SNAPSHOT_JSON     = source.snapshot_json,
             target.SOURCE_FACTS_HASH = source.source_facts_hash
         when not matched then insert (
-            SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
+            SCOPE, SYMBOL, MARKET_TYPE, PATTERN_ID, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
         ) values (
-            source.scope, source.symbol, source.market_type, source.as_of_ts, source.run_id,
+            source.scope, source.symbol, source.market_type, source.pattern_id, source.as_of_ts, source.run_id,
             source.snapshot_json, source.source_facts_hash, current_timestamp()
         );
         v_snapshot_count := :v_snapshot_count + 1;
 
-        -- Prior symbol snapshot
+        -- Prior symbol snapshot (same pattern_id)
         begin
             v_prior_snapshot := (
                 select SNAPSHOT_JSON
                 from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT
                 where SCOPE = 'SYMBOL_TRAINING'
                   and SYMBOL = :v_symbol and MARKET_TYPE = :v_market_type
+                  and PATTERN_ID = :v_pattern_id
                   and (AS_OF_TS < :v_as_of_ts or (AS_OF_TS = :v_as_of_ts and RUN_ID != :v_run_id))
                 order by AS_OF_TS desc limit 1
             );
@@ -418,7 +426,7 @@ Rules:
 
         -- Build per-symbol Cortex prompt
         v_cortex_prompt :=
-'You are a training coach for MIP (Market Intelligence Platform), analysing the training journey of symbol ' || :v_symbol || ' (' || :v_market_type || '). ' ||
+'You are a training coach for MIP (Market Intelligence Platform), analysing the training journey of symbol ' || :v_symbol || ' (' || :v_market_type || ', pattern ' || :v_pattern_id::varchar || '). ' ||
 'Explain in plain language where this symbol is on the path from "no data" to "trade-eligible". ' ||
 'You MUST only reference numbers and facts present in the snapshot data below. ' ||
 'Do NOT invent facts, propose trades, or suggest training parameter changes. ' ||
@@ -580,13 +588,14 @@ Rules:
             v_model_name := 'DETERMINISTIC_FALLBACK';
         end if;
 
-        -- MERGE symbol narrative
+        -- MERGE symbol narrative (keyed by symbol + market_type + pattern_id)
         merge into MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE as target
         using (
             select
                 'SYMBOL_TRAINING'::varchar       as scope,
                 :v_symbol::varchar               as symbol,
                 :v_market_type::varchar          as market_type,
+                :v_pattern_id::number            as pattern_id,
                 :v_as_of_ts::timestamp_ntz       as as_of_ts,
                 :v_run_id::varchar               as run_id,
                 :v_agent_name::varchar           as agent_name,
@@ -598,6 +607,7 @@ Rules:
         on  target.SCOPE        = source.scope
         and target.SYMBOL       = source.symbol
         and target.MARKET_TYPE  = source.market_type
+        and target.PATTERN_ID   = source.pattern_id
         and target.AS_OF_TS     = source.as_of_ts
         and target.RUN_ID       = source.run_id
         and target.AGENT_NAME   = source.agent_name
@@ -607,10 +617,10 @@ Rules:
             target.MODEL_INFO        = source.model_info,
             target.SOURCE_FACTS_HASH = source.source_facts_hash
         when not matched then insert (
-            SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, AGENT_NAME,
+            SCOPE, SYMBOL, MARKET_TYPE, PATTERN_ID, AS_OF_TS, RUN_ID, AGENT_NAME,
             NARRATIVE_TEXT, NARRATIVE_JSON, MODEL_INFO, SOURCE_FACTS_HASH, CREATED_AT
         ) values (
-            source.scope, source.symbol, source.market_type, source.as_of_ts, source.run_id,
+            source.scope, source.symbol, source.market_type, source.pattern_id, source.as_of_ts, source.run_id,
             source.agent_name, source.narrative_text, source.narrative_json, source.model_info,
             source.source_facts_hash, current_timestamp()
         );
@@ -621,6 +631,7 @@ Rules:
             'scope', 'SYMBOL_TRAINING',
             'symbol', :v_symbol,
             'market_type', :v_market_type,
+            'pattern_id', :v_pattern_id,
             'facts_hash', :v_facts_hash,
             'cortex_succeeded', :v_cortex_succeeded,
             'model_info', :v_model_name

@@ -112,18 +112,18 @@ from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT;
 select 'TRAINING_SNAPSHOT_IDEMPOTENCY' as TEST,
        iff(count(*) = 0, 'PASS', 'FAIL') as RESULT
 from (
-    select SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, count(*) as cnt
+    select SCOPE, SYMBOL, MARKET_TYPE, PATTERN_ID, AS_OF_TS, RUN_ID, count(*) as cnt
     from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT
-    group by 1, 2, 3, 4, 5
+    group by 1, 2, 3, 4, 5, 6
     having cnt > 1
 );
 
 select 'TRAINING_NARRATIVE_IDEMPOTENCY' as TEST,
        iff(count(*) = 0, 'PASS', 'FAIL') as RESULT
 from (
-    select SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, AGENT_NAME, count(*) as cnt
+    select SCOPE, SYMBOL, MARKET_TYPE, PATTERN_ID, AS_OF_TS, RUN_ID, AGENT_NAME, count(*) as cnt
     from MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE
-    group by 1, 2, 3, 4, 5, 6
+    group by 1, 2, 3, 4, 5, 6, 7
     having cnt > 1
 );
 

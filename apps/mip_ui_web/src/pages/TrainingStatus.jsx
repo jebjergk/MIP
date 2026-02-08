@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
+import TrainingDigestPanel from '../components/TrainingDigestPanel'
 import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
@@ -171,6 +172,9 @@ export default function TrainingStatus() {
         </p>
       )}
 
+      {/* Global Training Journey Digest */}
+      <TrainingDigestPanel scope="global" />
+
       <section className="training-status-filters" aria-label="Filters">
         <div className="training-filter-row">
           <label htmlFor="ts-market-type">
@@ -284,6 +288,12 @@ export default function TrainingStatus() {
                   {isExpanded && (
                     <tr className="training-detail-row">
                       <td colSpan={COLUMN_COUNT + 1} className="training-detail-cell">
+                        <TrainingDigestPanel
+                          scope="symbol"
+                          symbol={get(row, 'symbol')}
+                          marketType={get(row, 'market_type')}
+                          compact
+                        />
                         <TrainingTimelineInline
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}

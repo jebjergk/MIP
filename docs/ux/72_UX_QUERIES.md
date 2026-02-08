@@ -595,3 +595,133 @@ The portfolio snapshot includes an array of interest detectors — deterministic
 | `SIGNAL_COUNT_CHANGE` | MEDIUM | Total signal count changed vs prior global snapshot |
 
 The AI narrative prioritises fired detectors by severity when composing bullets.
+
+---
+
+## Training Journey Digest API
+
+### `GET /training/digest/latest`
+
+Returns the latest **global** training digest.
+
+**Response** (200):
+
+```json
+{
+  "found": true,
+  "scope": "GLOBAL_TRAINING",
+  "symbol": null,
+  "market_type": null,
+  "as_of_ts": "2026-02-08T14:00:00",
+  "run_id": "abc123",
+  "snapshot_created_at": "2026-02-08T14:01:00",
+  "narrative_created_at": "2026-02-08T14:01:15",
+  "source_facts_hash": "c6016...",
+  "narrative": {
+    "headline": "25 symbols tracked — 3 CONFIDENT, 5 approaching trust thresholds",
+    "what_changed": ["..."],
+    "what_matters": ["..."],
+    "waiting_for": ["..."],
+    "where_to_look": [{"label": "Training Status", "route": "/training"}],
+    "journey": ["Collecting evidence (12 symbols)", "Evaluating outcomes (5 symbols)", "Earning trust (5 symbols)", "Trade-eligible (3 symbols)"]
+  },
+  "narrative_text": "...",
+  "model_info": "mistral-large2",
+  "is_ai_narrative": true,
+  "snapshot": { "...full training snapshot JSON..." },
+  "links": { "training": "/training", "signals": "/signals", "digest": "/digest" }
+}
+```
+
+### `GET /training/digest?as_of_ts=...`
+
+Historical global training digest lookup. Same response shape.
+
+### `GET /training/digest/symbol/latest?symbol=AAPL&market_type=STOCK`
+
+Returns the latest **per-symbol** training digest.
+
+**Response** (200):
+
+```json
+{
+  "found": true,
+  "scope": "SYMBOL_TRAINING",
+  "symbol": "AAPL",
+  "market_type": "STOCK",
+  "as_of_ts": "2026-02-08T14:00:00",
+  "narrative": {
+    "headline": "AAPL at LEARNING stage (score 62.5/100) — earning trust but hit rate gap remains",
+    "what_changed": ["..."],
+    "what_matters": ["Hit rate is 0.5417 vs threshold 0.55 (gap: 0.0083). ..."],
+    "waiting_for": ["Waiting for hit_rate >= 0.55 (today: 0.5417, gap: 0.0083)"],
+    "journey": ["Collecting evidence", "Evaluating outcomes", ">> Earning trust", "Trade-eligible"]
+  },
+  "snapshot": { "...per-symbol snapshot..." },
+  "links": { "training": "/training", "symbol_training": "/training?symbol=AAPL&market_type=STOCK" }
+}
+```
+
+### `GET /training/digest/symbol?symbol=AAPL&market_type=STOCK&as_of_ts=...`
+
+Historical per-symbol training digest lookup. Same response shape.
+
+### Training Digest — Canonical SQL
+
+```sql
+-- Latest global training digest (snapshot + narrative joined)
+select
+    s.SCOPE, s.AS_OF_TS, s.RUN_ID,
+    s.SNAPSHOT_JSON, s.SOURCE_FACTS_HASH,
+    n.NARRATIVE_JSON, n.NARRATIVE_TEXT, n.MODEL_INFO
+from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT s
+left join MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE n
+    on  n.SCOPE         = s.SCOPE
+    and n.SYMBOL is null and s.SYMBOL is null
+    and n.MARKET_TYPE is null and s.MARKET_TYPE is null
+    and n.AS_OF_TS      = s.AS_OF_TS
+    and n.RUN_ID        = s.RUN_ID
+where s.SCOPE = 'GLOBAL_TRAINING'
+  and s.SYMBOL is null
+order by s.CREATED_AT desc
+limit 1;
+
+-- Latest per-symbol training digest
+select
+    s.SCOPE, s.SYMBOL, s.MARKET_TYPE, s.AS_OF_TS,
+    s.SNAPSHOT_JSON,
+    n.NARRATIVE_JSON, n.MODEL_INFO
+from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT s
+left join MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE n
+    on  n.SCOPE       = s.SCOPE
+    and n.SYMBOL      = s.SYMBOL
+    and n.MARKET_TYPE = s.MARKET_TYPE
+    and n.AS_OF_TS    = s.AS_OF_TS
+    and n.RUN_ID      = s.RUN_ID
+where s.SCOPE = 'SYMBOL_TRAINING'
+  and s.SYMBOL = 'AAPL'            -- :symbol
+  and s.MARKET_TYPE = 'STOCK'      -- :market_type
+order by s.CREATED_AT desc
+limit 1;
+```
+
+### Interest Detectors — Training (Global)
+
+| Detector | Severity | Description |
+|---|---|---|
+| `STAGE_DISTRIBUTION_CHANGED` | HIGH | Count of CONFIDENT or LEARNING symbols changed vs prior |
+| `TRUST_DISTRIBUTION_CHANGED` | HIGH | Number of TRUSTED patterns changed |
+| `LARGE_OUTCOMES_DELTA` | MEDIUM | More than 50 new outcomes evaluated since prior |
+| `TRAINING_STALLED` | MEDIUM | Zero new outcomes since prior snapshot |
+| `NEAR_MISS_STAGE_ADVANCE` | MEDIUM | Symbols within 5 maturity points of next stage |
+| `COVERAGE_MISMATCH` | LOW | Symbols with 20+ recs but <30% coverage |
+| `NO_NEW_TRAINING_DATA` | LOW | No new recommendations or outcomes |
+
+### Interest Detectors — Per-Symbol Training
+
+Per-symbol detectors are computed at the Cortex prompt level by comparing current vs prior symbol snapshot. The prompt explicitly uses `threshold_gaps` to highlight:
+
+- Signals threshold met/unmet
+- Hit rate gap to trust threshold
+- Avg return gap to trust threshold
+- Coverage ratio gaps

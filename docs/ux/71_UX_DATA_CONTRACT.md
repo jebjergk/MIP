@@ -198,3 +198,126 @@ After a portfolio reset (new episode), the trade history is cleared. The API han
 1. **Never claim trades happened unless we can show the rows**
 2. **Distinguish "trades" (verified ledger entries) from "actions" (brief record only)**
 3. **Provide audit trail**: clicking shows proof or explains why proof is unavailable
+
+---
+
+## Training Journey Digest
+
+### Tables
+
+#### `MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT`
+
+| Column | Type | Description |
+|---|---|---|
+| `SNAPSHOT_ID` | number (identity) | Auto-increment PK |
+| `SCOPE` | varchar(32) | `GLOBAL_TRAINING` or `SYMBOL_TRAINING` |
+| `SYMBOL` | varchar(32) | NULL for global scope |
+| `MARKET_TYPE` | varchar(32) | NULL for global scope |
+| `AS_OF_TS` | timestamp_ntz | Pipeline effective timestamp |
+| `RUN_ID` | varchar(64) | Pipeline run identifier |
+| `SNAPSHOT_JSON` | variant | Deterministic training facts |
+| `SOURCE_FACTS_HASH` | varchar(64) | SHA-256 of serialised snapshot |
+| `CREATED_AT` | timestamp_ntz | Row creation timestamp |
+
+**Unique key**: `(SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID)`
+
+#### `MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE`
+
+| Column | Type | Description |
+|---|---|---|
+| `NARRATIVE_ID` | number (identity) | Auto-increment PK |
+| `SCOPE` | varchar(32) | `GLOBAL_TRAINING` or `SYMBOL_TRAINING` |
+| `SYMBOL` | varchar(32) | NULL for global scope |
+| `MARKET_TYPE` | varchar(32) | NULL for global scope |
+| `AS_OF_TS` | timestamp_ntz | Pipeline effective timestamp |
+| `RUN_ID` | varchar(64) | Pipeline run identifier |
+| `AGENT_NAME` | varchar(128) | Default `TRAINING_DIGEST` |
+| `NARRATIVE_TEXT` | string | Raw narrative text from Cortex |
+| `NARRATIVE_JSON` | variant | Structured: headline, what_changed, what_matters, waiting_for, where_to_look, journey |
+| `MODEL_INFO` | varchar(256) | Model used (e.g. `mistral-large2`) or `DETERMINISTIC_FALLBACK` |
+| `SOURCE_FACTS_HASH` | varchar(64) | Must match snapshot hash |
+| `CREATED_AT` | timestamp_ntz | Row creation timestamp |
+
+**Unique key**: `(SCOPE, SYMBOL, MARKET_TYPE, AS_OF_TS, RUN_ID, AGENT_NAME)`
+
+### Views
+
+#### `MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_GLOBAL`
+
+Single-row view returning `SNAPSHOT_JSON` with global training facts:
+
+```json
+{
+  "scope": "GLOBAL_TRAINING",
+  "timestamps": { "as_of_ts": "...", "snapshot_created_at": "..." },
+  "thresholds": { "min_signals": 40, "min_hit_rate": 0.55, "min_avg_return": 0.0005 },
+  "stages": {
+    "total_symbols": 25,
+    "insufficient_count": 12,
+    "warming_up_count": 5,
+    "learning_count": 5,
+    "confident_count": 3,
+    "avg_maturity_score": 38.5,
+    "total_recommendations": 1200,
+    "total_outcomes": 3500,
+    "avg_coverage_ratio": 0.584
+  },
+  "trust": { "trusted_count": 8, "watch_count": 5, "untrusted_count": 20 },
+  "near_miss_symbols": [ { "symbol": "...", "gap_to_next": 3.2, ... } ],
+  "top_confident_symbols": [ { "symbol": "...", "maturity_score": 92.0, ... } ],
+  "detectors": [ { "detector": "...", "fired": true, "severity": "HIGH", "detail": {...} } ]
+}
+```
+
+#### `MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL`
+
+One row per `(SYMBOL, MARKET_TYPE)` with `SNAPSHOT_JSON`:
+
+```json
+{
+  "scope": "SYMBOL_TRAINING",
+  "symbol": "AAPL",
+  "market_type": "STOCK",
+  "maturity": { "score": 62.5, "stage": "LEARNING", "score_sample": 30, "score_coverage": 20.5, "score_horizons": 12 },
+  "evidence": { "recs_total": 45, "outcomes_total": 120, "hit_count": 65, "coverage_ratio": 0.533, "hit_rate": 0.5417, "avg_return": 0.0003 },
+  "threshold_gaps": {
+    "min_signals": 40, "signals_gap": 0, "signals_met": true,
+    "min_hit_rate": 0.55, "hit_rate_gap": 0.0083, "hit_rate_met": false,
+    "min_avg_return": 0.0005, "avg_return_gap": 0.0002, "avg_return_met": false
+  },
+  "trust": { "trust_label": "WATCH", "recommended_action": "MONITOR" },
+  "journey_stage": "Earning trust"
+}
+```
+
+### Narrative JSON Schema
+
+Both global and per-symbol narratives share this schema:
+
+```json
+{
+  "headline": "One sentence summary",
+  "what_changed": ["bullet 1", "bullet 2"],
+  "what_matters": ["bullet 1", "bullet 2"],
+  "waiting_for": ["bullet 1", "bullet 2"],
+  "where_to_look": [{"label": "Training Status", "route": "/training"}],
+  "journey": ["Collecting evidence (12 symbols)", "Evaluating outcomes (5 symbols)", "Earning trust (5 symbols)", "Trade-eligible (3 symbols)"]
+}
+```
+
+### Maturity Stages
+
+| Stage | Score Range | Description |
+|---|---|---|
+| `INSUFFICIENT` | 0–24 | Not enough data; collecting evidence |
+| `WARMING_UP` | 25–49 | Building sample; evaluating early outcomes |
+| `LEARNING` | 50–74 | Meaningful data; approaching trust thresholds |
+| `CONFIDENT` | 75–100 | Strong coverage; trade-eligible |
+
+### Scoring Components (0–100)
+
+| Component | Max Points | Computation |
+|---|---|---|
+| Sample size | 30 | `30 × min(1, recs_total / MIN_SIGNALS)` |
+| Coverage | 40 | `40 × min(1, outcomes_total / (recs_total × 5))` |
+| Horizons | 30 | `30 × horizons_covered / 5` |

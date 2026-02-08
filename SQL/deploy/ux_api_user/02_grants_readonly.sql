@@ -40,6 +40,8 @@ grant select on table MIP.AGENT_OUT.ORDER_PROPOSALS to role MIP_UI_API_ROLE;
 grant select on table MIP.AGENT_OUT.AGENT_RUN_LOG   to role MIP_UI_API_ROLE;
 grant select on table MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT to role MIP_UI_API_ROLE;
 grant select on table MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE to role MIP_UI_API_ROLE;
+grant select on table MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT to role MIP_UI_API_ROLE;
+grant select on table MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE to role MIP_UI_API_ROLE;
 
 -- Tables/Views (MIP.MART)
 grant select on table MIP.MART.MARKET_BARS          to role MIP_UI_API_ROLE;
@@ -64,3 +66,5 @@ grant select on view MIP.MART.V_PORTFOLIO_EPISODE_RESULTS  to role MIP_UI_API_RO
 grant select on view MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_BAR_INDEX to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_DAILY_DIGEST_SNAPSHOT_GLOBAL to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_GLOBAL to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL to role MIP_UI_API_ROLE;

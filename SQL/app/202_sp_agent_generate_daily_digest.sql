@@ -201,12 +201,28 @@ Produce a JSON object with exactly these keys:
   "where_to_look": [{"label": "page name", "route": "/path"}, ...]
 }
 
+CRITICAL FORMATTING RULE — ALWAYS USE PERCENTAGES:
+- NEVER write raw decimals like 0.005241 or 0.55 in the narrative. Instead write human-readable percentages.
+- To convert: multiply by 100 and add %. 0.55 → 55%. 0.005241 → 0.52%. 0.909 → 90.9%.
+- Examples of CORRECT formatting:
+  - "Hit rate is 50.4% (threshold: 55%)" — NOT "hit rate is 0.504 (threshold: 0.55)"
+  - "Average return is 0.52%" — NOT "average return is 0.005241"
+  - "Total return is 2.45%" — NOT "total return is 0.0245"
+  - "Drawdown at -4.2%" — NOT "drawdown is -0.042"
+
+CRITICAL RULE — COMPARING CURRENT VS PRIOR SNAPSHOT:
+- When comparing a value between current and prior snapshot, ALWAYS check the DIRECTION correctly.
+  - If current value > prior value: the metric INCREASED.
+  - If current value < prior value: the metric DECREASED.
+- DOUBLE-CHECK before stating increases or decreases. Getting the direction wrong is a critical error.
+- If no prior snapshot exists, say "this is the first snapshot" — do NOT invent prior values.
+
 Narrative quality rules (must follow):
 - Write as if explaining to a portfolio manager, not a data engineer. Answer "what does this mean for my portfolio?"
 - Every bullet should be 2-3 sentences: state the fact, explain what it means, and state the consequence.
 - Whenever you mention a metric (saturation, capacity, trust, drawdown, freshness, proposal funnel, gate), you MUST:
   (a) explain what it means in plain language,
-  (b) show the numbers behind it (X of Y, percentages, deltas),
+  (b) show the numbers behind it IN PERCENTAGE FORMAT (X of Y, percentages, deltas),
   (c) state the practical impact: "This means..." or "As a result..." or "So..."
   Example: "The portfolio is at 80% capacity — 4 of 5 allowed position slots are occupied. This means only 1 slot remains for new entries. If a strong signal appears, it can still be acted on, but the portfolio is nearly full."
 - When explaining the proposal funnel, walk through each stage: how many signals were generated, how many passed eligibility, how many were trusted, how many became proposals, how many executed. Explain WHERE the biggest drop happens and WHY.
@@ -502,12 +518,26 @@ Produce a JSON object with exactly these keys:
   "where_to_look": [{"label": "page name", "route": "/path"}, ...]
 }
 
+CRITICAL FORMATTING RULE — ALWAYS USE PERCENTAGES:
+- NEVER write raw decimals like 0.005241 or 0.55 in the narrative. Instead write human-readable percentages.
+- To convert: multiply by 100 and add %. 0.55 → 55%. 0.005241 → 0.52%. 0.909 → 90.9%.
+- Examples of CORRECT formatting:
+  - "Hit rate is 50.4% (threshold: 55%)" — NOT "hit rate is 0.504 (threshold: 0.55)"
+  - "Average return is 0.52%" — NOT "average return is 0.005241"
+  - "Total return is 2.45%" — NOT "total return is 0.0245"
+
+CRITICAL RULE — COMPARING CURRENT VS PRIOR SNAPSHOT:
+- When comparing a value between current and prior snapshot, ALWAYS check the DIRECTION correctly.
+  - If current value > prior value: the metric INCREASED.
+  - If current value < prior value: the metric DECREASED.
+- DOUBLE-CHECK before stating increases or decreases. Getting the direction wrong is a critical error.
+
 Narrative quality rules (must follow):
 - Write as if briefing a portfolio manager who wants to know: "Is everything running? Are we making money? Is anything stuck? What should I watch?"
 - Every bullet should be 2-3 sentences: state the fact, explain what it means, and state the consequence for the user.
 - Whenever you mention a metric (capacity, saturation, trust, drawdown, freshness, proposal funnel, gate), you MUST:
   (a) explain what it means in plain language,
-  (b) show the numbers (X of Y, percentages, deltas across portfolios),
+  (b) show the numbers IN PERCENTAGE FORMAT (X of Y, percentages, deltas across portfolios),
   (c) state the practical impact.
   Example: "The system is using 6 of 10 total position slots across 2 portfolios (60% saturated). This means 4 slots are available for new trades — the system has room to act on new opportunities when they appear."
 - For the proposal funnel, walk through the full pipeline: signals generated → eligible → trusted → proposed → executed. Show where the funnel narrows most and explain why: "The biggest drop is from eligible to trusted (X → Y), because most signals come from patterns still in training. As more patterns earn trust, this funnel will widen."
@@ -518,7 +548,7 @@ Narrative quality rules (must follow):
 Rules:
 - headline: 1-2 sentences. State the system state AND its meaning. Example: "All 2 portfolios running safely with 4 of 10 slots available — system is ready for opportunities but no new market data arrived today."
 - what_changed: 3-5 bullets. Each explains a change, names portfolios where relevant, and states the consequence. If nothing changed, explain why thoroughly and reassure the user.
-- what_matters: 3-5 bullets. what_matters[0] MUST unpack one key pattern gating outcome using observed vs required numbers from pattern_observations, if any signals exist. Example: "Across all patterns, 24 momentum signals were generated today — 14 from FX_MOMENTUM_DAILY and 10 from STOCK_MOMENTUM_FAST. Only 4 were eligible for trading because most patterns are still in WATCH trust status (they need min_hit_rate >= 0.55 but current rates range from 0.38 to 0.51)." If no signals today, focus on system health instead. Include at least one bullet about the signal pipeline (flowing or blocked, and why). Include at least one bullet comparing system state to prior (is it improving, stable, or degrading?).
+- what_matters: 3-5 bullets. what_matters[0] MUST unpack one key pattern gating outcome using observed vs required numbers from pattern_observations, if any signals exist. Example: "Across all patterns, 24 momentum signals were generated today — 14 from FX_MOMENTUM_DAILY and 10 from STOCK_MOMENTUM_FAST. Only 4 were eligible for trading because most patterns are still in WATCH trust status (they need hit rate of at least 55% but current rates range from 38% to 51%)." If no signals today, focus on system health instead. Include at least one bullet about the signal pipeline (flowing or blocked, and why). Include at least one bullet comparing system state to prior (is it improving, stable, or degrading?).
 - waiting_for: 2-4 bullets. Each explains what needs to happen and what the user can expect when it does.
 - where_to_look: 2-4 links. Valid routes: /signals, /training, /market-timeline, /suggestions, /portfolios, /cockpit
 - Every number you mention MUST appear in the snapshot data.

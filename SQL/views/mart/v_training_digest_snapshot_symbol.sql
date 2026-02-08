@@ -164,6 +164,28 @@ select
             'hit_rate', round(coalesce(ss.HIT_RATE, 0), 4),
             'avg_return', round(coalesce(ss.AVG_RETURN, 0), 6)
         ),
+        -- ── Human-readable display values (use THESE in narrative text) ──
+        'display', object_construct(
+            'hit_rate_pct', round(coalesce(ss.HIT_RATE, 0) * 100, 1) || '%',
+            'avg_return_pct', round(coalesce(ss.AVG_RETURN, 0) * 100, 2) || '%',
+            'coverage_pct', round(ss.COVERAGE_RATIO * 100, 1) || '%',
+            'min_hit_rate_pct', round(ss.MIN_HIT_RATE * 100, 1) || '%',
+            'min_avg_return_pct', round(ss.MIN_AVG_RETURN * 100, 2) || '%',
+            'h1_avg_return_pct', round(coalesce(ss.H1_AVG_RETURN, 0) * 100, 2) || '%',
+            'h5_avg_return_pct', round(coalesce(ss.H5_AVG_RETURN, 0) * 100, 2) || '%',
+            'h20_avg_return_pct', round(coalesce(ss.H20_AVG_RETURN, 0) * 100, 2) || '%',
+            'maturity_summary', ss.MATURITY_STAGE || ' (' || round(ss.MATURITY_SCORE, 1) || '/100)',
+            'trust_summary', coalesce(tl.TRUST_LABEL, 'UNKNOWN') ||
+                case when coalesce(tl.TRUST_LABEL, 'UNKNOWN') = 'TRUSTED'
+                     then ' — eligible for trade proposals'
+                     when coalesce(tl.TRUST_LABEL, 'UNKNOWN') = 'WATCH'
+                     then ' — being monitored, NOT eligible for trading'
+                     else ' — NOT eligible for trading' end,
+            'score_breakdown', 'Sample=' || round(ss.SCORE_SAMPLE, 1) ||
+                ' + Coverage=' || round(ss.SCORE_COVERAGE, 1) ||
+                ' + Horizons=' || round(ss.SCORE_HORIZONS, 1) ||
+                ' = ' || round(ss.MATURITY_SCORE, 1)
+        ),
         'threshold_gaps', object_construct(
             'min_signals', ss.MIN_SIGNALS,
             'signals_gap', greatest(0, ss.MIN_SIGNALS - ss.RECS_TOTAL),
@@ -188,11 +210,13 @@ select
             'recommended_action', coalesce(tl.RECOMMENDED_ACTION, 'UNKNOWN'),
             'reason', tl.REASON
         ),
-        'journey_stage', case ss.MATURITY_STAGE
-            when 'INSUFFICIENT' then 'Collecting evidence'
-            when 'WARMING_UP' then 'Evaluating outcomes'
-            when 'LEARNING' then 'Earning trust'
-            when 'CONFIDENT' then 'Trade-eligible'
+        -- journey_stage is TRUST-AWARE: if already TRUSTED, say so even if maturity is still LEARNING
+        'journey_stage', case
+            when coalesce(tl.TRUST_LABEL, 'UNKNOWN') = 'TRUSTED' then 'Trade-eligible'
+            when ss.MATURITY_STAGE = 'INSUFFICIENT' then 'Collecting evidence'
+            when ss.MATURITY_STAGE = 'WARMING_UP' then 'Evaluating outcomes'
+            when ss.MATURITY_STAGE = 'LEARNING' then 'Earning trust'
+            when ss.MATURITY_STAGE = 'CONFIDENT' then 'Trade-eligible'
         end
     ) as SNAPSHOT_JSON
 from symbol_scored ss

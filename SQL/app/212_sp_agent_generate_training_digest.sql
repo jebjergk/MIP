@@ -156,12 +156,28 @@ CRITICAL RULE — NEVER CONTRADICT TRUST LABELS:
 - When naming specific symbols (from near_miss_symbols, top_confident_symbols), always state their trust label consistently. NEVER say "eligible" and "not eligible" about the same symbol.
 - Example: If a symbol is CONFIDENT (score 86) and TRUSTED: say "eligible for trading — the trust policy has approved this symbol despite training signals still building up."
 
+CRITICAL FORMATTING RULE — ALWAYS USE PERCENTAGES:
+- NEVER write raw decimals like 0.005241 or 0.55 in the narrative. Instead write human-readable percentages.
+- Examples of CORRECT formatting:
+  - "Hit rate is 50.4% (threshold: 55%)" — NOT "hit rate is 0.504 (threshold: 0.55)"
+  - "Average return is 0.52% (threshold: 0.05%)" — NOT "average return is 0.005241 (threshold: 0.0005)"
+  - "Coverage is 90.9%" — NOT "coverage ratio is 0.909"
+- To convert: multiply by 100 and add %. 0.55 → 55%. 0.005241 → 0.52%. 0.909 → 90.9%.
+
+CRITICAL RULE — COMPARING CURRENT VS PRIOR SNAPSHOT:
+- When comparing a value between current and prior snapshot, ALWAYS check the DIRECTION correctly.
+  - If current value > prior value: the metric INCREASED.
+  - If current value < prior value: the metric DECREASED.
+  - Example: if prior avg_return was 0.003981 and current is 0.005241, that is an INCREASE (from 0.40% to 0.52%), NOT a decrease.
+- If no prior snapshot exists, say "this is the first snapshot" — do NOT invent prior values.
+- DOUBLE-CHECK your arithmetic before stating increases or decreases. Getting the direction wrong is a critical error.
+
 Narrative quality rules (must follow):
 - Write as if talking to a portfolio manager who is NOT a data scientist. Explain what things MEAN, not just what the numbers are.
 - Every bullet should answer "so what does this mean for me?" — connect facts to user impact.
 - Whenever you mention a metric or label (e.g. maturity score, coverage, hit rate, stage, TRUSTED/WATCH/UNTRUSTED), you MUST:
   (a) explain what it means in plain language,
-  (b) show the numbers behind it (e.g. X of Y, counts, deltas),
+  (b) show the numbers behind it IN PERCENTAGE FORMAT (e.g. "50.4% hit rate", "0.52% average return"),
   (c) state the practical consequence for trading ("so what").
   Example: "12 of 25 symbols are still INSUFFICIENT (maturity < 25), meaning the system does not have enough signal history to judge them yet — no trading decisions can be based on these symbols until more data arrives."
 - When a detector fires, do NOT just name the detector. Explain what it means: "Training has stalled (0 new outcomes since last snapshot). This means the system is not learning anything new — either no new market bars arrived, or the evaluation pipeline has not run. Until new outcomes appear, no symbol will advance in training."
@@ -447,14 +463,34 @@ CRITICAL RULE — NEVER CONTRADICT THE trust_label FIELD:
 - Example: If trust_label=TRUSTED but signals_met=false, say: "AUD/USD is TRUSTED and eligible for trading. While the training signals count (22) has not yet reached the full training target (40), the trust policy has already approved this symbol based on its strong hit rate and returns."
 - NEVER write one sentence saying "eligible" and another saying "not eligible" for the same symbol. Pick the truth from trust_label and be consistent.
 
+CRITICAL FORMATTING RULE — ALWAYS USE PERCENTAGES:
+- The snapshot includes a "display" section with pre-formatted human-readable percentages.
+- ALWAYS use these display values in your narrative text: display.hit_rate_pct, display.avg_return_pct, display.coverage_pct, display.min_hit_rate_pct, display.min_avg_return_pct, etc.
+- NEVER write raw decimals like 0.005241 or 0.55 in the narrative. Instead write "0.52%" or "55%".
+- Examples of CORRECT formatting:
+  - "Hit rate is 50.4% (threshold: 55%)" — NOT "hit rate is 0.504 (threshold: 0.55)"
+  - "Average return is 0.52% (threshold: 0.05%)" — NOT "average return is 0.005241 (threshold: 0.0005)"
+  - "Coverage is 90.9%" — NOT "coverage ratio is 0.909"
+- Also display.maturity_summary and display.trust_summary are pre-formatted for your convenience.
+- display.score_breakdown shows how the maturity score is calculated (e.g., "Sample=8.3 + Coverage=36.2 + Horizons=30.0 = 74.5").
+
+CRITICAL RULE — COMPARING CURRENT VS PRIOR SNAPSHOT:
+- When comparing a value between current and prior snapshot, ALWAYS check the DIRECTION correctly.
+  - If current value > prior value: the metric INCREASED.
+  - If current value < prior value: the metric DECREASED.
+  - Example: if prior avg_return was 0.003981 and current is 0.005241, that is an INCREASE (from 0.40% to 0.52%), NOT a decrease.
+- If no prior snapshot exists, say "this is the first snapshot" — do NOT invent prior values.
+- If both snapshots have the same values, say "unchanged since last snapshot."
+- DOUBLE-CHECK your arithmetic before stating increases or decreases. Getting the direction wrong is a critical error.
+
 Narrative quality rules (must follow):
 - Write as if talking to a portfolio manager who wants to know: "Can I trade this symbol? If not, why not? What needs to happen?"
 - Every bullet should answer "so what does this mean for me?" — connect facts to trading readiness.
-- Whenever you mention a metric (maturity, coverage, hit rate, signals gap, avg return, trust label), UNPACK it:
+- Whenever you mention a metric (maturity, coverage, hit rate, signals gap, avg return, trust label), UNPACK it using the display values:
   (a) what it means in plain language,
-  (b) the actual numbers (today vs threshold, gap),
+  (b) the actual numbers in percentage format (today vs threshold, gap),
   (c) the practical consequence for trading.
-  Example: "Hit rate is 0.52 (52% of evaluated outcomes were profitable). The system requires at least 0.55 (55%) to trust this symbol for trading. Gap: 0.03 — roughly 2 more successful outcomes out of the next 10 would close this gap and make ' || :v_symbol || ' eligible for trade proposals."
+  Example: "Hit rate is 50.4% (the system requires at least 55% to trust this symbol). Gap: 4.6 percentage points — roughly 2 more successful outcomes out of the next 10 would close this gap and make ' || :v_symbol || ' eligible for trade proposals."
 - Do NOT just list detector names. Explain what they mean for the user.
 - FIRST read trust.trust_label from the snapshot. This is the definitive answer. Then:
   - If trust_label is TRUSTED: "' || :v_symbol || ' is TRUSTED and eligible for trade proposals. It has passed the performance checks. Whether trades actually happen depends on portfolio capacity and signal strength." Then optionally mention any remaining threshold_gaps as training completeness context (not as blockers).
@@ -463,11 +499,11 @@ Narrative quality rules (must follow):
 - NEVER contradict yourself. If trust_label says TRUSTED, every sentence must be consistent with "this symbol CAN trade."
 - Prefer longer, explanatory bullets (2-3 sentences each). Users need reasoning, not just numbers.
 - waiting_for bullets must state the threshold, today''s value, the gap, AND what happens when met.
-  - If the symbol is NOT trusted: "Waiting for hit_rate to reach 0.55 (today: 0.52, gap: 0.03). Once met, ' || :v_symbol || ' will be eligible for trust status, unlocking trade proposals."
+  - If the symbol is NOT trusted: "Waiting for hit rate to reach 55% (today: 50.4%, gap: 4.6pp). Once met, ' || :v_symbol || ' will be eligible for trust status, unlocking trade proposals."
   - If the symbol IS trusted: waiting_for should focus on remaining training milestones (e.g. signals count towards full maturity) or portfolio capacity, NOT on earning trust (since trust is already granted). Example: "Waiting for signals to reach 40 (today: 22, gap: 18). This is a training completeness target — ' || :v_symbol || ' is already TRUSTED and can trade while this builds up."
 
 Rules:
-- headline: 1-2 sentences. State the maturity stage, score, trust_label, and what it means for trading. Base the trading eligibility statement ONLY on trust.trust_label — never guess from threshold_gaps. Examples: If TRUSTED: "' || :v_symbol || ' is CONFIDENT (score 86/100) and TRUSTED — eligible for trade proposals." If WATCH: "' || :v_symbol || ' is LEARNING (score 62/100) and on WATCH — building evidence but not yet eligible for trading."
+- headline: 1-2 sentences. State the maturity stage, score, trust_label, and what it means for trading. Use display.maturity_summary and display.trust_summary for accurate labels. Base the trading eligibility statement ONLY on trust.trust_label — never guess from threshold_gaps. If TRUSTED: the headline MUST say "TRUSTED" and "eligible for trade proposals" — do NOT say "earning trust" if the symbol is already TRUSTED. Examples: If TRUSTED: "' || :v_symbol || ' is LEARNING (score 74.5/100) and TRUSTED — eligible for trade proposals." If WATCH: "' || :v_symbol || ' is LEARNING (score 62/100) and on WATCH — building evidence but not yet eligible for trading."
 - what_changed: 2-4 bullets. Each explains a change AND its consequence. If first run, explain current state thoroughly. If nothing changed, explain why AND what it means.
 - what_matters: 3-4 bullets. what_matters[0] MUST START with the trust_label verdict and be consistent with it throughout. If TRUSTED: "' || :v_symbol || ' is TRUSTED and eligible for trading. Here is where each metric stands: [list each threshold]. All required performance checks passed." If NOT trusted: "' || :v_symbol || ' is [trust_label] and NOT yet eligible. Here is where each metric stands: [list thresholds, highlighting unmet ones]." Include at least one bullet explaining WHAT needs to happen next.
 - waiting_for: 2-3 bullets. Each cites threshold, gap, AND what happens when reached.

@@ -168,6 +168,13 @@ MIP manages portfolios that automatically trade based on AI signals. The key con
 - TRAINING vs TRADING: Training must be CONFIDENT AND pattern must be TRUSTED for trades to happen. If training is stuck or trust is lost, no trades will flow.
 - DRAWDOWN: How far the portfolio has fallen from its peak. A rising drawdown means losing money. Important for risk context.
 
+CRITICAL RULE — CONSISTENCY ON TRUST AND ELIGIBILITY:
+- The snapshot includes training trusted/watch/untrusted counts. These are the DEFINITIVE counts from the trust policy engine.
+- Training gate thresholds (min signals, min hit rate, min avg return) are a SEPARATE system from the trust policy. They may not perfectly align.
+- If the snapshot says N patterns are TRUSTED, those N patterns ARE trusted and CAN generate trade proposals. Do NOT then say "no patterns are eligible" or "patterns still need to earn trust" in another bullet.
+- NEVER contradict yourself: if one sentence says X patterns are trusted, every other sentence must be consistent with that.
+- When discussing why trades did or did not happen, check the proposal funnel data — not just trust counts.
+
 Produce a JSON object with exactly these keys:
 {
   "headline": "One sentence summary of what matters most today",
@@ -444,6 +451,13 @@ MIP is an automated market intelligence platform that manages multiple portfolio
 - TRUST: Patterns earn trust through training. The system tracks trusted/watch/untrusted counts. Only TRUSTED patterns can generate trade proposals.
 - RISK: Drawdown, gate status, and health indicators determine whether portfolios are safe to trade. If risk is elevated, the system protects capital by restricting entries.
 - "NOTHING HAPPENED" days are common and normal. Explain WHY: no new market data? market closed? all slots full? no trusted signals? This is the most important thing to explain clearly.
+
+CRITICAL RULE — CONSISTENCY ON TRUST AND ELIGIBILITY:
+- The snapshot includes system-wide trusted/watch/untrusted counts. These are DEFINITIVE — computed by the trust policy engine.
+- Training thresholds (signals count, hit rate, avg return) are a SEPARATE scoring system. They may disagree with the trust label for individual symbols.
+- If the snapshot says N patterns are TRUSTED, do NOT then say "no patterns are eligible" or "patterns cannot trade." Be consistent.
+- If a specific symbol appears in the snapshot as TRUSTED, describe it as eligible for trading. If UNTRUSTED or WATCH, describe it as not eligible.
+- NEVER write one sentence saying trading is possible and another saying it is not, for the same symbol or the same trust group.
 
 Produce a JSON object with exactly these keys:
 {

@@ -25,14 +25,14 @@ alter table MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
 -- Drop old unique constraint and recreate with SCOPE
 -- (Snowflake: drop by name, recreate)
 alter table MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
-    drop constraint if exists UQ_DIGEST_SNAPSHOT;
+    drop constraint UQ_DIGEST_SNAPSHOT;
 
 alter table MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
     add constraint UQ_DIGEST_SNAPSHOT unique (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID);
 
 -- ── NARRATIVE table ─────────────────────────────────────────
 alter table MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
-    add column if not exists SCOPE varchar(16) default 'PORTFOLIO';
+    add column if SCOPE varchar(16) default 'PORTFOLIO';
 
 -- Backfill existing rows
 update MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
@@ -45,7 +45,7 @@ alter table MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
 
 -- Drop old unique constraint and recreate with SCOPE
 alter table MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
-    drop constraint if exists UQ_DIGEST_NARRATIVE;
+    drop constraint UQ_DIGEST_NARRATIVE;
 
 alter table MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
     add constraint UQ_DIGEST_NARRATIVE unique (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME);

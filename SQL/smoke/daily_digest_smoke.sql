@@ -183,18 +183,25 @@ qualify row_number() over (partition by n.PORTFOLIO_ID order by n.CREATED_AT des
 -- =============================================================================
 
 select 'NARRATIVE_JSON_STRUCTURE_GLOBAL' as TEST,
-       iff(
-           n.NARRATIVE_JSON:headline is not null
-           and n.NARRATIVE_JSON:what_changed is not null
-           and n.NARRATIVE_JSON:what_matters is not null
-           and n.NARRATIVE_JSON:waiting_for is not null,
-           'PASS', 'FAIL'
-       ) as RESULT,
-       n.NARRATIVE_JSON:headline::string as HEADLINE_PREVIEW
-from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
-where n.SCOPE = 'GLOBAL'
-  and n.PORTFOLIO_ID is null
-qualify row_number() over (order by n.CREATED_AT desc) = 1;
+       case
+           when count(*) = 0 then 'PENDING'
+           when max(iff(
+               n.NARRATIVE_JSON:headline is not null
+               and n.NARRATIVE_JSON:what_changed is not null
+               and n.NARRATIVE_JSON:what_matters is not null
+               and n.NARRATIVE_JSON:waiting_for is not null,
+               1, 0
+           )) = 1 then 'PASS'
+           else 'FAIL'
+       end as RESULT,
+       max(n.NARRATIVE_JSON:headline::string) as HEADLINE_PREVIEW
+from (
+    select *
+    from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
+    where SCOPE = 'GLOBAL'
+      and PORTFOLIO_ID is null
+    qualify row_number() over (order by CREATED_AT desc) = 1
+) n;
 
 -- =============================================================================
 -- 13. PORTFOLIO snapshot JSON has required top-level keys
@@ -220,21 +227,28 @@ qualify row_number() over (partition by s.PORTFOLIO_ID order by s.CREATED_AT des
 -- =============================================================================
 
 select 'SNAPSHOT_JSON_STRUCTURE_GLOBAL' as TEST,
-       iff(
-           s.SNAPSHOT_JSON:scope::string = 'GLOBAL'
-           and s.SNAPSHOT_JSON:system is not null
-           and s.SNAPSHOT_JSON:gates is not null
-           and s.SNAPSHOT_JSON:capacity is not null
-           and s.SNAPSHOT_JSON:signals is not null
-           and s.SNAPSHOT_JSON:proposals is not null
-           and s.SNAPSHOT_JSON:training is not null
-           and s.SNAPSHOT_JSON:detectors is not null,
-           'PASS', 'FAIL'
-       ) as RESULT
-from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
-where s.SCOPE = 'GLOBAL'
-  and s.PORTFOLIO_ID is null
-qualify row_number() over (order by s.CREATED_AT desc) = 1;
+       case
+           when count(*) = 0 then 'PENDING'
+           when max(iff(
+               s.SNAPSHOT_JSON:scope::string = 'GLOBAL'
+               and s.SNAPSHOT_JSON:system is not null
+               and s.SNAPSHOT_JSON:gates is not null
+               and s.SNAPSHOT_JSON:capacity is not null
+               and s.SNAPSHOT_JSON:signals is not null
+               and s.SNAPSHOT_JSON:proposals is not null
+               and s.SNAPSHOT_JSON:training is not null
+               and s.SNAPSHOT_JSON:detectors is not null,
+               1, 0
+           )) = 1 then 'PASS'
+           else 'FAIL'
+       end as RESULT
+from (
+    select *
+    from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
+    where SCOPE = 'GLOBAL'
+      and PORTFOLIO_ID is null
+    qualify row_number() over (order by CREATED_AT desc) = 1
+) s;
 
 -- =============================================================================
 -- 15. Audit log has DAILY_DIGEST step entries
@@ -271,19 +285,24 @@ qualify row_number() over (partition by s.PORTFOLIO_ID order by s.CREATED_AT des
 -- 17. Facts hash matches between snapshot and narrative — GLOBAL scope
 -- =============================================================================
 
+with global_pair as (
+    select s.SOURCE_FACTS_HASH as SNAPSHOT_HASH,
+           n.SOURCE_FACTS_HASH as NARRATIVE_HASH
+    from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
+    join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
+        on  n.SCOPE = s.SCOPE
+        and n.PORTFOLIO_ID is null
+        and s.PORTFOLIO_ID is null
+        and n.AS_OF_TS     = s.AS_OF_TS
+        and n.RUN_ID       = s.RUN_ID
+    where s.SCOPE = 'GLOBAL'
+    qualify row_number() over (order by s.CREATED_AT desc) = 1
+)
 select 'HASH_GROUNDING_GLOBAL' as TEST,
-       iff(
-           s.SOURCE_FACTS_HASH = n.SOURCE_FACTS_HASH,
-           'PASS', 'FAIL'
-       ) as RESULT,
-       s.SOURCE_FACTS_HASH as SNAPSHOT_HASH,
-       n.SOURCE_FACTS_HASH as NARRATIVE_HASH
-from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
-join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
-    on  n.SCOPE = s.SCOPE
-    and n.PORTFOLIO_ID is null
-    and s.PORTFOLIO_ID is null
-    and n.AS_OF_TS     = s.AS_OF_TS
-    and n.RUN_ID       = s.RUN_ID
-where s.SCOPE = 'GLOBAL'
-qualify row_number() over (order by s.CREATED_AT desc) = 1;
+       case
+           when (select count(*) from global_pair) = 0 then 'PENDING'
+           when (select count(*) from global_pair where SNAPSHOT_HASH = NARRATIVE_HASH) = 1 then 'PASS'
+           else 'FAIL'
+       end as RESULT,
+       (select SNAPSHOT_HASH from global_pair limit 1) as SNAPSHOT_HASH,
+       (select NARRATIVE_HASH from global_pair limit 1) as NARRATIVE_HASH;

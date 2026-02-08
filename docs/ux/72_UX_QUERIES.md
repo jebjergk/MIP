@@ -405,16 +405,27 @@ limit 1;
 
 ## Daily Intelligence Digest (GET /digest/latest, GET /digest)
 
-AI-generated narrative layer synthesising deterministic MIP facts into a daily story. The digest is grounded in a deterministic snapshot (Layer 1) and an AI narrative (Layer 2) produced by Snowflake Cortex.
+AI-generated narrative layer synthesising deterministic MIP facts into a daily story. Supports two scopes:
+- **PORTFOLIO**: per-portfolio digest grounded in portfolio-specific snapshot.
+- **GLOBAL**: system-wide digest aggregating across all active portfolios.
 
-### GET /digest/latest?portfolio_id=:pid
+The digest is grounded in a deterministic snapshot (Layer 1) and an AI narrative (Layer 2) produced by Snowflake Cortex.
 
-Latest digest for a portfolio. Returns narrative + snapshot + links.
+### GET /digest/latest?portfolio_id=:pid&scope=:scope
 
-**Response shape:**
+Latest digest. Pass `scope=GLOBAL` for system-wide digest (no `portfolio_id` needed). Pass `portfolio_id` for a portfolio-scoped digest.
+
+**Query parameters:**
+| Parameter | Type | Description |
+|---|---|---|
+| `portfolio_id` | int (optional) | Portfolio ID for portfolio-scoped digest |
+| `scope` | string (optional) | `PORTFOLIO` or `GLOBAL`. If `scope=GLOBAL`, returns system-wide digest |
+
+**Response shape (portfolio scope):**
 ```json
 {
   "found": true,
+  "scope": "PORTFOLIO",
   "portfolio_id": 1,
   "as_of_ts": "2026-02-08T...",
   "run_id": "abc-123-...",
@@ -455,14 +466,53 @@ Latest digest for a portfolio. Returns narrative + snapshot + links.
 }
 ```
 
-### GET /digest?portfolio_id=:pid&as_of_ts=:ts
+**Response shape (global scope):**
+```json
+{
+  "found": true,
+  "scope": "GLOBAL",
+  "portfolio_id": null,
+  "as_of_ts": "2026-02-08T...",
+  "run_id": "abc-123-...",
+  "narrative": {
+    "headline": "MIP system: 2 active portfolios, 15 signals generated today...",
+    "what_changed": ["Trust distribution shifted: 8→9 trusted patterns...", "..."],
+    "what_matters": ["System at 60% capacity saturation..."],
+    "waiting_for": ["3 patterns approaching trust threshold..."],
+    "where_to_look": [{"label": "Signals Explorer", "route": "/signals"}, ...]
+  },
+  "snapshot": {
+    "system": {"active_portfolios": 2, "portfolio_summary": [...]},
+    "gates": {"ok_count": 2, "warn_count": 0, "blocked_count": 0, ...},
+    "capacity": {"total_max_positions": 10, "total_open": 6, "total_remaining": 4, ...},
+    "signals": {"total_signals": 15, "total_eligible": 8, ...},
+    "proposals": {"total_proposed": 4, "total_executed": 2, ...},
+    "trades": {"total_trades": 2, ...},
+    "training": {"trusted_count": 9, "watch_count": 5, ...},
+    "pipeline": {"latest_run_id": "...", ...},
+    "detectors": [{"detector": "SIGNAL_COUNT_CHANGE", "fired": true, ...}, ...]
+  },
+  "links": {
+    "signals": "/signals",
+    "training": "/training",
+    "digest": "/digest",
+    "brief": "/brief",
+    "market_timeline": "/market-timeline",
+    "suggestions": "/suggestions",
+    "runs": "/runs"
+  }
+}
+```
 
-Historical digest lookup with date filter. Same response shape as `/digest/latest`.
+### GET /digest?portfolio_id=:pid&as_of_ts=:ts&scope=:scope
 
-### Canonical SQL (latest digest)
+Historical digest lookup with date and scope filter. Same response shape as `/digest/latest`.
+
+### Canonical SQL (latest portfolio digest)
 
 ```sql
 select
+    s.SCOPE,
     s.PORTFOLIO_ID,
     s.AS_OF_TS,
     s.RUN_ID,
@@ -476,17 +526,48 @@ select
     n.CREATED_AT          as NARRATIVE_CREATED_AT
 from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
 left join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
-    on  n.PORTFOLIO_ID = s.PORTFOLIO_ID
-    and n.AS_OF_TS     = s.AS_OF_TS
-    and n.RUN_ID       = s.RUN_ID
-where s.PORTFOLIO_ID = :portfolio_id
+    on  n.SCOPE         = s.SCOPE
+    and n.PORTFOLIO_ID  = s.PORTFOLIO_ID
+    and n.AS_OF_TS      = s.AS_OF_TS
+    and n.RUN_ID        = s.RUN_ID
+where s.SCOPE = 'PORTFOLIO'
+  and s.PORTFOLIO_ID = :portfolio_id
 order by s.CREATED_AT desc
 limit 1;
 ```
 
-### Interest Detectors
+### Canonical SQL (latest global digest)
 
-The snapshot includes an array of interest detectors — deterministic checks that identify notable changes. Each has `{detector, fired, severity, detail}`:
+```sql
+select
+    s.SCOPE,
+    s.PORTFOLIO_ID,
+    s.AS_OF_TS,
+    s.RUN_ID,
+    s.SNAPSHOT_JSON,
+    s.SOURCE_FACTS_HASH,
+    s.CREATED_AT          as SNAPSHOT_CREATED_AT,
+    n.NARRATIVE_TEXT,
+    n.NARRATIVE_JSON,
+    n.MODEL_INFO,
+    n.AGENT_NAME,
+    n.CREATED_AT          as NARRATIVE_CREATED_AT
+from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
+left join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
+    on  n.SCOPE         = s.SCOPE
+    and n.PORTFOLIO_ID is null
+    and s.PORTFOLIO_ID is null
+    and n.AS_OF_TS      = s.AS_OF_TS
+    and n.RUN_ID        = s.RUN_ID
+where s.SCOPE = 'GLOBAL'
+  and s.PORTFOLIO_ID is null
+order by s.CREATED_AT desc
+limit 1;
+```
+
+### Interest Detectors — Portfolio Scope
+
+The portfolio snapshot includes an array of interest detectors — deterministic checks that identify notable changes. Each has `{detector, fired, severity, detail}`:
 
 | Detector | Severity | Description |
 |---|---|---|
@@ -500,5 +581,17 @@ The snapshot includes an array of interest detectors — deterministic checks th
 | `CONFLICT_BLOCKED` | MEDIUM | Strong signals blocked by portfolio rules |
 | `KPI_MOVEMENT` | MEDIUM | Significant return or drawdown change (>0.5%) |
 | `TRAINING_PROGRESS` | LOW | Trusted pattern count changed vs prior snapshot |
+
+### Interest Detectors — Global Scope
+
+| Detector | Severity | Description |
+|---|---|---|
+| `GATE_CHANGED_ANY` | HIGH | Any portfolio's gate status changed vs prior global snapshot |
+| `TRUST_DELTA` | MEDIUM | System-wide trusted pattern count changed |
+| `NO_NEW_BARS` | LOW | No new market bars detected or pipeline ran with skips |
+| `PROPOSAL_FUNNEL_GLOBAL` | LOW | Aggregate funnel: signals → eligible → proposed → executed (with biggest dropoff) |
+| `NOTHING_HAPPENED` | LOW | No signals, no proposals, no trades system-wide |
+| `CAPACITY_GLOBAL` | HIGH/MEDIUM | Total remaining slots across all portfolios (HIGH if 0) |
+| `SIGNAL_COUNT_CHANGE` | MEDIUM | Total signal count changed vs prior global snapshot |
 
 The AI narrative prioritises fired detectors by severity when composing bullets.

@@ -1,6 +1,7 @@
 -- daily_digest_smoke.sql
 -- Purpose: Smoke tests for Daily Intelligence Digest tables, view, and procedure.
--- Run after deploying 200/201/202 SQL files and running the pipeline at least once.
+-- Run after deploying 200/201/202/200b SQL files and running the pipeline at least once.
+-- Covers both PORTFOLIO and GLOBAL scopes.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -22,12 +23,17 @@ where TABLE_SCHEMA = 'AGENT_OUT'
   and TABLE_NAME = 'DAILY_DIGEST_NARRATIVE';
 
 -- =============================================================================
--- 2. View compiles (select 0 rows)
+-- 2. Views compile (select 0 rows)
 -- =============================================================================
 
 select 'SNAPSHOT_VIEW_COMPILES' as TEST,
        iff(count(*) >= 0, 'PASS', 'FAIL') as RESULT
 from MIP.MART.V_DAILY_DIGEST_SNAPSHOT
+where 1 = 0;
+
+select 'GLOBAL_SNAPSHOT_VIEW_COMPILES' as TEST,
+       iff(count(*) >= 0, 'PASS', 'FAIL') as RESULT
+from MIP.MART.V_DAILY_DIGEST_SNAPSHOT_GLOBAL
 where 1 = 0;
 
 -- =============================================================================
@@ -41,7 +47,25 @@ where PROCEDURE_SCHEMA = 'APP'
   and PROCEDURE_NAME = 'SP_AGENT_GENERATE_DAILY_DIGEST';
 
 -- =============================================================================
--- 4. At least one snapshot per active portfolio (after first pipeline run)
+-- 4. SCOPE column exists on both tables
+-- =============================================================================
+
+select 'SNAPSHOT_HAS_SCOPE' as TEST,
+       iff(count(*) = 1, 'PASS', 'FAIL') as RESULT
+from MIP.INFORMATION_SCHEMA.COLUMNS
+where TABLE_SCHEMA = 'AGENT_OUT'
+  and TABLE_NAME = 'DAILY_DIGEST_SNAPSHOT'
+  and COLUMN_NAME = 'SCOPE';
+
+select 'NARRATIVE_HAS_SCOPE' as TEST,
+       iff(count(*) = 1, 'PASS', 'FAIL') as RESULT
+from MIP.INFORMATION_SCHEMA.COLUMNS
+where TABLE_SCHEMA = 'AGENT_OUT'
+  and TABLE_NAME = 'DAILY_DIGEST_NARRATIVE'
+  and COLUMN_NAME = 'SCOPE';
+
+-- =============================================================================
+-- 5. At least one PORTFOLIO snapshot per active portfolio (after first run)
 -- =============================================================================
 
 select 'SNAPSHOT_PER_PORTFOLIO' as TEST,
@@ -50,12 +74,13 @@ select 'SNAPSHOT_PER_PORTFOLIO' as TEST,
 from MIP.APP.PORTFOLIO p
 left join MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
     on s.PORTFOLIO_ID = p.PORTFOLIO_ID
+   and s.SCOPE = 'PORTFOLIO'
 where p.STATUS = 'ACTIVE'
 group by p.PORTFOLIO_ID
 order by p.PORTFOLIO_ID;
 
 -- =============================================================================
--- 5. At least one narrative per active portfolio (after first pipeline run)
+-- 6. At least one PORTFOLIO narrative per active portfolio (after first run)
 -- =============================================================================
 
 select 'NARRATIVE_PER_PORTFOLIO' as TEST,
@@ -64,12 +89,31 @@ select 'NARRATIVE_PER_PORTFOLIO' as TEST,
 from MIP.APP.PORTFOLIO p
 left join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
     on n.PORTFOLIO_ID = p.PORTFOLIO_ID
+   and n.SCOPE = 'PORTFOLIO'
 where p.STATUS = 'ACTIVE'
 group by p.PORTFOLIO_ID
 order by p.PORTFOLIO_ID;
 
 -- =============================================================================
--- 6. CREATED_AT is never NULL (acceptance criteria)
+-- 7. At least one GLOBAL snapshot + narrative exists (after first run)
+-- =============================================================================
+
+select 'GLOBAL_SNAPSHOT_EXISTS' as TEST,
+       iff(count(*) >= 1, 'PASS', 'PENDING') as RESULT,
+       count(*) as ROW_COUNT
+from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
+where SCOPE = 'GLOBAL'
+  and PORTFOLIO_ID is null;
+
+select 'GLOBAL_NARRATIVE_EXISTS' as TEST,
+       iff(count(*) >= 1, 'PASS', 'PENDING') as RESULT,
+       count(*) as ROW_COUNT
+from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
+where SCOPE = 'GLOBAL'
+  and PORTFOLIO_ID is null;
+
+-- =============================================================================
+-- 8. CREATED_AT is never NULL (acceptance criteria)
 -- =============================================================================
 
 select 'SNAPSHOT_CREATED_AT_NOT_NULL' as TEST,
@@ -85,7 +129,7 @@ from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
 where CREATED_AT is null;
 
 -- =============================================================================
--- 7. SOURCE_FACTS_HASH is populated
+-- 9. SOURCE_FACTS_HASH is populated
 -- =============================================================================
 
 select 'SNAPSHOT_HASH_POPULATED' as TEST,
@@ -95,32 +139,32 @@ select 'SNAPSHOT_HASH_POPULATED' as TEST,
 from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT;
 
 -- =============================================================================
--- 8. Idempotency: no duplicate (PORTFOLIO_ID, AS_OF_TS, RUN_ID) rows
+-- 10. Idempotency: no duplicate (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID) rows
 -- =============================================================================
 
 select 'SNAPSHOT_IDEMPOTENCY' as TEST,
        iff(count(*) = 0, 'PASS', 'FAIL') as RESULT
 from (
-    select PORTFOLIO_ID, AS_OF_TS, RUN_ID, count(*) as cnt
+    select SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, count(*) as cnt
     from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
-    group by 1, 2, 3
+    group by 1, 2, 3, 4
     having cnt > 1
 );
 
 select 'NARRATIVE_IDEMPOTENCY' as TEST,
        iff(count(*) = 0, 'PASS', 'FAIL') as RESULT
 from (
-    select PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME, count(*) as cnt
+    select SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME, count(*) as cnt
     from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
-    group by 1, 2, 3, 4
+    group by 1, 2, 3, 4, 5
     having cnt > 1
 );
 
 -- =============================================================================
--- 9. Narrative has required JSON keys (headline, what_changed, what_matters, waiting_for)
+-- 11. PORTFOLIO narrative has required JSON keys
 -- =============================================================================
 
-select 'NARRATIVE_JSON_STRUCTURE' as TEST,
+select 'NARRATIVE_JSON_STRUCTURE_PORTFOLIO' as TEST,
        n.PORTFOLIO_ID,
        iff(
            n.NARRATIVE_JSON:headline is not null
@@ -131,13 +175,32 @@ select 'NARRATIVE_JSON_STRUCTURE' as TEST,
        ) as RESULT,
        n.NARRATIVE_JSON:headline::string as HEADLINE_PREVIEW
 from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
+where n.SCOPE = 'PORTFOLIO'
 qualify row_number() over (partition by n.PORTFOLIO_ID order by n.CREATED_AT desc) = 1;
 
 -- =============================================================================
--- 10. Snapshot JSON has required top-level keys
+-- 12. GLOBAL narrative has required JSON keys
 -- =============================================================================
 
-select 'SNAPSHOT_JSON_STRUCTURE' as TEST,
+select 'NARRATIVE_JSON_STRUCTURE_GLOBAL' as TEST,
+       iff(
+           n.NARRATIVE_JSON:headline is not null
+           and n.NARRATIVE_JSON:what_changed is not null
+           and n.NARRATIVE_JSON:what_matters is not null
+           and n.NARRATIVE_JSON:waiting_for is not null,
+           'PASS', 'FAIL'
+       ) as RESULT,
+       n.NARRATIVE_JSON:headline::string as HEADLINE_PREVIEW
+from MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
+where n.SCOPE = 'GLOBAL'
+  and n.PORTFOLIO_ID is null
+qualify row_number() over (order by n.CREATED_AT desc) = 1;
+
+-- =============================================================================
+-- 13. PORTFOLIO snapshot JSON has required top-level keys
+-- =============================================================================
+
+select 'SNAPSHOT_JSON_STRUCTURE_PORTFOLIO' as TEST,
        s.PORTFOLIO_ID,
        iff(
            s.SNAPSHOT_JSON:gate is not null
@@ -149,10 +212,32 @@ select 'SNAPSHOT_JSON_STRUCTURE' as TEST,
            'PASS', 'FAIL'
        ) as RESULT
 from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
+where s.SCOPE = 'PORTFOLIO'
 qualify row_number() over (partition by s.PORTFOLIO_ID order by s.CREATED_AT desc) = 1;
 
 -- =============================================================================
--- 11. Audit log has DAILY_DIGEST step entries
+-- 14. GLOBAL snapshot JSON has required top-level keys
+-- =============================================================================
+
+select 'SNAPSHOT_JSON_STRUCTURE_GLOBAL' as TEST,
+       iff(
+           s.SNAPSHOT_JSON:scope::string = 'GLOBAL'
+           and s.SNAPSHOT_JSON:system is not null
+           and s.SNAPSHOT_JSON:gates is not null
+           and s.SNAPSHOT_JSON:capacity is not null
+           and s.SNAPSHOT_JSON:signals is not null
+           and s.SNAPSHOT_JSON:proposals is not null
+           and s.SNAPSHOT_JSON:training is not null
+           and s.SNAPSHOT_JSON:detectors is not null,
+           'PASS', 'FAIL'
+       ) as RESULT
+from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
+where s.SCOPE = 'GLOBAL'
+  and s.PORTFOLIO_ID is null
+qualify row_number() over (order by s.CREATED_AT desc) = 1;
+
+-- =============================================================================
+-- 15. Audit log has DAILY_DIGEST step entries
 -- =============================================================================
 
 select 'AUDIT_LOG_HAS_DIGEST_STEP' as TEST,
@@ -162,10 +247,10 @@ from MIP.APP.MIP_AUDIT_LOG
 where EVENT_NAME = 'SP_AGENT_GENERATE_DAILY_DIGEST';
 
 -- =============================================================================
--- 12. Facts hash matches between snapshot and narrative (grounding check)
+-- 16. Facts hash matches between snapshot and narrative — PORTFOLIO scope
 -- =============================================================================
 
-select 'HASH_GROUNDING_CHECK' as TEST,
+select 'HASH_GROUNDING_PORTFOLIO' as TEST,
        s.PORTFOLIO_ID,
        iff(
            s.SOURCE_FACTS_HASH = n.SOURCE_FACTS_HASH,
@@ -175,7 +260,30 @@ select 'HASH_GROUNDING_CHECK' as TEST,
        n.SOURCE_FACTS_HASH as NARRATIVE_HASH
 from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
 join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
-    on  n.PORTFOLIO_ID = s.PORTFOLIO_ID
+    on  n.SCOPE        = s.SCOPE
+    and n.PORTFOLIO_ID = s.PORTFOLIO_ID
     and n.AS_OF_TS     = s.AS_OF_TS
     and n.RUN_ID       = s.RUN_ID
+where s.SCOPE = 'PORTFOLIO'
 qualify row_number() over (partition by s.PORTFOLIO_ID order by s.CREATED_AT desc) = 1;
+
+-- =============================================================================
+-- 17. Facts hash matches between snapshot and narrative — GLOBAL scope
+-- =============================================================================
+
+select 'HASH_GROUNDING_GLOBAL' as TEST,
+       iff(
+           s.SOURCE_FACTS_HASH = n.SOURCE_FACTS_HASH,
+           'PASS', 'FAIL'
+       ) as RESULT,
+       s.SOURCE_FACTS_HASH as SNAPSHOT_HASH,
+       n.SOURCE_FACTS_HASH as NARRATIVE_HASH
+from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT s
+join MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE n
+    on  n.SCOPE = s.SCOPE
+    and n.PORTFOLIO_ID is null
+    and s.PORTFOLIO_ID is null
+    and n.AS_OF_TS     = s.AS_OF_TS
+    and n.RUN_ID       = s.RUN_ID
+where s.SCOPE = 'GLOBAL'
+qualify row_number() over (order by s.CREATED_AT desc) = 1;

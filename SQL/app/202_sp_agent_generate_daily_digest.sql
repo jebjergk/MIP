@@ -1,16 +1,18 @@
 -- 202_sp_agent_generate_daily_digest.sql
--- Purpose: Generate the Daily Intelligence Digest per portfolio.
---   Step 1: Compute deterministic snapshot from V_DAILY_DIGEST_SNAPSHOT.
+-- Purpose: Generate the Daily Intelligence Digest per portfolio AND global scope.
+--   Step 1: Compute deterministic snapshot from V_DAILY_DIGEST_SNAPSHOT (per portfolio).
 --   Step 2: MERGE snapshot into DAILY_DIGEST_SNAPSHOT.
 --   Step 3: Call Snowflake Cortex COMPLETE() to produce narrative from snapshot + prior snapshot.
 --   Step 4: MERGE narrative into DAILY_DIGEST_NARRATIVE.
---   Step 5: Audit log event with counts and hashes.
+--   Step 5: Repeat for GLOBAL scope using V_DAILY_DIGEST_SNAPSHOT_GLOBAL.
+--   Step 6: Audit log event with counts and hashes.
 --
 -- Inputs:  :P_RUN_ID, :P_AS_OF_TS, :P_PORTFOLIO_ID (null = all active portfolios).
 -- Uses:    :P_RUN_ID everywhere; does NOT use signal_run_id.
 -- Cortex:  snowflake.cortex.complete('mistral-large2', prompt) for narrative.
 -- Fallback: If Cortex fails, writes deterministic fallback narrative from detectors.
 -- MERGE semantics: idempotent; reruns update the same keys (no duplicates).
+-- SCOPE: 'PORTFOLIO' for per-portfolio rows, 'GLOBAL' for system-wide row.
 --
 -- Note: Uses RESULTSET + FOR loop pattern per SNOWFLAKE_SQL_LIMITATIONS.md.
 
@@ -93,22 +95,24 @@ begin
         merge into MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT as target
         using (
             select
+                'PORTFOLIO'::varchar          as scope,
                 :v_portfolio_id::number       as portfolio_id,
                 :v_as_of_ts::timestamp_ntz    as as_of_ts,
                 :v_run_id::varchar            as run_id,
                 :v_snapshot::variant           as snapshot_json,
                 :v_facts_hash::varchar         as source_facts_hash
         ) as source
-        on  target.PORTFOLIO_ID = source.portfolio_id
+        on  target.SCOPE        = source.scope
+        and target.PORTFOLIO_ID = source.portfolio_id
         and target.AS_OF_TS     = source.as_of_ts
         and target.RUN_ID       = source.run_id
         when matched then update set
             target.SNAPSHOT_JSON     = source.snapshot_json,
             target.SOURCE_FACTS_HASH = source.source_facts_hash
         when not matched then insert (
-            PORTFOLIO_ID, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
+            SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
         ) values (
-            source.portfolio_id, source.as_of_ts, source.run_id,
+            source.scope, source.portfolio_id, source.as_of_ts, source.run_id,
             source.snapshot_json, source.source_facts_hash, current_timestamp()
         );
 
@@ -119,7 +123,8 @@ begin
             v_prior_snapshot := (
                 select SNAPSHOT_JSON
                 from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
-                where PORTFOLIO_ID = :v_portfolio_id
+                where SCOPE = 'PORTFOLIO'
+                  and PORTFOLIO_ID = :v_portfolio_id
                   and (AS_OF_TS < :v_as_of_ts or (AS_OF_TS = :v_as_of_ts and RUN_ID != :v_run_id))
                 order by AS_OF_TS desc
                 limit 1
@@ -168,7 +173,7 @@ Rules:
 - waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching.
 - where_to_look: 2-4 links. Valid routes: /signals, /training, /portfolios/' || :v_portfolio_id::string || ', /brief, /market-timeline, /suggestions
 - Every number you mention MUST appear in the snapshot data.
-- Return ONLY the JSON object, no markdown fences, no explanation.';
+- Return ONLY the raw JSON object. Do NOT wrap it in ```json or ``` or any markdown. Start your response with { and end with }.';
 
         begin
             v_narrative_text := (
@@ -197,11 +202,24 @@ Rules:
 
         -- Step 5: Parse narrative or build deterministic fallback
         if (:v_cortex_succeeded and :v_narrative_text is not null) then
+            -- Strip markdown code fences that Cortex sometimes wraps around JSON
+            -- Handles: ```json\n{...}\n``` and ```\n{...}\n```
+            v_narrative_text := trim(:v_narrative_text);
+            if (left(:v_narrative_text, 7) = '```json') then
+                v_narrative_text := trim(substr(:v_narrative_text, 8));
+            elseif (left(:v_narrative_text, 3) = '```') then
+                v_narrative_text := trim(substr(:v_narrative_text, 4));
+            end if;
+            if (right(:v_narrative_text, 3) = '```') then
+                v_narrative_text := trim(substr(:v_narrative_text, 1, length(:v_narrative_text) - 3));
+            end if;
+            v_narrative_text := trim(:v_narrative_text);
+
             begin
                 v_narrative_json := parse_json(:v_narrative_text);
             exception
                 when other then
-                    -- Cortex returned non-JSON; wrap as plain text
+                    -- Cortex returned non-JSON even after stripping; wrap as plain text
                     v_narrative_json := object_construct(
                         'headline', 'Daily digest generated but could not parse structured response.',
                         'what_changed', array_construct(:v_narrative_text),
@@ -274,6 +292,7 @@ Rules:
         merge into MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE as target
         using (
             select
+                'PORTFOLIO'::varchar             as scope,
                 :v_portfolio_id::number          as portfolio_id,
                 :v_as_of_ts::timestamp_ntz       as as_of_ts,
                 :v_run_id::varchar               as run_id,
@@ -283,7 +302,8 @@ Rules:
                 :v_model_name::varchar            as model_info,
                 :v_facts_hash::varchar            as source_facts_hash
         ) as source
-        on  target.PORTFOLIO_ID = source.portfolio_id
+        on  target.SCOPE        = source.scope
+        and target.PORTFOLIO_ID = source.portfolio_id
         and target.AS_OF_TS     = source.as_of_ts
         and target.RUN_ID       = source.run_id
         and target.AGENT_NAME   = source.agent_name
@@ -293,10 +313,10 @@ Rules:
             target.MODEL_INFO       = source.model_info,
             target.SOURCE_FACTS_HASH = source.source_facts_hash
         when not matched then insert (
-            PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME,
+            SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME,
             NARRATIVE_TEXT, NARRATIVE_JSON, MODEL_INFO, SOURCE_FACTS_HASH, CREATED_AT
         ) values (
-            source.portfolio_id, source.as_of_ts, source.run_id, source.agent_name,
+            source.scope, source.portfolio_id, source.as_of_ts, source.run_id, source.agent_name,
             source.narrative_text, source.narrative_json, source.model_info,
             source.source_facts_hash, current_timestamp()
         );
@@ -310,6 +330,276 @@ Rules:
             'model_info', :v_model_name
         ));
     end for;
+
+    -- ════════════════════════════════════════════════════════════
+    -- GLOBAL SCOPE: system-wide snapshot + narrative
+    -- ════════════════════════════════════════════════════════════
+    begin
+        -- Global snapshot from the global view
+        v_snapshot := (
+            select SNAPSHOT_JSON
+            from MIP.MART.V_DAILY_DIGEST_SNAPSHOT_GLOBAL
+            limit 1
+        );
+        v_facts_hash := (select sha2(to_varchar(:v_snapshot), 256));
+
+        -- MERGE global snapshot
+        merge into MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT as target
+        using (
+            select
+                'GLOBAL'::varchar             as scope,
+                null::number                  as portfolio_id,
+                :v_as_of_ts::timestamp_ntz    as as_of_ts,
+                :v_run_id::varchar            as run_id,
+                :v_snapshot::variant           as snapshot_json,
+                :v_facts_hash::varchar         as source_facts_hash
+        ) as source
+        on  target.SCOPE        = source.scope
+        and target.PORTFOLIO_ID is null
+        and source.portfolio_id is null
+        and target.AS_OF_TS     = source.as_of_ts
+        and target.RUN_ID       = source.run_id
+        when matched then update set
+            target.SNAPSHOT_JSON     = source.snapshot_json,
+            target.SOURCE_FACTS_HASH = source.source_facts_hash
+        when not matched then insert (
+            SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
+        ) values (
+            source.scope, null, source.as_of_ts, source.run_id,
+            source.snapshot_json, source.source_facts_hash, current_timestamp()
+        );
+
+        v_snapshot_count := :v_snapshot_count + 1;
+
+        -- Get prior global snapshot for context
+        begin
+            v_prior_snapshot := (
+                select SNAPSHOT_JSON
+                from MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
+                where SCOPE = 'GLOBAL'
+                  and PORTFOLIO_ID is null
+                  and (AS_OF_TS < :v_as_of_ts or (AS_OF_TS = :v_as_of_ts and RUN_ID != :v_run_id))
+                order by AS_OF_TS desc
+                limit 1
+            );
+        exception
+            when other then
+                v_prior_snapshot := null;
+        end;
+
+        -- Fired detectors for global
+        v_fired_detectors := (
+            select array_agg(value)
+            from table(flatten(input => :v_snapshot:detectors))
+            where value:fired::boolean = true
+        );
+        v_fired_detectors := coalesce(:v_fired_detectors, array_construct());
+
+        -- Build global Cortex prompt
+        v_cortex_prompt :=
+'You are a system-wide intelligence analyst for MIP (Market Intelligence Platform). ' ||
+'You write concise, fact-grounded daily digests covering ALL portfolios and the entire signal/training universe. ' ||
+'You MUST only reference numbers and facts present in the snapshot data below. ' ||
+'Do NOT invent facts, propose trades, or suggest parameter changes. ' ||
+'
+CURRENT GLOBAL SNAPSHOT:
+' || to_varchar(:v_snapshot) || '
+
+PRIOR GLOBAL SNAPSHOT:
+' || coalesce(to_varchar(:v_prior_snapshot), 'No prior snapshot available (first run).') || '
+
+FIRED INTEREST DETECTORS (prioritise these):
+' || to_varchar(:v_fired_detectors) || '
+
+Produce a JSON object with exactly these keys:
+{
+  "headline": "One sentence summary of the system-wide state today",
+  "what_changed": ["bullet 1", "bullet 2", ...],
+  "what_matters": ["bullet 1", "bullet 2", ...],
+  "waiting_for": ["bullet 1", "bullet 2", ...],
+  "where_to_look": [{"label": "page name", "route": "/path"}, ...]
+}
+
+Rules:
+- headline: 1 sentence, reference concrete numbers from snapshot. This is a GLOBAL digest covering all portfolios.
+- what_changed: 3-5 bullets about system-wide changes since prior snapshot. Mention portfolio names when relevant.
+- what_matters: 2-4 bullets about the most important current system-wide facts.
+- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching.
+- where_to_look: 2-4 links. Valid routes: /signals, /training, /digest, /brief, /market-timeline, /suggestions, /portfolios
+- Every number you mention MUST appear in the snapshot data.
+- Return ONLY the raw JSON object. Do NOT wrap it in ```json or ``` or any markdown. Start your response with { and end with }.';
+
+        v_model_name := 'mistral-large2';
+        v_cortex_succeeded := false;
+
+        begin
+            v_narrative_text := (
+                select snowflake.cortex.complete(:v_model_name, :v_cortex_prompt)
+            );
+            v_cortex_succeeded := true;
+        exception
+            when other then
+                v_cortex_succeeded := false;
+                call MIP.APP.SP_LOG_EVENT(
+                    'AGENT',
+                    'SP_AGENT_GENERATE_DAILY_DIGEST',
+                    'WARN_CORTEX_FAILED_GLOBAL',
+                    null,
+                    object_construct(
+                        'scope', 'GLOBAL',
+                        'run_id', :v_run_id,
+                        'error', :sqlerrm
+                    ),
+                    :sqlerrm,
+                    :v_run_id,
+                    null
+                );
+        end;
+
+        -- Parse or fallback (same logic as portfolio)
+        if (:v_cortex_succeeded and :v_narrative_text is not null) then
+            v_narrative_text := trim(:v_narrative_text);
+            if (left(:v_narrative_text, 7) = '```json') then
+                v_narrative_text := trim(substr(:v_narrative_text, 8));
+            elseif (left(:v_narrative_text, 3) = '```') then
+                v_narrative_text := trim(substr(:v_narrative_text, 4));
+            end if;
+            if (right(:v_narrative_text, 3) = '```') then
+                v_narrative_text := trim(substr(:v_narrative_text, 1, length(:v_narrative_text) - 3));
+            end if;
+            v_narrative_text := trim(:v_narrative_text);
+
+            begin
+                v_narrative_json := parse_json(:v_narrative_text);
+            exception
+                when other then
+                    v_narrative_json := object_construct(
+                        'headline', 'Global digest generated but could not parse structured response.',
+                        'what_changed', array_construct(:v_narrative_text),
+                        'what_matters', array_construct(),
+                        'waiting_for', array_construct(),
+                        'where_to_look', array_construct()
+                    );
+            end;
+        else
+            -- Deterministic fallback for global scope
+            v_fallback_bullets := array_construct();
+
+            v_fallback_bullets := array_append(:v_fallback_bullets,
+                'Active portfolios: ' || coalesce(:v_snapshot:system:active_portfolios::string, '0')
+            );
+            v_fallback_bullets := array_append(:v_fallback_bullets,
+                'Gate status: ' || coalesce(:v_snapshot:gates:ok_count::string, '0') || ' OK, ' ||
+                coalesce(:v_snapshot:gates:warn_count::string, '0') || ' WARN, ' ||
+                coalesce(:v_snapshot:gates:blocked_count::string, '0') || ' blocked'
+            );
+            v_fallback_bullets := array_append(:v_fallback_bullets,
+                'Signals today: ' || coalesce(:v_snapshot:signals:total_signals::string, '0') ||
+                ' total, ' || coalesce(:v_snapshot:signals:total_eligible::string, '0') || ' eligible'
+            );
+            v_fallback_bullets := array_append(:v_fallback_bullets,
+                'Proposals: ' || coalesce(:v_snapshot:proposals:total_proposed::string, '0') ||
+                ' proposed, ' || coalesce(:v_snapshot:proposals:total_executed::string, '0') ||
+                ' executed, ' || coalesce(:v_snapshot:proposals:total_rejected::string, '0') || ' rejected'
+            );
+            v_fallback_bullets := array_append(:v_fallback_bullets,
+                'Training: ' || coalesce(:v_snapshot:training:trusted_count::string, '0') ||
+                ' trusted / ' || coalesce(:v_snapshot:training:watch_count::string, '0') ||
+                ' watch / ' || coalesce(:v_snapshot:training:untrusted_count::string, '0') || ' untrusted'
+            );
+
+            v_narrative_text := 'No AI narrative available; showing deterministic summary.';
+            v_narrative_json := object_construct(
+                'headline', 'Global digest — ' ||
+                    coalesce(:v_snapshot:system:active_portfolios::string, '0') || ' active portfolios, ' ||
+                    coalesce(:v_snapshot:signals:total_signals::string, '0') || ' signals today',
+                'what_changed', :v_fallback_bullets,
+                'what_matters', array_construct(
+                    'Total open positions: ' || coalesce(:v_snapshot:capacity:total_open::string, '0') ||
+                    ' / ' || coalesce(:v_snapshot:capacity:total_max_positions::string, '?') ||
+                    ' (' || coalesce(:v_snapshot:capacity:total_remaining::string, '?') || ' remaining)',
+                    'System saturation: ' || coalesce(:v_snapshot:capacity:saturation_pct::string, '0') || '%'
+                ),
+                'waiting_for', array_construct(
+                    'Next pipeline run for fresh signals',
+                    coalesce(:v_snapshot:training:watch_count::string, '0') || ' patterns in WATCH status approaching trust threshold'
+                ),
+                'where_to_look', array_construct(
+                    object_construct('label', 'Signals Explorer', 'route', '/signals'),
+                    object_construct('label', 'Training Status', 'route', '/training'),
+                    object_construct('label', 'Portfolio Digests', 'route', '/digest')
+                )
+            );
+            v_model_name := 'DETERMINISTIC_FALLBACK';
+        end if;
+
+        -- MERGE global narrative
+        merge into MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE as target
+        using (
+            select
+                'GLOBAL'::varchar                as scope,
+                null::number                     as portfolio_id,
+                :v_as_of_ts::timestamp_ntz       as as_of_ts,
+                :v_run_id::varchar               as run_id,
+                :v_agent_name::varchar           as agent_name,
+                :v_narrative_text::string         as narrative_text,
+                :v_narrative_json::variant        as narrative_json,
+                :v_model_name::varchar            as model_info,
+                :v_facts_hash::varchar            as source_facts_hash
+        ) as source
+        on  target.SCOPE        = source.scope
+        and target.PORTFOLIO_ID is null
+        and source.portfolio_id is null
+        and target.AS_OF_TS     = source.as_of_ts
+        and target.RUN_ID       = source.run_id
+        and target.AGENT_NAME   = source.agent_name
+        when matched then update set
+            target.NARRATIVE_TEXT    = source.narrative_text,
+            target.NARRATIVE_JSON   = source.narrative_json,
+            target.MODEL_INFO       = source.model_info,
+            target.SOURCE_FACTS_HASH = source.source_facts_hash
+        when not matched then insert (
+            SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME,
+            NARRATIVE_TEXT, NARRATIVE_JSON, MODEL_INFO, SOURCE_FACTS_HASH, CREATED_AT
+        ) values (
+            source.scope, null, source.as_of_ts, source.run_id, source.agent_name,
+            source.narrative_text, source.narrative_json, source.model_info,
+            source.source_facts_hash, current_timestamp()
+        );
+
+        v_narrative_count := :v_narrative_count + 1;
+
+        v_results := array_append(:v_results, object_construct(
+            'scope', 'GLOBAL',
+            'portfolio_id', null,
+            'facts_hash', :v_facts_hash,
+            'cortex_succeeded', :v_cortex_succeeded,
+            'model_info', :v_model_name
+        ));
+    exception
+        when other then
+            -- Global digest failure is non-fatal; log and continue
+            call MIP.APP.SP_LOG_EVENT(
+                'AGENT',
+                'SP_AGENT_GENERATE_DAILY_DIGEST',
+                'WARN_GLOBAL_DIGEST_FAILED',
+                null,
+                object_construct(
+                    'scope', 'GLOBAL',
+                    'run_id', :v_run_id,
+                    'error', :sqlerrm
+                ),
+                :sqlerrm,
+                :v_run_id,
+                null
+            );
+            v_results := array_append(:v_results, object_construct(
+                'scope', 'GLOBAL',
+                'portfolio_id', null,
+                'cortex_succeeded', false,
+                'error', :sqlerrm
+            ));
+    end;
 
     -- Compute top-level Cortex summary for audit visibility
     let v_cortex_success_count number := 0;

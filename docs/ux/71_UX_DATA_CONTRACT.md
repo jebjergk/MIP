@@ -91,19 +91,22 @@ Data contract for the read-only UX: object names, schemas (column list and types
 
 ## MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT
 
-- **Grain**: One snapshot per (PORTFOLIO_ID, AS_OF_TS, RUN_ID).
-- **Columns**: SNAPSHOT_ID (number identity), PORTFOLIO_ID (number), AS_OF_TS (timestamp_ntz), RUN_ID (varchar 64), SNAPSHOT_JSON (variant), SOURCE_FACTS_HASH (varchar 64), CREATED_AT (timestamp_ntz default current_timestamp()).
-- **Source**: `MIP/SQL/app/200_agent_out_daily_digest_snapshot.sql`.
-- **MERGE key**: (PORTFOLIO_ID, AS_OF_TS, RUN_ID) — idempotent; reruns update same row.
-- **SNAPSHOT_JSON top-level keys**: timestamps, gate, capacity, pipeline, signals, proposals, trades, training, kpis, exposure, portfolio_meta, detectors, prior_snapshot_ts.
-- **Detectors**: Array of `{detector, fired, severity, detail}` objects. Detectors: GATE_CHANGED, HEALTH_CHANGED, TRUST_CHANGED, NEAR_MISS, PROPOSAL_FUNNEL, NOTHING_HAPPENED, CAPACITY_STATE, CONFLICT_BLOCKED, KPI_MOVEMENT, TRAINING_PROGRESS.
+- **Grain**: One snapshot per (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID).
+- **Columns**: SNAPSHOT_ID (number identity), SCOPE (varchar 16 default 'PORTFOLIO'), PORTFOLIO_ID (number, nullable — NULL for GLOBAL), AS_OF_TS (timestamp_ntz), RUN_ID (varchar 64), SNAPSHOT_JSON (variant), SOURCE_FACTS_HASH (varchar 64), CREATED_AT (timestamp_ntz default current_timestamp()).
+- **Source**: `MIP/SQL/app/200_agent_out_daily_digest_snapshot.sql`, migration `200b_alter_digest_add_scope.sql`.
+- **MERGE key**: (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID) — idempotent; reruns update same row.
+- **SCOPE values**: `PORTFOLIO` (per-portfolio digest), `GLOBAL` (system-wide digest with PORTFOLIO_ID = NULL).
+- **PORTFOLIO SNAPSHOT_JSON top-level keys**: timestamps, gate, capacity, pipeline, signals, proposals, trades, training, kpis, exposure, portfolio_meta, detectors, prior_snapshot_ts.
+- **GLOBAL SNAPSHOT_JSON top-level keys**: scope, timestamps, system, gates, capacity, pipeline, signals, proposals, trades, training, detectors, prior_snapshot_ts.
+- **Portfolio detectors**: GATE_CHANGED, HEALTH_CHANGED, TRUST_CHANGED, NEAR_MISS, PROPOSAL_FUNNEL, NOTHING_HAPPENED, CAPACITY_STATE, CONFLICT_BLOCKED, KPI_MOVEMENT, TRAINING_PROGRESS.
+- **Global detectors**: GATE_CHANGED_ANY, TRUST_DELTA, NO_NEW_BARS, PROPOSAL_FUNNEL_GLOBAL, NOTHING_HAPPENED, CAPACITY_GLOBAL, SIGNAL_COUNT_CHANGE.
 
 ## MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE
 
-- **Grain**: One narrative per (PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME).
-- **Columns**: NARRATIVE_ID (number identity), PORTFOLIO_ID (number), AS_OF_TS (timestamp_ntz), RUN_ID (varchar 64), AGENT_NAME (varchar 128 default 'DAILY_DIGEST'), NARRATIVE_TEXT (string), NARRATIVE_JSON (variant), MODEL_INFO (varchar 256), SOURCE_FACTS_HASH (varchar 64), CREATED_AT (timestamp_ntz default current_timestamp()).
-- **Source**: `MIP/SQL/app/201_agent_out_daily_digest_narrative.sql`.
-- **MERGE key**: (PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME) — idempotent.
+- **Grain**: One narrative per (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME).
+- **Columns**: NARRATIVE_ID (number identity), SCOPE (varchar 16 default 'PORTFOLIO'), PORTFOLIO_ID (number, nullable — NULL for GLOBAL), AS_OF_TS (timestamp_ntz), RUN_ID (varchar 64), AGENT_NAME (varchar 128 default 'DAILY_DIGEST'), NARRATIVE_TEXT (string), NARRATIVE_JSON (variant), MODEL_INFO (varchar 256), SOURCE_FACTS_HASH (varchar 64), CREATED_AT (timestamp_ntz default current_timestamp()).
+- **Source**: `MIP/SQL/app/201_agent_out_daily_digest_narrative.sql`, migration `200b_alter_digest_add_scope.sql`.
+- **MERGE key**: (SCOPE, PORTFOLIO_ID, AS_OF_TS, RUN_ID, AGENT_NAME) — idempotent.
 - **NARRATIVE_JSON keys**: headline (string), what_changed (array), what_matters (array), waiting_for (array), where_to_look (array of {label, route}).
 - **MODEL_INFO**: Cortex model name (e.g. 'mistral-large2') or 'DETERMINISTIC_FALLBACK' if Cortex was unavailable.
 - **SOURCE_FACTS_HASH**: Must match the corresponding snapshot's hash — proves narrative is grounded in deterministic facts.
@@ -114,6 +117,14 @@ Data contract for the read-only UX: object names, schemas (column list and types
 - **Output columns**: PORTFOLIO_ID (number), SNAPSHOT_JSON (variant).
 - **Source**: `MIP/SQL/views/mart/v_daily_digest_snapshot.sql`.
 - **Not persisted**: This is a view. The stored procedure materialises snapshots into `DAILY_DIGEST_SNAPSHOT`.
+
+## MIP.MART.V_DAILY_DIGEST_SNAPSHOT_GLOBAL
+
+- **Grain**: Exactly one row; system-wide deterministic snapshot aggregated across all active portfolios.
+- **Output columns**: SNAPSHOT_JSON (variant).
+- **Source**: `MIP/SQL/views/mart/v_daily_digest_snapshot_global.sql`.
+- **SNAPSHOT_JSON keys**: scope, timestamps, system (active_portfolios, portfolio_summary), gates (ok_count, warn_count, blocked_count, per_portfolio), capacity (total_max_positions, total_open, total_remaining, saturation_pct), pipeline, signals (total_signals, total_eligible, by_market_type, top_ready_symbols), proposals (total_proposed, total_rejected, total_executed), trades (total_trades, total_buys, total_sells, total_realized_pnl), training (trusted_count, watch_count, untrusted_count), detectors, prior_snapshot_ts.
+- **Not persisted**: This is a view. The stored procedure materialises global snapshots into `DAILY_DIGEST_SNAPSHOT` with SCOPE='GLOBAL'.
 
 ## MIP.AGENT_OUT.ORDER_PROPOSALS
 

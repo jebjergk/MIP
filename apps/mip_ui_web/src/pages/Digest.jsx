@@ -9,6 +9,8 @@ import './Digest.css'
 
 /* ── Helpers ─────────────────────────────────────────────────── */
 
+const GLOBAL_SCOPE = 'GLOBAL'
+
 function formatTs(ts) {
   if (!ts) return '—'
   try {
@@ -62,6 +64,15 @@ function AiBadge({ isAi, modelInfo }) {
   )
 }
 
+function ScopeBadge({ scope }) {
+  const isGlobal = scope === GLOBAL_SCOPE
+  return (
+    <span className={`digest-scope-badge ${isGlobal ? 'digest-scope-badge--global' : 'digest-scope-badge--portfolio'}`}>
+      {isGlobal ? 'System-wide' : 'Portfolio'}
+    </span>
+  )
+}
+
 function DigestSection({ title, icon, bullets, variant }) {
   if (!bullets || bullets.length === 0) return null
   return (
@@ -101,6 +112,7 @@ function DrillDownCards({ links, whereToLook }) {
       { key: 'brief', label: 'Morning Brief' },
       { key: 'market_timeline', label: 'Market Timeline' },
       { key: 'runs', label: 'Audit Log' },
+      { key: 'digest', label: 'Portfolio Digests' },
     ]
     standardLinks.forEach(({ key, label }) => {
       if (links[key] && !allLinks.find((l) => l.to === links[key])) {
@@ -169,37 +181,41 @@ function SnapshotFacts({ snapshot }) {
 export default function Digest() {
   const { portfolioId: routePortfolioId } = useParams()
   const { portfolios, defaultPortfolioId, loading: portfoliosLoading } = usePortfolios()
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState(
-    routePortfolioId ? Number(routePortfolioId) : null
+
+  // Selection state: 'GLOBAL' or a numeric portfolio ID
+  // Default to GLOBAL on /digest route; portfolio on /portfolios/:id/digest
+  const [selection, setSelection] = useState(
+    routePortfolioId ? String(routePortfolioId) : GLOBAL_SCOPE
   )
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // Default to context's defaultPortfolioId when ready
-  useEffect(() => {
-    if (portfoliosLoading || selectedPortfolioId != null) return
-    if (defaultPortfolioId != null) {
-      setSelectedPortfolioId(defaultPortfolioId)
-    }
-  }, [defaultPortfolioId, portfoliosLoading, selectedPortfolioId])
-
-  // Override from route param
+  // Override from route param (e.g. /portfolios/1/digest)
   useEffect(() => {
     if (routePortfolioId) {
-      setSelectedPortfolioId(Number(routePortfolioId))
+      setSelection(String(routePortfolioId))
     }
   }, [routePortfolioId])
 
-  // Fetch digest
+  // Fetch digest based on current selection
   useEffect(() => {
-    if (!selectedPortfolioId) return
+    if (portfoliosLoading) return
+    // If selection is still null or empty, default to GLOBAL
+    const sel = selection || GLOBAL_SCOPE
 
     let cancelled = false
     setLoading(true)
     setError(null)
 
-    fetch(`${API_BASE}/digest/latest?portfolio_id=${selectedPortfolioId}`)
+    let url
+    if (sel === GLOBAL_SCOPE) {
+      url = `${API_BASE}/digest/latest?scope=GLOBAL`
+    } else {
+      url = `${API_BASE}/digest/latest?portfolio_id=${sel}`
+    }
+
+    fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
@@ -218,12 +234,13 @@ export default function Digest() {
       })
 
     return () => { cancelled = true }
-  }, [selectedPortfolioId])
+  }, [selection, portfoliosLoading])
 
   /* ── Render ──────────────────────────────────────────────── */
 
   const narrative = data?.narrative || {}
   const snapshot = data?.snapshot || {}
+  const isGlobal = data?.scope === GLOBAL_SCOPE || selection === GLOBAL_SCOPE
 
   return (
     <div className="digest-page">
@@ -232,28 +249,27 @@ export default function Digest() {
         AI-generated narrative synthesising deterministic MIP facts into a daily story.
       </p>
 
-      {/* Portfolio selector */}
-      {portfolios && portfolios.length > 0 && (
-        <div className="digest-controls">
-          <label>
-            Portfolio:
-            <select
-              value={selectedPortfolioId || ''}
-              onChange={(e) => setSelectedPortfolioId(Number(e.target.value))}
-            >
-              {portfolios.map((p) => {
-                const id = p.PORTFOLIO_ID ?? p.portfolio_id
-                const name = p.NAME ?? p.name
-                return (
-                  <option key={id} value={id}>
-                    {name || `Portfolio ${id}`}
-                  </option>
-                )
-              })}
-            </select>
-          </label>
-        </div>
-      )}
+      {/* Scope + Portfolio selector */}
+      <div className="digest-controls">
+        <label>
+          Scope:
+          <select
+            value={selection}
+            onChange={(e) => setSelection(e.target.value)}
+          >
+            <option value={GLOBAL_SCOPE}>Global (System-wide)</option>
+            {portfolios && portfolios.map((p) => {
+              const id = p.PORTFOLIO_ID ?? p.portfolio_id
+              const name = p.NAME ?? p.name
+              return (
+                <option key={id} value={id}>
+                  {name || `Portfolio ${id}`}
+                </option>
+              )
+            })}
+          </select>
+        </label>
+      </div>
 
       {loading && <LoadingState message="Loading digest..." />}
       {error && <ErrorState message={error} />}
@@ -273,6 +289,7 @@ export default function Digest() {
               {narrative.headline || 'Daily digest available'}
             </h2>
             <div className="digest-meta">
+              <ScopeBadge scope={data.scope} />
               <span className="digest-meta-item">
                 As of {formatTs(data.as_of_ts)}
               </span>

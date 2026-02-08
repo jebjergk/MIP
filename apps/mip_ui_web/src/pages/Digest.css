@@ -75,6 +75,29 @@
   border: 1px solid #dee2e6;
 }
 
+/* Scope badge */
+.digest-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.digest-scope-badge--global {
+  background: linear-gradient(135deg, #d5f5e3 0%, #d5eef5 100%);
+  color: #0b5345;
+}
+
+.digest-scope-badge--portfolio {
+  background: #e8eaf6;
+  color: #283593;
+}
+
 /* Fallback banner */
 .digest-fallback-banner {
   display: flex;

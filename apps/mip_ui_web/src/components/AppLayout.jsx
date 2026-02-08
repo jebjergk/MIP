@@ -10,6 +10,7 @@ import './AppLayout.css'
 
 const SIDEBAR_WIDTH = 220
 const NAV_ITEMS = [
+  { to: '/cockpit', label: 'Cockpit' },
   { to: '/today', label: 'Today' },
   { to: '/home', label: 'Home' },
   { to: '/portfolios', label: 'Portfolio' },

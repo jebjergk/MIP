@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import Today from './pages/Today'
+import Cockpit from './pages/Cockpit'
 import Home from './pages/Home'
 import Portfolio from './pages/Portfolio'
 import AuditViewer from './pages/AuditViewer'
@@ -20,7 +21,8 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
-        <Route path="/" element={<Navigate to="/today" replace />} />
+        <Route path="/" element={<Navigate to="/cockpit" replace />} />
+        <Route path="/cockpit" element={<Cockpit />} />
         <Route path="/today" element={<Today />} />
         <Route path="/home" element={<Home />} />
         <Route path="/portfolios" element={<Portfolio />} />

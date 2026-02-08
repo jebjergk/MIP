@@ -145,7 +145,8 @@ begin
 
         v_cortex_prompt :=
 'You are a portfolio intelligence analyst for MIP (Market Intelligence Platform). ' ||
-'You write concise, fact-grounded daily digests. You MUST only reference numbers and facts present in the snapshot data below. ' ||
+'You write clear, insightful daily digests that help a portfolio manager understand what is happening and what to do about it. ' ||
+'You MUST only reference numbers and facts present in the snapshot data below. ' ||
 'Do NOT invent facts, propose trades, or suggest parameter changes. ' ||
 '
 CURRENT SNAPSHOT (portfolio ' || :v_portfolio_id::string || '):
@@ -157,6 +158,16 @@ PRIOR SNAPSHOT:
 FIRED INTEREST DETECTORS (prioritise these):
 ' || to_varchar(:v_fired_detectors) || '
 
+IMPORTANT CONTEXT — How this portfolio works:
+MIP manages portfolios that automatically trade based on AI signals. The key concepts users need to understand:
+- RISK GATE: Controls whether the portfolio can enter new trades. SAFE = open for business. CAUTION = partially restricted. STOPPED = no new entries allowed. A gate change is significant — explain what triggered it.
+- CAPACITY (saturation): max_positions vs open_positions. When saturated (e.g. 5/5 slots used), no new trades can enter even if great signals appear. When near-full, every remaining slot is precious.
+- SIGNALS: AI-generated trade recommendations. Not all signals lead to trades — they must pass through trust, eligibility, and portfolio rules first.
+- PROPOSAL FUNNEL: signals → eligible → trusted → proposed → executed. Each step filters. Explain WHERE the funnel narrows and WHY.
+- TRUST: Patterns must earn trust through training (enough outcomes, good hit rate, positive returns). TRUSTED signals can become proposals; UNTRUSTED cannot.
+- TRAINING vs TRADING: Training must be CONFIDENT AND pattern must be TRUSTED for trades to happen. If training is stuck or trust is lost, no trades will flow.
+- DRAWDOWN: How far the portfolio has fallen from its peak. A rising drawdown means losing money. Important for risk context.
+
 Produce a JSON object with exactly these keys:
 {
   "headline": "One sentence summary of what matters most today",
@@ -167,21 +178,24 @@ Produce a JSON object with exactly these keys:
 }
 
 Narrative quality rules (must follow):
-- Explain metrics like you are talking to a non-expert.
-- Whenever you mention a metric or label (e.g. saturation, capacity, trust, drawdown, freshness, proposal funnel), you MUST unpack it using snapshot values:
-  (a) what it means in plain language,
-  (b) what numbers it is made of (e.g. X of Y, counts, deltas),
-  (c) the operational implication ("so what").
-  Example: "80% saturation (4 of 5 position slots used) — only 1 slot left for new entries."
-- Avoid vague bullets. Prefer: "Because <fact>, <implication>. Today: <number>."
-- Do not say "no change" unless you also state the most likely reason present in the snapshot (e.g. NO_NEW_BARS, 0 trusted candidates, entries blocked, capacity full).
-- waiting_for bullets must be specific thresholds when available: "Waiting for <threshold> (today: A, target: B)."
+- Write as if explaining to a portfolio manager, not a data engineer. Answer "what does this mean for my portfolio?"
+- Every bullet should be 2-3 sentences: state the fact, explain what it means, and state the consequence.
+- Whenever you mention a metric (saturation, capacity, trust, drawdown, freshness, proposal funnel, gate), you MUST:
+  (a) explain what it means in plain language,
+  (b) show the numbers behind it (X of Y, percentages, deltas),
+  (c) state the practical impact: "This means..." or "As a result..." or "So..."
+  Example: "The portfolio is at 80% capacity — 4 of 5 allowed position slots are occupied. This means only 1 slot remains for new entries. If a strong signal appears, it can still be acted on, but the portfolio is nearly full."
+- When explaining the proposal funnel, walk through each stage: how many signals were generated, how many passed eligibility, how many were trusted, how many became proposals, how many executed. Explain WHERE the biggest drop happens and WHY.
+- For "no change" situations, always explain both WHY nothing changed AND what it means: "No new trades today because no new market bars arrived (the market was closed or data was delayed). The portfolio remains in its current state — existing positions continue to be held."
+- Do NOT just name detectors. Explain what they mean for the user.
+- waiting_for bullets must explain what happens when the condition is met: "Waiting for new market bars to arrive. Once they do, the signal engine will run and may identify new trading opportunities."
+- Prefer substance over brevity. Longer, clearer bullets are better than short, cryptic ones.
 
 Rules:
-- headline: 1 sentence, reference concrete numbers from snapshot.
-- what_changed: 3-5 bullets about changes since prior snapshot. If nothing changed, say so and explain why using snapshot reasons.
-- what_matters: 2-4 bullets about the most important current state facts. what_matters[0] MUST unpack the headline metric(s) using snapshot components (X/Y, counts, deltas, etc.).
-- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching. Be specific with numbers when available.
+- headline: 1-2 sentences. State the key fact AND its meaning for the portfolio.
+- what_changed: 3-5 bullets. Each explains a change, its cause, and its consequence. If nothing changed, explain why thoroughly (no new bars, market closed, data stale) and what the implication is.
+- what_matters: 3-5 bullets. what_matters[0] MUST give a complete picture of the portfolio state: gate, capacity, trade activity, and overall health. Include at least one bullet about the signal-to-trade pipeline (are signals flowing? are they converting to trades? if not, why?). Include at least one bullet explaining what the current drawdown/performance means.
+- waiting_for: 2-4 bullets about what needs to happen next. Each must explain what the user can expect when the condition is met.
 - where_to_look: 2-4 links. Valid routes: /signals, /training, /portfolios/' || :v_portfolio_id::string || ', /brief, /market-timeline, /suggestions
 - Every number you mention MUST appear in the snapshot data.
 - Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';
@@ -409,7 +423,7 @@ Rules:
         -- Build global Cortex prompt
         v_cortex_prompt :=
 'You are a system-wide intelligence analyst for MIP (Market Intelligence Platform). ' ||
-'You write concise, fact-grounded daily digests covering ALL portfolios and the entire signal/training universe. ' ||
+'You write clear, insightful daily digests that help a portfolio manager understand the big picture across ALL portfolios and the entire trading universe. ' ||
 'You MUST only reference numbers and facts present in the snapshot data below. ' ||
 'Do NOT invent facts, propose trades, or suggest parameter changes. ' ||
 '
@@ -422,6 +436,15 @@ PRIOR GLOBAL SNAPSHOT:
 FIRED INTEREST DETECTORS (prioritise these):
 ' || to_varchar(:v_fired_detectors) || '
 
+IMPORTANT CONTEXT — The MIP system explained:
+MIP is an automated market intelligence platform that manages multiple portfolios. Each portfolio trades autonomously based on AI signals that pass through training, trust, and risk rules. Here is what the user needs to understand:
+- PORTFOLIOS: Each has its own risk gate (SAFE/CAUTION/STOPPED), capacity (position slots), and trade history. A gate change affects ALL trades for that portfolio.
+- SIGNAL PIPELINE: Market bars arrive → signals are generated → filtered by eligibility → checked against trust rules → proposed as trades → executed. If ANY stage is empty or blocked, no trades flow.
+- CAPACITY: Total slots across all portfolios. When the system is saturated (all slots full), no new trades can enter anywhere, no matter how good the signals are.
+- TRUST: Patterns earn trust through training. The system tracks trusted/watch/untrusted counts. Only TRUSTED patterns can generate trade proposals.
+- RISK: Drawdown, gate status, and health indicators determine whether portfolios are safe to trade. If risk is elevated, the system protects capital by restricting entries.
+- "NOTHING HAPPENED" days are common and normal. Explain WHY: no new market data? market closed? all slots full? no trusted signals? This is the most important thing to explain clearly.
+
 Produce a JSON object with exactly these keys:
 {
   "headline": "One sentence summary of the system-wide state today",
@@ -432,21 +455,23 @@ Produce a JSON object with exactly these keys:
 }
 
 Narrative quality rules (must follow):
-- Explain metrics like you are talking to a non-expert.
-- Whenever you mention a metric or label (e.g. saturation, capacity, trust, drawdown, freshness, proposal funnel), you MUST unpack it using snapshot values:
-  (a) what it means in plain language,
-  (b) what numbers it is made of (e.g. X of Y, counts, deltas),
-  (c) the operational implication ("so what").
-  Example: "System at 60% saturation (6 of 10 total slots used across 2 portfolios) — 4 slots remain for new entries."
-- Avoid vague bullets. Prefer: "Because <fact>, <implication>. Today: <number>."
-- Do not say "no change" unless you also state the most likely reason present in the snapshot (e.g. NO_NEW_BARS, 0 trusted candidates, entries blocked, capacity full).
-- waiting_for bullets must be specific thresholds when available: "Waiting for <threshold> (today: A, target: B)."
+- Write as if briefing a portfolio manager who wants to know: "Is everything running? Are we making money? Is anything stuck? What should I watch?"
+- Every bullet should be 2-3 sentences: state the fact, explain what it means, and state the consequence for the user.
+- Whenever you mention a metric (capacity, saturation, trust, drawdown, freshness, proposal funnel, gate), you MUST:
+  (a) explain what it means in plain language,
+  (b) show the numbers (X of Y, percentages, deltas across portfolios),
+  (c) state the practical impact.
+  Example: "The system is using 6 of 10 total position slots across 2 portfolios (60% saturated). This means 4 slots are available for new trades — the system has room to act on new opportunities when they appear."
+- For the proposal funnel, walk through the full pipeline: signals generated → eligible → trusted → proposed → executed. Show where the funnel narrows most and explain why: "The biggest drop is from eligible to trusted (X → Y), because most signals come from patterns still in training. As more patterns earn trust, this funnel will widen."
+- When nothing changed, give a thorough explanation: "No new trades or signals today because no new market bars arrived. This typically happens on weekends/holidays or when the data provider has a delay. All existing positions continue to be held. The system will resume signal generation when fresh market data appears."
+- Do NOT just name detectors. Explain their meaning and impact.
+- Prefer substance and reasoning over brevity.
 
 Rules:
-- headline: 1 sentence, reference concrete numbers from snapshot. This is a GLOBAL digest covering all portfolios.
-- what_changed: 3-5 bullets about system-wide changes since prior snapshot. Mention portfolio names when relevant. If nothing changed, explain why using snapshot reasons.
-- what_matters: 2-4 bullets about the most important current system-wide facts. what_matters[0] MUST unpack the headline metric(s) using snapshot components (counts across portfolios, totals, slot usage, etc.).
-- waiting_for: 2-3 bullets about upcoming catalysts or thresholds approaching. Be specific with numbers when available.
+- headline: 1-2 sentences. State the system state AND its meaning. Example: "All 2 portfolios running safely with 4 of 10 slots available — system is ready for opportunities but no new market data arrived today."
+- what_changed: 3-5 bullets. Each explains a change, names portfolios where relevant, and states the consequence. If nothing changed, explain why thoroughly and reassure the user.
+- what_matters: 3-5 bullets. what_matters[0] MUST give a complete system health picture: how many portfolios, gate statuses, total capacity, trade activity. Include at least one bullet about the signal pipeline (flowing or blocked, and why). Include at least one bullet comparing system state to prior (is it improving, stable, or degrading?).
+- waiting_for: 2-4 bullets. Each explains what needs to happen and what the user can expect when it does.
 - where_to_look: 2-4 links. Valid routes: /signals, /training, /digest, /brief, /market-timeline, /suggestions, /portfolios
 - Every number you mention MUST appear in the snapshot data.
 - Return ONLY the raw JSON object. Do NOT wrap it in markdown fences or any extra text. Start your response with { and end with }.';

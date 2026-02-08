@@ -65,19 +65,16 @@ symbol_outcomes as (
     group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
 ),
 
--- ── Trust labels from policy view ───────────────────────────
--- Get best (most trusted) label per (symbol, market_type)
+-- ── Trust labels from policy view (one per pattern_id + market_type) ──
 trust_labels as (
     select
         v.MARKET_TYPE,
-        -- Extract symbol from pattern context (policy is per pattern_id)
-        pd.NAME as PATTERN_NAME,
         v.PATTERN_ID,
         v.TRUST_LABEL,
         v.RECOMMENDED_ACTION,
         v.REASON
     from MIP.MART.V_TRUSTED_SIGNAL_POLICY v
-    left join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = v.PATTERN_ID
+    qualify row_number() over (partition by v.PATTERN_ID, v.MARKET_TYPE order by v.AS_OF_TS desc) = 1
 ),
 
 -- ── Compute maturity per (symbol, market_type, pattern_id) ──
@@ -186,17 +183,10 @@ select
             'h20_count', coalesce(ss.H20_COUNT, 0),
             'h20_avg_return', round(coalesce(ss.H20_AVG_RETURN, 0), 6)
         ),
-        'trust', coalesce(
-            (select object_construct(
-                'trust_label', tl.TRUST_LABEL,
-                'recommended_action', tl.RECOMMENDED_ACTION,
-                'reason', tl.REASON
-            )
-            from trust_labels tl
-            where tl.MARKET_TYPE = ss.MARKET_TYPE
-              and tl.PATTERN_ID = ss.PATTERN_ID
-            limit 1),
-            object_construct('trust_label', 'UNKNOWN', 'recommended_action', 'UNKNOWN', 'reason', null)
+        'trust', object_construct(
+            'trust_label', coalesce(tl.TRUST_LABEL, 'UNKNOWN'),
+            'recommended_action', coalesce(tl.RECOMMENDED_ACTION, 'UNKNOWN'),
+            'reason', tl.REASON
         ),
         'journey_stage', case ss.MATURITY_STAGE
             when 'INSUFFICIENT' then 'Collecting evidence'
@@ -205,4 +195,7 @@ select
             when 'CONFIDENT' then 'Trade-eligible'
         end
     ) as SNAPSHOT_JSON
-from symbol_scored ss;
+from symbol_scored ss
+left join trust_labels tl
+    on tl.MARKET_TYPE = ss.MARKET_TYPE
+    and tl.PATTERN_ID = ss.PATTERN_ID;

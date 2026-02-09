@@ -18,6 +18,7 @@ const NAV_ITEMS = [
   { to: '/suggestions', label: 'Suggestions' },
   { to: '/signals', label: 'Signals' },
   { to: '/market-timeline', label: 'Market Timeline' },
+  { to: '/manage', label: 'Manage' },
   { to: '/debug', label: 'Debug' },
 ]
 

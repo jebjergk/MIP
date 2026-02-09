@@ -1,0 +1,582 @@
+/* PortfolioManagement.css — Portfolio & Profile Management page */
+
+/* ── Tab navigation ──────────────────────────────────────────── */
+.mgmt-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 1.5rem;
+}
+
+.mgmt-tab {
+  padding: 0.6rem 1.25rem;
+  border: none;
+  background: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #666;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.mgmt-tab:hover {
+  color: #333;
+}
+
+.mgmt-tab--active {
+  color: #0066cc;
+  border-bottom-color: #0066cc;
+  font-weight: 600;
+}
+
+/* ── Section headers ─────────────────────────────────────────── */
+.mgmt-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.mgmt-section-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* ── Cards / Panels ──────────────────────────────────────────── */
+.mgmt-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.25rem;
+  background: #fafafa;
+  margin-bottom: 1rem;
+}
+
+.mgmt-card h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* ── Tables ──────────────────────────────────────────────────── */
+.mgmt-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mgmt-table th,
+.mgmt-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 0.9rem;
+}
+
+.mgmt-table th {
+  background: #f5f5f5;
+  font-weight: 600;
+  color: #555;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.mgmt-table tr:hover td {
+  background: #f0f7ff;
+}
+
+/* ── Forms ────────────────────────────────────────────────────── */
+.mgmt-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.5rem;
+  max-width: 700px;
+}
+
+.mgmt-form-full {
+  grid-column: 1 / -1;
+}
+
+.mgmt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.mgmt-field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.mgmt-field input,
+.mgmt-field select,
+.mgmt-field textarea {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  background: white;
+  transition: border-color 0.15s;
+}
+
+.mgmt-field input:focus,
+.mgmt-field select:focus,
+.mgmt-field textarea:focus {
+  outline: none;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+}
+
+.mgmt-field textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.mgmt-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.mgmt-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mgmt-btn-primary {
+  background: #0066cc;
+  color: white;
+}
+
+.mgmt-btn-primary:hover:not(:disabled) {
+  background: #0055aa;
+}
+
+.mgmt-btn-success {
+  background: #198754;
+  color: white;
+}
+
+.mgmt-btn-success:hover:not(:disabled) {
+  background: #146c43;
+}
+
+.mgmt-btn-danger {
+  background: #dc3545;
+  color: white;
+}
+
+.mgmt-btn-danger:hover:not(:disabled) {
+  background: #bb2d3b;
+}
+
+.mgmt-btn-secondary {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.mgmt-btn-secondary:hover:not(:disabled) {
+  background: #d0d0d0;
+}
+
+.mgmt-btn-sm {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.mgmt-btn-group {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* ── Cash event panel ────────────────────────────────────────── */
+.mgmt-cash-panel {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: #f0f7ff;
+  border-radius: 8px;
+  border: 1px solid #c8ddf0;
+  margin-top: 0.75rem;
+}
+
+.mgmt-cash-panel .mgmt-field {
+  flex: 0 0 auto;
+}
+
+/* ── Crystallize section ──────────────────────────────────────── */
+.mgmt-crystallize-section {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.mgmt-crystallize-section summary {
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: #555;
+}
+
+.mgmt-crystallize-section summary:hover {
+  color: #333;
+}
+
+.mgmt-crystallize-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.5rem;
+  margin-top: 0.75rem;
+}
+
+/* ── Toggle switch ────────────────────────────────────────────── */
+.mgmt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mgmt-toggle input[type="checkbox"] {
+  width: 36px;
+  height: 20px;
+  appearance: none;
+  background: #ccc;
+  border-radius: 10px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.mgmt-toggle input[type="checkbox"]:checked {
+  background: #198754;
+}
+
+.mgmt-toggle input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+}
+
+.mgmt-toggle input[type="checkbox"]:checked::before {
+  transform: translateX(16px);
+}
+
+/* ── Safety badge ────────────────────────────────────────────── */
+.mgmt-safety-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.mgmt-safety-badge--safe {
+  background: #d4edda;
+  color: #155724;
+}
+
+.mgmt-safety-badge--busy {
+  background: #fff3cd;
+  color: #856404;
+}
+
+/* ── Modal/overlay ────────────────────────────────────────────── */
+.mgmt-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.mgmt-modal {
+  background: white;
+  border-radius: 10px;
+  padding: 1.5rem;
+  min-width: 500px;
+  max-width: 700px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.mgmt-modal h3 {
+  margin: 0 0 1rem 0;
+}
+
+/* ── Lifecycle Timeline ──────────────────────────────────────── */
+.mgmt-timeline {
+  position: relative;
+  padding-left: 2rem;
+  margin: 1rem 0;
+}
+
+.mgmt-timeline::before {
+  content: '';
+  position: absolute;
+  left: 0.6rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #d0d0d0;
+}
+
+.mgmt-timeline-event {
+  position: relative;
+  padding: 0.75rem 0 0.75rem 1rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.mgmt-timeline-event:last-child {
+  border-bottom: none;
+}
+
+.mgmt-timeline-dot {
+  position: absolute;
+  left: -1.65rem;
+  top: 1rem;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #999;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px #d0d0d0;
+}
+
+.mgmt-timeline-dot--create { background: #0066cc; }
+.mgmt-timeline-dot--deposit { background: #198754; }
+.mgmt-timeline-dot--withdraw { background: #dc3545; }
+.mgmt-timeline-dot--crystallize { background: #ff9800; }
+.mgmt-timeline-dot--profile_change { background: #6f42c1; }
+.mgmt-timeline-dot--episode_start { background: #0dcaf0; }
+.mgmt-timeline-dot--bust { background: #dc3545; }
+
+.mgmt-timeline-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.mgmt-timeline-type {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.mgmt-timeline-ts {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.mgmt-timeline-amount {
+  font-weight: 600;
+  margin-right: 0.5rem;
+}
+
+.mgmt-timeline-amount--positive { color: #198754; }
+.mgmt-timeline-amount--negative { color: #dc3545; }
+
+.mgmt-timeline-snapshots {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.mgmt-timeline-snapshots span {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.mgmt-timeline-notes {
+  font-size: 0.8rem;
+  color: #888;
+  margin-top: 0.2rem;
+  font-style: italic;
+}
+
+/* ── Charts section ──────────────────────────────────────────── */
+.mgmt-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.mgmt-chart-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.mgmt-chart-card h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: #555;
+  font-weight: 600;
+}
+
+/* ── Portfolio Selector ──────────────────────────────────────── */
+.mgmt-portfolio-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: #f5f5f5;
+  border-radius: 6px;
+}
+
+.mgmt-portfolio-selector label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.mgmt-portfolio-selector select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+/* ── Narrative ────────────────────────────────────────────────── */
+.mgmt-narrative-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1.5rem;
+  background: #fefefe;
+  line-height: 1.7;
+}
+
+.mgmt-narrative-headline {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #333;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 0.5rem;
+}
+
+.mgmt-narrative-text {
+  font-size: 0.95rem;
+  color: #444;
+  white-space: pre-wrap;
+}
+
+.mgmt-narrative-text p {
+  margin: 0 0 1rem 0;
+}
+
+.mgmt-narrative-moments {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #f5f5f5;
+  border-radius: 6px;
+}
+
+.mgmt-narrative-moments h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.mgmt-narrative-moments ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.mgmt-narrative-moments li {
+  font-size: 0.9rem;
+  color: #555;
+  margin-bottom: 0.25rem;
+}
+
+.mgmt-narrative-outlook {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #f0f7ff;
+  border-radius: 6px;
+  border-left: 3px solid #0066cc;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.mgmt-narrative-meta {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: #999;
+  display: flex;
+  gap: 1rem;
+}
+
+/* ── Status/Feedback ─────────────────────────────────────────── */
+.mgmt-success {
+  padding: 0.5rem 0.75rem;
+  background: #d4edda;
+  color: #155724;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.mgmt-error {
+  padding: 0.5rem 0.75rem;
+  background: #f8d7da;
+  color: #721c24;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.mgmt-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #666;
+  font-size: 0.9rem;
+  padding: 1rem;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .mgmt-form {
+    grid-template-columns: 1fr;
+  }
+  .mgmt-charts-grid {
+    grid-template-columns: 1fr;
+  }
+  .mgmt-crystallize-fields {
+    grid-template-columns: 1fr;
+  }
+}

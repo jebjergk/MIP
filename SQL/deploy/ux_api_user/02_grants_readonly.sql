@@ -68,3 +68,40 @@ grant select on view MIP.MART.V_BAR_INDEX to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_DAILY_DIGEST_SNAPSHOT_GLOBAL to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_GLOBAL to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL to role MIP_UI_API_ROLE;
+
+-- Portfolio Management (220/221): lifecycle events, narrative, views, stored procedures
+grant select on table MIP.APP.PORTFOLIO_LIFECYCLE_EVENT          to role MIP_UI_API_ROLE;
+grant select on table MIP.AGENT_OUT.PORTFOLIO_LIFECYCLE_NARRATIVE to role MIP_UI_API_ROLE;
+grant select on view  MIP.MART.V_PORTFOLIO_LIFECYCLE_TIMELINE    to role MIP_UI_API_ROLE;
+grant select on view  MIP.MART.V_PORTFOLIO_LIFECYCLE_SNAPSHOT    to role MIP_UI_API_ROLE;
+
+-- Write stored procedures (EXECUTE AS OWNER — API role only needs USAGE, no direct table writes)
+grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO(number, varchar, varchar, number, number, varchar)
+    to role MIP_UI_API_ROLE;
+grant usage on procedure MIP.APP.SP_PORTFOLIO_CASH_EVENT(number, varchar, number, varchar)
+    to role MIP_UI_API_ROLE;
+grant usage on procedure MIP.APP.SP_ATTACH_PROFILE(number, number)
+    to role MIP_UI_API_ROLE;
+grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO_PROFILE(number, varchar, number, number, number, varchar, number, boolean, number, varchar, number, number, varchar, varchar)
+    to role MIP_UI_API_ROLE;
+grant usage on procedure MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(number, varchar, timestamp_ntz)
+    to role MIP_UI_API_ROLE;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- FUTURE GRANTS: Auto-grant SELECT on all future tables/views in all MIP schemas
+-- Run once as MIP_ADMIN_ROLE or ACCOUNTADMIN. Covers everything created after this.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+use role MIP_ADMIN_ROLE;
+
+-- Schema: MIP.APP
+grant select on future tables in schema MIP.APP       to role MIP_UI_API_ROLE;
+grant select on future views  in schema MIP.APP       to role MIP_UI_API_ROLE;
+
+-- Schema: MIP.MART
+grant select on future tables in schema MIP.MART      to role MIP_UI_API_ROLE;
+grant select on future views  in schema MIP.MART      to role MIP_UI_API_ROLE;
+
+-- Schema: MIP.AGENT_OUT
+grant select on future tables in schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;
+grant select on future views  in schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;

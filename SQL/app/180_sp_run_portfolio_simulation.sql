@@ -243,15 +243,13 @@ begin
     -- LOAD EXISTING OPEN POSITIONS into TEMP_POSITIONS
     -- This ensures the simulation knows about agent-created positions.
     --
-    -- CRITICAL: BAR_INDEX drift protection.
-    -- V_BAR_INDEX computes BAR_INDEX via ROW_NUMBER(), which shifts
-    -- whenever bars are added/removed from MARKET_BARS. The stored
-    -- ENTRY_INDEX / HOLD_UNTIL_INDEX in PORTFOLIO_POSITIONS can therefore
-    -- become stale. To avoid silent breakage we:
-    --   1. Look up the CURRENT BAR_INDEX for the position's ENTRY_TS
-    --   2. Preserve the relative horizon (HOLD_UNTIL_INDEX - ENTRY_INDEX)
-    --   3. Compute current HOLD_UNTIL_INDEX from current ENTRY_INDEX + horizon
-    -- This anchors on ENTRY_TS (stable) instead of stored BAR_INDEX (volatile).
+    -- CRITICAL: BAR_INDEX drift protection + ENTRY_TS mismatch handling.
+    -- 1. V_BAR_INDEX computes BAR_INDEX via ROW_NUMBER(), which drifts when
+    --    bars are added/removed. Stored ENTRY_INDEX becomes stale.
+    -- 2. ENTRY_TS may be the pipeline execution timestamp (e.g. 21:31:10 or
+    --    even the next day for weekend runs), NOT the bar midnight timestamp.
+    -- Solution: find the latest bar ON OR BEFORE ENTRY_TS using <= + QUALIFY.
+    -- This handles both BAR_INDEX drift AND timestamp granularity mismatches.
     -- ============================================================
     insert into TEMP_POSITIONS (
         SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_PRICE,
@@ -272,8 +270,12 @@ begin
       on vb.SYMBOL = p.SYMBOL
      and vb.MARKET_TYPE = p.MARKET_TYPE
      and vb.INTERVAL_MINUTES = 1440
-     and vb.TS = p.ENTRY_TS
-    where p.PORTFOLIO_ID = :v_portfolio_id;
+     and vb.TS <= p.ENTRY_TS
+    where p.PORTFOLIO_ID = :v_portfolio_id
+    qualify row_number() over (
+        partition by p.PORTFOLIO_ID, p.SYMBOL, p.MARKET_TYPE, p.ENTRY_TS
+        order by vb.TS desc
+    ) = 1;
 
     -- Determine current cash balance. Priority:
     -- 1. Latest CASH_AFTER from PORTFOLIO_TRADES within the current episode
@@ -735,34 +737,51 @@ begin
     -- Include ALL positions for this portfolio (any RUN_ID) so equity
     -- reflects mark-to-market of agent-created positions too.
     --
-    -- CRITICAL: BAR_INDEX drift protection (same principle as TEMP_POSITIONS loading).
-    -- We anchor on ENTRY_TS (stable) to find the CURRENT BAR_INDEX for each position's
-    -- entry bar, then use the relative horizon (HOLD_UNTIL_INDEX - ENTRY_INDEX) to
-    -- compute the current hold-until bar index. This prevents stale stored indices
-    -- from silently producing zero equity.
+    -- CRITICAL: BAR_INDEX drift protection + ENTRY_TS mismatch handling.
+    -- Same approach as TEMP_POSITIONS loading:
+    --   1. Find entry bar via <= + QUALIFY (handles non-midnight ENTRY_TS)
+    --   2. Use relative horizon to compute current hold-until index
+    --   3. Expand to all bars between entry and hold-until
     create or replace temporary table TEMP_POSITION_DAYS as
+    with position_entry_bars as (
+        select
+            p.PORTFOLIO_ID,
+            p.SYMBOL,
+            p.MARKET_TYPE,
+            p.QUANTITY,
+            p.ENTRY_TS,
+            p.ENTRY_INDEX as STORED_ENTRY_INDEX,
+            p.HOLD_UNTIL_INDEX as STORED_HOLD_UNTIL_INDEX,
+            entry_vb.BAR_INDEX as CURRENT_ENTRY_INDEX,
+            entry_vb.BAR_INDEX + (p.HOLD_UNTIL_INDEX - p.ENTRY_INDEX) as CURRENT_HOLD_UNTIL_INDEX
+        from MIP.APP.PORTFOLIO_POSITIONS p
+        join MIP.MART.V_BAR_INDEX entry_vb
+          on entry_vb.SYMBOL = p.SYMBOL
+         and entry_vb.MARKET_TYPE = p.MARKET_TYPE
+         and entry_vb.INTERVAL_MINUTES = 1440
+         and entry_vb.TS <= p.ENTRY_TS
+        where p.PORTFOLIO_ID = :v_portfolio_id
+          and p.INTERVAL_MINUTES = 1440
+        qualify row_number() over (
+            partition by p.PORTFOLIO_ID, p.SYMBOL, p.MARKET_TYPE, p.ENTRY_TS
+            order by entry_vb.TS desc
+        ) = 1
+    )
     select
         vb.TS,
         vb.BAR_INDEX,
-        p.SYMBOL,
-        p.MARKET_TYPE,
-        p.QUANTITY,
+        peb.SYMBOL,
+        peb.MARKET_TYPE,
+        peb.QUANTITY,
         vb.CLOSE as CLOSE_PRICE
-    from MIP.APP.PORTFOLIO_POSITIONS p
-    join MIP.MART.V_BAR_INDEX entry_vb
-      on entry_vb.SYMBOL = p.SYMBOL
-     and entry_vb.MARKET_TYPE = p.MARKET_TYPE
-     and entry_vb.INTERVAL_MINUTES = 1440
-     and entry_vb.TS = p.ENTRY_TS
+    from position_entry_bars peb
     join MIP.MART.V_BAR_INDEX vb
-      on vb.SYMBOL = p.SYMBOL
-     and vb.MARKET_TYPE = p.MARKET_TYPE
+      on vb.SYMBOL = peb.SYMBOL
+     and vb.MARKET_TYPE = peb.MARKET_TYPE
      and vb.INTERVAL_MINUTES = 1440
-     and vb.BAR_INDEX between entry_vb.BAR_INDEX
-         and entry_vb.BAR_INDEX + (p.HOLD_UNTIL_INDEX - p.ENTRY_INDEX)
-    where p.PORTFOLIO_ID = :v_portfolio_id
-      and p.INTERVAL_MINUTES = 1440
-      and vb.TS between :v_effective_from_ts and :v_to_ts;
+     and vb.BAR_INDEX between peb.CURRENT_ENTRY_INDEX
+         and peb.CURRENT_HOLD_UNTIL_INDEX
+    where vb.TS between :v_effective_from_ts and :v_to_ts;
 
     select count(*)
       into v_position_days_expanded

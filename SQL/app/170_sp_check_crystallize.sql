@@ -218,6 +218,51 @@ begin
          where PORTFOLIO_ID = :v_portfolio_id;
     end if;
 
+    -- ── Lifecycle event: record CRYSTALLIZE (non-fatal) ──────────────────────
+    -- If PORTFOLIO_LIFECYCLE_EVENT table does not exist or insert fails,
+    -- crystallization still succeeds — this is purely additive audit trail.
+    begin
+        declare
+            v_lc_cum_deposited number(18,2) := 0;
+            v_lc_cum_withdrawn number(18,2) := 0;
+            v_lc_cum_pnl number(18,2) := 0;
+        begin
+            -- Get latest running totals
+            select CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN
+              into :v_lc_cum_deposited, :v_lc_cum_withdrawn
+              from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+             where PORTFOLIO_ID = :v_portfolio_id
+             order by EVENT_TS desc, EVENT_ID desc
+             limit 1;
+        exception when other then
+            v_lc_cum_deposited := :v_start_equity;
+            v_lc_cum_withdrawn := 0;
+        end;
+
+        -- Crystallize payout counts as a withdrawal
+        if (:v_distribution_amt > 0) then
+            v_lc_cum_withdrawn := :v_lc_cum_withdrawn + :v_distribution_amt;
+        end if;
+        v_lc_cum_pnl := :v_next_start_equity - (:v_lc_cum_deposited - :v_lc_cum_withdrawn);
+
+        insert into MIP.APP.PORTFOLIO_LIFECYCLE_EVENT (
+            PORTFOLIO_ID, EVENT_TS, EVENT_TYPE, AMOUNT,
+            CASH_BEFORE, CASH_AFTER, EQUITY_BEFORE, EQUITY_AFTER,
+            CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN, CUMULATIVE_PNL,
+            EPISODE_ID, PROFILE_ID, NOTES, CREATED_BY
+        ) values (
+            :v_portfolio_id, :v_ended_ts, 'CRYSTALLIZE', :v_distribution_amt,
+            :v_final_equity, :v_next_start_equity, :v_final_equity, :v_next_start_equity,
+            :v_lc_cum_deposited, :v_lc_cum_withdrawn, :v_lc_cum_pnl,
+            :v_episode_id, :v_profile_id,
+            'Profit target hit (' || to_varchar(:v_return_pct * 100, '999.99') || '%). '
+                || :v_crystallize_mode || ' — distributed $' || to_varchar(:v_distribution_amt, '999,999,999.00'),
+            current_user()
+        );
+    exception
+        when other then null;  -- lifecycle logging is non-fatal
+    end;
+
     return true;
 end;
 $$;

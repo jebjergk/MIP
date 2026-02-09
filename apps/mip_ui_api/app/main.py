@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest
+from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest, management
 
 app = FastAPI(
     title="MIP UI API",
-    description="Read-only API for MIP pipeline runs, portfolios, AI digests, and training status. No writes to Snowflake.",
+    description="API for MIP pipeline runs, portfolios, AI digests, training status, and portfolio management.",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -27,8 +27,9 @@ app.include_router(signals.router)
 app.include_router(market_timeline.router)
 app.include_router(digest.router)
 app.include_router(training_digest.router)
+app.include_router(management.router)
 
 
 @app.get("/")
 def root():
-    return {"service": "MIP UI API", "read_only": True}
+    return {"service": "MIP UI API"}

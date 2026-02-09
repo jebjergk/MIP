@@ -8,6 +8,7 @@ import Suggestions from './pages/Suggestions'
 import Signals from './pages/Signals'
 import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
+import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import AppLayout from './components/AppLayout'
 
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/suggestions" element={<Suggestions />} />
         <Route path="/signals" element={<Signals />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
+        <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/guide" element={<UserGuide />} />
         {/* Redirects for old routes */}

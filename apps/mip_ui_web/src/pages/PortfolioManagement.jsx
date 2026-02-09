@@ -88,9 +88,24 @@ export default function PortfolioManagement() {
       setNarrativeLoading(true)
       fetch(`${API_BASE}/manage/portfolios/${selectedPortfolioId}/narrative`)
         .then(r => r.ok ? r.json() : null)
-        .then(d => setNarrative(d))
-        .catch(() => setNarrative(null))
-        .finally(() => setNarrativeLoading(false))
+        .then(d => {
+          if (d && d.narrative) {
+            // Cached narrative exists, show it
+            setNarrative(d)
+            setNarrativeLoading(false)
+          } else {
+            // No cached narrative -- auto-generate
+            setNarrativeLoading(false)
+            setNarrativeGenerating(true)
+            fetch(`${API_BASE}/manage/portfolios/${selectedPortfolioId}/narrative`, { method: 'POST' })
+              .then(() => fetch(`${API_BASE}/manage/portfolios/${selectedPortfolioId}/narrative`))
+              .then(r => r.ok ? r.json() : null)
+              .then(d2 => setNarrative(d2))
+              .catch(() => setNarrative(null))
+              .finally(() => setNarrativeGenerating(false))
+          }
+        })
+        .catch(() => { setNarrative(null); setNarrativeLoading(false) })
     }
   }, [selectedPortfolioId, tab])
 
@@ -575,13 +590,15 @@ function StoryTab({ portfolios, selectedPortfolioId, onSelectPortfolio, narrativ
 
       <div className="mgmt-section-header">
         <h2>Portfolio Story</h2>
-        <button
-          className="mgmt-btn mgmt-btn-primary"
-          onClick={onGenerate}
-          disabled={generating || !selectedPortfolioId}
-        >
-          {generating ? 'Generating...' : 'Generate Story'}
-        </button>
+        {narData && (
+          <button
+            className="mgmt-btn mgmt-btn-secondary mgmt-btn-sm"
+            onClick={onGenerate}
+            disabled={generating}
+          >
+            {generating ? 'Regenerating...' : 'Regenerate'}
+          </button>
+        )}
       </div>
 
       {loading && <div className="mgmt-loading">Loading narrative...</div>}
@@ -589,8 +606,7 @@ function StoryTab({ portfolios, selectedPortfolioId, onSelectPortfolio, narrativ
 
       {!loading && !generating && !narData && (
         <div className="mgmt-card" style={{ textAlign: 'center', color: '#888', padding: '3rem' }}>
-          No portfolio story generated yet. Click "Generate Story" to create an AI-powered narrative
-          of this portfolio's entire lifecycle.
+          No portfolio story available. The AI narrative will be generated automatically.
         </div>
       )}
 

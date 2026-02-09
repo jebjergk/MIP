@@ -16,13 +16,37 @@ select * from mip.app.pattern_definition;
 
 
 
--- 1. Redeploy the SP (run 180_sp_run_portfolio_simulation.sql)
+use role MIP_ADMIN_ROLE;
+use database MIP;
 
--- 2. Clean + test
-delete from MIP.APP.PORTFOLIO_DAILY where PORTFOLIO_ID = 2;
-update MIP.APP.PORTFOLIO set LAST_SIMULATION_RUN_ID = null where PORTFOLIO_ID = 2;
-call MIP.APP.SP_RUN_PORTFOLIO_SIMULATION(2, '2026-02-03'::timestamp_ntz, '2026-02-06'::timestamp_ntz);
+-- Check which objects exist
+SELECT 'PORTFOLIO_LIFECYCLE_EVENT' as obj, count(*) as exists_flag FROM information_schema.tables WHERE table_schema = 'APP' AND table_name = 'PORTFOLIO_LIFECYCLE_EVENT'
+UNION ALL
+SELECT 'PORTFOLIO_LIFECYCLE_NARRATIVE', count(*) FROM information_schema.tables WHERE table_schema = 'AGENT_OUT' AND table_name = 'PORTFOLIO_LIFECYCLE_NARRATIVE'
+UNION ALL
+SELECT 'V_PORTFOLIO_LIFECYCLE_TIMELINE', count(*) FROM information_schema.views WHERE table_schema = 'MART' AND table_name = 'V_PORTFOLIO_LIFECYCLE_TIMELINE'
+UNION ALL
+SELECT 'V_PORTFOLIO_LIFECYCLE_SNAPSHOT', count(*) FROM information_schema.views WHERE table_schema = 'MART' AND table_name = 'V_PORTFOLIO_LIFECYCLE_SNAPSHOT'
+UNION ALL
+SELECT 'SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE', count(*) FROM information_schema.procedures WHERE procedure_schema = 'APP' AND procedure_name = 'SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE';
 
--- 3. Check — EQUITY_VALUE should now be > 0
-select TS, CASH, EQUITY_VALUE, TOTAL_EQUITY, OPEN_POSITIONS
-from MIP.APP.PORTFOLIO_DAILY where PORTFOLIO_ID = 2 order by TS;
+-- 1. Check if the grant exists
+SHOW GRANTS ON PROCEDURE MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(NUMBER, VARCHAR, TIMESTAMP_NTZ);
+
+-- 2. Test the call AS the API role to reproduce the exact error
+USE ROLE MIP_UI_API_ROLE;
+CALL MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(1);
+
+USE ROLE ACCOUNTADMIN;
+
+-- Allow MIP_ADMIN_ROLE to assume MIP_UI_API_ROLE (for testing)
+GRANT ROLE MIP_UI_API_ROLE TO ROLE MIP_ADMIN_ROLE;
+
+-- Now apply the procedure grant
+USE ROLE MIP_ADMIN_ROLE;
+GRANT USAGE ON PROCEDURE MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(NUMBER, VARCHAR, TIMESTAMP_NTZ)
+    TO ROLE MIP_UI_API_ROLE;
+
+-- Test as the API role
+USE ROLE MIP_UI_API_ROLE;
+CALL MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(1);

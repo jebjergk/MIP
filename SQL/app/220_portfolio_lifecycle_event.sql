@@ -621,3 +621,47 @@ begin
     end if;
 end;
 $$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- BACKFILL: Seed CREATE events for existing portfolios that predate this table.
+-- Idempotent: only inserts for portfolios with no lifecycle events yet.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+merge into MIP.APP.PORTFOLIO_LIFECYCLE_EVENT as target
+using (
+    select
+        p.PORTFOLIO_ID,
+        p.CREATED_AT                                as EVENT_TS,
+        'CREATE'                                    as EVENT_TYPE,
+        p.STARTING_CASH                             as AMOUNT,
+        0                                           as CASH_BEFORE,
+        p.STARTING_CASH                             as CASH_AFTER,
+        0                                           as EQUITY_BEFORE,
+        p.STARTING_CASH                             as EQUITY_AFTER,
+        p.STARTING_CASH                             as CUMULATIVE_DEPOSITED,
+        0                                           as CUMULATIVE_WITHDRAWN,
+        coalesce(p.FINAL_EQUITY, p.STARTING_CASH) - p.STARTING_CASH as CUMULATIVE_PNL,
+        ae.EPISODE_ID                               as EPISODE_ID,
+        p.PROFILE_ID                                as PROFILE_ID,
+        'Backfilled: portfolio existed before lifecycle tracking was introduced' as NOTES
+    from MIP.APP.PORTFOLIO p
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE ae
+      on ae.PORTFOLIO_ID = p.PORTFOLIO_ID
+    where p.PORTFOLIO_ID not in (
+        select distinct PORTFOLIO_ID from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+    )
+) as source
+on target.PORTFOLIO_ID = source.PORTFOLIO_ID
+   and target.EVENT_TYPE = 'CREATE'
+when not matched then insert (
+    PORTFOLIO_ID, EVENT_TS, EVENT_TYPE, AMOUNT,
+    CASH_BEFORE, CASH_AFTER, EQUITY_BEFORE, EQUITY_AFTER,
+    CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN, CUMULATIVE_PNL,
+    EPISODE_ID, PROFILE_ID, NOTES, CREATED_BY
+) values (
+    source.PORTFOLIO_ID, source.EVENT_TS, source.EVENT_TYPE, source.AMOUNT,
+    source.CASH_BEFORE, source.CASH_AFTER, source.EQUITY_BEFORE, source.EQUITY_AFTER,
+    source.CUMULATIVE_DEPOSITED, source.CUMULATIVE_WITHDRAWN, source.CUMULATIVE_PNL,
+    source.EPISODE_ID, source.PROFILE_ID, source.NOTES, current_user()
+);

@@ -208,10 +208,29 @@ def get_narrative(portfolio_id: int):
 @router.post("/portfolios/{portfolio_id}/narrative")
 def generate_narrative(portfolio_id: int):
     """Generate (or regenerate) the AI portfolio lifecycle narrative using Cortex."""
-    return _call_sp(
-        "CALL MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(%s, %s, %s)",
-        (portfolio_id, None, None),
-    )
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "CALL MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(%s)",
+            (portfolio_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=500, detail="Stored procedure returned no result")
+        result = row[0]
+        if isinstance(result, str):
+            import json as _json
+            result = _json.loads(result)
+        if isinstance(result, dict) and result.get("status") == "ERROR":
+            raise HTTPException(status_code=422, detail=result.get("error", "Unknown error"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 # ─── Profile CRUD ─────────────────────────────────────────────────────────────

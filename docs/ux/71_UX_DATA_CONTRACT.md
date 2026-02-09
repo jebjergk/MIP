@@ -136,7 +136,7 @@ Data contract for the read-only UX: object names, schemas (column list and types
 
 ## Executed Fields: Truthfulness and Verification
 
-The Morning Brief displays an "Executed: N trades" (or "actions") count. This section defines the canonical source and verification semantics.
+The Cockpit displays an "Executed: N trades" (or "actions") count. This section defines the canonical source and verification semantics.
 
 ### Canonical Source
 

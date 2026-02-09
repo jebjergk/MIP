@@ -5,7 +5,7 @@ from app.routers import runs, portfolios, briefs, training, performance, status,
 
 app = FastAPI(
     title="MIP UI API",
-    description="Read-only API for MIP pipeline runs, portfolios, briefs, and training status. No writes to Snowflake.",
+    description="Read-only API for MIP pipeline runs, portfolios, AI digests, and training status. No writes to Snowflake.",
 )
 app.add_middleware(
     CORSMiddleware,

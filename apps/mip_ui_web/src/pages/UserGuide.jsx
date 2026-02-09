@@ -809,7 +809,7 @@ export default function UserGuide() {
               <tbody>
                 <tr><td><strong>View Portfolios</strong></td><td>/portfolios</td><td>All portfolios — positions, trades, episodes</td></tr>
                 <tr><td><strong>Default Portfolio</strong></td><td>/portfolios/1</td><td>Quick link to your primary portfolio</td></tr>
-                <tr><td><strong>View Latest Morning Brief</strong></td><td>/brief</td><td>Latest AI-generated brief per portfolio</td></tr>
+                <tr><td><strong>Open Cockpit</strong></td><td>/cockpit</td><td>AI narratives, portfolio status, training</td></tr>
                 <tr><td><strong>Open Training Status</strong></td><td>/training</td><td>Maturity by symbol and pattern</td></tr>
                 <tr><td><strong>Open Suggestions</strong></td><td>/suggestions</td><td>Ranked candidates from outcome history</td></tr>
               </tbody>
@@ -832,11 +832,11 @@ export default function UserGuide() {
               <br /><strong>Example:</strong> "+12" means 12 new outcomes were computed. This number grows
               as time passes and more horizons become evaluable. If it says "0", no new outcomes are ready yet.
             </dd>
-            <dt>Latest brief (as-of)</dt>
+            <dt>Latest digest (as-of)</dt>
             <dd>
-              When the most recent morning brief was generated.
-              <br /><strong>Example:</strong> "3 hours ago" means the brief covers data up to 3 hours ago.
-              "No brief yet" means no brief exists (run the pipeline first).
+              When the most recent AI digest was generated.
+              <br /><strong>Example:</strong> "3 hours ago" means the digest covers data up to 3 hours ago.
+              "No digest yet" means no digest exists (run the pipeline first).
             </dd>
           </dl>
         </div>
@@ -1501,7 +1501,7 @@ export default function UserGuide() {
         <p>
           If no signals match your filters for the current run, the system automatically tries a broader
           search (fallback). A yellow banner appears explaining what happened and offering actions:
-          "Clear all filters," "Use latest run," or "Back to Morning Brief."
+          "Clear all filters," "Use latest run," or "Back to Cockpit."
         </p>
       </section>
 
@@ -1649,7 +1649,7 @@ export default function UserGuide() {
               <tr><td><code>/api/status</code></td><td>Is the API server running?</td></tr>
               <tr><td><code>/api/runs</code></td><td>Can we fetch pipeline runs?</td></tr>
               <tr><td><code>/api/portfolios</code></td><td>Can we fetch the portfolio list?</td></tr>
-              <tr><td><code>/api/briefs/latest</code></td><td>Is the latest brief available?</td></tr>
+              <tr><td><code>/api/digest/latest</code></td><td>Is the latest digest available?</td></tr>
               <tr><td><code>/api/training/status</code></td><td>Is training data accessible?</td></tr>
             </tbody>
           </table>

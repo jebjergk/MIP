@@ -488,12 +488,12 @@
       "long": "Daily-bar research means analysis on daily candles; outcomes-based learning means the system learns from realized returns and hit rates; explainable suggestions means ranked candidates with clear metrics and tooltips, not black-box signals."
     },
     "quick_actions": {
-      "short": "Shortcuts to key views: Portfolio, Morning Brief, Training Status, Suggestions.",
-      "long": "Quick actions take you directly to the most used pages: view a portfolio (default portfolio 1), read the latest morning brief, open training status by symbol/pattern, or open the ranked suggestions list."
+      "short": "Shortcuts to key views: Cockpit, Portfolio, Training Status, Suggestions.",
+      "long": "Quick actions take you directly to the most used pages: open the Cockpit for AI narratives and daily overview, view a portfolio (default portfolio 1), open training status by symbol/pattern, or open the ranked suggestions list."
     },
     "system_at_a_glance": {
-      "short": "Summary of last pipeline run, new evaluations since run, and latest brief timestamp.",
-      "long": "System at a glance shows live metrics: when the last pipeline run completed and its status, how many new outcome evaluations were added since that run, and when the latest morning brief was generated. Helps you see if data is fresh."
+      "short": "Summary of last pipeline run, new evaluations since run, and latest digest timestamp.",
+      "long": "System at a glance shows live metrics: when the last pipeline run completed and its status, how many new outcome evaluations were added since that run, and when the latest AI digest was generated. Helps you see if data is fresh."
     }
   },
   "today": {
@@ -518,8 +518,8 @@
       "long": "Recent events come from V_PORTFOLIO_RUN_EVENTS: markers like drawdown stop and first time flat (no positions) after a stop. They help you see what happened in recent simulation runs."
     },
     "latest_brief": {
-      "short": "Most recent morning brief for the selected portfolio.",
-      "long": "Latest brief is the most recent morning brief written for this portfolio (from MORNING_BRIEF). It includes as_of_ts and pipeline_run_id. Expand to see the full brief JSON."
+      "short": "Most recent AI digest for the selected portfolio.",
+      "long": "Latest digest is the most recent AI-generated digest for this portfolio. It includes as_of_ts and pipeline_run_id. Expand to see the full digest."
     }
   }
 }

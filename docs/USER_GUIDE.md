@@ -9,9 +9,8 @@
 1. [Introduction](#1-introduction)
 2. [Understanding the Screens](#2-understanding-the-screens)
    - [Home](#21-home)
-   - [Today](#22-today)
    - [Portfolio](#23-portfolio)
-   - [Morning Brief](#24-morning-brief)
+   - [Cockpit](#24-cockpit)
    - [Signals](#25-signals)
    - [Market Timeline](#26-market-timeline)
    - [Suggestions](#27-suggestions)
@@ -58,31 +57,10 @@ The system runs automatically every day, but you can also trigger it manually. T
 |---------|---------------|
 | **Last Pipeline Run** | When the system last processed data. Shows time ago (e.g., "2 hours ago") |
 | **New Evaluations** | How many signals were evaluated since the last run |
-| **Latest Brief** | When the last morning brief was generated |
-| **Quick Action Cards** | Shortcuts to Portfolios, Morning Brief, Training Status, and Suggestions |
+| **Latest Digest** | When the last digest was generated |
+| **Quick Action Cards** | Shortcuts to Portfolios, Cockpit, Training Status, and Suggestions |
 
 **When to use:** Start here to see if everything is running normally. If the "Last Pipeline Run" is old, something may be wrong.
-
----
-
-### 2.2 Today
-
-**What it shows:** Everything you need to know about today's trading situation.
-
-| Section | What it means |
-|---------|---------------|
-| **System Status** | Is the database connection working? Green = OK |
-| **Portfolio Selector** | Switch between different portfolios |
-| **Risk Gate** | Are entries allowed? Shows SAFE, CAUTION, or STOPPED |
-| **Recent Run Events** | What happened in the last pipeline run |
-| **Today's Insights** | Ranked list of trading candidates for today |
-| **Latest Brief** | The most recent morning brief (collapsible) |
-
-**Today's Insights explained:**
-- **Symbol/Pattern**: Which stock and what pattern was detected
-- **Maturity Score**: How confident we are in this pattern (0-100%)
-- **Today Score**: How strong the signal is today
-- **Why Shown**: The reason this candidate appears
 
 ---
 
@@ -135,34 +113,9 @@ The system runs automatically every day, but you can also trigger it manually. T
 
 ---
 
-### 2.4 Morning Brief
+### 2.4 Cockpit
 
-**What it shows:** A daily summary of opportunities, risks, and portfolio actions.
-
-**Key sections:**
-
-| Section | What it means |
-|---------|---------------|
-| **Executive Summary** | High-level status: Are entries allowed? How many suggestions? Any executed trades? |
-| **Portfolio Actions** | Live state from actual tables - open positions, trades this run, last simulation |
-| **Today's Proposals** | Suggested trades based on trusted signals (NOT yet executed) |
-| **Risk & Guardrails** | Current risk state, profile thresholds, allowed actions |
-| **Changes Since Last Brief** | What changed: equity, return, drawdown, positions, signal changes |
-
-**Important timestamps:**
-
-| Timestamp | What it means |
-|-----------|---------------|
-| **As-of Date** | The market date the brief covers (e.g., "Feb 4, 2026") |
-| **Generated At** | When the brief was actually created (could be later than as-of date) |
-
-**Staleness indicator:**
-- **CURRENT** (green): Brief matches the latest pipeline run
-- **STALE** (yellow): A newer pipeline run exists; brief may be outdated
-
-**Proposals vs Executed:**
-- **Proposals** = Suggestions that passed validation, ready to execute
-- **Executed** = Trades that were actually simulated in the portfolio
+**What it shows:** The unified dashboard providing AI-generated narratives, portfolio status, and training insights. The Cockpit consolidates daily AI narratives, portfolio status, and training insights, offering a comprehensive view of trading opportunities, risk status, and system performance in one place.
 
 ---
 
@@ -183,7 +136,7 @@ The system runs automatically every day, but you can also trigger it manually. T
 
 **Filters:**
 - Filter by symbol, market type, pattern, trust level, run ID, or date
-- Use "From Brief" to jump here with filters pre-set from the Morning Brief
+- Use "From Cockpit" to jump here with filters pre-set from the Cockpit
 
 ---
 
@@ -297,7 +250,7 @@ The system runs a daily pipeline that processes data through these steps:
 5. SIMULATION     → Run portfolio paper trading
 6. PROPOSALS      → Create trade suggestions
 7. EXECUTION      → Execute approved trades (paper)
-8. MORNING BRIEF  → Generate daily summary
+8. MORNING BRIEF  → Generate daily summary (viewed in Cockpit UI)
 ```
 
 **When does it run?**
@@ -400,17 +353,18 @@ The system runs a daily pipeline that processes data through these steps:
 - Validates position limits
 - Executes as paper trades
 
-#### Step 8: Morning Brief
+#### Step 8: Daily Digest
 
-**What happens:** Generates a JSON summary of the day.
+**What happens:** Generates AI-powered narrative summaries of the day.
 
 **Tables affected:**
-- `MORNING_BRIEF` - Stores the brief
+- `DAILY_DIGEST_SNAPSHOT` / `DAILY_DIGEST_NARRATIVE` - Stores digest snapshots and AI narratives (viewed in Cockpit)
+- `TRAINING_DIGEST_SNAPSHOT` / `TRAINING_DIGEST_NARRATIVE` - Stores training digests
 
 **Key behavior:**
-- Compiles opportunities, risks, and portfolio state
-- Calculates "deltas" (what changed since yesterday)
-- Persists with PIPELINE_RUN_ID for lineage
+- Compiles opportunities, risks, and portfolio state into deterministic snapshots
+- Calls Snowflake Cortex to generate AI narratives explaining what matters
+- Persists with RUN_ID for lineage and SOURCE_FACTS_HASH for auditability
 
 ---
 
@@ -450,7 +404,7 @@ AlphaVantage API
 └────────┬────────┘
          ↓
 ┌─────────────────┐
-│ MORNING_BRIEF   │  ← Final output
+│ MORNING_BRIEF   │  ← Final output (viewed in Cockpit UI)
 └─────────────────┘
 ```
 
@@ -569,7 +523,7 @@ A classification of how reliable a pattern is, based on historical performance.
 | Concept | What it is | Where to see it |
 |---------|------------|-----------------|
 | **Signal** | A pattern detection (raw opportunity) | Signals page |
-| **Proposal** | A suggested trade (passed filters) | Morning Brief, ORDER_PROPOSALS table |
+| **Proposal** | A suggested trade (passed filters) | Cockpit, ORDER_PROPOSALS table |
 | **Trade** | An executed transaction (paper) | Portfolio page, PORTFOLIO_TRADES table |
 
 **The journey:**
@@ -591,15 +545,15 @@ SIGNAL → [Trust check] → [Eligibility check] → PROPOSAL → [Risk check] �
 
 ## 5. Troubleshooting
 
-### "STALE" brief showing
+### "STALE" digest showing
 
-**Symptom:** Morning Brief shows "STALE" badge
+**Symptom:** Cockpit shows "STALE" badge for the digest
 
-**Cause:** A newer pipeline run completed but the brief is from an older run
+**Cause:** A newer pipeline run completed but the digest is from an older run
 
 **Solution:**
 1. Check Audit Viewer for recent pipeline runs
-2. If a run completed successfully, the brief should refresh
+2. If a run completed successfully, the digest should refresh
 3. If stuck, check if the brief write step failed
 
 ---

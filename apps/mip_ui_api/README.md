@@ -1,6 +1,6 @@
 # MIP UI API
 
-Read-only FastAPI backend for MIP: pipeline runs, portfolios, briefs, and training status. No writes to Snowflake.
+Read-only FastAPI backend for MIP: pipeline runs, portfolios, AI digests, and training status. No writes to Snowflake.
 
 ## Setup
 
@@ -17,5 +17,6 @@ Or from `MIP/apps/mip_ui_api`: `uvicorn app.main:app --reload`
 - `GET /portfolios` — portfolio list
 - `GET /portfolios/{portfolio_id}` — portfolio header
 - `GET /portfolios/{portfolio_id}/snapshot?run_id=...` — positions, trades, daily, KPIs, risk
-- `GET /briefs/latest?portfolio_id=...` — latest morning brief for portfolio
-- `GET /training/status` — training status (first draft)
+- `GET /digest/latest?portfolio_id=...` — latest AI digest for portfolio
+- `GET /training/digest/latest` — latest global training digest
+- `GET /training/status` — training status

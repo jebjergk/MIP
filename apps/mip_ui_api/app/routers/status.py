@@ -17,9 +17,9 @@ def _get_latest_pipeline_run(conn):
     """
     Get the latest successful pipeline run info for freshness checks.
     
-    Uses the audit log as the source of truth (same as briefs.py staleness check).
+    Uses the audit log as the source of truth (same as digest staleness check).
     This ensures consistency across the UI - the same run ID is considered "latest"
-    everywhere (briefs, portfolios, status badge).
+    everywhere (digests, portfolios, status badge).
     
     Note: We use audit log, NOT PORTFOLIO.LAST_SIMULATION_RUN_ID, because that field
     is set by a different procedure (SP_RUN_PORTFOLIO_SIMULATION) with a different run ID.
@@ -27,7 +27,7 @@ def _get_latest_pipeline_run(conn):
     try:
         cur = conn.cursor()
         # Get latest successful pipeline run from audit log
-        # This matches the staleness check in briefs.py
+        # This matches the staleness check in digest/briefs.py
         cur.execute("""
             select 
                 RUN_ID as run_id,

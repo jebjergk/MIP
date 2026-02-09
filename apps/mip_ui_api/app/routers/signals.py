@@ -1,7 +1,7 @@
 """
 Signals Explorer endpoint: GET /signals
 Returns actual signal/recommendation rows with filters.
-Used by Morning Brief deep-links for opportunity drill-down.
+Used by Cockpit deep-links for opportunity drill-down.
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -147,7 +147,7 @@ def get_signals(
                 "pattern_id": pattern_id,
             },
             "fallback_used": True,
-            "fallback_reason": "No signals found matching any criteria. Try clearing filters or check if the brief is stale.",
+            "fallback_reason": "No signals found matching any criteria. Try clearing filters or check if the data is stale.",
         }
         
     finally:
@@ -250,7 +250,7 @@ def _query_signals(
 def get_latest_run():
     """
     Get latest successful pipeline run info.
-    Used to determine if a Morning Brief is stale.
+    Used to determine if digest data is stale.
     """
     conn = get_connection()
     try:

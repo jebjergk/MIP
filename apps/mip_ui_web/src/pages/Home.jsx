@@ -93,9 +93,9 @@ export default function Home() {
               <span className="home-card-desc">Portfolio {defaultPortfolioId} — quick link</span>
             </Link>
           )}
-          <Link to="/brief" className="home-card home-card--link">
-            <span className="home-card-title">View Latest Morning Brief</span>
-            <span className="home-card-desc">Latest brief per portfolio</span>
+          <Link to="/cockpit" className="home-card home-card--link">
+            <span className="home-card-title">Open Cockpit</span>
+            <span className="home-card-desc">AI narratives, portfolio status, training</span>
           </Link>
           <Link to="/training" className="home-card home-card--link">
             <span className="home-card-title">Open Training Status</span>
@@ -144,11 +144,11 @@ export default function Home() {
           </div>
           <div className="home-card">
             <span className="home-card-label">
-              Latest brief (as-of)
+              Latest digest (as-of)
               <InfoTooltip scope="live" entryKey="data_freshness" variant="short" />
             </span>
             <span className="home-card-value">
-              {lastBrief?.found ? relativeTime(lastBrief.as_of_ts) : 'No brief yet'}
+              {lastBrief?.found ? relativeTime(lastBrief.as_of_ts) : 'No digest yet'}
             </span>
           </div>
         </div>

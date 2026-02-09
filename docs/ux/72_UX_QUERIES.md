@@ -140,7 +140,9 @@ from MIP.MART.V_PORTFOLIO_RISK_STATE
 where PORTFOLIO_ID = :portfolio_id;
 ```
 
-## Latest morning brief by portfolio_id
+## Latest Cockpit data by portfolio_id
+
+Query against MORNING_BRIEF table to retrieve latest snapshot data supporting the Cockpit/pipeline view. The MORNING_BRIEF table stores pipeline snapshots used by the Cockpit interface.
 
 ```sql
 select *
@@ -285,7 +287,7 @@ Backend builds items from the two queries above: triple-level gives recs_total a
 
 ## Signals Explorer (GET /signals)
 
-Canonical signal/recommendation rows for drill-down from Morning Brief opportunities. Used by the `/signals` page.
+Canonical signal/recommendation rows for drill-down from Cockpit opportunities. Used by the `/signals` page.
 
 **Route:** `GET /signals`
 
@@ -369,8 +371,8 @@ limit :limit;
 # All signals for a symbol
 GET /signals?symbol=AAPL
 
-# Filter by Morning Brief context (from opportunity link)
-GET /signals?symbol=AAPL&pattern_id=AAPL_2&run_id=abc123&from=brief
+# Filter by Cockpit context (from opportunity link)
+GET /signals?symbol=AAPL&pattern_id=AAPL_2&run_id=abc123&from=cockpit
 
 # Trusted signals only
 GET /signals?trust_label=TRUSTED&limit=50
@@ -378,7 +380,7 @@ GET /signals?trust_label=TRUSTED&limit=50
 
 ## Latest Pipeline Run (GET /signals/latest-run)
 
-Returns the latest successful pipeline run info, used to determine if a Morning Brief is stale.
+Returns the latest successful pipeline run info, used to determine if Cockpit data is stale.
 
 **Route:** `GET /signals/latest-run`
 
@@ -454,11 +456,11 @@ Latest digest. Pass `scope=GLOBAL` for system-wide digest (no `portfolio_id` nee
     "pipeline": {"latest_run_id": "...", ...},
     "detectors": [{"detector": "CAPACITY_STATE", "fired": true, ...}, ...]
   },
-  "links": {
+    "links": {
     "signals": "/signals",
     "training": "/training",
     "portfolio": "/portfolios/1",
-    "brief": "/brief",
+    "cockpit": "/cockpit",
     "market_timeline": "/market-timeline",
     "suggestions": "/suggestions",
     "runs": "/runs"
@@ -496,7 +498,7 @@ Latest digest. Pass `scope=GLOBAL` for system-wide digest (no `portfolio_id` nee
     "signals": "/signals",
     "training": "/training",
     "digest": "/digest",
-    "brief": "/brief",
+    "cockpit": "/cockpit",
     "market_timeline": "/market-timeline",
     "suggestions": "/suggestions",
     "runs": "/runs"

@@ -92,7 +92,7 @@ export default function LiveHeader() {
 
       {lastBrief?.found && (
         <span className="live-header-item" title={explainMode ? undefined : null}>
-          Latest brief: {relativeTime(lastBrief.as_of_ts)}
+          Latest digest: {relativeTime(lastBrief.as_of_ts)}
           <InfoTooltip scope="live" entryKey="latest_brief" variant="short" />
         </span>
       )}

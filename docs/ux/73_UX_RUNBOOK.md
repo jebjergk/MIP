@@ -1,6 +1,6 @@
 # UX Runbook
 
-Operational runbook for the read-only UX: deployment, inspecting a run, validating briefs, restarting a portfolio episode, and where to look for failures. Aligns with [MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md](MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md).
+Operational runbook for the read-only UX: deployment, inspecting a run, validating digests, restarting a portfolio episode, and where to look for failures. Aligns with [MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md](MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md).
 
 ## Deployment
 
@@ -133,35 +133,33 @@ Use a single run identifier (e.g. from `MIP_AUDIT_LOG` after a pipeline run). Re
    - KPI summary: `MIP.MART.V_PORTFOLIO_RUN_KPIS` where `RUN_ID = :run_id`.  
    See [MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md](MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md) for the exact queries.
 
-## Morning Brief drill-down
+## Cockpit drill-down
 
-The Morning Brief page shows opportunities (signal-based recommendations). Each opportunity card has a "View in Signals" link that navigates to the **Signals Explorer** page (`/signals`) with pre-filled filters.
+The Cockpit page shows opportunities (signal-based recommendations). Each opportunity card has a "View in Signals" link that navigates to the **Signals Explorer** page (`/signals`) with pre-filled filters.
 
 **Deep-link parameters:**
 - `portfolioId` — Portfolio context
-- `asOf` — Brief's as-of timestamp (market date)
-- `pipelineRunId` — Brief's pipeline run ID
+- `asOf` — Digest's as-of timestamp (market date)
+- `pipelineRunId` — Digest's pipeline run ID
 - `symbol` — Symbol from the opportunity
 - `market_type` — Market type (STOCK, FX)
 - `pattern_id` — Pattern ID
-- `from=brief` — Indicates navigation from Morning Brief
+- `from=cockpit` — Indicates navigation from Cockpit
 
 The Signals Explorer automatically applies fallback logic if the exact filters return no rows (e.g., drops `run_id` filter, expands time window). See [72_UX_QUERIES.md](72_UX_QUERIES.md) "Signals Explorer (GET /signals)" for the full API contract.
 
-**Staleness indicator:** The Morning Brief displays a **CURRENT** (green) or **STALE** (orange) badge based on whether the brief's `pipeline_run_id` matches the latest pipeline run.
+## Validating digests
 
-## Validating briefs
+1. **Latest digest per portfolio**  
+   Use [72_UX_QUERIES.md](72_UX_QUERIES.md) “Latest cockpit digest by portfolio_id” (or `GET /cockpit/latest?portfolio_id=...`).
 
-1. **Latest brief per portfolio**  
-   Use [72_UX_QUERIES.md](72_UX_QUERIES.md) “Latest morning brief by portfolio_id” (or `GET /briefs/latest?portfolio_id=...`).
-
-2. **Attribution smoke (new briefs)**  
-   For a given `:run_id`, check that no brief rows incorrectly carry attribution from a previous run:  
+2. **Attribution smoke (new digests)**  
+   For a given `:run_id`, check that no digest rows incorrectly carry attribution from a previous run:  
    `select count(*) as bad_rows from MIP.AGENT_OUT.MORNING_BRIEF where RUN_ID = :run_id and BRIEF:"attribution":"latest_run_id" is not null;`  
    Expect 0. See [MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md](MIP/docs/60_RUNBOOK_TROUBLESHOOTING.md) “Attribution smoke”.
 
 3. **Consistency checks**  
-   For full consistency checks (brief vs ORDER_PROPOSALS, risk gate, signals), use the checks documented in the repo (e.g. morning_brief_consistency).
+   For full consistency checks (digest vs ORDER_PROPOSALS, risk gate, signals), use the checks documented in the repo (e.g. morning_brief_consistency).
 
 ## Restarting a portfolio episode
 

@@ -33,7 +33,6 @@ def _build_links(portfolio_id=None, scope="PORTFOLIO") -> dict:
     base = {
         "signals": "/signals",
         "training": "/training",
-        "brief": "/brief",
         "market_timeline": "/market-timeline",
         "suggestions": "/suggestions",
         "runs": "/runs",

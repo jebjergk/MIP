@@ -35,7 +35,6 @@ def _build_links(symbol=None, market_type=None) -> dict:
         "signals": "/signals",
         "digest": "/digest",
         "market_timeline": "/market-timeline",
-        "brief": "/brief",
     }
     if symbol and market_type:
         base["symbol_training"] = f"/training?symbol={symbol}&market_type={market_type}"

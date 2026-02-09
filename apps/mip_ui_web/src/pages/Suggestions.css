@@ -53,7 +53,7 @@
   text-decoration: underline;
 }
 
-/* Filter banner (when coming from Morning Brief) */
+/* Filter banner (when coming from Cockpit) */
 .suggestions-filter-banner {
   display: flex;
   align-items: center;
@@ -442,7 +442,7 @@
   border-color: #ffcdd2;
 }
 
-/* Cross-links: Training Status, Portfolio, Brief */
+/* Cross-links: Training Status, Portfolio, Cockpit */
 .suggestion-cross-links {
   display: flex;
   flex-wrap: wrap;

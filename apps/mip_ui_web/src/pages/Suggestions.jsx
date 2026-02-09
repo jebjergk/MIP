@@ -201,7 +201,7 @@ export default function Suggestions() {
   const { setContext } = useExplainCenter()
   const openExplainSuggestions = useExplainSection(SUGGESTIONS_EXPLAIN_CONTEXT)
 
-  // URL query params for deep-linking from Morning Brief
+  // URL query params for deep-linking from Cockpit
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const filterFromBrief = searchParams.get('from') === 'brief'
@@ -424,7 +424,7 @@ export default function Suggestions() {
         <div className="suggestions-filter-banner" role="status">
           <span className="filter-icon">🔍</span>
           <span className="filter-text">
-            {filterFromBrief && 'Filtered from Morning Brief. '}
+            {filterFromBrief && 'Filtered from Cockpit. '}
             {filterSymbol && `Symbol: ${filterSymbol}. `}
             {filterPatternId && `Pattern: ${filterPatternId}. `}
             {filterMarketType && `Market: ${filterMarketType}. `}
@@ -638,7 +638,7 @@ export default function Suggestions() {
               <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()} role="navigation" aria-label="Connect to other views">
                 <Link to={trainingUrl(row)} className="suggestion-link" title="Training Status filtered to this symbol/pattern">View Training</Link>
                 <Link to="/portfolios" className="suggestion-link" title="Portfolio snapshot — see if you hold this symbol">View Portfolio</Link>
-                <Link to="/brief" className="suggestion-link" title="Morning brief — see if this symbol is mentioned">View Brief</Link>
+                <Link to="/cockpit" className="suggestion-link" title="Cockpit — AI narratives and portfolio status">View Cockpit</Link>
               </div>
             </article>
           ))}
@@ -743,7 +743,7 @@ export default function Suggestions() {
                   <div className="suggestion-cross-links" onClick={(e) => e.stopPropagation()} role="navigation" aria-label="Connect to other views">
                     <Link to={trainingUrl(row)} className="suggestion-link" title="Training Status filtered to this symbol/pattern">View Training</Link>
                     <Link to="/portfolios" className="suggestion-link" title="Portfolio snapshot — see if you hold this symbol">View Portfolio</Link>
-                    <Link to="/brief" className="suggestion-link" title="Morning brief — see if this symbol is mentioned">View Brief</Link>
+                    <Link to="/cockpit" className="suggestion-link" title="Cockpit — AI narratives and portfolio status">View Cockpit</Link>
                   </div>
                 </article>
               ))}
@@ -804,8 +804,8 @@ export default function Suggestions() {
                     View Portfolio
                   </Link>
                   <span className="suggestion-drawer-connect-sep" aria-hidden="true">·</span>
-                  <Link to="/brief" className="suggestion-link" onClick={() => setSelectedItem(null)} title="Morning brief — see if this symbol is mentioned">
-                    View Brief
+                  <Link to="/cockpit" className="suggestion-link" onClick={() => setSelectedItem(null)} title="Cockpit — AI narratives and portfolio status">
+                    View Cockpit
                   </Link>
                 </div>
 

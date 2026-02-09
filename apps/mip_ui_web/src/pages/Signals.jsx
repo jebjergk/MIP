@@ -38,8 +38,8 @@ function FallbackBanner({ reason, onClearFilters, onUseLatestRun, onBackToBrief 
           <button type="button" className="fallback-btn" onClick={onUseLatestRun}>
             Use latest run
           </button>
-          <Link to="/brief" className="fallback-btn" onClick={onBackToBrief}>
-            Back to Morning Brief
+          <Link to="/cockpit" className="fallback-btn" onClick={onBackToBrief}>
+            Back to Cockpit
           </Link>
         </div>
       </div>
@@ -47,13 +47,13 @@ function FallbackBanner({ reason, onClearFilters, onUseLatestRun, onBackToBrief 
   )
 }
 
-// From Brief banner component
+// From Cockpit banner component
 function FromBriefBanner({ portfolioId, asOfTs, pipelineRunId, onClearFilters }) {
   return (
     <div className="signals-from-brief-banner" role="status">
       <span className="banner-icon">📋</span>
       <span className="banner-text">
-        Filtered from Morning Brief
+        Filtered from Cockpit
         {portfolioId && ` (Portfolio ${portfolioId})`}
         {asOfTs && ` • As of ${new Date(asOfTs).toLocaleDateString()}`}
       </span>
@@ -223,7 +223,7 @@ export default function Signals() {
           reason={fallbackReason}
           onClearFilters={clearFilters}
           onUseLatestRun={useLatestRun}
-          onBackToBrief={() => navigate('/brief')}
+          onBackToBrief={() => navigate('/cockpit')}
         />
       )}
       
@@ -263,7 +263,7 @@ export default function Signals() {
             hasFilters ? (
               <button type="button" onClick={clearFilters}>Clear all filters</button>
             ) : (
-              <Link to="/brief">Go to Morning Brief</Link>
+              <Link to="/cockpit">Go to Cockpit</Link>
             )
           }
           explanation={
@@ -306,7 +306,7 @@ export default function Signals() {
       
       {/* Navigation links */}
       <div className="signals-nav">
-        <Link to="/brief" className="nav-link">← Morning Brief</Link>
+        <Link to="/cockpit" className="nav-link">← Cockpit</Link>
         <Link to="/suggestions" className="nav-link">Suggestions →</Link>
       </div>
     </>

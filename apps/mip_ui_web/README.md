@@ -1,6 +1,6 @@
 # MIP UI Web
 
-React (Vite) frontend for MIP: Home, Portfolio, Audit Viewer, Morning Brief, Training Status. Read-only; no trading approvals or agent orchestration.
+React (Vite) frontend for MIP: Home, Cockpit, Portfolio, Audit Viewer, Training Status, Suggestions. Read-only; no trading approvals or agent orchestration.
 
 ## Setup
 
@@ -25,5 +25,5 @@ React (Vite) frontend for MIP: Home, Portfolio, Audit Viewer, Morning Brief, Tra
 - **Home** — landing and nav.
 - **Portfolios** — list; click a portfolio for header + snapshot (positions, trades, daily, KPIs, risk).
 - **Audit Viewer** — recent runs; click a run for timeline + interpreted summary.
-- **Morning Brief** — select portfolio and load latest brief.
-- **Training Status** — leaderboard row count and top entries (first draft).
+- **Cockpit** — unified dashboard with AI narratives, portfolio status, training progress, upcoming symbols.
+- **Training Status** — leaderboard row count and top entries.

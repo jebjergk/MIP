@@ -27,7 +27,7 @@ Get the local UX running in a few steps:
 
 ## Goals
 
-- **Visibility**: Operators and developers can inspect pipeline runs, portfolio state, morning briefs, and training status without writing SQL.
+- **Visibility**: Operators and developers can inspect pipeline runs, portfolio state, briefs (via Cockpit), and training status without writing SQL.
 - **Read-only**: The UI and API do not write to Snowflake; no trading approvals or agent orchestration in v1.
 - **Canonical source**: All displayed data comes from the documented canonical objects only.
 
@@ -35,16 +35,16 @@ Get the local UX running in a few steps:
 
 - **Operator**: Checks run success, inspects run timeline and interpreted summary, validates briefs, restarts a portfolio episode when needed.
 - **Developer**: Debugs pipeline steps via audit log and DETAILS JSON; verifies portfolio snapshots (positions, trades, daily, KPIs, risk).
-- **Viewer**: Browses portfolios, latest morning brief per portfolio, and training status (first draft).
+- **Viewer**: Browses portfolios, latest brief per portfolio (via Cockpit), and training status (first draft).
 
 ## Screens and canonical objects
 
 | Screen | Purpose | Canonical objects consumed |
 |--------|---------|----------------------------|
-| **Home** | Landing and nav to Runs, Portfolios, Audit, Brief, Training. | None (navigation only). |
+| **Home** | Landing and nav to Runs, Portfolios, Audit, Cockpit, Training. | None (navigation only). |
 | **Audit Viewer** | List recent pipeline runs; drill into run timeline + interpreted summary. | `MIP.APP.MIP_AUDIT_LOG` (EVENT_TYPE=PIPELINE / PIPELINE_STEP, RUN_ID, PARENT_RUN_ID, DETAILS). |
 | **Portfolio** | List portfolios; detail header and snapshot (positions, trades, daily, KPIs, risk). | `MIP.APP.PORTFOLIO`, `MIP.APP.PORTFOLIO_TRADES`, `MIP.APP.PORTFOLIO_POSITIONS`, `MIP.APP.PORTFOLIO_DAILY`, `MIP.MART.V_PORTFOLIO_RUN_KPIS`, `MIP.MART.V_PORTFOLIO_RISK_GATE`, `MIP.MART.V_PORTFOLIO_RISK_STATE`, `MIP.MART.V_PORTFOLIO_RUN_EVENTS`. |
-| **Morning Brief** | Latest brief per portfolio. | `MIP.AGENT_OUT.MORNING_BRIEF`. |
+| **Cockpit** | Latest brief per portfolio. | `MIP.AGENT_OUT.MORNING_BRIEF` (backend table; UI page is Cockpit). |
 | **Training Status** | First-draft view of training state (e.g. row counts, last run). | `MIP.MART.V_TRAINING_LEADERBOARD` and/or training-related audit/tables; minimal. |
 
 ## Freshness model: AS_OF vs GENERATED_AT
@@ -53,12 +53,12 @@ The UX distinguishes between two timestamps to help users understand data curren
 
 | Timestamp | Meaning | Example field |
 |-----------|---------|---------------|
-| **AS_OF_TS** | Market date/time the data represents. | `MORNING_BRIEF.AS_OF_TS` — the trading day the brief covers. |
-| **CREATED_AT / GENERATED_AT** | System time when the data was produced. | `MORNING_BRIEF.CREATED_AT` — when the brief row was written. |
+| **AS_OF_TS** | Market date/time the data represents. | `MORNING_BRIEF.AS_OF_TS` — the trading day the brief covers (displayed in Cockpit). |
+| **CREATED_AT / GENERATED_AT** | System time when the data was produced. | `MORNING_BRIEF.CREATED_AT` — when the brief row was written (displayed in Cockpit). |
 
 ### Staleness detection
 
-A brief (or portfolio snapshot) is considered **STALE** when:
+A brief (displayed in Cockpit) or portfolio snapshot is considered **STALE** when:
 - Its `pipeline_run_id` differs from `latest_success_run_id` (from `/api/status`)
 - Or its `created_at` is older than the latest pipeline run time
 
@@ -68,12 +68,12 @@ The UI shows:
 
 ### Why staleness matters
 
-When a brief is stale:
+When a brief (in Cockpit) is stale:
 1. Drill-down links (e.g., "View in Signals") may not match current data
 2. Opportunity recommendations may have been superseded
 3. Risk gate state may have changed
 
-The UI shows a banner on stale briefs with a **"Load Latest Brief"** button.
+The UI shows a banner on stale briefs in Cockpit with a **"Load Latest Brief"** button.
 
 ### API endpoints for freshness
 
@@ -86,7 +86,7 @@ The UI shows a banner on stale briefs with a **"Load Latest Brief"** button.
 
 | Page | Freshness display |
 |------|-------------------|
-| Morning Brief | CURRENT/STALE badge + "Load Latest Brief" CTA |
+| Cockpit | CURRENT/STALE badge + "Load Latest Brief" CTA |
 | Portfolio | CURRENT/STALE badge + last run timestamp |
 | Suggestions | CURRENT badge + data freshness timestamp |
 

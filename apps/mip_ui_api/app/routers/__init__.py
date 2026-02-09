@@ -1,1 +1,1 @@
-# Routers for runs, portfolios, briefs, training
+# Routers for runs, portfolios, digests, training

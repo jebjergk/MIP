@@ -109,7 +109,6 @@ function DrillDownCards({ links, whereToLook }) {
       { key: 'signals', label: 'Signals Explorer' },
       { key: 'training', label: 'Training Status' },
       { key: 'portfolio', label: 'Portfolio' },
-      { key: 'brief', label: 'Morning Brief' },
       { key: 'market_timeline', label: 'Market Timeline' },
       { key: 'runs', label: 'Audit Log' },
       { key: 'digest', label: 'Portfolio Digests' },

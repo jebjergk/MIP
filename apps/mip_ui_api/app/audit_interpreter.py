@@ -31,7 +31,7 @@ PHASE_LABELS = {
     "evaluation": "Evaluation",
     "trusted_signal_refresh": "Trust gating",
     "portfolio_simulation": "Portfolio simulation",
-    "morning_brief": "Morning brief",
+    "morning_brief": "Daily digest",
     "proposer": "Proposer",
     "executor": "Executor",
     "agent_run_all": "Agent run",
@@ -111,7 +111,7 @@ STEP_NARRATIVE = {
     "evaluation": "Evaluation step completed.",
     "portfolio_simulation": "Portfolio simulation completed.",
     "trusted_signal_refresh": "Trusted signal refresh completed.",
-    "morning_brief": "Morning brief step completed.",
+    "morning_brief": "Daily digest step completed.",
     "proposer": "Proposer step completed.",
     "executor": "Executor step completed.",
     "agent_run_all": "Agent run all completed.",
@@ -297,7 +297,7 @@ def build_run_summary(rows: list[dict]) -> dict | None:
             "headline": "No new bars — downstream steps skipped",
             "what_happened": (
                 "Ingestion ran but there were no new market bars. Returns, recommendations, "
-                "evaluation, trust gating, portfolio simulation, and morning brief were skipped."
+                "evaluation, trust gating, portfolio simulation, and daily digest were skipped."
             ),
             "why": "Downstream steps were skipped to avoid duplicates and stale work when no new data is available.",
             "impact": "No new recommendations, evaluations, or portfolio updates from this run.",
@@ -344,7 +344,7 @@ def interpret_timeline(rows: list[dict]) -> dict:
       - timeline: raw rows (serializable)
       - summary_cards: legacy flat list
       - narrative_bullets: legacy flat list
-      - phases: [{ phase_key, phase_label, events }] — ingest → returns → … → morning brief
+      - phases: [{ phase_key, phase_label, events }] — ingest → returns → … → daily digest
       - sections: [{ headline, what_happened, why, impact, next_check, phase_key?, phase_label? }]
       - interpreted_narrative: short paragraph (no new bars stated clearly when applicable)
       - run_summary: { headline, what_happened, why, impact, next_check } | null when no-new-bars/skip detected

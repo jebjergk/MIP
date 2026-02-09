@@ -72,9 +72,9 @@ function DrillLinks({ whereToLook, links }) {
     })
   }
   if (links) {
-    ['signals', 'training', 'portfolio', 'brief', 'market_timeline', 'digest'].forEach((key) => {
+    ['signals', 'training', 'portfolio', 'market_timeline', 'digest'].forEach((key) => {
       if (links[key] && !allLinks.find((l) => l.to === links[key])) {
-        const labels = { signals: 'Signals', training: 'Training', portfolio: 'Portfolio', brief: 'Brief', market_timeline: 'Timeline', digest: 'Digest' }
+        const labels = { signals: 'Signals', training: 'Training', portfolio: 'Portfolio', market_timeline: 'Timeline', digest: 'Digest' }
         allLinks.push({ to: links[key], label: labels[key] || key })
       }
     })

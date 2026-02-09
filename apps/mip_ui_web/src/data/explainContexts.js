@@ -13,27 +13,27 @@ export const HOME_EXPLAIN_CONTEXT = {
 **What you'll see:**
 - **Last Pipeline Run** — When the system last processed market data. If this is old (e.g., more than a day), something may be wrong.
 - **New Evaluations** — How many trading signals were measured for performance since the last run.
-- **Latest Brief** — When the most recent morning brief was generated.
-- **Quick Action Cards** — One-click shortcuts to Portfolios, Morning Brief, Training Status, and Suggestions.`,
+- **Latest Digest** — When the most recent AI digest was generated.
+- **Quick Action Cards** — One-click shortcuts to Cockpit, Portfolios, Training Status, and Suggestions.`,
 
   why: `Start here each day to confirm the system is running normally. If the "Last Pipeline Run" shows a recent timestamp with SUCCESS status, everything is healthy. The quick actions help you jump directly to what matters without hunting through menus.`,
 
   how: `The page fetches live metrics from the API, which reads from:
 - **MIP_AUDIT_LOG** — For pipeline run status and timing
-- **MORNING_BRIEF** — For the latest brief timestamp
+- **DAILY_DIGEST_SNAPSHOT** — For the latest digest timestamp
 - **RECOMMENDATION_OUTCOMES** — For evaluation counts
 
 The data refreshes each time you visit the page.`,
 
   sources: [
     { object: 'MIP.APP.MIP_AUDIT_LOG', purpose: 'Last pipeline run and status.' },
-    { object: 'MIP.AGENT_OUT.MORNING_BRIEF', purpose: 'Latest brief as-of timestamp per portfolio.' },
+    { object: 'MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT', purpose: 'Latest digest as-of timestamp.' },
     { object: 'MIP.APP.RECOMMENDATION_OUTCOMES', purpose: 'Total outcomes and count since last run.' },
   ],
   fields: [
     { key: 'last_run', label: 'Last pipeline run', meaning: 'When the last daily pipeline run completed. Shows time ago (e.g., "2 hours ago") and status (SUCCESS, FAIL, etc.). A healthy system shows a recent successful run.', glossaryKey: 'live.last_pipeline_run' },
     { key: 'since_last_run', label: 'New evaluations since last run', meaning: 'Number of signal outcomes that were calculated after the last run. Higher numbers mean more historical signals have been measured for performance.', glossaryKey: 'live.new_evaluations_since_last_run' },
-    { key: 'latest_brief', label: 'Latest brief (as-of)', meaning: 'The market date covered by the most recent morning brief. This tells you how current the trading recommendations are.', glossaryKey: 'live.data_freshness' },
+    { key: 'latest_brief', label: 'Latest digest (as-of)', meaning: 'The market date covered by the most recent AI digest. This tells you how current the trading recommendations are.', glossaryKey: 'live.data_freshness' },
   ],
 }
 
@@ -191,7 +191,7 @@ export const RUNS_EXPLAIN_CONTEXT = {
 5. Simulation — Run portfolio paper trading
 6. Proposals — Create trade suggestions
 7. Execution — Execute approved trades
-8. Morning Brief — Generate daily summary`,
+8. Daily Digest — Generate AI narrative summary`,
 
   sources: [
     { object: 'MIP.APP.MIP_AUDIT_LOG', purpose: 'Pipeline runs and steps; RUN_ID, EVENT_TS, STATUS, ERROR_MESSAGE, DURATION_MS, DETAILS.' },
@@ -210,75 +210,21 @@ export const RUNS_EXPLAIN_CONTEXT = {
   ],
 }
 
+// Morning Brief page was removed — its functionality is now in the Cockpit.
+// Keeping a minimal context for backward compatibility if anything references it.
 export const MORNING_BRIEF_EXPLAIN_CONTEXT = {
-  id: 'brief',
-  title: 'Morning Brief',
-  what: `Your daily trading summary. The Morning Brief compiles everything you need to know about today's opportunities, risks, and portfolio status.
-
-**Key Sections:**
-
-**Executive Summary**
-- Are entries allowed? (risk gate status)
-- How many suggestions today?
-- Were any trades executed?
-
-**Portfolio Actions**
-- Current open positions
-- Trades executed this run
-- Last simulation timestamp
-
-**Today's Proposals**
-- Suggested trades based on trusted signals
-- Each shows: symbol, side (BUY/SELL), market type, pattern, confidence
-- These are proposals, not executed trades — they passed filters but await execution
-
-**Risk & Guardrails**
-- Current risk state and thresholds
-- What actions are allowed
-- Warning if approaching limits
-
-**Changes Since Last Brief**
-- Equity delta (up/down since yesterday)
-- Return change
-- Drawdown change
-- Position changes`,
-
-  why: `Read this every morning to understand:
-1. **What's new** — Any proposals or executed trades
-2. **Risk status** — Can you open new positions?
-3. **Performance** — How did the portfolio change since yesterday?
-
-**Important distinctions:**
-- **Proposals** = Suggestions that passed initial filters, ready to execute
-- **Executed** = Trades that were actually simulated in the portfolio
-
-**Staleness indicator:**
-- **CURRENT** (green) — Brief matches the latest pipeline run
-- **STALE** (yellow) — A newer pipeline run exists; this brief may be outdated`,
-
-  how: `The brief is generated at the end of each pipeline run:
-
-1. **SP_AGENT_PROPOSE_TRADES** — Creates trade proposals from eligible signals
-2. **SP_VALIDATE_AND_EXECUTE_PROPOSALS** — Validates against risk rules, executes approved trades
-3. **SP_WRITE_MORNING_BRIEF** — Compiles everything into a JSON document
-
-The brief includes attribution (which run produced it) so you can trace any data back to its source.`,
-
+  id: 'cockpit',
+  title: 'Cockpit',
+  what: `The Cockpit is your unified dashboard combining AI-generated narratives, portfolio status, training progress, and upcoming symbols. It replaces the old Morning Brief, Daily Digest, and Today pages.`,
+  why: `Use the Cockpit for your daily check-in. Everything you need is in one place.`,
+  how: `The Cockpit fetches data from Daily Digest (AI narrative), Training Digest, and portfolio views.`,
   sources: [
-    { object: 'MIP.AGENT_OUT.MORNING_BRIEF', purpose: 'The stored brief document with AS_OF_TS, PIPELINE_RUN_ID, and BRIEF JSON.' },
-    { object: 'MIP.AGENT_OUT.ORDER_PROPOSALS', purpose: 'Trade proposals with status (PROPOSED, APPROVED, REJECTED, EXECUTED).' },
+    { object: 'MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT', purpose: 'AI digest snapshot with facts.' },
+    { object: 'MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE', purpose: 'AI-generated narrative for daily digest.' },
+    { object: 'MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT', purpose: 'Training state snapshot.' },
     { object: 'MIP.APP.PORTFOLIO', purpose: 'Portfolio status and current state.' },
-    { object: 'MIP.MART.V_PORTFOLIO_RISK_GATE', purpose: 'Risk gate status for entries allowed/blocked.' },
   ],
-  fields: [
-    { key: 'as_of_ts', label: 'As-of date', meaning: 'The market date this brief covers (e.g., "Feb 4, 2026"). This is the date of the market data used, not when the brief was generated.', glossaryKey: 'brief.as_of_ts' },
-    { key: 'generated_at', label: 'Generated at', meaning: 'When the brief was actually created. This may be later than the as-of date (e.g., brief generated at 7:00 AM for yesterday\'s market close).', glossaryKey: 'brief.generated_at' },
-    { key: 'pipeline_run_id', label: 'Pipeline run ID', meaning: 'Unique identifier for the pipeline run that produced this brief. Use this to trace data or investigate in the Audit Viewer.', glossaryKey: 'brief.pipeline_run_id' },
-    { key: 'entries_allowed', label: 'Entries allowed', meaning: 'Whether new positions can be opened. If false, only closing existing positions is allowed (risk gate triggered).', glossaryKey: 'risk_gate.entries_allowed' },
-    { key: 'proposals', label: 'Proposals', meaning: 'Suggested trades that passed initial validation. Shows symbol, side (BUY/SELL), and confidence. Not yet executed.', glossaryKey: 'brief.proposals' },
-    { key: 'executed_trades', label: 'Executed trades', meaning: 'Trades that were actually simulated during this run. These affect portfolio positions and equity.', glossaryKey: 'brief.executed_trades' },
-    { key: 'staleness', label: 'Staleness', meaning: 'Whether this brief is current or outdated. STALE means a newer pipeline run completed but the brief hasn\'t been updated yet.', glossaryKey: 'brief.staleness' },
-  ],
+  fields: [],
 }
 
 export const TRAINING_STATUS_EXPLAIN_CONTEXT = {
@@ -398,14 +344,14 @@ export const TODAY_EXPLAIN_CONTEXT = {
 
 **Today's Insights** — Ranked list of trading candidates based on pattern detection and historical performance
 
-**Latest Brief** — Collapsible view of the morning brief`,
+**AI Narrative** — AI-generated digest for your portfolio`,
 
   why: `Use this page for your daily check-in. In one glance you can:
 
 1. **Verify the system is healthy** — Green status, recent pipeline run
 2. **Check your risk state** — Can you open new positions?
 3. **See today's opportunities** — Ranked candidates with clear reasoning
-4. **Access the brief** — Full details without leaving the page
+4. **Access AI narrative** — Full details without leaving the page
 
 **Reading Today's Insights:**
 - **Maturity Score** — How confident we are in this pattern (0-100%)
@@ -417,7 +363,7 @@ export const TODAY_EXPLAIN_CONTEXT = {
 - Portfolio data from PORTFOLIO table
 - Risk state from V_PORTFOLIO_RISK_GATE
 - Candidates from RECOMMENDATION_LOG filtered by training maturity
-- Brief from MORNING_BRIEF
+- Digest from DAILY_DIGEST_NARRATIVE
 
 All data uses daily bars only.`,
 
@@ -427,7 +373,7 @@ All data uses daily bars only.`,
     { object: 'MIP.MART.V_PORTFOLIO_RISK_GATE', purpose: 'Risk gate state (entries allowed/blocked).' },
     { object: 'MIP.APP.RECOMMENDATION_LOG', purpose: 'Today\'s signals for ranking candidates.' },
     { object: 'MIP.APP.RECOMMENDATION_OUTCOMES', purpose: 'Historical performance for maturity scoring.' },
-    { object: 'MIP.AGENT_OUT.MORNING_BRIEF', purpose: 'Latest brief content.' },
+    { object: 'MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE', purpose: 'Latest AI digest narrative.' },
   ],
   fields: [
     { key: 'system_status', label: 'System status', meaning: 'Overall health: Green = database connected, pipeline running. Red = connection issue or failure.', glossaryKey: 'live.system_status' },
@@ -455,7 +401,7 @@ export const SIGNALS_EXPLAIN_CONTEXT = {
 
 **Filters:**
 - Filter by symbol, market type, pattern, trust level, run ID, or date
-- Use "From Brief" to jump here with filters pre-set from the Morning Brief`,
+- Use filters to narrow down signals by symbol, market type, trust level, or date`,
 
   why: `Use this page to:
 1. **Browse all signals** — See everything the system detected

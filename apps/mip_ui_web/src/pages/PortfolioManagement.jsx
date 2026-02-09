@@ -108,9 +108,11 @@ export default function PortfolioManagement() {
       const opts = { method, headers: { 'Content-Type': 'application/json' } }
       if (body) opts.body = JSON.stringify(body)
       const res = await fetch(`${API_BASE}${url}`, opts)
-      const data = await res.json()
+      let data
+      const text = await res.text()
+      try { data = JSON.parse(text) } catch { data = { detail: text } }
       if (!res.ok) {
-        setFeedback({ type: 'error', message: data.detail || 'Request failed' })
+        setFeedback({ type: 'error', message: data.detail || `Request failed (${res.status})` })
         return null
       }
       setFeedback({ type: 'success', message: data.action ? `${data.action} successfully` : 'Success' })
@@ -128,14 +130,16 @@ export default function PortfolioManagement() {
     setNarrativeGenerating(true)
     try {
       const res = await fetch(`${API_BASE}/manage/portfolios/${selectedPortfolioId}/narrative`, { method: 'POST' })
+      let resData
+      const resText = await res.text()
+      try { resData = JSON.parse(resText) } catch { resData = { detail: resText } }
       if (res.ok) {
         // Reload narrative
         const narRes = await fetch(`${API_BASE}/manage/portfolios/${selectedPortfolioId}/narrative`)
         if (narRes.ok) setNarrative(await narRes.json())
         setFeedback({ type: 'success', message: 'Portfolio story generated successfully' })
       } else {
-        const err = await res.json()
-        setFeedback({ type: 'error', message: err.detail || 'Failed to generate narrative' })
+        setFeedback({ type: 'error', message: resData.detail || `Failed to generate narrative (${res.status})` })
       }
     } catch (e) {
       setFeedback({ type: 'error', message: e.message })

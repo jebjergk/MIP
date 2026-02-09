@@ -14,11 +14,11 @@ const NAV_ITEMS = [
   { to: '/home', label: 'Home' },
   { to: '/manage', label: 'Portfolio Management' },
   { to: '/portfolios', label: 'Portfolio Activity' },
-  { to: '/runs', label: 'Runs (Audit)' },
   { to: '/training', label: 'Training Status' },
   { to: '/suggestions', label: 'Suggestions' },
   { to: '/signals', label: 'Signals' },
   { to: '/market-timeline', label: 'Market Timeline' },
+  { to: '/runs', label: 'Runs (Audit)' },
   { to: '/debug', label: 'Debug' },
 ]
 

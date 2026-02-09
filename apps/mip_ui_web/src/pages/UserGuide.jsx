@@ -34,6 +34,7 @@ export default function UserGuide() {
               <li><a href="#page-home">Home</a></li>
               <li><a href="#page-cockpit">Cockpit (Daily Dashboard)</a></li>
               <li><a href="#page-portfolio">Portfolio</a></li>
+              <li><a href="#page-manage">Portfolio Management</a></li>
               <li><a href="#page-training">Training Status</a></li>
               <li><a href="#page-suggestions">Suggestions</a></li>
               <li><a href="#page-signals">Signals Explorer</a></li>
@@ -970,6 +971,16 @@ export default function UserGuide() {
           <p>
             Same structure as the global card, but scoped to your selected portfolio. Shows what changed for that portfolio's positions, risk gate, and capacity.
           </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Episode Badge (purple)</dt>
+            <dd>
+              Shows which episode the portfolio is in. Example: <strong>"Episode 3 (of 3)"</strong> means this is the 3rd lifecycle period.
+              Hover over it to see when the episode started. All performance numbers in the narrative are scoped to this episode — they
+              reflect the current cycle, not lifetime totals.
+              <br /><strong>Why this matters:</strong> After a crystallization event or profile change, a new episode starts with a fresh
+              cost basis. The AI narrative knows this and reports performance relative to the current episode only.
+            </dd>
+          </dl>
         </div>
 
         <div className="guide-page-section">
@@ -1257,9 +1268,259 @@ export default function UserGuide() {
         </div>
       </section>
 
-      {/* ─── 14. TRAINING STATUS ─── */}
+      {/* ─── 14. PORTFOLIO MANAGEMENT ─── */}
+      <section className="guide-section" id="page-manage">
+        <h2>14. Portfolio Management</h2>
+        <p className="guide-page-purpose">
+          Create and configure portfolios, manage risk profiles, deposit/withdraw cash, view
+          lifecycle history, and generate AI-powered portfolio stories. This is the operational
+          hub where you set up and maintain your portfolios.
+        </p>
+
+        <div className="guide-callout--warn guide-callout">
+          <strong>Pipeline Lock</strong>
+          When the daily pipeline is actively running, <strong>all editing is disabled</strong> on this page.
+          A yellow warning banner appears at the top: "Pipeline is currently running — editing is
+          disabled until the run completes." This prevents changes from interfering with an active
+          simulation. Buttons automatically re-enable once the pipeline finishes (the page polls
+          every 15 seconds). You can still browse data and read-only tabs while waiting.
+        </div>
+
+        <h3>Tabs</h3>
+        <p>The page is organized into four tabs:</p>
+        <div className="guide-metric-table">
+          <table>
+            <thead>
+              <tr><th>Tab</th><th>Purpose</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Portfolios</strong></td><td>Create/edit portfolios, deposit/withdraw cash, attach risk profiles</td></tr>
+              <tr><td><strong>Profiles</strong></td><td>Create/edit risk profiles with position limits, drawdown stops, and crystallization settings</td></tr>
+              <tr><td><strong>Lifecycle Timeline</strong></td><td>Visual history of every lifecycle event (charts + timeline) for a selected portfolio</td></tr>
+              <tr><td><strong>Portfolio Story</strong></td><td>AI-generated narrative summarizing the portfolio's complete journey</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="guide-page-section">
+          <h4>Tab 1: Portfolios</h4>
+          <p>
+            Shows a table of all portfolios with key metrics. Each row displays the portfolio's
+            ID, name, assigned risk profile, starting cash, final equity, total return, and status.
+          </p>
+
+          <h5>Actions on each portfolio row</h5>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Edit</dt>
+            <dd>Update the portfolio name, currency, or notes. <strong>Starting cash cannot be changed after creation</strong> — use the Cash button for deposits/withdrawals instead.</dd>
+            <dt>Cash</dt>
+            <dd>
+              Opens the <strong>Cash Event</strong> dialog where you register a deposit or withdrawal.
+              <br /><strong>Deposit:</strong> Adds money to the portfolio. Increases cash and equity by the deposited amount.
+              <br /><strong>Withdraw:</strong> Removes money from the portfolio. You can only withdraw up to the current cash balance.
+              <br /><strong>Important:</strong> Your lifetime P&amp;L tracking stays intact. The system adjusts the cost basis so gains/losses
+              are always calculated correctly — a deposit doesn't count as "profit" and a withdrawal doesn't count as a "loss."
+            </dd>
+            <dt>Profile</dt>
+            <dd>
+              Attach a different risk profile to the portfolio. <strong>Warning:</strong> Changing the profile
+              ends the current episode and starts a new one. Episode results are preserved in the lifecycle history.
+            </dd>
+          </dl>
+
+          <h5>"+ Create Portfolio" button</h5>
+          <p>Opens a dialog to create a new portfolio. You'll set:</p>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Field</th><th>What it means</th><th>Example</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Name</strong></td><td>A descriptive name for the portfolio</td><td>Main FX Portfolio</td></tr>
+                <tr><td><strong>Currency</strong></td><td>Base currency (USD, EUR, or GBP)</td><td>USD</td></tr>
+                <tr><td><strong>Starting Cash</strong></td><td>Initial capital — cannot be changed later</td><td>$100,000</td></tr>
+                <tr><td><strong>Risk Profile</strong></td><td>Which profile's rules to apply (position limits, drawdown stops, crystallization)</td><td>MODERATE_RISK</td></tr>
+                <tr><td><strong>Notes</strong></td><td>Optional description</td><td>"FX-focused momentum strategy"</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Depositing Cash</div>
+            <p>
+              Your portfolio "Main FX" has $87,000 in cash and $15,000 in open positions (equity = $102,000).
+              You click <strong>Cash → Deposit → $10,000</strong>. After the deposit:
+            </p>
+            <ul>
+              <li>Cash: $87,000 + $10,000 = <strong>$97,000</strong></li>
+              <li>Equity: $102,000 + $10,000 = <strong>$112,000</strong></li>
+              <li>P&amp;L stays the same — the deposit is a cost basis adjustment, not a profit</li>
+              <li>A <strong>DEPOSIT</strong> event is recorded in the lifecycle timeline</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="guide-page-section">
+          <h4>Tab 2: Profiles</h4>
+          <p>
+            Risk profiles are reusable templates that define how a portfolio should behave. You can create
+            as many profiles as you need and attach them to any portfolio. The table shows each profile's
+            settings and how many portfolios are currently using it.
+          </p>
+
+          <h5>Profile settings explained</h5>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Setting</th><th>What it controls</th><th>Example</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Max Positions</strong></td><td>Maximum number of holdings at once</td><td>10</td></tr>
+                <tr><td><strong>Max Position %</strong></td><td>Maximum size of any single position as a % of cash</td><td>8%</td></tr>
+                <tr><td><strong>Bust Equity %</strong></td><td>If equity drops below this % of starting cash, the portfolio is "bust"</td><td>50%</td></tr>
+                <tr><td><strong>Bust Action</strong></td><td>What happens at bust: Allow Exits Only, Liquidate Next Bar, or Liquidate Immediate</td><td>Allow Exits Only</td></tr>
+                <tr><td><strong>Drawdown Stop %</strong></td><td>Maximum peak-to-trough decline before entries are blocked</td><td>15%</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h5>Crystallization settings (collapsible section in the profile editor)</h5>
+          <p>
+            Crystallization is the process of <strong>locking in gains</strong> when a profit target is reached.
+            When triggered, the current episode ends, profits are recorded, and a new episode begins.
+          </p>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Setting</th><th>What it does</th><th>Example</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Enabled</strong></td><td>Turn crystallization on or off</td><td>On</td></tr>
+                <tr><td><strong>Profit Target %</strong></td><td>The return that triggers crystallization</td><td>10%</td></tr>
+                <tr>
+                  <td><strong>Mode</strong></td>
+                  <td>
+                    <strong>Withdraw Profits:</strong> Gains are withdrawn from the portfolio. New episode starts with original capital.
+                    <br /><strong>Rebase (compound):</strong> Gains stay in the portfolio. New episode starts with the higher equity as the new cost basis.
+                  </td>
+                  <td>Withdraw Profits</td>
+                </tr>
+                <tr><td><strong>Cooldown Days</strong></td><td>Minimum days between crystallization events</td><td>30</td></tr>
+                <tr><td><strong>Max Episode Days</strong></td><td>Force a new episode after this many days even without hitting the profit target</td><td>90</td></tr>
+                <tr><td><strong>Take Profit On</strong></td><td>Check the target at End of Day or Intraday</td><td>End of Day</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Crystallization in action</div>
+            <p>
+              Your profile has a <strong>10% profit target</strong> in <strong>Withdraw Profits</strong> mode.
+              The portfolio started with $100,000. After 6 weeks, equity reaches $110,500 (+10.5%).
+            </p>
+            <ol style={{marginLeft: '1.5rem', lineHeight: '1.8'}}>
+              <li>The pipeline detects the profit target is hit (+10.5% &gt; 10%)</li>
+              <li>$10,500 in profits is withdrawn and recorded as a payout</li>
+              <li>The current episode (Episode 1) ends with status "CRYSTALLIZED"</li>
+              <li>A new episode (Episode 2) starts with $100,000 as the cost basis</li>
+              <li>The lifecycle timeline records both the CRYSTALLIZE and EPISODE_START events</li>
+            </ol>
+            <p>
+              If <strong>Rebase</strong> mode were used instead, the $10,500 would stay in the portfolio
+              and Episode 2 would start with $110,500 as the new cost basis. This is compounding —
+              subsequent profit targets are measured against the higher base.
+            </p>
+          </div>
+        </div>
+
+        <div className="guide-page-section">
+          <h4>Tab 3: Lifecycle Timeline</h4>
+          <p>
+            A visual history of every meaningful event in a portfolio's life. Select a portfolio
+            from the dropdown to view its history.
+          </p>
+
+          <h5>Charts (4 panels)</h5>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Lifetime Equity</dt>
+            <dd>A line chart showing equity over time across all lifecycle events. Each dot marks a recorded event (deposit, withdrawal, crystallization, etc.).</dd>
+            <dt>Cumulative Lifetime P&amp;L</dt>
+            <dd>An area chart showing the running total of profit/loss over time. Green = above zero (profitable), red area appears if it dips below zero.</dd>
+            <dt>Cash Flow Events</dt>
+            <dd>A bar chart showing money in (green bars for CREATE and DEPOSIT) and money out (red bars for WITHDRAW and CRYSTALLIZE). Helps you see the pattern of cash flows over time.</dd>
+            <dt>Cash vs Equity</dt>
+            <dd>Two lines: orange for cash on hand, blue for total equity. The gap between them represents the value tied up in open positions.</dd>
+          </dl>
+
+          <h5>Event Timeline (below the charts)</h5>
+          <p>
+            A vertical timeline listing every lifecycle event in chronological order. Each entry shows:
+          </p>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Element</th><th>What it shows</th><th>Example</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Event Type</strong></td><td>What happened (color-coded dot)</td><td>DEPOSIT, CRYSTALLIZE, EPISODE_START</td></tr>
+                <tr><td><strong>Timestamp</strong></td><td>When it happened</td><td>Feb 7, 2026, 14:30</td></tr>
+                <tr><td><strong>Amount</strong></td><td>Money involved (if applicable)</td><td>+$10,000 or -$5,200</td></tr>
+                <tr><td><strong>Snapshots</strong></td><td>Cash, Equity, and Lifetime P&amp;L at that moment</td><td>Cash: $97,000 | Equity: $112,000 | P&amp;L: $2,000</td></tr>
+                <tr><td><strong>Notes</strong></td><td>Optional notes recorded with the event</td><td>"Quarterly deposit"</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h5>Lifecycle event types</h5>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Event Type</th><th>When it happens</th><th>What it records</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>CREATE</strong></td><td>Portfolio is first created</td><td>Initial cash, starting equity</td></tr>
+                <tr><td><strong>DEPOSIT</strong></td><td>You add cash to the portfolio</td><td>Deposit amount, new cash/equity balances</td></tr>
+                <tr><td><strong>WITHDRAW</strong></td><td>You remove cash from the portfolio</td><td>Withdrawal amount, new balances</td></tr>
+                <tr><td><strong>CRYSTALLIZE</strong></td><td>Profit target hit, gains locked in</td><td>Payout amount, mode (withdraw or rebase)</td></tr>
+                <tr><td><strong>PROFILE_CHANGE</strong></td><td>Risk profile is changed</td><td>Old and new profile references</td></tr>
+                <tr><td><strong>EPISODE_START</strong></td><td>A new episode begins</td><td>New episode ID, starting equity</td></tr>
+                <tr><td><strong>EPISODE_END</strong></td><td>An episode ends</td><td>Final equity, end reason</td></tr>
+                <tr><td><strong>BUST</strong></td><td>Portfolio hits bust threshold</td><td>Equity at bust</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="guide-page-section">
+          <h4>Tab 4: Portfolio Story</h4>
+          <p>
+            An AI-generated narrative that tells the complete story of a portfolio — from creation through
+            every deposit, withdrawal, crystallization event, and market performance period. Think of it as
+            a "biography" for your portfolio.
+          </p>
+
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Headline</dt>
+            <dd>A one-line summary of the portfolio's journey. Example: "Main FX Portfolio: 3 episodes, $5,200 in payouts, currently active with +2.4% return."</dd>
+            <dt>Narrative</dt>
+            <dd>Multiple paragraphs explaining the full story — how the portfolio started, what happened in each episode, how it responded to market conditions, and where it stands now.</dd>
+            <dt>Key Moments</dt>
+            <dd>A bulleted list of the most significant events. Example: "Episode 1 crystallized at +12.3% after 45 days" or "Deposit of $10,000 on Feb 7 increased the capital base."</dd>
+            <dt>Outlook</dt>
+            <dd>Forward-looking commentary based on current state. Example: "With the risk gate in SAFE mode and 4 of 10 position slots available, the portfolio is well-positioned for new opportunities."</dd>
+          </dl>
+
+          <div className="guide-callout">
+            <strong>Auto-generation:</strong> The story is generated automatically the first time you visit the tab
+            for a portfolio. You can manually regenerate it by clicking the <strong>Regenerate</strong> button.
+            Generation uses Snowflake Cortex AI and typically takes 10–20 seconds.
+          </div>
+        </div>
+      </section>
+
+      {/* ─── 15. TRAINING STATUS ─── */}
       <section className="guide-section" id="page-training">
-        <h2>14. Training Status</h2>
+        <h2>15. Training Status</h2>
         <p className="guide-page-purpose">
           Monitor the learning process for every symbol/pattern combination. See which
           symbols are gathering evidence, which are close to earning trust, and which are
@@ -1399,9 +1660,9 @@ export default function UserGuide() {
         </dl>
       </section>
 
-      {/* ─── 15. SUGGESTIONS ─── */}
+      {/* ─── 16. SUGGESTIONS ─── */}
       <section className="guide-section" id="page-suggestions">
-        <h2>15. Suggestions</h2>
+        <h2>16. Suggestions</h2>
         <p className="guide-page-purpose">
           Ranked list of trading candidates based on historical performance. These are NOT predictions —
           they're ranked by which symbol/pattern pairs have the best track record.
@@ -1485,9 +1746,9 @@ export default function UserGuide() {
         </dl>
       </section>
 
-      {/* ─── 16. SIGNALS EXPLORER ─── */}
+      {/* ─── 17. SIGNALS EXPLORER ─── */}
       <section className="guide-section" id="page-signals">
-        <h2>16. Signals Explorer</h2>
+        <h2>17. Signals Explorer</h2>
         <p className="guide-page-purpose">
           Browse raw signal data — every detection the system has made. Use this page to
           see exactly which signals were generated today, their trust labels, and whether
@@ -1585,9 +1846,9 @@ export default function UserGuide() {
         </p>
       </section>
 
-      {/* ─── 17. MARKET TIMELINE ─── */}
+      {/* ─── 18. MARKET TIMELINE ─── */}
       <section className="guide-section" id="page-market-timeline">
-        <h2>17. Market Timeline</h2>
+        <h2>18. Market Timeline</h2>
         <p className="guide-page-purpose">
           End-to-end symbol observability. See every symbol as a tile showing signal, proposal,
           and trade counts. Click a tile to see the price chart with event overlays.
@@ -1655,9 +1916,9 @@ export default function UserGuide() {
         </dl>
       </section>
 
-      {/* ─── 18. RUNS (AUDIT VIEWER) ─── */}
+      {/* ─── 19. RUNS (AUDIT VIEWER) ─── */}
       <section className="guide-section" id="page-runs">
-        <h2>18. Runs (Audit Viewer)</h2>
+        <h2>19. Runs (Audit Viewer)</h2>
         <p className="guide-page-purpose">
           Monitor every pipeline run — when it happened, whether it succeeded, how long each step took,
           and what errors occurred. This is your pipeline health dashboard.

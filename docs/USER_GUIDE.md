@@ -11,6 +11,7 @@
    - [Home](#21-home)
    - [Portfolio](#23-portfolio)
    - [Cockpit](#24-cockpit)
+   - [Portfolio Management](#210-portfolio-management)
    - [Signals](#25-signals)
    - [Market Timeline](#26-market-timeline)
    - [Suggestions](#27-suggestions)
@@ -22,10 +23,13 @@
    - [Data Flow](#33-data-flow)
 4. [Key Concepts](#4-key-concepts)
    - [Episodes](#41-episodes)
-   - [Run IDs](#42-run-ids)
-   - [Risk Gates](#43-risk-gates)
-   - [Trust Levels](#44-trust-levels)
-   - [Proposals vs Trades](#45-proposals-vs-trades)
+   - [Crystallization](#42-crystallization)
+   - [Risk Profiles](#43-risk-profiles)
+   - [Run IDs](#44-run-ids)
+   - [Risk Gates](#45-risk-gates)
+   - [Trust Levels](#46-trust-levels)
+   - [Proposals vs Trades](#47-proposals-vs-trades)
+   - [Pipeline Lock](#48-pipeline-lock)
 5. [Troubleshooting](#5-troubleshooting)
 6. [Glossary](#6-glossary)
 
@@ -115,7 +119,73 @@ The system runs automatically every day, but you can also trigger it manually. T
 
 ### 2.4 Cockpit
 
-**What it shows:** The unified dashboard providing AI-generated narratives, portfolio status, and training insights. The Cockpit consolidates daily AI narratives, portfolio status, and training insights, offering a comprehensive view of trading opportunities, risk status, and system performance in one place.
+**What it shows:** The unified daily command center. Shows AI-generated narratives, portfolio status, training insights, signal candidates, and upcoming symbols — all in one view.
+
+**Layout:**
+
+| Row | Left Card | Right Card |
+|-----|-----------|------------|
+| **Row 1** | System Overview (Global Digest) | Portfolio Intelligence (Per-Portfolio Digest) |
+| **Row 2** | Global Training Digest (full width) | |
+| **Row 3** | Today's Signal Candidates | Upcoming Symbols |
+
+**Portfolio Picker:** Top-right dropdown to select which portfolio's intelligence to show.
+
+**System Overview (Left Card):**
+
+| Element | What it shows |
+|---------|---------------|
+| **Headline** | AI-generated one-sentence summary of the day |
+| **Cortex AI / Deterministic badge** | Whether the narrative was AI-generated or template-based |
+| **Fresh / Stale badge** | Digest age — Fresh if under 2 hours, Stale if older |
+| **What Changed** | Bullet points of differences from yesterday |
+| **What Matters** | Important observations and implications |
+| **Waiting For** | Upcoming triggers or thresholds to watch |
+| **Detector Pills** | Color-coded interest detectors (green/orange/red severity) |
+
+**Portfolio Intelligence (Right Card):**
+
+Same structure as System Overview but scoped to the selected portfolio. Includes:
+
+| Badge | What it shows |
+|-------|---------------|
+| **Episode badge (purple)** | Current episode number, e.g. "Episode 3 (of 3)". Hover for episode start date. All performance numbers in the narrative are scoped to this episode. |
+
+**When to use:** Check this page first every morning. It tells you what changed overnight and what to focus on.
+
+---
+
+### 2.10 Portfolio Management
+
+**What it shows:** Create and configure portfolios, manage risk profiles, deposit/withdraw cash, view lifecycle history, and generate AI portfolio stories.
+
+> **Pipeline Lock:** When the daily pipeline is running, all editing is disabled. A yellow warning banner appears and buttons are greyed out. Editing re-enables automatically once the pipeline finishes (polls every 15 seconds).
+
+**Four tabs:**
+
+#### Portfolios Tab
+
+| Action | What it does |
+|--------|--------------|
+| **+ Create Portfolio** | Create a new portfolio with name, currency, starting cash, and risk profile |
+| **Edit** | Update name, currency, notes (starting cash is fixed after creation) |
+| **Cash** | Deposit or withdraw money. P&L tracking stays intact — cost basis adjusts automatically |
+| **Profile** | Attach a different risk profile. Warning: this ends the current episode and starts a new one |
+
+#### Profiles Tab
+
+Create/edit reusable risk profiles with:
+- Position limits (max positions, max position %)
+- Risk thresholds (bust equity %, drawdown stop %)
+- Crystallization settings (profit target, mode, cooldown, max episode days)
+
+#### Lifecycle Timeline Tab
+
+Visual history of every portfolio event — 4 charts (equity, P&L, cash flows, cash vs equity) plus a vertical event timeline showing CREATE, DEPOSIT, WITHDRAW, CRYSTALLIZE, PROFILE_CHANGE, EPISODE_START, EPISODE_END, and BUST events.
+
+#### Portfolio Story Tab
+
+AI-generated narrative "biography" of a portfolio. Auto-generates on first visit, can be manually regenerated. Shows headline, narrative paragraphs, key moments, and outlook.
 
 ---
 
@@ -243,14 +313,15 @@ Click any suggestion to see detailed charts and statistics about its historical 
 The system runs a daily pipeline that processes data through these steps:
 
 ```
-1. INGESTION      → Fetch market data from API
-2. RETURNS        → Calculate price returns
-3. RECOMMENDATIONS → Generate trading signals
-4. EVALUATION     → Measure signal quality
-5. SIMULATION     → Run portfolio paper trading
-6. PROPOSALS      → Create trade suggestions
-7. EXECUTION      → Execute approved trades (paper)
-8. MORNING BRIEF  → Generate daily summary (viewed in Cockpit UI)
+1. INGESTION        → Fetch market data from API
+2. RETURNS          → Calculate price returns
+3. RECOMMENDATIONS  → Generate trading signals
+4. EVALUATION       → Measure signal quality
+5. SIMULATION       → Run portfolio paper trading
+6. CRYSTALLIZATION  → Check profit targets, lock in gains, cycle episodes
+7. PROPOSALS        → Create trade suggestions
+8. EXECUTION        → Execute approved trades (paper)
+9. DAILY DIGEST     → Generate AI narrative summaries (viewed in Cockpit UI)
 ```
 
 **When does it run?**
@@ -429,17 +500,73 @@ An episode is a lifecycle period for a portfolio. Think of it as a "trading seas
 | **BUST** | Lost too much, trading halted |
 
 **Why episodes matter:**
-- All portfolio data (trades, positions, equity) is scoped to the current episode
-- When you "reset" a portfolio, you end the current episode and start a new one
-- Historical episodes are preserved for analysis
+- All portfolio data (trades, positions, equity, KPIs) is scoped to the current episode
+- AI narratives in the Cockpit and digest know which episode is active and report performance accordingly
+- The Cockpit shows an "Episode N (of M)" badge on the Portfolio Intelligence card
+- When you change a profile, deposit/withdraw cash that triggers crystallization, or hit a profit target, the current episode ends and a new one starts
+- Historical episodes are preserved — view them on the Portfolio page or Lifecycle Timeline
+
+**What triggers a new episode:**
+- **Crystallization**: Profit target reached → gains locked in → new episode
+- **Profile change**: Attaching a different risk profile ends the current episode
+- **Manual reset**: Forced restart via system operator
+- **Max episode days**: If configured in the profile, the episode auto-ends after N days
 
 **Episode boundaries:**
-- **Start**: When the episode begins (usually a reset or new portfolio)
-- **End**: When a trigger occurs (profit target, drawdown stop, manual reset)
+- **Start**: When the episode begins (creation, crystallization, profile change)
+- **End**: When a trigger occurs (profit target, drawdown stop, profile change, bust)
 
 ---
 
-### 4.2 Run IDs
+### 4.2 Crystallization
+
+**What is crystallization?**
+
+Crystallization is the process of locking in profits when a portfolio hits its profit target. It's configured per risk profile and runs automatically as part of the daily pipeline.
+
+**How it works:**
+
+1. The pipeline checks if the portfolio's return exceeds the profit target (e.g., +10%)
+2. If yes, it "crystallizes" — the current episode ends, gains are recorded
+3. A new episode starts with either the original capital (Withdraw Profits) or the higher equity (Rebase)
+
+**Two modes:**
+
+| Mode | What happens to profits | Example |
+|------|------------------------|---------|
+| **Withdraw Profits** | Gains are withdrawn from the portfolio. New episode starts with original capital. | Started with $100K, earned $10K → $10K paid out, new episode starts at $100K |
+| **Rebase (compound)** | Gains stay in the portfolio. New episode starts with higher cost basis. | Started with $100K, earned $10K → new episode starts at $110K, no payout |
+
+**Configuration options:**
+- **Profit Target %**: The return threshold (e.g., 10%)
+- **Cooldown Days**: Minimum days between crystallizations (e.g., 30)
+- **Max Episode Days**: Force a new episode after N days even without hitting the target
+- **Take Profit On**: Check target at End of Day or Intraday
+
+---
+
+### 4.3 Risk Profiles
+
+**What is a risk profile?**
+
+A reusable template that defines how a portfolio should behave. You create profiles once and attach them to any number of portfolios.
+
+**Profile settings:**
+
+| Setting | What it controls | Example |
+|---------|-----------------|---------|
+| **Max Positions** | Maximum concurrent holdings | 10 |
+| **Max Position %** | Size limit per position (% of cash) | 8% |
+| **Bust Equity %** | Equity floor before bust (% of starting cash) | 50% |
+| **Bust Action** | What happens at bust | Allow Exits Only |
+| **Drawdown Stop %** | Max decline from peak before entries blocked | 15% |
+| **Crystallization** | Profit-taking settings (target, mode, cooldown) | 10% target, Withdraw Profits |
+
+**Changing profiles:** You can attach a different profile at any time through Portfolio Management. Changing the profile ends the current episode and starts a new one — this is intentional, as different risk parameters mean a different "trading context."
+
+---
+
+### 4.4 Run IDs
 
 **What is a Run ID?**
 
@@ -460,7 +587,7 @@ A unique identifier that tracks every pipeline execution and simulation run.
 
 ---
 
-### 4.3 Risk Gates
+### 4.5 Risk Gates
 
 **What is a risk gate?**
 
@@ -490,7 +617,7 @@ Each portfolio profile defines its own risk limits:
 
 ---
 
-### 4.4 Trust Levels
+### 4.6 Trust Levels
 
 **What is trust?**
 
@@ -516,7 +643,7 @@ A classification of how reliable a pattern is, based on historical performance.
 
 ---
 
-### 4.5 Proposals vs Trades
+### 4.7 Proposals vs Trades
 
 **Understanding the difference:**
 
@@ -540,6 +667,26 @@ SIGNAL → [Trust check] → [Eligibility check] → PROPOSAL → [Risk check] �
 | **APPROVED** | Passed all checks, ready to execute |
 | **REJECTED** | Failed validation (risk gate, limits, etc.) |
 | **EXECUTED** | Successfully traded (paper) |
+
+---
+
+### 4.8 Pipeline Lock
+
+**What is the pipeline lock?**
+
+A safety mechanism that prevents portfolio editing while the daily pipeline is actively running. This avoids data conflicts — for example, depositing cash at the exact moment the simulation is calculating equity could lead to inconsistent results.
+
+**How it works:**
+- The Portfolio Management page polls the system status every 15 seconds
+- If the pipeline is detected as running (a START event exists with no matching completion), all Create/Edit/Cash/Profile buttons are disabled
+- A yellow warning banner appears: "Pipeline is currently running — editing is disabled until the run completes"
+- Once the pipeline finishes (SUCCESS, FAIL, or SUCCESS_WITH_SKIPS), buttons automatically re-enable
+- Read-only tabs (Lifecycle Timeline, Portfolio Story) remain accessible during a lock
+
+**When you might see it:**
+- During the daily automated pipeline run (typically at 07:00 Europe/Berlin)
+- During a manually triggered pipeline run
+- The lock typically lasts 2–5 minutes
 
 ---
 
@@ -604,20 +751,27 @@ SIGNAL → [Trust check] → [Eligibility check] → PROPOSAL → [Risk check] �
 |------|------------|
 | **Bar** | A single OHLC price data point (Open, High, Low, Close) |
 | **Bust** | When portfolio value drops below the bust threshold |
-| **Crystallize** | Lock in gains when profit target is hit |
+| **Cost Basis** | Average entry price for a position, adjusted for deposits/withdrawals |
+| **Cortex AI** | Snowflake's built-in LLM service used to generate narrative digests and portfolio stories |
+| **Crystallization** | Locking in gains when a profit target is hit. Ends the current episode. Two modes: Withdraw Profits or Rebase (compound) |
+| **Deposit / Withdraw** | Cash events that add/remove money without affecting P&L. Cost basis adjusts automatically |
 | **Drawdown** | Decline from peak equity (expressed as %) |
-| **Episode** | A portfolio lifecycle period with defined start/end |
+| **Episode** | A portfolio lifecycle period with defined start/end. All KPIs are scoped to the active episode |
 | **Equity** | Total portfolio value (cash + positions) |
 | **Hit Rate** | Percentage of signals that went in the predicted direction |
 | **Horizon** | Forward time period for evaluation (1, 3, 5, 10, 20 bars) |
 | **Idempotent** | Can be run multiple times without creating duplicates |
+| **Lifecycle Event** | Immutable record of a portfolio state change (CREATE, DEPOSIT, WITHDRAW, CRYSTALLIZE, etc.) |
 | **Maturity** | How well the system has learned a pattern |
 | **OHLC** | Open, High, Low, Close - standard price bar format |
 | **Pattern** | A price behavior that signals a trading opportunity |
 | **Pipeline** | The automated sequence of data processing steps |
+| **Pipeline Lock** | Safety mechanism that disables portfolio editing while the pipeline is running |
+| **Portfolio Story** | AI-generated narrative biography of a portfolio — creation through current state |
 | **Position** | A holding in an asset (shares owned) |
 | **Proposal** | A suggested trade that passed initial filters |
 | **Risk Gate** | Safety mechanism controlling trade entries |
+| **Risk Profile** | Reusable template defining portfolio risk rules (position limits, drawdown stops, crystallization) |
 | **Run ID** | Unique identifier for a pipeline or simulation execution |
 | **Signal** | A detected trading opportunity from pattern matching |
 | **Simulation** | Paper trading that doesn't use real money |
@@ -625,4 +779,4 @@ SIGNAL → [Trust check] → [Eligibility check] → PROPOSAL → [Risk check] �
 
 ---
 
-*Last updated: February 2026*
+*Last updated: February 9, 2026*

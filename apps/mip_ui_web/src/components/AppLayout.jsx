@@ -8,18 +8,38 @@ import { useExplainMode } from '../context/ExplainModeContext'
 import { useExplainCenter } from '../context/ExplainCenterContext'
 import './AppLayout.css'
 
-const SIDEBAR_WIDTH = 220
-const NAV_ITEMS = [
-  { to: '/cockpit', label: 'Cockpit' },
-  { to: '/home', label: 'Home' },
-  { to: '/manage', label: 'Portfolio Management' },
-  { to: '/portfolios', label: 'Portfolio Activity' },
-  { to: '/training', label: 'Training Status' },
-  { to: '/suggestions', label: 'Suggestions' },
-  { to: '/signals', label: 'Signals' },
-  { to: '/market-timeline', label: 'Market Timeline' },
-  { to: '/runs', label: 'Runs (Audit)' },
-  { to: '/debug', label: 'Debug' },
+const SIDEBAR_WIDTH = 240
+const NAV_GROUPS = [
+  {
+    label: 'Dashboard',
+    items: [
+      { to: '/cockpit', icon: '\u25C9', label: 'Cockpit' },
+      { to: '/home',    icon: '\u2302', label: 'Home' },
+    ],
+  },
+  {
+    label: 'Portfolio',
+    items: [
+      { to: '/manage',     icon: '\u2699', label: 'Management' },
+      { to: '/portfolios', icon: '\u25C8', label: 'Activity' },
+    ],
+  },
+  {
+    label: 'Research',
+    items: [
+      { to: '/training',         icon: '\u25B3', label: 'Training Status' },
+      { to: '/suggestions',      icon: '\u2726', label: 'Suggestions' },
+      { to: '/signals',          icon: '\u26A1', label: 'Signals' },
+      { to: '/market-timeline',  icon: '\u25D4', label: 'Market Timeline' },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { to: '/runs',  icon: '\u25B8', label: 'Runs (Audit)' },
+      { to: '/debug', icon: '\u2692', label: 'Debug' },
+    ],
+  },
 ]
 
 export default function AppLayout() {
@@ -57,18 +77,24 @@ export default function AppLayout() {
             </NavLink>
           </h1>
           <nav className="app-layout-nav">
-            {NAV_ITEMS.map(({ to, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to !== '/portfolios' && to !== '/runs'}
-                className={({ isActive }) =>
-                  `app-layout-nav-link ${isActive ? 'app-layout-nav-link--active' : ''}`
-                }
-                onClick={closeSidebar}
-              >
-                {label}
-              </NavLink>
+            {NAV_GROUPS.map((group, gi) => (
+              <div key={group.label} className="app-layout-nav-group">
+                {gi > 0 && <div className="app-layout-nav-divider" />}
+                <span className="app-layout-nav-group-label">{group.label}</span>
+                {group.items.map(({ to, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to !== '/portfolios' && to !== '/runs'}
+                    className={({ isActive }) =>
+                      `app-layout-nav-link ${isActive ? 'app-layout-nav-link--active' : ''}`
+                    }
+                    onClick={closeSidebar}
+                  >
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
             ))}
             <div className="app-layout-nav-divider" />
             <NavLink

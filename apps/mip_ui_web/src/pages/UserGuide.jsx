@@ -31,16 +31,16 @@ export default function UserGuide() {
           <div className="guide-toc-col">
             <h4>Part 2 — Page-by-Page Guide</h4>
             <ol start={11}>
-              <li><a href="#page-home">Home</a></li>
-              <li><a href="#page-cockpit">Cockpit (Daily Dashboard)</a></li>
-              <li><a href="#page-portfolio">Portfolio</a></li>
-              <li><a href="#page-manage">Portfolio Management</a></li>
-              <li><a href="#page-training">Training Status</a></li>
-              <li><a href="#page-suggestions">Suggestions</a></li>
-              <li><a href="#page-signals">Signals Explorer</a></li>
-              <li><a href="#page-market-timeline">Market Timeline</a></li>
-              <li><a href="#page-runs">Runs (Audit Viewer)</a></li>
-              <li><a href="#page-debug">Debug</a></li>
+              <li><a href="#page-home">Home</a> (11)</li>
+              <li><a href="#page-cockpit">Cockpit (Daily Dashboard)</a> (12)</li>
+              <li><a href="#page-portfolio">Portfolio Activity</a> (13)</li>
+              <li><a href="#page-manage">Portfolio Management</a> (14)</li>
+              <li><a href="#page-training">Training Status</a> (15)</li>
+              <li><a href="#page-suggestions">Suggestions</a> (16)</li>
+              <li><a href="#page-signals">Signals Explorer</a> (17)</li>
+              <li><a href="#page-market-timeline">Market Timeline</a> (18)</li>
+              <li><a href="#page-runs">Runs (Audit Viewer)</a> (19)</li>
+              <li><a href="#page-debug">Debug</a> (20)</li>
             </ol>
           </div>
         </div>
@@ -1969,9 +1969,9 @@ export default function UserGuide() {
         </dl>
       </section>
 
-      {/* ─── 19. DEBUG ─── */}
+      {/* ─── 20. DEBUG ─── */}
       <section className="guide-section" id="page-debug">
-        <h2>19. Debug</h2>
+        <h2>20. Debug</h2>
         <p className="guide-page-purpose">
           A technical health check page. Calls the backend API endpoints one by one and shows
           whether each responds correctly. Primarily for developers and system administrators.
@@ -2038,14 +2038,20 @@ export default function UserGuide() {
               <tr><td><strong>Trust Label</strong></td><td>TRUSTED / WATCH / UNTRUSTED. Determined by passing 3 gates: sample ≥ 40, hit rate ≥ 55%, avg return ≥ 0.05%.</td></tr>
               <tr><td><strong>Proposal</strong></td><td>A suggested trade order generated when a TRUSTED signal passes risk/capacity checks.</td></tr>
               <tr><td><strong>Risk Gate</strong></td><td>Safety mechanism that blocks new entries when portfolio drawdown exceeds a threshold.</td></tr>
-              <tr><td><strong>Episode</strong></td><td>A "generation" of the portfolio. When reset, a new episode starts with fresh capital.</td></tr>
+              <tr><td><strong>Episode</strong></td><td>A "generation" of the portfolio. Starts at creation or after crystallization/profile change. All KPIs and performance numbers are scoped to the active episode.</td></tr>
+              <tr><td><strong>Crystallization</strong></td><td>The process of locking in gains when a profit target is hit. Ends the current episode and starts a new one. Two modes: Withdraw Profits (pay out gains) or Rebase (compound gains into new cost basis).</td></tr>
+              <tr><td><strong>Lifecycle Event</strong></td><td>An immutable record of a portfolio state change — CREATE, DEPOSIT, WITHDRAW, CRYSTALLIZE, PROFILE_CHANGE, EPISODE_START, EPISODE_END, or BUST. Stored permanently for audit and timeline views.</td></tr>
+              <tr><td><strong>Risk Profile</strong></td><td>A reusable template defining portfolio behavior: position limits, drawdown stops, bust threshold, and crystallization rules. Attached to portfolios and can be changed at any time (which starts a new episode).</td></tr>
+              <tr><td><strong>Pipeline Lock</strong></td><td>A safety mechanism that disables all portfolio editing while the daily pipeline is running. Prevents data conflicts. Buttons re-enable automatically once the pipeline completes.</td></tr>
+              <tr><td><strong>Deposit / Withdraw</strong></td><td>Cash events that add or remove money from a portfolio without affecting P&amp;L tracking. The system adjusts the cost basis so deposits aren't counted as profit and withdrawals aren't counted as losses.</td></tr>
               <tr><td><strong>Drawdown</strong></td><td>The percentage decline from a portfolio's peak equity. -5% drawdown = 5% below the high water mark.</td></tr>
-              <tr><td><strong>Cortex AI</strong></td><td>Snowflake's built-in LLM service used to generate narrative digests from snapshot data.</td></tr>
-              <tr><td><strong>Pipeline</strong></td><td>The daily automated process: fetch data → detect signals → evaluate outcomes → update trust → trade → generate digest.</td></tr>
+              <tr><td><strong>Cortex AI</strong></td><td>Snowflake's built-in LLM service used to generate narrative digests and portfolio stories from snapshot data.</td></tr>
+              <tr><td><strong>Pipeline</strong></td><td>The daily automated process: fetch data → detect signals → evaluate outcomes → update trust → trade → check crystallization → generate digest.</td></tr>
               <tr><td><strong>Z-Score</strong></td><td>How many standard deviations a value is from the mean. Z-score of 2 means the move is unusually large (2σ above average).</td></tr>
               <tr><td><strong>Coverage Ratio</strong></td><td>What fraction of signals have been fully evaluated across all horizons. 100% = complete evaluation.</td></tr>
               <tr><td><strong>Notional</strong></td><td>The total monetary value of a trade: Price × Quantity. A buy of 100 shares at $150 = $15,000 notional.</td></tr>
-              <tr><td><strong>Cost Basis</strong></td><td>The average price at which a position was entered. Used to calculate unrealized profit/loss.</td></tr>
+              <tr><td><strong>Cost Basis</strong></td><td>The average price at which a position was entered, adjusted for deposits and withdrawals. Used to calculate unrealized profit/loss.</td></tr>
+              <tr><td><strong>Portfolio Story</strong></td><td>An AI-generated narrative biography of a portfolio — covering its creation, cash events, episodes, crystallizations, and current outlook. Found in Portfolio Management → Portfolio Story tab.</td></tr>
             </tbody>
           </table>
         </div>

@@ -325,6 +325,12 @@ export default function Cockpit() {
             <h3 className="ck-card-title">Portfolio Intelligence</h3>
             <div className="ck-card-badges">
               <span className="ck-badge ck-badge--scope">Portfolio</span>
+              {digestPortfolio?.found && digestPortfolio.snapshot?.episode?.episode_id && (
+                <span className="ck-badge ck-badge--episode" title={`Episode started ${digestPortfolio.snapshot.episode.episode_start_ts || '—'}`}>
+                  Episode {digestPortfolio.snapshot.episode.total_episodes || 1}
+                  {digestPortfolio.snapshot.episode.total_episodes > 1 ? ` (of ${digestPortfolio.snapshot.episode.total_episodes})` : ''}
+                </span>
+              )}
               {digestPortfolio?.found && <AiBadge isAi={digestPortfolio.is_ai_narrative} modelInfo={digestPortfolio.model_info} />}
             </div>
           </div>

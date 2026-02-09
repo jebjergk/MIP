@@ -26,20 +26,55 @@ create or replace view MIP.MART.V_DAILY_DIGEST_SNAPSHOT (
     PORTFOLIO_ID,
     SNAPSHOT_JSON
 ) as
-with portfolio_scope as (
+with
+-- Active episode per portfolio (for episode-scoped data)
+active_episode as (
+    select
+        pe.PORTFOLIO_ID,
+        pe.EPISODE_ID,
+        pe.PROFILE_ID as EPISODE_PROFILE_ID,
+        pe.START_TS   as EPISODE_START_TS,
+        pe.START_EQUITY as EPISODE_START_EQUITY,
+        row_number() over (
+            partition by pe.PORTFOLIO_ID
+            order by pe.START_TS desc
+        ) as EPISODE_NUMBER_DESC
+    from MIP.APP.PORTFOLIO_EPISODE pe
+    where pe.STATUS = 'ACTIVE'
+),
+-- Total episodes per portfolio (to show "Episode 3 of 3" etc.)
+episode_counts as (
+    select
+        PORTFOLIO_ID,
+        count(*) as TOTAL_EPISODES
+    from MIP.APP.PORTFOLIO_EPISODE
+    group by PORTFOLIO_ID
+),
+
+portfolio_scope as (
     select
         p.PORTFOLIO_ID,
         p.NAME as PORTFOLIO_NAME,
-        p.STARTING_CASH,
+        -- Use episode START_EQUITY when available (correct after crystallize);
+        -- fall back to PORTFOLIO.STARTING_CASH for portfolios without episodes.
+        coalesce(ae.EPISODE_START_EQUITY, p.STARTING_CASH) as STARTING_CASH,
         p.FINAL_EQUITY,
         p.TOTAL_RETURN,
         p.STATUS as PORTFOLIO_STATUS,
         coalesce(pp.MAX_POSITIONS, 5) as MAX_POSITIONS,
         coalesce(pp.MAX_POSITION_PCT, 0.20) as MAX_POSITION_PCT,
-        coalesce(pp.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT
+        coalesce(pp.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT,
+        ae.EPISODE_ID,
+        ae.EPISODE_START_TS,
+        ae.EPISODE_START_EQUITY,
+        coalesce(ec.TOTAL_EPISODES, 1) as TOTAL_EPISODES
     from MIP.APP.PORTFOLIO p
     left join MIP.APP.PORTFOLIO_PROFILE pp
         on pp.PROFILE_ID = p.PROFILE_ID
+    left join active_episode ae
+        on ae.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join episode_counts ec
+        on ec.PORTFOLIO_ID = p.PORTFOLIO_ID
     where p.STATUS = 'ACTIVE'
 ),
 
@@ -206,20 +241,26 @@ kpis_ranked as (
     from MIP.MART.V_PORTFOLIO_RUN_KPIS
 ),
 
--- Latest exposure
+-- Latest exposure (episode-scoped: only rows from active episode)
 exposure_ranked as (
     select
-        PORTFOLIO_ID,
-        RUN_ID,
-        TS,
-        CASH,
-        TOTAL_EQUITY,
-        OPEN_POSITIONS,
+        d.PORTFOLIO_ID,
+        d.RUN_ID,
+        d.TS,
+        d.CASH,
+        d.TOTAL_EQUITY,
+        d.OPEN_POSITIONS,
         row_number() over (
-            partition by PORTFOLIO_ID
-            order by TS desc
+            partition by d.PORTFOLIO_ID
+            order by d.TS desc
         ) as rn
-    from MIP.APP.PORTFOLIO_DAILY
+    from MIP.APP.PORTFOLIO_DAILY d
+    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
+      on e.PORTFOLIO_ID = d.PORTFOLIO_ID
+    where (
+        (d.EPISODE_ID is not null and d.EPISODE_ID = e.EPISODE_ID)
+        or (d.EPISODE_ID is null and (e.EPISODE_ID is null or d.TS >= e.START_TS))
+    )
 ),
 
 -- Prior snapshot for delta detectors
@@ -734,6 +775,13 @@ select
             'name', ps.PORTFOLIO_NAME,
             'starting_cash', ps.STARTING_CASH,
             'drawdown_stop_pct', ps.DRAWDOWN_STOP_PCT
+        ),
+        'episode', object_construct(
+            'episode_id', ps.EPISODE_ID,
+            'episode_start_ts', ps.EPISODE_START_TS,
+            'episode_start_equity', ps.EPISODE_START_EQUITY,
+            'total_episodes', ps.TOTAL_EPISODES,
+            'is_first_episode', iff(ps.TOTAL_EPISODES <= 1, true, false)
         ),
         'patterns', coalesce(pc.PATTERNS, array_construct()),
         'pattern_observations', coalesce(poa.PATTERN_OBS, array_construct()),

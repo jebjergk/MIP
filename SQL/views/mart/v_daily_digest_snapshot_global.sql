@@ -12,7 +12,23 @@ create or replace view MIP.MART.V_DAILY_DIGEST_SNAPSHOT_GLOBAL (
     SNAPSHOT_JSON
 ) as
 with
--- ── Portfolio aggregate ─────────────────────────────────────
+-- ── Portfolio aggregate (episode-aware) ─────────────────────
+active_episodes as (
+    select
+        pe.PORTFOLIO_ID,
+        pe.EPISODE_ID,
+        pe.START_TS as EPISODE_START_TS,
+        pe.START_EQUITY as EPISODE_START_EQUITY
+    from MIP.APP.PORTFOLIO_EPISODE pe
+    where pe.STATUS = 'ACTIVE'
+),
+episode_counts as (
+    select
+        PORTFOLIO_ID,
+        count(*) as TOTAL_EPISODES
+    from MIP.APP.PORTFOLIO_EPISODE
+    group by PORTFOLIO_ID
+),
 portfolio_agg as (
     select
         count(*) as ACTIVE_PORTFOLIOS,
@@ -22,10 +38,18 @@ portfolio_agg as (
                 'name', p.NAME,
                 'total_return', p.TOTAL_RETURN,
                 'final_equity', p.FINAL_EQUITY,
-                'status', p.STATUS
+                'status', p.STATUS,
+                'episode_id', ae.EPISODE_ID,
+                'episode_start_ts', ae.EPISODE_START_TS,
+                'episode_start_equity', ae.EPISODE_START_EQUITY,
+                'total_episodes', coalesce(ec.TOTAL_EPISODES, 1)
             )
         ) within group (order by p.PORTFOLIO_ID) as PORTFOLIO_SUMMARY
     from MIP.APP.PORTFOLIO p
+    left join active_episodes ae
+        on ae.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join episode_counts ec
+        on ec.PORTFOLIO_ID = p.PORTFOLIO_ID
     where p.STATUS = 'ACTIVE'
 ),
 

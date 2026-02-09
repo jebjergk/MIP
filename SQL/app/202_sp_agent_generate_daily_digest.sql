@@ -160,13 +160,14 @@ FIRED INTEREST DETECTORS (prioritise these):
 
 IMPORTANT CONTEXT — How this portfolio works:
 MIP manages portfolios that automatically trade based on AI signals. The key concepts users need to understand:
+- EPISODES: A portfolio lives through multiple episodes. Each episode starts when the portfolio is crystallised/reset. All KPIs, equity curves, and performance numbers you see in the snapshot are SCOPED TO THE CURRENT EPISODE — they do NOT include history from prior episodes. The snapshot includes an "episode" section: episode_id, episode_start_ts, episode_start_equity, total_episodes. If total_episodes > 1, the portfolio has been through prior cycles. Always reference "current episode" when discussing performance. If this is the first episode, you may omit episode references.
 - RISK GATE: Controls whether the portfolio can enter new trades. SAFE = open for business. CAUTION = partially restricted. STOPPED = no new entries allowed. A gate change is significant — explain what triggered it.
 - CAPACITY (saturation): max_positions vs open_positions. When saturated (e.g. 5/5 slots used), no new trades can enter even if great signals appear. When near-full, every remaining slot is precious.
 - SIGNALS: AI-generated trade recommendations. Not all signals lead to trades — they must pass through trust, eligibility, and portfolio rules first.
 - PROPOSAL FUNNEL: signals → eligible → trusted → proposed → executed. Each step filters. Explain WHERE the funnel narrows and WHY.
 - TRUST: Patterns must earn trust through training (enough outcomes, good hit rate, positive returns). TRUSTED signals can become proposals; UNTRUSTED cannot.
 - TRAINING vs TRADING: Training must be CONFIDENT AND pattern must be TRUSTED for trades to happen. If training is stuck or trust is lost, no trades will flow.
-- DRAWDOWN: How far the portfolio has fallen from its peak. A rising drawdown means losing money. Important for risk context.
+- DRAWDOWN: How far the portfolio has fallen from its peak within the current episode. A rising drawdown means losing money. Important for risk context.
 
 CRITICAL RULE — CONSISTENCY ON TRUST AND ELIGIBILITY:
 - The snapshot includes training trusted/watch/untrusted counts. These are the DEFINITIVE counts from the trust policy engine.
@@ -479,6 +480,7 @@ FIRED INTEREST DETECTORS (prioritise these):
 IMPORTANT CONTEXT — The MIP system explained:
 MIP is an automated market intelligence platform that manages multiple portfolios. Each portfolio trades autonomously based on AI signals that pass through training, trust, and risk rules. Here is what the user needs to understand:
 - PORTFOLIOS: Each has its own risk gate (SAFE/CAUTION/STOPPED), capacity (position slots), and trade history. A gate change affects ALL trades for that portfolio.
+- EPISODES: Each portfolio lives through multiple episodes. An episode starts when the portfolio is created or crystallised/reset. All KPIs, returns, and equity in the portfolio_summary are SCOPED TO THE CURRENT EPISODE. The portfolio_summary includes episode_id, episode_start_ts, episode_start_equity, and total_episodes per portfolio. If a portfolio has multiple episodes, acknowledge this and reference "current episode" when discussing its performance. The system always shows current-episode performance, not lifetime cumulative.
 - SIGNAL PIPELINE: Market bars arrive → signals are generated → filtered by eligibility → checked against trust rules → proposed as trades → executed. If ANY stage is empty or blocked, no trades flow.
 - CAPACITY: Total slots across all portfolios. When the system is saturated (all slots full), no new trades can enter anywhere, no matter how good the signals are.
 - TRUST: Patterns earn trust through training. The system tracks trusted/watch/untrusted counts. Only TRUSTED patterns can generate trade proposals.

@@ -79,6 +79,7 @@ def _format_response(data, scope="PORTFOLIO"):
             "kpis": snapshot_json.get("kpis", {}),
             "exposure": snapshot_json.get("exposure", {}),
             "pipeline": snapshot_json.get("pipeline", {}),
+            "episode": snapshot_json.get("episode", {}),
             "detectors": snapshot_json.get("detectors", []),
         }
 

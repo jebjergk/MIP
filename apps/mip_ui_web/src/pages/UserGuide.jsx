@@ -177,7 +177,7 @@ export default function UserGuide() {
         </p>
 
         <div className="guide-example">
-          <div className="guide-example-title">Example: Momentum Pattern</div>
+          <div className="guide-example-title">Example: FX Pattern (Moving-Average Crossover)</div>
           <p>
             The <strong>FX_MOMENTUM_DAILY</strong> pattern for AUD/USD checks:
             "Did today's return exceed 0.1% AND is the price above both the 10-bar and
@@ -194,6 +194,30 @@ export default function UserGuide() {
           </p>
         </div>
 
+        <div className="guide-example">
+          <div className="guide-example-title">Example: STOCK Pattern (Breakout + Momentum)</div>
+          <p>
+            The <strong>STOCK_MOMENTUM_FAST</strong> pattern for AAPL checks three conditions simultaneously:
+          </p>
+          <ol style={{marginLeft: '1.5rem', lineHeight: '1.7'}}>
+            <li><strong>Minimum return:</strong> Did today's return exceed 0.2%?</li>
+            <li><strong>Momentum confirmation (slow_window=1):</strong> Was yesterday also a green (positive) day?</li>
+            <li><strong>Breakout (fast_window=5):</strong> Is today's close at a new 5-day high?</li>
+            <li><strong>Z-score ≥ 1.0:</strong> Is today's move at least 1 standard deviation above the recent average (using 5-day volatility)?</li>
+          </ol>
+          <p>
+            All four must be true simultaneously. This means the stock must be on consecutive green days,
+            breaking out to new short-term highs, with an unusually large move.
+          </p>
+          <p className="guide-example-numbers">
+            AAPL closed at $195.00 today, up from $193.50 yesterday (return = +0.78%).<br />
+            Yesterday was also green (up from $192.00 → +0.78%). ✓ momentum check passed.<br />
+            The highest close in the last 5 days was $194.20. Today's $195.00 exceeds it. ✓ breakout passed.<br />
+            5-day return std dev = 0.5%. Z-score = 0.78% / 0.5% = 1.56. ✓ z-score ≥ 1.0.<br />
+            → Signal fires with score 0.0078.
+          </p>
+        </div>
+
         <h3>Key parameters in each pattern</h3>
         <p>Every pattern has configuration parameters that control how selective it is. Here's what each one means:</p>
         <dl className="guide-kv guide-kv--wide">
@@ -205,25 +229,66 @@ export default function UserGuide() {
           </dd>
           <dt>min_zscore</dt>
           <dd>
-            <strong>What:</strong> Minimum z-score — how unusual the move is compared to the symbol's recent history.<br />
+            <strong>What:</strong> Minimum z-score — how unusual the move is compared to the symbol's recent volatility.<br />
             <strong>Why:</strong> A 0.5% move might be huge for a stable stock but normal for a volatile one. Z-score adjusts for this.<br />
-            <strong>How:</strong> If the average daily move for AAPL over the last 90 days is 0.3% with a standard deviation of 0.2%,
-            then a +0.7% move has z-score = (0.7 − 0.3) / 0.2 = <strong>2.0</strong>. That's 2 standard deviations above average — very unusual.<br />
-            <strong>Example:</strong> If min_zscore = 1.0, any move less than 1 standard deviation above average is ignored. Higher = more selective.
+            <strong>How:</strong> Z-score = today's return ÷ standard deviation of returns over the <code>fast_window</code> period.
+            For STOCK/ETF, the volatility is measured over the fast_window bars (e.g., 5 days for STOCK). For FX, it uses the fast_window bars as well.<br />
+            <strong>Example:</strong> If AAPL's return std dev over the last 5 bars is 0.4% and today's return is 0.78%,
+            then z-score = 0.78 / 0.4 = <strong>1.95</strong>. With min_zscore = 1.0, this signal fires. A move of only 0.3% (z-score = 0.75) would not.
           </dd>
-          <dt>fast_window</dt>
+          <dt>fast_window and slow_window</dt>
           <dd>
-            <strong>What:</strong> Number of recent bars for the "fast" moving average (e.g., 10 bars = 10 days).<br />
-            <strong>Why:</strong> Captures the short-term trend. If the price recently jumped, the fast average rises quickly.<br />
-            <strong>Example:</strong> A 10-bar fast window averages the last 10 days of closing prices. If AAPL closed at
-            $180, $181, $183, $185, $186, $188, $190, $191, $193, $195 → fast average = <strong>$187.20</strong>.
-          </dd>
-          <dt>slow_window</dt>
-          <dd>
-            <strong>What:</strong> Number of bars for the "slow" moving average (e.g., 20 bars = 20 days).<br />
-            <strong>Why:</strong> Captures the baseline trend. When the fast average crosses above the slow, it suggests momentum is building.<br />
-            <strong>Example:</strong> A 20-bar slow window averages the last 20 days. If the slow average is $184.50 and the fast average is $187.20,
-            the fast is above the slow → this confirms upward momentum.
+            <strong>Warning: These names are misleading.</strong> They originate from a moving-average crossover
+            concept, but in the STOCK/ETF patterns they are repurposed for different filters.
+            The meaning depends on the market type:
+
+            <div className="guide-metric-table" style={{marginTop: '0.75rem'}}>
+              <table>
+                <thead>
+                  <tr><th>Parameter</th><th>FX Patterns</th><th>STOCK / ETF Patterns</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>slow_window</strong></td>
+                    <td>
+                      <em>Slow moving average</em> — the longer lookback (e.g., 20 bars).
+                      The price must be above this average.<br />
+                      Traditional usage: fast MA crossing above slow MA = momentum.
+                    </td>
+                    <td>
+                      <em>Momentum confirmation</em> — the <strong>shorter</strong> lookback (e.g., STOCK=1, ETF=3).<br />
+                      The system checks the last N bars before today and requires <strong>all N</strong> to have positive returns
+                      (green days).<br />
+                      <strong>Example:</strong> slow_window=3 means "the 3 most recent prior days must ALL
+                      have had positive returns." If any of them were negative, the signal does not fire.
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>fast_window</strong></td>
+                    <td>
+                      <em>Fast moving average</em> — the shorter lookback (e.g., 10 bars).
+                      The price must be above this average.
+                    </td>
+                    <td>
+                      <em>Breakout + volatility window</em> — the <strong>longer</strong> lookback (e.g., STOCK=5, ETF=20).<br />
+                      Two uses:<br />
+                      1. <strong>Breakout:</strong> Today's close must exceed the highest close in the prior N bars
+                      (an N-bar high breakout).<br />
+                      2. <strong>Z-score:</strong> The standard deviation of returns over the last N bars is used to
+                      calculate how unusual today's move is.<br />
+                      <strong>Example:</strong> fast_window=20 means "price must be at a 20-day high, and
+                      z-score is measured over 20 days of return volatility."
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p style={{marginTop: '0.5rem', fontSize: '0.92rem', color: '#616161'}}>
+              <strong>Why the naming is counterintuitive:</strong> For STOCK/ETF, "slow" is actually the <em>shorter</em> window
+              and "fast" is the <em>longer</em> one. This is an artifact of the codebase reusing the same parameter names
+              for a different algorithm. The FX path uses a traditional moving-average crossover; the STOCK/ETF path
+              uses momentum confirmation + breakout detection.
+            </p>
           </dd>
           <dt>lookback_days</dt>
           <dd>
@@ -730,34 +795,49 @@ export default function UserGuide() {
           <div className="guide-metric-table">
             <table>
               <thead>
-                <tr><th>Pattern</th><th>Market</th><th>Interval</th><th>Fast / Slow</th><th>Min Return</th><th>Min Z-Score</th><th>Lookback</th></tr>
+                <tr><th>Pattern</th><th>Market</th><th>fast_window</th><th>slow_window</th><th>What It Actually Requires</th><th>Min Return</th><th>Min Z-Score</th></tr>
               </thead>
               <tbody>
                 <tr>
                   <td><strong>FX_MOMENTUM_DAILY</strong></td>
                   <td>FX</td>
-                  <td>Daily (1440 min)</td>
-                  <td>10 / 20</td>
+                  <td>10</td>
+                  <td>20</td>
+                  <td>Price above 10-bar MA <em>and</em> 20-bar MA (traditional crossover)</td>
                   <td>0.1%</td>
                   <td>0 (any)</td>
-                  <td>60 days</td>
                 </tr>
                 <tr>
                   <td><strong>STOCK_MOMENTUM_FAST</strong></td>
                   <td>STOCK</td>
-                  <td>Daily (1440 min)</td>
-                  <td>20 / 3</td>
+                  <td>5</td>
+                  <td>1</td>
+                  <td>1 prior green day + 5-day high breakout + z-score ≥ 1.0</td>
                   <td>0.2%</td>
                   <td>1.0</td>
-                  <td>90 days</td>
+                </tr>
+                <tr>
+                  <td><strong>ETF_MOMENTUM_DAILY</strong></td>
+                  <td>ETF</td>
+                  <td>20</td>
+                  <td>3</td>
+                  <td>3 consecutive green days + 20-day high breakout + z-score ≥ 1.0</td>
+                  <td>0.2%</td>
+                  <td>1.0</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p>
-            FX_MOMENTUM_DAILY is less selective (z-score = 0, meaning any positive move above 0.1% fires).
-            STOCK_MOMENTUM_FAST is more selective (z-score ≥ 1.0, meaning the move must be unusually large
-            relative to the stock's recent behavior).
+            <strong>FX_MOMENTUM_DAILY</strong> uses the traditional moving-average approach (less selective: z-score = 0, any positive move above 0.1% fires).
+          </p>
+          <p>
+            <strong>STOCK_MOMENTUM_FAST</strong> requires a 5-day high breakout with at least 1 prior green day — achievable and fires regularly.
+          </p>
+          <p>
+            <strong>ETF_MOMENTUM_DAILY</strong> is paradoxically the <em>most demanding</em> pattern: it requires
+            3 consecutive green days AND a 20-day high breakout AND z-score ≥ 1.0. This is extremely selective,
+            which is why ETF signals fire less frequently despite targeting less volatile instruments.
           </p>
         </div>
 

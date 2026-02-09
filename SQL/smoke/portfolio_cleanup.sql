@@ -2,40 +2,41 @@
 -- Purpose: Clean up corrupted portfolio data before re-deploying fixes.
 -- Run this AFTER deploying the fixed SPs/views but BEFORE re-running the pipeline.
 --
--- Steps:
--- 1. Remove duplicate positions
--- 2. Remove orphaned PORTFOLIO_DAILY (null EPISODE_ID legacy data)
--- 3. Create missing active episode for Portfolio 2
--- 4. Backfill START_EQUITY on existing episodes
--- 5. Backfill EPISODE_ID on trades
--- 6. Reset PORTFOLIO table stats
--- 7. Remove stale PORTFOLIO_DAILY so fresh pipeline run creates clean data
+-- All statements use Snowflake-compatible SQL (no correlated subqueries in UPDATE SET).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
 -- ============================================================
--- STEP 1: Remove duplicate positions (keep only the LATEST RUN_ID per position)
+-- STEP 1: Remove duplicate positions (keep only one per position key)
 -- Query 8 showed 9x duplicates for Portfolio 2.
 -- ============================================================
--- Preview what will be deleted:
-select 'POSITIONS TO DELETE' as action, count(*) as cnt
+-- Preview what duplicates exist:
+select 'DUPLICATE POSITIONS' as check_name,
+       PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX, count(*) as dup_count
 from MIP.APP.PORTFOLIO_POSITIONS
-where (PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX, CREATED_AT) not in (
-    select PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX,
-           max(CREATED_AT) as keep_created_at
-    from MIP.APP.PORTFOLIO_POSITIONS
-    group by PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX
-);
+group by PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX
+having count(*) > 1
+order by PORTFOLIO_ID, SYMBOL;
 
--- Execute:
-delete from MIP.APP.PORTFOLIO_POSITIONS
-where (PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX, CREATED_AT) not in (
-    select PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX,
-           max(CREATED_AT) as keep_created_at
-    from MIP.APP.PORTFOLIO_POSITIONS
-    group by PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX
-);
+-- Delete duplicates: keep only the row with the latest RUN_ID per position.
+-- Uses a CTE to identify rows to keep, then deletes the rest.
+create or replace temporary table TEMP_POSITIONS_TO_KEEP as
+select PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX, RUN_ID
+from MIP.APP.PORTFOLIO_POSITIONS
+qualify row_number() over (
+    partition by PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX
+    order by CREATED_AT desc nulls last
+) = 1;
+
+delete from MIP.APP.PORTFOLIO_POSITIONS p
+using TEMP_POSITIONS_TO_KEEP k
+where p.PORTFOLIO_ID = k.PORTFOLIO_ID
+  and p.SYMBOL = k.SYMBOL
+  and p.MARKET_TYPE = k.MARKET_TYPE
+  and p.ENTRY_TS = k.ENTRY_TS
+  and p.ENTRY_INDEX = k.ENTRY_INDEX
+  and p.RUN_ID != k.RUN_ID;
 
 -- Verify: should now have 0 duplicates
 select 'REMAINING DUPLICATES' as check_name, count(*)
@@ -78,7 +79,7 @@ insert into MIP.APP.PORTFOLIO_EPISODE (
 select
     2 as PORTFOLIO_ID,
     p.PROFILE_ID,
-    '2026-02-06 00:00:00.000'::timestamp_ntz as START_TS,  -- Start from crystallize date
+    '2026-02-06 00:00:00.000'::timestamp_ntz as START_TS,
     null as END_TS,
     'ACTIVE' as STATUS,
     null as END_REASON,
@@ -99,13 +100,12 @@ where STATUS = 'ACTIVE';
 -- STEP 4: Backfill START_EQUITY on existing episodes where NULL
 -- Episode 1 (Portfolio 1) has START_EQUITY = null.
 -- ============================================================
-update MIP.APP.PORTFOLIO_EPISODE e
-   set START_EQUITY = (
-       select p.STARTING_CASH
-         from MIP.APP.PORTFOLIO p
-        where p.PORTFOLIO_ID = e.PORTFOLIO_ID
-   )
- where e.START_EQUITY is null;
+merge into MIP.APP.PORTFOLIO_EPISODE e
+using MIP.APP.PORTFOLIO p
+  on p.PORTFOLIO_ID = e.PORTFOLIO_ID
+ and e.START_EQUITY is null
+when matched then
+  update set START_EQUITY = p.STARTING_CASH;
 
 -- Verify:
 select 'EPISODE START_EQUITY' as check_name, PORTFOLIO_ID, EPISODE_ID, STATUS, START_EQUITY
@@ -115,48 +115,34 @@ order by PORTFOLIO_ID, EPISODE_ID;
 -- ============================================================
 -- STEP 5: Backfill EPISODE_ID on trades where NULL
 -- Map trades to episodes by matching PORTFOLIO_ID and timestamp range.
+-- Uses MERGE (Snowflake-compatible) instead of correlated subqueries.
 -- ============================================================
--- For active episodes (no END_TS): assign trades with TRADE_TS >= START_TS
-update MIP.APP.PORTFOLIO_TRADES t
-   set EPISODE_ID = (
-       select e.EPISODE_ID
-         from MIP.APP.PORTFOLIO_EPISODE e
-        where e.PORTFOLIO_ID = t.PORTFOLIO_ID
-          and e.STATUS = 'ACTIVE'
-          and t.TRADE_TS >= e.START_TS
-        order by e.START_TS desc
-        limit 1
-   )
- where t.EPISODE_ID is null
-   and exists (
-       select 1
-         from MIP.APP.PORTFOLIO_EPISODE e
-        where e.PORTFOLIO_ID = t.PORTFOLIO_ID
-          and e.STATUS = 'ACTIVE'
-          and t.TRADE_TS >= e.START_TS
-   );
+-- 5a. Assign trades to ACTIVE episodes (TRADE_TS >= episode START_TS)
+merge into MIP.APP.PORTFOLIO_TRADES t
+using (
+    select PORTFOLIO_ID, EPISODE_ID, START_TS
+    from MIP.APP.PORTFOLIO_EPISODE
+    where STATUS = 'ACTIVE'
+) e
+on e.PORTFOLIO_ID = t.PORTFOLIO_ID
+   and t.TRADE_TS >= e.START_TS
+   and t.EPISODE_ID is null
+when matched then
+  update set EPISODE_ID = e.EPISODE_ID;
 
--- For ended episodes: assign trades within START_TS..END_TS
-update MIP.APP.PORTFOLIO_TRADES t
-   set EPISODE_ID = (
-       select e.EPISODE_ID
-         from MIP.APP.PORTFOLIO_EPISODE e
-        where e.PORTFOLIO_ID = t.PORTFOLIO_ID
-          and e.STATUS = 'ENDED'
-          and t.TRADE_TS >= e.START_TS
-          and t.TRADE_TS <= e.END_TS
-        order by e.START_TS desc
-        limit 1
-   )
- where t.EPISODE_ID is null
-   and exists (
-       select 1
-         from MIP.APP.PORTFOLIO_EPISODE e
-        where e.PORTFOLIO_ID = t.PORTFOLIO_ID
-          and e.STATUS = 'ENDED'
-          and t.TRADE_TS >= e.START_TS
-          and t.TRADE_TS <= e.END_TS
-   );
+-- 5b. Assign remaining null trades to ENDED episodes (TRADE_TS between START_TS and END_TS)
+merge into MIP.APP.PORTFOLIO_TRADES t
+using (
+    select PORTFOLIO_ID, EPISODE_ID, START_TS, END_TS
+    from MIP.APP.PORTFOLIO_EPISODE
+    where STATUS = 'ENDED'
+) e
+on e.PORTFOLIO_ID = t.PORTFOLIO_ID
+   and t.TRADE_TS >= e.START_TS
+   and t.TRADE_TS <= e.END_TS
+   and t.EPISODE_ID is null
+when matched then
+  update set EPISODE_ID = e.EPISODE_ID;
 
 -- Verify:
 select 'TRADES BY EPISODE' as check_name,
@@ -166,29 +152,7 @@ group by PORTFOLIO_ID, EPISODE_ID
 order by PORTFOLIO_ID, EPISODE_ID;
 
 -- ============================================================
--- STEP 6: Also backfill EPISODE_ID on PORTFOLIO_DAILY where NULL
--- ============================================================
-update MIP.APP.PORTFOLIO_DAILY d
-   set EPISODE_ID = (
-       select e.EPISODE_ID
-         from MIP.APP.PORTFOLIO_EPISODE e
-        where e.PORTFOLIO_ID = d.PORTFOLIO_ID
-          and e.STATUS = 'ACTIVE'
-          and d.TS >= e.START_TS
-        order by e.START_TS desc
-        limit 1
-   )
- where d.EPISODE_ID is null
-   and exists (
-       select 1
-         from MIP.APP.PORTFOLIO_EPISODE e
-        where e.PORTFOLIO_ID = d.PORTFOLIO_ID
-          and e.STATUS = 'ACTIVE'
-          and d.TS >= e.START_TS
-   );
-
--- ============================================================
--- STEP 7: Reset PORTFOLIO table stats (will be recomputed by pipeline)
+-- STEP 6: Reset PORTFOLIO table stats (will be recomputed by pipeline)
 -- ============================================================
 update MIP.APP.PORTFOLIO
    set FINAL_EQUITY = STARTING_CASH,
@@ -206,7 +170,7 @@ select 'PORTFOLIO STATS RESET' as check_name,
 from MIP.APP.PORTFOLIO;
 
 -- ============================================================
--- STEP 8: Delete ALL existing PORTFOLIO_DAILY so pipeline starts fresh
+-- STEP 7: Delete ALL existing PORTFOLIO_DAILY so pipeline starts fresh
 -- This ensures no stale equity calculations (with EQUITY_VALUE=0 bug) remain.
 -- The pipeline will recreate all daily rows with correct equity values.
 -- ============================================================

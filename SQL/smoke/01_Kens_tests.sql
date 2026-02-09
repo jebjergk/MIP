@@ -18,22 +18,51 @@ DROP TABLE MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE;
 DROP TABLE MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT;
 
 -- Count ETF candidates at each filter stage for the latest bar
-with latest as (
-    select max(TS) as ts from MIP.MART.MARKET_RETURNS 
-    where MARKET_TYPE = 'ETF' and INTERVAL_MINUTES = 1440
-)
-select
-    count(*) as total_etf_rows_at_latest,
-    count_if(RETURN_SIMPLE >= 0) as positive_return,
-    count_if(RETURN_SIMPLE >= 0 and VOLUME >= 1000) as positive_with_volume
-from MIP.MART.MARKET_RETURNS r
-join latest l on r.TS = l.ts
-where r.MARKET_TYPE = 'ETF' and r.INTERVAL_MINUTES = 1440;
+-- 1. Check: did SP actually get redeployed? (Look for position_days_expanded in latest sim log)
+select EVENT_TS, EVENT_TYPE, DETAILS:position_days_expanded::number as pos_days_expanded,
+       DETAILS:final_equity::number as final_equity,
+       DETAILS:daily_rows::number as daily_rows,
+       DETAILS:effective_from_ts::string as eff_from,
+       DETAILS:portfolio_id::number as pid
+from MIP.APP.mip_audit_LOG
+where EVENT_TYPE = 'PORTFOLIO_SIM'
+order by EVENT_TS desc
+limit 4;
 
--- Show the last 5 daily returns per ETF symbol to see the momentum picture
-select SYMBOL, TS, RETURN_SIMPLE, VOLUME,
-       case when RETURN_SIMPLE > 0 then 'GREEN' else 'RED' end as DAY_COLOR
-from MIP.MART.MARKET_RETURNS
-where MARKET_TYPE = 'ETF' and INTERVAL_MINUTES = 1440
-qualify row_number() over (partition by SYMBOL order by TS desc) <= 5
-order by SYMBOL, TS desc;
+-- 2. Check: do existing positions have INTERVAL_MINUTES set?
+select PORTFOLIO_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, ENTRY_INDEX, HOLD_UNTIL_INDEX
+from MIP.APP.PORTFOLIO_POSITIONS
+order by PORTFOLIO_ID, SYMBOL;
+
+-- 3. Simulate the TEMP_POSITION_DAYS join manually
+select
+    vb.TS, vb.BAR_INDEX, p.SYMBOL, p.MARKET_TYPE, p.QUANTITY,
+    vb.CLOSE as CLOSE_PRICE, p.INTERVAL_MINUTES as pos_interval, p.ENTRY_INDEX, p.HOLD_UNTIL_INDEX
+from MIP.APP.PORTFOLIO_POSITIONS p
+join MIP.MART.V_BAR_INDEX vb
+  on vb.SYMBOL = p.SYMBOL
+ and vb.MARKET_TYPE = p.MARKET_TYPE
+ and vb.INTERVAL_MINUTES = 1440
+ and vb.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
+where p.PORTFOLIO_ID = 1
+  and p.INTERVAL_MINUTES = 1440
+  and vb.TS >= '2026-02-06'
+order by p.SYMBOL, vb.TS
+limit 20;
+
+-- What BAR_INDEX does V_BAR_INDEX currently assign to bars near Feb 6?
+select SYMBOL, MARKET_TYPE, TS, BAR_INDEX, CLOSE
+from MIP.MART.V_BAR_INDEX
+where SYMBOL in ('AUD/USD', 'JNJ', 'KO', 'PG')
+  and INTERVAL_MINUTES = 1440
+  and TS >= '2026-02-04'
+order by SYMBOL, TS;
+
+-- What's the MAX BAR_INDEX per symbol?
+select SYMBOL, MARKET_TYPE, max(BAR_INDEX) as max_bar_index, max(TS) as max_ts, count(*) as total_bars
+from MIP.MART.V_BAR_INDEX
+where SYMBOL in ('AUD/USD', 'JNJ', 'KO', 'PG')
+  and INTERVAL_MINUTES = 1440
+group by SYMBOL, MARKET_TYPE;
+
+delete from MIP.APP.PORTFOLIO_DAILY;

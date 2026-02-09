@@ -1,5 +1,19 @@
 -- 180_sp_run_portfolio_simulation.sql
 -- Purpose: Deterministic v1 portfolio simulation for paper portfolios
+--
+-- ARCHITECTURE NOTE — BAR_INDEX drift protection:
+-- V_BAR_INDEX computes BAR_INDEX as ROW_NUMBER() over MARKET_BARS. This value
+-- shifts whenever bars are added to or removed from MARKET_BARS (e.g. by the
+-- ingest step). PORTFOLIO_POSITIONS stores ENTRY_INDEX and HOLD_UNTIL_INDEX as
+-- materialized numbers, which become stale after any bar data change.
+--
+-- To protect against this, we NEVER trust stored BAR_INDEX values directly.
+-- Instead, we re-derive the current BAR_INDEX from ENTRY_TS (which is stable)
+-- and preserve the relative horizon (HOLD_UNTIL_INDEX - ENTRY_INDEX) to compute
+-- the current hold-until bar. This applies to:
+--   1. Loading positions into TEMP_POSITIONS (join V_BAR_INDEX on ENTRY_TS)
+--   2. Creating TEMP_POSITION_DAYS for equity calculation (join via entry_vb)
+--   3. MERGE key for PORTFOLIO_POSITIONS (uses ENTRY_TS, not ENTRY_INDEX)
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -227,8 +241,17 @@ begin
 
     -- ============================================================
     -- LOAD EXISTING OPEN POSITIONS into TEMP_POSITIONS
-    -- This ensures the simulation knows about agent-created positions
-    -- and uses their correct HOLD_UNTIL_INDEX (not recalculated).
+    -- This ensures the simulation knows about agent-created positions.
+    --
+    -- CRITICAL: BAR_INDEX drift protection.
+    -- V_BAR_INDEX computes BAR_INDEX via ROW_NUMBER(), which shifts
+    -- whenever bars are added/removed from MARKET_BARS. The stored
+    -- ENTRY_INDEX / HOLD_UNTIL_INDEX in PORTFOLIO_POSITIONS can therefore
+    -- become stale. To avoid silent breakage we:
+    --   1. Look up the CURRENT BAR_INDEX for the position's ENTRY_TS
+    --   2. Preserve the relative horizon (HOLD_UNTIL_INDEX - ENTRY_INDEX)
+    --   3. Compute current HOLD_UNTIL_INDEX from current ENTRY_INDEX + horizon
+    -- This anchors on ENTRY_TS (stable) instead of stored BAR_INDEX (volatile).
     -- ============================================================
     insert into TEMP_POSITIONS (
         SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_PRICE,
@@ -242,9 +265,14 @@ begin
         p.QUANTITY,
         p.COST_BASIS,
         p.ENTRY_SCORE,
-        p.ENTRY_INDEX,
-        p.HOLD_UNTIL_INDEX
+        vb.BAR_INDEX as ENTRY_INDEX,
+        vb.BAR_INDEX + (p.HOLD_UNTIL_INDEX - p.ENTRY_INDEX) as HOLD_UNTIL_INDEX
     from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+    join MIP.MART.V_BAR_INDEX vb
+      on vb.SYMBOL = p.SYMBOL
+     and vb.MARKET_TYPE = p.MARKET_TYPE
+     and vb.INTERVAL_MINUTES = 1440
+     and vb.TS = p.ENTRY_TS
     where p.PORTFOLIO_ID = :v_portfolio_id;
 
     -- Determine current cash balance. Priority:
@@ -637,7 +665,9 @@ begin
                                 end if;
 
                                 -- Use MERGE to prevent duplicate positions on pipeline re-runs.
-                                -- Match on (PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX).
+                                -- Match on (PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS).
+                                -- NOTE: ENTRY_INDEX excluded from match key because V_BAR_INDEX
+                                -- computes it via ROW_NUMBER() which can drift; ENTRY_TS is stable.
                                 merge into MIP.APP.PORTFOLIO_POSITIONS as ptgt
                                 using (
                                     select
@@ -659,7 +689,6 @@ begin
                                    and ptgt.SYMBOL = psrc.SYMBOL
                                    and ptgt.MARKET_TYPE = psrc.MARKET_TYPE
                                    and ptgt.ENTRY_TS = psrc.ENTRY_TS
-                                   and ptgt.ENTRY_INDEX = psrc.ENTRY_INDEX
                                 when not matched then
                                     insert (
                                         PORTFOLIO_ID, RUN_ID, EPISODE_ID, SYMBOL, MARKET_TYPE,
@@ -705,11 +734,12 @@ begin
 
     -- Include ALL positions for this portfolio (any RUN_ID) so equity
     -- reflects mark-to-market of agent-created positions too.
-    -- IMPORTANT: BAR_INDEX is per-symbol (partitioned by SYMBOL, MARKET_TYPE in V_BAR_INDEX).
-    -- We must join each position with its OWN symbol's BAR_INDEX series, not a generic day spine.
-    -- Previous bug: used TEMP_DAY_SPINE's single BAR_INDEX per day, which silently dropped
-    -- positions whose symbol had a different BAR_INDEX numbering.
-    -- Now includes CLOSE price so TEMP_DAILY_EQUITY doesn't need a second V_BAR_INDEX join.
+    --
+    -- CRITICAL: BAR_INDEX drift protection (same principle as TEMP_POSITIONS loading).
+    -- We anchor on ENTRY_TS (stable) to find the CURRENT BAR_INDEX for each position's
+    -- entry bar, then use the relative horizon (HOLD_UNTIL_INDEX - ENTRY_INDEX) to
+    -- compute the current hold-until bar index. This prevents stale stored indices
+    -- from silently producing zero equity.
     create or replace temporary table TEMP_POSITION_DAYS as
     select
         vb.TS,
@@ -719,11 +749,17 @@ begin
         p.QUANTITY,
         vb.CLOSE as CLOSE_PRICE
     from MIP.APP.PORTFOLIO_POSITIONS p
+    join MIP.MART.V_BAR_INDEX entry_vb
+      on entry_vb.SYMBOL = p.SYMBOL
+     and entry_vb.MARKET_TYPE = p.MARKET_TYPE
+     and entry_vb.INTERVAL_MINUTES = 1440
+     and entry_vb.TS = p.ENTRY_TS
     join MIP.MART.V_BAR_INDEX vb
       on vb.SYMBOL = p.SYMBOL
      and vb.MARKET_TYPE = p.MARKET_TYPE
      and vb.INTERVAL_MINUTES = 1440
-     and vb.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
+     and vb.BAR_INDEX between entry_vb.BAR_INDEX
+         and entry_vb.BAR_INDEX + (p.HOLD_UNTIL_INDEX - p.ENTRY_INDEX)
     where p.PORTFOLIO_ID = :v_portfolio_id
       and p.INTERVAL_MINUTES = 1440
       and vb.TS between :v_effective_from_ts and :v_to_ts;

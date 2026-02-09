@@ -55,6 +55,36 @@ def _get_latest_pipeline_run(conn):
     }
 
 
+def _is_pipeline_running(conn) -> bool:
+    """
+    Check if a pipeline is currently running.
+    
+    A pipeline is running if there is a START event in the last 2 hours
+    that has not yet been followed by a SUCCESS/FAIL/SUCCESS_WITH_SKIPS event.
+    Mirrors SP_CHECK_PIPELINE_SAFE_FOR_EDIT logic.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            select count(*) as active_count
+            from MIP.APP.MIP_AUDIT_LOG start_evt
+            where start_evt.EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+              and start_evt.STATUS = 'START'
+              and start_evt.EVENT_TS > dateadd(hour, -2, current_timestamp())
+              and not exists (
+                  select 1
+                  from MIP.APP.MIP_AUDIT_LOG end_evt
+                  where end_evt.EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+                    and end_evt.RUN_ID = start_evt.RUN_ID
+                    and end_evt.STATUS in ('SUCCESS', 'SUCCESS_WITH_SKIPS', 'FAIL')
+              )
+        """)
+        row = cur.fetchone()
+        return row[0] > 0 if row else False
+    except Exception:
+        return False
+
+
 @router.get("/status")
 def get_status():
     """
@@ -71,6 +101,7 @@ def get_status():
     snowflake_ok = False
     snowflake_message = None
     latest_run_info = {"latest_success_run_id": None, "latest_success_ts": None}
+    pipeline_running = False
     
     try:
         conn = get_connection()
@@ -81,6 +112,7 @@ def get_status():
             snowflake_ok = True
             # Fetch latest pipeline run info
             latest_run_info = _get_latest_pipeline_run(conn)
+            pipeline_running = _is_pipeline_running(conn)
         finally:
             conn.close()
     except SnowflakeAuthError as e:
@@ -98,5 +130,6 @@ def get_status():
         "snowflake_message": snowflake_message,
         "latest_success_run_id": latest_run_info.get("latest_success_run_id"),
         "latest_success_ts": latest_run_info.get("latest_success_ts"),
+        "pipeline_running": pipeline_running,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

@@ -281,17 +281,34 @@ begin
     -- 1. Latest CASH_AFTER from PORTFOLIO_TRADES within the current episode
     --    (scoped by EPISODE_ID to avoid pulling cash from a prior episode)
     -- 2. Fallback: starting_cash - cost of all open positions
+    --
+    -- After loading trade cash, adjust for any DEPOSIT/WITHDRAW lifecycle events
+    -- that occurred SINCE the last trade. SP_PORTFOLIO_CASH_EVENT updates
+    -- PORTFOLIO.STARTING_CASH but that change is NOT reflected in
+    -- PORTFOLIO_TRADES.CASH_AFTER until a new trade is recorded.
     begin
-        declare v_trade_cash number(18,2);
+        let v_trade_cash number(18,2) := null;
+        let v_last_trade_ts timestamp_ntz := null;
+        let v_cash_event_delta number(18,2) := 0;
         begin
-            select CASH_AFTER into :v_trade_cash
+            select CASH_AFTER, TRADE_TS into :v_trade_cash, :v_last_trade_ts
               from MIP.APP.PORTFOLIO_TRADES
              where PORTFOLIO_ID = :v_portfolio_id
                and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
              order by TRADE_TS desc, TRADE_ID desc
              limit 1;
             if (v_trade_cash is not null) then
-                v_cash := v_trade_cash;
+                -- Check for DEPOSIT/WITHDRAW events after the last trade
+                select coalesce(sum(
+                    case when EVENT_TYPE = 'DEPOSIT'  then AMOUNT
+                         when EVENT_TYPE = 'WITHDRAW' then -AMOUNT
+                         else 0 end
+                ), 0) into :v_cash_event_delta
+                  from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+                 where PORTFOLIO_ID = :v_portfolio_id
+                   and EVENT_TYPE in ('DEPOSIT', 'WITHDRAW')
+                   and EVENT_TS > :v_last_trade_ts;
+                v_cash := v_trade_cash + v_cash_event_delta;
             end if;
         exception
             when other then null; -- No trade records yet

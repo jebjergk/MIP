@@ -36,6 +36,9 @@ export default function PortfolioManagement() {
   const [loading, setLoading] = useState(true)
   const [feedback, setFeedback] = useState(null)
 
+  // Pipeline lock state -- disables all write actions when pipeline is running
+  const [pipelineRunning, setPipelineRunning] = useState(false)
+
   // Lifecycle tab state
   const [selectedPortfolioId, setSelectedPortfolioId] = useState(null)
   const [lifecycle, setLifecycle] = useState(null)
@@ -48,6 +51,20 @@ export default function PortfolioManagement() {
 
   // Modal state
   const [modal, setModal] = useState(null) // { type: 'portfolio'|'profile'|'cash', data?: ... }
+
+  // ── Poll pipeline status ──
+  useEffect(() => {
+    let cancelled = false
+    const check = () => {
+      fetch(`${API_BASE}/status`)
+        .then(r => r.ok ? r.json() : {})
+        .then(d => { if (!cancelled) setPipelineRunning(!!d.pipeline_running) })
+        .catch(() => {})
+    }
+    check()
+    const interval = setInterval(check, 15_000) // re-check every 15 s
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
 
   // ── Load portfolios + profiles ──
   const loadData = useCallback(async () => {
@@ -172,6 +189,12 @@ export default function PortfolioManagement() {
     <div>
       <h1>Portfolio Management</h1>
 
+      {pipelineRunning && (
+        <div className="mgmt-pipeline-lock">
+          Pipeline is currently running &mdash; editing is disabled until the run completes.
+        </div>
+      )}
+
       {feedback && (
         <div className={feedback.type === 'error' ? 'mgmt-error' : 'mgmt-success'}>
           {feedback.message}
@@ -200,6 +223,7 @@ export default function PortfolioManagement() {
           onCreate={() => setModal({ type: 'portfolio', data: null })}
           onCash={(p) => setModal({ type: 'cash', data: p })}
           onAttachProfile={(p) => setModal({ type: 'attach', data: p })}
+          disabled={pipelineRunning}
         />
       )}
 
@@ -208,6 +232,7 @@ export default function PortfolioManagement() {
           profiles={profiles}
           onEdit={(p) => setModal({ type: 'profile', data: p })}
           onCreate={() => setModal({ type: 'profile', data: null })}
+          disabled={pipelineRunning}
         />
       )}
 
@@ -294,7 +319,7 @@ export default function PortfolioManagement() {
 // Tab 1: Portfolios
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttachProfile }) {
+function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttachProfile, disabled }) {
   const profileMap = {}
   profiles.forEach(p => { profileMap[p.PROFILE_ID] = p.NAME })
 
@@ -302,7 +327,7 @@ function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttac
     <div>
       <div className="mgmt-section-header">
         <h2>Portfolios</h2>
-        <button className="mgmt-btn mgmt-btn-primary" onClick={onCreate}>+ Create Portfolio</button>
+        <button className="mgmt-btn mgmt-btn-primary" onClick={onCreate} disabled={disabled}>+ Create Portfolio</button>
       </div>
       <table className="mgmt-table">
         <thead>
@@ -336,9 +361,9 @@ function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttac
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                    <button className="mgmt-btn mgmt-btn-secondary mgmt-btn-sm" onClick={() => onEdit(p)}>Edit</button>
-                    <button className="mgmt-btn mgmt-btn-success mgmt-btn-sm" onClick={() => onCash(p)}>Cash</button>
-                    <button className="mgmt-btn mgmt-btn-primary mgmt-btn-sm" onClick={() => onAttachProfile(p)}>Profile</button>
+                    <button className="mgmt-btn mgmt-btn-secondary mgmt-btn-sm" onClick={() => onEdit(p)} disabled={disabled}>Edit</button>
+                    <button className="mgmt-btn mgmt-btn-success mgmt-btn-sm" onClick={() => onCash(p)} disabled={disabled}>Cash</button>
+                    <button className="mgmt-btn mgmt-btn-primary mgmt-btn-sm" onClick={() => onAttachProfile(p)} disabled={disabled}>Profile</button>
                   </div>
                 </td>
               </tr>
@@ -358,12 +383,12 @@ function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttac
 // Tab 2: Profiles
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ProfilesTab({ profiles, onEdit, onCreate }) {
+function ProfilesTab({ profiles, onEdit, onCreate, disabled }) {
   return (
     <div>
       <div className="mgmt-section-header">
         <h2>Portfolio Profiles</h2>
-        <button className="mgmt-btn mgmt-btn-primary" onClick={onCreate}>+ Create Profile</button>
+        <button className="mgmt-btn mgmt-btn-primary" onClick={onCreate} disabled={disabled}>+ Create Profile</button>
       </div>
       <table className="mgmt-table">
         <thead>
@@ -399,7 +424,7 @@ function ProfilesTab({ profiles, onEdit, onCreate }) {
               </td>
               <td>{p.PORTFOLIO_COUNT || 0} portfolio{(p.PORTFOLIO_COUNT || 0) !== 1 ? 's' : ''}</td>
               <td>
-                <button className="mgmt-btn mgmt-btn-secondary mgmt-btn-sm" onClick={() => onEdit(p)}>Edit</button>
+                <button className="mgmt-btn mgmt-btn-secondary mgmt-btn-sm" onClick={() => onEdit(p)} disabled={disabled}>Edit</button>
               </td>
             </tr>
           ))}

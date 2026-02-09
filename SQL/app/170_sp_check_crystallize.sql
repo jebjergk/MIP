@@ -197,6 +197,19 @@ begin
     -- Start next episode (same profile)
     call MIP.APP.SP_START_PORTFOLIO_EPISODE(:v_portfolio_id, :v_profile_id, 'PROFIT_TARGET_HIT', :v_next_start_equity);
 
+    -- Reset PORTFOLIO header stats for the new episode.
+    -- Without this, the old episode's win/loss days, max drawdown, total return
+    -- persist until the next full simulation run, causing confusing UI display.
+    update MIP.APP.PORTFOLIO
+       set FINAL_EQUITY = :v_next_start_equity,
+           TOTAL_RETURN = 0,
+           MAX_DRAWDOWN = 0,
+           WIN_DAYS = 0,
+           LOSS_DAYS = 0,
+           BUST_AT = null,
+           UPDATED_AT = current_timestamp()
+     where PORTFOLIO_ID = :v_portfolio_id;
+
     -- Cooldown: block new entries until COOLDOWN_DAYS have passed
     if (v_cooldown_days is not null and v_cooldown_days > 0) then
         update MIP.APP.PORTFOLIO

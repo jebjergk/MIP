@@ -248,7 +248,8 @@ begin
     where p.PORTFOLIO_ID = :v_portfolio_id;
 
     -- Determine current cash balance. Priority:
-    -- 1. Latest CASH_AFTER from PORTFOLIO_TRADES (reflects actual money after last trade)
+    -- 1. Latest CASH_AFTER from PORTFOLIO_TRADES within the current episode
+    --    (scoped by EPISODE_ID to avoid pulling cash from a prior episode)
     -- 2. Fallback: starting_cash - cost of all open positions
     begin
         declare v_trade_cash number(18,2);
@@ -256,6 +257,7 @@ begin
             select CASH_AFTER into :v_trade_cash
               from MIP.APP.PORTFOLIO_TRADES
              where PORTFOLIO_ID = :v_portfolio_id
+               and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
              order by TRADE_TS desc, TRADE_ID desc
              limit 1;
             if (v_trade_cash is not null) then
@@ -634,36 +636,41 @@ begin
                                     v_trade_dedup_skipped := v_trade_dedup_skipped + 1;
                                 end if;
 
-                                insert into MIP.APP.PORTFOLIO_POSITIONS (
-                                    PORTFOLIO_ID,
-                                    RUN_ID,
-                                    EPISODE_ID,
-                                    SYMBOL,
-                                    MARKET_TYPE,
-                                    INTERVAL_MINUTES,
-                                    ENTRY_TS,
-                                    ENTRY_PRICE,
-                                    QUANTITY,
-                                    COST_BASIS,
-                                    ENTRY_SCORE,
-                                    ENTRY_INDEX,
-                                    HOLD_UNTIL_INDEX
-                                )
-                                values (
-                                    :v_portfolio_id,
-                                    :v_run_id,
-                                    :v_episode_id,
-                                    :v_signal_symbol,
-                                    :v_signal_market_type,
-                                    1440,
-                                    :v_signal_entry_ts,
-                                    :v_buy_exec_price,
-                                    :v_buy_qty,
-                                    :v_total_cost,
-                                    :v_signal_score,
-                                    :v_signal_entry_index,
-                                    :v_signal_hold_until_index
-                                );
+                                -- Use MERGE to prevent duplicate positions on pipeline re-runs.
+                                -- Match on (PORTFOLIO_ID, SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_INDEX).
+                                merge into MIP.APP.PORTFOLIO_POSITIONS as ptgt
+                                using (
+                                    select
+                                        :v_portfolio_id as PORTFOLIO_ID,
+                                        :v_run_id as RUN_ID,
+                                        :v_episode_id as EPISODE_ID,
+                                        :v_signal_symbol as SYMBOL,
+                                        :v_signal_market_type as MARKET_TYPE,
+                                        1440 as INTERVAL_MINUTES,
+                                        :v_signal_entry_ts as ENTRY_TS,
+                                        :v_buy_exec_price as ENTRY_PRICE,
+                                        :v_buy_qty as QUANTITY,
+                                        :v_total_cost as COST_BASIS,
+                                        :v_signal_score as ENTRY_SCORE,
+                                        :v_signal_entry_index as ENTRY_INDEX,
+                                        :v_signal_hold_until_index as HOLD_UNTIL_INDEX
+                                ) as psrc
+                                on ptgt.PORTFOLIO_ID = psrc.PORTFOLIO_ID
+                                   and ptgt.SYMBOL = psrc.SYMBOL
+                                   and ptgt.MARKET_TYPE = psrc.MARKET_TYPE
+                                   and ptgt.ENTRY_TS = psrc.ENTRY_TS
+                                   and ptgt.ENTRY_INDEX = psrc.ENTRY_INDEX
+                                when not matched then
+                                    insert (
+                                        PORTFOLIO_ID, RUN_ID, EPISODE_ID, SYMBOL, MARKET_TYPE,
+                                        INTERVAL_MINUTES, ENTRY_TS, ENTRY_PRICE, QUANTITY,
+                                        COST_BASIS, ENTRY_SCORE, ENTRY_INDEX, HOLD_UNTIL_INDEX
+                                    )
+                                    values (
+                                        psrc.PORTFOLIO_ID, psrc.RUN_ID, psrc.EPISODE_ID, psrc.SYMBOL, psrc.MARKET_TYPE,
+                                        psrc.INTERVAL_MINUTES, psrc.ENTRY_TS, psrc.ENTRY_PRICE, psrc.QUANTITY,
+                                        psrc.COST_BASIS, psrc.ENTRY_SCORE, psrc.ENTRY_INDEX, psrc.HOLD_UNTIL_INDEX
+                                    );
 
                                 v_position_count := v_position_count + 1;
                                 v_open_positions := v_open_positions + 1;
@@ -698,18 +705,28 @@ begin
 
     -- Include ALL positions for this portfolio (any RUN_ID) so equity
     -- reflects mark-to-market of agent-created positions too.
+    -- IMPORTANT: BAR_INDEX is per-symbol (partitioned by SYMBOL, MARKET_TYPE in V_BAR_INDEX).
+    -- We must join each position with its OWN symbol's BAR_INDEX series, not a generic day spine.
+    -- Previous bug: used TEMP_DAY_SPINE's single BAR_INDEX per day, which silently dropped
+    -- positions whose symbol had a different BAR_INDEX numbering.
+    -- Now includes CLOSE price so TEMP_DAILY_EQUITY doesn't need a second V_BAR_INDEX join.
     create or replace temporary table TEMP_POSITION_DAYS as
     select
-        d.TS,
-        d.BAR_INDEX,
+        vb.TS,
+        vb.BAR_INDEX,
         p.SYMBOL,
         p.MARKET_TYPE,
-        p.QUANTITY
+        p.QUANTITY,
+        vb.CLOSE as CLOSE_PRICE
     from MIP.APP.PORTFOLIO_POSITIONS p
-    join TEMP_DAY_SPINE d
-      on d.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
+    join MIP.MART.V_BAR_INDEX vb
+      on vb.SYMBOL = p.SYMBOL
+     and vb.MARKET_TYPE = p.MARKET_TYPE
+     and vb.INTERVAL_MINUTES = 1440
+     and vb.BAR_INDEX between p.ENTRY_INDEX and p.HOLD_UNTIL_INDEX
     where p.PORTFOLIO_ID = :v_portfolio_id
-      and p.INTERVAL_MINUTES = 1440;
+      and p.INTERVAL_MINUTES = 1440
+      and vb.TS between :v_effective_from_ts and :v_to_ts;
 
     select count(*)
       into v_position_days_expanded
@@ -718,14 +735,9 @@ begin
     create or replace temporary table TEMP_DAILY_EQUITY as
     select
         pd.TS,
-        sum(pd.QUANTITY * vb.CLOSE) as EQUITY_VALUE,
+        sum(pd.QUANTITY * pd.CLOSE_PRICE) as EQUITY_VALUE,
         count(distinct pd.SYMBOL) as OPEN_POSITIONS
     from TEMP_POSITION_DAYS pd
-    join MIP.MART.V_BAR_INDEX vb
-      on vb.SYMBOL = pd.SYMBOL
-     and vb.MARKET_TYPE = pd.MARKET_TYPE
-     and vb.INTERVAL_MINUTES = 1440
-     and vb.BAR_INDEX = pd.BAR_INDEX
     group by pd.TS;
 
     insert into MIP.APP.PORTFOLIO_DAILY (
@@ -797,6 +809,8 @@ begin
       into v_daily_count
       from TEMP_DAY_SPINE;
 
+    -- Compute stats scoped to the current episode.
+    -- Filter by both RUN_ID and EPISODE_ID to prevent cross-episode contamination.
     select
         max(case when rn = 1 then TOTAL_EQUITY else null end),
         max(DRAWDOWN),
@@ -821,6 +835,7 @@ begin
         from MIP.APP.PORTFOLIO_DAILY
         where PORTFOLIO_ID = :v_portfolio_id
           and RUN_ID = :v_run_id
+          and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
       ) run_daily;
 
     v_total_return := case

@@ -49,7 +49,9 @@ daily_base as (
         d.OPEN_POSITIONS,
         d.PEAK_EQUITY,
         d.DRAWDOWN,
-        p.STARTING_CASH,
+        -- Use episode START_EQUITY when available (correct after crystallize);
+        -- fall back to PORTFOLIO.STARTING_CASH for portfolios without episodes.
+        coalesce(ep.START_EQUITY, p.STARTING_CASH) as STARTING_CASH,
         coalesce(prof.DRAWDOWN_STOP_PCT, 0.10) as DRAWDOWN_STOP_PCT,
         lag(d.TOTAL_EQUITY) over (
             partition by d.PORTFOLIO_ID, d.RUN_ID
@@ -68,6 +70,9 @@ daily_base as (
       on p.PORTFOLIO_ID = d.PORTFOLIO_ID
     left join MIP.APP.PORTFOLIO_PROFILE prof
       on prof.PROFILE_ID = p.PROFILE_ID
+    left join MIP.APP.PORTFOLIO_EPISODE ep
+      on ep.PORTFOLIO_ID = d.PORTFOLIO_ID
+     and ep.EPISODE_ID = d.EPISODE_ID
 ),
 daily_calc as (
     select

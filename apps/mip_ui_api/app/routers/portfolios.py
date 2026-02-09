@@ -645,45 +645,73 @@ def get_portfolio_snapshot(
         positions = _enrich_positions_side(positions)
         positions = _enrich_positions_hold_until_ts(positions, cur)
 
-        # Trades: trade_ts_col=TRADE_TS, run_id_col=RUN_ID. Total + last_ts for portfolio; list filtered by lookback_days
+        # Trades: scoped to active episode (total + last_ts, then filtered list)
+        # Get active episode for trade scoping
         cur.execute(
-            "select count(*) as n, max(TRADE_TS) as last_ts from MIP.APP.PORTFOLIO_TRADES where PORTFOLIO_ID = %s",
+            "select EPISODE_ID from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE where PORTFOLIO_ID = %s",
             (portfolio_id,),
         )
+        _ep_row = cur.fetchone()
+        _active_ep_id = int(_ep_row[0]) if _ep_row and _ep_row[0] is not None else None
+        
+        # Episode-scoped trade aggregate
+        if _active_ep_id is not None:
+            cur.execute(
+                """select count(*) as n, max(TRADE_TS) as last_ts
+                from MIP.APP.PORTFOLIO_TRADES
+                where PORTFOLIO_ID = %s and EPISODE_ID = %s""",
+                (portfolio_id, _active_ep_id),
+            )
+        else:
+            cur.execute(
+                "select count(*) as n, max(TRADE_TS) as last_ts from MIP.APP.PORTFOLIO_TRADES where PORTFOLIO_ID = %s",
+                (portfolio_id,),
+            )
         agg_row = cur.fetchone()
         trades_total = int(agg_row[0]) if agg_row and agg_row[0] is not None else 0
         _last_ts = agg_row[1] if agg_row and len(agg_row) > 1 and agg_row[1] is not None else None
         last_trade_ts = _last_ts.isoformat() if _last_ts is not None and hasattr(_last_ts, "isoformat") else _last_ts
 
+        # Episode-scoped trade list
+        _ep_filter = "and EPISODE_ID = %s" if _active_ep_id is not None else ""
+        _ep_params_base = (portfolio_id, _active_ep_id) if _active_ep_id is not None else (portfolio_id,)
+        
         if lookback_days < 0:
             cur.execute(
-                """
+                f"""
                 select * from MIP.APP.PORTFOLIO_TRADES
-                where PORTFOLIO_ID = %s
+                where PORTFOLIO_ID = %s {_ep_filter}
                 order by TRADE_TS desc
                 limit 500
                 """,
-                (portfolio_id,),
+                _ep_params_base,
             )
         else:
             cur.execute(
-                """
+                f"""
                 select * from MIP.APP.PORTFOLIO_TRADES
-                where PORTFOLIO_ID = %s and TRADE_TS >= dateadd(day, -%s, current_timestamp())
+                where PORTFOLIO_ID = %s {_ep_filter} and TRADE_TS >= dateadd(day, -%s, current_timestamp())
                 order by TRADE_TS desc
                 limit 500
                 """,
-                (portfolio_id, lookback_days),
+                (*_ep_params_base, lookback_days),
             )
         trades = serialize_rows(fetch_all(cur))
 
-        # Daily: latest record per day across all runs (preserves history)
+        # Daily: latest record per day, scoped to the active episode.
+        # Uses subquery to find active episode so we only show current episode data.
         cur.execute(
             """
-            select * from MIP.APP.PORTFOLIO_DAILY
-            where PORTFOLIO_ID = %s
-            qualify row_number() over (partition by TS order by CREATED_AT desc nulls last, RUN_ID desc) = 1
-            order by TS desc
+            select d.* from MIP.APP.PORTFOLIO_DAILY d
+            left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
+              on e.PORTFOLIO_ID = d.PORTFOLIO_ID
+            where d.PORTFOLIO_ID = %s
+              and (
+                  (d.EPISODE_ID is not null and d.EPISODE_ID = e.EPISODE_ID)
+                  or (d.EPISODE_ID is null and (e.EPISODE_ID is null or d.TS >= e.START_TS))
+              )
+            qualify row_number() over (partition by d.TS order by d.CREATED_AT desc nulls last, d.RUN_ID desc) = 1
+            order by d.TS desc
             """,
             (portfolio_id,),
         )
@@ -797,17 +825,19 @@ def get_portfolio_snapshot(
             equity_value = latest_daily.get("EQUITY_VALUE") or latest_daily.get("equity_value")
             total_equity = latest_daily.get("TOTAL_EQUITY") or latest_daily.get("total_equity")
 
-            # Override cash with latest CASH_AFTER from trades (most accurate source)
+            # Override cash with latest CASH_AFTER from trades in current episode (most accurate source)
+            _cash_ep_filter = "and EPISODE_ID = %s" if _active_ep_id is not None else ""
+            _cash_ep_params = (portfolio_id, _active_ep_id) if _active_ep_id is not None else (portfolio_id,)
             try:
                 cur.execute(
-                    """
+                    f"""
                     select CASH_AFTER
                       from MIP.APP.PORTFOLIO_TRADES
-                     where PORTFOLIO_ID = %s
+                     where PORTFOLIO_ID = %s {_cash_ep_filter}
                      order by TRADE_TS desc, TRADE_ID desc
                      limit 1
                     """,
-                    (portfolio_id,),
+                    _cash_ep_params,
                 )
                 trade_row = cur.fetchone()
                 if trade_row and trade_row[0] is not None:
@@ -951,7 +981,8 @@ def get_portfolio_snapshot(
                     ep_drawdown_stop_pct = 0.10  # Default 10%
                 
                 # Get episode-local peak and current equity to compute drawdown
-                # Use latest record per day across all runs for complete picture
+                # Use latest record per day, scoped by EPISODE_ID for accuracy
+                _ep_id_for_risk = _active_ep_id  # From earlier trade scoping query
                 cur.execute(
                     """
                     select 
@@ -962,10 +993,11 @@ def get_portfolio_snapshot(
                         from MIP.APP.PORTFOLIO_DAILY
                         where PORTFOLIO_ID = %s 
                           and TS >= %s
+                          and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
                         qualify row_number() over (partition by TS order by CREATED_AT desc nulls last, RUN_ID desc) = 1
                     )
                     """,
-                    (portfolio_id, episode_start_ts),
+                    (portfolio_id, episode_start_ts, _ep_id_for_risk, _ep_id_for_risk),
                 )
                 row = cur.fetchone()
                 if row and row[0] is not None and row[1] is not None:
@@ -1285,7 +1317,7 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             float(ep["STARTING_CASH"]) if ep.get("STARTING_CASH") is not None else None
         )
 
-        # Equity series: PORTFOLIO_DAILY in episode window
+        # Equity series: PORTFOLIO_DAILY in episode window, scoped by EPISODE_ID.
         # Use latest record per day across ALL runs so history is preserved
         # even when a newer run covers fewer days than the previous one.
         # QUALIFY keeps only the most recent RUN_ID's record for each day.
@@ -1296,10 +1328,11 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             where PORTFOLIO_ID = %s 
               and TS >= %s 
               and (%s is null or TS <= %s)
+              and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
             qualify row_number() over (partition by TS order by CREATED_AT desc nulls last, RUN_ID desc) = 1
             order by TS
             """,
-            (portfolio_id, start_ts, end_ts, end_ts),
+            (portfolio_id, start_ts, end_ts, end_ts, episode_id, episode_id),
         )
         daily_rows = fetch_all(cur)
         
@@ -1350,16 +1383,17 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
                     drawdown_series.append({"ts": tss, "drawdown_pct": None, "high_watermark_equity": episode_peak})
                     regime_per_day.append({"ts": tss, "gate_state": "SAFE"})
 
-        # Trades per day
+        # Trades per day — scoped to episode
         cur.execute(
             """
             select date_trunc('day', TRADE_TS) as day_ts, count(*) as trades_count
             from MIP.APP.PORTFOLIO_TRADES
             where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
+              and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
             group by date_trunc('day', TRADE_TS)
             order by day_ts
             """,
-            (portfolio_id, start_ts, end_ts, end_ts),
+            (portfolio_id, start_ts, end_ts, end_ts, episode_id, episode_id),
         )
         trade_rows = fetch_all(cur)
         trades_per_day = []
@@ -1426,8 +1460,10 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
             if isinstance(peak_open, (int, float)):
                 peak_open = int(peak_open)
         cur.execute(
-            "select count(*) from MIP.APP.PORTFOLIO_TRADES where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)",
-            (portfolio_id, start_ts, end_ts, end_ts),
+            """select count(*) from MIP.APP.PORTFOLIO_TRADES
+            where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
+              and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))""",
+            (portfolio_id, start_ts, end_ts, end_ts, episode_id, episode_id),
         )
         tc = cur.fetchone()
         trades_count = int(tc[0]) if tc and tc[0] is not None else 0

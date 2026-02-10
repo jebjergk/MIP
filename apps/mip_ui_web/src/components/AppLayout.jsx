@@ -13,31 +13,31 @@ const NAV_GROUPS = [
   {
     label: 'Dashboard',
     items: [
-      { to: '/cockpit', icon: '\u25C9', label: 'Cockpit' },
-      { to: '/home',    icon: '\u2302', label: 'Home' },
+      { to: '/cockpit', icon: '\uD83D\uDCCA', label: 'Cockpit' },
+      { to: '/home',    icon: '\uD83C\uDFE0', label: 'Home' },
     ],
   },
   {
     label: 'Portfolio',
     items: [
-      { to: '/manage',     icon: '\u2699', label: 'Management' },
-      { to: '/portfolios', icon: '\u25C8', label: 'Activity' },
+      { to: '/manage',     icon: '\uD83D\uDCCB', label: 'Management' },
+      { to: '/portfolios', icon: '\uD83D\uDCC8', label: 'Activity' },
     ],
   },
   {
     label: 'Research',
     items: [
-      { to: '/training',         icon: '\u25B3', label: 'Training Status' },
-      { to: '/suggestions',      icon: '\u2726', label: 'Suggestions' },
-      { to: '/signals',          icon: '\u26A1', label: 'Signals' },
-      { to: '/market-timeline',  icon: '\u25D4', label: 'Market Timeline' },
+      { to: '/training',        icon: '\uD83C\uDFAF', label: 'Training Status' },
+      { to: '/suggestions',     icon: '\uD83D\uDCA1', label: 'Suggestions' },
+      { to: '/signals',         icon: '\uD83D\uDCE1', label: 'Signals' },
+      { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Market Timeline' },
     ],
   },
   {
     label: 'Operations',
     items: [
-      { to: '/runs',  icon: '\u25B8', label: 'Runs (Audit)' },
-      { to: '/debug', icon: '\u2692', label: 'Debug' },
+      { to: '/runs',  icon: '\u25B6\uFE0F', label: 'Runs (Audit)' },
+      { to: '/debug', icon: '\uD83D\uDD27', label: 'Debug' },
     ],
   },
 ]
@@ -71,17 +71,20 @@ export default function AppLayout() {
         aria-label="Main navigation"
       >
         <div className="app-layout-sidebar-inner">
-          <h1 className="app-layout-title">
-            <NavLink to="/" onClick={closeSidebar} className="app-layout-title-link">
-              MIP
-            </NavLink>
-          </h1>
+          <div className="app-layout-brand">
+            <h1 className="app-layout-title">
+              <NavLink to="/" onClick={closeSidebar} className="app-layout-title-link">
+                <span className="app-layout-title-accent" />
+                MIP
+              </NavLink>
+            </h1>
+            <span className="app-layout-subtitle">Market Intelligence Platform</span>
+          </div>
           <nav className="app-layout-nav">
-            {NAV_GROUPS.map((group, gi) => (
+            {NAV_GROUPS.map((group) => (
               <div key={group.label} className="app-layout-nav-group">
-                {gi > 0 && <div className="app-layout-nav-divider" />}
                 <span className="app-layout-nav-group-label">{group.label}</span>
-                {group.items.map(({ to, label }) => (
+                {group.items.map(({ to, icon, label }) => (
                   <NavLink
                     key={to}
                     to={to}
@@ -91,21 +94,23 @@ export default function AppLayout() {
                     }
                     onClick={closeSidebar}
                   >
+                    <span className="app-layout-nav-icon" aria-hidden="true">{icon}</span>
                     {label}
                   </NavLink>
                 ))}
               </div>
             ))}
-            <div className="app-layout-nav-divider" />
-            <NavLink
-              to="/guide"
-              className={({ isActive }) =>
-                `app-layout-nav-link app-layout-nav-link--guide ${isActive ? 'app-layout-nav-link--active' : ''}`
-              }
-              onClick={closeSidebar}
-            >
-              User Guide
-            </NavLink>
+            <div className="app-layout-nav-footer">
+              <NavLink
+                to="/guide"
+                className={({ isActive }) =>
+                  `app-layout-nav-link app-layout-nav-link--guide ${isActive ? 'app-layout-nav-link--active' : ''}`
+                }
+                onClick={closeSidebar}
+              >
+                User Guide
+              </NavLink>
+            </div>
           </nav>
         </div>
       </aside>

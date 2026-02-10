@@ -222,10 +222,9 @@ begin
     -- If PORTFOLIO_LIFECYCLE_EVENT table does not exist or insert fails,
     -- crystallization still succeeds — this is purely additive audit trail.
     begin
-        declare
-            v_lc_cum_deposited number(18,2) := 0;
-            v_lc_cum_withdrawn number(18,2) := 0;
-            v_lc_cum_pnl number(18,2) := 0;
+        let v_lc_cum_deposited number(18,2) := 0;
+        let v_lc_cum_withdrawn number(18,2) := 0;
+        let v_lc_cum_pnl number(18,2) := 0;
         begin
             -- Get latest running totals
             select CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN

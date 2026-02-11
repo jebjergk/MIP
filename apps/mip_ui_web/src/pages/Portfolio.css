@@ -75,6 +75,10 @@
 }
 
 /* ── P&L cells: colored arrows and values ── */
+.num-cell {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85em;
+}
 .pnl-cell {
   white-space: nowrap;
 }

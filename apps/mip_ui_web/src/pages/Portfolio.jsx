@@ -342,6 +342,7 @@ export default function Portfolio() {
                         <thead>
                           <tr>
                             <th>Symbol</th>
+                            <th>Qty</th>
                             <th>Mkt Value</th>
                             <th>Cost</th>
                             <th>P&L</th>
@@ -368,6 +369,7 @@ export default function Portfolio() {
                                     <span className="pos-symbol-name">{pos.SYMBOL ?? pos.symbol}</span>
                                     <span className="pos-symbol-meta">{pos.MARKET_TYPE ?? pos.market_type}</span>
                                   </td>
+                                  <td className="num-cell">{pos.QUANTITY ?? pos.quantity}</td>
                                   <td>{mktVal != null ? Number(mktVal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                                   <td>{cost != null ? Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                                   <td className={`pnl-cell ${pnl != null ? (isUp ? 'pnl-up' : 'pnl-down') : ''}`}>
@@ -424,6 +426,7 @@ export default function Portfolio() {
                           <tr>
                             <th>Symbol</th>
                             <th>Side</th>
+                            <th>Qty</th>
                             <th>Notional</th>
                             <th>P&L</th>
                           </tr>
@@ -452,6 +455,7 @@ export default function Portfolio() {
                                     <span className="trade-symbol-date">{(t.TRADE_TS ?? t.trade_ts) ? String(t.TRADE_TS ?? t.trade_ts).slice(0, 10) : ''}</span>
                                   </td>
                                   <td><span className={`trade-side-badge trade-side-badge--${side.toLowerCase()}`}>{side}</span></td>
+                                  <td className="num-cell">{qty}</td>
                                   <td>{notional != null ? Number(notional).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                                   <td className={`pnl-cell ${isSell && realizedPnl != null ? (isUp ? 'pnl-up' : 'pnl-down') : ''}`}>
                                     {isSell && realizedPnl != null ? (

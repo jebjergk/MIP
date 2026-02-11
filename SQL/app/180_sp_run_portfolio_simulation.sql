@@ -12,7 +12,7 @@
 -- and preserve the relative horizon (HOLD_UNTIL_INDEX - ENTRY_INDEX) to compute
 -- the current hold-until bar. This applies to:
 --   1. Loading positions into TEMP_POSITIONS (join V_BAR_INDEX on ENTRY_TS)
---   2. Creating TEMP_POSITION_DAYS for equity calculation (join via entry_vb)
+--   2. TEMP_DAILY_SNAPSHOT stores cash + equity from the bar loop (single source of truth)
 --   3. MERGE key for PORTFOLIO_POSITIONS (uses ENTRY_TS, not ENTRY_INDEX)
 
 use role MIP_ADMIN_ROLE;
@@ -238,9 +238,15 @@ begin
         EXIT_PRICE number(18,8)
     );
 
-    create or replace temporary table TEMP_DAILY_CASH (
+    -- Stores cash, equity value, and open position count per bar from the
+    -- authoritative bar loop.  The bar loop correctly removes sold positions
+    -- from TEMP_POSITIONS before calculating equity, so these values are the
+    -- single source of truth for PORTFOLIO_DAILY.
+    create or replace temporary table TEMP_DAILY_SNAPSHOT (
         TS timestamp_ntz,
-        CASH number(18,2)
+        CASH number(18,2),
+        EQUITY_VALUE number(18,2),
+        OPEN_POSITIONS number
     );
 
     -- ============================================================
@@ -743,84 +749,14 @@ begin
            and vb.TS = :v_bar_ts;
 
         v_total_equity := v_cash + v_equity_value;
+        v_open_positions := (select count(*) from TEMP_POSITIONS);
 
-        insert into TEMP_DAILY_CASH (TS, CASH)
-        values (:v_bar_ts, :v_cash);
+        insert into TEMP_DAILY_SNAPSHOT (TS, CASH, EQUITY_VALUE, OPEN_POSITIONS)
+        values (:v_bar_ts, :v_cash, :v_equity_value, :v_open_positions);
     end for;
 
-    create or replace temporary table TEMP_DAY_SPINE as
-    select TS, BAR_INDEX
-    from MIP.MART.V_BAR_INDEX
-    where INTERVAL_MINUTES = 1440
-      and TS between :v_effective_from_ts and :v_to_ts
-    qualify row_number() over (partition by TS order by BAR_INDEX) = 1;
-
-    -- Include ALL positions for this portfolio (any RUN_ID) so equity
-    -- reflects mark-to-market of agent-created positions too.
-    --
-    -- CRITICAL: BAR_INDEX drift protection + ENTRY_TS mismatch handling.
-    -- Same approach as TEMP_POSITIONS loading:
-    --   1. Find entry bar via <= + QUALIFY (handles non-midnight ENTRY_TS)
-    --   2. Use relative horizon to compute current hold-until index
-    --   3. Expand to all bars between entry and hold-until
-    create or replace temporary table TEMP_POSITION_DAYS as
-    with position_entry_bars as (
-        select
-            p.PORTFOLIO_ID,
-            p.SYMBOL,
-            p.MARKET_TYPE,
-            p.QUANTITY,
-            p.ENTRY_TS,
-            p.ENTRY_INDEX as STORED_ENTRY_INDEX,
-            p.HOLD_UNTIL_INDEX as STORED_HOLD_UNTIL_INDEX,
-            entry_vb.BAR_INDEX as CURRENT_ENTRY_INDEX,
-            entry_vb.BAR_INDEX + (p.HOLD_UNTIL_INDEX - p.ENTRY_INDEX) as CURRENT_HOLD_UNTIL_INDEX
-        from MIP.APP.PORTFOLIO_POSITIONS p
-        join MIP.MART.V_BAR_INDEX entry_vb
-          on entry_vb.SYMBOL = p.SYMBOL
-         and entry_vb.MARKET_TYPE = p.MARKET_TYPE
-         and entry_vb.INTERVAL_MINUTES = 1440
-         and entry_vb.TS <= p.ENTRY_TS
-        where p.PORTFOLIO_ID = :v_portfolio_id
-          and p.INTERVAL_MINUTES = 1440
-          -- Episode filter: only include positions from the current episode.
-          -- Without this, sold positions from previous episodes inflate equity.
-          and (
-              (p.EPISODE_ID is not null and p.EPISODE_ID = :v_episode_id)
-              or (p.EPISODE_ID is null and :v_episode_id is null)
-          )
-        qualify row_number() over (
-            partition by p.PORTFOLIO_ID, p.SYMBOL, p.MARKET_TYPE, p.ENTRY_TS
-            order by entry_vb.TS desc
-        ) = 1
-    )
-    select
-        vb.TS,
-        vb.BAR_INDEX,
-        peb.SYMBOL,
-        peb.MARKET_TYPE,
-        peb.QUANTITY,
-        vb.CLOSE as CLOSE_PRICE
-    from position_entry_bars peb
-    join MIP.MART.V_BAR_INDEX vb
-      on vb.SYMBOL = peb.SYMBOL
-     and vb.MARKET_TYPE = peb.MARKET_TYPE
-     and vb.INTERVAL_MINUTES = 1440
-     and vb.BAR_INDEX between peb.CURRENT_ENTRY_INDEX
-         and peb.CURRENT_HOLD_UNTIL_INDEX
-    where vb.TS between :v_effective_from_ts and :v_to_ts;
-
-    select count(*)
-      into v_position_days_expanded
-      from TEMP_POSITION_DAYS;
-
-    create or replace temporary table TEMP_DAILY_EQUITY as
-    select
-        pd.TS,
-        sum(pd.QUANTITY * pd.CLOSE_PRICE) as EQUITY_VALUE,
-        count(distinct pd.SYMBOL) as OPEN_POSITIONS
-    from TEMP_POSITION_DAYS pd
-    group by pd.TS;
+    -- Count position-days for diagnostic output (how many position×bar combinations)
+    select count(*) into v_position_days_expanded from TEMP_DAILY_SNAPSHOT where EQUITY_VALUE > 0;
 
     -- ============================================================
     -- DELETE existing PORTFOLIO_DAILY rows before re-inserting.
@@ -852,20 +788,10 @@ begin
         DRAWDOWN,
         STATUS
     )
-    with daily_base as (
-        select
-            d.TS,
-            d.BAR_INDEX,
-            coalesce(c.CASH, 0) as CASH,
-            coalesce(e.EQUITY_VALUE, 0) as EQUITY_VALUE,
-            coalesce(e.OPEN_POSITIONS, 0) as OPEN_POSITIONS
-        from TEMP_DAY_SPINE d
-        left join TEMP_DAILY_CASH c
-          on c.TS = d.TS
-        left join TEMP_DAILY_EQUITY e
-          on e.TS = d.TS
-    ),
-    daily_calc as (
+    -- TEMP_DAILY_SNAPSHOT is the authoritative source: it's written inside the
+    -- bar loop AFTER sold positions are removed from TEMP_POSITIONS, so equity
+    -- values correctly exclude positions that have been sold.
+    with daily_calc as (
         select
             TS,
             CASH,
@@ -874,7 +800,7 @@ begin
             CASH + EQUITY_VALUE as TOTAL_EQUITY,
             lag(CASH + EQUITY_VALUE) over (order by TS) as PREV_TOTAL_EQUITY,
             max(CASH + EQUITY_VALUE) over (order by TS rows between unbounded preceding and current row) as PEAK_EQUITY
-        from daily_base
+        from TEMP_DAILY_SNAPSHOT
     )
     select
         :v_portfolio_id,
@@ -904,7 +830,7 @@ begin
 
     select count(*)
       into v_daily_count
-      from TEMP_DAY_SPINE;
+      from TEMP_DAILY_SNAPSHOT;
 
     -- Compute stats scoped to the current episode.
     -- Filter by both RUN_ID and EPISODE_ID to prevent cross-episode contamination.

@@ -816,6 +816,21 @@ begin
     from TEMP_POSITION_DAYS pd
     group by pd.TS;
 
+    -- ============================================================
+    -- DELETE existing PORTFOLIO_DAILY rows before re-inserting.
+    -- Without this, every pipeline re-run would add DUPLICATE rows
+    -- for the same (PORTFOLIO_ID, TS), causing cumulative metrics
+    -- (P&L, equity, drawdown) to inflate on each run.
+    -- Scoped to the current portfolio + episode + date range.
+    -- ============================================================
+    delete from MIP.APP.PORTFOLIO_DAILY
+     where PORTFOLIO_ID = :v_portfolio_id
+       and TS between :v_effective_from_ts and :v_to_ts
+       and (
+           (EPISODE_ID is not null and EPISODE_ID = :v_episode_id)
+           or (EPISODE_ID is null and :v_episode_id is null)
+       );
+
     insert into MIP.APP.PORTFOLIO_DAILY (
         PORTFOLIO_ID,
         RUN_ID,

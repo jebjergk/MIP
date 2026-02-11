@@ -76,6 +76,9 @@ with sell_trades as (
       and REALIZED_PNL is not null
 ),
 position_map as (
+    -- Match each SELL trade to its corresponding BUY trade to get entry timestamp.
+    -- Uses BUY trades (self-join on PORTFOLIO_TRADES) which is more robust than
+    -- joining to PORTFOLIO_POSITIONS since positions may outlive their sell cycle.
     select
         t.TRADE_ID,
         t.PORTFOLIO_ID,
@@ -84,18 +87,18 @@ position_map as (
         t.SYMBOL,
         t.INTERVAL_MINUTES,
         t.REALIZED_PNL,
-        p.ENTRY_TS
+        buy.TRADE_TS as ENTRY_TS
     from sell_trades t
-    join MIP.APP.PORTFOLIO_POSITIONS p
-      on p.PORTFOLIO_ID = t.PORTFOLIO_ID
-     and p.RUN_ID = t.RUN_ID
-     and p.SYMBOL = t.SYMBOL
-     and p.MARKET_TYPE = t.MARKET_TYPE
-     and p.INTERVAL_MINUTES = t.INTERVAL_MINUTES
-     and p.ENTRY_TS <= t.TRADE_TS
+    join MIP.APP.PORTFOLIO_TRADES buy
+      on buy.PORTFOLIO_ID = t.PORTFOLIO_ID
+     and buy.SYMBOL = t.SYMBOL
+     and buy.MARKET_TYPE = t.MARKET_TYPE
+     and buy.INTERVAL_MINUTES = t.INTERVAL_MINUTES
+     and buy.SIDE = 'BUY'
+     and buy.TRADE_TS <= t.TRADE_TS
     qualify row_number() over (
         partition by t.TRADE_ID
-        order by p.ENTRY_TS desc
+        order by buy.TRADE_TS desc
     ) = 1
 ),
 rec_map as (

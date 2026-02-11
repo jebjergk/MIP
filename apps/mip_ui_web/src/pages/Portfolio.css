@@ -56,6 +56,16 @@
   margin: 1rem 0;
 }
 
+/* Two-column layout: positions + trades get more room without Cash & Exposure */
+.portfolio-cards--two-col {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 900px) {
+  .portfolio-cards--two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
 .portfolio-card {
   border: 1px solid #e0e0e0;
   border-radius: 8px;
@@ -64,8 +74,83 @@
   min-width: 0; /* allow grid item to shrink so overflow scroll works */
 }
 
-.portfolio-card-cash-exposure {
-  border-left: 4px solid #2e7d32;
+/* ── P&L cells: colored arrows and values ── */
+.pnl-cell {
+  white-space: nowrap;
+}
+.pnl-up {
+  color: #2e7d32;
+}
+.pnl-down {
+  color: #c62828;
+}
+.pnl-arrow {
+  font-size: 0.7em;
+  margin-right: 0.25rem;
+}
+.pnl-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pnl-pct {
+  display: block;
+  font-size: 0.8em;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+/* ── Position table: symbol stacked layout ── */
+.pos-symbol {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.pos-symbol-name {
+  font-weight: 600;
+}
+.pos-symbol-meta {
+  font-size: 0.75em;
+  color: #888;
+  text-transform: uppercase;
+}
+.pos-closes {
+  font-size: 0.85em;
+  color: #666;
+}
+
+/* ── Trade table: side badges ── */
+.trade-side-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.trade-side-badge--buy {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+.trade-side-badge--sell {
+  background: #fce4ec;
+  color: #c62828;
+}
+.trade-symbol {
+  display: flex;
+  flex-direction: column;
+}
+.trade-symbol-name {
+  font-weight: 600;
+}
+.trade-symbol-date {
+  font-size: 0.75em;
+  color: #888;
+}
+.trade-row--sell {
+  background: #fff8f8;
+}
+.trade-row--buy {
+  background: #f8fff8;
 }
 
 .portfolio-card-positions {

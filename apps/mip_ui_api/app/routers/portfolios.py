@@ -620,19 +620,33 @@ def get_portfolio_snapshot(
             if r and r[0]:
                 effective_run_id = r[0]
 
-        # Open positions: only from canonical view (IS_OPEN = true by definition there).
-        # MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL is the single source of truth for which positions are open.
+        # Open positions: canonical view enriched with latest market price for P&L display.
+        # Joins V_BAR_INDEX to get the current CLOSE price per symbol, then computes
+        # MARKET_VALUE, UNREALIZED_PNL, and UNREALIZED_PNL_PCT for each position.
         positions = []
         snapshot_ts = None
         try:
             cur.execute(
                 """
-                select PORTFOLIO_ID, RUN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES,
-                       ENTRY_TS, ENTRY_PRICE, QUANTITY, COST_BASIS, ENTRY_SCORE,
-                       ENTRY_INDEX, HOLD_UNTIL_INDEX, AS_OF_TS, CURRENT_BAR_INDEX, IS_OPEN, OPEN_POSITIONS
-                from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
-                where PORTFOLIO_ID = %s
-                order by ENTRY_TS desc
+                select
+                    p.PORTFOLIO_ID, p.RUN_ID, p.SYMBOL, p.MARKET_TYPE, p.INTERVAL_MINUTES,
+                    p.ENTRY_TS, p.ENTRY_PRICE, p.QUANTITY, p.COST_BASIS, p.ENTRY_SCORE,
+                    p.ENTRY_INDEX, p.HOLD_UNTIL_INDEX, p.AS_OF_TS, p.CURRENT_BAR_INDEX,
+                    p.IS_OPEN, p.OPEN_POSITIONS,
+                    vb.CLOSE as CURRENT_PRICE,
+                    vb.CLOSE * p.QUANTITY as MARKET_VALUE,
+                    (vb.CLOSE * p.QUANTITY) - p.COST_BASIS as UNREALIZED_PNL,
+                    case when p.COST_BASIS > 0
+                         then ((vb.CLOSE * p.QUANTITY) - p.COST_BASIS) / p.COST_BASIS * 100
+                         else null end as UNREALIZED_PNL_PCT
+                from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+                left join MIP.MART.V_BAR_INDEX vb
+                  on vb.SYMBOL = p.SYMBOL
+                 and vb.MARKET_TYPE = p.MARKET_TYPE
+                 and vb.INTERVAL_MINUTES = 1440
+                 and vb.TS = p.AS_OF_TS
+                where p.PORTFOLIO_ID = %s
+                order by p.ENTRY_TS desc
                 """,
                 (portfolio_id,),
             )

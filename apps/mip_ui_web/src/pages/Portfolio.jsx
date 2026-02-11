@@ -326,25 +326,7 @@ export default function Portfolio() {
                 <InfoTooltip scope="trades" entryKey="event" variant="short" />
               </p>
 
-              <section className="portfolio-cards" aria-label="Portfolio snapshot cards">
-                {/* Cash & Exposure */}
-                <div className="portfolio-card portfolio-card-cash-exposure">
-                  <h3 className="portfolio-card-title">Cash & Exposure <InfoTooltip scope="portfolio" key="total_equity" variant="short" /></h3>
-                  {cashExposure ? (
-                    <dl className="portfolio-card-dl">
-                      <dt>Cash <InfoTooltip scope="portfolio" key="cash" variant="short" /></dt>
-                      <dd>{cashExposure.cash != null ? Number(cashExposure.cash).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
-                      <dt>Exposure <InfoTooltip scope="portfolio" key="exposure" variant="short" /></dt>
-                      <dd>{cashExposure.exposure != null ? Number(cashExposure.exposure).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
-                      <dt>Total equity <InfoTooltip scope="portfolio" key="total_equity" variant="short" /></dt>
-                      <dd>{cashExposure.total_equity != null ? Number(cashExposure.total_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
-                      {cashExposure.as_of_ts && <dd className="portfolio-card-meta">As of {String(cashExposure.as_of_ts).slice(0, 19)}</dd>}
-                    </dl>
-                  ) : (
-                    <p className="portfolio-card-empty">No daily data yet. Run pipeline to see cash and exposure.</p>
-                  )}
-                </div>
-
+              <section className="portfolio-cards portfolio-cards--two-col" aria-label="Portfolio snapshot cards">
                 {/* Open Positions — sorted by hold-until bar ascending (next to close first) */}
                 <div id="portfolio-positions" className="portfolio-card portfolio-card-positions">
                   <h3 className="portfolio-card-title">Open Positions <InfoTooltip scope="positions" entryKey="symbol" variant="short" /></h3>
@@ -359,12 +341,11 @@ export default function Portfolio() {
                       <table className="portfolio-card-table">
                         <thead>
                           <tr>
-                            <th>Symbol <InfoTooltip scope="positions" entryKey="symbol" variant="short" /></th>
-                            <th>Side <InfoTooltip scope="positions" entryKey="side" variant="short" /></th>
-                            <th>Quantity <InfoTooltip scope="positions" entryKey="quantity" variant="short" /></th>
-                            <th>Cost basis <InfoTooltip scope="positions" entryKey="cost_basis" variant="short" /></th>
-                            <th title="Bar index when this position is scheduled to close (next to close first)">Hold until (bar)</th>
-                            <th title="Calendar date when this position is scheduled to close">Hold until (date)</th>
+                            <th>Symbol</th>
+                            <th>Mkt Value</th>
+                            <th>Cost</th>
+                            <th>P&L</th>
+                            <th title="Calendar date when this position is scheduled to close">Closes</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -375,16 +356,33 @@ export default function Portfolio() {
                               return Number(ha) - Number(hb)
                             })
                             .slice(0, 20)
-                            .map((pos, i) => (
-                              <tr key={i}>
-                                <td>{pos.SYMBOL ?? pos.symbol}</td>
-                                <td>{pos.side_label ?? pos.side ?? '—'}</td>
-                                <td>{pos.QUANTITY ?? pos.quantity}</td>
-                                <td>{pos.COST_BASIS != null ? Number(pos.COST_BASIS ?? pos.cost_basis).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
-                                <td>{pos.HOLD_UNTIL_INDEX ?? pos.hold_until_index ?? '—'}</td>
-                                <td>{pos.hold_until_ts ? String(pos.hold_until_ts).slice(0, 10) : '—'}</td>
-                              </tr>
-                            ))}
+                            .map((pos, i) => {
+                              const pnl = pos.UNREALIZED_PNL ?? pos.unrealized_pnl
+                              const pnlPct = pos.UNREALIZED_PNL_PCT ?? pos.unrealized_pnl_pct
+                              const mktVal = pos.MARKET_VALUE ?? pos.market_value
+                              const cost = pos.COST_BASIS ?? pos.cost_basis
+                              const isUp = pnl != null && Number(pnl) >= 0
+                              return (
+                                <tr key={i}>
+                                  <td className="pos-symbol">
+                                    <span className="pos-symbol-name">{pos.SYMBOL ?? pos.symbol}</span>
+                                    <span className="pos-symbol-meta">{pos.MARKET_TYPE ?? pos.market_type}</span>
+                                  </td>
+                                  <td>{mktVal != null ? Number(mktVal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                                  <td>{cost != null ? Number(cost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                                  <td className={`pnl-cell ${pnl != null ? (isUp ? 'pnl-up' : 'pnl-down') : ''}`}>
+                                    {pnl != null ? (
+                                      <>
+                                        <span className="pnl-arrow">{isUp ? '\u25B2' : '\u25BC'}</span>
+                                        <span className="pnl-value">{(isUp ? '+' : '') + Number(pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        {pnlPct != null && <span className="pnl-pct">{(isUp ? '+' : '') + Number(pnlPct).toFixed(2)}%</span>}
+                                      </>
+                                    ) : '—'}
+                                  </td>
+                                  <td className="pos-closes">{pos.hold_until_ts ? String(pos.hold_until_ts).slice(0, 10) : (pos.HOLD_UNTIL_INDEX ?? pos.hold_until_index ?? '—')}</td>
+                                </tr>
+                              )
+                            })}
                         </tbody>
                       </table>
                     </div>
@@ -400,7 +398,7 @@ export default function Portfolio() {
 
                 {/* Recent Trades (events) */}
                 <div className="portfolio-card portfolio-card-trades">
-                  <h3 className="portfolio-card-title">Trades (events) <InfoTooltip scope="trades" entryKey="event" variant="short" /></h3>
+                  <h3 className="portfolio-card-title">Trades <InfoTooltip scope="trades" entryKey="event" variant="short" /></h3>
                   <div className="portfolio-trades-lookback">
                     <label>
                       Lookback
@@ -424,27 +422,46 @@ export default function Portfolio() {
                       <table className="portfolio-card-table">
                         <thead>
                           <tr>
-                            <th>Symbol <InfoTooltip scope="trades" entryKey="symbol" variant="short" /></th>
-                            <th>Side <InfoTooltip scope="trades" entryKey="side" variant="short" /></th>
-                            <th>Quantity <InfoTooltip scope="trades" entryKey="quantity" variant="short" /></th>
-                            <th>Price <InfoTooltip scope="trades" entryKey="price" variant="short" /></th>
-                            <th>Notional <InfoTooltip scope="trades" entryKey="notional" variant="short" /></th>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Notional</th>
+                            <th>P&L</th>
                           </tr>
                         </thead>
                         <tbody>
                           {tradesList.slice(0, 20).map((t, i) => {
+                              const side = (t.SIDE ?? t.side ?? '').toUpperCase()
                               const price = t.PRICE ?? t.price
                               const qty = t.QUANTITY ?? t.quantity
                               const notional = (price != null && qty != null)
                                 ? Number(price) * Number(qty)
                                 : (t.NOTIONAL ?? t.notional)
+                              const realizedPnl = t.REALIZED_PNL ?? t.realized_pnl
+                              const costBasis = notional != null && realizedPnl != null
+                                ? Number(notional) - Number(realizedPnl)
+                                : null
+                              const pnlPct = costBasis != null && costBasis > 0 && realizedPnl != null
+                                ? (Number(realizedPnl) / costBasis) * 100
+                                : null
+                              const isSell = side === 'SELL'
+                              const isUp = realizedPnl != null && Number(realizedPnl) >= 0
                               return (
-                                <tr key={i} className={t.from_last_run ? 'portfolio-trade-from-last-run' : undefined} title={t.from_last_run ? 'From latest run' : undefined}>
-                                  <td>{t.SYMBOL ?? t.symbol}</td>
-                                  <td>{t.SIDE ?? t.side}</td>
-                                  <td>{t.QUANTITY ?? t.quantity}</td>
-                                  <td>{price != null ? Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
-                                  <td>{notional != null ? Number(notional).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</td>
+                                <tr key={i} className={`trade-row trade-row--${side.toLowerCase()} ${t.from_last_run ? 'portfolio-trade-from-last-run' : ''}`} title={t.from_last_run ? 'From latest run' : undefined}>
+                                  <td className="trade-symbol">
+                                    <span className="trade-symbol-name">{t.SYMBOL ?? t.symbol}</span>
+                                    <span className="trade-symbol-date">{(t.TRADE_TS ?? t.trade_ts) ? String(t.TRADE_TS ?? t.trade_ts).slice(0, 10) : ''}</span>
+                                  </td>
+                                  <td><span className={`trade-side-badge trade-side-badge--${side.toLowerCase()}`}>{side}</span></td>
+                                  <td>{notional != null ? Number(notional).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                                  <td className={`pnl-cell ${isSell && realizedPnl != null ? (isUp ? 'pnl-up' : 'pnl-down') : ''}`}>
+                                    {isSell && realizedPnl != null ? (
+                                      <>
+                                        <span className="pnl-arrow">{isUp ? '\u25B2' : '\u25BC'}</span>
+                                        <span className="pnl-value">{(isUp ? '+' : '') + Number(realizedPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        {pnlPct != null && <span className="pnl-pct">{(Number(pnlPct) >= 0 ? '+' : '') + Number(pnlPct).toFixed(2)}%</span>}
+                                      </>
+                                    ) : isSell ? '—' : ''}
+                                  </td>
                                 </tr>
                               )
                             })}

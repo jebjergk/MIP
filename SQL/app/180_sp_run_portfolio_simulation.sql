@@ -783,6 +783,12 @@ begin
          and entry_vb.TS <= p.ENTRY_TS
         where p.PORTFOLIO_ID = :v_portfolio_id
           and p.INTERVAL_MINUTES = 1440
+          -- Episode filter: only include positions from the current episode.
+          -- Without this, sold positions from previous episodes inflate equity.
+          and (
+              (p.EPISODE_ID is not null and p.EPISODE_ID = :v_episode_id)
+              or (p.EPISODE_ID is null and :v_episode_id is null)
+          )
         qualify row_number() over (
             partition by p.PORTFOLIO_ID, p.SYMBOL, p.MARKET_TYPE, p.ENTRY_TS
             order by entry_vb.TS desc

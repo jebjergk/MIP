@@ -79,6 +79,8 @@ def list_portfolios():
     select
         p.PORTFOLIO_ID,
         p.NAME,
+        p.BASE_CURRENCY,
+        p.NOTES,
         p.STATUS,
         p.LAST_SIMULATED_AT,
         p.LAST_SIMULATION_RUN_ID,

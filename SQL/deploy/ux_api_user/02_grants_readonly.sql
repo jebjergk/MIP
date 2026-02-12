@@ -82,7 +82,7 @@ grant usage on procedure MIP.APP.SP_PORTFOLIO_CASH_EVENT(number, varchar, number
     to role MIP_UI_API_ROLE;
 grant usage on procedure MIP.APP.SP_ATTACH_PROFILE(number, number)
     to role MIP_UI_API_ROLE;
-grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO_PROFILE(number, varchar, number, number, number, varchar, number, boolean, number, varchar, number, number, varchar, varchar)
+grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO_PROFILE(number, varchar, number, number(18,6), number(18,6), varchar, number(18,6), boolean, number(18,6), varchar, number, number, varchar, varchar)
     to role MIP_UI_API_ROLE;
 grant usage on procedure MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(number, varchar, timestamp_ntz)
     to role MIP_UI_API_ROLE;

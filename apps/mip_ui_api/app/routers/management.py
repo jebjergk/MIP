@@ -316,7 +316,7 @@ def create_profile(body: ProfileUpsert):
 def update_profile(profile_id: int, body: ProfileUpsert):
     """Update an existing portfolio profile."""
     logger.info("[update_profile] profile_id=%s body=%s", profile_id, body.model_dump())
-    result = _call_sp(
+    return _call_sp(
         "CALL MIP.APP.SP_UPSERT_PORTFOLIO_PROFILE(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             profile_id, body.name, body.max_positions, body.max_position_pct,
@@ -326,14 +326,3 @@ def update_profile(profile_id: int, body: ProfileUpsert):
             body.description,
         ),
     )
-    # ── DEBUG: read back the row to confirm persistence ──
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM MIP.APP.PORTFOLIO_PROFILE WHERE PROFILE_ID = %s", (profile_id,))
-        readback = fetch_all(cur)
-        logger.info("[update_profile] READ-BACK after SP: %s", readback)
-        conn.close()
-    except Exception as e:
-        logger.warning("[update_profile] read-back failed: %s", e)
-    return result

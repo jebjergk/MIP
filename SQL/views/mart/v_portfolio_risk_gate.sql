@@ -11,33 +11,34 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace view MIP.MART.V_PORTFOLIO_RISK_GATE as
-with run_anchor as (
-    -- Robust run anchor: try multiple sources in priority order
+with latest_daily as (
+    -- Latest PORTFOLIO_DAILY row per portfolio (avoids correlated subquery)
+    select PORTFOLIO_ID, RUN_ID, TS
+    from MIP.APP.PORTFOLIO_DAILY
+    qualify row_number() over (partition by PORTFOLIO_ID order by TS desc) = 1
+),
+latest_trade as (
+    -- Latest PORTFOLIO_TRADES row per portfolio
+    select PORTFOLIO_ID, RUN_ID, TRADE_TS
+    from MIP.APP.PORTFOLIO_TRADES
+    qualify row_number() over (partition by PORTFOLIO_ID order by TRADE_TS desc) = 1
+),
+latest_position as (
+    -- Latest PORTFOLIO_POSITIONS row per portfolio
+    select PORTFOLIO_ID, RUN_ID, ENTRY_TS
+    from MIP.APP.PORTFOLIO_POSITIONS
+    qualify row_number() over (partition by PORTFOLIO_ID order by ENTRY_TS desc) = 1
+),
+run_anchor as (
+    -- Robust run anchor: try multiple sources in priority order via LEFT JOINs
     select
         p.PORTFOLIO_ID,
-        coalesce(
-            -- 1. Portfolio's last simulation run (most authoritative)
-            p.LAST_SIMULATION_RUN_ID,
-            -- 2. Latest from PORTFOLIO_DAILY
-            (select RUN_ID from MIP.APP.PORTFOLIO_DAILY d 
-             where d.PORTFOLIO_ID = p.PORTFOLIO_ID 
-             order by d.TS desc limit 1),
-            -- 3. Latest from PORTFOLIO_TRADES
-            (select RUN_ID from MIP.APP.PORTFOLIO_TRADES t 
-             where t.PORTFOLIO_ID = p.PORTFOLIO_ID 
-             order by t.TRADE_TS desc limit 1),
-            -- 4. Latest from PORTFOLIO_POSITIONS
-            (select RUN_ID from MIP.APP.PORTFOLIO_POSITIONS pos 
-             where pos.PORTFOLIO_ID = p.PORTFOLIO_ID 
-             order by pos.ENTRY_TS desc limit 1)
-        ) as LATEST_RUN_ID,
-        coalesce(
-            p.LAST_SIMULATED_AT,
-            (select max(TS) from MIP.APP.PORTFOLIO_DAILY d where d.PORTFOLIO_ID = p.PORTFOLIO_ID),
-            (select max(TRADE_TS) from MIP.APP.PORTFOLIO_TRADES t where t.PORTFOLIO_ID = p.PORTFOLIO_ID),
-            (select max(ENTRY_TS) from MIP.APP.PORTFOLIO_POSITIONS pos where pos.PORTFOLIO_ID = p.PORTFOLIO_ID)
-        ) as AS_OF_TS
+        coalesce(p.LAST_SIMULATION_RUN_ID, ld.RUN_ID, lt.RUN_ID, lp.RUN_ID) as LATEST_RUN_ID,
+        coalesce(p.LAST_SIMULATED_AT, ld.TS, lt.TRADE_TS, lp.ENTRY_TS) as AS_OF_TS
     from MIP.APP.PORTFOLIO p
+    left join latest_daily    ld on ld.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join latest_trade    lt on lt.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join latest_position lp on lp.PORTFOLIO_ID = p.PORTFOLIO_ID
 ),
 latest_kpis as (
     select

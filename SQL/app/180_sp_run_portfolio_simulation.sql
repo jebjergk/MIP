@@ -371,6 +371,19 @@ begin
           select 1 from TEMP_POSITIONS tp
           where tp.SYMBOL = s.SYMBOL
             and tp.MARKET_TYPE = s.MARKET_TYPE
+      )
+      -- ALSO exclude signals that already have a BUY trade in the current episode
+      -- on the same day. Without this, re-runs re-enter signals for positions that
+      -- were opened and then sold within the same episode, causing duplicate trades
+      -- (the sold position is no longer in TEMP_POSITIONS but the trade record exists).
+      and not exists (
+          select 1 from MIP.APP.PORTFOLIO_TRADES t
+          where t.PORTFOLIO_ID = :v_portfolio_id
+            and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+            and t.PROPOSAL_ID is null
+            and t.SYMBOL = s.SYMBOL
+            and t.SIDE = 'BUY'
+            and date_trunc('day', t.TRADE_TS) = s.TS
       );
 
     v_bar_sql := '
@@ -432,6 +445,12 @@ begin
                     v_trade_candidates := v_trade_candidates + 1;
                     v_trade_day := date_trunc('day', v_bar_ts);
 
+                    -- MERGE dedup key: stable columns only.
+                    -- NEVER use PRICE or QUANTITY in the match key — they are
+                    -- computed from v_cash which drifts between re-runs, causing
+                    -- the MERGE to miss existing rows and insert duplicates.
+                    -- Natural key: (PORTFOLIO_ID, EPISODE_ID, TRADE_DAY, SYMBOL, SIDE)
+                    -- is unique for simulation trades (one trade per symbol/side/day).
                     merge into MIP.APP.PORTFOLIO_TRADES as target
                     using (
                         select
@@ -453,11 +472,10 @@ begin
                     ) as source
                     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
                        and target.PROPOSAL_ID is null
+                       and (target.EPISODE_ID = source.EPISODE_ID or (target.EPISODE_ID is null and source.EPISODE_ID is null))
                        and date_trunc('day', target.TRADE_TS) = source.TRADE_DAY
                        and target.SYMBOL = source.SYMBOL
                        and target.SIDE = source.SIDE
-                       and target.PRICE = source.PRICE
-                       and target.QUANTITY = source.QUANTITY
                     when not matched then
                         insert (
                             PORTFOLIO_ID,
@@ -625,6 +643,7 @@ begin
                                 v_trade_candidates := v_trade_candidates + 1;
                                 v_trade_day := date_trunc('day', v_signal_entry_ts);
 
+                                -- MERGE dedup key: stable columns only (see SELL trade comment above).
                                 merge into MIP.APP.PORTFOLIO_TRADES as target
                                 using (
                                     select
@@ -646,11 +665,10 @@ begin
                                 ) as source
                                 on target.PORTFOLIO_ID = source.PORTFOLIO_ID
                                    and target.PROPOSAL_ID is null
+                                   and (target.EPISODE_ID = source.EPISODE_ID or (target.EPISODE_ID is null and source.EPISODE_ID is null))
                                    and date_trunc('day', target.TRADE_TS) = source.TRADE_DAY
                                    and target.SYMBOL = source.SYMBOL
                                    and target.SIDE = source.SIDE
-                                   and target.PRICE = source.PRICE
-                                   and target.QUANTITY = source.QUANTITY
                                 when not matched then
                                     insert (
                                         PORTFOLIO_ID,

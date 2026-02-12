@@ -30,11 +30,11 @@ def _compute_health_state(last_run_ts, outcomes_updated_ts, stale_hours: int = 2
         except ValueError:
             outcomes_updated_ts = None
     
-    # No run data at all
+    # No run data at all — new portfolio, not broken
     if last_run_ts is None:
         return {
-            "health_state": "BROKEN",
-            "health_reason": "No pipeline run recorded",
+            "health_state": "NEW",
+            "health_reason": "Awaiting first pipeline run",
         }
     
     run_age = now - last_run_ts

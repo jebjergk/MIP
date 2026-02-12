@@ -645,6 +645,11 @@
   box-shadow: 0 0 0 2px rgba(198, 40, 40, 0.2);
 }
 
+.traffic-light--new {
+  background: #78909c;
+  box-shadow: 0 0 0 2px rgba(120, 144, 156, 0.2);
+}
+
 .traffic-label {
   font-size: 0.8rem;
   font-weight: 500;

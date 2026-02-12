@@ -14,3 +14,17 @@ call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
 select * from mip.app.pattern_definition;
 
+UPDATE MIP.APP.PATTERN_DEFINITION
+SET 
+    PARAMS_JSON = '{
+      "fast_window": 5,
+      "interval_minutes": 1440,
+      "lookback_days": 90,
+      "market_type": "ETF",
+      "min_return": 0,
+      "min_zscore": 1,
+      "slow_window": 3
+    }',
+    UPDATED_AT = CURRENT_TIMESTAMP(),
+    UPDATED_BY = 'KJEBERG'
+WHERE PATTERN_ID = 201;

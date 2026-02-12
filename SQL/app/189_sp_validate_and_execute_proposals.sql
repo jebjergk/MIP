@@ -274,18 +274,30 @@ begin
     -- Use available CASH for position sizing, not total equity.
     -- Priority: latest trade's CASH_AFTER (actual money after last trade),
     -- then PORTFOLIO_DAILY cash, then starting cash as final fallback.
+    -- IMPORTANT: Scope to active episode so we don't pull cash from a prior episode.
+    let v_active_episode_id number := null;
+    begin
+        select EPISODE_ID into :v_active_episode_id
+          from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+    exception
+        when other then v_active_episode_id := null;
+    end;
+
     v_available_cash := coalesce(
         (
             select CASH_AFTER
               from MIP.APP.PORTFOLIO_TRADES
              where PORTFOLIO_ID = :P_PORTFOLIO_ID
-             order by TRADE_TS desc
+               and (EPISODE_ID = :v_active_episode_id or (:v_active_episode_id is null and EPISODE_ID is null))
+             order by TRADE_TS desc, TRADE_ID desc
              limit 1
         ),
         (
             select CASH
               from MIP.APP.PORTFOLIO_DAILY
              where PORTFOLIO_ID = :P_PORTFOLIO_ID
+               and (EPISODE_ID = :v_active_episode_id or (:v_active_episode_id is null and EPISODE_ID is null))
              order by TS desc
              limit 1
         ),
@@ -485,6 +497,7 @@ begin
                 p.PROPOSAL_ID,
                 :P_PORTFOLIO_ID as PORTFOLIO_ID,
                 to_varchar(:P_RUN_ID) as RUN_ID,
+                :v_active_episode_id as EPISODE_ID,
                 p.SYMBOL,
                 p.MARKET_TYPE,
                 1440 as INTERVAL_MINUTES,
@@ -521,6 +534,7 @@ begin
                 PROPOSAL_ID,
                 PORTFOLIO_ID,
                 RUN_ID,
+                EPISODE_ID,
                 SYMBOL,
                 MARKET_TYPE,
                 INTERVAL_MINUTES,
@@ -540,6 +554,7 @@ begin
                 PROPOSAL_ID,
                 PORTFOLIO_ID,
                 RUN_ID,
+                EPISODE_ID,
                 SYMBOL,
                 MARKET_TYPE,
                 INTERVAL_MINUTES,
@@ -564,6 +579,7 @@ begin
             PROPOSAL_ID,
             PORTFOLIO_ID,
             RUN_ID,
+            EPISODE_ID,
             SYMBOL,
             MARKET_TYPE,
             INTERVAL_MINUTES,
@@ -584,6 +600,7 @@ begin
             PROPOSAL_ID,
             PORTFOLIO_ID,
             RUN_ID,
+            EPISODE_ID,
             SYMBOL,
             MARKET_TYPE,
             INTERVAL_MINUTES,
@@ -600,6 +617,7 @@ begin
             source.PROPOSAL_ID,
             source.PORTFOLIO_ID,
             source.RUN_ID,
+            source.EPISODE_ID,
             source.SYMBOL,
             source.MARKET_TYPE,
             source.INTERVAL_MINUTES,

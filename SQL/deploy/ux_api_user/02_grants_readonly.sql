@@ -76,9 +76,9 @@ grant select on view  MIP.MART.V_PORTFOLIO_LIFECYCLE_TIMELINE    to role MIP_UI_
 grant select on view  MIP.MART.V_PORTFOLIO_LIFECYCLE_SNAPSHOT    to role MIP_UI_API_ROLE;
 
 -- Write stored procedures (EXECUTE AS OWNER — API role only needs USAGE, no direct table writes)
-grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO(number, varchar, varchar, number, number, varchar)
+grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO(number, varchar, varchar, number(18,2), number, varchar)
     to role MIP_UI_API_ROLE;
-grant usage on procedure MIP.APP.SP_PORTFOLIO_CASH_EVENT(number, varchar, number, varchar)
+grant usage on procedure MIP.APP.SP_PORTFOLIO_CASH_EVENT(number, varchar, number(18,2), varchar)
     to role MIP_UI_API_ROLE;
 grant usage on procedure MIP.APP.SP_ATTACH_PROFILE(number, number)
     to role MIP_UI_API_ROLE;

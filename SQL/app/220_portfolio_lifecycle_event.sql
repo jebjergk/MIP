@@ -123,7 +123,7 @@ create or replace procedure MIP.APP.SP_UPSERT_PORTFOLIO(
     P_PORTFOLIO_ID   number,
     P_NAME           varchar,
     P_BASE_CURRENCY  varchar,
-    P_STARTING_CASH  number,
+    P_STARTING_CASH  number(18,2),
     P_PROFILE_ID     number,
     P_NOTES          varchar
 )
@@ -256,7 +256,7 @@ $$;
 create or replace procedure MIP.APP.SP_PORTFOLIO_CASH_EVENT(
     P_PORTFOLIO_ID   number,
     P_EVENT_TYPE     varchar,
-    P_AMOUNT         number,
+    P_AMOUNT         number(18,2),
     P_NOTES          varchar
 )
 returns variant

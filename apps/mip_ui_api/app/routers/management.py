@@ -97,6 +97,13 @@ def _call_sp(sql: str, params: tuple) -> dict:
                 raise HTTPException(status_code=404, detail=error_msg)
             else:
                 raise HTTPException(status_code=422, detail=error_msg)
+        # Explicit commit: although Snowflake defaults to AUTOCOMMIT=TRUE,
+        # pooled connections may carry stale transaction state.  This ensures
+        # DML executed inside the stored procedure is persisted.
+        try:
+            cur.execute("COMMIT")
+        except Exception:
+            pass  # harmless if no active transaction
         return result
     finally:
         conn.close()

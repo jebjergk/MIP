@@ -148,7 +148,7 @@ export default function PortfolioManagement() {
         return null
       }
       setFeedback({ type: 'success', message: data.action ? `${data.action} successfully` : 'Success' })
-      loadData()
+      await loadData()
       return data
     } catch (e) {
       setFeedback({ type: 'error', message: e.message })

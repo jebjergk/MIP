@@ -20,6 +20,7 @@ Endpoints:
 """
 
 import json
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -27,6 +28,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.db import get_connection, fetch_all, serialize_rows, serialize_row
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/manage", tags=["management"])
 
@@ -77,6 +80,8 @@ class ProfileUpsert(BaseModel):
 
 def _call_sp(sql: str, params: tuple) -> dict:
     """Call a Snowflake stored procedure and return its VARIANT result as a dict."""
+    logger.info("[_call_sp] SQL: %s", sql)
+    logger.info("[_call_sp] Params (%d): %s", len(params), params)
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -310,7 +315,8 @@ def create_profile(body: ProfileUpsert):
 @router.put("/profiles/{profile_id}")
 def update_profile(profile_id: int, body: ProfileUpsert):
     """Update an existing portfolio profile."""
-    return _call_sp(
+    logger.info("[update_profile] profile_id=%s body=%s", profile_id, body.model_dump())
+    result = _call_sp(
         "CALL MIP.APP.SP_UPSERT_PORTFOLIO_PROFILE(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             profile_id, body.name, body.max_positions, body.max_position_pct,
@@ -320,3 +326,14 @@ def update_profile(profile_id: int, body: ProfileUpsert):
             body.description,
         ),
     )
+    # ── DEBUG: read back the row to confirm persistence ──
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM MIP.APP.PORTFOLIO_PROFILE WHERE PROFILE_ID = %s", (profile_id,))
+        readback = fetch_all(cur)
+        logger.info("[update_profile] READ-BACK after SP: %s", readback)
+        conn.close()
+    except Exception as e:
+        logger.warning("[update_profile] read-back failed: %s", e)
+    return result

@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest, management
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
     title="MIP UI API",

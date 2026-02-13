@@ -129,19 +129,24 @@ begin
     end;
 
     -- Determine effective_from_ts with episode boundary awareness:
-    -- 1. If no last simulation run (fresh reset), use today only
-    -- 2. Otherwise, use the LATER of (episode start, requested from_ts)
-    -- This prevents re-processing historical data from before a reset
     --
     -- CRITICAL: episode_start_ts includes the time of day (e.g. 07:30 AM),
     -- but bar timestamps are midnight (00:00:00). We must truncate to day,
     -- otherwise effective_from > to_ts and the bar loop processes zero rows.
-    if (v_last_sim_run_id is null) then
-        -- Fresh reset: only simulate today
-        v_effective_from_ts := date_trunc('day', v_to_ts);
-    elseif (v_episode_start_ts is not null) then
-        -- Has active episode: use the later of episode start (day) or requested from
+    --
+    -- Priority:
+    -- 1. If an active episode exists, ALWAYS process from episode start day.
+    --    This ensures sells, daily snapshots, and PNL are computed correctly
+    --    even after a fresh reset (LAST_SIMULATION_RUN_ID = null).
+    --    The MERGE dedup keys prevent duplicate trades on re-processed bars.
+    -- 2. If no episode but have last run, use requested from_ts.
+    -- 3. If no episode and no last run, use today only.
+    if (v_episode_start_ts is not null) then
+        -- Has active episode: process from episode start (or requested from, whichever is later)
         v_effective_from_ts := greatest(date_trunc('day', :v_episode_start_ts), :v_from_ts);
+    elseif (v_last_sim_run_id is null) then
+        -- Fresh reset without episode: only simulate today
+        v_effective_from_ts := date_trunc('day', v_to_ts);
     else
         -- No episode tracking: use requested from
         v_effective_from_ts := v_from_ts;

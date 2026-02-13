@@ -14,30 +14,3 @@ call MIP.APP.SP_RUN_DAILY_PIPELINE();
 
 select * from mip.app.pattern_definition;
 
-select
-    PORTFOLIO_ID,
-    EPISODE_ID,
-    START_TS,
-    END_TS,
-    STATUS,
-    END_REASON,
-    START_EQUITY
-from MIP.APP.PORTFOLIO_EPISODE
-where PORTFOLIO_ID in (1, 2)
-order by PORTFOLIO_ID, START_TS;
-
-select
-    TRADE_ID,
-    PORTFOLIO_ID,
-    EPISODE_ID,
-    SYMBOL,
-    SIDE,
-    TRADE_TS,
-    PRICE,
-    QUANTITY,
-    CASH_AFTER,
-    PROPOSAL_ID
-from MIP.APP.PORTFOLIO_TRADES
-where EPISODE_ID is null
-  and PORTFOLIO_ID in (1, 2)
-order by PORTFOLIO_ID, TRADE_TS;

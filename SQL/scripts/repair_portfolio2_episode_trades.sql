@@ -126,25 +126,162 @@ group by t.PORTFOLIO_ID, t.EPISODE_ID, e.START_TS, e.END_TS, e.STATUS
 order by t.PORTFOLIO_ID, e.START_TS;
 
 -- =============================================================================
--- STEP 6: Reset LAST_SIMULATION_RUN_ID on affected portfolios so the next
--- simulation run starts fresh with correct cash from the repaired trades.
---
--- We identify affected portfolios as those that have trades whose TRADE_TS
--- falls outside their assigned episode window — i.e. the same predicate used
--- in Step 2 above. On a second run (after repair) this returns 0 rows, making
--- the UPDATE a no-op (idempotent).
+-- STEP 6: Portfolio 1 — assign same-day orphans to episode 1
+-- The simulation stamps TRADE_TS at midnight (bar date) but the episode was
+-- created later that same day (08:52). Match on DATE instead of exact TS.
+-- =============================================================================
+-- Preview:
+select 'Portfolio 1 same-day orphans to assign' as action,
+       count(*) as trade_count
+from MIP.APP.PORTFOLIO_TRADES
+where PORTFOLIO_ID = 1
+  and EPISODE_ID is null
+  and date_trunc('day', TRADE_TS) = (
+      select date_trunc('day', START_TS)
+      from MIP.APP.PORTFOLIO_EPISODE
+      where PORTFOLIO_ID = 1 and STATUS = 'ACTIVE'
+  );
+
+update MIP.APP.PORTFOLIO_TRADES
+   set EPISODE_ID = (
+       select EPISODE_ID
+       from MIP.APP.PORTFOLIO_EPISODE
+       where PORTFOLIO_ID = 1 and STATUS = 'ACTIVE'
+   )
+ where PORTFOLIO_ID = 1
+   and EPISODE_ID is null
+   and date_trunc('day', TRADE_TS) = (
+       select date_trunc('day', START_TS)
+       from MIP.APP.PORTFOLIO_EPISODE
+       where PORTFOLIO_ID = 1 and STATUS = 'ACTIVE'
+   );
+
+select 'Portfolio 1 same-day orphans assigned to episode 1' as action, $1 as rows_affected;
+
+-- =============================================================================
+-- STEP 7: Portfolio 2 — delete old orphan trades (Nov-Dec 2025)
+-- These belonged to phantom episodes that were already deleted. Their episodes
+-- are gone, so these trades have no valid home and will never be needed.
+-- Only deletes trades BEFORE the earliest surviving episode for portfolio 2.
+-- =============================================================================
+-- Preview:
+select 'Portfolio 2 old orphan trades to delete' as action,
+       count(*) as trade_count,
+       min(TRADE_TS) as earliest,
+       max(TRADE_TS) as latest
+from MIP.APP.PORTFOLIO_TRADES
+where PORTFOLIO_ID = 2
+  and EPISODE_ID is null
+  and TRADE_TS < (
+      select min(START_TS)
+      from MIP.APP.PORTFOLIO_EPISODE
+      where PORTFOLIO_ID = 2
+  );
+
+delete from MIP.APP.PORTFOLIO_TRADES
+where PORTFOLIO_ID = 2
+  and EPISODE_ID is null
+  and TRADE_TS < (
+      select min(START_TS)
+      from MIP.APP.PORTFOLIO_EPISODE
+      where PORTFOLIO_ID = 2
+  );
+
+select 'Portfolio 2 old orphan trades deleted' as action, $1 as rows_affected;
+
+-- =============================================================================
+-- STEP 8: Portfolio 2 — assign agent trades (Feb 10) to episode 402
+-- These were placed during the cooldown gap (before cooldown enforcement was
+-- deployed). Episode 402 starts Feb 11 but these Feb 10 trades are the real
+-- opening trades for this period. Nudge episode 402's START_TS back to cover
+-- them, then assign.
+-- =============================================================================
+-- Preview:
+select 'Portfolio 2 gap orphan trades to assign' as action,
+       count(*) as trade_count,
+       min(TRADE_TS) as earliest,
+       max(TRADE_TS) as latest
+from MIP.APP.PORTFOLIO_TRADES
+where PORTFOLIO_ID = 2
+  and EPISODE_ID is null
+  and TRADE_TS >= '2026-02-01';  -- recent orphans only
+
+-- 8a: Move episode 402 START_TS back to the earliest orphan trade TS
+-- so the episode window covers these trades.
+update MIP.APP.PORTFOLIO_EPISODE
+   set START_TS = (
+       select min(TRADE_TS)
+       from MIP.APP.PORTFOLIO_TRADES
+       where PORTFOLIO_ID = 2
+         and EPISODE_ID is null
+         and TRADE_TS >= '2026-02-01'
+   )
+ where PORTFOLIO_ID = 2
+   and EPISODE_ID = 402
+   and START_TS > (
+       select min(TRADE_TS)
+       from MIP.APP.PORTFOLIO_TRADES
+       where PORTFOLIO_ID = 2
+         and EPISODE_ID is null
+         and TRADE_TS >= '2026-02-01'
+   );
+
+select 'Episode 402 START_TS moved back' as action, $1 as rows_affected;
+
+-- 8b: Assign the orphan trades to episode 402
+update MIP.APP.PORTFOLIO_TRADES
+   set EPISODE_ID = 402
+ where PORTFOLIO_ID = 2
+   and EPISODE_ID is null
+   and TRADE_TS >= (
+       select START_TS
+       from MIP.APP.PORTFOLIO_EPISODE
+       where PORTFOLIO_ID = 2 and EPISODE_ID = 402
+   );
+
+select 'Portfolio 2 gap orphans assigned to episode 402' as action, $1 as rows_affected;
+
+-- =============================================================================
+-- STEP 9: Also delete orphan PORTFOLIO_POSITIONS for portfolio 2 that reference
+-- trades from deleted episodes (positions without matching trades are stale).
+-- Only deletes positions whose ENTRY_TS is before all surviving episodes.
+-- =============================================================================
+delete from MIP.APP.PORTFOLIO_POSITIONS
+where PORTFOLIO_ID = 2
+  and ENTRY_TS < (
+      select min(START_TS)
+      from MIP.APP.PORTFOLIO_EPISODE
+      where PORTFOLIO_ID = 2
+  )
+  and not exists (
+      select 1 from MIP.APP.PORTFOLIO_TRADES t
+      where t.PORTFOLIO_ID = 2
+        and t.SYMBOL = PORTFOLIO_POSITIONS.SYMBOL
+        and t.SIDE = 'BUY'
+        and t.TRADE_TS = PORTFOLIO_POSITIONS.ENTRY_TS
+  );
+
+select 'Portfolio 2 stale positions deleted' as action, $1 as rows_affected;
+
+-- =============================================================================
+-- STEP 10: Final verification — no more orphans
+-- =============================================================================
+select
+    PORTFOLIO_ID,
+    count(*) as orphan_count,
+    min(TRADE_TS) as earliest_trade,
+    max(TRADE_TS) as latest_trade
+from MIP.APP.PORTFOLIO_TRADES
+where EPISODE_ID is null
+group by PORTFOLIO_ID;
+
+-- =============================================================================
+-- STEP 11: Reset LAST_SIMULATION_RUN_ID on both portfolios so the next
+-- simulation starts fresh with correct cash.
 -- =============================================================================
 update MIP.APP.PORTFOLIO
    set LAST_SIMULATION_RUN_ID = null,
        UPDATED_AT = current_timestamp()
- where PORTFOLIO_ID in (
-     select distinct t.PORTFOLIO_ID
-     from MIP.APP.PORTFOLIO_TRADES t
-     join MIP.APP.PORTFOLIO_EPISODE e
-       on e.PORTFOLIO_ID = t.PORTFOLIO_ID
-      and e.EPISODE_ID = t.EPISODE_ID
-     where t.TRADE_TS < e.START_TS
-        or (e.END_TS is not null and t.TRADE_TS > e.END_TS)
- );
+ where PORTFOLIO_ID in (1, 2);
 
-select 'LAST_SIMULATION_RUN_ID reset on repaired portfolios' as action, $1 as rows_affected;
+select 'LAST_SIMULATION_RUN_ID reset on portfolios 1 and 2' as action, $1 as rows_affected;

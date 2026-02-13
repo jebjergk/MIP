@@ -200,6 +200,11 @@ begin
     -- Reset PORTFOLIO header stats for the new episode.
     -- Without this, the old episode's win/loss days, max drawdown, total return
     -- persist until the next full simulation run, causing confusing UI display.
+    --
+    -- CRITICAL: Also reset LAST_SIMULATION_RUN_ID to NULL. This forces the
+    -- next simulation to take the "fresh reset" path (effective_from_ts = today only),
+    -- preventing it from re-processing historical bars with known-profitable signals
+    -- and triggering an infinite crystallization loop.
     update MIP.APP.PORTFOLIO
        set FINAL_EQUITY = :v_next_start_equity,
            TOTAL_RETURN = 0,
@@ -207,6 +212,7 @@ begin
            WIN_DAYS = 0,
            LOSS_DAYS = 0,
            BUST_AT = null,
+           LAST_SIMULATION_RUN_ID = null,
            UPDATED_AT = current_timestamp()
      where PORTFOLIO_ID = :v_portfolio_id;
 

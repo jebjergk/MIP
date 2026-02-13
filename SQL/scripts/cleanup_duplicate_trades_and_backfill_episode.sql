@@ -77,29 +77,13 @@ where t.TRADE_ID = e.TRADE_ID
 select 'Trades backfilled with EPISODE_ID (by timestamp window)' as action, $1 as rows_affected;
 
 -- =============================================================================
--- STEP 3b: Fallback — if trades still have NULL EPISODE_ID (e.g. TRADE_TS is
--- before the earliest episode START_TS), assign them to the EARLIEST episode
--- for that portfolio. These are legacy trades from before episodes existed.
+-- STEP 3b: REMOVED — Previously assigned all remaining orphan trades to the
+-- earliest episode per portfolio. This is dangerous: trades outside any episode
+-- window should remain orphaned (EPISODE_ID = NULL) rather than be forced into
+-- a wrong episode, which corrupts cash recovery and equity calculations.
+-- Any remaining orphans after Step 3a need manual inspection.
 -- =============================================================================
-update MIP.APP.PORTFOLIO_TRADES t
-   set EPISODE_ID = e.EPISODE_ID
-  from (
-      select
-          t2.TRADE_ID,
-          first_ep.EPISODE_ID
-      from MIP.APP.PORTFOLIO_TRADES t2
-      join (
-          select PORTFOLIO_ID, EPISODE_ID
-          from MIP.APP.PORTFOLIO_EPISODE
-          qualify row_number() over (partition by PORTFOLIO_ID order by START_TS asc) = 1
-      ) first_ep
-        on first_ep.PORTFOLIO_ID = t2.PORTFOLIO_ID
-      where t2.EPISODE_ID is null
-  ) e
-where t.TRADE_ID = e.TRADE_ID
-  and t.EPISODE_ID is null;
-
-select 'Remaining orphan trades assigned to earliest episode (fallback)' as action, $1 as rows_affected;
+-- (no-op)
 
 -- =============================================================================
 -- STEP 4: Verify — no more orphaned trades without EPISODE_ID
@@ -127,3 +111,145 @@ from MIP.APP.PORTFOLIO_TRADES
 where PROPOSAL_ID is null
 group by PORTFOLIO_ID, EPISODE_ID, SYMBOL, SIDE, date_trunc('day', TRADE_TS)
 having count(*) > 1;
+
+-- =============================================================================
+-- STEP 6: Diagnose bogus crystallization episodes
+-- Episodes that ran for < 1 day with 0 trades and high returns are phantom
+-- crystallizations caused by the simulation re-trading historical signals.
+-- Preview them before deleting.
+-- =============================================================================
+select
+    e.PORTFOLIO_ID,
+    e.EPISODE_ID,
+    e.START_TS,
+    e.END_TS,
+    e.STATUS,
+    e.END_REASON,
+    r.RETURN_PCT,
+    r.TRADES_COUNT,
+    r.DISTRIBUTION_AMOUNT,
+    timestampdiff(hour, e.START_TS, e.END_TS) as duration_hours
+from MIP.APP.PORTFOLIO_EPISODE e
+left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+  on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+where e.STATUS = 'ENDED'
+  and e.END_REASON = 'PROFIT_TARGET_HIT'
+  and timestampdiff(hour, e.START_TS, coalesce(e.END_TS, current_timestamp())) < 24
+  and coalesce(r.TRADES_COUNT, 0) = 0
+order by e.PORTFOLIO_ID, e.START_TS;
+
+-- =============================================================================
+-- STEP 7: Delete bogus crystallization episodes and their results
+-- These are phantom episodes: ran < 1 day, 0 trades, triggered by re-trading
+-- historical signals. Safe to delete because they have no real data.
+--
+-- NOTE: This also deletes PORTFOLIO_LIFECYCLE_EVENT rows for these episodes
+-- and resets COOLDOWN_UNTIL_TS on affected portfolios.
+-- =============================================================================
+
+-- 7a: Delete results for phantom episodes
+delete from MIP.APP.PORTFOLIO_EPISODE_RESULTS
+where (PORTFOLIO_ID, EPISODE_ID) in (
+    select e.PORTFOLIO_ID, e.EPISODE_ID
+    from MIP.APP.PORTFOLIO_EPISODE e
+    left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+      on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+    where e.STATUS = 'ENDED'
+      and e.END_REASON = 'PROFIT_TARGET_HIT'
+      and timestampdiff(hour, e.START_TS, coalesce(e.END_TS, current_timestamp())) < 24
+      and coalesce(r.TRADES_COUNT, 0) = 0
+);
+select 'Phantom episode results deleted' as action, $1 as rows_affected;
+
+-- 7b: Delete PORTFOLIO_DAILY rows for phantom episodes
+delete from MIP.APP.PORTFOLIO_DAILY
+where (PORTFOLIO_ID, EPISODE_ID) in (
+    select e.PORTFOLIO_ID, e.EPISODE_ID
+    from MIP.APP.PORTFOLIO_EPISODE e
+    left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+      on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+    where e.STATUS = 'ENDED'
+      and e.END_REASON = 'PROFIT_TARGET_HIT'
+      and timestampdiff(hour, e.START_TS, coalesce(e.END_TS, current_timestamp())) < 24
+      and coalesce(r.TRADES_COUNT, 0) = 0
+);
+select 'Phantom episode daily rows deleted' as action, $1 as rows_affected;
+
+-- 7c: Delete lifecycle events for phantom episodes
+delete from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+where EVENT_TYPE = 'CRYSTALLIZE'
+  and (PORTFOLIO_ID, EPISODE_ID) in (
+    select e.PORTFOLIO_ID, e.EPISODE_ID
+    from MIP.APP.PORTFOLIO_EPISODE e
+    left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+      on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+    where e.STATUS = 'ENDED'
+      and e.END_REASON = 'PROFIT_TARGET_HIT'
+      and timestampdiff(hour, e.START_TS, coalesce(e.END_TS, current_timestamp())) < 24
+      and coalesce(r.TRADES_COUNT, 0) = 0
+);
+select 'Phantom crystallize lifecycle events deleted' as action, $1 as rows_affected;
+
+-- 7d: Reset LAST_SIMULATION_RUN_ID on portfolios that had phantom episodes.
+-- MUST run BEFORE 7e (episode deletion) because the subquery needs the
+-- phantom episodes to still exist in the table.
+-- DO NOT use COOLDOWN_UNTIL_TS IS NULL — that matches nearly ALL portfolios
+-- and would clobber legitimate run IDs, causing simulations to miss bars.
+update MIP.APP.PORTFOLIO
+   set LAST_SIMULATION_RUN_ID = null,
+       UPDATED_AT = current_timestamp()
+ where PORTFOLIO_ID in (
+     select distinct e.PORTFOLIO_ID
+     from MIP.APP.PORTFOLIO_EPISODE e
+     left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+       on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+     where e.STATUS = 'ENDED'
+       and e.END_REASON = 'PROFIT_TARGET_HIT'
+       and timestampdiff(hour, e.START_TS, coalesce(e.END_TS, current_timestamp())) < 24
+       and coalesce(r.TRADES_COUNT, 0) = 0
+ );
+select 'LAST_SIMULATION_RUN_ID reset on phantom-affected portfolios' as action, $1 as rows_affected;
+
+-- 7e: Clear stale COOLDOWN_UNTIL_TS on affected portfolios
+-- (may have been set by a phantom crystallization)
+update MIP.APP.PORTFOLIO
+   set COOLDOWN_UNTIL_TS = null,
+       UPDATED_AT = current_timestamp()
+ where COOLDOWN_UNTIL_TS is not null
+   and COOLDOWN_UNTIL_TS > current_timestamp();
+select 'Stale cooldowns cleared' as action, $1 as rows_affected;
+
+-- 7f: Delete the phantom episodes themselves
+-- MUST run AFTER 7d (run-ID reset) since 7d needs the episodes to exist.
+delete from MIP.APP.PORTFOLIO_EPISODE
+where STATUS = 'ENDED'
+  and END_REASON = 'PROFIT_TARGET_HIT'
+  and EPISODE_ID in (
+    select e.EPISODE_ID
+    from MIP.APP.PORTFOLIO_EPISODE e
+    left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+      on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+    where e.STATUS = 'ENDED'
+      and e.END_REASON = 'PROFIT_TARGET_HIT'
+      and timestampdiff(hour, e.START_TS, coalesce(e.END_TS, current_timestamp())) < 24
+      and coalesce(r.TRADES_COUNT, 0) = 0
+  );
+select 'Phantom episodes deleted' as action, $1 as rows_affected;
+
+-- =============================================================================
+-- STEP 8: Verify — remaining episodes should look legitimate
+-- =============================================================================
+select
+    e.PORTFOLIO_ID,
+    e.EPISODE_ID,
+    e.START_TS,
+    e.END_TS,
+    e.STATUS,
+    e.END_REASON,
+    r.RETURN_PCT,
+    r.TRADES_COUNT,
+    r.DISTRIBUTION_AMOUNT
+from MIP.APP.PORTFOLIO_EPISODE e
+left join MIP.APP.PORTFOLIO_EPISODE_RESULTS r
+  on r.PORTFOLIO_ID = e.PORTFOLIO_ID and r.EPISODE_ID = e.EPISODE_ID
+order by e.PORTFOLIO_ID, e.START_TS;

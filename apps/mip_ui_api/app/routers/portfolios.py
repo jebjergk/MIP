@@ -294,9 +294,28 @@ def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
 
 def _position_still_open_by_date(position: dict) -> bool:
     """
-    True if position should be shown as open: no hold_until_ts (unresolved) or hold_until date is today or in the future.
-    Filters out positions whose hold-until bar date is in the past (canonical view can be stale).
+    True if position should be shown as open.
+
+    Two checks (either failing -> not open):
+    1. Bar-index check: HOLD_UNTIL_INDEX > CURRENT_BAR_INDEX.
+       The simulation sells when HOLD_UNTIL_INDEX <= bar_index, so positions
+       at or past their hold bar have already been sold but the canonical view
+       still reports IS_OPEN = true (it uses >=).  We use strict > here so
+       the UI immediately hides them.
+    2. Date fallback: if bar indices are unavailable, use the resolved
+       hold_until_ts vs today's date (original logic).
     """
+    # --- Bar-index check (most accurate) ---
+    hold_idx = _get(position, "HOLD_UNTIL_INDEX", "hold_until_index")
+    cur_idx = _get(position, "CURRENT_BAR_INDEX", "current_bar_index")
+    if hold_idx is not None and cur_idx is not None:
+        try:
+            if int(float(hold_idx)) <= int(float(cur_idx)):
+                return False  # Simulation has already sold this position
+        except (ValueError, TypeError):
+            pass
+
+    # --- Date fallback ---
     ts = position.get("hold_until_ts")
     if ts is None:
         return True
@@ -664,11 +683,12 @@ def get_portfolio_snapshot(
         # Trades: scoped to active episode (total + last_ts, then filtered list)
         # Get active episode for trade scoping
         cur.execute(
-            "select EPISODE_ID from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE where PORTFOLIO_ID = %s",
+            "select EPISODE_ID, START_TS from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE where PORTFOLIO_ID = %s",
             (portfolio_id,),
         )
         _ep_row = cur.fetchone()
         _active_ep_id = int(_ep_row[0]) if _ep_row and _ep_row[0] is not None else None
+        _active_ep_start_ts = _ep_row[1] if _ep_row and len(_ep_row) > 1 else None
         
         # Episode-scoped trade aggregate
         if _active_ep_id is not None:
@@ -842,18 +862,25 @@ def get_portfolio_snapshot(
             total_equity = latest_daily.get("TOTAL_EQUITY") or latest_daily.get("total_equity")
 
             # Override cash with latest CASH_AFTER from trades in current episode (most accurate source)
+            # CRITICAL: Also filter TRADE_TS >= episode START_TS to avoid pulling stale
+            # CASH_AFTER from trades that were mis-assigned to the current episode.
             _cash_ep_filter = "and EPISODE_ID = %s" if _active_ep_id is not None else ""
-            _cash_ep_params = (portfolio_id, _active_ep_id) if _active_ep_id is not None else (portfolio_id,)
+            _cash_ep_ts_filter = "and TRADE_TS >= %s" if _active_ep_start_ts is not None else ""
+            _cash_ep_params = [portfolio_id]
+            if _active_ep_id is not None:
+                _cash_ep_params.append(_active_ep_id)
+            if _active_ep_start_ts is not None:
+                _cash_ep_params.append(_active_ep_start_ts)
             try:
                 cur.execute(
                     f"""
                     select CASH_AFTER
                       from MIP.APP.PORTFOLIO_TRADES
-                     where PORTFOLIO_ID = %s {_cash_ep_filter}
+                     where PORTFOLIO_ID = %s {_cash_ep_filter} {_cash_ep_ts_filter}
                      order by TRADE_TS desc, TRADE_ID desc
                      limit 1
                     """,
-                    _cash_ep_params,
+                    tuple(_cash_ep_params),
                 )
                 trade_row = cur.fetchone()
                 if trade_row and trade_row[0] is not None:

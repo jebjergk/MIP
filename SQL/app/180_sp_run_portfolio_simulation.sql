@@ -86,6 +86,8 @@ begin
     let v_episode_id number;
     let v_episode_start_ts timestamp_ntz;
     
+    let v_cooldown_until_ts timestamp_ntz;
+
     select
         p.STARTING_CASH,
         p.PROFILE_ID,
@@ -94,7 +96,8 @@ begin
         prof.MAX_POSITION_PCT,
         prof.BUST_EQUITY_PCT,
         prof.BUST_ACTION,
-        prof.DRAWDOWN_STOP_PCT
+        prof.DRAWDOWN_STOP_PCT,
+        p.COOLDOWN_UNTIL_TS
       into v_starting_cash,
            v_profile_id,
            v_last_sim_run_id,
@@ -102,7 +105,8 @@ begin
            v_max_position_pct,
            v_bust_equity_pct,
            v_bust_action,
-           v_drawdown_stop_pct
+           v_drawdown_stop_pct,
+           v_cooldown_until_ts
       from MIP.APP.PORTFOLIO p
       left join MIP.APP.PORTFOLIO_PROFILE prof
         on prof.PROFILE_ID = p.PROFILE_ID
@@ -198,6 +202,15 @@ begin
     v_cash := v_starting_cash;
     v_total_equity := v_starting_cash;
     v_peak_equity := v_starting_cash;
+
+    -- COOLDOWN enforcement: block new entries if still within cooldown window.
+    -- COOLDOWN_UNTIL_TS is set by SP_CHECK_CRYSTALLIZE after profit target hit.
+    -- During cooldown the portfolio should hold (exits via bar expiry still allowed)
+    -- but NOT open any new positions.
+    if (v_cooldown_until_ts is not null and v_to_ts < v_cooldown_until_ts) then
+        v_entries_blocked := true;
+        v_block_reason := 'COOLDOWN';
+    end if;
 
     select
         coalesce(try_to_number(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE end)), 2),
@@ -301,10 +314,15 @@ begin
         let v_last_trade_ts timestamp_ntz := null;
         let v_cash_event_delta number(18,2) := 0;
         begin
+            -- CRITICAL: Also filter TRADE_TS >= episode_start_ts.
+            -- Without this, trades from prior episodes that were mis-assigned
+            -- (e.g. via backfill) to the current EPISODE_ID can corrupt v_cash
+            -- with a stale CASH_AFTER from a completely different cash state.
             select CASH_AFTER, TRADE_TS into :v_trade_cash, :v_last_trade_ts
               from MIP.APP.PORTFOLIO_TRADES
              where PORTFOLIO_ID = :v_portfolio_id
                and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
+               and (:v_episode_start_ts is null or TRADE_TS >= :v_episode_start_ts)
              order by TRADE_TS desc, TRADE_ID desc
              limit 1;
             if (v_trade_cash is not null) then

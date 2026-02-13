@@ -117,6 +117,23 @@ begin
       from MIP.MART.V_PORTFOLIO_RISK_STATE
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
+    -- COOLDOWN enforcement: block entries if still within cooldown window.
+    -- COOLDOWN_UNTIL_TS is set by SP_CHECK_CRYSTALLIZE after profit target hit.
+    if (not v_entries_blocked) then
+        let v_cooldown_until timestamp_ntz := null;
+        begin
+            select COOLDOWN_UNTIL_TS into :v_cooldown_until
+              from MIP.APP.PORTFOLIO
+             where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+        exception when other then v_cooldown_until := null;
+        end;
+        if (v_cooldown_until is not null and current_timestamp() < v_cooldown_until) then
+            v_entries_blocked := true;
+            v_stop_reason := 'COOLDOWN';
+            v_allowed_actions := 'ALLOW_EXITS_ONLY';
+        end if;
+    end if;
+
     -- Get diagnostic timestamps for logging
     v_latest_bar_ts := (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440);
     v_latest_rec_ts := (select max(TS) from MIP.APP.RECOMMENDATION_LOG where INTERVAL_MINUTES = 1440);

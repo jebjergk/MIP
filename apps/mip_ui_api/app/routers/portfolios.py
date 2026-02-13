@@ -294,28 +294,16 @@ def _enrich_positions_hold_until_ts(positions: list[dict], cur) -> list[dict]:
 
 def _position_still_open_by_date(position: dict) -> bool:
     """
-    True if position should be shown as open.
+    True if position should be shown as open: no hold_until_ts (unresolved)
+    or hold_until date is today or in the future.
 
-    Two checks (either failing -> not open):
-    1. Bar-index check: HOLD_UNTIL_INDEX > CURRENT_BAR_INDEX.
-       The simulation sells when HOLD_UNTIL_INDEX <= bar_index, so positions
-       at or past their hold bar have already been sold but the canonical view
-       still reports IS_OPEN = true (it uses >=).  We use strict > here so
-       the UI immediately hides them.
-    2. Date fallback: if bar indices are unavailable, use the resolved
-       hold_until_ts vs today's date (original logic).
+    Note: We intentionally do NOT use a bar-index comparison here.  The
+    canonical view uses HOLD_UNTIL_INDEX >= CURRENT_BAR_INDEX which keeps
+    positions whose hold bar equals the current bar (they haven't been sold
+    yet — the simulation sells them *during* processing of that bar, which
+    may not have happened yet).  The date check below is a safety net for
+    stale data only.
     """
-    # --- Bar-index check (most accurate) ---
-    hold_idx = _get(position, "HOLD_UNTIL_INDEX", "hold_until_index")
-    cur_idx = _get(position, "CURRENT_BAR_INDEX", "current_bar_index")
-    if hold_idx is not None and cur_idx is not None:
-        try:
-            if int(float(hold_idx)) <= int(float(cur_idx)):
-                return False  # Simulation has already sold this position
-        except (ValueError, TypeError):
-            pass
-
-    # --- Date fallback ---
     ts = position.get("hold_until_ts")
     if ts is None:
         return True

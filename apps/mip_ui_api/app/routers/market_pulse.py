@@ -162,14 +162,18 @@ def get_market_pulse(
                     first_value(CLOSE) over (
                         partition by SYMBOL, MARKET_TYPE
                         order by TS
-                    ) as BASE_CLOSE
+                    ) as BASE_CLOSE,
+                    lag(CLOSE) over (
+                        partition by SYMBOL, MARKET_TYPE
+                        order by TS
+                    ) as PREV_CLOSE
                 from bars
             )
             select
                 TS,
                 avg(case when BASE_CLOSE > 0 then (CLOSE / BASE_CLOSE - 1) * 100 end) as INDEX_RETURN_PCT,
                 count(distinct SYMBOL) as SYMBOL_COUNT,
-                sum(case when CLOSE > lag(CLOSE) over (partition by SYMBOL order by TS) then 1 else 0 end) as UP_COUNT_DAY,
+                sum(case when PREV_CLOSE is not null and CLOSE > PREV_CLOSE then 1 else 0 end) as UP_COUNT_DAY,
                 count(*) as TOTAL_COUNT_DAY
             from indexed
             group by TS

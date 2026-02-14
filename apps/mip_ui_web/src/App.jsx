@@ -10,6 +10,7 @@ import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
 import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
+import ParallelWorlds from './pages/ParallelWorlds'
 import AppLayout from './components/AppLayout'
 
 const API_BASE = '/api'
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/signals" element={<Signals />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/manage" element={<PortfolioManagement />} />
+        <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/guide" element={<UserGuide />} />
         {/* Redirects for old routes */}

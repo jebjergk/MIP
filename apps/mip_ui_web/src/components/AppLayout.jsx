@@ -31,6 +31,7 @@ const NAV_GROUPS = [
       { to: '/suggestions',     icon: '\uD83D\uDCA1', label: 'Suggestions' },
       { to: '/signals',         icon: '\uD83D\uDCE1', label: 'Signals' },
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Market Timeline' },
+      { to: '/parallel-worlds', icon: '\uD83C\uDF10', label: 'Parallel Worlds' },
     ],
   },
   {

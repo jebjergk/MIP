@@ -103,6 +103,13 @@ declare
     v_training_digest_status string;
     v_training_digest_start timestamp_ntz;
     v_training_digest_end timestamp_ntz;
+    -- Parallel Worlds variables
+    v_pw_enabled boolean := false;
+    v_pw_result variant;
+    v_pw_narrative_result variant;
+    v_pw_status string := 'SKIPPED';
+    v_pw_start timestamp_ntz;
+    v_pw_end timestamp_ntz;
     -- Error capture variables (used in exception handlers)
     v_ingest_error_query_id string;
     v_ingest_duration_ms number;
@@ -565,6 +572,7 @@ begin
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
             'daily_digest', object_construct('status', :v_digest_status, 'narrative_mode', :v_digest_result:narrative_mode, 'portfolio_count', :v_digest_result:portfolio_count, 'cortex_success_count', :v_digest_result:cortex_success_count, 'cortex_fallback_count', :v_digest_result:cortex_fallback_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
             'training_digest', object_construct('status', :v_training_digest_status, 'snapshot_count', :v_training_digest_result:snapshot_count, 'narrative_count', :v_training_digest_result:narrative_count, 'reason', 'TRAINING_DIGEST_ALWAYS_GENERATED'),
+            'parallel_worlds', object_construct('enabled', false, 'status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS')
         );
         call MIP.APP.SP_LOG_EVENT(
@@ -1311,6 +1319,63 @@ begin
         );
     end if;
 
+    -- ─────────────────────────────────────────────────────────────────────
+    -- [PARALLEL WORLDS] Run counterfactual simulations + narrative (config-gated, non-fatal)
+    -- ─────────────────────────────────────────────────────────────────────
+    begin
+        v_pw_enabled := (select try_to_boolean(CONFIG_VALUE) from MIP.APP.APP_CONFIG
+                         where CONFIG_KEY = 'PARALLEL_WORLDS_ENABLED');
+    exception when other then
+        v_pw_enabled := false;
+    end;
+
+    if (:v_pw_enabled) then
+        v_pw_start := current_timestamp();
+        begin
+            let pw_run_id varchar := :v_run_id || '_PW';
+            v_pw_result := (call MIP.APP.SP_RUN_PARALLEL_WORLDS(
+                :pw_run_id,
+                :v_effective_to_ts,
+                null,                -- all active portfolios
+                'DEFAULT_ACTIVE'
+            ));
+            v_pw_status := coalesce(:v_pw_result:status::string, 'SUCCESS');
+
+            -- Generate narrative (best-effort, non-fatal within non-fatal)
+            begin
+                v_pw_narrative_result := (call MIP.APP.SP_GENERATE_PW_NARRATIVE(
+                    :pw_run_id,
+                    :v_effective_to_ts,
+                    null                 -- all portfolios
+                ));
+            exception when other then
+                v_pw_narrative_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
+            end;
+        exception when other then
+            v_pw_status := 'FAIL';
+            v_pw_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
+            v_pw_narrative_result := object_construct('status', 'SKIPPED', 'reason', 'simulation_failed');
+        end;
+        v_pw_end := current_timestamp();
+
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'PARALLEL_WORLDS',
+            :v_pw_status,
+            :v_pw_result:scenario_count::number,
+            object_construct(
+                'step_name', 'parallel_worlds',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_pw_start,
+                'completed_at', :v_pw_end,
+                'simulation', :v_pw_result,
+                'narrative', :v_pw_narrative_result
+            ),
+            null
+        );
+    end if;
+
     v_pipeline_root_status := iff(:v_any_step_skipped_or_degraded, 'SUCCESS_WITH_SKIPS', 'SUCCESS');
     v_pipeline_status_reason := iff(:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS'), 'RATE_LIMIT', null);
 
@@ -1349,6 +1414,12 @@ begin
             'status', :v_training_digest_status,
             'snapshot_count', :v_training_digest_result:snapshot_count,
             'narrative_count', :v_training_digest_result:narrative_count
+        ),
+        'parallel_worlds', object_construct(
+            'enabled', :v_pw_enabled,
+            'status', :v_pw_status,
+            'simulation', :v_pw_result,
+            'narrative', :v_pw_narrative_result
         ),
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,

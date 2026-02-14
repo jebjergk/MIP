@@ -422,12 +422,23 @@ begin
     for bar_row in v_bar_rs do
         v_bar_ts := bar_row.TS;
         v_bar_index := bar_row.BAR_INDEX;
+        -- CRITICAL: Compare each position's HOLD_UNTIL_INDEX against its OWN
+        -- symbol's BAR_INDEX for the current bar date, NOT the cross-symbol
+        -- minimum v_bar_index from the bar loop. Different symbols (e.g. stocks
+        -- vs FX) have different BAR_INDEX sequences because BAR_INDEX = ROW_NUMBER
+        -- per symbol. Using the minimum would cause sells to fire too late (or never)
+        -- for symbols whose BAR_INDEX is higher than the minimum.
         v_position_sql := '
-            select *
-            from TEMP_POSITIONS
-            where HOLD_UNTIL_INDEX <= ?
+            select tp.*
+            from TEMP_POSITIONS tp
+            join MIP.MART.V_BAR_INDEX vb
+              on vb.SYMBOL = tp.SYMBOL
+             and vb.MARKET_TYPE = tp.MARKET_TYPE
+             and vb.INTERVAL_MINUTES = 1440
+             and vb.TS = ?
+            where tp.HOLD_UNTIL_INDEX <= vb.BAR_INDEX
         ';
-        v_position_rs := (execute immediate :v_position_sql using (v_bar_index));
+        v_position_rs := (execute immediate :v_position_sql using (v_bar_ts));
         for position_row in v_position_rs do
             declare
                 v_sell_price number(18,8);
@@ -798,6 +809,135 @@ begin
 
     -- Count position-days for diagnostic output (how many position×bar combinations)
     select count(*) into v_position_days_expanded from TEMP_DAILY_SNAPSHOT where EQUITY_VALUE > 0;
+
+    -- ============================================================
+    -- POST-PROCESS: Correct daily CASH from actual trade history.
+    --
+    -- During replay (processing from episode start), v_cash in the bar loop
+    -- starts from the latest CASH_AFTER and only changes when NEW sells fire.
+    -- Buy deductions are missed because TEMP_SIGNALS excludes signals with
+    -- existing trades. This leaves daily CASH wrong for bars before the buys.
+    --
+    -- Fix: replace each snapshot's CASH with the last CASH_AFTER from
+    -- PORTFOLIO_TRADES on or before that date. For dates before the first
+    -- trade, use starting_cash. This gives the true cash state at each day.
+    -- ============================================================
+    -- Build a cash timeline from existing trade records.
+    -- For each trade day, get the last CASH_AFTER (i.e. cash state at end of that day).
+    create or replace temporary table TEMP_TRADE_CASH_TIMELINE as
+    select
+        date_trunc('day', TRADE_TS) as TRADE_DAY,
+        CASH_AFTER
+    from MIP.APP.PORTFOLIO_TRADES
+    where PORTFOLIO_ID = :v_portfolio_id
+      and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
+    qualify row_number() over (
+        partition by date_trunc('day', TRADE_TS)
+        order by TRADE_TS desc, TRADE_ID desc
+    ) = 1;
+
+    -- For each daily snapshot, find the correct cash: the last CASH_AFTER
+    -- from trades on or before that date, or starting_cash if none.
+    -- Uses a left join + window function to carry forward the last known cash.
+    update TEMP_DAILY_SNAPSHOT ds
+       set CASH = cc.CORRECT_CASH
+      from (
+          select
+              snap.TS,
+              coalesce(
+                  tc.CASH_AFTER,
+                  last_value(tc.CASH_AFTER ignore nulls) over (order by snap.TS rows between unbounded preceding and current row),
+                  :v_starting_cash
+              ) as CORRECT_CASH
+          from TEMP_DAILY_SNAPSHOT snap
+          left join TEMP_TRADE_CASH_TIMELINE tc
+            on tc.TRADE_DAY = snap.TS
+      ) cc
+     where ds.TS = cc.TS;
+
+    -- ============================================================
+    -- POST-PROCESS: Correct daily EQUITY_VALUE from position history.
+    --
+    -- During replay, TEMP_POSITIONS only contains currently-open positions
+    -- (from the canonical view). Historical bars incorrectly show these
+    -- positions' values even on bars BEFORE they were opened, and miss
+    -- positions that were opened and closed within the episode.
+    --
+    -- Fix: use FIFO matching to determine which positions were open on
+    -- each bar date. For each symbol, rank positions by ENTRY_TS (earliest
+    -- first). Count cumulative sells per symbol up to each date. A position
+    -- is open if its FIFO rank > the number of sells for that symbol by
+    -- that date.
+    -- ============================================================
+
+    -- Step 1: Use BUY trades (not PORTFOLIO_POSITIONS) as the authoritative
+    -- source of position openings. PORTFOLIO_POSITIONS may have gaps from
+    -- data repairs. Cross-join each bar date with BUY trades on or before it.
+    -- Rank per symbol in FIFO order (earliest buy first).
+    create or replace temporary table TEMP_POSITION_TIMELINE as
+    select
+        snap.TS as BAR_TS,
+        bt.SYMBOL,
+        bt.MARKET_TYPE,
+        bt.QUANTITY,
+        bt.TRADE_TS as ENTRY_TS,
+        vb.CLOSE as BAR_CLOSE,
+        row_number() over (
+            partition by snap.TS, bt.SYMBOL, bt.MARKET_TYPE
+            order by bt.TRADE_TS, bt.TRADE_ID
+        ) as POS_RANK
+    from TEMP_DAILY_SNAPSHOT snap
+    cross join MIP.APP.PORTFOLIO_TRADES bt
+    left join MIP.MART.V_BAR_INDEX vb
+      on vb.SYMBOL = bt.SYMBOL
+     and vb.MARKET_TYPE = bt.MARKET_TYPE
+     and vb.INTERVAL_MINUTES = 1440
+     and vb.TS = snap.TS
+    where bt.PORTFOLIO_ID = :v_portfolio_id
+      and (bt.EPISODE_ID = :v_episode_id or (:v_episode_id is null and bt.EPISODE_ID is null))
+      and bt.SIDE = 'BUY'
+      and date_trunc('day', bt.TRADE_TS) <= snap.TS;
+
+    -- Step 2: Count cumulative sells per symbol per bar date.
+    create or replace temporary table TEMP_SELL_COUNTS as
+    select
+        snap.TS as BAR_TS,
+        sell.SYMBOL,
+        sell.MARKET_TYPE,
+        count(*) as SELL_COUNT
+    from TEMP_DAILY_SNAPSHOT snap
+    join MIP.APP.PORTFOLIO_TRADES sell
+      on sell.PORTFOLIO_ID = :v_portfolio_id
+     and (sell.EPISODE_ID = :v_episode_id or (:v_episode_id is null and sell.EPISODE_ID is null))
+     and sell.SIDE = 'SELL'
+     and date_trunc('day', sell.TRADE_TS) <= snap.TS
+    group by snap.TS, sell.SYMBOL, sell.MARKET_TYPE;
+
+    -- Step 3: A position is OPEN if its FIFO rank > cumulative sells for that symbol.
+    -- First reset equity to 0 for ALL bars (handles bars with no open positions,
+    -- e.g. after all positions were sold that day — the bar loop's original equity
+    -- from TEMP_POSITIONS would otherwise persist).
+    update TEMP_DAILY_SNAPSHOT set EQUITY_VALUE = 0, OPEN_POSITIONS = 0;
+
+    -- Then update bars that DO have open positions with correct values.
+    update TEMP_DAILY_SNAPSHOT ds
+       set EQUITY_VALUE = eq.CORRECT_EQUITY,
+           OPEN_POSITIONS = eq.CORRECT_OPEN_POS
+      from (
+          select
+              pt.BAR_TS,
+              sum(pt.QUANTITY * pt.BAR_CLOSE) as CORRECT_EQUITY,
+              count(*) as CORRECT_OPEN_POS
+          from TEMP_POSITION_TIMELINE pt
+          left join TEMP_SELL_COUNTS sc
+            on sc.BAR_TS = pt.BAR_TS
+           and sc.SYMBOL = pt.SYMBOL
+           and sc.MARKET_TYPE = pt.MARKET_TYPE
+          where pt.POS_RANK > coalesce(sc.SELL_COUNT, 0)
+            and pt.BAR_CLOSE is not null
+          group by pt.BAR_TS
+      ) eq
+     where ds.TS = eq.BAR_TS;
 
     -- ============================================================
     -- DELETE existing PORTFOLIO_DAILY rows before re-inserting.

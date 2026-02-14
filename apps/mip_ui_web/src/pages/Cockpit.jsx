@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import LoadingState from '../components/LoadingState'
@@ -39,10 +39,17 @@ function formatMoney(val) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val)
 }
 
+function _get(row, ...keys) {
+  for (const k of keys) {
+    if (row[k] != null) return row[k]
+    if (row[k.toLowerCase?.()] != null) return row[k.toLowerCase()]
+  }
+  return null
+}
+
 /* ── Attention Indicator ──────────────────────────────── */
 
 function AttentionDot({ level, pulse }) {
-  // level: 'critical' | 'warning' | 'positive' | 'info' | 'neutral'
   return (
     <span className={`ck-attention ck-attention--${level || 'neutral'} ${pulse ? 'ck-attention--pulse' : ''}`} />
   )
@@ -67,6 +74,27 @@ function FreshnessBadge({ createdAt }) {
       {fresh ? 'Fresh' : 'Stale'} ({mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`})
     </span>
   )
+}
+
+function GateBadge({ gateState }) {
+  const map = {
+    SAFE: { cls: 'ck-gate--safe', label: 'Safe' },
+    CAUTION: { cls: 'ck-gate--caution', label: 'Caution' },
+    STOPPED: { cls: 'ck-gate--stopped', label: 'Stopped' },
+  }
+  const d = map[gateState] || map.SAFE
+  return <span className={`ck-gate-badge ${d.cls}`}>{d.label}</span>
+}
+
+function HealthBadge({ healthState }) {
+  const map = {
+    OK: { cls: 'ck-health--ok', label: 'Healthy' },
+    NEW: { cls: 'ck-health--new', label: 'New' },
+    STALE: { cls: 'ck-health--stale', label: 'Stale' },
+    BROKEN: { cls: 'ck-health--broken', label: 'Broken' },
+  }
+  const d = map[healthState] || map.OK
+  return <span className={`ck-health-badge ${d.cls}`}>{d.label}</span>
 }
 
 function DirectionBadge({ direction }) {
@@ -100,12 +128,18 @@ function DetectorPills({ detectors }) {
 
 /* ── Story Expander Component ──────────────────────────── */
 
-function StoryCard({ attention, headline, summary, badges, children, defaultOpen, accent }) {
+function StoryCard({ attention, headline, summary, badges, children, defaultOpen, accent, onOpen }) {
   const [open, setOpen] = useState(defaultOpen || false)
+
+  const handleToggle = useCallback(() => {
+    const next = !open
+    setOpen(next)
+    if (next && onOpen) onOpen()
+  }, [open, onOpen])
 
   return (
     <div className={`ck-story ${open ? 'ck-story--open' : ''} ${accent ? `ck-story--${accent}` : ''}`}>
-      <button className="ck-story-header" onClick={() => setOpen(!open)} type="button">
+      <button className="ck-story-header" onClick={handleToggle} type="button">
         <div className="ck-story-indicator">
           <AttentionDot level={attention} pulse={attention === 'critical'} />
         </div>
@@ -347,28 +381,150 @@ function UpcomingSymbolsDetail({ trainingData }) {
   )
 }
 
+/* ── Portfolio Story Card (lazy-loads digest on expand) ── */
+
+function PortfolioStory({ portfolio }) {
+  const pid = _get(portfolio, 'PORTFOLIO_ID', 'portfolio_id')
+  const name = _get(portfolio, 'NAME', 'name') || `Portfolio ${pid}`
+  const status = (_get(portfolio, 'STATUS', 'status') || 'ACTIVE').toUpperCase()
+  const gateState = (_get(portfolio, 'GATE_STATE', 'gate_state') || 'SAFE').toUpperCase()
+  const healthState = _get(portfolio, 'health_state') || 'OK'
+  const equity = _get(portfolio, 'latest_equity', 'FINAL_EQUITY', 'final_equity') || 0
+  const totalReturn = _get(portfolio, 'TOTAL_RETURN', 'total_return')
+  const maxDrawdown = _get(portfolio, 'MAX_DRAWDOWN', 'max_drawdown')
+  const totalPaidOut = _get(portfolio, 'total_paid_out', 'TOTAL_PAID_OUT') || 0
+  const gateTooltip = _get(portfolio, 'gate_tooltip') || ''
+
+  const [digest, setDigest] = useState(null)
+  const [digestLoading, setDigestLoading] = useState(false)
+  const [digestFetched, setDigestFetched] = useState(false)
+
+  // Attention level based on gate state and health
+  const attention = useMemo(() => {
+    if (gateState === 'STOPPED' || healthState === 'BROKEN') return 'critical'
+    if (gateState === 'CAUTION' || healthState === 'STALE') return 'warning'
+    if (status !== 'ACTIVE') return 'neutral'
+    if (totalReturn != null && totalReturn > 0) return 'positive'
+    return 'info'
+  }, [gateState, healthState, status, totalReturn])
+
+  // Headline: portfolio name + quick status
+  const headline = useMemo(() => {
+    const retStr = totalReturn != null ? ` \u2014 ${totalReturn >= 0 ? '+' : ''}${(totalReturn * 100).toFixed(1)}%` : ''
+    return `${name}${retStr}`
+  }, [name, totalReturn])
+
+  // Summary: equity, gate, key stat
+  const summary = useMemo(() => {
+    const parts = [`Equity: ${formatMoney(equity)}`]
+    if (gateState !== 'SAFE') parts.push(`Gate: ${gateState}`)
+    if (totalPaidOut > 0) parts.push(`Paid out: ${formatMoney(totalPaidOut)}`)
+    if (maxDrawdown != null) parts.push(`Max DD: ${(maxDrawdown * 100).toFixed(1)}%`)
+    return parts.join('  \u00B7  ')
+  }, [equity, gateState, totalPaidOut, maxDrawdown])
+
+  // Lazy-fetch digest on expand
+  const handleOpen = useCallback(() => {
+    if (digestFetched || digestLoading) return
+    setDigestLoading(true)
+    fetch(`${API_BASE}/digest/latest?portfolio_id=${pid}`)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null)
+      .then(data => {
+        setDigest(data)
+        setDigestLoading(false)
+        setDigestFetched(true)
+      })
+  }, [pid, digestFetched, digestLoading])
+
+  return (
+    <StoryCard
+      attention={attention}
+      headline={headline}
+      summary={summary}
+      accent="portfolio"
+      onOpen={handleOpen}
+      badges={
+        <>
+          <GateBadge gateState={gateState} />
+          <HealthBadge healthState={healthState} />
+        </>
+      }
+    >
+      {/* KPI strip */}
+      <div className="ck-kpi-row">
+        <div className="ck-kpi-item">
+          <span className="ck-kpi-label">Equity</span>
+          <span className="ck-kpi-value">{formatMoney(equity)}</span>
+        </div>
+        {totalReturn != null && (
+          <div className="ck-kpi-item">
+            <span className="ck-kpi-label">Return</span>
+            <span className={`ck-kpi-value ${totalReturn > 0 ? 'ck-kpi--positive' : totalReturn < 0 ? 'ck-kpi--negative' : ''}`}>
+              {formatPct(totalReturn)}
+            </span>
+          </div>
+        )}
+        {maxDrawdown != null && (
+          <div className="ck-kpi-item">
+            <span className="ck-kpi-label">Max DD</span>
+            <span className="ck-kpi-value ck-kpi--negative">{formatPct(maxDrawdown)}</span>
+          </div>
+        )}
+        {totalPaidOut > 0 && (
+          <div className="ck-kpi-item">
+            <span className="ck-kpi-label">Paid Out</span>
+            <span className="ck-kpi-value ck-kpi--positive">{formatMoney(totalPaidOut)}</span>
+          </div>
+        )}
+      </div>
+
+      {gateTooltip && <p className="ck-gate-explanation">{gateTooltip}</p>}
+
+      {/* Digest content (lazy loaded) */}
+      {digestLoading && <p className="ck-loading-inline">Loading digest...</p>}
+
+      {digest?.found && (
+        <div className="ck-digest-detail">
+          <p className="ck-headline">{digest.narrative?.headline || 'Portfolio digest available'}</p>
+          {digest.is_ai_narrative && (
+            <div style={{ marginBottom: '0.4rem' }}>
+              <AiBadge isAi={digest.is_ai_narrative} modelInfo={digest.model_info} />
+            </div>
+          )}
+          <DetectorPills detectors={digest.snapshot?.detectors} />
+          <DigestSection title="What Changed" icon="&#x1F504;" bullets={digest.narrative?.what_changed} variant="changed" />
+          <DigestSection title="What Matters" icon="&#x26A0;&#xFE0F;" bullets={digest.narrative?.what_matters} variant="matters" />
+          <DigestSection title="Waiting For" icon="&#x23F3;" bullets={digest.narrative?.waiting_for} variant="waiting" />
+          <DrillLinks whereToLook={digest.narrative?.where_to_look} links={digest.links} />
+        </div>
+      )}
+
+      {digestFetched && !digest?.found && (
+        <p className="ck-empty">No digest yet for this portfolio. Run the pipeline to generate.</p>
+      )}
+
+      {/* Link to full portfolio page */}
+      <div className="ck-drill-links" style={{ marginTop: '0.5rem' }}>
+        <Link to={`/portfolios/${pid}`} className="ck-drill-link">Full Portfolio &rarr;</Link>
+        <Link to={`/suggestions?portfolio_id=${pid}`} className="ck-drill-link">Suggestions &rarr;</Link>
+      </div>
+    </StoryCard>
+  )
+}
+
 /* ── Main Cockpit Page ───────────────────────────────── */
 
 export default function Cockpit() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const portfolioIdParam = searchParams.get('portfolio_id')
-  const portfolioId = portfolioIdParam ? parseInt(portfolioIdParam, 10) : null
-  const { portfolios, defaultPortfolioId, loading: portfoliosLoading } = usePortfolios()
+  const { portfolios, loading: portfoliosLoading } = usePortfolios()
 
   const [digestGlobal, setDigestGlobal] = useState(null)
-  const [digestPortfolio, setDigestPortfolio] = useState(null)
   const [trainingGlobal, setTrainingGlobal] = useState(null)
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // Default portfolio
-  useEffect(() => {
-    if (portfolioIdParam != null || portfoliosLoading || defaultPortfolioId == null) return
-    setSearchParams({ portfolio_id: String(defaultPortfolioId) }, { replace: true })
-  }, [defaultPortfolioId, portfolioIdParam, portfoliosLoading, setSearchParams])
-
-  // Parallel fetch all data sources
+  // Parallel fetch non-portfolio data sources
   useEffect(() => {
     if (portfoliosLoading) return
     let cancelled = false
@@ -376,18 +532,14 @@ export default function Cockpit() {
 
     const fetches = [
       fetch(`${API_BASE}/digest/latest?scope=GLOBAL`).then(r => r.ok ? r.json() : null).catch(() => null),
-      portfolioId
-        ? fetch(`${API_BASE}/digest/latest?portfolio_id=${portfolioId}`).then(r => r.ok ? r.json() : null).catch(() => null)
-        : Promise.resolve(null),
       fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/today${portfolioId ? `?portfolio_id=${portfolioId}` : ''}`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
     ]
 
-    Promise.all(fetches).then(([dg, dp, tg, td, mp]) => {
+    Promise.all(fetches).then(([dg, tg, td, mp]) => {
       if (cancelled) return
       setDigestGlobal(dg)
-      setDigestPortfolio(dp)
       setTrainingGlobal(tg)
       setTodayData(td)
       setMarketPulse(mp)
@@ -395,24 +547,14 @@ export default function Cockpit() {
     })
 
     return () => { cancelled = true }
-  }, [portfolioId, portfoliosLoading])
+  }, [portfoliosLoading])
 
   const insights = todayData?.insights || []
   const aggregate = marketPulse?.aggregate || {}
   const marketSymbols = marketPulse?.symbols || []
   const indexSeries = marketPulse?.index_series || []
 
-  // Compute attention levels
-  const portfolioAttention = useMemo(() => {
-    if (!digestPortfolio?.found) return 'neutral'
-    const detectors = digestPortfolio.snapshot?.detectors || []
-    const highFired = detectors.some(d => d.fired && d.severity === 'HIGH')
-    const medFired = detectors.some(d => d.fired && d.severity === 'MEDIUM')
-    if (highFired) return 'critical'
-    if (medFired) return 'warning'
-    return 'info'
-  }, [digestPortfolio])
-
+  // Attention levels for right-column stories
   const globalAttention = useMemo(() => {
     if (!digestGlobal?.found) return 'neutral'
     const detectors = digestGlobal.snapshot?.detectors || []
@@ -443,21 +585,7 @@ export default function Cockpit() {
     return 'neutral'
   }, [trainingGlobal])
 
-  // Build portfolio headline + summary
-  const portfolioHeadline = digestPortfolio?.found
-    ? (digestPortfolio.narrative?.headline || 'Portfolio Intelligence')
-    : 'Portfolio Intelligence'
-
-  const portfolioSummary = useMemo(() => {
-    if (!digestPortfolio?.found) return 'Select a portfolio above to see intelligence.'
-    const wc = digestPortfolio.narrative?.what_changed || []
-    const wm = digestPortfolio.narrative?.what_matters || []
-    if (wc.length > 0) return wc[0]
-    if (wm.length > 0) return wm[0]
-    return 'Portfolio digest generated. Expand for full details.'
-  }, [digestPortfolio])
-
-  // Build global headline + summary
+  // Global digest headline + summary
   const globalHeadline = digestGlobal?.found
     ? (digestGlobal.narrative?.headline || 'System Overview')
     : 'System Overview'
@@ -474,7 +602,6 @@ export default function Cockpit() {
   // Market headline + summary
   const marketHeadline = useMemo(() => {
     if (!aggregate.direction || aggregate.direction === 'NO_DATA') return 'Market Pulse \u2014 Awaiting Data'
-    const dir = aggregate.direction === 'UP' ? 'mostly up' : aggregate.direction === 'DOWN' ? 'mostly down' : 'mixed'
     return `Market Pulse \u2014 ${aggregate.up_count} of ${aggregate.total_symbols} symbols gained today`
   }, [aggregate])
 
@@ -511,6 +638,15 @@ export default function Cockpit() {
     return 'No near-miss symbols. Expand for training details.'
   }, [trainingGlobal])
 
+  // Split portfolios: active first, then others
+  const activePortfolios = useMemo(() => {
+    return portfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() === 'ACTIVE')
+  }, [portfolios])
+
+  const otherPortfolios = useMemo(() => {
+    return portfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() !== 'ACTIVE')
+  }, [portfolios])
+
   if (loading) {
     return (
       <>
@@ -524,120 +660,34 @@ export default function Cockpit() {
     <div className="ck-page">
       <div className="ck-page-header">
         <h1>Cockpit</h1>
-        {portfolios.length > 0 && (
-          <label className="ck-portfolio-picker">
-            Portfolio:
-            <select
-              value={portfolioId != null ? String(portfolioId) : ''}
-              onChange={(e) => {
-                const v = e.target.value
-                setSearchParams(v ? { portfolio_id: v } : {})
-              }}
-            >
-              <option value="">&mdash;</option>
-              {portfolios.map((p) => {
-                const id = p.PORTFOLIO_ID ?? p.portfolio_id
-                return <option key={id} value={String(id)}>{p.NAME ?? p.name ?? id}</option>
-              })}
-            </select>
-          </label>
-        )}
       </div>
 
       {/* ═══ Two-Column News Layout ═══ */}
       <div className="ck-news-grid">
 
-        {/* ── LEFT COLUMN: Portfolio Stories ── */}
+        {/* ── LEFT COLUMN: All Portfolios ── */}
         <div className="ck-news-column">
-          <div className="ck-column-label">Portfolio</div>
+          <div className="ck-column-label">Portfolios</div>
 
-          {/* Story: Portfolio Digest */}
-          <StoryCard
-            attention={portfolioAttention}
-            headline={portfolioHeadline}
-            summary={portfolioSummary}
-            accent="portfolio"
-            badges={
-              <>
-                {digestPortfolio?.found && <AiBadge isAi={digestPortfolio.is_ai_narrative} modelInfo={digestPortfolio.model_info} />}
-                {digestPortfolio?.found && digestPortfolio.snapshot?.episode?.episode_id && (
-                  <span className="ck-badge ck-badge--episode">
-                    Ep {digestPortfolio.snapshot.episode.total_episodes || 1}
-                  </span>
-                )}
-              </>
-            }
-          >
-            {portfolioId == null ? (
-              <p className="ck-empty">Select a portfolio above.</p>
-            ) : digestPortfolio?.found ? (
-              <>
-                <DetectorPills detectors={digestPortfolio.snapshot?.detectors} />
-                <DigestSection title="What Changed" icon="&#x1F504;" bullets={digestPortfolio.narrative?.what_changed} variant="changed" />
-                <DigestSection title="What Matters" icon="&#x26A0;&#xFE0F;" bullets={digestPortfolio.narrative?.what_matters} variant="matters" />
-                <DigestSection title="Waiting For" icon="&#x23F3;" bullets={digestPortfolio.narrative?.waiting_for} variant="waiting" />
-                <DrillLinks whereToLook={digestPortfolio.narrative?.where_to_look} links={digestPortfolio.links} />
-              </>
-            ) : (
-              <EmptyState title="No portfolio digest yet" action="Run the pipeline to generate." />
-            )}
-          </StoryCard>
+          {activePortfolios.length === 0 && otherPortfolios.length === 0 && (
+            <div className="ck-story ck-story--portfolio">
+              <div className="ck-story-body" style={{ padding: '1rem' }}>
+                <EmptyState title="No portfolios" action="Create a portfolio to get started." />
+              </div>
+            </div>
+          )}
 
-          {/* Story: Portfolio KPIs (from todayData) */}
-          {todayData?.portfolio && (
-            <StoryCard
-              attention={
-                todayData.portfolio.risk_gate?.[0]?.ENTRIES_BLOCKED ? 'critical' :
-                todayData.portfolio.risk_gate?.[0]?.RISK_STATUS === 'WARN' ? 'warning' : 'positive'
-              }
-              headline="Portfolio Risk & Performance"
-              summary={(() => {
-                const kpi = todayData.portfolio.kpis?.[0]
-                if (!kpi) return 'No KPI data available for this portfolio.'
-                const equity = kpi.FINAL_EQUITY || kpi.final_equity
-                const ret = kpi.TOTAL_RETURN || kpi.total_return
-                return `Equity: ${formatMoney(equity)}. Return: ${formatPct(ret)}.`
-              })()}
-              accent="portfolio"
-            >
-              {todayData.portfolio.kpis?.length > 0 && (
-                <div className="ck-kpi-grid">
-                  {todayData.portfolio.kpis.slice(0, 1).map((kpi, i) => {
-                    const equity = kpi.FINAL_EQUITY || kpi.final_equity
-                    const ret = kpi.TOTAL_RETURN || kpi.total_return
-                    const dd = kpi.MAX_DRAWDOWN || kpi.max_drawdown
-                    return (
-                      <div key={i} className="ck-kpi-row">
-                        <div className="ck-kpi-item">
-                          <span className="ck-kpi-label">Equity</span>
-                          <span className="ck-kpi-value">{formatMoney(equity)}</span>
-                        </div>
-                        <div className="ck-kpi-item">
-                          <span className="ck-kpi-label">Return</span>
-                          <span className={`ck-kpi-value ${ret > 0 ? 'ck-kpi--positive' : ret < 0 ? 'ck-kpi--negative' : ''}`}>{formatPct(ret)}</span>
-                        </div>
-                        <div className="ck-kpi-item">
-                          <span className="ck-kpi-label">Max DD</span>
-                          <span className="ck-kpi-value ck-kpi--negative">{formatPct(dd)}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              {todayData.portfolio.run_events?.length > 0 && (
-                <div className="ck-run-events">
-                  <h4 className="ck-subsection-title">Recent Pipeline Events</h4>
-                  <ul className="ck-bullets">
-                    {todayData.portfolio.run_events.slice(0, 5).map((ev, i) => {
-                      const name = ev.EVENT_NAME || ev.event_name || 'Event'
-                      const status = ev.STATUS || ev.status || ''
-                      return <li key={i} className="ck-bullet">{name}: {status}</li>
-                    })}
-                  </ul>
-                </div>
-              )}
-            </StoryCard>
+          {activePortfolios.map((p) => (
+            <PortfolioStory key={_get(p, 'PORTFOLIO_ID', 'portfolio_id')} portfolio={p} />
+          ))}
+
+          {otherPortfolios.length > 0 && (
+            <>
+              <div className="ck-column-label" style={{ marginTop: '0.5rem' }}>Inactive / Ended</div>
+              {otherPortfolios.map((p) => (
+                <PortfolioStory key={_get(p, 'PORTFOLIO_ID', 'portfolio_id')} portfolio={p} />
+              ))}
+            </>
           )}
         </div>
 
@@ -645,7 +695,7 @@ export default function Cockpit() {
         <div className="ck-news-column">
           <div className="ck-column-label">Market & System</div>
 
-          {/* Story: Market Pulse (NEW) */}
+          {/* Story: Market Pulse */}
           <StoryCard
             attention={marketAttention}
             headline={marketHeadline}

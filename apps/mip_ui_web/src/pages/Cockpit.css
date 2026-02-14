@@ -242,6 +242,39 @@
   color: #e65100;
 }
 
+/* ── Gate Badge ───────────────────────────────────────── */
+
+.ck-gate-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ck-gate--safe    { background: #e8f5e9; color: #1b5e20; }
+.ck-gate--caution { background: #fff3e0; color: #e65100; }
+.ck-gate--stopped { background: #fbe9e7; color: #b71c1c; }
+
+/* ── Health Badge ─────────────────────────────────────── */
+
+.ck-health-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ck-health--ok    { background: #e8f5e9; color: #2e7d32; }
+.ck-health--new   { background: #e3f2fd; color: #0d47a1; }
+.ck-health--stale { background: #fff3e0; color: #e65100; }
+.ck-health--broken { background: #fbe9e7; color: #b71c1c; }
+
 /* ── Direction Badge ─────────────────────────────────── */
 
 .ck-direction-badge {
@@ -676,4 +709,34 @@
   color: #6c757d;
   margin: 0.15rem 0 0 0;
   line-height: 1.35;
+}
+
+/* ── Portfolio Story extras ──────────────────────────── */
+
+.ck-gate-explanation {
+  font-size: 0.8rem;
+  color: #6c757d;
+  margin: 0.35rem 0 0.5rem 0;
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.ck-loading-inline {
+  font-size: 0.82rem;
+  color: #6c757d;
+  margin: 0.5rem 0;
+}
+
+.ck-digest-detail {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #f0f0f0;
+}
+
+.ck-headline {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 0.5rem 0;
+  line-height: 1.4;
 }

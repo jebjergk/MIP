@@ -516,11 +516,15 @@ begin
                     v_trade_day := date_trunc('day', v_bar_ts);
 
                     -- MERGE dedup key: stable columns only.
-                    -- NEVER use PRICE or QUANTITY in the match key — they are
-                    -- computed from v_cash which drifts between re-runs, causing
-                    -- the MERGE to miss existing rows and insert duplicates.
-                    -- Natural key: (PORTFOLIO_ID, EPISODE_ID, TRADE_DAY, SYMBOL, SIDE)
-                    -- is unique for simulation trades (one trade per symbol/side/day).
+                    -- NEVER use PRICE in the match key — it is computed from
+                    -- v_cash which drifts between re-runs, causing the MERGE to
+                    -- miss existing rows and insert duplicates.
+                    --
+                    -- QUANTITY is safe for SELLs because it comes from the
+                    -- position (stable), not from v_cash. Including QUANTITY is
+                    -- CRITICAL: without it, only one sell per symbol per day is
+                    -- possible, causing positions to get stuck when multiple
+                    -- positions of the same symbol expire on the same bar.
                     merge into MIP.APP.PORTFOLIO_TRADES as target
                     using (
                         select
@@ -546,6 +550,7 @@ begin
                        and date_trunc('day', target.TRADE_TS) = source.TRADE_DAY
                        and target.SYMBOL = source.SYMBOL
                        and target.SIDE = source.SIDE
+                       and target.QUANTITY = source.QUANTITY
                     when not matched then
                         insert (
                             PORTFOLIO_ID,

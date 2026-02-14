@@ -813,8 +813,10 @@ def get_portfolio_snapshot(
                 and str(t.get("RUN_ID") or t.get("run_id") or "") == str(effective_run_id)
             )
 
-        # Only show as "open" positions whose hold_until date is today or in the future (canonical can be stale)
-        open_positions_filtered = [p for p in positions if _position_still_open_by_date(p)]
+        # The canonical view now uses FIFO sell matching: a position is open
+        # if no SELL trade exists for it, regardless of HOLD_UNTIL_INDEX.
+        # No secondary date filter needed — trust the view.
+        open_positions_filtered = positions
 
         # Portfolio profile (for risk strategy: thresholds from PORTFOLIO_PROFILE)
         # Only show the profile actually linked to this portfolio; no fallback to avoid showing wrong thresholds.

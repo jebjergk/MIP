@@ -268,94 +268,130 @@ begin
     );
 
     -- ============================================================
-    -- LOAD EXISTING OPEN POSITIONS into TEMP_POSITIONS
-    -- This ensures the simulation knows about agent-created positions.
+    -- LOAD EXISTING UNSOLD POSITIONS into TEMP_POSITIONS
     --
-    -- CRITICAL: BAR_INDEX drift protection + ENTRY_TS mismatch handling.
-    -- 1. V_BAR_INDEX computes BAR_INDEX via ROW_NUMBER(), which drifts when
-    --    bars are added/removed. Stored ENTRY_INDEX becomes stale.
-    -- 2. ENTRY_TS may be the pipeline execution timestamp (e.g. 21:31:10 or
-    --    even the next day for weekend runs), NOT the bar midnight timestamp.
-    -- Solution: find the latest bar ON OR BEFORE ENTRY_TS using <= + QUALIFY.
-    -- This handles both BAR_INDEX drift AND timestamp granularity mismatches.
+    -- Uses PORTFOLIO_POSITIONS + FIFO sell matching instead of the
+    -- canonical view (V_PORTFOLIO_OPEN_POSITIONS_CANONICAL). The canonical
+    -- view uses HOLD_UNTIL_INDEX >= CURRENT_BAR_INDEX to determine IS_OPEN,
+    -- but CURRENT_BAR_INDEX is the MAX across ALL symbols. When a new bar
+    -- arrives, CURRENT_BAR_INDEX jumps and positions whose HOLD_UNTIL_INDEX
+    -- equals the previous bar become IS_OPEN=false BEFORE the simulation
+    -- has a chance to sell them. This creates a timing gap where positions
+    -- expire out of the canonical view without generating SELL trades.
+    --
+    -- The FIFO approach: rank each position per symbol by ENTRY_TS, count
+    -- cumulative SELL trades per symbol, and load positions whose FIFO rank
+    -- exceeds the sell count (i.e. they haven't been sold yet).
+    --
+    -- BAR_INDEX drift protection: re-derive ENTRY_INDEX from V_BAR_INDEX
+    -- using the latest bar ON OR BEFORE ENTRY_TS, then compute
+    -- HOLD_UNTIL_INDEX from the original horizon (stored hold - stored entry).
     -- ============================================================
     insert into TEMP_POSITIONS (
         SYMBOL, MARKET_TYPE, ENTRY_TS, ENTRY_PRICE,
         QUANTITY, COST_BASIS, ENTRY_SCORE, ENTRY_INDEX, HOLD_UNTIL_INDEX
     )
     select
-        p.SYMBOL,
-        p.MARKET_TYPE,
-        p.ENTRY_TS,
-        p.ENTRY_PRICE,
-        p.QUANTITY,
-        p.COST_BASIS,
-        p.ENTRY_SCORE,
-        vb.BAR_INDEX as ENTRY_INDEX,
-        vb.BAR_INDEX + (p.HOLD_UNTIL_INDEX - p.ENTRY_INDEX) as HOLD_UNTIL_INDEX
-    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
-    join MIP.MART.V_BAR_INDEX vb
-      on vb.SYMBOL = p.SYMBOL
-     and vb.MARKET_TYPE = p.MARKET_TYPE
-     and vb.INTERVAL_MINUTES = 1440
-     and vb.TS <= p.ENTRY_TS
-    where p.PORTFOLIO_ID = :v_portfolio_id
-    qualify row_number() over (
-        partition by p.PORTFOLIO_ID, p.SYMBOL, p.MARKET_TYPE, p.ENTRY_TS
-        order by vb.TS desc
-    ) = 1;
+        ranked.SYMBOL,
+        ranked.MARKET_TYPE,
+        ranked.ENTRY_TS,
+        ranked.ENTRY_PRICE,
+        ranked.QUANTITY,
+        ranked.COST_BASIS,
+        ranked.ENTRY_SCORE,
+        ranked.RE_ENTRY_INDEX,
+        ranked.RE_HOLD_UNTIL_INDEX
+    from (
+        select
+            pp.SYMBOL,
+            pp.MARKET_TYPE,
+            pp.ENTRY_TS,
+            pp.ENTRY_PRICE,
+            pp.QUANTITY,
+            pp.COST_BASIS,
+            pp.ENTRY_SCORE,
+            pp.ENTRY_INDEX,
+            pp.HOLD_UNTIL_INDEX,
+            vb.BAR_INDEX as RE_ENTRY_INDEX,
+            vb.BAR_INDEX + (pp.HOLD_UNTIL_INDEX - pp.ENTRY_INDEX) as RE_HOLD_UNTIL_INDEX,
+            row_number() over (
+                partition by pp.SYMBOL, pp.MARKET_TYPE
+                order by pp.ENTRY_TS
+            ) as POS_RANK
+        from MIP.APP.PORTFOLIO_POSITIONS pp
+        join MIP.MART.V_BAR_INDEX vb
+          on vb.SYMBOL = pp.SYMBOL
+         and vb.MARKET_TYPE = pp.MARKET_TYPE
+         and vb.INTERVAL_MINUTES = 1440
+         and vb.TS <= pp.ENTRY_TS
+        where pp.PORTFOLIO_ID = :v_portfolio_id
+          and (pp.EPISODE_ID = :v_episode_id or (:v_episode_id is null and pp.EPISODE_ID is null))
+        qualify row_number() over (
+            partition by pp.PORTFOLIO_ID, pp.SYMBOL, pp.MARKET_TYPE, pp.ENTRY_TS
+            order by vb.TS desc
+        ) = 1
+    ) ranked
+    left join (
+        select SYMBOL, MARKET_TYPE, count(*) as SELL_COUNT
+        from MIP.APP.PORTFOLIO_TRADES
+        where PORTFOLIO_ID = :v_portfolio_id
+          and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
+          and SIDE = 'SELL'
+        group by SYMBOL, MARKET_TYPE
+    ) sc
+      on sc.SYMBOL = ranked.SYMBOL
+     and sc.MARKET_TYPE = ranked.MARKET_TYPE
+    where ranked.POS_RANK > coalesce(sc.SELL_COUNT, 0);
 
-    -- Determine current cash balance. Priority:
-    -- 1. Latest CASH_AFTER from PORTFOLIO_TRADES within the current episode
-    --    (scoped by EPISODE_ID to avoid pulling cash from a prior episode)
-    -- 2. Fallback: starting_cash - cost of all open positions
+    -- ============================================================
+    -- Determine current cash balance.
     --
-    -- After loading trade cash, adjust for any DEPOSIT/WITHDRAW lifecycle events
-    -- that occurred SINCE the last trade. SP_PORTFOLIO_CASH_EVENT updates
-    -- PORTFOLIO.STARTING_CASH but that change is NOT reflected in
-    -- PORTFOLIO_TRADES.CASH_AFTER until a new trade is recorded.
+    -- CRITICAL: Do NOT use PORTFOLIO_TRADES.CASH_AFTER — it can be
+    -- corrupted from prior bugs where MERGE dedup skipped trades
+    -- without adjusting v_cash, causing CASH_AFTER to cascade errors.
+    --
+    -- Instead, compute cash from first principles:
+    --   STARTING_CASH
+    --   - SUM( BUY notional + fee )
+    --   + SUM( SELL notional - fee )
+    --   + DEPOSIT/WITHDRAW events
+    --
+    -- This is always correct regardless of CASH_AFTER values.
+    -- ============================================================
     begin
-        let v_trade_cash number(18,2) := null;
-        let v_last_trade_ts timestamp_ntz := null;
+        let v_computed_cash number(18,2) := null;
         let v_cash_event_delta number(18,2) := 0;
         begin
-            -- CRITICAL: Also filter TRADE_TS >= episode_start_ts.
-            -- Without this, trades from prior episodes that were mis-assigned
-            -- (e.g. via backfill) to the current EPISODE_ID can corrupt v_cash
-            -- with a stale CASH_AFTER from a completely different cash state.
-            select CASH_AFTER, TRADE_TS into :v_trade_cash, :v_last_trade_ts
-              from MIP.APP.PORTFOLIO_TRADES
+            select :v_starting_cash + coalesce(sum(
+                case
+                    when SIDE = 'BUY'
+                        then -(NOTIONAL + greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000))
+                    when SIDE = 'SELL'
+                        then +(NOTIONAL - greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000))
+                    else 0
+                end
+            ), 0)
+            into :v_computed_cash
+            from MIP.APP.PORTFOLIO_TRADES
+            where PORTFOLIO_ID = :v_portfolio_id
+              and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null));
+
+            v_cash := v_computed_cash;
+
+            -- Also adjust for DEPOSIT/WITHDRAW lifecycle events
+            select coalesce(sum(
+                case when EVENT_TYPE = 'DEPOSIT'  then AMOUNT
+                     when EVENT_TYPE = 'WITHDRAW' then -AMOUNT
+                     else 0 end
+            ), 0) into :v_cash_event_delta
+              from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
              where PORTFOLIO_ID = :v_portfolio_id
-               and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
-               and (:v_episode_start_ts is null or TRADE_TS >= :v_episode_start_ts)
-             order by TRADE_TS desc, TRADE_ID desc
-             limit 1;
-            if (v_trade_cash is not null) then
-                -- Check for DEPOSIT/WITHDRAW events after the last trade
-                select coalesce(sum(
-                    case when EVENT_TYPE = 'DEPOSIT'  then AMOUNT
-                         when EVENT_TYPE = 'WITHDRAW' then -AMOUNT
-                         else 0 end
-                ), 0) into :v_cash_event_delta
-                  from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
-                 where PORTFOLIO_ID = :v_portfolio_id
-                   and EVENT_TYPE in ('DEPOSIT', 'WITHDRAW')
-                   and EVENT_TS > :v_last_trade_ts;
-                v_cash := v_trade_cash + v_cash_event_delta;
-            end if;
+               and EVENT_TYPE in ('DEPOSIT', 'WITHDRAW');
+            v_cash := v_cash + v_cash_event_delta;
         exception
-            when other then null; -- No trade records yet
+            when other then null; -- No trade records yet; v_cash stays at v_starting_cash
         end;
     end;
-
-    -- If no trades exist, calculate cash from starting cash minus open position cost
-    if (v_cash = v_starting_cash) then
-        let v_existing_cost number(18,2) := 0;
-        select coalesce(sum(COST_BASIS), 0) into :v_existing_cost from TEMP_POSITIONS;
-        if (v_existing_cost > 0) then
-            v_cash := v_starting_cash - v_existing_cost;
-        end if;
-    end if;
 
     select count(*) into :v_open_positions from TEMP_POSITIONS;
 
@@ -813,32 +849,68 @@ begin
     -- ============================================================
     -- POST-PROCESS: Correct daily CASH from actual trade history.
     --
-    -- During replay (processing from episode start), v_cash in the bar loop
-    -- starts from the latest CASH_AFTER and only changes when NEW sells fire.
-    -- Buy deductions are missed because TEMP_SIGNALS excludes signals with
-    -- existing trades. This leaves daily CASH wrong for bars before the buys.
+    -- CRITICAL: Does NOT use PORTFOLIO_TRADES.CASH_AFTER because it can be
+    -- corrupted from prior bugs (MERGE dedup preserves stale values).
     --
-    -- Fix: replace each snapshot's CASH with the last CASH_AFTER from
-    -- PORTFOLIO_TRADES on or before that date. For dates before the first
-    -- trade, use starting_cash. This gives the true cash state at each day.
+    -- Instead, computes a running cash balance from first principles:
+    --   STARTING_CASH + cumulative sum of trade impacts.
+    -- For each trade: BUY = -(NOTIONAL + fee), SELL = +(NOTIONAL - fee).
+    -- Then carries forward the last known cash to non-trade days.
     -- ============================================================
-    -- Build a cash timeline from existing trade records.
-    -- For each trade day, get the last CASH_AFTER (i.e. cash state at end of that day).
+
+    -- Step A: Compute correct running cash for every trade.
+    create or replace temporary table TEMP_TRADE_RUNNING_CASH as
+    with trade_impacts as (
+        select
+            TRADE_ID,
+            TRADE_TS,
+            date_trunc('day', TRADE_TS) as TRADE_DAY,
+            SIDE,
+            NOTIONAL,
+            case
+                when SIDE = 'BUY'
+                    then -(NOTIONAL + greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000))
+                when SIDE = 'SELL'
+                    then +(NOTIONAL - greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000))
+                else 0
+            end as CASH_DELTA
+        from MIP.APP.PORTFOLIO_TRADES
+        where PORTFOLIO_ID = :v_portfolio_id
+          and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
+    )
+    select
+        TRADE_ID,
+        TRADE_TS,
+        TRADE_DAY,
+        :v_starting_cash + sum(CASH_DELTA) over (
+            order by TRADE_TS, TRADE_ID
+            rows between unbounded preceding and current row
+        ) as CORRECT_CASH_AFTER
+    from trade_impacts;
+
+    -- Step B: Also fix CASH_AFTER in PORTFOLIO_TRADES while we're at it.
+    -- This prevents the corruption from persisting across future runs.
+    update MIP.APP.PORTFOLIO_TRADES t
+       set CASH_AFTER = rc.CORRECT_CASH_AFTER
+      from TEMP_TRADE_RUNNING_CASH rc
+     where t.TRADE_ID = rc.TRADE_ID
+       and t.CASH_AFTER != rc.CORRECT_CASH_AFTER;
+
+    -- Step C: Build daily cash timeline from the corrected running cash.
+    -- For each trade day, take the last trade's cash (end-of-day state).
     create or replace temporary table TEMP_TRADE_CASH_TIMELINE as
     select
-        date_trunc('day', TRADE_TS) as TRADE_DAY,
-        CASH_AFTER
-    from MIP.APP.PORTFOLIO_TRADES
-    where PORTFOLIO_ID = :v_portfolio_id
-      and (EPISODE_ID = :v_episode_id or (:v_episode_id is null and EPISODE_ID is null))
+        TRADE_DAY,
+        CORRECT_CASH_AFTER as CASH_AFTER
+    from TEMP_TRADE_RUNNING_CASH
     qualify row_number() over (
-        partition by date_trunc('day', TRADE_TS)
+        partition by TRADE_DAY
         order by TRADE_TS desc, TRADE_ID desc
     ) = 1;
 
-    -- For each daily snapshot, find the correct cash: the last CASH_AFTER
-    -- from trades on or before that date, or starting_cash if none.
-    -- Uses a left join + window function to carry forward the last known cash.
+    -- Step D: Update daily snapshots with correct cash.
+    -- For each day: use the last known cash from trades on or before that date.
+    -- For days before the first trade, use starting_cash.
     update TEMP_DAILY_SNAPSHOT ds
        set CASH = cc.CORRECT_CASH
       from (

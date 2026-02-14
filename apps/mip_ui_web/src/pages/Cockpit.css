@@ -1,14 +1,16 @@
-/* Cockpit — unified dashboard */
+/* Cockpit — News-style dashboard with expander stories */
 
 .ck-page {
-  max-width: 1400px;
+  max-width: 1440px;
 }
+
+/* ── Page header ─────────────────────────────────────── */
 
 .ck-page-header {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   flex-wrap: wrap;
 }
 
@@ -32,65 +34,169 @@
   border: 1px solid #ccc;
 }
 
-/* ── Grid layouts ────────────────────────────────────── */
+/* ── News Grid: two columns ──────────────────────────── */
 
-.ck-grid-2 {
+.ck-news-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
-  margin-bottom: 1.25rem;
+  align-items: start;
 }
 
-@media (max-width: 900px) {
-  .ck-grid-2 { grid-template-columns: 1fr; }
+@media (max-width: 960px) {
+  .ck-news-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-/* ── Cards ───────────────────────────────────────────── */
+.ck-news-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
 
-.ck-card {
+.ck-column-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #868e96;
+  padding: 0 0.25rem;
+  margin-bottom: -0.25rem;
+}
+
+/* ── Story Card (expander) ───────────────────────────── */
+
+.ck-story {
   background: #fff;
   border: 1px solid #e9ecef;
-  border-radius: 12px;
-  padding: 1.25rem;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.2s, border-color 0.2s;
 }
 
-.ck-card--primary {
-  border-top: 3px solid #0d6efd;
+.ck-story:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+  border-color: #dee2e6;
 }
 
-.ck-card--portfolio {
-  border-top: 3px solid #6f42c1;
+.ck-story--open {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
-.ck-card-header {
+/* Accent borders */
+.ck-story--portfolio { border-left: 3px solid #6f42c1; }
+.ck-story--market    { border-left: 3px solid #0d6efd; }
+.ck-story--system    { border-left: 3px solid #495057; }
+.ck-story--signal    { border-left: 3px solid #fd7e14; }
+.ck-story--training  { border-left: 3px solid #20c997; }
+
+/* ── Story Header (clickable) ────────────────────────── */
+
+.ck-story-header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  background: none;
+  border: none;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: background 0.15s;
 }
 
-.ck-card-title {
-  font-size: 1.05rem;
-  font-weight: 600;
+.ck-story-header:hover {
+  background: #f8f9fa;
+}
+
+.ck-story-indicator {
+  flex-shrink: 0;
+  padding-top: 0.25rem;
+}
+
+.ck-story-headline-area {
+  flex: 1;
+  min-width: 0;
+}
+
+.ck-story-headline {
+  font-size: 0.95rem;
+  font-weight: 650;
   color: #1a1a2e;
-  margin: 0;
+  margin: 0 0 0.2rem 0;
+  line-height: 1.35;
 }
 
-.ck-card-subtitle {
-  font-size: 0.85rem;
+.ck-story-summary {
+  font-size: 0.82rem;
   color: #6c757d;
-  margin: 0 0 0.75rem 0;
-  line-height: 1.4;
+  margin: 0;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.ck-card-badges {
+.ck-story-meta {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
+  flex-shrink: 0;
   flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ck-story-chevron {
+  font-size: 1rem;
+  color: #adb5bd;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.ck-story-chevron--open {
+  transform: rotate(90deg);
+}
+
+/* ── Story Body (expanded content) ───────────────────── */
+
+.ck-story-body {
+  padding: 0 1rem 1rem 2.5rem;
+  border-top: 1px solid #f0f0f0;
+  animation: ck-slideDown 0.2s ease-out;
+}
+
+@keyframes ck-slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Attention Dots ──────────────────────────────────── */
+
+.ck-attention {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ck-attention--critical  { background: #dc3545; }
+.ck-attention--warning   { background: #fd7e14; }
+.ck-attention--positive  { background: #198754; }
+.ck-attention--info      { background: #0d6efd; }
+.ck-attention--neutral   { background: #adb5bd; }
+
+.ck-attention--pulse {
+  animation: ck-pulse 1.5s infinite;
+}
+
+@keyframes ck-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(220, 53, 69, 0); }
 }
 
 /* ── Badges ──────────────────────────────────────────── */
@@ -98,10 +204,11 @@
 .ck-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.15rem 0.55rem;
+  padding: 0.12rem 0.5rem;
   border-radius: 12px;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .ck-badge--ai {
@@ -135,43 +242,45 @@
   color: #e65100;
 }
 
-/* ── Headlines ───────────────────────────────────────── */
+/* ── Direction Badge ─────────────────────────────────── */
 
-.ck-headline {
-  font-size: 1.08rem;
+.ck-direction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 12px;
+  font-size: 0.72rem;
   font-weight: 600;
-  color: #1a1a2e;
-  margin: 0 0 0.75rem 0;
-  line-height: 1.4;
+  white-space: nowrap;
 }
 
-.ck-empty {
-  font-size: 0.9rem;
-  color: #6c757d;
-  font-style: italic;
-}
+.ck-dir--up      { background: #e8f5e9; color: #1b5e20; }
+.ck-dir--down    { background: #fbe9e7; color: #b71c1c; }
+.ck-dir--mixed   { background: #fff8e1; color: #e65100; }
+.ck-dir--neutral { background: #f5f5f5; color: #616161; }
 
 /* ── Sections (bullet groups) ────────────────────────── */
 
 .ck-section {
-  margin-bottom: 0.75rem;
-  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.75rem;
   background: #fafbfc;
   border: 1px solid #f0f0f0;
   border-radius: 8px;
 }
 
 .ck-section-title {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: #495057;
-  margin: 0 0 0.4rem 0;
+  margin: 0 0 0.3rem 0;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 
-.ck-section-icon { font-size: 0.9rem; }
+.ck-section-icon { font-size: 0.85rem; }
 
 .ck-bullets {
   list-style: none;
@@ -181,8 +290,8 @@
 
 .ck-bullet {
   position: relative;
-  padding: 0.3rem 0 0.3rem 1.15rem;
-  font-size: 0.85rem;
+  padding: 0.25rem 0 0.25rem 1rem;
+  font-size: 0.82rem;
   line-height: 1.5;
   color: #212529;
   border-bottom: 1px solid #f5f5f5;
@@ -193,8 +302,8 @@
 .ck-bullet::before {
   content: '';
   position: absolute;
-  left: 0.15rem;
-  top: 0.65rem;
+  left: 0.1rem;
+  top: 0.6rem;
   width: 5px;
   height: 5px;
   border-radius: 50%;
@@ -211,40 +320,40 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
 }
 
 .ck-detector {
   padding: 0.12rem 0.45rem;
   border-radius: 10px;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 500;
 }
 
-.ck-detector--high { background: #f8d7da; color: #842029; }
+.ck-detector--high   { background: #f8d7da; color: #842029; }
 .ck-detector--medium { background: #fff3cd; color: #664d03; }
-.ck-detector--low { background: #e2e3e5; color: #41464b; }
+.ck-detector--low    { background: #e2e3e5; color: #41464b; }
 
 /* ── Drill links ─────────────────────────────────────── */
 
 .ck-drill-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.35rem;
   margin-top: 0.5rem;
 }
 
 .ck-drill-link {
   display: inline-flex;
   align-items: center;
-  padding: 0.3rem 0.6rem;
+  padding: 0.25rem 0.55rem;
   background: #f8f9fa;
   border: 1px solid #e9ecef;
   border-radius: 6px;
   color: #0d6efd;
   text-decoration: none;
   font-weight: 500;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   transition: all 0.15s;
 }
 
@@ -253,16 +362,175 @@
   border-color: #0d6efd;
 }
 
+/* ── Empty / utility ─────────────────────────────────── */
+
+.ck-empty {
+  font-size: 0.85rem;
+  color: #6c757d;
+  font-style: italic;
+}
+
+/* ── Market KPI Strip ────────────────────────────────── */
+
+.ck-market-kpi-strip {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.ck-market-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 60px;
+  padding: 0.35rem 0.5rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  flex: 1;
+}
+
+.ck-market-kpi-val {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.ck-market-kpi-label {
+  font-size: 0.68rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── KPI Colors ──────────────────────────────────────── */
+
+.ck-kpi--positive { color: #198754; }
+.ck-kpi--negative { color: #dc3545; }
+
+/* ── Top Movers ──────────────────────────────────────── */
+
+.ck-movers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.ck-movers-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ck-movers-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin: 0 0 0.15rem 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ck-movers-label--up   { color: #198754; }
+.ck-movers-label--down { color: #dc3545; }
+
+.ck-mover {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.ck-mover--up {
+  background: #e8f5e9;
+}
+
+.ck-mover--down {
+  background: #fbe9e7;
+}
+
+.ck-mover-symbol {
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.ck-mover-return {
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.ck-mover--up .ck-mover-return   { color: #198754; }
+.ck-mover--down .ck-mover-return { color: #dc3545; }
+
+/* ── Market Charts ───────────────────────────────────── */
+
+.ck-market-chart {
+  margin-bottom: 0.75rem;
+}
+
+.ck-chart-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #495057;
+  margin: 0 0 0.35rem 0;
+}
+
+/* ── KPI Grid (portfolio) ────────────────────────────── */
+
+.ck-kpi-grid {
+  margin-bottom: 0.5rem;
+}
+
+.ck-kpi-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.ck-kpi-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 80px;
+  padding: 0.4rem 0.6rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  flex: 1;
+}
+
+.ck-kpi-label {
+  font-size: 0.7rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ck-kpi-value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+/* ── Run Events ──────────────────────────────────────── */
+
+.ck-run-events {
+  margin-top: 0.5rem;
+}
+
 /* ── Upcoming Symbols ────────────────────────────────── */
 
 .ck-upcoming-list {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 
 .ck-upcoming-item {
-  padding: 0.65rem 0.85rem;
+  padding: 0.55rem 0.75rem;
   background: #f8f9fa;
   border: 1px solid #e9ecef;
   border-radius: 8px;
@@ -277,43 +545,43 @@
 .ck-upcoming-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.25rem;
 }
 
 .ck-upcoming-rank {
   font-weight: 700;
   color: #6c757d;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 
 .ck-upcoming-symbol {
   font-weight: 600;
   color: #0d6efd;
   text-decoration: none;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .ck-upcoming-symbol:hover { text-decoration: underline; }
 
 .ck-upcoming-market {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: #6c757d;
 }
 
 .ck-upcoming-score {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: #495057;
   margin-left: auto;
 }
 
 .ck-upcoming-bar-wrap {
-  height: 5px;
+  height: 4px;
   background: #e0e0e0;
   border-radius: 3px;
   overflow: hidden;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.25rem;
 }
 
 .ck-upcoming-bar {
@@ -330,7 +598,7 @@
 .ck-upcoming-detail {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: #6c757d;
 }
 
@@ -340,37 +608,37 @@
 }
 
 .ck-subsection-title {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: #198754;
-  margin: 1rem 0 0.5rem 0;
+  margin: 0.75rem 0 0.4rem 0;
 }
 
 /* ── Stage pills ─────────────────────────────────────── */
 
 .ck-stage-pill {
   display: inline-flex;
-  padding: 0.12rem 0.4rem;
-  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.68rem;
   font-weight: 600;
   border-radius: 4px;
 }
 
 .ck-stage-pill--insufficient { background: #f5d0d0; color: #8b0000; }
-.ck-stage-pill--warming-up { background: #f5e6c8; color: #7d5a00; }
-.ck-stage-pill--learning { background: #c8e0f5; color: #0a5276; }
-.ck-stage-pill--confident { background: #c8f5d0; color: #0d5c0d; }
+.ck-stage-pill--warming-up   { background: #f5e6c8; color: #7d5a00; }
+.ck-stage-pill--learning     { background: #c8e0f5; color: #0a5276; }
+.ck-stage-pill--confident    { background: #c8f5d0; color: #0d5c0d; }
 
 /* ── Insights mini grid ──────────────────────────────── */
 
 .ck-insights-grid {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.5rem;
 }
 
 .ck-insight-mini {
-  padding: 0.6rem 0.8rem;
+  padding: 0.5rem 0.7rem;
   background: #f8f9fa;
   border: 1px solid #e9ecef;
   border-radius: 8px;
@@ -380,25 +648,32 @@
 .ck-insight-mini-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  gap: 0.45rem;
+  margin-bottom: 0.2rem;
 }
 
 .ck-insight-mini-rank {
   font-weight: 700;
   color: #6c757d;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
 }
 
 .ck-insight-mini-symbol {
   font-weight: 600;
   color: #1a1a2e;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
+}
+
+.ck-insight-mini-score {
+  font-size: 0.72rem;
+  color: #495057;
+  margin-left: auto;
+  font-weight: 600;
 }
 
 .ck-insight-mini-why {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: #6c757d;
-  margin: 0.2rem 0 0 0;
+  margin: 0.15rem 0 0 0;
   line-height: 1.35;
 }

@@ -275,6 +275,21 @@
 .ck-health--stale { background: #fff3e0; color: #e65100; }
 .ck-health--broken { background: #fbe9e7; color: #b71c1c; }
 
+/* ── Nasdaq Badge ─────────────────────────────────────── */
+
+.ck-nasdaq-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #e6f5fb;
+  color: #0878a1;
+  border: 1px solid #b8e3f3;
+}
+
 /* ── Direction Badge ─────────────────────────────────── */
 
 .ck-direction-badge {

@@ -97,6 +97,18 @@ function HealthBadge({ healthState }) {
   return <span className={`ck-health-badge ${d.cls}`}>{d.label}</span>
 }
 
+function NasdaqBadge() {
+  return (
+    <span className="ck-nasdaq-badge" title="Data sourced from Nasdaq-listed symbols">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: '-2px', marginRight: '3px' }}>
+        <rect x="1" y="1" width="22" height="22" rx="4" fill="#0996C7" />
+        <path d="M7 17V7l10 10V7" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      Nasdaq
+    </span>
+  )
+}
+
 function DirectionBadge({ direction }) {
   const map = {
     UP: { label: 'Markets Up', cls: 'ck-dir--up', icon: '\u25B2' },
@@ -702,7 +714,7 @@ export default function Cockpit() {
             summary={marketSummary}
             accent="market"
             defaultOpen={false}
-            badges={<DirectionBadge direction={aggregate.direction} />}
+            badges={<><NasdaqBadge /><DirectionBadge direction={aggregate.direction} /></>}
           >
             {marketPulse ? (
               <>

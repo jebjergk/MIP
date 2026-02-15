@@ -11,6 +11,7 @@ use database MIP;
 create table if not exists MIP.APP.PARALLEL_WORLD_SCENARIO (
     SCENARIO_ID     number        autoincrement,
     NAME            varchar(128)  not null,
+    DISPLAY_NAME    varchar(256),
     DESCRIPTION     varchar(1024),
     SCENARIO_TYPE   varchar(32)   not null,       -- THRESHOLD | SIZING | TIMING | BASELINE
     PARAMS_JSON     variant       not null,
@@ -26,51 +27,61 @@ create table if not exists MIP.APP.PARALLEL_WORLD_SCENARIO (
 merge into MIP.APP.PARALLEL_WORLD_SCENARIO as target
 using (
     select column1 as NAME,
-           column2 as DESCRIPTION,
-           column3 as SCENARIO_TYPE,
-           parse_json(column4) as PARAMS_JSON
+           column2 as DISPLAY_NAME,
+           column3 as DESCRIPTION,
+           column4 as SCENARIO_TYPE,
+           parse_json(column5) as PARAMS_JSON
     from values
         ('THRESH_ZSCORE_MINUS_0_25',
+         'Looser Signal Filter (z-score -0.25)',
          'Lower z-score threshold by 0.25 — admits more signals (looser filter).',
          'THRESHOLD',
          '{"min_zscore_delta": -0.25}'),
         ('THRESH_ZSCORE_PLUS_0_25',
+         'Stricter Signal Filter (z-score +0.25)',
          'Raise z-score threshold by 0.25 — admits fewer signals (stricter filter).',
          'THRESHOLD',
          '{"min_zscore_delta": 0.25}'),
         ('THRESH_RETURN_MINUS_0_0005',
+         'Lower Return Bar (-0.05%)',
          'Lower min-return threshold by 0.05% — admits weaker momentum signals.',
          'THRESHOLD',
          '{"min_return_delta": -0.0005}'),
         ('THRESH_RETURN_PLUS_0_0005',
+         'Higher Return Bar (+0.05%)',
          'Raise min-return threshold by 0.05% — requires stronger momentum signals.',
          'THRESHOLD',
          '{"min_return_delta": 0.0005}'),
         ('SIZING_75PCT',
+         'Smaller Positions (75%)',
          'Reduce position sizing to 75% of profile max — more conservative allocation.',
          'SIZING',
          '{"position_pct_multiplier": 0.75}'),
         ('SIZING_125PCT',
+         'Larger Positions (125%)',
          'Increase position sizing to 125% of profile max (capped at capacity) — more aggressive allocation.',
          'SIZING',
          '{"position_pct_multiplier": 1.25}'),
         ('TIMING_DELAY_1_BAR',
+         'Wait 1 Day Before Entering',
          'Delay entry by 1 bar — enter on the following day instead of the signal day.',
          'TIMING',
          '{"entry_delay_bars": 1}'),
         ('DO_NOTHING',
+         'Stay in Cash (No Trades)',
          'Baseline: skip all entries, hold cash only. Shows the cost/benefit of any trading.',
          'BASELINE',
          '{"skip_all_entries": true}')
 ) as source
 on target.NAME = source.NAME
 when not matched then insert (
-    NAME, DESCRIPTION, SCENARIO_TYPE, PARAMS_JSON, IS_ACTIVE, CREATED_AT, UPDATED_AT
+    NAME, DISPLAY_NAME, DESCRIPTION, SCENARIO_TYPE, PARAMS_JSON, IS_ACTIVE, CREATED_AT, UPDATED_AT
 ) values (
-    source.NAME, source.DESCRIPTION, source.SCENARIO_TYPE, source.PARAMS_JSON,
+    source.NAME, source.DISPLAY_NAME, source.DESCRIPTION, source.SCENARIO_TYPE, source.PARAMS_JSON,
     true, current_timestamp(), current_timestamp()
 )
 when matched then update set
+    target.DISPLAY_NAME  = source.DISPLAY_NAME,
     target.DESCRIPTION   = source.DESCRIPTION,
     target.SCENARIO_TYPE = source.SCENARIO_TYPE,
     target.PARAMS_JSON   = source.PARAMS_JSON,

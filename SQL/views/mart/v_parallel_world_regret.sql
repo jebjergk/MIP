@@ -15,6 +15,7 @@ create or replace view MIP.MART.V_PARALLEL_WORLD_REGRET (
     AS_OF_TS,
     SCENARIO_ID,
     SCENARIO_NAME,
+    SCENARIO_DISPLAY_NAME,
     SCENARIO_TYPE,
     -- Daily metrics
     PNL_DELTA,
@@ -36,6 +37,7 @@ with daily_regret as (
         AS_OF_TS,
         SCENARIO_ID,
         SCENARIO_NAME,
+        SCENARIO_DISPLAY_NAME,
         SCENARIO_TYPE,
         PNL_DELTA,
         greatest(PNL_DELTA, 0) as DAILY_REGRET
@@ -46,6 +48,7 @@ select
     AS_OF_TS,
     SCENARIO_ID,
     SCENARIO_NAME,
+    SCENARIO_DISPLAY_NAME,
     SCENARIO_TYPE,
     PNL_DELTA,
     DAILY_REGRET,

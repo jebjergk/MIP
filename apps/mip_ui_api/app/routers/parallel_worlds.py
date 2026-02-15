@@ -7,10 +7,17 @@ import json
 
 from fastapi import APIRouter, Query, HTTPException
 
-from app.db import get_connection, fetch_all, serialize_row, serialize_rows
+from app.db import get_connection, serialize_row, serialize_rows
 
 
 router = APIRouter(prefix="/parallel-worlds", tags=["parallel-worlds"])
+
+
+def _fetch_all(cursor):
+    """Like db.fetch_all but lowercases column names for consistent key access."""
+    columns = [d[0].lower() for d in cursor.description]
+    rows = cursor.fetchall()
+    return [dict(zip(columns, row)) for row in rows]
 
 
 def _parse_json(value):
@@ -70,7 +77,7 @@ def get_scenarios():
     try:
         cur = conn.cursor()
         cur.execute(sql)
-        rows = fetch_all(cur)
+        rows = _fetch_all(cur)
         return {
             "scenarios": serialize_rows(rows),
             "count": len(rows),
@@ -107,6 +114,7 @@ def get_results(
         d.AS_OF_TS,
         d.SCENARIO_ID,
         d.SCENARIO_NAME,
+        d.SCENARIO_DISPLAY_NAME,
         d.SCENARIO_TYPE,
         d.ACTUAL_PNL,
         d.ACTUAL_RETURN_PCT,
@@ -139,7 +147,7 @@ def get_results(
     try:
         cur = conn.cursor()
         cur.execute(sql, tuple(params))
-        rows = fetch_all(cur)
+        rows = _fetch_all(cur)
         if not rows:
             return {"found": False, "message": "No parallel-worlds results found.", "scenarios": []}
 
@@ -163,6 +171,7 @@ def get_results(
             scenarios.append({
                 "scenario_id": r.get("scenario_id"),
                 "scenario_name": r.get("scenario_name"),
+                "display_name": r.get("scenario_display_name") or r.get("scenario_name"),
                 "scenario_type": r.get("scenario_type"),
                 "cf_pnl": r.get("cf_pnl"),
                 "cf_return_pct": r.get("cf_return_pct"),
@@ -203,6 +212,7 @@ def get_regret(
         AS_OF_TS,
         SCENARIO_ID,
         SCENARIO_NAME,
+        SCENARIO_DISPLAY_NAME,
         SCENARIO_TYPE,
         ROUND(PNL_DELTA, 2) AS PNL_DELTA,
         ROUND(DAILY_REGRET, 2) AS DAILY_REGRET,
@@ -223,7 +233,7 @@ def get_regret(
     try:
         cur = conn.cursor()
         cur.execute(sql, (portfolio_id, days))
-        rows = fetch_all(cur)
+        rows = _fetch_all(cur)
         return {
             "portfolio_id": portfolio_id,
             "days_requested": days,
@@ -299,6 +309,146 @@ def get_narrative(
 
 
 # ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/confidence
+# ──────────────────────────────────────────────────────────────
+@router.get("/confidence")
+def get_confidence(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+):
+    """Confidence classification for each scenario — signal strength + recommendation."""
+    sql = """
+    SELECT
+        PORTFOLIO_ID,
+        AS_OF_TS,
+        SCENARIO_ID,
+        SCENARIO_NAME,
+        SCENARIO_DISPLAY_NAME,
+        SCENARIO_TYPE,
+        TOTAL_DAYS,
+        ROUND(OUTPERFORM_PCT, 1) AS OUTPERFORM_PCT,
+        ROUND(CUMULATIVE_DELTA, 2) AS CUMULATIVE_DELTA,
+        ROUND(CUMULATIVE_REGRET, 2) AS CUMULATIVE_REGRET,
+        ROUND(ROLLING_AVG_DELTA_20D, 2) AS ROLLING_AVG_DELTA_20D,
+        CONFIDENCE_CLASS,
+        CONFIDENCE_REASON,
+        RECOMMENDATION_STRENGTH
+    FROM MIP.MART.V_PARALLEL_WORLD_CONFIDENCE
+    WHERE PORTFOLIO_ID = %s
+    ORDER BY
+        CASE CONFIDENCE_CLASS
+            WHEN 'STRONG' THEN 1
+            WHEN 'EMERGING' THEN 2
+            WHEN 'WEAK' THEN 3
+            ELSE 4
+        END,
+        CUMULATIVE_DELTA DESC
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (portfolio_id,))
+        rows = _fetch_all(cur)
+        return {
+            "portfolio_id": portfolio_id,
+            "data": serialize_rows(rows),
+            "count": len(rows),
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/policy-diagnostics
+# ──────────────────────────────────────────────────────────────
+@router.get("/policy-diagnostics")
+def get_policy_diagnostics(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+):
+    """Policy health summary — combines confidence, attribution, and stability."""
+    sql = """
+    SELECT
+        PORTFOLIO_ID,
+        TOTAL_SCENARIOS,
+        STRONG_SIGNALS,
+        EMERGING_SIGNALS,
+        WEAK_SIGNALS,
+        NOISE_SIGNALS,
+        POLICY_HEALTH,
+        POLICY_HEALTH_REASON,
+        DOMINANT_DRIVER_TYPE,
+        DOMINANT_DRIVER_LABEL,
+        ROUND(DOMINANT_DRIVER_REGRET, 2) AS DOMINANT_DRIVER_REGRET,
+        DOMINANT_DRIVER_BEST_SCENARIO,
+        DOMINANT_DRIVER_BEST_CONFIDENCE,
+        TOP_RECOMMENDATION,
+        TOP_RECOMMENDATION_TYPE,
+        STABILITY_SCORE,
+        STABILITY_LABEL
+    FROM MIP.MART.V_PARALLEL_WORLD_POLICY_DIAGNOSTICS
+    WHERE PORTFOLIO_ID = %s
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (portfolio_id,))
+        rows = _fetch_all(cur)
+        if not rows:
+            return {"found": False, "message": "No policy diagnostics available."}
+        return {
+            "found": True,
+            "portfolio_id": portfolio_id,
+            **serialize_row(rows[0]),
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/regret-attribution
+# ──────────────────────────────────────────────────────────────
+@router.get("/regret-attribution")
+def get_regret_attribution(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+):
+    """Regret attribution by scenario type — identifies the dominant regret driver."""
+    sql = """
+    SELECT
+        PORTFOLIO_ID,
+        SCENARIO_TYPE,
+        TYPE_LABEL,
+        SCENARIO_COUNT,
+        AVG_OUTPERFORM_PCT,
+        TOTAL_CUMULATIVE_DELTA,
+        TOTAL_CUMULATIVE_REGRET,
+        AVG_CUMULATIVE_DELTA,
+        AVG_ROLLING_AVG_DELTA_20D,
+        MAX_CUMULATIVE_DELTA,
+        BEST_SCENARIO_NAME,
+        BEST_SCENARIO_DISPLAY_NAME,
+        BEST_CONFIDENCE_CLASS,
+        REGRET_RANK,
+        IS_DOMINANT_DRIVER
+    FROM MIP.MART.V_PARALLEL_WORLD_REGRET_ATTRIBUTION
+    WHERE PORTFOLIO_ID = %s
+    ORDER BY REGRET_RANK
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (portfolio_id,))
+        rows = _fetch_all(cur)
+        dominant = next((r for r in rows if r.get("is_dominant_driver")), None)
+        return {
+            "portfolio_id": portfolio_id,
+            "data": serialize_rows(rows),
+            "dominant_driver": serialize_row(dominant) if dominant else None,
+            "count": len(rows),
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
 # GET /parallel-worlds/equity-curves
 # ──────────────────────────────────────────────────────────────
 @router.get("/equity-curves")
@@ -321,7 +471,7 @@ def get_equity_curves(
     SELECT
         r.AS_OF_TS,
         r.SCENARIO_ID,
-        COALESCE(s.NAME, 'ACTUAL') AS SCENARIO_NAME,
+        COALESCE(s.DISPLAY_NAME, s.NAME, 'ACTUAL') AS SCENARIO_NAME,
         r.WORLD_KEY,
         ROUND(r.END_EQUITY_SIMULATED, 2) AS EQUITY,
         ROUND(r.PNL_SIMULATED, 2) AS PNL,
@@ -340,7 +490,7 @@ def get_equity_curves(
     try:
         cur = conn.cursor()
         cur.execute(sql, tuple(params))
-        rows = fetch_all(cur)
+        rows = _fetch_all(cur)
 
         # Group by scenario for chart-friendly format
         by_scenario = {}

@@ -41,6 +41,7 @@ export default function UserGuide() {
               <li><a href="#page-market-timeline">Market Timeline</a> (18)</li>
               <li><a href="#page-runs">Runs (Audit Viewer)</a> (19)</li>
               <li><a href="#page-debug">Debug</a> (20)</li>
+              <li><a href="#page-parallel-worlds">Parallel Worlds</a> (21)</li>
             </ol>
           </div>
         </div>
@@ -2016,6 +2017,458 @@ export default function UserGuide() {
         </p>
       </section>
 
+      {/* ─── 21. PARALLEL WORLDS ─── */}
+      <section className="guide-section" id="page-parallel-worlds">
+        <h2>21. Parallel Worlds</h2>
+        <p className="guide-page-purpose">
+          A "what-if" laboratory for your trading rules. Parallel Worlds replays each day's real market data
+          through alternative rule sets and shows you what <em>would</em> have happened — without risking a
+          single dollar. It's like having a time machine that lets you test different decisions after the fact.
+        </p>
+
+        <div className="guide-example">
+          <div className="guide-example-title">Real-World Analogy</div>
+          <p>
+            Imagine you're a chess player reviewing a game you just finished. You wonder: "What if I'd
+            moved the bishop instead of the knight on move 12?" You replay from that point and discover
+            you would have won 3 moves sooner. That's Parallel Worlds — except instead of chess moves,
+            you're replaying market days with different trading rules and seeing whether those rules
+            would have made you more or less money.
+          </p>
+        </div>
+
+        {/* ── What Is Parallel Worlds? ── */}
+        <div className="guide-page-section">
+          <h3>What Is Parallel Worlds?</h3>
+          <p>
+            Every day, MIP runs your portfolio using your current rules: signal thresholds, position sizes,
+            entry timing, and risk gates. Parallel Worlds takes that <em>same</em> day's data and asks:
+          </p>
+          <ul>
+            <li><strong>What if we'd used a looser signal filter?</strong> — Would more trades have passed, and would they have been profitable?</li>
+            <li><strong>What if we'd used a tighter filter?</strong> — Would being pickier have avoided losses?</li>
+            <li><strong>What if we'd used bigger (or smaller) positions?</strong> — Would the extra (or reduced) exposure have helped?</li>
+            <li><strong>What if we'd waited a day before entering?</strong> — Would patience have gotten a better price?</li>
+            <li><strong>What if we'd done nothing at all?</strong> — Would staying in cash have been the best move?</li>
+          </ul>
+          <p>
+            Each of these alternatives is called a <strong>scenario</strong>. MIP runs all of them every day,
+            records the results, and builds up a history so you can see which alternative rules — if any —
+            <em>consistently</em> outperform your current approach.
+          </p>
+
+          <div className="guide-callout">
+            <strong>Key point:</strong> Parallel Worlds never changes your real portfolio. It's a read-only,
+            retrospective analysis. Think of it as a flight simulator — you learn from the replay without
+            any risk to the real plane.
+          </div>
+        </div>
+
+        {/* ── Policy Health Card ── */}
+        <div className="guide-page-section">
+          <h4>Policy Health Card (top of page)</h4>
+          <p>
+            This card gives you an instant, at-a-glance answer to the question: <strong>"Are my current
+            trading rules the best they can be?"</strong> It combines signal confidence, regret, and stability
+            into a single health assessment.
+          </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Health Badge</dt>
+            <dd>
+              A colored badge in the top-right corner. Possible values:
+              <br /><strong>Healthy</strong> (green) — No alternative rules reliably beat yours. Your approach is solid.
+              <br /><strong>Watch</strong> (blue) — Some early signals, but nothing definitive yet. Keep an eye on it.
+              <br /><strong>Monitor</strong> (orange) — A couple of scenarios are showing emerging patterns. Worth tracking.
+              <br /><strong>Review Suggested</strong> (orange) — One scenario consistently outperforms. Consider studying it.
+              <br /><strong>Needs Attention</strong> (red) — Multiple scenarios beat your rules. Time to investigate.
+              <br /><strong>Example:</strong> If you see <em>"Healthy"</em>, that means none of the alternative scenarios have
+              found a reliable way to beat your current approach — your rules are working well.
+            </dd>
+            <dt>Stability Gauge (0–100)</dt>
+            <dd>
+              A progress bar showing how "settled" your rules are. <strong>100</strong> means every alternative
+              scenario is noise — your rules are rock-solid. <strong>0</strong> would mean every alternative beats
+              you (extremely unlikely in practice).
+              <br /><strong>Example:</strong> "Stability 95/100, Very Stable" means 95% of alternative scenarios
+              can't beat you. Only 5% show any signal at all — and even those may be weak.
+            </dd>
+            <dt>Signal Breakdown</dt>
+            <dd>
+              Small colored badges showing how many scenarios fall into each confidence tier:
+              Strong (green), Emerging (blue), Weak (orange), Noise (gray). Most of the time,
+              you'll see mostly Noise badges — that's a good thing.
+              <br /><strong>Example:</strong> "Noise: 7, Weak: 1" means 7 out of 8 scenarios show no meaningful
+              difference, and 1 shows a faint pattern that isn't reliable yet.
+            </dd>
+            <dt>Biggest Regret Area</dt>
+            <dd>
+              Which <em>category</em> of rule changes accounts for the most regret (missed opportunity).
+              Categories are: Signal Filter, Position Size, Entry Timing, and Baseline (doing nothing).
+              <br /><strong>Example:</strong> "Baseline — $378 cumulative regret" means that over all the days measured,
+              doing absolutely nothing (staying in cash) would have avoided $378 in losses. That doesn't
+              mean "stop trading" — it means there were some rough days where cash was king.
+            </dd>
+            <dt>Top Candidate</dt>
+            <dd>
+              If any scenario shows a non-noise signal, the strongest one appears here by name.
+              <br /><strong>Example:</strong> "Stay in Cash (No Trades) — Baseline" would appear if the
+              do-nothing scenario had the only detectable signal. This is informational, not a recommendation.
+            </dd>
+          </dl>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Reading the Policy Health Card</div>
+            <p>
+              You open Parallel Worlds and see: <strong>Healthy</strong>, Stability <strong>95/100</strong>,
+              Signal Breakdown: <em>Noise: 7, Weak: 1</em>. The italic text at the bottom says:
+              "No scenarios reliably beat your current approach."
+            </p>
+            <p>
+              This tells you: your trading rules are performing well relative to alternatives. The one "Weak"
+              scenario is not consistent enough to worry about. No action needed — just keep running the pipeline
+              and the system will keep checking every day.
+            </p>
+          </div>
+        </div>
+
+        {/* ── AI Narrative Card ── */}
+        <div className="guide-page-section">
+          <h4>Parallel Worlds Analysis (AI Narrative)</h4>
+          <p>
+            An AI-written summary that reads all the numbers and tells you what matters in plain English.
+            The AI looks at today's scenario results, the decision traces, the regret trend, and writes
+            a brief story about what happened and whether anything is worth paying attention to.
+          </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>AI / Fallback Badge</dt>
+            <dd>
+              <strong>"AI"</strong> (purple gradient) means the narrative was generated by Snowflake Cortex AI,
+              grounded in today's actual snapshot data. <strong>"Fallback"</strong> (gray) means the AI was
+              unavailable and a simpler template-based summary was used instead.
+            </dd>
+            <dt>Headline</dt>
+            <dd>A one-sentence summary of today's most important parallel worlds finding.
+              <br /><strong>Example:</strong> "All 8 scenarios matched actual performance — current rules are well-calibrated."</dd>
+            <dt>Gate Analysis</dt>
+            <dd>Explains what happened at each decision gate (trust, risk, capacity, signal filters).
+              <br /><strong>Example:</strong> "Risk gate was open across all scenarios. The capacity gate held at 2/3 positions for all variants."</dd>
+            <dt>What-If Insights</dt>
+            <dd>Bullet points for the most noteworthy scenario comparisons.
+              <br /><strong>Example:</strong> "Lowering the z-score threshold would not have changed any entries — the signal pool was identical."</dd>
+            <dt>Regret Trend</dt>
+            <dd>Whether regret is growing, shrinking, or flat over time.
+              <br /><strong>Example:</strong> "Cumulative regret for the DO_NOTHING scenario has been climbing — 3 of the last 5 days, cash outperformed."</dd>
+            <dt>Consideration</dt>
+            <dd>A green-boxed suggestion — <em>not</em> a recommendation, but a thought to consider.
+              <br /><strong>Example:</strong> "The timing delay scenario has consistently underperformed. Current instant-entry approach appears optimal."</dd>
+          </dl>
+        </div>
+
+        {/* ── Scenario Comparison Table ── */}
+        <div className="guide-page-section">
+          <h4>Scenario Comparison Table</h4>
+          <p>
+            The main data table. Each row is one alternative universe — a different set of rules applied to
+            the same day. The table answers: "How much more (or less) money would each scenario have made?"
+          </p>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Column</th><th>What It Means</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>What If We Had...</strong></td>
+                  <td>The scenario's display name. Examples: "Looser Signal Filter (z-score -0.25)", "Bigger Positions (125%)", "Wait 1 Day Before Entering".</td>
+                </tr>
+                <tr>
+                  <td><strong>Category</strong></td>
+                  <td>Which type of rule was changed. Color-coded pill: Signal Filter (blue), Position Size (orange), Entry Timing (purple), Baseline (gray).</td>
+                </tr>
+                <tr>
+                  <td><strong>Scenario PnL</strong></td>
+                  <td>The profit or loss this scenario would have produced on that day. This is the "counterfactual" — the number from the alternative universe.</td>
+                </tr>
+                <tr>
+                  <td><strong>vs Actual</strong></td>
+                  <td>Scenario PnL minus your real PnL. <strong style={{color:'#198754'}}>Green positive</strong> = scenario was better. <strong style={{color:'#dc3545'}}>Red negative</strong> = your real approach was better. $0 = identical.</td>
+                </tr>
+                <tr>
+                  <td><strong>Equity Impact</strong></td>
+                  <td>Same idea as "vs Actual" but applied to total portfolio equity. Shows the dollar difference in end-of-day portfolio value.</td>
+                </tr>
+                <tr>
+                  <td><strong># Trades</strong></td>
+                  <td>How many trades the scenario would have taken. Compare to your actual trade count to see if the scenario is more or less active.</td>
+                </tr>
+                <tr>
+                  <td><strong>Signal</strong></td>
+                  <td>The confidence badge for this scenario (see Signal Confidence section below). Shows whether the scenario's outperformance is reliable or just noise.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Reading a Row</div>
+            <p>
+              You see a row that says: <strong>"Looser Signal Filter (z-score -0.25)"</strong>, Category: <em>Signal Filter</em>,
+              Scenario PnL: <strong>$142</strong>, vs Actual: <strong style={{color:'#198754'}}>+$42</strong>,
+              Equity Impact: <strong style={{color:'#198754'}}>+$42</strong>, # Trades: <strong>5</strong>, Signal: <em>Noise</em>.
+            </p>
+            <p className="guide-example-numbers">
+              This means: if you had lowered your signal filter's z-score threshold by 0.25, you would have made
+              $142 instead of your actual $100 — a $42 improvement. But the "Noise" badge tells you this is
+              probably a one-day fluke, not a reliable pattern. Don't change your rules based on a single green day.
+            </p>
+          </div>
+
+          <h5>Row Highlighting</h5>
+          <p>
+            Rows with a light green background are scenarios that <strong>outperformed</strong> your actual result
+            on that day. This is purely visual — it doesn't mean the scenario is "better" in a reliable sense.
+            Look at the Signal badge for the confidence assessment.
+          </p>
+
+          <h5>Expandable Detail Row (Decision Trace)</h5>
+          <p>
+            Click the arrow on any row to expand it and see the <strong>Decision Trace</strong> — a human-readable
+            explanation of what happened at each decision gate in that scenario. Instead of raw numbers, you'll
+            see plain English sentences.
+          </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Gate Cards</dt>
+            <dd>
+              Each card represents one decision gate (Threshold, Trust, Sizing, Timing, Baseline). The left
+              border is color-coded: <strong style={{color:'#198754'}}>green</strong> = passed,
+              <strong style={{color:'#dc3545'}}> red</strong> = blocked,
+              <strong style={{color:'#fd7e14'}}> orange</strong> = modified or delayed.
+            </dd>
+            <dt>Status Label</dt>
+            <dd>A small badge inside each card: PASSED, BLOCKED, MODIFIED, DELAYED, or INFO.</dd>
+            <dt>Explanation Text</dt>
+            <dd>
+              A sentence written in plain English explaining what happened.
+              <br /><strong>Example (Timing):</strong> "Delayed entry by 1 bar. No trades were affected."
+              <br /><strong>Example (Threshold):</strong> "No signals changed eligibility."
+              <br /><strong>Example (Baseline):</strong> "This scenario skips all trade entries (stay in cash)."
+              <br /><strong>Example (Sizing):</strong> "Position size multiplier: 1.25x. Max position moved from 15.0% to 18.8%. No PnL change."
+            </dd>
+          </dl>
+        </div>
+
+        {/* ── Signal Confidence Panel ── */}
+        <div className="guide-page-section">
+          <h4>Signal Confidence Panel</h4>
+          <p>
+            This panel answers: <strong>"Can I trust this scenario's results, or is it just random noise?"</strong>
+            A single good day doesn't prove anything. The confidence classifier looks at <em>win-rate</em>
+            (how often the scenario beats you), <em>cumulative impact</em> (total dollars of difference),
+            and <em>consistency</em> (rolling trend) to sort each scenario into one of four tiers.
+          </p>
+          <div className="guide-metric-table">
+            <table>
+              <thead>
+                <tr><th>Tier</th><th>Color</th><th>What It Means</th><th>Example</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Strong</strong></td>
+                  <td>Green</td>
+                  <td>This scenario reliably outperforms your rules — high win rate, many days of data, positive trend. Worth investigating seriously.</td>
+                  <td>"Wins 75% over 15 days, avg +$12/day"</td>
+                </tr>
+                <tr>
+                  <td><strong>Emerging</strong></td>
+                  <td>Blue</td>
+                  <td>A pattern is forming but it's too early to be sure. Keep watching — it might become Strong, or it might fade.</td>
+                  <td>"Wins 60% over 8 days — emerging pattern"</td>
+                </tr>
+                <tr>
+                  <td><strong>Weak</strong></td>
+                  <td>Orange</td>
+                  <td>Some signal exists but it's not consistent. Could be meaningful, could be coincidence.</td>
+                  <td>"Wins 45% but not yet consistent"</td>
+                </tr>
+                <tr>
+                  <td><strong>Noise</strong></td>
+                  <td>Gray</td>
+                  <td>No meaningful difference from your actual approach. Either too few days of data, negligible dollar impact, or low win rate. Ignore it.</td>
+                  <td>"Cumulative impact is negligible ($0.50)" or "Too few days of data (2)"</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Interpreting the Panel</div>
+            <p>
+              You see 8 scenarios listed. Seven say "Noise" and one says "Weak — Wins 60% but not yet consistent."
+              The Weak scenario is "Stay in Cash (No Trades)" with a cumulative delta of -$104.
+            </p>
+            <p className="guide-example-numbers">
+              This means: the do-nothing approach won on 6 out of 10 days (60%), but overall it still
+              lost $104 compared to your actual trading. So even though it "won" more days, the days
+              you actually traded profitably were bigger wins. The classifier correctly marks it as
+              "Weak" — not reliable enough to act on.
+            </p>
+          </div>
+
+          <div className="guide-callout">
+            <strong>Why Noise is good news:</strong> If most scenarios show "Noise," that means the system
+            couldn't find any rule changes that would reliably beat your current approach. Your rules are
+            well-calibrated. Think of it like a doctor's checkup — "nothing unusual" is exactly what you
+            want to hear.
+          </div>
+        </div>
+
+        {/* ── Equity Curves Chart ── */}
+        <div className="guide-page-section">
+          <h4>Equity Curves Chart</h4>
+          <p>
+            A line chart showing how your portfolio equity evolved over time — and how each scenario
+            <em> would have</em> evolved if you'd used different rules from the start.
+          </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Solid Blue Line</dt>
+            <dd>Your actual portfolio equity over time. This is the ground truth — what really happened.</dd>
+            <dt>Dashed Colored Lines</dt>
+            <dd>Each dashed line represents one scenario. If a dashed line is <strong>above</strong> the solid
+              line, that scenario would have produced more wealth. If <strong>below</strong>, your approach
+              was better.
+              <br /><strong>Example:</strong> If the "Bigger Positions (125%)" dashed line hovers just above
+              your solid line for a week, that scenario would have compounded slightly better — but check
+              the confidence tier before drawing conclusions.</dd>
+            <dt>Hovering</dt>
+            <dd>Hover over any point to see the exact equity value for each line on that date.</dd>
+            <dt>Convergence</dt>
+            <dd>If all lines are bunched tightly together, the scenarios didn't make much difference. If lines
+              diverge widely, small rule changes had a big impact — which is worth understanding why.</dd>
+          </dl>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Reading the Chart</div>
+            <p>
+              You see your solid blue line at $50,000 and a dashed purple line (Looser Signal Filter) at $50,200.
+              That $200 gap means: over the entire period, loosening the filter would have made about $200 more.
+              But if the confidence is "Noise," that $200 could easily flip to -$200 next week.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Regret Attribution ── */}
+        <div className="guide-page-section">
+          <h4>Regret Attribution</h4>
+          <p>
+            Think of this as a <strong>report card for your rule categories</strong>. Instead of looking at
+            individual scenarios, it groups them by type — Signal Filter, Position Size, Entry Timing,
+            Baseline — and tells you which <em>category</em> of rules accounts for the most missed opportunity.
+          </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Dominant Regret Driver</dt>
+            <dd>
+              A highlighted bar at the top showing which rule category has the most cumulative regret.
+              Regret here means "the total amount the best scenario in that category would have beaten you by,
+              summed across all days."
+              <br /><strong>Example:</strong> "Baseline — $378 cumulative regret" means over all measured days,
+              staying in cash (the best Baseline scenario) would have avoided $378 in losses.
+              This doesn't mean you should stop trading — it means some of your trades had rough days.
+            </dd>
+            <dt>Category Cards</dt>
+            <dd>
+              One card per rule category, ranked by regret. Each card shows:
+              <br /><strong>Avg win rate</strong> — how often that category's scenarios beat you.
+              <br /><strong>Cumulative regret</strong> — total missed opportunity in dollars.
+              <br /><strong>Best delta</strong> — the single best scenario's cumulative dollar advantage (or disadvantage).
+              <br /><strong>Best scenario name</strong> — which specific scenario in that category was strongest, plus its confidence badge.
+            </dd>
+            <dt>Blue left border</dt>
+            <dd>The card with the blue left border is the dominant driver — the #1 regret category.</dd>
+          </dl>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Reading the Attribution</div>
+            <p>
+              You see four cards: Baseline (rank #1, $378 regret), Entry Timing (#2, $31 regret),
+              Signal Filter (#3, $0 regret), Position Size (#4, $0 regret).
+            </p>
+            <p className="guide-example-numbers">
+              The takeaway: most of the "missed opportunity" comes from the Baseline category — meaning
+              there were days when doing nothing would have been better. Signal filters and position sizes
+              made no difference at all (zero regret), so those rules are well-tuned. Entry timing showed
+              a tiny $31 regret — negligible. Overall, your rules are working well.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Regret Heatmap ── */}
+        <div className="guide-page-section">
+          <h4>Regret Heatmap</h4>
+          <p>
+            A color-coded grid that shows how each scenario performed on each day. Each cell is one
+            scenario on one day. It's the most detailed view — you can spot trends, streaks, and outliers
+            at a glance.
+          </p>
+          <dl className="guide-kv guide-kv--wide">
+            <dt>Rows</dt>
+            <dd>Each row is one scenario (by name). All scenarios appear, sorted alphabetically.</dd>
+            <dt>Columns</dt>
+            <dd>Each column is one date (short format like "Feb 10"). The most recent date is on the right.</dd>
+            <dt>Cell Color</dt>
+            <dd>
+              <strong style={{color:'#198754'}}>Green</strong> = the scenario beat your actual result that day (positive delta).
+              <strong style={{color:'#dc3545'}}> Red</strong> = your actual result was better (negative delta).
+              <strong>Gray</strong> = no difference ($0).
+              <br />The <em>intensity</em> of the color shows how large the difference was. A bright green
+              cell means a big positive delta; a pale green cell means a small one.
+            </dd>
+            <dt>Cell Value</dt>
+            <dd>The dollar amount shown inside each cell. Hover for the full detail tooltip.</dd>
+          </dl>
+
+          <div className="guide-example">
+            <div className="guide-example-title">Example: Reading the Heatmap</div>
+            <p>
+              You look at the "Stay in Cash" row and see: Feb 3: <strong style={{color:'#dc3545'}}>-$45</strong>,
+              Feb 4: <strong style={{color:'#198754'}}>+$20</strong>,
+              Feb 5: <strong style={{color:'#198754'}}>+$60</strong>,
+              Feb 6: <strong style={{color:'#dc3545'}}>-$12</strong>,
+              Feb 7: <strong style={{color:'#198754'}}>+$15</strong>.
+            </p>
+            <p className="guide-example-numbers">
+              This means: on Feb 3, your actual trading made $45 more than doing nothing — good day.
+              On Feb 5, doing nothing would have saved you $60 — bad day for your trades.
+              The mix of green and red tells you the cash scenario is not consistently better; it won
+              3 of 5 days but the win sizes varied. If the entire row were solid green, that would be
+              a much stronger signal that something needs to change.
+            </p>
+          </div>
+        </div>
+
+        {/* ── What Parallel Worlds Is NOT ── */}
+        <div className="guide-page-section">
+          <h3>What Parallel Worlds Is NOT</h3>
+          <div className="guide-callout--warn guide-callout">
+            <strong>Important clarifications</strong>
+            <br />
+            <strong>Not a crystal ball.</strong> Parallel Worlds looks backward, not forward. It tells you what
+            <em> would have</em> happened, not what <em>will</em> happen. Past patterns may not repeat.
+            <br /><br />
+            <strong>Not a recommendation to change your rules.</strong> Even a "Strong" confidence signal
+            is informational, not prescriptive. Markets change, and a scenario that outperformed last
+            week might underperform next week. Use the data to <em>understand</em> your rules, not to
+            blindly change them.
+            <br /><br />
+            <strong>Not live trading.</strong> No money is at risk. Parallel Worlds never places trades,
+            modifies positions, or changes any portfolio settings. It's purely analytical.
+            <br /><br />
+            <strong>Not random.</strong> Every simulation is <strong>deterministic</strong> — run it twice with
+            the same data and you get the same result. There's no randomness, no Monte Carlo sampling.
+            The numbers are exact "what-if" calculations.
+          </div>
+        </div>
+      </section>
+
       {/* ═══════════════════════════════════════════════════════════════ */}
       {/* GLOSSARY / QUICK REFERENCE                                     */}
       {/* ═══════════════════════════════════════════════════════════════ */}
@@ -2052,6 +2505,14 @@ export default function UserGuide() {
               <tr><td><strong>Notional</strong></td><td>The total monetary value of a trade: Price × Quantity. A buy of 100 shares at $150 = $15,000 notional.</td></tr>
               <tr><td><strong>Cost Basis</strong></td><td>The average price at which a position was entered, adjusted for deposits and withdrawals. Used to calculate unrealized profit/loss.</td></tr>
               <tr><td><strong>Portfolio Story</strong></td><td>An AI-generated narrative biography of a portfolio — covering its creation, cash events, episodes, crystallizations, and current outlook. Found in Portfolio Management → Portfolio Story tab.</td></tr>
+              <tr><td><strong>Parallel Worlds</strong></td><td>A read-only "what-if" analysis system. Replays each day's market data through alternative rule sets (scenarios) and compares their outcomes to your actual results. Never affects your real portfolio.</td></tr>
+              <tr><td><strong>Scenario</strong></td><td>An alternative set of trading rules used in Parallel Worlds. Examples: "Looser Signal Filter," "Bigger Positions (125%)," "Wait 1 Day Before Entering," "Stay in Cash." Each scenario produces a counterfactual PnL.</td></tr>
+              <tr><td><strong>Counterfactual</strong></td><td>The hypothetical outcome that would have occurred under different rules. "Counterfactual PnL of $142" means the scenario would have made $142 that day, compared to your actual result.</td></tr>
+              <tr><td><strong>Regret</strong></td><td>The dollar amount by which a scenario outperformed your actual result, summed over time. Regret of $50 means the scenario's cumulative advantage is $50. Only positive differences count — days you beat the scenario don't reduce regret.</td></tr>
+              <tr><td><strong>Confidence Class</strong></td><td>A reliability tier assigned to each scenario: Strong (reliable outperformance), Emerging (pattern forming), Weak (inconsistent), or Noise (no meaningful signal). Based on win-rate, cumulative impact, and rolling consistency.</td></tr>
+              <tr><td><strong>Decision Trace</strong></td><td>A human-readable record of what happened at each decision gate (Trust, Risk, Threshold, Sizing, Timing) during a scenario's simulation. Shows which gates passed, blocked, or modified trades, and explains why in plain English.</td></tr>
+              <tr><td><strong>Policy Health</strong></td><td>An at-a-glance assessment of whether your current trading rules are optimal. Combines confidence signals, regret attribution, and stability into a single health rating: Healthy, Watch, Monitor, Review Suggested, or Needs Attention.</td></tr>
+              <tr><td><strong>Stability Score</strong></td><td>A 0–100 score measuring how "settled" your trading rules are. 100 = every alternative is noise (very stable). Lower scores mean more scenarios are showing signal, suggesting your rules might benefit from review.</td></tr>
             </tbody>
           </table>
         </div>

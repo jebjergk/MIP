@@ -18,6 +18,7 @@ create or replace view MIP.MART.V_PARALLEL_WORLD_DIFF (
     EPISODE_ID,
     SCENARIO_ID,
     SCENARIO_NAME,
+    SCENARIO_DISPLAY_NAME,
     SCENARIO_TYPE,
     -- Actual metrics
     ACTUAL_PNL,
@@ -57,6 +58,7 @@ select
     cf.EPISODE_ID,
     cf.SCENARIO_ID,
     s.NAME                                          as SCENARIO_NAME,
+    coalesce(s.DISPLAY_NAME, s.NAME)                as SCENARIO_DISPLAY_NAME,
     s.SCENARIO_TYPE,
     -- Actual
     act.PNL_SIMULATED                               as ACTUAL_PNL,

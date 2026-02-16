@@ -2,7 +2,7 @@
 ## Advertising Deck
 
 **For:** Traders, Market Makers, Investment Bank Leadership  
-**Date:** January 2026
+**Date:** February 2026
 
 ---
 
@@ -10,11 +10,11 @@
 
 # Market Intelligence Platform (MIP)
 
-### Automated Signal Generation, Portfolio Simulation & AI-Ready Decision Support
+### Signal R&D | Trust Engine | Risk-Managed Paper Trading | AI Intelligence
 
 **Vision Statement**
 
-MIP transforms raw market data into actionable trading intelligence through automated pattern recognition, systematic evaluation, and portfolio simulation. Built natively on Snowflake, MIP delivers production-ready analytics that scale from daily operations to autonomous decision support.
+MIP transforms raw market data into actionable trading intelligence through automated pattern recognition, trust-based signal classification, risk-managed portfolio simulation, and AI-generated daily intelligence briefs. Built natively on Snowflake, MIP delivers a full-stack research and decision-support platform — from data ingestion to plain-English morning reports — with zero external compute.
 
 **Target Audience**
 - Traders seeking systematic signal validation and multi-horizon analysis
@@ -23,743 +23,312 @@ MIP transforms raw market data into actionable trading intelligence through auto
 
 ---
 
-## Slide 2: What is MIP?
+## Slide 2: The Challenge
 
-**Core Definition**
+**Pain Points MIP Addresses**
 
-MIP (Market Intelligence Platform) is a **Snowflake-native analytics pipeline** that ingests daily market bars, calculates returns, generates recommendations, evaluates outcomes, runs portfolio simulations, and writes morning briefs—all within Snowflake's secure, scalable infrastructure.
+| Challenge | Impact |
+|-----------|--------|
+| **Manual Discovery Doesn't Scale** | Traders scan charts by eye. Covering 50+ instruments across timeframes is impossible manually. Good signals get missed every day. |
+| **No Continuous Evaluation** | A pattern that worked last quarter may be failing now. Without systematic outcome tracking at multiple horizons, we trade on assumptions, not evidence. |
+| **Ad Hoc Paper Trading** | No standardised risk framework, no audit trail, no episode management. Results are anecdotal, not measurable. |
+| **Missing the 'Why'** | When PnL moves, the narrative is missing. Why did we enter? What signal drove it? What's the risk state now? |
 
-### Key Capabilities
-
-- **Automated Daily Market Data Ingestion**
-  - Multi-asset support: STOCK, ETF, FX markets
-  - External API integration (AlphaVantage) with graceful rate limit handling
-  - Idempotent operations ensuring data consistency
-
-- **Pattern-Based Recommendation Generation**
-  - Momentum-based signal generation across market types
-  - Score calibration and threshold gating
-  - Deduplication logic preventing duplicate recommendations
-
-- **Multi-Horizon Outcome Evaluation**
-  - Forward-looking evaluation at 1, 3, 5, 10, and 20 bar horizons
-  - Realized return calculation with hit rate tracking
-  - Coverage metrics indicating recommendation maturity
-
-- **Portfolio Simulation with Risk Controls**
-  - Paper trading with drawdown stops and position limits
-  - Daily equity tracking and PnL attribution
-  - Risk-aware entry/exit logic
-
-- **AI-Ready Morning Briefs**
-  - Structured JSON outputs for agent consumption
-  - Portfolio status, recommendations, and risk summaries
-  - Delta tracking showing changes since last run
-
-**Architecture Highlight**
-
-Fully native to Snowflake—no external runtime dependencies for core pipeline operations. All logic executes as stored procedures, tasks, and views within Snowflake's secure environment.
+**The gap isn't ideas — it's disciplined, continuous evaluation of those ideas at scale.**
 
 ---
 
-## Slide 3: Current State - Phase 1 Complete
+## Slide 3: What MIP Does
 
-**Status: Foundation Phase Operational and Stable**
+**A Snowflake-native daily pipeline that ingests market data, detects momentum patterns, evaluates their reliability over time, and runs risk-managed paper portfolios — with AI-generated daily briefs explaining what happened and why.**
 
-### Phase 1 Achievements ✅
+### Pipeline Flow
 
-**Pipeline Automation**
-- ✅ End-to-end daily pipeline automation via `SP_RUN_DAILY_PIPELINE`
-- ✅ Scheduled execution via `TASK_RUN_DAILY_PIPELINE` (07:00 Europe/Berlin)
-- ✅ Structured audit logging with JSON details for every step
-
-**Multi-Market Support**
-- ✅ STOCK, ETF, and FX universe support (24+ symbols across types)
-- ✅ AlphaVantage integration with external access
-- ✅ Graceful rate limit handling (`SUCCESS_WITH_SKIPS` status)
-- ✅ Smart skip logic when no new bars detected (`SKIPPED_NO_NEW_BARS`)
-
-**Signal Generation & Evaluation**
-- ✅ Pattern-based recommendations with threshold gating
-- ✅ Deduplication preventing duplicate signals for same timestamp
-- ✅ Multi-horizon evaluation (1/3/5/10/20 bars) generating hundreds of outcomes per run
-- ✅ Outcome tracking with hit rate, average return, and score correlation metrics
-
-**Portfolio Simulation**
-- ✅ Portfolio simulation engine creating 4-5 trades per run
-- ✅ Drawdown stop mechanism triggering `ALLOW_EXITS_ONLY` regime
-- ✅ Position limits and exposure controls
-- ✅ Daily equity series, total return, win/loss day tracking
-
-**Observability & Outputs**
-- ✅ Comprehensive audit trail in `MIP_AUDIT_LOG`
-- ✅ Morning brief generation with structured JSON
-- ✅ KPI views for portfolio runs, attribution, and signal quality
-
-**Current Focus**
-
-Stabilizing pipeline behavior under repeated runs and rate limits. Ensuring downstream steps correctly skip when no new data is available, maintaining idempotency across all operations.
-
----
-
-## Slide 4: Where We Are Now
-
-### Three-Phase Roadmap Progress
-
-```mermaid
-gantt
-    title MIP Development Roadmap
-    dateFormat YYYY-MM
-    section Phase 1
-    Foundation (Daily bars → Signals → Evaluation)    :done, phase1, 2025-01, 2026-01
-    section Phase 2
-    Paper Portfolio Execution (Realistic Mechanics)  :active, phase2, 2026-01, 2026-06
-    section Phase 3
-    Risk Layer + Hedging + AI Support                :phase3, 2026-06, 2026-12
+```
+Ingest → Detect → Evaluate → Classify → Simulate → Narrate
 ```
 
-**Phase 1: ✅ COMPLETE**
-- Foundation: Daily bars → Signals → Evaluation
-- Status: Production-ready daily pipeline with portfolio simulation
-- Key Deliverable: Reliable, idempotent pipeline generating trustworthy outcome data
+| Step | What It Does | Details |
+|------|-------------|---------|
+| **Ingest** | Market Data | AlphaVantage OHLC data for stocks, ETFs, FX |
+| **Detect** | Pattern Signals | Momentum crossovers with z-score and return filters |
+| **Evaluate** | Outcome Tracking | Forward returns at 1, 3, 5, 10, 20 bar horizons |
+| **Classify** | Trust Labels | TRUSTED / WATCH / UNTRUSTED based on track record |
+| **Simulate** | Paper Trading | Multi-portfolio, risk-managed, episode-based |
+| **Narrate** | AI Intelligence | Snowflake Cortex daily briefs, digests, Ask MIP |
 
-**Phase 2: ⏳ IN PROGRESS**
-- Paper portfolio execution with realistic mechanics
-- Current Focus: Profile tuning knobs and training mode optimization
-- Next Unlock: Cash management, transaction costs, enhanced exposure controls
-
-**Phase 3: ⬜ PLANNED**
-- Risk layer + Hedging + AI Brief/Suggestions
-- Vision: Risk-aware proposals with explainability and autonomous decision support
-
-**Progress Summary**
-
-- **Phase 1 Completion:** ~100% (all core objectives met)
-- **Phase 2 Progress:** ~30% (portfolio simulation working, tuning in progress)
-- **Phase 3 Progress:** ~10% (morning brief mechanism exists, content upgrade planned)
-
-**Key Milestone Achieved**
-
-Production-ready daily pipeline with portfolio simulation, risk controls, and comprehensive observability. System successfully handles rate limits, detects no-new-bars scenarios, and maintains data integrity across repeated runs.
+**Everything runs inside Snowflake. No external compute. No infrastructure to manage. One pipeline, one database, full audit trail.**
 
 ---
 
-## Slide 5: Technical Architecture Highlights
+## Slide 4: Technical Architecture
 
-### Data Flow Pipeline
+### Three-Layer Architecture
 
-```mermaid
-flowchart LR
-    INGEST[Market Data<br/>Ingestion<br/>AlphaVantage API] --> BARS[Market Bars<br/>MIP.MART.MARKET_BARS]
-    BARS --> RETURNS[Returns Layer<br/>MIP.MART.MARKET_RETURNS]
-    RETURNS --> RECS[Recommendations<br/>MIP.APP.RECOMMENDATION_LOG]
-    RECS --> EVAL[Outcome Evaluation<br/>MIP.APP.RECOMMENDATION_OUTCOMES]
-    RECS --> PORT[Portfolio Simulation<br/>MIP.APP.PORTFOLIO_*]
-    EVAL --> KPIS[KPI Layer<br/>MIP.MART.V_*_KPIS]
-    PORT --> KPIS
-    KPIS --> BRIEF[Morning Brief<br/>MIP.AGENT_OUT.MORNING_BRIEF]
-    
-    style INGEST fill:#e1f5ff
-    style BRIEF fill:#fff4e1
-    style KPIS fill:#e8f5e9
+```
+┌─────────────────────────────────────────────────────────────┐
+│  React Dashboard                                            │
+│  Real-time monitoring, 7 research screens, explain mode,    │
+│  Ask MIP AI assistant                                       │
+├─────────────────────────────────────────────────────────────┤
+│  FastAPI (Read-Only)                                        │
+│  RESTful endpoints, keypair auth, cost-optimised polling    │
+├─────────────────────────────────────────────────────────────┤
+│  Snowflake (Core Engine)                                    │
+│  Stored procedures, Cortex AI, scheduled tasks,             │
+│  all business logic — zero external compute                 │
+│                                                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │ APP      │  │ MART     │  │ AGENT_OUT│  │ RAW_EXT  │   │
+│  │ Tables,  │  │ Views,   │  │ Briefs,  │  │ External │   │
+│  │ SPs,     │  │ analytics│  │ digests, │  │ data     │   │
+│  │ trades   │  │ KPIs     │  │ proposals│  │ APIs     │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Key Components
+**Key Infrastructure Decisions:**
+- All logic executes as Snowflake stored procedures — no external runtime
+- Scheduled daily task (`TASK_RUN_DAILY_PIPELINE`) at 07:00 Europe/Berlin
+- Snowflake Cortex for AI narrative generation
+- Keypair authentication — no passwords, no MFA prompts
+- Visibility-aware frontend polling — warehouse auto-suspends when idle, zero cost overnight
 
-**Automated Ingestion**
-- External API integration via Snowflake external access
-- Graceful degradation: rate limit handling, no-new-bars detection
-- Idempotent upserts preventing duplicate data
+---
 
-**Multi-Horizon Evaluation**
-- Forward-looking analysis at 1, 3, 5, 10, 20 bar horizons
+## Slide 5: The Training Engine
+
+**Signals must prove themselves through data before they can drive paper trades.**
+
+### Signal Generation
+- Momentum patterns: fast MA crosses slow MA
+- Filters: minimum return, minimum z-score, minimum volume
+- Configurable parameters stored in database
+- Each signal gets a score and BUY/SELL action
+- Full audit trail in RECOMMENDATION_LOG
+
+### Multi-Horizon Evaluation
+Every signal is tracked at **5 forward horizons**: 1, 3, 5, 10, 20 bars ahead.
 - Realized return calculation with entry/exit price tracking
-- Coverage metrics indicating data maturity
+- Hit rate, average return, coverage metrics
+- Score-return correlation validation
 
-**Portfolio Simulation Engine**
-- Paper trading with realistic constraints
-- Drawdown stops triggering regime changes
-- Position limits and exposure controls
-- Daily equity series and PnL attribution
+### Trust Classification
 
-**KPI Layer**
-- Portfolio run KPIs (returns, volatility, drawdown, win/loss days)
-- Attribution by symbol, pattern, and market type
-- Signal quality metrics (hit rate, score correlation, coverage)
-- Training leaderboards for pattern performance
+| Level | Criteria | Action |
+|-------|----------|--------|
+| **TRUSTED** | 30+ successes, 80%+ coverage, positive returns | Can generate trade proposals |
+| **WATCH** | Meets sample + coverage thresholds, returns neutral | Monitored — not trading yet |
+| **UNTRUSTED** | Insufficient data or poor performance | Ignored — no action |
 
-**Agent-Ready Outputs**
-- Structured JSON morning briefs
-- Portfolio status, recommendations, risk summaries
-- Delta tracking for change detection
+### Maturity Journey
+```
+INSUFFICIENT → WARMING UP → LEARNING → CONFIDENT
+```
 
-### Infrastructure
-
-**Snowflake-Native Architecture**
-- Stored procedures for orchestration (`SP_RUN_DAILY_PIPELINE`)
-- Scheduled tasks for automation (`TASK_RUN_DAILY_PIPELINE`)
-- Views for analytics and reporting (`MIP.MART.V_*`)
-- Schemas organized by responsibility (RAW_EXT, MART, APP, AGENT_OUT)
-
-**Security & Roles**
-- Role-based access: `MIP_ADMIN_ROLE`, `MIP_APP_ROLE`, `MIP_AGENT_READ_ROLE`
-- Dedicated warehouse: `MIP_WH_XS` for ingestion, analytics, and Streamlit
+Each pattern-instrument pair progresses through maturity stages with a 0-100 maturity score, visible in the Training Status screen.
 
 ---
 
-## Slide 6: Value Proposition - For Traders
+## Slide 6: Portfolio Simulation & Risk Management
 
-### Signal Quality & Validation
+### Multi-Portfolio Paper Trading
+- Run multiple strategies simultaneously
+- Episode-based lifecycle management
+- Each portfolio has a configurable risk profile
+- Daily equity snapshots with full attribution
+- Crystallisation: profit-taking with cooldown periods
+- Immutable event log (deposits, withdrawals, busts)
 
-**Pattern-Based Recommendations**
-- Systematic momentum pattern identification
-- Score calibration with decile-based expected returns
-- Threshold gating filtering low-confidence signals
-- Deduplication ensuring one signal per symbol/timestamp
+### Risk Gate System
 
-**Multi-Horizon Analysis**
-- Evaluate signals across 1, 3, 5, 10, 20 bar horizons simultaneously
-- Forward-looking realized return tracking
-- Coverage metrics showing recommendation maturity
-- Hit rate calculation by threshold (default: non-negative returns)
+| State | Meaning |
+|-------|---------|
+| **SAFE** (Green) | All entries allowed |
+| **CAUTION** (Orange) | Approaching drawdown threshold |
+| **STOPPED** (Red) | New entries blocked, exits only |
 
-**Training KPIs for Pattern Validation**
-- Hit rate: success rate by pattern and horizon
-- Average return: mean realized outcome
-- Sharpe-like metrics: risk-adjusted performance indicators
-- Score-return correlation: validates model calibration
-- Training leaderboards: rank patterns by performance (requires n_success ≥ 30)
+### Configurable Risk Profiles
 
-**Attribution & Performance Tracking**
-- PnL attribution by symbol, pattern, and market type
-- Roundtrip analysis: win rate, average PnL per trade
-- Contribution percentage: which signals drive portfolio performance
-- Pattern-level attribution: understand which strategies work
+| Parameter | Description |
+|-----------|-------------|
+| Max Positions | Cap on simultaneous holdings |
+| Max Position % | Maximum % of equity per position |
+| Drawdown Stop | Block entries when drawdown exceeds threshold |
+| Bust Threshold | Halt all trading when equity falls below % |
+| Crystallisation | Take profits: Withdraw or Rebase mode |
+| Cooldown Period | Prevent re-entry after crystallisation |
 
-**Risk Awareness**
-- Drawdown stops: automatic regime switching to `ALLOW_EXITS_ONLY`
-- Position limits: maximum positions and position sizing constraints
-- Exposure controls: per asset class and symbol caps
-- Daily volatility tracking and risk event monitoring
+### Full Provenance Chain
+```
+Pattern → Signal → Trust Label → Proposal → Risk Gate → Paper Trade
+```
 
-**Operational Benefits**
-- Automated daily pipeline: no manual intervention required
-- Structured audit logs: complete lineage and observability
-- Idempotent operations: safe to re-run without data corruption
-- Production-ready: handling rate limits and edge cases gracefully
+Every trade is traceable back to its origin.
 
 ---
 
-## Slide 7: Value Proposition - For Market Makers
+## Slide 7: AI-Powered Intelligence
 
-### Automated Discovery & Systematic Trading
+**Every morning, Snowflake Cortex generates plain-English narratives explaining what happened, what matters, and what to watch.**
 
-**Automated Pattern Discovery**
-- Systematic pattern identification across asset classes (STOCK, ETF, FX)
-- Multi-market support: 24+ symbols across market types
-- Pattern-based signal generation with score calibration
-- Training views enabling pattern performance validation
+### Four AI Capabilities
 
-**Portfolio Simulation with Realistic Constraints**
-- Paper trading engine with drawdown stops and position limits
-- Daily equity tracking and PnL calculation
-- Trade generation: 4-5 trades per run with realistic mechanics
-- Risk-aware entry/exit logic preventing overexposure
+| Capability | What It Does |
+|-----------|-------------|
+| **Global Daily Digest** | AI-generated overview across all portfolios: What Changed, What Matters, Waiting For. Grounded in deterministic snapshot data — no hallucination. |
+| **Portfolio Intelligence** | Scoped to each portfolio's active episode. Equity changes, trade decisions, risk posture, KPIs. |
+| **Training Digest** | Signal training progress: symbols approaching trust, maturity changes, coverage gaps. Global and per-symbol scopes. |
+| **Ask MIP** | Interactive AI assistant. Natural-language Q&A grounded in MIP's User Guide documentation. Context-aware answers about metrics, signals, risk. |
 
-**Comprehensive Performance Tracking**
-- Portfolio KPIs: total return, daily volatility, max drawdown
-- Win/loss day analysis: average win/loss PnL
-- Time in market: share of days with open positions
-- Attribution: symbol-level and pattern-level PnL contribution
-
-**Multi-Asset Support**
-- STOCK, ETF, FX coverage in single unified system
-- Market-type agnostic logic: no hardcoding of asset classes
-- Consistent evaluation framework across all market types
-- Flexible universe configuration via seed tables
-
-**Complete Audit Trail**
-- Structured audit logging: every pipeline step logged with JSON details
-- Data lineage: clear traceability from ingestion to portfolio outcomes
-- Observability: runbook queries answering "is it healthy?" in <30 seconds
-- Idempotency: safe re-runs without duplicate data or corrupted state
-
-**Scalable Infrastructure**
-- Snowflake-native: no external runtime dependencies
-- Cloud-ready: scales with Snowflake warehouse sizing
-- Automated scheduling: daily task execution without manual intervention
-- Secure: role-based access control and dedicated warehouse
+**Additional AI features:**
+- Portfolio lifecycle narratives (AI-generated portfolio stories)
+- Parallel Worlds narratives (AI-generated counterfactual explanations)
+- All narratives grounded in structured data — verifiable, not speculative
 
 ---
 
-## Slide 8: Value Proposition - For Investment Bank Leadership
+## Slide 8: Parallel Worlds (Counterfactual Analysis)
 
-### Operational Excellence & Strategic Vision
+**What if we had made different decisions? Learn from paths not taken — without the P&L impact.**
 
-**Operational Efficiency**
-- **Fully Automated Daily Pipeline**: Zero manual intervention required
-  - Scheduled execution at 07:00 Europe/Berlin
-  - Graceful handling of rate limits and edge cases
-  - Smart skip logic when no new data available
-  - Complete observability via structured audit logs
+### How It Works
+Parallel Worlds runs alternative scenarios against the exact same market data. The only thing that changes is the decision rules.
 
-**Scalable, Cloud-Ready Architecture**
-- **Snowflake-Native Infrastructure**: No external runtime dependencies
-  - All logic executes within Snowflake's secure environment
-  - Scales with warehouse sizing (currently XS, easily upgradeable)
-  - Role-based access control with dedicated roles and warehouses
-  - Cloud-native design supporting enterprise security requirements
+### Scenario Types
+- **Threshold**: What if we lowered/raised the trust threshold?
+- **Sizing**: What if we used different position sizing?
+- **Timing**: What if we had different entry/exit timing?
+- **Baseline**: What if we had no risk controls?
 
-**Built-In Risk Management**
-- **Drawdown Stops**: Automatic regime switching when thresholds breached
-- **Position Limits**: Maximum positions and position sizing constraints
-- **Exposure Controls**: Per asset class and symbol caps
-- **Risk Event Tracking**: Structured logging of stop events and drawdown breaches
+### Analytics Produced
 
-**AI-Ready Foundation**
-- **Structured Outputs**: JSON morning briefs designed for agent consumption
-- **Agent Catalog**: Defined read-only agents (Performance Analyst, Risk Observer, Attribution Narrator)
-- **Future-Proof Design**: Clear path to autonomous decision support
-- **Explainability Ready**: Attribution and rationale tracking built into data model
-
-**Clear Roadmap to Autonomous Intelligence**
-- **Phase 1 Complete**: Production-ready foundation
-- **Phase 2 In Progress**: Realistic execution mechanics
-- **Phase 3 Vision**: Risk layer, hedging, AI decision support
-- **Measurable Progress**: Transparent roadmap with defined success criteria
-
-**Strategic Value**
-- **Competitive Advantage**: Systematic pattern discovery at scale
-- **Risk-Aware**: Built-in controls preventing catastrophic losses
-- **Data-Driven**: Comprehensive KPIs enabling evidence-based decisions
-- **Future Investment**: Foundation for AI-powered trading intelligence
+| Analysis | Description |
+|----------|-------------|
+| **Regret Analysis** | Quantifies the P&L cost of decisions not taken |
+| **Scenario Comparison** | Side-by-side equity curves for each alternative |
+| **Regret Attribution** | Regret broken down by symbol and pattern |
+| **Confidence Classification** | How confident is each scenario's outperformance |
+| **Policy Diagnostics** | Health assessment of current decision rules |
+| **AI Explanation** | Cortex narrates why scenarios diverged |
 
 ---
 
-## Slide 9: Ambitious Goals - Phase 2 (In Progress)
+## Slide 9: The Dashboard Experience
 
-### Paper Portfolio Execution with Realistic Mechanics
+### Seven Major Screens
 
-**Current Status: ⏳ IN PROGRESS**
+| Screen | Purpose |
+|--------|---------|
+| **Cockpit** | News-style daily command centre: AI digests, market pulse, signal candidates, training progress |
+| **Portfolio Detail** | Equity curves, drawdown charts, positions, risk gate, episode analytics with evolution charts |
+| **Parallel Worlds** | Counterfactual scenarios, regret heatmap, equity overlays, AI narratives |
+| **Training Status** | Pattern maturity by symbol, horizon strip, coverage metrics, confidence timeline |
+| **Suggestions** | Ranked opportunities with evidence drawers, maturity scores, distribution charts |
+| **Audit Viewer** | Pipeline run inspection, step-by-step execution, error diagnostics, debug SQL |
+| **Market Timeline** | End-to-end signal → proposal → trade timeline per symbol, OHLC charts with event overlays |
 
-Phase 2 transforms signals into a consistent, realistic simulated trading process with proper execution mechanics and cash management.
-
-### Phase 2 Objectives
-
-**Cash Account Management**
-- Realistic position sizing based on available cash (not just target weight)
-- Cash tracking: starting cash, available cash, cash utilization
-- Position sizing constraints: max position percentage, total exposure limits
-
-**Transaction Costs & Slippage**
-- Simple basis points (bps) model for transaction costs
-- Slippage modeling for realistic execution
-- Cost attribution: track transaction costs per trade and pattern
-
-**Order Lifecycle Simulation**
-- Signal → Proposal → Execution → Fills workflow
-- Proposal validation: constraints checking before execution
-- Execution simulation: realistic fill modeling
-- Order status tracking: pending, filled, rejected, cancelled
-
-**Enhanced Exposure Controls**
-- Per asset class exposure caps (STOCK, ETF, FX)
-- Per symbol concentration limits
-- Correlation-based exposure rules (for ETFs)
-- Sector-level exposure controls
-
-**Portfolio PnL Attribution**
-- Attribution by signal/pattern/asset class
-- Realized vs unrealized PnL tracking
-- Contribution analysis: which signals drive performance
-- Pattern-level performance validation
-
-### Current Phase 2 Progress
-
-**✅ Completed**
-- Portfolio simulation engine running
-- Drawdown stops working (triggers `ALLOW_EXITS_ONLY` regime)
-- Trade generation (4-5 trades per run)
-- Morning brief production
-
-**⏳ In Progress**
-- Profile tuning knobs: initial cash, max_positions, max_position_pct, drawdown_stop_pct
-- Training mode profile: less strict drawdown stop for learning iteration
-- Enhanced logging for systematic experimentation
-
-**⬜ Backlog**
-- Transaction costs and slippage modeling
-- Exposure rules per asset class/correlation/sector
-- Cash account management refinements
-
-**Timeline**
-
-Currently stabilizing Phase 1 edge cases while beginning Phase 2 development. Focus on enabling training iteration by tuning portfolio profiles to generate sufficient trade volume for pattern validation.
+### Cross-Cutting Features
+- **Explain Mode**: Toggle that activates contextual tooltips throughout the entire UI
+- **Ask MIP**: Floating AI chat assistant for natural-language questions
+- **Live Status Bar**: Real-time pipeline status, data freshness, latest brief timestamp
+- **Deep Linking**: Navigate between screens with full context preservation
+- **Cost-Optimised Polling**: Pauses automatically when browser tab is hidden
 
 ---
 
-## Slide 10: Ambitious Goals - Phase 3 (Vision)
+## Slide 10: What MIP Is — and What It Isn't
 
-### Risk Layer + Hedging + AI Decision Support
+### MIP IS
 
-**Status: ⬜ PLANNED**
+- A systematic signal R&D platform
+- A risk-managed paper trading engine
+- A daily AI-powered intelligence briefing system
+- An auditable, provenance-tracked decision log
+- A counterfactual analysis framework
+- A tool that keeps the trader in control
 
-Phase 3 elevates MIP from a signal generation system to an autonomous, risk-aware decision support platform with explainability and AI-powered recommendations.
+### MIP IS NOT
 
-### Risk Layer
-
-**Daily Risk Summaries**
-- Exposure by market type: STOCK, ETF, FX breakdown
-- Concentration metrics: position concentration, symbol-level exposure
-- Recent volatility tracking: rolling volatility windows
-- Drawdown trajectory: current drawdown vs historical patterns
-
-**Volatility Targeting**
-- Daily VaR proxy: value-at-risk estimation
-- Volatility-adjusted position sizing
-- Risk budget allocation across strategies
-- Dynamic risk scaling based on market conditions
-
-**Drawdown Regime Controls**
-- Enhanced drawdown stop logic with regime detection
-- Regime-based position sizing (reduce size in high drawdown periods)
-- Recovery mode: gradual position rebuilding after stops
-- Stress scenario preparation
-
-**Stress Scenario Analysis**
-- "What if" scenarios: volatility doubles, gap down events, correlation spikes
-- Scenario-based position sizing adjustments
-- Stress test reporting for risk committees
-
-### Hedging Logic
-
-**Index Hedging via ETFs**
-- Automatic index hedge calculation when equity drawdown rising
-- ETF-based hedging for market exposure reduction
-- Correlation-based hedge ratio optimization
-- Hedge effectiveness tracking
-
-**FX Hedging for USD Exposure**
-- Currency exposure calculation
-- FX hedge rules for non-USD positions
-- Hedge instrument selection (currency pairs, FX ETFs)
-- Cost-benefit analysis of hedging decisions
-
-**Dynamic Hedging**
-- Real-time hedge ratio adjustments
-- Correlation-based hedge optimization
-- Cost-aware hedging: transaction costs vs risk reduction
-
-### AI Decision Support
-
-**Explainability: Rationale per Recommendation & Trade**
-- Pattern rationale: why this pattern triggered
-- Score explanation: what factors drove the score
-- Trade rationale: why this trade was proposed/executed/rejected
-- Attribution explanation: what drove this PnL outcome
-
-**AI Morning Brief: "What Changed, Why, What to Do Next"**
-- **What Changed**: Delta tracking since last run
-  - New recommendations, updated outcomes, portfolio changes
-  - Risk metric shifts, drawdown trajectory changes
-- **Why**: Contextual explanations
-  - Why entries were blocked (drawdown stop, position limits, etc.)
-  - Why certain patterns are performing well/poorly
-  - Market context affecting signal quality
-- **What to Do Next**: Actionable recommendations
-  - Top candidates with rationale
-  - Risk adjustments needed
-  - Pattern tuning suggestions
-
-**Multi-Agent Roles (Structured Framework)**
-- **Signal Scout**: Identifies opportunities, ranks candidates, explains patterns
-- **Risk Officer**: Monitors stops, blocks entries, explains risk constraints
-- **Portfolio Manager**: Sizing decisions, rotation suggestions, attribution analysis
-- **Market Context**: News/sentiment integration (future phase)
-
-**News/Sentiment Integration (Future)**
-- External news feed integration
-- Sentiment analysis for market context
-- Event-driven signal adjustments
-- News-based risk regime detection
-
-### Vision Statement
-
-Transform MIP from a signal generator into an **autonomous market intelligence system** that not only identifies opportunities but explains why, manages risk proactively, and provides actionable recommendations with full transparency.
+- A live trading system (no broker integration — paper trading by design)
+- A black box (full audit trail, explainable AI, grounded narratives)
+- A replacement for trader judgment (MIP proposes, the trader decides)
+- A back-office system (it's a research and decision-support tool)
+- Dependent on external compute (100% Snowflake-native)
+- Static (it learns and adapts continuously through the training engine)
 
 ---
 
-## Slide 11: Key Metrics & KPIs
+## Slide 11: Use Cases for Your Desk
 
-### Signal Quality Metrics
-
-**Coverage Rate (Maturity Indicator)**
-- Measures what percentage of recommendations have "matured" (enough future bars exist for evaluation)
-- Coverage rate near 1.0 indicates complete evaluation dataset
-- Available by pattern, market type, interval, and horizon
-- Source: `MIP.MART.V_SIGNAL_OUTCOME_KPIS.COVERAGE_RATE`
-
-**Hit Rate (Success Rate)**
-- Percentage of recommendations meeting minimum return threshold
-- Default threshold: 0.0 (any non-negative return is a "hit")
-- Configurable threshold for different success criteria
-- Available by pattern, horizon, and market type
-- Source: `MIP.MART.V_SIGNAL_OUTCOME_KPIS.HIT_RATE`
-
-**Score-Return Correlation**
-- Correlation between recommendation score and realized return
-- Positive correlation: higher scores predict better outcomes
-- Near zero: score not informative (needs recalibration)
-- Negative correlation: score inversely related to performance
-- Source: `MIP.MART.V_SIGNAL_OUTCOME_KPIS.SCORE_RETURN_CORR`
-
-**Return Distribution Statistics**
-- Average return: mean realized outcome
-- Median return: median realized outcome (robust to outliers)
-- Standard deviation: volatility of returns
-- Min/max returns: worst and best case outcomes
-- Average win vs average loss: win/loss asymmetry
-- Source: `MIP.MART.V_SIGNAL_OUTCOME_KPIS`
-
-**Training Leaderboards**
-- Ranked patterns by Sharpe-like metrics, hit rate, average return
-- Filtered to patterns with sufficient sample size (n_success ≥ 30)
-- Enables identification of best-performing patterns
-- Source: `MIP.MART.V_TRAINING_LEADERBOARD`
-
-### Portfolio Metrics
-
-**Return Metrics**
-- Total return: `(final_equity / starting_cash) - 1`
-- Average daily return: mean daily return
-- Daily volatility: standard deviation of daily returns
-- Source: `MIP.MART.V_PORTFOLIO_RUN_KPIS`
-
-**Risk Metrics**
-- Max drawdown: maximum peak-to-trough decline
-- Peak equity: highest equity value achieved
-- Min equity: lowest equity value (drawdown trough)
-- Drawdown stop timestamp: when drawdown threshold breached
-- Source: `MIP.MART.V_PORTFOLIO_RUN_KPIS`
-
-**Trading Activity Metrics**
-- Win days vs loss days: count and average PnL
-- Average open positions: mean position count
-- Time in market: share of days with open positions > 0
-- Trading days: total number of trading days in run
-- Source: `MIP.MART.V_PORTFOLIO_RUN_KPIS`
-
-**Attribution Metrics**
-- Total realized PnL by symbol, pattern, market type
-- Contribution percentage: each component's share of total PnL
-- Win rate: percentage of profitable trades
-- Average PnL per trade: mean realized PnL
-- Roundtrips: number of completed trades
-- Source: `MIP.MART.V_PORTFOLIO_ATTRIBUTION`, `V_PORTFOLIO_ATTRIBUTION_BY_PATTERN`
-
-### Training Metrics
-
-**Pattern Performance KPIs**
-- Signal count: total recommendations generated
-- Success count: matured outcomes with realized returns
-- Hit rate: success rate by threshold
-- Average/median return: central tendency metrics
-- Sharpe-like metrics: risk-adjusted performance
-- Last signal timestamp: recency indicator
-- Source: `MIP.MART.V_TRAINING_KPIS`
-
-**Score Calibration**
-- Decile-based expected returns: score buckets with performance
-- Calibration quality: how well scores predict outcomes
-- Source: `MIP.MART.V_SCORE_CALIBRATION`, `V_SIGNALS_WITH_EXPECTED_RETURN`
+| Use Case | Description |
+|----------|-------------|
+| **Signal R&D** | Test pattern hypotheses systematically before committing capital. See which patterns work on which instruments. |
+| **Strategy Incubation** | Run paper portfolios with real risk profiles to see how ideas perform over weeks and months. |
+| **Training & Onboarding** | Demonstrate signal lifecycle, risk management, portfolio construction. Explain mode is built in. |
+| **Compliance & Audit** | Full provenance chain from signal to trade. Immutable event logs. Every decision is traceable. |
+| **Cross-Desk Collaboration** | Share signal research via Suggestions and Training views. See what's working across the whole universe. |
+| **Decision Validation** | Parallel Worlds: continuously stress-test your decision rules. Learn from paths not taken. |
 
 ---
 
-## Slide 12: Current Capabilities Demo
+## Slide 12: Roadmap & Future Possibilities
 
-### Production-Ready Daily Operations
+### Live Now (Operational)
+- Multi-portfolio paper trading with episode lifecycle
+- Trust engine + risk gate system
+- AI briefs, digests, Ask MIP assistant
+- Parallel Worlds counterfactual analysis
+- 7-screen React dashboard
+- Full audit trail and provenance chain
+- Cost-optimised infrastructure
 
-**Automated Daily Pipeline**
+### Next (Near-Term)
+- Mean reversion patterns
+- Volatility-based signals
+- Transaction cost modelling (basis points slippage)
+- Higher-frequency data (intraday)
 
-The system runs end-to-end daily without manual intervention:
+### Future (Medium-Term)
+- Multi-asset class (futures, options)
+- Broker integration for live execution
+- Order flow pattern detection
+- Desk-level strategy definitions
 
-1. **Ingestion** → AlphaVantage API calls, graceful rate limit handling
-2. **Returns Refresh** → Rebuilds returns layer from latest bars
-3. **Recommendation Generation** → Pattern-based signals across STOCK/ETF/FX
-4. **Outcome Evaluation** → Multi-horizon forward returns (1/3/5/10/20 bars)
-5. **Portfolio Simulation** → Paper trading with risk controls
-6. **Morning Brief** → Structured JSON output for agents
+### Vision (Long-Term)
+- Enterprise-wide signal intelligence
+- Cross-desk signal marketplace
+- Advanced Cortex AI reasoning
+- Regulatory reporting integration
 
-**Portfolio Simulation in Action**
-
-- **Real-Time Risk Controls**: Drawdown stops automatically trigger `ALLOW_EXITS_ONLY` regime
-- **Trade Generation**: 4-5 trades per run with realistic position sizing
-- **Daily Equity Tracking**: Complete equity series with total return calculation
-- **PnL Attribution**: Symbol-level and pattern-level performance attribution
-- **Event Tracking**: Drawdown stop events, flat position timestamps logged
-
-**Morning Brief Output**
-
-Structured JSON containing:
-- Portfolio status: equity, positions, cash, exposure
-- Recommendations: top candidates with scores and rationale
-- Risk summary: drawdown, volatility, stop status
-- Deltas: what changed since last run
-- Ready for AI agent consumption
-
-**Training Views & Leaderboards**
-
-- **Signal Outcomes**: One row per recommendation-horizon with realized returns
-- **Training KPIs**: Aggregated metrics by pattern, market type, horizon
-- **Leaderboards**: Ranked patterns by Sharpe-like metrics (n_success ≥ 30)
-- **Score Calibration**: Decile-based expected returns for score interpretation
-
-**Observability & Audit Trail**
-
-- **Structured Audit Logs**: Every pipeline step logged with JSON details
-- **Runbook Queries**: Answer "is it healthy?" in <30 seconds
-- **Data Lineage**: Clear traceability from ingestion to outcomes
-- **Idempotency**: Safe re-runs without duplicate data
-
-**Status: Production-Ready**
-
-The system is operational and handling:
-- ✅ Rate limits gracefully (`SUCCESS_WITH_SKIPS`)
-- ✅ No-new-bars scenarios (`SKIPPED_NO_NEW_BARS`)
-- ✅ Drawdown stops triggering regime changes
-- ✅ Idempotent operations across repeated runs
-- ✅ Comprehensive observability via audit logs
+**The architecture is built for extensibility — adding new pattern types is a configuration change, not a rebuild.**
 
 ---
 
-## Slide 13: Next Steps & Roadmap
+## Slide 13: At a Glance
 
-### Immediate Priorities (Phase 2)
-
-**Profile Tuning & Training Mode**
-- Add profile tuning knobs: initial cash, max_positions, max_position_pct, drawdown_stop_pct, bust_equity_pct
-- Create controlled "training mode" profile:
-  - Less strict drawdown stop for learning iteration
-  - Smaller position sizing
-  - Fewer symbols or fewer candidates per day
-- Enhanced logging for systematic experimentation
-
-**Cash Management & Position Sizing**
-- Realistic position sizing based on available cash (not just target weight)
-- Cash account tracking: starting, available, utilized
-- Position sizing constraints enforcement
-
-**Transaction Cost Modeling**
-- Simple basis points (bps) model for transaction costs
-- Slippage modeling for realistic execution
-- Cost attribution per trade and pattern
-
-### Near-Term (Phase 2 Completion)
-
-**Order Lifecycle Simulation**
-- Signal → Proposal → Execution → Fills workflow
-- Proposal validation with constraint checking
-- Execution simulation with realistic fill modeling
-- Order status tracking
-
-**Enhanced Exposure Controls**
-- Per asset class exposure caps
-- Per symbol concentration limits
-- Correlation-based exposure rules (for ETFs)
-- Sector-level exposure controls
-
-**Portfolio Attribution Enhancements**
-- Enhanced PnL attribution by signal/pattern/asset class
-- Realized vs unrealized PnL tracking
-- Pattern-level performance validation improvements
-
-### Future Vision (Phase 3)
-
-**Risk Layer Development**
-- Daily VaR proxy and volatility targeting
-- Enhanced drawdown regime controls
-- Stress scenario analysis ("what if" modeling)
-- Risk budget allocation
-
-**Hedging Automation**
-- Index hedging via ETFs
-- FX hedging for USD exposure
-- Dynamic hedge ratio optimization
-- Hedge effectiveness tracking
-
-**AI-Powered Decision Support**
-- Explainability: rationale per recommendation and trade
-- Enhanced AI Morning Brief: "what changed, why, what to do next"
-- Multi-agent roles: Signal Scout, Risk Officer, Portfolio Manager
-- News/sentiment integration (future phase)
-
-**Timeline Estimate**
-
-- **Phase 2 Completion**: Q2 2026 (focus on cash management, transaction costs, exposure controls)
-- **Phase 3 Initiation**: Q3 2026 (risk layer, hedging logic)
-- **Phase 3 Completion**: Q4 2026 (AI decision support, explainability)
-
-**Success Criteria**
-
-- Phase 2: Realistic paper trading with transaction costs and cash management
-- Phase 3: Risk-aware proposals with full explainability and AI recommendations
+| Capability | Detail |
+|-----------|--------|
+| **Data Sources** | OHLC from AlphaVantage — Stocks, ETFs, FX |
+| **Pattern Detection** | Momentum crossovers (configurable, extensible) |
+| **Signal Evaluation** | 5 forward horizons — hit rate, avg return, coverage |
+| **Trust Engine** | TRUSTED / WATCH / UNTRUSTED classification |
+| **Paper Trading** | Multi-portfolio, episode-based, risk-managed |
+| **Risk Controls** | Drawdown stops, bust protection, crystallisation, cooldowns |
+| **AI Narratives** | Cortex-powered digests, portfolio stories, training briefs |
+| **Ask MIP** | Interactive AI assistant — natural language Q&A, grounded in docs |
+| **Counterfactuals** | Parallel Worlds with regret analysis and AI explanations |
+| **Observability** | Audit Viewer, pipeline run inspection, debug SQL, live status bar |
+| **Audit Trail** | Full provenance: pattern → signal → proposal → trade |
+| **Architecture** | 100% Snowflake-native — zero external compute, cost-optimised |
 
 ---
 
-## Slide 14: Call to Action / Closing
+## Slide 14: Thank You
 
-### Current Status
+### Questions & Discussion
 
-**Phase 1: ✅ COMPLETE**
-- Production-ready daily pipeline
-- Multi-market signal generation and evaluation
-- Portfolio simulation with risk controls
-- Comprehensive observability and audit trail
-
-**Phase 2: ⏳ IN PROGRESS**
-- Portfolio simulation operational
-- Focus on profile tuning and training mode optimization
-- Next: Cash management, transaction costs, enhanced exposure controls
-
-**Phase 3: ⬜ PLANNED**
-- Risk layer with VaR and stress testing
-- Hedging automation
-- AI-powered decision support with explainability
-
-### Ready For
-
-- **Daily Operations**: Automated pipeline running reliably
-- **Pattern Validation**: Training views and leaderboards enabling systematic pattern evaluation
-- **Portfolio Simulation**: Paper trading with risk controls for strategy testing
-- **AI Integration**: Structured outputs ready for agent consumption
-
-### Vision
-
-**Autonomous Market Intelligence with AI Decision Support**
-
-MIP is evolving from a signal generation system to an autonomous, risk-aware trading intelligence platform that:
-- Identifies opportunities systematically across asset classes
-- Explains why recommendations are made (explainability)
-- Manages risk proactively with built-in controls
-- Provides actionable recommendations with full transparency
-- Scales from daily operations to AI-powered decision support
-
-### Next Steps
-
-**For Traders & Market Makers**
-- Explore training views and leaderboards to identify best-performing patterns
-- Review portfolio simulation results and attribution analysis
-- Provide feedback on signal quality and evaluation metrics
-
-**For Investment Bank Leadership**
-- Review Phase 1 achievements and Phase 2/3 roadmap
-- Evaluate strategic value and resource allocation
-- Discuss integration with existing trading infrastructure
-
-**For Development Team**
-- Continue Phase 2 development: cash management, transaction costs
-- Begin Phase 3 planning: risk layer architecture, hedging logic design
-- Enhance morning brief content: status → insight transformation
+Live demo available  •  Dashboard walkthrough  •  Deep-dive on any module
 
 ---
 
@@ -771,4 +340,4 @@ For roadmap status: `MIP/docs/ROADMAP_CHECKLIST.md`
 
 ---
 
-*Market Intelligence Platform (MIP) - Transforming Market Data into Trading Intelligence*
+*Market Intelligence Platform (MIP) — Transforming Market Data into Trading Intelligence*

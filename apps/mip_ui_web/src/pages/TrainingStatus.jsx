@@ -7,10 +7,7 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
 import TrainingDigestPanel from '../components/TrainingDigestPanel'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
-import { TRAINING_STATUS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
@@ -43,7 +40,6 @@ function getRowKey(row, get) {
 }
 
 export default function TrainingStatus() {
-  const { explainMode } = useExplainMode()
   const [searchParams] = useSearchParams()
   const appliedUrlRef = useRef(false)
   const [data, setData] = useState(null)
@@ -54,12 +50,6 @@ export default function TrainingStatus() {
   const [patternIdFilter, setPatternIdFilter] = useState('')
   const [expandedRowId, setExpandedRowId] = useState(null)
   const timelineCacheRef = useRef({}) // Cache for timeline data per row key
-  const { setContext } = useExplainCenter()
-
-  useEffect(() => {
-    setContext(TRAINING_STATUS_EXPLAIN_CONTEXT)
-  }, [setContext])
-
   useEffect(() => {
     if (appliedUrlRef.current) return
     appliedUrlRef.current = true
@@ -166,7 +156,7 @@ export default function TrainingStatus() {
   return (
     <>
       <h1>Training Status</h1>
-      {explainMode && (
+      {(
         <p className="training-status-intro">
           Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.
         </p>
@@ -235,7 +225,7 @@ export default function TrainingStatus() {
               const maturityStage = get(row, 'maturity_stage')
               const score = get(row, 'maturity_score') != null ? Number(get(row, 'maturity_score')) : 0
               const stageKey = stageGlossaryKey(maturityStage)
-              const stageTitle = explainMode ? (getGlossaryEntry(SCOPE, stageKey)?.short ?? maturityStage) : undefined
+              const stageTitle = getGlossaryEntry(SCOPE, stageKey)?.short ?? maturityStage
               const rowKey = getRowKey(row, get)
               const isExpanded = expandedRowId === rowKey
               const cachedData = timelineCacheRef.current[rowKey]
@@ -272,7 +262,7 @@ export default function TrainingStatus() {
                       <div className="training-progress-wrap" title={stageTitle}>
                         <div className="training-progress-bar" style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
                       </div>
-                      <span className="training-score-num" title={explainMode ? getGlossaryEntry(SCOPE, 'maturity_score')?.short : undefined}>
+                      <span className="training-score-num" title={getGlossaryEntry(SCOPE, 'maturity_score')?.short}>
                         {formatNum(get(row, 'maturity_score'))}
                       </span>
                     </td>

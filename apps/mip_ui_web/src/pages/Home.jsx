@@ -5,24 +5,13 @@ import EmptyState from '../components/EmptyState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
 import { relativeTime } from '../components/LiveHeader'
-import { useExplainCenter } from '../context/ExplainCenterContext'
-import { useExplainSection } from '../context/ExplainCenterContext'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
-import { HOME_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Home.css'
 
 export default function Home() {
   const defaultPortfolioId = useDefaultPortfolioId()
   const [loading, setLoading] = useState(true)
   const [liveMetrics, setLiveMetrics] = useState(null)
-  const { setContext } = useExplainCenter()
-  const openExplainQuickActions = useExplainSection(HOME_EXPLAIN_CONTEXT)
-  const openExplainGlance = useExplainSection({ ...HOME_EXPLAIN_CONTEXT, id: 'home-glance', title: 'System at a glance' })
-
-  useEffect(() => {
-    setContext(HOME_EXPLAIN_CONTEXT)
-  }, [setContext])
-
   useEffect(() => {
     let cancelled = false
     fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
@@ -80,7 +69,6 @@ export default function Home() {
         <h2 className="home-section-title">
           Quick actions
           <InfoTooltip scope="home" entryKey="quick_actions" variant="short" />
-          <button type="button" className="home-explain-this" onClick={openExplainQuickActions} aria-label="Open Explain Center for this section">Explain this</button>
         </h2>
         <div className="home-quick-actions-grid">
           <Link to="/portfolios" className="home-card home-card--link">
@@ -112,7 +100,6 @@ export default function Home() {
         <h2 className="home-section-title">
           System at a glance
           <InfoTooltip scope="home" entryKey="system_at_a_glance" variant="short" />
-          <button type="button" className="home-explain-this" onClick={openExplainGlance} aria-label="Open Explain Center for this section">Explain this</button>
         </h2>
         <div className="home-glance-grid">
           <div className="home-card">

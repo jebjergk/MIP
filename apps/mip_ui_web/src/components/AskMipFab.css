@@ -1,0 +1,56 @@
+/* ── Floating Action Button ── */
+.ask-mip-fab {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  z-index: 1100;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #1a237e 0%, #3949ab 100%);
+  color: #fff;
+  font-size: 1.5rem;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(26, 35, 126, 0.35);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ask-mip-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 24px rgba(26, 35, 126, 0.45);
+}
+
+.ask-mip-fab:active {
+  transform: scale(0.96);
+}
+
+.ask-mip-fab--open {
+  background: linear-gradient(135deg, #455a64 0%, #78909c 100%);
+}
+
+.ask-mip-fab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: transform 0.25s ease;
+}
+
+.ask-mip-fab--open .ask-mip-fab-icon {
+  transform: rotate(90deg);
+}
+
+/* On small screens, reduce size slightly */
+@media (max-width: 768px) {
+  .ask-mip-fab {
+    width: 48px;
+    height: 48px;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    font-size: 1.25rem;
+  }
+}

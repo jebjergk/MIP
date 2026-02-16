@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../App'
 import InfoTooltip from './InfoTooltip'
-import { useExplainMode } from '../context/ExplainModeContext'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
+import useVisibleInterval from '../hooks/useVisibleInterval'
 import './LiveHeader.css'
 
 const POLL_INTERVAL_MS = 60_000
@@ -25,7 +25,6 @@ function relativeTime(isoOrDate) {
 }
 
 export default function LiveHeader() {
-  const { explainMode } = useExplainMode()
   const defaultPortfolioId = useDefaultPortfolioId()
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -48,12 +47,10 @@ export default function LiveHeader() {
       .finally(() => setLoading(false))
   }, [defaultPortfolioId])
 
-  useEffect(() => {
-    fetchMetrics()
-    const interval = setInterval(fetchMetrics, POLL_INTERVAL_MS)
-    return () => clearInterval(interval)
-  }, [fetchMetrics])
+  // Poll Snowflake only while the tab is visible (prevents overnight warehouse spin)
+  useVisibleInterval(fetchMetrics, POLL_INTERVAL_MS)
 
+  // 1-second UI tick for relative time display (pure client-side, no cost)
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(id)
@@ -81,7 +78,7 @@ export default function LiveHeader() {
       <span className="live-header-label">Live</span>
 
       {lastRun && (
-        <span className="live-header-item" title={explainMode ? undefined : null}>
+        <span className="live-header-item" title={undefined}>
           Last pipeline run: {relativeTime(lastRun.completed_at ?? lastRun.started_at)}
           <span className={`live-header-badge live-header-badge--${(lastRun.status || '').toLowerCase()}`}>
             {lastRun.status ?? '—'}
@@ -91,21 +88,21 @@ export default function LiveHeader() {
       )}
 
       {lastBrief?.found && (
-        <span className="live-header-item" title={explainMode ? undefined : null}>
+        <span className="live-header-item" title={undefined}>
           Latest digest: {relativeTime(lastBrief.as_of_ts)}
           <InfoTooltip scope="live" entryKey="latest_brief" variant="short" />
         </span>
       )}
 
       {sinceLastRun > 0 && (
-        <span className="live-header-item live-header-item--pulse" title={explainMode ? undefined : null}>
+        <span className="live-header-item live-header-item--pulse" title={undefined}>
           New evaluations since last run: +{sinceLastRun}
           <InfoTooltip scope="live" entryKey="new_evaluations_since_last_run" variant="short" />
         </span>
       )}
 
       {lastCalculatedAt && (
-        <span className="live-header-item" title={explainMode ? undefined : null}>
+        <span className="live-header-item" title={undefined}>
           Data freshness: outcomes updated {relativeTime(lastCalculatedAt)} ago
           <InfoTooltip scope="live" entryKey="data_freshness" variant="short" />
         </span>

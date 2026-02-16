@@ -4,9 +4,7 @@ import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
-import { useExplainCenter } from '../context/ExplainCenterContext'
 import { usePortfolios } from '../context/PortfolioContext'
-import { MORNING_BRIEF_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './MorningBrief.css'
 
 // Status badge component
@@ -556,12 +554,6 @@ export default function MorningBrief() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showTradesModal, setShowTradesModal] = useState(false)
-  const { setContext } = useExplainCenter()
-
-  useEffect(() => {
-    setContext(MORNING_BRIEF_EXPLAIN_CONTEXT)
-  }, [setContext])
-
   // Default selected portfolio to first active when list is ready
   useEffect(() => {
     if (portfoliosLoading || defaultPortfolioId == null || portfolioId !== '') return

@@ -660,3 +660,106 @@
     padding: 0.75rem 1rem;
   }
 }
+
+/* ── Markdown rendered content ── */
+.guide-markdown-content h1 {
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: #1a237e;
+  margin: 0 0 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #e8eaf6;
+}
+.guide-markdown-content h2 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #283593;
+  margin: 1.5rem 0 0.5rem;
+}
+.guide-markdown-content h3 {
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: #37474f;
+  margin: 1.25rem 0 0.4rem;
+}
+.guide-markdown-content h4 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #455a64;
+  margin: 1rem 0 0.3rem;
+}
+.guide-markdown-content p {
+  margin: 0.4rem 0 0.8rem;
+}
+.guide-markdown-content ul,
+.guide-markdown-content ol {
+  padding-left: 1.5rem;
+  margin: 0.4rem 0 0.8rem;
+}
+.guide-markdown-content li {
+  margin-bottom: 0.35rem;
+}
+.guide-markdown-content blockquote {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid #c5cae9;
+  background: #f5f7ff;
+  border-radius: 0 8px 8px 0;
+  font-size: 0.95rem;
+}
+.guide-markdown-content blockquote p {
+  margin: 0;
+}
+.guide-markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin: 0.75rem 0 1rem;
+}
+.guide-markdown-content thead th {
+  background: #e8eaf6;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  color: #283593;
+  border-bottom: 2px solid #c5cae9;
+  font-size: 0.85rem;
+}
+.guide-markdown-content tbody td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid #e8eaf6;
+  vertical-align: top;
+}
+.guide-markdown-content tbody tr:hover {
+  background: #f8f9fe;
+}
+.guide-markdown-content code {
+  background: #eef0f5;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.88em;
+  color: #c62828;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+.guide-markdown-content pre {
+  background: #f0f2f8;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0 1rem;
+}
+.guide-markdown-content pre code {
+  background: none;
+  padding: 0;
+  color: #37474f;
+  font-size: 0.88rem;
+}
+.guide-markdown-content hr {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 1.5rem 0;
+}
+.guide-markdown-content strong {
+  font-weight: 600;
+  color: #1a1a2e;
+}

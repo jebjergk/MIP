@@ -5,16 +5,12 @@ import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter } from '../context/ExplainCenterContext'
 import { getGlossaryEntry } from '../data/glossary'
-import { RUNS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './AuditViewer.css'
 
 // Status badge component with color coding
 function StatusBadge({ status, showTooltip = false }) {
-  const { explainMode } = useExplainMode()
-  const statusBadgeTitle = explainMode && showTooltip ? getGlossaryEntry('ui', 'status_badge')?.long : undefined
+  const statusBadgeTitle = showTooltip ? getGlossaryEntry('ui', 'status_badge')?.long : undefined
   
   const statusClass = status?.toUpperCase()?.includes('FAIL') || status?.toUpperCase()?.includes('ERROR')
     ? 'status-badge--error'
@@ -58,7 +54,7 @@ function CopyButton({ text, label = 'Copy' }) {
 
 // Run list filters component
 function RunFilters({ filters, setFilters, onSearch }) {
-  const { explainMode } = useExplainMode()
+
   
   return (
     <div className="run-filters">
@@ -67,7 +63,7 @@ function RunFilters({ filters, setFilters, onSearch }) {
           value={filters.status} 
           onChange={(e) => setFilters({ ...filters, status: e.target.value })}
           className="run-filters__select"
-          title={explainMode ? 'Filter runs by their final status' : undefined}
+          title="Filter runs by their final status"
         >
           <option value="">All statuses</option>
           <option value="FAIL">Failed</option>
@@ -80,14 +76,14 @@ function RunFilters({ filters, setFilters, onSearch }) {
           value={filters.fromDate}
           onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
           className="run-filters__date"
-          title={explainMode ? 'Filter runs started after this date' : undefined}
+          title="Filter runs started after this date"
         />
         <input
           type="date"
           value={filters.toDate}
           onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
           className="run-filters__date"
-          title={explainMode ? 'Filter runs started before this date' : undefined}
+          title="Filter runs started before this date"
         />
       </div>
       <button onClick={onSearch} className="run-filters__search">
@@ -99,7 +95,7 @@ function RunFilters({ filters, setFilters, onSearch }) {
 
 // Run list item component
 function RunListItem({ run, isSelected, onClick }) {
-  const { explainMode } = useExplainMode()
+
   
   const formatTime = (ts) => {
     if (!ts) return '—'
@@ -119,7 +115,7 @@ function RunListItem({ run, isSelected, onClick }) {
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
-      title={explainMode ? 'Click to view run details' : undefined}
+      title="Click to view run details"
     >
       <div className="run-list-item__header">
         <StatusBadge status={run.status} showTooltip />
@@ -142,14 +138,14 @@ function RunListItem({ run, isSelected, onClick }) {
 
 // Step timeline component
 function StepTimeline({ steps, selectedStep, onSelectStep }) {
-  const { explainMode } = useExplainMode()
+
   
   if (!steps || steps.length === 0) {
     return <p className="step-timeline__empty">No steps recorded.</p>
   }
   
   return (
-    <div className="step-timeline" title={explainMode ? 'Pipeline execution steps in order' : undefined}>
+    <div className="step-timeline" title="Pipeline execution steps in order">
       {steps.map((step, i) => {
         const isSelected = selectedStep === i
         const isFailed = step.status?.toUpperCase()?.includes('FAIL') || step.status?.toUpperCase()?.includes('ERROR')
@@ -188,7 +184,7 @@ function StepTimeline({ steps, selectedStep, onSelectStep }) {
 
 // Step detail panel
 function StepDetail({ step }) {
-  const { explainMode } = useExplainMode()
+
   
   if (!step) {
     return (
@@ -204,19 +200,19 @@ function StepDetail({ step }) {
     <div className={`step-detail ${isFailed ? 'step-detail--failed' : ''}`}>
       <h4>{step.step_name || step.event_name}</h4>
       <dl className="step-detail__dl">
-        <dt title={explainMode ? 'Final status of this step' : undefined}>Status</dt>
+        <dt title="Final status of this step">Status</dt>
         <dd><StatusBadge status={step.status} /></dd>
         
         {step.duration_ms != null && (
           <>
-            <dt title={explainMode ? 'Time taken to execute this step' : undefined}>Duration</dt>
+            <dt title="Time taken to execute this step">Duration</dt>
             <dd>{(step.duration_ms / 1000).toFixed(2)}s ({step.duration_ms}ms)</dd>
           </>
         )}
         
         {step.rows_affected != null && (
           <>
-            <dt title={explainMode ? 'Number of database rows affected' : undefined}>Rows Affected</dt>
+            <dt title="Number of database rows affected">Rows Affected</dt>
             <dd>{step.rows_affected}</dd>
           </>
         )}
@@ -270,7 +266,7 @@ function StepDetail({ step }) {
 
 // Error panel component
 function ErrorPanel({ errors, debugSql }) {
-  const { explainMode } = useExplainMode()
+
   const [showDebugSql, setShowDebugSql] = useState(false)
   const [selectedDebugQuery, setSelectedDebugQuery] = useState('all_events')
   
@@ -297,12 +293,12 @@ function ErrorPanel({ errors, debugSql }) {
           </div>
           <div className="error-panel__meta">
             {error.error_sqlstate && (
-              <span title={explainMode ? 'SQL error state code from Snowflake' : undefined}>
+              <span title="SQL error state code from Snowflake">
                 SQLSTATE: <code>{error.error_sqlstate}</code>
               </span>
             )}
             {error.error_query_id && (
-              <span title={explainMode ? 'Snowflake query ID - use to look up in QUERY_HISTORY' : undefined}>
+              <span title="Snowflake query ID - use to look up in QUERY_HISTORY">
                 Query ID: <code>{error.error_query_id}</code>
                 <CopyButton text={error.error_query_id} label="Copy" />
               </span>
@@ -347,7 +343,7 @@ function ErrorPanel({ errors, debugSql }) {
 
 // Run summary cards
 function RunSummaryCards({ runDetail }) {
-  const { explainMode } = useExplainMode()
+
   
   if (!runDetail) return null
   
@@ -380,28 +376,28 @@ function RunSummaryCards({ runDetail }) {
   
   return (
     <div className="run-summary-cards">
-      <div className="run-summary-card" title={explainMode ? 'Final status of the pipeline run' : undefined}>
+      <div className="run-summary-card" title="Final status of the pipeline run">
         <div className="run-summary-card__label">Status</div>
         <div className="run-summary-card__value">
           <StatusBadge status={status} showTooltip />
         </div>
       </div>
       
-      <div className="run-summary-card" title={explainMode ? 'Total time from start to finish' : undefined}>
+      <div className="run-summary-card" title="Total time from start to finish">
         <div className="run-summary-card__label">Duration</div>
         <div className="run-summary-card__value">
           {totalDurationMs != null ? `${(totalDurationMs / 1000).toFixed(1)}s` : '—'}
         </div>
       </div>
       
-      <div className="run-summary-card" title={explainMode ? 'Market data timestamp the pipeline processed up to' : undefined}>
+      <div className="run-summary-card" title="Market data timestamp the pipeline processed up to">
         <div className="run-summary-card__label">As-of</div>
         <div className="run-summary-card__value run-summary-card__value--small">
           {asOfTs ? new Date(asOfTs).toLocaleString() : '—'}
         </div>
       </div>
       
-      <div className="run-summary-card" title={explainMode ? 'Number of portfolios processed' : undefined}>
+      <div className="run-summary-card" title="Number of portfolios processed">
         <div className="run-summary-card__label">Portfolios</div>
         <div className="run-summary-card__value">
           {portfolioIds.size || '—'}
@@ -409,7 +405,7 @@ function RunSummaryCards({ runDetail }) {
       </div>
       
       {runDetail.error_count > 0 && (
-        <div className="run-summary-card run-summary-card--error" title={explainMode ? 'Number of failed steps' : undefined}>
+        <div className="run-summary-card run-summary-card--error" title="Number of failed steps">
           <div className="run-summary-card__label">Errors</div>
           <div className="run-summary-card__value">{runDetail.error_count}</div>
         </div>
@@ -423,9 +419,7 @@ export default function AuditViewer() {
   const { runId: urlRunId } = useParams()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { explainMode } = useExplainMode()
-  const { setContext } = useExplainCenter()
-  
+
   // State
   const [runs, setRuns] = useState([])
   const [selectedRunId, setSelectedRunId] = useState(urlRunId || null)
@@ -439,10 +433,6 @@ export default function AuditViewer() {
     fromDate: searchParams.get('from') || '',
     toDate: searchParams.get('to') || '',
   })
-
-  useEffect(() => {
-    setContext(RUNS_EXPLAIN_CONTEXT)
-  }, [setContext])
 
   // Load runs list
   const loadRuns = useCallback(async () => {

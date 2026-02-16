@@ -15,13 +15,9 @@ import { relativeTime } from '../components/LiveHeader'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter } from '../context/ExplainCenterContext'
-import { useExplainSection } from '../context/ExplainCenterContext'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
-import { useFreshness, relativeTime as relTime } from '../context/FreshnessContext'
+import useVisibleInterval from '../hooks/useVisibleInterval'
 import { getGlossaryEntry } from '../data/glossary'
-import { SUGGESTIONS_EXPLAIN_CONTEXT, buildSuggestionsEvidenceContext } from '../data/explainContexts'
 import './Suggestions.css'
 
 const SCOPE_SUG = 'suggestions'
@@ -184,9 +180,8 @@ function buildHistogramBins(values, numBins = 20) {
 }
 
 export default function Suggestions() {
-  const { explainMode } = useExplainMode()
   const defaultPortfolioId = useDefaultPortfolioId()
-  const { latestRunId, latestRunTs } = useFreshness()
+  // FreshnessContext removed to avoid background Snowflake polling
   const [summaryData, setSummaryData] = useState(null)
   const [trainingData, setTrainingData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -198,9 +193,6 @@ export default function Suggestions() {
   const [distributionError, setDistributionError] = useState(null)
   const [liveMetrics, setLiveMetrics] = useState(null)
   const [refreshingSummary, setRefreshingSummary] = useState(false)
-  const { setContext } = useExplainCenter()
-  const openExplainSuggestions = useExplainSection(SUGGESTIONS_EXPLAIN_CONTEXT)
-
   // URL query params for deep-linking from Cockpit
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -214,18 +206,6 @@ export default function Suggestions() {
     setSearchParams({})
     navigate('/suggestions', { replace: true })
   }, [setSearchParams, navigate])
-
-  useEffect(() => {
-    setContext(SUGGESTIONS_EXPLAIN_CONTEXT)
-  }, [setContext])
-
-  useEffect(() => {
-    if (selectedItem != null && selectedHorizon != null) {
-      setContext(buildSuggestionsEvidenceContext(selectedItem, selectedHorizon))
-    } else {
-      setContext(SUGGESTIONS_EXPLAIN_CONTEXT)
-    }
-  }, [selectedItem, selectedHorizon, setContext])
 
   useEffect(() => {
     if (!selectedItem) return
@@ -291,20 +271,15 @@ export default function Suggestions() {
     return () => { cancelled = true }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    const fetchLive = () => {
+  useVisibleInterval(
+    useCallback(() => {
       fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
-        .then((data) => {
-          if (!cancelled) setLiveMetrics(data)
-        })
-        .catch(() => { if (!cancelled) setLiveMetrics(null) })
-    }
-    fetchLive()
-    const interval = setInterval(fetchLive, 60_000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [defaultPortfolioId])
+        .then((data) => setLiveMetrics(data))
+        .catch(() => setLiveMetrics(null))
+    }, [defaultPortfolioId]),
+    60_000,
+  )
 
   const refetchSummary = useCallback(() => {
     setRefreshingSummary(true)
@@ -410,15 +385,7 @@ export default function Suggestions() {
     <>
       <h1>Suggestions</h1>
 
-      {/* Freshness header */}
-      {latestRunTs && (
-        <div className="suggestions-freshness-header">
-          <span className="freshness-badge freshness-current">CURRENT</span>
-          <span className="freshness-text">
-            Data from pipeline run {relTime(latestRunTs)}
-          </span>
-        </div>
-      )}
+      {/* Freshness header removed — data freshness shown in LiveHeader */}
 
       {hasFilters && (
         <div className="suggestions-filter-banner" role="status">
@@ -449,7 +416,6 @@ export default function Suggestions() {
         , horizons ≥ {MIN_HORIZONS_REQUIRED}
         <InfoTooltip scope={SCOPE_SUG} key="min_horizons_required" variant="short" />
         .{' '}
-        <button type="button" className="suggestions-explain-this" onClick={openExplainSuggestions} aria-label="Open Explain Center">Explain this</button>
       </p>
 
       <label className="suggestions-toggle-early">
@@ -577,7 +543,7 @@ export default function Suggestions() {
                   <span className="suggestion-sep">/</span>
                   <span className="suggestion-pattern">pattern {row.pattern_id ?? '—'}</span>
                 </span>
-                <span className="suggestion-score-block" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'suggestion_score_formula')?.short : undefined}>
+                <span className="suggestion-score-block" title={getGlossaryEntry(SCOPE_SUG, 'suggestion_score_formula')?.short}>
                   <span className="suggestion-score-label">
                     Suggestion score
                     <InfoTooltip scope={SCOPE_SUG} key="suggestion_score" variant="short" />
@@ -585,27 +551,27 @@ export default function Suggestions() {
                   <span className="suggestion-score">{formatNum(row.suggestion_score)}</span>
                 </span>
               </div>
-              <div className="suggestion-sample" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'sample_size')?.short : undefined}>
+              <div className="suggestion-sample" title={getGlossaryEntry(SCOPE_SUG, 'sample_size')?.short}>
                 Sample size
                 <InfoTooltip scope={SCOPE_SUG} key="sample_size" variant="short" />
                 : <strong>{formatNum(row.recs_total)}</strong>
               </div>
-              <div className="suggestion-maturity" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.short : undefined}>
-                <span className={`suggestion-stage suggestion-stage-${(row.maturity_stage || '').toLowerCase().replace('_', '-')}`} title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, stageGlossaryKey(row.maturity_stage))?.short : undefined}>
+              <div className="suggestion-maturity" title={getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.short}>
+                <span className={`suggestion-stage suggestion-stage-${(row.maturity_stage || '').toLowerCase().replace('_', '-')}`} title={getGlossaryEntry(SCOPE_TRAINING, stageGlossaryKey(row.maturity_stage))?.short}>
                   {row.maturity_stage ?? '—'}
                   <InfoTooltip scope={SCOPE_TRAINING} key={stageGlossaryKey(row.maturity_stage)} variant="short" />
                 </span>
-                <div className="suggestion-maturity-bar-wrap" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.long : undefined}>
+                <div className="suggestion-maturity-bar-wrap" title={getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.long}>
                   <div className="suggestion-maturity-bar" style={{ width: `${Math.min(100, Math.max(0, row.maturity_score ?? 0))}%` }} aria-hidden="true" />
                 </div>
               </div>
-              <div className="suggestion-what-history" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'what_history_suggests')?.short : undefined}>
+              <div className="suggestion-what-history" title={getGlossaryEntry(SCOPE_SUG, 'what_history_suggests')?.short}>
                 <strong>What history suggests</strong>
                 <InfoTooltip scope={SCOPE_SUG} key="what_history_suggests" variant="short" />
                 <p className="suggestion-what-line1">{row.what_history_line1}</p>
                 <p className="suggestion-what-line2">{row.what_history_line2}</p>
               </div>
-              <div className="suggestion-horizon-strip" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'horizon_strip')?.short : undefined}>
+              <div className="suggestion-horizon-strip" title={getGlossaryEntry(SCOPE_SUG, 'horizon_strip')?.short}>
                 <span className="suggestion-horizon-strip-label">Horizon strip (1 / 3 / 5 / 10 / 20) <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" /></span>
                 <div className="suggestion-sparkline" aria-hidden="true">
                   {HORIZON_BARS_ORDER.map((hb) => {
@@ -675,42 +641,42 @@ export default function Suggestions() {
                         / Effective
                         <InfoTooltip scope={SCOPE_SUG} key="effective_score" variant="short" />
                       </span>
-                      <span className="suggestion-score" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'suggestion_score_formula')?.short : undefined}>
+                      <span className="suggestion-score" title={getGlossaryEntry(SCOPE_SUG, 'suggestion_score_formula')?.short}>
                         {formatNum(row.suggestion_score)}
                       </span>
-                      <span className="suggestion-effective-score" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'effective_score')?.short : undefined}>
+                      <span className="suggestion-effective-score" title={getGlossaryEntry(SCOPE_SUG, 'effective_score')?.short}>
                         {formatNum(row.effective_score)}
                       </span>
                     </span>
                   </div>
-                  <div className="suggestion-badge-early" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'why_confidence_low')?.short : undefined}>
+                  <div className="suggestion-badge-early" title={getGlossaryEntry(SCOPE_SUG, 'why_confidence_low')?.short}>
                     Early / Low confidence
                     <InfoTooltip scope={SCOPE_SUG} key="why_confidence_low" variant="short" />
                   </div>
                   <p className="suggestion-early-sentence">
                     Only {formatNum(row.recs_total)} evaluated examples so far—treat as directional only.
                   </p>
-                  <div className="suggestion-sample" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'sample_size')?.short : undefined}>
+                  <div className="suggestion-sample" title={getGlossaryEntry(SCOPE_SUG, 'sample_size')?.short}>
                     Sample size
                     <InfoTooltip scope={SCOPE_SUG} key="sample_size" variant="short" />
                     : <strong>{formatNum(row.recs_total)}</strong>
                   </div>
-                  <div className="suggestion-maturity" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.short : undefined}>
-                    <span className={`suggestion-stage suggestion-stage-${(row.maturity_stage || '').toLowerCase().replace('_', '-')}`} title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, stageGlossaryKey(row.maturity_stage))?.short : undefined}>
+                  <div className="suggestion-maturity" title={getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.short}>
+                    <span className={`suggestion-stage suggestion-stage-${(row.maturity_stage || '').toLowerCase().replace('_', '-')}`} title={getGlossaryEntry(SCOPE_TRAINING, stageGlossaryKey(row.maturity_stage))?.short}>
                       {row.maturity_stage ?? '—'}
                       <InfoTooltip scope={SCOPE_TRAINING} key={stageGlossaryKey(row.maturity_stage)} variant="short" />
                     </span>
-                    <div className="suggestion-maturity-bar-wrap" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.long : undefined}>
+                    <div className="suggestion-maturity-bar-wrap" title={getGlossaryEntry(SCOPE_TRAINING, 'maturity_score')?.long}>
                       <div className="suggestion-maturity-bar" style={{ width: `${Math.min(100, Math.max(0, row.maturity_score ?? 0))}%` }} aria-hidden="true" />
                     </div>
                   </div>
-                  <div className="suggestion-what-history" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'what_history_suggests')?.short : undefined}>
+                  <div className="suggestion-what-history" title={getGlossaryEntry(SCOPE_SUG, 'what_history_suggests')?.short}>
                     <strong>What history suggests</strong>
                     <InfoTooltip scope={SCOPE_SUG} key="what_history_suggests" variant="short" />
                     <p className="suggestion-what-line1">{row.what_history_line1}</p>
                     <p className="suggestion-what-line2">{row.what_history_line2}</p>
                   </div>
-                  <div className="suggestion-horizon-strip" title={explainMode ? getGlossaryEntry(SCOPE_SUG, 'horizon_strip')?.short : undefined}>
+                  <div className="suggestion-horizon-strip" title={getGlossaryEntry(SCOPE_SUG, 'horizon_strip')?.short}>
                     <span className="suggestion-horizon-strip-label">Horizon strip (1 / 3 / 5 / 10 / 20) <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" /></span>
                     <div className="suggestion-sparkline" aria-hidden="true">
                       {HORIZON_BARS_ORDER.map((hb) => {
@@ -813,7 +779,7 @@ export default function Suggestions() {
                 <section className="evidence-section evidence-explanations" aria-label="Explanations">
                   <div className="evidence-what">
                     <h3>What</h3>
-                    {explainMode && <InfoTooltip scope={SCOPE_SUG} key="what_history_suggests" variant="short" />}
+                    <InfoTooltip scope={SCOPE_SUG} key="what_history_suggests" variant="short" />
                     <p>
                       We evaluated this pattern <InfoTooltip scope={SCOPE_TRAINING} key="pattern_id" variant="short" />
                       {' '}<strong>{whatData.n}</strong> <InfoTooltip scope={SCOPE_SUG} key="sample_size" variant="short" />
@@ -825,7 +791,7 @@ export default function Suggestions() {
                   </div>
                   <div className="evidence-why">
                     <h3>Why</h3>
-                    {explainMode && <InfoTooltip scope={SCOPE_SUG} key="why_this_is_shown" variant="short" />}
+                    <InfoTooltip scope={SCOPE_SUG} key="why_this_is_shown" variant="short" />
                     <p>
                       This appears because it has <strong>{selectedItem.maturity_stage ?? '—'} training maturity</strong>{' '}
                       <InfoTooltip scope={SCOPE_TRAINING} key="maturity_stage" variant="short" />
@@ -834,7 +800,7 @@ export default function Suggestions() {
                   </div>
                   <div className="evidence-how">
                     <h3>How</h3>
-                    {explainMode && <InfoTooltip scope={SCOPE_SUG} key="how_to_interpret" variant="short" />}
+                    <InfoTooltip scope={SCOPE_SUG} key="how_to_interpret" variant="short" />
                     <p>
                       <strong>Realized return</strong> <InfoTooltip scope={SCOPE_PERF} key="realized_return" variant="short" />
                       {' '}is computed from the <strong>entry price</strong> to the <strong>exit price</strong> at the chosen{' '}
@@ -848,7 +814,7 @@ export default function Suggestions() {
                 {/* Section B: Charts (Recharts); tooltips in plain language when Explain Mode on) */}
                 <section className="evidence-section evidence-charts" aria-label="Charts">
                   <h3>Horizon strip (1 / 3 / 5 / 10 / 20 days)</h3>
-                  {explainMode && <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" />}
+                  <InfoTooltip scope={SCOPE_SUG} key="horizon_strip" variant="short" />
                   <div className="evidence-horizon-chart">
                     <span className="evidence-chart-label">Average return over holding period</span>
                     <ResponsiveContainer width="100%" height={220}>
@@ -856,8 +822,8 @@ export default function Suggestions() {
                         <XAxis dataKey="days" tickFormatter={(v) => `${v} days`} />
                         <YAxis tickFormatter={(v) => `${v}%`} />
                         <Tooltip
-                          formatter={(v) => [v != null ? `${Number(v).toFixed(2)}%` : '—', explainMode ? (getGlossaryEntry(SCOPE_PERF, 'mean_realized_return')?.short ?? 'Mean return') : 'Mean return']}
-                          labelFormatter={(l) => (explainMode ? `${l} days — ${getGlossaryEntry(SCOPE_PERF, 'horizon_bars')?.short ?? 'holding period'}` : `${l} days`)}
+                          formatter={(v) => [v != null ? `${Number(v).toFixed(2)}%` : '—', getGlossaryEntry(SCOPE_PERF, 'mean_realized_return')?.short ?? 'Mean return']}
+                          labelFormatter={(l) => `${l} days — ${getGlossaryEntry(SCOPE_PERF, 'horizon_bars')?.short ?? 'holding period'}`}
                         />
                         <Bar dataKey="mean_pct" name="Mean return" fill="#1976d2" radius={[4, 4, 0, 0]}>
                           {horizonChartData.map((_, i) => (
@@ -874,7 +840,7 @@ export default function Suggestions() {
                         <XAxis dataKey="days" tickFormatter={(v) => `${v}d`} />
                         <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
                         <Tooltip
-                          formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', explainMode ? (getGlossaryEntry(SCOPE_PERF, 'pct_positive')?.short ?? '% positive') : '% positive']}
+                          formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', getGlossaryEntry(SCOPE_PERF, 'pct_positive')?.short ?? '% positive']}
                           labelFormatter={(l) => `${l} days`}
                         />
                         <Bar dataKey="pct_positive" name="% positive" fill="#1565c0" radius={[4, 4, 0, 0]} />
@@ -888,7 +854,7 @@ export default function Suggestions() {
                         <XAxis dataKey="days" tickFormatter={(v) => `${v}d`} />
                         <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
                         <Tooltip
-                          formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', explainMode ? (getGlossaryEntry(SCOPE_PERF, 'hit_rate')?.short ?? 'Hit rate') : 'Hit rate']}
+                          formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '—', getGlossaryEntry(SCOPE_PERF, 'hit_rate')?.short ?? 'Hit rate']}
                           labelFormatter={(l) => `${l} days`}
                         />
                         <Bar dataKey="pct_hit" name="Hit rate" fill="#5e35b1" radius={[4, 4, 0, 0]} />
@@ -897,7 +863,7 @@ export default function Suggestions() {
                   </div>
 
                   <h3>Distribution of realized return ({selectedHorizon} days)</h3>
-                  {explainMode && <InfoTooltip scope={SCOPE_PERF} key="realized_return" variant="short" />}
+                  <InfoTooltip scope={SCOPE_PERF} key="realized_return" variant="short" />
                   <div className="evidence-horizon-selector">
                     {HORIZON_BARS_ORDER.map((hb) => (
                       <button
@@ -929,7 +895,7 @@ export default function Suggestions() {
                           )}
                         </BarChart>
                       </ResponsiveContainer>
-                      {explainMode && (distMean != null || distMedian != null) && (
+                      {(distMean != null || distMedian != null) && (
                         <p className="evidence-dist-legend">
                           {distMean != null && <span>Mean: {(distMean * 100).toFixed(2)}%</span>}
                           {distMedian != null && <span> Median: {(distMedian * 100).toFixed(2)}%</span>}
@@ -941,13 +907,13 @@ export default function Suggestions() {
                   {/* Confidence panel */}
                   <div className="evidence-confidence">
                     <h3>Confidence</h3>
-                    {explainMode && <InfoTooltip scope={SCOPE_TRAINING} key="maturity_score" variant="short" />}
+                    <InfoTooltip scope={SCOPE_TRAINING} key="maturity_score" variant="short" />
                     <div className="evidence-maturity-bar-wrap">
                       <div className="evidence-maturity-bar" style={{ width: `${Math.min(100, Math.max(0, selectedItem.maturity_score ?? 0))}%` }} aria-hidden="true" />
                     </div>
                     <span className="evidence-maturity-label">Maturity: {formatNum(selectedItem.maturity_score)}</span>
                     {coverageRatio != null && (
-                      <p className="evidence-coverage" title={explainMode ? getGlossaryEntry(SCOPE_TRAINING, 'coverage_ratio')?.short : undefined}>
+                      <p className="evidence-coverage" title={getGlossaryEntry(SCOPE_TRAINING, 'coverage_ratio')?.short}>
                         Coverage ratio: {(coverageRatio * 100).toFixed(0)}%
                         <InfoTooltip scope={SCOPE_TRAINING} key="coverage_ratio" variant="short" />
                       </p>

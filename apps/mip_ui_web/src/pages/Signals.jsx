@@ -4,8 +4,6 @@ import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
-import { useExplainCenter } from '../context/ExplainCenterContext'
-import { SIGNALS_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Signals.css'
 
 // Filter badge component
@@ -94,16 +92,9 @@ function SignalRow({ signal }) {
 export default function Signals() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { setContext } = useExplainCenter()
-  
   const [signalsData, setSignalsData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  
-  // Set explain context on mount
-  useEffect(() => {
-    setContext(SIGNALS_EXPLAIN_CONTEXT)
-  }, [setContext])
   
   // Parse filters from URL
   const filters = {

@@ -5,6 +5,7 @@ import {
   ReferenceLine, Cell, Legend,
 } from 'recharts'
 import { API_BASE } from '../App'
+import useVisibleInterval from '../hooks/useVisibleInterval'
 import './PortfolioManagement.css'
 
 const TABS = [
@@ -52,19 +53,16 @@ export default function PortfolioManagement() {
   // Modal state
   const [modal, setModal] = useState(null) // { type: 'portfolio'|'profile'|'cash', data?: ... }
 
-  // ── Poll pipeline status ──
-  useEffect(() => {
-    let cancelled = false
-    const check = () => {
+  // ── Poll pipeline status (pauses when tab hidden) ──
+  useVisibleInterval(
+    useCallback(() => {
       fetch(`${API_BASE}/status`)
         .then(r => r.ok ? r.json() : {})
-        .then(d => { if (!cancelled) setPipelineRunning(!!d.pipeline_running) })
+        .then(d => setPipelineRunning(!!d.pipeline_running))
         .catch(() => {})
-    }
-    check()
-    const interval = setInterval(check, 15_000) // re-check every 15 s
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [])
+    }, []),
+    15_000,
+  )
 
   // ── Load portfolios + profiles ──
   const loadData = useCallback(async () => {

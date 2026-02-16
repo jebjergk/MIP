@@ -1,20 +1,17 @@
 import { useState, useRef, useEffect } from 'react'
-import { useExplainMode } from '../context/ExplainModeContext'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
 import './InfoTooltip.css'
 
 /**
  * Renders a small "?" icon that shows glossary text on hover.
- * When Explain mode is OFF, renders nothing.
- * Key convention: use key="audit.has_new_bars" (scope optional), or scope="audit" key="has_new_bars" (backward compatible).
- * @param {string} [scope] - Glossary scope (audit, portfolio, risk_gate, signals, proposals, positions, trades, ui)
+ * Always visible — no Explain Mode dependency.
+ * @param {string} [scope] - Glossary scope
  * @param {string} [key] - Glossary key (React reserves this; use entryKey if not passed)
  * @param {string} [entryKey] - Glossary key: either dot-key "audit.has_new_bars" or plain "has_new_bars" when scope is set
  * @param {'short' | 'long'} variant - Which text to show (short = brief, long = full explanation)
  */
 export default function InfoTooltip({ scope, key: glossaryKey, entryKey, variant = 'short' }) {
   const keyToUse = glossaryKey ?? entryKey
-  const { explainMode } = useExplainMode()
   const [showLong, setShowLong] = useState(false)
   const anchorRef = useRef(null)
   const popoverRef = useRef(null)
@@ -33,7 +30,7 @@ export default function InfoTooltip({ scope, key: glossaryKey, entryKey, variant
     popover.style.top = `${rect.bottom + 4}px`
   }, [showLong])
 
-  if (!explainMode || !entry) return null
+  if (!entry) return null
 
   const hasStructured = entry.what || entry.why || entry.how
   const displayText = variant === 'long' ? entry.long : entry.short

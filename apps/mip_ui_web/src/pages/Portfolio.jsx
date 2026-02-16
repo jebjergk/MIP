@@ -8,18 +8,14 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import EpisodeCard from '../components/EpisodeCard'
 import PortfolioMiniGridCharts from '../components/PortfolioMiniGridCharts'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter, useExplainSection } from '../context/ExplainCenterContext'
-import { useFreshness, relativeTime } from '../context/FreshnessContext'
+import { relativeTime } from '../components/LiveHeader'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
-import { PORTFOLIO_EXPLAIN_CONTEXT, RISK_GATE_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Portfolio.css'
 
 export default function Portfolio() {
   const { portfolioId } = useParams()
-  const { explainMode } = useExplainMode()
-  const { latestRunId, latestRunTs, isStale } = useFreshness()
-  const statusBadgeTitle = explainMode ? getGlossaryEntryByDotKey('ui.status_badge')?.long : undefined
+  // FreshnessContext removed to avoid background Snowflake polling
+  const statusBadgeTitle = getGlossaryEntryByDotKey('ui.status_badge')?.long
   const [portfolios, setPortfolios] = useState([])
   const [portfolio, setPortfolio] = useState(null)
   const [snapshot, setSnapshot] = useState(null)
@@ -31,13 +27,6 @@ export default function Portfolio() {
   const [timeline, setTimeline] = useState(null)
   const [activeAnalytics, setActiveAnalytics] = useState(null)
   const [proposerDiagnostics, setProposerDiagnostics] = useState(null)
-  const { setContext } = useExplainCenter()
-  const openExplainRiskGate = useExplainSection(RISK_GATE_EXPLAIN_CONTEXT)
-
-  useEffect(() => {
-    setContext(PORTFOLIO_EXPLAIN_CONTEXT)
-  }, [setContext])
-
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -488,7 +477,7 @@ export default function Portfolio() {
 
                 {/* Risk Gate panel */}
                 <div className="portfolio-card portfolio-card-risk-gate">
-                  <h3 className="portfolio-card-title risk-gate-headline" title={explainMode ? (getGlossaryEntry('risk_gate', 'mode')?.short ?? '') : undefined}>
+                  <h3 className="portfolio-card-title risk-gate-headline" title={getGlossaryEntry('risk_gate', 'mode')?.short ?? ''}>
                     Risk Gate:{' '}
                     <span className="risk-gate-mode risk-gate-mode--current">
                       {riskLabel === 'NORMAL' && '✅ Normal'}
@@ -496,7 +485,7 @@ export default function Portfolio() {
                       {riskLabel === 'DEFENSIVE' && '🛑 Defensive'}
                       {riskLabel !== 'NORMAL' && riskLabel !== 'CAUTION' && riskLabel !== 'DEFENSIVE' && '✅ Normal'}
                     </span>
-                    {explainMode && <InfoTooltip scope="risk_gate" entryKey="mode" variant="short" />}
+                    <InfoTooltip scope="risk_gate" entryKey="mode" variant="short" />
                   </h3>
                   {riskStrategy && (
                     <div className="risk-strategy-block">
@@ -532,14 +521,14 @@ export default function Portfolio() {
                     <dt>Close/reduce positions <InfoTooltip scope="risk_gate" entryKey="exits_allowed" variant="short" /></dt>
                     <dd>Allowed</dd>
                   </dl>
-                  <p className="risk-gate-reason" title={explainMode ? (getGlossaryEntry('risk_gate', 'reason_text')?.short ?? '') : undefined}>
+                  <p className="risk-gate-reason" title={getGlossaryEntry('risk_gate', 'reason_text')?.short ?? ''}>
                     {reasonText}
-                    {explainMode && <InfoTooltip scope="risk_gate" entryKey="reason_text" variant="short" />}
+                    <InfoTooltip scope="risk_gate" entryKey="reason_text" variant="short" />
                   </p>
                   {whatToDoNow.length > 0 && (
-                    <div className="risk-gate-what-to-do" title={explainMode ? (getGlossaryEntry('risk_gate', 'what_to_do_now')?.short ?? '') : undefined}>
+                    <div className="risk-gate-what-to-do" title={getGlossaryEntry('risk_gate', 'what_to_do_now')?.short ?? ''}>
                       <span className="risk-gate-what-to-do-label">What to do now</span>
-                      {explainMode && <InfoTooltip scope="risk_gate" entryKey="what_to_do_now" variant="short" />}
+                      <InfoTooltip scope="risk_gate" entryKey="what_to_do_now" variant="short" />
                       <ul className="risk-gate-bullets">
                         {whatToDoNow.map((item, i) => (
                           <li key={i}>{item}</li>

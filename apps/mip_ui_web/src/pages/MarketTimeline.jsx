@@ -4,8 +4,6 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import MarketTimelineDetail from '../components/MarketTimelineDetail'
-import { useExplainCenter } from '../context/ExplainCenterContext'
-import { MARKET_TIMELINE_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './MarketTimeline.css'
 
 /**
@@ -18,8 +16,6 @@ export default function MarketTimeline() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const { setContext } = useExplainCenter()
-  
   // Filters
   const [portfolioId, setPortfolioId] = useState('')
   const [marketTypeFilter, setMarketTypeFilter] = useState('')
@@ -28,11 +24,6 @@ export default function MarketTimeline() {
   // Inline expansion
   const [expandedSymbol, setExpandedSymbol] = useState(null) // {symbol, market_type}
   const detailCacheRef = useRef({}) // Cache for detail data
-  
-  // Set explain context on mount
-  useEffect(() => {
-    setContext(MARKET_TIMELINE_EXPLAIN_CONTEXT)
-  }, [setContext])
   
   // Fetch overview data
   useEffect(() => {

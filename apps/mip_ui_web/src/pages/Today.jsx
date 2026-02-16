@@ -5,11 +5,8 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter } from '../context/ExplainCenterContext'
 import { usePortfolios } from '../context/PortfolioContext'
 import { getGlossaryEntry } from '../data/glossary'
-import { TODAY_EXPLAIN_CONTEXT } from '../data/explainContexts'
 import './Today.css'
 
 const SCOPE_TODAY = 'today'
@@ -26,21 +23,15 @@ export default function Today() {
   const portfolioIdParam = searchParams.get('portfolio_id')
   const portfolioId = portfolioIdParam ? parseInt(portfolioIdParam, 10) : null
   const { portfolios, defaultPortfolioId, loading: portfoliosLoading } = usePortfolios()
-  const { explainMode } = useExplainMode()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const { setContext } = useExplainCenter()
 
   // When no portfolio in URL and we have a default, set it so multi-portfolio UX works without manual ?portfolio_id=
   useEffect(() => {
     if (portfolioIdParam != null || portfoliosLoading || defaultPortfolioId == null) return
     setSearchParams({ portfolio_id: String(defaultPortfolioId) }, { replace: true })
   }, [defaultPortfolioId, portfolioIdParam, portfoliosLoading, setSearchParams])
-
-  useEffect(() => {
-    setContext(TODAY_EXPLAIN_CONTEXT)
-  }, [setContext])
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +76,7 @@ export default function Today() {
   return (
     <>
       <h1>Today</h1>
-      {explainMode && (
+      {(
         <p className="today-intro">
           One view: system status, portfolio situation, and today’s candidates from evaluated history. Research guidance only—no auto-trading.
           <InfoTooltip scope={SCOPE_TODAY} entryKey="today_overview" variant="short" />
@@ -204,12 +195,12 @@ export default function Today() {
                     <span className="today-insight-market">{item.market_type ?? '—'}</span>
                     <span
                       className={`today-insight-stage today-insight-stage--${(item.maturity_stage ?? '').toLowerCase().replace('_', '-')}`}
-                      title={explainMode ? getGlossaryEntry(SCOPE_TS, item.maturity_stage === 'INSUFFICIENT' ? 'stage_insufficient' : item.maturity_stage === 'CONFIDENT' ? 'stage_confident' : 'maturity_stage')?.short : undefined}
+                      title={getGlossaryEntry(SCOPE_TS, item.maturity_stage === 'INSUFFICIENT' ? 'stage_insufficient' : item.maturity_stage === 'CONFIDENT' ? 'stage_confident' : 'maturity_stage')?.short}
                     >
                       {item.maturity_stage ?? '—'}
                     </span>
                     <InfoTooltip scope={SCOPE_TS} entryKey="maturity_stage" variant="short" />
-                    <span className="today-insight-score" title={explainMode ? getGlossaryEntry(SCOPE_TODAY, 'today_score')?.short : undefined}>
+                    <span className="today-insight-score" title={getGlossaryEntry(SCOPE_TODAY, 'today_score')?.short}>
                       Today score: {item.today_score != null ? Number(item.today_score).toFixed(2) : '—'}
                     </span>
                     <InfoTooltip scope={SCOPE_TODAY} entryKey="today_score" variant="short" />
@@ -224,11 +215,11 @@ export default function Today() {
                       aria-valuemax={100}
                     />
                   </div>
-                  <p className="today-insight-what" title={explainMode ? getGlossaryEntry(SCOPE_PERF, 'mean_outcome')?.short : undefined}>
+                  <p className="today-insight-what" title={getGlossaryEntry(SCOPE_PERF, 'mean_outcome')?.short}>
                     What history suggests: maturity score {item.maturity_score ?? '—'}; outcomes at 5-bar horizon in performance summary.
                     <InfoTooltip scope={SCOPE_PERF} entryKey="mean_outcome" variant="short" />
                   </p>
-                  <p className="today-insight-why" title={explainMode ? getGlossaryEntry(SCOPE_TODAY, 'why_this_is_shown')?.short : undefined}>
+                  <p className="today-insight-why" title={getGlossaryEntry(SCOPE_TODAY, 'why_this_is_shown')?.short}>
                     Why it’s shown: {item.why_this_is_here ?? '—'}
                     <InfoTooltip scope={SCOPE_TODAY} entryKey="why_this_is_shown" variant="short" />
                   </p>

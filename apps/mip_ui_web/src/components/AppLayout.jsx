@@ -1,11 +1,9 @@
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import StatusBanner from './StatusBanner'
 import LiveHeader from './LiveHeader'
-import ExplainModeToggle from './ExplainModeToggle'
-import ExplainDrawer from './ExplainDrawer'
-import { useExplainMode } from '../context/ExplainModeContext'
-import { useExplainCenter } from '../context/ExplainCenterContext'
+import AskMipFab from './AskMipFab'
+import AskMipPanel from './AskMipPanel'
 import './AppLayout.css'
 
 const SIDEBAR_WIDTH = 240
@@ -45,8 +43,8 @@ const NAV_GROUPS = [
 
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { explainMode } = useExplainMode()
-  const { open: openExplainDrawer } = useExplainCenter()
+  const [askMipOpen, setAskMipOpen] = useState(false)
+  const { pathname } = useLocation()
 
   const closeSidebar = () => setSidebarOpen(false)
 
@@ -133,25 +131,15 @@ export default function AppLayout() {
             <StatusBanner />
             <LiveHeader />
           </div>
-          <div className="app-layout-topbar-right">
-            {explainMode && (
-              <button
-                type="button"
-                className="explain-center-btn"
-                onClick={openExplainDrawer}
-                aria-label="Open Explain Center"
-              >
-                Explain
-              </button>
-            )}
-            <ExplainModeToggle />
-          </div>
         </header>
         <main className="app-layout-content page" role="main">
           <Outlet />
         </main>
       </div>
-      <ExplainDrawer />
+
+      {/* Ask MIP — floating button + slide-over panel */}
+      <AskMipFab open={askMipOpen} onClick={() => setAskMipOpen((v) => !v)} />
+      <AskMipPanel open={askMipOpen} onClose={() => setAskMipOpen(false)} pathname={pathname} />
     </div>
   )
 }

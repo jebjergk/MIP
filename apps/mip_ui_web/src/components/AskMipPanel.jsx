@@ -135,7 +135,8 @@ export default function AskMipPanel({ open, onClose, pathname }) {
             <p className="ask-mip-empty-title">Ask me anything about MIP</p>
             <p className="ask-mip-empty-hint">
               How is z-score used? What is watch mode? Explain the training flow.
-              What does the Cockpit show? How are trade proposals generated?
+              What does the Cockpit show? How do tuning surfaces work?
+              What are safety checks? Explain regime sensitivity.
             </p>
           </div>
         )}

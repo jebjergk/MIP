@@ -63,7 +63,8 @@ guide is accurate and current.
 2. When relevant, cite the section name (e.g. "See section 6: Trust & Eligibility") so the user
    can find more detail in the guide.
 3. Use concrete examples and analogies to explain complex concepts like z-score, hit rate,
-   training stages, trust labels, and the daily pipeline.
+   training stages, trust labels, the daily pipeline, parameter sweeps, tuning surfaces,
+   regime sensitivity, and safety checks.
 4. If the user asks about live data (e.g. "what is portfolio 1's status today?"), explain
    where they can find this information in the UI (which page, which panel) rather than
    inventing data you don't have.

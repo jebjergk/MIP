@@ -172,7 +172,7 @@ Every recommendation must pass three safety checks before it's marked "Ready for
 
 | Check | What It Means | Why It Matters |
 |-------|---------------|----------------|
-| **Minimum Observation Days** | At least 5 days of sweep data | Prevents acting on too little information — like flipping a coin twice and concluding it's riased |
+| **Minimum Observation Days** | At least 5 days of sweep data | Prevents acting on too little information — like flipping a coin twice and concluding it's biased |
 | **Trade Count Stability** | Changing this setting won't wildly increase/decrease trade count | A setting that makes you take 10x more trades might have a different risk profile entirely |
 | **Regime Robustness** | Works in multiple market conditions (quiet, normal, volatile) | A setting that only helps in calm markets but hurts in volatile ones is risky |
 

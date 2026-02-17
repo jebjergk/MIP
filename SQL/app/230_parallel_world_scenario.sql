@@ -23,6 +23,14 @@ create table if not exists MIP.APP.PARALLEL_WORLD_SCENARIO (
     constraint UQ_PW_SCENARIO_NAME unique (NAME)
 );
 
+-- Sweep columns (added for Policy Tuning Lab)
+alter table MIP.APP.PARALLEL_WORLD_SCENARIO add column if not exists
+    IS_SWEEP      boolean       default false;
+alter table MIP.APP.PARALLEL_WORLD_SCENARIO add column if not exists
+    SWEEP_FAMILY  varchar(64);
+alter table MIP.APP.PARALLEL_WORLD_SCENARIO add column if not exists
+    SWEEP_ORDER   number;
+
 -- Seed scenarios (idempotent via MERGE on NAME)
 merge into MIP.APP.PARALLEL_WORLD_SCENARIO as target
 using (

@@ -1376,6 +1376,63 @@ begin
         );
     end if;
 
+    -- ═══ PARALLEL WORLDS SWEEP + RECOMMENDATIONS (non-fatal, config-gated) ═══
+    begin
+        let v_sweep_enabled boolean := false;
+        begin
+            v_sweep_enabled := (select try_to_boolean(CONFIG_VALUE) from MIP.APP.APP_CONFIG
+                                where CONFIG_KEY = 'PW_SWEEP_ENABLED');
+        exception when other then
+            v_sweep_enabled := false;
+        end;
+
+        if (:v_sweep_enabled and :v_pw_enabled) then
+            let v_sweep_start timestamp_ntz := current_timestamp();
+            let v_sweep_result variant := null;
+            let v_rec_result variant := null;
+            let v_sweep_status varchar := 'SUCCESS';
+
+            begin
+                let sweep_run_id varchar := :v_run_id || '_SWEEP';
+                v_sweep_result := (call MIP.APP.SP_RUN_PW_SWEEP(
+                    :sweep_run_id,
+                    :v_effective_to_ts,
+                    null
+                ));
+
+                begin
+                    v_rec_result := (call MIP.APP.SP_GENERATE_PW_RECOMMENDATIONS(
+                        :sweep_run_id,
+                        :v_effective_to_ts
+                    ));
+                exception when other then
+                    v_rec_result := object_construct('error', sqlerrm);
+                end;
+            exception when other then
+                v_sweep_status := 'FAIL';
+                v_sweep_result := object_construct('error', sqlerrm);
+            end;
+
+            let v_sweep_end timestamp_ntz := current_timestamp();
+            call MIP.APP.SP_AUDIT_LOG_STEP(
+                :v_run_id,
+                'PW_SWEEP_RECOMMENDATIONS',
+                :v_sweep_status,
+                :v_sweep_result:seeded_scenarios::number,
+                object_construct(
+                    'step_name', 'pw_sweep_recommendations',
+                    'scope', 'AGG',
+                    'scope_key', null,
+                    'started_at', :v_sweep_start,
+                    'completed_at', :v_sweep_end,
+                    'sweep', :v_sweep_result,
+                    'recommendations', :v_rec_result
+                ),
+                null
+            );
+        end if;
+    end;
+
     v_pipeline_root_status := iff(:v_any_step_skipped_or_degraded, 'SUCCESS_WITH_SKIPS', 'SUCCESS');
     v_pipeline_status_reason := iff(:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS'), 'RATE_LIMIT', null);
 

@@ -519,3 +519,200 @@ def get_equity_curves(
         }
     finally:
         conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/tuning-surface
+# ──────────────────────────────────────────────────────────────
+@router.get("/tuning-surface")
+def get_tuning_surface(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+    family: str = Query(None, description="Sweep family filter (e.g. ZSCORE_SWEEP)"),
+):
+    """Tuning surface data for parameter sweep charts."""
+    conditions = ["PORTFOLIO_ID = %s"]
+    params = [portfolio_id]
+
+    if family:
+        conditions.append("SWEEP_FAMILY = %s")
+        params.append(family)
+
+    where = " AND ".join(conditions)
+
+    sql = f"""
+    SELECT
+        SWEEP_FAMILY,
+        SCENARIO_ID,
+        SCENARIO_NAME,
+        DISPLAY_NAME,
+        SWEEP_ORDER,
+        PARAM_VALUE,
+        OBSERVATION_DAYS,
+        TOTAL_PNL_DELTA,
+        AVG_DAILY_PNL_DELTA,
+        WIN_RATE_PCT,
+        WIN_DAYS,
+        LOSE_DAYS,
+        MAX_DAILY_GAIN,
+        MAX_DAILY_LOSS,
+        AVG_TRADES_DELTA,
+        IS_OPTIMAL,
+        IS_MINIMAL_SAFE_TWEAK,
+        IS_CURRENT_SETTING
+    FROM MIP.MART.V_PW_TUNING_SURFACE
+    WHERE {where}
+    ORDER BY SWEEP_FAMILY, SWEEP_ORDER
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        rows = _fetch_all(cur)
+
+        # Group by family for chart-friendly format
+        by_family = {}
+        for row in rows:
+            r = serialize_row(row)
+            fam = r.get("sweep_family")
+            if fam not in by_family:
+                by_family[fam] = {"family": fam, "points": []}
+            by_family[fam]["points"].append(r)
+
+        return {
+            "portfolio_id": portfolio_id,
+            "families": list(by_family.values()),
+            "family_count": len(by_family),
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/regime-sensitivity
+# ──────────────────────────────────────────────────────────────
+@router.get("/regime-sensitivity")
+def get_regime_sensitivity(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+    family: str = Query(None, description="Sweep family filter"),
+):
+    """Regime sensitivity breakdown for sweep scenarios."""
+    conditions = ["PORTFOLIO_ID = %s"]
+    params = [portfolio_id]
+
+    if family:
+        conditions.append("SWEEP_FAMILY = %s")
+        params.append(family)
+
+    where = " AND ".join(conditions)
+
+    sql = f"""
+    SELECT
+        REGIME,
+        SWEEP_FAMILY,
+        SCENARIO_ID,
+        DISPLAY_NAME,
+        PARAM_VALUE,
+        REGIME_DAYS,
+        REGIME_PNL_DELTA,
+        REGIME_AVG_DELTA,
+        REGIME_WIN_RATE_PCT,
+        TOTAL_DAYS,
+        QUIET_WIN_PCT,
+        NORMAL_WIN_PCT,
+        VOLATILE_WIN_PCT,
+        IS_REGIME_FRAGILE
+    FROM MIP.MART.V_PW_REGIME_SENSITIVITY
+    WHERE {where}
+    ORDER BY SWEEP_FAMILY, SCENARIO_ID, REGIME
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        rows = _fetch_all(cur)
+        return {
+            "portfolio_id": portfolio_id,
+            "data": serialize_rows(rows),
+            "count": len(rows),
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/recommendations
+# ──────────────────────────────────────────────────────────────
+@router.get("/recommendations")
+def get_recommendations(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+    domain: str = Query(None, description="Filter by domain: SIGNAL or PORTFOLIO"),
+):
+    """Ranked tuning recommendations with safety status."""
+    conditions = ["PORTFOLIO_ID = %s"]
+    params = [portfolio_id]
+
+    if domain:
+        conditions.append("DOMAIN = %s")
+        params.append(domain)
+
+    where = " AND ".join(conditions)
+
+    sql = f"""
+    SELECT
+        REC_ID, RUN_ID, PORTFOLIO_ID, AS_OF_TS,
+        RECOMMENDATION_TYPE, DOMAIN, SWEEP_FAMILY, SCENARIO_ID,
+        PARAMETER_NAME, CURRENT_VALUE, RECOMMENDED_VALUE,
+        EXPECTED_DAILY_DELTA, EXPECTED_CUMULATIVE_DELTA,
+        WIN_RATE_PCT, OBSERVATION_DAYS,
+        CONFIDENCE_CLASS, CONFIDENCE_REASON,
+        REGIME_FRAGILE, REGIME_DETAIL,
+        SAFETY_STATUS, EVIDENCE_HASH,
+        APPROVAL_STATUS, ROLLBACK_NOTE, CREATED_AT,
+        DOMAIN_LABEL, FAMILY_LABEL, TYPE_LABEL,
+        CONFIDENCE_EMOJI, REC_RANK
+    FROM MIP.MART.V_PW_RECOMMENDATIONS
+    WHERE {where}
+    ORDER BY REC_RANK
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        rows = _fetch_all(cur)
+        return {
+            "portfolio_id": portfolio_id,
+            "data": serialize_rows(rows),
+            "count": len(rows),
+        }
+    finally:
+        conn.close()
+
+
+# ──────────────────────────────────────────────────────────────
+# GET /parallel-worlds/safety-checks
+# ──────────────────────────────────────────────────────────────
+@router.get("/safety-checks")
+def get_safety_checks(
+    rec_id: int = Query(..., description="Recommendation ID"),
+):
+    """Individual safety check details for a recommendation."""
+    sql = """
+    SELECT
+        REC_ID, PORTFOLIO_ID, SWEEP_FAMILY, RECOMMENDATION_TYPE,
+        CHECK_NAME, PASSED, THRESHOLD, ACTUAL_VALUE, EXPLANATION
+    FROM MIP.MART.V_PW_SAFETY_CHECKS
+    WHERE REC_ID = %s
+    ORDER BY CHECK_NAME
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (rec_id,))
+        rows = _fetch_all(cur)
+        return {
+            "rec_id": rec_id,
+            "checks": serialize_rows(rows),
+            "count": len(rows),
+        }
+    finally:
+        conn.close()

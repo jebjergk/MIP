@@ -237,10 +237,21 @@ begin
         v_result_count := :v_result_count + 1;
 
         -- ===== SCENARIO LOOP =====
-        v_scenarios := (
-            select SCENARIO_ID, NAME, SCENARIO_TYPE, PARAMS_JSON
-            from MIP.APP.PARALLEL_WORLD_SCENARIO where IS_ACTIVE = true order by SCENARIO_ID
-        );
+        if (:P_SCENARIO_SET = 'SWEEP') then
+            v_scenarios := (
+                select SCENARIO_ID, NAME, SCENARIO_TYPE, PARAMS_JSON
+                from MIP.APP.PARALLEL_WORLD_SCENARIO
+                where IS_ACTIVE = true and IS_SWEEP = true
+                order by SWEEP_FAMILY, SWEEP_ORDER
+            );
+        else
+            v_scenarios := (
+                select SCENARIO_ID, NAME, SCENARIO_TYPE, PARAMS_JSON
+                from MIP.APP.PARALLEL_WORLD_SCENARIO
+                where IS_ACTIVE = true and coalesce(IS_SWEEP, false) = false
+                order by SCENARIO_ID
+            );
+        end if;
 
         for s_rec in v_scenarios do
             v_scenario_id := s_rec.SCENARIO_ID;

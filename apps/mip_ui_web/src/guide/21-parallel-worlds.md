@@ -129,6 +129,95 @@ A color-coded grid showing how each scenario performed on each day.
 
 You look at the "Stay in Cash" row and see: Feb 3: -$45, Feb 4: +$20, Feb 5: +$60, Feb 6: -$12, Feb 7: +$15. This means: on Feb 3, your actual trading made $45 more than doing nothing — good day. On Feb 5, doing nothing would have saved you $60 — bad day for your trades. The mix of green and red tells you the cash scenario is not consistently better.
 
+## Signal Tuning Tab
+
+Think of this tab as a **radio dial** for your signal detection rules. It answers the question: **"What if I turned the sensitivity dial up or down — would I hear better signals or just more static?"**
+
+When you click the **Signal Tuning** tab, MIP runs a full "parameter sweep" — it replays your trading history with dozens of slightly different signal filter settings and charts the results. Instead of testing just two or three alternatives (like the Overview tab does), it tests a whole range of settings in fine increments.
+
+### Tuning Surface Charts
+
+Each chart shows a parameter across its full range on the X-axis, with the cumulative PnL impact on the Y-axis. For example, the Z-Score Threshold surface shows what would have happened if you'd adjusted your signal filter by small amounts, from -0.50 (much looser) to +0.50 (much stricter).
+
+- **Blue bars** — Your current setting. This is the zero-change baseline.
+- **Green bars** — Settings that would have improved your results. The taller the bar, the more money you would have made with that setting.
+- **Red bars** — Settings that would have hurt your results.
+- **Optimal marker** (green dot, thick border) — The single best setting across the entire range.
+- **Minimal Safe Tweak marker** (orange dot) — The smallest change from your current setting that still improves things. Think of it as "the least risky improvement."
+
+> **Real-world analogy:** Imagine adjusting the thermostat in your house. The Tuning Surface shows you: "At 68° you're comfortable. At 70° you'd be slightly better. At 85° you'd be miserable." It finds the sweet spot.
+
+### Recommendations Cards
+
+Above the charts, you'll see recommendation cards ranked by confidence:
+
+- **Conservative** (blue border) — The smallest change that would improve results. Low risk, modest reward.
+- **Aggressive** (orange border) — The optimal change for maximum improvement. Higher potential reward, but a bigger change from current settings.
+
+Each card shows:
+- **Parameter** — Which setting and the change (e.g., "min_zscore_delta: 0 → -0.125")
+- **Expected Impact** — Dollar amount of cumulative improvement
+- **Win Rate** — Percentage of days the new setting would have outperformed
+- **Confidence Badge** — Strong / Emerging / Weak / Noise (same as the Overview tab)
+- **Safety Status** — "Ready for Review" (green) means it passed all safety checks. "Not Ready" (red) means it failed one or more.
+
+Click any card to expand it and see:
+- **Evidence details** — Daily delta, domain, observation count, and confidence reasoning
+- **Safety Checklist** — Green checks and red crosses showing which safety tests passed or failed
+- **Governance Buttons** — Approve / Reject / Dismiss buttons (currently disabled — governance workflow coming soon)
+
+### Safety Checks Explained
+
+Every recommendation must pass three safety checks before it's marked "Ready for Review":
+
+| Check | What It Means | Why It Matters |
+|-------|---------------|----------------|
+| **Minimum Observation Days** | At least 5 days of sweep data | Prevents acting on too little information — like flipping a coin twice and concluding it's riased |
+| **Trade Count Stability** | Changing this setting won't wildly increase/decrease trade count | A setting that makes you take 10x more trades might have a different risk profile entirely |
+| **Regime Robustness** | Works in multiple market conditions (quiet, normal, volatile) | A setting that only helps in calm markets but hurts in volatile ones is risky |
+
+### Regime Sensitivity Chart
+
+A horizontal bar chart showing how each setting performs across different market conditions:
+
+- **Quiet** (gray bars) — Low-volatility market days
+- **Normal** (blue bars) — Average volatility days
+- **Volatile** (orange bars) — High-volatility days
+
+If a setting's bars are roughly even across all three regimes, it's **robust**. If it only shows high win rates in one regime, it's **fragile** and will be flagged.
+
+## Portfolio Tuning Tab
+
+This tab works exactly like Signal Tuning but for the **execution** side of your rules: how much to buy and when to enter.
+
+### Position Sizing Surface
+
+Tests what would happen if you had used different position sizes — from 50% of your current size to 150%. Answers: "Am I putting enough money into each trade, or too much?"
+
+- Size 50% = half your current position size (more conservative)
+- Size 100% = current setting (the blue bar)
+- Size 150% = 50% larger positions (more aggressive)
+
+### Entry Timing Surface
+
+Tests what would happen if you had delayed entry by 0 to 3 bars (days). Answers: "Should I have waited a day before buying?"
+
+- Delay 0 bars = enter immediately (current behavior)
+- Delay 1 bar = wait one day after the signal
+- Delay 2–3 bars = even more patience
+
+> **Example:** You see the Delay 1 bar column at +$85 cumulative. This means: if you had waited one extra day before entering every trade, you would have saved $85 over the measured period — presumably by getting better entry prices.
+
+### Portfolio Recommendations
+
+Same card format as Signal Tuning, but covering sizing and timing parameters. Conservative recommendations suggest the smallest sizing or timing adjustment that helps; Aggressive recommendations suggest the optimal setting from the full sweep.
+
+### Important: What These Tabs Are NOT
+
+These tabs are **analysis tools**, not auto-pilots. They show you what *would have worked* in the past. The disclaimer at the top of each tab reads: *"Analysis only — these are suggestions based on historical replay, not instructions. All changes require human review and approval."*
+
+The Approve/Reject buttons are intentionally disabled — they exist to show the future governance workflow, but no recommendations are automatically applied. You are always in control.
+
 ## What Parallel Worlds Is NOT
 
 - **Not a crystal ball.** It looks backward, not forward. Past patterns may not repeat.

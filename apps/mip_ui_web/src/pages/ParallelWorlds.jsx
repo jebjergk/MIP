@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend, ReferenceLine,
+  AreaChart, Area, BarChart, Bar, Cell,
 } from 'recharts'
 import './ParallelWorlds.css'
 
@@ -590,6 +591,371 @@ function RegretHeatmap({ regretData }) {
   )
 }
 
+/* ── Tuning Surface Chart ────────────────────────────── */
+
+const FAMILY_LABELS = {
+  ZSCORE_SWEEP: 'Z-Score Threshold',
+  RETURN_SWEEP: 'Return Threshold',
+  SIZING_SWEEP: 'Position Sizing',
+  TIMING_SWEEP: 'Entry Timing',
+}
+
+const FAMILY_X_LABELS = {
+  ZSCORE_SWEEP: 'Z-Score Delta',
+  RETURN_SWEEP: 'Return Delta (%)',
+  SIZING_SWEEP: 'Position Size Multiplier',
+  TIMING_SWEEP: 'Entry Delay (bars)',
+}
+
+function TuningSurfaceChart({ familyData }) {
+  if (!familyData || !familyData.points || familyData.points.length === 0) return null
+
+  const family = familyData.family
+  const points = familyData.points.map(p => ({
+    ...p,
+    param: family === 'RETURN_SWEEP' ? (p.param_value * 100) : p.param_value,
+    pnl_delta: p.total_pnl_delta || 0,
+    display: p.display_name,
+  }))
+
+  const optimal = points.find(p => p.is_optimal)
+  const safeTweak = points.find(p => p.is_minimal_safe_tweak)
+  const current = points.find(p => p.is_current_setting)
+
+  return (
+    <section className="pw-card pw-surface-card">
+      <div className="pw-card-header">
+        <h3>{FAMILY_LABELS[family] || family} Surface</h3>
+        <div className="pw-surface-legend">
+          {optimal && <span className="pw-surface-legend-item pw-surface-legend--optimal">Optimal</span>}
+          {safeTweak && <span className="pw-surface-legend-item pw-surface-legend--safe">Safe Tweak</span>}
+          <span className="pw-surface-legend-item pw-surface-legend--current">Current</span>
+        </div>
+      </div>
+      <p className="pw-help-text">
+        Each point shows the cumulative PnL impact of a different parameter setting.
+        <em> Green</em> = better than current, <em>Red</em> = worse.
+        The higher the bar, the more that setting would have helped.
+      </p>
+      <div className="pw-chart-wrap">
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={points} margin={{ top: 20, right: 20, left: 10, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+            <XAxis
+              dataKey="display"
+              fontSize={10}
+              angle={-30}
+              textAnchor="end"
+              height={60}
+              interval={0}
+            />
+            <YAxis
+              tickFormatter={v => `$${v}`}
+              fontSize={11}
+              label={{ value: 'Cumulative PnL Delta ($)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#6c757d' }}
+            />
+            <ReferenceLine y={0} stroke="#adb5bd" strokeDasharray="3 3" />
+            <Tooltip
+              formatter={(v, name) => [formatMoney(v), 'PnL Delta']}
+              labelFormatter={label => label}
+              contentStyle={{ fontSize: '0.82rem' }}
+            />
+            <Bar dataKey="pnl_delta" radius={[4, 4, 0, 0]}>
+              {points.map((p, i) => {
+                let fill = '#e9ecef'
+                if (p.pnl_delta > 0) fill = '#198754'
+                else if (p.pnl_delta < 0) fill = '#dc3545'
+                if (p.is_current_setting) fill = '#0d6efd'
+                if (p.is_optimal) fill = '#198754'
+                return <Cell key={i} fill={fill} stroke={p.is_optimal ? '#0f5132' : p.is_minimal_safe_tweak ? '#fd7e14' : 'none'} strokeWidth={p.is_optimal || p.is_minimal_safe_tweak ? 2 : 0} />
+              })}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      {/* Markers legend below chart */}
+      <div className="pw-surface-markers">
+        {optimal && (
+          <div className="pw-surface-marker">
+            <span className="pw-surface-dot pw-surface-dot--optimal" />
+            <span>Optimal: <strong>{optimal.display}</strong> ({formatMoney(optimal.pnl_delta)}, {optimal.win_rate_pct}% win rate, {optimal.observation_days} days)</span>
+          </div>
+        )}
+        {safeTweak && (
+          <div className="pw-surface-marker">
+            <span className="pw-surface-dot pw-surface-dot--safe" />
+            <span>Minimal safe tweak: <strong>{safeTweak.display}</strong> ({formatMoney(safeTweak.pnl_delta)})</span>
+          </div>
+        )}
+        {current && (
+          <div className="pw-surface-marker">
+            <span className="pw-surface-dot pw-surface-dot--current" />
+            <span>Current setting: <strong>{current.display}</strong></span>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/* ── Regime Sensitivity Chart ────────────────────────── */
+
+function RegimeSensitivityChart({ regimeData, family }) {
+  if (!regimeData || regimeData.length === 0) return null
+
+  const filtered = regimeData.filter(r => !family || r.sweep_family === family)
+  if (filtered.length === 0) return null
+
+  // Pivot: one row per scenario, columns for each regime
+  const byScenario = {}
+  filtered.forEach(r => {
+    const key = r.display_name || r.scenario_id
+    if (!byScenario[key]) byScenario[key] = { name: key, is_fragile: r.is_regime_fragile }
+    byScenario[key][r.regime] = r.regime_win_rate_pct || 0
+  })
+  const data = Object.values(byScenario)
+  if (data.length === 0) return null
+
+  return (
+    <section className="pw-card">
+      <div className="pw-card-header"><h3>Regime Sensitivity</h3></div>
+      <p className="pw-help-text">
+        How each parameter setting performs across different market conditions.
+        <em> Fragile</em> scenarios only work in one regime — use with caution.
+      </p>
+      <div className="pw-chart-wrap">
+        <ResponsiveContainer width="100%" height={Math.max(200, data.length * 32 + 60)}>
+          <BarChart data={data} layout="vertical" margin={{ top: 10, right: 20, left: 100, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+            <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} />
+            <YAxis type="category" dataKey="name" fontSize={10} width={90} />
+            <Tooltip formatter={(v) => [`${v}%`, '']} contentStyle={{ fontSize: '0.82rem' }} />
+            <Legend />
+            <Bar dataKey="QUIET" fill="#6c757d" name="Quiet" barSize={8} />
+            <Bar dataKey="NORMAL" fill="#0d6efd" name="Normal" barSize={8} />
+            <Bar dataKey="VOLATILE" fill="#fd7e14" name="Volatile" barSize={8} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </section>
+  )
+}
+
+/* ── Safety Checklist ────────────────────────────────── */
+
+function SafetyChecklist({ checks }) {
+  if (!checks || checks.length === 0) return <p className="pw-muted">No safety data.</p>
+  return (
+    <ul className="pw-safety-checklist">
+      {checks.map((c, i) => (
+        <li key={i} className={`pw-safety-item ${c.passed ? 'pw-safety--pass' : 'pw-safety--fail'}`}>
+          <span className="pw-safety-icon">{c.passed ? '\u2705' : '\u274C'}</span>
+          <span className="pw-safety-label">{c.explanation || c.check_name}</span>
+          <span className="pw-safety-value">
+            {c.actual_value}{c.threshold ? ` (need: ${c.threshold})` : ''}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/* ── Recommendation Cards ────────────────────────────── */
+
+const CONF_BADGE_MAP = {
+  STRONG:   { cls: 'pw-conf--strong',   label: 'Strong' },
+  EMERGING: { cls: 'pw-conf--emerging',  label: 'Emerging' },
+  WEAK:     { cls: 'pw-conf--weak',      label: 'Weak' },
+  NOISE:    { cls: 'pw-conf--noise',     label: 'Noise' },
+}
+
+function RecommendationCards({ recommendations, onLoadSafety, safetyCache, domainFilter }) {
+  const [expandedRec, setExpandedRec] = useState(null)
+
+  const filtered = (recommendations || []).filter(r =>
+    !domainFilter || r.domain === domainFilter
+  )
+
+  if (filtered.length === 0) {
+    return (
+      <section className="pw-card">
+        <div className="pw-card-header"><h3>Recommendations</h3></div>
+        <p className="pw-muted" style={{ padding: '1rem' }}>
+          No recommendations available yet. More sweep data is needed to generate reliable suggestions.
+        </p>
+      </section>
+    )
+  }
+
+  const handleExpand = (recId) => {
+    if (expandedRec === recId) {
+      setExpandedRec(null)
+    } else {
+      setExpandedRec(recId)
+      if (onLoadSafety && !safetyCache?.[recId]) {
+        onLoadSafety(recId)
+      }
+    }
+  }
+
+  return (
+    <section className="pw-card">
+      <div className="pw-card-header"><h3>Top Recommendations</h3></div>
+      <div className="pw-rec-list">
+        {filtered.map(rec => {
+          const isExpanded = expandedRec === rec.rec_id
+          const confBadge = CONF_BADGE_MAP[rec.confidence_class] || CONF_BADGE_MAP.NOISE
+          const isAggressive = rec.recommendation_type === 'AGGRESSIVE'
+
+          return (
+            <div key={rec.rec_id}
+              className={`pw-rec-card ${isAggressive ? 'pw-rec-card--aggressive' : 'pw-rec-card--conservative'}`}
+            >
+              <div className="pw-rec-header" onClick={() => handleExpand(rec.rec_id)}>
+                <div className="pw-rec-header-left">
+                  <span className={`pw-rec-type-pill ${isAggressive ? 'pw-rec-type--aggressive' : 'pw-rec-type--conservative'}`}>
+                    {rec.type_label || rec.recommendation_type}
+                  </span>
+                  <span className="pw-rec-family">{rec.family_label || rec.sweep_family}</span>
+                  <span className={`pw-conf-badge ${confBadge.cls}`}>{confBadge.label}</span>
+                </div>
+                <div className="pw-rec-header-right">
+                  <div className="pw-rec-delta">
+                    <span className="pw-rec-delta-value">{formatMoney(rec.expected_cumulative_delta)}</span>
+                    <span className="pw-rec-delta-label">cumulative</span>
+                  </div>
+                  <span className={`pw-rec-safety-badge ${rec.safety_status === 'READY_FOR_REVIEW' ? 'pw-rec-safety--ready' : 'pw-rec-safety--notready'}`}>
+                    {rec.safety_status === 'READY_FOR_REVIEW' ? 'Ready for Review' : 'Not Ready'}
+                  </span>
+                  <span className="pw-rec-expand">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+                </div>
+              </div>
+
+              {/* Summary row */}
+              <div className="pw-rec-summary">
+                <span>{rec.parameter_name}: <strong>{rec.current_value}</strong> → <strong>{rec.recommended_value}</strong></span>
+                <span>{rec.win_rate_pct}% win rate</span>
+                <span>{rec.observation_days} days observed</span>
+                {rec.regime_fragile && <span className="pw-rec-fragile-badge">Regime Fragile</span>}
+              </div>
+
+              {/* Expanded details */}
+              {isExpanded && (
+                <div className="pw-rec-details">
+                  <div className="pw-rec-detail-grid">
+                    <div className="pw-rec-detail-item">
+                      <span className="pw-rec-detail-label">Expected daily delta</span>
+                      <span className="pw-rec-detail-value">{formatMoney(rec.expected_daily_delta)}</span>
+                    </div>
+                    <div className="pw-rec-detail-item">
+                      <span className="pw-rec-detail-label">Domain</span>
+                      <span className="pw-rec-detail-value">{rec.domain_label || rec.domain}</span>
+                    </div>
+                    <div className="pw-rec-detail-item">
+                      <span className="pw-rec-detail-label">Confidence</span>
+                      <span className="pw-rec-detail-value">{rec.confidence_reason}</span>
+                    </div>
+                    {rec.regime_detail && (
+                      <div className="pw-rec-detail-item">
+                        <span className="pw-rec-detail-label">Regime Note</span>
+                        <span className="pw-rec-detail-value">{rec.regime_detail}</span>
+                      </div>
+                    )}
+                    {rec.rollback_note && (
+                      <div className="pw-rec-detail-item">
+                        <span className="pw-rec-detail-label">Rollback Plan</span>
+                        <span className="pw-rec-detail-value">{rec.rollback_note}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <h4 className="pw-rec-section-title">Safety Checks</h4>
+                  <SafetyChecklist checks={safetyCache?.[rec.rec_id]} />
+
+                  {/* Future governance buttons */}
+                  <div className="pw-approval-row">
+                    <button className="pw-approval-btn pw-approval--approve" disabled title="Governance workflow coming soon">Approve</button>
+                    <button className="pw-approval-btn pw-approval--reject" disabled title="Governance workflow coming soon">Reject</button>
+                    <button className="pw-approval-btn pw-approval--dismiss" disabled title="Governance workflow coming soon">Dismiss</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+/* ── Signal Tuning Tab ───────────────────────────────── */
+
+function SignalTuningTab({ pid, surfaceData, regimeData, recommendations, onLoadSafety, safetyCache }) {
+  const zscoreSurface = surfaceData?.families?.find(f => f.family === 'ZSCORE_SWEEP')
+  const returnSurface = surfaceData?.families?.find(f => f.family === 'RETURN_SWEEP')
+
+  return (
+    <>
+      <div className="pw-disclaimer">
+        Analysis only — these are suggestions based on historical replay, not instructions.
+        All changes require human review and approval.
+      </div>
+      <RecommendationCards
+        recommendations={recommendations}
+        domainFilter="SIGNAL"
+        onLoadSafety={onLoadSafety}
+        safetyCache={safetyCache}
+      />
+      {!zscoreSurface && !returnSurface && (
+        <EmptyState
+          title="No signal tuning data yet"
+          explanation="Run a parameter sweep to see signal tuning surfaces."
+          reasons={['The sweep may not have run yet.', 'PW_SWEEP_ENABLED may be false in APP_CONFIG.']}
+        />
+      )}
+      {zscoreSurface && <TuningSurfaceChart familyData={zscoreSurface} />}
+      {returnSurface && <TuningSurfaceChart familyData={returnSurface} />}
+      {regimeData && regimeData.length > 0 && (
+        <RegimeSensitivityChart regimeData={regimeData.filter(r => r.sweep_family?.includes('ZSCORE') || r.sweep_family?.includes('RETURN'))} />
+      )}
+    </>
+  )
+}
+
+/* ── Portfolio Tuning Tab ────────────────────────────── */
+
+function PortfolioTuningTab({ pid, surfaceData, regimeData, recommendations, onLoadSafety, safetyCache }) {
+  const sizingSurface = surfaceData?.families?.find(f => f.family === 'SIZING_SWEEP')
+  const timingSurface = surfaceData?.families?.find(f => f.family === 'TIMING_SWEEP')
+
+  return (
+    <>
+      <div className="pw-disclaimer">
+        Analysis only — these are suggestions based on historical replay, not instructions.
+        All changes require human review and approval.
+      </div>
+      <RecommendationCards
+        recommendations={recommendations}
+        domainFilter="PORTFOLIO"
+        onLoadSafety={onLoadSafety}
+        safetyCache={safetyCache}
+      />
+      {!sizingSurface && !timingSurface && (
+        <EmptyState
+          title="No portfolio tuning data yet"
+          explanation="Run a parameter sweep to see portfolio tuning surfaces."
+          reasons={['The sweep may not have run yet.', 'PW_SWEEP_ENABLED may be false in APP_CONFIG.']}
+        />
+      )}
+      {sizingSurface && <TuningSurfaceChart familyData={sizingSurface} />}
+      {timingSurface && <TuningSurfaceChart familyData={timingSurface} />}
+      {regimeData && regimeData.length > 0 && (
+        <RegimeSensitivityChart regimeData={regimeData.filter(r => r.sweep_family?.includes('SIZING') || r.sweep_family?.includes('TIMING'))} />
+      )}
+    </>
+  )
+}
+
 /* ── Main Page ───────────────────────────────────────── */
 
 export default function ParallelWorlds() {
@@ -602,6 +968,11 @@ export default function ParallelWorlds() {
   const [confidence, setConfidence] = useState(null)
   const [attribution, setAttribution] = useState(null)
   const [diagnostics, setDiagnostics] = useState(null)
+  const [surfaceData, setSurfaceData] = useState(null)
+  const [regimeData, setRegimeData] = useState(null)
+  const [recommendations, setRecommendations] = useState(null)
+  const [safetyCache, setSafetyCache] = useState({})
+  const [activeTab, setActiveTab] = useState('overview')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [expandedRow, setExpandedRow] = useState(null)
@@ -619,7 +990,7 @@ export default function ParallelWorlds() {
     setLoading(true)
     setError(null)
     try {
-      const [resResult, resNarrative, resCurves, resRegret, resConfidence, resAttribution, resDiagnostics] = await Promise.all([
+      const [resResult, resNarrative, resCurves, resRegret, resConfidence, resAttribution, resDiagnostics, resSurface, resRegime, resRecs] = await Promise.all([
         fetch(`${API_BASE}/parallel-worlds/results?portfolio_id=${pid}`).then(r => r.json()),
         fetch(`${API_BASE}/parallel-worlds/narrative?portfolio_id=${pid}`).then(r => r.json()),
         fetch(`${API_BASE}/parallel-worlds/equity-curves?portfolio_id=${pid}`).then(r => r.json()),
@@ -627,6 +998,9 @@ export default function ParallelWorlds() {
         fetch(`${API_BASE}/parallel-worlds/confidence?portfolio_id=${pid}`).then(r => r.json()),
         fetch(`${API_BASE}/parallel-worlds/regret-attribution?portfolio_id=${pid}`).then(r => r.json()),
         fetch(`${API_BASE}/parallel-worlds/policy-diagnostics?portfolio_id=${pid}`).then(r => r.json()),
+        fetch(`${API_BASE}/parallel-worlds/tuning-surface?portfolio_id=${pid}`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/parallel-worlds/regime-sensitivity?portfolio_id=${pid}`).then(r => r.json()).catch(() => null),
+        fetch(`${API_BASE}/parallel-worlds/recommendations?portfolio_id=${pid}`).then(r => r.json()).catch(() => null),
       ])
       setResults(resResult)
       setNarrative(resNarrative)
@@ -635,6 +1009,10 @@ export default function ParallelWorlds() {
       setConfidence(resConfidence)
       setAttribution(resAttribution)
       setDiagnostics(resDiagnostics)
+      setSurfaceData(resSurface)
+      setRegimeData(resRegime)
+      setRecommendations(resRecs)
+      setSafetyCache({})
     } catch (e) {
       setError(e.message)
     } finally {
@@ -646,12 +1024,19 @@ export default function ParallelWorlds() {
     if (selectedPortfolio) loadData(selectedPortfolio)
   }, [selectedPortfolio, loadData])
 
+  const loadSafetyChecks = useCallback(async (recId) => {
+    try {
+      const res = await fetch(`${API_BASE}/parallel-worlds/safety-checks?rec_id=${recId}`).then(r => r.json())
+      setSafetyCache(prev => ({ ...prev, [recId]: res?.checks || [] }))
+    } catch { /* ignore */ }
+  }, [])
+
   return (
     <div className="pw-page">
       <header className="pw-header">
         <div className="pw-header-left">
           <h2 className="pw-title">Parallel Worlds</h2>
-          <p className="pw-subtitle">Counterfactual analysis — what could have been</p>
+          <p className="pw-subtitle">Counterfactual analysis &amp; policy tuning lab</p>
         </div>
         <div className="pw-header-right">
           <select
@@ -669,36 +1054,81 @@ export default function ParallelWorlds() {
         </div>
       </header>
 
+      {/* Tab navigation */}
+      <nav className="pw-tab-bar">
+        {[
+          { id: 'overview', label: 'Overview' },
+          { id: 'signal-tuning', label: 'Signal Tuning' },
+          { id: 'portfolio-tuning', label: 'Portfolio Tuning' },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            className={`pw-tab ${activeTab === tab.id ? 'pw-tab--active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
       {loading && <LoadingState message="Loading parallel worlds..." />}
       {error && <div className="pw-error">Error: {error}</div>}
 
-      {!loading && !error && results && !results.found && (
-        <EmptyState
-          title="No parallel-worlds data yet"
-          explanation="Run the parallel worlds simulation to see counterfactual comparisons."
-          reasons={['The daily pipeline may not have run yet.', 'Parallel Worlds may not be enabled in APP_CONFIG.']}
+      {/* Overview Tab */}
+      {!loading && !error && activeTab === 'overview' && (
+        <>
+          {results && !results.found && (
+            <EmptyState
+              title="No parallel-worlds data yet"
+              explanation="Run the parallel worlds simulation to see counterfactual comparisons."
+              reasons={['The daily pipeline may not have run yet.', 'Parallel Worlds may not be enabled in APP_CONFIG.']}
+            />
+          )}
+          {results && results.found && (
+            <>
+              <PolicyHealthCard diagnostics={diagnostics} />
+              <NarrativeCard narrative={narrative} isAi={narrative?.is_ai_narrative} />
+              <ScenarioTable
+                results={results}
+                expandedRow={expandedRow}
+                setExpandedRow={setExpandedRow}
+                confidenceMap={
+                  confidence?.data
+                    ? Object.fromEntries(confidence.data.map(c => [c.scenario_name, c]))
+                    : {}
+                }
+              />
+              <ConfidencePanel confidenceData={confidence?.data} />
+              <EquityCurvesChart curves={curves?.curves} />
+              <RegretAttribution attribution={attribution} />
+              <RegretHeatmap regretData={regret?.data} />
+            </>
+          )}
+        </>
+      )}
+
+      {/* Signal Tuning Tab */}
+      {!loading && !error && activeTab === 'signal-tuning' && (
+        <SignalTuningTab
+          pid={selectedPortfolio}
+          surfaceData={surfaceData}
+          regimeData={regimeData?.data}
+          recommendations={recommendations?.data}
+          onLoadSafety={loadSafetyChecks}
+          safetyCache={safetyCache}
         />
       )}
 
-      {!loading && !error && results && results.found && (
-        <>
-          <PolicyHealthCard diagnostics={diagnostics} />
-          <NarrativeCard narrative={narrative} isAi={narrative?.is_ai_narrative} />
-          <ScenarioTable
-            results={results}
-            expandedRow={expandedRow}
-            setExpandedRow={setExpandedRow}
-            confidenceMap={
-              confidence?.data
-                ? Object.fromEntries(confidence.data.map(c => [c.scenario_name, c]))
-                : {}
-            }
-          />
-          <ConfidencePanel confidenceData={confidence?.data} />
-          <EquityCurvesChart curves={curves?.curves} />
-          <RegretAttribution attribution={attribution} />
-          <RegretHeatmap regretData={regret?.data} />
-        </>
+      {/* Portfolio Tuning Tab */}
+      {!loading && !error && activeTab === 'portfolio-tuning' && (
+        <PortfolioTuningTab
+          pid={selectedPortfolio}
+          surfaceData={surfaceData}
+          regimeData={regimeData?.data}
+          recommendations={recommendations?.data}
+          onLoadSafety={loadSafetyChecks}
+          safetyCache={safetyCache}
+        />
       )}
     </div>
   )

@@ -464,14 +464,26 @@ begin
         -- vs FX) have different BAR_INDEX sequences because BAR_INDEX = ROW_NUMBER
         -- per symbol. Using the minimum would cause sells to fire too late (or never)
         -- for symbols whose BAR_INDEX is higher than the minimum.
+        --
+        -- CARRY-FORWARD: Uses the latest available bar ON OR BEFORE the current
+        -- date per symbol. This prevents positions from getting stuck on market
+        -- holidays (e.g. President's Day for stocks) when no bar exists for the
+        -- exact date. The position is sold using the most recent known price.
         v_position_sql := '
             select tp.*
             from TEMP_POSITIONS tp
-            join MIP.MART.V_BAR_INDEX vb
+            join (
+                select SYMBOL, MARKET_TYPE, BAR_INDEX, CLOSE
+                from MIP.MART.V_BAR_INDEX
+                where INTERVAL_MINUTES = 1440
+                  and TS <= ?
+                qualify row_number() over (
+                    partition by SYMBOL, MARKET_TYPE
+                    order by TS desc
+                ) = 1
+            ) vb
               on vb.SYMBOL = tp.SYMBOL
              and vb.MARKET_TYPE = tp.MARKET_TYPE
-             and vb.INTERVAL_MINUTES = 1440
-             and vb.TS = ?
             where tp.HOLD_UNTIL_INDEX <= vb.BAR_INDEX
         ';
         v_position_rs := (execute immediate :v_position_sql using (v_bar_ts));
@@ -498,13 +510,17 @@ begin
                 v_position_cost_basis := position_row.COST_BASIS;
                 v_position_entry_score := position_row.ENTRY_SCORE;
 
+                -- Carry-forward: use latest bar on or before the current date.
+                -- Ensures a price is found even on market holidays.
                 select CLOSE
                   into v_sell_price
                   from MIP.MART.V_BAR_INDEX
                  where SYMBOL = :v_position_symbol
                    and MARKET_TYPE = :v_position_market_type
                    and INTERVAL_MINUTES = 1440
-                   and TS = :v_bar_ts;
+                   and TS <= :v_bar_ts
+                 order by TS desc
+                 limit 1;
 
                 if (v_sell_price is not null) then
                     v_sell_exec_price := v_sell_price * (1 - ((v_slippage_bps + (v_spread_bps / 2)) / 10000));
@@ -601,14 +617,23 @@ begin
             end;
         end for;
 
+        -- Carry-forward equity: use latest bar on or before current date per symbol.
+        -- Prevents equity from dropping to 0 on market holidays for stocks.
         select coalesce(sum(tp.QUANTITY * vb.CLOSE), 0)
           into v_equity_value
           from TEMP_POSITIONS tp
-          join MIP.MART.V_BAR_INDEX vb
+          join (
+              select SYMBOL, MARKET_TYPE, CLOSE
+              from MIP.MART.V_BAR_INDEX
+              where INTERVAL_MINUTES = 1440
+                and TS <= :v_bar_ts
+              qualify row_number() over (
+                  partition by SYMBOL, MARKET_TYPE
+                  order by TS desc
+              ) = 1
+          ) vb
             on vb.SYMBOL = tp.SYMBOL
-           and vb.MARKET_TYPE = tp.MARKET_TYPE
-           and vb.INTERVAL_MINUTES = 1440
-           and vb.TS = :v_bar_ts;
+           and vb.MARKET_TYPE = tp.MARKET_TYPE;
 
         v_total_equity := v_cash + v_equity_value;
 
@@ -832,14 +857,22 @@ begin
             end for;
         end if;
 
+        -- Carry-forward equity: use latest bar on or before current date per symbol.
         select coalesce(sum(tp.QUANTITY * vb.CLOSE), 0)
           into v_equity_value
           from TEMP_POSITIONS tp
-          join MIP.MART.V_BAR_INDEX vb
+          join (
+              select SYMBOL, MARKET_TYPE, CLOSE
+              from MIP.MART.V_BAR_INDEX
+              where INTERVAL_MINUTES = 1440
+                and TS <= :v_bar_ts
+              qualify row_number() over (
+                  partition by SYMBOL, MARKET_TYPE
+                  order by TS desc
+              ) = 1
+          ) vb
             on vb.SYMBOL = tp.SYMBOL
-           and vb.MARKET_TYPE = tp.MARKET_TYPE
-           and vb.INTERVAL_MINUTES = 1440
-           and vb.TS = :v_bar_ts;
+           and vb.MARKET_TYPE = tp.MARKET_TYPE;
 
         v_total_equity := v_cash + v_equity_value;
         v_open_positions := (select count(*) from TEMP_POSITIONS);
@@ -951,6 +984,25 @@ begin
     -- source of position openings. PORTFOLIO_POSITIONS may have gaps from
     -- data repairs. Cross-join each bar date with BUY trades on or before it.
     -- Rank per symbol in FIFO order (earliest buy first).
+    --
+    -- CARRY-FORWARD PRICING: use the latest bar ON OR BEFORE each snapshot
+    -- date per symbol. This ensures stock positions retain their last known
+    -- price on market holidays instead of showing BAR_CLOSE = NULL.
+    create or replace temporary table TEMP_CF_PRICES as
+    select
+        sd.TS as BAR_TS,
+        vb.SYMBOL,
+        vb.MARKET_TYPE,
+        vb.CLOSE
+    from TEMP_DAILY_SNAPSHOT sd
+    join MIP.MART.V_BAR_INDEX vb
+      on vb.INTERVAL_MINUTES = 1440
+     and vb.TS <= sd.TS
+    qualify row_number() over (
+        partition by sd.TS, vb.SYMBOL, vb.MARKET_TYPE
+        order by vb.TS desc
+    ) = 1;
+
     create or replace temporary table TEMP_POSITION_TIMELINE as
     select
         snap.TS as BAR_TS,
@@ -958,18 +1010,17 @@ begin
         bt.MARKET_TYPE,
         bt.QUANTITY,
         bt.TRADE_TS as ENTRY_TS,
-        vb.CLOSE as BAR_CLOSE,
+        cfp.CLOSE as BAR_CLOSE,
         row_number() over (
             partition by snap.TS, bt.SYMBOL, bt.MARKET_TYPE
             order by bt.TRADE_TS, bt.TRADE_ID
         ) as POS_RANK
     from TEMP_DAILY_SNAPSHOT snap
     cross join MIP.APP.PORTFOLIO_TRADES bt
-    left join MIP.MART.V_BAR_INDEX vb
-      on vb.SYMBOL = bt.SYMBOL
-     and vb.MARKET_TYPE = bt.MARKET_TYPE
-     and vb.INTERVAL_MINUTES = 1440
-     and vb.TS = snap.TS
+    left join TEMP_CF_PRICES cfp
+      on cfp.SYMBOL = bt.SYMBOL
+     and cfp.MARKET_TYPE = bt.MARKET_TYPE
+     and cfp.BAR_TS = snap.TS
     where bt.PORTFOLIO_ID = :v_portfolio_id
       and (bt.EPISODE_ID = :v_episode_id or (:v_episode_id is null and bt.EPISODE_ID is null))
       and bt.SIDE = 'BUY'

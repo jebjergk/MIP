@@ -649,11 +649,17 @@ def get_portfolio_snapshot(
                          then ((vb.CLOSE * p.QUANTITY) - p.COST_BASIS) / p.COST_BASIS * 100
                          else null end as UNREALIZED_PNL_PCT
                 from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
-                left join MIP.MART.V_BAR_INDEX vb
+                left join (
+                    select SYMBOL, MARKET_TYPE, CLOSE
+                    from MIP.MART.V_BAR_INDEX
+                    where INTERVAL_MINUTES = 1440
+                    qualify row_number() over (
+                        partition by SYMBOL, MARKET_TYPE
+                        order by TS desc
+                    ) = 1
+                ) vb
                   on vb.SYMBOL = p.SYMBOL
                  and vb.MARKET_TYPE = p.MARKET_TYPE
-                 and vb.INTERVAL_MINUTES = 1440
-                 and vb.TS = p.AS_OF_TS
                 where p.PORTFOLIO_ID = %s
                 order by p.ENTRY_TS desc
                 """,

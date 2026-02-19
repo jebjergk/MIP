@@ -234,6 +234,7 @@ def get_overview(
         left join trade_counts tc on tc.SYMBOL = s.SYMBOL and tc.MARKET_TYPE = s.MARKET_TYPE
         left join trust_labels tl on tl.SYMBOL = s.SYMBOL and tl.MARKET_TYPE = s.MARKET_TYPE
         left join latest_bars lb on lb.SYMBOL = s.SYMBOL and lb.MARKET_TYPE = s.MARKET_TYPE
+        {"where coalesce(pc.proposal_count, 0) + coalesce(tc.trade_count, 0) > 0" if portfolio_id else ""}
         order by s.MARKET_TYPE, s.SYMBOL
         """
         

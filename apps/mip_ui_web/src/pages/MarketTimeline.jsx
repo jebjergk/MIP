@@ -16,6 +16,7 @@ export default function MarketTimeline() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [portfolios, setPortfolios] = useState([])
   // Filters
   const [portfolioId, setPortfolioId] = useState('')
   const [marketTypeFilter, setMarketTypeFilter] = useState('')
@@ -25,6 +26,14 @@ export default function MarketTimeline() {
   const [expandedSymbol, setExpandedSymbol] = useState(null) // {symbol, market_type}
   const detailCacheRef = useRef({}) // Cache for detail data
   
+  // Fetch portfolio list once
+  useEffect(() => {
+    fetch(`${API_BASE}/portfolios`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((d) => setPortfolios(Array.isArray(d) ? d : []))
+      .catch(() => setPortfolios([]))
+  }, [])
+
   // Fetch overview data
   useEffect(() => {
     let cancelled = false
@@ -117,8 +126,11 @@ export default function MarketTimeline() {
           Portfolio:
           <select value={portfolioId} onChange={(e) => setPortfolioId(e.target.value)}>
             <option value="">All</option>
-            <option value="1">Portfolio 1</option>
-            <option value="2">Portfolio 2</option>
+            {portfolios.map((p) => (
+              <option key={p.PORTFOLIO_ID} value={p.PORTFOLIO_ID}>
+                {p.NAME || `Portfolio ${p.PORTFOLIO_ID}`}
+              </option>
+            ))}
           </select>
         </label>
         <label>

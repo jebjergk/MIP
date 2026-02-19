@@ -342,6 +342,20 @@ def get_detail(
                 "volume": int(r.get("VOLUME")) if r.get("VOLUME") is not None else None,
             })
         
+        # Extend to today if the last bar is before today
+        from datetime import date as _date
+        today_str = _date.today().isoformat()
+        if ohlc and ohlc[-1]["ts"][:10] < today_str:
+            last = ohlc[-1]
+            ohlc.append({
+                "ts": today_str + "T00:00:00",
+                "open": last["close"],
+                "high": last["close"],
+                "low": last["close"],
+                "close": last["close"],
+                "volume": None,
+            })
+
         # Determine window bounds
         if ohlc:
             window_start = ohlc[0]["ts"]

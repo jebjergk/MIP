@@ -96,11 +96,33 @@ declare
     v_end_ts timestamp_ntz := current_timestamp();
     v_new_episode_id number;
     v_start_equity number(18,2) := :P_START_EQUITY;
+    v_old_episode_id number;
+    v_old_equity number(18,2);
+    v_old_cash number(18,2);
 begin
     if (v_start_equity is null) then
         select STARTING_CASH into :v_start_equity
           from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID;
     end if;
+
+    -- Capture old episode state before ending it
+    begin
+        select EPISODE_ID into :v_old_episode_id
+          from MIP.APP.PORTFOLIO_EPISODE
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID and STATUS = 'ACTIVE';
+    exception when other then
+        v_old_episode_id := null;
+    end;
+    begin
+        select TOTAL_EQUITY, CASH into :v_old_equity, :v_old_cash
+          from MIP.APP.PORTFOLIO_DAILY
+         where PORTFOLIO_ID = :P_PORTFOLIO_ID
+         order by TS desc
+         limit 1;
+    exception when other then
+        v_old_equity := :v_start_equity;
+        v_old_cash := :v_start_equity;
+    end;
 
     update MIP.APP.PORTFOLIO_EPISODE
        set END_TS = :v_end_ts, STATUS = 'ENDED', END_REASON = coalesce(:P_END_REASON, 'MANUAL_RESET')
@@ -120,6 +142,62 @@ begin
     update MIP.APP.PORTFOLIO
        set PROFILE_ID = :P_PROFILE_ID, UPDATED_AT = :v_end_ts
      where PORTFOLIO_ID = :P_PORTFOLIO_ID;
+
+    -- Lifecycle events: EPISODE_END + EPISODE_START (non-fatal)
+    begin
+        let v_lc_dep number(18,2) := 0;
+        let v_lc_wth number(18,2) := 0;
+        let v_lc_pnl number(18,2) := 0;
+        begin
+            select CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN, CUMULATIVE_PNL
+              into :v_lc_dep, :v_lc_wth, :v_lc_pnl
+              from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+             where PORTFOLIO_ID = :P_PORTFOLIO_ID
+             order by EVENT_TS desc, EVENT_ID desc
+             limit 1;
+        exception when other then
+            v_lc_dep := :v_start_equity;
+            v_lc_wth := 0;
+            v_lc_pnl := 0;
+        end;
+
+        if (:v_old_episode_id is not null) then
+            let v_ep_pnl number(18,2) := coalesce(:v_old_equity, :v_start_equity) - :v_start_equity;
+            v_lc_pnl := :v_lc_pnl + :v_ep_pnl;
+            insert into MIP.APP.PORTFOLIO_LIFECYCLE_EVENT (
+                PORTFOLIO_ID, EVENT_TS, EVENT_TYPE, AMOUNT,
+                CASH_BEFORE, CASH_AFTER, EQUITY_BEFORE, EQUITY_AFTER,
+                CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN, CUMULATIVE_PNL,
+                EPISODE_ID, PROFILE_ID, NOTES, CREATED_BY
+            ) values (
+                :P_PORTFOLIO_ID, :v_end_ts, 'EPISODE_END',
+                coalesce(:v_old_equity, 0) - :v_start_equity,
+                :v_old_cash, :v_old_cash,
+                :v_old_equity, :v_old_equity,
+                :v_lc_dep, :v_lc_wth, :v_lc_pnl,
+                :v_old_episode_id, :P_PROFILE_ID,
+                'Episode ended: ' || coalesce(:P_END_REASON, 'MANUAL_RESET'),
+                current_user()
+            );
+        end if;
+
+        insert into MIP.APP.PORTFOLIO_LIFECYCLE_EVENT (
+            PORTFOLIO_ID, EVENT_TS, EVENT_TYPE, AMOUNT,
+            CASH_BEFORE, CASH_AFTER, EQUITY_BEFORE, EQUITY_AFTER,
+            CUMULATIVE_DEPOSITED, CUMULATIVE_WITHDRAWN, CUMULATIVE_PNL,
+            EPISODE_ID, PROFILE_ID, NOTES, CREATED_BY
+        ) values (
+            :P_PORTFOLIO_ID, :v_end_ts, 'EPISODE_START', :v_start_equity,
+            :v_start_equity, :v_start_equity,
+            :v_start_equity, :v_start_equity,
+            :v_lc_dep, :v_lc_wth, :v_lc_pnl,
+            :v_new_episode_id, :P_PROFILE_ID,
+            'New episode started',
+            current_user()
+        );
+    exception when other then
+        null;
+    end;
 
     return :v_new_episode_id;
 end;

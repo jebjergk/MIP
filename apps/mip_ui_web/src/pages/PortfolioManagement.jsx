@@ -439,6 +439,7 @@ function ProfilesTab({ profiles, onEdit, onCreate, disabled }) {
 
 function LifecycleTab({ portfolios, selectedPortfolioId, onSelectPortfolio, lifecycle, loading }) {
   const events = lifecycle?.events || []
+  const dailySeries = lifecycle?.daily_series || []
   const pid = (p) => p.PORTFOLIO_ID || p.portfolio_id
 
   // Prepare chart data from events (ordered ASC)
@@ -450,6 +451,13 @@ function LifecycleTab({ portfolios, selectedPortfolioId, onSelectPortfolio, life
     pnl: Number(e.CUMULATIVE_PNL) || 0,
     amount: Number(e.AMOUNT) || 0,
     label: e.EVENT_LABEL,
+  }))
+
+  // Daily data for Cash vs Equity (real intraday divergence)
+  const dailyChartData = dailySeries.map(d => ({
+    ts: fmtDate(d.ts),
+    equity: d.equity ?? 0,
+    cash: d.cash ?? 0,
   }))
 
   // Cash flow data (only money events)
@@ -547,18 +555,18 @@ function LifecycleTab({ portfolios, selectedPortfolioId, onSelectPortfolio, life
               </ResponsiveContainer>
             </div>
 
-            {/* Cash + Equity Over Time */}
+            {/* Cash + Equity Over Time — uses daily series for real divergence */}
             <div className="mgmt-chart-card">
               <h4>Cash vs Equity</h4>
               <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={chartData}>
+                <LineChart data={dailyChartData.length > 0 ? dailyChartData : chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                   <XAxis dataKey="ts" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={v => '$' + (v / 1000).toFixed(1) + 'k'} />
                   <Tooltip formatter={(v) => [fmt$(v)]} />
                   <Legend />
-                  <Line type="monotone" dataKey="cash" stroke="#ff9800" strokeWidth={2} dot={{ r: 3 }} name="Cash" />
-                  <Line type="monotone" dataKey="equity" stroke="#0066cc" strokeWidth={2} dot={{ r: 3 }} name="Total Equity" />
+                  <Line type="monotone" dataKey="cash" stroke="#ff9800" strokeWidth={2} dot={false} name="Cash" />
+                  <Line type="monotone" dataKey="equity" stroke="#0066cc" strokeWidth={2} dot={false} name="Total Equity" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -574,11 +582,14 @@ function LifecycleTab({ portfolios, selectedPortfolioId, onSelectPortfolio, life
                   <span className="mgmt-timeline-type">{e.EVENT_LABEL || e.EVENT_TYPE}</span>
                   <span className="mgmt-timeline-ts">{fmtDateTime(e.EVENT_TS)}</span>
                 </div>
-                {e.AMOUNT != null && e.AMOUNT > 0 && (
-                  <span className={`mgmt-timeline-amount ${['DEPOSIT', 'CREATE'].includes(e.EVENT_TYPE) ? 'mgmt-timeline-amount--positive' : 'mgmt-timeline-amount--negative'}`}>
-                    {['DEPOSIT', 'CREATE'].includes(e.EVENT_TYPE) ? '+' : '-'}{fmt$(e.AMOUNT)}
-                  </span>
-                )}
+                {e.AMOUNT != null && e.AMOUNT > 0 && !['EPISODE_START'].includes(e.EVENT_TYPE) && (() => {
+                  const isPositive = ['DEPOSIT', 'CREATE', 'EPISODE_END'].includes(e.EVENT_TYPE)
+                  return (
+                    <span className={`mgmt-timeline-amount ${isPositive ? 'mgmt-timeline-amount--positive' : 'mgmt-timeline-amount--negative'}`}>
+                      {isPositive ? '+' : '-'}{fmt$(e.AMOUNT)}
+                    </span>
+                  )
+                })()}
                 <div className="mgmt-timeline-snapshots">
                   <span>Cash: {fmt$(e.CASH_AFTER)}</span>
                   <span>Equity: {fmt$(e.EQUITY_AFTER)}</span>

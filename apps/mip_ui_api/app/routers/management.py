@@ -160,7 +160,7 @@ def attach_profile(portfolio_id: int, body: AttachProfile):
 
 @router.get("/portfolios/{portfolio_id}/lifecycle")
 def get_lifecycle_timeline(portfolio_id: int):
-    """Get the full lifecycle event timeline for a portfolio."""
+    """Get the full lifecycle event timeline for a portfolio, plus daily series for charts."""
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -174,10 +174,37 @@ def get_lifecycle_timeline(portfolio_id: int):
             (portfolio_id,),
         )
         rows = fetch_all(cur)
+
+        # Daily series: PORTFOLIO_DAILY gives real cash vs equity divergence
+        cur.execute(
+            """
+            SELECT TS, TOTAL_EQUITY, CASH, EQUITY_VALUE, EPISODE_ID
+              FROM MIP.APP.PORTFOLIO_DAILY
+             WHERE PORTFOLIO_ID = %s
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY TS ORDER BY CREATED_AT DESC NULLS LAST, RUN_ID DESC) = 1
+             ORDER BY TS ASC
+            """,
+            (portfolio_id,),
+        )
+        daily_rows = fetch_all(cur)
+        daily_series = []
+        for d in daily_rows:
+            ts = d.get("TS")
+            if ts is not None:
+                tss = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+                daily_series.append({
+                    "ts": tss,
+                    "equity": float(d["TOTAL_EQUITY"]) if d.get("TOTAL_EQUITY") is not None else None,
+                    "cash": float(d["CASH"]) if d.get("CASH") is not None else None,
+                    "equity_value": float(d["EQUITY_VALUE"]) if d.get("EQUITY_VALUE") is not None else None,
+                    "episode_id": d.get("EPISODE_ID"),
+                })
+
         return {
             "portfolio_id": portfolio_id,
             "event_count": len(rows),
             "events": serialize_rows(rows),
+            "daily_series": daily_series,
         }
     finally:
         conn.close()

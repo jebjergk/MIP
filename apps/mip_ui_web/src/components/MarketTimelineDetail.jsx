@@ -165,7 +165,7 @@ export default function MarketTimelineDetail({
     const date = bar.ts?.slice(0, 10)
     const barEvents = eventsByDate[date] || []
     
-    // Calculate markers for overlay
+    // Calculate markers for overlay — space out when multiple types on same day
     const hasSignal = barEvents.some((e) => e.type === 'SIGNAL')
     const hasProposal = barEvents.some((e) => e.type === 'PROPOSAL')
     const hasTrade = barEvents.some((e) => e.type === 'TRADE')
@@ -174,7 +174,7 @@ export default function MarketTimelineDetail({
       ...bar,
       date,
       events: barEvents,
-      signalMarker: hasSignal ? bar.low * 0.995 : null,
+      signalMarker: hasSignal ? bar.low * (hasProposal ? 0.982 : 0.99) : null,
       proposalMarker: hasProposal ? bar.low * 0.99 : null,
       tradeMarker: hasTrade ? bar.high * 1.005 : null,
       // For candlestick-like rendering
@@ -264,20 +264,7 @@ export default function MarketTimelineDetail({
               name="Close Price"
             />
             
-            {/* Signal markers - blue triangles pointing up below the price */}
-            <Scatter
-              dataKey="signalMarker"
-              fill="#2196f3"
-              name="Signal"
-            >
-              {chartData.map((entry, index) => (
-                entry.signalMarker != null ? (
-                  <circle key={`signal-${index}`} r={6} fill="#2196f3" stroke="#1565c0" strokeWidth={1} />
-                ) : null
-              ))}
-            </Scatter>
-            
-            {/* Proposal markers - orange diamonds */}
+            {/* Proposal markers - orange circles below price */}
             <Scatter
               dataKey="proposalMarker"
               fill="#ff9800"
@@ -290,7 +277,20 @@ export default function MarketTimelineDetail({
               ))}
             </Scatter>
             
-            {/* Trade markers - green stars above the price */}
+            {/* Signal markers - blue circles below proposals (rendered after so visible on top) */}
+            <Scatter
+              dataKey="signalMarker"
+              fill="#2196f3"
+              name="Signal"
+            >
+              {chartData.map((entry, index) => (
+                entry.signalMarker != null ? (
+                  <circle key={`signal-${index}`} r={6} fill="#2196f3" stroke="#1565c0" strokeWidth={2} />
+                ) : null
+              ))}
+            </Scatter>
+            
+            {/* Trade markers - green circles above price */}
             <Scatter
               dataKey="tradeMarker"
               fill="#4caf50"

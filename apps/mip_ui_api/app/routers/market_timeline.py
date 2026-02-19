@@ -415,6 +415,7 @@ def get_detail(
                     "ts": chart_ts.isoformat() if hasattr(chart_ts, "isoformat") else str(chart_ts),
                     "proposed_at": proposed_at.isoformat() if hasattr(proposed_at, "isoformat") else str(proposed_at),
                     "proposal_id": row.get("PROPOSAL_ID"),
+                    "recommendation_id": row.get("RECOMMENDATION_ID"),
                     "portfolio_id": row.get("PORTFOLIO_ID"),
                     "side": row.get("SIDE"),
                     "target_weight": float(row.get("TARGET_WEIGHT")) if row.get("TARGET_WEIGHT") is not None else None,
@@ -434,7 +435,8 @@ def get_detail(
                     t.QUANTITY,
                     t.PRICE,
                     t.NOTIONAL,
-                    t.REALIZED_PNL
+                    t.REALIZED_PNL,
+                    t.PROPOSAL_ID
                 from MIP.APP.PORTFOLIO_TRADES t
                 where t.SYMBOL = %s
                   and t.MARKET_TYPE = %s

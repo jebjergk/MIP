@@ -595,13 +595,45 @@
   50% { opacity: 0.5; }
 }
 
-.mtd-chain-signal_only {
-  opacity: 0.65;
-}
-
 .mtd-chain-rejected .chain-step.chain-proposal .chain-label {
   text-decoration: line-through;
   opacity: 0.7;
+}
+
+/* Orphan signals toggle */
+.mtd-chain-orphans {
+  margin-top: 0.5rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid #eee;
+}
+
+.mtd-chain-orphan-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: #999;
+  padding: 0.2rem 0;
+}
+
+.mtd-chain-orphan-toggle:hover {
+  color: #666;
+}
+
+.mtd-chain-orphan-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+}
+
+.mtd-chain-orphan-item {
+  font-size: 0.68rem;
+  color: #aaa;
+  background: #f5f5f5;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
 }
 
 /* Portfolio link in events table */

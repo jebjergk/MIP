@@ -110,9 +110,10 @@ function ChainLinks({ offset, width: svgWidth, yAxisMap, chains, chartData }) {
   }
 
   const paths = []
-  chains.forEach((chain, ci) => {
+  const activeChains = chains.filter((c) => c.status !== 'SIGNAL_ONLY')
+  activeChains.forEach((chain, ci) => {
     const color = CHAIN_COLORS[chain.status] || '#bbb'
-    const dashed = chain.status === 'SIGNAL_ONLY' || chain.status === 'REJECTED'
+    const dashed = chain.status === 'REJECTED'
     const nodes = []
 
     const pushNode = (ts, yVal) => {

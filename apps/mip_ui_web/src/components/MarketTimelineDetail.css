@@ -484,6 +484,126 @@
   cursor: pointer;
 }
 
+/* Chain legend items */
+.mtd-chart-legend .legend-chain-line {
+  width: 20px;
+  height: 0;
+  border-top: 2px solid;
+}
+
+.mtd-chart-legend .legend-chain-line.solid.green {
+  border-color: #4caf50;
+}
+
+.mtd-chart-legend .legend-chain-line.solid.blue {
+  border-color: #1976d2;
+}
+
+.mtd-chart-legend .legend-chain-line.solid.orange {
+  border-color: #ff9800;
+}
+
+.mtd-chart-legend .legend-chain-line.dashed.grey {
+  border-color: #bbb;
+  border-top-style: dashed;
+}
+
+/* Chain flow view */
+.mtd-chains {
+  margin-top: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.mtd-chains h5 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.mtd-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin-bottom: 2px;
+  background: #fafafa;
+  flex-wrap: wrap;
+}
+
+.mtd-chain-row:hover {
+  background: #f0f4ff;
+}
+
+.chain-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.chain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.chain-dot.signal { background: #2196f3; }
+.chain-dot.proposal { background: #ff9800; }
+.chain-dot.trade { background: #4caf50; }
+.chain-dot.sell { background: #ef5350; }
+
+.chain-label {
+  font-weight: 500;
+  color: #333;
+}
+
+.chain-date {
+  color: #999;
+  font-size: 0.7rem;
+}
+
+.chain-arrow {
+  color: #ccc;
+  font-weight: 600;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.chain-arrow.chain-end {
+  color: #ef5350;
+}
+
+.chain-status {
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.chain-status-open {
+  animation: gentle-pulse 2s ease-in-out infinite;
+}
+
+@keyframes gentle-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.mtd-chain-signal_only {
+  opacity: 0.65;
+}
+
+.mtd-chain-rejected .chain-step.chain-proposal .chain-label {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
 /* Portfolio link in events table */
 .mtd-portfolio-link {
   color: #1976d2;

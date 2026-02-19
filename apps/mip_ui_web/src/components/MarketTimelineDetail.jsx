@@ -12,6 +12,7 @@ import {
   ReferenceLine,
   ReferenceArea,
   Scatter,
+  Customized,
 } from 'recharts'
 import { API_BASE } from '../App'
 import './MarketTimelineDetail.css'
@@ -74,6 +75,186 @@ function DetailSkeleton() {
         <div className="mtd-skeleton-line"></div>
         <div className="mtd-skeleton-line short"></div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * SVG overlay: draws thin curved lines connecting linked chain events on the chart.
+ */
+function ChainLinks({ formattedGraphicalItems, xAxisMap, yAxisMap, chains, chartData }) {
+  if (!chains?.length || !xAxisMap || !yAxisMap) return null
+  const xAxis = Object.values(xAxisMap)[0]
+  const yAxis = Object.values(yAxisMap)[0]
+  if (!xAxis || !yAxis) return null
+
+  const dateIndex = {}
+  chartData.forEach((bar, i) => { dateIndex[bar.date] = i })
+
+  const getX = (dateStr) => {
+    const d = dateStr?.slice(0, 10)
+    const idx = dateIndex[d]
+    if (idx == null) return null
+    const domain = xAxis.scale?.domain?.()
+    if (!domain) return null
+    return xAxis.scale(idx != null ? idx : d)
+  }
+  const getY = (val) => (val != null ? yAxis.scale(val) : null)
+
+  const CHAIN_COLORS = {
+    CLOSED: '#4caf50',
+    OPEN: '#1976d2',
+    PROPOSED: '#ff9800',
+    REJECTED: '#ef5350',
+    SIGNAL_ONLY: '#bbb',
+  }
+
+  const paths = []
+  chains.forEach((chain, ci) => {
+    const color = CHAIN_COLORS[chain.status] || '#bbb'
+    const dashed = chain.status === 'SIGNAL_ONLY' || chain.status === 'REJECTED'
+    const nodes = []
+
+    if (chain.signal) {
+      const x = getX(chain.signal.ts)
+      const bar = chartData[dateIndex[chain.signal.ts?.slice(0, 10)]]
+      if (x != null && bar) {
+        const hasP = chain.proposal != null
+        nodes.push({ x, y: getY(bar.low * (hasP ? 0.982 : 0.99)) })
+      }
+    }
+    if (chain.proposal) {
+      const x = getX(chain.proposal.ts)
+      const bar = chartData[dateIndex[chain.proposal.ts?.slice(0, 10)]]
+      if (x != null && bar) nodes.push({ x, y: getY(bar.low * 0.99) })
+    }
+    if (chain.buy) {
+      const x = getX(chain.buy.ts)
+      const bar = chartData[dateIndex[chain.buy.ts?.slice(0, 10)]]
+      if (x != null && bar) nodes.push({ x, y: getY(bar.high * 1.005) })
+    }
+    if (chain.sell) {
+      const x = getX(chain.sell.ts)
+      const bar = chartData[dateIndex[chain.sell.ts?.slice(0, 10)]]
+      if (x != null && bar) nodes.push({ x, y: getY(bar.high * 1.005) })
+    }
+
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const a = nodes[i], b = nodes[i + 1]
+      if (a.x == null || a.y == null || b.x == null || b.y == null) continue
+      paths.push(
+        <line
+          key={`chain-${ci}-${i}`}
+          x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          stroke={color}
+          strokeWidth={1.5}
+          strokeOpacity={0.55}
+          strokeDasharray={dashed ? '4 3' : undefined}
+        />
+      )
+    }
+
+    // Terminal marker for stalled chains
+    const last = nodes[nodes.length - 1]
+    if (last && (chain.status === 'SIGNAL_ONLY' || chain.status === 'REJECTED')) {
+      paths.push(
+        <line
+          key={`chain-end-${ci}`}
+          x1={last.x - 3} y1={last.y - 3} x2={last.x + 3} y2={last.y + 3}
+          stroke={color} strokeWidth={2} strokeOpacity={0.7}
+        />,
+        <line
+          key={`chain-end2-${ci}`}
+          x1={last.x - 3} y1={last.y + 3} x2={last.x + 3} y2={last.y - 3}
+          stroke={color} strokeWidth={2} strokeOpacity={0.7}
+        />
+      )
+    }
+  })
+  return <g className="chain-links-layer">{paths}</g>
+}
+
+const CHAIN_STATUS_LABELS = {
+  CLOSED: 'Closed',
+  OPEN: 'Open',
+  PROPOSED: 'Proposed',
+  REJECTED: 'Rejected',
+  SIGNAL_ONLY: 'No proposal',
+}
+const CHAIN_STATUS_COLORS = {
+  CLOSED: '#4caf50',
+  OPEN: '#1976d2',
+  PROPOSED: '#ff9800',
+  REJECTED: '#ef5350',
+  SIGNAL_ONLY: '#999',
+}
+
+function ChainFlowView({ chains }) {
+  if (!chains?.length) return null
+  const sorted = [...chains].sort((a, b) => (b.signal?.ts || '').localeCompare(a.signal?.ts || ''))
+  const fmtDate = (ts) => ts?.slice(0, 10) || '—'
+  const fmtPrice = (v) => v != null ? '$' + Number(v).toFixed(2) : ''
+
+  return (
+    <div className="mtd-chains">
+      <h5>Signal Chains ({chains.length})</h5>
+      {sorted.map((chain, i) => (
+        <div key={i} className={`mtd-chain-row mtd-chain-${chain.status?.toLowerCase()}`}>
+          {/* Signal */}
+          <span className="chain-step chain-signal">
+            <span className="chain-dot signal" />
+            <span className="chain-label">Signal</span>
+            <span className="chain-date">{fmtDate(chain.signal?.ts)}</span>
+          </span>
+
+          {chain.proposal ? (
+            <>
+              <span className="chain-arrow">→</span>
+              <span className="chain-step chain-proposal">
+                <span className="chain-dot proposal" />
+                <span className="chain-label">{chain.proposal.side || 'Proposal'}</span>
+                <span className="chain-date">{fmtDate(chain.proposal.ts)}</span>
+              </span>
+            </>
+          ) : (
+            <span className="chain-arrow chain-end">✕</span>
+          )}
+
+          {chain.buy && (
+            <>
+              <span className="chain-arrow">→</span>
+              <span className="chain-step chain-trade">
+                <span className="chain-dot trade" />
+                <span className="chain-label">BUY {fmtPrice(chain.buy.price)}</span>
+                <span className="chain-date">{fmtDate(chain.buy.ts)}</span>
+              </span>
+            </>
+          )}
+          {chain.proposal && !chain.buy && chain.status === 'REJECTED' && (
+            <span className="chain-arrow chain-end">✕</span>
+          )}
+
+          {chain.sell && (
+            <>
+              <span className="chain-arrow">→</span>
+              <span className="chain-step chain-sell">
+                <span className="chain-dot sell" />
+                <span className="chain-label">SELL {fmtPrice(chain.sell.price)}</span>
+                <span className="chain-date">{fmtDate(chain.sell.ts)}</span>
+              </span>
+            </>
+          )}
+
+          {/* Terminal status badge */}
+          <span className="chain-arrow">→</span>
+          <span
+            className={`chain-status chain-status-${chain.status?.toLowerCase()}`}
+            style={{ color: CHAIN_STATUS_COLORS[chain.status] }}
+          >
+            {CHAIN_STATUS_LABELS[chain.status] || chain.status}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -149,6 +330,7 @@ export default function MarketTimelineDetail({
   // Prepare chart data: merge OHLC with events
   const ohlc = data.ohlc || []
   const events = data.events || []
+  const chains = data.chains || []
   const narrative = data.narrative || {}
   const counts = data.counts || {}
   
@@ -302,6 +484,12 @@ export default function MarketTimelineDetail({
                 ) : null
               ))}
             </Scatter>
+            {/* Chain link overlay: thin lines connecting signal → proposal → trade */}
+            <Customized
+              component={(props) => (
+                <ChainLinks {...props} chains={chains} chartData={chartData} />
+              )}
+            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -319,6 +507,15 @@ export default function MarketTimelineDetail({
           <span className="legend-item"><span className="legend-dot proposal"></span> Proposal (order suggested)</span>
           <span className="legend-item"><span className="legend-dot trade"></span> Trade (executed)</span>
         </div>
+        {chains.length > 0 && (
+          <div className="legend-section legend-chains">
+            <span className="legend-title">Chain links:</span>
+            <span className="legend-item"><span className="legend-chain-line solid green"></span> Traded</span>
+            <span className="legend-item"><span className="legend-chain-line solid blue"></span> Open position</span>
+            <span className="legend-item"><span className="legend-chain-line solid orange"></span> Proposed</span>
+            <span className="legend-item"><span className="legend-chain-line dashed grey"></span> Stalled</span>
+          </div>
+        )}
       </div>
       
       {/* Narrative */}
@@ -368,6 +565,9 @@ export default function MarketTimelineDetail({
         </div>
       )}
       
+      {/* Signal chain flow view */}
+      {chains.length > 0 && <ChainFlowView chains={chains} />}
+
       {/* Events table (recent) */}
       {events.length > 0 && (
         <div className="mtd-events-table">

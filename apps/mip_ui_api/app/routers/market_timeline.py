@@ -455,11 +455,13 @@ def get_detail(
                     "type": "TRADE",
                     "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                     "trade_id": row.get("TRADE_ID"),
+                    "proposal_id": row.get("PROPOSAL_ID"),
                     "portfolio_id": row.get("PORTFOLIO_ID"),
                     "side": row.get("SIDE"),
                     "quantity": float(row.get("QUANTITY")) if row.get("QUANTITY") is not None else None,
                     "price": float(row.get("PRICE")) if row.get("PRICE") is not None else None,
                     "notional": float(row.get("NOTIONAL")) if row.get("NOTIONAL") is not None else None,
+                    "realized_pnl": float(row.get("REALIZED_PNL")) if row.get("REALIZED_PNL") is not None else None,
                 })
         
         # Get trust classification history (latest per pattern)
@@ -498,6 +500,64 @@ def get_detail(
         events = signals + proposals + trades
         events.sort(key=lambda e: e.get("ts", ""))
         
+        # Build signal chains: link signal -> proposal -> buy -> sell
+        proposal_by_rec = {}
+        for p in proposals:
+            rid = p.get("recommendation_id")
+            if rid is not None:
+                proposal_by_rec.setdefault(rid, []).append(p)
+        trade_by_proposal = {}
+        for t in trades:
+            pid = t.get("proposal_id")
+            if pid is not None:
+                trade_by_proposal.setdefault(pid, []).append(t)
+        sell_trades = sorted(
+            [t for t in trades if t.get("side") == "SELL"],
+            key=lambda t: t.get("ts", ""),
+        )
+
+        chains = []
+        used_sell_ids = set()
+        for sig in signals:
+            rec_id = sig.get("recommendation_id")
+            chain = {
+                "signal": sig,
+                "proposal": None,
+                "buy": None,
+                "sell": None,
+                "status": "SIGNAL_ONLY",
+            }
+            matched_proposals = proposal_by_rec.get(rec_id, [])
+            best_proposal = None
+            for mp in matched_proposals:
+                if mp.get("status") == "EXECUTED":
+                    best_proposal = mp
+                    break
+                if best_proposal is None:
+                    best_proposal = mp
+            if best_proposal:
+                chain["proposal"] = best_proposal
+                chain["status"] = (
+                    "REJECTED" if best_proposal.get("status") == "REJECTED" else "PROPOSED"
+                )
+                buy_trades = trade_by_proposal.get(best_proposal.get("proposal_id"), [])
+                buy_trade = next((t for t in buy_trades if t.get("side") == "BUY"), None)
+                if buy_trade:
+                    chain["buy"] = buy_trade
+                    chain["status"] = "OPEN"
+                    buy_qty = buy_trade.get("quantity")
+                    for st in sell_trades:
+                        if st.get("trade_id") in used_sell_ids:
+                            continue
+                        if st.get("ts", "") > buy_trade.get("ts", ""):
+                            sell_qty = st.get("quantity")
+                            if buy_qty and sell_qty and abs(buy_qty - sell_qty) < 0.0001:
+                                chain["sell"] = st
+                                chain["status"] = "CLOSED"
+                                used_sell_ids.add(st.get("trade_id"))
+                                break
+            chains.append(chain)
+
         # Build decision narrative
         narrative = _build_narrative(
             cur,
@@ -523,6 +583,7 @@ def get_detail(
             },
             "ohlc": ohlc,
             "events": events,
+            "chains": chains,
             "trust_summary": trust_events,
             "narrative": narrative,
             "counts": {

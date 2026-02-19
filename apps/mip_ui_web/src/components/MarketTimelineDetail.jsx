@@ -81,12 +81,20 @@ function DetailSkeleton() {
 
 /**
  * SVG overlay: draws thin curved lines connecting linked chain events on the chart.
+ * Uses formattedGraphicalItems to get reliable pixel coordinates from rendered points.
  */
-function ChainLinks({ formattedGraphicalItems, xAxisMap, yAxisMap, chains, chartData }) {
-  if (!chains?.length || !xAxisMap || !yAxisMap) return null
-  const xAxis = Object.values(xAxisMap)[0]
-  const yAxis = Object.values(yAxisMap)[0]
-  if (!xAxis || !yAxis) return null
+function ChainLinks({ formattedGraphicalItems, yAxisMap, chains, chartData }) {
+  if (!chains?.length || !formattedGraphicalItems?.length) return null
+  const yAxis = Object.values(yAxisMap || {})[0]
+  if (!yAxis?.scale) return null
+
+  // Extract X pixel positions from the first rendered Line's points
+  const lineItem = formattedGraphicalItems.find(
+    (item) => item.props?.points?.length > 0
+  )
+  if (!lineItem) return null
+  const xByIndex = {}
+  lineItem.props.points.forEach((pt, i) => { xByIndex[i] = pt.x })
 
   const dateIndex = {}
   chartData.forEach((bar, i) => { dateIndex[bar.date] = i })
@@ -94,10 +102,7 @@ function ChainLinks({ formattedGraphicalItems, xAxisMap, yAxisMap, chains, chart
   const getX = (dateStr) => {
     const d = dateStr?.slice(0, 10)
     const idx = dateIndex[d]
-    if (idx == null) return null
-    const domain = xAxis.scale?.domain?.()
-    if (!domain) return null
-    return xAxis.scale(idx != null ? idx : d)
+    return idx != null ? xByIndex[idx] ?? null : null
   }
   const getY = (val) => (val != null ? yAxis.scale(val) : null)
 

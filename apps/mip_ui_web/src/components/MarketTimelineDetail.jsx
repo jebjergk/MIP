@@ -80,29 +80,24 @@ function DetailSkeleton() {
 }
 
 /**
- * SVG overlay: draws thin curved lines connecting linked chain events on the chart.
- * Uses formattedGraphicalItems to get reliable pixel coordinates from rendered points.
+ * SVG overlay: draws thin lines connecting linked chain events on the chart.
+ * Recharts offset = { top, bottom, left, right } (margins), so chart area
+ * width = svgWidth - offset.left - offset.right.
  */
-function ChainLinks({ formattedGraphicalItems, yAxisMap, chains, chartData }) {
-  if (!chains?.length || !formattedGraphicalItems?.length) return null
+function ChainLinks({ offset, width: svgWidth, yAxisMap, chains, chartData }) {
+  if (!chains?.length || !offset || !svgWidth || !chartData?.length) return null
   const yAxis = Object.values(yAxisMap || {})[0]
   if (!yAxis?.scale) return null
 
-  // Extract X pixel positions from the first rendered Line's points
-  const lineItem = formattedGraphicalItems.find(
-    (item) => item.props?.points?.length > 0
-  )
-  if (!lineItem) return null
-  const xByIndex = {}
-  lineItem.props.points.forEach((pt, i) => { xByIndex[i] = pt.x })
-
+  const n = chartData.length
   const dateIndex = {}
   chartData.forEach((bar, i) => { dateIndex[bar.date] = i })
 
+  const chartAreaWidth = svgWidth - (offset.left || 0) - (offset.right || 0)
+  const step = n > 1 ? chartAreaWidth / (n - 1) : 0
   const getX = (dateStr) => {
-    const d = dateStr?.slice(0, 10)
-    const idx = dateIndex[d]
-    return idx != null ? xByIndex[idx] ?? null : null
+    const idx = dateIndex[dateStr?.slice(0, 10)]
+    return idx != null ? (offset.left || 0) + idx * step : null
   }
   const getY = (val) => (val != null ? yAxis.scale(val) : null)
 
@@ -120,33 +115,34 @@ function ChainLinks({ formattedGraphicalItems, yAxisMap, chains, chartData }) {
     const dashed = chain.status === 'SIGNAL_ONLY' || chain.status === 'REJECTED'
     const nodes = []
 
+    const pushNode = (ts, yVal) => {
+      const x = getX(ts)
+      const y = getY(yVal)
+      if (x != null && y != null && isFinite(x) && isFinite(y)) nodes.push({ x, y })
+    }
+
     if (chain.signal) {
-      const x = getX(chain.signal.ts)
       const bar = chartData[dateIndex[chain.signal.ts?.slice(0, 10)]]
-      if (x != null && bar) {
+      if (bar) {
         const hasP = chain.proposal != null
-        nodes.push({ x, y: getY(bar.low * (hasP ? 0.982 : 0.99)) })
+        pushNode(chain.signal.ts, bar.low * (hasP ? 0.982 : 0.99))
       }
     }
     if (chain.proposal) {
-      const x = getX(chain.proposal.ts)
       const bar = chartData[dateIndex[chain.proposal.ts?.slice(0, 10)]]
-      if (x != null && bar) nodes.push({ x, y: getY(bar.low * 0.99) })
+      if (bar) pushNode(chain.proposal.ts, bar.low * 0.99)
     }
     if (chain.buy) {
-      const x = getX(chain.buy.ts)
       const bar = chartData[dateIndex[chain.buy.ts?.slice(0, 10)]]
-      if (x != null && bar) nodes.push({ x, y: getY(bar.high * 1.005) })
+      if (bar) pushNode(chain.buy.ts, bar.high * 1.005)
     }
     if (chain.sell) {
-      const x = getX(chain.sell.ts)
       const bar = chartData[dateIndex[chain.sell.ts?.slice(0, 10)]]
-      if (x != null && bar) nodes.push({ x, y: getY(bar.high * 1.005) })
+      if (bar) pushNode(chain.sell.ts, bar.high * 1.005)
     }
 
     for (let i = 0; i < nodes.length - 1; i++) {
       const a = nodes[i], b = nodes[i + 1]
-      if (a.x == null || a.y == null || b.x == null || b.y == null) continue
       paths.push(
         <line
           key={`chain-${ci}-${i}`}
@@ -159,7 +155,6 @@ function ChainLinks({ formattedGraphicalItems, yAxisMap, chains, chartData }) {
       )
     }
 
-    // Terminal marker for stalled chains
     const last = nodes[nodes.length - 1]
     if (last && (chain.status === 'SIGNAL_ONLY' || chain.status === 'REJECTED')) {
       paths.push(
@@ -196,33 +191,36 @@ const CHAIN_STATUS_COLORS = {
 
 function ChainFlowView({ chains }) {
   if (!chains?.length) return null
-  const sorted = [...chains].sort((a, b) => (b.signal?.ts || '').localeCompare(a.signal?.ts || ''))
+
+  const active = chains.filter((c) => c.status !== 'SIGNAL_ONLY')
+  const orphans = chains.filter((c) => c.status === 'SIGNAL_ONLY')
+  const sorted = [...active].sort((a, b) => (b.signal?.ts || '').localeCompare(a.signal?.ts || ''))
+
   const fmtDate = (ts) => ts?.slice(0, 10) || '—'
   const fmtPrice = (v) => v != null ? '$' + Number(v).toFixed(2) : ''
 
+  const [showOrphans, setShowOrphans] = useState(false)
+
   return (
     <div className="mtd-chains">
-      <h5>Signal Chains ({chains.length})</h5>
+      <h5>Signal Chains ({active.length})</h5>
       {sorted.map((chain, i) => (
         <div key={i} className={`mtd-chain-row mtd-chain-${chain.status?.toLowerCase()}`}>
-          {/* Signal */}
           <span className="chain-step chain-signal">
             <span className="chain-dot signal" />
             <span className="chain-label">Signal</span>
             <span className="chain-date">{fmtDate(chain.signal?.ts)}</span>
           </span>
 
-          {chain.proposal ? (
+          {chain.proposal && (
             <>
               <span className="chain-arrow">→</span>
               <span className="chain-step chain-proposal">
                 <span className="chain-dot proposal" />
                 <span className="chain-label">{chain.proposal.side || 'Proposal'}</span>
-                <span className="chain-date">{fmtDate(chain.proposal.ts)}</span>
+                <span className="chain-date">{fmtDate(chain.proposal.proposed_at || chain.proposal.ts)}</span>
               </span>
             </>
-          ) : (
-            <span className="chain-arrow chain-end">✕</span>
           )}
 
           {chain.buy && (
@@ -250,7 +248,6 @@ function ChainFlowView({ chains }) {
             </>
           )}
 
-          {/* Terminal status badge */}
           <span className="chain-arrow">→</span>
           <span
             className={`chain-status chain-status-${chain.status?.toLowerCase()}`}
@@ -260,6 +257,26 @@ function ChainFlowView({ chains }) {
           </span>
         </div>
       ))}
+
+      {orphans.length > 0 && (
+        <div className="mtd-chain-orphans">
+          <button
+            className="mtd-chain-orphan-toggle"
+            onClick={() => setShowOrphans((v) => !v)}
+          >
+            {showOrphans ? '▾' : '▸'} {orphans.length} signal{orphans.length !== 1 ? 's' : ''} with no proposal
+          </button>
+          {showOrphans && (
+            <div className="mtd-chain-orphan-list">
+              {orphans.map((c, i) => (
+                <span key={i} className="mtd-chain-orphan-item">
+                  {fmtDate(c.signal?.ts)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

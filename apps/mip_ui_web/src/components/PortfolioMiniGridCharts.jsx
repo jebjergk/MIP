@@ -75,8 +75,23 @@ function DrawdownChart({ data, drawdownStopPct }) {
 
 function TradesPerDayChart({ data }) {
   const dataKey = data?.[0] != null && ('day' in data[0]) ? 'day' : 'ts'
-  const countKey = data?.[0] != null && ('trades_count' in data[0]) ? 'trades_count' : 'tradesCount'
   if (!Array.isArray(data) || data.length === 0) return <p className="mini-grid-empty">No trades in period</p>
+  const hasBreakdown = data.some(d => d.buy_count != null || d.sell_count != null)
+  if (hasBreakdown) {
+    return (
+      <ResponsiveContainer width="100%" height={160}>
+        <BarChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+          <XAxis dataKey={dataKey} tick={{ fontSize: 10 }} tickFormatter={formatTs} />
+          <YAxis tick={{ fontSize: 10 }} width={28} allowDecimals={false} />
+          <Tooltip labelFormatter={formatTs} />
+          <Bar dataKey="buy_count" stackId="trades" fill="#1565c0" name="Buy" radius={[0, 0, 0, 0]} />
+          <Bar dataKey="sell_count" stackId="trades" fill="#c62828" name="Sell" radius={[2, 2, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    )
+  }
+  const countKey = data?.[0] != null && ('trades_count' in data[0]) ? 'trades_count' : 'tradesCount'
   return (
     <ResponsiveContainer width="100%" height={160}>
       <BarChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
@@ -183,7 +198,7 @@ export default function PortfolioMiniGridCharts({
           <DrawdownChart data={drawdown} drawdownStopPct={thresholds.drawdown_stop_pct} />
         </div>
         <div className="mini-grid-cell">
-          <ChartTitle title="Trades per day" tooltip="Number of trades executed each day." />
+          <ChartTitle title="Trades per day" tooltip="Trades executed each day — blue = buys, red = sells." />
           <TradesPerDayChart data={tradesPerDay} />
         </div>
         <div className="mini-grid-cell">

@@ -1422,10 +1422,45 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
                     drawdown_series.append({"ts": tss, "drawdown_pct": None, "high_watermark_equity": episode_peak})
                     regime_per_day.append({"ts": tss, "gate_state": "SAFE"})
 
-        # Trades per day — scoped to episode
+        # Project a current-day data point onto equity_series when trades exist
+        # beyond the last PORTFOLIO_DAILY row (e.g. new trades booked today but
+        # daily simulation hasn't run yet). Buying/selling conserves total equity
+        # in the short term, so we hold equity flat and update cash from CASH_AFTER.
+        if equity_series:
+            last_daily_date = equity_series[-1]["ts"][:10]
+            cur.execute(
+                """
+                select date_trunc('day', TRADE_TS) as trade_day,
+                       max_by(CASH_AFTER, TRADE_ID) as latest_cash
+                from MIP.APP.PORTFOLIO_TRADES
+                where PORTFOLIO_ID = %s
+                  and date_trunc('day', TRADE_TS)::date > %s::date
+                  and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
+                group by date_trunc('day', TRADE_TS)
+                order by trade_day desc
+                limit 1
+                """,
+                (portfolio_id, last_daily_date, episode_id, episode_id),
+            )
+            proj_row = cur.fetchone()
+            if proj_row and proj_row[0] is not None:
+                proj_ts = proj_row[0]
+                proj_cash = float(proj_row[1]) if proj_row[1] is not None else None
+                proj_ts_str = proj_ts.isoformat() if hasattr(proj_ts, "isoformat") else str(proj_ts)
+                proj_equity = equity_series[-1]["equity"]
+                equity_series.append({
+                    "ts": proj_ts_str,
+                    "equity": proj_equity,
+                    "cash": proj_cash,
+                })
+
+        # Trades per day — scoped to episode, split by BUY/SELL
         cur.execute(
             """
-            select date_trunc('day', TRADE_TS) as day_ts, count(*) as trades_count
+            select date_trunc('day', TRADE_TS) as day_ts,
+                   count(*) as trades_count,
+                   count_if(SIDE = 'BUY') as buy_count,
+                   count_if(SIDE = 'SELL') as sell_count
             from MIP.APP.PORTFOLIO_TRADES
             where PORTFOLIO_ID = %s and TRADE_TS >= %s and (%s is null or TRADE_TS <= %s)
               and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
@@ -1439,9 +1474,16 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
         for r in trade_rows:
             day_ts = r.get("day_ts") or r.get("DAY_TS")
             cnt = r.get("trades_count") or r.get("TRADES_COUNT")
+            buy_cnt = r.get("buy_count") or r.get("BUY_COUNT")
+            sell_cnt = r.get("sell_count") or r.get("SELL_COUNT")
             if day_ts is not None:
                 tss = day_ts.isoformat() if hasattr(day_ts, "isoformat") else str(day_ts)
-                trades_per_day.append({"ts": tss, "trades_count": int(cnt) if cnt is not None else 0})
+                trades_per_day.append({
+                    "ts": tss,
+                    "trades_count": int(cnt) if cnt is not None else 0,
+                    "buy_count": int(buy_cnt) if buy_cnt is not None else 0,
+                    "sell_count": int(sell_cnt) if sell_cnt is not None else 0,
+                })
 
         # Events: entries_blocked (drawdown_stop), drawdown_stop, bust, episode_ended
         events = []

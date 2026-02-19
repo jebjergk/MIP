@@ -500,7 +500,7 @@ def get_detail(
         events = signals + proposals + trades
         events.sort(key=lambda e: e.get("ts", ""))
         
-        # Build signal chains: link signal -> proposal -> buy -> sell
+        # Build signal chains: signal -> [branches], each branch = proposal -> buy -> sell
         proposal_by_rec = {}
         for p in proposals:
             rid = p.get("recommendation_id")
@@ -511,51 +511,57 @@ def get_detail(
             pid = t.get("proposal_id")
             if pid is not None:
                 trade_by_proposal.setdefault(pid, []).append(t)
-        sell_trades = sorted(
+        sell_by_portfolio = {}
+        for t in sorted(
             [t for t in trades if t.get("side") == "SELL"],
             key=lambda t: t.get("ts", ""),
-        )
+        ):
+            sell_by_portfolio.setdefault(t.get("portfolio_id"), []).append(t)
 
         chains = []
         used_sell_ids = set()
         for sig in signals:
             rec_id = sig.get("recommendation_id")
-            chain = {
-                "signal": sig,
-                "proposal": None,
-                "buy": None,
-                "sell": None,
-                "status": "SIGNAL_ONLY",
-            }
             matched_proposals = proposal_by_rec.get(rec_id, [])
-            best_proposal = None
-            for mp in matched_proposals:
-                if mp.get("status") == "EXECUTED":
-                    best_proposal = mp
-                    break
-                if best_proposal is None:
-                    best_proposal = mp
-            if best_proposal:
-                chain["proposal"] = best_proposal
-                chain["status"] = (
-                    "REJECTED" if best_proposal.get("status") == "REJECTED" else "PROPOSED"
-                )
-                buy_trades = trade_by_proposal.get(best_proposal.get("proposal_id"), [])
-                buy_trade = next((t for t in buy_trades if t.get("side") == "BUY"), None)
+            branches = []
+            for prop in matched_proposals:
+                branch = {
+                    "proposal": prop,
+                    "buy": None,
+                    "sell": None,
+                    "status": "PROPOSED",
+                }
+                if prop.get("status") == "REJECTED":
+                    branch["status"] = "REJECTED"
+
+                buy_trades = trade_by_proposal.get(prop.get("proposal_id"), [])
+                buy_trade = next((bt for bt in buy_trades if bt.get("side") == "BUY"), None)
                 if buy_trade:
-                    chain["buy"] = buy_trade
-                    chain["status"] = "OPEN"
+                    branch["buy"] = buy_trade
+                    branch["status"] = "OPEN"
                     buy_qty = buy_trade.get("quantity")
-                    for st in sell_trades:
+                    pid = buy_trade.get("portfolio_id")
+                    for st in sell_by_portfolio.get(pid, []):
                         if st.get("trade_id") in used_sell_ids:
                             continue
                         if st.get("ts", "") > buy_trade.get("ts", ""):
                             sell_qty = st.get("quantity")
                             if buy_qty and sell_qty and abs(buy_qty - sell_qty) < 0.0001:
-                                chain["sell"] = st
-                                chain["status"] = "CLOSED"
+                                branch["sell"] = st
+                                branch["status"] = "CLOSED"
                                 used_sell_ids.add(st.get("trade_id"))
                                 break
+                branches.append(branch)
+
+            chain = {
+                "signal": sig,
+                "branches": branches,
+                "status": "SIGNAL_ONLY" if not branches else max(
+                    (b["status"] for b in branches),
+                    key=lambda s: ["REJECTED", "PROPOSED", "OPEN", "CLOSED"].index(s)
+                    if s in ["REJECTED", "PROPOSED", "OPEN", "CLOSED"] else -1,
+                ),
+            }
             chains.append(chain)
 
         # Build decision narrative

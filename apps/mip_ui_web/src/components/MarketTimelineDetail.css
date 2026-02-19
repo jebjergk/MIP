@@ -484,110 +484,140 @@
   cursor: pointer;
 }
 
-/* Chain legend items */
-.mtd-chart-legend .legend-chain-line {
-  width: 20px;
-  height: 0;
-  border-top: 2px solid;
-}
-
-.mtd-chart-legend .legend-chain-line.solid.green {
-  border-color: #4caf50;
-}
-
-.mtd-chart-legend .legend-chain-line.solid.blue {
-  border-color: #1976d2;
-}
-
-.mtd-chart-legend .legend-chain-line.solid.orange {
-  border-color: #ff9800;
-}
-
-.mtd-chart-legend .legend-chain-line.dashed.grey {
-  border-color: #bbb;
-  border-top-style: dashed;
-}
-
-/* Chain flow view */
-.mtd-chains {
+/* Signal chain tree view */
+.mtd-tree {
   margin-top: 1rem;
-  margin-bottom: 0.25rem;
 }
 
-.mtd-chains h5 {
-  margin: 0 0 0.5rem;
-  font-size: 0.8rem;
-  color: #666;
+.mtd-tree h5 {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: #555;
 }
 
-.mtd-chain-row {
+.mtd-tree-orphan-note {
+  font-weight: 400;
+  color: #aaa;
+  font-size: 0.75rem;
+}
+
+.mtd-tree-chain {
+  position: relative;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.mtd-tree-chain:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.mtd-tree-node {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  margin-bottom: 2px;
-  background: #fafafa;
-  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.25rem 0;
+  font-size: 0.78rem;
+  position: relative;
 }
 
-.mtd-chain-row:hover {
-  background: #f0f4ff;
+.mtd-tree-l0 { padding-left: 0; }
+.mtd-tree-l1 { padding-left: 1.5rem; }
+.mtd-tree-l2 { padding-left: 3rem; }
+.mtd-tree-l3 { padding-left: 4.5rem; }
+
+/* Tree branch connector (vertical + horizontal) */
+.mtd-tree-branch {
+  position: absolute;
+  left: calc(-1rem + 4px);
+  top: 0;
+  width: 0.75rem;
+  height: 50%;
+  border-left: 1.5px solid #ddd;
+  border-bottom: 1.5px solid #ddd;
+  border-bottom-left-radius: 4px;
 }
 
-.chain-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  white-space: nowrap;
-}
+.mtd-tree-l1 .mtd-tree-branch { left: 0.5rem; }
+.mtd-tree-l2 .mtd-tree-branch { left: 2rem; }
+.mtd-tree-l3 .mtd-tree-branch { left: 3.5rem; }
 
-.chain-dot {
-  width: 8px;
-  height: 8px;
+/* Colored dots */
+.mtd-tree-dot {
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  display: inline-block;
   flex-shrink: 0;
+  border: 2px solid;
 }
 
-.chain-dot.signal { background: #2196f3; }
-.chain-dot.proposal { background: #ff9800; }
-.chain-dot.trade { background: #4caf50; }
-.chain-dot.sell { background: #ef5350; }
+.mtd-tree-dot.signal {
+  background: #2196f3;
+  border-color: #1565c0;
+}
 
-.chain-label {
-  font-weight: 500;
+.mtd-tree-dot.proposal {
+  background: #ff9800;
+  border-color: #e65100;
+}
+
+.mtd-tree-dot.trade {
+  background: #4caf50;
+  border-color: #2e7d32;
+}
+
+.mtd-tree-dot.sell {
+  background: #ef5350;
+  border-color: #c62828;
+}
+
+.mtd-tree-type {
+  font-weight: 600;
   color: #333;
+  min-width: 5rem;
 }
 
-.chain-date {
-  color: #999;
-  font-size: 0.7rem;
+.mtd-tree-date {
+  color: #888;
+  font-size: 0.72rem;
+  font-family: monospace;
 }
 
-.chain-arrow {
-  color: #ccc;
+.mtd-tree-detail {
+  color: #666;
+  font-size: 0.72rem;
+}
+
+/* Status badges */
+.mtd-tree-badge {
+  font-size: 0.65rem;
   font-weight: 600;
-  font-size: 0.8rem;
-  flex-shrink: 0;
-}
-
-.chain-arrow.chain-end {
-  color: #ef5350;
-}
-
-.chain-status {
-  font-weight: 600;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  padding: 0.1rem 0.4rem;
+  padding: 0.1rem 0.45rem;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.04);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
-.chain-status-open {
+.mtd-tree-badge.open {
+  background: #e3f2fd;
+  color: #1565c0;
   animation: gentle-pulse 2s ease-in-out infinite;
+}
+
+.mtd-tree-badge.closed {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.mtd-tree-badge.rejected {
+  background: #fce4ec;
+  color: #c62828;
+}
+
+.mtd-tree-badge.proposed {
+  background: #fff3e0;
+  color: #e65100;
 }
 
 @keyframes gentle-pulse {
@@ -595,45 +625,18 @@
   50% { opacity: 0.5; }
 }
 
-.mtd-chain-rejected .chain-step.chain-proposal .chain-label {
-  text-decoration: line-through;
-  opacity: 0.7;
+/* PnL in tree */
+.mtd-tree-pnl {
+  font-weight: 600;
+  font-size: 0.75rem;
 }
 
-/* Orphan signals toggle */
-.mtd-chain-orphans {
-  margin-top: 0.5rem;
-  padding-top: 0.35rem;
-  border-top: 1px solid #eee;
+.mtd-tree-pnl.positive {
+  color: #2e7d32;
 }
 
-.mtd-chain-orphan-toggle {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 0.72rem;
-  color: #999;
-  padding: 0.2rem 0;
-}
-
-.mtd-chain-orphan-toggle:hover {
-  color: #666;
-}
-
-.mtd-chain-orphan-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.25rem;
-  padding-left: 1rem;
-}
-
-.mtd-chain-orphan-item {
-  font-size: 0.68rem;
-  color: #aaa;
-  background: #f5f5f5;
-  padding: 0.1rem 0.4rem;
-  border-radius: 3px;
+.mtd-tree-pnl.negative {
+  color: #c62828;
 }
 
 /* Portfolio link in events table */

@@ -12,7 +12,6 @@ import {
   ReferenceLine,
   ReferenceArea,
   Scatter,
-  Customized,
 } from 'recharts'
 import { API_BASE } from '../App'
 import './MarketTimelineDetail.css'
@@ -80,204 +79,120 @@ function DetailSkeleton() {
 }
 
 /**
- * SVG overlay: draws thin lines connecting linked chain events on the chart.
- * Recharts offset = { top, bottom, left, right } (margins), so chart area
- * width = svgWidth - offset.left - offset.right.
+ * Tree-style Signal Chain view.
+ * Each signal branches into multiple proposals (one per portfolio),
+ * each proposal may lead to a BUY trade, then a SELL trade.
  */
-function ChainLinks({ offset, width: svgWidth, yAxisMap, chains, chartData }) {
-  if (!chains?.length || !offset || !svgWidth || !chartData?.length) return null
-  const yAxis = Object.values(yAxisMap || {})[0]
-  if (!yAxis?.scale) return null
-
-  const n = chartData.length
-  const dateIndex = {}
-  chartData.forEach((bar, i) => { dateIndex[bar.date] = i })
-
-  const chartAreaWidth = svgWidth - (offset.left || 0) - (offset.right || 0)
-  const step = n > 1 ? chartAreaWidth / (n - 1) : 0
-  const getX = (dateStr) => {
-    const idx = dateIndex[dateStr?.slice(0, 10)]
-    return idx != null ? (offset.left || 0) + idx * step : null
-  }
-  const getY = (val) => (val != null ? yAxis.scale(val) : null)
-
-  const CHAIN_COLORS = {
-    CLOSED: '#4caf50',
-    OPEN: '#1976d2',
-    PROPOSED: '#ff9800',
-    REJECTED: '#ef5350',
-    SIGNAL_ONLY: '#bbb',
-  }
-
-  const paths = []
-  const activeChains = chains.filter((c) => c.status !== 'SIGNAL_ONLY')
-  activeChains.forEach((chain, ci) => {
-    const color = CHAIN_COLORS[chain.status] || '#bbb'
-    const dashed = chain.status === 'REJECTED'
-    const nodes = []
-
-    const pushNode = (ts, yVal) => {
-      const x = getX(ts)
-      const y = getY(yVal)
-      if (x != null && y != null && isFinite(x) && isFinite(y)) nodes.push({ x, y })
-    }
-
-    if (chain.signal) {
-      const bar = chartData[dateIndex[chain.signal.ts?.slice(0, 10)]]
-      if (bar) {
-        const hasP = chain.proposal != null
-        pushNode(chain.signal.ts, bar.low * (hasP ? 0.982 : 0.99))
-      }
-    }
-    if (chain.proposal) {
-      const bar = chartData[dateIndex[chain.proposal.ts?.slice(0, 10)]]
-      if (bar) pushNode(chain.proposal.ts, bar.low * 0.99)
-    }
-    if (chain.buy) {
-      const bar = chartData[dateIndex[chain.buy.ts?.slice(0, 10)]]
-      if (bar) pushNode(chain.buy.ts, bar.high * 1.005)
-    }
-    if (chain.sell) {
-      const bar = chartData[dateIndex[chain.sell.ts?.slice(0, 10)]]
-      if (bar) pushNode(chain.sell.ts, bar.high * 1.005)
-    }
-
-    for (let i = 0; i < nodes.length - 1; i++) {
-      const a = nodes[i], b = nodes[i + 1]
-      paths.push(
-        <line
-          key={`chain-${ci}-${i}`}
-          x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-          stroke={color}
-          strokeWidth={1.5}
-          strokeOpacity={0.55}
-          strokeDasharray={dashed ? '4 3' : undefined}
-        />
-      )
-    }
-
-    const last = nodes[nodes.length - 1]
-    if (last && (chain.status === 'SIGNAL_ONLY' || chain.status === 'REJECTED')) {
-      paths.push(
-        <line
-          key={`chain-end-${ci}`}
-          x1={last.x - 3} y1={last.y - 3} x2={last.x + 3} y2={last.y + 3}
-          stroke={color} strokeWidth={2} strokeOpacity={0.7}
-        />,
-        <line
-          key={`chain-end2-${ci}`}
-          x1={last.x - 3} y1={last.y + 3} x2={last.x + 3} y2={last.y - 3}
-          stroke={color} strokeWidth={2} strokeOpacity={0.7}
-        />
-      )
-    }
-  })
-  return <g className="chain-links-layer">{paths}</g>
-}
-
-const CHAIN_STATUS_LABELS = {
-  CLOSED: 'Closed',
-  OPEN: 'Open',
-  PROPOSED: 'Proposed',
-  REJECTED: 'Rejected',
-  SIGNAL_ONLY: 'No proposal',
-}
-const CHAIN_STATUS_COLORS = {
-  CLOSED: '#4caf50',
-  OPEN: '#1976d2',
-  PROPOSED: '#ff9800',
-  REJECTED: '#ef5350',
-  SIGNAL_ONLY: '#999',
-}
-
-function ChainFlowView({ chains }) {
+function SignalChainTree({ chains }) {
   if (!chains?.length) return null
 
   const active = chains.filter((c) => c.status !== 'SIGNAL_ONLY')
-  const orphans = chains.filter((c) => c.status === 'SIGNAL_ONLY')
+  const orphanCount = chains.length - active.length
   const sorted = [...active].sort((a, b) => (b.signal?.ts || '').localeCompare(a.signal?.ts || ''))
 
-  const fmtDate = (ts) => ts?.slice(0, 10) || '—'
+  const fmtDate = (ts) => {
+    if (!ts) return '—'
+    const d = ts.slice(0, 10)
+    const t = ts.slice(11, 16)
+    return t && t !== '00:00' ? `${d} ${t}` : d
+  }
   const fmtPrice = (v) => v != null ? '$' + Number(v).toFixed(2) : ''
+  const fmtPnl = (v) => {
+    if (v == null) return null
+    const n = Number(v)
+    const sign = n >= 0 ? '+' : ''
+    return `${sign}${fmtPrice(Math.abs(n))}`
+  }
 
-  const [showOrphans, setShowOrphans] = useState(false)
+  const branches = (chain) => chain.branches || []
 
   return (
-    <div className="mtd-chains">
-      <h5>Signal Chains ({active.length})</h5>
-      {sorted.map((chain, i) => (
-        <div key={i} className={`mtd-chain-row mtd-chain-${chain.status?.toLowerCase()}`}>
-          <span className="chain-step chain-signal">
-            <span className="chain-dot signal" />
-            <span className="chain-label">Signal</span>
-            <span className="chain-date">{fmtDate(chain.signal?.ts)}</span>
-          </span>
+    <div className="mtd-tree">
+      <h5>Signal Chains ({active.length}){orphanCount > 0 && <span className="mtd-tree-orphan-note"> · {orphanCount} signal-only</span>}</h5>
+      {sorted.map((chain, ci) => (
+        <div key={ci} className="mtd-tree-chain">
+          {/* Level 0: Signal */}
+          <div className="mtd-tree-node mtd-tree-l0">
+            <span className="mtd-tree-dot signal" />
+            <span className="mtd-tree-type">Signal</span>
+            <span className="mtd-tree-date">{fmtDate(chain.signal?.ts)}</span>
+            <span className="mtd-tree-detail">Pattern {chain.signal?.pattern_id}</span>
+            {chain.signal?.score != null && (
+              <span className="mtd-tree-detail">Score {chain.signal.score.toFixed(4)}</span>
+            )}
+          </div>
 
-          {chain.proposal && (
-            <>
-              <span className="chain-arrow">→</span>
-              <span className="chain-step chain-proposal">
-                <span className="chain-dot proposal" />
-                <span className="chain-label">{chain.proposal.side || 'Proposal'}</span>
-                <span className="chain-date">{fmtDate(chain.proposal.proposed_at || chain.proposal.ts)}</span>
-              </span>
-            </>
-          )}
+          {/* Branches: one per proposal/portfolio */}
+          {branches(chain).map((branch, bi) => (
+            <div key={bi} className="mtd-tree-branch-group">
+              {/* Level 1: Proposal */}
+              <div className="mtd-tree-node mtd-tree-l1">
+                <span className="mtd-tree-branch" />
+                <span className="mtd-tree-dot proposal" />
+                <span className="mtd-tree-type">{branch.proposal?.side} Proposal</span>
+                <span className="mtd-tree-date">{fmtDate(branch.proposal?.proposed_at || branch.proposal?.ts)}</span>
+                {branch.proposal?.portfolio_id && (
+                  <Link to={`/portfolios/${branch.proposal.portfolio_id}`} className="mtd-portfolio-link">
+                    Portfolio {branch.proposal.portfolio_id}
+                  </Link>
+                )}
+                {branch.proposal?.target_weight != null && (
+                  <span className="mtd-tree-detail">Weight {branch.proposal.target_weight.toFixed(2)}</span>
+                )}
+                {branch.status === 'REJECTED' && (
+                  <span className="mtd-tree-badge rejected">Rejected</span>
+                )}
+                {branch.status === 'PROPOSED' && (
+                  <span className="mtd-tree-badge proposed">Pending</span>
+                )}
+              </div>
 
-          {chain.buy && (
-            <>
-              <span className="chain-arrow">→</span>
-              <span className="chain-step chain-trade">
-                <span className="chain-dot trade" />
-                <span className="chain-label">BUY {fmtPrice(chain.buy.price)}</span>
-                <span className="chain-date">{fmtDate(chain.buy.ts)}</span>
-              </span>
-            </>
-          )}
-          {chain.proposal && !chain.buy && chain.status === 'REJECTED' && (
-            <span className="chain-arrow chain-end">✕</span>
-          )}
+              {/* Level 2: BUY Trade */}
+              {branch.buy && (
+                <div className="mtd-tree-node mtd-tree-l2">
+                  <span className="mtd-tree-branch" />
+                  <span className="mtd-tree-dot trade" />
+                  <span className="mtd-tree-type">BUY</span>
+                  <span className="mtd-tree-date">{fmtDate(branch.buy.ts)}</span>
+                  <span className="mtd-tree-detail">
+                    {branch.buy.quantity} × {fmtPrice(branch.buy.price)}
+                  </span>
+                  {branch.buy.notional != null && (
+                    <span className="mtd-tree-detail">(${Number(branch.buy.notional).toFixed(0)})</span>
+                  )}
+                  {branch.buy.portfolio_id && (
+                    <Link to={`/portfolios/${branch.buy.portfolio_id}`} className="mtd-portfolio-link">
+                      Portfolio {branch.buy.portfolio_id}
+                    </Link>
+                  )}
+                  {!branch.sell && branch.status === 'OPEN' && (
+                    <span className="mtd-tree-badge open">Open</span>
+                  )}
+                </div>
+              )}
 
-          {chain.sell && (
-            <>
-              <span className="chain-arrow">→</span>
-              <span className="chain-step chain-sell">
-                <span className="chain-dot sell" />
-                <span className="chain-label">SELL {fmtPrice(chain.sell.price)}</span>
-                <span className="chain-date">{fmtDate(chain.sell.ts)}</span>
-              </span>
-            </>
-          )}
-
-          <span className="chain-arrow">→</span>
-          <span
-            className={`chain-status chain-status-${chain.status?.toLowerCase()}`}
-            style={{ color: CHAIN_STATUS_COLORS[chain.status] }}
-          >
-            {CHAIN_STATUS_LABELS[chain.status] || chain.status}
-          </span>
+              {/* Level 3: SELL Trade */}
+              {branch.sell && (
+                <div className="mtd-tree-node mtd-tree-l3">
+                  <span className="mtd-tree-branch" />
+                  <span className="mtd-tree-dot sell" />
+                  <span className="mtd-tree-type">SELL</span>
+                  <span className="mtd-tree-date">{fmtDate(branch.sell.ts)}</span>
+                  <span className="mtd-tree-detail">
+                    {branch.sell.quantity} × {fmtPrice(branch.sell.price)}
+                  </span>
+                  {branch.sell.realized_pnl != null && (
+                    <span className={`mtd-tree-pnl ${Number(branch.sell.realized_pnl) >= 0 ? 'positive' : 'negative'}`}>
+                      {fmtPnl(branch.sell.realized_pnl)}
+                    </span>
+                  )}
+                  <span className="mtd-tree-badge closed">Closed</span>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       ))}
-
-      {orphans.length > 0 && (
-        <div className="mtd-chain-orphans">
-          <button
-            className="mtd-chain-orphan-toggle"
-            onClick={() => setShowOrphans((v) => !v)}
-          >
-            {showOrphans ? '▾' : '▸'} {orphans.length} signal{orphans.length !== 1 ? 's' : ''} with no proposal
-          </button>
-          {showOrphans && (
-            <div className="mtd-chain-orphan-list">
-              {orphans.map((c, i) => (
-                <span key={i} className="mtd-chain-orphan-item">
-                  {fmtDate(c.signal?.ts)}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
@@ -507,12 +422,6 @@ export default function MarketTimelineDetail({
                 ) : null
               ))}
             </Scatter>
-            {/* Chain link overlay: thin lines connecting signal → proposal → trade */}
-            <Customized
-              component={(props) => (
-                <ChainLinks {...props} chains={chains} chartData={chartData} />
-              )}
-            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -530,15 +439,6 @@ export default function MarketTimelineDetail({
           <span className="legend-item"><span className="legend-dot proposal"></span> Proposal (order suggested)</span>
           <span className="legend-item"><span className="legend-dot trade"></span> Trade (executed)</span>
         </div>
-        {chains.length > 0 && (
-          <div className="legend-section legend-chains">
-            <span className="legend-title">Chain links:</span>
-            <span className="legend-item"><span className="legend-chain-line solid green"></span> Traded</span>
-            <span className="legend-item"><span className="legend-chain-line solid blue"></span> Open position</span>
-            <span className="legend-item"><span className="legend-chain-line solid orange"></span> Proposed</span>
-            <span className="legend-item"><span className="legend-chain-line dashed grey"></span> Stalled</span>
-          </div>
-        )}
       </div>
       
       {/* Narrative */}
@@ -588,51 +488,8 @@ export default function MarketTimelineDetail({
         </div>
       )}
       
-      {/* Signal chain flow view */}
-      {chains.length > 0 && <ChainFlowView chains={chains} />}
-
-      {/* Events table (recent) */}
-      {events.length > 0 && (
-        <div className="mtd-events-table">
-          <h5>Recent Events ({events.length})</h5>
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.slice(-20).reverse().map((e, i) => (
-                <tr key={i} className={`event-row event-${e.type?.toLowerCase()}`}>
-                  <td>{e.ts?.slice(0, 10)}</td>
-                  <td><span className={`event-badge ${e.type?.toLowerCase()}`}>{e.type}</span></td>
-                  <td>
-                    {e.type === 'SIGNAL' && `Pattern ${e.pattern_id}, Score: ${e.score?.toFixed(4) || '—'}`}
-                    {e.type === 'PROPOSAL' && (
-                      <>
-                        {e.side} · Weight: {e.target_weight?.toFixed(2) || '—'} · Status: {e.status}
-                        {e.portfolio_id && (
-                          <> · <Link to={`/portfolios/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
-                        )}
-                      </>
-                    )}
-                    {e.type === 'TRADE' && (
-                      <>
-                        {e.side} {e.quantity} @ {e.price?.toFixed(2)} (${e.notional?.toFixed(0)})
-                        {e.portfolio_id && (
-                          <> · <Link to={`/portfolios/${e.portfolio_id}`} className="mtd-portfolio-link">Portfolio {e.portfolio_id}</Link></>
-                        )}
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Signal chain tree view */}
+      {chains.length > 0 && <SignalChainTree chains={chains} />}
     </div>
   )
 }

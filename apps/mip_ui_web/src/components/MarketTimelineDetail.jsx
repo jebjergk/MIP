@@ -212,6 +212,7 @@ export default function MarketTimelineDetail({
   const [data, setData] = useState(cachedData || null)
   const [loading, setLoading] = useState(!cachedData)
   const [error, setError] = useState(null)
+  const [chartMode, setChartMode] = useState('line') // 'line' or 'candle'
   
   useEffect(() => {
     if (cachedData) {
@@ -290,6 +291,7 @@ export default function MarketTimelineDetail({
     const hasProposal = barEvents.some((e) => e.type === 'PROPOSAL')
     const hasTrade = barEvents.some((e) => e.type === 'TRADE')
     
+    const isUp = bar.close >= bar.open
     return {
       ...bar,
       date,
@@ -297,8 +299,10 @@ export default function MarketTimelineDetail({
       signalMarker: hasSignal ? bar.low * (hasProposal ? 0.982 : 0.99) : null,
       proposalMarker: hasProposal ? bar.low * 0.99 : null,
       tradeMarker: hasTrade ? bar.high * 1.005 : null,
-      // For candlestick-like rendering
-      range: bar.high && bar.low ? [bar.low, bar.high] : null,
+      // Candlestick data
+      wick: bar.high != null && bar.low != null ? [bar.low, bar.high] : null,
+      bodyUp: isUp && bar.open != null ? [bar.open, bar.close] : null,
+      bodyDown: !isUp && bar.open != null ? [bar.close, bar.open] : null,
     }
   })
   
@@ -335,6 +339,18 @@ export default function MarketTimelineDetail({
         </span>
       </div>
       
+      {/* Chart mode toggle */}
+      <div className="mtd-chart-toggle">
+        <button
+          className={`mtd-toggle-btn ${chartMode === 'line' ? 'active' : ''}`}
+          onClick={() => setChartMode('line')}
+        >Line</button>
+        <button
+          className={`mtd-toggle-btn ${chartMode === 'candle' ? 'active' : ''}`}
+          onClick={() => setChartMode('candle')}
+        >Candlestick</button>
+      </div>
+
       {/* Chart */}
       <div className="mtd-chart-container">
         <ResponsiveContainer width="100%" height={300}>
@@ -343,7 +359,7 @@ export default function MarketTimelineDetail({
             <XAxis
               dataKey="date"
               tick={{ fontSize: 10 }}
-              tickFormatter={(v) => v?.slice(5)} // Show MM-DD
+              tickFormatter={(v) => v?.slice(5)}
             />
             <YAxis
               domain={['auto', 'auto']}
@@ -351,71 +367,41 @@ export default function MarketTimelineDetail({
               tickFormatter={(v) => v?.toFixed(2)}
             />
             <Tooltip content={<ChartTooltip />} />
-            
-            {/* High-Low range as thin grey lines showing daily price range */}
-            <Line
-              type="monotone"
-              dataKey="high"
-              stroke="#bbb"
-              strokeWidth={1}
-              strokeDasharray="2 2"
-              dot={false}
-              name="Daily High"
-              legendType="none"
-            />
-            <Line
-              type="monotone"
-              dataKey="low"
-              stroke="#bbb"
-              strokeWidth={1}
-              strokeDasharray="2 2"
-              dot={false}
-              name="Daily Low"
-              legendType="none"
-            />
-            
-            {/* Close price as main blue line */}
-            <Line
-              type="monotone"
-              dataKey="close"
-              stroke="#1976d2"
-              strokeWidth={2}
-              dot={false}
-              name="Close Price"
-            />
-            
-            {/* Proposal markers - orange circles below price */}
-            <Scatter
-              dataKey="proposalMarker"
-              fill="#ff9800"
-              name="Proposal"
-            >
+
+            {chartMode === 'line' ? (
+              <>
+                <Line type="monotone" dataKey="high" stroke="#bbb" strokeWidth={1} strokeDasharray="2 2" dot={false} name="Daily High" legendType="none" />
+                <Line type="monotone" dataKey="low" stroke="#bbb" strokeWidth={1} strokeDasharray="2 2" dot={false} name="Daily Low" legendType="none" />
+                <Line type="monotone" dataKey="close" stroke="#1976d2" strokeWidth={2} dot={false} name="Close Price" />
+              </>
+            ) : (
+              <>
+                <Bar dataKey="wick" fill="none" stroke="#888" strokeWidth={1} barSize={1} name="Wick" legendType="none" />
+                <Bar dataKey="bodyUp" fill="#26a69a" stroke="#26a69a" barSize={6} name="Up" legendType="none" />
+                <Bar dataKey="bodyDown" fill="#ef5350" stroke="#ef5350" barSize={6} name="Down" legendType="none" />
+              </>
+            )}
+
+            {/* Proposal markers */}
+            <Scatter dataKey="proposalMarker" fill="#ff9800" name="Proposal">
               {chartData.map((entry, index) => (
                 entry.proposalMarker != null ? (
                   <circle key={`proposal-${index}`} r={7} fill="#ff9800" stroke="#e65100" strokeWidth={2} />
                 ) : null
               ))}
             </Scatter>
-            
-            {/* Signal markers - blue circles below proposals (rendered after so visible on top) */}
-            <Scatter
-              dataKey="signalMarker"
-              fill="#2196f3"
-              name="Signal"
-            >
+
+            {/* Signal markers */}
+            <Scatter dataKey="signalMarker" fill="#2196f3" name="Signal">
               {chartData.map((entry, index) => (
                 entry.signalMarker != null ? (
                   <circle key={`signal-${index}`} r={6} fill="#2196f3" stroke="#1565c0" strokeWidth={2} />
                 ) : null
               ))}
             </Scatter>
-            
-            {/* Trade markers - green circles above price */}
-            <Scatter
-              dataKey="tradeMarker"
-              fill="#4caf50"
-              name="Trade"
-            >
+
+            {/* Trade markers */}
+            <Scatter dataKey="tradeMarker" fill="#4caf50" name="Trade">
               {chartData.map((entry, index) => (
                 entry.tradeMarker != null ? (
                   <circle key={`trade-${index}`} r={8} fill="#4caf50" stroke="#2e7d32" strokeWidth={2} />
@@ -425,13 +411,22 @@ export default function MarketTimelineDetail({
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      
-      {/* Chart legend - explains what each element means */}
+
+      {/* Chart legend */}
       <div className="mtd-chart-legend">
         <div className="legend-section legend-price">
           <span className="legend-title">Price:</span>
-          <span className="legend-item"><span className="legend-line blue"></span> Close price</span>
-          <span className="legend-item"><span className="legend-line grey dashed"></span> High/Low range</span>
+          {chartMode === 'line' ? (
+            <>
+              <span className="legend-item"><span className="legend-line blue"></span> Close price</span>
+              <span className="legend-item"><span className="legend-line grey dashed"></span> High/Low range</span>
+            </>
+          ) : (
+            <>
+              <span className="legend-item"><span className="legend-candle up"></span> Up day</span>
+              <span className="legend-item"><span className="legend-candle down"></span> Down day</span>
+            </>
+          )}
         </div>
         <div className="legend-section legend-events">
           <span className="legend-title">Events:</span>

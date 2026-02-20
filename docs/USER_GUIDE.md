@@ -212,22 +212,25 @@ AI-generated narrative "biography" of a portfolio. Auto-generates on first visit
 
 ### 2.6 Market Timeline
 
-**What it shows:** End-to-end view of what happened with each symbol - from signals to proposals to trades.
+**What it shows:** End-to-end view of what happened with each symbol — from signals to proposals to trades.
 
 **Main grid:**
-- Each card shows a symbol
-- **Counts**: How many signals, proposals, and trades for that symbol
+- Each card shows a symbol with signal (S), proposal (P), and trade (T) counts
 - **Trust badges**: Trust level for this symbol's patterns
 - **ACTION badge**: Shows if there's a proposal for today
+- **Portfolio filter**: Dynamically loaded from the system — when a portfolio is selected, only symbols where that portfolio has proposals or trades are shown
 
 **Expanded detail view:**
 
 | Element | What it shows |
 |---------|---------------|
-| **OHLC Chart** | Price candlesticks with event overlays (signals, proposals, trades marked) |
+| **Chart mode toggle** | Switch between **Line** (clean close-price line with high/low range) and **Candlestick** (traditional OHLC candles, green up / red down) |
+| **Event overlays** | Blue dots = signals, orange dots = proposals, green dots = trades — shown in both chart modes |
 | **Decision Narrative** | AI-generated explanation of what happened |
 | **Trust Summary** | Trust levels by pattern for this symbol |
-| **Recent Events** | Table of signals, proposals, trades with timestamps |
+| **Signal Chains** | Tree view showing the full lifecycle: Signal → Proposal(s) per portfolio → BUY trade → SELL trade, with status badges (Open, Closed, Pending, Rejected), portfolio links, prices, and realized PnL |
+
+The chart always extends to today's date so current-day activity is visible. Signal chains look back as far as the chart window (default 60 bars ≈ 3 months). Signals that never led to a proposal are counted in the header but not shown individually.
 
 ---
 

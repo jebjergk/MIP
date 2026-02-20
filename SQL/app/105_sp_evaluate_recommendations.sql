@@ -1,5 +1,6 @@
 -- /sql/app/105_sp_evaluate_recommendations.sql
 -- Purpose: Evaluate forward returns for recommendations over trading-bar horizons
+-- Reads horizons from HORIZON_DEFINITION: BAR/DAY use n-th future bar, SESSION uses last bar of the day
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -40,11 +41,7 @@ BEGIN
 
     MERGE INTO MIP.APP.RECOMMENDATION_OUTCOMES t
     USING (
-        WITH horizons AS (
-            SELECT column1::NUMBER AS HORIZON_BARS
-            FROM VALUES (1), (3), (5), (10), (20)
-        ),
-        entry_bars AS (
+        WITH entry_bars AS (
             SELECT
                 r.RECOMMENDATION_ID,
                 r.SYMBOL,
@@ -57,10 +54,23 @@ BEGIN
               ON b.SYMBOL = r.SYMBOL
              AND b.MARKET_TYPE = r.MARKET_TYPE
              AND b.INTERVAL_MINUTES = r.INTERVAL_MINUTES
-             AND b.TS = r.TS                      -- strict entry bar
+             AND b.TS = r.TS
             WHERE r.TS >= :v_from_ts
               AND r.TS <= :v_to_ts
         ),
+
+        -- Match each rec to its bar-based horizons from HORIZON_DEFINITION
+        rec_bar_horizons AS (
+            SELECT DISTINCT
+                e.RECOMMENDATION_ID,
+                h.HORIZON_LENGTH AS HORIZON_BARS
+            FROM entry_bars e
+            JOIN MIP.APP.HORIZON_DEFINITION h
+              ON h.INTERVAL_MINUTES = e.INTERVAL_MINUTES
+             AND h.IS_ACTIVE = TRUE
+             AND h.HORIZON_TYPE IN ('BAR', 'DAY')
+        ),
+
         future_ranked AS (
             SELECT
                 e.RECOMMENDATION_ID,
@@ -75,53 +85,97 @@ BEGIN
               ON b.SYMBOL = e.SYMBOL
              AND b.MARKET_TYPE = e.MARKET_TYPE
              AND b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
-             AND b.TS > e.ENTRY_TS                 -- strict future: lookahead-safe
+             AND b.TS > e.ENTRY_TS
             WHERE e.ENTRY_PRICE IS NOT NULL
               AND e.ENTRY_PRICE <> 0
         ),
-        future_bars AS (
+
+        -- Bar-based outcomes (BAR / DAY horizons)
+        bar_outcomes AS (
             SELECT
                 e.RECOMMENDATION_ID,
                 e.ENTRY_TS,
                 e.ENTRY_PRICE,
-                h.HORIZON_BARS,
+                rh.HORIZON_BARS,
                 fr.EXIT_TS,
                 fr.EXIT_PRICE
             FROM entry_bars e
-            JOIN horizons h ON 1=1
+            JOIN rec_bar_horizons rh ON rh.RECOMMENDATION_ID = e.RECOMMENDATION_ID
             LEFT JOIN future_ranked fr
               ON fr.RECOMMENDATION_ID = e.RECOMMENDATION_ID
-             AND fr.FUTURE_RN = h.HORIZON_BARS
+             AND fr.FUTURE_RN = rh.HORIZON_BARS
+        ),
+
+        -- Session-end (EOD) outcomes: last bar of the same trading day
+        eod_exits AS (
+            SELECT
+                e.RECOMMENDATION_ID,
+                b.TS AS EXIT_TS,
+                b.CLOSE::FLOAT AS EXIT_PRICE
+            FROM entry_bars e
+            JOIN MIP.APP.HORIZON_DEFINITION h
+              ON h.INTERVAL_MINUTES = e.INTERVAL_MINUTES
+             AND h.IS_ACTIVE = TRUE
+             AND h.HORIZON_TYPE = 'SESSION'
+            JOIN MIP.MART.MARKET_BARS b
+              ON b.SYMBOL = e.SYMBOL
+             AND b.MARKET_TYPE = e.MARKET_TYPE
+             AND b.INTERVAL_MINUTES = e.INTERVAL_MINUTES
+             AND b.TS::DATE = e.ENTRY_TS::DATE
+             AND b.TS > e.ENTRY_TS
+            WHERE e.ENTRY_PRICE IS NOT NULL
+              AND e.ENTRY_PRICE <> 0
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY e.RECOMMENDATION_ID ORDER BY b.TS DESC) = 1
+        ),
+
+        eod_outcomes AS (
+            SELECT
+                e.RECOMMENDATION_ID,
+                e.ENTRY_TS,
+                e.ENTRY_PRICE,
+                -1 AS HORIZON_BARS,
+                eod.EXIT_TS,
+                eod.EXIT_PRICE
+            FROM entry_bars e
+            JOIN eod_exits eod ON eod.RECOMMENDATION_ID = e.RECOMMENDATION_ID
+        ),
+
+        -- Combine bar-based + session-end outcomes
+        all_outcomes AS (
+            SELECT * FROM bar_outcomes
+            UNION ALL
+            SELECT * FROM eod_outcomes
         )
+
         SELECT
-            fb.RECOMMENDATION_ID,
-            fb.HORIZON_BARS,
-            fb.ENTRY_TS,
-            fb.EXIT_TS,
-            fb.ENTRY_PRICE,
-            fb.EXIT_PRICE,
+            ao.RECOMMENDATION_ID,
+            ao.HORIZON_BARS,
+            ao.ENTRY_TS,
+            ao.EXIT_TS,
+            ao.ENTRY_PRICE,
+            ao.EXIT_PRICE,
             CASE
-                WHEN fb.ENTRY_PRICE IS NOT NULL AND fb.ENTRY_PRICE <> 0
-                 AND fb.EXIT_PRICE  IS NOT NULL AND fb.EXIT_PRICE  <> 0
-                THEN (fb.EXIT_PRICE / fb.ENTRY_PRICE) - 1
+                WHEN ao.ENTRY_PRICE IS NOT NULL AND ao.ENTRY_PRICE <> 0
+                 AND ao.EXIT_PRICE  IS NOT NULL AND ao.EXIT_PRICE  <> 0
+                THEN (ao.EXIT_PRICE / ao.ENTRY_PRICE) - 1
                 ELSE NULL
             END AS REALIZED_RETURN,
             'LONG' AS DIRECTION,
             CASE
-                WHEN fb.ENTRY_PRICE IS NOT NULL AND fb.ENTRY_PRICE <> 0
-                 AND fb.EXIT_PRICE  IS NOT NULL AND fb.EXIT_PRICE  <> 0
-                THEN ((fb.EXIT_PRICE / fb.ENTRY_PRICE) - 1) >= :v_thr
+                WHEN ao.ENTRY_PRICE IS NOT NULL AND ao.ENTRY_PRICE <> 0
+                 AND ao.EXIT_PRICE  IS NOT NULL AND ao.EXIT_PRICE  <> 0
+                THEN ((ao.EXIT_PRICE / ao.ENTRY_PRICE) - 1) >= :v_thr
                 ELSE NULL
             END AS HIT_FLAG,
             'THRESHOLD' AS HIT_RULE,
             :v_thr AS MIN_RETURN_THRESHOLD,
             CASE
-                WHEN fb.ENTRY_PRICE IS NULL OR fb.ENTRY_PRICE = 0 THEN 'FAILED_NO_ENTRY_BAR'
-                WHEN fb.EXIT_PRICE  IS NULL OR fb.EXIT_PRICE  = 0 THEN 'INSUFFICIENT_FUTURE_DATA'
+                WHEN ao.ENTRY_PRICE IS NULL OR ao.ENTRY_PRICE = 0 THEN 'FAILED_NO_ENTRY_BAR'
+                WHEN ao.EXIT_PRICE  IS NULL OR ao.EXIT_PRICE  = 0 THEN 'INSUFFICIENT_FUTURE_DATA'
                 ELSE 'SUCCESS'
             END AS EVAL_STATUS,
             CURRENT_TIMESTAMP() AS CALCULATED_AT
-        FROM future_bars fb
+        FROM all_outcomes ao
     ) s
       ON t.RECOMMENDATION_ID = s.RECOMMENDATION_ID
      AND t.HORIZON_BARS      = s.HORIZON_BARS
@@ -169,7 +223,6 @@ BEGIN
 
     v_merged := SQLROWCOUNT;
 
-    -- counts by horizon for this run's window
     SELECT OBJECT_AGG(HORIZON_BARS, CNT)
       INTO :v_horizon_counts
     FROM (

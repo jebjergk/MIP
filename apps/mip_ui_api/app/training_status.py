@@ -31,23 +31,21 @@ def compute_maturity_score(
     outcomes_total: int,
     horizons_covered: int,
     min_signals: int = DEFAULT_MIN_SIGNALS,
+    max_horizons: int = MAX_HORIZONS,
 ) -> tuple[float, float, float]:
     """
     Compute the three component scores (sample, coverage, horizons).
     Returns (score_sample, score_coverage, score_horizons) each in [0, max].
     """
-    # Sample: 0→30, cap at min_signals
     ratio_sample = min(1.0, recs_total / min_signals) if min_signals else 1.0
     score_sample = POINTS_SAMPLE * ratio_sample
 
-    # Coverage: outcomes / (recs * 5) capped at 1
-    possible_outcomes = recs_total * MAX_HORIZONS if recs_total else 0
+    possible_outcomes = recs_total * max_horizons if recs_total else 0
     coverage_ratio = (outcomes_total / possible_outcomes) if possible_outcomes else 0.0
     coverage_ratio = min(1.0, coverage_ratio)
     score_coverage = POINTS_COVERAGE * coverage_ratio
 
-    # Horizons: 0..5 → 0..30
-    score_horizons = POINTS_HORIZONS * (horizons_covered / MAX_HORIZONS) if MAX_HORIZONS else 0.0
+    score_horizons = POINTS_HORIZONS * (horizons_covered / max_horizons) if max_horizons else 0.0
 
     return (score_sample, score_coverage, score_horizons)
 
@@ -73,6 +71,7 @@ def build_reasons(
     score_horizons: float,
     total_score: float,
     min_signals: int = DEFAULT_MIN_SIGNALS,
+    max_horizons: int = MAX_HORIZONS,
 ) -> list[str]:
     """Plain-language reasons for the score (non-trader language)."""
     reasons: list[str] = []
@@ -89,9 +88,9 @@ def build_reasons(
     else:
         reasons.append("All recommendations have outcome data for the horizons evaluated.")
 
-    if horizons_covered < MAX_HORIZONS:
+    if horizons_covered < max_horizons:
         reasons.append(
-            f"Outcome data is available for {horizons_covered} of {MAX_HORIZONS} time windows; "
+            f"Outcome data is available for {horizons_covered} of {max_horizons} time windows; "
             "more windows will strengthen the score."
         )
     else:
@@ -115,16 +114,17 @@ def score_training_status_row(
     outcomes_total: int,
     horizons_covered: int,
     min_signals: int = DEFAULT_MIN_SIGNALS,
+    max_horizons: int = MAX_HORIZONS,
 ) -> TrainingStatusScore:
     """
     Deterministic scoring for one row. coverage_ratio derived from outcomes_total and recs_total.
     """
-    possible_outcomes = recs_total * MAX_HORIZONS if recs_total else 0
+    possible_outcomes = recs_total * max_horizons if recs_total else 0
     coverage_ratio = (outcomes_total / possible_outcomes) if possible_outcomes else 0.0
     coverage_ratio = min(1.0, coverage_ratio)
 
     score_sample, score_coverage, score_horizons = compute_maturity_score(
-        recs_total, outcomes_total, horizons_covered, min_signals
+        recs_total, outcomes_total, horizons_covered, min_signals, max_horizons
     )
     total_score = score_sample + score_coverage + score_horizons
     total_score = min(100.0, max(0.0, total_score))
@@ -139,6 +139,7 @@ def score_training_status_row(
         score_horizons,
         total_score,
         min_signals,
+        max_horizons,
     )
     return TrainingStatusScore(maturity_score=round(total_score, 1), maturity_stage=stage, reasons=reasons)
 
@@ -208,6 +209,7 @@ def _get_int(row: dict[str, Any], *keys: str) -> int:
 def apply_scoring_to_rows(
     rows: list[dict[str, Any]],
     min_signals: int = DEFAULT_MIN_SIGNALS,
+    max_horizons: int = MAX_HORIZONS,
 ) -> list[dict[str, Any]]:
     """
     For each row from the training-status SQL, add maturity_score, maturity_stage, reasons.
@@ -218,7 +220,7 @@ def apply_scoring_to_rows(
         recs = _get_int(r, "recs_total")
         outcomes = _get_int(r, "outcomes_total")
         horizons = _get_int(r, "horizons_covered")
-        score_result = score_training_status_row(recs, outcomes, horizons, min_signals)
+        score_result = score_training_status_row(recs, outcomes, horizons, min_signals, max_horizons)
         out = {**r, "maturity_score": score_result.maturity_score, "maturity_stage": score_result.maturity_stage, "reasons": score_result.reasons}
         result.append(out)
     return result

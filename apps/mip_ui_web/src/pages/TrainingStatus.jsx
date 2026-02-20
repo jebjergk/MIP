@@ -12,7 +12,7 @@ import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
-const COLUMN_COUNT = 14 // Number of columns in the table
+const BASE_COLUMN_COUNT = 10 // Columns before horizon columns (expand, market, symbol, pattern, interval, as_of, maturity, sample, coverage, horizons)
 
 function stageGlossaryKey(stage) {
   if (!stage) return 'maturity_stage'
@@ -91,6 +91,7 @@ export default function TrainingStatus() {
   }, [intervalMode])
 
   const rows = data?.rows ?? []
+  const horizonDefs = data?.horizon_definitions ?? []
   const get = (r, k) => r[k] ?? r[k.toUpperCase()]
 
   const marketTypes = useMemo(() => {
@@ -243,11 +244,9 @@ export default function TrainingStatus() {
               <th>Sample size <InfoTooltip scope={SCOPE} key="recs_total" variant="short" /></th>
               <th>Coverage <InfoTooltip scope={SCOPE} key="coverage_ratio" variant="short" /></th>
               <th>Horizons <InfoTooltip scope={SCOPE} key="horizons_covered" variant="short" /></th>
-              <th>Avg H1 <InfoTooltip scope={SCOPE} key="avg_outcome_h1" variant="short" /></th>
-              <th>Avg H3 <InfoTooltip scope={SCOPE} key="avg_outcome_h3" variant="short" /></th>
-              <th>Avg H5 <InfoTooltip scope={SCOPE} key="avg_outcome_h5" variant="short" /></th>
-              <th>Avg H10 <InfoTooltip scope={SCOPE} key="avg_outcome_h10" variant="short" /></th>
-              <th>Avg H20 <InfoTooltip scope={SCOPE} key="avg_outcome_h20" variant="short" /></th>
+              {horizonDefs.map((h) => (
+                <th key={h.key} title={h.label}>Avg {h.key}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -299,15 +298,13 @@ export default function TrainingStatus() {
                     <td>{formatNum(get(row, 'recs_total'))}</td>
                     <td>{formatPct(get(row, 'coverage_ratio'))}</td>
                     <td>{formatNum(get(row, 'horizons_covered'))}</td>
-                    <td>{formatNum(get(row, 'avg_outcome_h1'))}</td>
-                    <td>{formatNum(get(row, 'avg_outcome_h3'))}</td>
-                    <td>{formatNum(get(row, 'avg_outcome_h5'))}</td>
-                    <td>{formatNum(get(row, 'avg_outcome_h10'))}</td>
-                    <td>{formatNum(get(row, 'avg_outcome_h20'))}</td>
+                    {horizonDefs.map((h) => (
+                      <td key={h.key}>{formatNum(get(row, `avg_outcome_${h.key.toLowerCase()}`))}</td>
+                    ))}
                   </tr>
                   {isExpanded && (
                     <tr className="training-detail-row">
-                      <td colSpan={COLUMN_COUNT + 1} className="training-detail-cell">
+                      <td colSpan={BASE_COLUMN_COUNT + horizonDefs.length + 1} className="training-detail-cell">
                         {intervalMode === 'daily' && (
                           <TrainingDigestPanel
                             scope="symbol"
@@ -321,7 +318,7 @@ export default function TrainingStatus() {
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}
                           patternId={get(row, 'pattern_id')}
-                          horizonBars={5}
+                          horizonBars={intervalMode === 'intraday' ? 4 : 5}
                           intervalMinutes={intervalMinutes}
                           cachedData={cachedData}
                           onDataLoaded={(data) => setTimelineCache(rowKey, data)}

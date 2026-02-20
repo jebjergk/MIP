@@ -21,7 +21,66 @@ from app.training_timeline import build_training_timeline
 router = APIRouter(prefix="/training", tags=["training"])
 
 
-def _training_status_sql(interval_minutes: int = 1440) -> str:
+HORIZON_DEFS_CACHE: dict = {}
+
+
+def _get_horizon_defs(conn, interval_minutes: int) -> list[dict]:
+    """Fetch active horizon definitions for a given interval. Cached per interval."""
+    if interval_minutes in HORIZON_DEFS_CACHE:
+        return HORIZON_DEFS_CACHE[interval_minutes]
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT HORIZON_LENGTH, DISPLAY_SHORT, DISPLAY_LABEL, HORIZON_TYPE "
+        "FROM MIP.APP.HORIZON_DEFINITION "
+        "WHERE INTERVAL_MINUTES = %s AND IS_ACTIVE = TRUE "
+        "ORDER BY HORIZON_ID",
+        (interval_minutes,),
+    )
+    rows = fetch_all(cur)
+    defs = [
+        {
+            "horizon_bars": int(r["HORIZON_LENGTH"]),
+            "key": r["DISPLAY_SHORT"],
+            "label": r["DISPLAY_LABEL"],
+            "type": r["HORIZON_TYPE"],
+        }
+        for r in rows
+    ]
+    HORIZON_DEFS_CACHE[interval_minutes] = defs
+    return defs
+
+
+def _training_status_sql(interval_minutes: int = 1440, horizon_defs: list[dict] | None = None) -> str:
+    if not horizon_defs:
+        if interval_minutes == 15:
+            horizon_defs = [
+                {"horizon_bars": 1, "key": "H1"},
+                {"horizon_bars": 4, "key": "H4"},
+                {"horizon_bars": 8, "key": "H8"},
+                {"horizon_bars": -1, "key": "EOD"},
+            ]
+        else:
+            horizon_defs = [
+                {"horizon_bars": 1, "key": "H1"},
+                {"horizon_bars": 3, "key": "H3"},
+                {"horizon_bars": 5, "key": "H5"},
+                {"horizon_bars": 10, "key": "H10"},
+                {"horizon_bars": 20, "key": "H20"},
+            ]
+
+    n_horizons = len(horizon_defs)
+
+    avg_cols = ",\n    ".join(
+        f"avg(case when o.HORIZON_BARS = {h['horizon_bars']} and o.EVAL_STATUS = 'SUCCESS' "
+        f"then o.REALIZED_RETURN end) as avg_outcome_{h['key'].lower()}"
+        for h in horizon_defs
+    )
+
+    select_cols = ",\n  ".join(
+        f"o.avg_outcome_{h['key'].lower()} as avg_outcome_{h['key'].lower()}"
+        for h in horizon_defs
+    )
+
     return f"""
 with recs as (
   select
@@ -43,11 +102,7 @@ outcomes_agg as (
     r.INTERVAL_MINUTES,
     count(*) as outcomes_total,
     count(distinct o.HORIZON_BARS) as horizons_covered,
-    avg(case when o.HORIZON_BARS = 1 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h1,
-    avg(case when o.HORIZON_BARS = 3 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h3,
-    avg(case when o.HORIZON_BARS = 5 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h5,
-    avg(case when o.HORIZON_BARS = 10 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h10,
-    avg(case when o.HORIZON_BARS = 20 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h20
+    {avg_cols}
   from MIP.APP.RECOMMENDATION_LOG r
   join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
   where r.INTERVAL_MINUTES = {interval_minutes}
@@ -62,14 +117,10 @@ select
   recs.recs_total as recs_total,
   coalesce(o.outcomes_total, 0) as outcomes_total,
   coalesce(o.horizons_covered, 0) as horizons_covered,
-  case when recs.recs_total > 0 and (recs.recs_total * 5) > 0
-    then least(1.0, coalesce(o.outcomes_total, 0)::float / (recs.recs_total * 5))
+  case when recs.recs_total > 0 and (recs.recs_total * {n_horizons}) > 0
+    then least(1.0, coalesce(o.outcomes_total, 0)::float / (recs.recs_total * {n_horizons}))
     else 0.0 end as coverage_ratio,
-  o.avg_outcome_h1 as avg_outcome_h1,
-  o.avg_outcome_h3 as avg_outcome_h3,
-  o.avg_outcome_h5 as avg_outcome_h5,
-  o.avg_outcome_h10 as avg_outcome_h10,
-  o.avg_outcome_h20 as avg_outcome_h20
+  {select_cols}
 from recs
 left join outcomes_agg o
   on o.MARKET_TYPE = recs.MARKET_TYPE and o.SYMBOL = recs.SYMBOL
@@ -102,25 +153,60 @@ def _get_min_signals(conn) -> int:
     return DEFAULT_MIN_SIGNALS
 
 
+@router.get("/horizons")
+def get_horizon_definitions(
+    interval_minutes: Optional[int] = Query(None, description="Filter by interval (15, 1440). Omit for all."),
+):
+    """Return active horizon definitions, optionally filtered by interval."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        if interval_minutes:
+            cur.execute(
+                "SELECT HORIZON_ID, HORIZON_TYPE, HORIZON_LENGTH, RESOLUTION, "
+                "INTERVAL_MINUTES, DISPLAY_LABEL, DISPLAY_SHORT, DESCRIPTION "
+                "FROM MIP.APP.HORIZON_DEFINITION WHERE IS_ACTIVE = TRUE AND INTERVAL_MINUTES = %s "
+                "ORDER BY HORIZON_ID",
+                (interval_minutes,),
+            )
+        else:
+            cur.execute(
+                "SELECT HORIZON_ID, HORIZON_TYPE, HORIZON_LENGTH, RESOLUTION, "
+                "INTERVAL_MINUTES, DISPLAY_LABEL, DISPLAY_SHORT, DESCRIPTION "
+                "FROM MIP.APP.HORIZON_DEFINITION WHERE IS_ACTIVE = TRUE "
+                "ORDER BY HORIZON_ID",
+            )
+        return {"horizons": serialize_rows(fetch_all(cur))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
 @router.get("/status")
 def get_training_status(
-    interval_minutes: Optional[int] = Query(None, description="Bar interval: 1440=daily (default), 60=hourly, etc."),
+    interval_minutes: Optional[int] = Query(None, description="Bar interval: 1440=daily (default), 15=intraday, etc."),
 ):
     """
     Training Status: per (market_type, symbol, pattern_id, interval_minutes).
-    Returns recs_total, outcomes_total, horizons_covered, coverage_ratio, avg_outcome_h1..h20,
-    maturity_score (0–100), maturity_stage (INSUFFICIENT/WARMING_UP/LEARNING/CONFIDENT), reasons[].
-    Pass interval_minutes=60 for intraday data.
+    Returns recs_total, outcomes_total, horizons_covered, coverage_ratio,
+    dynamic avg_outcome columns based on HORIZON_DEFINITION,
+    maturity_score (0–100), maturity_stage, reasons[].
     """
     iv = interval_minutes if interval_minutes and interval_minutes in (15, 30, 60, 1440) else 1440
     conn = get_connection()
     try:
+        hdefs = _get_horizon_defs(conn, iv)
         min_signals = _get_min_signals(conn)
         cur = conn.cursor()
-        cur.execute(_training_status_sql(iv))
+        cur.execute(_training_status_sql(iv, hdefs))
         rows = fetch_all(cur)
-        scored = apply_scoring_to_rows(rows, min_signals=min_signals)
-        return {"rows": serialize_rows(scored), "interval_minutes": iv}
+        scored = apply_scoring_to_rows(rows, min_signals=min_signals, max_horizons=len(hdefs) or 5)
+        return {
+            "rows": serialize_rows(scored),
+            "interval_minutes": iv,
+            "horizon_definitions": hdefs,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

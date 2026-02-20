@@ -65,7 +65,7 @@ export default function TrainingStatus() {
     if (iv === 'intraday') setIntervalMode('intraday')
   }, [searchParams])
 
-  const intervalMinutes = intervalMode === 'intraday' ? 60 : 1440
+  const intervalMinutes = intervalMode === 'intraday' ? 15 : 1440
 
   useEffect(() => {
     let cancelled = false
@@ -74,7 +74,7 @@ export default function TrainingStatus() {
     setData(null)
     setExpandedRowId(null)
     const url = intervalMode === 'intraday'
-      ? `${API_BASE}/training/status?interval_minutes=60`
+      ? `${API_BASE}/training/status?interval_minutes=15`
       : `${API_BASE}/training/status`
     fetch(url)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
@@ -181,14 +181,14 @@ export default function TrainingStatus() {
           className={`training-interval-btn ${intervalMode === 'intraday' ? 'training-interval-btn--active' : ''}`}
           onClick={() => setIntervalMode('intraday')}
         >
-          Intraday (60m)
+          Intraday (15m)
         </button>
       </div>
 
       <p className="training-status-intro">
         {intervalMode === 'daily'
           ? 'Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.'
-          : 'Intraday pattern learning loop (hourly bars): signal detection, fee-adjusted outcomes, and pattern trust scoring.'}
+          : 'Intraday pattern learning loop (15-minute bars): signal detection, fee-adjusted outcomes, and pattern trust scoring.'}
       </p>
 
       {intervalMode === 'intraday' && <IntradayDashboard />}

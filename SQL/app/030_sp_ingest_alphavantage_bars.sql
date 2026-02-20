@@ -69,6 +69,7 @@ def _fetch_stock_bars(api_key: str, symbol: str, interval_minutes: int) -> tuple
     }
     if interval_str:
         params["interval"] = interval_str
+        params["entitlement"] = "delayed"
     resp = requests.get(ALPHAVANTAGE_BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
     return resp.json(), resp.url, expected_key

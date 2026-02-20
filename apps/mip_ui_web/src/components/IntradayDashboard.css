@@ -1,0 +1,169 @@
+/* IntradayDashboard: cards, KPIs, tables for intraday learning loop */
+
+.id-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.id-loading {
+  color: #666;
+  font-style: italic;
+  padding: 1rem 0;
+}
+
+.id-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.id-card-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #1565c0;
+}
+
+.id-card-subtitle {
+  margin: 0 0 0.75rem;
+  font-size: 0.82rem;
+  color: #888;
+}
+
+.id-empty {
+  color: #999;
+  font-style: italic;
+  padding: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+/* Pipeline health KPI grid */
+.id-pipeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.id-kpi {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.6rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #eee;
+}
+
+.id-kpi-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #888;
+  margin-bottom: 0.15rem;
+}
+
+.id-kpi-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333;
+}
+
+/* Status indicators */
+.id-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.id-enabled-badge {
+  background: #c8f5d0;
+  color: #0d5c0d;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.id-disabled-badge {
+  background: #f5d0d0;
+  color: #8b0000;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Trust badges */
+.id-trust-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.id-trust-trusted { background: #c8f5d0; color: #0d5c0d; }
+.id-trust-watch { background: #f5e6c8; color: #7d5a00; }
+.id-trust-immature { background: #e0e0e0; color: #555; }
+.id-trust-untrusted { background: #f5d0d0; color: #8b0000; }
+
+/* Stability badges */
+.id-stability-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.id-stability-stable { background: #c8f5d0; color: #0d5c0d; }
+.id-stability-improving { background: #c8e0f5; color: #0a5276; }
+.id-stability-degrading { background: #f5d0d0; color: #8b0000; }
+.id-stability-insufficient { background: #e0e0e0; color: #555; }
+
+/* Tables */
+.id-table-wrap {
+  overflow-x: auto;
+}
+
+.id-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.id-table th,
+.id-table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
+}
+
+.id-table th {
+  background: #f5f7fa;
+  font-weight: 600;
+  color: #555;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.id-table tbody tr:hover {
+  background: #f8f9fb;
+}
+
+.id-pattern-name {
+  font-weight: 600;
+  color: #1565c0;
+}
+
+.id-positive { color: #2e7d32; }
+.id-negative { color: #c62828; }

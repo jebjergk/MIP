@@ -1,5 +1,6 @@
 """
-Training Status v1: per (market_type, symbol, pattern_id, interval_minutes) for INTERVAL_MINUTES=1440.
+Training Status: per (market_type, symbol, pattern_id, interval_minutes).
+Supports both daily (1440) and intraday intervals via query parameter.
 Uses MIP.APP.RECOMMENDATION_LOG, MIP.APP.RECOMMENDATION_OUTCOMES;
 optional MIP.APP.PATTERN_DEFINITION (labels), MIP.APP.TRAINING_GATE_PARAMS (thresholds).
 """
@@ -19,8 +20,9 @@ from app.training_timeline import build_training_timeline
 
 router = APIRouter(prefix="/training", tags=["training"])
 
-# Training Status v1: INTERVAL_MINUTES = 1440 only. No placeholders required for base query.
-TRAINING_STATUS_SQL = """
+
+def _training_status_sql(interval_minutes: int = 1440) -> str:
+    return f"""
 with recs as (
   select
     r.MARKET_TYPE,
@@ -30,7 +32,7 @@ with recs as (
     count(*) as recs_total,
     max(r.TS) as as_of_ts
   from MIP.APP.RECOMMENDATION_LOG r
-  where r.INTERVAL_MINUTES = 1440
+  where r.INTERVAL_MINUTES = {interval_minutes}
   group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
 ),
 outcomes_agg as (
@@ -48,7 +50,7 @@ outcomes_agg as (
     avg(case when o.HORIZON_BARS = 20 and o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_outcome_h20
   from MIP.APP.RECOMMENDATION_LOG r
   join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
-  where r.INTERVAL_MINUTES = 1440
+  where r.INTERVAL_MINUTES = {interval_minutes}
   group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
 )
 select
@@ -75,6 +77,9 @@ left join outcomes_agg o
 order by recs.MARKET_TYPE, recs.SYMBOL, recs.PATTERN_ID
 """
 
+
+TRAINING_STATUS_SQL = _training_status_sql(1440)
+
 # Optional: fetch MIN_SIGNALS from TRAINING_GATE_PARAMS (one active row)
 GATE_PARAMS_SQL = """
 select MIN_SIGNALS
@@ -98,20 +103,24 @@ def _get_min_signals(conn) -> int:
 
 
 @router.get("/status")
-def get_training_status():
+def get_training_status(
+    interval_minutes: Optional[int] = Query(None, description="Bar interval: 1440=daily (default), 60=hourly, etc."),
+):
     """
-    Training Status v1: per (market_type, symbol, pattern_id, interval_minutes) for daily (1440) only.
+    Training Status: per (market_type, symbol, pattern_id, interval_minutes).
     Returns recs_total, outcomes_total, horizons_covered, coverage_ratio, avg_outcome_h1..h20,
     maturity_score (0–100), maturity_stage (INSUFFICIENT/WARMING_UP/LEARNING/CONFIDENT), reasons[].
+    Pass interval_minutes=60 for intraday data.
     """
+    iv = interval_minutes if interval_minutes and interval_minutes in (15, 30, 60, 1440) else 1440
     conn = get_connection()
     try:
         min_signals = _get_min_signals(conn)
         cur = conn.cursor()
-        cur.execute(TRAINING_STATUS_SQL)
+        cur.execute(_training_status_sql(iv))
         rows = fetch_all(cur)
         scored = apply_scoring_to_rows(rows, min_signals=min_signals)
-        return {"rows": serialize_rows(scored)}
+        return {"rows": serialize_rows(scored), "interval_minutes": iv}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:
@@ -189,6 +198,79 @@ def get_training_timeline(
             max_points=max_points or 250,
         )
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Intraday-specific endpoints (read from mart views deployed in Phase 1a)
+# ---------------------------------------------------------------------------
+
+@router.get("/intraday/pipeline-status")
+def get_intraday_pipeline_status():
+    """Operational health of the intraday pipeline: latest run, data coverage, compute usage."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM MIP.MART.V_INTRADAY_PIPELINE_STATUS")
+        rows = fetch_all(cur)
+        return serialize_row(rows[0]) if rows else {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/intraday/trust-scoreboard")
+def get_intraday_trust_scoreboard():
+    """Fee-adjusted pattern trust scores for intraday patterns."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM MIP.MART.V_INTRADAY_TRUST_SCOREBOARD
+            ORDER BY TRUST_STATUS DESC, NET_HIT_RATE DESC NULLS LAST
+        """)
+        rows = fetch_all(cur)
+        return {"rows": serialize_rows(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/intraday/pattern-stability")
+def get_intraday_pattern_stability():
+    """Rolling-window stability for intraday patterns (detecting drift or improvement)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM MIP.MART.V_INTRADAY_PATTERN_STABILITY
+            ORDER BY PATTERN_NAME, HORIZON_BARS
+        """)
+        rows = fetch_all(cur)
+        return {"rows": serialize_rows(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/intraday/excursion-stats")
+def get_intraday_excursion_stats():
+    """Max favorable/adverse excursion stats per intraday pattern (stop-loss/take-profit design)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM MIP.MART.V_INTRADAY_EXCURSION_STATS
+            ORDER BY PATTERN_NAME, HORIZON_BARS
+        """)
+        rows = fetch_all(cur)
+        return {"rows": serialize_rows(rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

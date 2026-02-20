@@ -7,6 +7,7 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
 import TrainingDigestPanel from '../components/TrainingDigestPanel'
+import IntradayDashboard from '../components/IntradayDashboard'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
 
@@ -49,6 +50,7 @@ export default function TrainingStatus() {
   const [symbolSearch, setSymbolSearch] = useState('')
   const [patternIdFilter, setPatternIdFilter] = useState('')
   const [expandedRowId, setExpandedRowId] = useState(null)
+  const [intervalMode, setIntervalMode] = useState('daily') // 'daily' | 'intraday'
   const timelineCacheRef = useRef({}) // Cache for timeline data per row key
   useEffect(() => {
     if (appliedUrlRef.current) return
@@ -56,14 +58,25 @@ export default function TrainingStatus() {
     const s = searchParams.get('symbol')
     const m = searchParams.get('market_type')
     const p = searchParams.get('pattern_id')
+    const iv = searchParams.get('interval')
     if (s != null && s !== '') setSymbolSearch(s)
     if (m != null && m !== '') setMarketTypeFilter(m)
     if (p != null && p !== '') setPatternIdFilter(p)
+    if (iv === 'intraday') setIntervalMode('intraday')
   }, [searchParams])
+
+  const intervalMinutes = intervalMode === 'intraday' ? 60 : 1440
 
   useEffect(() => {
     let cancelled = false
-    fetch(`${API_BASE}/training/status`)
+    setLoading(true)
+    setError(null)
+    setData(null)
+    setExpandedRowId(null)
+    const url = intervalMode === 'intraday'
+      ? `${API_BASE}/training/status?interval_minutes=60`
+      : `${API_BASE}/training/status`
+    fetch(url)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((d) => {
         if (!cancelled) setData(d)
@@ -75,7 +88,7 @@ export default function TrainingStatus() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [intervalMode])
 
   const rows = data?.rows ?? []
   const get = (r, k) => r[k] ?? r[k.toUpperCase()]
@@ -156,14 +169,31 @@ export default function TrainingStatus() {
   return (
     <>
       <h1>Training Status</h1>
-      {(
-        <p className="training-status-intro">
-          Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.
-        </p>
-      )}
 
-      {/* Global Training Journey Digest */}
-      <TrainingDigestPanel scope="global" />
+      <div className="training-interval-toggle">
+        <button
+          className={`training-interval-btn ${intervalMode === 'daily' ? 'training-interval-btn--active' : ''}`}
+          onClick={() => setIntervalMode('daily')}
+        >
+          Daily (1440m)
+        </button>
+        <button
+          className={`training-interval-btn ${intervalMode === 'intraday' ? 'training-interval-btn--active' : ''}`}
+          onClick={() => setIntervalMode('intraday')}
+        >
+          Intraday (60m)
+        </button>
+      </div>
+
+      <p className="training-status-intro">
+        {intervalMode === 'daily'
+          ? 'Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.'
+          : 'Intraday pattern learning loop (hourly bars): signal detection, fee-adjusted outcomes, and pattern trust scoring.'}
+      </p>
+
+      {intervalMode === 'intraday' && <IntradayDashboard />}
+
+      {intervalMode === 'daily' && <TrainingDigestPanel scope="global" />}
 
       <section className="training-status-filters" aria-label="Filters">
         <div className="training-filter-row">

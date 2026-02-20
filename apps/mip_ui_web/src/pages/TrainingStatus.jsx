@@ -10,6 +10,7 @@ import TrainingDigestPanel from '../components/TrainingDigestPanel'
 import IntradayDashboard from '../components/IntradayDashboard'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
+import '../components/IntradayDashboard.css'
 
 const SCOPE = 'training_status'
 const BASE_COLUMN_COUNT = 10 // Columns before horizon columns (expand, market, symbol, pattern, interval, as_of, maturity, sample, coverage, horizons)

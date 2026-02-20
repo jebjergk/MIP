@@ -1,5 +1,7 @@
 -- 165_signals_eligible_today.sql
 -- Purpose: Canonical control-plane view for eligible signals (today + history)
+-- Fix: run_id filtering is now per-interval so daily signals are not excluded
+--      when intraday signals (which carry run_ids) are present.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -22,13 +24,15 @@ with recs as (
         ) as RUN_GENERATED_AT
     from MIP.APP.RECOMMENDATION_LOG r
 ),
-daily_flags as (
+interval_flags as (
     select
-        count_if(LOG_RUN_ID is not null and GENERATED_AT::date = current_date()) > 0 as HAS_DAILY_RUN_ID
+        INTERVAL_MINUTES,
+        count_if(LOG_RUN_ID is not null and GENERATED_AT::date = current_date()) > 0 as HAS_RUN_ID
     from recs
+    group by INTERVAL_MINUTES
 )
 select
-    coalesce(r.LOG_RUN_ID, to_varchar(r.RUN_GENERATED_AT, 'YYYYMMDD\"T\"HH24MISS')) as RUN_ID,
+    coalesce(r.LOG_RUN_ID, to_varchar(r.RUN_GENERATED_AT, 'YYYYMMDD"T"HH24MISS')) as RUN_ID,
     r.RECOMMENDATION_ID,
     r.TS,
     r.SYMBOL,
@@ -47,14 +51,13 @@ select
     ) as IS_ELIGIBLE,
     c.GATING_REASON
 from recs r
-cross join daily_flags f
+join interval_flags f
+  on f.INTERVAL_MINUTES = r.INTERVAL_MINUTES
 left join MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION c
   on c.SYMBOL = r.SYMBOL
  and c.MARKET_TYPE = r.MARKET_TYPE
  and c.INTERVAL_MINUTES = r.INTERVAL_MINUTES
  and c.TS = r.TS
  and c.PATTERN_ID = r.PATTERN_ID
-where (
-    (f.HAS_DAILY_RUN_ID and r.LOG_RUN_ID is not null and r.GENERATED_AT::date = current_date())
-    or (not f.HAS_DAILY_RUN_ID and r.GENERATED_AT::date = current_date())
-);
+where r.GENERATED_AT::date = current_date()
+  and (f.HAS_RUN_ID = false or r.LOG_RUN_ID is not null);

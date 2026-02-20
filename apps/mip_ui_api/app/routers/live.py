@@ -43,6 +43,7 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
     api_ok = True
     snowflake_ok = False
     last_run = None
+    last_intraday_run = None
     last_brief = {"found": False}
     outcomes = {"total": 0, "last_calculated_at": None, "since_last_run": None}
 
@@ -60,6 +61,7 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
             "snowflake_ok": snowflake_ok,
             "updated_at": updated_at,
             "last_run": last_run,
+            "last_intraday_run": last_intraday_run,
             "last_brief": last_brief,
             "outcomes": outcomes,
         }
@@ -114,6 +116,33 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
         run_list.sort(key=lambda x: (x["completed_at"] or x["started_at"] or ""), reverse=True)
         if run_list:
             last_run = serialize_row(run_list[0])
+
+        # --- Last intraday run: most recent from INTRADAY_PIPELINE_RUN_LOG
+        intraday_sql = """
+        select RUN_ID, STARTED_AT, COMPLETED_AT, STATUS,
+               BARS_INGESTED, SIGNALS_GENERATED, SYMBOLS_PROCESSED
+        from MIP.APP.INTRADAY_PIPELINE_RUN_LOG
+        order by STARTED_AT desc
+        limit 1
+        """
+        try:
+            cur.execute(intraday_sql)
+            irow = cur.fetchone()
+            if irow:
+                icols = [d[0] for d in cur.description]
+                ir = dict(zip(icols, irow))
+                ir_status = ir.get("STATUS") or ""
+                last_intraday_run = serialize_row({
+                    "run_id": ir.get("RUN_ID"),
+                    "started_at": ir["STARTED_AT"].isoformat() if hasattr(ir.get("STARTED_AT"), "isoformat") else ir.get("STARTED_AT"),
+                    "completed_at": ir["COMPLETED_AT"].isoformat() if hasattr(ir.get("COMPLETED_AT"), "isoformat") else ir.get("COMPLETED_AT"),
+                    "status": ir_status if ir_status != "START" else "RUNNING",
+                    "bars_ingested": ir.get("BARS_INGESTED"),
+                    "signals_generated": ir.get("SIGNALS_GENERATED"),
+                    "symbols_processed": ir.get("SYMBOLS_PROCESSED"),
+                })
+        except Exception:
+            pass
 
         # --- Last brief: same as /briefs/latest
         brief_sql = """
@@ -185,6 +214,7 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
         "snowflake_ok": snowflake_ok,
         "updated_at": updated_at,
         "last_run": last_run,
+        "last_intraday_run": last_intraday_run,
         "last_brief": last_brief,
         "outcomes": outcomes,
     }

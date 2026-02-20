@@ -9,6 +9,46 @@ from app.db import get_connection, fetch_all, serialize_row, serialize_rows
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
+# ---------------------------------------------------------------------------
+# Intraday run helpers
+# ---------------------------------------------------------------------------
+
+INTRADAY_RUNS_SQL = """
+SELECT
+    RUN_ID,
+    INTERVAL_MINUTES,
+    STARTED_AT,
+    COMPLETED_AT,
+    STATUS,
+    BARS_INGESTED,
+    SIGNALS_GENERATED,
+    OUTCOMES_EVALUATED,
+    SYMBOLS_PROCESSED,
+    DAILY_CONTEXT_USED,
+    COMPUTE_SECONDS,
+    DETAILS
+FROM MIP.APP.INTRADAY_PIPELINE_RUN_LOG
+{where}
+ORDER BY STARTED_AT DESC
+LIMIT %s
+"""
+
+
+def _intraday_summary_hint(status: str | None) -> str | None:
+    if not status:
+        return None
+    s = (status or "").upper()
+    if s == "SKIPPED_DISABLED":
+        return "Disabled"
+    if s == "PARTIAL":
+        return "Partial success"
+    if s == "FAIL":
+        return "Failed"
+    if s == "SUCCESS":
+        return None
+    return None
+
+
 def _summary_hint_from_status_and_details(status: str | None, details: dict | None) -> str | None:
     """Derive a short summary hint for the runs list (e.g. 'No new bars')."""
     if not status:
@@ -340,5 +380,129 @@ def get_run(run_id: str):
                 interpreted["total_duration_ms"] = total_duration_ms
         
         return interpreted
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Intraday pipeline runs (from INTRADAY_PIPELINE_RUN_LOG)
+# ---------------------------------------------------------------------------
+
+@router.get("/intraday")
+def list_intraday_runs(
+    limit: int = 50,
+    status: Optional[str] = Query(None, description="Filter by status"),
+    from_ts: Optional[str] = Query(None, description="Filter runs after this timestamp"),
+    to_ts: Optional[str] = Query(None, description="Filter runs before this timestamp"),
+):
+    """List intraday pipeline runs from INTRADAY_PIPELINE_RUN_LOG."""
+    where_clauses = []
+    params = []
+
+    if status:
+        where_clauses.append("STATUS = %s")
+        params.append(status.upper())
+    if from_ts:
+        where_clauses.append("STARTED_AT >= %s")
+        params.append(from_ts)
+    if to_ts:
+        where_clauses.append("STARTED_AT <= %s")
+        params.append(to_ts)
+
+    where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    params.append(limit)
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(INTRADAY_RUNS_SQL.format(where=where), tuple(params))
+        rows = fetch_all(cur)
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        details = r.get("DETAILS")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details) if details else {}
+            except Exception:
+                details = {}
+
+        run_status = r.get("STATUS") or ""
+        started_at = r.get("STARTED_AT")
+        completed_at = r.get("COMPLETED_AT")
+        is_error = run_status.upper() in ("FAIL", "ERROR")
+
+        out.append({
+            "run_id": r.get("RUN_ID"),
+            "started_at": started_at.isoformat() if hasattr(started_at, "isoformat") else started_at,
+            "completed_at": completed_at.isoformat() if hasattr(completed_at, "isoformat") else completed_at,
+            "status": run_status,
+            "summary_hint": _intraday_summary_hint(run_status),
+            "has_errors": is_error,
+            "error_count": 1 if is_error else 0,
+            "interval_minutes": r.get("INTERVAL_MINUTES"),
+            "bars_ingested": r.get("BARS_INGESTED"),
+            "signals_generated": r.get("SIGNALS_GENERATED"),
+            "outcomes_evaluated": r.get("OUTCOMES_EVALUATED"),
+            "symbols_processed": r.get("SYMBOLS_PROCESSED"),
+            "compute_seconds": r.get("COMPUTE_SECONDS"),
+        })
+    return [serialize_row(r) for r in out]
+
+
+@router.get("/intraday/{run_id}")
+def get_intraday_run(run_id: str):
+    """Detail for a single intraday pipeline run."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT *
+            FROM MIP.APP.INTRADAY_PIPELINE_RUN_LOG
+            WHERE RUN_ID = %s
+        """, (run_id,))
+        rows = fetch_all(cur)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Intraday run not found")
+
+        r = rows[0]
+        details = r.get("DETAILS")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details) if details else {}
+            except Exception:
+                details = {}
+
+        started_at = r.get("STARTED_AT")
+        completed_at = r.get("COMPLETED_AT")
+        duration_ms = None
+        if started_at and completed_at and hasattr(started_at, "timestamp") and hasattr(completed_at, "timestamp"):
+            duration_ms = int((completed_at.timestamp() - started_at.timestamp()) * 1000)
+
+        is_error = (r.get("STATUS") or "").upper() in ("FAIL", "ERROR")
+        error_msg = None
+        if is_error and isinstance(details, dict):
+            error_msg = details.get("error") or details.get("error_message")
+
+        return serialize_row({
+            "run_id": r.get("RUN_ID"),
+            "interval_minutes": r.get("INTERVAL_MINUTES"),
+            "started_at": started_at.isoformat() if hasattr(started_at, "isoformat") else started_at,
+            "completed_at": completed_at.isoformat() if hasattr(completed_at, "isoformat") else completed_at,
+            "status": r.get("STATUS"),
+            "bars_ingested": r.get("BARS_INGESTED"),
+            "signals_generated": r.get("SIGNALS_GENERATED"),
+            "outcomes_evaluated": r.get("OUTCOMES_EVALUATED"),
+            "symbols_processed": r.get("SYMBOLS_PROCESSED"),
+            "daily_context_used": r.get("DAILY_CONTEXT_USED"),
+            "compute_seconds": r.get("COMPUTE_SECONDS"),
+            "details": details,
+            "total_duration_ms": duration_ms,
+            "has_errors": is_error,
+            "error_count": 1 if is_error else 0,
+            "error_message": error_msg,
+        })
     finally:
         conn.close()

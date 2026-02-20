@@ -8,8 +8,47 @@
 }
 
 .run-explorer h1 {
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.75rem 0;
   font-size: 1.5rem;
+}
+
+/* Pipeline toggle (daily / intraday) */
+.run-pipeline-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.run-pipeline-btn {
+  padding: 0.45rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: none;
+  background: #f8f9fa;
+  color: #555;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.run-pipeline-btn:not(:last-child) {
+  border-right: 1px solid #ccc;
+}
+
+.run-pipeline-btn:hover {
+  background: #e9ecef;
+}
+
+.run-pipeline-btn--active {
+  background: #0066cc;
+  color: white;
+}
+
+.run-pipeline-btn--active:hover {
+  background: #0052a3;
 }
 
 /* 2-pane layout */
@@ -22,8 +61,8 @@
 }
 
 .run-explorer__left {
-  width: 320px;
-  min-width: 280px;
+  width: 300px;
+  min-width: 260px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e0e0e0;
@@ -141,6 +180,55 @@
   font-size: 0.75rem;
   color: #dc3545;
   margin-top: 0.25rem;
+}
+
+.run-list-item__metrics {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: #666;
+  margin-bottom: 0.15rem;
+}
+
+/* Pagination */
+.run-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0 0.25rem;
+  border-top: 1px solid #eee;
+  margin-top: 0.5rem;
+}
+
+.run-pagination__btn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.run-pagination__btn:hover:not(:disabled) {
+  background: #e0e0e0;
+}
+
+.run-pagination__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.run-pagination__info {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.run-list-count {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #999;
+  padding-top: 0.25rem;
 }
 
 /* Status badge */
@@ -690,6 +778,41 @@
   font-size: 0.8rem;
   color: #666;
   margin: 0.5rem 0 0 0;
+}
+
+/* Intraday run detail */
+.intraday-run-detail {
+  margin-top: 1rem;
+}
+
+.intraday-detail-section {
+  margin-bottom: 1.25rem;
+}
+
+.intraday-detail-section h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.35rem;
+}
+
+.intraday-detail-dl {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 0.3rem 1rem;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.intraday-detail-dl dt {
+  font-weight: 600;
+  color: #555;
+}
+
+.intraday-detail-dl dd {
+  margin: 0;
+  color: #333;
 }
 
 /* Responsive adjustments */

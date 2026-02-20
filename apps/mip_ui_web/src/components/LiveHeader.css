@@ -56,7 +56,9 @@
 
 .live-header-badge--skipped_no_new_bars,
 .live-header-badge--skip_rate_limit,
-.live-header-badge--success_with_skips {
+.live-header-badge--success_with_skips,
+.live-header-badge--skipped_disabled,
+.live-header-badge--partial {
   background: #fff8e1;
   color: #f57c00;
 }

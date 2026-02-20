@@ -68,6 +68,7 @@ export default function LiveHeader() {
   }
 
   const lastRun = metrics?.last_run
+  const lastIntradayRun = metrics?.last_intraday_run
   const lastBrief = metrics?.last_brief
   const outcomes = metrics?.outcomes ?? {}
   const sinceLastRun = outcomes.since_last_run ?? 0
@@ -79,11 +80,20 @@ export default function LiveHeader() {
 
       {lastRun && (
         <span className="live-header-item" title={undefined}>
-          Last pipeline run: {relativeTime(lastRun.completed_at ?? lastRun.started_at)}
+          Daily: {relativeTime(lastRun.completed_at ?? lastRun.started_at)}
           <span className={`live-header-badge live-header-badge--${(lastRun.status || '').toLowerCase()}`}>
             {lastRun.status ?? '—'}
           </span>
           <InfoTooltip scope="live" entryKey="last_pipeline_run" variant="short" />
+        </span>
+      )}
+
+      {lastIntradayRun && (
+        <span className="live-header-item" title={`${lastIntradayRun.bars_ingested ?? 0} bars, ${lastIntradayRun.signals_generated ?? 0} signals, ${lastIntradayRun.symbols_processed ?? 0} symbols`}>
+          Intraday: {relativeTime(lastIntradayRun.completed_at ?? lastIntradayRun.started_at)}
+          <span className={`live-header-badge live-header-badge--${(lastIntradayRun.status || '').toLowerCase()}`}>
+            {lastIntradayRun.status ?? '—'}
+          </span>
         </span>
       )}
 

@@ -308,18 +308,21 @@ export default function TrainingStatus() {
                   {isExpanded && (
                     <tr className="training-detail-row">
                       <td colSpan={COLUMN_COUNT + 1} className="training-detail-cell">
-                        <TrainingDigestPanel
-                          scope="symbol"
-                          symbol={get(row, 'symbol')}
-                          marketType={get(row, 'market_type')}
-                          patternId={get(row, 'pattern_id')}
-                          compact
-                        />
+                        {intervalMode === 'daily' && (
+                          <TrainingDigestPanel
+                            scope="symbol"
+                            symbol={get(row, 'symbol')}
+                            marketType={get(row, 'market_type')}
+                            patternId={get(row, 'pattern_id')}
+                            compact
+                          />
+                        )}
                         <TrainingTimelineInline
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}
                           patternId={get(row, 'pattern_id')}
                           horizonBars={5}
+                          intervalMinutes={intervalMinutes}
                           cachedData={cachedData}
                           onDataLoaded={(data) => setTimelineCache(rowKey, data)}
                           onClose={() => setExpandedRowId(null)}

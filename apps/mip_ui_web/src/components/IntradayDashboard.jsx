@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../App'
+import IntradaySignalChart from './IntradaySignalChart'
 import './IntradayDashboard.css'
 
 function StatusDot({ status }) {
@@ -151,6 +152,9 @@ export default function IntradayDashboard() {
           </div>
         </div>
       </section>
+
+      {/* Signal Activity Chart */}
+      <IntradaySignalChart />
 
       {/* Trust Scoreboard */}
       <section className="id-card">

@@ -179,6 +179,7 @@ def get_training_timeline(
     horizon_bars: Optional[int] = Query(None, description="Horizon bars (default 5)"),
     rolling_window: Optional[int] = Query(None, description="Rolling window size for hit rate (default 20)"),
     max_points: Optional[int] = Query(None, description="Max points to return (default 250)"),
+    interval_minutes: Optional[int] = Query(None, description="Interval minutes (default 1440 for daily)"),
 ):
     """
     Training Timeline: time series of rolling hit rate and state transitions for a symbol.
@@ -196,6 +197,7 @@ def get_training_timeline(
             horizon_bars=horizon_bars or 5,
             rolling_window=rolling_window or 20,
             max_points=max_points or 250,
+            interval_minutes=interval_minutes or 1440,
         )
         return result
     except Exception as e:
@@ -253,6 +255,77 @@ def get_intraday_pattern_stability():
         """)
         rows = fetch_all(cur)
         return {"rows": serialize_rows(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/intraday/signal-chart")
+def get_intraday_signal_chart(
+    symbol: str = Query(..., description="Symbol"),
+    market_type: str = Query(..., description="Market type (STOCK, ETF, FX)"),
+    days: int = Query(5, description="Number of days of bar history"),
+):
+    """Price bars + signal markers for a symbol, used by the intraday signal chart."""
+    import json as _json
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        bars_sql = """
+        SELECT TS, OPEN, HIGH, LOW, CLOSE, VOLUME
+        FROM MIP.MART.MARKET_BARS
+        WHERE SYMBOL = %s AND MARKET_TYPE = %s AND INTERVAL_MINUTES = 15
+          AND TS >= dateadd(day, -%s, current_timestamp())
+        ORDER BY TS
+        """
+        cur.execute(bars_sql, (symbol, market_type, days))
+        bars = fetch_all(cur)
+
+        signals_sql = """
+        SELECT
+            r.TS,
+            r.PATTERN_ID,
+            p.NAME AS PATTERN_NAME,
+            p.PATTERN_TYPE,
+            r.SCORE,
+            r.DETAILS
+        FROM MIP.APP.RECOMMENDATION_LOG r
+        LEFT JOIN MIP.APP.PATTERN_DEFINITION p ON p.PATTERN_ID = r.PATTERN_ID
+        WHERE r.SYMBOL = %s AND r.MARKET_TYPE = %s AND r.INTERVAL_MINUTES = 15
+          AND r.TS >= dateadd(day, -%s, current_timestamp())
+        ORDER BY r.TS
+        """
+        cur.execute(signals_sql, (symbol, market_type, days))
+        signals = fetch_all(cur)
+
+        sig_rows = serialize_rows(signals)
+        for row in sig_rows:
+            raw = row.get("DETAILS")
+            if isinstance(raw, str):
+                try:
+                    row["DETAILS"] = _json.loads(raw)
+                except Exception:
+                    pass
+
+        symbols_sql = """
+        SELECT DISTINCT SYMBOL, MARKET_TYPE
+        FROM MIP.APP.RECOMMENDATION_LOG
+        WHERE INTERVAL_MINUTES = 15
+        ORDER BY MARKET_TYPE, SYMBOL
+        """
+        cur.execute(symbols_sql)
+        available = fetch_all(cur)
+
+        return {
+            "symbol": symbol,
+            "market_type": market_type,
+            "bars": serialize_rows(bars),
+            "signals": sig_rows,
+            "available_symbols": serialize_rows(available),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

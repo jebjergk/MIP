@@ -53,7 +53,7 @@ with base as (
     where r.SYMBOL = %(symbol)s
       and r.MARKET_TYPE = %(market_type)s
       and r.PATTERN_ID = %(pattern_id)s
-      and r.INTERVAL_MINUTES = 1440
+      and r.INTERVAL_MINUTES = %(interval_minutes)s
       and o.HORIZON_BARS = %(horizon_bars)s
       and o.EVAL_STATUS = 'SUCCESS'
       and o.REALIZED_RETURN is not null
@@ -88,7 +88,7 @@ join MIP.APP.RECOMMENDATION_OUTCOMES o
 where r.SYMBOL = %(symbol)s
   and r.MARKET_TYPE = %(market_type)s
   and r.PATTERN_ID = %(pattern_id)s
-  and r.INTERVAL_MINUTES = 1440
+  and r.INTERVAL_MINUTES = %(interval_minutes)s
   and o.HORIZON_BARS = %(horizon_bars)s
   and o.EVAL_STATUS = 'INSUFFICIENT_FUTURE_DATA'
 """
@@ -101,7 +101,7 @@ from MIP.APP.RECOMMENDATION_LOG
 where SYMBOL = %(symbol)s
   and MARKET_TYPE = %(market_type)s
   and PATTERN_ID = %(pattern_id)s
-  and INTERVAL_MINUTES = 1440
+  and INTERVAL_MINUTES = %(interval_minutes)s
 """
 
 
@@ -119,7 +119,7 @@ select
 from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
 where PATTERN_ID = %(pattern_id)s
   and MARKET_TYPE = %(market_type)s
-  and INTERVAL_MINUTES = 1440
+  and INTERVAL_MINUTES = %(interval_minutes)s
   and HORIZON_BARS = %(horizon_bars)s
 """
 
@@ -134,7 +134,7 @@ from MIP.APP.RECOMMENDATION_OUTCOMES o
 join MIP.APP.RECOMMENDATION_LOG r on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
 where r.PATTERN_ID = %(pattern_id)s
   and r.MARKET_TYPE = %(market_type)s
-  and r.INTERVAL_MINUTES = 1440
+  and r.INTERVAL_MINUTES = %(interval_minutes)s
   and o.HORIZON_BARS = %(horizon_bars)s
   and o.EVAL_STATUS = 'SUCCESS'
 """
@@ -346,6 +346,7 @@ def get_pattern_trust_status(
     market_type: str,
     horizon_bars: int,
     params: GateParams,
+    interval_minutes: int = 1440,
 ) -> dict[str, Any]:
     """
     Get pattern-level trust status (aggregated across all symbols).
@@ -359,6 +360,7 @@ def get_pattern_trust_status(
             "pattern_id": pattern_id,
             "market_type": market_type,
             "horizon_bars": horizon_bars,
+            "interval_minutes": interval_minutes,
         })
         trust_row = cur.fetchone()
         
@@ -380,6 +382,7 @@ def get_pattern_trust_status(
             "pattern_id": pattern_id,
             "market_type": market_type,
             "horizon_bars": horizon_bars,
+            "interval_minutes": interval_minutes,
         })
         agg_row = cur.fetchone()
         
@@ -424,6 +427,7 @@ def build_training_timeline(
     horizon_bars: int = 5,
     rolling_window: int = 20,
     max_points: int = 250,
+    interval_minutes: int = 1440,
 ) -> dict[str, Any]:
     """
     Build the training timeline response.
@@ -444,7 +448,7 @@ def build_training_timeline(
     params = get_gate_params(conn)
     
     # Get pattern-level trust status (what actually matters for trading)
-    pattern_trust = get_pattern_trust_status(conn, pattern_id, market_type, horizon_bars, params)
+    pattern_trust = get_pattern_trust_status(conn, pattern_id, market_type, horizon_bars, params, interval_minutes)
     
     # Get first signal date
     cur = conn.cursor()
@@ -452,6 +456,7 @@ def build_training_timeline(
         "symbol": symbol,
         "market_type": market_type,
         "pattern_id": pattern_id,
+        "interval_minutes": interval_minutes,
     })
     first_signal_row = cur.fetchone()
     first_signal_ts = first_signal_row[0] if first_signal_row else None
@@ -464,6 +469,7 @@ def build_training_timeline(
             "market_type": market_type,
             "pattern_id": pattern_id,
             "horizon_bars": horizon_bars,
+            "interval_minutes": interval_minutes,
         })
         pending_row = cur.fetchone()
         if pending_row and pending_row[0]:
@@ -481,6 +487,7 @@ def build_training_timeline(
         "market_type": market_type,
         "pattern_id": pattern_id,
         "horizon_bars": horizon_bars,
+        "interval_minutes": interval_minutes,
     })
     rows = fetch_all(cur)
     

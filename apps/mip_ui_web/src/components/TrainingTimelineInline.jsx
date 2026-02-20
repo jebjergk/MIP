@@ -112,6 +112,7 @@ export default function TrainingTimelineInline({
   marketType,
   patternId = 1,
   horizonBars = 5,
+  intervalMinutes = 1440,
   cachedData,
   onDataLoaded,
   onClose,
@@ -142,6 +143,7 @@ export default function TrainingTimelineInline({
       market_type: marketType,
       pattern_id: String(patternId),
       horizon_bars: String(horizonBars),
+      interval_minutes: String(intervalMinutes),
     })
 
     fetch(`${API_BASE}/training/timeline?${params}`)
@@ -165,7 +167,7 @@ export default function TrainingTimelineInline({
     return () => {
       cancelled = true
     }
-  }, [symbol, marketType, patternId, horizonBars, cachedData, onDataLoaded])
+  }, [symbol, marketType, patternId, horizonBars, intervalMinutes, cachedData, onDataLoaded])
 
   // Transform series data for recharts
   const chartData = useMemo(() => {

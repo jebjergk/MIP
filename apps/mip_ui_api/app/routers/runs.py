@@ -262,130 +262,9 @@ def list_runs(
     return [serialize_row(r) for r in out]
 
 
-@router.get("/{run_id}")
-def get_run(run_id: str):
-    """All audit events for the run (ordered by EVENT_TS) + interpreted narrative, error details, step timeline, and debug SQL."""
-    sql = """
-    SELECT
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        ERROR_MESSAGE,
-        ERROR_SQLSTATE,
-        ERROR_QUERY_ID,
-        ERROR_CONTEXT,
-        DURATION_MS,
-        DETAILS
-    FROM MIP.APP.MIP_AUDIT_LOG
-    WHERE RUN_ID = %s
-       OR PARENT_RUN_ID = %s
-    ORDER BY EVENT_TS
-    """
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, (run_id, run_id))
-        rows = fetch_all(cur)
-        if not rows:
-            raise HTTPException(status_code=404, detail="Run not found")
-        serialized = serialize_rows(rows)
-        interpreted = interpret_timeline(rows)
-        interpreted["timeline"] = serialized
-        
-        # Build step timeline with enhanced details
-        steps = []
-        for row in rows:
-            if row.get("EVENT_TYPE") not in ("PIPELINE_STEP", "REPLAY"):
-                continue
-            details = row.get("DETAILS")
-            if isinstance(details, str):
-                try:
-                    details = json.loads(details) if details else {}
-                except Exception:
-                    details = {}
-            
-            step_name = details.get("step_name") if isinstance(details, dict) else None
-            started_at = details.get("started_at") if isinstance(details, dict) else None
-            completed_at = details.get("completed_at") if isinstance(details, dict) else None
-            
-            step = {
-                "event_ts": row.get("EVENT_TS").isoformat() if hasattr(row.get("EVENT_TS"), "isoformat") else row.get("EVENT_TS"),
-                "run_id": row.get("RUN_ID"),
-                "event_name": row.get("EVENT_NAME"),
-                "step_name": step_name or row.get("EVENT_NAME"),
-                "status": row.get("STATUS"),
-                "rows_affected": row.get("ROWS_AFFECTED"),
-                "duration_ms": row.get("DURATION_MS"),
-                "started_at": started_at,
-                "completed_at": completed_at,
-                "error_message": row.get("ERROR_MESSAGE"),
-                "error_sqlstate": row.get("ERROR_SQLSTATE"),
-                "error_query_id": row.get("ERROR_QUERY_ID"),
-                "error_context": row.get("ERROR_CONTEXT"),
-                "scope": details.get("scope") if isinstance(details, dict) else None,
-                "scope_key": details.get("scope_key") if isinstance(details, dict) else None,
-                "portfolio_id": details.get("portfolio_id") if isinstance(details, dict) else None,
-            }
-            steps.append(step)
-        
-        interpreted["steps"] = steps
-        
-        # Extract all errors across the run
-        errors = []
-        for row in rows:
-            if row.get("STATUS") in ("FAIL", "ERROR") or row.get("ERROR_MESSAGE"):
-                error_context = row.get("ERROR_CONTEXT")
-                if isinstance(error_context, str):
-                    try:
-                        error_context = json.loads(error_context) if error_context else None
-                    except Exception:
-                        pass
-                
-                errors.append({
-                    "event_ts": row.get("EVENT_TS").isoformat() if hasattr(row.get("EVENT_TS"), "isoformat") else row.get("EVENT_TS"),
-                    "event_name": row.get("EVENT_NAME"),
-                    "status": row.get("STATUS"),
-                    "error_message": row.get("ERROR_MESSAGE"),
-                    "error_sqlstate": row.get("ERROR_SQLSTATE"),
-                    "error_query_id": row.get("ERROR_QUERY_ID"),
-                    "error_context": error_context,
-                    "duration_ms": row.get("DURATION_MS"),
-                })
-        
-        interpreted["errors"] = errors
-        interpreted["has_errors"] = len(errors) > 0
-        interpreted["error_count"] = len(errors)
-        
-        # Add first failed step info for quick access
-        failed_step = None
-        for step in steps:
-            if step.get("status") in ("FAIL", "ERROR"):
-                failed_step = step
-                break
-        interpreted["failed_step"] = failed_step
-        
-        # Generate debug SQL for this run
-        interpreted["debug_sql"] = _generate_debug_sql(run_id)
-        
-        # Compute total run duration
-        if rows:
-            first_ts = rows[0].get("EVENT_TS")
-            last_ts = rows[-1].get("EVENT_TS")
-            if first_ts and last_ts and hasattr(first_ts, "timestamp") and hasattr(last_ts, "timestamp"):
-                total_duration_ms = int((last_ts.timestamp() - first_ts.timestamp()) * 1000)
-                interpreted["total_duration_ms"] = total_duration_ms
-        
-        return interpreted
-    finally:
-        conn.close()
-
-
 # ---------------------------------------------------------------------------
 # Intraday pipeline runs (from INTRADAY_PIPELINE_RUN_LOG)
+# IMPORTANT: these must be defined BEFORE /{run_id} to avoid route shadowing.
 # ---------------------------------------------------------------------------
 
 @router.get("/intraday")
@@ -504,5 +383,127 @@ def get_intraday_run(run_id: str):
             "error_count": 1 if is_error else 0,
             "error_message": error_msg,
         })
+    finally:
+        conn.close()
+
+
+@router.get("/{run_id}")
+def get_run(run_id: str):
+    """All audit events for the run (ordered by EVENT_TS) + interpreted narrative, error details, step timeline, and debug SQL."""
+    sql = """
+    SELECT
+        EVENT_TS,
+        RUN_ID,
+        PARENT_RUN_ID,
+        EVENT_TYPE,
+        EVENT_NAME,
+        STATUS,
+        ROWS_AFFECTED,
+        ERROR_MESSAGE,
+        ERROR_SQLSTATE,
+        ERROR_QUERY_ID,
+        ERROR_CONTEXT,
+        DURATION_MS,
+        DETAILS
+    FROM MIP.APP.MIP_AUDIT_LOG
+    WHERE RUN_ID = %s
+       OR PARENT_RUN_ID = %s
+    ORDER BY EVENT_TS
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (run_id, run_id))
+        rows = fetch_all(cur)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Run not found")
+        serialized = serialize_rows(rows)
+        interpreted = interpret_timeline(rows)
+        interpreted["timeline"] = serialized
+        
+        # Build step timeline with enhanced details
+        steps = []
+        for row in rows:
+            if row.get("EVENT_TYPE") not in ("PIPELINE_STEP", "REPLAY"):
+                continue
+            details = row.get("DETAILS")
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details) if details else {}
+                except Exception:
+                    details = {}
+            
+            step_name = details.get("step_name") if isinstance(details, dict) else None
+            started_at = details.get("started_at") if isinstance(details, dict) else None
+            completed_at = details.get("completed_at") if isinstance(details, dict) else None
+            
+            step = {
+                "event_ts": row.get("EVENT_TS").isoformat() if hasattr(row.get("EVENT_TS"), "isoformat") else row.get("EVENT_TS"),
+                "run_id": row.get("RUN_ID"),
+                "event_name": row.get("EVENT_NAME"),
+                "step_name": step_name or row.get("EVENT_NAME"),
+                "status": row.get("STATUS"),
+                "rows_affected": row.get("ROWS_AFFECTED"),
+                "duration_ms": row.get("DURATION_MS"),
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "error_message": row.get("ERROR_MESSAGE"),
+                "error_sqlstate": row.get("ERROR_SQLSTATE"),
+                "error_query_id": row.get("ERROR_QUERY_ID"),
+                "error_context": row.get("ERROR_CONTEXT"),
+                "scope": details.get("scope") if isinstance(details, dict) else None,
+                "scope_key": details.get("scope_key") if isinstance(details, dict) else None,
+                "portfolio_id": details.get("portfolio_id") if isinstance(details, dict) else None,
+            }
+            steps.append(step)
+        
+        interpreted["steps"] = steps
+        
+        # Extract all errors across the run
+        errors = []
+        for row in rows:
+            if row.get("STATUS") in ("FAIL", "ERROR") or row.get("ERROR_MESSAGE"):
+                error_context = row.get("ERROR_CONTEXT")
+                if isinstance(error_context, str):
+                    try:
+                        error_context = json.loads(error_context) if error_context else None
+                    except Exception:
+                        pass
+                
+                errors.append({
+                    "event_ts": row.get("EVENT_TS").isoformat() if hasattr(row.get("EVENT_TS"), "isoformat") else row.get("EVENT_TS"),
+                    "event_name": row.get("EVENT_NAME"),
+                    "status": row.get("STATUS"),
+                    "error_message": row.get("ERROR_MESSAGE"),
+                    "error_sqlstate": row.get("ERROR_SQLSTATE"),
+                    "error_query_id": row.get("ERROR_QUERY_ID"),
+                    "error_context": error_context,
+                    "duration_ms": row.get("DURATION_MS"),
+                })
+        
+        interpreted["errors"] = errors
+        interpreted["has_errors"] = len(errors) > 0
+        interpreted["error_count"] = len(errors)
+        
+        # Add first failed step info for quick access
+        failed_step = None
+        for step in steps:
+            if step.get("status") in ("FAIL", "ERROR"):
+                failed_step = step
+                break
+        interpreted["failed_step"] = failed_step
+        
+        # Generate debug SQL for this run
+        interpreted["debug_sql"] = _generate_debug_sql(run_id)
+        
+        # Compute total run duration
+        if rows:
+            first_ts = rows[0].get("EVENT_TS")
+            last_ts = rows[-1].get("EVENT_TS")
+            if first_ts and last_ts and hasattr(first_ts, "timestamp") and hasattr(last_ts, "timestamp"):
+                total_duration_ms = int((last_ts.timestamp() - first_ts.timestamp()) * 1000)
+                interpreted["total_duration_ms"] = total_duration_ms
+        
+        return interpreted
     finally:
         conn.close()

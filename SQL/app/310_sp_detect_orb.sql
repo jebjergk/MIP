@@ -166,7 +166,7 @@ begin
             )
         )
     from first_breakout
-    where TS::date = :v_as_of_ts::date
+    where TS >= dateadd(day, -3, :v_as_of_ts)
       and not exists (
           select 1 from MIP.APP.RECOMMENDATION_LOG r
           where r.PATTERN_ID = :P_PATTERN_ID

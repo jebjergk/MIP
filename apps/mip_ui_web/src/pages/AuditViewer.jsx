@@ -591,6 +591,7 @@ export default function AuditViewer() {
   const loadRuns = useCallback(async (mode) => {
     setLoading(true)
     setError(null)
+    setRuns([])
     try {
       const params = new URLSearchParams()
       params.set('limit', '200')
@@ -672,9 +673,11 @@ export default function AuditViewer() {
 
   const handleModeSwitch = (mode) => {
     setPipelineMode(mode)
+    setRuns([])
     setSelectedRunId(null)
     setRunDetail(null)
     setSelectedStep(null)
+    setPage(1)
     setFilters({ status: '', fromDate: '', toDate: '' })
   }
 

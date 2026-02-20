@@ -153,7 +153,7 @@ begin
             )
         )
     from deviations
-    where TS::date = :v_as_of_ts::date
+    where TS >= dateadd(day, -3, :v_as_of_ts)
       and (:v_direction = 'BOTH' or REVERSION_DIRECTION = :v_direction)
       and not exists (
           select 1 from MIP.APP.RECOMMENDATION_LOG r

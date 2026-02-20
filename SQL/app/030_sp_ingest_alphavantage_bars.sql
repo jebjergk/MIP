@@ -19,7 +19,9 @@ create or replace external access integration MIP_ALPHA_EXTERNAL_ACCESS
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace procedure MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS()
+create or replace procedure MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(
+    P_INTERVAL_FILTER NUMBER DEFAULT NULL
+)
 returns variant
 language python
 runtime_version = '3.12'
@@ -291,23 +293,24 @@ def _extract_fx_rows_daily(json_data: Dict, pair: str, interval_minutes: int) ->
 
     return rows
 
-def _load_ingest_universe(session: Session) -> Tuple[List[Dict], int, bool]:
-    rows = session.sql(
-        """
+def _load_ingest_universe(session: Session, interval_filter=None) -> Tuple[List[Dict], int, bool]:
+    where = "where coalesce(IS_ENABLED, true)"
+    if interval_filter is not None:
+        where += f" and INTERVAL_MINUTES = {int(interval_filter)}"
+    rows = session.sql(f"""
         select
             SYMBOL,
             MARKET_TYPE,
             INTERVAL_MINUTES,
             PRIORITY
         from MIP.APP.INGEST_UNIVERSE
-        where coalesce(IS_ENABLED, true)
+        {where}
         order by PRIORITY desc, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
-        """
-    ).collect()
+    """).collect()
     total_rows = len(rows)
     return rows[:25], total_rows, total_rows > 25
 
-def run(session: Session) -> Dict:
+def run(session: Session, p_interval_filter=None) -> Dict:
     run_id_row = session.sql(
         "select coalesce(nullif(current_query_tag(), ''), uuid_string()) as RUN_ID"
     ).collect()
@@ -351,7 +354,7 @@ def run(session: Session) -> Dict:
             )
             return result
 
-        ingest_rows, enabled_total, truncated = _load_ingest_universe(session)
+        ingest_rows, enabled_total, truncated = _load_ingest_universe(session, p_interval_filter)
         if not ingest_rows:
             result = {
                 "status": "SUCCESS",

@@ -21,6 +21,7 @@
    - [Pipeline Overview](#31-pipeline-overview)
    - [Step-by-Step Breakdown](#32-step-by-step-breakdown)
    - [Data Flow](#33-data-flow)
+   - [Intraday Subsystem](#34-intraday-subsystem)
 4. [Key Concepts](#4-key-concepts)
    - [Episodes](#41-episodes)
    - [Crystallization](#42-crystallization)
@@ -264,7 +265,9 @@ Click any suggestion to see detailed charts and statistics about its historical 
 
 ### 2.8 Training Status
 
-**What it shows:** How well the system has learned each pattern for each symbol.
+**What it shows:** How well the system has learned each pattern for each symbol. Has two modes — **Daily (1440m)** and **Intraday (15m)** — toggled at the top of the page.
+
+#### Daily Mode
 
 | Column | What it means |
 |--------|---------------|
@@ -276,7 +279,7 @@ Click any suggestion to see detailed charts and statistics about its historical 
 | **Sample Size** | How many times this pattern was observed |
 | **Coverage** | What percentage of observations have been evaluated |
 | **Horizons** | Which forward periods have been measured |
-| **Avg Outcomes** | Average returns at each horizon (H1, H3, H5, H10, H20) |
+| **Avg H1–H20** | Average returns at each daily horizon (1, 3, 5, 10, 20 days) |
 
 **Maturity stages:**
 
@@ -287,11 +290,32 @@ Click any suggestion to see detailed charts and statistics about its historical 
 | **LEARNING** | Building confidence |
 | **CONFIDENT** | Enough data for reliable predictions |
 
+#### Intraday Mode (Cockpit Layout)
+
+When toggled to Intraday (15m), the page becomes a **decision-first cockpit** with three layers:
+
+**Layer 1 — Executive Summary** (visible without scrolling):
+- **Status Banner**: System stage (INSUFFICIENT / EMERGING / LEARNING / CONFIDENT), total signals, outcomes evaluated, symbol count, tradable pattern count
+- **Pattern Readiness Tiles**: One card per pattern family (ORB, MEAN_REVERSION, PULLBACK_CONTINUATION) with events, trust, confidence, best edge, and trend arrow
+- **Pipeline Health Strip**: Compact single-line summary of the latest intraday pipeline run
+
+**Layer 2 — Pattern Insights** (visible by default):
+- **Trust Scoreboard**: One row per pattern with best horizon. Click to expand per-horizon breakdown
+- **Signal Activity Chart**: Collapsible price chart with signal overlays
+
+**Layer 3 — Advanced Diagnostics** (collapsed by default):
+- Pattern Stability, Excursion Analysis
+- Toggle with "Show advanced diagnostics" button (persisted in browser)
+
+**Intraday horizon columns** are different from daily: **Avg H1** (+1 bar / 15m), **Avg H4** (+4 bars / ~1hr), **Avg H8** (+8 bars / ~2hr), **Avg EOD** (end-of-day close).
+
 ---
 
 ### 2.9 Audit Viewer (Run Explorer)
 
 **What it shows:** Detailed history of all pipeline runs, including errors.
+
+**Daily / Intraday Toggle:** Switch between "Daily Pipeline" and "Intraday Pipeline" views at the top of the page. Each pipeline type has its own run history, metrics, and detail panels.
 
 **Run list:**
 - Shows all pipeline runs with status, duration, and timestamp
@@ -382,7 +406,9 @@ The system runs a daily pipeline that processes data through these steps:
 
 **Key behavior:**
 - For each past signal, checks: "What happened after?"
-- Measures returns at 1, 3, 5, 10, and 20 bars forward
+- **Daily signals**: measures returns at 1, 3, 5, 10, and 20 days forward
+- **Intraday signals**: measures returns at +1, +4, +8 bars and end-of-day close
+- Horizons are configured in the `HORIZON_DEFINITION` table
 - Tracks "hit rate" (did it go the right direction?)
 
 #### Step 5: Portfolio Simulation
@@ -481,6 +507,42 @@ AlphaVantage API
 │ MORNING_BRIEF   │  ← Final output (viewed in Cockpit UI)
 └─────────────────┘
 ```
+
+---
+
+### 3.4 Intraday Subsystem
+
+MIP has two independent pipelines that share the same database but run separately:
+
+| Aspect | Daily Pipeline | Intraday Pipeline |
+|--------|---------------|-------------------|
+| **Bar interval** | 1440 minutes (daily) | 15 minutes |
+| **Horizons** | 1, 3, 5, 10, 20 days | +1 bar (15m), +4 bars (~1hr), +8 bars (~2hr), EOD close |
+| **Patterns** | Momentum, Reversal | ORB, Pullback Continuation, Mean-Reversion Overshoot |
+| **Symbol universe** | Full (23+ symbols) | Focused (14–16 high-liquidity symbols) |
+| **Schedule** | Daily 07:00 Berlin | Configurable (initially hourly during market hours) |
+| **Stage** | Active trading | Learning only (no live trading yet) |
+
+**Intraday Learning Loop:**
+
+```
+1. INGEST         → Fetch 15-minute bars from Alpha Vantage (delayed)
+2. DETECT         → Run intraday pattern detectors (ORB, Pullback, Mean-Reversion)
+3. LOG            → Record signals as hypotheses
+4. EVALUATE       → Measure outcomes at +1, +4, +8 bars and EOD
+5. SCORE          → Build trust/confidence per pattern
+6. REPEAT         → Each run adds more evidence
+```
+
+**Three Intraday Patterns:**
+
+- **Opening Range Breakout (ORB)** — Detects breakout from the early-session trading range
+- **Pullback Continuation** — Impulse move → consolidation → breakout in original direction
+- **Mean-Reversion Overshoot** — Extreme deviation from short-term average, expecting reversion
+
+**Data Isolation:** The intraday pipeline does not modify daily signals, training, or execution. It has its own Snowflake task, pattern definitions, and trust scoring. Disabling it has zero impact on daily.
+
+**Horizon Metadata:** Both daily and intraday horizons are stored in the `HORIZON_DEFINITION` table with type (BAR, DAY, SESSION), length, resolution, and display labels.
 
 ---
 
@@ -762,7 +824,12 @@ A safety mechanism that prevents portfolio editing while the daily pipeline is a
 | **Episode** | A portfolio lifecycle period with defined start/end. All KPIs are scoped to the active episode |
 | **Equity** | Total portfolio value (cash + positions) |
 | **Hit Rate** | Percentage of signals that went in the predicted direction |
-| **Horizon** | Forward time period for evaluation (1, 3, 5, 10, 20 bars) |
+| **Horizon** | Forward time period for evaluation. Daily: 1, 3, 5, 10, 20 days. Intraday: +1, +4, +8 bars and EOD close |
+| **Horizon Definition** | Metadata table storing horizon type (BAR, DAY, SESSION), length, and display labels for both daily and intraday |
+| **Intraday Pipeline** | Independent pipeline ingesting 15-min bars, detecting intraday patterns, and evaluating bar-based outcomes |
+| **Opening Range Breakout (ORB)** | Intraday pattern detecting price breakout from early-session trading range |
+| **Pullback Continuation** | Intraday pattern: impulse move → consolidation → breakout continuation |
+| **Mean-Reversion Overshoot** | Intraday pattern detecting extreme deviation from a short-term average |
 | **Idempotent** | Can be run multiple times without creating duplicates |
 | **Lifecycle Event** | Immutable record of a portfolio state change (CREATE, DEPOSIT, WITHDRAW, CRYSTALLIZE, etc.) |
 | **Maturity** | How well the system has learned a pattern |
@@ -782,4 +849,4 @@ A safety mechanism that prevents portfolio editing while the daily pipeline is a
 
 ---
 
-*Last updated: February 9, 2026*
+*Last updated: February 20, 2026*

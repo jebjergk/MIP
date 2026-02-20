@@ -32,6 +32,7 @@ import runs from './19-runs.md?raw'
 import debug from './20-debug.md?raw'
 import parallelWorlds from './21-parallel-worlds.md?raw'
 import glossary from './22-glossary.md?raw'
+import intraday from './23-intraday.md?raw'
 
 const sections = [
   { id: 'big-picture',      number: 1,  title: 'The Big Picture',              part: 1, markdown: bigPicture,          route: null },
@@ -56,6 +57,7 @@ const sections = [
   { id: 'page-debug',       number: 20, title: 'Debug',                        part: 2, markdown: debug,               route: '/debug' },
   { id: 'page-parallel',    number: 21, title: 'Parallel Worlds',              part: 2, markdown: parallelWorlds,      route: '/parallel-worlds' },
   { id: 'glossary',         number: 22, title: 'Key Terms Glossary',           part: 3, markdown: glossary,            route: null },
+  { id: 'intraday',         number: 23, title: 'The Intraday Subsystem',       part: 1, markdown: intraday,            route: null },
 ]
 
 export default sections

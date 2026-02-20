@@ -2,43 +2,69 @@
 
 Monitor the learning process for every symbol/pattern combination. See which symbols are gathering evidence, which are close to earning trust, and which are already trade-eligible.
 
-## Global Training Digest (top of page)
+## Daily / Intraday Toggle
 
-An AI-generated narrative covering training progress system-wide. Same format as the Cockpit (headline, what changed, what matters, waiting for) but focused entirely on training.
+The Training page has a **Daily (1440m)** / **Intraday (15m)** toggle at the top. This switches the entire table between daily and intraday training data. The columns, horizons, and expanded row charts all adapt to the selected interval.
 
-## Filters
+## Global Training Digest (top of page — daily mode)
+
+An AI-generated narrative covering training progress system-wide. Same format as the Cockpit (headline, what changed, what matters, waiting for) but focused entirely on training. This digest is shown in daily mode only.
+
+## Intraday Mode — Cockpit Layout
+
+When viewing intraday training, the page switches to a **decision-first cockpit** with three layers. See section 23 (The Intraday Subsystem) for full details. The key sections are:
+
+- **Executive Summary** — status banner, pattern readiness tiles, compressed pipeline health
+- **Pattern Trust Scoreboard** — compact view with one row per pattern, expandable for per-horizon detail
+- **Signal Activity Chart** — collapsible price chart with signal overlays
+- **Advanced Diagnostics** — pattern stability and excursion analysis (hidden by default)
+
+## Filters (daily mode)
 
 Use the **Market Type** dropdown (FX, STOCK, etc.) and the **Symbol Search** input to narrow the table to specific assets.
 
-## Training Table — Every Column Explained
+## Training Table — Column Reference
 
-| Column | What it means | Where the number comes from | Example |
-|--------|---------------|----------------------------|---------|
-| **Market Type** | Asset class (FX, STOCK, CRYPTO, etc.) | From the pattern definition | FX |
-| **Symbol** | Specific asset being tracked | From the recommendation log | AUD/USD |
-| **Pattern** | Which signal pattern is being evaluated | Pattern ID from pattern definitions | 2 |
-| **Interval** | Bar interval in minutes (1440 = daily) | From pattern definition | 1440 |
-| **As Of** | Date this training data was last updated | Timestamp of last pipeline run | 2026-02-07 |
-| **Maturity** | Stage badge + score (0–100) with progress bar. See section 5 for stage definitions. | Calculated from sample size (30%) + coverage (40%) + horizons (30%) | CONFIDENT (82) |
-| **Sample Size** | Total number of signals (recommendations) generated | Count of rows in RECOMMENDATION_LOG for this symbol/pattern | 45 |
-| **Coverage** | What % of signals have been fully evaluated across horizons | Evaluated outcomes ÷ (signals × expected horizons) × 100 | 92% |
-| **Horizons** | How many of the 5 evaluation windows have data | Count of distinct horizon_bars with outcomes | 5 |
-| **Avg H1** | Average outcome return at the 1-bar horizon | Mean of realized_return for all outcomes at horizon_bars = 1 | +0.0032 |
-| **Avg H3** | Average outcome return at the 3-bar horizon | Same calculation for horizon_bars = 3 | +0.0058 |
-| **Avg H5** | Average outcome return at the 5-bar horizon | Same calculation for horizon_bars = 5 | +0.0081 |
-| **Avg H10** | Average outcome return at the 10-bar horizon | Same calculation for horizon_bars = 10 | +0.0045 |
-| **Avg H20** | Average outcome return at the 20-bar horizon | Same calculation for horizon_bars = 20 | -0.0012 |
+### Daily Mode (1440m)
+
+| Column | What it means | Example |
+|--------|---------------|---------|
+| **Market Type** | Asset class (FX, STOCK, etc.) | FX |
+| **Symbol** | Specific asset being tracked | AUD/USD |
+| **Pattern** | Which signal pattern is being evaluated | 2 |
+| **Interval** | Bar interval in minutes (1440 = daily) | 1440 |
+| **As Of** | Date this training data was last updated | 2026-02-07 |
+| **Maturity** | Stage badge + score (0–100). See section 5 for stage definitions. | CONFIDENT (82) |
+| **Sample Size** | Total signals generated for this symbol/pattern | 45 |
+| **Coverage** | % of signals fully evaluated across all horizons | 92% |
+| **Horizons** | How many evaluation windows have data | 5 |
+| **Avg H1** | Average return at the 1-day horizon | +0.0032 |
+| **Avg H3** | Average return at the 3-day horizon | +0.0058 |
+| **Avg H5** | Average return at the 5-day horizon | +0.0081 |
+| **Avg H10** | Average return at the 10-day horizon | +0.0045 |
+| **Avg H20** | Average return at the 20-day horizon | -0.0012 |
+
+### Intraday Mode (15m) — Dynamic Horizons
+
+Intraday horizon columns are different from daily. They come from the **HORIZON_DEFINITION** table and adapt automatically:
+
+| Column | What it means | Example |
+|--------|---------------|---------|
+| **Avg H1** | Average return at +1 bar (15 minutes) | +0.0008 |
+| **Avg H4** | Average return at +4 bars (~1 hour) | +0.0015 |
+| **Avg H8** | Average return at +8 bars (~2 hours) | +0.0022 |
+| **Avg EOD** | Average return at end-of-day close | +0.0031 |
 
 ### Reading Avg H Columns
 
-The "Avg H5" column shows +0.0081 for AUD/USD. This means that, on average, 5 trading days after the pattern fired, the price had moved +0.81% in the right direction. Positive values are good — they indicate the pattern has historically been profitable at that horizon.
+For daily: "Avg H5" = +0.0081 means 5 trading days after the pattern fired, price moved +0.81% in the right direction on average. Positive = historically profitable.
 
-The "Avg H20" column shows -0.0012 — meaning at the 20-day horizon, the average return is slightly negative (-0.12%). This tells you the momentum doesn't persist that long for this particular symbol/pattern. The 5-bar horizon is the sweet spot.
+For intraday: "Avg H4" = +0.0015 means ~1 hour after the intraday pattern fired, price moved +0.15% in the right direction on average.
 
-## Expanded Row (click any row)
+## Expanded Row (click any row — daily mode)
 
 Clicking a row expands it to show two additional components:
 
-- **Per-Symbol Training Digest** — An AI-generated narrative specific to this symbol/pattern. Describes what changed in training, whether it's close to trust, and what outcomes the system is waiting for. Same format as the global digest but focused on one symbol.
+- **Per-Symbol Training Digest** — An AI-generated narrative specific to this symbol/pattern. Describes what changed in training, whether it's close to trust, and what outcomes the system is waiting for.
 
-- **Training Timeline Chart** — A chart showing the training metrics over time for this symbol. Helps you see if the hit rate and average return are trending up (good) or down (concerning).
+- **Training Timeline Chart** — A chart showing training metrics over time for this symbol. Helps you see if the hit rate and average return are trending up (good) or down (concerning). In daily mode, defaults to the 5-day horizon. In intraday mode, defaults to the +4 bar (~1hr) horizon.

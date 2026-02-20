@@ -2,6 +2,10 @@
 
 Monitor every pipeline run — when it happened, whether it succeeded, how long each step took, and what errors occurred. This is your pipeline health dashboard.
 
+## Daily / Intraday Toggle
+
+The page has a **Daily Pipeline / Intraday Pipeline** toggle at the top. Switch to "Intraday Pipeline" to see intraday-specific pipeline runs with their own metrics (bars ingested, signals generated, outcomes evaluated, compute time). The run list, filters, and detail panel all adapt to the selected pipeline type.
+
 ## Left Panel: Run List
 
 A list of recent pipeline runs, showing status, time, and run ID. Click a run to see its details.

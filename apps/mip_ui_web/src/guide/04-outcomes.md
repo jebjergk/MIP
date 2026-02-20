@@ -18,16 +18,33 @@ Training is **not** teaching an AI model. It's building a track record. Every da
 
 - **Ongoing — Metrics accumulate:** Each evaluation feeds into training metrics. After many signals and evaluations, the system has a track record: "Out of 40 signals, 31 were hits (77% hit rate) with an average return of +0.81%."
 
-## The Five Horizons
+## Horizons — Daily vs Intraday
 
-Every signal is evaluated at **5 different time windows** (called "horizons"):
+Every signal is evaluated at multiple time windows called **horizons**. The horizons differ depending on whether the signal comes from the daily or intraday pipeline.
+
+### Daily Horizons (5 windows)
 
 | Horizon | Meaning | What it tells you |
 |---------|---------|-------------------|
-| **1 bar** | Next trading day | Very short-term reaction — did the momentum continue tomorrow? |
-| **3 bars** | 3 trading days later | Short-term follow-through — did the move extend over a few days? |
-| **5 bars** | 1 trading week later | The "standard" holding horizon — the main metric used for scoring. |
-| **10 bars** | 2 trading weeks later | Medium-term — does the pattern have staying power? |
-| **20 bars** | 1 trading month later | Longer-term — was this a meaningful trend or just a blip? |
+| **1 day** | Next trading day | Very short-term reaction — did the momentum continue tomorrow? |
+| **3 days** | 3 trading days later | Short-term follow-through — did the move extend over a few days? |
+| **5 days** | 1 trading week later | The "standard" holding horizon — the main metric used for scoring. |
+| **10 days** | 2 trading weeks later | Medium-term — does the pattern have staying power? |
+| **20 days** | 1 trading month later | Longer-term — was this a meaningful trend or just a blip? |
 
-> **This is backtesting in production.** The system generates signals every day, then evaluates them at multiple time horizons. Over weeks and months, this builds a statistically meaningful track record for each symbol/pattern combination.
+### Intraday Horizons (4 windows)
+
+Intraday patterns resolve faster, so their horizons are measured in **bars** (15-minute intervals) and **session events**:
+
+| Horizon | Label | Meaning |
+|---------|-------|---------|
+| **+1 bar** | H1 | Immediate validation — did the next 15-min bar confirm? |
+| **+4 bars** | H4 | ~1 hour continuation — did the move extend? |
+| **+8 bars** | H8 | ~2 hour persistence — does the pattern have staying power? |
+| **EOD close** | EOD | End-of-day — did it matter by market close? |
+
+### Unified Horizon Metadata
+
+Both daily and intraday horizons are stored in the **HORIZON_DEFINITION** table with metadata describing the horizon type (BAR, DAY, SESSION), length, and resolution. This allows the system to interpret horizons consistently across timeframes while keeping evaluation logic appropriate to each.
+
+> **This is backtesting in production.** The system generates signals every day (and intraday), then evaluates them at multiple time horizons. Over weeks and months, this builds a statistically meaningful track record for each symbol/pattern combination.

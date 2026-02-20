@@ -10,11 +10,13 @@ MIP is an automated market intelligence platform. It watches markets every day, 
 Market Data → Signal Detection → Training → Trust Decision → Trade Proposals
 ```
 
-1. **Market Data** — Fresh price bars arrive daily
+1. **Market Data** — Fresh price bars arrive daily (and every 15 minutes for intraday)
 2. **Signal Detection** — Patterns scan for notable moves
 3. **Training** — Evaluate past signals, build evidence
 4. **Trust Decision** — Enough evidence? Earn trust status
 5. **Trade Proposals** — Only trusted patterns can trade
+
+MIP runs **two independent pipelines**: a **Daily Pipeline** for multi-day patterns and an **Intraday Pipeline** for patterns that resolve within hours. Both follow the same learn-before-you-trade philosophy but operate on different time scales. See section 23 for details on the intraday subsystem.
 
 ## Real-World Analogy
 

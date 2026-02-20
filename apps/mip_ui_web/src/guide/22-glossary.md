@@ -41,3 +41,11 @@
 | **Regime Fragile** | A scenario or parameter setting that only outperforms in one market volatility regime (e.g., only in calm markets). Flagged as a safety concern because it may fail when conditions change. |
 | **Safety Check** | An automated verification that a recommendation passes minimum reliability thresholds: enough observation days, stable trade counts, and multi-regime robustness. All three must pass for a recommendation to be marked "Ready for Review." |
 | **Recommendation** | A tuning suggestion generated from sweep results. Comes in two flavors: Conservative (smallest helpful change) and Aggressive (optimal setting). Always requires human approval — never auto-applied. |
+| **Intraday Pipeline** | A separate, independent pipeline that ingests 15-minute bars, detects intraday patterns (ORB, Pullback, Mean-Reversion), evaluates outcomes on bar-based horizons, and builds trust. Runs alongside the daily pipeline without affecting it. |
+| **Intraday Horizon** | A time window for evaluating intraday signals: +1 bar (15m), +4 bars (~1hr), +8 bars (~2hr), or end-of-day close (EOD). Stored in HORIZON_DEFINITION alongside daily horizons. |
+| **Opening Range Breakout (ORB)** | An intraday pattern that detects when price breaks above or below the early-session trading range with sufficient momentum. |
+| **Pullback Continuation** | An intraday pattern that identifies an impulse move, followed by consolidation, and then a breakout in the original direction. |
+| **Mean-Reversion Overshoot** | An intraday pattern that detects extreme deviation from a short-term rolling average, signaling a likely reversion. |
+| **System Stage** | An intraday readiness classification: INSUFFICIENT (too little data), EMERGING (signals appearing), LEARNING (outcomes accumulating), or CONFIDENT (patterns earning trust). |
+| **HORIZON_DEFINITION** | A metadata table that defines all evaluation horizons for both daily and intraday intervals. Stores horizon type (BAR, DAY, SESSION), length, resolution, and display labels. |
+| **Pattern Readiness Tile** | A summary card on the intraday cockpit showing a pattern family's event count, trust state, confidence, best edge, and trend arrow at a glance. |

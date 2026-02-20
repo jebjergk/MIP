@@ -1,0 +1,1726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIP Education Handbook</title>
+<style>
+  @page { size: A4; margin: 2cm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #1a1a2e;
+    line-height: 1.7;
+    font-size: 15px;
+    background: #f8f9fa;
+    padding: 0;
+  }
+
+  /* ── Cover Page ─────────────────────────────────── */
+  .cover {
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 4rem 2rem;
+    page-break-after: always;
+  }
+  .cover-icon {
+    width: 120px; height: 120px;
+    margin-bottom: 2rem;
+  }
+  .cover h1 {
+    font-size: 3rem;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 0.5rem;
+  }
+  .cover .subtitle {
+    font-size: 1.3rem;
+    color: #a8b2d1;
+    max-width: 600px;
+    margin-bottom: 2rem;
+  }
+  .cover .edition {
+    font-size: 0.9rem;
+    color: #64748b;
+    border-top: 1px solid rgba(255,255,255,0.15);
+    padding-top: 1.5rem;
+    margin-top: 1rem;
+  }
+
+  /* ── Layout ─────────────────────────────────────── */
+  .content { max-width: 900px; margin: 0 auto; padding: 2rem; }
+
+  .chapter {
+    page-break-before: always;
+    margin-bottom: 3rem;
+  }
+  .chapter:first-of-type { page-break-before: avoid; }
+
+  .chapter-number {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: #6366f1;
+    font-weight: 700;
+    margin-bottom: 0.3rem;
+  }
+
+  h2 {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #1e1b4b;
+    margin-bottom: 1rem;
+    border-bottom: 3px solid #6366f1;
+    padding-bottom: 0.5rem;
+  }
+  h3 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #312e81;
+    margin-top: 2rem;
+    margin-bottom: 0.8rem;
+  }
+  h4 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #4338ca;
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  p { margin-bottom: 1rem; }
+  ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+  li { margin-bottom: 0.3rem; }
+
+  /* ── Scenario Boxes ────────────────────────────── */
+  .scenario {
+    background: #fffbeb;
+    border-left: 5px solid #f59e0b;
+    border-radius: 0 10px 10px 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    page-break-inside: avoid;
+  }
+  .scenario-title {
+    font-weight: 700;
+    color: #92400e;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .scenario-title::before { content: "📖"; }
+  .scenario p:last-child { margin-bottom: 0; }
+
+  /* ── Key Concept Boxes ─────────────────────────── */
+  .concept {
+    background: #eef2ff;
+    border-left: 5px solid #6366f1;
+    border-radius: 0 10px 10px 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    page-break-inside: avoid;
+  }
+  .concept-title {
+    font-weight: 700;
+    color: #3730a3;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .concept-title::before { content: "💡"; }
+
+  /* ── Warning / Important Boxes ─────────────────── */
+  .important {
+    background: #fef2f2;
+    border-left: 5px solid #ef4444;
+    border-radius: 0 10px 10px 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    page-break-inside: avoid;
+  }
+  .important-title {
+    font-weight: 700;
+    color: #991b1b;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+  }
+  .important-title::before { content: "⚠️ "; }
+
+  /* ── Analogy Boxes ─────────────────────────────── */
+  .analogy {
+    background: #f0fdf4;
+    border-left: 5px solid #22c55e;
+    border-radius: 0 10px 10px 0;
+    padding: 1.2rem 1.5rem;
+    margin: 1.5rem 0;
+    page-break-inside: avoid;
+  }
+  .analogy-title {
+    font-weight: 700;
+    color: #166534;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+  }
+  .analogy-title::before { content: "🔗 "; }
+
+  /* ── Tables ────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.2rem 0;
+    font-size: 0.92rem;
+    page-break-inside: avoid;
+  }
+  th {
+    background: #312e81;
+    color: #fff;
+    padding: 0.6rem 1rem;
+    text-align: left;
+    font-weight: 600;
+  }
+  td {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  tr:nth-child(even) td { background: #f9fafb; }
+  tr:hover td { background: #eef2ff; }
+
+  /* ── Diagrams (CSS-based) ──────────────────────── */
+  .diagram {
+    margin: 2rem 0;
+    page-break-inside: avoid;
+  }
+  .diagram-title {
+    text-align: center;
+    font-weight: 700;
+    color: #4338ca;
+    margin-bottom: 1rem;
+    font-size: 1.05rem;
+  }
+
+  /* Flow diagram */
+  .flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 1rem;
+  }
+  .flow-step {
+    background: linear-gradient(135deg, #6366f1, #4f46e5);
+    color: #fff;
+    padding: 0.7rem 1.2rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-align: center;
+    min-width: 100px;
+    box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+  }
+  .flow-arrow {
+    font-size: 1.5rem;
+    color: #6366f1;
+    padding: 0 0.3rem;
+    font-weight: bold;
+  }
+
+  /* Vertical flow */
+  .vflow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    padding: 1rem;
+  }
+  .vflow-step {
+    background: #fff;
+    border: 2px solid #6366f1;
+    padding: 0.8rem 2rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-align: center;
+    width: 80%;
+    max-width: 500px;
+  }
+  .vflow-step--highlight {
+    background: linear-gradient(135deg, #6366f1, #4f46e5);
+    color: #fff;
+    border-color: #4f46e5;
+  }
+  .vflow-arrow {
+    font-size: 1.5rem;
+    color: #a5b4fc;
+    padding: 0.2rem;
+  }
+
+  /* Comparison columns */
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+  }
+  .compare-col {
+    border-radius: 12px;
+    padding: 1.2rem 1.5rem;
+    page-break-inside: avoid;
+  }
+  .compare-col--yes {
+    background: #f0fdf4;
+    border: 2px solid #22c55e;
+  }
+  .compare-col--no {
+    background: #fef2f2;
+    border: 2px solid #ef4444;
+  }
+  .compare-col h4 {
+    margin-top: 0;
+    font-size: 1rem;
+  }
+  .compare-col--yes h4 { color: #166534; }
+  .compare-col--no h4 { color: #991b1b; }
+  .compare-col ul { padding-left: 1.2rem; }
+
+  /* Number highlight */
+  .num {
+    display: inline-block;
+    background: #6366f1;
+    color: #fff;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 28px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    margin-right: 0.5rem;
+  }
+
+  /* Math callout */
+  .math-box {
+    background: #f1f5f9;
+    border: 2px solid #94a3b8;
+    border-radius: 10px;
+    padding: 1rem 1.5rem;
+    margin: 1rem 0;
+    text-align: center;
+    font-size: 1.2rem;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    page-break-inside: avoid;
+  }
+
+  /* Visual price bar */
+  .bar-visual {
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    gap: 2rem;
+    margin: 1.5rem 0;
+    padding: 1rem;
+  }
+  .bar-candle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+  }
+  .bar-candle-label { font-size: 0.75rem; color: #6b7280; font-weight: 600; }
+  .bar-candle-val { font-weight: 700; font-size: 0.9rem; }
+
+  /* Gauge / Meter */
+  .gauge {
+    margin: 1rem 0;
+    page-break-inside: avoid;
+  }
+  .gauge-bar {
+    height: 24px;
+    background: #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+  }
+  .gauge-fill {
+    height: 100%;
+    border-radius: 12px;
+    transition: width 0.5s;
+  }
+  .gauge-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.3rem;
+  }
+
+  /* Timeline */
+  .timeline {
+    position: relative;
+    padding-left: 2rem;
+    margin: 1.5rem 0;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #c7d2fe;
+    border-radius: 2px;
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 1.2rem;
+    padding-left: 1rem;
+  }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -1.65rem;
+    top: 0.5rem;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #6366f1;
+    border: 3px solid #e0e7ff;
+  }
+  .timeline-item--green::before { background: #22c55e; border-color: #dcfce7; }
+  .timeline-item--red::before { background: #ef4444; border-color: #fee2e2; }
+  .timeline-item--amber::before { background: #f59e0b; border-color: #fef3c7; }
+  .timeline-label { font-weight: 700; font-size: 0.9rem; }
+  .timeline-desc { font-size: 0.9rem; color: #4b5563; }
+
+  /* Status cards */
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .status-card {
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    text-align: center;
+    page-break-inside: avoid;
+  }
+  .status-card h4 { margin-top: 0; font-size: 1rem; }
+  .status-card--green { background: #f0fdf4; border: 2px solid #22c55e; }
+  .status-card--green h4 { color: #166534; }
+  .status-card--amber { background: #fffbeb; border: 2px solid #f59e0b; }
+  .status-card--amber h4 { color: #92400e; }
+  .status-card--red { background: #fef2f2; border: 2px solid #ef4444; }
+  .status-card--red h4 { color: #991b1b; }
+
+  /* KPI cards */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .kpi-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 1rem;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .kpi-card .kpi-val {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: #1e1b4b;
+  }
+  .kpi-card .kpi-val--up { color: #16a34a; }
+  .kpi-card .kpi-val--down { color: #dc2626; }
+  .kpi-card .kpi-label {
+    font-size: 0.75rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 0.2rem;
+  }
+
+  /* TOC */
+  .toc {
+    page-break-after: always;
+    padding: 3rem 2rem;
+  }
+  .toc h2 { font-size: 1.8rem; }
+  .toc-list { list-style: none; padding: 0; }
+  .toc-list li {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 1.05rem;
+  }
+  .toc-list li a {
+    text-decoration: none;
+    color: #312e81;
+    font-weight: 600;
+  }
+  .toc-list li a:hover { color: #6366f1; }
+  .toc-list .toc-num {
+    display: inline-block;
+    width: 2.5rem;
+    font-weight: 700;
+    color: #6366f1;
+  }
+
+  /* Glossary */
+  .glossary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.8rem;
+    margin: 1rem 0;
+  }
+  .glossary-item {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+  }
+  .glossary-item dt {
+    font-weight: 700;
+    color: #4338ca;
+    margin-bottom: 0.2rem;
+  }
+  .glossary-item dd {
+    font-size: 0.88rem;
+    color: #4b5563;
+    margin: 0;
+  }
+
+  /* FAQ */
+  .faq {
+    margin: 1rem 0;
+    page-break-inside: avoid;
+  }
+  .faq-q {
+    font-weight: 700;
+    color: #1e1b4b;
+    font-size: 1.05rem;
+    margin-bottom: 0.3rem;
+  }
+  .faq-a {
+    margin-bottom: 1.5rem;
+    padding-left: 1rem;
+    border-left: 3px solid #c7d2fe;
+  }
+
+  @media print {
+    body { background: #fff; font-size: 12px; }
+    .content { max-width: 100%; padding: 0; }
+    .cover { min-height: 100vh; }
+    .scenario, .concept, .analogy, .important { page-break-inside: avoid; }
+    table { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ COVER PAGE ═══════════════════ -->
+<div class="cover">
+  <svg class="cover-icon" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="10" y="10" width="100" height="100" rx="20" fill="#6366f1" opacity="0.2"/>
+    <rect x="20" y="20" width="80" height="80" rx="16" fill="#6366f1" opacity="0.4"/>
+    <path d="M40 75 L40 55 L52 45 L64 60 L76 35 L88 50" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="40" cy="75" r="4" fill="#22c55e"/>
+    <circle cx="52" cy="45" r="4" fill="#22c55e"/>
+    <circle cx="64" cy="60" r="4" fill="#f59e0b"/>
+    <circle cx="76" cy="35" r="4" fill="#22c55e"/>
+    <circle cx="88" cy="50" r="4" fill="#22c55e"/>
+    <path d="M30 85 L90 85" stroke="#a5b4fc" stroke-width="2" stroke-dasharray="4 3"/>
+  </svg>
+  <h1>MIP Education Handbook</h1>
+  <p class="subtitle">A complete, illustrated guide to the Market Intelligence Platform &mdash; written for everyone, no trading experience required.</p>
+  <div class="edition">
+    Market Intelligence Platform &bull; Version 0.7 &bull; February 2026<br>
+    <em>Open in your browser and press Ctrl+P &rarr; Save as PDF</em>
+  </div>
+</div>
+
+<!-- ═══════════════════ TABLE OF CONTENTS ═══════════════════ -->
+<div class="toc content">
+  <h2>Table of Contents</h2>
+  <ol class="toc-list">
+    <li><span class="toc-num">1.</span> <a href="#ch1">What is MIP?</a></li>
+    <li><span class="toc-num">2.</span> <a href="#ch2">The Building Blocks &mdash; Understanding Markets</a></li>
+    <li><span class="toc-num">3.</span> <a href="#ch3">How MIP Watches the Market</a></li>
+    <li><span class="toc-num">4.</span> <a href="#ch4">Patterns and Signals &mdash; How MIP Spots Opportunities</a></li>
+    <li><span class="toc-num">5.</span> <a href="#ch5">Did the Signal Work? &mdash; Outcomes, Horizons, and Training</a></li>
+    <li><span class="toc-num">6.</span> <a href="#ch6">Trust &mdash; How MIP Decides What to Act On</a></li>
+    <li><span class="toc-num">7.</span> <a href="#ch7">Portfolios &mdash; Simulated Investing</a></li>
+    <li><span class="toc-num">8.</span> <a href="#ch8">The Daily Pipeline and Advanced Features</a></li>
+    <li><span class="toc-num">9.</span> <a href="#ch9">Using the MIP Dashboard</a></li>
+    <li><span class="toc-num">A.</span> <a href="#glossary">Glossary</a></li>
+    <li><span class="toc-num">B.</span> <a href="#faq">Frequently Asked Questions</a></li>
+  </ol>
+</div>
+
+<div class="content">
+
+<!-- ═══════════════════ CHAPTER 1 ═══════════════════ -->
+<div class="chapter" id="ch1">
+  <div class="chapter-number">Chapter 1</div>
+  <h2>What is MIP?</h2>
+
+  <p><strong>MIP</strong> stands for <strong>Market Intelligence Platform</strong>. It is a system that watches financial markets every day, looks for patterns in how prices are moving, and tests whether acting on those patterns would have made money &mdash; all without spending a single real dollar.</p>
+
+  <div class="analogy">
+    <div class="analogy-title">Think of it this way</div>
+    <p>MIP is a <strong>flight simulator for investing</strong>. Just as a pilot practices flying in a simulator before stepping into a real cockpit, MIP lets you practice and observe investment strategies in a safe, simulated environment. No real money is at risk. Ever.</p>
+  </div>
+
+  <h3>What MIP Does Every Day</h3>
+
+  <div class="diagram">
+    <div class="diagram-title">MIP's Five Daily Jobs</div>
+    <div class="flow">
+      <div class="flow-step">1. Collect<br>Market Data</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">2. Look for<br>Patterns</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">3. Grade Its<br>Own Work</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">4. Simulate<br>Portfolios</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">5. Report<br>Results</div>
+    </div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: A Day in MIP's Life</div>
+    <p>It's Tuesday morning, 7:00 AM. MIP's daily pipeline kicks off automatically.</p>
+    <p><span class="num">1</span> MIP downloads yesterday's closing prices for Apple, Tesla, SPY (an ETF), and EUR/USD (a currency pair).</p>
+    <p><span class="num">2</span> It runs its pattern rules and notices Apple's price has been climbing steadily for 5 days with above-average momentum. MIP records: <em>"Signal: AAPL looks interesting."</em></p>
+    <p><span class="num">3</span> It also checks signals from last week. A signal it made about Tesla 5 days ago? Tesla went up 3.2%. That's a "hit." Another about EUR/USD? It went down 0.5%. That's a "miss."</p>
+    <p><span class="num">4</span> MIP's virtual portfolio has room for one more position. It "buys" $5,000 worth of Apple with virtual money.</p>
+    <p><span class="num">5</span> A morning brief is generated: "1 new signal today, 1 paper trade executed, portfolio up 2.1% overall."</p>
+  </div>
+
+  <h3>What MIP Is vs. What MIP Is Not</h3>
+
+  <div class="compare">
+    <div class="compare-col compare-col--yes">
+      <h4>&#x2705; What MIP IS</h4>
+      <ul>
+        <li>A learning and analysis platform</li>
+        <li>A paper trading simulator</li>
+        <li>A pattern detection engine</li>
+        <li>An automated daily pipeline</li>
+        <li>A scorecard for investment signals</li>
+      </ul>
+    </div>
+    <div class="compare-col compare-col--no">
+      <h4>&#x274C; What MIP Is NOT</h4>
+      <ul>
+        <li>Not a broker or exchange</li>
+        <li>Not using real money</li>
+        <li>Not real-time (runs daily)</li>
+        <li>Not a guarantee of profits</li>
+        <li>Not connected to any bank</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 2 ═══════════════════ -->
+<div class="chapter" id="ch2">
+  <div class="chapter-number">Chapter 2</div>
+  <h2>The Building Blocks &mdash; Understanding Markets</h2>
+
+  <h3>Three Types of Assets MIP Watches</h3>
+
+  <table>
+    <thead>
+      <tr><th>Type</th><th>What It Is</th><th>Example</th><th>Everyday Analogy</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Stock</strong></td>
+        <td>A tiny ownership slice of a company</td>
+        <td>AAPL (Apple), TSLA (Tesla)</td>
+        <td>Like owning one tile in a giant mosaic of a building</td>
+      </tr>
+      <tr>
+        <td><strong>ETF</strong></td>
+        <td>A bundle of assets traded as one</td>
+        <td>SPY (S&P 500), QQQ (Nasdaq)</td>
+        <td>Like a variety pack &mdash; many snacks in one box</td>
+      </tr>
+      <tr>
+        <td><strong>FX (Currency)</strong></td>
+        <td>Exchange rate between two currencies</td>
+        <td>EUR/USD, GBP/USD</td>
+        <td>Like the exchange board at an airport</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>What Is a Price Bar?</h3>
+
+  <p>Every trading day, each asset produces a single <strong>price bar</strong> &mdash; a compact summary of everything that happened to its price during that day.</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Apple's Trading Day</div>
+    <p>Imagine watching Apple stock on January 15, 2026:</p>
+    <ul>
+      <li><strong>9:30 AM</strong> &mdash; Market opens. Apple's first trade is at <strong>$192.00</strong> (this is the <strong>Open</strong>)</li>
+      <li><strong>11:45 AM</strong> &mdash; Good news breaks. Apple surges to <strong>$197.50</strong> (this becomes the day's <strong>High</strong>)</li>
+      <li><strong>2:15 PM</strong> &mdash; Broad market dip pulls Apple down to <strong>$190.25</strong> (the day's <strong>Low</strong>)</li>
+      <li><strong>4:00 PM</strong> &mdash; Market closes. Apple's last trade is at <strong>$195.80</strong> (the <strong>Close</strong>)</li>
+      <li>Throughout the day, <strong>42 million shares</strong> changed hands (the <strong>Volume</strong>)</li>
+    </ul>
+  </div>
+
+  <p>That entire day is captured in five numbers:</p>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-val">$192.00</div>
+      <div class="kpi-label">Open (O)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--up">$197.50</div>
+      <div class="kpi-label">High (H)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--down">$190.25</div>
+      <div class="kpi-label">Low (L)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val">$195.80</div>
+      <div class="kpi-label">Close (C)</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val">42M</div>
+      <div class="kpi-label">Volume (V)</div>
+    </div>
+  </div>
+
+  <p>Together, these are called an <strong>OHLCV bar</strong>. MIP stores one bar per asset per day.</p>
+
+  <h3>What Is a "Return"?</h3>
+
+  <p>A <strong>return</strong> is simply how much an asset's price changed, expressed as a percentage.</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Calculating a Return</div>
+    <p>Apple closed at <strong>$192.00</strong> on Monday and <strong>$195.80</strong> on Tuesday.</p>
+    <div class="math-box">
+      Return = ($195.80 &minus; $192.00) / $192.00 = <strong>+1.98%</strong>
+    </div>
+    <p>Apple went up almost 2% in one day. That's a <strong>positive return</strong>.</p>
+    <p>If Apple had closed at $188.00 instead:</p>
+    <div class="math-box">
+      Return = ($188.00 &minus; $192.00) / $192.00 = <strong>&minus;2.08%</strong>
+    </div>
+    <p>That's a <strong>negative return</strong> &mdash; the price went down.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-title">Key Concept</div>
+    <p>MIP doesn't care about raw prices. It cares about <strong>returns</strong> &mdash; how much prices are <em>changing</em>. A $200 stock that goes up 1% and a $20 stock that goes up 1% are equally interesting to MIP.</p>
+  </div>
+
+  <h3>Daily vs. Intraday Bars</h3>
+
+  <table>
+    <thead>
+      <tr><th>Type</th><th>Time Period</th><th>MIP Label</th><th>Use</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Daily Bar</strong></td>
+        <td>One full trading day</td>
+        <td>INTERVAL_MINUTES = 1440</td>
+        <td>MIP's primary mode. One snapshot per day.</td>
+      </tr>
+      <tr>
+        <td><strong>Intraday Bar</strong></td>
+        <td>15 minutes</td>
+        <td>INTERVAL_MINUTES = 15</td>
+        <td>Faster-paced analysis within a single day.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ═══════════════════ CHAPTER 3 ═══════════════════ -->
+<div class="chapter" id="ch3">
+  <div class="chapter-number">Chapter 3</div>
+  <h2>How MIP Watches the Market</h2>
+
+  <h3>Data Ingestion: The Morning Newspaper</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Analogy</div>
+    <p>Think of ingestion as MIP's <strong>morning newspaper delivery</strong>. Each day, fresh data arrives at the door, and MIP's analysis begins. Without the newspaper, there's nothing to analyze.</p>
+  </div>
+
+  <p>Every day, MIP connects to a financial data provider called <strong>AlphaVantage</strong> and downloads the latest price bars for every asset it tracks. This raw data is stored in MIP's database as <code>MARKET_BARS</code>.</p>
+
+  <h3>The Universe: What MIP Tracks</h3>
+
+  <p>MIP doesn't watch every asset in the world. It has a configured list called the <strong>ingest universe</strong> that specifies exactly which symbols to track.</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: A Typical MIP Universe</div>
+    <table>
+      <thead><tr><th>Symbol</th><th>Type</th><th>What It Is</th></tr></thead>
+      <tbody>
+        <tr><td>AAPL</td><td>STOCK</td><td>Apple Inc.</td></tr>
+        <tr><td>MSFT</td><td>STOCK</td><td>Microsoft Corp.</td></tr>
+        <tr><td>TSLA</td><td>STOCK</td><td>Tesla Inc.</td></tr>
+        <tr><td>SPY</td><td>ETF</td><td>S&P 500 Index Fund</td></tr>
+        <tr><td>QQQ</td><td>ETF</td><td>Nasdaq 100 Index Fund</td></tr>
+        <tr><td>EUR/USD</td><td>FX</td><td>Euro vs US Dollar</td></tr>
+        <tr><td>GBP/USD</td><td>FX</td><td>British Pound vs US Dollar</td></tr>
+      </tbody>
+    </table>
+    <p>If a symbol isn't in the universe, MIP simply doesn't watch it.</p>
+  </div>
+
+  <h3>From Raw Data to Returns</h3>
+
+  <div class="diagram">
+    <div class="diagram-title">Data Flow: Ingestion to Returns</div>
+    <div class="flow">
+      <div class="flow-step">AlphaVantage<br>API</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Download<br>OHLCV Bars</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Store in<br>MARKET_BARS</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Calculate<br>Returns</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Ready for<br>Pattern Analysis</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 4 ═══════════════════ -->
+<div class="chapter" id="ch4">
+  <div class="chapter-number">Chapter 4</div>
+  <h2>Patterns and Signals &mdash; How MIP Spots Opportunities</h2>
+
+  <h3>What Is a Pattern?</h3>
+
+  <p>A <strong>pattern</strong> is a set of rules that examines recent price behavior and decides: <em>"Something noteworthy is happening with this asset right now."</em></p>
+
+  <div class="analogy">
+    <div class="analogy-title">Analogy: Weather Forecasting</div>
+    <p>A meteorologist might say: <em>"If barometric pressure drops rapidly, humidity rises above 80%, and wind shifts from the southwest, then rain is likely within 24 hours."</em></p>
+    <p>That's a pattern &mdash; a combination of observable conditions that historically precedes a specific outcome.</p>
+    <p>MIP works the same way, but with <strong>price data</strong> instead of weather data, and <strong>"continued price increase"</strong> instead of rain.</p>
+  </div>
+
+  <h3>The Momentum Pattern: MIP's Primary Strategy</h3>
+
+  <div class="concept">
+    <div class="concept-title">Core Idea Behind Momentum</div>
+    <p><em>"Assets that have been going up recently tend to keep going up for a little while longer."</em></p>
+    <p>This is one of the most well-studied phenomena in finance. It doesn't always work, but historically it works often enough to be useful.</p>
+  </div>
+
+  <p>Here's how MIP's momentum pattern evaluates an asset, step by step:</p>
+
+  <div class="diagram">
+    <div class="diagram-title">Momentum Pattern: Decision Steps</div>
+    <div class="vflow">
+      <div class="vflow-step"><strong>Step 1:</strong> Look at returns over the Fast Window (e.g., 3 days) and Slow Window (e.g., 20 days)</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Step 2:</strong> Is the recent return above the minimum threshold? (e.g., &ge; 0.2%)</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Step 3:</strong> Has the price been going up <em>consistently</em>, not just one lucky day?</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Step 4:</strong> Is the current price at or near its recent high?</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Step 5:</strong> Is this move unusually strong for this asset? (Z-score check)</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step vflow-step--highlight">All checks pass? &rarr; SIGNAL GENERATED!</div>
+    </div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Momentum Pattern in Action</div>
+    <p>MIP is evaluating Apple (AAPL) on February 19, 2026. Here's what the data shows:</p>
+    <table>
+      <thead><tr><th>Check</th><th>Requirement</th><th>Apple's Data</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Recent return</td><td>&ge; 0.2%</td><td>+3.5% over 3 days</td><td style="color:#16a34a;font-weight:700">&#x2713; PASS</td></tr>
+        <tr><td>Consistency</td><td>Most recent days positive</td><td>4 of last 5 days up</td><td style="color:#16a34a;font-weight:700">&#x2713; PASS</td></tr>
+        <tr><td>At recent high</td><td>Close &ge; max close in fast window</td><td>$198.40 vs $197.80 max</td><td style="color:#16a34a;font-weight:700">&#x2713; PASS</td></tr>
+        <tr><td>Unusualness (Z-score)</td><td>&ge; 1.0</td><td>Z-score = 1.8</td><td style="color:#16a34a;font-weight:700">&#x2713; PASS</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Result:</strong> MIP records a signal &mdash; <em>"AAPL momentum signal on Feb 19, score 0.035 (3.5% return)."</em></p>
+  </div>
+
+  <h3>What Is a Signal?</h3>
+
+  <p>A <strong>signal</strong> (also called a <strong>recommendation</strong>) is a record that says:</p>
+
+  <div class="concept">
+    <div class="concept-title">Signal = A Detection, Not an Action</div>
+    <p><em>"Pattern X detected an opportunity in asset Y at time Z, with strength score S."</em></p>
+    <p>Signals are <strong>not</strong> trades. They are observations. Many signals are generated, but only a fraction ever lead to paper trades (after passing trust and risk checks).</p>
+  </div>
+
+  <h3>Understanding the Score</h3>
+
+  <p>Each signal has a <strong>score</strong> that indicates its strength. For momentum signals, the score is typically the asset's recent return.</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Comparing Signal Scores</div>
+    <table>
+      <thead><tr><th>Signal</th><th>Score</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>AAPL momentum</td><td>0.035</td><td>Apple had a 3.5% return &mdash; strong signal</td></tr>
+        <tr><td>MSFT momentum</td><td>0.012</td><td>Microsoft had a 1.2% return &mdash; moderate signal</td></tr>
+        <tr><td>SPY momentum</td><td>0.005</td><td>SPY had a 0.5% return &mdash; weak signal</td></tr>
+      </tbody>
+    </table>
+    <p>When MIP decides which signals to act on, it prefers higher scores. AAPL would be first in line.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 5 ═══════════════════ -->
+<div class="chapter" id="ch5">
+  <div class="chapter-number">Chapter 5</div>
+  <h2>Did the Signal Work? &mdash; Outcomes, Horizons, and Training</h2>
+
+  <h3>The Core Question</h3>
+  <p>Every time MIP records a signal (<em>"AAPL looks interesting today"</em>), a clock starts ticking. The question is:</p>
+  <div class="concept">
+    <div class="concept-title">The Question MIP Always Asks</div>
+    <p><em>"If we had bought this asset at the moment of the signal, would we have made money?"</em></p>
+  </div>
+
+  <h3>Horizons: Checking Back at Multiple Time Points</h3>
+
+  <p>MIP doesn't just check once. It checks back at <strong>five different horizons</strong>:</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Horizons for an AAPL Signal on Feb 19</div>
+    <p>MIP generated a signal for Apple at $198.40 on Feb 19. Here's what happens next:</p>
+    <div class="timeline">
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Horizon 1 (1 day later &mdash; Feb 20)</div>
+        <div class="timeline-desc">Apple closes at $200.10. Return: <strong>+0.86%</strong> &#x2713; Hit!</div>
+      </div>
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Horizon 2 (3 days later &mdash; Feb 24)</div>
+        <div class="timeline-desc">Apple closes at $203.50. Return: <strong>+2.57%</strong> &#x2713; Hit!</div>
+      </div>
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Horizon 3 (5 days later &mdash; Feb 26)</div>
+        <div class="timeline-desc">Apple closes at $201.80. Return: <strong>+1.71%</strong> &#x2713; Hit!</div>
+      </div>
+      <div class="timeline-item timeline-item--red">
+        <div class="timeline-label">Horizon 4 (10 days later &mdash; Mar 5)</div>
+        <div class="timeline-desc">Apple closes at $196.20. Return: <strong>&minus;1.11%</strong> &#x2717; Miss</div>
+      </div>
+      <div class="timeline-item timeline-item--amber">
+        <div class="timeline-label">Horizon 5 (20 days later &mdash; Mar 19)</div>
+        <div class="timeline-desc">Not enough data yet &mdash; still waiting. Status: INSUFFICIENT_FUTURE_DATA</div>
+      </div>
+    </div>
+    <p><strong>Insight:</strong> This signal worked well for the first week (horizons 1-5) but faded by day 10. This tells MIP that the momentum effect for AAPL tends to be <em>short-lived</em>.</p>
+  </div>
+
+  <h3>Hit Rate: The Batting Average</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Analogy: Baseball Batting Average</div>
+    <p>In baseball, a batting average tells you how often a batter gets a hit. A .300 average means they succeed about 30% of the time &mdash; and that's considered excellent.</p>
+    <p>MIP's <strong>hit rate</strong> works the same way. If a pattern's hit rate is 58%, it means 58 out of every 100 signals ended up making money. MIP requires at least 55%.</p>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Hit Rate Calculation</div>
+    <p>The STOCK_MOMENTUM_FAST pattern has generated 100 signals over the past 3 months. At the 5-day horizon:</p>
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-val">100</div>
+        <div class="kpi-label">Total Signals</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val kpi-val--up">58</div>
+        <div class="kpi-label">Hits (Positive)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val kpi-val--down">42</div>
+        <div class="kpi-label">Misses (Negative)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-val kpi-val--up">58%</div>
+        <div class="kpi-label">Hit Rate</div>
+      </div>
+    </div>
+    <p>58% > 55% minimum &rarr; This pattern passes the hit rate requirement.</p>
+  </div>
+
+  <h3>Strict Lookahead: No Cheating</h3>
+
+  <div class="important">
+    <div class="important-title">Critical Rule</div>
+    <p>When evaluating a signal, MIP <strong>only uses data from after the signal</strong>. It never peeks at data from the same time or earlier. This prevents "lookahead bias" &mdash; where a system appears to predict the future but is really just using information it already had.</p>
+  </div>
+
+  <h3>Training: MIP's Performance Review</h3>
+
+  <p>Training is how MIP reviews its own work and decides which patterns deserve to keep running. Think of it as a quarterly performance review for each pattern.</p>
+
+  <div class="diagram">
+    <div class="diagram-title">The Training / Learning Cycle</div>
+    <div class="flow">
+      <div class="flow-step">Generate<br>Signals</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Evaluate<br>Outcomes</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Run<br>Backtest</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Update Pattern<br>Status</div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-step">Keep or<br>Deactivate</div>
+    </div>
+  </div>
+
+  <h4>Minimum Thresholds: The Bar for Active Patterns</h4>
+
+  <table>
+    <thead><tr><th>Threshold</th><th>Minimum</th><th>Why It Matters</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Trade count</strong></td><td>&ge; 30 signals</td><td>Less than 30 is too small a sample &mdash; could be luck.</td></tr>
+      <tr><td><strong>Hit rate</strong></td><td>&ge; 55%</td><td>Must be right more often than wrong.</td></tr>
+      <tr><td><strong>Cumulative return</strong></td><td>&gt; 0%</td><td>Overall result of following the pattern must be positive.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Pass or Fail?</div>
+    <table>
+      <thead><tr><th>Pattern</th><th>Trades</th><th>Hit Rate</th><th>Cum. Return</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>STOCK_MOMENTUM_FAST</td><td>85</td><td>58%</td><td>+12.3%</td><td style="color:#16a34a;font-weight:700">&#x2713; Active</td></tr>
+        <tr><td>STOCK_MOMENTUM_SLOW</td><td>62</td><td>53%</td><td>+2.1%</td><td style="color:#dc2626;font-weight:700">&#x2717; Deactivated (hit rate &lt; 55%)</td></tr>
+        <tr><td>FX_MOMENTUM_DAILY</td><td>18</td><td>61%</td><td>+5.8%</td><td style="color:#dc2626;font-weight:700">&#x2717; Deactivated (only 18 trades)</td></tr>
+      </tbody>
+    </table>
+    <p>Even though FX_MOMENTUM has a great hit rate (61%), it only has 18 trades. That's not enough data to be confident &mdash; it could just be luck.</p>
+  </div>
+
+  <h3>Maturity Stages</h3>
+
+  <p>MIP tracks how much data it has for each pattern/symbol combination using four maturity stages:</p>
+
+  <div class="gauge">
+    <div class="gauge-bar">
+      <div class="gauge-fill" style="width:100%; background: linear-gradient(to right, #ef4444 0%, #ef4444 25%, #f59e0b 25%, #f59e0b 50%, #3b82f6 50%, #3b82f6 75%, #22c55e 75%, #22c55e 100%)"></div>
+    </div>
+    <div class="gauge-labels">
+      <span>INSUFFICIENT<br>&lt; 25 signals</span>
+      <span>WARMING UP<br>25&ndash;49</span>
+      <span>LEARNING<br>50&ndash;74</span>
+      <span>CONFIDENT<br>75+</span>
+    </div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Maturity in Practice</div>
+    <table>
+      <thead><tr><th>Symbol</th><th>Pattern</th><th>Signals</th><th>Maturity</th><th>What It Means</th></tr></thead>
+      <tbody>
+        <tr><td>AAPL</td><td>MOMENTUM_FAST</td><td>92</td><td style="color:#16a34a">CONFIDENT</td><td>Plenty of data. MIP can make informed judgments.</td></tr>
+        <tr><td>MSFT</td><td>MOMENTUM_FAST</td><td>67</td><td style="color:#3b82f6">LEARNING</td><td>Good data. Trends are becoming visible.</td></tr>
+        <tr><td>GBP/USD</td><td>FX_MOMENTUM</td><td>31</td><td style="color:#f59e0b">WARMING UP</td><td>Accumulating data, but not enough to be confident.</td></tr>
+        <tr><td>BTC/USD</td><td>MOMENTUM_FAST</td><td>8</td><td style="color:#ef4444">INSUFFICIENT</td><td>Just started. Way too early to tell anything.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 6 ═══════════════════ -->
+<div class="chapter" id="ch6">
+  <div class="chapter-number">Chapter 6</div>
+  <h2>Trust &mdash; How MIP Decides What to Act On</h2>
+
+  <div class="analogy">
+    <div class="analogy-title">Analogy: Two Weather Forecasters</div>
+    <p><strong>Forecaster A</strong> has been working for 10 years, made thousands of predictions, and is right 62% of the time.</p>
+    <p><strong>Forecaster B</strong> just started last week, made 4 predictions, and was right on all 4.</p>
+    <p><strong>Which one do you trust more?</strong> Most people would say Forecaster A. Four predictions could easily be luck. MIP faces the same dilemma and solves it with a structured trust system.</p>
+  </div>
+
+  <h3>Three Trust Levels</h3>
+
+  <div class="status-grid">
+    <div class="status-card status-card--green">
+      <h4>TRUSTED</h4>
+      <p>Proven track record. Enough data, high hit rate, positive returns.</p>
+      <p><strong>Action:</strong> MIP uses these signals for trading.</p>
+    </div>
+    <div class="status-card status-card--amber">
+      <h4>WATCH</h4>
+      <p>Shows promise but doesn't yet meet all criteria.</p>
+      <p><strong>Action:</strong> MIP monitors but doesn't trade on them.</p>
+    </div>
+    <div class="status-card status-card--red">
+      <h4>UNTRUSTED</h4>
+      <p>Not reliable enough, or insufficient data to judge.</p>
+      <p><strong>Action:</strong> Ignored for trading purposes.</p>
+    </div>
+  </div>
+
+  <h3>The Training Gate: What It Takes to Be Trusted</h3>
+
+  <table>
+    <thead><tr><th>Requirement</th><th>Threshold</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Enough signals evaluated</strong></td><td>&ge; 40</td><td>Need a meaningful sample size. A few lucky wins aren't enough.</td></tr>
+      <tr><td><strong>Hit rate</strong></td><td>&ge; 55%</td><td>Must be right more often than wrong.</td></tr>
+      <tr><td><strong>Average return</strong></td><td>&ge; 0.05%</td><td>On average, following the signal must produce a positive result.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Which Patterns Earn Trust?</div>
+    <table>
+      <thead><tr><th>Pattern</th><th>Signals</th><th>Hit Rate</th><th>Avg Return</th><th>Trust Level</th></tr></thead>
+      <tbody>
+        <tr><td>STOCK_MOMENTUM_FAST</td><td>85</td><td>58%</td><td>+0.42%</td><td style="color:#16a34a;font-weight:700">TRUSTED &#x2713;</td></tr>
+        <tr><td>ETF_MOMENTUM_SLOW</td><td>52</td><td>56%</td><td>+0.11%</td><td style="color:#16a34a;font-weight:700">TRUSTED &#x2713;</td></tr>
+        <tr><td>FX_MOMENTUM_DAILY</td><td>45</td><td>54%</td><td>+0.08%</td><td style="color:#f59e0b;font-weight:700">WATCH (hit rate 54% &lt; 55%)</td></tr>
+        <tr><td>STOCK_MOMENTUM_SLOW</td><td>12</td><td>67%</td><td>+1.2%</td><td style="color:#f59e0b;font-weight:700">WATCH (only 12 signals)</td></tr>
+      </tbody>
+    </table>
+    <p>STOCK_MOMENTUM_SLOW looks amazing (67% hit rate, 1.2% average return!) but it only has 12 signals. That's not enough to be confident &mdash; it could be a lucky streak. MIP wisely keeps it on WATCH until more data accumulates.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-title">Why Trust Matters</div>
+    <p>Trust is the gatekeeper between <em>"MIP noticed something"</em> and <em>"MIP acts on it."</em> Only TRUSTED signals feed into portfolio decisions, trade proposals, and morning briefs. This prevents MIP from betting (even virtual money) on unproven patterns.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 7 ═══════════════════ -->
+<div class="chapter" id="ch7">
+  <div class="chapter-number">Chapter 7</div>
+  <h2>Portfolios &mdash; Simulated Investing</h2>
+
+  <h3>What Is a Portfolio?</h3>
+  <p>A <strong>portfolio</strong> is a virtual investment account. MIP starts it with a fixed amount of virtual cash and then simulates buying and selling assets based on trusted signals.</p>
+
+  <h3>Portfolio Profiles: Risk Rules</h3>
+  <p>Every portfolio is linked to a <strong>risk profile</strong> &mdash; a set of rules that define how much risk is allowed. Think of it as the portfolio's <em>personality</em>.</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Three Investors, Three Profiles</div>
+    <table>
+      <thead>
+        <tr><th>Setting</th><th>PRIVATE SAVINGS<br>(Conservative)</th><th>LOW RISK<br>(Moderate)</th><th>HIGH RISK<br>(Aggressive)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Max positions</strong></td><td>5 assets</td><td>8 assets</td><td>15 assets</td></tr>
+        <tr><td><strong>Max per position</strong></td><td>5% of cash</td><td>8% of cash</td><td>15% of cash</td></tr>
+        <tr><td><strong>Drawdown stop</strong></td><td>10%</td><td>15%</td><td>30%</td></tr>
+        <tr><td><strong>Bust threshold</strong></td><td>60% of start</td><td>50% of start</td><td>35% of start</td></tr>
+        <tr><td><strong>Analogy</strong></td><td>Savings account<br>attitude</td><td>Balanced investor</td><td>Aggressive<br>trader</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Understanding Drawdown</h3>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: How Drawdown Works</div>
+    <p>Your portfolio starts at $100,000 and grows to $120,000 over a few weeks. That $120,000 is your <strong>peak</strong>.</p>
+    <p>Then the market dips and your portfolio drops to $108,000.</p>
+    <div class="math-box">
+      Drawdown = ($120,000 &minus; $108,000) / $120,000 = <strong>10%</strong>
+    </div>
+    <p>Notice: you're still <em>up</em> $8,000 from the start! But drawdown measures the drop from the <em>highest point</em>, not the starting point. It captures the pain of watching gains evaporate.</p>
+    <p>If your profile has a 10% drawdown stop, MIP will now <strong>stop making new purchases</strong>. It can still sell existing positions, but no new buying until conditions improve.</p>
+  </div>
+
+  <h3>How Simulation Works: A Day-by-Day Walkthrough</h3>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: A Week in Portfolio "Conservative Growth"</div>
+    <p><strong>Setup:</strong> Starting cash $100,000, PRIVATE_SAVINGS profile (max 5 positions, 5% per position, 10% drawdown stop).</p>
+
+    <div class="timeline">
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Monday: Two Trusted Signals</div>
+        <div class="timeline-desc">
+          MIP finds trusted signals for AAPL (score 0.035) and MSFT (score 0.022).<br>
+          <strong>BUY</strong> AAPL: 25 shares @ $198.40 = $4,960 (5% of cash)<br>
+          <strong>BUY</strong> MSFT: 12 shares @ $415.20 = $4,982 (5% of cash)<br>
+          Cash remaining: $90,058. Positions: 2 of 5.
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-label">Tuesday: No New Signals</div>
+        <div class="timeline-desc">
+          No assets meet the pattern criteria today. MIP marks-to-market:<br>
+          AAPL up to $200.10, MSFT flat at $415.50.<br>
+          Portfolio equity: $90,058 + $5,003 + $4,986 = <strong>$100,047</strong>. A small up day.
+        </div>
+      </div>
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Wednesday: One More Signal</div>
+        <div class="timeline-desc">
+          Trusted signal for SPY (score 0.018).<br>
+          <strong>BUY</strong> SPY: 10 shares @ $498.30 = $4,983<br>
+          Cash remaining: $85,075. Positions: 3 of 5.
+        </div>
+      </div>
+      <div class="timeline-item timeline-item--red">
+        <div class="timeline-label">Thursday: Market Dip</div>
+        <div class="timeline-desc">
+          Broad market sells off. All three positions drop.<br>
+          Portfolio equity falls to <strong>$98,420</strong>.<br>
+          Peak was $100,047. Drawdown: 1.6%. Under the 10% stop &mdash; still trading normally.
+        </div>
+      </div>
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Friday: Holding Period Ends for AAPL</div>
+        <div class="timeline-desc">
+          AAPL's 5-day holding period is up. MIP sells.<br>
+          <strong>SELL</strong> AAPL: 25 shares @ $201.30. Realized P&amp;L: <strong>+$72.50</strong><br>
+          Cash back to $90,108. Positions: 2 of 5.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Key Portfolio Metrics</h3>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-val">$100,000</div>
+      <div class="kpi-label">Starting Cash</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--up">$108,500</div>
+      <div class="kpi-label">Final Equity</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--up">+8.5%</div>
+      <div class="kpi-label">Total Return</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--down">-6.2%</div>
+      <div class="kpi-label">Max Drawdown</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--up">47</div>
+      <div class="kpi-label">Win Days</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-val kpi-val--down">38</div>
+      <div class="kpi-label">Loss Days</div>
+    </div>
+  </div>
+
+  <h3>Episodes and Crystallization</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Analogy: Chapters in a Book</div>
+    <p>A portfolio's life is divided into <strong>episodes</strong> &mdash; like chapters. Each chapter has its own story. A new chapter starts when MIP locks in profits (crystallization), after a risk event, or when the user resets.</p>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Crystallization in Action</div>
+    <p><strong>Setup:</strong> Profit target set to 15%. Portfolio starts Episode 1 at $100,000.</p>
+    <div class="timeline">
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Week 1&ndash;8: Growth Phase</div>
+        <div class="timeline-desc">Portfolio grows steadily. Current equity: $115,200.</div>
+      </div>
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Week 9: Profit Target Hit!</div>
+        <div class="timeline-desc">
+          Equity reaches $115,200 &mdash; that's a 15.2% return, above the 15% target.<br>
+          <strong>Crystallization triggers:</strong>
+          <ul>
+            <li>Episode 1 ends. $15,200 profit is "paid out" (recorded).</li>
+            <li>Episode 2 begins with the base amount.</li>
+            <li>A 5-day cooldown starts &mdash; no new trades allowed.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="timeline-item timeline-item--amber">
+        <div class="timeline-label">Week 9&ndash;10: Cooldown</div>
+        <div class="timeline-desc">MIP sits on its hands for 5 days. No new purchases.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-label">Week 10+: Episode 2 Begins</div>
+        <div class="timeline-desc">Cooldown ends. Trading resumes with fresh metrics.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 8 ═══════════════════ -->
+<div class="chapter" id="ch8">
+  <div class="chapter-number">Chapter 8</div>
+  <h2>The Daily Pipeline and Advanced Features</h2>
+
+  <h3>The Daily Pipeline: MIP's Assembly Line</h3>
+
+  <div class="diagram">
+    <div class="diagram-title">The 8-Step Daily Pipeline</div>
+    <div class="vflow">
+      <div class="vflow-step"><span class="num">1</span> <strong>Ingest</strong> &mdash; Download fresh market data</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><span class="num">2</span> <strong>Returns</strong> &mdash; Calculate how each asset moved</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><span class="num">3</span> <strong>Signals</strong> &mdash; Run pattern rules, generate new signals</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><span class="num">4</span> <strong>Evaluate</strong> &mdash; Check past signals: did they work?</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><span class="num">5</span> <strong>Simulate</strong> &mdash; Run portfolio simulations</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><span class="num">6</span> <strong>Propose</strong> &mdash; Agent suggests new trades</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><span class="num">7</span> <strong>Execute</strong> &mdash; Validate and paper-execute trades</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step vflow-step--highlight"><span class="num">8</span> <strong>Brief</strong> &mdash; Generate morning briefs</div>
+    </div>
+  </div>
+
+  <h3>Risk Gates: Traffic Lights for Trading</h3>
+
+  <div class="status-grid">
+    <div class="status-card status-card--green">
+      <h4>&#x1F7E2; Normal</h4>
+      <p>Everything is fine. The portfolio can buy and sell freely.</p>
+    </div>
+    <div class="status-card status-card--amber">
+      <h4>&#x1F7E1; Caution</h4>
+      <p>Drawdown is approaching the stop level. Trading continues, but MIP is watching closely.</p>
+    </div>
+    <div class="status-card status-card--red">
+      <h4>&#x1F534; Defensive</h4>
+      <p>Drawdown hit the stop, or portfolio bust. <strong>No new buying</strong> &mdash; only selling allowed.</p>
+    </div>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Risk Gate in Action</div>
+    <p><strong>Portfolio:</strong> "Balanced Growth" with 10% drawdown stop.</p>
+    <div class="timeline">
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Day 1&ndash;30: Normal</div>
+        <div class="timeline-desc">Portfolio grows from $100,000 to $112,000. Peak equity = $112,000. Drawdown = 0%. Gate: <strong>Normal</strong>.</div>
+      </div>
+      <div class="timeline-item timeline-item--amber">
+        <div class="timeline-label">Day 31&ndash;35: Market Correction</div>
+        <div class="timeline-desc">Portfolio drops to $103,000. Drawdown = ($112,000 &minus; $103,000) / $112,000 = <strong>8%</strong>. Gate: <strong>Caution</strong>.</div>
+      </div>
+      <div class="timeline-item timeline-item--red">
+        <div class="timeline-label">Day 36: Drawdown Stop Hit</div>
+        <div class="timeline-desc">Portfolio drops to $100,800. Drawdown = <strong>10%</strong>. Gate switches to <strong>Defensive</strong>. No new purchases allowed. MIP can only sell existing positions to reduce exposure.</div>
+      </div>
+      <div class="timeline-item timeline-item--green">
+        <div class="timeline-label">Day 42: Recovery</div>
+        <div class="timeline-desc">All positions are sold. Market recovers. Gate returns to <strong>Normal</strong> when drawdown conditions clear.</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Trade Proposals: The Agent's Suggestions</h3>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: From Signal to Paper Trade</div>
+    <p>Here's how a signal becomes a paper trade:</p>
+    <div class="vflow">
+      <div class="vflow-step"><strong>Signal:</strong> AAPL momentum detected, score 0.035</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Trust check:</strong> Is STOCK_MOMENTUM_FAST trusted? &rarr; Yes (58% hit rate, 85 signals)</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Proposal created:</strong> "Buy AAPL, target weight 5%" with rationale and signal snapshot</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step"><strong>Validation:</strong> Risk gate open? Yes. Portfolio has capacity? Yes (3/5 positions). Already hold AAPL? No.</div>
+      <div class="vflow-arrow">&#x25BC;</div>
+      <div class="vflow-step vflow-step--highlight"><strong>Executed:</strong> BUY 25 shares AAPL @ $198.40. Cash: $95,040 &rarr; $90,080</div>
+    </div>
+  </div>
+
+  <h3>Parallel Worlds: "What If?" Scenarios</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Analogy: Choosing a Route to Work</div>
+    <p>Imagine you take Route A to work every day. Parallel Worlds is like having a GPS that also tracks Route B, Route C, and "staying home." At the end of the month, you can compare: <em>"Would I have been faster on Route B?"</em></p>
+  </div>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: Parallel World Comparison</div>
+    <table>
+      <thead><tr><th>Scenario</th><th>Type</th><th>What Changed</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><strong>ACTUAL</strong></td><td>Baseline</td><td>Nothing &mdash; what really happened</td><td style="color:#16a34a">+8.5% return</td></tr>
+        <tr><td>Stricter Threshold</td><td>THRESHOLD</td><td>Higher minimum return to buy</td><td>+6.2% (fewer trades, missed some winners)</td></tr>
+        <tr><td>Larger Positions</td><td>SIZING</td><td>125% of normal position size</td><td style="color:#16a34a">+11.3% (more exposure, more gains)</td></tr>
+        <tr><td>Delayed Entry</td><td>TIMING</td><td>Wait 1 day before buying</td><td>+7.1% (missed some initial momentum)</td></tr>
+        <tr><td><strong>Do Nothing</strong></td><td>BASELINE</td><td>Zero trades, cash only</td><td style="color:#6b7280">0.0% (just sat in cash)</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Key insight:</strong> The actual strategy (+8.5%) outperformed doing nothing (0%) and most alternatives, but larger positions (+11.3%) would have done even better. This suggests the strategy works but could be more aggressive.</p>
+  </div>
+
+  <div class="important">
+    <div class="important-title">Paper Trading Reminder</div>
+    <p>Everything in MIP is <strong>paper trading</strong>. All money is virtual. All trades are simulated. No real financial transactions occur. No broker is involved. The results represent what <em>would</em> have happened, not actual financial gains or losses.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════ CHAPTER 9 ═══════════════════ -->
+<div class="chapter" id="ch9">
+  <div class="chapter-number">Chapter 9</div>
+  <h2>Using the MIP Dashboard</h2>
+
+  <p>MIP comes with a web-based dashboard. Here's a tour of what each screen shows and when to use it.</p>
+
+  <table>
+    <thead><tr><th>Screen</th><th>What It Shows</th><th>When to Use It</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Home</strong></td>
+        <td>System health: last pipeline run, new evaluations, quick action cards</td>
+        <td>First thing &mdash; check if MIP is running normally</td>
+      </tr>
+      <tr>
+        <td><strong>Cockpit</strong></td>
+        <td>Daily command center: market pulse, system digest, signal candidates, portfolio intelligence, training progress</td>
+        <td>Every day &mdash; your primary "what's happening?" view</td>
+      </tr>
+      <tr>
+        <td><strong>Portfolio</strong></td>
+        <td>Equity charts, drawdown charts, trades, positions, risk gate status for each portfolio</td>
+        <td>When you want to deep-dive into a specific portfolio's performance</td>
+      </tr>
+      <tr>
+        <td><strong>Training Status</strong></td>
+        <td>Maturity stages, sample sizes, coverage, returns at each horizon per pattern/symbol</td>
+        <td>To see how confident MIP is in each pattern</td>
+      </tr>
+      <tr>
+        <td><strong>Suggestions</strong></td>
+        <td>Ranked opportunities: Strong Candidates (10+ recs) and Early Signals (3&ndash;9)</td>
+        <td>To find the most promising signal opportunities</td>
+      </tr>
+      <tr>
+        <td><strong>Signals</strong></td>
+        <td>Searchable list of all detected signals with trust levels and filters</td>
+        <td>To browse individual signals and understand why MIP flagged specific assets</td>
+      </tr>
+      <tr>
+        <td><strong>Market Timeline</strong></td>
+        <td>Per-symbol history: price chart with signal/proposal/trade overlays</td>
+        <td>To see MIP's complete history with a specific asset</td>
+      </tr>
+      <tr>
+        <td><strong>Audit Viewer</strong></td>
+        <td>Pipeline run logs: status, duration, step-by-step breakdown</td>
+        <td>To diagnose pipeline issues or see what happened during a run</td>
+      </tr>
+      <tr>
+        <td><strong>Manage</strong></td>
+        <td>Create/edit portfolios, risk profiles, deposits/withdrawals, lifecycle events</td>
+        <td>When you want to set up or adjust a portfolio</td>
+      </tr>
+      <tr>
+        <td><strong>Parallel Worlds</strong></td>
+        <td>Counterfactual scenarios, regret analysis, equity curve comparisons</td>
+        <td>To evaluate whether your strategy is optimal</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: A Typical Morning Check-In</div>
+    <p>You open MIP at 8:00 AM to see what happened overnight.</p>
+    <p><span class="num">1</span> <strong>Home:</strong> "Last Pipeline Run: 45 minutes ago" &mdash; good, it ran this morning.</p>
+    <p><span class="num">2</span> <strong>Cockpit:</strong> Market Pulse shows "Markets Up &mdash; 5 of 7 symbols gained." Two new signal candidates for AAPL and QQQ. Training digest notes MSFT just moved from LEARNING to CONFIDENT.</p>
+    <p><span class="num">3</span> <strong>Portfolio:</strong> Your "Conservative Growth" portfolio is up 0.3% today. No risk warnings. One open position in SPY about to reach its sell date.</p>
+    <p><span class="num">4</span> <strong>Suggestions:</strong> AAPL is ranked #1 with a strong suggestion score of 82. You click to see the full evidence.</p>
+    <p><span class="num">5</span> Total time: <strong>3 minutes</strong>. You now know exactly what MIP did overnight and what to watch today.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════ GLOSSARY ═══════════════════ -->
+<div class="chapter" id="glossary">
+  <div class="chapter-number">Appendix A</div>
+  <h2>Glossary</h2>
+
+  <div class="glossary-grid">
+    <div class="glossary-item">
+      <dt>Backtest</dt>
+      <dd>Replaying historical data to evaluate how a pattern would have performed in the past.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Bar (OHLCV)</dt>
+      <dd>A summary of price activity in one time period: Open, High, Low, Close, Volume.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Bust</dt>
+      <dd>When portfolio value drops below a critical threshold, triggering emergency rules.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Cost Basis</dt>
+      <dd>The average price paid for a position, including fees. Used to calculate profit or loss.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Coverage</dt>
+      <dd>The fraction of signals that have been fully evaluated. High coverage = complete picture.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Crystallization</dt>
+      <dd>Locking in profits when a target is reached. Ends the current episode and starts a cooldown.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Drawdown</dt>
+      <dd>How far a portfolio has fallen from its peak value, as a percentage.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Drawdown Stop</dt>
+      <dd>A rule that blocks new purchases when drawdown exceeds a set threshold.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Entry Gate</dt>
+      <dd>The mechanism controlling whether new purchases are allowed. Can be "open" or "closed."</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Episode</dt>
+      <dd>A chapter in a portfolio's life, with its own start, end, and performance metrics.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Equity</dt>
+      <dd>Total portfolio value: cash + market value of all positions.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>ETF</dt>
+      <dd>Exchange-Traded Fund &mdash; a bundle of assets traded as one security.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Hit Flag</dt>
+      <dd>Yes/no: did a signal's return meet the minimum threshold? (Default: &ge; 0%)</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Hit Rate</dt>
+      <dd>Percentage of signals that were "hits." MIP requires &ge; 55% for trust.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Horizon</dt>
+      <dd>Number of future days at which MIP checks a signal's outcome (1, 3, 5, 10, or 20 days).</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Ingestion</dt>
+      <dd>Downloading and storing fresh market data from the data provider.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Learning Cycle</dt>
+      <dd>The full feedback loop: generate signals &rarr; evaluate &rarr; backtest &rarr; update patterns.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Maturity</dt>
+      <dd>How much data MIP has for a pattern/symbol. Stages: Insufficient, Warming Up, Learning, Confident.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Max Drawdown</dt>
+      <dd>The largest peak-to-trough decline at any point in a portfolio's history.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Momentum</dt>
+      <dd>A pattern based on the idea that assets going up tend to keep going up short-term.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Morning Brief</dt>
+      <dd>Daily summary for each portfolio: signals, risk, performance, trades, attribution.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Outcome</dt>
+      <dd>The measured result of a signal at a horizon: entry/exit price, return, hit flag.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Paper Trading</dt>
+      <dd>Simulated trading with virtual money. No real transactions occur.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Parallel Worlds</dt>
+      <dd>"What if" scenarios testing alternative rules alongside actual results.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Pattern</dt>
+      <dd>A set of rules that examines price data to flag potentially interesting opportunities.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Pipeline</dt>
+      <dd>The automated 8-step sequence MIP runs daily: ingest &rarr; returns &rarr; signals &rarr; ... &rarr; briefs.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Portfolio</dt>
+      <dd>A virtual investment account with starting cash, risk profile, and trade history.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Position</dt>
+      <dd>A holding in a specific asset (e.g., 25 shares of AAPL).</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Proposal</dt>
+      <dd>A suggested trade from MIP's agent, pending validation before execution.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Realized Return</dt>
+      <dd>The actual % gain or loss after selling &mdash; entry price to exit price.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Return</dt>
+      <dd>The % change in price over a period. +3% means the price went up 3%.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Risk Gate</dt>
+      <dd>Traffic light system: Normal (green), Caution (yellow), Defensive (red).</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Risk Profile</dt>
+      <dd>A reusable template of risk rules assigned to portfolios.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Run ID</dt>
+      <dd>A unique identifier for each pipeline execution, used for traceability.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Score</dt>
+      <dd>A number indicating signal strength. Higher = stronger price movement detected.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Signal</dt>
+      <dd>A detected opportunity: "Pattern X found something in asset Y at time Z."</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Simulation</dt>
+      <dd>Replaying market data through a portfolio as if trades were real.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Slippage</dt>
+      <dd>The small price difference between deciding to trade and actual execution.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Strict Lookahead</dt>
+      <dd>Rule: only use data from AFTER the signal. No peeking at future data.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Trust</dt>
+      <dd>Reliability classification: Trusted (proven), Watch (promising), Untrusted (unproven).</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Universe</dt>
+      <dd>The configured set of symbols MIP tracks and analyzes.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Z-Score</dt>
+      <dd>How unusual a value is vs. normal. Z-score of 2 = twice as far from average as typical.</dd>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ FAQ ═══════════════════ -->
+<div class="chapter" id="faq">
+  <div class="chapter-number">Appendix B</div>
+  <h2>Frequently Asked Questions</h2>
+
+  <div class="faq">
+    <div class="faq-q">Is MIP trading with real money?</div>
+    <div class="faq-a">
+      <p><strong>No.</strong> MIP is a paper trading system. All money is virtual, all trades are simulated, and no real financial transactions occur. MIP has no connection to any broker or exchange.</p>
+    </div>
+
+    <div class="faq-q">Can MIP lose my money?</div>
+    <div class="faq-a">
+      <p><strong>No.</strong> There is nothing real to lose. A portfolio going "bust" means its virtual value dropped below a threshold &mdash; a learning experience, not a financial loss.</p>
+    </div>
+
+    <div class="faq-q">How accurate are the signals?</div>
+    <div class="faq-a">
+      <p>It depends on the pattern, the asset, and market conditions. A pattern with a 60% hit rate is "right" about 60% of the time. MIP's trust system ensures only patterns with demonstrated accuracy (55%+) are used for trading decisions.</p>
+    </div>
+
+    <div class="faq-q">What happens when a pattern stops working?</div>
+    <div class="faq-a">
+      <p>MIP catches it automatically. During training, if a pattern's hit rate drops below 55% or its cumulative return turns negative, MIP deactivates it. No more signals from that pattern until performance improves.</p>
+    </div>
+
+    <div class="faq-q">Why does MIP need 40+ signals before trusting a pattern?</div>
+    <div class="faq-a">
+      <p><strong>Statistical significance.</strong> If you flip a coin 5 times and get heads 4 times (80%), you wouldn't conclude the coin is rigged &mdash; that could easily be luck. But 550 heads out of 1,000 flips (55%) is much more convincing. MIP's threshold ensures decisions are based on evidence, not coincidence.</p>
+    </div>
+
+    <div class="faq-q">What is the difference between a signal and a trade?</div>
+    <div class="faq-a">
+      <p>A <strong>signal</strong> is a detection: <em>"This asset meets the criteria."</em> A <strong>trade</strong> is an action: <em>"Buy this asset."</em> Signals must earn trust, survive capacity limits, and pass risk checks before becoming trades. Many signals never become trades.</p>
+    </div>
+
+    <div class="faq-q">What does "drawdown" really mean in practical terms?</div>
+    <div class="faq-a">
+      <p>Imagine your portfolio grew from $100K to $120K, then dropped to $108K. Your drawdown is 10% &mdash; measured from the <em>peak</em> ($120K), not the start ($100K). You're still up $8K overall, but drawdown captures the pain of watching $12K in gains shrink to $8K.</p>
+    </div>
+
+    <div class="faq-q">Can different portfolios trade on the same signal?</div>
+    <div class="faq-a">
+      <p><strong>Yes.</strong> Each portfolio applies its own risk rules independently. The same AAPL signal might trigger a trade in one portfolio but not another (because the second is full, or its risk gate is blocking).</p>
+    </div>
+
+    <div class="faq-q">How does MIP handle weekends and holidays?</div>
+    <div class="faq-a">
+      <p>Markets are closed on weekends and holidays, so no new bars exist. MIP carries forward the last available closing price when needed. The pipeline only processes days where market data actually exists.</p>
+    </div>
+
+    <div class="faq-q">Can I create my own patterns?</div>
+    <div class="faq-a">
+      <p>Yes. Patterns are configured through definitions with adjustable parameters (lookback windows, minimum returns, z-score thresholds). Add a new definition, and MIP will automatically start generating signals, evaluating outcomes, and building a track record for it.</p>
+    </div>
+
+    <div class="faq-q">What's the difference between the simulation and the proposal system?</div>
+    <div class="faq-a">
+      <p>The <strong>simulation</strong> replays the entire portfolio history from start to finish. The <strong>proposal system</strong> operates on today only: it looks at today's signals, suggests trades, validates them, and executes. Simulation = big picture replay. Proposals = "what should we do right now?"</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ BACK COVER ═══════════════════ -->
+<div class="cover" style="min-height: 40vh;">
+  <p class="subtitle">This handbook is a living document.<br>As MIP evolves with new features, this guide will be updated to reflect them.</p>
+  <div class="edition">
+    Market Intelligence Platform &bull; mip_0.7<br>
+    Generated February 2026
+  </div>
+</div>
+
+</div><!-- .content -->
+</body>
+</html>

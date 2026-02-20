@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceLine, Cell,
+} from 'recharts'
 import { API_BASE } from '../App'
 import IntradaySignalChart from './IntradaySignalChart'
 import './IntradayDashboard.css'
@@ -116,6 +120,147 @@ function getStabilityDrift(stabilityRows, patternType) {
   return match?.HIT_RATE_DRIFT ?? null
 }
 
+/* ── Intraday Market Pulse ───────────────────────────── */
+
+function DirectionBadge({ direction }) {
+  const map = {
+    UP:      { label: 'Session Up', cls: 'id-dir--up', icon: '▲' },
+    DOWN:    { label: 'Session Down', cls: 'id-dir--down', icon: '▼' },
+    MIXED:   { label: 'Mixed', cls: 'id-dir--mixed', icon: '◆' },
+    NO_DATA: { label: 'No Data', cls: 'id-dir--neutral', icon: '—' },
+  }
+  const d = map[direction] || map.NO_DATA
+  return <span className={`id-dir-badge ${d.cls}`}>{d.icon} {d.label}</span>
+}
+
+function IntradayTopMovers({ symbols }) {
+  if (!symbols?.length) return null
+  const withReturn = symbols.filter(s => s.session_return != null)
+  const top3 = withReturn.slice(0, 3)
+  const bottom3 = withReturn.slice(-3).reverse()
+  if (!top3.length && !bottom3.length) return null
+
+  return (
+    <div className="id-mp-movers">
+      <div className="id-mp-movers-group">
+        <h4 className="id-mp-movers-label id-mp-movers-label--up">Top Gainers</h4>
+        {top3.map((s, i) => (
+          <div key={i} className="id-mp-mover id-mp-mover--up">
+            <span className="id-mp-mover-sym">{s.symbol}</span>
+            <span className="id-mp-mover-ret">+{(s.session_return * 100).toFixed(2)}%</span>
+          </div>
+        ))}
+      </div>
+      <div className="id-mp-movers-group">
+        <h4 className="id-mp-movers-label id-mp-movers-label--down">Top Losers</h4>
+        {bottom3.map((s, i) => (
+          <div key={i} className="id-mp-mover id-mp-mover--down">
+            <span className="id-mp-mover-sym">{s.symbol}</span>
+            <span className="id-mp-mover-ret">{(s.session_return * 100).toFixed(2)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function IntradayReturnChart({ symbols }) {
+  if (!symbols?.length) return null
+  const data = symbols
+    .filter(s => s.session_return != null)
+    .map(s => ({ symbol: s.symbol, return_pct: +(s.session_return * 100).toFixed(2) }))
+    .sort((a, b) => b.return_pct - a.return_pct)
+  if (!data.length) return null
+
+  return (
+    <div className="id-mp-chart">
+      <h4 className="id-mp-chart-title">Session Returns by Symbol</h4>
+      <ResponsiveContainer width="100%" height={Math.max(200, data.length * 24)}>
+        <BarChart data={data} layout="vertical" margin={{ left: 50, right: 20, top: 5, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis type="number" tickFormatter={v => `${v}%`} fontSize={11} />
+          <YAxis type="category" dataKey="symbol" width={50} fontSize={11} tick={{ fill: '#495057' }} />
+          <Tooltip formatter={v => [`${v}%`, 'Return']} />
+          <ReferenceLine x={0} stroke="#adb5bd" />
+          <Bar dataKey="return_pct" radius={[0, 3, 3, 0]}>
+            {data.map((entry, i) => (
+              <Cell key={i} fill={entry.return_pct >= 0 ? '#198754' : '#dc3545'} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function IntradayMarketPulse({ pulse }) {
+  if (!pulse) return null
+  const agg = pulse.aggregate || {}
+  const symbols = pulse.symbols || []
+  const sessionDate = pulse.session_date
+  const isToday = pulse.is_today
+
+  if (agg.direction === 'NO_DATA') {
+    return (
+      <section className="id-card id-mp">
+        <h3 className="id-card-title">Intraday Market Pulse</h3>
+        <p className="id-empty">No intraday bar data yet. Pulse will appear after the pipeline ingests 15-min bars.</p>
+      </section>
+    )
+  }
+
+  const dateLabel = sessionDate
+    ? new Date(sessionDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    : '—'
+
+  return (
+    <section className="id-card id-mp">
+      <div className="id-mp-header">
+        <h3 className="id-card-title">Intraday Market Pulse</h3>
+        <div className="id-mp-badges">
+          <span className={`id-mp-session-badge ${isToday ? 'id-mp-session--live' : 'id-mp-session--prev'}`}>
+            {isToday ? 'Live Session' : 'Previous Session'}
+          </span>
+          <span className="id-mp-date">{dateLabel}</span>
+          <DirectionBadge direction={agg.direction} />
+        </div>
+      </div>
+
+      <div className="id-mp-kpi-strip">
+        <div className="id-mp-kpi">
+          <span className="id-mp-kpi-val id-positive">{agg.up_count}</span>
+          <span className="id-mp-kpi-label">Up</span>
+        </div>
+        <div className="id-mp-kpi">
+          <span className="id-mp-kpi-val id-negative">{agg.down_count}</span>
+          <span className="id-mp-kpi-label">Down</span>
+        </div>
+        <div className="id-mp-kpi">
+          <span className="id-mp-kpi-val">{agg.flat_count}</span>
+          <span className="id-mp-kpi-label">Flat</span>
+        </div>
+        <div className="id-mp-kpi">
+          <span className={`id-mp-kpi-val ${agg.avg_return_pct >= 0 ? 'id-positive' : 'id-negative'}`}>
+            {agg.avg_return_pct >= 0 ? '+' : ''}{agg.avg_return_pct}%
+          </span>
+          <span className="id-mp-kpi-label">Avg Return</span>
+        </div>
+        <div className="id-mp-kpi">
+          <span className="id-mp-kpi-val">{agg.breadth_pct}%</span>
+          <span className="id-mp-kpi-label">Breadth</span>
+        </div>
+        <div className="id-mp-kpi">
+          <span className="id-mp-kpi-val">{agg.total_symbols}</span>
+          <span className="id-mp-kpi-label">Symbols</span>
+        </div>
+      </div>
+
+      <IntradayTopMovers symbols={symbols} />
+      <IntradayReturnChart symbols={symbols} />
+    </section>
+  )
+}
+
 /* ── Main Component ──────────────────────────────────── */
 
 export default function IntradayDashboard() {
@@ -123,6 +268,7 @@ export default function IntradayDashboard() {
   const [trust, setTrust] = useState(null)
   const [stability, setStability] = useState(null)
   const [excursion, setExcursion] = useState(null)
+  const [pulse, setPulse] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showDiagnostics, setShowDiagnostics] = useState(() => {
     try { return localStorage.getItem('mip_intraday_diagnostics') === '1' } catch { return false }
@@ -149,12 +295,14 @@ export default function IntradayDashboard() {
       fetch(`${API_BASE}/training/intraday/trust-scoreboard`).then(r => r.ok ? r.json() : null),
       fetch(`${API_BASE}/training/intraday/pattern-stability`).then(r => r.ok ? r.json() : null),
       fetch(`${API_BASE}/training/intraday/excursion-stats`).then(r => r.ok ? r.json() : null),
-    ]).then(([pRes, tRes, sRes, eRes]) => {
+      fetch(`${API_BASE}/market/pulse/intraday`).then(r => r.ok ? r.json() : null),
+    ]).then(([pRes, tRes, sRes, eRes, mpRes]) => {
       if (cancelled) return
       setPipeline(pRes.status === 'fulfilled' ? pRes.value : null)
       setTrust(tRes.status === 'fulfilled' ? tRes.value : null)
       setStability(sRes.status === 'fulfilled' ? sRes.value : null)
       setExcursion(eRes.status === 'fulfilled' ? eRes.value : null)
+      setPulse(mpRes.status === 'fulfilled' ? mpRes.value : null)
       setLoading(false)
     })
     return () => { cancelled = true }
@@ -176,6 +324,9 @@ export default function IntradayDashboard() {
 
   return (
     <div className="id-dashboard">
+
+      {/* ═══════════ MARKET PULSE ═══════════ */}
+      <IntradayMarketPulse pulse={pulse} />
 
       {/* ═══════════ LAYER 1: EXECUTIVE SUMMARY ═══════════ */}
 

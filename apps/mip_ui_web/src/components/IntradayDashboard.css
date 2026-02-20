@@ -281,3 +281,125 @@
   border-color: #1565c0;
   color: #1565c0;
 }
+
+/* ═══════════ Intraday Market Pulse ═══════════ */
+
+.id-mp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.id-mp-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.id-mp-session-badge {
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.id-mp-session--live {
+  background: #c8f5d0;
+  color: #0d5c0d;
+}
+.id-mp-session--prev {
+  background: #e8e8e8;
+  color: #666;
+}
+.id-mp-date {
+  font-size: 0.78rem;
+  color: #777;
+  font-weight: 500;
+}
+
+/* Direction badge */
+.id-dir-badge {
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.id-dir--up      { background: #e8f5e9; color: #198754; }
+.id-dir--down    { background: #fbe9e7; color: #dc3545; }
+.id-dir--mixed   { background: #fff8e1; color: #7d5a00; }
+.id-dir--neutral { background: #e8e8e8; color: #666; }
+
+/* KPI strip */
+.id-mp-kpi-strip {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.id-mp-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 60px;
+  padding: 0.35rem 0.6rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #eee;
+}
+.id-mp-kpi-val {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+.id-mp-kpi-label {
+  font-size: 0.66rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Top Movers */
+.id-mp-movers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.id-mp-movers-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.id-mp-movers-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin: 0 0 0.1rem;
+  text-transform: uppercase;
+}
+.id-mp-movers-label--up   { color: #198754; }
+.id-mp-movers-label--down { color: #dc3545; }
+
+.id-mp-mover {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+.id-mp-mover--up   { background: #e8f5e9; }
+.id-mp-mover--down { background: #fbe9e7; }
+.id-mp-mover-sym { font-weight: 600; color: #1a1a2e; }
+.id-mp-mover-ret { font-weight: 600; font-size: 0.78rem; }
+.id-mp-mover--up .id-mp-mover-ret   { color: #198754; }
+.id-mp-mover--down .id-mp-mover-ret { color: #dc3545; }
+
+/* Return chart */
+.id-mp-chart { margin-top: 0.25rem; }
+.id-mp-chart-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #495057;
+  margin: 0 0 0.3rem;
+}

@@ -241,3 +241,185 @@ def _safe_float(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Intraday Market Pulse
+# ---------------------------------------------------------------------------
+
+@router.get("/pulse/intraday")
+def get_intraday_market_pulse():
+    """
+    Intraday Market Pulse — session-level overview of the intraday symbol universe.
+
+    Picks the most recent trading session (today if bars exist, otherwise yesterday).
+    Returns per-symbol session stats, aggregate KPIs, and the session bar series.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        # Find the latest session date with 15-min bars
+        cur.execute(
+            """
+            select max(TS::date) as SESSION_DATE
+            from MIP.MART.MARKET_BARS
+            where INTERVAL_MINUTES = 15
+              and TS >= dateadd('day', -5, current_date())
+            """
+        )
+        row = cur.fetchone()
+        session_date = row[0] if row else None
+
+        if not session_date:
+            return {
+                "session_date": None,
+                "is_today": False,
+                "symbols": [],
+                "aggregate": {
+                    "direction": "NO_DATA",
+                    "total_symbols": 0,
+                    "up_count": 0,
+                    "down_count": 0,
+                    "flat_count": 0,
+                    "avg_return": 0,
+                    "avg_return_pct": 0,
+                    "breadth_pct": 0,
+                },
+                "bars": [],
+            }
+
+        import datetime
+        today = datetime.date.today()
+        is_today = (session_date == today)
+
+        # Per-symbol session stats: open (first bar), close (last bar), high, low, return
+        cur.execute(
+            """
+            with session_bars as (
+                select
+                    SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME,
+                    row_number() over (partition by SYMBOL, MARKET_TYPE order by TS asc)  as rn_first,
+                    row_number() over (partition by SYMBOL, MARKET_TYPE order by TS desc) as rn_last
+                from MIP.MART.MARKET_BARS
+                where INTERVAL_MINUTES = 15
+                  and TS::date = %s
+            )
+            select
+                SYMBOL, MARKET_TYPE,
+                max(case when rn_first = 1 then OPEN end)  as SESSION_OPEN,
+                max(HIGH)                                    as SESSION_HIGH,
+                min(LOW)                                     as SESSION_LOW,
+                max(case when rn_last = 1 then CLOSE end)   as SESSION_CLOSE,
+                max(case when rn_last = 1 then TS end)      as LAST_BAR_TS,
+                sum(VOLUME)                                  as SESSION_VOLUME,
+                count(*)                                     as BAR_COUNT
+            from session_bars
+            group by SYMBOL, MARKET_TYPE
+            order by SYMBOL
+            """,
+            (str(session_date),),
+        )
+        symbol_rows = serialize_rows(fetch_all(cur))
+
+        symbols = []
+        up_count = 0
+        down_count = 0
+        flat_count = 0
+        total_return = 0.0
+        return_count = 0
+
+        for r in symbol_rows:
+            sym = r.get("SYMBOL")
+            mt = r.get("MARKET_TYPE")
+            s_open = _safe_float(r.get("SESSION_OPEN"))
+            s_close = _safe_float(r.get("SESSION_CLOSE"))
+
+            session_return = None
+            if s_open and s_close and s_open != 0:
+                session_return = (s_close - s_open) / s_open
+
+            if session_return is not None:
+                if session_return > 0.0001:
+                    up_count += 1
+                elif session_return < -0.0001:
+                    down_count += 1
+                else:
+                    flat_count += 1
+                total_return += session_return
+                return_count += 1
+            else:
+                flat_count += 1
+
+            symbols.append({
+                "symbol": sym,
+                "market_type": mt,
+                "session_open": s_open,
+                "session_high": _safe_float(r.get("SESSION_HIGH")),
+                "session_low": _safe_float(r.get("SESSION_LOW")),
+                "session_close": s_close,
+                "session_return": round(session_return, 6) if session_return is not None else None,
+                "last_bar_ts": r.get("LAST_BAR_TS"),
+                "session_volume": r.get("SESSION_VOLUME"),
+                "bar_count": r.get("BAR_COUNT"),
+            })
+
+        symbols.sort(key=lambda x: (x.get("session_return") or 0), reverse=True)
+
+        avg_return = (total_return / return_count) if return_count > 0 else 0.0
+        total_symbols = up_count + down_count + flat_count
+
+        if total_symbols == 0:
+            direction = "NO_DATA"
+        elif up_count > down_count * 1.5:
+            direction = "UP"
+        elif down_count > up_count * 1.5:
+            direction = "DOWN"
+        else:
+            direction = "MIXED"
+
+        aggregate = {
+            "direction": direction,
+            "total_symbols": total_symbols,
+            "up_count": up_count,
+            "down_count": down_count,
+            "flat_count": flat_count,
+            "avg_return": round(avg_return, 6),
+            "avg_return_pct": round(avg_return * 100, 2),
+            "breadth_pct": round((up_count / total_symbols * 100) if total_symbols > 0 else 0, 1),
+        }
+
+        # Session bar series (all 15m bars for the session date)
+        cur.execute(
+            """
+            select TS, SYMBOL, MARKET_TYPE, OPEN, HIGH, LOW, CLOSE, VOLUME
+            from MIP.MART.MARKET_BARS
+            where INTERVAL_MINUTES = 15
+              and TS::date = %s
+            order by TS, SYMBOL
+            """,
+            (str(session_date),),
+        )
+        bar_rows = serialize_rows(fetch_all(cur))
+
+        bars = []
+        for r in bar_rows:
+            bars.append({
+                "ts": r.get("TS"),
+                "symbol": r.get("SYMBOL"),
+                "market_type": r.get("MARKET_TYPE"),
+                "close": _safe_float(r.get("CLOSE")),
+                "high": _safe_float(r.get("HIGH")),
+                "low": _safe_float(r.get("LOW")),
+                "volume": r.get("VOLUME"),
+            })
+
+        return {
+            "session_date": str(session_date),
+            "is_today": is_today,
+            "symbols": symbols,
+            "aggregate": aggregate,
+            "bars": bars,
+        }
+    finally:
+        conn.close()

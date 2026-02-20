@@ -58,15 +58,28 @@ function EquityChart({ data, thresholds, events }) {
 
 function DrawdownChart({ data, drawdownStopPct }) {
   if (!Array.isArray(data) || data.length === 0) return <p className="mini-grid-empty">No drawdown data</p>
-  const refVal = drawdownStopPct != null ? -Math.abs(Number(drawdownStopPct)) : null
+  const stopVal = drawdownStopPct != null ? -Math.abs(Number(drawdownStopPct)) : null
+  const maxDD = Math.min(...data.map(d => d.drawdown_pct ?? 0))
+  const domainTop = stopVal != null ? Math.min(maxDD, stopVal) - 1 : maxDD - 1
   return (
     <ResponsiveContainer width="100%" height={160}>
       <LineChart data={data} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
         <XAxis dataKey="ts" tick={{ fontSize: 10 }} tickFormatter={formatTs} />
-        <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => v + '%'} width={40} domain={['auto', 0]} />
+        <YAxis
+          tick={{ fontSize: 10 }}
+          tickFormatter={(v) => v + '%'}
+          width={40}
+          domain={[domainTop, 0]}
+          reversed
+        />
         <Tooltip formatter={(v) => [v != null ? Number(v).toFixed(2) + '%' : '—', 'Drawdown']} labelFormatter={formatTs} />
-        {refVal != null && <ReferenceLine y={refVal} stroke="#c62828" strokeDasharray="2 2" />}
+        {stopVal != null && (
+          <ReferenceLine y={stopVal} stroke="#c62828" strokeDasharray="4 3" label={{ value: 'Stop', position: 'right', fontSize: 9, fill: '#c62828' }} />
+        )}
+        {maxDD < -0.01 && (
+          <ReferenceLine y={maxDD} stroke="#6a1b9a" strokeDasharray="3 3" label={{ value: `Max ${maxDD.toFixed(1)}%`, position: 'right', fontSize: 9, fill: '#6a1b9a' }} />
+        )}
         <Line type="monotone" dataKey="drawdown_pct" stroke="#6a1b9a" strokeWidth={2} dot={false} name="Drawdown %" />
       </LineChart>
     </ResponsiveContainer>

@@ -206,9 +206,9 @@ export default function IntradaySignalChart() {
   }
 
   return (
-    <section className="id-card isc-section">
+    <div className="isc-section">
       <div className="isc-header">
-        <h3 className="id-card-title">Signal Activity</h3>
+        <div />
         <div className="isc-controls">
           <select
             className="isc-select"
@@ -302,6 +302,6 @@ export default function IntradaySignalChart() {
           </div>
         </>
       )}
-    </section>
+    </div>
   )
 }

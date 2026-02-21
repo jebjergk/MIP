@@ -1,6 +1,7 @@
 -- 320_sp_run_intraday_pipeline.sql
 -- Purpose: Orchestrator for the independent intraday learning pipeline.
--- Flow: check feature flag → ingest intraday bars → detect patterns → evaluate outcomes → log run.
+-- Flow: check feature flag → ingest intraday bars → detect patterns → evaluate outcomes
+--       → evaluate early exits for daily positions → log run.
 -- Non-fatal per step: each step is wrapped so failures don't kill the pipeline.
 -- Does NOT touch daily pipeline tables/procs except shared RECOMMENDATION_LOG and RECOMMENDATION_OUTCOMES.
 
@@ -32,6 +33,10 @@ declare
     v_eval_result         variant;
     v_eval_status         string := 'PENDING';
     v_outcomes_evaluated  number := 0;
+
+    v_early_exit_result   variant;
+    v_early_exit_status   string := 'PENDING';
+    v_early_exit_signals  number := 0;
 
     v_symbols_processed   number := 0;
     v_pipeline_status     string := 'SUCCESS';
@@ -126,11 +131,26 @@ begin
             end if;
     end;
 
+    -- ── STEP 4: Evaluate early exits for open daily positions ─────────
+    begin
+        v_early_exit_result := (call MIP.APP.SP_EVALUATE_EARLY_EXITS(:v_run_id));
+        v_early_exit_status := coalesce(:v_early_exit_result:status::string, 'UNKNOWN');
+        v_early_exit_signals := coalesce(:v_early_exit_result:exit_signals::number, 0);
+    exception
+        when other then
+            v_early_exit_status := 'FAIL';
+            v_early_exit_result := object_construct('status', 'FAIL', 'error', sqlerrm);
+            if (:v_pipeline_status = 'SUCCESS') then
+                v_pipeline_status := 'PARTIAL';
+            end if;
+    end;
+
     -- ── Finalize ──────────────────────────────────────────────────────
     v_completed_at := current_timestamp();
     v_compute_seconds := timestampdiff(millisecond, :v_compute_start, :v_completed_at) / 1000.0;
 
-    if (:v_ingest_status = 'FAIL' and :v_signal_status = 'FAIL' and :v_eval_status = 'FAIL') then
+    if (:v_ingest_status = 'FAIL' and :v_signal_status = 'FAIL'
+        and :v_eval_status = 'FAIL' and :v_early_exit_status = 'FAIL') then
         v_pipeline_status := 'FAIL';
     end if;
 
@@ -148,6 +168,7 @@ begin
             'ingestion', :v_ingest_result,
             'signal_generation', :v_signal_result,
             'evaluation', :v_eval_result,
+            'early_exit', :v_early_exit_result,
             'config', object_construct(
                 'interval_minutes', :v_interval_minutes,
                 'use_daily_context', :v_use_daily_context
@@ -165,12 +186,14 @@ begin
             'bars_ingested', :v_bars_ingested,
             'signals_generated', :v_signals_generated,
             'outcomes_evaluated', :v_outcomes_evaluated,
+            'early_exit_signals', :v_early_exit_signals,
             'symbols_processed', :v_symbols_processed,
             'compute_seconds', :v_compute_seconds,
             'step_statuses', object_construct(
                 'ingestion', :v_ingest_status,
                 'signal_generation', :v_signal_status,
-                'evaluation', :v_eval_status
+                'evaluation', :v_eval_status,
+                'early_exit', :v_early_exit_status
             )
         ),
         null,
@@ -185,12 +208,14 @@ begin
         'bars_ingested', :v_bars_ingested,
         'signals_generated', :v_signals_generated,
         'outcomes_evaluated', :v_outcomes_evaluated,
+        'early_exit_signals', :v_early_exit_signals,
         'symbols_processed', :v_symbols_processed,
         'compute_seconds', :v_compute_seconds,
         'steps', object_construct(
             'ingestion', object_construct('status', :v_ingest_status),
             'signal_generation', object_construct('status', :v_signal_status),
-            'evaluation', object_construct('status', :v_eval_status)
+            'evaluation', object_construct('status', :v_eval_status),
+            'early_exit', object_construct('status', :v_early_exit_status)
         )
     );
 exception

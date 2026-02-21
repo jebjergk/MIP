@@ -1,0 +1,575 @@
+-- ============================================================================
+-- DAILY TRADING EDGE AUDIT — Diagnostic SQL
+-- Analysis-only: no production logic is modified.
+-- ============================================================================
+
+-- ============================================================================
+-- 3.1  SIGNAL QUALITY ANALYSIS
+-- ============================================================================
+
+-- 3.1.1  Per-pattern, per-horizon outcome summary
+SELECT
+    p.NAME                                          AS PATTERN,
+    r.MARKET_TYPE,
+    o.HORIZON_BARS,
+    COUNT(*)                                        AS N_SIGNALS,
+    SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END) AS WINS,
+    ROUND(SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                 AS WIN_RATE,
+    ROUND(AVG(o.REALIZED_RETURN), 6)                AS AVG_RETURN,
+    ROUND(MEDIAN(o.REALIZED_RETURN), 6)             AS MED_RETURN,
+    ROUND(STDDEV(o.REALIZED_RETURN), 6)             AS STD_RETURN,
+    ROUND(AVG(o.REALIZED_RETURN)
+          / NULLIF(STDDEV(o.REALIZED_RETURN), 0), 4) AS SHARPE_LIKE,
+    ROUND(AVG(o.MAX_FAVORABLE_EXCURSION), 6)        AS AVG_MFE,
+    ROUND(AVG(o.MAX_ADVERSE_EXCURSION), 6)          AS AVG_MAE,
+    ROUND(MIN(o.REALIZED_RETURN), 6)                AS MIN_RETURN,
+    ROUND(MAX(o.REALIZED_RETURN), 6)                AS MAX_RETURN
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440
+  AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, r.MARKET_TYPE, o.HORIZON_BARS
+ORDER BY p.NAME, o.HORIZON_BARS;
+
+-- 3.1.2  Hit-rate binomial z-test vs 50% baseline
+SELECT
+    p.NAME                                          AS PATTERN,
+    r.MARKET_TYPE,
+    o.HORIZON_BARS,
+    COUNT(*)                                        AS N,
+    SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END) AS WINS,
+    ROUND(SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                 AS WIN_RATE,
+    ROUND((SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+           - COUNT(*) * 0.5)
+          / NULLIF(SQRT(COUNT(*) * 0.25), 0), 3)   AS Z_SCORE,
+    CASE
+        WHEN ABS((SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+                   - COUNT(*) * 0.5)
+                  / NULLIF(SQRT(COUNT(*) * 0.25), 0)) >= 1.96 THEN 'SIGNIFICANT'
+        WHEN ABS((SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+                   - COUNT(*) * 0.5)
+                  / NULLIF(SQRT(COUNT(*) * 0.25), 0)) >= 1.645 THEN 'MARGINAL'
+        ELSE 'NOT_SIGNIFICANT'
+    END                                             AS SIGNIFICANCE
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440
+  AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, r.MARKET_TYPE, o.HORIZON_BARS
+ORDER BY Z_SCORE DESC;
+
+-- 3.1.3  Return distribution histogram per pattern
+SELECT
+    p.NAME                                AS PATTERN,
+    o.HORIZON_BARS,
+    SUM(CASE WHEN o.REALIZED_RETURN < -0.03  THEN 1 ELSE 0 END) AS "< -3%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= -0.03 AND o.REALIZED_RETURN < -0.02 THEN 1 ELSE 0 END) AS "-3 to -2%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= -0.02 AND o.REALIZED_RETURN < -0.01 THEN 1 ELSE 0 END) AS "-2 to -1%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= -0.01 AND o.REALIZED_RETURN < 0     THEN 1 ELSE 0 END) AS "-1 to 0%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= 0     AND o.REALIZED_RETURN < 0.01  THEN 1 ELSE 0 END) AS "0 to 1%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= 0.01  AND o.REALIZED_RETURN < 0.02  THEN 1 ELSE 0 END) AS "1 to 2%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= 0.02  AND o.REALIZED_RETURN < 0.03  THEN 1 ELSE 0 END) AS "2 to 3%",
+    SUM(CASE WHEN o.REALIZED_RETURN >= 0.03  THEN 1 ELSE 0 END)                               AS "> 3%"
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, o.HORIZON_BARS
+ORDER BY p.NAME, o.HORIZON_BARS;
+
+-- 3.1.4  Performance after estimated fees (0.1% round-trip)
+SELECT
+    p.NAME                                          AS PATTERN,
+    o.HORIZON_BARS,
+    COUNT(*)                                        AS N,
+    ROUND(AVG(o.REALIZED_RETURN), 6)                AS AVG_GROSS,
+    ROUND(AVG(o.REALIZED_RETURN) - 0.001, 6)        AS AVG_NET_AFTER_FEES,
+    ROUND(MEDIAN(o.REALIZED_RETURN) - 0.001, 6)     AS MED_NET_AFTER_FEES,
+    SUM(CASE WHEN o.REALIZED_RETURN - 0.001 > 0 THEN 1 ELSE 0 END) AS NET_WINS,
+    ROUND(SUM(CASE WHEN o.REALIZED_RETURN - 0.001 > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                 AS NET_WIN_RATE
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, o.HORIZON_BARS
+ORDER BY AVG_NET_AFTER_FEES DESC;
+
+-- 3.1.5  Rolling stability — 3 equal time windows
+WITH ranked AS (
+    SELECT
+        p.NAME AS PATTERN,
+        o.HORIZON_BARS,
+        o.REALIZED_RETURN,
+        r.TS,
+        NTILE(3) OVER (PARTITION BY p.NAME, o.HORIZON_BARS ORDER BY r.TS) AS TIME_WINDOW
+    FROM MIP.APP.RECOMMENDATION_LOG     r
+    JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+    JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+    WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+)
+SELECT
+    PATTERN,
+    HORIZON_BARS,
+    TIME_WINDOW,
+    COUNT(*)                                                    AS N,
+    ROUND(AVG(REALIZED_RETURN), 6)                              AS AVG_RETURN,
+    ROUND(SUM(CASE WHEN REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                             AS WIN_RATE,
+    MIN(TS)::DATE                                               AS WINDOW_START,
+    MAX(TS)::DATE                                               AS WINDOW_END
+FROM ranked
+GROUP BY PATTERN, HORIZON_BARS, TIME_WINDOW
+ORDER BY PATTERN, HORIZON_BARS, TIME_WINDOW;
+
+-- 3.1.6  Score-return correlation (Pearson) per pattern/horizon
+SELECT
+    p.NAME AS PATTERN,
+    o.HORIZON_BARS,
+    COUNT(*) AS N,
+    ROUND(CORR(r.SCORE, o.REALIZED_RETURN), 4) AS SCORE_RETURN_CORR,
+    ROUND(REGR_SLOPE(o.REALIZED_RETURN, r.SCORE), 6) AS SLOPE,
+    ROUND(REGR_INTERCEPT(o.REALIZED_RETURN, r.SCORE), 6) AS INTERCEPT
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, o.HORIZON_BARS
+ORDER BY SCORE_RETURN_CORR DESC;
+
+
+-- ============================================================================
+-- 3.2  TRUST GATE EFFECTIVENESS
+-- ============================================================================
+
+-- 3.2.1  Outcome comparison by trust label
+SELECT
+    tsp.TRUST_LABEL,
+    tsp.RECOMMENDED_ACTION,
+    tsp.HORIZON_BARS,
+    COUNT(*)                                        AS N_SIGNALS,
+    ROUND(AVG(o.REALIZED_RETURN), 6)                AS AVG_RETURN,
+    ROUND(MEDIAN(o.REALIZED_RETURN), 6)             AS MED_RETURN,
+    ROUND(SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                 AS WIN_RATE
+FROM MIP.APP.RECOMMENDATION_LOG       r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES   o  ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.MART.V_TRUSTED_SIGNAL_POLICY  tsp ON r.PATTERN_ID = tsp.PATTERN_ID
+                                            AND r.MARKET_TYPE = tsp.MARKET_TYPE
+                                            AND r.INTERVAL_MINUTES = tsp.INTERVAL_MINUTES
+                                            AND o.HORIZON_BARS = tsp.HORIZON_BARS
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY tsp.TRUST_LABEL, tsp.RECOMMENDED_ACTION, tsp.HORIZON_BARS
+ORDER BY tsp.TRUST_LABEL, tsp.HORIZON_BARS;
+
+-- 3.2.2  False positives and false negatives
+SELECT
+    tsp.TRUST_LABEL,
+    tsp.RECOMMENDED_ACTION,
+    COUNT(*) AS TOTAL,
+    SUM(CASE WHEN tsp.TRUST_LABEL = 'TRUSTED' AND o.REALIZED_RETURN < 0 THEN 1 ELSE 0 END) AS FALSE_POSITIVES,
+    SUM(CASE WHEN tsp.TRUST_LABEL IN ('UNTRUSTED','WATCH') AND o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END) AS FALSE_NEGATIVES,
+    ROUND(SUM(CASE WHEN tsp.TRUST_LABEL = 'TRUSTED' AND o.REALIZED_RETURN < 0 THEN 1 ELSE 0 END)
+          / NULLIF(SUM(CASE WHEN tsp.TRUST_LABEL = 'TRUSTED' THEN 1 ELSE 0 END), 0), 4) AS FP_RATE,
+    ROUND(SUM(CASE WHEN tsp.TRUST_LABEL IN ('UNTRUSTED','WATCH') AND o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(SUM(CASE WHEN tsp.TRUST_LABEL IN ('UNTRUSTED','WATCH') THEN 1 ELSE 0 END), 0), 4) AS FN_RATE
+FROM MIP.APP.RECOMMENDATION_LOG       r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES   o  ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.MART.V_TRUSTED_SIGNAL_POLICY  tsp ON r.PATTERN_ID = tsp.PATTERN_ID
+                                            AND r.MARKET_TYPE = tsp.MARKET_TYPE
+                                            AND r.INTERVAL_MINUTES = tsp.INTERVAL_MINUTES
+                                            AND o.HORIZON_BARS = tsp.HORIZON_BARS
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY tsp.TRUST_LABEL, tsp.RECOMMENDED_ACTION
+ORDER BY tsp.TRUST_LABEL;
+
+-- 3.2.3  Training gate params vs actual KPIs
+SELECT
+    tph.PATTERN_ID,
+    pd.NAME,
+    tph.MARKET_TYPE,
+    tph.HORIZON_BARS,
+    tph.N_SIGNALS,
+    tph.HIT_RATE_SUCCESS,
+    tph.AVG_RETURN_SUCCESS,
+    tph.SHARPE_LIKE_SUCCESS,
+    tph.CONFIDENCE,
+    gp.MIN_SIGNALS,
+    gp.MIN_HIT_RATE,
+    gp.MIN_AVG_RETURN,
+    CASE WHEN tph.HIT_RATE_SUCCESS >= gp.MIN_HIT_RATE THEN 'PASS' ELSE 'FAIL' END AS HR_CHECK,
+    CASE WHEN tph.AVG_RETURN_SUCCESS >= gp.MIN_AVG_RETURN THEN 'PASS' ELSE 'FAIL' END AS AR_CHECK
+FROM MIP.MART.V_TRUSTED_PATTERN_HORIZONS tph
+JOIN MIP.APP.PATTERN_DEFINITION          pd  ON tph.PATTERN_ID = pd.PATTERN_ID
+CROSS JOIN (SELECT * FROM MIP.APP.TRAINING_GATE_PARAMS WHERE IS_ACTIVE = TRUE) gp
+ORDER BY tph.PATTERN_ID, tph.HORIZON_BARS;
+
+
+-- ============================================================================
+-- 3.3  PORTFOLIO SELECTION POLICY
+-- ============================================================================
+
+-- 3.3.1  Daily signal funnel for Portfolio 1
+WITH signal_days AS (
+    SELECT
+        CAST(r.TS AS DATE) AS SIGNAL_DATE,
+        COUNT(*)           AS TOTAL_SIGNALS,
+        COUNT(DISTINCT r.SYMBOL) AS UNIQUE_SYMBOLS
+    FROM MIP.APP.RECOMMENDATION_LOG r
+    WHERE r.INTERVAL_MINUTES = 1440
+    GROUP BY CAST(r.TS AS DATE)
+),
+trade_days AS (
+    SELECT
+        CAST(t.TRADE_TS AS DATE) AS TRADE_DATE,
+        SUM(CASE WHEN t.SIDE = 'BUY' THEN 1 ELSE 0 END)  AS BUYS,
+        SUM(CASE WHEN t.SIDE = 'SELL' THEN 1 ELSE 0 END) AS SELLS
+    FROM MIP.APP.PORTFOLIO_TRADES t
+    WHERE t.PORTFOLIO_ID = 1
+    GROUP BY CAST(t.TRADE_TS AS DATE)
+)
+SELECT
+    s.SIGNAL_DATE,
+    s.TOTAL_SIGNALS,
+    s.UNIQUE_SYMBOLS,
+    COALESCE(td.BUYS, 0)  AS POSITIONS_OPENED,
+    COALESCE(td.SELLS, 0) AS POSITIONS_CLOSED
+FROM signal_days s
+LEFT JOIN trade_days td ON s.SIGNAL_DATE = td.TRADE_DATE
+ORDER BY s.SIGNAL_DATE;
+
+-- 3.3.2  Rank effectiveness: top-scored signals vs lower-scored
+WITH daily_ranked AS (
+    SELECT
+        r.RECOMMENDATION_ID,
+        CAST(r.TS AS DATE)    AS SIGNAL_DATE,
+        r.SYMBOL,
+        r.SCORE,
+        o.HORIZON_BARS,
+        o.REALIZED_RETURN,
+        ROW_NUMBER() OVER (PARTITION BY CAST(r.TS AS DATE), o.HORIZON_BARS
+                           ORDER BY r.SCORE DESC)  AS SCORE_RANK
+    FROM MIP.APP.RECOMMENDATION_LOG     r
+    JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+    WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+)
+SELECT
+    HORIZON_BARS,
+    CASE WHEN SCORE_RANK <= 5 THEN 'TOP_5' ELSE 'REST' END AS RANK_GROUP,
+    COUNT(*)                                                 AS N,
+    ROUND(AVG(REALIZED_RETURN), 6)                           AS AVG_RETURN,
+    ROUND(MEDIAN(REALIZED_RETURN), 6)                        AS MED_RETURN,
+    ROUND(SUM(CASE WHEN REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                          AS WIN_RATE
+FROM daily_ranked
+GROUP BY HORIZON_BARS, CASE WHEN SCORE_RANK <= 5 THEN 'TOP_5' ELSE 'REST' END
+ORDER BY HORIZON_BARS, RANK_GROUP;
+
+-- 3.3.3  Slot utilization — capacity usage per trading day
+SELECT
+    pd.TS::DATE                                           AS TRADE_DATE,
+    pd.OPEN_POSITIONS,
+    pp.MAX_POSITIONS,
+    ROUND(pd.OPEN_POSITIONS / NULLIF(pp.MAX_POSITIONS, 0), 2) AS UTILIZATION,
+    pd.TOTAL_EQUITY,
+    pd.DAILY_RETURN
+FROM MIP.APP.PORTFOLIO_DAILY   pd
+JOIN MIP.APP.PORTFOLIO         pf ON pd.PORTFOLIO_ID = pf.PORTFOLIO_ID
+JOIN MIP.APP.PORTFOLIO_PROFILE pp ON pf.PROFILE_ID = pp.PROFILE_ID
+WHERE pd.PORTFOLIO_ID = 1
+ORDER BY pd.TS;
+
+
+-- ============================================================================
+-- 3.4  POSITION SIZING & ALLOCATION EFFECTS
+-- ============================================================================
+
+-- 3.4.1  Winner vs loser notional comparison
+SELECT
+    CASE
+        WHEN t.REALIZED_PNL > 0 THEN 'WINNER'
+        WHEN t.REALIZED_PNL < 0 THEN 'LOSER'
+        ELSE 'FLAT'
+    END                                                  AS OUTCOME,
+    COUNT(*)                                             AS N_TRADES,
+    ROUND(AVG(t.NOTIONAL), 2)                            AS AVG_NOTIONAL,
+    ROUND(AVG(ABS(t.REALIZED_PNL)), 4)                   AS AVG_ABS_PNL,
+    ROUND(SUM(t.REALIZED_PNL), 4)                        AS TOTAL_PNL
+FROM MIP.APP.PORTFOLIO_TRADES t
+WHERE t.PORTFOLIO_ID = 1 AND t.SIDE = 'SELL'
+GROUP BY CASE
+        WHEN t.REALIZED_PNL > 0 THEN 'WINNER'
+        WHEN t.REALIZED_PNL < 0 THEN 'LOSER'
+        ELSE 'FLAT'
+    END
+ORDER BY OUTCOME;
+
+-- 3.4.2  Cash drag — average cash % across trading days
+SELECT
+    ROUND(AVG(pd.CASH / NULLIF(pd.TOTAL_EQUITY, 0)), 4)        AS AVG_CASH_PCT,
+    ROUND(AVG(pd.EQUITY_VALUE / NULLIF(pd.TOTAL_EQUITY, 0)), 4) AS AVG_INVESTED_PCT,
+    SUM(CASE WHEN pd.OPEN_POSITIONS = 0 THEN 1 ELSE 0 END)     AS DAYS_FULLY_CASH,
+    COUNT(*)                                                     AS TOTAL_DAYS
+FROM MIP.APP.PORTFOLIO_DAILY pd
+WHERE pd.PORTFOLIO_ID = 1;
+
+-- 3.4.3  Score vs realized PnL correlation (sell trades only)
+SELECT
+    t.PORTFOLIO_ID,
+    COUNT(*)                                        AS N_SELLS,
+    ROUND(CORR(t.SCORE, t.REALIZED_PNL), 4)        AS SCORE_PNL_CORR,
+    ROUND(AVG(t.SCORE), 6)                          AS AVG_SCORE,
+    ROUND(AVG(t.REALIZED_PNL), 4)                   AS AVG_PNL
+FROM MIP.APP.PORTFOLIO_TRADES t
+WHERE t.SIDE = 'SELL' AND t.REALIZED_PNL IS NOT NULL
+GROUP BY t.PORTFOLIO_ID
+ORDER BY t.PORTFOLIO_ID;
+
+-- 3.4.4  Effective exposure per trading day
+SELECT
+    pd.TS::DATE                                                   AS TRADE_DATE,
+    pd.TOTAL_EQUITY,
+    pd.EQUITY_VALUE,
+    pd.CASH,
+    pd.OPEN_POSITIONS,
+    ROUND(pd.EQUITY_VALUE / NULLIF(pd.TOTAL_EQUITY, 0), 4)       AS EXPOSURE_PCT,
+    pd.DAILY_RETURN
+FROM MIP.APP.PORTFOLIO_DAILY pd
+WHERE pd.PORTFOLIO_ID = 1
+ORDER BY pd.TS;
+
+
+-- ============================================================================
+-- 3.5  HOLDING HORIZON ALIGNMENT
+-- ============================================================================
+
+-- 3.5.1  Holding-period distribution across all portfolio positions
+SELECT
+    pos.PORTFOLIO_ID,
+    (pos.HOLD_UNTIL_INDEX - pos.ENTRY_INDEX) AS HOLD_BARS,
+    COUNT(*)                                 AS N_POSITIONS
+FROM MIP.APP.PORTFOLIO_POSITIONS pos
+GROUP BY pos.PORTFOLIO_ID, (pos.HOLD_UNTIL_INDEX - pos.ENTRY_INDEX)
+ORDER BY pos.PORTFOLIO_ID, HOLD_BARS;
+
+-- 3.5.2  Actual 1-bar trades vs what longer horizons would have returned
+WITH traded_signals AS (
+    SELECT DISTINCT
+        t.SYMBOL,
+        t.MARKET_TYPE,
+        CAST(t.TRADE_TS AS DATE) AS TRADE_DATE,
+        t.SCORE,
+        t.REALIZED_PNL,
+        t.NOTIONAL
+    FROM MIP.APP.PORTFOLIO_TRADES t
+    WHERE t.PORTFOLIO_ID = 1 AND t.SIDE = 'SELL'
+),
+signal_match AS (
+    SELECT
+        ts_t.SYMBOL,
+        ts_t.TRADE_DATE,
+        ts_t.REALIZED_PNL     AS ACTUAL_PNL,
+        ts_t.NOTIONAL          AS ACTUAL_NOTIONAL,
+        r.RECOMMENDATION_ID,
+        r.TS::DATE             AS SIGNAL_DATE
+    FROM traded_signals ts_t
+    JOIN MIP.APP.RECOMMENDATION_LOG r
+        ON r.SYMBOL = ts_t.SYMBOL
+       AND r.MARKET_TYPE = ts_t.MARKET_TYPE
+       AND r.INTERVAL_MINUTES = 1440
+       AND r.TS::DATE BETWEEN DATEADD(day, -3, ts_t.TRADE_DATE) AND ts_t.TRADE_DATE
+)
+SELECT
+    sm.SYMBOL,
+    sm.TRADE_DATE,
+    sm.ACTUAL_PNL,
+    o.HORIZON_BARS,
+    ROUND(o.REALIZED_RETURN, 6)                        AS HORIZON_RETURN,
+    ROUND(o.REALIZED_RETURN * sm.ACTUAL_NOTIONAL, 2)   AS HYPOTHETICAL_PNL
+FROM signal_match sm
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON sm.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+WHERE o.REALIZED_RETURN IS NOT NULL
+ORDER BY sm.SYMBOL, sm.TRADE_DATE, o.HORIZON_BARS;
+
+-- 3.5.3  Pattern-specific optimal horizon (best risk-adjusted return)
+SELECT
+    p.NAME                                          AS PATTERN,
+    o.HORIZON_BARS,
+    COUNT(*)                                        AS N,
+    ROUND(AVG(o.REALIZED_RETURN), 6)                AS AVG_RETURN,
+    ROUND(STDDEV(o.REALIZED_RETURN), 6)             AS STD_RETURN,
+    ROUND(AVG(o.REALIZED_RETURN)
+          / NULLIF(STDDEV(o.REALIZED_RETURN), 0), 4) AS SHARPE_LIKE,
+    ROUND(SUM(CASE WHEN o.REALIZED_RETURN > 0 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                 AS WIN_RATE,
+    RANK() OVER (PARTITION BY p.NAME
+                 ORDER BY AVG(o.REALIZED_RETURN)
+                          / NULLIF(STDDEV(o.REALIZED_RETURN), 0) DESC) AS SHARPE_RANK
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, o.HORIZON_BARS
+ORDER BY p.NAME, SHARPE_LIKE DESC;
+
+-- 3.5.4  Missed continuation — 1-bar exits where 3 or 5 bar was better
+WITH one_bar AS (
+    SELECT r.RECOMMENDATION_ID, o.REALIZED_RETURN AS RET_1
+    FROM MIP.APP.RECOMMENDATION_LOG r
+    JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+    WHERE r.INTERVAL_MINUTES = 1440 AND o.HORIZON_BARS = 1 AND o.REALIZED_RETURN IS NOT NULL
+),
+three_bar AS (
+    SELECT RECOMMENDATION_ID, REALIZED_RETURN AS RET_3
+    FROM MIP.APP.RECOMMENDATION_OUTCOMES WHERE HORIZON_BARS = 3 AND REALIZED_RETURN IS NOT NULL
+),
+five_bar AS (
+    SELECT RECOMMENDATION_ID, REALIZED_RETURN AS RET_5
+    FROM MIP.APP.RECOMMENDATION_OUTCOMES WHERE HORIZON_BARS = 5 AND REALIZED_RETURN IS NOT NULL
+)
+SELECT
+    COUNT(*) AS TOTAL_SIGNALS,
+    SUM(CASE WHEN ob.RET_1 < tb.RET_3 THEN 1 ELSE 0 END)  AS BETTER_AT_3,
+    ROUND(SUM(CASE WHEN ob.RET_1 < tb.RET_3 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                         AS PCT_BETTER_AT_3,
+    SUM(CASE WHEN ob.RET_1 < fb.RET_5 THEN 1 ELSE 0 END)  AS BETTER_AT_5,
+    ROUND(SUM(CASE WHEN ob.RET_1 < fb.RET_5 THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                         AS PCT_BETTER_AT_5,
+    ROUND(AVG(tb.RET_3 - ob.RET_1), 6)                     AS AVG_GAIN_HOLDING_TO_3,
+    ROUND(AVG(fb.RET_5 - ob.RET_1), 6)                     AS AVG_GAIN_HOLDING_TO_5
+FROM one_bar ob
+LEFT JOIN three_bar tb ON ob.RECOMMENDATION_ID = tb.RECOMMENDATION_ID
+LEFT JOIN five_bar  fb ON ob.RECOMMENDATION_ID = fb.RECOMMENDATION_ID;
+
+
+-- ============================================================================
+-- 3.6  PARALLEL WORLDS COUNTERFACTUAL REVIEW
+-- ============================================================================
+
+-- 3.6.1  Scenario type summary vs actual
+WITH actual AS (
+    SELECT PORTFOLIO_ID, AS_OF_TS, PNL_SIMULATED AS ACTUAL_PNL
+    FROM MIP.APP.PARALLEL_WORLD_RESULT
+    WHERE WORLD_KEY = 'ACTUAL'
+)
+SELECT
+    s.SCENARIO_TYPE,
+    s.NAME                                             AS SCENARIO,
+    COUNT(*)                                           AS N_DAYS,
+    ROUND(AVG(r.PNL_SIMULATED), 4)                     AS AVG_PNL,
+    ROUND(AVG(r.PNL_SIMULATED - a.ACTUAL_PNL), 4)      AS AVG_DELTA_VS_ACTUAL,
+    ROUND(MEDIAN(r.PNL_SIMULATED - a.ACTUAL_PNL), 4)   AS MED_DELTA_VS_ACTUAL,
+    SUM(CASE WHEN r.PNL_SIMULATED > a.ACTUAL_PNL THEN 1 ELSE 0 END) AS DAYS_BETTER,
+    ROUND(SUM(CASE WHEN r.PNL_SIMULATED > a.ACTUAL_PNL THEN 1 ELSE 0 END)
+          / NULLIF(COUNT(*), 0), 4)                    AS PCT_BETTER
+FROM MIP.APP.PARALLEL_WORLD_RESULT   r
+JOIN MIP.APP.PARALLEL_WORLD_SCENARIO s ON r.SCENARIO_ID = s.SCENARIO_ID
+LEFT JOIN actual a ON r.PORTFOLIO_ID = a.PORTFOLIO_ID AND r.AS_OF_TS = a.AS_OF_TS
+WHERE r.WORLD_KEY = 'COUNTERFACTUAL'
+GROUP BY s.SCENARIO_TYPE, s.NAME
+ORDER BY AVG_DELTA_VS_ACTUAL DESC;
+
+-- 3.6.2  Sweep sizing surface
+SELECT
+    s.NAME,
+    s.PARAMS_JSON:position_pct_multiplier::FLOAT AS SIZE_MULT,
+    r.PORTFOLIO_ID,
+    ROUND(AVG(r.PNL_SIMULATED), 4)               AS AVG_PNL,
+    ROUND(AVG(r.RETURN_PCT_SIMULATED), 6)         AS AVG_RETURN
+FROM MIP.APP.PARALLEL_WORLD_RESULT   r
+JOIN MIP.APP.PARALLEL_WORLD_SCENARIO s ON r.SCENARIO_ID = s.SCENARIO_ID
+WHERE s.SWEEP_FAMILY = 'SIZING_SWEEP'
+GROUP BY s.NAME, s.PARAMS_JSON:position_pct_multiplier::FLOAT, r.PORTFOLIO_ID
+ORDER BY SIZE_MULT, r.PORTFOLIO_ID;
+
+-- 3.6.3  Sweep timing surface
+SELECT
+    s.NAME,
+    s.PARAMS_JSON:entry_delay_bars::INT AS DELAY_BARS,
+    r.PORTFOLIO_ID,
+    ROUND(AVG(r.PNL_SIMULATED), 4)      AS AVG_PNL,
+    ROUND(AVG(r.RETURN_PCT_SIMULATED), 6) AS AVG_RETURN
+FROM MIP.APP.PARALLEL_WORLD_RESULT   r
+JOIN MIP.APP.PARALLEL_WORLD_SCENARIO s ON r.SCENARIO_ID = s.SCENARIO_ID
+WHERE s.SWEEP_FAMILY = 'TIMING_SWEEP'
+GROUP BY s.NAME, s.PARAMS_JSON:entry_delay_bars::INT, r.PORTFOLIO_ID
+ORDER BY DELAY_BARS, r.PORTFOLIO_ID;
+
+-- 3.6.4  PW Recommendation viability
+SELECT
+    RECOMMENDATION_TYPE,
+    DOMAIN,
+    SWEEP_FAMILY,
+    PARAMETER_NAME,
+    CURRENT_VALUE,
+    RECOMMENDED_VALUE,
+    EXPECTED_DAILY_DELTA,
+    EXPECTED_CUMULATIVE_DELTA,
+    WIN_RATE_PCT,
+    OBSERVATION_DAYS,
+    CONFIDENCE_CLASS,
+    CONFIDENCE_REASON,
+    REGIME_FRAGILE,
+    SAFETY_STATUS
+FROM MIP.APP.PARALLEL_WORLD_RECOMMENDATION
+ORDER BY EXPECTED_CUMULATIVE_DELTA DESC;
+
+
+-- ============================================================================
+-- 3.7  STATISTICAL SIGNIFICANCE TESTS
+-- ============================================================================
+
+-- 3.7.1  Portfolio daily return t-test vs zero
+SELECT
+    pd.PORTFOLIO_ID,
+    COUNT(*)                                        AS N_DAYS,
+    ROUND(AVG(pd.DAILY_RETURN), 6)                  AS MEAN_DAILY_RETURN,
+    ROUND(STDDEV(pd.DAILY_RETURN), 6)               AS STD_DAILY_RETURN,
+    ROUND(AVG(pd.DAILY_RETURN)
+          / NULLIF(STDDEV(pd.DAILY_RETURN) / SQRT(COUNT(*)), 0), 3) AS T_STAT,
+    CASE
+        WHEN ABS(AVG(pd.DAILY_RETURN)
+                 / NULLIF(STDDEV(pd.DAILY_RETURN) / SQRT(COUNT(*)), 0)) >= 2.576 THEN 'p < 0.01'
+        WHEN ABS(AVG(pd.DAILY_RETURN)
+                 / NULLIF(STDDEV(pd.DAILY_RETURN) / SQRT(COUNT(*)), 0)) >= 1.96  THEN 'p < 0.05'
+        WHEN ABS(AVG(pd.DAILY_RETURN)
+                 / NULLIF(STDDEV(pd.DAILY_RETURN) / SQRT(COUNT(*)), 0)) >= 1.645 THEN 'p < 0.10'
+        ELSE 'NOT_SIGNIFICANT'
+    END                                              AS SIGNIFICANCE
+FROM MIP.APP.PORTFOLIO_DAILY pd
+WHERE pd.DAILY_RETURN IS NOT NULL
+GROUP BY pd.PORTFOLIO_ID
+ORDER BY pd.PORTFOLIO_ID;
+
+-- 3.7.2  Signal return t-test vs zero per pattern/horizon
+SELECT
+    p.NAME                                          AS PATTERN,
+    o.HORIZON_BARS,
+    COUNT(*)                                        AS N,
+    ROUND(AVG(o.REALIZED_RETURN), 6)                AS MEAN_RETURN,
+    ROUND(STDDEV(o.REALIZED_RETURN), 6)             AS STD_RETURN,
+    ROUND(AVG(o.REALIZED_RETURN)
+          / NULLIF(STDDEV(o.REALIZED_RETURN) / SQRT(COUNT(*)), 0), 3) AS T_STAT,
+    CASE
+        WHEN ABS(AVG(o.REALIZED_RETURN)
+                 / NULLIF(STDDEV(o.REALIZED_RETURN) / SQRT(COUNT(*)), 0)) >= 2.576 THEN 'p < 0.01'
+        WHEN ABS(AVG(o.REALIZED_RETURN)
+                 / NULLIF(STDDEV(o.REALIZED_RETURN) / SQRT(COUNT(*)), 0)) >= 1.96  THEN 'p < 0.05'
+        WHEN ABS(AVG(o.REALIZED_RETURN)
+                 / NULLIF(STDDEV(o.REALIZED_RETURN) / SQRT(COUNT(*)), 0)) >= 1.645 THEN 'p < 0.10'
+        ELSE 'NOT_SIGNIFICANT'
+    END                                              AS SIGNIFICANCE
+FROM MIP.APP.RECOMMENDATION_LOG     r
+JOIN MIP.APP.RECOMMENDATION_OUTCOMES o ON r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+JOIN MIP.APP.PATTERN_DEFINITION      p ON r.PATTERN_ID = p.PATTERN_ID
+WHERE r.INTERVAL_MINUTES = 1440 AND o.REALIZED_RETURN IS NOT NULL
+GROUP BY p.NAME, o.HORIZON_BARS
+ORDER BY T_STAT DESC;
+
+-- ============================================================================
+-- END OF DIAGNOSTIC
+-- ============================================================================

@@ -651,7 +651,7 @@ begin
             not v_entries_blocked
             and v_bust_equity_pct is not null
             and v_bust_equity_pct > 0
-            and v_total_equity <= v_starting_cash * v_bust_equity_pct
+            and v_total_equity < v_starting_cash * v_bust_equity_pct
         ) then
             v_entries_blocked := true;
             v_block_reason := 'BUST_EQUITY';
@@ -1149,7 +1149,7 @@ begin
         sum(case when DAILY_PNL > 0 then 1 else 0 end),
         sum(case when DAILY_PNL < 0 then 1 else 0 end),
         min(case
-            when TOTAL_EQUITY <= :v_starting_cash * :v_bust_equity_pct then TS
+            when TOTAL_EQUITY < :v_starting_cash * :v_bust_equity_pct then TS
             else null
         end)
       into v_final_equity,

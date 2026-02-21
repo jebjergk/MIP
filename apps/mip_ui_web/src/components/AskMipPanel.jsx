@@ -41,6 +41,9 @@ export default function AskMipPanel({ open, onClose, pathname }) {
     setInput('')
     setLoading(true)
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 90_000)
+
     try {
       // Build history (last 10 messages for context window management)
       const history = [...messages, userMsg].slice(-10).map(({ role, content }) => ({ role, content }))
@@ -53,6 +56,7 @@ export default function AskMipPanel({ open, onClose, pathname }) {
           route: pathname || null,
           history,
         }),
+        signal: controller.signal,
       })
 
       if (!res.ok) {
@@ -66,11 +70,15 @@ export default function AskMipPanel({ open, onClose, pathname }) {
         { role: 'assistant', content: data.answer || 'No response received.' },
       ])
     } catch (err) {
+      const msg = err.name === 'AbortError'
+        ? 'The request timed out. Please try again.'
+        : `Sorry, something went wrong: ${err.message}`
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: `Sorry, something went wrong: ${err.message}`, error: true },
+        { role: 'assistant', content: msg, error: true },
       ])
     } finally {
+      clearTimeout(timeoutId)
       setLoading(false)
     }
   }, [input, loading, messages, pathname])

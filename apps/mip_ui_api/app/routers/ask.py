@@ -112,8 +112,11 @@ def ask_mip(req: AskRequest):
 
     # Call Snowflake Cortex COMPLETE (single-prompt form, matching existing SP pattern)
     conn = get_connection()
+    cur = None
     try:
         cur = conn.cursor()
+        # 120s statement timeout prevents indefinite hangs on slow Cortex responses
+        cur.execute("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 120")
         sql = "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS response"
         cur.execute(sql, (model_name, full_prompt))
         row = cur.fetchone()
@@ -144,6 +147,11 @@ def ask_mip(req: AskRequest):
             detail=f"Failed to get a response from the AI model: {exc}",
         ) from exc
     finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
         conn.close()
 
 

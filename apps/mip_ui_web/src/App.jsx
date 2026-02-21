@@ -11,6 +11,7 @@ import MarketTimeline from './pages/MarketTimeline'
 import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
+import DecisionConsole from './pages/DecisionConsole'
 import AppLayout from './components/AppLayout'
 
 const API_BASE = '/api'
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
+        <Route path="/decision-console" element={<DecisionConsole />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/guide" element={<UserGuide />} />
         {/* Redirects for old routes */}

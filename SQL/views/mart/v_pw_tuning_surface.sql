@@ -50,6 +50,7 @@ with sweep_diffs as (
             when 'SIZING_SWEEP'  then s.PARAMS_JSON:position_pct_multiplier::number(18,4)
             when 'TIMING_SWEEP'  then s.PARAMS_JSON:entry_delay_bars::number
             when 'HORIZON_SWEEP' then s.PARAMS_JSON:hold_horizon_bars::number
+            when 'EARLY_EXIT_SWEEP' then s.PARAMS_JSON:payoff_multiplier::number(18,4)
         end as PARAM_VALUE,
         d.AS_OF_TS,
         d.PNL_DELTA,
@@ -95,6 +96,7 @@ ranked as (
             when SWEEP_FAMILY = 'SIZING_SWEEP' and PARAM_VALUE = 1.0 then true
             when SWEEP_FAMILY = 'TIMING_SWEEP' and PARAM_VALUE = 0 then true
             when SWEEP_FAMILY = 'HORIZON_SWEEP' and PARAM_VALUE = 1 then true
+            when SWEEP_FAMILY = 'EARLY_EXIT_SWEEP' and PARAM_VALUE = 1.0 then true
             else false
         end as IS_CURRENT_SETTING,
         -- Best cumulative delta per family (optimal point)
@@ -113,12 +115,14 @@ ranked as (
                             when SWEEP_FAMILY = 'SIZING_SWEEP' then 1.0
                             when SWEEP_FAMILY = 'TIMING_SWEEP' then 0
                             when SWEEP_FAMILY = 'HORIZON_SWEEP' then 1
+                            when SWEEP_FAMILY = 'EARLY_EXIT_SWEEP' then 1.0
                         end) > 0
                     then abs(PARAM_VALUE - case
                             when SWEEP_FAMILY in ('ZSCORE_SWEEP', 'RETURN_SWEEP') then 0
                             when SWEEP_FAMILY = 'SIZING_SWEEP' then 1.0
                             when SWEEP_FAMILY = 'TIMING_SWEEP' then 0
                             when SWEEP_FAMILY = 'HORIZON_SWEEP' then 1
+                            when SWEEP_FAMILY = 'EARLY_EXIT_SWEEP' then 1.0
                         end)
                     else 999
                 end asc

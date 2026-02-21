@@ -8,7 +8,8 @@
 --   RETURN_SWEEP   — 9 points: min_return_delta from -0.0010 to +0.0010
 --   SIZING_SWEEP   — 7 points: position_pct_multiplier from 0.50 to 1.50
 --   TIMING_SWEEP   — 4 points: entry_delay_bars from 0 to 3
---   HORIZON_SWEEP  — 4 points: hold_horizon_bars from 1 to 10
+--   HORIZON_SWEEP    — 4 points: hold_horizon_bars from 1 to 10
+--   EARLY_EXIT_SWEEP — 6 points: payoff_multiplier from 0.6 to 2.0
 --
 -- Config-gated via PW_SWEEP_ENABLED + per-family flags.
 -- Non-fatal: failures return error JSON, don't halt pipeline.
@@ -35,6 +36,7 @@ declare
     v_sizing_on     boolean := false;
     v_timing_on     boolean := false;
     v_horizon_on    boolean := false;
+    v_early_exit_on boolean := false;
     v_max_scenarios number := 30;
     v_seeded_count  number := 0;
     v_pw_result     variant;
@@ -60,8 +62,9 @@ begin
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_SIZING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_TIMING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_HORIZON_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
+            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_EARLY_EXIT_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_MAX_SCENARIOS' then CONFIG_VALUE::number end), 30)
-        into :v_zscore_on, :v_return_on, :v_sizing_on, :v_timing_on, :v_horizon_on, :v_max_scenarios
+        into :v_zscore_on, :v_return_on, :v_sizing_on, :v_timing_on, :v_horizon_on, :v_early_exit_on, :v_max_scenarios
         from MIP.APP.APP_CONFIG
         where CONFIG_KEY like 'PW_SWEEP_%';
     exception when other then
@@ -250,6 +253,41 @@ begin
             t.UPDATED_AT = current_timestamp();
     end if;
 
+    -- EARLY_EXIT_SWEEP: 6 points: payoff_multiplier 0.6, 0.8, 1.0, 1.2, 1.5, 2.0
+    if (:v_early_exit_on) then
+        merge into MIP.APP.PARALLEL_WORLD_SCENARIO as t
+        using (
+            select
+                'SWEEP_EARLY_EXIT_' || lpad(row_number() over (order by v.val), 2, '0') as NAME,
+                'Early Exit ' || round(v.val, 1) || 'x' as DISPLAY_NAME,
+                'Sweep: early-exit payoff multiplier = ' || round(v.val, 2) as DESCRIPTION,
+                'EARLY_EXIT' as SCENARIO_TYPE,
+                parse_json('{"payoff_multiplier": ' || round(v.val, 2) || '}') as PARAMS_JSON,
+                true as IS_SWEEP,
+                'EARLY_EXIT_SWEEP' as SWEEP_FAMILY,
+                row_number() over (order by v.val) as SWEEP_ORDER
+            from (
+                select 0.6 as val union all select 0.8 union all select 1.0
+                union all select 1.2 union all select 1.5 union all select 2.0
+            ) v
+        ) as s on t.NAME = s.NAME
+        when not matched then insert (
+            NAME, DISPLAY_NAME, DESCRIPTION, SCENARIO_TYPE, PARAMS_JSON,
+            IS_ACTIVE, IS_SWEEP, SWEEP_FAMILY, SWEEP_ORDER, CREATED_AT, UPDATED_AT
+        ) values (
+            s.NAME, s.DISPLAY_NAME, s.DESCRIPTION, s.SCENARIO_TYPE, s.PARAMS_JSON,
+            true, true, s.SWEEP_FAMILY, s.SWEEP_ORDER, current_timestamp(), current_timestamp()
+        )
+        when matched then update set
+            t.DISPLAY_NAME = s.DISPLAY_NAME,
+            t.PARAMS_JSON = s.PARAMS_JSON,
+            t.IS_ACTIVE = true,
+            t.IS_SWEEP = true,
+            t.SWEEP_FAMILY = s.SWEEP_FAMILY,
+            t.SWEEP_ORDER = s.SWEEP_ORDER,
+            t.UPDATED_AT = current_timestamp();
+    end if;
+
     -- Count seeded sweep scenarios
     v_seeded_count := (select count(*) from MIP.APP.PARALLEL_WORLD_SCENARIO where IS_SWEEP = true and IS_ACTIVE = true);
 
@@ -279,7 +317,8 @@ begin
             'return', :v_return_on,
             'sizing', :v_sizing_on,
             'timing', :v_timing_on,
-            'horizon', :v_horizon_on
+            'horizon', :v_horizon_on,
+            'early_exit', :v_early_exit_on
         ),
         'simulation_result', :v_pw_result
     );

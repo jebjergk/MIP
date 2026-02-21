@@ -13,7 +13,7 @@ create table if not exists MIP.APP.PARALLEL_WORLD_SCENARIO (
     NAME            varchar(128)  not null,
     DISPLAY_NAME    varchar(256),
     DESCRIPTION     varchar(1024),
-    SCENARIO_TYPE   varchar(32)   not null,       -- THRESHOLD | SIZING | TIMING | BASELINE | HORIZON
+    SCENARIO_TYPE   varchar(32)   not null,       -- THRESHOLD | SIZING | TIMING | BASELINE | HORIZON | EARLY_EXIT
     PARAMS_JSON     variant       not null,
     IS_ACTIVE       boolean       default true,
     CREATED_AT      timestamp_ntz default current_timestamp(),
@@ -131,6 +131,75 @@ using (
          'HORIZON',
          '{"hold_horizon_bars": 10}',
          true, 'HORIZON_SWEEP', 4)
+) as source
+on target.NAME = source.NAME
+when not matched then insert (
+    NAME, DISPLAY_NAME, DESCRIPTION, SCENARIO_TYPE, PARAMS_JSON,
+    IS_ACTIVE, IS_SWEEP, SWEEP_FAMILY, SWEEP_ORDER,
+    CREATED_AT, UPDATED_AT
+) values (
+    source.NAME, source.DISPLAY_NAME, source.DESCRIPTION, source.SCENARIO_TYPE, source.PARAMS_JSON,
+    true, source.IS_SWEEP, source.SWEEP_FAMILY, source.SWEEP_ORDER,
+    current_timestamp(), current_timestamp()
+)
+when matched then update set
+    target.DISPLAY_NAME  = source.DISPLAY_NAME,
+    target.DESCRIPTION   = source.DESCRIPTION,
+    target.SCENARIO_TYPE = source.SCENARIO_TYPE,
+    target.PARAMS_JSON   = source.PARAMS_JSON,
+    target.IS_SWEEP      = source.IS_SWEEP,
+    target.SWEEP_FAMILY  = source.SWEEP_FAMILY,
+    target.SWEEP_ORDER   = source.SWEEP_ORDER,
+    target.UPDATED_AT    = current_timestamp();
+
+-- Early exit sweep scenarios (idempotent via MERGE on NAME)
+merge into MIP.APP.PARALLEL_WORLD_SCENARIO as target
+using (
+    select column1 as NAME,
+           column2 as DISPLAY_NAME,
+           column3 as DESCRIPTION,
+           column4 as SCENARIO_TYPE,
+           parse_json(column5) as PARAMS_JSON,
+           column6 as IS_SWEEP,
+           column7 as SWEEP_FAMILY,
+           column8 as SWEEP_ORDER
+    from values
+        ('SWEEP_EARLY_EXIT_01',
+         'Early Exit 0.6x Target',
+         'Early exit sweep: payoff multiplier = 0.6 (aggressive — exit below target).',
+         'EARLY_EXIT',
+         '{"payoff_multiplier": 0.6}',
+         true, 'EARLY_EXIT_SWEEP', 1),
+        ('SWEEP_EARLY_EXIT_02',
+         'Early Exit 0.8x Target',
+         'Early exit sweep: payoff multiplier = 0.8 (moderately aggressive).',
+         'EARLY_EXIT',
+         '{"payoff_multiplier": 0.8}',
+         true, 'EARLY_EXIT_SWEEP', 2),
+        ('SWEEP_EARLY_EXIT_03',
+         'Early Exit 1.0x Target (Current)',
+         'Early exit sweep: payoff multiplier = 1.0 (current default — exit at exact target).',
+         'EARLY_EXIT',
+         '{"payoff_multiplier": 1.0}',
+         true, 'EARLY_EXIT_SWEEP', 3),
+        ('SWEEP_EARLY_EXIT_04',
+         'Early Exit 1.2x Target',
+         'Early exit sweep: payoff multiplier = 1.2 (conservative — 20% buffer above target).',
+         'EARLY_EXIT',
+         '{"payoff_multiplier": 1.2}',
+         true, 'EARLY_EXIT_SWEEP', 4),
+        ('SWEEP_EARLY_EXIT_05',
+         'Early Exit 1.5x Target',
+         'Early exit sweep: payoff multiplier = 1.5 (patient — 50% buffer).',
+         'EARLY_EXIT',
+         '{"payoff_multiplier": 1.5}',
+         true, 'EARLY_EXIT_SWEEP', 5),
+        ('SWEEP_EARLY_EXIT_06',
+         'Early Exit 2.0x Target',
+         'Early exit sweep: payoff multiplier = 2.0 (very patient — exit only at 2x target).',
+         'EARLY_EXIT',
+         '{"payoff_multiplier": 2.0}',
+         true, 'EARLY_EXIT_SWEEP', 6)
 ) as source
 on target.NAME = source.NAME
 when not matched then insert (

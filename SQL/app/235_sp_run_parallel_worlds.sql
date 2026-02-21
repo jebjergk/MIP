@@ -11,8 +11,9 @@
 --   THRESHOLD — re-evaluate signals with modified min_zscore / min_return thresholds
 --   SIZING   — same trades as actual, but with adjusted position sizing
 --   TIMING   — same signals as actual, but with shifted entry bar
---   HORIZON  — same trades as actual, but with alternative holding periods
---   BASELINE — do nothing (cash-only), shows the cost/benefit of any trading
+--   HORIZON    — same trades as actual, but with alternative holding periods
+--   EARLY_EXIT — same trades as actual, but with alternative early-exit payoff multipliers
+--   BASELINE   — do nothing (cash-only), shows the cost/benefit of any trading
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -607,6 +608,150 @@ begin
                                     'horizon_pnl', round(:v_horizon_pnl, 2),
                                     'actual_pnl', round(:v_actual_pnl, 2),
                                     'pnl_delta', round(:v_horizon_pnl - :v_actual_pnl, 2))
+                            ),
+                            'trades_simulated', :v_cf_trades_json
+                        );
+                    end;
+
+                -- ==== EARLY_EXIT SCENARIOS ====
+                elseif (:v_scenario_type = 'EARLY_EXIT') then
+                    declare
+                        v_alt_payoff_mult number(18,4) := coalesce(:v_params_json:payoff_multiplier::number(18,4), 1.0);
+                        v_ee_pnl          number(18,4) := 0;
+                        v_ee_count        number := 0;
+                        v_ee_exit_count   number := 0;
+                    begin
+                        -- For each BUY trade on this day, check if MFE (from early exit state
+                        -- or log) exceeded target * alt_payoff_mult.
+                        -- If yes: estimate P&L as exiting at the alt target (minus fees).
+                        -- If no:  use actual hold-to-horizon P&L.
+                        begin
+                            select
+                                coalesce(sum(
+                                    case
+                                        when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult
+                                        then (ts.AVG_RETURN * :v_alt_payoff_mult
+                                              - (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0
+                                             ) * t.NOTIONAL
+                                        else coalesce(t_sell.REALIZED_PNL, 0)
+                                    end
+                                ), 0),
+                                count(*),
+                                coalesce(sum(
+                                    case when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult then 1 else 0 end
+                                ), 0)
+                            into :v_ee_pnl, :v_ee_count, :v_ee_exit_count
+                            from MIP.APP.PORTFOLIO_TRADES t
+                            -- Get the trusted signal target return for this trade
+                            join MIP.APP.RECOMMENDATION_LOG rl
+                              on rl.SYMBOL = t.SYMBOL
+                             and rl.MARKET_TYPE = t.MARKET_TYPE
+                             and rl.INTERVAL_MINUTES = 1440
+                             and rl.TS::date = t.TRADE_TS::date
+                            join MIP.MART.V_TRUSTED_SIGNALS ts
+                              on ts.PATTERN_ID = rl.PATTERN_ID
+                             and ts.MARKET_TYPE = rl.MARKET_TYPE
+                             and ts.INTERVAL_MINUTES = 1440
+                             and ts.IS_TRUSTED = true
+                            -- Get MFE from early exit position state
+                            left join MIP.APP.EARLY_EXIT_POSITION_STATE es
+                              on es.PORTFOLIO_ID = t.PORTFOLIO_ID
+                             and es.SYMBOL = t.SYMBOL
+                             and es.ENTRY_TS = t.TRADE_TS
+                            -- Get actual sell P&L for hold-to-horizon baseline
+                            left join (
+                                select PORTFOLIO_ID, SYMBOL, SIDE, REALIZED_PNL,
+                                       lag(TRADE_TS) over (partition by PORTFOLIO_ID, SYMBOL order by TRADE_TS) as BUY_TS
+                                from MIP.APP.PORTFOLIO_TRADES
+                                where SIDE = 'SELL'
+                            ) t_sell
+                              on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
+                             and t_sell.SYMBOL = t.SYMBOL
+                             and t_sell.BUY_TS = t.TRADE_TS
+                            where t.PORTFOLIO_ID = :v_portfolio_id
+                              and t.TRADE_TS::date = :v_as_of_ts::date
+                              and t.SIDE = 'BUY'
+                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                            qualify row_number() over (
+                                partition by t.TRADE_ID
+                                order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID
+                            ) = 1;
+                        exception when other then
+                            v_ee_pnl := 0;
+                            v_ee_count := 0;
+                            v_ee_exit_count := 0;
+                        end;
+
+                        v_sim_pnl := :v_ee_pnl;
+                        v_sim_equity := :v_actual_equity + (:v_ee_pnl - :v_actual_pnl);
+                        v_sim_return := iff(:v_starting_cash > 0, :v_sim_pnl / :v_starting_cash, 0);
+                        v_sim_trades := :v_actual_trades;
+                        v_sim_positions := :v_actual_positions;
+                        v_sim_cash := :v_actual_cash;
+
+                        v_cf_trades_json := (
+                            select coalesce(array_agg(object_construct(
+                                'symbol', t.SYMBOL,
+                                'notional', round(t.NOTIONAL, 2),
+                                'target_return', round(ts.AVG_RETURN, 6),
+                                'alt_payoff_mult', :v_alt_payoff_mult,
+                                'alt_threshold', round(ts.AVG_RETURN * :v_alt_payoff_mult, 6),
+                                'mfe_return', round(coalesce(es.MFE_RETURN, 0), 6),
+                                'would_early_exit', iff(es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult, true, false),
+                                'alt_pnl', round(
+                                    case
+                                        when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult
+                                        then (ts.AVG_RETURN * :v_alt_payoff_mult
+                                              - (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0
+                                             ) * t.NOTIONAL
+                                        else coalesce(t_sell.REALIZED_PNL, 0)
+                                    end, 2),
+                                'actual_pnl', round(coalesce(t_sell.REALIZED_PNL, 0), 2)
+                            )), array_construct())
+                            from MIP.APP.PORTFOLIO_TRADES t
+                            join MIP.APP.RECOMMENDATION_LOG rl
+                              on rl.SYMBOL = t.SYMBOL
+                             and rl.MARKET_TYPE = t.MARKET_TYPE
+                             and rl.INTERVAL_MINUTES = 1440
+                             and rl.TS::date = t.TRADE_TS::date
+                            join MIP.MART.V_TRUSTED_SIGNALS ts
+                              on ts.PATTERN_ID = rl.PATTERN_ID
+                             and ts.MARKET_TYPE = rl.MARKET_TYPE
+                             and ts.INTERVAL_MINUTES = 1440
+                             and ts.IS_TRUSTED = true
+                            left join MIP.APP.EARLY_EXIT_POSITION_STATE es
+                              on es.PORTFOLIO_ID = t.PORTFOLIO_ID
+                             and es.SYMBOL = t.SYMBOL
+                             and es.ENTRY_TS = t.TRADE_TS
+                            left join (
+                                select PORTFOLIO_ID, SYMBOL, SIDE, REALIZED_PNL,
+                                       lag(TRADE_TS) over (partition by PORTFOLIO_ID, SYMBOL order by TRADE_TS) as BUY_TS
+                                from MIP.APP.PORTFOLIO_TRADES
+                                where SIDE = 'SELL'
+                            ) t_sell
+                              on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
+                             and t_sell.SYMBOL = t.SYMBOL
+                             and t_sell.BUY_TS = t.TRADE_TS
+                            where t.PORTFOLIO_ID = :v_portfolio_id
+                              and t.TRADE_TS::date = :v_as_of_ts::date
+                              and t.SIDE = 'BUY'
+                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                            qualify row_number() over (
+                                partition by t.TRADE_ID
+                                order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID
+                            ) = 1
+                        );
+
+                        v_cf_decision_trace := object_construct(
+                            'world', 'COUNTERFACTUAL', 'scenario', :v_scenario_name,
+                            'decision_trace', array_construct(
+                                object_construct('gate', 'EARLY_EXIT', 'status', 'MODIFIED',
+                                    'payoff_multiplier', :v_alt_payoff_mult,
+                                    'trades_evaluated', :v_ee_count,
+                                    'would_early_exit', :v_ee_exit_count,
+                                    'early_exit_pnl', round(:v_ee_pnl, 2),
+                                    'actual_pnl', round(:v_actual_pnl, 2),
+                                    'pnl_delta', round(:v_ee_pnl - :v_actual_pnl, 2))
                             ),
                             'trades_simulated', :v_cf_trades_json
                         );

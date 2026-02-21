@@ -103,6 +103,7 @@ begin
             when 'SIZING_SWEEP' then 'position_pct_multiplier'
             when 'TIMING_SWEEP' then 'entry_delay_bars'
             when 'HORIZON_SWEEP' then 'hold_horizon_bars'
+            when 'EARLY_EXIT_SWEEP' then 'payoff_multiplier'
         end;
 
         -- Regime fragility check
@@ -242,6 +243,7 @@ begin
             when 'SIZING_SWEEP' then 'position_pct_multiplier'
             when 'TIMING_SWEEP' then 'entry_delay_bars'
             when 'HORIZON_SWEEP' then 'hold_horizon_bars'
+            when 'EARLY_EXIT_SWEEP' then 'payoff_multiplier'
         end;
 
         begin

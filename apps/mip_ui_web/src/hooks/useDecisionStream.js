@@ -121,7 +121,7 @@ export default function useDecisionStream({ portfolioId = null, enabled = true }
         } catch (e) {
           setError(e.message)
         }
-      }, 10000)
+      }, 1800000)
     }
 
     return () => {

@@ -484,7 +484,7 @@ async def stream_events(
 
                     # Every 6th cycle (~60s), send position summary
                     heartbeat_counter += 1
-                    if heartbeat_counter % 6 == 0:
+                    if heartbeat_counter % 2 == 0:
                         cur.execute("""
                         select count(*) as OPEN_COUNT,
                                sum(iff(ps.FIRST_HIT_TS is not null, 1, 0)) as CANDIDATE_COUNT,
@@ -510,7 +510,7 @@ async def stream_events(
                 logger.warning("SSE poll error: %s", e)
                 yield _sse_msg("error", {"message": str(e)})
 
-            await asyncio.sleep(10)
+            await asyncio.sleep(1800)
 
     return StreamingResponse(
         event_generator(),

@@ -879,6 +879,99 @@ A **pipeline lock** prevents edits while the daily pipeline is running, ensuring
 
 ---
 
+## Chapter 10: The Early-Exit Layer and Decision Console
+
+### The Problem: Catching the Fish, Then Throwing It Back
+
+Imagine you go fishing and catch a beautiful trout. You put it in your bucket. Then, because your plan says "fish for four more hours," you keep the line in the water. A wave rolls by, tips the bucket, and the trout flops back into the lake. You had the win and lost it because you followed the plan too rigidly.
+
+This is **giveback risk** in trading. MIP's daily positions have a planned holding period -- say, 5 bars (about a week). But sometimes, the position achieves its expected return within hours. If MIP holds mechanically until the planned exit, the market can reverse and erase those gains. The early-exit layer is MIP's solution: a system that watches your open positions in real time using 15-minute bars and can recognize when it is time to take the win and walk away.
+
+### How the Two-Stage Policy Works
+
+The early-exit system does not simply grab profits the instant a target is reached. That would be like leaving a party the moment you start having fun -- you would miss the best moments. Instead, it uses a **two-stage decision**, similar to how a lifeguard operates:
+
+**Stage A: "Has the swimmer reached safety?"** (Payoff Detection)
+
+Every time new 15-minute price bars arrive, MIP checks each open daily position:
+- What is the current return since entry?
+- What was the expected return for this position's pattern?
+- Has the current return met or exceeded the target?
+
+If yes, the position becomes an **early-exit candidate**. The flag goes up, but no whistle blows yet.
+
+**Stage B: "Is the swimmer drifting back out?"** (Giveback Confirmation)
+
+Being a candidate does not trigger an exit. MIP now watches for evidence of reversal:
+
+- **Giveback from peak**: Has the position given back 40% or more of its best return? Imagine climbing 100 meters up a hill, then sliding 40 meters back down -- that is significant backsliding.
+- **No new highs**: Have the last 3 consecutive 15-minute bars all failed to set a new high? The climb has stalled.
+- **Quick payoff rule**: If the target was hit within 60 minutes of entry, MIP applies a stricter threshold (25% giveback instead of 40%), because very fast moves are statistically more likely to snap back.
+
+Only when **both** stages confirm does MIP signal an early exit.
+
+### Why Not Just Exit When Target Is Hit?
+
+Consider this analogy: you are driving to a destination 100 miles away. After 80 miles, you see a sign saying "Your destination is near." Would you immediately pull over and walk the rest? Of course not -- you might be on a highway and the remaining 20 miles could take 15 minutes.
+
+Similarly, many of MIP's best trades are **continuation moves** where hitting the initial target is just the first act. Exiting at the minimum target would systematically cut winners short while doing nothing to protect against reversals. The two-stage approach lets winners run when momentum continues, but steps in when the move is clearly fading.
+
+### The Safety Ladder: Three Execution Modes
+
+MIP rolls out the early-exit feature through three modes, like a pilot qualifying in a new aircraft:
+
+1. **SHADOW Mode** (simulator flights): The system evaluates every position and logs what it *would* do, but changes nothing. Your portfolio is completely unaffected. This is the proving ground where you accumulate evidence that the system adds value.
+
+2. **PAPER Mode** (supervised solo flights): The system actually closes positions in the simulation when an exit triggers. Original hold-to-horizon results are preserved as a baseline for comparison. You can see exactly what changed.
+
+3. **ACTIVE Mode** (certified flights): Full execution. Only enabled after Paper mode demonstrates stable, positive results over multiple weeks.
+
+The system starts in Shadow mode by default. Upgrading requires a deliberate configuration change -- it never auto-promotes itself.
+
+### What Gets Recorded
+
+Every evaluation is logged with two critical timestamps:
+- **bar_close_ts** -- which 15-minute bar the decision was based on (the data)
+- **decision_ts** -- when MIP actually made the decision (the action)
+
+This separation is essential. It proves that MIP never uses future information ("time travel") in its decisions. An auditor can verify that every decision was made using only data available at the time.
+
+Beyond timestamps, each log entry records: target return, current return, peak return (MFE), giveback percentage, gate results (pass/fail for each check), fee-adjusted P&L, and the delta versus holding to the planned horizon.
+
+### The Decision Console
+
+The Decision Console is MIP's real-time command center -- think of it as a flight control tower for your positions. It has three modes:
+
+**Open Positions** shows every position with a color-coded stage badge:
+- 🟢 **On Track** -- target not yet reached, monitoring normally
+- 🟡 **Candidate** -- target reached, watching for reversal
+- 🟡 **Watching** -- significant giveback detected
+- 🔴 **Exit Triggered** -- both stages passed, exit signal fired
+
+**Live Decisions** is a rolling feed of decision events that updates automatically via Server-Sent Events (SSE) -- no manual refresh needed. Each event appears as a "story card" with severity coloring, a concise summary, and key metrics. You can click any event to see the full gate trace.
+
+**History** replays past events for any date, so you can review what happened after market close.
+
+The **Position Inspector** (right panel) shows two powerful views:
+- **Decision Diff**: "If we exit now, we lock in X. If we hold, we expect Y." This comparison makes the system feel like a smart advisor, not just a logger.
+- **Gate Trace Timeline**: A vertical timeline of every evaluation, with pass/fail pills for each check and expandable advanced JSON for full audit detail.
+
+### How the Early-Exit Layer Fits Into the Pipeline
+
+The early-exit evaluation runs as Step 4 of the existing intraday pipeline:
+
+```
+Ingest 15m bars → Generate signals → Evaluate outcomes → Evaluate early exits → Log run
+```
+
+It piggybacks on the same hourly pipeline that already ingests intraday data. If intraday bars are missing for any symbol, that position is silently skipped -- no crashes, no errors, no disruption to anything else.
+
+### Cost Awareness
+
+The Decision Console polls Snowflake every 30 minutes (not continuously) to keep data warehouse costs minimal. Since the intraday pipeline runs hourly, this polling frequency ensures you see fresh data within one cycle while keeping the warehouse idle most of the time.
+
+---
+
 ## Appendix A: Glossary
 
 A plain-language reference for every term used in MIP, organized alphabetically.
@@ -904,11 +997,23 @@ The fraction of a pattern's signals that have been fully evaluated (enough time 
 **Crystallization**
 The process of locking in profits when a portfolio reaches a defined profit target. Ends the current episode, records the gains, and starts a new episode after a cooldown period.
 
+**Decision Console**
+A live UI page that shows open daily positions, their real-time decision lifecycle (monitoring, candidate detection, exit triggers), and a rolling event feed. Functions as both a system log and a decision trace explorer. Includes a Position Inspector with gate trace timeline and Decision Diff comparison.
+
+**Decision Diff**
+A comparison view in the Decision Console showing what happens if a position is exited now versus held to its planned horizon. Displays current return, expected return, P&L delta, and bars remaining.
+
+**Decision Event**
+A structured record emitted whenever the early-exit system evaluates or transitions a position through a gate. Contains timestamps, metrics, gate results, reason codes, and links to advanced JSON detail.
+
 **Drawdown**
 How far a portfolio has fallen from its highest-ever value (its peak), expressed as a percentage. A drawdown of 8% means the portfolio is currently 8% below its best point.
 
 **Drawdown Stop**
 A risk rule that blocks new purchases when drawdown exceeds a defined threshold. If the stop is set to 10%, MIP will not buy anything new once the portfolio has dropped 10% from its peak.
+
+**Early Exit**
+An execution optimization that can close daily positions before their planned horizon when intraday price action indicates the payoff has been achieved and giveback risk is high. Uses a two-stage policy: payoff detection followed by reversal confirmation.
 
 **Entry Gate**
 The mechanism that controls whether a portfolio is allowed to make new purchases. The gate can be "open" (buying allowed) or "closed" (buying blocked) based on risk conditions.
@@ -927,6 +1032,12 @@ Indicates whether an outcome could be fully calculated. "SUCCESS" means enough f
 
 **FX (Foreign Exchange)**
 The market for trading currencies. FX prices represent exchange rates between two currencies (e.g., EUR/USD = how many dollars one euro is worth).
+
+**Gate Trace**
+A timeline of every decision gate evaluated for a position over time. Each node shows the gate name, pass/fail result, key metrics, and timestamps. Accessible in the Decision Console's Position Inspector.
+
+**Giveback Risk**
+The risk that a position which has already reached its target return will reverse and lose those gains before the planned exit. The early-exit system monitors for this by tracking the peak return and the subsequent price decay.
 
 **Hit Flag**
 A yes/no indicator for whether a signal's realized return met the minimum threshold (default: 0%). TRUE means the signal made money (or at least broke even); FALSE means it lost money.
@@ -948,6 +1059,9 @@ MIP's full feedback loop: generate signals, evaluate outcomes, run a backtest, a
 
 **Maturity**
 How much data MIP has accumulated for a specific pattern/symbol combination. Ranges from INSUFFICIENT (fewer than 25 signals) through WARMING_UP, LEARNING, to CONFIDENT (75+ signals).
+
+**Max Favorable Excursion (MFE)**
+The highest unrealized return a position achieves before it is closed. MFE measures how much profit was "on the table" at the best point -- useful for evaluating whether exits are well-timed.
 
 **Max Drawdown**
 The largest peak-to-trough decline a portfolio experienced at any point during its history. Represents the worst-case scenario the strategy went through.
@@ -1008,6 +1122,12 @@ A unique identifier (UUID) assigned to each pipeline execution. Used to trace ev
 
 **Score**
 A number indicating how strong a signal is. For momentum signals, the score is typically the asset's recent return. Higher scores indicate stronger price movements.
+
+**Server-Sent Events (SSE)**
+A web protocol where the server pushes updates to the browser over a persistent connection. The Decision Console uses SSE to deliver new decision events without manual page refresh.
+
+**Shadow Mode**
+An early-exit execution mode where the system evaluates positions and logs hypothetical exit decisions, but does not actually close any positions. Used for proof-of-concept during the initial rollout period (typically 2--4 weeks).
 
 **Signal**
 A detected trading opportunity. When a pattern's rules are met for a specific asset at a specific time, MIP records a signal. Signals are the raw material that portfolios act on (after trust filtering).
@@ -1085,6 +1205,20 @@ The **simulation** replays the entire portfolio history from start to finish, re
 ### Can different portfolios act on the same signal?
 
 Yes. If MIP generates a trusted signal for AAPL, multiple portfolios can each buy AAPL based on that signal. Each portfolio applies its own risk rules, position sizing, and capacity limits independently. The same signal might lead to a trade in one portfolio but not another (because the other portfolio is full, or its risk gate is blocking entries).
+
+---
+
+### Does the early-exit system change my portfolio automatically?
+
+**Not by default.** The early-exit system starts in Shadow mode, which means it evaluates every position and logs what it *would* do, but takes no action. Your portfolio is completely unaffected. To enable actual early exits, you must explicitly switch to Paper mode (applies to simulated positions) or Active mode (future real execution). The mode is controlled by the `EARLY_EXIT_MODE` configuration setting.
+
+### How much does the Decision Console cost to run?
+
+Very little. The console polls Snowflake every 30 minutes (not continuously), so the data warehouse spends most of its time idle. The underlying intraday pipeline runs once per hour during market hours. There is no continuous warehouse usage from the Decision Console.
+
+### Can I see why an early exit was triggered or not triggered?
+
+Yes. The Decision Console's Position Inspector shows a full gate trace timeline for every position. Each evaluation node shows which gates passed, which failed, the exact metrics used, and timestamps. You can also expand the "Advanced" section on any node to see the raw JSON with every detail.
 
 ---
 

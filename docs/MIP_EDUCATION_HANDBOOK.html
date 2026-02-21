@@ -573,6 +573,7 @@
     <li><span class="toc-num">7.</span> <a href="#ch7">Portfolios &mdash; Simulated Investing</a></li>
     <li><span class="toc-num">8.</span> <a href="#ch8">The Daily Pipeline and Advanced Features</a></li>
     <li><span class="toc-num">9.</span> <a href="#ch9">Using the MIP Dashboard</a></li>
+    <li><span class="toc-num">10.</span> <a href="#ch10">The Early-Exit Layer and Decision Console</a></li>
     <li><span class="toc-num">A.</span> <a href="#glossary">Glossary</a></li>
     <li><span class="toc-num">B.</span> <a href="#faq">Frequently Asked Questions</a></li>
   </ol>
@@ -1472,6 +1473,156 @@
   </div>
 </div>
 
+<!-- ═══════════════════ CHAPTER 10 ═══════════════════ -->
+<div class="chapter" id="ch10">
+  <div class="chapter-number">Chapter 10</div>
+  <h2>The Early-Exit Layer and Decision Console</h2>
+
+  <h3>The Problem: Catching the Fish, Then Throwing It Back</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Real-World Analogy</div>
+    <p>Imagine you go fishing and catch a beautiful trout. You put it in your bucket. Then, because your plan says "fish for four more hours," you keep the line in the water. A wave rolls by, tips the bucket, and the trout flops back into the lake. You had the win and lost it because you followed the plan too rigidly.</p>
+  </div>
+
+  <p>This is <strong>giveback risk</strong> in trading. MIP's daily positions have a planned holding period &mdash; say, 5 bars (about a week). But sometimes, the position achieves its expected return within hours. If MIP holds mechanically until the planned exit, the market can reverse and erase those gains. The early-exit layer watches your open positions in real time using 15-minute bars and can recognize when it is time to take the win and walk away.</p>
+
+  <h3>The Two-Stage Policy</h3>
+
+  <p>The early-exit system does not simply grab profits the instant a target is reached. That would be like leaving a party the moment you start having fun &mdash; you'd miss the best moments. Instead, it uses a <strong>two-stage decision</strong>:</p>
+
+  <div class="concept">
+    <div class="concept-title">Stage A &mdash; Payoff Detection</div>
+    <p>Every time new 15-minute bars arrive, MIP checks each open daily position: What is the current return since entry? Has it reached or exceeded the target? If yes, the position becomes an <strong>early-exit candidate</strong>. The flag goes up, but no whistle blows yet.</p>
+  </div>
+
+  <div class="concept">
+    <div class="concept-title">Stage B &mdash; Giveback Confirmation</div>
+    <p>Being a candidate does not trigger an exit. MIP now watches for evidence of reversal:</p>
+    <ul>
+      <li><strong>Giveback from peak:</strong> Has the position given back 40% or more of its best return? Imagine climbing 100 meters up a hill, then sliding 40 meters back down.</li>
+      <li><strong>No new highs:</strong> Have the last 3 consecutive 15-minute bars all failed to set a new high? The climb has stalled.</li>
+      <li><strong>Quick payoff rule:</strong> If the target was hit within 60 minutes, a stricter threshold (25% giveback) applies, because very fast moves are more likely to snap back.</li>
+    </ul>
+    <p>Only when <strong>both stages</strong> confirm does MIP signal an early exit.</p>
+  </div>
+
+  <h3>Why Not Just Exit When Target Is Hit?</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Real-World Analogy</div>
+    <p>You are driving to a destination 100 miles away. After 80 miles, you see a sign saying "Your destination is near." Would you immediately pull over and walk the rest? Of course not &mdash; you might be on a highway and the remaining 20 miles could take 15 minutes.</p>
+  </div>
+
+  <p>Many of MIP's best trades are <strong>continuation moves</strong> where hitting the initial target is just the first act. Exiting at the minimum target would systematically cut winners short. The two-stage approach lets winners run when momentum continues, but steps in when the move is clearly fading.</p>
+
+  <h3>The Safety Ladder: Three Execution Modes</h3>
+
+  <div class="analogy">
+    <div class="analogy-title">Real-World Analogy</div>
+    <p>Think of it like a pilot qualifying in a new aircraft: first you fly the simulator, then supervised solo flights, then full certification.</p>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>What Happens</th>
+        <th>When to Use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>SHADOW</strong></td>
+        <td>Evaluates and logs what <em>would</em> happen, but changes nothing</td>
+        <td>First 2&ndash;4 weeks (prove it works)</td>
+      </tr>
+      <tr>
+        <td><strong>PAPER</strong></td>
+        <td>Actually closes positions in the simulation</td>
+        <td>After SHADOW shows net benefit</td>
+      </tr>
+      <tr>
+        <td><strong>ACTIVE</strong></td>
+        <td>Full execution (future)</td>
+        <td>Only after Paper proves stable</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="important">
+    <div class="important-title">Safety First</div>
+    <p>The system starts in Shadow mode by default. Upgrading requires a deliberate configuration change &mdash; it never auto-promotes itself.</p>
+  </div>
+
+  <h3>What Gets Recorded</h3>
+
+  <p>Every evaluation is logged with two critical timestamps:</p>
+  <ul>
+    <li><strong>bar_close_ts</strong> &mdash; which 15-minute bar the decision was based on (the data)</li>
+    <li><strong>decision_ts</strong> &mdash; when MIP actually made the decision (the action)</li>
+  </ul>
+  <p>This separation is essential. It proves MIP never uses future information in its decisions. Beyond timestamps, each log entry records: target return, current return, peak return (MFE), giveback percentage, gate pass/fail results, fee-adjusted P&amp;L, and the delta versus holding to the planned horizon.</p>
+
+  <h3>The Decision Console</h3>
+
+  <p>The Decision Console is MIP's real-time command center &mdash; think of it as a flight control tower for your positions.</p>
+
+  <h4>Open Positions</h4>
+  <p>Shows every position with a color-coded stage badge:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Badge</th>
+        <th>Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="color:#198754;font-weight:700;">&#9679; On Track</td><td>Target not yet reached, monitoring normally</td></tr>
+      <tr><td style="color:#b8860b;font-weight:700;">&#9670; Candidate</td><td>Target reached, watching for reversal</td></tr>
+      <tr><td style="color:#b8860b;font-weight:700;">&#9670; Watching</td><td>Significant giveback detected</td></tr>
+      <tr><td style="color:#dc3545;font-weight:700;">&#9650; Exit Triggered</td><td>Both stages passed, exit signal fired</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Live Decisions</h4>
+  <p>A rolling feed of decision events that updates automatically via Server-Sent Events (SSE) &mdash; no manual refresh needed. Each event appears as a "story card" with severity coloring, a concise summary, and key metrics.</p>
+
+  <h4>History</h4>
+  <p>Replays past events for any date, so you can review what happened after market close.</p>
+
+  <h4>Position Inspector</h4>
+  <p>Click any position to open the inspector panel with two powerful views:</p>
+  <ul>
+    <li><strong>Decision Diff:</strong> "If we exit now, we lock in X. If we hold, we expect Y." This makes the system feel like a smart advisor, not just a logger.</li>
+    <li><strong>Gate Trace Timeline:</strong> A vertical timeline of every evaluation, with pass/fail pills for each check and expandable advanced JSON for full audit detail.</li>
+  </ul>
+
+  <h3>Pipeline Integration</h3>
+
+  <p>The early-exit evaluation runs as <strong>Step 4</strong> of the existing intraday pipeline:</p>
+
+  <div class="concept">
+    <div class="concept-title">Pipeline Flow</div>
+    <p>Ingest 15m bars &rarr; Generate signals &rarr; Evaluate outcomes &rarr; <strong>Evaluate early exits</strong> &rarr; Log run</p>
+  </div>
+
+  <p>It piggybacks on the same hourly pipeline that already ingests intraday data. If intraday bars are missing for any symbol, that position is silently skipped &mdash; no crashes, no errors, no disruption.</p>
+
+  <h3>Cost Awareness</h3>
+
+  <p>The Decision Console polls Snowflake every 30 minutes (not continuously) to keep data warehouse costs minimal. Since the intraday pipeline runs hourly, this polling frequency ensures you see fresh data within one cycle while keeping the warehouse idle most of the time.</p>
+
+  <div class="scenario">
+    <div class="scenario-title">Scenario: A Typical Early-Exit Day</div>
+    <p>MIP buys AMZN at 9:35 AM based on a strong momentum signal, targeting +0.45% over 5 bars.</p>
+    <p><span class="num">1</span> <strong>10:15 AM:</strong> AMZN hits +0.52% &mdash; target reached. Position becomes a <strong>Candidate</strong> (yellow badge in the console).</p>
+    <p><span class="num">2</span> <strong>11:00 AM:</strong> AMZN pushes to +0.71% (MFE). Momentum is strong &mdash; no exit, let it run.</p>
+    <p><span class="num">3</span> <strong>12:30 PM:</strong> AMZN pulls back to +0.38% &mdash; giveback is 46% from peak. Last 3 bars made no new high. Stage B triggers. <strong>Exit signal fires</strong> (red badge).</p>
+    <p><span class="num">4</span> In Shadow mode: the exit is logged but the position stays open. The Decision Diff shows you would have locked in +0.38% versus the hold-to-horizon outcome. After 2&ndash;4 weeks of evidence, you can switch to Paper mode.</p>
+  </div>
+</div>
+
 <!-- ═══════════════════ GLOSSARY ═══════════════════ -->
 <div class="chapter" id="glossary">
   <div class="chapter-number">Appendix A</div>
@@ -1503,12 +1654,28 @@
       <dd>Locking in profits when a target is reached. Ends the current episode and starts a cooldown.</dd>
     </div>
     <div class="glossary-item">
+      <dt>Decision Console</dt>
+      <dd>A real-time UI page that streams open-position status and decision events as they happen.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Decision Diff</dt>
+      <dd>A comparison showing the P&amp;L if you exit now versus holding to the planned horizon.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Decision Event</dt>
+      <dd>A logged evaluation or state change for a position (e.g., candidate detected, exit triggered, exit skipped).</dd>
+    </div>
+    <div class="glossary-item">
       <dt>Drawdown</dt>
       <dd>How far a portfolio has fallen from its peak value, as a percentage.</dd>
     </div>
     <div class="glossary-item">
       <dt>Drawdown Stop</dt>
       <dd>A rule that blocks new purchases when drawdown exceeds a set threshold.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Early Exit</dt>
+      <dd>Closing a daily position before its planned horizon when intraday price action shows the target was reached and reversal risk is high.</dd>
     </div>
     <div class="glossary-item">
       <dt>Entry Gate</dt>
@@ -1525,6 +1692,14 @@
     <div class="glossary-item">
       <dt>ETF</dt>
       <dd>Exchange-Traded Fund &mdash; a bundle of assets traded as one security.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Gate Trace</dt>
+      <dd>A timeline of every gate (trust, risk, capacity, payoff, giveback) evaluated for a position, with pass/fail and metrics.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Giveback Risk</dt>
+      <dd>The danger that a position which achieved its target will reverse and erase the gain before the planned exit.</dd>
     </div>
     <div class="glossary-item">
       <dt>Hit Flag</dt>
@@ -1553,6 +1728,10 @@
     <div class="glossary-item">
       <dt>Max Drawdown</dt>
       <dd>The largest peak-to-trough decline at any point in a portfolio's history.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Max Favorable Excursion (MFE)</dt>
+      <dd>The best unrealized return a position reached before it was closed. Measures how much "opportunity" existed.</dd>
     </div>
     <div class="glossary-item">
       <dt>Momentum</dt>
@@ -1617,6 +1796,14 @@
     <div class="glossary-item">
       <dt>Score</dt>
       <dd>A number indicating signal strength. Higher = stronger price movement detected.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Server-Sent Events (SSE)</dt>
+      <dd>A lightweight streaming protocol that pushes updates from the server to the browser without the client polling repeatedly.</dd>
+    </div>
+    <div class="glossary-item">
+      <dt>Shadow Mode</dt>
+      <dd>An execution mode where MIP evaluates early-exit logic and logs results but does not actually close any positions.</dd>
     </div>
     <div class="glossary-item">
       <dt>Signal</dt>
@@ -1708,6 +1895,21 @@
     <div class="faq-q">What's the difference between the simulation and the proposal system?</div>
     <div class="faq-a">
       <p>The <strong>simulation</strong> replays the entire portfolio history from start to finish. The <strong>proposal system</strong> operates on today only: it looks at today's signals, suggests trades, validates them, and executes. Simulation = big picture replay. Proposals = "what should we do right now?"</p>
+    </div>
+
+    <div class="faq-q">Will the early-exit layer automatically close my positions?</div>
+    <div class="faq-a">
+      <p>Not by default. The system starts in <strong>Shadow mode</strong>, which logs what <em>would</em> happen but changes nothing. You must deliberately switch to Paper or Active mode after reviewing 2&ndash;4 weeks of shadow evidence.</p>
+    </div>
+
+    <div class="faq-q">Does the Decision Console use a lot of Snowflake credits?</div>
+    <div class="faq-a">
+      <p>No. The console polls every <strong>30 minutes</strong>, which means only about 16 small queries per 8-hour market day. Since the intraday pipeline itself runs hourly, polling more often would not yield fresher data.</p>
+    </div>
+
+    <div class="faq-q">Can I see <em>why</em> MIP decided to exit (or not exit) a position?</div>
+    <div class="faq-a">
+      <p>Yes. Open the <strong>Position Inspector</strong> in the Decision Console and expand the <strong>Gate Trace</strong>. Each evaluation shows pass/fail for every check (payoff reached, giveback %, no-new-high count), with timestamps and raw JSON available for full audit.</p>
     </div>
   </div>
 </div>

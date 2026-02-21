@@ -846,7 +846,15 @@ A safety mechanism that prevents portfolio editing while the daily pipeline is a
 | **Signal** | A detected trading opportunity from pattern matching |
 | **Simulation** | Paper trading that doesn't use real money |
 | **Trust** | Reliability classification of a pattern |
+| **Early Exit** | Execution optimization that closes daily positions before horizon when intraday data confirms payoff achieved and giveback risk is high |
+| **Giveback Risk** | Risk that a position reverses after reaching its target return, erasing gains |
+| **Shadow Mode** | Early-exit mode that evaluates and logs decisions without actually closing positions |
+| **Decision Console** | Live UI page showing open positions, decision events, and gate traces in real time |
+| **Decision Diff** | Comparison of exit-now vs hold-to-horizon outcomes for an open position |
+| **Gate Trace** | Timeline of all decision gates evaluated for a position, with pass/fail results and metrics |
+| **Max Favorable Excursion (MFE)** | Highest unrealized return a position achieves before exit |
+| **Server-Sent Events (SSE)** | Web protocol used by the Decision Console for real-time updates without polling |
 
 ---
 
-*Last updated: February 20, 2026*
+*Last updated: February 21, 2026*

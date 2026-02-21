@@ -82,25 +82,29 @@ when not matched then insert (NAME, PATTERN_TYPE, DESCRIPTION, PARAMS_JSON, IS_A
     values (s.NAME, s.PATTERN_TYPE, s.DESCRIPTION, s.PARAMS_JSON, s.IS_ACTIVE, s.ENABLED);
 
 ------------------------------
--- 2. Intraday ingest universe rows (disabled)
---    Top liquid US stocks for initial intraday research.
+-- 2. Intraday 15-min ingest universe — all daily trading symbols
 --    PRIORITY lower than daily rows so daily ingestion is unaffected.
 ------------------------------
 merge into MIP.APP.INGEST_UNIVERSE t
 using (
-    select 'AAPL'  as SYMBOL, 'STOCK' as MARKET_TYPE, 60 as INTERVAL_MINUTES,
-           false as IS_ENABLED, 50 as PRIORITY, 'Intraday hourly - Phase 1 research' as NOTES
-    union all
-    select 'MSFT',  'STOCK', 60, false, 50, 'Intraday hourly - Phase 1 research'
-    union all
-    select 'GOOGL', 'STOCK', 60, false, 50, 'Intraday hourly - Phase 1 research'
-    union all
-    select 'AMZN',  'STOCK', 60, false, 50, 'Intraday hourly - Phase 1 research'
-    union all
-    select 'NVDA',  'STOCK', 60, false, 50, 'Intraday hourly - Phase 1 research'
+    select column1 as SYMBOL, column2 as MARKET_TYPE, 15 as INTERVAL_MINUTES,
+           true as IS_ENABLED, column3 as PRIORITY,
+           'Intraday 15m — early exit analysis + intraday learning' as NOTES
+    from values
+        ('AAPL',   'STOCK', 50), ('AMZN',   'STOCK', 50), ('GOOGL',  'STOCK', 50),
+        ('JNJ',    'STOCK', 50), ('JPM',    'STOCK', 50), ('KO',     'STOCK', 50),
+        ('META',   'STOCK', 50), ('MSFT',   'STOCK', 50), ('NVDA',   'STOCK', 50),
+        ('PG',     'STOCK', 50), ('TSLA',   'STOCK', 50), ('XOM',    'STOCK', 50),
+        ('DIA',    'ETF',   55), ('IWM',    'ETF',   55), ('QQQ',    'ETF',   60),
+        ('SPY',    'ETF',   60), ('XLF',    'ETF',   55), ('XLK',    'ETF',   55),
+        ('AUDUSD', 'FX',    40), ('EURUSD', 'FX',    40), ('GBPUSD', 'FX',    40),
+        ('USDCAD', 'FX',    40), ('USDCHF', 'FX',    40), ('USDJPY', 'FX',    40)
 ) s
 on  t.SYMBOL = s.SYMBOL
 and t.MARKET_TYPE = s.MARKET_TYPE
 and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
 when not matched then insert (SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, IS_ENABLED, PRIORITY, NOTES)
-    values (s.SYMBOL, s.MARKET_TYPE, s.INTERVAL_MINUTES, s.IS_ENABLED, s.PRIORITY, s.NOTES);
+    values (s.SYMBOL, s.MARKET_TYPE, s.INTERVAL_MINUTES, s.IS_ENABLED, s.PRIORITY, s.NOTES)
+when matched then update set
+    t.IS_ENABLED = s.IS_ENABLED,
+    t.NOTES = s.NOTES;

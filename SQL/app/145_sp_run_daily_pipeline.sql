@@ -58,14 +58,6 @@ declare
     v_rows_before number;
     v_rows_after number;
     v_rows_delta number;
-    v_trusted_signal_proc string;
-    v_trusted_signal_status string;
-    v_trusted_signal_rows_before number := 0;
-    v_trusted_signal_rows_after number := 0;
-    v_trusted_signal_rows_delta number := 0;
-    v_trusted_candidates number := 0;
-    v_trusted_patterns number := 0;
-    v_gate_param_set string := null;
     v_proposer_start timestamp_ntz;
     v_proposer_end timestamp_ntz;
     v_executor_start timestamp_ntz;
@@ -376,21 +368,6 @@ begin
             null,
             object_construct(
                 'step_name', 'portfolio_simulation',
-                'scope', 'AGG',
-                'scope_key', null,
-                'started_at', :v_step_start,
-                'completed_at', :v_step_end,
-                'reason', 'NO_NEW_BARS'
-            ),
-            null
-        );
-        call MIP.APP.SP_AUDIT_LOG_STEP(
-            :v_run_id,
-            'TRUSTED_SIGNAL_REFRESH',
-            'SKIPPED_NO_NEW_BARS',
-            null,
-            object_construct(
-                'step_name', 'trusted_signal_refresh',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_step_start,
@@ -821,88 +798,6 @@ begin
             'trades', :v_portfolio_trades,
             'entries_blocked', :v_portfolio_entries_blocked,
             'stop_reason', :v_portfolio_stop_reasons
-        ),
-        null
-    );
-
-    v_step_start := current_timestamp();
-    begin
-        select count(*)
-          into :v_trusted_signal_rows_before
-          from MIP.MART.V_TRUSTED_SIGNALS;
-
-        select
-            coalesce(
-                max(iff(PROCEDURE_SCHEMA = 'APP', 'MIP.APP.SP_REFRESH_TRUSTED_SIGNALS', null)),
-                max(iff(PROCEDURE_SCHEMA = 'MART', 'MIP.MART.SP_REFRESH_TRUSTED_SIGNALS', null))
-            )
-          into :v_trusted_signal_proc
-          from MIP.INFORMATION_SCHEMA.PROCEDURES
-         where PROCEDURE_SCHEMA in ('APP', 'MART')
-           and PROCEDURE_NAME = 'SP_REFRESH_TRUSTED_SIGNALS'
-           and ARGUMENT_SIGNATURE = '()';
-
-        if (v_trusted_signal_proc is not null) then
-            execute immediate 'call ' || v_trusted_signal_proc || '()';
-            v_trusted_signal_status := 'SUCCESS';
-        else
-            v_trusted_signal_status := 'SKIPPED_NOT_FOUND';
-            v_any_step_skipped_or_degraded := true;
-        end if;
-
-        select count(*)
-          into :v_trusted_signal_rows_after
-          from MIP.MART.V_TRUSTED_SIGNALS;
-
-        v_trusted_signal_rows_delta := :v_trusted_signal_rows_after - :v_trusted_signal_rows_before;
-    exception
-        when other then
-            v_step_end := current_timestamp();
-            call MIP.APP.SP_AUDIT_LOG_STEP(
-                :v_run_id,
-                'TRUSTED_SIGNAL_REFRESH',
-                'FAIL',
-                null,
-                object_construct(
-                    'step_name', 'trusted_signal_refresh',
-                    'scope', 'AGG',
-                    'scope_key', null,
-                    'started_at', :v_step_start,
-                    'completed_at', :v_step_end,
-                    'procedure_name', :v_trusted_signal_proc
-                ),
-                :sqlerrm
-            );
-            raise;
-    end;
-    v_step_end := current_timestamp();
-
-    select count(*) into :v_trusted_candidates from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
-    select count(*) into :v_trusted_patterns from MIP.MART.V_TRUSTED_PATTERN_HORIZONS;
-    select PARAM_SET into :v_gate_param_set
-      from MIP.APP.TRAINING_GATE_PARAMS
-     where IS_ACTIVE
-     qualify row_number() over (order by PARAM_SET) = 1;
-
-    call MIP.APP.SP_AUDIT_LOG_STEP(
-        :v_run_id,
-        'TRUSTED_SIGNAL_REFRESH',
-        :v_trusted_signal_status,
-        :v_trusted_signal_rows_delta,
-        object_construct(
-            'step_name', 'trusted_signal_refresh',
-            'scope', 'AGG',
-            'scope_key', null,
-            'started_at', :v_step_start,
-            'completed_at', :v_step_end,
-            'rows_before', :v_trusted_signal_rows_before,
-            'rows_after', :v_trusted_signal_rows_after,
-            'rows_delta', :v_trusted_signal_rows_delta,
-            'procedure_name', :v_trusted_signal_proc,
-            'procedure_status', :v_trusted_signal_status,
-            'trusted_candidates', :v_trusted_candidates,
-            'trusted_patterns', :v_trusted_patterns,
-            'gate_param_set', :v_gate_param_set
         ),
         null
     );

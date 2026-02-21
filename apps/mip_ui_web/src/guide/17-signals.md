@@ -1,30 +1,56 @@
-# 17. Signals Explorer
+# 17. Decision Explorer
 
-Browse raw signal data — every detection the system has made. Use this page to see exactly which signals were generated today, their trust labels, and whether they're eligible for trading.
+Understand **why trades happened — or didn't**. The Decision Explorer connects signals to portfolio actions and presents clear, readable explanations instead of raw data.
+
+## Executive Summary
+
+At the top of the page, a summary banner shows:
+
+- **Total Signals** in scope for the selected date/run
+- **Traded** — signals that became actual trades
+- **Rejected** — signals that failed trust gating
+- **Eligible · Not Selected** — signals that passed all gates but were not chosen
 
 ## Filters
 
-You can filter signals by symbol, market type, pattern, horizon, pipeline run ID, timestamp, and trust label. Filters can be set via URL parameters (often linked from other pages) or manually adjusted on this page.
+Filter by symbol, market type, pattern, trust level, outcome category, pipeline run ID, or date. Filters can be set via URL parameters (often linked from Cockpit) or adjusted directly on the page.
 
-## Signals Table — Every Column Explained
+## Decision Table — Every Column Explained
 
 | Column | What it means | Example |
 |--------|---------------|---------|
 | **Symbol** | Which asset generated this signal | EUR/USD |
-| **Market** | Asset class | FX |
-| **Pattern** | Which pattern definition detected this signal | 2 |
-| **Score** | The signal strength — typically the observed return at the moment of detection. Higher = stronger detection. | 0.0035 (meaning +0.35%) |
-| **Trust** | Current trust label for this symbol/pattern combination. TRUSTED (green) = can generate proposals. WATCH (orange) = monitoring. UNTRUSTED (red) = not eligible. | TRUSTED |
-| **Action** | The recommended action — typically BUY or SELL | BUY |
-| **Eligible** | Whether this signal can become a trade proposal. ✓ = eligible (trusted pattern, risk gate allows). If not eligible, shows the gating reason (e.g., "NOT_TRUSTED", "Z_SCORE_BELOW_THRESHOLD"). | ✓ or "Z_SCORE_BELOW_THRESHOLD" |
+| **Pattern** | Which pattern definition detected this signal, plus market tag | 2 · FX |
+| **Outcome** | What happened to this signal — color-coded pill | ✔ Traded, ✖ Rejected · Trust, ○ Eligible · Not Selected |
+| **Trust** | Current trust label for this symbol/pattern combination | TRUSTED (green), WATCH (amber), UNTRUSTED (red) |
+| **Score** | Signal strength — higher = stronger detection | 0.85 |
 | **Signal Time** | When the signal was generated | 2026-02-07 14:30 |
+| **Why** | One-line human-readable explanation of the outcome | "Trusted pattern — selected and executed" |
 
-## Example: Reading the Signals Table
+## Outcome Categories
 
-You see a row: AUD/USD | FX | Pattern 2 | Score 0.0035 | TRUSTED | BUY | ✓ | 2026-02-07
+Each signal is classified into exactly one outcome:
 
-This means: Today, the FX_MOMENTUM_DAILY pattern detected a +0.35% move in AUD/USD. The pattern is TRUSTED (it has a proven track record). The signal IS eligible to become a trade proposal (✓). If the risk gate allows and the portfolio has capacity, this could result in a BUY order for AUD/USD.
+- **TRADED** — Passed trust gate, eligible, and selected for trading
+- **REJECTED · TRUST** — Trust level is WATCH or UNTRUSTED; not eligible
+- **ELIGIBLE · NOT SELECTED** — Passed all gates but was not chosen (e.g., ranked below alternatives or portfolio at capacity)
 
-## Fallback Banner
+## Decision Trace (Expand a Row)
 
-If no signals match your filters for the current run, the system automatically tries a broader search (fallback). A yellow banner appears explaining what happened and offering actions: "Clear all filters," "Use latest run," or "Back to Cockpit."
+Click any row to expand a step-by-step decision trace:
+
+1. **Signal Detected** — ✓ (always true if row exists) with score
+2. **Trust Gate** — ✓ or ✗ with threshold comparison (score vs min, hit rate)
+3. **Eligibility** — ✓ or ✗ derived from trust + recommended action
+4. **Selection** — ✓ or ✗ (only shown for eligible signals)
+5. **Final Decision** — Trade executed or not
+
+The expanded view also shows **Supporting Metrics** (hit rate, avg return, coverage, horizon) and **Trade Details** (price, quantity, notional) when applicable.
+
+## Advanced View
+
+For power users: click **"Show raw policy JSON"** at the bottom of any expanded row to see the full gating reason object, including all policy thresholds and scoring details.
+
+## Fallback Logic
+
+If no signals match your filters for the current run, the system automatically tries a broader search. Results will include signals from a wider time window.

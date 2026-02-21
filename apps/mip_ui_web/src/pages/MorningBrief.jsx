@@ -289,7 +289,7 @@ function ExecutiveSummary({ brief, onShowTrades }) {
   )
 }
 
-// Build URL for Signals Explorer page with filters
+// Build URL for Decision Explorer page with filters
 function buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId) {
   const params = new URLSearchParams()
   if (portfolioId) params.set('portfolioId', String(portfolioId))

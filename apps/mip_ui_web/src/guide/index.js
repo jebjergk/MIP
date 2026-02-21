@@ -51,7 +51,7 @@ const sections = [
   { id: 'page-manage',      number: 14, title: 'Portfolio Management',         part: 2, markdown: portfolioManagement, route: '/manage' },
   { id: 'page-training',    number: 15, title: 'Training Status',              part: 2, markdown: trainingStatus,      route: '/training' },
   { id: 'page-suggestions', number: 16, title: 'Suggestions',                  part: 2, markdown: suggestions,         route: '/suggestions' },
-  { id: 'page-signals',     number: 17, title: 'Signals Explorer',             part: 2, markdown: signalsExplorer,     route: '/signals' },
+  { id: 'page-signals',     number: 17, title: 'Decision Explorer',             part: 2, markdown: signalsExplorer,     route: '/signals' },
   { id: 'page-timeline',    number: 18, title: 'Market Timeline',              part: 2, markdown: marketTimeline,      route: '/market-timeline' },
   { id: 'page-runs',        number: 19, title: 'Runs (Audit Viewer)',          part: 2, markdown: runs,                route: '/runs' },
   { id: 'page-debug',       number: 20, title: 'Debug',                        part: 2, markdown: debug,               route: '/debug' },

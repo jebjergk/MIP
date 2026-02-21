@@ -74,7 +74,7 @@ function DrillDownLinks({ links, whereToLook }) {
   if (links) {
     const standardLinks = [
       { key: 'training', label: 'Training Status' },
-      { key: 'signals', label: 'Signals Explorer' },
+      { key: 'signals', label: 'Decision Explorer' },
       { key: 'symbol_training', label: 'View Symbol' },
       { key: 'digest', label: 'Daily Digest' },
     ]

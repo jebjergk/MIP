@@ -1,304 +1,502 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import './Signals.css'
 
-// Filter badge component
+/* ── helpers ──────────────────────────────────────────────────────── */
+
+function formatJson(val) {
+  if (val == null) return 'null'
+  if (typeof val === 'string') {
+    try { return JSON.stringify(JSON.parse(val), null, 2) }
+    catch { return val }
+  }
+  return JSON.stringify(val, null, 2)
+}
+
+function fmtPct(v)  { return v != null ? `${(v * 100).toFixed(1)}%` : '—' }
+function fmtNum(v, d = 2) { return v != null ? Number(v).toFixed(d) : '—' }
+
+const OUTCOME_CFG = {
+  TRADED:               { icon: '✔', label: 'Traded',                cls: 'de-pill--traded'  },
+  REJECTED_BY_TRUST:    { icon: '✖', label: 'Rejected · Trust',      cls: 'de-pill--rejected' },
+  REJECTED_BY_RISK:     { icon: '✖', label: 'Rejected · Risk',       cls: 'de-pill--rejected-risk' },
+  REJECTED_BY_CAPACITY: { icon: '✖', label: 'Rejected · Capacity',   cls: 'de-pill--rejected-risk' },
+  ELIGIBLE_NOT_SELECTED:{ icon: '○', label: 'Eligible · Not Selected',cls: 'de-pill--eligible' },
+}
+
+const TRUST_CLS = {
+  TRUSTED:   'de-trust--trusted',
+  WATCH:     'de-trust--watch',
+  UNTRUSTED: 'de-trust--untrusted',
+}
+
+/* ── small components ─────────────────────────────────────────────── */
+
+function OutcomePill({ outcome }) {
+  const c = OUTCOME_CFG[outcome] || { icon: '?', label: outcome, cls: '' }
+  return (
+    <span className={`de-outcome-pill ${c.cls}`}>
+      <span className="de-pill-icon">{c.icon}</span>
+      {c.label}
+    </span>
+  )
+}
+
+function TrustPill({ label }) {
+  const cls = TRUST_CLS[(label || '').toUpperCase()] || ''
+  return <span className={`de-trust-pill ${cls}`}>{label || '—'}</span>
+}
+
 function FilterBadge({ label, value, onClear }) {
   if (!value) return null
   return (
-    <span className="filter-badge">
-      <span className="filter-label">{label}:</span>
-      <span className="filter-value">{value}</span>
+    <span className="de-filter-badge">
+      <span className="de-filter-badge-label">{label}:</span>
+      <span className="de-filter-badge-value">{value}</span>
       {onClear && (
-        <button type="button" className="filter-clear" onClick={onClear} aria-label={`Clear ${label} filter`}>
-          ×
-        </button>
+        <button type="button" className="de-filter-badge-x" onClick={onClear} aria-label={`Clear ${label}`}>×</button>
       )}
     </span>
   )
 }
 
-// Fallback banner component
-function FallbackBanner({ reason, onClearFilters, onUseLatestRun, onBackToBrief }) {
+/* ── Summary Banner ───────────────────────────────────────────────── */
+
+function SummaryBanner({ summary, scope }) {
+  if (!summary) return null
+  const rejected = (summary.rejected_by_trust || 0) + (summary.rejected_by_risk || 0) + (summary.rejected_by_capacity || 0)
   return (
-    <div className="signals-fallback-banner" role="alert">
-      <div className="fallback-icon">⚠️</div>
-      <div className="fallback-content">
-        <p className="fallback-reason">{reason}</p>
-        <div className="fallback-actions">
-          <button type="button" className="fallback-btn" onClick={onClearFilters}>
-            Clear all filters
-          </button>
-          <button type="button" className="fallback-btn" onClick={onUseLatestRun}>
-            Use latest run
-          </button>
-          <Link to="/cockpit" className="fallback-btn" onClick={onBackToBrief}>
-            Back to Cockpit
-          </Link>
+    <div className="de-summary">
+      {scope && <div className="de-summary-scope">{scope}</div>}
+      <div className="de-summary-cards">
+        <div className="de-card de-card--total">
+          <span className="de-card-count">{summary.total}</span>
+          <span className="de-card-label">Total Signals</span>
+        </div>
+        <div className="de-card de-card--traded">
+          <span className="de-card-count">{summary.traded}</span>
+          <span className="de-card-label">Traded</span>
+        </div>
+        <div className="de-card de-card--rejected">
+          <span className="de-card-count">{rejected}</span>
+          <span className="de-card-label">Rejected</span>
+        </div>
+        <div className="de-card de-card--eligible">
+          <span className="de-card-count">{summary.eligible_not_selected}</span>
+          <span className="de-card-label">Eligible · Not Selected</span>
         </div>
       </div>
     </div>
   )
 }
 
-// From Cockpit banner component
-function FromBriefBanner({ portfolioId, asOfTs, pipelineRunId, onClearFilters }) {
+/* ── Filter Bar ───────────────────────────────────────────────────── */
+
+function FilterBar({ filters, onChange, options }) {
   return (
-    <div className="signals-from-brief-banner" role="status">
-      <span className="banner-icon">📋</span>
-      <span className="banner-text">
-        Filtered from Cockpit
-        {portfolioId && ` (Portfolio ${portfolioId})`}
-        {asOfTs && ` • As of ${new Date(asOfTs).toLocaleDateString()}`}
-      </span>
-      <button type="button" className="banner-clear-btn" onClick={onClearFilters}>
-        Clear filters
-      </button>
+    <div className="de-filters">
+      <div className="de-filter-group">
+        <label className="de-filter-label">Symbol</label>
+        <input
+          type="text"
+          className="de-filter-input"
+          placeholder="e.g. AAPL"
+          value={filters.symbol || ''}
+          onChange={e => onChange('symbol', e.target.value || null)}
+        />
+      </div>
+
+      <div className="de-filter-group">
+        <label className="de-filter-label">Market</label>
+        <select className="de-filter-select" value={filters.marketType || ''} onChange={e => onChange('market_type', e.target.value || null)}>
+          <option value="">All</option>
+          {(options.markets || []).map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+
+      <div className="de-filter-group">
+        <label className="de-filter-label">Pattern</label>
+        <select className="de-filter-select" value={filters.patternId || ''} onChange={e => onChange('pattern_id', e.target.value || null)}>
+          <option value="">All</option>
+          {(options.patterns || []).map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+      </div>
+
+      <div className="de-filter-group">
+        <label className="de-filter-label">Trust</label>
+        <select className="de-filter-select" value={filters.trustLabel || ''} onChange={e => onChange('trust_label', e.target.value || null)}>
+          <option value="">All</option>
+          <option value="TRUSTED">Trusted</option>
+          <option value="WATCH">Watch</option>
+          <option value="UNTRUSTED">Untrusted</option>
+        </select>
+      </div>
+
+      <div className="de-filter-group">
+        <label className="de-filter-label">Outcome</label>
+        <select className="de-filter-select" value={filters.outcome || ''} onChange={e => onChange('outcome', e.target.value || null)}>
+          <option value="">All</option>
+          <option value="TRADED">Traded</option>
+          <option value="REJECTED_BY_TRUST">Rejected · Trust</option>
+          <option value="ELIGIBLE_NOT_SELECTED">Eligible · Not Selected</option>
+        </select>
+      </div>
     </div>
   )
 }
 
-// Signal row component
-function SignalRow({ signal }) {
-  const trustClass = (signal.TRUST_LABEL || signal.trust_label || '').toLowerCase()
-  const isEligible = signal.IS_ELIGIBLE ?? signal.is_eligible
-  
+/* ── Decision Trace (expanded panel) ──────────────────────────────── */
+
+function DecisionTrace({ decision }) {
+  const [showJson, setShowJson] = useState(false)
+  const trace   = decision.decision_trace || []
+  const metrics = decision.metrics || {}
+  const gating  = decision.gating_parsed || {}
+  const hasMetrics = Object.keys(metrics).length > 0
+
   return (
-    <tr className={`signal-row ${isEligible ? '' : 'signal-ineligible'}`}>
-      <td className="signal-symbol">{signal.SYMBOL || signal.symbol}</td>
-      <td className="signal-market">{signal.MARKET_TYPE || signal.market_type}</td>
-      <td className="signal-pattern">{signal.PATTERN_ID || signal.pattern_id}</td>
-      <td className="signal-score">{(signal.SCORE || signal.score)?.toFixed(2) ?? '—'}</td>
-      <td className={`signal-trust trust-${trustClass}`}>
-        {signal.TRUST_LABEL || signal.trust_label || '—'}
-      </td>
-      <td className="signal-action">{signal.RECOMMENDED_ACTION || signal.recommended_action || '—'}</td>
-      <td className="signal-eligible">
-        {isEligible ? '✓' : (signal.GATING_REASON || signal.gating_reason || 'No')}
-      </td>
-      <td className="signal-ts">
-        {(signal.SIGNAL_TS || signal.signal_ts) 
-          ? new Date(signal.SIGNAL_TS || signal.signal_ts).toLocaleString() 
-          : '—'}
-      </td>
-    </tr>
+    <div className="de-trace">
+      {/* Step diagram */}
+      <div className="de-trace-steps">
+        {trace.map((step, i) => (
+          <div key={i} className={`de-trace-step ${step.passed ? 'de-step--pass' : 'de-step--fail'}`}>
+            <div className="de-step-indicator">
+              <span className="de-step-circle">{step.passed ? '✓' : '✗'}</span>
+              {i < trace.length - 1 && <span className="de-step-line" />}
+            </div>
+            <div className="de-step-body">
+              <span className="de-step-label">{step.label}</span>
+              {step.detail && <span className="de-step-detail">{step.detail}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Supporting metrics */}
+      {hasMetrics && (
+        <div className="de-trace-metrics">
+          <h4 className="de-metrics-title">Supporting Metrics</h4>
+          <div className="de-metrics-grid">
+            {Object.entries(metrics).map(([k, v]) => (
+              <div key={k} className="de-metric">
+                <span className="de-metric-label">{k}</span>
+                <span className="de-metric-value">
+                  {typeof v === 'number'
+                    ? (k.includes('Rate') || k.includes('Return') || k.includes('Coverage') || k.includes('Corr')
+                        ? fmtPct(v) : fmtNum(v, k.includes('Score') ? 2 : 0))
+                    : String(v ?? '—')}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Trade info */}
+      {decision.trade_info && (
+        <div className="de-trace-trade">
+          <h4 className="de-metrics-title">Trade Details</h4>
+          <div className="de-metrics-grid">
+            <div className="de-metric">
+              <span className="de-metric-label">Side</span>
+              <span className="de-metric-value">{decision.trade_info.SIDE}</span>
+            </div>
+            <div className="de-metric">
+              <span className="de-metric-label">Price</span>
+              <span className="de-metric-value">{fmtNum(decision.trade_info.PRICE, 4)}</span>
+            </div>
+            <div className="de-metric">
+              <span className="de-metric-label">Quantity</span>
+              <span className="de-metric-value">{fmtNum(decision.trade_info.QUANTITY, 4)}</span>
+            </div>
+            <div className="de-metric">
+              <span className="de-metric-label">Notional</span>
+              <span className="de-metric-value">{fmtNum(decision.trade_info.NOTIONAL, 2)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Advanced JSON */}
+      <button type="button" className="de-json-toggle" onClick={() => setShowJson(v => !v)}>
+        {showJson ? '▾ Hide' : '▸ Show'} raw policy JSON
+      </button>
+      {showJson && (
+        <pre className="de-raw-json">{formatJson(decision.GATING_REASON)}</pre>
+      )}
+    </div>
   )
 }
 
+/* ── Decision Row ─────────────────────────────────────────────────── */
+
+function DecisionRow({ decision, expanded, onToggle }) {
+  const d = decision
+  return (
+    <>
+      <tr className={`de-row ${expanded ? 'de-row--expanded' : ''}`} onClick={onToggle}>
+        <td className="de-col-symbol">{d.SYMBOL}</td>
+        <td className="de-col-pattern">
+          <span className="de-pattern-id">{d.PATTERN_ID ?? '—'}</span>
+          {d.MARKET_TYPE && <span className="de-market-tag">{d.MARKET_TYPE}</span>}
+        </td>
+        <td className="de-col-outcome"><OutcomePill outcome={d.outcome} /></td>
+        <td className="de-col-trust"><TrustPill label={d.TRUST_LABEL} /></td>
+        <td className="de-col-score">{fmtNum(d.SCORE)}</td>
+        <td className="de-col-time">
+          {d.SIGNAL_TS ? new Date(d.SIGNAL_TS).toLocaleString() : '—'}
+        </td>
+        <td className="de-col-why">{d.why_summary || '—'}</td>
+        <td className="de-col-expand">
+          <span className={`de-chevron ${expanded ? 'de-chevron--open' : ''}`}>▸</span>
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="de-trace-row">
+          <td colSpan={8}>
+            <DecisionTrace decision={d} />
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+/* ── From-Cockpit Banner ──────────────────────────────────────────── */
+
+function FromBriefBanner({ portfolioId, asOfTs, onClear }) {
+  return (
+    <div className="de-brief-banner" role="status">
+      <span className="de-brief-icon">📋</span>
+      <span className="de-brief-text">
+        Filtered from Cockpit
+        {portfolioId && ` (Portfolio ${portfolioId})`}
+        {asOfTs && ` · As of ${new Date(asOfTs).toLocaleDateString()}`}
+      </span>
+      <button type="button" className="de-brief-clear" onClick={onClear}>Clear filters</button>
+    </div>
+  )
+}
+
+/* ── Main Page ────────────────────────────────────────────────────── */
+
 export default function Signals() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const [signalsData, setSignalsData] = useState(null)
+  const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  
-  // Parse filters from URL
+  const [error, setError]     = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
+
   const filters = {
-    symbol: searchParams.get('symbol'),
-    marketType: searchParams.get('market_type'),
-    patternId: searchParams.get('pattern_id'),
-    horizonBars: searchParams.get('horizon_bars'),
-    runId: searchParams.get('pipelineRunId') || searchParams.get('run_id'),
-    asOfTs: searchParams.get('asOf') || searchParams.get('as_of_ts'),
-    trustLabel: searchParams.get('trust_label'),
-    fromBrief: searchParams.get('from') === 'brief',
+    symbol:      searchParams.get('symbol'),
+    marketType:  searchParams.get('market_type'),
+    patternId:   searchParams.get('pattern_id'),
+    trustLabel:  searchParams.get('trust_label'),
+    outcome:     searchParams.get('outcome'),
+    runId:       searchParams.get('pipelineRunId') || searchParams.get('run_id'),
+    asOfTs:      searchParams.get('asOf') || searchParams.get('as_of_ts'),
+    fromBrief:   searchParams.get('from') === 'brief',
     portfolioId: searchParams.get('portfolioId'),
   }
-  
-  const hasFilters = Object.values(filters).some(v => v && v !== 'brief')
-  
-  // Fetch signals
-  const fetchSignals = useCallback(async () => {
+
+  const hasFilters = Object.entries(filters).some(
+    ([k, v]) => v && k !== 'fromBrief',
+  )
+
+  /* fetch decisions */
+  const fetchDecisions = useCallback(async () => {
     setLoading(true)
     setError(null)
-    
     try {
-      const params = new URLSearchParams()
-      if (filters.symbol) params.set('symbol', filters.symbol)
-      if (filters.marketType) params.set('market_type', filters.marketType)
-      if (filters.patternId) params.set('pattern_id', filters.patternId)
-      if (filters.horizonBars) params.set('horizon_bars', filters.horizonBars)
-      if (filters.runId) params.set('run_id', filters.runId)
-      if (filters.asOfTs) params.set('as_of_ts', filters.asOfTs)
-      if (filters.trustLabel) params.set('trust_label', filters.trustLabel)
-      params.set('include_fallback', 'true')
-      params.set('limit', '100')
-      
-      const res = await fetch(`${API_BASE}/signals?${params}`)
+      const p = new URLSearchParams()
+      if (filters.symbol)    p.set('symbol', filters.symbol)
+      if (filters.marketType)p.set('market_type', filters.marketType)
+      if (filters.patternId) p.set('pattern_id', filters.patternId)
+      if (filters.trustLabel)p.set('trust_label', filters.trustLabel)
+      if (filters.outcome)   p.set('outcome', filters.outcome)
+      if (filters.runId)     p.set('run_id', filters.runId)
+      if (filters.asOfTs)    p.set('as_of_ts', filters.asOfTs)
+      if (filters.portfolioId) p.set('portfolio_id', filters.portfolioId)
+      p.set('include_fallback', 'true')
+      p.set('limit', '200')
+
+      const res = await fetch(`${API_BASE}/signals/decisions?${p}`)
       if (!res.ok) throw new Error(res.statusText)
-      const data = await res.json()
-      setSignalsData(data)
+      setData(await res.json())
     } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
     }
-  }, [filters.symbol, filters.marketType, filters.patternId, filters.horizonBars, filters.runId, filters.asOfTs, filters.trustLabel])
-  
-  useEffect(() => {
-    fetchSignals()
-  }, [fetchSignals])
-  
-  // Clear all filters
-  const clearFilters = useCallback(() => {
-    setSearchParams({})
-  }, [setSearchParams])
-  
-  // Clear single filter
+  }, [
+    filters.symbol, filters.marketType, filters.patternId,
+    filters.trustLabel, filters.outcome, filters.runId,
+    filters.asOfTs, filters.portfolioId,
+  ])
+
+  useEffect(() => { fetchDecisions() }, [fetchDecisions])
+
+  /* filter actions */
+  const clearFilters = useCallback(() => setSearchParams({}), [setSearchParams])
+
+  const setFilter = useCallback((key, value) => {
+    const next = new URLSearchParams(searchParams)
+    if (value) { next.set(key, value) } else { next.delete(key) }
+    next.delete('from')
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
+
   const clearFilter = useCallback((key) => {
-    const newParams = new URLSearchParams(searchParams)
-    newParams.delete(key)
-    // Also clear 'from' if we're clearing filters
-    if (key !== 'from') newParams.delete('from')
-    setSearchParams(newParams)
+    const next = new URLSearchParams(searchParams)
+    next.delete(key)
+    next.delete('from')
+    setSearchParams(next)
   }, [searchParams, setSearchParams])
-  
-  // Use latest run (remove run_id filter)
-  const useLatestRun = useCallback(() => {
-    const newParams = new URLSearchParams(searchParams)
-    newParams.delete('pipelineRunId')
-    newParams.delete('run_id')
-    newParams.delete('asOf')
-    newParams.delete('as_of_ts')
-    setSearchParams(newParams)
-  }, [searchParams, setSearchParams])
-  
+
+  /* scope description */
+  const scopeLabel = [
+    filters.asOfTs && `Date: ${new Date(filters.asOfTs).toLocaleDateString()}`,
+    filters.runId && `Run: ${filters.runId.slice(0, 8)}…`,
+    filters.portfolioId && `Portfolio ${filters.portfolioId}`,
+  ].filter(Boolean).join(' · ') || 'Today'
+
+  /* ── render ──────────────────────────────────────────────────────── */
+
   if (loading) {
     return (
       <>
-        <h1>Signals Explorer</h1>
+        <h1>Decision Explorer</h1>
+        <p className="de-subtitle">Explain why trades happened (or didn't).</p>
         <LoadingState />
       </>
     )
   }
-  
+
   if (error) {
     return (
       <>
-        <h1>Signals Explorer</h1>
+        <h1>Decision Explorer</h1>
+        <p className="de-subtitle">Explain why trades happened (or didn't).</p>
         <ErrorState message={error} />
       </>
     )
   }
-  
-  const signals = signalsData?.signals || []
-  const count = signalsData?.count || 0
-  const fallbackUsed = signalsData?.fallback_used
-  const fallbackReason = signalsData?.fallback_reason
-  const queryType = signalsData?.query_type
-  
+
+  const decisions     = data?.decisions || []
+  const summary       = data?.summary
+  const filterOptions = data?.filter_options || {}
+
   return (
     <>
-      <h1>Signals Explorer</h1>
-      <p className="page-description">
-        Browse actual signal and recommendation rows. Filter by symbol, pattern, trust level, and more.
-      </p>
-      
-      {/* From Brief banner */}
+      <h1>Decision Explorer</h1>
+      <p className="de-subtitle">Explain why trades happened (or didn't).</p>
+
+      {/* From-Cockpit banner */}
       {filters.fromBrief && (
         <FromBriefBanner
           portfolioId={filters.portfolioId}
           asOfTs={filters.asOfTs}
-          pipelineRunId={filters.runId}
-          onClearFilters={clearFilters}
+          onClear={clearFilters}
         />
       )}
-      
-      {/* Fallback banner */}
-      {fallbackUsed && fallbackReason && (
-        <FallbackBanner
-          reason={fallbackReason}
-          onClearFilters={clearFilters}
-          onUseLatestRun={useLatestRun}
-          onBackToBrief={() => navigate('/cockpit')}
-        />
-      )}
-      
-      {/* Active filters */}
+
+      {/* Executive Summary */}
+      <SummaryBanner summary={summary} scope={scopeLabel} />
+
+      {/* Filters */}
+      <FilterBar
+        filters={filters}
+        onChange={setFilter}
+        options={filterOptions}
+      />
+
+      {/* Active filter badges */}
       {hasFilters && (
-        <div className="signals-active-filters">
-          <span className="filters-label">Active filters:</span>
-          <FilterBadge label="Symbol" value={filters.symbol} onClear={() => clearFilter('symbol')} />
-          <FilterBadge label="Market" value={filters.marketType} onClear={() => clearFilter('market_type')} />
-          <FilterBadge label="Pattern" value={filters.patternId} onClear={() => clearFilter('pattern_id')} />
-          <FilterBadge label="Trust" value={filters.trustLabel} onClear={() => clearFilter('trust_label')} />
-          <FilterBadge label="Run ID" value={filters.runId?.slice(0, 8)} onClear={() => clearFilter('pipelineRunId')} />
-          <FilterBadge label="As of" value={filters.asOfTs ? new Date(filters.asOfTs).toLocaleDateString() : null} onClear={() => clearFilter('asOf')} />
-          <button type="button" className="clear-all-btn" onClick={clearFilters}>
-            Clear all
-          </button>
+        <div className="de-active-filters">
+          <span className="de-active-label">Active:</span>
+          <FilterBadge label="Symbol"  value={filters.symbol}    onClear={() => clearFilter('symbol')} />
+          <FilterBadge label="Market"  value={filters.marketType} onClear={() => clearFilter('market_type')} />
+          <FilterBadge label="Pattern" value={filters.patternId}  onClear={() => clearFilter('pattern_id')} />
+          <FilterBadge label="Trust"   value={filters.trustLabel} onClear={() => clearFilter('trust_label')} />
+          <FilterBadge label="Outcome" value={filters.outcome?.replace(/_/g, ' ')} onClear={() => clearFilter('outcome')} />
+          <FilterBadge label="Run"     value={filters.runId?.slice(0, 8)} onClear={() => clearFilter('pipelineRunId')} />
+          <FilterBadge
+            label="Date"
+            value={filters.asOfTs ? new Date(filters.asOfTs).toLocaleDateString() : null}
+            onClear={() => clearFilter('asOf')}
+          />
+          <button type="button" className="de-clear-all" onClick={clearFilters}>Clear all</button>
         </div>
       )}
-      
+
       {/* Results count */}
-      <div className="signals-count">
-        {count > 0 ? (
-          <span>Showing {count} signal{count !== 1 ? 's' : ''}</span>
-        ) : (
-          <span>No signals found</span>
-        )}
-        {queryType && queryType !== 'primary' && queryType !== 'no_results' && (
-          <span className="query-type-badge">{queryType.replace(/_/g, ' ')}</span>
-        )}
+      <div className="de-count">
+        {decisions.length > 0
+          ? <span>Showing {decisions.length} decision{decisions.length !== 1 ? 's' : ''}{data?.total > decisions.length ? ` of ${data.total} total` : ''}</span>
+          : <span>No decisions found</span>}
       </div>
-      
-      {/* Results table or empty state */}
-      {count === 0 ? (
+
+      {/* Table or empty state */}
+      {decisions.length === 0 ? (
         <EmptyState
-          title="No signals found"
+          title="No decisions found"
           action={
-            hasFilters ? (
-              <button type="button" onClick={clearFilters}>Clear all filters</button>
-            ) : (
-              <Link to="/cockpit">Go to Cockpit</Link>
-            )
+            hasFilters
+              ? <button type="button" onClick={clearFilters}>Clear all filters</button>
+              : <Link to="/cockpit">Go to Cockpit</Link>
           }
           explanation={
             hasFilters
-              ? "No signals match your current filters. Try clearing some filters or using a different time window."
-              : "No signals available. Run the pipeline to generate recommendations."
+              ? 'No decisions match your filters. Try clearing some or using a different date.'
+              : 'No signals available. Run the pipeline to generate recommendations.'
           }
           reasons={[
-            "The brief may be stale (from an older pipeline run).",
-            "The signal may have been filtered out by trust rules.",
-            "Try clearing the run ID or date filters.",
+            'The pipeline may not have run today.',
+            'Signals may have been filtered out by trust rules.',
+            'Try clearing the run ID or date filters.',
           ]}
         />
       ) : (
-        <div className="signals-table-container">
-          <table className="signals-table">
+        <div className="de-table-wrap">
+          <table className="de-table">
             <thead>
               <tr>
                 <th>Symbol</th>
-                <th>Market</th>
                 <th>Pattern</th>
-                <th>Score</th>
+                <th>Outcome</th>
                 <th>Trust</th>
-                <th>Action</th>
-                <th>Eligible</th>
+                <th>Score</th>
                 <th>Signal Time</th>
+                <th>Why</th>
+                <th className="de-th-expand" aria-label="Expand" />
               </tr>
             </thead>
             <tbody>
-              {signals.map((signal, idx) => (
-                <SignalRow 
-                  key={signal.RECOMMENDATION_ID || signal.recommendation_id || idx} 
-                  signal={signal} 
+              {decisions.map((d, idx) => (
+                <DecisionRow
+                  key={d.RECOMMENDATION_ID || idx}
+                  decision={d}
+                  expanded={expandedId === (d.RECOMMENDATION_ID || idx)}
+                  onToggle={() =>
+                    setExpandedId(prev =>
+                      prev === (d.RECOMMENDATION_ID || idx) ? null : (d.RECOMMENDATION_ID || idx),
+                    )
+                  }
                 />
               ))}
             </tbody>
           </table>
         </div>
       )}
-      
-      {/* Navigation links */}
-      <div className="signals-nav">
-        <Link to="/cockpit" className="nav-link">← Cockpit</Link>
-        <Link to="/suggestions" className="nav-link">Suggestions →</Link>
+
+      {/* Navigation */}
+      <div className="de-nav">
+        <Link to="/cockpit" className="de-nav-link">← Cockpit</Link>
+        <Link to="/suggestions" className="de-nav-link">Suggestions →</Link>
       </div>
     </>
   )

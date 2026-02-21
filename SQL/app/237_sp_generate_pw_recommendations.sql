@@ -102,6 +102,7 @@ begin
             when 'RETURN_SWEEP' then 'min_return_delta'
             when 'SIZING_SWEEP' then 'position_pct_multiplier'
             when 'TIMING_SWEEP' then 'entry_delay_bars'
+            when 'HORIZON_SWEEP' then 'hold_horizon_bars'
         end;
 
         -- Regime fragility check
@@ -240,6 +241,7 @@ begin
             when 'RETURN_SWEEP' then 'min_return_delta'
             when 'SIZING_SWEEP' then 'position_pct_multiplier'
             when 'TIMING_SWEEP' then 'entry_delay_bars'
+            when 'HORIZON_SWEEP' then 'hold_horizon_bars'
         end;
 
         begin

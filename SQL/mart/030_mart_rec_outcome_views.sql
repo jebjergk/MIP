@@ -126,8 +126,8 @@ join MIP.MART.V_TRUSTED_SIGNALS ts
 where rl.INTERVAL_MINUTES = 1440
   and ts.IS_TRUSTED = true
 qualify row_number() over (
-    partition by rl.RECOMMENDATION_ID, ts.HORIZON_BARS
-    order by rl.TS desc
+    partition by rl.RECOMMENDATION_ID
+    order by ts.AVG_RETURN desc, ts.HORIZON_BARS
 ) = 1;
 
 create or replace view MIP.MART.SCORE_CALIBRATION as

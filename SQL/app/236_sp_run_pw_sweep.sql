@@ -8,6 +8,7 @@
 --   RETURN_SWEEP   — 9 points: min_return_delta from -0.0010 to +0.0010
 --   SIZING_SWEEP   — 7 points: position_pct_multiplier from 0.50 to 1.50
 --   TIMING_SWEEP   — 4 points: entry_delay_bars from 0 to 3
+--   HORIZON_SWEEP  — 4 points: hold_horizon_bars from 1 to 10
 --
 -- Config-gated via PW_SWEEP_ENABLED + per-family flags.
 -- Non-fatal: failures return error JSON, don't halt pipeline.
@@ -33,6 +34,7 @@ declare
     v_return_on     boolean := false;
     v_sizing_on     boolean := false;
     v_timing_on     boolean := false;
+    v_horizon_on    boolean := false;
     v_max_scenarios number := 30;
     v_seeded_count  number := 0;
     v_pw_result     variant;
@@ -57,8 +59,9 @@ begin
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_RETURN_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_SIZING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_TIMING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
+            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_HORIZON_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_MAX_SCENARIOS' then CONFIG_VALUE::number end), 30)
-        into :v_zscore_on, :v_return_on, :v_sizing_on, :v_timing_on, :v_max_scenarios
+        into :v_zscore_on, :v_return_on, :v_sizing_on, :v_timing_on, :v_horizon_on, :v_max_scenarios
         from MIP.APP.APP_CONFIG
         where CONFIG_KEY like 'PW_SWEEP_%';
     exception when other then
@@ -213,6 +216,40 @@ begin
             t.UPDATED_AT = current_timestamp();
     end if;
 
+    -- HORIZON_SWEEP: 4 points: hold 1, 3, 5, 10 bars
+    if (:v_horizon_on) then
+        merge into MIP.APP.PARALLEL_WORLD_SCENARIO as t
+        using (
+            select
+                'SWEEP_HORIZON_' || lpad(row_number() over (order by v.val), 2, '0') as NAME,
+                'Hold ' || v.val || ' bar' || case when v.val != 1 then 's' else '' end as DISPLAY_NAME,
+                'Sweep: hold horizon = ' || v.val || ' bars' as DESCRIPTION,
+                'HORIZON' as SCENARIO_TYPE,
+                parse_json('{"hold_horizon_bars": ' || v.val || '}') as PARAMS_JSON,
+                true as IS_SWEEP,
+                'HORIZON_SWEEP' as SWEEP_FAMILY,
+                row_number() over (order by v.val) as SWEEP_ORDER
+            from (
+                select 1 as val union all select 3 union all select 5 union all select 10
+            ) v
+        ) as s on t.NAME = s.NAME
+        when not matched then insert (
+            NAME, DISPLAY_NAME, DESCRIPTION, SCENARIO_TYPE, PARAMS_JSON,
+            IS_ACTIVE, IS_SWEEP, SWEEP_FAMILY, SWEEP_ORDER, CREATED_AT, UPDATED_AT
+        ) values (
+            s.NAME, s.DISPLAY_NAME, s.DESCRIPTION, s.SCENARIO_TYPE, s.PARAMS_JSON,
+            true, true, s.SWEEP_FAMILY, s.SWEEP_ORDER, current_timestamp(), current_timestamp()
+        )
+        when matched then update set
+            t.DISPLAY_NAME = s.DISPLAY_NAME,
+            t.PARAMS_JSON = s.PARAMS_JSON,
+            t.IS_ACTIVE = true,
+            t.IS_SWEEP = true,
+            t.SWEEP_FAMILY = s.SWEEP_FAMILY,
+            t.SWEEP_ORDER = s.SWEEP_ORDER,
+            t.UPDATED_AT = current_timestamp();
+    end if;
+
     -- Count seeded sweep scenarios
     v_seeded_count := (select count(*) from MIP.APP.PARALLEL_WORLD_SCENARIO where IS_SWEEP = true and IS_ACTIVE = true);
 
@@ -241,7 +278,8 @@ begin
             'zscore', :v_zscore_on,
             'return', :v_return_on,
             'sizing', :v_sizing_on,
-            'timing', :v_timing_on
+            'timing', :v_timing_on,
+            'horizon', :v_horizon_on
         ),
         'simulation_result', :v_pw_result
     );

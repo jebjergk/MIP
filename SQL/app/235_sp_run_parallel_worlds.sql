@@ -11,6 +11,7 @@
 --   THRESHOLD — re-evaluate signals with modified min_zscore / min_return thresholds
 --   SIZING   — same trades as actual, but with adjusted position sizing
 --   TIMING   — same signals as actual, but with shifted entry bar
+--   HORIZON  — same trades as actual, but with alternative holding periods
 --   BASELINE — do nothing (cash-only), shows the cost/benefit of any trading
 
 use role MIP_ADMIN_ROLE;
@@ -510,6 +511,102 @@ begin
                                     'estimated_new_pnl', round(:v_new_signal_pnl, 2)),
                                 object_construct('gate', 'TRUST', 'status', 'INFO',
                                     'note', 'Threshold scenarios modify signal filtering; trust gate still applies to pattern-level eligibility')
+                            ),
+                            'trades_simulated', :v_cf_trades_json
+                        );
+                    end;
+
+                -- ==== HORIZON SCENARIOS ====
+                elseif (:v_scenario_type = 'HORIZON') then
+                    declare
+                        v_hold_horizon number := coalesce(:v_params_json:hold_horizon_bars::number, 1);
+                        v_horizon_pnl number(18,4) := 0;
+                        v_horizon_count number := 0;
+                    begin
+                        -- For each BUY trade on this day, look up what REALIZED_RETURN
+                        -- would have been at the alternative horizon, then compute PnL
+                        -- as return * notional. Compare against actual PnL.
+                        begin
+                            select
+                                coalesce(sum(ro.REALIZED_RETURN * t.NOTIONAL), 0),
+                                count(ro.REALIZED_RETURN)
+                            into :v_horizon_pnl, :v_horizon_count
+                            from MIP.APP.PORTFOLIO_TRADES t
+                            left join MIP.AGENT_OUT.ORDER_PROPOSALS op
+                              on op.PROPOSAL_ID = t.PROPOSAL_ID
+                            join MIP.APP.RECOMMENDATION_LOG rl
+                              on rl.SYMBOL = t.SYMBOL
+                             and rl.MARKET_TYPE = t.MARKET_TYPE
+                             and rl.INTERVAL_MINUTES = 1440
+                             and rl.TS::date = t.TRADE_TS::date
+                            join MIP.APP.RECOMMENDATION_OUTCOMES ro
+                              on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+                             and ro.HORIZON_BARS = :v_hold_horizon
+                             and ro.REALIZED_RETURN is not null
+                            where t.PORTFOLIO_ID = :v_portfolio_id
+                              and t.TRADE_TS::date = :v_as_of_ts::date
+                              and t.SIDE = 'BUY'
+                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                            qualify row_number() over (partition by t.TRADE_ID order by rl.RECOMMENDATION_ID) = 1;
+                        exception when other then
+                            v_horizon_pnl := 0;
+                            v_horizon_count := 0;
+                        end;
+
+                        v_sim_pnl := :v_horizon_pnl;
+                        v_sim_equity := :v_actual_equity + (:v_horizon_pnl - :v_actual_pnl);
+                        v_sim_return := iff(:v_starting_cash > 0, :v_sim_pnl / :v_starting_cash, 0);
+                        v_sim_trades := :v_actual_trades;
+                        v_sim_positions := :v_actual_positions;
+                        v_sim_cash := :v_actual_cash;
+
+                        v_cf_trades_json := (
+                            select coalesce(array_agg(object_construct(
+                                'symbol', t.SYMBOL,
+                                'notional', round(t.NOTIONAL, 2),
+                                'actual_horizon', pp.HOLD_UNTIL_INDEX - pp.ENTRY_INDEX,
+                                'alt_horizon', :v_hold_horizon,
+                                'alt_return', round(ro.REALIZED_RETURN, 6),
+                                'alt_pnl', round(ro.REALIZED_RETURN * t.NOTIONAL, 2),
+                                'actual_pnl', round(coalesce(t_sell.REALIZED_PNL, 0), 2)
+                            )), array_construct())
+                            from MIP.APP.PORTFOLIO_TRADES t
+                            left join MIP.AGENT_OUT.ORDER_PROPOSALS op2
+                              on op2.PROPOSAL_ID = t.PROPOSAL_ID
+                            join MIP.APP.RECOMMENDATION_LOG rl2
+                              on rl2.SYMBOL = t.SYMBOL
+                             and rl2.MARKET_TYPE = t.MARKET_TYPE
+                             and rl2.INTERVAL_MINUTES = 1440
+                             and rl2.TS::date = t.TRADE_TS::date
+                            join MIP.APP.RECOMMENDATION_OUTCOMES ro
+                              on ro.RECOMMENDATION_ID = rl2.RECOMMENDATION_ID
+                             and ro.HORIZON_BARS = :v_hold_horizon
+                             and ro.REALIZED_RETURN is not null
+                            left join MIP.APP.PORTFOLIO_POSITIONS pp
+                              on pp.PORTFOLIO_ID = t.PORTFOLIO_ID
+                             and pp.SYMBOL = t.SYMBOL
+                             and pp.ENTRY_TS = t.TRADE_TS
+                            left join MIP.APP.PORTFOLIO_TRADES t_sell
+                              on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
+                             and t_sell.SYMBOL = t.SYMBOL
+                             and t_sell.SIDE = 'SELL'
+                             and t_sell.TRADE_TS > t.TRADE_TS
+                            where t.PORTFOLIO_ID = :v_portfolio_id
+                              and t.TRADE_TS::date = :v_as_of_ts::date
+                              and t.SIDE = 'BUY'
+                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                            qualify row_number() over (partition by t.TRADE_ID order by rl2.RECOMMENDATION_ID) = 1
+                        );
+
+                        v_cf_decision_trace := object_construct(
+                            'world', 'COUNTERFACTUAL', 'scenario', :v_scenario_name,
+                            'decision_trace', array_construct(
+                                object_construct('gate', 'HORIZON', 'status', 'MODIFIED',
+                                    'hold_horizon_bars', :v_hold_horizon,
+                                    'trades_evaluated', :v_horizon_count,
+                                    'horizon_pnl', round(:v_horizon_pnl, 2),
+                                    'actual_pnl', round(:v_actual_pnl, 2),
+                                    'pnl_delta', round(:v_horizon_pnl - :v_actual_pnl, 2))
                             ),
                             'trades_simulated', :v_cf_trades_json
                         );

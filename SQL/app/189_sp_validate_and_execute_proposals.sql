@@ -697,7 +697,7 @@ begin
             and p.SYMBOL = t.SYMBOL
             and p.ENTRY_TS = t.TRADE_TS
       )
-    qualify row_number() over (partition by t.TRADE_ID order by ts.HORIZON_BARS) = 1;
+    qualify row_number() over (partition by t.TRADE_ID order by ts.AVG_RETURN desc, ts.HORIZON_BARS) = 1;
 
     return object_construct(
         'status', 'SUCCESS',

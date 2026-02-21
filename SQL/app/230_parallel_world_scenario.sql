@@ -13,7 +13,7 @@ create table if not exists MIP.APP.PARALLEL_WORLD_SCENARIO (
     NAME            varchar(128)  not null,
     DISPLAY_NAME    varchar(256),
     DESCRIPTION     varchar(1024),
-    SCENARIO_TYPE   varchar(32)   not null,       -- THRESHOLD | SIZING | TIMING | BASELINE
+    SCENARIO_TYPE   varchar(32)   not null,       -- THRESHOLD | SIZING | TIMING | BASELINE | HORIZON
     PARAMS_JSON     variant       not null,
     IS_ACTIVE       boolean       default true,
     CREATED_AT      timestamp_ntz default current_timestamp(),
@@ -93,4 +93,61 @@ when matched then update set
     target.DESCRIPTION   = source.DESCRIPTION,
     target.SCENARIO_TYPE = source.SCENARIO_TYPE,
     target.PARAMS_JSON   = source.PARAMS_JSON,
+    target.UPDATED_AT    = current_timestamp();
+
+-- Horizon sweep scenarios (idempotent via MERGE on NAME)
+merge into MIP.APP.PARALLEL_WORLD_SCENARIO as target
+using (
+    select column1 as NAME,
+           column2 as DISPLAY_NAME,
+           column3 as DESCRIPTION,
+           column4 as SCENARIO_TYPE,
+           parse_json(column5) as PARAMS_JSON,
+           column6 as IS_SWEEP,
+           column7 as SWEEP_FAMILY,
+           column8 as SWEEP_ORDER
+    from values
+        ('SWEEP_HORIZON_01',
+         'Hold 1 Bar (Baseline)',
+         'Horizon sweep: hold each position for 1 bar.',
+         'HORIZON',
+         '{"hold_horizon_bars": 1}',
+         true, 'HORIZON_SWEEP', 1),
+        ('SWEEP_HORIZON_02',
+         'Hold 3 Bars',
+         'Horizon sweep: hold each position for 3 bars.',
+         'HORIZON',
+         '{"hold_horizon_bars": 3}',
+         true, 'HORIZON_SWEEP', 2),
+        ('SWEEP_HORIZON_03',
+         'Hold 5 Bars',
+         'Horizon sweep: hold each position for 5 bars.',
+         'HORIZON',
+         '{"hold_horizon_bars": 5}',
+         true, 'HORIZON_SWEEP', 3),
+        ('SWEEP_HORIZON_04',
+         'Hold 10 Bars',
+         'Horizon sweep: hold each position for 10 bars.',
+         'HORIZON',
+         '{"hold_horizon_bars": 10}',
+         true, 'HORIZON_SWEEP', 4)
+) as source
+on target.NAME = source.NAME
+when not matched then insert (
+    NAME, DISPLAY_NAME, DESCRIPTION, SCENARIO_TYPE, PARAMS_JSON,
+    IS_ACTIVE, IS_SWEEP, SWEEP_FAMILY, SWEEP_ORDER,
+    CREATED_AT, UPDATED_AT
+) values (
+    source.NAME, source.DISPLAY_NAME, source.DESCRIPTION, source.SCENARIO_TYPE, source.PARAMS_JSON,
+    true, source.IS_SWEEP, source.SWEEP_FAMILY, source.SWEEP_ORDER,
+    current_timestamp(), current_timestamp()
+)
+when matched then update set
+    target.DISPLAY_NAME  = source.DISPLAY_NAME,
+    target.DESCRIPTION   = source.DESCRIPTION,
+    target.SCENARIO_TYPE = source.SCENARIO_TYPE,
+    target.PARAMS_JSON   = source.PARAMS_JSON,
+    target.IS_SWEEP      = source.IS_SWEEP,
+    target.SWEEP_FAMILY  = source.SWEEP_FAMILY,
+    target.SWEEP_ORDER   = source.SWEEP_ORDER,
     target.UPDATED_AT    = current_timestamp();

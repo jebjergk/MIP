@@ -630,36 +630,38 @@ def get_portfolio_snapshot(
                 effective_run_id = r[0]
 
         # Open positions: canonical view enriched with latest market price for P&L display.
-        # Joins V_BAR_INDEX to get the current CLOSE price per symbol, then computes
-        # MARKET_VALUE, UNREALIZED_PNL, and UNREALIZED_PNL_PCT for each position.
+        # Uses the freshest available bar (15-min intraday if available, daily otherwise)
+        # to show the most current price for each position.
         positions = []
         snapshot_ts = None
         try:
             cur.execute(
                 """
+                with latest_price as (
+                    select SYMBOL, MARKET_TYPE, CLOSE, TS as PRICE_TS, INTERVAL_MINUTES as PRICE_INTERVAL
+                    from MIP.MART.MARKET_BARS
+                    qualify row_number() over (
+                        partition by SYMBOL, MARKET_TYPE
+                        order by TS desc
+                    ) = 1
+                )
                 select
                     p.PORTFOLIO_ID, p.RUN_ID, p.SYMBOL, p.MARKET_TYPE, p.INTERVAL_MINUTES,
                     p.ENTRY_TS, p.ENTRY_PRICE, p.QUANTITY, p.COST_BASIS, p.ENTRY_SCORE,
                     p.ENTRY_INDEX, p.HOLD_UNTIL_INDEX, p.AS_OF_TS, p.CURRENT_BAR_INDEX,
                     p.IS_OPEN, p.OPEN_POSITIONS,
-                    vb.CLOSE as CURRENT_PRICE,
-                    vb.CLOSE * p.QUANTITY as MARKET_VALUE,
-                    (vb.CLOSE * p.QUANTITY) - p.COST_BASIS as UNREALIZED_PNL,
+                    lp.CLOSE as CURRENT_PRICE,
+                    lp.PRICE_TS,
+                    lp.PRICE_INTERVAL,
+                    lp.CLOSE * p.QUANTITY as MARKET_VALUE,
+                    (lp.CLOSE * p.QUANTITY) - p.COST_BASIS as UNREALIZED_PNL,
                     case when p.COST_BASIS > 0
-                         then ((vb.CLOSE * p.QUANTITY) - p.COST_BASIS) / p.COST_BASIS * 100
+                         then ((lp.CLOSE * p.QUANTITY) - p.COST_BASIS) / p.COST_BASIS * 100
                          else null end as UNREALIZED_PNL_PCT
                 from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
-                left join (
-                    select SYMBOL, MARKET_TYPE, CLOSE
-                    from MIP.MART.V_BAR_INDEX
-                    where INTERVAL_MINUTES = 1440
-                    qualify row_number() over (
-                        partition by SYMBOL, MARKET_TYPE
-                        order by TS desc
-                    ) = 1
-                ) vb
-                  on vb.SYMBOL = p.SYMBOL
-                 and vb.MARKET_TYPE = p.MARKET_TYPE
+                left join latest_price lp
+                  on lp.SYMBOL = p.SYMBOL
+                 and lp.MARKET_TYPE = p.MARKET_TYPE
                 where p.PORTFOLIO_ID = %s
                 order by p.ENTRY_TS desc
                 """,

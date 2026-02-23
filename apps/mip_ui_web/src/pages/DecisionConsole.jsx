@@ -34,16 +34,13 @@ function fmtDate(ts) {
 const SEVERITY_ICON = { green: '●', yellow: '◆', red: '▲' }
 const STAGE_BADGE = {
   'on-track':        { label: 'On Track',        cls: 'dc-badge--green' },
-  'candidate':       { label: 'Candidate',       cls: 'dc-badge--yellow' },
-  'watching':        { label: 'Watching',         cls: 'dc-badge--yellow' },
   'exit-triggered':  { label: 'Exit Triggered',  cls: 'dc-badge--red' },
   'exited':          { label: 'Exited',           cls: 'dc-badge--red' },
 }
 const DECISION_TYPE_LABEL = {
   ENTRY_EVALUATION:      'Entry Evaluation',
   POSITION_MONITOR:      'Monitor',
-  EARLY_EXIT_CANDIDATE:  'Exit Candidate',
-  EARLY_EXIT_TRIGGER:    'Exit Trigger',
+  EARLY_EXIT_TRIGGER:    'Threshold Exit',
   EXIT_EXECUTED:         'Exit Executed',
   EXIT_SKIPPED:          'Exit Skipped',
 }
@@ -76,12 +73,12 @@ function ConnectionDot({ connected }) {
 
 function KpiStrip({ heartbeat, positions }) {
   const open = heartbeat?.open ?? positions?.length ?? 0
-  const candidates = heartbeat?.candidates ?? 0
+  const triggered = heartbeat?.triggered ?? 0
   const exited = heartbeat?.exited ?? 0
   return (
     <div className="dc-kpi-strip">
       <div className="dc-kpi"><span className="dc-kpi-val">{open}</span><span className="dc-kpi-label">Open</span></div>
-      <div className="dc-kpi dc-kpi--yellow"><span className="dc-kpi-val">{candidates}</span><span className="dc-kpi-label">Candidates</span></div>
+      <div className="dc-kpi dc-kpi--red"><span className="dc-kpi-val">{triggered}</span><span className="dc-kpi-label">Triggered</span></div>
       <div className="dc-kpi dc-kpi--red"><span className="dc-kpi-val">{exited}</span><span className="dc-kpi-label">Exited</span></div>
     </div>
   )
@@ -131,7 +128,7 @@ function PositionRow({ pos, onSelect }) {
   const stage = (pos.STAGE || 'on-track').toLowerCase()
 
   return (
-    <div className={`dc-pos-row dc-pos-row--${stage === 'on-track' ? 'green' : stage === 'candidate' ? 'yellow' : stage === 'watching' ? 'yellow' : 'red'}`}
+    <div className={`dc-pos-row dc-pos-row--${stage === 'on-track' ? 'green' : 'red'}`}
          onClick={() => onSelect?.(pos)}>
       <div className="dc-pos-main">
         <span className="dc-pos-symbol">{pos.SYMBOL}</span>
@@ -258,11 +255,12 @@ function PositionInspector({ position, onClose }) {
               </div>
               <p className="dc-timeline-summary">{evt.summary}</p>
               <div className="dc-timeline-gates">
-                <GatePill label="Payoff" pass={evt.gates?.payoff_reached} val={fmtPct(evt.metrics?.unrealized_return)} />
-                <GatePill label="Giveback" pass={evt.gates?.giveback_triggered}
-                  val={evt.metrics?.giveback_pct != null ? `${(evt.metrics.giveback_pct * 100).toFixed(0)}%` : '—'} />
-                <GatePill label="No New High" pass={(evt.gates?.no_new_high_bars ?? 0) >= 3}
-                  val={`${evt.gates?.no_new_high_bars ?? 0} bars`} />
+                <GatePill label="Threshold" pass={evt.gates?.threshold_reached}
+                  val={evt.metrics?.effective_target != null
+                    ? `${evt.metrics.multiplier ?? '?'}× (${fmtPct(evt.metrics.effective_target)})`
+                    : fmtPct(evt.metrics?.target_return)} />
+                <GatePill label="MFE" pass={evt.metrics?.mfe_return > 0}
+                  val={fmtPct(evt.metrics?.mfe_return)} />
               </div>
               <button className="dc-json-toggle" onClick={() => setShowJson(showJson === evt.event_id ? null : evt.event_id)}>
                 {showJson === evt.event_id ? 'Hide JSON' : 'Advanced'}
@@ -392,7 +390,7 @@ export default function DecisionConsole() {
   })
 
   // Sort: pinned first, then by stage severity
-  const stagePriority = { 'exited': 0, 'exit-triggered': 1, 'watching': 2, 'candidate': 3, 'on-track': 4 }
+  const stagePriority = { 'exited': 0, 'exit-triggered': 1, 'on-track': 2 }
   const sortedPositions = [...filteredPositions].sort((a, b) => {
     const aPinned = pinnedSymbols.has(a.SYMBOL) ? 0 : 1
     const bPinned = pinnedSymbols.has(b.SYMBOL) ? 0 : 1

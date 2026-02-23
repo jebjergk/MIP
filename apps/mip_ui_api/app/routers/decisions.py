@@ -27,8 +27,6 @@ _STAGE_MAP = {
 
 def _build_event_from_log(row: dict) -> dict:
     """Transform an EARLY_EXIT_LOG row into a Decision Event."""
-    payoff = row.get("PAYOFF_REACHED") or False
-    triggered = row.get("GIVEBACK_TRIGGERED") or False
     exit_signal = row.get("EXIT_SIGNAL") or False
     executed = (row.get("EXECUTION_STATUS") or "") == "EXECUTED"
 
@@ -40,14 +38,6 @@ def _build_event_from_log(row: dict) -> dict:
         decision_type = "EARLY_EXIT_TRIGGER"
         stage = "exit-triggered"
         severity = "red"
-    elif triggered:
-        decision_type = "EARLY_EXIT_TRIGGER"
-        stage = "exit-triggered"
-        severity = "red"
-    elif payoff:
-        decision_type = "EARLY_EXIT_CANDIDATE"
-        stage = "candidate"
-        severity = "yellow"
     else:
         decision_type = "POSITION_MONITOR"
         stage = "on-track"
@@ -56,17 +46,18 @@ def _build_event_from_log(row: dict) -> dict:
     target_ret = row.get("TARGET_RETURN")
     current_ret = row.get("UNREALIZED_RETURN")
     mfe = row.get("MFE_RETURN")
-    giveback_pct = row.get("GIVEBACK_PCT")
+    multiplier = row.get("PAYOFF_MULTIPLIER")
+    effective_target = row.get("EFFECTIVE_TARGET")
 
     summary_parts = []
     if current_ret is not None and target_ret is not None:
         ret_pct = f"{current_ret * 100:+.2f}%"
         tgt_pct = f"{target_ret * 100:.2f}%"
         summary_parts.append(f"Return {ret_pct} vs target {tgt_pct}")
-    if payoff and row.get("PAYOFF_HIT_AFTER_MINS") is not None:
-        summary_parts.append(f"Target hit after {int(row['PAYOFF_HIT_AFTER_MINS'])} min")
-    if triggered and giveback_pct is not None:
-        summary_parts.append(f"Giveback {giveback_pct * 100:.0f}% from peak")
+    if exit_signal and multiplier is not None and target_ret is not None:
+        mult_str = f"{float(multiplier):.1f}"
+        eff_pct = f"{float(effective_target or (target_ret * float(multiplier))) * 100:.2f}%"
+        summary_parts.append(f"Threshold reached: {mult_str}\u00d7 expected payoff ({eff_pct})")
     if exit_signal and not executed:
         summary_parts.append(f"Exit signal in {(row.get('MODE') or 'SHADOW')} mode")
     if executed:
@@ -97,17 +88,14 @@ def _build_event_from_log(row: dict) -> dict:
             "target_return": _flt(target_ret),
             "unrealized_return": _flt(current_ret),
             "mfe_return": _flt(mfe),
-            "giveback_pct": _flt(giveback_pct),
-            "payoff_hit_after_mins": row.get("PAYOFF_HIT_AFTER_MINS"),
+            "effective_target": _flt(effective_target),
+            "multiplier": _flt(multiplier),
             "early_exit_pnl": _flt(row.get("EARLY_EXIT_PNL")),
             "hold_to_end_pnl": _flt(row.get("HOLD_TO_END_PNL")),
             "pnl_delta": _flt(row.get("PNL_DELTA")),
         },
         "gates": {
-            "payoff_reached": payoff,
-            "giveback_triggered": triggered,
-            "exit_signal": exit_signal,
-            "no_new_high_bars": row.get("NO_NEW_HIGH_BARS"),
+            "threshold_reached": exit_signal,
         },
         "mode": row.get("MODE"),
         "execution_status": row.get("EXECUTION_STATUS"),
@@ -195,14 +183,7 @@ def get_open_positions():
 
             case
                 when ps.EARLY_EXIT_FIRED then 'exited'
-                when ps.FIRST_HIT_TS is not null
-                     and ps.MFE_RETURN is not null
-                     and ps.MFE_RETURN > 0
-                     and (ps.MFE_RETURN - coalesce(
-                           (lb.CLOSE - op.ENTRY_PRICE) / nullif(op.ENTRY_PRICE, 0), 0
-                         )) / ps.MFE_RETURN >= 0.40
-                     then 'watching'
-                when ps.FIRST_HIT_TS is not null then 'candidate'
+                when ps.FIRST_HIT_TS is not null then 'exit-triggered'
                 else 'on-track'
             end as STAGE,
 
@@ -221,7 +202,14 @@ def get_open_positions():
         left join best_targets bt
           on bt.SYMBOL = op.SYMBOL
          and bt.MARKET_TYPE = op.MARKET_TYPE
-         and bt.SIGNAL_DATE = op.ENTRY_TS::date
+         and bt.SIGNAL_DATE = (
+                select max(rl2.TS::date)
+                from MIP.APP.RECOMMENDATION_LOG rl2
+                where rl2.SYMBOL = op.SYMBOL
+                  and rl2.MARKET_TYPE = op.MARKET_TYPE
+                  and rl2.INTERVAL_MINUTES = 1440
+                  and rl2.TS < op.ENTRY_TS
+            )
         where op.INTERVAL_MINUTES = 1440
           and op.IS_OPEN = true
         order by op.PORTFOLIO_ID, op.SYMBOL
@@ -401,7 +389,14 @@ def get_decision_diff(
          and ts2.INTERVAL_MINUTES = 1440
          and ts2.IS_TRUSTED = true
         where rl.SYMBOL = %s and rl.INTERVAL_MINUTES = 1440
-          and rl.TS::date = %s::date
+          and rl.TS::date = (
+                select max(rl2.TS::date)
+                from MIP.APP.RECOMMENDATION_LOG rl2
+                where rl2.SYMBOL = rl.SYMBOL
+                  and rl2.MARKET_TYPE = rl.MARKET_TYPE
+                  and rl2.INTERVAL_MINUTES = 1440
+                  and rl2.TS < %s
+            )
         order by ts2.AVG_RETURN desc limit 1
         """
         cur.execute(tgt_sql, (symbol.upper(), entry_ts))
@@ -487,7 +482,7 @@ async def stream_events(
                     if heartbeat_counter % 2 == 0:
                         cur.execute("""
                         select count(*) as OPEN_COUNT,
-                               sum(iff(ps.FIRST_HIT_TS is not null, 1, 0)) as CANDIDATE_COUNT,
+                               sum(iff(ps.FIRST_HIT_TS is not null, 1, 0)) as TRIGGERED_COUNT,
                                sum(iff(ps.EARLY_EXIT_FIRED, 1, 0)) as EXITED_COUNT
                         from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
                         left join MIP.APP.EARLY_EXIT_POSITION_STATE ps
@@ -501,7 +496,7 @@ async def stream_events(
                             yield _sse_msg("heartbeat", {
                                 "ts": datetime.now(timezone.utc).isoformat(),
                                 "open": hb_rows[0].get("OPEN_COUNT", 0),
-                                "candidates": hb_rows[0].get("CANDIDATE_COUNT", 0),
+                                "triggered": hb_rows[0].get("TRIGGERED_COUNT", 0),
                                 "exited": hb_rows[0].get("EXITED_COUNT", 0),
                             })
                 finally:

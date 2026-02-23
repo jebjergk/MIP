@@ -5,7 +5,7 @@ import { useDefaultPortfolioId } from '../context/PortfolioContext'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import './LiveHeader.css'
 
-const POLL_INTERVAL_MS = 60_000
+const POLL_INTERVAL_MS = 900_000
 
 /** Human-readable relative time (e.g. "2 min ago", "1 hour ago"). */
 function relativeTime(isoOrDate) {

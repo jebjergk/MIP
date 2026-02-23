@@ -435,12 +435,11 @@ async def stream_events(
 ):
     """
     Server-Sent Events stream.
-    Sends new decision events and position status every ~10 seconds.
+    Polls decision data every 15 minutes to reduce warehouse churn.
     """
 
     async def event_generator():
         last_event_id = 0
-        heartbeat_counter = 0
 
         yield _sse_msg("connected", {"ts": datetime.now(timezone.utc).isoformat()})
 
@@ -478,30 +477,28 @@ async def stream_events(
                             "last_id": last_event_id,
                         })
 
-                    # Every 6th cycle (~60s), send position summary
-                    heartbeat_counter += 1
-                    if heartbeat_counter % 2 == 0:
-                        cur.execute("""
-                        select
-                            (select count(*) from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
-                             where INTERVAL_MINUTES = 1440 and IS_OPEN = true) as OPEN_COUNT,
-                            (select count(*) from MIP.APP.EARLY_EXIT_POSITION_STATE
-                             where EARLY_EXIT_FIRED = true) as EXITED_COUNT
-                        """)
-                        hb_rows = fetch_all(cur)
-                        if hb_rows:
-                            yield _sse_msg("heartbeat", {
-                                "ts": datetime.now(timezone.utc).isoformat(),
-                                "open": hb_rows[0].get("OPEN_COUNT", 0),
-                                "exited": hb_rows[0].get("EXITED_COUNT", 0),
-                            })
+                    # Send position summary every cycle (same 15-minute cadence)
+                    cur.execute("""
+                    select
+                        (select count(*) from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+                         where INTERVAL_MINUTES = 1440 and IS_OPEN = true) as OPEN_COUNT,
+                        (select count(*) from MIP.APP.EARLY_EXIT_POSITION_STATE
+                         where EARLY_EXIT_FIRED = true) as EXITED_COUNT
+                    """)
+                    hb_rows = fetch_all(cur)
+                    if hb_rows:
+                        yield _sse_msg("heartbeat", {
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "open": hb_rows[0].get("OPEN_COUNT", 0),
+                            "exited": hb_rows[0].get("EXITED_COUNT", 0),
+                        })
                 finally:
                     conn.close()
             except Exception as e:
                 logger.warning("SSE poll error: %s", e)
                 yield _sse_msg("error", {"message": str(e)})
 
-            await asyncio.sleep(1800)
+            await asyncio.sleep(900)
 
     return StreamingResponse(
         event_generator(),

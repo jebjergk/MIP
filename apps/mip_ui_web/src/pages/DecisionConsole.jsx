@@ -342,7 +342,7 @@ export default function DecisionConsole() {
     }
   }, [])
 
-  useVisibleInterval(loadPositions, mode === 'positions' ? 1800000 : null)
+  useVisibleInterval(loadPositions, mode === 'positions' ? 900000 : null)
 
   useEffect(() => { loadPositions() }, [loadPositions])
 

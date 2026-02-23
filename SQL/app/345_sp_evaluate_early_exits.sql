@@ -154,7 +154,9 @@ begin
 
             -- ═══ GET EXPECTED PAYOFF (deterministic, from entry context) ═══
             begin
-                select ts.AVG_RETURN
+                -- Deterministic payoff selection:
+                -- pick the maximum trusted AVG_RETURN from the latest recommendation timestamp before entry.
+                select max(ts.AVG_RETURN)
                 into :v_target_return
                 from MIP.APP.RECOMMENDATION_LOG rl
                 join MIP.MART.V_TRUSTED_SIGNALS ts
@@ -172,12 +174,7 @@ begin
                         and rl2.MARKET_TYPE = rl.MARKET_TYPE
                         and rl2.INTERVAL_MINUTES = 1440
                         and rl2.TS < :v_pos_entry_ts
-                  )
-                qualify row_number() over (
-                    partition by rl.RECOMMENDATION_ID
-                    order by ts.AVG_RETURN desc
-                ) = 1
-                limit 1;
+                  );
             exception when other then
                 v_target_return := null;
             end;
@@ -254,10 +251,11 @@ begin
             -- ═══ SINGLE THRESHOLD CHECK ═══
             v_exit_signal := (:v_first_hit_ts is not null);
 
-            -- Exit price = close of the bar that crossed the threshold (with fees)
+            -- Exit price = close of the current evaluation bar (with fees).
+            -- Trigger remains based on first threshold hit, but execution is real-time.
             v_fees := (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0;
             if (:v_exit_signal) then
-                v_exit_price := :v_first_hit_price * (1 - :v_fees);
+                v_exit_price := :v_current_price * (1 - :v_fees);
                 v_early_pnl := (:v_exit_price - :v_pos_entry_price) * :v_pos_quantity;
             else
                 v_exit_price := :v_current_price * (1 - :v_fees);
@@ -266,9 +264,15 @@ begin
 
             -- Hold-to-end return (from RECOMMENDATION_OUTCOMES if available)
             begin
+                -- Keep hold-to-end reference aligned with deterministic target selection.
                 select ro.REALIZED_RETURN
                 into :v_hold_end_return
                 from MIP.APP.RECOMMENDATION_LOG rl
+                join MIP.MART.V_TRUSTED_SIGNALS ts
+                  on ts.PATTERN_ID = rl.PATTERN_ID
+                 and ts.MARKET_TYPE = rl.MARKET_TYPE
+                 and ts.INTERVAL_MINUTES = 1440
+                 and ts.IS_TRUSTED = true
                 join MIP.MART.V_PORTFOLIO_SIGNALS ps
                   on ps.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
                 join MIP.APP.RECOMMENDATION_OUTCOMES ro
@@ -286,7 +290,9 @@ begin
                         and rl2.INTERVAL_MINUTES = 1440
                         and rl2.TS < :v_pos_entry_ts
                   )
-                limit 1;
+                qualify row_number() over (
+                    order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID desc
+                ) = 1;
             exception when other then
                 v_hold_end_return := null;
             end;
@@ -353,7 +359,7 @@ begin
                 t.MFE_TS = iff(coalesce(:v_mfe_return, 0) > coalesce(t.MFE_RETURN, 0), :v_mfe_ts, t.MFE_TS),
                 t.LAST_EVALUATED_TS = :v_bar_close_ts,
                 t.EARLY_EXIT_FIRED = iff(:v_exit_signal and :v_mode != 'SHADOW', true, t.EARLY_EXIT_FIRED),
-                t.EARLY_EXIT_TS = iff(:v_exit_signal and :v_mode != 'SHADOW', :v_first_hit_ts, t.EARLY_EXIT_TS),
+                t.EARLY_EXIT_TS = iff(:v_exit_signal and :v_mode != 'SHADOW', :v_bar_close_ts, t.EARLY_EXIT_TS),
                 t.UPDATED_AT = current_timestamp()
             when not matched then insert (
                 PORTFOLIO_ID, SYMBOL, ENTRY_TS,
@@ -391,7 +397,7 @@ begin
                 ) values (
                     :v_pos_portfolio_id, :v_pos_run_id, :v_pos_episode_id,
                     :v_pos_symbol, :v_pos_market_type, 1440,
-                    :v_first_hit_ts, 'SELL', :v_exit_price,
+                    :v_bar_close_ts, 'SELL', :v_exit_price,
                     :v_pos_quantity, :v_sell_notional,
                     :v_early_pnl, :v_cash_after, null
                 );

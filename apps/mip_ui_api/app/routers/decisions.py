@@ -277,12 +277,29 @@ def get_position_trace(
     try:
         cur = conn.cursor()
         sql = """
-        select *
-        from MIP.APP.EARLY_EXIT_LOG
-        where PORTFOLIO_ID = %s
-          and SYMBOL = %s
-          and ENTRY_TS = %s
-        order by BAR_CLOSE_TS asc
+        with trace as (
+            select *
+            from MIP.APP.EARLY_EXIT_LOG
+            where PORTFOLIO_ID = %s
+              and SYMBOL = %s
+              and ENTRY_TS = %s
+        ),
+        latest_target as (
+            select
+                max_by(TARGET_RETURN, LOG_ID) as target_return,
+                max_by(PAYOFF_MULTIPLIER, LOG_ID) as payoff_multiplier
+            from trace
+        )
+        select t.*
+        from trace t
+        cross join latest_target lt
+        where t.TARGET_RETURN = lt.target_return
+          and t.PAYOFF_MULTIPLIER = lt.payoff_multiplier
+        qualify row_number() over (
+            partition by t.BAR_CLOSE_TS
+            order by t.LOG_ID desc
+        ) = 1
+        order by t.BAR_CLOSE_TS asc
         """
         cur.execute(sql, (portfolio_id, symbol.upper(), entry_ts))
         rows = fetch_all(cur)

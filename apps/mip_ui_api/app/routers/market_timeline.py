@@ -201,11 +201,19 @@ def get_overview(
             select
                 SYMBOL,
                 MARKET_TYPE,
-                max(case when TRUST_LABEL = 'TRUSTED' then 1 
-                         when TRUST_LABEL = 'WATCH' then 2 
-                         else 3 end) as trust_rank,
-                max_by(TRUST_LABEL, TS) as latest_trust_label
+                case min(
+                    case
+                        when TRUST_LABEL = 'TRUSTED' then 1
+                        when TRUST_LABEL = 'WATCH' then 2
+                        else 3
+                    end
+                )
+                    when 1 then 'TRUSTED'
+                    when 2 then 'WATCH'
+                    else 'UNTRUSTED'
+                end as latest_trust_label
             from MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION
+            where TS >= %s
             group by SYMBOL, MARKET_TYPE
         ),
         latest_bars as (
@@ -255,6 +263,7 @@ def get_overview(
         query_params.append(window_start)  # trade_counts
         if portfolio_id:
             query_params.append(portfolio_id)
+        query_params.append(window_start)  # trust_labels
         query_params.append(interval_minutes)  # latest_bars
         
         cur.execute(sql, query_params)

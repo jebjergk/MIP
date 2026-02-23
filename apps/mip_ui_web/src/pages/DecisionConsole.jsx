@@ -73,12 +73,10 @@ function ConnectionDot({ connected }) {
 
 function KpiStrip({ heartbeat, positions }) {
   const open = heartbeat?.open ?? positions?.length ?? 0
-  const triggered = heartbeat?.triggered ?? 0
   const exited = heartbeat?.exited ?? 0
   return (
     <div className="dc-kpi-strip">
       <div className="dc-kpi"><span className="dc-kpi-val">{open}</span><span className="dc-kpi-label">Open</span></div>
-      <div className="dc-kpi dc-kpi--red"><span className="dc-kpi-val">{triggered}</span><span className="dc-kpi-label">Triggered</span></div>
       <div className="dc-kpi dc-kpi--red"><span className="dc-kpi-val">{exited}</span><span className="dc-kpi-label">Exited</span></div>
     </div>
   )
@@ -402,7 +400,7 @@ export default function DecisionConsole() {
     setSelectedPosition({
       portfolio_id: evt.portfolio_id,
       symbol: evt.symbol,
-      entry_ts: evt.metrics?.entry_ts || positions.find(p => p.SYMBOL === evt.symbol && p.PORTFOLIO_ID === evt.portfolio_id)?.ENTRY_TS,
+      entry_ts: evt.entry_ts || positions.find(p => p.SYMBOL === evt.symbol && p.PORTFOLIO_ID === evt.portfolio_id)?.ENTRY_TS,
     })
   }
 
@@ -501,7 +499,11 @@ export default function DecisionConsole() {
         {/* Right pane: inspector */}
         {selectedPosition && (
           <div className="dc-right-pane">
-            <PositionInspector position={selectedPosition} onClose={() => setSelectedPosition(null)} />
+            <PositionInspector
+              key={`${selectedPosition.portfolio_id}-${selectedPosition.symbol}-${selectedPosition.entry_ts}`}
+              position={selectedPosition}
+              onClose={() => setSelectedPosition(null)}
+            />
           </div>
         )}
       </div>

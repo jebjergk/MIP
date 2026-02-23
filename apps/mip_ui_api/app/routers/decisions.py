@@ -78,6 +78,7 @@ def _build_event_from_log(row: dict) -> dict:
         "portfolio_id": row.get("PORTFOLIO_ID"),
         "symbol": row.get("SYMBOL"),
         "market_type": row.get("MARKET_TYPE"),
+        "entry_ts": _iso(row.get("ENTRY_TS")),
         "decision_type": decision_type,
         "stage": stage,
         "severity": severity,
@@ -481,22 +482,17 @@ async def stream_events(
                     heartbeat_counter += 1
                     if heartbeat_counter % 2 == 0:
                         cur.execute("""
-                        select count(*) as OPEN_COUNT,
-                               sum(iff(ps.FIRST_HIT_TS is not null, 1, 0)) as TRIGGERED_COUNT,
-                               sum(iff(ps.EARLY_EXIT_FIRED, 1, 0)) as EXITED_COUNT
-                        from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
-                        left join MIP.APP.EARLY_EXIT_POSITION_STATE ps
-                          on ps.PORTFOLIO_ID = op.PORTFOLIO_ID
-                         and ps.SYMBOL = op.SYMBOL
-                         and ps.ENTRY_TS = op.ENTRY_TS
-                        where op.INTERVAL_MINUTES = 1440 and op.IS_OPEN = true
+                        select
+                            (select count(*) from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+                             where INTERVAL_MINUTES = 1440 and IS_OPEN = true) as OPEN_COUNT,
+                            (select count(*) from MIP.APP.EARLY_EXIT_POSITION_STATE
+                             where EARLY_EXIT_FIRED = true) as EXITED_COUNT
                         """)
                         hb_rows = fetch_all(cur)
                         if hb_rows:
                             yield _sse_msg("heartbeat", {
                                 "ts": datetime.now(timezone.utc).isoformat(),
                                 "open": hb_rows[0].get("OPEN_COUNT", 0),
-                                "triggered": hb_rows[0].get("TRIGGERED_COUNT", 0),
                                 "exited": hb_rows[0].get("EXITED_COUNT", 0),
                             })
                 finally:

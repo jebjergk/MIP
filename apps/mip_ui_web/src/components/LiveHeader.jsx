@@ -120,7 +120,7 @@ export default function LiveHeader() {
 
       {displaySeconds != null && (
         <span className="live-header-item live-header-meta">
-          Updated {displaySeconds} sec ago
+          Next refresh in {Math.max(0, Math.floor(POLL_INTERVAL_MS / 1000) - displaySeconds)} sec
         </span>
       )}
 

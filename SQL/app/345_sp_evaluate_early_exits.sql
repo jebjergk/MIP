@@ -62,6 +62,9 @@ declare
     v_pnl_delta         number(18,4);
     v_reason_codes      variant;
 
+    v_cash_after        number(18,4);
+    v_sell_notional      number(18,4);
+
     v_evaluated         number := 0;
     v_signal_count      number := 0;
     v_executed_count    number := 0;
@@ -364,16 +367,33 @@ begin
 
             -- ═══ PAPER/ACTIVE EXECUTION ═══
             if (:v_exit_signal and :v_mode in ('PAPER', 'ACTIVE')) then
+                v_sell_notional := :v_exit_price * :v_pos_quantity;
+
+                -- Compute CASH_AFTER: current cash + sell proceeds
+                begin
+                    select CASH_AFTER
+                    into :v_cash_after
+                    from MIP.APP.PORTFOLIO_TRADES
+                    where PORTFOLIO_ID = :v_pos_portfolio_id
+                    order by TRADE_ID desc
+                    limit 1;
+                exception when other then
+                    select STARTING_CASH into :v_cash_after
+                    from MIP.APP.PORTFOLIO
+                    where PORTFOLIO_ID = :v_pos_portfolio_id;
+                end;
+                v_cash_after := coalesce(:v_cash_after, 0) + :v_sell_notional;
+
                 insert into MIP.APP.PORTFOLIO_TRADES (
                     PORTFOLIO_ID, RUN_ID, EPISODE_ID, SYMBOL, MARKET_TYPE,
                     INTERVAL_MINUTES, TRADE_TS, SIDE, PRICE, QUANTITY, NOTIONAL,
-                    REALIZED_PNL, SCORE
+                    REALIZED_PNL, CASH_AFTER, SCORE
                 ) values (
                     :v_pos_portfolio_id, :v_pos_run_id, :v_pos_episode_id,
                     :v_pos_symbol, :v_pos_market_type, 1440,
                     :v_first_hit_ts, 'SELL', :v_exit_price,
-                    :v_pos_quantity, :v_exit_price * :v_pos_quantity,
-                    :v_early_pnl, null
+                    :v_pos_quantity, :v_sell_notional,
+                    :v_early_pnl, :v_cash_after, null
                 );
 
                 v_executed_count := :v_executed_count + 1;

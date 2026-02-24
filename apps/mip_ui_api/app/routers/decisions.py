@@ -130,13 +130,29 @@ def get_open_positions():
     try:
         cur = conn.cursor()
         sql = """
-        with latest_bars as (
-            select SYMBOL, MARKET_TYPE, CLOSE, TS
+        with latest_bars_ranked as (
+            select
+                SYMBOL,
+                MARKET_TYPE,
+                CLOSE,
+                TS,
+                row_number() over (
+                    partition by SYMBOL, MARKET_TYPE
+                    order by TS desc
+                ) as RN
             from MIP.MART.MARKET_BARS
             where INTERVAL_MINUTES = 15
-            qualify row_number() over (
-                partition by SYMBOL, MARKET_TYPE order by TS desc
-            ) = 1
+        ),
+        latest_bars as (
+            select
+                SYMBOL,
+                MARKET_TYPE,
+                max(case when RN = 1 then CLOSE end) as CURRENT_CLOSE,
+                max(case when RN = 1 then TS end) as LATEST_BAR_TS,
+                max(case when RN = 2 then CLOSE end) as PREV_CLOSE,
+                max(case when RN = 2 then TS end) as PREV_BAR_TS
+            from latest_bars_ranked
+            group by SYMBOL, MARKET_TYPE
         ),
         best_targets as (
             select
@@ -153,6 +169,33 @@ def get_open_positions():
                 partition by rl.SYMBOL, rl.MARKET_TYPE, rl.TS::date
                 order by ts2.AVG_RETURN desc
             ) = 1
+        ),
+        intraday_series as (
+            select
+                op.PORTFOLIO_ID,
+                op.SYMBOL,
+                op.MARKET_TYPE,
+                op.ENTRY_TS,
+                array_agg(
+                    object_construct(
+                        't', mb.TS,
+                        'v', case
+                                when op.ENTRY_PRICE > 0
+                                then (mb.CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE
+                                else null
+                             end
+                    )
+                ) within group (order by mb.TS) as INTRADAY_RETURNS
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
+            join MIP.MART.MARKET_BARS mb
+              on mb.SYMBOL = op.SYMBOL
+             and mb.MARKET_TYPE = op.MARKET_TYPE
+             and mb.INTERVAL_MINUTES = 15
+             and mb.TS::date = current_date()
+             and mb.TS > op.ENTRY_TS
+            where op.INTERVAL_MINUTES = 1440
+              and op.IS_OPEN = true
+            group by op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE, op.ENTRY_TS
         )
         select
             op.PORTFOLIO_ID,
@@ -166,11 +209,24 @@ def get_open_positions():
             op.HOLD_UNTIL_INDEX,
             op.CURRENT_BAR_INDEX,
 
-            lb.CLOSE as CURRENT_PRICE,
-            lb.TS as LATEST_BAR_TS,
-            case when op.ENTRY_PRICE > 0 and lb.CLOSE is not null
-                 then (lb.CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE
+            lb.CURRENT_CLOSE as CURRENT_PRICE,
+            lb.LATEST_BAR_TS as LATEST_BAR_TS,
+            case when op.ENTRY_PRICE > 0 and lb.CURRENT_CLOSE is not null
+                      and lb.LATEST_BAR_TS > op.ENTRY_TS
+                 then (lb.CURRENT_CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE
                  else null end as CURRENT_RETURN,
+            case when op.ENTRY_PRICE > 0 and lb.PREV_CLOSE is not null
+                      and lb.PREV_BAR_TS > op.ENTRY_TS
+                 then (lb.PREV_CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE
+                 else null end as PREV_BAR_RETURN,
+            case when op.ENTRY_PRICE > 0
+                      and lb.CURRENT_CLOSE is not null
+                      and lb.PREV_CLOSE is not null
+                      and lb.LATEST_BAR_TS > op.ENTRY_TS
+                      and lb.PREV_BAR_TS > op.ENTRY_TS
+                 then ((lb.CURRENT_CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE)
+                    - ((lb.PREV_CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE)
+                 else null end as RETURN_DELTA_15M,
 
             bt.AVG_RETURN as TARGET_RETURN,
 
@@ -187,6 +243,7 @@ def get_open_positions():
                 when ps.FIRST_HIT_TS is not null then 'exit-triggered'
                 else 'on-track'
             end as STAGE,
+            ir.INTRADAY_RETURNS,
 
             datediff('minute', op.ENTRY_TS, current_timestamp()) as MINUTES_IN_TRADE
 
@@ -199,7 +256,6 @@ def get_open_positions():
         left join latest_bars lb
           on lb.SYMBOL = op.SYMBOL
          and lb.MARKET_TYPE = op.MARKET_TYPE
-         and lb.TS > op.ENTRY_TS
         left join best_targets bt
           on bt.SYMBOL = op.SYMBOL
          and bt.MARKET_TYPE = op.MARKET_TYPE
@@ -211,6 +267,11 @@ def get_open_positions():
                   and rl2.INTERVAL_MINUTES = 1440
                   and rl2.TS < op.ENTRY_TS
             )
+        left join intraday_series ir
+          on ir.PORTFOLIO_ID = op.PORTFOLIO_ID
+         and ir.SYMBOL = op.SYMBOL
+         and ir.MARKET_TYPE = op.MARKET_TYPE
+         and ir.ENTRY_TS = op.ENTRY_TS
         where op.INTERVAL_MINUTES = 1440
           and op.IS_OPEN = true
         order by op.PORTFOLIO_ID, op.SYMBOL

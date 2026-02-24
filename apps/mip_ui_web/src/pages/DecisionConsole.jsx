@@ -80,37 +80,21 @@ const MODES = [
   { id: 'history',   label: 'History' },
 ]
 
-const POSITIONS_STATE_STORAGE_KEY = 'mip_decision_console_positions_state_v1'
-const POSITIONS_STATE_MAX_AGE_MS = 1000 * 60 * 60 * 12 // 12h safety window
-
-function readPersistedPositionsState() {
-  try {
-    const raw = window.sessionStorage.getItem(POSITIONS_STATE_STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    const savedAt = Number(parsed?.savedAt || 0)
-    if (!savedAt || (Date.now() - savedAt) > POSITIONS_STATE_MAX_AGE_MS) return null
-    return {
-      positionChanges: parsed.positionChanges && typeof parsed.positionChanges === 'object' ? parsed.positionChanges : {},
-      positionSpark: parsed.positionSpark && typeof parsed.positionSpark === 'object' ? parsed.positionSpark : {},
-      prevPositions: parsed.prevPositions && typeof parsed.prevPositions === 'object' ? parsed.prevPositions : {},
-    }
-  } catch {
-    return null
+function normalizeSparklinePoints(raw) {
+  let value = raw
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { value = null }
   }
-}
-
-function persistPositionsState({ positionChanges, positionSpark, prevPositions }) {
-  try {
-    window.sessionStorage.setItem(POSITIONS_STATE_STORAGE_KEY, JSON.stringify({
-      savedAt: Date.now(),
-      positionChanges,
-      positionSpark,
-      prevPositions,
-    }))
-  } catch {
-    // Ignore storage quota/private mode issues; UI still works in-memory.
-  }
+  if (!Array.isArray(value)) return []
+  return value
+    .map((p) => {
+      const v = p?.v ?? p?.V
+      if (v == null) return null
+      const n = Number(v)
+      if (!Number.isFinite(n)) return null
+      return n
+    })
+    .filter(v => v != null)
 }
 
 /* ── Badge ────────────────────────────────────────────────────────── */
@@ -194,13 +178,15 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
     ? { cls: 'dc-pos-change--new', text: 'NEW' }
     : change?.stageChanged
       ? { cls: 'dc-pos-change--stage', text: 'Stage changed' }
-      : (change?.deltaReturn != null && Math.abs(change.deltaReturn) > 0)
+      : (change?.deltaReturn != null)
         ? {
-            cls: change.deltaReturn > 0 ? 'dc-pos-change--up' : 'dc-pos-change--down',
-            text: `${change.deltaReturn > 0 ? '▲' : '▼'} ${fmtSignedPct(change.deltaReturn)}`,
+            cls: change.deltaReturn > 0
+              ? 'dc-pos-change--up'
+              : (change.deltaReturn < 0 ? 'dc-pos-change--down' : 'dc-pos-change--stage'),
+            text: `${change.deltaReturn > 0 ? '▲' : (change.deltaReturn < 0 ? '▼' : '=')} ${fmtSignedPct(change.deltaReturn)}`,
           }
         : null
-  const sparkValues = Array.isArray(sparkline) ? sparkline.map(p => p.v).filter(v => v != null) : []
+  const sparkValues = normalizeSparklinePoints(sparkline)
   const sparkPath = buildSparkPath(sparkValues)
   const latestRet = sparkValues.length ? sparkValues[sparkValues.length - 1] : null
 
@@ -404,7 +390,6 @@ function FilterBar({ filters, onChange, symbols, portfolios }) {
 /* ── Main Page ────────────────────────────────────────────────────── */
 
 export default function DecisionConsole() {
-  const hydratedStateRef = useRef(readPersistedPositionsState())
   const [mode, setMode] = useState('positions')
   const [positions, setPositions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -415,9 +400,7 @@ export default function DecisionConsole() {
   const [historyEvents, setHistoryEvents] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [pinnedSymbols, setPinnedSymbols] = useState(new Set())
-  const [positionChanges, setPositionChanges] = useState(() => hydratedStateRef.current?.positionChanges || {})
-  const [positionSpark, setPositionSpark] = useState(() => hydratedStateRef.current?.positionSpark || {})
-  const prevPositionsRef = useRef(new Map(Object.entries(hydratedStateRef.current?.prevPositions || {})))
+  const [positionChanges, setPositionChanges] = useState({})
   const positionsLoadInFlight = useRef(false)
   const feedRef = useRef(null)
 
@@ -435,41 +418,20 @@ export default function DecisionConsole() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       const nextPositions = data.positions || []
-      const prevMap = prevPositionsRef.current
-      const nextMap = new Map()
       const nextChanges = {}
 
       nextPositions.forEach((p) => {
         const key = `${p.PORTFOLIO_ID}|${p.SYMBOL}|${p.ENTRY_TS}`
-        const prev = prevMap.get(key)
-        const currRet = p.CURRENT_RETURN
-        const prevRet = prev?.CURRENT_RETURN
-        const deltaReturn = (currRet != null && prevRet != null) ? (currRet - prevRet) : null
-        const stageChanged = !!prev && ((p.STAGE || '').toLowerCase() !== (prev.STAGE || '').toLowerCase())
-        const isNew = !prev
-        const changed = isNew || stageChanged || (deltaReturn != null && Math.abs(deltaReturn) > 0.00001)
-        if (changed) {
-          nextChanges[key] = { changed, isNew, stageChanged, deltaReturn }
+        const deltaReturn = p.RETURN_DELTA_15M
+        nextChanges[key] = {
+          changed: deltaReturn != null && Math.abs(deltaReturn) > 0.00001,
+          isNew: false,
+          stageChanged: false,
+          deltaReturn,
         }
-        nextMap.set(key, p)
       })
 
-      prevPositionsRef.current = nextMap
       setPositionChanges(nextChanges)
-      setPositionSpark(prev => {
-        const now = Date.now()
-        const next = {}
-        nextPositions.forEach((p) => {
-          const key = `${p.PORTFOLIO_ID}|${p.SYMBOL}|${p.ENTRY_TS}`
-          const curr = p.CURRENT_RETURN
-          const hist = Array.isArray(prev[key]) ? [...prev[key]] : []
-          if (curr != null) {
-            hist.push({ t: now, v: Number(curr) })
-          }
-          next[key] = hist.slice(-24)
-        })
-        return next
-      })
       setPositions(nextPositions)
       setError(null)
     } catch (e) {
@@ -483,11 +445,6 @@ export default function DecisionConsole() {
   useVisibleInterval(loadPositions, mode === 'positions' ? 900000 : null)
 
   useEffect(() => { loadPositions() }, [loadPositions])
-
-  useEffect(() => {
-    const prevPositions = Object.fromEntries(prevPositionsRef.current.entries())
-    persistPositionsState({ positionChanges, positionSpark, prevPositions })
-  }, [positionChanges, positionSpark])
 
   // Load history events
   useEffect(() => {
@@ -624,7 +581,7 @@ export default function DecisionConsole() {
                     pos={pos}
                     onSelect={handleSelectPosition}
                     change={positionChanges[`${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`]}
-                    sparkline={positionSpark[`${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`]}
+                    sparkline={pos.INTRADAY_RETURNS}
                   />
                 </div>
               ))}

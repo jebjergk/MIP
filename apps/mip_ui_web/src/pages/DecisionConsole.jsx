@@ -189,9 +189,6 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
   const sparkValues = normalizeSparklinePoints(sparkline)
   const sparkPath = buildSparkPath(sparkValues)
   const startRet = sparkValues.length ? sparkValues[0] : null
-  const startPrice = (startRet != null && pos.ENTRY_PRICE != null)
-    ? (Number(pos.ENTRY_PRICE) * (1 + Number(startRet)))
-    : null
 
   return (
     <div className={rowClasses}
@@ -207,8 +204,8 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         )}
         {sparkPath && (
           <span className="dc-pos-spark-wrap" title="Intraday return trend (today)">
-            <span className="dc-pos-spark-start">
-              {fmtUsd(startPrice)}
+            <span className={`dc-pos-spark-start ${startRet > 0 ? 'dc-val--pos' : startRet < 0 ? 'dc-val--neg' : ''}`}>
+              {fmtPct(startRet)}
             </span>
             <svg className="dc-pos-spark" viewBox="0 0 74 20" aria-hidden="true">
               <path d={sparkPath} />

@@ -166,7 +166,7 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
   const currentReturn = pos.CURRENT_RETURN
   const targetReturn = pos.TARGET_RETURN
   const distance = (currentReturn != null && targetReturn != null)
-    ? targetReturn - currentReturn : null
+    ? currentReturn - targetReturn : null
   const stage = (pos.STAGE || 'on-track').toLowerCase()
   const rowClasses = [
     'dc-pos-row',
@@ -189,7 +189,8 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
   const sparkValues = normalizeSparklinePoints(sparkline)
   const sparkPath = buildSparkPath(sparkValues)
   const startRet = sparkValues.length ? sparkValues[0] : null
-  const mfeReturn = (pos.INTRADAY_MFE_RETURN != null) ? pos.INTRADAY_MFE_RETURN : pos.MFE_RETURN
+  const lifetimeMfeReturn = pos.MFE_RETURN
+  const todayMfeReturn = pos.INTRADAY_MFE_RETURN
 
   return (
     <div className={rowClasses}
@@ -227,7 +228,9 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         </div>
         <div className="dc-pos-metric">
           <span className="dc-pos-metric-label">Distance</span>
-          <span className="dc-pos-metric-val">{distance != null ? fmtPct(distance) : '—'}</span>
+          <span className={`dc-pos-metric-val ${distance > 0 ? 'dc-val--pos' : distance < 0 ? 'dc-val--neg' : ''}`}>
+            {distance != null ? fmtSignedPct(distance) : '—'}
+          </span>
         </div>
         <div className="dc-pos-metric">
           <span className="dc-pos-metric-label">Time in Trade</span>
@@ -235,7 +238,11 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         </div>
         <div className="dc-pos-metric">
           <span className="dc-pos-metric-label">MFE</span>
-          <span className="dc-pos-metric-val">{mfeReturn != null ? fmtPct(mfeReturn) : '—'}</span>
+          <span className="dc-pos-metric-val">{lifetimeMfeReturn != null ? fmtPct(lifetimeMfeReturn) : '—'}</span>
+        </div>
+        <div className="dc-pos-metric">
+          <span className="dc-pos-metric-label">Today's MFE</span>
+          <span className="dc-pos-metric-val">{todayMfeReturn != null ? fmtPct(todayMfeReturn) : '—'}</span>
         </div>
       </div>
     </div>

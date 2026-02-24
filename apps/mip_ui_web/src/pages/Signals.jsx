@@ -17,7 +17,12 @@ function formatJson(val) {
   return JSON.stringify(val, null, 2)
 }
 
-function fmtPct(v)  { return v != null ? `${(v * 100).toFixed(1)}%` : '—' }
+function fmtPct(v)  {
+  if (v == null) return '—'
+  const pct = v * 100
+  if (Math.abs(pct) < 0.1) return `${pct.toFixed(2)}%`
+  return `${pct.toFixed(1)}%`
+}
 function fmtNum(v, d = 2) { return v != null ? Number(v).toFixed(d) : '—' }
 
 const OUTCOME_CFG = {
@@ -155,71 +160,95 @@ function DecisionTrace({ decision }) {
   const [showJson, setShowJson] = useState(false)
   const trace   = decision.decision_trace || []
   const metrics = decision.metrics || {}
-  const gating  = decision.gating_parsed || {}
   const hasMetrics = Object.keys(metrics).length > 0
 
   return (
     <div className="de-trace">
-      {/* Step diagram */}
-      <div className="de-trace-steps">
+      {/* Horizontal signal process */}
+      <div className="de-trace-flow">
         {trace.map((step, i) => (
-          <div key={i} className={`de-trace-step ${step.passed ? 'de-step--pass' : 'de-step--fail'}`}>
-            <div className="de-step-indicator">
+          <div key={i} className="de-flow-item-wrap">
+            <div className={`de-flow-item ${step.passed ? 'de-step--pass' : 'de-step--fail'}`}>
               <span className="de-step-circle">{step.passed ? '✓' : '✗'}</span>
-              {i < trace.length - 1 && <span className="de-step-line" />}
+              <div className="de-step-body">
+                <span className="de-step-label">{step.label}</span>
+                {step.detail && <span className="de-step-detail">{step.detail}</span>}
+              </div>
             </div>
-            <div className="de-step-body">
-              <span className="de-step-label">{step.label}</span>
-              {step.detail && <span className="de-step-detail">{step.detail}</span>}
-            </div>
+            {i < trace.length - 1 && <span className="de-flow-arrow" aria-hidden="true">→</span>}
           </div>
         ))}
       </div>
 
-      {/* Supporting metrics */}
-      {hasMetrics && (
-        <div className="de-trace-metrics">
-          <h4 className="de-metrics-title">Supporting Metrics</h4>
-          <div className="de-metrics-grid">
-            {Object.entries(metrics).map(([k, v]) => (
-              <div key={k} className="de-metric">
-                <span className="de-metric-label">{k}</span>
+      {/* Supporting cards under process row */}
+      <div className="de-trace-panels">
+        {hasMetrics && (
+          <div className="de-trace-metrics">
+            <h4 className="de-metrics-title">Supporting Metrics</h4>
+            <div className="de-metrics-grid">
+              {Object.entries(metrics).map(([k, v]) => (
+                <div key={k} className="de-metric">
+                  <span className="de-metric-label">{k}</span>
+                  <span className="de-metric-value">
+                    {typeof v === 'number'
+                      ? (k.includes('Rate') || k.includes('Return') || k.includes('Coverage') || k.includes('Corr')
+                          ? fmtPct(v) : fmtNum(v, k.includes('Score') ? 2 : 0))
+                      : String(v ?? '—')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {decision.trade_info && (
+          <div className="de-trace-trade">
+            <h4 className="de-metrics-title">Trade Details</h4>
+            <div className="de-metrics-grid">
+              <div className="de-metric">
+                <span className="de-metric-label">Portfolios</span>
                 <span className="de-metric-value">
-                  {typeof v === 'number'
-                    ? (k.includes('Rate') || k.includes('Return') || k.includes('Coverage') || k.includes('Corr')
-                        ? fmtPct(v) : fmtNum(v, k.includes('Score') ? 2 : 0))
-                    : String(v ?? '—')}
+                  {Array.isArray(decision.trade_info.PORTFOLIO_IDS) && decision.trade_info.PORTFOLIO_IDS.length > 0
+                    ? decision.trade_info.PORTFOLIO_IDS.join(', ')
+                    : (decision.trade_info.PORTFOLIO_ID ?? '—')}
                 </span>
               </div>
-            ))}
+              <div className="de-metric">
+                <span className="de-metric-label">Portfolio Count</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.PORTFOLIO_COUNT, 0)}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Linked Trades</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.TRADE_COUNT, 0)}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Side</span>
+                <span className="de-metric-value">{decision.trade_info.SIDE}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Price</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.PRICE, 4)}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Quantity</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.QUANTITY, 4)}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Notional</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.NOTIONAL, 2)}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Total Quantity</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.TOTAL_QUANTITY, 4)}</span>
+              </div>
+              <div className="de-metric">
+                <span className="de-metric-label">Total Notional</span>
+                <span className="de-metric-value">{fmtNum(decision.trade_info.TOTAL_NOTIONAL, 2)}</span>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* Trade info */}
-      {decision.trade_info && (
-        <div className="de-trace-trade">
-          <h4 className="de-metrics-title">Trade Details</h4>
-          <div className="de-metrics-grid">
-            <div className="de-metric">
-              <span className="de-metric-label">Side</span>
-              <span className="de-metric-value">{decision.trade_info.SIDE}</span>
-            </div>
-            <div className="de-metric">
-              <span className="de-metric-label">Price</span>
-              <span className="de-metric-value">{fmtNum(decision.trade_info.PRICE, 4)}</span>
-            </div>
-            <div className="de-metric">
-              <span className="de-metric-label">Quantity</span>
-              <span className="de-metric-value">{fmtNum(decision.trade_info.QUANTITY, 4)}</span>
-            </div>
-            <div className="de-metric">
-              <span className="de-metric-label">Notional</span>
-              <span className="de-metric-value">{fmtNum(decision.trade_info.NOTIONAL, 2)}</span>
-            </div>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Advanced JSON */}
       <button type="button" className="de-json-toggle" onClick={() => setShowJson(v => !v)}>
@@ -469,7 +498,7 @@ export default function Signals() {
                 <th>Pattern</th>
                 <th>Outcome</th>
                 <th>Trust</th>
-                <th>Score</th>
+                <th>Signal Score</th>
                 <th>Signal Time</th>
                 <th>Why</th>
                 <th className="de-th-expand" aria-label="Expand" />

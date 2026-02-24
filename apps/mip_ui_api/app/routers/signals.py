@@ -318,6 +318,31 @@ def _safe_float(val):
         return None
 
 
+def _build_trade_info(trades: list) -> dict:
+    """Build UI-friendly trade payload from one-or-many linked trade rows."""
+    serialized = [serialize_row(t) for t in trades] if trades else []
+    if not serialized:
+        return {}
+
+    # Preserve backward compatibility with existing UI fields by keeping
+    # representative trade fields from the first linked row.
+    base = dict(serialized[0])
+    portfolio_ids = sorted({
+        int(t.get("PORTFOLIO_ID"))
+        for t in serialized
+        if t.get("PORTFOLIO_ID") is not None
+    })
+    total_qty = sum((_safe_float(t.get("QUANTITY")) or 0.0) for t in serialized)
+    total_notional = sum((_safe_float(t.get("NOTIONAL")) or 0.0) for t in serialized)
+
+    base["PORTFOLIO_IDS"] = portfolio_ids
+    base["PORTFOLIO_COUNT"] = len(portfolio_ids)
+    base["TRADE_COUNT"] = len(serialized)
+    base["TOTAL_QUANTITY"] = total_qty
+    base["TOTAL_NOTIONAL"] = total_notional
+    return base
+
+
 def _derive_why(outcome: str, trust_label: str, gating: dict) -> str:
     """One-line human-readable explanation for why this outcome happened."""
     pr = gating.get("policy_reason") or {}
@@ -391,8 +416,10 @@ def _build_decision_trace(
     trust_passed = trust_label == "TRUSTED"
     parts = [trust_label]
     trusted_min = _safe_float(thresholds.get("trusted_min"))
-    if trusted_min is not None and score_f is not None:
-        parts.append(f"score {score_f:.2f} vs min {trusted_min:.2f}")
+    if score_f is not None:
+        parts.append(f"signal score {score_f:.2f}")
+    if trusted_min is not None:
+        parts.append(f"policy threshold field {trusted_min:.2f} (diagnostic)")
     hr = _safe_float(pr.get("hit_rate"))
     if hr is not None:
         parts.append(f"hit rate {hr:.0%}")
@@ -462,9 +489,9 @@ def _build_decision_metrics(gating: dict) -> dict:
         metrics["Horizon (bars)"] = horizon
 
     if thresholds.get("trusted_min") is not None:
-        metrics["Trusted Min Score"] = _safe_float(thresholds["trusted_min"])
+        metrics["Policy Trusted Threshold (diag)"] = _safe_float(thresholds["trusted_min"])
     if thresholds.get("watch_min") is not None:
-        metrics["Watch Min Score"] = _safe_float(thresholds["watch_min"])
+        metrics["Policy Watch Threshold (diag)"] = _safe_float(thresholds["watch_min"])
 
     return metrics
 
@@ -632,8 +659,8 @@ def get_decisions(
                 cur.execute(trade_sql, tuple(trade_params))
                 for tr in fetch_all(cur):
                     rid = tr.get("RECOMMENDATION_ID")
-                    if rid is not None and rid not in traded_map:
-                        traded_map[rid] = tr
+                    if rid is not None:
+                        traded_map.setdefault(rid, []).append(tr)
             except Exception:
                 pass  # ORDER_PROPOSALS or linkage unavailable
 
@@ -648,7 +675,7 @@ def get_decisions(
 
             if rec_id in traded_map:
                 outcome_val = "TRADED"
-                trade_info = serialize_row(traded_map[rec_id])
+                trade_info = _build_trade_info(traded_map[rec_id])
             elif not is_eligible:
                 outcome_val = "REJECTED_BY_TRUST"
                 trade_info = None

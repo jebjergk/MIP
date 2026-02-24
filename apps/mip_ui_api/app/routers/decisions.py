@@ -185,7 +185,14 @@ def get_open_positions():
                                 else null
                              end
                     )
-                ) within group (order by mb.TS) as INTRADAY_RETURNS
+                ) within group (order by mb.TS) as INTRADAY_RETURNS,
+                max(
+                    case
+                        when op.ENTRY_PRICE > 0
+                        then (mb.CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE
+                        else null
+                    end
+                ) as INTRADAY_MFE_RETURN
             from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
             join MIP.MART.MARKET_BARS mb
               on mb.SYMBOL = op.SYMBOL
@@ -244,6 +251,7 @@ def get_open_positions():
                 else 'on-track'
             end as STAGE,
             ir.INTRADAY_RETURNS,
+            ir.INTRADAY_MFE_RETURN,
 
             datediff('minute', op.ENTRY_TS, current_timestamp()) as MINUTES_IN_TRADE
 

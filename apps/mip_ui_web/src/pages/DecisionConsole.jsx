@@ -189,6 +189,7 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
   const sparkValues = normalizeSparklinePoints(sparkline)
   const sparkPath = buildSparkPath(sparkValues)
   const startRet = sparkValues.length ? sparkValues[0] : null
+  const mfeReturn = (pos.INTRADAY_MFE_RETURN != null) ? pos.INTRADAY_MFE_RETURN : pos.MFE_RETURN
 
   return (
     <div className={rowClasses}
@@ -234,7 +235,7 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         </div>
         <div className="dc-pos-metric">
           <span className="dc-pos-metric-label">MFE</span>
-          <span className="dc-pos-metric-val">{pos.MFE_RETURN != null ? fmtPct(pos.MFE_RETURN) : '—'}</span>
+          <span className="dc-pos-metric-val">{mfeReturn != null ? fmtPct(mfeReturn) : '—'}</span>
         </div>
       </div>
     </div>

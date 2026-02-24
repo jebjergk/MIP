@@ -43,6 +43,21 @@ function fmtDate(ts) {
   try { return new Date(ts).toLocaleDateString() } catch { return ts }
 }
 
+function buildSparkPath(values, width = 74, height = 20, pad = 2) {
+  if (!Array.isArray(values) || values.length < 2) return null
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = Math.max(max - min, 1e-9)
+  const xStep = (width - pad * 2) / (values.length - 1)
+  const yFor = (v) => {
+    const t = (v - min) / range
+    return (height - pad) - t * (height - pad * 2)
+  }
+  return values
+    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(pad + i * xStep).toFixed(2)} ${yFor(v).toFixed(2)}`)
+    .join(' ')
+}
+
 const SEVERITY_ICON = { green: '●', yellow: '◆', red: '▲' }
 const STAGE_BADGE = {
   'on-track':        { label: 'On Track',        cls: 'dc-badge--green' },
@@ -130,7 +145,7 @@ function EventCard({ event, onSelect }) {
 
 /* ── Position Row (for Open Positions mode) ───────────────────────── */
 
-function PositionRow({ pos, onSelect, change }) {
+function PositionRow({ pos, onSelect, change, sparkline }) {
   const currentReturn = pos.CURRENT_RETURN
   const targetReturn = pos.TARGET_RETURN
   const distance = (currentReturn != null && targetReturn != null)
@@ -152,6 +167,9 @@ function PositionRow({ pos, onSelect, change }) {
             text: `${change.deltaReturn > 0 ? '▲' : '▼'} ${fmtSignedPct(change.deltaReturn)}`,
           }
         : null
+  const sparkValues = Array.isArray(sparkline) ? sparkline.map(p => p.v).filter(v => v != null) : []
+  const sparkPath = buildSparkPath(sparkValues)
+  const latestRet = sparkValues.length ? sparkValues[sparkValues.length - 1] : null
 
   return (
     <div className={rowClasses}
@@ -163,6 +181,16 @@ function PositionRow({ pos, onSelect, change }) {
         {changeBadge && (
           <span className={`dc-pos-change ${changeBadge.cls}`} title="Change since previous refresh">
             {changeBadge.text}
+          </span>
+        )}
+        {sparkPath && (
+          <span className="dc-pos-spark-wrap" title="Return trend (session)">
+            <svg className="dc-pos-spark" viewBox="0 0 74 20" aria-hidden="true">
+              <path d={sparkPath} />
+            </svg>
+            <span className={`dc-pos-spark-latest ${latestRet > 0 ? 'dc-val--pos' : latestRet < 0 ? 'dc-val--neg' : ''}`}>
+              {fmtPct(latestRet)}
+            </span>
           </span>
         )}
       </div>
@@ -354,7 +382,9 @@ export default function DecisionConsole() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [pinnedSymbols, setPinnedSymbols] = useState(new Set())
   const [positionChanges, setPositionChanges] = useState({})
+  const [positionSpark, setPositionSpark] = useState({})
   const prevPositionsRef = useRef(new Map())
+  const positionsLoadInFlight = useRef(false)
   const feedRef = useRef(null)
 
   const { events: liveEvents, heartbeat, connected } = useDecisionStream({
@@ -364,6 +394,8 @@ export default function DecisionConsole() {
 
   // Load open positions
   const loadPositions = useCallback(async () => {
+    if (positionsLoadInFlight.current) return
+    positionsLoadInFlight.current = true
     try {
       const resp = await fetch(`${API_BASE}/decisions/open-positions`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -390,11 +422,26 @@ export default function DecisionConsole() {
 
       prevPositionsRef.current = nextMap
       setPositionChanges(nextChanges)
+      setPositionSpark(prev => {
+        const now = Date.now()
+        const next = {}
+        nextPositions.forEach((p) => {
+          const key = `${p.PORTFOLIO_ID}|${p.SYMBOL}|${p.ENTRY_TS}`
+          const curr = p.CURRENT_RETURN
+          const hist = Array.isArray(prev[key]) ? [...prev[key]] : []
+          if (curr != null) {
+            hist.push({ t: now, v: Number(curr) })
+          }
+          next[key] = hist.slice(-24)
+        })
+        return next
+      })
       setPositions(nextPositions)
       setError(null)
     } catch (e) {
       setError(e.message)
     } finally {
+      positionsLoadInFlight.current = false
       setLoading(false)
     }
   }, [])
@@ -538,6 +585,7 @@ export default function DecisionConsole() {
                     pos={pos}
                     onSelect={handleSelectPosition}
                     change={positionChanges[`${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`]}
+                    sparkline={positionSpark[`${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`]}
                   />
                 </div>
               ))}

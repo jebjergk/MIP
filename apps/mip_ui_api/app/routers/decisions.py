@@ -469,6 +469,25 @@ async def stream_events(
                 try:
                     cur = conn.cursor()
 
+                    # Bootstrap from stream tail so Live Decisions doesn't replay
+                    # stale historical rows (e.g. old SHADOW events) on reconnect.
+                    if last_event_id == 0:
+                        wheres_boot = ["1=1"]
+                        params_boot = []
+                        if portfolio_id is not None:
+                            wheres_boot.append("PORTFOLIO_ID = %s")
+                            params_boot.append(portfolio_id)
+                        cur.execute(
+                            f"""
+                            select coalesce(max(LOG_ID), 0) as LAST_ID
+                            from MIP.APP.EARLY_EXIT_LOG
+                            where {' and '.join(wheres_boot)}
+                            """,
+                            params_boot,
+                        )
+                        boot_rows = fetch_all(cur)
+                        last_event_id = int((boot_rows[0] or {}).get("LAST_ID") or 0)
+
                     # Fetch new events since last check
                     wheres = ["LOG_ID > %s"]
                     params = [last_event_id]

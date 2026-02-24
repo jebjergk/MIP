@@ -10,6 +10,11 @@ import './DecisionConsole.css'
 /* ── helpers ──────────────────────────────────────────────────────── */
 
 function fmtPct(v) { return v != null ? `${(v * 100).toFixed(2)}%` : '—' }
+function fmtSignedPct(v) {
+  if (v == null) return '—'
+  const sign = v > 0 ? '+' : ''
+  return `${sign}${(v * 100).toFixed(2)}%`
+}
 function fmtUsd(v) { return v != null ? `$${Number(v).toFixed(2)}` : '—' }
 function fmtNum(v, d = 2) { return v != null ? Number(v).toFixed(d) : '—' }
 function fmtMins(m) {
@@ -23,7 +28,14 @@ function fmtTs(ts) {
   if (!ts) return '—'
   try {
     const d = new Date(ts)
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return d.toLocaleString([], {
+      year: '2-digit',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
   } catch { return ts }
 }
 function fmtDate(ts) {
@@ -118,20 +130,41 @@ function EventCard({ event, onSelect }) {
 
 /* ── Position Row (for Open Positions mode) ───────────────────────── */
 
-function PositionRow({ pos, onSelect }) {
+function PositionRow({ pos, onSelect, change }) {
   const currentReturn = pos.CURRENT_RETURN
   const targetReturn = pos.TARGET_RETURN
   const distance = (currentReturn != null && targetReturn != null)
     ? targetReturn - currentReturn : null
   const stage = (pos.STAGE || 'on-track').toLowerCase()
+  const rowClasses = [
+    'dc-pos-row',
+    `dc-pos-row--${stage === 'on-track' ? 'green' : 'red'}`,
+    change?.changed ? 'dc-pos-row--changed' : '',
+  ].filter(Boolean).join(' ')
+
+  const changeBadge = change?.isNew
+    ? { cls: 'dc-pos-change--new', text: 'NEW' }
+    : change?.stageChanged
+      ? { cls: 'dc-pos-change--stage', text: 'Stage changed' }
+      : (change?.deltaReturn != null && Math.abs(change.deltaReturn) > 0)
+        ? {
+            cls: change.deltaReturn > 0 ? 'dc-pos-change--up' : 'dc-pos-change--down',
+            text: `${change.deltaReturn > 0 ? '▲' : '▼'} ${fmtSignedPct(change.deltaReturn)}`,
+          }
+        : null
 
   return (
-    <div className={`dc-pos-row dc-pos-row--${stage === 'on-track' ? 'green' : 'red'}`}
+    <div className={rowClasses}
          onClick={() => onSelect?.(pos)}>
       <div className="dc-pos-main">
         <span className="dc-pos-symbol">{pos.SYMBOL}</span>
         <StageBadge stage={stage} />
         <span className="dc-pos-portfolio">{pos.PORTFOLIO_NAME}</span>
+        {changeBadge && (
+          <span className={`dc-pos-change ${changeBadge.cls}`} title="Change since previous refresh">
+            {changeBadge.text}
+          </span>
+        )}
       </div>
       <div className="dc-pos-metrics">
         <div className="dc-pos-metric">
@@ -320,6 +353,8 @@ export default function DecisionConsole() {
   const [historyEvents, setHistoryEvents] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [pinnedSymbols, setPinnedSymbols] = useState(new Set())
+  const [positionChanges, setPositionChanges] = useState({})
+  const prevPositionsRef = useRef(new Map())
   const feedRef = useRef(null)
 
   const { events: liveEvents, heartbeat, connected } = useDecisionStream({
@@ -333,7 +368,29 @@ export default function DecisionConsole() {
       const resp = await fetch(`${API_BASE}/decisions/open-positions`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
-      setPositions(data.positions || [])
+      const nextPositions = data.positions || []
+      const prevMap = prevPositionsRef.current
+      const nextMap = new Map()
+      const nextChanges = {}
+
+      nextPositions.forEach((p) => {
+        const key = `${p.PORTFOLIO_ID}|${p.SYMBOL}|${p.ENTRY_TS}`
+        const prev = prevMap.get(key)
+        const currRet = p.CURRENT_RETURN
+        const prevRet = prev?.CURRENT_RETURN
+        const deltaReturn = (currRet != null && prevRet != null) ? (currRet - prevRet) : null
+        const stageChanged = !!prev && ((p.STAGE || '').toLowerCase() !== (prev.STAGE || '').toLowerCase())
+        const isNew = !prev
+        const changed = isNew || stageChanged || (deltaReturn != null && Math.abs(deltaReturn) > 0.00001)
+        if (changed) {
+          nextChanges[key] = { changed, isNew, stageChanged, deltaReturn }
+        }
+        nextMap.set(key, p)
+      })
+
+      prevPositionsRef.current = nextMap
+      setPositionChanges(nextChanges)
+      setPositions(nextPositions)
       setError(null)
     } catch (e) {
       setError(e.message)
@@ -477,7 +534,11 @@ export default function DecisionConsole() {
                     onClick={e => { e.stopPropagation(); togglePin(pos.SYMBOL) }}
                     title={pinnedSymbols.has(pos.SYMBOL) ? 'Unpin' : 'Pin'}
                   >&#9733;</button>
-                  <PositionRow pos={pos} onSelect={handleSelectPosition} />
+                  <PositionRow
+                    pos={pos}
+                    onSelect={handleSelectPosition}
+                    change={positionChanges[`${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`]}
+                  />
                 </div>
               ))}
             </div>

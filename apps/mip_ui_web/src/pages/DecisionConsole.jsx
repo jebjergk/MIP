@@ -188,7 +188,10 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         : null
   const sparkValues = normalizeSparklinePoints(sparkline)
   const sparkPath = buildSparkPath(sparkValues)
-  const latestRet = sparkValues.length ? sparkValues[sparkValues.length - 1] : null
+  const startRet = sparkValues.length ? sparkValues[0] : null
+  const startPrice = (startRet != null && pos.ENTRY_PRICE != null)
+    ? (Number(pos.ENTRY_PRICE) * (1 + Number(startRet)))
+    : null
 
   return (
     <div className={rowClasses}
@@ -198,18 +201,18 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         <StageBadge stage={stage} />
         <span className="dc-pos-portfolio">{pos.PORTFOLIO_NAME}</span>
         {changeBadge && (
-          <span className={`dc-pos-change ${changeBadge.cls}`} title="Change since previous refresh">
+          <span className={`dc-pos-change ${changeBadge.cls}`} title="Change vs previous 15-minute bar">
             {changeBadge.text}
           </span>
         )}
         {sparkPath && (
-          <span className="dc-pos-spark-wrap" title="Return trend (session)">
+          <span className="dc-pos-spark-wrap" title="Intraday return trend (today)">
+            <span className="dc-pos-spark-start">
+              {fmtUsd(startPrice)}
+            </span>
             <svg className="dc-pos-spark" viewBox="0 0 74 20" aria-hidden="true">
               <path d={sparkPath} />
             </svg>
-            <span className={`dc-pos-spark-latest ${latestRet > 0 ? 'dc-val--pos' : latestRet < 0 ? 'dc-val--neg' : ''}`}>
-              {fmtPct(latestRet)}
-            </span>
           </span>
         )}
       </div>

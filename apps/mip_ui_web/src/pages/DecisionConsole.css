@@ -295,6 +295,13 @@
   border-radius: 999px;
   background: #fff;
 }
+.dc-pos-spark-start {
+  font-size: 0.72rem;
+  font-weight: 700;
+  min-width: 52px;
+  text-align: left;
+  color: var(--dc-text-muted);
+}
 .dc-pos-spark {
   width: 74px;
   height: 20px;
@@ -306,12 +313,6 @@
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-.dc-pos-spark-latest {
-  font-size: 0.72rem;
-  font-weight: 700;
-  min-width: 44px;
-  text-align: right;
 }
 .dc-pos-change {
   display: inline-flex;

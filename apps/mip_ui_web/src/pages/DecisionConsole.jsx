@@ -80,6 +80,39 @@ const MODES = [
   { id: 'history',   label: 'History' },
 ]
 
+const POSITIONS_STATE_STORAGE_KEY = 'mip_decision_console_positions_state_v1'
+const POSITIONS_STATE_MAX_AGE_MS = 1000 * 60 * 60 * 12 // 12h safety window
+
+function readPersistedPositionsState() {
+  try {
+    const raw = window.sessionStorage.getItem(POSITIONS_STATE_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const savedAt = Number(parsed?.savedAt || 0)
+    if (!savedAt || (Date.now() - savedAt) > POSITIONS_STATE_MAX_AGE_MS) return null
+    return {
+      positionChanges: parsed.positionChanges && typeof parsed.positionChanges === 'object' ? parsed.positionChanges : {},
+      positionSpark: parsed.positionSpark && typeof parsed.positionSpark === 'object' ? parsed.positionSpark : {},
+      prevPositions: parsed.prevPositions && typeof parsed.prevPositions === 'object' ? parsed.prevPositions : {},
+    }
+  } catch {
+    return null
+  }
+}
+
+function persistPositionsState({ positionChanges, positionSpark, prevPositions }) {
+  try {
+    window.sessionStorage.setItem(POSITIONS_STATE_STORAGE_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      positionChanges,
+      positionSpark,
+      prevPositions,
+    }))
+  } catch {
+    // Ignore storage quota/private mode issues; UI still works in-memory.
+  }
+}
+
 /* ── Badge ────────────────────────────────────────────────────────── */
 
 function StageBadge({ stage }) {
@@ -371,6 +404,7 @@ function FilterBar({ filters, onChange, symbols, portfolios }) {
 /* ── Main Page ────────────────────────────────────────────────────── */
 
 export default function DecisionConsole() {
+  const hydratedStateRef = useRef(readPersistedPositionsState())
   const [mode, setMode] = useState('positions')
   const [positions, setPositions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -381,9 +415,9 @@ export default function DecisionConsole() {
   const [historyEvents, setHistoryEvents] = useState([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [pinnedSymbols, setPinnedSymbols] = useState(new Set())
-  const [positionChanges, setPositionChanges] = useState({})
-  const [positionSpark, setPositionSpark] = useState({})
-  const prevPositionsRef = useRef(new Map())
+  const [positionChanges, setPositionChanges] = useState(() => hydratedStateRef.current?.positionChanges || {})
+  const [positionSpark, setPositionSpark] = useState(() => hydratedStateRef.current?.positionSpark || {})
+  const prevPositionsRef = useRef(new Map(Object.entries(hydratedStateRef.current?.prevPositions || {})))
   const positionsLoadInFlight = useRef(false)
   const feedRef = useRef(null)
 
@@ -449,6 +483,11 @@ export default function DecisionConsole() {
   useVisibleInterval(loadPositions, mode === 'positions' ? 900000 : null)
 
   useEffect(() => { loadPositions() }, [loadPositions])
+
+  useEffect(() => {
+    const prevPositions = Object.fromEntries(prevPositionsRef.current.entries())
+    persistPositionsState({ positionChanges, positionSpark, prevPositions })
+  }, [positionChanges, positionSpark])
 
   // Load history events
   useEffect(() => {

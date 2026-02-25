@@ -30,6 +30,9 @@ declare
     v_allowed_actions string;
     v_inserted_count number := 0;
     v_selected_count number := 0;
+    -- Proposal size should be profile-driven, not hardcoded globally.
+    -- We set target_weight from MAX_POSITION_PCT so each portfolio strategy
+    -- controls proposal sizing.
     v_target_weight float := 0.05;
     v_run_id_string string := :P_RUN_ID;
     v_current_bar_index number := 0;
@@ -72,6 +75,7 @@ begin
 
     v_max_positions := coalesce(v_max_positions, 5);
     v_max_position_pct := coalesce(v_max_position_pct, 0.05);
+    v_target_weight := v_max_position_pct;
 
     if (v_max_positions <= 0) then
         return object_construct(

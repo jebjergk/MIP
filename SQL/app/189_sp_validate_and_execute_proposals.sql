@@ -494,31 +494,85 @@ begin
             )
             where rn = 1
         ),
-        base as (
+        approved_proposals as (
             select
                 p.PROPOSAL_ID,
-                :P_PORTFOLIO_ID as PORTFOLIO_ID,
-                to_varchar(:P_RUN_ID) as RUN_ID,
-                :v_active_episode_id as EPISODE_ID,
                 p.SYMBOL,
                 p.MARKET_TYPE,
-                1440 as INTERVAL_MINUTES,
-                current_timestamp() as TRADE_TS,
                 p.SIDE,
-                lp.CLOSE as MID_PRICE,
-                :v_available_cash * p.TARGET_WEIGHT as NOTIONAL,
-                p.SOURCE_SIGNALS:score::number as SCORE
+                p.TARGET_WEIGHT,
+                p.SOURCE_SIGNALS:score::number as SCORE,
+                p.APPROVED_AT
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
-            join TMP_PROPOSAL_VALIDATION v
-              on v.PROPOSAL_ID = p.PROPOSAL_ID
-            join latest_prices lp
-              on lp.SYMBOL = p.SYMBOL
-             and lp.MARKET_TYPE = p.MARKET_TYPE
             where p.RUN_ID_VARCHAR = :P_RUN_ID
               and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.STATUS = 'APPROVED'
-              -- CRIT-001: Extra safety - never execute BUY trades when entry gate is active
               and not (:v_entries_blocked and p.SIDE = 'BUY')
+        ),
+        buy_ranked as (
+            select
+                ap.PROPOSAL_ID,
+                greatest(least(coalesce(ap.TARGET_WEIGHT, 0), 1), 0) as TARGET_WEIGHT,
+                row_number() over (
+                    order by ap.APPROVED_AT, ap.PROPOSAL_ID
+                ) as BUY_RN
+            from approved_proposals ap
+            where ap.SIDE = 'BUY'
+        ),
+        buy_sized as (
+            with recursive r as (
+                select
+                    br.PROPOSAL_ID,
+                    br.BUY_RN,
+                    br.TARGET_WEIGHT,
+                    :v_available_cash::number(18,8) as CASH_BEFORE,
+                    least(:v_available_cash::number(18,8), :v_available_cash::number(18,8) * br.TARGET_WEIGHT) as NOTIONAL
+                from buy_ranked br
+                where br.BUY_RN = 1
+
+                union all
+
+                select
+                    br.PROPOSAL_ID,
+                    br.BUY_RN,
+                    br.TARGET_WEIGHT,
+                    greatest(0, r.CASH_BEFORE - r.NOTIONAL) as CASH_BEFORE,
+                    least(
+                        greatest(0, r.CASH_BEFORE - r.NOTIONAL),
+                        greatest(0, r.CASH_BEFORE - r.NOTIONAL) * br.TARGET_WEIGHT
+                    ) as NOTIONAL
+                from r
+                join buy_ranked br
+                  on br.BUY_RN = r.BUY_RN + 1
+            )
+            select
+                PROPOSAL_ID,
+                NOTIONAL
+            from r
+        ),
+        base as (
+            select
+                ap.PROPOSAL_ID,
+                :P_PORTFOLIO_ID as PORTFOLIO_ID,
+                to_varchar(:P_RUN_ID) as RUN_ID,
+                :v_active_episode_id as EPISODE_ID,
+                ap.SYMBOL,
+                ap.MARKET_TYPE,
+                1440 as INTERVAL_MINUTES,
+                current_timestamp() as TRADE_TS,
+                ap.SIDE,
+                lp.CLOSE as MID_PRICE,
+                case
+                    when ap.SIDE = 'BUY' then coalesce(bs.NOTIONAL, 0)
+                    else :v_available_cash * greatest(least(coalesce(ap.TARGET_WEIGHT, 0), 1), 0)
+                end as NOTIONAL,
+                ap.SCORE
+            from approved_proposals ap
+            join latest_prices lp
+              on lp.SYMBOL = ap.SYMBOL
+             and lp.MARKET_TYPE = ap.MARKET_TYPE
+            left join buy_sized bs
+              on bs.PROPOSAL_ID = ap.PROPOSAL_ID
         ),
         priced as (
             select

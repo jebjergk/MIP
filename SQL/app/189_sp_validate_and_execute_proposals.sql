@@ -426,25 +426,27 @@ begin
         -- Also check position count limit
         if (v_open_positions_count + v_approved_count > v_max_positions) then
             -- Reject excess proposals beyond position limit
-            update MIP.AGENT_OUT.ORDER_PROPOSALS
-               set STATUS = 'REJECTED',
-                   VALIDATION_ERRORS = array_construct('EXCEEDS_MAX_POSITIONS'),
-                   APPROVED_AT = null
+            create or replace temporary table TMP_EXCESS_POSITION_PROPOSALS as
+            select PROPOSAL_ID
+              from MIP.AGENT_OUT.ORDER_PROPOSALS
              where RUN_ID_VARCHAR = :P_RUN_ID
                and PORTFOLIO_ID = :P_PORTFOLIO_ID
                and STATUS = 'APPROVED'
                and SIDE = 'BUY'
-               and PROPOSAL_ID in (
-                   select PROPOSAL_ID
-                     from MIP.AGENT_OUT.ORDER_PROPOSALS
-                    where RUN_ID_VARCHAR = :P_RUN_ID
-                      and PORTFOLIO_ID = :P_PORTFOLIO_ID
-                      and STATUS = 'APPROVED'
-                      and SIDE = 'BUY'
-                    qualify row_number() over (
-                        order by PROPOSED_AT desc
-                    ) > greatest(:v_max_positions - :v_open_positions_count, 0)
-               );
+            qualify row_number() over (
+                order by PROPOSED_AT desc
+            ) > greatest(:v_max_positions - :v_open_positions_count, 0);
+
+            update MIP.AGENT_OUT.ORDER_PROPOSALS
+               set STATUS = 'REJECTED',
+                   VALIDATION_ERRORS = array_construct('EXCEEDS_MAX_POSITIONS'),
+                   APPROVED_AT = null
+              from TMP_EXCESS_POSITION_PROPOSALS x
+             where RUN_ID_VARCHAR = :P_RUN_ID
+               and PORTFOLIO_ID = :P_PORTFOLIO_ID
+               and STATUS = 'APPROVED'
+               and SIDE = 'BUY'
+               and ORDER_PROPOSALS.PROPOSAL_ID = x.PROPOSAL_ID;
 
             v_position_rejected := SQLROWCOUNT;
 

@@ -281,6 +281,8 @@ declare
     v_cum_pnl number(18,2) := 0;
     v_prev_totals variant;
     v_status varchar;
+    v_episode_start_equity number(18,2);
+    v_new_episode_start_equity number(18,2);
 begin
     -- Validate event type
     if (v_event_type not in ('DEPOSIT', 'WITHDRAW')) then
@@ -359,6 +361,42 @@ begin
     v_cum_pnl := (v_current_equity + (case when v_event_type = 'DEPOSIT' then v_amount else -v_amount end))
                  - (v_cum_deposited - v_cum_withdrawn);
 
+    -- Rebase the active episode baseline so cash events do not look like trading returns.
+    if (v_episode_id is not null) then
+        begin
+            select START_EQUITY
+              into :v_episode_start_equity
+              from MIP.APP.PORTFOLIO_EPISODE
+             where PORTFOLIO_ID = :v_portfolio_id
+               and EPISODE_ID = :v_episode_id
+               and STATUS = 'ACTIVE'
+             limit 1;
+        exception
+            when other then v_episode_start_equity := null;
+        end;
+
+        if (v_episode_start_equity is not null) then
+            v_new_episode_start_equity := v_episode_start_equity
+                + (case when v_event_type = 'DEPOSIT' then v_amount else -v_amount end);
+            if (v_new_episode_start_equity <= 0) then
+                return object_construct(
+                    'status', 'ERROR',
+                    'error', 'Cash event would make episode start_equity non-positive.',
+                    'episode_id', :v_episode_id,
+                    'current_start_equity', :v_episode_start_equity,
+                    'cash_event_amount', :v_amount,
+                    'event_type', :v_event_type
+                );
+            end if;
+
+            update MIP.APP.PORTFOLIO_EPISODE
+               set START_EQUITY = :v_new_episode_start_equity
+             where PORTFOLIO_ID = :v_portfolio_id
+               and EPISODE_ID = :v_episode_id
+               and STATUS = 'ACTIVE';
+        end if;
+    end if;
+
     -- Update portfolio STARTING_CASH (the "cost basis" for the portfolio adjusts with cash events)
     update MIP.APP.PORTFOLIO
        set STARTING_CASH = :v_new_cash,
@@ -386,6 +424,9 @@ begin
         'amount', :v_amount,
         'cash_before', :v_current_cash,
         'cash_after', :v_new_cash,
+        'episode_id', :v_episode_id,
+        'episode_start_equity_before', :v_episode_start_equity,
+        'episode_start_equity_after', :v_new_episode_start_equity,
         'cumulative_deposited', :v_cum_deposited,
         'cumulative_withdrawn', :v_cum_withdrawn,
         'cumulative_pnl', :v_cum_pnl

@@ -78,6 +78,27 @@ class ProfileUpsert(BaseModel):
 
 # ─── Helper: call a stored procedure and parse the VARIANT result ─────────────
 
+def _normalize_sp_result(result):
+    """Normalize Snowflake SP results to JSON-serializable Python types."""
+    # Snowflake connectors may return VARIANT as bytes.
+    if isinstance(result, (bytes, bytearray)):
+        result = result.decode("utf-8", errors="replace")
+
+    # Most procedures return a JSON stringified VARIANT.
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except json.JSONDecodeError:
+            return result
+
+    # Keep already-serializable objects as-is.
+    if isinstance(result, (dict, list, int, float, bool)) or result is None:
+        return result
+
+    # Fallback for connector-specific objects (e.g. Decimal-like wrappers).
+    return str(result)
+
+
 def _call_sp(sql: str, params: tuple) -> dict:
     """Call a Snowflake stored procedure and return its VARIANT result as a dict."""
     logger.info("[_call_sp] SQL: %s", sql)
@@ -89,10 +110,7 @@ def _call_sp(sql: str, params: tuple) -> dict:
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=500, detail="Stored procedure returned no result")
-        result = row[0]
-        # Result may be a string (JSON) or already parsed
-        if isinstance(result, str):
-            result = json.loads(result)
+        result = _normalize_sp_result(row[0])
         if isinstance(result, dict) and result.get("status") == "ERROR":
             error_msg = result.get("error", "Unknown error")
             # Map to appropriate HTTP status
@@ -110,6 +128,11 @@ def _call_sp(sql: str, params: tuple) -> dict:
         except Exception:
             pass  # harmless if no active transaction
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("[_call_sp] Unhandled error while executing SP call")
+        raise HTTPException(status_code=500, detail=f"Stored procedure call failed: {e}")
     finally:
         conn.close()
 

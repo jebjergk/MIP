@@ -389,9 +389,11 @@ def get_detail(
                 where r.SYMBOL = %s
                   and r.MARKET_TYPE = %s
                   and r.TS >= %s
+                  and r.TS <= %s
+                  and r.INTERVAL_MINUTES = %s
                 order by r.TS
                 """,
-                (symbol, market_type, window_start),
+                (symbol, market_type, window_start, window_end, interval_minutes),
             )
             for row in fetch_all(cur):
                 ts = row.get("TS")

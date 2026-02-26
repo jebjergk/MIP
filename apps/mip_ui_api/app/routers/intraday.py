@@ -78,15 +78,19 @@ def get_intraday_dashboard(
                         count(distinct PATTERN_ID) as PATTERNS_TOTAL
                     from MIP.MART.V_INTRADAY_UI_SIGNALS
                 ),
+                terrain_rows_latest as (
+                    select *
+                    from MIP.MART.V_INTRADAY_UI_TERRAIN
+                    qualify row_number() over (
+                        partition by PATTERN_ID, MARKET_TYPE, SYMBOL, HORIZON_BARS, STATE_BUCKET_ID, TS
+                        order by CALCULATED_AT desc
+                    ) = 1
+                ),
                 terrain_latest as (
                     select
                         count(distinct TERRAIN_SCORE) as TERRAIN_DISTINCT_SCORES,
                         stddev(TERRAIN_SCORE) as TERRAIN_STDDEV
-                    from MIP.MART.V_INTRADAY_UI_TERRAIN
-                    qualify row_number() over (
-                        partition by PATTERN_ID, MARKET_TYPE, SYMBOL, HORIZON_BARS, STATE_BUCKET_ID
-                        order by CALCULATED_AT desc
-                    ) = 1
+                    from terrain_rows_latest
                 )
                 select
                     (select as_of_ts from as_of_input) as AS_OF_TS,

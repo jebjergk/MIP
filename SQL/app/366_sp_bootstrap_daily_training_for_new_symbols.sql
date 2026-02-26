@@ -23,6 +23,7 @@ declare
     v_end_date date := coalesce(:P_END_DATE, current_date());
     v_symbol_cohort string := coalesce(:P_SYMBOL_COHORT, 'VOL_EXP');
     v_market_type_filter string := :P_MARKET_TYPE;
+    v_warehouse_override string := :P_WAREHOUSE_OVERRIDE;
     v_d date;
     v_effective_to_ts timestamp_ntz;
     v_day_run_id string;
@@ -50,8 +51,8 @@ begin
         );
     end if;
 
-    if (P_WAREHOUSE_OVERRIDE is not null) then
-        execute immediate 'use warehouse ' || identifier(:P_WAREHOUSE_OVERRIDE);
+    if (v_warehouse_override is not null) then
+        execute immediate 'use warehouse ' || :v_warehouse_override;
     end if;
 
     merge into MIP.APP.VOL_EXP_BOOTSTRAP_RUN_LOG t
@@ -82,7 +83,7 @@ begin
             :v_end_date,
             :v_symbol_cohort,
             :v_market_type_filter,
-            :P_WAREHOUSE_OVERRIDE
+            :v_warehouse_override
         )
     );
     v_bars_loaded_total := coalesce(:v_backfill_result:"bars_loaded_count"::number, 0);

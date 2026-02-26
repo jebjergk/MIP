@@ -155,6 +155,8 @@ def _load_targets(session: Session, cohort: str, market_type: Optional[str]) -> 
     return [{"SYMBOL": r["SYMBOL"], "MARKET_TYPE": r["MARKET_TYPE"]} for r in df.collect()]
 
 def _upsert_run_log(session: Session, run_id: str, status: str, details: Dict):
+    symbols_processed = int(details.get("symbols_processed") or 0)
+    bars_loaded_count = int(details.get("bars_loaded_count") or 0)
     session.sql(
         f"""
         merge into MIP.APP.VOL_EXP_BOOTSTRAP_RUN_LOG t
@@ -168,8 +170,8 @@ def _upsert_run_log(session: Session, run_id: str, status: str, details: Dict):
         when matched then update set
             t.FINISHED_AT = current_timestamp(),
             t.STATUS = {_sql_literal(status)},
-            t.SYMBOLS_PROCESSED = try_to_number({_variant_literal(details)}:symbols_processed),
-            t.BARS_LOADED_COUNT = try_to_number({_variant_literal(details)}:bars_loaded_count),
+            t.SYMBOLS_PROCESSED = {symbols_processed},
+            t.BARS_LOADED_COUNT = {bars_loaded_count},
             t.FAILURES = {_variant_literal(details.get("failures"))},
             t.DETAILS = {_variant_literal(details)}
         when not matched then insert (
@@ -185,8 +187,8 @@ def _upsert_run_log(session: Session, run_id: str, status: str, details: Dict):
             current_timestamp(),
             current_timestamp(),
             {_sql_literal(status)},
-            try_to_number({_variant_literal(details)}:symbols_processed),
-            try_to_number({_variant_literal(details)}:bars_loaded_count),
+            {symbols_processed},
+            {bars_loaded_count},
             {_variant_literal(details.get("failures"))},
             {_variant_literal(details)}
         )
@@ -307,7 +309,7 @@ def run(
                 {_sql_literal(status)},
                 {len(extracted_rows)},
                 {_sql_literal(err)},
-                {_variant_literal(symbol_result)}
+                null
             )
             """
         ).collect()

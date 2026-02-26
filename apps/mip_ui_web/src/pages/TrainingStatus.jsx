@@ -7,10 +7,8 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
 import TrainingDigestPanel from '../components/TrainingDigestPanel'
-import IntradayDashboard from '../components/IntradayDashboard'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
-import '../components/IntradayDashboard.css'
 
 const SCOPE = 'training_status'
 const BASE_COLUMN_COUNT = 10 // Columns before horizon columns (expand, market, symbol, pattern, interval, as_of, maturity, sample, coverage, horizons)
@@ -51,7 +49,6 @@ export default function TrainingStatus() {
   const [symbolSearch, setSymbolSearch] = useState('')
   const [patternIdFilter, setPatternIdFilter] = useState('')
   const [expandedRowId, setExpandedRowId] = useState(null)
-  const [intervalMode, setIntervalMode] = useState('daily') // 'daily' | 'intraday'
   const timelineCacheRef = useRef({}) // Cache for timeline data per row key
   useEffect(() => {
     if (appliedUrlRef.current) return
@@ -59,14 +56,12 @@ export default function TrainingStatus() {
     const s = searchParams.get('symbol')
     const m = searchParams.get('market_type')
     const p = searchParams.get('pattern_id')
-    const iv = searchParams.get('interval')
     if (s != null && s !== '') setSymbolSearch(s)
     if (m != null && m !== '') setMarketTypeFilter(m)
     if (p != null && p !== '') setPatternIdFilter(p)
-    if (iv === 'intraday') setIntervalMode('intraday')
   }, [searchParams])
 
-  const intervalMinutes = intervalMode === 'intraday' ? 15 : 1440
+  const intervalMinutes = 1440
 
   useEffect(() => {
     let cancelled = false
@@ -74,10 +69,7 @@ export default function TrainingStatus() {
     setError(null)
     setData(null)
     setExpandedRowId(null)
-    const url = intervalMode === 'intraday'
-      ? `${API_BASE}/training/status?interval_minutes=15`
-      : `${API_BASE}/training/status`
-    fetch(url)
+    fetch(`${API_BASE}/training/status`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((d) => {
         if (!cancelled) setData(d)
@@ -89,7 +81,7 @@ export default function TrainingStatus() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [intervalMode])
+  }, [])
 
   const rows = data?.rows ?? []
   const horizonDefs = data?.horizon_definitions ?? []
@@ -172,30 +164,11 @@ export default function TrainingStatus() {
     <>
       <h1>Training Status</h1>
 
-      <div className="training-interval-toggle">
-        <button
-          className={`training-interval-btn ${intervalMode === 'daily' ? 'training-interval-btn--active' : ''}`}
-          onClick={() => setIntervalMode('daily')}
-        >
-          Daily (1440m)
-        </button>
-        <button
-          className={`training-interval-btn ${intervalMode === 'intraday' ? 'training-interval-btn--active' : ''}`}
-          onClick={() => setIntervalMode('intraday')}
-        >
-          Intraday (15m)
-        </button>
-      </div>
-
       <p className="training-status-intro">
-        {intervalMode === 'daily'
-          ? 'Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.'
-          : 'Intraday pattern learning loop (15-minute bars): signal detection, fee-adjusted outcomes, and pattern trust scoring.'}
+        Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.
       </p>
 
-      {intervalMode === 'intraday' && <IntradayDashboard />}
-
-      {intervalMode === 'daily' && <TrainingDigestPanel scope="global" />}
+      <TrainingDigestPanel scope="global" />
 
       <section className="training-status-filters" aria-label="Filters">
         <div className="training-filter-row">
@@ -306,20 +279,18 @@ export default function TrainingStatus() {
                   {isExpanded && (
                     <tr className="training-detail-row">
                       <td colSpan={BASE_COLUMN_COUNT + horizonDefs.length + 1} className="training-detail-cell">
-                        {intervalMode === 'daily' && (
-                          <TrainingDigestPanel
-                            scope="symbol"
-                            symbol={get(row, 'symbol')}
-                            marketType={get(row, 'market_type')}
-                            patternId={get(row, 'pattern_id')}
-                            compact
-                          />
-                        )}
+                        <TrainingDigestPanel
+                          scope="symbol"
+                          symbol={get(row, 'symbol')}
+                          marketType={get(row, 'market_type')}
+                          patternId={get(row, 'pattern_id')}
+                          compact
+                        />
                         <TrainingTimelineInline
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}
                           patternId={get(row, 'pattern_id')}
-                          horizonBars={intervalMode === 'intraday' ? 4 : 5}
+                          horizonBars={5}
                           intervalMinutes={intervalMinutes}
                           cachedData={cachedData}
                           onDataLoaded={(data) => setTimelineCache(rowKey, data)}

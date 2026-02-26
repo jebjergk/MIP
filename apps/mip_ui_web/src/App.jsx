@@ -13,6 +13,10 @@ import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
 import DecisionConsole from './pages/DecisionConsole'
 import AppLayout from './components/AppLayout'
+import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
+import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPage'
+import IntradayTerrainExplorerPage from './pages/intraday/IntradayTerrainExplorerPage'
+import IntradayPipelineHealthPage from './pages/intraday/IntradayPipelineHealthPage'
 
 const API_BASE = '/api'
 
@@ -36,6 +40,10 @@ export default function App() {
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/decision-console" element={<DecisionConsole />} />
+        <Route path="/intraday/dashboard" element={<IntradayDashboardPage />} />
+        <Route path="/intraday/pattern/:patternId" element={<IntradayPatternDetailPage />} />
+        <Route path="/intraday/terrain" element={<IntradayTerrainExplorerPage />} />
+        <Route path="/intraday/health" element={<IntradayPipelineHealthPage />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/guide" element={<UserGuide />} />
         {/* Redirects for old routes */}

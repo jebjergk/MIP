@@ -12,7 +12,7 @@ using (
     select
         'ORB_PROTO_RETRIGGER_STOCK_15MIN' as NAME,
         'ORB' as PATTERN_TYPE,
-        'Stage2 dry-run ORB retrigger proto (STOCK): state change OR vol expansion; cap 2/day.' as DESCRIPTION,
+        'Stage2 dry-run ORB retrigger proto (STOCK): state change OR vol expansion, cap 2/day.' as DESCRIPTION,
         object_construct(
             'pattern_type', 'ORB',
             'interval_minutes', 15,
@@ -34,7 +34,7 @@ using (
     select
         'ORB_PROTO_RETRIGGER_ETF_15MIN',
         'ORB',
-        'Stage2 dry-run ORB retrigger proto (ETF): state change OR vol expansion; cap 2/day.',
+        'Stage2 dry-run ORB retrigger proto (ETF): state change OR vol expansion, cap 2/day.',
         object_construct(
             'pattern_type', 'ORB',
             'interval_minutes', 15,
@@ -56,7 +56,7 @@ using (
     select
         'ORB_PROTO_RETRIGGER_FX_15MIN',
         'ORB',
-        'Stage2 dry-run ORB retrigger proto (FX): state change OR vol expansion; cap 2/day.',
+        'Stage2 dry-run ORB retrigger proto (FX): state change OR vol expansion, cap 2/day.',
         object_construct(
             'pattern_type', 'ORB',
             'interval_minutes', 15,

@@ -26,6 +26,7 @@ const NAV_GROUPS = [
     label: 'Research',
     items: [
       { to: '/training',        icon: '\uD83C\uDFAF', label: 'Training Status' },
+      { to: '/intraday/dashboard', icon: '\u23F1\uFE0F', label: 'Intraday Training' },
       { to: '/suggestions',     icon: '\uD83D\uDCA1', label: 'Suggestions' },
       { to: '/signals',         icon: '\uD83D\uDD0D', label: 'Decisions' },
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Market Timeline' },

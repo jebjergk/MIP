@@ -114,6 +114,69 @@ def list_portfolios():
         cur.execute(sql)
         rows = fetch_all(cur)
         rows = serialize_rows(rows)
+
+        # Live current equity map (cash + latest mark-to-market of open positions).
+        # Keep FINAL_EQUITY untouched as the last simulated daily-close metric.
+        current_equity_by_portfolio = {}
+        try:
+            cur.execute(
+                """
+                with latest_price as (
+                    select SYMBOL, MARKET_TYPE, CLOSE
+                    from MIP.MART.MARKET_BARS
+                    qualify row_number() over (
+                        partition by SYMBOL, MARKET_TYPE
+                        order by TS desc
+                    ) = 1
+                ),
+                open_market_value as (
+                    select
+                        p.PORTFOLIO_ID,
+                        sum(coalesce(lp.CLOSE, 0) * coalesce(p.QUANTITY, 0)) as OPEN_MARKET_VALUE
+                    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+                    left join latest_price lp
+                      on lp.SYMBOL = p.SYMBOL
+                     and lp.MARKET_TYPE = p.MARKET_TYPE
+                    group by p.PORTFOLIO_ID
+                ),
+                latest_daily_cash as (
+                    select
+                        d.PORTFOLIO_ID,
+                        d.CASH
+                    from MIP.APP.PORTFOLIO_DAILY d
+                    qualify row_number() over (
+                        partition by d.PORTFOLIO_ID
+                        order by d.TS desc, d.CREATED_AT desc nulls last
+                    ) = 1
+                ),
+                latest_trade_cash as (
+                    select
+                        t.PORTFOLIO_ID,
+                        t.CASH_AFTER
+                    from MIP.APP.PORTFOLIO_TRADES t
+                    qualify row_number() over (
+                        partition by t.PORTFOLIO_ID
+                        order by t.TRADE_TS desc, t.TRADE_ID desc
+                    ) = 1
+                )
+                select
+                    p.PORTFOLIO_ID,
+                    coalesce(ltc.CASH_AFTER, ldc.CASH, p.STARTING_CASH, 0) + coalesce(omv.OPEN_MARKET_VALUE, 0) as CURRENT_EQUITY
+                from MIP.APP.PORTFOLIO p
+                left join open_market_value omv on omv.PORTFOLIO_ID = p.PORTFOLIO_ID
+                left join latest_daily_cash ldc on ldc.PORTFOLIO_ID = p.PORTFOLIO_ID
+                left join latest_trade_cash ltc on ltc.PORTFOLIO_ID = p.PORTFOLIO_ID
+                """
+            )
+            for r in serialize_rows(fetch_all(cur)):
+                pid = r.get("PORTFOLIO_ID") or r.get("portfolio_id")
+                ce = r.get("CURRENT_EQUITY")
+                if ce is None:
+                    ce = r.get("current_equity")
+                if pid is not None:
+                    current_equity_by_portfolio[int(pid)] = float(ce) if ce is not None else None
+        except Exception:
+            current_equity_by_portfolio = {}
         
         result = []
         for row in rows:
@@ -147,7 +210,14 @@ def list_portfolios():
                 row["gate_tooltip"] = "Portfolio operating normally. Entries allowed."
             
             # Ensure numeric fields are present
-            row["latest_equity"] = row.get("FINAL_EQUITY") or row.get("final_equity") or 0
+            daily_close_equity = row.get("FINAL_EQUITY")
+            if daily_close_equity is None:
+                daily_close_equity = row.get("final_equity")
+            row["latest_equity"] = daily_close_equity or 0
+            row["last_day_close_equity"] = daily_close_equity
+            rid = row.get("PORTFOLIO_ID") or row.get("portfolio_id")
+            rid_int = int(rid) if rid is not None else None
+            row["current_equity"] = current_equity_by_portfolio.get(rid_int, daily_close_equity)
             row["total_paid_out"] = row.get("TOTAL_PAID_OUT") or row.get("total_paid_out") or 0
             
             result.append(row)
@@ -190,7 +260,12 @@ def get_portfolio(portfolio_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Portfolio not found")
         columns = [d[0] for d in cur.description]
-        return serialize_row(dict(zip(columns, row)))
+        payload = serialize_row(dict(zip(columns, row)))
+        last_day_close_equity = payload.get("FINAL_EQUITY")
+        if last_day_close_equity is None:
+            last_day_close_equity = payload.get("final_equity")
+        payload["last_day_close_equity"] = last_day_close_equity
+        return payload
     finally:
         conn.close()
 
@@ -826,6 +901,17 @@ def get_portfolio_snapshot(
         # No secondary date filter needed — trust the view.
         open_positions_filtered = positions
 
+        # Live mark-to-market exposure using latest available price on open positions.
+        live_market_value = 0.0
+        for pos in open_positions_filtered:
+            mv = _get(pos, "MARKET_VALUE", "market_value")
+            if mv is None:
+                continue
+            try:
+                live_market_value += float(mv)
+            except (TypeError, ValueError):
+                continue
+
         # Portfolio profile (for risk strategy: thresholds from PORTFOLIO_PROFILE)
         # Only show the profile actually linked to this portfolio; no fallback to avoid showing wrong thresholds.
         profile_row = None
@@ -858,6 +944,7 @@ def get_portfolio_snapshot(
             cash = latest_daily.get("CASH") or latest_daily.get("cash")
             equity_value = latest_daily.get("EQUITY_VALUE") or latest_daily.get("equity_value")
             total_equity = latest_daily.get("TOTAL_EQUITY") or latest_daily.get("total_equity")
+            last_day_close_equity = total_equity
 
             # Override cash with latest CASH_AFTER from trades in current episode (most accurate source)
             # CRITICAL: Also filter TRADE_TS >= episode START_TS to avoid pulling stale
@@ -899,6 +986,7 @@ def get_portfolio_snapshot(
             latest_kpi = _first(kpis)
             if latest_kpi:
                 fe = latest_kpi.get("FINAL_EQUITY") or latest_kpi.get("final_equity")
+                last_day_close_equity = fe
                 cash_and_exposure = {
                     "cash": None,
                     "exposure": None,
@@ -906,7 +994,24 @@ def get_portfolio_snapshot(
                     "as_of_ts": snapshot_ts or latest_kpi.get("TO_TS") or latest_kpi.get("to_ts"),
                 }
             elif snapshot_ts is not None:
+                last_day_close_equity = None
                 cash_and_exposure = {"cash": None, "exposure": None, "total_equity": None, "as_of_ts": snapshot_ts}
+            else:
+                last_day_close_equity = None
+
+        current_equity = None
+        if cash_and_exposure:
+            cash_v = cash_and_exposure.get("cash")
+            total_v = cash_and_exposure.get("total_equity")
+            if cash_v is not None:
+                try:
+                    current_equity = float(cash_v) + float(live_market_value)
+                except (TypeError, ValueError):
+                    current_equity = float(total_v) if total_v is not None else None
+            elif total_v is not None:
+                current_equity = float(total_v)
+            cash_and_exposure["last_day_close_equity"] = last_day_close_equity
+            cash_and_exposure["current_equity"] = current_equity
 
         risk_gate_status = {
             "entries_blocked": not risk_gate_normalized["entries_allowed"],
@@ -1090,6 +1195,8 @@ def get_portfolio_snapshot(
             "latest_available_bar_date": latest_available_bar_date,
             # Episode-scoped risk state (Item 2)
             "episode_risk_state": episode_risk_state,
+            "last_day_close_equity": last_day_close_equity,
+            "current_equity": current_equity,
         }
     finally:
         conn.close()

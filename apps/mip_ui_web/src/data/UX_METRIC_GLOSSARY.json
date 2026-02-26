@@ -79,11 +79,15 @@
   "portfolio": {
     "starting_cash": {
       "short": "Cash balance at the start of the simulation or period.",
-      "long": "Starting cash is the amount of money the portfolio had at the beginning of the run or period. It's the baseline for measuring gains and losses. Compare with final equity to see total return."
+      "long": "Starting cash is the amount of money the portfolio had at the beginning of the run or period. It's the baseline for measuring gains and losses. Compare with last day close equity to see total return."
     },
     "final_equity": {
-      "short": "Total portfolio value (cash + positions) at the end of the period.",
-      "long": "Final equity is the total value of the portfolio at the end of the run—cash plus the value of any open positions. It's the number that matters for seeing how much the strategy made or lost."
+      "short": "Last simulated daily-close portfolio value (cash + positions).",
+      "long": "Last day close equity is the total portfolio value at the latest completed daily simulation close. It includes cash plus open-position value at that daily close and remains stable intraday."
+    },
+    "current_equity": {
+      "short": "Live mark-to-market portfolio value using latest available prices.",
+      "long": "Current equity is a live estimate: current cash plus open positions valued at the freshest market prices (15-minute bars when available, otherwise latest available). It can move intraday even when last day close equity does not."
     },
     "total_return": {
       "short": "Overall gain or loss as a percentage from start to end.",

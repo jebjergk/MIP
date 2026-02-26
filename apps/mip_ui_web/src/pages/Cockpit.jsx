@@ -475,7 +475,8 @@ function PortfolioStory({ portfolio }) {
   const status = (_get(portfolio, 'STATUS', 'status') || 'ACTIVE').toUpperCase()
   const gateState = (_get(portfolio, 'GATE_STATE', 'gate_state') || 'SAFE').toUpperCase()
   const healthState = _get(portfolio, 'health_state') || 'OK'
-  const equity = _get(portfolio, 'latest_equity', 'FINAL_EQUITY', 'final_equity') || 0
+  const lastDayCloseEquity = _get(portfolio, 'last_day_close_equity', 'latest_equity', 'FINAL_EQUITY', 'final_equity') || 0
+  const currentEquity = _get(portfolio, 'current_equity')
   const totalReturn = _get(portfolio, 'TOTAL_RETURN', 'total_return')
   const maxDrawdown = _get(portfolio, 'MAX_DRAWDOWN', 'max_drawdown')
   const totalPaidOut = _get(portfolio, 'total_paid_out', 'TOTAL_PAID_OUT') || 0
@@ -502,12 +503,13 @@ function PortfolioStory({ portfolio }) {
 
   // Summary: equity, gate, key stat
   const summary = useMemo(() => {
-    const parts = [`Equity: ${formatMoney(equity)}`]
+    const parts = [`Last day close equity: ${formatMoney(lastDayCloseEquity)}`]
+    if (currentEquity != null) parts.push(`Current equity: ${formatMoney(currentEquity)}`)
     if (gateState !== 'SAFE') parts.push(`Gate: ${gateState}`)
     if (totalPaidOut > 0) parts.push(`Paid out: ${formatMoney(totalPaidOut)}`)
     if (maxDrawdown != null) parts.push(`Max DD: ${(maxDrawdown * 100).toFixed(1)}%`)
     return parts.join('  \u00B7  ')
-  }, [equity, gateState, totalPaidOut, maxDrawdown])
+  }, [lastDayCloseEquity, currentEquity, gateState, totalPaidOut, maxDrawdown])
 
   // Lazy-fetch digest on expand
   const handleOpen = useCallback(() => {
@@ -540,9 +542,15 @@ function PortfolioStory({ portfolio }) {
       {/* KPI strip */}
       <div className="ck-kpi-row">
         <div className="ck-kpi-item">
-          <span className="ck-kpi-label">Equity</span>
-          <span className="ck-kpi-value">{formatMoney(equity)}</span>
+          <span className="ck-kpi-label">Last day close equity</span>
+          <span className="ck-kpi-value">{formatMoney(lastDayCloseEquity)}</span>
         </div>
+        {currentEquity != null && (
+          <div className="ck-kpi-item">
+            <span className="ck-kpi-label">Current equity</span>
+            <span className="ck-kpi-value">{formatMoney(currentEquity)}</span>
+          </div>
+        )}
         {totalReturn != null && (
           <div className="ck-kpi-item">
             <span className="ck-kpi-label">Return</span>

@@ -251,10 +251,18 @@ export default function Portfolio() {
               <span className="kpi-value">{Number(snapshot.cards.cash_and_exposure.cash).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
             </div>
           )}
-          {portfolio.FINAL_EQUITY != null && (
+          {(portfolio.last_day_close_equity ?? portfolio.FINAL_EQUITY) != null && (
             <div className="kpi-card">
-              <span className="kpi-label">Final equity <InfoTooltip scope="portfolio" key="final_equity" variant="short" /></span>
-              <span className="kpi-value">{Number(portfolio.FINAL_EQUITY).toLocaleString()}</span>
+              <span className="kpi-label">Last day close equity <InfoTooltip scope="portfolio" key="final_equity" variant="short" /></span>
+              <span className="kpi-value">{Number(portfolio.last_day_close_equity ?? portfolio.FINAL_EQUITY).toLocaleString()}</span>
+            </div>
+          )}
+          {(snapshot?.current_equity ?? snapshot?.cards?.cash_and_exposure?.current_equity) != null && (
+            <div className="kpi-card">
+              <span className="kpi-label">Current equity</span>
+              <span className="kpi-value">
+                {Number(snapshot?.current_equity ?? snapshot?.cards?.cash_and_exposure?.current_equity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
             </div>
           )}
           {portfolio.TOTAL_RETURN != null && (
@@ -827,7 +835,8 @@ export default function Portfolio() {
               <th className="col-id">ID</th>
               <th className="col-gate" title="Risk regime: SAFE = entries allowed, CAUTION = approaching threshold, STOPPED = entries blocked">Gate</th>
               <th className="col-health" title="Data freshness: OK = recent run, STALE = older than 24h, BROKEN = very old or failed">Health</th>
-              <th className="col-equity" title="Latest total equity from last simulation">Equity</th>
+              <th className="col-equity" title="Latest total equity from the last simulated daily close">Last day close equity</th>
+              <th className="col-equity" title="Live mark-to-market equity using latest available prices (15m preferred)">Current equity</th>
               <th className="col-paidout" title="Cumulative profits withdrawn across all episodes">Paid Out</th>
               <th className="col-episode">Active Episode</th>
               <th className="col-status">Status</th>
@@ -843,7 +852,8 @@ export default function Portfolio() {
               const episodeLabel = ep
                 ? `#${ep.episode_id ?? '—'} since ${(ep.start_ts ?? '').toString().slice(0, 10)}`
                 : '—'
-              const equity = p.latest_equity ?? p.FINAL_EQUITY ?? p.final_equity ?? 0
+              const lastDayCloseEquity = p.last_day_close_equity ?? p.latest_equity ?? p.FINAL_EQUITY ?? p.final_equity ?? 0
+              const currentEquity = p.current_equity
               const paidOut = p.total_paid_out ?? p.TOTAL_PAID_OUT ?? 0
               const status = p.STATUS ?? p.status ?? 'ACTIVE'
               
@@ -871,7 +881,12 @@ export default function Portfolio() {
                     <span className="traffic-label">{healthState}</span>
                   </td>
                   <td className="col-equity">
-                    €{Number(equity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    €{Number(lastDayCloseEquity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </td>
+                  <td className="col-equity">
+                    {currentEquity != null
+                      ? `€${Number(currentEquity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                      : '—'}
                   </td>
                   <td className="col-paidout">
                     {paidOut > 0 ? (

@@ -334,7 +334,8 @@ function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttac
             <th>Name</th>
             <th>Profile</th>
             <th>Starting Cash</th>
-            <th>Final Equity</th>
+            <th>Last day close equity</th>
+            <th>Current equity</th>
             <th>Return</th>
             <th>Status</th>
             <th>Actions</th>
@@ -350,7 +351,8 @@ function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttac
                 <td><strong>{p.NAME || p.name}</strong></td>
                 <td>{profileMap[profileId] || profileId || '—'}</td>
                 <td>{fmt$(p.STARTING_CASH || p.starting_cash)}</td>
-                <td>{fmt$(p.FINAL_EQUITY || p.final_equity)}</td>
+                <td>{fmt$(p.last_day_close_equity ?? p.FINAL_EQUITY ?? p.final_equity)}</td>
+                <td>{fmt$(p.current_equity)}</td>
                 <td>{fmtPct(p.TOTAL_RETURN || p.total_return)}</td>
                 <td>
                   <span className={`status-badge ${(p.STATUS || p.status) === 'ACTIVE' ? '' : 'status-badge--warn'}`}>
@@ -368,7 +370,7 @@ function PortfoliosTab({ portfolios, profiles, onEdit, onCreate, onCash, onAttac
             )
           })}
           {portfolios.length === 0 && (
-            <tr><td colSpan={8} style={{ textAlign: 'center', color: '#888', padding: '2rem' }}>No portfolios yet. Create your first one.</td></tr>
+            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#888', padding: '2rem' }}>No portfolios yet. Create your first one.</td></tr>
           )}
         </tbody>
       </table>

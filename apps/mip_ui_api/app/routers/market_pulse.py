@@ -27,10 +27,27 @@ def get_market_pulse(
     try:
         cur = conn.cursor()
 
-        # 1. Per-symbol latest daily bar with return vs previous close
+        # 1. Per-symbol latest daily bar with return vs previous close.
+        #    Include the full enabled daily universe even if a symbol has no latest bar yet.
         cur.execute(
             """
-            with latest as (
+            with universe as (
+                select distinct SYMBOL, MARKET_TYPE
+                from MIP.APP.INGEST_UNIVERSE
+                where coalesce(IS_ENABLED, true)
+                  and INTERVAL_MINUTES = 1440
+            ),
+            deduped as (
+                select
+                    SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME,
+                    row_number() over (
+                        partition by SYMBOL, MARKET_TYPE, TS
+                        order by INGESTED_AT desc
+                    ) as rn
+                from MIP.MART.MARKET_BARS
+                where INTERVAL_MINUTES = 1440
+            ),
+            series as (
                 select
                     SYMBOL, MARKET_TYPE, TS,
                     OPEN, HIGH, LOW, CLOSE, VOLUME,
@@ -38,32 +55,39 @@ def get_market_pulse(
                         partition by SYMBOL, MARKET_TYPE
                         order by TS
                     ) as PREV_CLOSE
-                from (
-                    select SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME,
-                        row_number() over (
-                            partition by SYMBOL, MARKET_TYPE, TS
-                            order by INGESTED_AT desc
-                        ) as rn
-                    from MIP.MART.MARKET_BARS
-                    where INTERVAL_MINUTES = 1440
-                      and TS >= dateadd('day', -5, current_date())
-                )
+                from deduped
                 where rn = 1
+            ),
+            latest as (
+                select
+                    SYMBOL, MARKET_TYPE, TS,
+                    OPEN, HIGH, LOW, CLOSE, VOLUME, PREV_CLOSE
+                from series
+                qualify row_number() over (
+                    partition by SYMBOL, MARKET_TYPE
+                    order by TS desc
+                ) = 1
             )
             select
-                SYMBOL, MARKET_TYPE, TS,
-                OPEN, HIGH, LOW, CLOSE, VOLUME, PREV_CLOSE,
+                u.SYMBOL,
+                u.MARKET_TYPE,
+                l.TS,
+                l.OPEN,
+                l.HIGH,
+                l.LOW,
+                l.CLOSE,
+                l.VOLUME,
+                l.PREV_CLOSE,
                 case
-                    when PREV_CLOSE is not null and PREV_CLOSE <> 0
-                    then (CLOSE - PREV_CLOSE) / PREV_CLOSE
+                    when l.PREV_CLOSE is not null and l.PREV_CLOSE <> 0
+                    then (l.CLOSE - l.PREV_CLOSE) / l.PREV_CLOSE
                     else null
                 end as DAY_RETURN
-            from latest
-            qualify row_number() over (
-                partition by SYMBOL, MARKET_TYPE
-                order by TS desc
-            ) = 1
-            order by SYMBOL
+            from universe u
+            left join latest l
+              on l.SYMBOL = u.SYMBOL
+             and l.MARKET_TYPE = u.MARKET_TYPE
+            order by u.SYMBOL
             """
         )
         symbol_rows = serialize_rows(fetch_all(cur))

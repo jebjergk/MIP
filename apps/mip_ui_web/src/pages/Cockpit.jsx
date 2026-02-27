@@ -223,10 +223,10 @@ function MarketReturnChart({ symbols }) {
   if (!symbols?.length) return null
 
   const data = symbols
-    .filter((s) => s.day_return != null)
     .map((s) => ({
       symbol: s.symbol,
-      return_pct: +(s.day_return * 100).toFixed(2),
+      return_pct: +(((s.day_return ?? 0) * 100).toFixed(2)),
+      has_return: s.day_return != null,
     }))
     .sort((a, b) => b.return_pct - a.return_pct)
 
@@ -242,7 +242,7 @@ function MarketReturnChart({ symbols }) {
           <ReferenceLine x={0} stroke="#adb5bd" />
           <Bar dataKey="return_pct" radius={[0, 3, 3, 0]}>
             {data.map((entry, i) => (
-              <Cell key={i} fill={entry.return_pct >= 0 ? '#198754' : '#dc3545'} />
+              <Cell key={i} fill={!entry.has_return ? '#adb5bd' : (entry.return_pct >= 0 ? '#198754' : '#dc3545')} />
             ))}
           </Bar>
         </BarChart>

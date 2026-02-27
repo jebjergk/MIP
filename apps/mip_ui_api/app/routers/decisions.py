@@ -154,21 +154,79 @@ def get_open_positions():
             from latest_bars_ranked
             group by SYMBOL, MARKET_TYPE
         ),
-        best_targets as (
+        open_positions_scope as (
             select
-                rl.SYMBOL, rl.MARKET_TYPE, rl.TS::date as SIGNAL_DATE,
-                ts2.AVG_RETURN
-            from MIP.APP.RECOMMENDATION_LOG rl
+                PORTFOLIO_ID,
+                RUN_ID,
+                EPISODE_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                INTERVAL_MINUTES,
+                ENTRY_TS,
+                ENTRY_PRICE,
+                QUANTITY,
+                COST_BASIS,
+                ENTRY_INDEX,
+                HOLD_UNTIL_INDEX,
+                CURRENT_BAR_INDEX,
+                IS_OPEN,
+                greatest(HOLD_UNTIL_INDEX - ENTRY_INDEX, 1) as HOLD_BARS
+            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+            where INTERVAL_MINUTES = 1440
+              and IS_OPEN = true
+        ),
+        signal_anchor as (
+            select
+                op.PORTFOLIO_ID,
+                op.SYMBOL,
+                op.MARKET_TYPE,
+                op.ENTRY_TS,
+                op.HOLD_BARS,
+                max(rl2.TS::date) as SIGNAL_DATE
+            from open_positions_scope op
+            left join MIP.APP.RECOMMENDATION_LOG rl2
+              on rl2.SYMBOL = op.SYMBOL
+             and rl2.MARKET_TYPE = op.MARKET_TYPE
+             and rl2.INTERVAL_MINUTES = 1440
+             and rl2.TS < op.ENTRY_TS
+            group by
+                op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE, op.ENTRY_TS, op.HOLD_BARS
+        ),
+        target_candidates as (
+            select
+                sa.PORTFOLIO_ID,
+                sa.SYMBOL,
+                sa.MARKET_TYPE,
+                sa.ENTRY_TS,
+                ts2.AVG_RETURN,
+                row_number() over (
+                    partition by sa.PORTFOLIO_ID, sa.SYMBOL, sa.MARKET_TYPE, sa.ENTRY_TS
+                    order by
+                        case when ts2.HORIZON_BARS = sa.HOLD_BARS then 0 else 1 end,
+                        abs(ts2.HORIZON_BARS - sa.HOLD_BARS),
+                        ts2.AVG_RETURN desc
+                ) as RN
+            from signal_anchor sa
+            join MIP.APP.RECOMMENDATION_LOG rl
+              on rl.SYMBOL = sa.SYMBOL
+             and rl.MARKET_TYPE = sa.MARKET_TYPE
+             and rl.INTERVAL_MINUTES = 1440
+             and rl.TS::date = sa.SIGNAL_DATE
             join MIP.MART.V_TRUSTED_SIGNALS ts2
               on ts2.PATTERN_ID = rl.PATTERN_ID
              and ts2.MARKET_TYPE = rl.MARKET_TYPE
              and ts2.INTERVAL_MINUTES = 1440
              and ts2.IS_TRUSTED = true
-            where rl.INTERVAL_MINUTES = 1440
-            qualify row_number() over (
-                partition by rl.SYMBOL, rl.MARKET_TYPE, rl.TS::date
-                order by ts2.AVG_RETURN desc
-            ) = 1
+        ),
+        best_targets as (
+            select
+                PORTFOLIO_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                ENTRY_TS,
+                AVG_RETURN
+            from target_candidates
+            where RN = 1
         ),
         intraday_series as (
             select
@@ -193,15 +251,13 @@ def get_open_positions():
                         else null
                     end
                 ) as INTRADAY_MFE_RETURN
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
+            from open_positions_scope op
             join MIP.MART.MARKET_BARS mb
               on mb.SYMBOL = op.SYMBOL
              and mb.MARKET_TYPE = op.MARKET_TYPE
              and mb.INTERVAL_MINUTES = 15
              and mb.TS::date = current_date()
              and mb.TS > op.ENTRY_TS
-            where op.INTERVAL_MINUTES = 1440
-              and op.IS_OPEN = true
             group by op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE, op.ENTRY_TS
         )
         select
@@ -255,7 +311,7 @@ def get_open_positions():
 
             datediff('minute', op.ENTRY_TS, current_timestamp()) as MINUTES_IN_TRADE
 
-        from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
+        from open_positions_scope op
         join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = op.PORTFOLIO_ID
         left join MIP.APP.EARLY_EXIT_POSITION_STATE ps
           on ps.PORTFOLIO_ID = op.PORTFOLIO_ID
@@ -265,23 +321,15 @@ def get_open_positions():
           on lb.SYMBOL = op.SYMBOL
          and lb.MARKET_TYPE = op.MARKET_TYPE
         left join best_targets bt
-          on bt.SYMBOL = op.SYMBOL
+          on bt.PORTFOLIO_ID = op.PORTFOLIO_ID
+         and bt.SYMBOL = op.SYMBOL
          and bt.MARKET_TYPE = op.MARKET_TYPE
-         and bt.SIGNAL_DATE = (
-                select max(rl2.TS::date)
-                from MIP.APP.RECOMMENDATION_LOG rl2
-                where rl2.SYMBOL = op.SYMBOL
-                  and rl2.MARKET_TYPE = op.MARKET_TYPE
-                  and rl2.INTERVAL_MINUTES = 1440
-                  and rl2.TS < op.ENTRY_TS
-            )
+         and bt.ENTRY_TS = op.ENTRY_TS
         left join intraday_series ir
           on ir.PORTFOLIO_ID = op.PORTFOLIO_ID
          and ir.SYMBOL = op.SYMBOL
          and ir.MARKET_TYPE = op.MARKET_TYPE
          and ir.ENTRY_TS = op.ENTRY_TS
-        where op.INTERVAL_MINUTES = 1440
-          and op.IS_OPEN = true
         order by op.PORTFOLIO_ID, op.SYMBOL
         """
         cur.execute(sql)
@@ -427,7 +475,8 @@ def get_decision_diff(
         # Get position + current state
         pos_sql = """
         select
-            op.ENTRY_PRICE, op.QUANTITY, op.COST_BASIS,
+            op.MARKET_TYPE, op.ENTRY_PRICE, op.QUANTITY, op.COST_BASIS,
+            op.ENTRY_INDEX,
             op.HOLD_UNTIL_INDEX, op.CURRENT_BAR_INDEX,
             ps.MFE_RETURN, ps.FIRST_HIT_RETURN, ps.FIRST_HIT_TS
         from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
@@ -465,6 +514,15 @@ def get_decision_diff(
         entry_price = float(pos["ENTRY_PRICE"])
         quantity = float(pos["QUANTITY"])
         cost_basis = float(pos["COST_BASIS"])
+        market_type = pos.get("MARKET_TYPE")
+        hold_bars = None
+        try:
+            entry_idx = int(pos.get("ENTRY_INDEX")) if pos.get("ENTRY_INDEX") is not None else None
+            hold_idx = int(pos.get("HOLD_UNTIL_INDEX")) if pos.get("HOLD_UNTIL_INDEX") is not None else None
+            if entry_idx is not None and hold_idx is not None:
+                hold_bars = max(hold_idx - entry_idx, 1)
+        except (TypeError, ValueError):
+            hold_bars = None
 
         # Target return
         tgt_sql = """
@@ -475,7 +533,9 @@ def get_decision_diff(
          and ts2.MARKET_TYPE = rl.MARKET_TYPE
          and ts2.INTERVAL_MINUTES = 1440
          and ts2.IS_TRUSTED = true
-        where rl.SYMBOL = %s and rl.INTERVAL_MINUTES = 1440
+        where rl.SYMBOL = %s
+          and rl.MARKET_TYPE = %s
+          and rl.INTERVAL_MINUTES = 1440
           and rl.TS::date = (
                 select max(rl2.TS::date)
                 from MIP.APP.RECOMMENDATION_LOG rl2
@@ -484,9 +544,13 @@ def get_decision_diff(
                   and rl2.INTERVAL_MINUTES = 1440
                   and rl2.TS < %s
             )
-        order by ts2.AVG_RETURN desc limit 1
+        order by
+            case when (%s is not null and ts2.HORIZON_BARS = %s) then 0 else 1 end,
+            case when %s is not null then abs(ts2.HORIZON_BARS - %s) else 0 end,
+            ts2.AVG_RETURN desc
+        limit 1
         """
-        cur.execute(tgt_sql, (symbol.upper(), entry_ts))
+        cur.execute(tgt_sql, (symbol.upper(), market_type, entry_ts, hold_bars, hold_bars, hold_bars, hold_bars))
         tgt_rows = fetch_all(cur)
         target_return = float(tgt_rows[0]["AVG_RETURN"]) if tgt_rows else None
 

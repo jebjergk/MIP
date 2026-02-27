@@ -75,6 +75,16 @@ def list_portfolios():
             sum(coalesce(r.DISTRIBUTION_AMOUNT, 0)) as total_paid_out
         from MIP.APP.PORTFOLIO_EPISODE_RESULTS r
         group by r.PORTFOLIO_ID
+    ),
+    active_episode as (
+        select
+            e.PORTFOLIO_ID,
+            e.EPISODE_ID,
+            e.START_TS,
+            e.PROFILE_ID,
+            e.START_EQUITY
+        from MIP.APP.PORTFOLIO_EPISODE e
+        where e.STATUS = 'ACTIVE'
     )
     select
         p.PORTFOLIO_ID,
@@ -97,14 +107,15 @@ def list_portfolios():
         end as GATE_STATE,
         g.BLOCK_REASON as GATE_REASON,
         -- Active episode
-        e.EPISODE_ID as ACTIVE_EPISODE_ID,
-        e.START_TS as ACTIVE_EPISODE_START_TS,
-        e.PROFILE_ID as ACTIVE_EPISODE_PROFILE_ID,
+        ae.EPISODE_ID as ACTIVE_EPISODE_ID,
+        ae.START_TS as ACTIVE_EPISODE_START_TS,
+        ae.PROFILE_ID as ACTIVE_EPISODE_PROFILE_ID,
+        ae.START_EQUITY as ACTIVE_EPISODE_START_EQUITY,
         -- Cumulative paid out
         coalesce(ep.total_paid_out, 0) as TOTAL_PAID_OUT
     from MIP.APP.PORTFOLIO p
     left join MIP.MART.V_PORTFOLIO_RISK_GATE g on g.PORTFOLIO_ID = p.PORTFOLIO_ID
-    left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e on e.PORTFOLIO_ID = p.PORTFOLIO_ID
+    left join active_episode ae on ae.PORTFOLIO_ID = p.PORTFOLIO_ID
     left join episode_payouts ep on ep.PORTFOLIO_ID = p.PORTFOLIO_ID
     order by p.PORTFOLIO_ID
     """
@@ -184,11 +195,13 @@ def list_portfolios():
             ep_id = row.get("ACTIVE_EPISODE_ID") or row.get("active_episode_id")
             ep_ts = row.get("ACTIVE_EPISODE_START_TS") or row.get("active_episode_start_ts")
             ep_prof = row.get("ACTIVE_EPISODE_PROFILE_ID") or row.get("active_episode_profile_id")
-            if ep_id is not None or ep_ts is not None or ep_prof is not None:
+            ep_start_equity = row.get("ACTIVE_EPISODE_START_EQUITY") or row.get("active_episode_start_equity")
+            if ep_id is not None or ep_ts is not None or ep_prof is not None or ep_start_equity is not None:
                 row["active_episode"] = {
                     "episode_id": ep_id,
                     "start_ts": ep_ts if isinstance(ep_ts, str) else (ep_ts.isoformat() if hasattr(ep_ts, "isoformat") else ep_ts),
                     "profile_id": ep_prof,
+                    "start_equity": float(ep_start_equity) if ep_start_equity is not None else None,
                 }
             else:
                 row["active_episode"] = None

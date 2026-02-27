@@ -836,6 +836,7 @@ export default function Portfolio() {
               <th className="col-id">ID</th>
               <th className="col-gate" title="Risk regime: SAFE = entries allowed, CAUTION = approaching threshold, STOPPED = entries blocked">Gate</th>
               <th className="col-health" title="Data freshness: OK = recent run, STALE = older than 24h, BROKEN = very old or failed">Health</th>
+              <th className="col-equity" title="Starting equity of the currently active episode">Episode start equity</th>
               <th className="col-equity" title="Latest total equity from the last simulated daily close">Last day close equity</th>
               <th className="col-equity" title="Live mark-to-market equity using latest available prices (15m preferred)">Current equity</th>
               <th className="col-paidout" title="Cumulative profits withdrawn across all episodes">Paid Out</th>
@@ -853,6 +854,7 @@ export default function Portfolio() {
               const episodeLabel = ep
                 ? `#${ep.episode_id ?? '—'} since ${(ep.start_ts ?? '').toString().slice(0, 10)}`
                 : '—'
+              const episodeStartEquity = ep?.start_equity
               const lastDayCloseEquity = p.last_day_close_equity ?? p.latest_equity ?? p.FINAL_EQUITY ?? p.final_equity ?? 0
               const currentEquity = p.current_equity
               const paidOut = p.total_paid_out ?? p.TOTAL_PAID_OUT ?? 0
@@ -880,6 +882,11 @@ export default function Portfolio() {
                       title={healthReason}
                     />
                     <span className="traffic-label">{healthState}</span>
+                  </td>
+                  <td className="col-equity">
+                    {episodeStartEquity != null
+                      ? `€${Number(episodeStartEquity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                      : '—'}
                   </td>
                   <td className="col-equity">
                     €{Number(lastDayCloseEquity).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}

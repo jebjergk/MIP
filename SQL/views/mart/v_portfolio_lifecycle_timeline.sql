@@ -40,9 +40,10 @@ select
         when 'DEPOSIT'         then 'Cash deposit +$' || to_varchar(le.AMOUNT, '999,999,999.00')
         when 'WITHDRAW'        then 'Cash withdrawal -$' || to_varchar(le.AMOUNT, '999,999,999.00')
         when 'CRYSTALLIZE'     then 'Profits crystallized $' || to_varchar(le.AMOUNT, '999,999,999.00')
-        when 'PROFILE_CHANGE'  then 'Profile changed to ' || coalesce(pp.NAME, 'unknown')
+        when 'PROFILE_CHANGE'  then coalesce(le.NOTES, 'Profile changed to ' || coalesce(pp.NAME, 'unknown'))
         when 'EPISODE_START'   then 'New episode started'
-        when 'EPISODE_END'     then 'Episode ended'
+        when 'EPISODE_END'     then 'Episode ended' ||
+                                  iff(pe.END_REASON is not null, ' (' || pe.END_REASON || ')', '')
         when 'BUST'            then 'Portfolio bust'
         else le.EVENT_TYPE
     end                             as EVENT_LABEL
@@ -51,4 +52,6 @@ join MIP.APP.PORTFOLIO p
   on p.PORTFOLIO_ID = le.PORTFOLIO_ID
 left join MIP.APP.PORTFOLIO_PROFILE pp
   on pp.PROFILE_ID = le.PROFILE_ID
+left join MIP.APP.PORTFOLIO_EPISODE pe
+  on pe.EPISODE_ID = le.EPISODE_ID
 order by le.EVENT_TS desc, le.EVENT_ID desc;

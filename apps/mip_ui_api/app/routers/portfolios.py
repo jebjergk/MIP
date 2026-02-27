@@ -938,6 +938,49 @@ def get_portfolio_snapshot(
 
         # --- Operator-clarity cards ---
         latest_daily = _first(daily)
+        latest_trade_cash = None
+        try:
+            _cash_ep_filter = "and EPISODE_ID = %s" if _active_ep_id is not None else ""
+            _cash_ep_ts_filter = "and TRADE_TS >= %s" if _active_ep_start_ts is not None else ""
+            _cash_ep_params = [portfolio_id]
+            if _active_ep_id is not None:
+                _cash_ep_params.append(_active_ep_id)
+            if _active_ep_start_ts is not None:
+                _cash_ep_params.append(_active_ep_start_ts)
+            cur.execute(
+                f"""
+                select CASH_AFTER
+                  from MIP.APP.PORTFOLIO_TRADES
+                 where PORTFOLIO_ID = %s {_cash_ep_filter} {_cash_ep_ts_filter}
+                 order by TRADE_TS desc, TRADE_ID desc
+                 limit 1
+                """,
+                tuple(_cash_ep_params),
+            )
+            trade_row = cur.fetchone()
+            if trade_row and trade_row[0] is not None:
+                latest_trade_cash = float(trade_row[0])
+        except Exception:
+            latest_trade_cash = None
+        if latest_trade_cash is None and _active_ep_id is not None:
+            try:
+                cur.execute(
+                    """
+                    select CASH_AFTER
+                    from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+                    where PORTFOLIO_ID = %s
+                      and EPISODE_ID = %s
+                      and CASH_AFTER is not null
+                    order by EVENT_TS desc, EVENT_ID desc
+                    limit 1
+                    """,
+                    (portfolio_id, _active_ep_id),
+                )
+                lc_row = cur.fetchone()
+                if lc_row and lc_row[0] is not None:
+                    latest_trade_cash = float(lc_row[0])
+            except Exception:
+                pass
 
         cash_and_exposure = None
         if latest_daily:
@@ -949,32 +992,11 @@ def get_portfolio_snapshot(
             # Override cash with latest CASH_AFTER from trades in current episode (most accurate source)
             # CRITICAL: Also filter TRADE_TS >= episode START_TS to avoid pulling stale
             # CASH_AFTER from trades that were mis-assigned to the current episode.
-            _cash_ep_filter = "and EPISODE_ID = %s" if _active_ep_id is not None else ""
-            _cash_ep_ts_filter = "and TRADE_TS >= %s" if _active_ep_start_ts is not None else ""
-            _cash_ep_params = [portfolio_id]
-            if _active_ep_id is not None:
-                _cash_ep_params.append(_active_ep_id)
-            if _active_ep_start_ts is not None:
-                _cash_ep_params.append(_active_ep_start_ts)
-            try:
-                cur.execute(
-                    f"""
-                    select CASH_AFTER
-                      from MIP.APP.PORTFOLIO_TRADES
-                     where PORTFOLIO_ID = %s {_cash_ep_filter} {_cash_ep_ts_filter}
-                     order by TRADE_TS desc, TRADE_ID desc
-                     limit 1
-                    """,
-                    tuple(_cash_ep_params),
-                )
-                trade_row = cur.fetchone()
-                if trade_row and trade_row[0] is not None:
-                    cash = float(trade_row[0])
-                    # Recalculate total equity with accurate cash
-                    if equity_value is not None:
-                        total_equity = cash + float(equity_value)
-            except Exception:
-                pass  # Fall back to PORTFOLIO_DAILY cash
+            if latest_trade_cash is not None:
+                cash = latest_trade_cash
+                # Recalculate total equity with accurate cash
+                if equity_value is not None:
+                    total_equity = cash + float(equity_value)
 
             cash_and_exposure = {
                 "cash": cash,
@@ -993,9 +1015,18 @@ def get_portfolio_snapshot(
                     "total_equity": fe,
                     "as_of_ts": snapshot_ts or latest_kpi.get("TO_TS") or latest_kpi.get("to_ts"),
                 }
+                if latest_trade_cash is not None:
+                    cash_and_exposure["cash"] = latest_trade_cash
+                    cash_and_exposure["exposure"] = live_market_value
+                    cash_and_exposure["total_equity"] = latest_trade_cash + live_market_value
             elif snapshot_ts is not None:
                 last_day_close_equity = None
-                cash_and_exposure = {"cash": None, "exposure": None, "total_equity": None, "as_of_ts": snapshot_ts}
+                cash_and_exposure = {
+                    "cash": latest_trade_cash,
+                    "exposure": live_market_value if latest_trade_cash is not None else None,
+                    "total_equity": (latest_trade_cash + live_market_value) if latest_trade_cash is not None else None,
+                    "as_of_ts": snapshot_ts,
+                }
             else:
                 last_day_close_equity = None
 
@@ -1043,9 +1074,10 @@ def get_portfolio_snapshot(
         try:
             cur.execute(
                 """
-                select EPISODE_ID, PROFILE_ID, START_TS, 'ACTIVE' as STATUS
-                from MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE
+                select EPISODE_ID, PROFILE_ID, START_TS, START_EQUITY, STATUS
+                from MIP.APP.PORTFOLIO_EPISODE
                 where PORTFOLIO_ID = %s
+                  and STATUS = 'ACTIVE'
                 """,
                 (portfolio_id,),
             )
@@ -1240,6 +1272,7 @@ def get_portfolio_episodes(portfolio_id: int):
                 ep["start_ts"] = start_ts.isoformat()
             if end_ts and hasattr(end_ts, "isoformat"):
                 ep["end_ts"] = end_ts.isoformat()
+            ep["end_equity"] = float(row["RESULT_END_EQUITY"]) if row.get("RESULT_END_EQUITY") is not None else None
             # Prefer persisted results; map to response shape
             if row.get("RETURN_PCT") is not None:
                 ep["total_return"] = float(row["RETURN_PCT"]) if row.get("RETURN_PCT") is not None else None
@@ -1293,6 +1326,8 @@ def get_portfolio_episodes(portfolio_id: int):
                         final_equity = d.get("FINAL_EQUITY")
                         if start_cash and final_equity and start_cash != 0:
                             ep["total_return"] = (float(final_equity) / start_cash) - 1
+                        if final_equity is not None:
+                            ep["end_equity"] = float(final_equity)
                         ep["max_drawdown"] = d.get("MAX_DRAWDOWN")
                         ep["win_days"] = int(d["WIN_DAYS"]) if d.get("WIN_DAYS") is not None else None
                         ep["loss_days"] = int(d["LOSS_DAYS"]) if d.get("LOSS_DAYS") is not None else None
@@ -1357,17 +1392,99 @@ def get_portfolio_timeline(portfolio_id: int):
         total_paid_out_series = []
 
         for row in rows:
-            dist = float(row["DISTRIBUTION_AMOUNT"] or 0)
-            realized = float(row["REALIZED_PNL"] or 0)
-            total_paid_out += dist
-            total_realized_pnl += realized
-            cum_distributed += dist
-            cum_realized_pnl += realized
             start_ts = row.get("START_TS")
             end_ts = row.get("END_TS")
             status = row.get("STATUS") or "ENDED"
             end_reason = row.get("END_REASON")
-            
+            episode_id = row.get("EPISODE_ID")
+
+            start_equity = float(row["START_EQUITY"]) if row.get("START_EQUITY") is not None else None
+            end_equity = float(row["END_EQUITY"]) if row.get("END_EQUITY") is not None else None
+            realized = float(row["REALIZED_PNL"]) if row.get("REALIZED_PNL") is not None else None
+            return_pct = float(row["RETURN_PCT"]) if row.get("RETURN_PCT") is not None else None
+            max_drawdown_pct = float(row["MAX_DRAWDOWN_PCT"]) if row.get("MAX_DRAWDOWN_PCT") is not None else None
+            trades_count = int(row["TRADES_COUNT"]) if row.get("TRADES_COUNT") is not None else None
+            win_days = int(row["WIN_DAYS"]) if row.get("WIN_DAYS") is not None else None
+            loss_days = int(row["LOSS_DAYS"]) if row.get("LOSS_DAYS") is not None else None
+
+            # Fallback for episodes without persisted result rows (e.g. PROFILE_CHANGE):
+            # derive end-equity and simple stats from episode-scoped daily/trades data.
+            if start_ts is not None and (
+                end_equity is None
+                or realized is None
+                or return_pct is None
+                or trades_count is None
+            ):
+                try:
+                    cur.execute(
+                        """
+                        select
+                            max_by(TOTAL_EQUITY, TS) as final_equity,
+                            max(DRAWDOWN) as max_drawdown,
+                            count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) > 0) as win_days,
+                            count_if((TOTAL_EQUITY - PREV_TOTAL_EQUITY) < 0) as loss_days
+                        from (
+                            select TS, TOTAL_EQUITY, DRAWDOWN,
+                                   lag(TOTAL_EQUITY) over (order by TS) as PREV_TOTAL_EQUITY
+                            from MIP.APP.PORTFOLIO_DAILY
+                            where PORTFOLIO_ID = %s
+                              and TS >= %s
+                              and (%s is null or TS <= %s)
+                              and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
+                        )
+                        """,
+                        (portfolio_id, start_ts, end_ts, end_ts, episode_id, episode_id),
+                    )
+                    daily_row = cur.fetchone()
+                    if daily_row and cur.description:
+                        cols = [d[0] for d in cur.description]
+                        d = dict(zip(cols, daily_row))
+                        if end_equity is None and d.get("FINAL_EQUITY") is not None:
+                            end_equity = float(d["FINAL_EQUITY"])
+                        if max_drawdown_pct is None and d.get("MAX_DRAWDOWN") is not None:
+                            max_drawdown_pct = float(d["MAX_DRAWDOWN"])
+                        if win_days is None and d.get("WIN_DAYS") is not None:
+                            win_days = int(d["WIN_DAYS"])
+                        if loss_days is None and d.get("LOSS_DAYS") is not None:
+                            loss_days = int(d["LOSS_DAYS"])
+                except Exception:
+                    pass
+
+                if trades_count is None:
+                    try:
+                        cur.execute(
+                            """
+                            select count(*) from MIP.APP.PORTFOLIO_TRADES
+                            where PORTFOLIO_ID = %s
+                              and TRADE_TS >= %s
+                              and (%s is null or TRADE_TS <= %s)
+                              and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
+                            """,
+                            (portfolio_id, start_ts, end_ts, end_ts, episode_id, episode_id),
+                        )
+                        tc = cur.fetchone()
+                        trades_count = int(tc[0]) if tc and tc[0] is not None else 0
+                    except Exception:
+                        trades_count = 0
+
+            if realized is None and start_equity is not None and end_equity is not None:
+                realized = end_equity - start_equity
+            if return_pct is None and start_equity not in (None, 0) and end_equity is not None:
+                return_pct = (end_equity / start_equity) - 1
+            if trades_count is None:
+                trades_count = 0
+            if win_days is None:
+                win_days = 0
+            if loss_days is None:
+                loss_days = 0
+
+            dist = float(row["DISTRIBUTION_AMOUNT"] or 0)
+            realized = float(realized or 0)
+            total_paid_out += dist
+            total_realized_pnl += realized
+            cum_distributed += dist
+            cum_realized_pnl += realized
+
             # Compute lifecycle status label
             if status == "ACTIVE":
                 lifecycle_label = "Active"
@@ -1387,16 +1504,16 @@ def get_portfolio_timeline(portfolio_id: int):
                 "status": status,
                 "end_reason": end_reason,
                 "lifecycle_label": lifecycle_label,
-                "start_equity": float(row["START_EQUITY"]) if row.get("START_EQUITY") is not None else None,
-                "end_equity": float(row["END_EQUITY"]) if row.get("END_EQUITY") is not None else None,
-                "return_pct": float(row["RETURN_PCT"]) if row.get("RETURN_PCT") is not None else None,
-                "max_drawdown_pct": float(row["MAX_DRAWDOWN_PCT"]) if row.get("MAX_DRAWDOWN_PCT") is not None else None,
-                "realized_pnl": float(row["REALIZED_PNL"]) if row.get("REALIZED_PNL") is not None else None,
+                "start_equity": start_equity,
+                "end_equity": end_equity,
+                "return_pct": return_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+                "realized_pnl": realized,
                 "distribution_amount": float(row["DISTRIBUTION_AMOUNT"]) if row.get("DISTRIBUTION_AMOUNT") is not None else None,
                 "distribution_mode": row.get("DISTRIBUTION_MODE"),
-                "trades_count": int(row["TRADES_COUNT"]) if row.get("TRADES_COUNT") is not None else 0,
-                "win_days": int(row["WIN_DAYS"]) if row.get("WIN_DAYS") is not None else 0,
-                "loss_days": int(row["LOSS_DAYS"]) if row.get("LOSS_DAYS") is not None else 0,
+                "trades_count": trades_count,
+                "win_days": win_days,
+                "loss_days": loss_days,
             })
             ts = end_ts if end_ts else start_ts
             if ts:
@@ -1530,6 +1647,90 @@ def get_episode_detail(portfolio_id: int, episode_id: int):
                     # No equity data for this day
                     drawdown_series.append({"ts": tss, "drawdown_pct": None, "high_watermark_equity": episode_peak})
                     regime_per_day.append({"ts": tss, "gate_state": "SAFE"})
+
+        # Active episodes can have no daily row yet immediately after profile switch.
+        # Seed one synthetic point from current cash + open market value so charts don't render empty.
+        if not equity_series:
+            synthetic_ts = start_ts.isoformat() if hasattr(start_ts, "isoformat") else str(start_ts)
+            synthetic_cash = None
+            try:
+                cur.execute(
+                    """
+                    select CASH_AFTER
+                    from MIP.APP.PORTFOLIO_TRADES
+                    where PORTFOLIO_ID = %s
+                      and (EPISODE_ID = %s or (%s is null and EPISODE_ID is null))
+                    order by TRADE_TS desc, TRADE_ID desc
+                    limit 1
+                    """,
+                    (portfolio_id, episode_id, episode_id),
+                )
+                _cash_row = cur.fetchone()
+                if _cash_row and _cash_row[0] is not None:
+                    synthetic_cash = float(_cash_row[0])
+            except Exception:
+                synthetic_cash = None
+            if synthetic_cash is None:
+                try:
+                    cur.execute(
+                        """
+                        select CASH_AFTER
+                        from MIP.APP.PORTFOLIO_LIFECYCLE_EVENT
+                        where PORTFOLIO_ID = %s
+                          and EPISODE_ID = %s
+                          and CASH_AFTER is not null
+                        order by EVENT_TS desc, EVENT_ID desc
+                        limit 1
+                        """,
+                        (portfolio_id, episode_id),
+                    )
+                    _lc_cash_row = cur.fetchone()
+                    if _lc_cash_row and _lc_cash_row[0] is not None:
+                        synthetic_cash = float(_lc_cash_row[0])
+                except Exception:
+                    pass
+
+            synthetic_equity = float(start_equity) if start_equity is not None else None
+            try:
+                cur.execute(
+                    """
+                    with latest_price as (
+                        select SYMBOL, MARKET_TYPE, CLOSE
+                        from MIP.MART.MARKET_BARS
+                        qualify row_number() over (
+                            partition by SYMBOL, MARKET_TYPE
+                            order by TS desc
+                        ) = 1
+                    )
+                    select sum(coalesce(lp.CLOSE, 0) * coalesce(p.QUANTITY, 0)) as OPEN_MARKET_VALUE
+                    from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+                    left join latest_price lp
+                      on lp.SYMBOL = p.SYMBOL
+                     and lp.MARKET_TYPE = p.MARKET_TYPE
+                    where p.PORTFOLIO_ID = %s
+                      and (p.EPISODE_ID = %s or (%s is null and p.EPISODE_ID is null))
+                    """,
+                    (portfolio_id, episode_id, episode_id),
+                )
+                _mv_row = cur.fetchone()
+                open_mv = float(_mv_row[0]) if _mv_row and _mv_row[0] is not None else 0.0
+                if synthetic_cash is not None:
+                    synthetic_equity = synthetic_cash + open_mv
+            except Exception:
+                pass
+
+            if synthetic_equity is not None:
+                equity_series.append({
+                    "ts": synthetic_ts,
+                    "equity": synthetic_equity,
+                    "cash": synthetic_cash,
+                })
+                drawdown_series.append({
+                    "ts": synthetic_ts,
+                    "drawdown_pct": 0.0,
+                    "high_watermark_equity": synthetic_equity,
+                })
+                regime_per_day.append({"ts": synthetic_ts, "gate_state": "SAFE"})
 
         # Project a current-day data point onto equity_series when trades exist
         # beyond the last PORTFOLIO_DAILY row (e.g. new trades booked today but

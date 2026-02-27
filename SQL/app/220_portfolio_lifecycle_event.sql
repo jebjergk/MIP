@@ -467,6 +467,7 @@ declare
     v_cum_deposited number(18,2);
     v_cum_withdrawn number(18,2);
     v_cum_pnl number(18,2);
+    v_positions_carried number := 0;
 begin
     -- Safety check
     v_is_safe := (call MIP.APP.SP_CHECK_PIPELINE_SAFE_FOR_EDIT(:v_portfolio_id));
@@ -475,8 +476,8 @@ begin
     end if;
 
     -- Load portfolio
-    select PROFILE_ID, coalesce(FINAL_EQUITY, STARTING_CASH), STARTING_CASH, STATUS
-      into :v_current_profile_id, :v_current_equity, :v_starting_cash, :v_status
+    select PROFILE_ID, STARTING_CASH, STATUS
+      into :v_current_profile_id, :v_starting_cash, :v_status
       from MIP.APP.PORTFOLIO
      where PORTFOLIO_ID = :v_portfolio_id;
 
@@ -509,18 +510,85 @@ begin
      where PORTFOLIO_ID = :v_portfolio_id and STATUS = 'ACTIVE'
      limit 1;
 
-    -- Get current cash
+    -- Get current equity + cash snapshot from latest daily row (more accurate than PORTFOLIO.FINAL_EQUITY)
     begin
-        select CASH into :v_current_cash
+        select TOTAL_EQUITY, CASH into :v_current_equity, :v_current_cash
           from MIP.APP.PORTFOLIO_DAILY
-         where PORTFOLIO_ID = :v_portfolio_id order by TS desc limit 1;
-    exception when other then v_current_cash := :v_starting_cash;
+         where PORTFOLIO_ID = :v_portfolio_id
+         order by TS desc, CREATED_AT desc nulls last
+         limit 1;
+    exception when other then
+        v_current_equity := :v_starting_cash;
+        v_current_cash := :v_starting_cash;
+    end;
+
+    -- Get current cash (override from latest trade when available)
+    begin
+        select CASH_AFTER into :v_current_cash
+          from MIP.APP.PORTFOLIO_TRADES
+         where PORTFOLIO_ID = :v_portfolio_id
+           and (:v_old_episode_id is null or EPISODE_ID = :v_old_episode_id)
+         order by TRADE_TS desc, TRADE_ID desc
+         limit 1;
+    exception when other then null;
     end;
 
     -- End current episode, start new one with the new profile
     v_new_episode_id := (call MIP.APP.SP_START_PORTFOLIO_EPISODE(
         :v_portfolio_id, :v_new_profile_id, 'PROFILE_CHANGE', :v_current_equity
     ));
+
+    -- Carry still-open lots from old episode into the new active episode.
+    -- This prevents "ghosted" positions after profile changes.
+    if (v_old_episode_id is not null and v_new_episode_id is not null) then
+        update MIP.APP.PORTFOLIO_POSITIONS p
+           set EPISODE_ID = :v_new_episode_id
+          from (
+                with sell_counts as (
+                    select
+                        t.SYMBOL,
+                        t.MARKET_TYPE,
+                        count(*) as SELL_COUNT
+                    from MIP.APP.PORTFOLIO_TRADES t
+                    where t.PORTFOLIO_ID = :v_portfolio_id
+                      and t.EPISODE_ID = :v_old_episode_id
+                      and t.SIDE = 'SELL'
+                    group by t.SYMBOL, t.MARKET_TYPE
+                ),
+                ranked_positions as (
+                    select
+                        pos.RUN_ID,
+                        pos.SYMBOL,
+                        pos.MARKET_TYPE,
+                        pos.ENTRY_TS,
+                        row_number() over (
+                            partition by pos.SYMBOL, pos.MARKET_TYPE
+                            order by pos.ENTRY_TS, pos.RUN_ID
+                        ) as POS_RANK
+                    from MIP.APP.PORTFOLIO_POSITIONS pos
+                    where pos.PORTFOLIO_ID = :v_portfolio_id
+                      and pos.EPISODE_ID = :v_old_episode_id
+                )
+                select
+                    rp.RUN_ID,
+                    rp.SYMBOL,
+                    rp.MARKET_TYPE,
+                    rp.ENTRY_TS
+                from ranked_positions rp
+                left join sell_counts sc
+                  on sc.SYMBOL = rp.SYMBOL
+                 and sc.MARKET_TYPE = rp.MARKET_TYPE
+                where rp.POS_RANK > coalesce(sc.SELL_COUNT, 0)
+            ) open_lots
+         where p.PORTFOLIO_ID = :v_portfolio_id
+           and p.EPISODE_ID = :v_old_episode_id
+           and p.RUN_ID = open_lots.RUN_ID
+           and p.SYMBOL = open_lots.SYMBOL
+           and p.MARKET_TYPE = open_lots.MARKET_TYPE
+           and p.ENTRY_TS = open_lots.ENTRY_TS;
+
+        v_positions_carried := sqlrowcount;
+    end if;
 
     -- Get running totals
     v_prev_totals := (call MIP.APP.SP_GET_LIFECYCLE_RUNNING_TOTALS(:v_portfolio_id));
@@ -549,7 +617,8 @@ begin
         'old_profile', :v_old_profile_name,
         'new_profile', :v_new_profile_name,
         'old_episode_id', :v_old_episode_id,
-        'new_episode_id', :v_new_episode_id
+        'new_episode_id', :v_new_episode_id,
+        'positions_carried', :v_positions_carried
     );
 end;
 $$;

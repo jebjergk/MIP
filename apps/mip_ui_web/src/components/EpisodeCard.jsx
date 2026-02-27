@@ -148,7 +148,11 @@ export default function EpisodeCard({ episode, portfolioId, isActive }) {
         <dt>Start equity</dt>
         <dd>{episode?.start_equity != null ? Number(episode.start_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : (detail?.start_equity != null ? Number(detail.start_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—')}</dd>
         <dt>End equity</dt>
-        <dd>{detail?.end_equity != null ? Number(detail.end_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—'}</dd>
+        <dd>
+          {(detail?.end_equity ?? episode?.end_equity ?? episode?.RESULT_END_EQUITY) != null
+            ? Number(detail?.end_equity ?? episode?.end_equity ?? episode?.RESULT_END_EQUITY).toLocaleString(undefined, { minimumFractionDigits: 2 })
+            : '—'}
+        </dd>
         <dt>Total return</dt>
         <dd>{totalReturn != null ? (Number(totalReturn) * 100).toFixed(2) + '%' : '—'}</dd>
         <dt>Max drawdown</dt>

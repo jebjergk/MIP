@@ -845,7 +845,7 @@ function AttachProfileModal({ portfolio, profiles, onClose, onSave }) {
         <h3>Attach Profile: {name}</h3>
         <p style={{ color: '#666', fontSize: '0.9rem', margin: '0 0 1rem 0' }}>
           Changing the profile will end the current episode and start a new one with the selected profile.
-          Episode results will be preserved.
+          Open positions are carried into the new episode and episode history remains preserved.
         </p>
         <div className="mgmt-field" style={{ maxWidth: 300 }}>
           <label>Risk Profile</label>

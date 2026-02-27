@@ -127,6 +127,7 @@ export default function Portfolio() {
     const activeEp = snapshot?.active_episode
     const activeSince = (activeEp?.start_ts ?? activeEp?.START_TS ?? '').slice(0, 10)
     const activeProfileId = activeEp?.profile_id ?? activeEp?.PROFILE_ID
+    const episodeStartEquity = activeEp?.start_equity ?? activeEp?.START_EQUITY
     
     // Item 2 fix: Use episode-scoped risk state for consistency with drawdown chart
     // This ensures the risk label matches what the episode drawdown chart shows
@@ -239,10 +240,10 @@ export default function Portfolio() {
 
         <h2>Header</h2>
         <div className="kpi-cards">
-          {portfolio.STARTING_CASH != null && (
+          {(episodeStartEquity ?? portfolio.STARTING_CASH) != null && (
             <div className="kpi-card">
-              <span className="kpi-label">Starting cash <InfoTooltip scope="portfolio" key="starting_cash" variant="short" /></span>
-              <span className="kpi-value">{Number(portfolio.STARTING_CASH).toLocaleString()}</span>
+              <span className="kpi-label">Episode start equity <InfoTooltip scope="portfolio" key="starting_cash" variant="short" /></span>
+              <span className="kpi-value">{Number(episodeStartEquity ?? portfolio.STARTING_CASH).toLocaleString()}</span>
             </div>
           )}
           {snapshot?.cards?.cash_and_exposure?.cash != null && (

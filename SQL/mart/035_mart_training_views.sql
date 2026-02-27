@@ -46,6 +46,7 @@ join MIP.APP.RECOMMENDATION_OUTCOMES o
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRAINING_KPIS as
 select
+    'CURRENT' as TRAINING_VERSION,
     PATTERN_ID,
     MARKET_TYPE,
     INTERVAL_MINUTES,

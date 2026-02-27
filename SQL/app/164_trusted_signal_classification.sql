@@ -19,6 +19,7 @@ with recs as (
 ),
 policy_scored as (
     select
+        p.TRAINING_VERSION,
         p.PATTERN_ID,
         p.MARKET_TYPE,
         p.INTERVAL_MINUTES,
@@ -37,7 +38,7 @@ policy_ranked as (
     select
         p.*,
         row_number() over (
-            partition by p.PATTERN_ID, p.MARKET_TYPE, p.INTERVAL_MINUTES
+            partition by p.TRAINING_VERSION, p.PATTERN_ID, p.MARKET_TYPE, p.INTERVAL_MINUTES
             order by p.TRUST_RANK desc, p.HORIZON_BARS desc
         ) as POLICY_RN
     from policy_scored p
@@ -48,6 +49,7 @@ select
     r.INTERVAL_MINUTES,
     r.TS,
     r.PATTERN_ID,
+    coalesce(p.TRAINING_VERSION, 'CURRENT') as TRAINING_VERSION,
     coalesce(
         p.TRUST_LABEL,
         case
@@ -66,7 +68,7 @@ select
     ) as RECOMMENDED_ACTION,
     object_construct(
         'policy_source', iff(p.PATTERN_ID is null, 'SCORE_FALLBACK', 'MIP.MART.V_TRUSTED_SIGNAL_POLICY'),
-        'policy_version', 'v1',
+        'policy_version', coalesce(p.TRAINING_VERSION, 'CURRENT'),
         'horizon_bars', p.HORIZON_BARS,
         'policy_reason', p.REASON,
         'score', r.SCORE,

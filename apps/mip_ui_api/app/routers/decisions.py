@@ -198,13 +198,17 @@ def get_open_positions():
                 sa.SYMBOL,
                 sa.MARKET_TYPE,
                 sa.ENTRY_TS,
-                ts2.AVG_RETURN,
+                coalesce(pa.EFFECTIVE_TARGET, ts2.AVG_RETURN) as TARGET_RETURN,
+                coalesce(pa.PATTERN_TARGET, ts2.AVG_RETURN) as PATTERN_TARGET,
+                pa.SYMBOL_MULTIPLIER,
+                coalesce(pa.TARGET_SOURCE, 'PATTERN_ONLY') as TARGET_SOURCE,
+                pa.TRAINING_VERSION,
                 row_number() over (
                     partition by sa.PORTFOLIO_ID, sa.SYMBOL, sa.MARKET_TYPE, sa.ENTRY_TS
                     order by
                         case when ts2.HORIZON_BARS = sa.HOLD_BARS then 0 else 1 end,
                         abs(ts2.HORIZON_BARS - sa.HOLD_BARS),
-                        ts2.AVG_RETURN desc
+                        coalesce(pa.EFFECTIVE_TARGET, ts2.AVG_RETURN) desc
                 ) as RN
             from signal_anchor sa
             join MIP.APP.RECOMMENDATION_LOG rl
@@ -217,6 +221,11 @@ def get_open_positions():
              and ts2.MARKET_TYPE = rl.MARKET_TYPE
              and ts2.INTERVAL_MINUTES = 1440
              and ts2.IS_TRUSTED = true
+            left join MIP.MART.V_DAILY_POLICY_EFFECTIVE_ACTIVE pa
+              on pa.SYMBOL = sa.SYMBOL
+             and pa.MARKET_TYPE = sa.MARKET_TYPE
+             and pa.PATTERN_ID = rl.PATTERN_ID
+             and pa.HORIZON_BARS = ts2.HORIZON_BARS
         ),
         best_targets as (
             select
@@ -224,7 +233,11 @@ def get_open_positions():
                 SYMBOL,
                 MARKET_TYPE,
                 ENTRY_TS,
-                AVG_RETURN
+                TARGET_RETURN,
+                PATTERN_TARGET,
+                SYMBOL_MULTIPLIER,
+                TARGET_SOURCE,
+                TRAINING_VERSION
             from target_candidates
             where RN = 1
         ),
@@ -291,7 +304,11 @@ def get_open_positions():
                     - ((lb.PREV_CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE)
                  else null end as RETURN_DELTA_15M,
 
-            bt.AVG_RETURN as TARGET_RETURN,
+            bt.TARGET_RETURN as TARGET_RETURN,
+            bt.PATTERN_TARGET as PATTERN_TARGET,
+            bt.SYMBOL_MULTIPLIER as SYMBOL_MULTIPLIER,
+            bt.TARGET_SOURCE as TARGET_SOURCE,
+            bt.TRAINING_VERSION as TRAINING_VERSION,
 
             ps.FIRST_HIT_TS,
             ps.FIRST_HIT_RETURN,
@@ -524,15 +541,25 @@ def get_decision_diff(
         except (TypeError, ValueError):
             hold_bars = None
 
-        # Target return
+        # Target return (active training version with safe fallback)
         tgt_sql = """
-        select ts2.AVG_RETURN
+        select
+            coalesce(pa.EFFECTIVE_TARGET, ts2.AVG_RETURN) as TARGET_RETURN,
+            coalesce(pa.PATTERN_TARGET, ts2.AVG_RETURN) as PATTERN_TARGET,
+            pa.SYMBOL_MULTIPLIER,
+            coalesce(pa.TARGET_SOURCE, 'PATTERN_ONLY') as TARGET_SOURCE,
+            pa.TRAINING_VERSION
         from MIP.APP.RECOMMENDATION_LOG rl
         join MIP.MART.V_TRUSTED_SIGNALS ts2
           on ts2.PATTERN_ID = rl.PATTERN_ID
          and ts2.MARKET_TYPE = rl.MARKET_TYPE
          and ts2.INTERVAL_MINUTES = 1440
          and ts2.IS_TRUSTED = true
+        left join MIP.MART.V_DAILY_POLICY_EFFECTIVE_ACTIVE pa
+          on pa.SYMBOL = rl.SYMBOL
+         and pa.MARKET_TYPE = rl.MARKET_TYPE
+         and pa.PATTERN_ID = rl.PATTERN_ID
+         and pa.HORIZON_BARS = ts2.HORIZON_BARS
         where rl.SYMBOL = %s
           and rl.MARKET_TYPE = %s
           and rl.INTERVAL_MINUTES = 1440
@@ -552,7 +579,11 @@ def get_decision_diff(
         """
         cur.execute(tgt_sql, (symbol.upper(), market_type, entry_ts, hold_bars, hold_bars, hold_bars, hold_bars))
         tgt_rows = fetch_all(cur)
-        target_return = float(tgt_rows[0]["AVG_RETURN"]) if tgt_rows else None
+        target_return = float(tgt_rows[0]["TARGET_RETURN"]) if tgt_rows else None
+        pattern_target = float(tgt_rows[0]["PATTERN_TARGET"]) if tgt_rows and tgt_rows[0].get("PATTERN_TARGET") is not None else target_return
+        symbol_multiplier = _flt(tgt_rows[0].get("SYMBOL_MULTIPLIER")) if tgt_rows else None
+        target_source = (tgt_rows[0].get("TARGET_SOURCE") if tgt_rows else None) or "PATTERN_ONLY"
+        training_version = tgt_rows[0].get("TRAINING_VERSION") if tgt_rows else None
 
         exit_now_return = ((current_price - entry_price) / entry_price) if current_price else None
         exit_now_pnl = ((current_price - entry_price) * quantity) if current_price else None
@@ -563,6 +594,10 @@ def get_decision_diff(
                 "entry_price": entry_price,
                 "current_price": current_price,
                 "target_return": target_return,
+                "pattern_target": pattern_target,
+                "symbol_multiplier": symbol_multiplier,
+                "target_source": target_source,
+                "training_version": training_version,
                 "exit_now_return": exit_now_return,
                 "exit_now_pnl": exit_now_pnl,
                 "hold_expected_pnl": hold_expected_pnl,

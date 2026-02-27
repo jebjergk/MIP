@@ -7,7 +7,12 @@ use role MIP_ADMIN_ROLE;
 use database MIP;
 
 create or replace view MIP.MART.V_TRUSTED_SIGNAL_POLICY as
-with recent_kpis as (
+with active_version as (
+    select TRAINING_VERSION
+    from MIP.APP.V_TRAINING_VERSION_CURRENT
+    where POLICY_NAME = 'DAILY_POLICY'
+),
+recent_kpis as (
     select
         r.PATTERN_ID,
         r.MARKET_TYPE,
@@ -33,6 +38,7 @@ with recent_kpis as (
     group by r.PATTERN_ID, r.MARKET_TYPE, r.INTERVAL_MINUTES, o.HORIZON_BARS
 )
 select
+    av.TRAINING_VERSION,
     s.PATTERN_ID,
     s.MARKET_TYPE,
     s.INTERVAL_MINUTES,
@@ -77,6 +83,7 @@ select
     ) as REASON,
     current_timestamp() as AS_OF_TS
 from MIP.MART.V_SIGNAL_OUTCOME_KPIS s
+cross join active_version av
 left join recent_kpis rk
   on rk.PATTERN_ID = s.PATTERN_ID
  and rk.MARKET_TYPE = s.MARKET_TYPE

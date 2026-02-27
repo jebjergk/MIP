@@ -544,6 +544,11 @@ begin
                 'run_id', s.RUN_ID,
                 'trust_label', 'TRUSTED',
                 'recommended_action', 'ENABLE',
+                'training_version', s.TRAINING_VERSION,
+                'pattern_target', s.PATTERN_TARGET,
+                'symbol_multiplier', s.SYMBOL_MULTIPLIER,
+                'effective_target', s.EFFECTIVE_TARGET,
+                'target_source', s.TARGET_SOURCE,
                 'held_priority', s.HELD_PRIORITY,
                 'market_type_group', s.MARKET_TYPE_GROUP,
                 'trust_reason', s.TRUST_REASON

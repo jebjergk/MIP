@@ -10,7 +10,12 @@ use database MIP;
 -- Full gate: N_SIGNALS >= MIN_SIGNALS -> confidence HIGH. Bootstrap: N_SIGNALS >= MIN_SIGNALS_BOOTSTRAP -> confidence LOW.
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_PATTERN_HORIZONS as
-with p as (
+with active_version as (
+    select TRAINING_VERSION
+    from MIP.APP.V_TRAINING_VERSION_CURRENT
+    where POLICY_NAME = 'DAILY_POLICY'
+),
+p as (
     select
         MIN_SIGNALS,
         coalesce(MIN_SIGNALS_BOOTSTRAP, 5) as MIN_SIGNALS_BOOTSTRAP,
@@ -21,6 +26,7 @@ with p as (
     qualify row_number() over (order by PARAM_SET) = 1
 )
 select
+    av.TRAINING_VERSION,
     l.PATTERN_ID,
     l.MARKET_TYPE,
     l.INTERVAL_MINUTES,
@@ -36,6 +42,7 @@ select
         else 'LOW'
     end as CONFIDENCE
 from MIP.MART.V_TRAINING_LEADERBOARD l
+cross join active_version av
 cross join p
 where (l.N_SIGNALS >= p.MIN_SIGNALS or l.N_SIGNALS >= p.MIN_SIGNALS_BOOTSTRAP)
   and coalesce(l.HIT_RATE_SUCCESS, 0) >= p.MIN_HIT_RATE
@@ -86,6 +93,7 @@ with latest_ts as (
 ),
 trusted_ph as (
     select
+        TRAINING_VERSION,
         PATTERN_ID,
         MARKET_TYPE,
         INTERVAL_MINUTES,
@@ -96,6 +104,25 @@ trusted_ph as (
         SHARPE_LIKE_SUCCESS,
         CONFIDENCE
     from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
+),
+policy_active as (
+    select
+        TRAINING_VERSION,
+        SYMBOL,
+        MARKET_TYPE,
+        PATTERN_ID,
+        HORIZON_BARS,
+        PATTERN_TARGET,
+        SYMBOL_MULTIPLIER,
+        EFFECTIVE_TARGET,
+        TARGET_SOURCE,
+        EFFECTIVE_HORIZON_BARS,
+        HORIZON_SOURCE,
+        N_OUTCOMES as POLICY_N_OUTCOMES,
+        CI_WIDTH as POLICY_CI_WIDTH,
+        ELIGIBLE_FLAG as POLICY_ELIGIBLE_FLAG,
+        FALLBACK_REASON as POLICY_FALLBACK_REASON
+    from MIP.MART.V_DAILY_POLICY_EFFECTIVE_ACTIVE
 ),
 candidates as (
     -- Join today's signals to trusted pattern/horizon combos
@@ -112,12 +139,23 @@ candidates as (
         r.DETAILS,
         r.GENERATED_AT,
         coalesce(r.DETAILS:run_id::string, to_varchar(r.GENERATED_AT, 'YYYYMMDD"T"HH24MISS')) as RUN_ID,
+        t.TRAINING_VERSION,
         lt.TS as LAST_SIGNAL_TS,
         t.N_SIGNALS,
         t.HIT_RATE_SUCCESS,
         t.AVG_RETURN_SUCCESS,
         t.SHARPE_LIKE_SUCCESS,
         t.CONFIDENCE,
+        pa.PATTERN_TARGET,
+        pa.SYMBOL_MULTIPLIER,
+        coalesce(pa.EFFECTIVE_TARGET, t.AVG_RETURN_SUCCESS) as EFFECTIVE_TARGET,
+        coalesce(pa.TARGET_SOURCE, 'PATTERN_ONLY') as TARGET_SOURCE,
+        pa.EFFECTIVE_HORIZON_BARS,
+        pa.HORIZON_SOURCE,
+        pa.POLICY_N_OUTCOMES,
+        pa.POLICY_CI_WIDTH,
+        pa.POLICY_ELIGIBLE_FLAG,
+        pa.POLICY_FALLBACK_REASON,
         'GATE_PASS' as TRUST_REASON
     from MIP.APP.RECOMMENDATION_LOG r
     cross join latest_ts lt
@@ -125,6 +163,12 @@ candidates as (
       on t.PATTERN_ID = r.PATTERN_ID
      and t.MARKET_TYPE = r.MARKET_TYPE
      and t.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+    left join policy_active pa
+      on pa.TRAINING_VERSION = t.TRAINING_VERSION
+     and pa.SYMBOL = r.SYMBOL
+     and pa.MARKET_TYPE = r.MARKET_TYPE
+     and pa.PATTERN_ID = r.PATTERN_ID
+     and pa.HORIZON_BARS = t.HORIZON_BARS
     where r.INTERVAL_MINUTES = 1440
       and r.TS = lt.TS
 )
@@ -139,10 +183,21 @@ select
     SCORE,
     DETAILS,
     RUN_ID,
+    TRAINING_VERSION,
     LAST_SIGNAL_TS,
     N_SIGNALS,
     HIT_RATE_SUCCESS,
     AVG_RETURN_SUCCESS,
+    PATTERN_TARGET,
+    SYMBOL_MULTIPLIER,
+    EFFECTIVE_TARGET,
+    TARGET_SOURCE,
+    EFFECTIVE_HORIZON_BARS,
+    HORIZON_SOURCE,
+    POLICY_N_OUTCOMES,
+    POLICY_CI_WIDTH,
+    POLICY_ELIGIBLE_FLAG,
+    POLICY_FALLBACK_REASON,
     SHARPE_LIKE_SUCCESS,
     CONFIDENCE,
     TRUST_REASON

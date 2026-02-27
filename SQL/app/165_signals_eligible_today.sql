@@ -41,6 +41,7 @@ select
     r.PATTERN_ID,
     r.SCORE,
     r.DETAILS,
+    c.TRAINING_VERSION,
     c.TRUST_LABEL,
     c.RECOMMENDED_ACTION,
     iff(

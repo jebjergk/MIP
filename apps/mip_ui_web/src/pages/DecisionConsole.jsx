@@ -97,6 +97,22 @@ function normalizeSparklinePoints(raw) {
     .filter(v => v != null)
 }
 
+function normalizeHeadlines(raw) {
+  let value = raw
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { value = null }
+  }
+  if (!Array.isArray(value)) return []
+  return value
+    .map((h) => {
+      const title = h?.title ?? h?.TITLE
+      const url = h?.url ?? h?.URL
+      if (!title) return null
+      return { title: String(title), url: url ? String(url) : null }
+    })
+    .filter(Boolean)
+}
+
 /* ── Badge ────────────────────────────────────────────────────────── */
 
 function StageBadge({ stage }) {
@@ -296,6 +312,14 @@ function PositionInspector({ position, onClose }) {
 
   const timeline = trace?.timeline || []
   const state = trace?.state
+  const newsBadge = position?.NEWS_CONTEXT_BADGE
+  const newsCount = position?.NEWS_COUNT
+  const newsAge = position?.NEWS_SNAPSHOT_AGE_MINUTES
+  const newsIsStale = position?.NEWS_IS_STALE
+  const newsSnapshotTs = position?.NEWS_SNAPSHOT_TS
+  const newsLastPublished = position?.LAST_NEWS_PUBLISHED_AT
+  const newsLastIngested = position?.LAST_INGESTED_AT
+  const headlines = normalizeHeadlines(position?.NEWS_TOP_HEADLINES)
 
   return (
     <div className="dc-inspector">
@@ -341,6 +365,34 @@ function PositionInspector({ position, onClose }) {
           <span>Exit Fired: {state.EARLY_EXIT_FIRED ? 'Yes' : 'No'}</span>
         </div>
       )}
+
+      {/* News Context (display-only) */}
+      <div className="dc-news-panel">
+        <h4>News Context</h4>
+        <div className="dc-news-metrics">
+          <span>Badge: <b className={newsBadge === 'HOT' ? 'dc-val--neg' : ''}>{newsBadge || '—'}</b></span>
+          <span>Count: <b>{newsCount ?? '—'}</b></span>
+          <span>Age: <b className={newsIsStale ? 'dc-val--neg' : ''}>{newsAge != null ? `${fmtMins(newsAge)}${newsIsStale ? ' (stale)' : ''}` : '—'}</b></span>
+          <span>Snapshot: <b>{fmtTs(newsSnapshotTs)}</b></span>
+          <span>Last Published: <b>{fmtTs(newsLastPublished)}</b></span>
+          <span>Last Ingested: <b>{fmtTs(newsLastIngested)}</b></span>
+        </div>
+        {headlines.length > 0 ? (
+          <ul className="dc-news-headlines">
+            {headlines.slice(0, 3).map((h, i) => (
+              <li key={`${h.title}-${i}`}>
+                {h.url ? (
+                  <a href={h.url} target="_blank" rel="noreferrer">{h.title}</a>
+                ) : (
+                  <span>{h.title}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="dc-news-empty">No recent mapped headlines for this position.</p>
+        )}
+      </div>
 
       {/* Timeline */}
       <div className="dc-timeline">
@@ -520,21 +572,21 @@ export default function DecisionConsole() {
   })
 
   const handleSelectEvent = (evt) => {
+    const matchedPos = positions.find(p => p.SYMBOL === evt.symbol && p.PORTFOLIO_ID === evt.portfolio_id)
     setSelectedPosition({
+      ...(matchedPos || {}),
       portfolio_id: evt.portfolio_id,
       symbol: evt.symbol,
-      entry_ts: evt.entry_ts || positions.find(p => p.SYMBOL === evt.symbol && p.PORTFOLIO_ID === evt.portfolio_id)?.ENTRY_TS,
+      entry_ts: evt.entry_ts || matchedPos?.ENTRY_TS,
     })
   }
 
   const handleSelectPosition = (pos) => {
     setSelectedPosition({
+      ...pos,
       portfolio_id: pos.PORTFOLIO_ID ?? pos.portfolio_id,
       symbol: pos.SYMBOL ?? pos.symbol,
       entry_ts: pos.ENTRY_TS ?? pos.entry_ts,
-      PORTFOLIO_ID: pos.PORTFOLIO_ID,
-      SYMBOL: pos.SYMBOL,
-      ENTRY_TS: pos.ENTRY_TS,
     })
   }
 

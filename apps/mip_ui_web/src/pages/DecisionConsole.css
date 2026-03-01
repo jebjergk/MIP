@@ -480,6 +480,51 @@
   margin-bottom: 0.75rem;
 }
 
+/* ── News context panel ───────────────────────────────────────────── */
+
+.dc-news-panel {
+  background: #f8fbff;
+  border: 1px solid #dbe9ff;
+  border-radius: 8px;
+  padding: 0.7rem 0.75rem;
+  margin-bottom: 0.8rem;
+}
+.dc-news-panel h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.86rem;
+  color: #334155;
+}
+.dc-news-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  font-size: 0.78rem;
+  color: var(--dc-text-muted);
+  margin-bottom: 0.5rem;
+}
+.dc-news-metrics b {
+  color: var(--dc-text);
+}
+.dc-news-headlines {
+  margin: 0.1rem 0 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+.dc-news-headlines a {
+  color: #0d6efd;
+  text-decoration: none;
+}
+.dc-news-headlines a:hover {
+  text-decoration: underline;
+}
+.dc-news-empty {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--dc-text-muted);
+}
+
 /* ── Timeline ────────────────────────────────────────────────────── */
 
 .dc-timeline {

@@ -136,12 +136,15 @@ def get_open_positions():
                 MARKET_TYPE,
                 CLOSE,
                 TS,
+                INTERVAL_MINUTES,
                 row_number() over (
                     partition by SYMBOL, MARKET_TYPE
-                    order by TS desc
+                    order by
+                        case when INTERVAL_MINUTES = 15 then 0 else 1 end,
+                        TS desc
                 ) as RN
             from MIP.MART.MARKET_BARS
-            where INTERVAL_MINUTES = 15
+            where INTERVAL_MINUTES in (15, 1440)
         ),
         latest_bars as (
             select

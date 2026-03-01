@@ -12,6 +12,7 @@ import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
 import DecisionConsole from './pages/DecisionConsole'
+import NewsIntelligence from './pages/NewsIntelligence'
 import AppLayout from './components/AppLayout'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
 import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPage'
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/decision-console" element={<DecisionConsole />} />
+        <Route path="/news-intelligence" element={<NewsIntelligence />} />
         <Route path="/intraday/dashboard" element={<IntradayDashboardPage />} />
         <Route path="/intraday/pattern/:patternId" element={<IntradayPatternDetailPage />} />
         <Route path="/intraday/terrain" element={<IntradayTerrainExplorerPage />} />

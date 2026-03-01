@@ -1,0 +1,136 @@
+.news-intel-page {
+  max-width: 1300px;
+}
+
+.news-intel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.news-intel-subtitle {
+  margin: 0.25rem 0 0;
+  color: #64748b;
+}
+
+.news-intel-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.news-intel-controls select {
+  min-width: 230px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  background: #fff;
+}
+
+.news-intel-meta {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: #64748b;
+  margin-bottom: 1rem;
+}
+
+.news-intel-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+
+.news-intel-kpis article {
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  padding: 0.7rem;
+  background: #f8fbff;
+}
+
+.news-intel-kpis h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #475569;
+}
+
+.news-intel-kpis p {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.news-intel-section {
+  margin-bottom: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.8rem;
+  background: #fff;
+}
+
+.news-intel-section h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+}
+
+.news-intel-bullets {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.news-intel-headlines {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.news-intel-headline-symbol {
+  display: inline-block;
+  min-width: 52px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.news-intel-headlines a {
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.news-intel-headlines a:hover {
+  text-decoration: underline;
+}
+
+.news-intel-table-wrap {
+  overflow-x: auto;
+}
+
+.news-intel-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.news-intel-table th,
+.news-intel-table td {
+  border: 1px solid #e2e8f0;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+}
+
+.news-intel-table th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 600;
+}

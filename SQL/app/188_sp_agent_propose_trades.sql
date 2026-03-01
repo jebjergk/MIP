@@ -401,15 +401,64 @@ begin
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.CURRENT_BAR_INDEX = :v_current_bar_index
         ),
+        news_cfg as (
+            select
+                coalesce(max(iff(CONFIG_KEY = 'NEWS_ENABLED', lower(CONFIG_VALUE), null)), 'false') as NEWS_ENABLED,
+                coalesce(max(iff(CONFIG_KEY = 'NEWS_DISPLAY_ONLY', lower(CONFIG_VALUE), null)), 'true') as NEWS_DISPLAY_ONLY,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES', CONFIG_VALUE, null))), 180) as NEWS_STALE_MINUTES
+            from MIP.APP.APP_CONFIG
+        ),
         eligible_candidates as (
             select
                 s.*,
+                cfg.NEWS_ENABLED,
+                cfg.NEWS_DISPLAY_ONLY,
+                cfg.NEWS_STALE_MINUTES,
+                nctx.NEWS_COUNT as NEWS_COUNT,
+                nctx.NEWS_CONTEXT_BADGE as NEWS_CONTEXT_BADGE,
+                nctx.NOVELTY_SCORE as NEWS_NOVELTY_SCORE,
+                nctx.BURST_SCORE as NEWS_BURST_SCORE,
+                nctx.UNCERTAINTY_FLAG as NEWS_UNCERTAINTY_FLAG,
+                nctx.TOP_HEADLINES as NEWS_TOP_HEADLINES,
+                nctx.LAST_NEWS_PUBLISHED_AT as NEWS_LAST_PUBLISHED_AT,
+                nctx.LAST_INGESTED_AT as NEWS_LAST_INGESTED_AT,
+                nctx.SNAPSHOT_TS as NEWS_SNAPSHOT_TS,
+                iff(
+                    nctx.SNAPSHOT_TS is null,
+                    null,
+                    datediff('minute', nctx.SNAPSHOT_TS, s.SIGNAL_TS)
+                ) as NEWS_SNAPSHOT_AGE_MINUTES,
+                iff(
+                    nctx.SNAPSHOT_TS is null,
+                    null,
+                    datediff('minute', nctx.SNAPSHOT_TS, s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES
+                ) as NEWS_IS_STALE,
                 case
                     when s.MARKET_TYPE = 'FX' then 'FX'
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             -- No RUN_ID filter - view is already date-scoped to latest TS
+            cross join news_cfg cfg
+            left join lateral (
+                select
+                    n.NEWS_COUNT,
+                    n.NEWS_CONTEXT_BADGE,
+                    n.NOVELTY_SCORE,
+                    n.BURST_SCORE,
+                    n.UNCERTAINTY_FLAG,
+                    n.TOP_HEADLINES,
+                    n.LAST_NEWS_PUBLISHED_AT,
+                    n.LAST_INGESTED_AT,
+                    n.SNAPSHOT_TS
+                from MIP.NEWS.NEWS_INFO_STATE_DAILY n
+                where n.SYMBOL = s.SYMBOL
+                  and n.MARKET_TYPE = s.MARKET_TYPE
+                  and n.SNAPSHOT_TS <= s.SIGNAL_TS
+                qualify row_number() over (
+                    order by n.SNAPSHOT_TS desc, n.CREATED_AT desc
+                ) = 1
+            ) nctx on true
         ),
         deduped_candidates as (
             select
@@ -551,7 +600,27 @@ begin
                 'target_source', s.TARGET_SOURCE,
                 'held_priority', s.HELD_PRIORITY,
                 'market_type_group', s.MARKET_TYPE_GROUP,
-                'trust_reason', s.TRUST_REASON
+                'trust_reason', s.TRUST_REASON,
+                'news_enabled', iff(s.NEWS_ENABLED = 'true', true, false),
+                'news_display_only', iff(s.NEWS_DISPLAY_ONLY = 'true', true, false),
+                'news_staleness_threshold_minutes', s.NEWS_STALE_MINUTES,
+                'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,
+                'news_is_stale', s.NEWS_IS_STALE,
+                'news_context', iff(
+                    s.NEWS_ENABLED = 'true' and s.NEWS_SNAPSHOT_TS is not null,
+                    object_construct(
+                        'news_count', s.NEWS_COUNT,
+                        'news_context_badge', s.NEWS_CONTEXT_BADGE,
+                        'novelty_score', s.NEWS_NOVELTY_SCORE,
+                        'burst_score', s.NEWS_BURST_SCORE,
+                        'uncertainty_flag', s.NEWS_UNCERTAINTY_FLAG,
+                        'top_headlines', s.NEWS_TOP_HEADLINES,
+                        'last_news_published_at', s.NEWS_LAST_PUBLISHED_AT,
+                        'last_ingested_at', s.NEWS_LAST_INGESTED_AT,
+                        'snapshot_ts', s.NEWS_SNAPSHOT_TS
+                    ),
+                    null
+                )
             ) as SOURCE_SIGNALS,
             object_construct(
                 'strategy', 'diversified_capacity_aware_top_n',
@@ -563,7 +632,9 @@ begin
                     'STOCK', :v_max_new_stock,
                     'FX', :v_max_new_fx
                 ),
-                'selection_rank', s.SELECTION_RANK
+                'selection_rank', s.SELECTION_RANK,
+                'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,
+                'news_is_stale', s.NEWS_IS_STALE
             ) as RATIONALE
         from final_ranked s
         where s.SELECTION_RANK <= :v_remaining_capacity

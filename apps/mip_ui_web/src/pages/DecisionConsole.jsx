@@ -191,6 +191,9 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
   const startRet = sparkValues.length ? sparkValues[0] : null
   const lifetimeMfeReturn = pos.MFE_RETURN
   const todayMfeReturn = pos.INTRADAY_MFE_RETURN
+  const newsBadge = pos.NEWS_CONTEXT_BADGE || '—'
+  const newsAge = pos.NEWS_SNAPSHOT_AGE_MINUTES
+  const newsIsStale = pos.NEWS_IS_STALE
 
   return (
     <div className={rowClasses}
@@ -243,6 +246,18 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
         <div className="dc-pos-metric">
           <span className="dc-pos-metric-label">Today's MFE</span>
           <span className="dc-pos-metric-val">{todayMfeReturn != null ? fmtPct(todayMfeReturn) : '—'}</span>
+        </div>
+        <div className="dc-pos-metric">
+          <span className="dc-pos-metric-label">News</span>
+          <span className={`dc-pos-metric-val ${newsBadge === 'HOT' ? 'dc-val--neg' : ''}`}>
+            {newsBadge}
+          </span>
+        </div>
+        <div className="dc-pos-metric">
+          <span className="dc-pos-metric-label">News Age</span>
+          <span className={`dc-pos-metric-val ${newsIsStale ? 'dc-val--neg' : ''}`}>
+            {newsAge != null ? `${fmtMins(newsAge)}${newsIsStale ? ' (stale)' : ''}` : '—'}
+          </span>
         </div>
       </div>
     </div>

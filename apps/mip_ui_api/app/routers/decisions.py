@@ -154,6 +154,11 @@ def get_open_positions():
             from latest_bars_ranked
             group by SYMBOL, MARKET_TYPE
         ),
+        news_cfg as (
+            select
+                coalesce(max(try_to_number(case when CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES' then CONFIG_VALUE end)), 180) as STALENESS_MINUTES
+            from MIP.APP.APP_CONFIG
+        ),
         open_positions_scope as (
             select
                 PORTFOLIO_ID,
@@ -272,6 +277,46 @@ def get_open_positions():
              and mb.TS::date = current_date()
              and mb.TS > op.ENTRY_TS
             group by op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE, op.ENTRY_TS
+        ),
+        news_candidates as (
+            select
+                op.PORTFOLIO_ID,
+                op.SYMBOL,
+                op.MARKET_TYPE,
+                op.ENTRY_TS,
+                n.NEWS_COUNT,
+                n.NEWS_CONTEXT_BADGE,
+                n.SNAPSHOT_TS,
+                n.LAST_NEWS_PUBLISHED_AT,
+                n.LAST_INGESTED_AT,
+                n.TOP_HEADLINES,
+                row_number() over (
+                    partition by op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE, op.ENTRY_TS
+                    order by n.SNAPSHOT_TS desc, n.CREATED_AT desc
+                ) as RN
+            from open_positions_scope op
+            left join latest_bars lb
+              on lb.SYMBOL = op.SYMBOL
+             and lb.MARKET_TYPE = op.MARKET_TYPE
+            join MIP.NEWS.NEWS_INFO_STATE_DAILY n
+              on n.SYMBOL = op.SYMBOL
+             and n.MARKET_TYPE = op.MARKET_TYPE
+             and n.SNAPSHOT_TS <= lb.LATEST_BAR_TS
+        ),
+        news_latest as (
+            select
+                PORTFOLIO_ID,
+                SYMBOL,
+                MARKET_TYPE,
+                ENTRY_TS,
+                NEWS_COUNT,
+                NEWS_CONTEXT_BADGE,
+                SNAPSHOT_TS,
+                LAST_NEWS_PUBLISHED_AT,
+                LAST_INGESTED_AT,
+                TOP_HEADLINES
+            from news_candidates
+            where RN = 1
         )
         select
             op.PORTFOLIO_ID,
@@ -325,11 +370,28 @@ def get_open_positions():
             end as STAGE,
             ir.INTRADAY_RETURNS,
             ir.INTRADAY_MFE_RETURN,
+            nl.NEWS_COUNT,
+            nl.NEWS_CONTEXT_BADGE,
+            nl.SNAPSHOT_TS as NEWS_SNAPSHOT_TS,
+            nl.LAST_NEWS_PUBLISHED_AT,
+            nl.LAST_INGESTED_AT,
+            nl.TOP_HEADLINES as NEWS_TOP_HEADLINES,
+            iff(
+                nl.SNAPSHOT_TS is null or lb.LATEST_BAR_TS is null,
+                null,
+                datediff('minute', nl.SNAPSHOT_TS, lb.LATEST_BAR_TS)
+            ) as NEWS_SNAPSHOT_AGE_MINUTES,
+            iff(
+                nl.SNAPSHOT_TS is null or lb.LATEST_BAR_TS is null,
+                null,
+                datediff('minute', nl.SNAPSHOT_TS, lb.LATEST_BAR_TS) > cfg.STALENESS_MINUTES
+            ) as NEWS_IS_STALE,
 
             datediff('minute', op.ENTRY_TS, current_timestamp()) as MINUTES_IN_TRADE
 
         from open_positions_scope op
         join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = op.PORTFOLIO_ID
+        cross join news_cfg cfg
         left join MIP.APP.EARLY_EXIT_POSITION_STATE ps
           on ps.PORTFOLIO_ID = op.PORTFOLIO_ID
          and ps.SYMBOL = op.SYMBOL
@@ -347,6 +409,11 @@ def get_open_positions():
          and ir.SYMBOL = op.SYMBOL
          and ir.MARKET_TYPE = op.MARKET_TYPE
          and ir.ENTRY_TS = op.ENTRY_TS
+        left join news_latest nl
+          on nl.PORTFOLIO_ID = op.PORTFOLIO_ID
+         and nl.SYMBOL = op.SYMBOL
+         and nl.MARKET_TYPE = op.MARKET_TYPE
+         and nl.ENTRY_TS = op.ENTRY_TS
         order by op.PORTFOLIO_ID, op.SYMBOL
         """
         cur.execute(sql)

@@ -1,0 +1,59 @@
+-- 08_news_phase5_smoke.sql
+-- Purpose: Phase 5 smoke for decision console/proposal news context.
+
+use role MIP_ADMIN_ROLE;
+use database MIP;
+
+set phase5_portfolio_id = (
+    select min(PORTFOLIO_ID)
+    from MIP.APP.PORTFOLIO
+    where STATUS = 'ACTIVE'
+);
+
+set phase5_run_id = (
+    select 'NEWS_PHASE5_SMOKE_' || to_char(current_timestamp(), 'YYYYMMDDHH24MISS')
+);
+
+call MIP.APP.SP_AGENT_PROPOSE_TRADES($phase5_portfolio_id, $phase5_run_id, null);
+
+-- 1) Proposal payload sample with decision-time news fields.
+select
+    PROPOSAL_ID,
+    PORTFOLIO_ID,
+    SYMBOL,
+    MARKET_TYPE,
+    SIGNAL_TS,
+    SOURCE_SIGNALS:news_enabled::boolean as NEWS_ENABLED,
+    SOURCE_SIGNALS:news_display_only::boolean as NEWS_DISPLAY_ONLY,
+    SOURCE_SIGNALS:news_snapshot_age_minutes::number as NEWS_SNAPSHOT_AGE_MINUTES,
+    SOURCE_SIGNALS:news_is_stale::boolean as NEWS_IS_STALE,
+    SOURCE_SIGNALS:news_context:news_context_badge::string as NEWS_CONTEXT_BADGE,
+    SOURCE_SIGNALS:news_context:news_count::number as NEWS_COUNT,
+    SOURCE_SIGNALS:news_context:snapshot_ts::string as NEWS_SNAPSHOT_TS
+from MIP.AGENT_OUT.ORDER_PROPOSALS
+where RUN_ID_VARCHAR = $phase5_run_id
+  and PORTFOLIO_ID = $phase5_portfolio_id
+order by PROPOSAL_ID desc
+limit 50;
+
+-- 2) Rationale payload sample (display-only metadata).
+select
+    PROPOSAL_ID,
+    SYMBOL,
+    RATIONALE:strategy::string as STRATEGY,
+    RATIONALE:news_snapshot_age_minutes::number as NEWS_SNAPSHOT_AGE_MINUTES,
+    RATIONALE:news_is_stale::boolean as NEWS_IS_STALE
+from MIP.AGENT_OUT.ORDER_PROPOSALS
+where RUN_ID_VARCHAR = $phase5_run_id
+  and PORTFOLIO_ID = $phase5_portfolio_id
+order by PROPOSAL_ID desc
+limit 50;
+
+-- 3) Presence summary.
+select
+    count(*) as PROPOSALS_IN_RUN,
+    coalesce(count_if(SOURCE_SIGNALS:news_context is not null), 0) as WITH_NEWS_CONTEXT,
+    coalesce(count_if(SOURCE_SIGNALS:news_is_stale::boolean = true), 0) as STALE_COUNT
+from MIP.AGENT_OUT.ORDER_PROPOSALS
+where RUN_ID_VARCHAR = $phase5_run_id
+  and PORTFOLIO_ID = $phase5_portfolio_id;

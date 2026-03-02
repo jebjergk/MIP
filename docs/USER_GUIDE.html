@@ -375,6 +375,8 @@
     <ol>
         <li><a href="#introduction">1. Introduction</a></li>
         <li><a href="#screens">2. Understanding the Screens</a></li>
+        <li><a href="#decision-console-news">2.11 Decision Console &amp; 2.12 News Intelligence</a></li>
+        <li><a href="#ask-mip-assistant">2.13 Ask MIP Assistant</a></li>
         <li><a href="#backend">3. How the Backend Works</a></li>
         <li><a href="#concepts">4. Key Concepts</a></li>
         <li><a href="#troubleshooting">5. Troubleshooting</a></li>
@@ -655,6 +657,38 @@
             <p>Visual flow of each step with success/failure status.</p>
         </div>
     </div>
+
+    <h3 id="decision-console-news">⚡ Decision Console (2.11)</h3>
+    <p><strong>What it shows:</strong> Real-time monitoring of open daily positions and early-exit decision traces.</p>
+    <ul style="margin:0 0 1rem 1rem;">
+      <li>Open Positions grouped by <strong>symbol</strong>, with portfolio rows underneath</li>
+      <li>Click any portfolio row to open inline inspector (news context, decision diff, gate trace)</li>
+      <li>Live Decisions uses SSE event cards; History replays past events by date</li>
+      <li>Open Positions refreshes every <strong>15 minutes</strong></li>
+    </ul>
+
+    <h3>📰 News Intelligence (2.12)</h3>
+    <p><strong>What it shows:</strong> deterministic, evidence-backed news context and proposal-impact diagnostics.</p>
+    <table>
+      <thead>
+        <tr><th>Section</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Market Context</strong></td><td>Coverage, stale snapshots, HOT symbols, snapshot age</td></tr>
+        <tr><td><strong>Symbol Cards</strong></td><td>Per-symbol badge/count/freshness/novelty/burst metrics</td></tr>
+        <tr><td><strong>Decision Impact</strong></td><td>Evidence-only rows from proposal payload fields (`news_context`, `news_score_adj`, block/reasons)</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Note:</strong> <code>proposals_scoped</code> can be high while impact rows are empty if proposals carry no news evidence.</p>
+
+    <h3 id="ask-mip-assistant">🤖 Ask MIP Assistant (2.13)</h3>
+    <p><strong>What it is:</strong> A route-aware guide assistant available from the floating Ask MIP button.</p>
+    <ul style="margin:0 0 1rem 1rem;">
+      <li>Automatically uses the guide section for the page you are on</li>
+      <li>Best for metric interpretation and page-level navigation help</li>
+      <li>Starter prompts include News Intelligence impact interpretation and Decision Console trace behavior</li>
+    </ul>
+    <p>Ask MIP is guidance-only; it does not execute trades or change data.</p>
 </section>
 
 <!-- Section 3: Backend -->
@@ -948,7 +982,7 @@
 </div>
 
 <footer>
-    <p>MIP User Guide — Last updated: February 2026</p>
+    <p>MIP User Guide — Last updated: March 2026</p>
 </footer>
 
 </body>

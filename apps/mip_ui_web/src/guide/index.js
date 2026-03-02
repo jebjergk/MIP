@@ -35,6 +35,7 @@ import glossary from './22-glossary.md?raw'
 import intraday from './23-intraday.md?raw'
 import earlyExit from './24-early-exit.md?raw'
 import decisionConsole from './25-decision-console.md?raw'
+import newsIntelligence from './26-news-intelligence.md?raw'
 
 const sections = [
   { id: 'big-picture',      number: 1,  title: 'The Big Picture',              part: 1, markdown: bigPicture,          route: null },
@@ -62,6 +63,7 @@ const sections = [
   { id: 'intraday',         number: 23, title: 'The Intraday Subsystem',       part: 1, markdown: intraday,            route: null },
   { id: 'early-exit',       number: 24, title: 'Intraday Early Exit',          part: 1, markdown: earlyExit,           route: null },
   { id: 'page-decisions',   number: 25, title: 'Decision Console',             part: 2, markdown: decisionConsole,     route: '/decision-console' },
+  { id: 'page-news',        number: 26, title: 'News Intelligence',            part: 2, markdown: newsIntelligence,    route: '/news-intelligence' },
 ]
 
 export default sections

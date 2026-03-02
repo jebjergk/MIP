@@ -942,19 +942,19 @@ Beyond timestamps, each log entry records: target return, current return, peak r
 
 The Decision Console is MIP's real-time command center -- think of it as a flight control tower for your positions. It has three modes:
 
-**Open Positions** shows every position with a color-coded stage badge:
-- 🟢 **On Track** -- target not yet reached, monitoring normally
-- 🟡 **Candidate** -- target reached, watching for reversal
-- 🟡 **Watching** -- significant giveback detected
-- 🔴 **Exit Triggered** -- both stages passed, exit signal fired
+**Open Positions** groups positions by symbol and shows portfolio rows underneath:
+- Stage badges: 🟢 On Track, 🔴 Exit Triggered, 🔴 Exited
+- Portfolio-row metrics: current/target/distance, MFE, and news context
+- Clicking a row opens an inline inspector directly under that row
 
-**Live Decisions** is a rolling feed of decision events that updates automatically via Server-Sent Events (SSE) -- no manual refresh needed. Each event appears as a "story card" with severity coloring, a concise summary, and key metrics. You can click any event to see the full gate trace.
+**Live Decisions** is a rolling SSE event feed with story cards and full trace drill-down.
 
-**History** replays past events for any date, so you can review what happened after market close.
+**History** replays past events for any date.
 
-The **Position Inspector** (right panel) shows two powerful views:
-- **Decision Diff**: "If we exit now, we lock in X. If we hold, we expect Y." This comparison makes the system feel like a smart advisor, not just a logger.
-- **Gate Trace Timeline**: A vertical timeline of every evaluation, with pass/fail pills for each check and expandable advanced JSON for full audit detail.
+The **Position Inspector** (inline in Open Positions, side panel in Live/History) shows:
+- **News Context** first (badge, freshness, headlines)
+- **Decision Diff** (exit now vs hold expected)
+- **Gate Trace Timeline** with pass/fail pills and expandable advanced JSON
 
 ### How the Early-Exit Layer Fits Into the Pipeline
 
@@ -968,7 +968,14 @@ It piggybacks on the same hourly pipeline that already ingests intraday data. If
 
 ### Cost Awareness
 
-The Decision Console polls Snowflake every 30 minutes (not continuously) to keep data warehouse costs minimal. Since the intraday pipeline runs hourly, this polling frequency ensures you see fresh data within one cycle while keeping the warehouse idle most of the time.
+The Decision Console refreshes Open Positions every 15 minutes and uses SSE for live events. This keeps monitoring responsive while limiting warehouse churn.
+
+### News Intelligence
+
+MIP also includes **News Intelligence** as a deterministic context layer:
+- freshness/staleness + HOT symbol summaries
+- symbol cards and source-linked headline evidence
+- **Decision Impact** rows only when proposal payloads carry news evidence (`news_context`, `news_score_adj`, block flags, or reasons)
 
 ---
 
@@ -998,7 +1005,10 @@ The fraction of a pattern's signals that have been fully evaluated (enough time 
 The process of locking in profits when a portfolio reaches a defined profit target. Ends the current episode, records the gains, and starts a new episode after a cooldown period.
 
 **Decision Console**
-A live UI page that shows open daily positions, their real-time decision lifecycle (monitoring, candidate detection, exit triggers), and a rolling event feed. Functions as both a system log and a decision trace explorer. Includes a Position Inspector with gate trace timeline and Decision Diff comparison.
+A live UI page that groups open positions by symbol, streams decision events, and provides inline/side inspector traceability with Decision Diff and gate timeline.
+
+**News Intelligence**
+A deterministic context page for news freshness, symbol-level context, and evidence-only proposal impact diagnostics.
 
 **Decision Diff**
 A comparison view in the Decision Console showing what happens if a position is exited now versus held to its planned horizon. Displays current return, expected return, P&L delta, and bars remaining.
@@ -1214,7 +1224,11 @@ Yes. If MIP generates a trusted signal for AAPL, multiple portfolios can each bu
 
 ### How much does the Decision Console cost to run?
 
-Very little. The console polls Snowflake every 30 minutes (not continuously), so the data warehouse spends most of its time idle. The underlying intraday pipeline runs once per hour during market hours. There is no continuous warehouse usage from the Decision Console.
+Very little. Open Positions refreshes every 15 minutes and Live mode uses SSE events. There is no continuous polling loop against Snowflake for every screen action.
+
+### Why can Decision Impact show proposals scoped but no impacts?
+
+`proposals_scoped` is the number of proposal rows analyzed. Impact rows are only shown when proposal payloads carry news evidence (`news_context`, `news_score_adj`, block flags, or reasons). So scoped can be non-zero while impacts remain empty.
 
 ### Can I see why an early exit was triggered or not triggered?
 

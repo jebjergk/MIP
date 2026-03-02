@@ -1,87 +1,70 @@
 # 25. Decision Console
 
-The Decision Console is MIP's real-time command center for monitoring open positions and the decisions being made about them. Think of it as a flight control tower — you can see every aircraft (position), its status, and every decision the system is making moment by moment.
+The Decision Console is MIP's position-monitoring control center. It combines open-position state, live event flow, and full decision traceability.
 
 ## Three Modes
 
 ### Open Positions
 
-The default view. Shows every open daily position with:
+Default mode, optimized for portfolio monitoring.
 
-- **Symbol and portfolio** — which stock, in which portfolio
-- **Stage badge** — the position's current state:
-  - 🟢 **On Track** — position is open, target not yet reached
-  - 🟡 **Candidate** — target return achieved, watching for reversal
-  - 🟡 **Watching** — significant giveback detected, monitoring closely
-  - 🔴 **Exit Triggered** — both stages passed, exit signal fired
-  - 🔴 **Exited** — position was closed via early exit
-- **Metrics** — current return vs target, distance to target, time in trade, max favorable excursion (MFE)
-- **Pin** — star a symbol to keep it at the top of the list
-
-Positions are sorted by severity — exit-triggered positions float to the top, on-track positions sit at the bottom.
+- **Grouped by symbol** — one symbol header, then portfolio rows underneath
+- **Pinned symbols** — star a symbol to keep it near the top
+- **Stage badge per portfolio row**:
+  - 🟢 **On Track**
+  - 🔴 **Exit Triggered**
+  - 🔴 **Exited**
+- **Portfolio-row metrics** — current vs target, distance, time in trade, MFE, news badge/age
+- **Inline inspector** — clicking a row expands trace content directly below that row
 
 ### Live Decisions
 
-A rolling event feed that updates via **Server-Sent Events (SSE)** — no manual refresh needed. Each event appears as a "story card":
+Live event feed via **Server-Sent Events (SSE)**.
 
-- **Green cards** — routine monitoring, position on track
-- **Yellow cards** — payoff reached, position is a candidate for early exit
-- **Red cards** — exit triggered or executed
-
-Each card shows a concise summary ("XOM hit target +0.60% in 11 min → EARLY EXIT CANDIDATE"), key metrics, and a "View trace" button to inspect the full decision chain.
-
-Auto-scroll keeps the newest events at the top. Toggle it off if you want to read through the history.
+- Event cards show severity, summary, key metrics, and trace entry point
+- Auto-scroll can be toggled on/off
+- Designed for "what changed right now?" monitoring
 
 ### History
 
-Same card format as Live Decisions, but for past events. Use the date picker to replay what happened on any previous trading day. Useful for reviewing decisions after market close.
+Historical replay of decision events with the same event card model.
 
-## Position Inspector
+- Filter by date, portfolio, symbol
+- Useful for after-hours audit/review
 
-Click any position or event to open the inspector panel on the right. It shows:
+## Position Inspector (Inline or Side Panel)
 
-### Decision Diff
+In Open Positions mode, inspector opens inline under the selected row.
+In Live/History mode, inspector opens in the right pane.
 
-The "smart assistant" view — compares what happens if you exit now versus holding to horizon:
+Inspector order:
 
-- **Exit Now** — current return and P&L if the position were closed right now
-- **Hold (Expected)** — the target return and expected P&L based on the pattern's historical average
-- **Delta** — the difference, highlighted green (exit is better) or red (holding is better)
-- **Bars remaining** — how many daily bars are left until the planned exit
+1. **News Context** — badge, count, freshness/staleness, snapshot timestamps, headlines
+2. **Decision Diff** — exit-now vs hold expected comparison
+3. **State Summary** — first hit, MFE, last evaluated, exit-fired
+4. **Gate Trace Timeline** — full event-by-event timeline with Advanced JSON
 
-### Gate Trace Timeline
-
-A vertical timeline showing every evaluation the system has performed on this position:
-
-- Each node shows the **timestamp**, **stage**, and **decision type**
-- **Gate pills** show pass/fail for each check (Payoff reached? Giveback triggered? No new highs?)
-- Click **Advanced** on any node to see the raw JSON with all metrics and reason codes
-
-This is full traceability — you can reconstruct exactly why any decision was made, what data was used, and when.
+Gate pills focus on:
+- **Threshold** (trigger target and multiplier)
+- **MFE**
 
 ## KPI Strip
 
-The top of the page shows three headline numbers:
+Top strip currently shows:
 
-- **Open** — total open daily positions being monitored
-- **Candidates** — positions that have reached their payoff target
-- **Exited** — positions closed via early exit
+- **Open** — total open daily positions monitored
+- **Exited** — positions closed via early-exit logic
 
-These update with each data refresh.
+## Filters
 
-## Filtering
+Filters apply across all three modes:
 
-Use the dropdown filters to focus on:
+- **Portfolio**
+- **Symbol**
+- **Date** (History mode)
 
-- **Portfolio** — show only one portfolio's positions
-- **Symbol** — show only one symbol across all portfolios
+## Refresh & Connectivity
 
-Filters apply to all three modes.
-
-## Connection Status
-
-The green dot next to the page title indicates whether the live stream is connected. If it goes grey, the system will attempt to reconnect automatically. The page remains fully functional in all modes even when the stream is disconnected — it falls back to periodic polling.
-
-## Cost Control
-
-The Decision Console polls Snowflake every **30 minutes** (not continuously) to keep warehouse costs minimal. Since the intraday pipeline itself runs hourly, this gives you fresh data within one polling cycle of any new evaluations.
+- Open Positions refreshes every **15 minutes**
+- Live stream uses SSE with reconnect fallback
+- If stream disconnects, page remains usable and refresh logic continues

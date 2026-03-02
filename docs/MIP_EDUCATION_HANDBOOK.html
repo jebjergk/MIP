@@ -1569,7 +1569,7 @@
   <p>The Decision Console is MIP's real-time command center &mdash; think of it as a flight control tower for your positions.</p>
 
   <h4>Open Positions</h4>
-  <p>Shows every position with a color-coded stage badge:</p>
+  <p>Groups positions by symbol, with portfolio rows underneath:</p>
   <table>
     <thead>
       <tr>
@@ -1578,10 +1578,9 @@
       </tr>
     </thead>
     <tbody>
-      <tr><td style="color:#198754;font-weight:700;">&#9679; On Track</td><td>Target not yet reached, monitoring normally</td></tr>
-      <tr><td style="color:#b8860b;font-weight:700;">&#9670; Candidate</td><td>Target reached, watching for reversal</td></tr>
-      <tr><td style="color:#b8860b;font-weight:700;">&#9670; Watching</td><td>Significant giveback detected</td></tr>
-      <tr><td style="color:#dc3545;font-weight:700;">&#9650; Exit Triggered</td><td>Both stages passed, exit signal fired</td></tr>
+      <tr><td style="color:#198754;font-weight:700;">&#9679; On Track</td><td>Position open and monitored normally</td></tr>
+      <tr><td style="color:#dc3545;font-weight:700;">&#9650; Exit Triggered</td><td>Threshold logic fired for exit handling</td></tr>
+      <tr><td style="color:#dc3545;font-weight:700;">&#9650; Exited</td><td>Position closed via early-exit execution path</td></tr>
     </tbody>
   </table>
 
@@ -1592,10 +1591,11 @@
   <p>Replays past events for any date, so you can review what happened after market close.</p>
 
   <h4>Position Inspector</h4>
-  <p>Click any position to open the inspector panel with two powerful views:</p>
+  <p>Click any position to open the inspector (inline in Open Positions, side panel in Live/History):</p>
   <ul>
-    <li><strong>Decision Diff:</strong> "If we exit now, we lock in X. If we hold, we expect Y." This makes the system feel like a smart advisor, not just a logger.</li>
-    <li><strong>Gate Trace Timeline:</strong> A vertical timeline of every evaluation, with pass/fail pills for each check and expandable advanced JSON for full audit detail.</li>
+    <li><strong>News Context:</strong> badge, freshness/staleness, and headline evidence.</li>
+    <li><strong>Decision Diff:</strong> "If we exit now, we lock in X. If we hold, we expect Y."</li>
+    <li><strong>Gate Trace Timeline:</strong> evaluation timeline with pass/fail pills and expandable JSON.</li>
   </ul>
 
   <h3>Pipeline Integration</h3>
@@ -1611,12 +1611,15 @@
 
   <h3>Cost Awareness</h3>
 
-  <p>The Decision Console polls Snowflake every 30 minutes (not continuously) to keep data warehouse costs minimal. Since the intraday pipeline runs hourly, this polling frequency ensures you see fresh data within one cycle while keeping the warehouse idle most of the time.</p>
+  <p>The Decision Console refreshes Open Positions every 15 minutes and uses SSE for Live events. This keeps monitoring responsive while limiting warehouse churn.</p>
+
+  <h3>News Intelligence</h3>
+  <p>MIP includes a deterministic News Intelligence layer with freshness metrics, HOT context, and proposal-level impact diagnostics. Decision Impact rows are shown only when proposal payloads carry real news evidence.</p>
 
   <div class="scenario">
     <div class="scenario-title">Scenario: A Typical Early-Exit Day</div>
     <p>MIP buys AMZN at 9:35 AM based on a strong momentum signal, targeting +0.45% over 5 bars.</p>
-    <p><span class="num">1</span> <strong>10:15 AM:</strong> AMZN hits +0.52% &mdash; target reached. Position becomes a <strong>Candidate</strong> (yellow badge in the console).</p>
+    <p><span class="num">1</span> <strong>10:15 AM:</strong> AMZN hits +0.52% &mdash; target reached and tracked by threshold logic in the gate trace.</p>
     <p><span class="num">2</span> <strong>11:00 AM:</strong> AMZN pushes to +0.71% (MFE). Momentum is strong &mdash; no exit, let it run.</p>
     <p><span class="num">3</span> <strong>12:30 PM:</strong> AMZN pulls back to +0.38% &mdash; giveback is 46% from peak. Last 3 bars made no new high. Stage B triggers. <strong>Exit signal fires</strong> (red badge).</p>
     <p><span class="num">4</span> In Shadow mode: the exit is logged but the position stays open. The Decision Diff shows you would have locked in +0.38% versus the hold-to-horizon outcome. After 2&ndash;4 weeks of evidence, you can switch to Paper mode.</p>
@@ -1904,7 +1907,7 @@
 
     <div class="faq-q">Does the Decision Console use a lot of Snowflake credits?</div>
     <div class="faq-a">
-      <p>No. The console polls every <strong>30 minutes</strong>, which means only about 16 small queries per 8-hour market day. Since the intraday pipeline itself runs hourly, polling more often would not yield fresher data.</p>
+      <p>No. Open Positions refreshes every <strong>15 minutes</strong> and Live mode uses SSE events. The warehouse stays mostly idle while still providing timely visibility.</p>
     </div>
 
     <div class="faq-q">Can I see <em>why</em> MIP decided to exit (or not exit) a position?</div>

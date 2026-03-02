@@ -17,6 +17,9 @@
    - [Suggestions](#27-suggestions)
    - [Training Status](#28-training-status)
    - [Audit Viewer](#29-audit-viewer-run-explorer)
+   - [Decision Console](#211-decision-console)
+   - [News Intelligence](#212-news-intelligence)
+   - [Ask MIP Assistant](#213-ask-mip-assistant)
 3. [How the Backend Works](#3-how-the-backend-works)
    - [Pipeline Overview](#31-pipeline-overview)
    - [Step-by-Step Breakdown](#32-step-by-step-breakdown)
@@ -330,6 +333,60 @@ When toggled to Intraday (15m), the page becomes a **decision-first cockpit** wi
 | **Error Panel** | If failed: error message, SQL query ID, debug SQL to investigate |
 | **Step Timeline** | Visual flow of each step (Ingestion → Returns → Recommendations → etc.) |
 | **Step Details** | Click any step to see specifics |
+
+---
+
+### 2.11 Decision Console
+
+**What it shows:** Real-time monitoring for open positions and early-exit decisions.
+
+**Open Positions mode:**
+- Groups rows by **symbol** with portfolio rows underneath
+- Shows stage, returns, target distance, MFE, and news context fields
+- Clicking a row opens an **inline inspector** directly below that row
+
+**Live Decisions / History modes:**
+- Event-card feed with stage/severity summaries
+- Click through into full trace and decision diff
+
+**Inspector order:**
+1. News Context
+2. Decision Diff (exit now vs hold expected)
+3. Position state summary
+4. Gate trace timeline + advanced JSON
+
+**Refresh behavior:** Open Positions refreshes every **15 minutes**. Live mode uses SSE for streaming events.
+
+---
+
+### 2.12 News Intelligence
+
+**What it shows:** Evidence-backed news context and proposal impact diagnostics.
+
+| Section | What it means |
+|---------|---------------|
+| **Market Context KPIs** | Symbols with news, stale count, HOT count, average snapshot age |
+| **Reader Summary** | Deterministic bullets from stored context features |
+| **Top Headlines** | Source-linked titles (URL hygiene enforced) |
+| **Symbol Cards** | Per-symbol badge/count/freshness/uncertainty/novelty/burst |
+| **Decision Impact** | Proposal payload evidence (`news_context`, `news_score_adj`, block/reasons) |
+
+**Important:** `proposals_scoped` is the number of proposals analyzed. It can be non-zero while `top_impacts` is empty if no proposal carries news evidence.
+
+**Sidebar behavior:** A HOT badge/ticker appears on the News Intelligence nav item when unseen, decision-relevant news arrives; it clears after opening the page.
+
+---
+
+### 2.13 Ask MIP Assistant
+
+**What it is:** A route-aware assistant panel that uses the same guide corpus as the User Guide pages.
+
+- Opens from the floating **Ask MIP** button
+- Automatically loads the guide section for the current route
+- Best for "what does this page mean?" and "how does this metric work?"
+- Starter prompts now include News Intelligence impact interpretation and Decision Console trace behavior
+
+It is a guidance layer only; it does not execute trades or modify data.
 
 ---
 
@@ -849,12 +906,14 @@ A safety mechanism that prevents portfolio editing while the daily pipeline is a
 | **Early Exit** | Execution optimization that closes daily positions before horizon when intraday data confirms payoff achieved and giveback risk is high |
 | **Giveback Risk** | Risk that a position reverses after reaching its target return, erasing gains |
 | **Shadow Mode** | Early-exit mode that evaluates and logs decisions without actually closing positions |
-| **Decision Console** | Live UI page showing open positions, decision events, and gate traces in real time |
+| **Decision Console** | Live UI page with symbol-grouped positions, inline/side inspectors, decision events, and gate traces |
 | **Decision Diff** | Comparison of exit-now vs hold-to-horizon outcomes for an open position |
 | **Gate Trace** | Timeline of all decision gates evaluated for a position, with pass/fail results and metrics |
 | **Max Favorable Excursion (MFE)** | Highest unrealized return a position achieves before exit |
 | **Server-Sent Events (SSE)** | Web protocol used by the Decision Console for real-time updates without polling |
+| **News Intelligence** | Deterministic page for news context and evidence-only proposal impact rows |
+| **news_score_adj** | Bounded news adjustment applied to proposal scoring/weighting when influence is enabled |
 
 ---
 
-*Last updated: February 21, 2026*
+*Last updated: March 2, 2026*

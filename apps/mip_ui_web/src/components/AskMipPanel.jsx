@@ -142,9 +142,10 @@ export default function AskMipPanel({ open, onClose, pathname }) {
           <div className="ask-mip-empty">
             <p className="ask-mip-empty-title">Ask me anything about MIP</p>
             <p className="ask-mip-empty-hint">
-              How is z-score used? What is watch mode? Explain the training flow.
-              What does the Cockpit show? How do tuning surfaces work?
-              What are safety checks? Explain regime sensitivity.
+              How does News Intelligence determine decision impact? Why is proposals scoped high but impacts empty?
+              Explain Decision Console grouped symbols and inline gate trace.
+              What does HOT ticker in sidebar mean, and when does it clear?
+              How is news_score_adj bounded and when can news block new entries?
             </p>
           </div>
         )}

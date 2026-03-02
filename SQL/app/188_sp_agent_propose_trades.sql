@@ -374,6 +374,45 @@ begin
             from news_candidates
             where RN = 1
         ),
+        news_feature_candidates as (
+            select
+                s.RECOMMENDATION_ID,
+                f.EVENT_COUNT,
+                f.NEWS_PRESSURE,
+                f.NEWS_SENTIMENT,
+                f.UNCERTAINTY_SCORE,
+                f.EVENT_RISK_SCORE,
+                f.MACRO_HEAT,
+                f.TOP_EVENTS,
+                f.NEWS_SNAPSHOT_AGE_MINUTES,
+                f.NEWS_IS_STALE,
+                f.SNAPSHOT_TS,
+                row_number() over (
+                    partition by s.RECOMMENDATION_ID
+                    order by f.AS_OF_TS desc, f.SNAPSHOT_TS desc
+                ) as RN
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            left join MIP.MART.V_NEWS_FEATURES_BY_TS f
+              on f.SYMBOL = s.SYMBOL
+             and f.MARKET_TYPE = s.MARKET_TYPE
+             and f.AS_OF_TS <= s.SIGNAL_TS
+        ),
+        news_feature_latest as (
+            select
+                RECOMMENDATION_ID,
+                EVENT_COUNT,
+                NEWS_PRESSURE,
+                NEWS_SENTIMENT,
+                UNCERTAINTY_SCORE,
+                EVENT_RISK_SCORE,
+                MACRO_HEAT,
+                TOP_EVENTS,
+                NEWS_SNAPSHOT_AGE_MINUTES as FEATURE_SNAPSHOT_AGE_MINUTES,
+                NEWS_IS_STALE as FEATURE_IS_STALE,
+                SNAPSHOT_TS as FEATURE_SNAPSHOT_TS
+            from news_feature_candidates
+            where RN = 1
+        ),
         eligible_candidates as (
             select
                 s.*,
@@ -395,15 +434,23 @@ begin
                 nl.LAST_NEWS_PUBLISHED_AT as NEWS_LAST_PUBLISHED_AT,
                 nl.LAST_INGESTED_AT as NEWS_LAST_INGESTED_AT,
                 nl.SNAPSHOT_TS as NEWS_SNAPSHOT_TS,
+                nfl.EVENT_COUNT as NEWS_FEATURE_EVENT_COUNT,
+                nfl.NEWS_PRESSURE as NEWS_FEATURE_PRESSURE,
+                nfl.NEWS_SENTIMENT as NEWS_FEATURE_SENTIMENT,
+                nfl.UNCERTAINTY_SCORE as NEWS_FEATURE_UNCERTAINTY_SCORE,
+                nfl.EVENT_RISK_SCORE as NEWS_FEATURE_EVENT_RISK_SCORE,
+                nfl.MACRO_HEAT as NEWS_FEATURE_MACRO_HEAT,
+                nfl.TOP_EVENTS as NEWS_FEATURE_TOP_EVENTS,
+                nfl.FEATURE_SNAPSHOT_TS as NEWS_FEATURE_SNAPSHOT_TS,
                 iff(
-                    nl.SNAPSHOT_TS is null,
+                    coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS) is null,
                     null,
-                    datediff('minute', nl.SNAPSHOT_TS, s.SIGNAL_TS)
+                    datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS)
                 ) as NEWS_SNAPSHOT_AGE_MINUTES,
                 iff(
-                    nl.SNAPSHOT_TS is null,
+                    coalesce(nfl.FEATURE_IS_STALE, iff(coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS) is null, null, datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES)) is null,
                     null,
-                    datediff('minute', nl.SNAPSHOT_TS, s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES
+                    coalesce(nfl.FEATURE_IS_STALE, datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES)
                 ) as NEWS_IS_STALE,
                 case
                     when s.MARKET_TYPE = 'FX' then 'FX'
@@ -414,6 +461,8 @@ begin
             cross join news_cfg cfg
             left join news_latest nl
               on nl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
+            left join news_feature_latest nfl
+              on nfl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
         ),
         deduped_candidates as (
             select
@@ -440,13 +489,27 @@ begin
                     when 'WARM' then 0.5
                     when 'COLD' then -0.25
                     else 0.0
-                end as NEWS_PRESSURE_SCORE,
+                end as LEGACY_NEWS_PRESSURE_SCORE,
+                coalesce(
+                    d.NEWS_FEATURE_SENTIMENT,
+                    case upper(coalesce(d.NEWS_CONTEXT_BADGE, ''))
+                        when 'HOT' then 1.0
+                        when 'WARM' then 0.5
+                        when 'COLD' then -0.25
+                        else 0.0
+                    end
+                ) as NEWS_PRESSURE_SCORE,
+                coalesce(
+                    d.NEWS_FEATURE_UNCERTAINTY_SCORE,
+                    iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)
+                ) as NEWS_UNCERTAINTY_PROXY,
                 least(
                     greatest(
                         greatest(
-                            coalesce(d.NEWS_BURST_SCORE, 0.0),
-                            iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0),
-                            iff(coalesce(d.NEWS_IS_STALE, false), 1.0, 0.0)
+                            coalesce(d.NEWS_FEATURE_EVENT_RISK_SCORE, d.NEWS_BURST_SCORE, 0.0),
+                            coalesce(d.NEWS_FEATURE_UNCERTAINTY_SCORE, iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)),
+                            iff(coalesce(d.NEWS_IS_STALE, false), 1.0, 0.0),
+                            coalesce(d.NEWS_FEATURE_MACRO_HEAT, 0.0)
                         ),
                         0.0
                     ),
@@ -460,9 +523,10 @@ begin
                 array_construct_compact(
                     iff(upper(coalesce(e.NEWS_CONTEXT_BADGE, '')) = 'HOT', 'HOT_CONTEXT', null),
                     iff(upper(coalesce(e.NEWS_CONTEXT_BADGE, '')) = 'WARM', 'WARM_CONTEXT', null),
-                    iff(coalesce(e.NEWS_UNCERTAINTY_FLAG, false), 'UNCERTAINTY_HIGH', null),
+                    iff(coalesce(e.NEWS_UNCERTAINTY_PROXY, 0) >= 0.60, 'UNCERTAINTY_HIGH', null),
                     iff(coalesce(e.NEWS_IS_STALE, false), 'SNAPSHOT_STALE', null),
-                    iff(e.NEWS_EVENT_RISK_PROXY >= 0.90, 'EVENT_RISK_HIGH', null)
+                    iff(e.NEWS_EVENT_RISK_PROXY >= 0.90, 'EVENT_RISK_HIGH', null),
+                    iff(coalesce(e.NEWS_FEATURE_MACRO_HEAT, 0) >= 0.60, 'MACRO_HEAT_HIGH', null)
                 ) as NEWS_REASONS,
                 least(
                     greatest(
@@ -473,7 +537,7 @@ begin
                             e.NEWS_RECENCY_WEIGHT
                             * (
                                 e.NEWS_PRESSURE_SCORE * abs(e.NEWS_PRESSURE_HOT)
-                                - iff(coalesce(e.NEWS_UNCERTAINTY_FLAG, false), abs(e.NEWS_UNCERTAINTY_HIGH), 0.0)
+                                - (coalesce(e.NEWS_UNCERTAINTY_PROXY, 0.0) * abs(e.NEWS_UNCERTAINTY_HIGH))
                                 - (e.NEWS_EVENT_RISK_PROXY * abs(e.NEWS_EVENT_RISK_HIGH))
                             ),
                             0.0
@@ -650,11 +714,22 @@ begin
                 'news_score_max_abs', s.NEWS_SCORE_MAX_ABS,
                 'news_score_adj', s.NEWS_SCORE_ADJ,
                 'news_event_risk_proxy', s.NEWS_EVENT_RISK_PROXY,
+                'news_uncertainty_proxy', s.NEWS_UNCERTAINTY_PROXY,
                 'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
                 'news_reasons', s.NEWS_REASONS,
                 'news_staleness_threshold_minutes', s.NEWS_STALE_MINUTES,
                 'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,
                 'news_is_stale', s.NEWS_IS_STALE,
+                'news_features', object_construct(
+                    'event_count', s.NEWS_FEATURE_EVENT_COUNT,
+                    'news_pressure', s.NEWS_FEATURE_PRESSURE,
+                    'news_sentiment', s.NEWS_FEATURE_SENTIMENT,
+                    'uncertainty_score', s.NEWS_FEATURE_UNCERTAINTY_SCORE,
+                    'event_risk_score', s.NEWS_FEATURE_EVENT_RISK_SCORE,
+                    'macro_heat', s.NEWS_FEATURE_MACRO_HEAT,
+                    'top_events', s.NEWS_FEATURE_TOP_EVENTS,
+                    'snapshot_ts', s.NEWS_FEATURE_SNAPSHOT_TS
+                ),
                 'news_context', iff(
                     s.NEWS_ENABLED = 'true' and s.NEWS_SNAPSHOT_TS is not null,
                     object_construct(

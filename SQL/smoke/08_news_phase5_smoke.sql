@@ -30,6 +30,12 @@ select
     SOURCE_SIGNALS:final_score::float as FINAL_SCORE,
     SOURCE_SIGNALS:news_score_adj::float as NEWS_SCORE_ADJ,
     SOURCE_SIGNALS:news_block_new_entry::boolean as NEWS_BLOCK_NEW_ENTRY,
+    SOURCE_SIGNALS:news_features:event_count::number as NEWS_FEATURE_EVENT_COUNT,
+    SOURCE_SIGNALS:news_features:news_pressure::float as NEWS_FEATURE_PRESSURE,
+    SOURCE_SIGNALS:news_features:news_sentiment::float as NEWS_FEATURE_SENTIMENT,
+    SOURCE_SIGNALS:news_features:uncertainty_score::float as NEWS_FEATURE_UNCERTAINTY_SCORE,
+    SOURCE_SIGNALS:news_features:event_risk_score::float as NEWS_FEATURE_EVENT_RISK_SCORE,
+    SOURCE_SIGNALS:news_features:macro_heat::float as NEWS_FEATURE_MACRO_HEAT,
     SOURCE_SIGNALS:news_snapshot_age_minutes::number as NEWS_SNAPSHOT_AGE_MINUTES,
     SOURCE_SIGNALS:news_is_stale::boolean as NEWS_IS_STALE,
     SOURCE_SIGNALS:news_context:news_context_badge::string as NEWS_CONTEXT_BADGE,
@@ -65,7 +71,8 @@ select
     coalesce(count_if(SOURCE_SIGNALS:news_context is not null), 0) as WITH_NEWS_CONTEXT,
     coalesce(count_if(SOURCE_SIGNALS:news_is_stale::boolean = true), 0) as STALE_COUNT,
     coalesce(count_if(abs(SOURCE_SIGNALS:news_score_adj::float) > 0), 0) as WITH_NEWS_ADJ,
-    coalesce(count_if(SOURCE_SIGNALS:news_block_new_entry::boolean = true), 0) as BLOCKED_BY_NEWS
+    coalesce(count_if(SOURCE_SIGNALS:news_block_new_entry::boolean = true), 0) as BLOCKED_BY_NEWS,
+    coalesce(count_if(SOURCE_SIGNALS:news_features is not null), 0) as WITH_NEWS_FEATURES
 from MIP.AGENT_OUT.ORDER_PROPOSALS
 where PORTFOLIO_ID = $phase5_portfolio_id
   and STATUS = 'PROPOSED';

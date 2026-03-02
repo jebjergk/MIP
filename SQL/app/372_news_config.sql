@@ -26,6 +26,8 @@ using (
          'Master switch for proposal scoring influence from news context'),
         ('NEWS_DECAY_TAU_HOURS', '24',
          'Time-decay half-life control for proposal-time news impact weighting'),
+        ('NEWS_FEATURE_LOOKBACK_HOURS', '72',
+         'Lookback window in hours for building decision-time news features'),
         ('NEWS_PRESSURE_HOT', '0.12',
          'Positive score lift weight for HOT/WARM contextual pressure'),
         ('NEWS_UNCERTAINTY_HIGH', '0.08',

@@ -60,7 +60,12 @@ export default function NewsIntelligence() {
     setError(null)
     fetch(`${API_BASE}/news/intelligence?${params.toString()}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((payload) => setData(payload))
+      .then((payload) => {
+        setData(payload)
+        if (payload?.generated_at) {
+          localStorage.setItem('mip.newsIntelligence.lastSeenGeneratedAt', payload.generated_at)
+        }
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [portfolioId])

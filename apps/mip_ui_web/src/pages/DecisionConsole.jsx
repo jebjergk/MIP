@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { API_BASE } from '../App'
 import useDecisionStream from '../hooks/useDecisionStream'
 import useVisibleInterval from '../hooks/useVisibleInterval'
@@ -97,41 +97,40 @@ function normalizeSparklinePoints(raw) {
     .filter(v => v != null)
 }
 
-function normalizeHeadlines(raw) {
+function normalizeHeadlines(raw, symbolForFallback = null) {
   let value = raw
   if (typeof value === 'string') {
     try { value = JSON.parse(value) } catch { value = null }
   }
   if (!Array.isArray(value)) return []
+  const dedup = new Set()
   return value
     .map((h) => {
       const title = h?.title ?? h?.TITLE
-      const url = normalizeHeadlineUrl(h?.url ?? h?.URL, title)
+      const url = normalizeHeadlineUrl(h?.url ?? h?.URL, title, symbolForFallback)
       if (!title) return null
-      return { title: String(title), url: url ? String(url) : null }
+      const normalizedTitle = String(title)
+      const normalizedUrl = url ? String(url) : null
+      const k = `${normalizedTitle}||${normalizedUrl || ''}`
+      if (dedup.has(k)) return null
+      dedup.add(k)
+      return { title: normalizedTitle, url: normalizedUrl }
     })
     .filter(Boolean)
 }
 
-function normalizeHeadlineUrl(rawUrl, title) {
-  const fallback = buildHeadlineFallbackUrl(title)
-  if (!rawUrl) return fallback
+function normalizeHeadlineUrl(rawUrl) {
+  if (!rawUrl) return null
   const s = String(rawUrl).trim()
-  if (!s) return fallback
+  if (!s) return null
   const lower = s.toLowerCase()
   const isHttp = lower.startsWith('http://') || lower.startsWith('https://')
-  if (!isHttp) return fallback
-  // Route known mock/testing and feed XML links to a reader-friendly fallback.
+  if (!isHttp) return null
+  // Hide known non-article links (feed/search/mock placeholders).
   if (lower.includes('mock-item-') || lower.includes('/rss/') || lower.endsWith('.xml')) {
-    return fallback
+    return null
   }
   return s
-}
-
-function buildHeadlineFallbackUrl(title) {
-  const t = (title || '').toString().trim()
-  if (!t) return null
-  return `https://news.google.com/search?q=${encodeURIComponent(t)}`
 }
 
 /* ── Badge ────────────────────────────────────────────────────────── */
@@ -199,19 +198,8 @@ function EventCard({ event, onSelect }) {
 
 /* ── Position Row (for Open Positions mode) ───────────────────────── */
 
-function PositionRow({ pos, onSelect, change, sparkline }) {
-  const currentReturn = pos.CURRENT_RETURN
-  const targetReturn = pos.TARGET_RETURN
-  const distance = (currentReturn != null && targetReturn != null)
-    ? currentReturn - targetReturn : null
-  const stage = (pos.STAGE || 'on-track').toLowerCase()
-  const rowClasses = [
-    'dc-pos-row',
-    `dc-pos-row--${stage === 'on-track' ? 'green' : 'red'}`,
-    change?.changed ? 'dc-pos-row--changed' : '',
-  ].filter(Boolean).join(' ')
-
-  const changeBadge = change?.isNew
+function buildChangeBadge(change) {
+  return change?.isNew
     ? { cls: 'dc-pos-change--new', text: 'NEW' }
     : change?.stageChanged
       ? { cls: 'dc-pos-change--stage', text: 'Stage changed' }
@@ -223,9 +211,20 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
             text: `${change.deltaReturn > 0 ? '▲' : (change.deltaReturn < 0 ? '▼' : '=')} ${fmtSignedPct(change.deltaReturn)}`,
           }
         : null
-  const sparkValues = normalizeSparklinePoints(sparkline)
-  const sparkPath = buildSparkPath(sparkValues)
-  const startRet = sparkValues.length ? sparkValues[0] : null
+}
+
+function PositionRow({ pos, onSelect, change, showSymbol = true }) {
+  const currentReturn = pos.CURRENT_RETURN
+  const targetReturn = pos.TARGET_RETURN
+  const distance = (currentReturn != null && targetReturn != null)
+    ? currentReturn - targetReturn : null
+  const stage = (pos.STAGE || 'on-track').toLowerCase()
+  const rowClasses = [
+    'dc-pos-row',
+    `dc-pos-row--${stage === 'on-track' ? 'green' : 'red'}`,
+    change?.changed ? 'dc-pos-row--changed' : '',
+  ].filter(Boolean).join(' ')
+
   const lifetimeMfeReturn = pos.MFE_RETURN
   const todayMfeReturn = pos.INTRADAY_MFE_RETURN
   const newsBadge = pos.NEWS_CONTEXT_BADGE || '—'
@@ -236,24 +235,9 @@ function PositionRow({ pos, onSelect, change, sparkline }) {
     <div className={rowClasses}
          onClick={() => onSelect?.(pos)}>
       <div className="dc-pos-main">
-        <span className="dc-pos-symbol">{pos.SYMBOL}</span>
+        {showSymbol ? <span className="dc-pos-symbol">{pos.SYMBOL}</span> : null}
         <StageBadge stage={stage} />
-        <span className="dc-pos-portfolio">{pos.PORTFOLIO_NAME}</span>
-        {changeBadge && (
-          <span className={`dc-pos-change ${changeBadge.cls}`} title="Change vs previous 15-minute bar">
-            {changeBadge.text}
-          </span>
-        )}
-        {sparkPath && (
-          <span className="dc-pos-spark-wrap" title="Intraday return trend (today)">
-            <span className={`dc-pos-spark-start ${startRet > 0 ? 'dc-val--pos' : startRet < 0 ? 'dc-val--neg' : ''}`}>
-              {fmtPct(startRet)}
-            </span>
-            <svg className="dc-pos-spark" viewBox="0 0 74 20" aria-hidden="true">
-              <path d={sparkPath} />
-            </svg>
-          </span>
-        )}
+        <span className={`dc-pos-portfolio ${showSymbol ? '' : 'dc-pos-portfolio--primary'}`}>{pos.PORTFOLIO_NAME}</span>
       </div>
       <div className="dc-pos-metrics">
         <div className="dc-pos-metric">
@@ -340,13 +324,41 @@ function PositionInspector({ position, onClose }) {
   const newsSnapshotTs = position?.NEWS_SNAPSHOT_TS
   const newsLastPublished = position?.LAST_NEWS_PUBLISHED_AT
   const newsLastIngested = position?.LAST_INGESTED_AT
-  const headlines = normalizeHeadlines(position?.NEWS_TOP_HEADLINES)
+  const headlines = normalizeHeadlines(position?.NEWS_TOP_HEADLINES, symbol)
 
   return (
     <div className="dc-inspector">
       <div className="dc-inspector-header">
         <h3>{symbol} — Gate Trace</h3>
         <button className="dc-inspector-close" onClick={onClose}>×</button>
+      </div>
+
+      {/* News Context (display-only) */}
+      <div className="dc-news-panel">
+        <h4>News Context</h4>
+        <div className="dc-news-metrics">
+          <span>Badge: <b className={newsBadge === 'HOT' ? 'dc-val--neg' : ''}>{newsBadge || '—'}</b></span>
+          <span>Count: <b>{newsCount ?? '—'}</b></span>
+          <span>Snapshot Age: <b className={newsIsStale ? 'dc-val--neg' : ''}>{newsAge != null ? `${fmtMins(newsAge)}${newsIsStale ? ' (stale)' : ''}` : '—'}</b></span>
+          <span>Snapshot: <b>{fmtTs(newsSnapshotTs)}</b></span>
+          <span>Last Published: <b>{fmtTs(newsLastPublished)}</b></span>
+          <span>Last Ingested: <b>{fmtTs(newsLastIngested)}</b></span>
+        </div>
+        {headlines.length > 0 ? (
+          <ul className="dc-news-headlines">
+            {headlines.slice(0, 3).map((h, i) => (
+              <li key={`${h.title}-${i}`}>
+                {h.url ? (
+                  <a href={h.url} target="_blank" rel="noreferrer">{h.title}</a>
+                ) : (
+                  <span>{h.title}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="dc-news-empty">No recent mapped headlines for this position.</p>
+        )}
       </div>
 
       {/* Decision Diff */}
@@ -386,34 +398,6 @@ function PositionInspector({ position, onClose }) {
           <span>Exit Fired: {state.EARLY_EXIT_FIRED ? 'Yes' : 'No'}</span>
         </div>
       )}
-
-      {/* News Context (display-only) */}
-      <div className="dc-news-panel">
-        <h4>News Context</h4>
-        <div className="dc-news-metrics">
-          <span>Badge: <b className={newsBadge === 'HOT' ? 'dc-val--neg' : ''}>{newsBadge || '—'}</b></span>
-          <span>Count: <b>{newsCount ?? '—'}</b></span>
-          <span>Age: <b className={newsIsStale ? 'dc-val--neg' : ''}>{newsAge != null ? `${fmtMins(newsAge)}${newsIsStale ? ' (stale)' : ''}` : '—'}</b></span>
-          <span>Snapshot: <b>{fmtTs(newsSnapshotTs)}</b></span>
-          <span>Last Published: <b>{fmtTs(newsLastPublished)}</b></span>
-          <span>Last Ingested: <b>{fmtTs(newsLastIngested)}</b></span>
-        </div>
-        {headlines.length > 0 ? (
-          <ul className="dc-news-headlines">
-            {headlines.slice(0, 3).map((h, i) => (
-              <li key={`${h.title}-${i}`}>
-                {h.url ? (
-                  <a href={h.url} target="_blank" rel="noreferrer">{h.title}</a>
-                ) : (
-                  <span>{h.title}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="dc-news-empty">No recent mapped headlines for this position.</p>
-        )}
-      </div>
 
       {/* Timeline */}
       <div className="dc-timeline">
@@ -491,6 +475,7 @@ export default function DecisionConsole() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedPosition, setSelectedPosition] = useState(null)
+  const [expandedPositionKey, setExpandedPositionKey] = useState(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [filters, setFilters] = useState({ portfolioId: null, symbol: null, date: null })
   const [historyEvents, setHistoryEvents] = useState([])
@@ -592,6 +577,25 @@ export default function DecisionConsole() {
     return (stagePriority[a.STAGE?.toLowerCase()] ?? 9) - (stagePriority[b.STAGE?.toLowerCase()] ?? 9)
   })
 
+  const groupedPositions = useMemo(() => {
+    const groups = new Map()
+    for (const pos of sortedPositions) {
+      const symbol = pos.SYMBOL
+      if (!groups.has(symbol)) groups.set(symbol, [])
+      groups.get(symbol).push(pos)
+    }
+    const entries = Array.from(groups.entries()).map(([symbol, items]) => {
+      const minStage = Math.min(...items.map((p) => stagePriority[p.STAGE?.toLowerCase()] ?? 9))
+      return { symbol, items, minStage, pinned: pinnedSymbols.has(symbol) }
+    })
+    entries.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      if (a.minStage !== b.minStage) return a.minStage - b.minStage
+      return a.symbol.localeCompare(b.symbol)
+    })
+    return entries
+  }, [sortedPositions, pinnedSymbols])
+
   const handleSelectEvent = (evt) => {
     const matchedPos = positions.find(p => p.SYMBOL === evt.symbol && p.PORTFOLIO_ID === evt.portfolio_id)
     setSelectedPosition({
@@ -603,12 +607,15 @@ export default function DecisionConsole() {
   }
 
   const handleSelectPosition = (pos) => {
-    setSelectedPosition({
+    const prepared = {
       ...pos,
       portfolio_id: pos.PORTFOLIO_ID ?? pos.portfolio_id,
       symbol: pos.SYMBOL ?? pos.symbol,
       entry_ts: pos.ENTRY_TS ?? pos.entry_ts,
-    })
+    }
+    const key = `${prepared.portfolio_id}|${prepared.symbol}|${prepared.entry_ts}`
+    setExpandedPositionKey((prev) => (prev === key ? null : key))
+    setSelectedPosition(prepared)
   }
 
   const togglePin = (symbol) => {
@@ -665,20 +672,73 @@ export default function DecisionConsole() {
         <div className="dc-left-pane">
           {mode === 'positions' && (
             <div className="dc-positions-list">
-              {sortedPositions.length === 0 && <EmptyState message="No open daily positions" />}
-              {sortedPositions.map((pos, i) => (
-                <div key={`${pos.PORTFOLIO_ID}-${pos.SYMBOL}-${i}`} className="dc-pos-wrapper">
-                  <button
-                    className={`dc-pin-btn ${pinnedSymbols.has(pos.SYMBOL) ? 'dc-pin-btn--active' : ''}`}
-                    onClick={e => { e.stopPropagation(); togglePin(pos.SYMBOL) }}
-                    title={pinnedSymbols.has(pos.SYMBOL) ? 'Unpin' : 'Pin'}
-                  >&#9733;</button>
-                  <PositionRow
-                    pos={pos}
-                    onSelect={handleSelectPosition}
-                    change={positionChanges[`${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`]}
-                    sparkline={pos.INTRADAY_RETURNS}
-                  />
+              {groupedPositions.length === 0 && <EmptyState message="No open daily positions" />}
+              {groupedPositions.map((group) => (
+                <div key={group.symbol} className="dc-symbol-group">
+                  <div className="dc-symbol-group-header">
+                    <button
+                      className={`dc-pin-btn ${pinnedSymbols.has(group.symbol) ? 'dc-pin-btn--active' : ''}`}
+                      onClick={e => { e.stopPropagation(); togglePin(group.symbol) }}
+                      title={pinnedSymbols.has(group.symbol) ? 'Unpin' : 'Pin'}
+                    >&#9733;</button>
+                    <h3>{group.symbol}</h3>
+                    <span className="dc-symbol-group-count">{group.items.length} portfolio{group.items.length === 1 ? '' : 's'}</span>
+                    {(() => {
+                      const representative = [...group.items].sort((a, b) => new Date(b.ENTRY_TS) - new Date(a.ENTRY_TS))[0]
+                      const repKey = `${representative.PORTFOLIO_ID}|${representative.SYMBOL}|${representative.ENTRY_TS}`
+                      const repChange = positionChanges[repKey]
+                      const changeBadge = buildChangeBadge(repChange)
+                      const sparkValues = normalizeSparklinePoints(representative.INTRADAY_RETURNS)
+                      const sparkPath = buildSparkPath(sparkValues)
+                      const startRet = sparkValues.length ? sparkValues[0] : null
+                      if (!changeBadge && !sparkPath) return null
+                      return (
+                        <span className="dc-symbol-group-pulse">
+                          {changeBadge && (
+                            <span className={`dc-pos-change ${changeBadge.cls}`} title="Change vs previous 15-minute bar">
+                              {changeBadge.text}
+                            </span>
+                          )}
+                          {sparkPath && (
+                            <span className="dc-pos-spark-wrap" title="Intraday return trend (today)">
+                              <span className={`dc-pos-spark-start ${startRet > 0 ? 'dc-val--pos' : startRet < 0 ? 'dc-val--neg' : ''}`}>
+                                {fmtPct(startRet)}
+                              </span>
+                              <svg className="dc-pos-spark" viewBox="0 0 74 20" aria-hidden="true">
+                                <path d={sparkPath} />
+                              </svg>
+                            </span>
+                          )}
+                        </span>
+                      )
+                    })()}
+                  </div>
+                  {group.items.map((pos, i) => {
+                    const rowKey = `${pos.PORTFOLIO_ID}|${pos.SYMBOL}|${pos.ENTRY_TS}`
+                    const isExpanded = expandedPositionKey === rowKey
+                    return (
+                      <div key={`${rowKey}-${i}`} className="dc-pos-subrow">
+                        <PositionRow
+                          pos={pos}
+                          onSelect={handleSelectPosition}
+                          showSymbol={false}
+                          change={positionChanges[rowKey]}
+                        />
+                        {isExpanded && selectedPosition && (
+                          <div className="dc-pos-inline-inspector">
+                            <PositionInspector
+                              key={`${selectedPosition.portfolio_id}-${selectedPosition.symbol}-${selectedPosition.entry_ts}`}
+                              position={selectedPosition}
+                              onClose={() => {
+                                setExpandedPositionKey(null)
+                                setSelectedPosition(null)
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               ))}
             </div>
@@ -698,7 +758,7 @@ export default function DecisionConsole() {
         </div>
 
         {/* Right pane: inspector */}
-        {selectedPosition && (
+        {selectedPosition && mode !== 'positions' && (
           <div className="dc-right-pane">
             <PositionInspector
               key={`${selectedPosition.portfolio_id}-${selectedPosition.symbol}-${selectedPosition.entry_ts}`}

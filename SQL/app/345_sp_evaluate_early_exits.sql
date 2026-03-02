@@ -38,6 +38,8 @@ declare
     v_pos_quantity      number(18,8);
     v_pos_cost_basis    number(18,8);
     v_pos_hold_until    number;
+    v_pos_entry_index   number;
+    v_pos_hold_bars     number;
     v_pos_episode_id    number;
     v_pos_run_id        varchar;
 
@@ -104,7 +106,7 @@ begin
         select
             op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE,
             op.ENTRY_TS, op.ENTRY_PRICE, op.QUANTITY, op.COST_BASIS,
-            op.HOLD_UNTIL_INDEX, op.EPISODE_ID, op.RUN_ID
+            op.HOLD_UNTIL_INDEX, op.ENTRY_INDEX, op.EPISODE_ID, op.RUN_ID
         from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL op
         where op.INTERVAL_MINUTES = 1440
           and op.IS_OPEN = true
@@ -131,6 +133,8 @@ begin
         v_pos_quantity     := pos.QUANTITY;
         v_pos_cost_basis   := pos.COST_BASIS;
         v_pos_hold_until   := pos.HOLD_UNTIL_INDEX;
+        v_pos_entry_index  := pos.ENTRY_INDEX;
+        v_pos_hold_bars    := greatest(coalesce(v_pos_hold_until, 0) - coalesce(v_pos_entry_index, 0), 1);
         v_pos_episode_id   := pos.EPISODE_ID;
         v_pos_run_id       := pos.RUN_ID;
 
@@ -152,29 +156,49 @@ begin
                 continue;
             end if;
 
-            -- ═══ GET EXPECTED PAYOFF (deterministic, from entry context) ═══
+            -- ═══ GET EXPECTED PAYOFF (deterministic, horizon-aware) ═══
             begin
-                -- Deterministic payoff selection:
-                -- pick the maximum trusted AVG_RETURN from the latest recommendation timestamp before entry.
-                select max(ts.AVG_RETURN)
+                -- Align payoff target with Decision Console target contract:
+                -- nearest trusted horizon from latest signal date before entry,
+                -- preferring calibrated EFFECTIVE_TARGET when available.
+                with signal_anchor as (
+                    select max(rl2.TS::date) as SIGNAL_DATE
+                    from MIP.APP.RECOMMENDATION_LOG rl2
+                    where rl2.SYMBOL = :v_pos_symbol
+                      and rl2.MARKET_TYPE = :v_pos_market_type
+                      and rl2.INTERVAL_MINUTES = 1440
+                      and rl2.TS < :v_pos_entry_ts
+                ),
+                target_candidates as (
+                    select
+                        coalesce(pa.EFFECTIVE_TARGET, ts.AVG_RETURN) as TARGET_RETURN,
+                        row_number() over (
+                            order by
+                                case when ts.HORIZON_BARS = :v_pos_hold_bars then 0 else 1 end,
+                                abs(ts.HORIZON_BARS - :v_pos_hold_bars),
+                                coalesce(pa.EFFECTIVE_TARGET, ts.AVG_RETURN) desc
+                        ) as RN
+                    from signal_anchor sa
+                    join MIP.APP.RECOMMENDATION_LOG rl
+                      on rl.SYMBOL = :v_pos_symbol
+                     and rl.MARKET_TYPE = :v_pos_market_type
+                     and rl.INTERVAL_MINUTES = 1440
+                     and rl.TS::date = sa.SIGNAL_DATE
+                    join MIP.MART.V_TRUSTED_SIGNALS ts
+                      on ts.PATTERN_ID = rl.PATTERN_ID
+                     and ts.MARKET_TYPE = rl.MARKET_TYPE
+                     and ts.INTERVAL_MINUTES = 1440
+                     and ts.IS_TRUSTED = true
+                    left join MIP.MART.V_DAILY_POLICY_EFFECTIVE_ACTIVE pa
+                      on pa.SYMBOL = :v_pos_symbol
+                     and pa.MARKET_TYPE = :v_pos_market_type
+                     and pa.PATTERN_ID = rl.PATTERN_ID
+                     and pa.HORIZON_BARS = ts.HORIZON_BARS
+                )
+                select TARGET_RETURN
                 into :v_target_return
-                from MIP.APP.RECOMMENDATION_LOG rl
-                join MIP.MART.V_TRUSTED_SIGNALS ts
-                  on ts.PATTERN_ID = rl.PATTERN_ID
-                 and ts.MARKET_TYPE = rl.MARKET_TYPE
-                 and ts.INTERVAL_MINUTES = 1440
-                 and ts.IS_TRUSTED = true
-                where rl.SYMBOL = :v_pos_symbol
-                  and rl.MARKET_TYPE = :v_pos_market_type
-                  and rl.INTERVAL_MINUTES = 1440
-                  and rl.TS = (
-                      select max(rl2.TS)
-                      from MIP.APP.RECOMMENDATION_LOG rl2
-                      where rl2.SYMBOL = rl.SYMBOL
-                        and rl2.MARKET_TYPE = rl.MARKET_TYPE
-                        and rl2.INTERVAL_MINUTES = 1440
-                        and rl2.TS < :v_pos_entry_ts
-                  );
+                from target_candidates
+                where RN = 1;
             exception when other then
                 v_target_return := null;
             end;

@@ -62,7 +62,10 @@ begin
       on r.NEWS_ID = m.NEWS_ID
     left join MIP.NEWS.NEWS_DEDUP d
       on d.DEDUP_CLUSTER_ID = r.DEDUP_CLUSTER_ID
-    where r.PUBLISHED_AT::date between dateadd(day, -14, :v_as_of_date) and :v_as_of_date;
+    where r.PUBLISHED_AT::date between dateadd(day, -14, :v_as_of_date) and :v_as_of_date
+      and r.URL is not null
+      and regexp_like(lower(r.URL), '^https?://')
+      and not regexp_like(lower(r.URL), 'mock-item-|/rss/|\\.xml$');
 
     create or replace temporary table TMP_NEWS_DAILY_COUNTS as
     select

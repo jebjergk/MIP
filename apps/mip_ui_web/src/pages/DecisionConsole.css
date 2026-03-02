@@ -208,6 +208,49 @@
   flex-direction: column;
   gap: 0.5rem;
 }
+.dc-symbol-group {
+  border: 1px solid var(--dc-border);
+  border-radius: var(--dc-radius);
+  background: #fff;
+  padding: 0.5rem;
+}
+.dc-symbol-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.1rem 0.15rem 0.45rem;
+  border-bottom: 1px solid var(--dc-border);
+  margin-bottom: 0.45rem;
+}
+.dc-symbol-group-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.dc-symbol-group-count {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--dc-text-muted);
+}
+.dc-symbol-group-pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.35rem;
+}
+.dc-pos-subrow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.45rem;
+}
+.dc-pos-subrow:last-child {
+  margin-bottom: 0;
+}
+.dc-pos-inline-inspector {
+  border: 1px solid var(--dc-border);
+  border-radius: var(--dc-radius);
+  background: #fff;
+}
 .dc-pos-wrapper {
   display: flex;
   align-items: stretch;
@@ -256,6 +299,7 @@
 .dc-pos-main { display: flex; align-items: center; gap: 0.5rem; min-width: 180px; }
 .dc-pos-symbol { font-weight: 700; font-size: 1rem; }
 .dc-pos-portfolio { font-size: 0.78rem; color: var(--dc-text-muted); }
+.dc-pos-portfolio--primary { font-size: 0.86rem; font-weight: 600; color: var(--dc-text); }
 .dc-pos-change {
   display: inline-flex;
   align-items: center;

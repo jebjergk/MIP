@@ -47,19 +47,39 @@ def _normalize_headlines(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for h in raw:
         if not isinstance(h, dict):
             continue
         title = h.get("title") or h.get("TITLE")
         if not title:
             continue
+        url = _normalize_url(h.get("url") or h.get("URL"))
+        dedup_key = f"{str(title).strip()}||{url or ''}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
         out.append(
             {
                 "title": str(title),
-                "url": h.get("url") or h.get("URL"),
+                "url": url,
             }
         )
     return out
+
+
+def _normalize_url(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    lower = s.lower()
+    if not (lower.startswith("http://") or lower.startswith("https://")):
+        return None
+    if "mock-item-" in lower or "/rss/" in lower or lower.endswith(".xml"):
+        return None
+    return s
 
 
 def _to_obj(v: Any) -> dict[str, Any]:
@@ -305,6 +325,16 @@ def get_news_intelligence(
             reasons = _to_list(rat.get("news_reasons"))
             if not reasons:
                 reasons = _to_list(src.get("news_reasons"))
+
+            # Only surface rows that actually carry news evidence.
+            has_news_evidence = (
+                has_context
+                or news_adj is not None
+                or bool(blocked_entry)
+                or len(reasons) > 0
+            )
+            if not has_news_evidence:
+                continue
 
             decision_rows.append(
                 {

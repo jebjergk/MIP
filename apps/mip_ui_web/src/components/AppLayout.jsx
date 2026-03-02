@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import StatusBanner from './StatusBanner'
 import LiveHeader from './LiveHeader'
@@ -47,9 +47,63 @@ const NAV_GROUPS = [
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [askMipOpen, setAskMipOpen] = useState(false)
+  const [hasNewsAlert, setHasNewsAlert] = useState(false)
+  const [newsTicker, setNewsTicker] = useState('')
+  const latestNewsTsRef = useRef(null)
   const { pathname } = useLocation()
 
   const closeSidebar = () => setSidebarOpen(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const SEEN_KEY = 'mip.newsIntelligence.lastSeenGeneratedAt'
+
+    const checkNews = async () => {
+      try {
+        const resp = await fetch('/api/news/intelligence')
+        if (!resp.ok) return
+        const data = await resp.json()
+        const generatedAt = data?.generated_at || null
+        const hotSymbols = Number(data?.market_context?.hot_symbols || 0)
+        const topHeadlines = Array.isArray(data?.market_context?.top_headlines)
+          ? data.market_context.top_headlines
+          : []
+        const topHotHeadline = topHeadlines.find((h) => String(h?.badge || '').toUpperCase() === 'HOT') || topHeadlines[0]
+        const tickerText = topHotHeadline?.title
+          ? `${topHotHeadline?.symbol || 'NEWS'}: ${String(topHotHeadline.title).slice(0, 54)}${String(topHotHeadline.title).length > 54 ? '…' : ''}`
+          : ''
+        latestNewsTsRef.current = generatedAt
+        const isDecisionRelevant = hotSymbols > 0 && topHeadlines.length > 0
+        const seenTs = localStorage.getItem(SEEN_KEY)
+        const hasUnseen = Boolean(generatedAt) && (!seenTs || generatedAt > seenTs)
+        if (!cancelled) {
+          setHasNewsAlert(isDecisionRelevant && hasUnseen)
+          setNewsTicker(tickerText)
+        }
+      } catch {
+        if (!cancelled) {
+          setHasNewsAlert(false)
+          setNewsTicker('')
+        }
+      }
+    }
+
+    checkNews()
+    const t = setInterval(checkNews, 5 * 60 * 1000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [])
+
+  useEffect(() => {
+    const SEEN_KEY = 'mip.newsIntelligence.lastSeenGeneratedAt'
+    if (!pathname.startsWith('/news-intelligence')) return
+    const latest = latestNewsTsRef.current
+    if (latest) localStorage.setItem(SEEN_KEY, latest)
+    setHasNewsAlert(false)
+    setNewsTicker('')
+  }, [pathname])
 
   return (
     <div className="app-layout">
@@ -86,20 +140,31 @@ export default function AppLayout() {
             {NAV_GROUPS.map((group) => (
               <div key={group.label} className="app-layout-nav-group">
                 <span className="app-layout-nav-group-label">{group.label}</span>
-                {group.items.map(({ to, icon, label }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    end={to !== '/portfolios' && to !== '/runs'}
-                    className={({ isActive }) =>
-                      `app-layout-nav-link ${isActive ? 'app-layout-nav-link--active' : ''}`
-                    }
-                    onClick={closeSidebar}
-                  >
-                    <span className="app-layout-nav-icon" aria-hidden="true">{icon}</span>
-                    {label}
-                  </NavLink>
-                ))}
+                {group.items.map(({ to, icon, label }) => {
+                  const isNews = to === '/news-intelligence'
+                  return (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      end={to !== '/portfolios' && to !== '/runs'}
+                      className={({ isActive }) =>
+                        `app-layout-nav-link ${isActive ? 'app-layout-nav-link--active' : ''}`
+                      }
+                      onClick={closeSidebar}
+                    >
+                      <span className="app-layout-nav-icon" aria-hidden="true">{icon}</span>
+                      <span className="app-layout-nav-label-wrap">
+                        <span className="app-layout-nav-label">
+                          {label}
+                          {isNews && hasNewsAlert ? <span className="app-layout-news-pill">HOT</span> : null}
+                        </span>
+                        {isNews && hasNewsAlert && newsTicker ? (
+                          <span className="app-layout-news-ticker">{newsTicker}</span>
+                        ) : null}
+                      </span>
+                    </NavLink>
+                  )
+                })}
               </div>
             ))}
             <div className="app-layout-nav-footer">

@@ -48,6 +48,15 @@ def _build_event_from_log(row: dict) -> dict:
     mfe = row.get("MFE_RETURN")
     multiplier = row.get("PAYOFF_MULTIPLIER")
     effective_target = row.get("EFFECTIVE_TARGET")
+    # Prefer deterministic trigger math from target * multiplier.
+    # Fall back to logged effective_target when either input is missing.
+    computed_trigger = None
+    try:
+        if target_ret is not None and multiplier is not None:
+            computed_trigger = float(target_ret) * float(multiplier)
+    except Exception:
+        computed_trigger = None
+    trigger_target = computed_trigger if computed_trigger is not None else effective_target
 
     summary_parts = []
     if current_ret is not None and target_ret is not None:
@@ -56,8 +65,8 @@ def _build_event_from_log(row: dict) -> dict:
         summary_parts.append(f"Return {ret_pct} vs target {tgt_pct}")
     if exit_signal and multiplier is not None and target_ret is not None:
         mult_str = f"{float(multiplier):.1f}"
-        eff_pct = f"{float(effective_target or (target_ret * float(multiplier))) * 100:.2f}%"
-        summary_parts.append(f"Threshold reached: {mult_str}\u00d7 expected payoff ({eff_pct})")
+        eff_pct = f"{float(trigger_target) * 100:.2f}%"
+        summary_parts.append(f"Exit trigger reached at {eff_pct} ({mult_str}x base target)")
     if exit_signal and not executed:
         summary_parts.append(f"Exit signal in {(row.get('MODE') or 'SHADOW')} mode")
     if executed:
@@ -89,7 +98,7 @@ def _build_event_from_log(row: dict) -> dict:
             "target_return": _flt(target_ret),
             "unrealized_return": _flt(current_ret),
             "mfe_return": _flt(mfe),
-            "effective_target": _flt(effective_target),
+            "effective_target": _flt(trigger_target),
             "multiplier": _flt(multiplier),
             "early_exit_pnl": _flt(row.get("EARLY_EXIT_PNL")),
             "hold_to_end_pnl": _flt(row.get("HOLD_TO_END_PNL")),

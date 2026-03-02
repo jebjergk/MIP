@@ -106,11 +106,32 @@ function normalizeHeadlines(raw) {
   return value
     .map((h) => {
       const title = h?.title ?? h?.TITLE
-      const url = h?.url ?? h?.URL
+      const url = normalizeHeadlineUrl(h?.url ?? h?.URL, title)
       if (!title) return null
       return { title: String(title), url: url ? String(url) : null }
     })
     .filter(Boolean)
+}
+
+function normalizeHeadlineUrl(rawUrl, title) {
+  const fallback = buildHeadlineFallbackUrl(title)
+  if (!rawUrl) return fallback
+  const s = String(rawUrl).trim()
+  if (!s) return fallback
+  const lower = s.toLowerCase()
+  const isHttp = lower.startsWith('http://') || lower.startsWith('https://')
+  if (!isHttp) return fallback
+  // Route known mock/testing and feed XML links to a reader-friendly fallback.
+  if (lower.includes('mock-item-') || lower.includes('/rss/') || lower.endsWith('.xml')) {
+    return fallback
+  }
+  return s
+}
+
+function buildHeadlineFallbackUrl(title) {
+  const t = (title || '').toString().trim()
+  if (!t) return null
+  return `https://news.google.com/search?q=${encodeURIComponent(t)}`
 }
 
 /* ── Badge ────────────────────────────────────────────────────────── */
@@ -410,7 +431,7 @@ function PositionInspector({ position, onClose }) {
               <div className="dc-timeline-gates">
                 <GatePill label="Threshold" pass={evt.gates?.threshold_reached}
                   val={evt.metrics?.effective_target != null
-                    ? `${evt.metrics.multiplier ?? '?'}× (${fmtPct(evt.metrics.effective_target)})`
+                    ? `Trigger ${fmtPct(evt.metrics.effective_target)} (${fmtNum(evt.metrics.multiplier, 1)}x base target)`
                     : fmtPct(evt.metrics?.target_return)} />
                 <GatePill label="MFE" pass={evt.metrics?.mfe_return > 0}
                   val={fmtPct(evt.metrics?.mfe_return)} />

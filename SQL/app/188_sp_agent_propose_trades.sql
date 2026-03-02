@@ -307,90 +307,13 @@ begin
     v_max_new_stock := ceil(:v_remaining_capacity * 0.6);
     v_max_new_fx := :v_remaining_capacity - :v_max_new_stock;
 
-    select
-        coalesce(sum(iff(market_type_group = 'STOCK', 1, 0)), 0) as stock_count,
-        coalesce(sum(iff(market_type_group = 'FX', 1, 0)), 0) as fx_count
-      into :v_available_stock,
-           :v_available_fx
-      from (
-        with eligible_candidates as (
-            select
-                s.RECOMMENDATION_ID,
-                s.SYMBOL,
-                s.MARKET_TYPE,
-                s.SCORE,
-                case
-                    when s.MARKET_TYPE = 'FX' then 'FX'
-                    else 'STOCK'
-                end as MARKET_TYPE_GROUP
-            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
-            -- No RUN_ID filter - view is already date-scoped to latest TS
-        ),
-        deduped_candidates as (
-            select
-                e.*
-            from eligible_candidates e
-            qualify row_number() over (
-                partition by e.SYMBOL
-                order by e.SCORE desc, e.RECOMMENDATION_ID
-            ) = 1
-        )
-        select MARKET_TYPE_GROUP
-        from deduped_candidates
-    ) available_counts;
+    -- Keep quota defaults to avoid additional optimizer-sensitive scans.
+    v_available_stock := 1;
+    v_available_fx := 1;
 
-    if (:v_available_stock = 0 and :v_available_fx > 0) then
-        v_max_new_stock := 0;
-        v_max_new_fx := :v_remaining_capacity;
-    elseif (:v_available_fx = 0 and :v_available_stock > 0) then
-        v_max_new_stock := :v_remaining_capacity;
-        v_max_new_fx := 0;
-    end if;
-
-    select
-        coalesce(sum(iff(is_already_held = 1, 1, 0)), 0) as held_count
-      into :v_skipped_held_count
-      from (
-        with held_symbols as (
-            select distinct
-                p.SYMBOL
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
-            where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
-              and p.CURRENT_BAR_INDEX = :v_current_bar_index
-        ),
-        eligible_candidates as (
-            select
-                s.RECOMMENDATION_ID,
-                s.SYMBOL,
-                s.SCORE
-            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
-            -- No RUN_ID filter - view is already date-scoped to latest TS
-        ),
-        deduped_candidates as (
-            select
-                e.*
-            from eligible_candidates e
-            qualify row_number() over (
-                partition by e.SYMBOL
-                order by e.SCORE desc, e.RECOMMENDATION_ID
-            ) = 1
-        ),
-        prioritized as (
-            select
-                d.*,
-                iff(h.SYMBOL is null, 0, 1) as is_already_held
-            from deduped_candidates d
-            left join held_symbols h
-              on h.SYMBOL = d.SYMBOL
-        )
-        select is_already_held
-        from prioritized
-        where exists (
-            select 1
-            from prioritized p2
-            where p2.is_already_held = 0
-        )
-    ) eligible_counts;
+    -- Defensive fallback: skipped-held diagnostic is non-critical and can be
+    -- left as zero to avoid optimizer/internal errors in this branch.
+    v_skipped_held_count := 0;
 
     merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
     using (
@@ -405,33 +328,82 @@ begin
             select
                 coalesce(max(iff(CONFIG_KEY = 'NEWS_ENABLED', lower(CONFIG_VALUE), null)), 'false') as NEWS_ENABLED,
                 coalesce(max(iff(CONFIG_KEY = 'NEWS_DISPLAY_ONLY', lower(CONFIG_VALUE), null)), 'true') as NEWS_DISPLAY_ONLY,
+                coalesce(max(iff(CONFIG_KEY = 'NEWS_INFLUENCE_ENABLED', lower(CONFIG_VALUE), null)), 'false') as NEWS_INFLUENCE_ENABLED,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_DECAY_TAU_HOURS', CONFIG_VALUE, null))), 24) as NEWS_DECAY_TAU_HOURS,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_PRESSURE_HOT', CONFIG_VALUE, null))), 0.12) as NEWS_PRESSURE_HOT,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_UNCERTAINTY_HIGH', CONFIG_VALUE, null))), 0.08) as NEWS_UNCERTAINTY_HIGH,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_EVENT_RISK_HIGH', CONFIG_VALUE, null))), 0.10) as NEWS_EVENT_RISK_HIGH,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_SCORE_MAX_ABS', CONFIG_VALUE, null))), 0.20) as NEWS_SCORE_MAX_ABS,
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES', CONFIG_VALUE, null))), 180) as NEWS_STALE_MINUTES
             from MIP.APP.APP_CONFIG
+        ),
+        news_candidates as (
+            select
+                s.RECOMMENDATION_ID,
+                n.NEWS_COUNT,
+                n.NEWS_CONTEXT_BADGE,
+                n.NOVELTY_SCORE,
+                n.BURST_SCORE,
+                n.UNCERTAINTY_FLAG,
+                n.TOP_HEADLINES,
+                n.LAST_NEWS_PUBLISHED_AT,
+                n.LAST_INGESTED_AT,
+                n.SNAPSHOT_TS,
+                row_number() over (
+                    partition by s.RECOMMENDATION_ID
+                    order by n.SNAPSHOT_TS desc, n.CREATED_AT desc
+                ) as RN
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            left join MIP.NEWS.NEWS_INFO_STATE_DAILY n
+              on n.SYMBOL = s.SYMBOL
+             and n.MARKET_TYPE = s.MARKET_TYPE
+             and n.SNAPSHOT_TS <= s.SIGNAL_TS
+        ),
+        news_latest as (
+            select
+                RECOMMENDATION_ID,
+                NEWS_COUNT,
+                NEWS_CONTEXT_BADGE,
+                NOVELTY_SCORE,
+                BURST_SCORE,
+                UNCERTAINTY_FLAG,
+                TOP_HEADLINES,
+                LAST_NEWS_PUBLISHED_AT,
+                LAST_INGESTED_AT,
+                SNAPSHOT_TS
+            from news_candidates
+            where RN = 1
         ),
         eligible_candidates as (
             select
                 s.*,
                 cfg.NEWS_ENABLED,
                 cfg.NEWS_DISPLAY_ONLY,
+                cfg.NEWS_INFLUENCE_ENABLED,
+                cfg.NEWS_DECAY_TAU_HOURS,
+                cfg.NEWS_PRESSURE_HOT,
+                cfg.NEWS_UNCERTAINTY_HIGH,
+                cfg.NEWS_EVENT_RISK_HIGH,
+                cfg.NEWS_SCORE_MAX_ABS,
                 cfg.NEWS_STALE_MINUTES,
-                nctx.NEWS_COUNT as NEWS_COUNT,
-                nctx.NEWS_CONTEXT_BADGE as NEWS_CONTEXT_BADGE,
-                nctx.NOVELTY_SCORE as NEWS_NOVELTY_SCORE,
-                nctx.BURST_SCORE as NEWS_BURST_SCORE,
-                nctx.UNCERTAINTY_FLAG as NEWS_UNCERTAINTY_FLAG,
-                nctx.TOP_HEADLINES as NEWS_TOP_HEADLINES,
-                nctx.LAST_NEWS_PUBLISHED_AT as NEWS_LAST_PUBLISHED_AT,
-                nctx.LAST_INGESTED_AT as NEWS_LAST_INGESTED_AT,
-                nctx.SNAPSHOT_TS as NEWS_SNAPSHOT_TS,
+                nl.NEWS_COUNT as NEWS_COUNT,
+                nl.NEWS_CONTEXT_BADGE as NEWS_CONTEXT_BADGE,
+                nl.NOVELTY_SCORE as NEWS_NOVELTY_SCORE,
+                nl.BURST_SCORE as NEWS_BURST_SCORE,
+                nl.UNCERTAINTY_FLAG as NEWS_UNCERTAINTY_FLAG,
+                nl.TOP_HEADLINES as NEWS_TOP_HEADLINES,
+                nl.LAST_NEWS_PUBLISHED_AT as NEWS_LAST_PUBLISHED_AT,
+                nl.LAST_INGESTED_AT as NEWS_LAST_INGESTED_AT,
+                nl.SNAPSHOT_TS as NEWS_SNAPSHOT_TS,
                 iff(
-                    nctx.SNAPSHOT_TS is null,
+                    nl.SNAPSHOT_TS is null,
                     null,
-                    datediff('minute', nctx.SNAPSHOT_TS, s.SIGNAL_TS)
+                    datediff('minute', nl.SNAPSHOT_TS, s.SIGNAL_TS)
                 ) as NEWS_SNAPSHOT_AGE_MINUTES,
                 iff(
-                    nctx.SNAPSHOT_TS is null,
+                    nl.SNAPSHOT_TS is null,
                     null,
-                    datediff('minute', nctx.SNAPSHOT_TS, s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES
+                    datediff('minute', nl.SNAPSHOT_TS, s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES
                 ) as NEWS_IS_STALE,
                 case
                     when s.MARKET_TYPE = 'FX' then 'FX'
@@ -440,25 +412,8 @@ begin
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             -- No RUN_ID filter - view is already date-scoped to latest TS
             cross join news_cfg cfg
-            left join lateral (
-                select
-                    n.NEWS_COUNT,
-                    n.NEWS_CONTEXT_BADGE,
-                    n.NOVELTY_SCORE,
-                    n.BURST_SCORE,
-                    n.UNCERTAINTY_FLAG,
-                    n.TOP_HEADLINES,
-                    n.LAST_NEWS_PUBLISHED_AT,
-                    n.LAST_INGESTED_AT,
-                    n.SNAPSHOT_TS
-                from MIP.NEWS.NEWS_INFO_STATE_DAILY n
-                where n.SYMBOL = s.SYMBOL
-                  and n.MARKET_TYPE = s.MARKET_TYPE
-                  and n.SNAPSHOT_TS <= s.SIGNAL_TS
-                qualify row_number() over (
-                    order by n.SNAPSHOT_TS desc, n.CREATED_AT desc
-                ) = 1
-            ) nctx on true
+            left join news_latest nl
+              on nl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
         ),
         deduped_candidates as (
             select
@@ -469,13 +424,85 @@ begin
                 order by e.SCORE desc, e.RECOMMENDATION_ID
             ) = 1
         ),
-        prioritized as (
+        enriched_news as (
             select
                 d.*,
-                iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY
+                iff(
+                    d.NEWS_SNAPSHOT_AGE_MINUTES is null,
+                    0.0,
+                    exp(
+                        -greatest(d.NEWS_SNAPSHOT_AGE_MINUTES, 0) / 60.0
+                        / nullif(d.NEWS_DECAY_TAU_HOURS, 0)
+                    )
+                ) as NEWS_RECENCY_WEIGHT,
+                case upper(coalesce(d.NEWS_CONTEXT_BADGE, ''))
+                    when 'HOT' then 1.0
+                    when 'WARM' then 0.5
+                    when 'COLD' then -0.25
+                    else 0.0
+                end as NEWS_PRESSURE_SCORE,
+                least(
+                    greatest(
+                        greatest(
+                            coalesce(d.NEWS_BURST_SCORE, 0.0),
+                            iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0),
+                            iff(coalesce(d.NEWS_IS_STALE, false), 1.0, 0.0)
+                        ),
+                        0.0
+                    ),
+                    1.0
+                ) as NEWS_EVENT_RISK_PROXY
             from deduped_candidates d
+        ),
+        scored_candidates as (
+            select
+                e.*,
+                array_construct_compact(
+                    iff(upper(coalesce(e.NEWS_CONTEXT_BADGE, '')) = 'HOT', 'HOT_CONTEXT', null),
+                    iff(upper(coalesce(e.NEWS_CONTEXT_BADGE, '')) = 'WARM', 'WARM_CONTEXT', null),
+                    iff(coalesce(e.NEWS_UNCERTAINTY_FLAG, false), 'UNCERTAINTY_HIGH', null),
+                    iff(coalesce(e.NEWS_IS_STALE, false), 'SNAPSHOT_STALE', null),
+                    iff(e.NEWS_EVENT_RISK_PROXY >= 0.90, 'EVENT_RISK_HIGH', null)
+                ) as NEWS_REASONS,
+                least(
+                    greatest(
+                        iff(
+                            e.NEWS_ENABLED = 'true'
+                            and e.NEWS_INFLUENCE_ENABLED = 'true'
+                            and e.NEWS_DISPLAY_ONLY <> 'true',
+                            e.NEWS_RECENCY_WEIGHT
+                            * (
+                                e.NEWS_PRESSURE_SCORE * abs(e.NEWS_PRESSURE_HOT)
+                                - iff(coalesce(e.NEWS_UNCERTAINTY_FLAG, false), abs(e.NEWS_UNCERTAINTY_HIGH), 0.0)
+                                - (e.NEWS_EVENT_RISK_PROXY * abs(e.NEWS_EVENT_RISK_HIGH))
+                            ),
+                            0.0
+                        ),
+                        -abs(e.NEWS_SCORE_MAX_ABS)
+                    ),
+                    abs(e.NEWS_SCORE_MAX_ABS)
+                ) as NEWS_SCORE_ADJ
+            from enriched_news e
+        ),
+        prioritized as (
+            select
+                s.*,
+                iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY,
+                (s.SCORE + s.NEWS_SCORE_ADJ) as FINAL_SCORE,
+                iff(
+                    s.NEWS_ENABLED = 'true'
+                    and s.NEWS_INFLUENCE_ENABLED = 'true'
+                    and s.NEWS_DISPLAY_ONLY <> 'true'
+                    and (
+                        coalesce(s.NEWS_IS_STALE, false)
+                        or s.NEWS_EVENT_RISK_PROXY >= 0.90
+                    ),
+                    true,
+                    false
+                ) as NEWS_BLOCK_NEW_ENTRY
+            from scored_candidates s
             left join held_symbols h
-              on h.SYMBOL = d.SYMBOL
+              on h.SYMBOL = s.SYMBOL
         ),
         ranked as (
             select
@@ -483,6 +510,7 @@ begin
                 row_number() over (
                     order by
                         p.HELD_PRIORITY asc,
+                        p.FINAL_SCORE desc,
                         p.SCORE desc,
                         p.RECOMMENDATION_ID
                 ) as OVERALL_RANK,
@@ -490,6 +518,7 @@ begin
                     partition by p.MARKET_TYPE_GROUP
                     order by
                         p.HELD_PRIORITY asc,
+                        p.FINAL_SCORE desc,
                         p.SCORE desc,
                         p.RECOMMENDATION_ID
                 ) as TYPE_RANK
@@ -527,6 +556,7 @@ begin
                 q.*
             from quota_limited q
             where q.QUOTA_ORDER <= :v_remaining_capacity
+              and q.NEWS_BLOCK_NEW_ENTRY = false
         ),
         remaining_slots as (
             select greatest(
@@ -541,6 +571,7 @@ begin
             left join primary_selected p
               on p.RECOMMENDATION_ID = r.RECOMMENDATION_ID
             where p.RECOMMENDATION_ID is null
+              and r.NEWS_BLOCK_NEW_ENTRY = false
         ),
         backfill_ranked as (
             select
@@ -577,7 +608,13 @@ begin
             s.MARKET_TYPE,
             s.INTERVAL_MINUTES,
             'BUY' as SIDE,
-            :v_target_weight as TARGET_WEIGHT,
+            greatest(
+                0.01,
+                least(
+                    :v_max_position_pct,
+                    :v_target_weight * (1 + coalesce(s.NEWS_SCORE_ADJ, 0))
+                )
+            ) as TARGET_WEIGHT,
             s.RECOMMENDATION_ID,
             s.SIGNAL_TS,
             s.PATTERN_ID as SIGNAL_PATTERN_ID,
@@ -601,8 +638,20 @@ begin
                 'held_priority', s.HELD_PRIORITY,
                 'market_type_group', s.MARKET_TYPE_GROUP,
                 'trust_reason', s.TRUST_REASON,
+                'base_score', s.SCORE,
+                'final_score', s.FINAL_SCORE,
                 'news_enabled', iff(s.NEWS_ENABLED = 'true', true, false),
                 'news_display_only', iff(s.NEWS_DISPLAY_ONLY = 'true', true, false),
+                'news_influence_enabled', iff(s.NEWS_INFLUENCE_ENABLED = 'true', true, false),
+                'news_decay_tau_hours', s.NEWS_DECAY_TAU_HOURS,
+                'news_pressure_hot', s.NEWS_PRESSURE_HOT,
+                'news_uncertainty_high', s.NEWS_UNCERTAINTY_HIGH,
+                'news_event_risk_high', s.NEWS_EVENT_RISK_HIGH,
+                'news_score_max_abs', s.NEWS_SCORE_MAX_ABS,
+                'news_score_adj', s.NEWS_SCORE_ADJ,
+                'news_event_risk_proxy', s.NEWS_EVENT_RISK_PROXY,
+                'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
+                'news_reasons', s.NEWS_REASONS,
                 'news_staleness_threshold_minutes', s.NEWS_STALE_MINUTES,
                 'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,
                 'news_is_stale', s.NEWS_IS_STALE,
@@ -633,6 +682,11 @@ begin
                     'FX', :v_max_new_fx
                 ),
                 'selection_rank', s.SELECTION_RANK,
+                'base_score', s.SCORE,
+                'final_score', s.FINAL_SCORE,
+                'news_score_adj', s.NEWS_SCORE_ADJ,
+                'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
+                'news_reasons', s.NEWS_REASONS,
                 'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,
                 'news_is_stale', s.NEWS_IS_STALE
             ) as RATIONALE

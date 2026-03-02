@@ -31,6 +31,14 @@ function fmtTs(ts) {
   }
 }
 
+function fmtSigned(v, digits = 3) {
+  if (v == null) return '—'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  const s = n > 0 ? '+' : ''
+  return `${s}${n.toFixed(digits)}`
+}
+
 export default function NewsIntelligence() {
   const [data, setData] = useState(null)
   const [portfolios, setPortfolios] = useState([])
@@ -62,6 +70,8 @@ export default function NewsIntelligence() {
   const topHeadlines = useMemo(() => data?.market_context?.top_headlines || [], [data])
   const overlay = data?.portfolio_overlay || {}
   const mc = data?.market_context || {}
+  const di = data?.decision_impact || {}
+  const impacts = di?.top_impacts || []
 
   return (
     <div className="page news-intel-page">
@@ -171,6 +181,56 @@ export default function NewsIntelligence() {
                 </tbody>
               </table>
             </div>
+          </section>
+
+          <section className="news-intel-section">
+            <h2>Decision Impact</h2>
+            <p className="news-intel-note">
+              Evidence from proposal payloads. {di.note || ''}
+            </p>
+            <div className="news-intel-kpis news-intel-kpis-impact">
+              <article><h3>Proposals Scoped</h3><p>{di.proposals_scoped ?? 0}</p></article>
+              <article><h3>With News Context</h3><p>{di.proposals_with_news_context ?? 0}</p></article>
+              <article><h3>With News Adj</h3><p>{di.proposals_with_news_score_adj ?? 0}</p></article>
+              <article><h3>Avg News Adj</h3><p>{fmtSigned(di.avg_news_score_adj, 3)}</p></article>
+              <article><h3>Blocked New Entry</h3><p>{di.blocked_new_entry_count ?? 0}</p></article>
+            </div>
+            {impacts.length === 0 ? (
+              <EmptyState message="No proposal-level decision impact rows yet." />
+            ) : (
+              <div className="news-intel-table-wrap">
+                <table className="news-intel-table">
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Status</th>
+                      <th>News Adj</th>
+                      <th>Blocked</th>
+                      <th>Stale</th>
+                      <th>Age</th>
+                      <th>Badge</th>
+                      <th>Reasons</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {impacts.map((r) => (
+                      <tr key={r.proposal_id}>
+                        <td>{r.symbol}</td>
+                        <td>{r.status}</td>
+                        <td className={(r.news_score_adj || 0) < 0 ? 'news-intel-neg' : (r.news_score_adj || 0) > 0 ? 'news-intel-pos' : ''}>
+                          {fmtSigned(r.news_score_adj, 3)}
+                        </td>
+                        <td>{r.news_block_new_entry ? 'Yes' : 'No'}</td>
+                        <td>{r.news_is_stale ? 'Yes' : 'No'}</td>
+                        <td>{fmtMins(r.news_snapshot_age_minutes)}</td>
+                        <td>{r.news_badge || '—'}</td>
+                        <td>{Array.isArray(r.reasons) && r.reasons.length ? r.reasons.join(' | ') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -59,6 +60,34 @@ def _normalize_headlines(raw: Any) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _to_obj(v: Any) -> dict[str, Any]:
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            p = json.loads(v)
+            return p if isinstance(p, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _to_list(v: Any) -> list[Any]:
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            p = json.loads(v)
+            return p if isinstance(p, list) else []
+        except Exception:
+            return []
+    return []
 
 
 @router.get("/intelligence")
@@ -132,6 +161,27 @@ def get_news_intelligence(
             (portfolio_id, portfolio_id),
         )
         open_rows = serialize_rows(fetch_all(cur))
+
+        cur.execute(
+            """
+            select
+                p.PROPOSAL_ID,
+                p.PORTFOLIO_ID,
+                p.SYMBOL,
+                p.MARKET_TYPE,
+                p.STATUS,
+                p.PROPOSED_AT,
+                p.SOURCE_SIGNALS,
+                p.RATIONALE
+            from MIP.AGENT_OUT.ORDER_PROPOSALS p
+            where p.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')
+              and (%s is null or p.PORTFOLIO_ID = %s)
+            order by p.PROPOSED_AT desc, p.PROPOSAL_ID desc
+            limit 300
+            """,
+            (portfolio_id, portfolio_id),
+        )
+        proposal_rows = serialize_rows(fetch_all(cur))
 
         by_symbol = {(r.get("SYMBOL"), r.get("MARKET_TYPE")): r for r in news_rows}
         total_market_value = 0.0
@@ -226,6 +276,62 @@ def get_news_intelligence(
             f"Exposure-at-risk: {round(risk_pct, 1)}% of scoped open market value is in stale/uncertain/HOT context.",
         ]
 
+        decision_rows: list[dict[str, Any]] = []
+        with_context = 0
+        with_adj = 0
+        blocked = 0
+        adj_vals: list[float] = []
+        for row in proposal_rows:
+            src = _to_obj(row.get("SOURCE_SIGNALS"))
+            rat = _to_obj(row.get("RATIONALE"))
+            news_ctx = _to_obj(src.get("news_context"))
+            has_context = bool(news_ctx)
+            if has_context:
+                with_context += 1
+
+            news_adj = _to_float(rat.get("news_score_adj"))
+            if news_adj is None:
+                news_adj = _to_float(src.get("news_score_adj"))
+            if news_adj is not None:
+                with_adj += 1
+                adj_vals.append(news_adj)
+
+            blocked_entry = _to_bool(rat.get("news_block_new_entry"))
+            if blocked_entry is None:
+                blocked_entry = _to_bool(src.get("news_block_new_entry"))
+            if blocked_entry:
+                blocked += 1
+
+            reasons = _to_list(rat.get("news_reasons"))
+            if not reasons:
+                reasons = _to_list(src.get("news_reasons"))
+
+            decision_rows.append(
+                {
+                    "proposal_id": row.get("PROPOSAL_ID"),
+                    "portfolio_id": row.get("PORTFOLIO_ID"),
+                    "symbol": row.get("SYMBOL"),
+                    "market_type": row.get("MARKET_TYPE"),
+                    "status": row.get("STATUS"),
+                    "proposed_at": _safe_iso(row.get("PROPOSED_AT")),
+                    "news_score_adj": news_adj,
+                    "news_block_new_entry": bool(blocked_entry) if blocked_entry is not None else False,
+                    "news_snapshot_age_minutes": _to_float(src.get("news_snapshot_age_minutes")),
+                    "news_is_stale": _to_bool(src.get("news_is_stale")),
+                    "news_badge": news_ctx.get("news_context_badge"),
+                    "reasons": reasons[:3],
+                }
+            )
+
+        decision_rows.sort(
+            key=lambda x: (
+                -(abs(x.get("news_score_adj") or 0.0)),
+                x.get("symbol") or "",
+            )
+        )
+
+        avg_adj = sum(adj_vals) / len(adj_vals) if adj_vals else None
+
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "portfolio_scope": portfolio_id,
@@ -252,11 +358,21 @@ def get_news_intelligence(
             },
             "summary_bullets": summary_bullets,
             "symbol_cards": symbol_cards,
+            "decision_impact": {
+                "proposals_scoped": len(proposal_rows),
+                "proposals_with_news_context": with_context,
+                "proposals_with_news_score_adj": with_adj,
+                "avg_news_score_adj": avg_adj,
+                "blocked_new_entry_count": blocked,
+                "top_impacts": decision_rows[:12],
+                "note": "news_score_adj appears only after proposal scoring influence is enabled.",
+            },
             "lineage": {
                 "tables": [
                     "MIP.MART.V_NEWS_INFO_STATE_LATEST_DAILY",
                     "MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL",
                     "MIP.MART.MARKET_BARS",
+                    "MIP.AGENT_OUT.ORDER_PROPOSALS",
                 ],
                 "prompt_version": None,
                 "model_name": None,

@@ -134,3 +134,19 @@
   color: #334155;
   font-weight: 600;
 }
+
+.news-intel-note {
+  margin: 0 0 0.6rem;
+  font-size: 0.84rem;
+  color: #64748b;
+}
+
+.news-intel-pos {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.news-intel-neg {
+  color: #b91c1c;
+  font-weight: 600;
+}

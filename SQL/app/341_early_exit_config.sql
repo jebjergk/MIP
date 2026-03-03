@@ -9,10 +9,10 @@ merge into MIP.APP.APP_CONFIG t
 using (
     select column1 as CONFIG_KEY, column2 as CONFIG_VALUE, column3 as DESCRIPTION
     from values
-        ('EARLY_EXIT_ENABLED',          'false',
+        ('EARLY_EXIT_ENABLED',          'true',
          'Master kill switch for early-exit evaluation of daily positions'),
 
-        ('EARLY_EXIT_MODE',             'SHADOW',
+        ('EARLY_EXIT_MODE',             'PAPER',
          'Execution mode: SHADOW (log only), PAPER (apply to sim), ACTIVE (live)'),
 
         ('EARLY_EXIT_PAYOFF_MULTIPLIER','1.0',
@@ -30,8 +30,8 @@ using (
         ('EARLY_EXIT_QUICK_GIVEBACK_PCT','0.25',
          'Giveback threshold for quick-payoff trades (stricter than normal)'),
 
-        ('EARLY_EXIT_INTERVAL_MINUTES', '15',
-         'Bar interval used for early-exit evaluation (must match ingest)'),
+        ('EARLY_EXIT_INTERVAL_MINUTES', '60',
+         'Bar interval used for early-exit evaluation (must match ingest cadence)'),
 
         ('EARLY_EXIT_PORTFOLIOS',       'ALL',
          'Comma-separated portfolio IDs to evaluate, or ALL for all active portfolios'),
@@ -40,5 +40,9 @@ using (
          'Comma-separated market types to evaluate for early exit')
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
+when matched then update set
+    t.CONFIG_VALUE = s.CONFIG_VALUE,
+    t.DESCRIPTION = s.DESCRIPTION,
+    t.UPDATED_AT = current_timestamp()
 when not matched then insert (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION)
     values (s.CONFIG_KEY, s.CONFIG_VALUE, s.DESCRIPTION);

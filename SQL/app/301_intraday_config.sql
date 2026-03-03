@@ -11,11 +11,11 @@ use database MIP;
 merge into MIP.APP.APP_CONFIG t
 using (
     select 'INTRADAY_ENABLED' as CONFIG_KEY,
-           'true' as CONFIG_VALUE,
-           'Master kill switch for intraday subsystem' as DESCRIPTION
+           'false' as CONFIG_VALUE,
+           'Master kill switch for intraday subsystem (set false to park intraday trading/training)' as DESCRIPTION
     union all
-    select 'INTRADAY_INTERVAL_MINUTES', '15',
-           'Bar interval for intraday pipeline (15 = 15-minute bars)'
+    select 'INTRADAY_INTERVAL_MINUTES', '60',
+           'Bar interval for intraday pipeline when enabled (60 = hourly bars)'
     union all
     select 'INTRADAY_USE_DAILY_CONTEXT', 'false',
            'Whether intraday signal generation reads daily directional bias'
@@ -24,6 +24,10 @@ using (
            'Max symbols to ingest per intraday pipeline run (cost control)'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
+when matched then update set
+    t.CONFIG_VALUE = s.CONFIG_VALUE,
+    t.DESCRIPTION = s.DESCRIPTION,
+    t.UPDATED_AT = current_timestamp()
 when not matched then insert (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION)
     values (s.CONFIG_KEY, s.CONFIG_VALUE, s.DESCRIPTION);
 

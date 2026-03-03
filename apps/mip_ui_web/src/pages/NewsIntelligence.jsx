@@ -77,6 +77,18 @@ export default function NewsIntelligence() {
   const mc = data?.market_context || {}
   const di = data?.decision_impact || {}
   const impacts = di?.top_impacts || []
+  const impactedPositions = overlay?.top_impacted_positions || []
+  const showNoRelevantBanner =
+    Number(overlay?.positions_scoped || 0) > 0 && impactedPositions.length === 0
+  const latestIngestAt = useMemo(() => {
+    const candidates = cards
+      .map((c) => c?.last_ingested_at)
+      .filter(Boolean)
+      .map((ts) => new Date(ts))
+      .filter((d) => Number.isFinite(d.getTime()))
+    if (!candidates.length) return null
+    return new Date(Math.max(...candidates.map((d) => d.getTime()))).toISOString()
+  }, [cards])
 
   return (
     <div className="page news-intel-page">
@@ -124,6 +136,13 @@ export default function NewsIntelligence() {
             <article><h3>Avg Snapshot Age</h3><p>{fmtMins(mc.avg_snapshot_age_minutes)}</p></article>
             <article><h3>Exposure At Risk</h3><p>{fmtNum(overlay.risk_market_value_pct, 1)}%</p></article>
           </div>
+
+          {showNoRelevantBanner && (
+            <section className="news-intel-status-banner" role="status">
+              <strong>No relevant news for currently scoped open positions.</strong>
+              <span>Latest successful ingest: {fmtTs(latestIngestAt)}</span>
+            </section>
+          )}
 
           <section className="news-intel-section">
             <h2>Reader Summary</h2>

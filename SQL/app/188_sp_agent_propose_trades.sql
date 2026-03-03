@@ -531,6 +531,22 @@ begin
                 least(
                     greatest(
                         iff(
+                            e.NEWS_ENABLED = 'true',
+                            e.NEWS_RECENCY_WEIGHT
+                            * (
+                                e.NEWS_PRESSURE_SCORE * abs(e.NEWS_PRESSURE_HOT)
+                                - (coalesce(e.NEWS_UNCERTAINTY_PROXY, 0.0) * abs(e.NEWS_UNCERTAINTY_HIGH))
+                                - (e.NEWS_EVENT_RISK_PROXY * abs(e.NEWS_EVENT_RISK_HIGH))
+                            ),
+                            0.0
+                        ),
+                        -abs(e.NEWS_SCORE_MAX_ABS)
+                    ),
+                    abs(e.NEWS_SCORE_MAX_ABS)
+                ) as NEWS_SCORE_ADJ_SHADOW,
+                least(
+                    greatest(
+                        iff(
                             e.NEWS_ENABLED = 'true'
                             and e.NEWS_INFLUENCE_ENABLED = 'true'
                             and e.NEWS_DISPLAY_ONLY <> 'true',
@@ -545,14 +561,14 @@ begin
                         -abs(e.NEWS_SCORE_MAX_ABS)
                     ),
                     abs(e.NEWS_SCORE_MAX_ABS)
-                ) as NEWS_SCORE_ADJ
+                ) as NEWS_SCORE_ADJ_APPLIED
             from enriched_news e
         ),
         prioritized as (
             select
                 s.*,
                 iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY,
-                (s.SCORE + s.NEWS_SCORE_ADJ) as FINAL_SCORE,
+                (s.SCORE + s.NEWS_SCORE_ADJ_APPLIED) as FINAL_SCORE,
                 iff(
                     s.NEWS_ENABLED = 'true'
                     and s.NEWS_INFLUENCE_ENABLED = 'true'
@@ -676,7 +692,7 @@ begin
                 0.01,
                 least(
                     :v_max_position_pct,
-                    :v_target_weight * (1 + coalesce(s.NEWS_SCORE_ADJ, 0))
+                    :v_target_weight * (1 + coalesce(s.NEWS_SCORE_ADJ_APPLIED, 0))
                 )
             ) as TARGET_WEIGHT,
             s.RECOMMENDATION_ID,
@@ -712,7 +728,16 @@ begin
                 'news_uncertainty_high', s.NEWS_UNCERTAINTY_HIGH,
                 'news_event_risk_high', s.NEWS_EVENT_RISK_HIGH,
                 'news_score_max_abs', s.NEWS_SCORE_MAX_ABS,
-                'news_score_adj', s.NEWS_SCORE_ADJ,
+                'news_score_adj_shadow', s.NEWS_SCORE_ADJ_SHADOW,
+                'news_score_adj_applied', s.NEWS_SCORE_ADJ_APPLIED,
+                'news_score_adj', s.NEWS_SCORE_ADJ_APPLIED,
+                'news_influence_applied', iff(
+                    s.NEWS_ENABLED = 'true'
+                    and s.NEWS_INFLUENCE_ENABLED = 'true'
+                    and s.NEWS_DISPLAY_ONLY <> 'true',
+                    true,
+                    false
+                ),
                 'news_event_risk_proxy', s.NEWS_EVENT_RISK_PROXY,
                 'news_uncertainty_proxy', s.NEWS_UNCERTAINTY_PROXY,
                 'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
@@ -759,7 +784,16 @@ begin
                 'selection_rank', s.SELECTION_RANK,
                 'base_score', s.SCORE,
                 'final_score', s.FINAL_SCORE,
-                'news_score_adj', s.NEWS_SCORE_ADJ,
+                'news_score_adj_shadow', s.NEWS_SCORE_ADJ_SHADOW,
+                'news_score_adj_applied', s.NEWS_SCORE_ADJ_APPLIED,
+                'news_score_adj', s.NEWS_SCORE_ADJ_APPLIED,
+                'news_influence_applied', iff(
+                    s.NEWS_ENABLED = 'true'
+                    and s.NEWS_INFLUENCE_ENABLED = 'true'
+                    and s.NEWS_DISPLAY_ONLY <> 'true',
+                    true,
+                    false
+                ),
                 'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
                 'news_reasons', s.NEWS_REASONS,
                 'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,

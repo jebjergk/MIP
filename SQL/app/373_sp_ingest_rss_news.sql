@@ -24,6 +24,7 @@ $$
 import hashlib
 import json
 import re
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
@@ -162,12 +163,23 @@ def _mock_feed_entries(source_id, source_name, feed_url):
         ]
     return base
 
-def _fetch_rss_entries(feed_url):
-    r = requests.get(feed_url, timeout=15)
-    r.raise_for_status()
-    parsed = feedparser.parse(r.content)
-    entries = parsed.entries or []
-    return entries
+def _fetch_rss_entries(feed_url, max_attempts=4):
+    headers = {
+        "User-Agent": "MIP-News-Ingest/1.0 (+https://mip.local)"
+    }
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            r = requests.get(feed_url, timeout=(10, 30), headers=headers)
+            r.raise_for_status()
+            parsed = feedparser.parse(r.content)
+            entries = parsed.entries or []
+            return entries
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_attempts:
+                time.sleep(min(8, 2 ** (attempt - 1)))
+    raise RuntimeError(f"FETCH_FAILED after {max_attempts} attempts: {last_error}")
 
 def _normalize_entry(source_id, source_name, entry, snapshot_ts):
     title = _clean_text(entry.get("title"))

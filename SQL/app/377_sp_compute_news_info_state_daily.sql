@@ -64,7 +64,8 @@ begin
       on d.DEDUP_CLUSTER_ID = r.DEDUP_CLUSTER_ID
     where r.PUBLISHED_AT::date between dateadd(day, -14, :v_as_of_date) and :v_as_of_date
       and r.URL is not null
-      and regexp_like(lower(r.URL), '^https?://')
+      -- Snowflake REGEXP_LIKE is full-string match; require scheme plus remaining path.
+      and regexp_like(lower(r.URL), '^https?://.+')
       and not regexp_like(lower(r.URL), 'mock-item-|/rss/|\\.xml$');
 
     create or replace temporary table TMP_NEWS_DAILY_COUNTS as

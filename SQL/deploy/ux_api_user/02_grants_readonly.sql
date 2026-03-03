@@ -86,6 +86,8 @@ grant usage on procedure MIP.APP.SP_UPSERT_PORTFOLIO_PROFILE(number, varchar, nu
     to role MIP_UI_API_ROLE;
 grant usage on procedure MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(number, varchar, timestamp_ntz)
     to role MIP_UI_API_ROLE;
+-- Ensure newly created/replaced app procedures stay callable by the UX API role.
+grant usage on future procedures in schema MIP.APP to role MIP_UI_API_ROLE;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- FUTURE GRANTS: Auto-grant SELECT on all future tables/views in all MIP schemas

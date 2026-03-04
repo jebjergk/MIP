@@ -31,7 +31,32 @@
 }
 .dc-header h2 { margin: 0; font-size: 1.5rem; }
 .dc-header-left { display: flex; align-items: center; gap: 0.75rem; }
-.dc-header-right { display: flex; align-items: center; }
+.dc-header-right { display: flex; align-items: center; gap: 0.9rem; }
+
+.dc-refresh-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.dc-refresh-age {
+  font-size: 0.78rem;
+  color: var(--dc-text-muted);
+  white-space: nowrap;
+}
+.dc-refresh-btn {
+  border: 1px solid var(--dc-border);
+  background: #fff;
+  color: var(--dc-text);
+  border-radius: 7px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dc-refresh-btn:hover { background: #f8fafc; }
+.dc-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
 /* ── Connection dot ──────────────────────────────────────────────── */
 

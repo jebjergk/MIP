@@ -699,7 +699,7 @@ async def stream_events(
 ):
     """
     Server-Sent Events stream.
-    Polls decision data every 15 minutes to reduce warehouse churn.
+    Polls decision data hourly to reduce warehouse churn.
     """
 
     async def event_generator():
@@ -760,7 +760,7 @@ async def stream_events(
                             "last_id": last_event_id,
                         })
 
-                    # Send position summary every cycle (same 15-minute cadence)
+                    # Send position summary every cycle (same hourly cadence)
                     cur.execute("""
                     select
                         (select count(*) from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
@@ -781,7 +781,7 @@ async def stream_events(
                 logger.warning("SSE poll error: %s", e)
                 yield _sse_msg("error", {"message": str(e)})
 
-            await asyncio.sleep(900)
+            await asyncio.sleep(3600)
 
     return StreamingResponse(
         event_generator(),

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { API_BASE } from '../App'
 import useDecisionStream from '../hooks/useDecisionStream'
-import useVisibleInterval from '../hooks/useVisibleInterval'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
@@ -482,6 +481,9 @@ export default function DecisionConsole() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [pinnedSymbols, setPinnedSymbols] = useState(new Set())
   const [positionChanges, setPositionChanges] = useState({})
+  const [latestBarTs, setLatestBarTs] = useState(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [clockTick, setClockTick] = useState(Date.now())
   const positionsLoadInFlight = useRef(false)
   const feedRef = useRef(null)
 
@@ -512,35 +514,52 @@ export default function DecisionConsole() {
         }
       })
 
+      const latestTsMs = nextPositions.reduce((acc, p) => {
+        const ts = p?.LATEST_BAR_TS
+        if (!ts) return acc
+        const parsed = new Date(ts).getTime()
+        if (!Number.isFinite(parsed)) return acc
+        return Math.max(acc, parsed)
+      }, 0)
+
       setPositionChanges(nextChanges)
       setPositions(nextPositions)
+      setLatestBarTs(latestTsMs > 0 ? new Date(latestTsMs).toISOString() : null)
       setError(null)
     } catch (e) {
       setError(e.message)
     } finally {
       positionsLoadInFlight.current = false
       setLoading(false)
+      setIsRefreshing(false)
     }
   }, [])
 
-  useVisibleInterval(loadPositions, mode === 'positions' ? 900000 : null)
-
   useEffect(() => { loadPositions() }, [loadPositions])
 
-  // Load history events
   useEffect(() => {
-    if (mode !== 'history') return
+    const id = setInterval(() => setClockTick(Date.now()), 60000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Load history events
+  const loadHistory = useCallback(() => {
     setHistoryLoading(true)
     const params = new URLSearchParams({ limit: '200' })
     if (filters.portfolioId) params.set('portfolio_id', filters.portfolioId)
     if (filters.symbol) params.set('symbol', filters.symbol)
     if (filters.date) params.set('date', filters.date)
 
-    fetch(`${API_BASE}/decisions/events?${params}`)
+    return fetch(`${API_BASE}/decisions/events?${params}`)
       .then(r => r.json())
       .then(data => { setHistoryEvents(data.events || []); setHistoryLoading(false) })
       .catch(() => setHistoryLoading(false))
-  }, [mode, filters])
+  }, [filters])
+
+  useEffect(() => {
+    if (mode !== 'history') return
+    loadHistory()
+  }, [mode, loadHistory])
 
   // Auto-scroll live feed
   useEffect(() => {
@@ -596,6 +615,27 @@ export default function DecisionConsole() {
     return entries
   }, [sortedPositions, pinnedSymbols])
 
+  const minutesSinceLatestBar = useMemo(() => {
+    if (!latestBarTs) return null
+    const latestMs = new Date(latestBarTs).getTime()
+    if (!Number.isFinite(latestMs)) return null
+    const diffMinutes = Math.floor((clockTick - latestMs) / 60000)
+    return Math.max(diffMinutes, 0)
+  }, [latestBarTs, clockTick])
+
+  const handleManualRefresh = useCallback(async () => {
+    setIsRefreshing(true)
+    try {
+      if (mode === 'history') {
+        await loadHistory()
+      } else {
+        await loadPositions()
+      }
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [mode, loadHistory, loadPositions])
+
   const handleSelectEvent = (evt) => {
     const matchedPos = positions.find(p => p.SYMBOL === evt.symbol && p.PORTFOLIO_ID === evt.portfolio_id)
     setSelectedPosition({
@@ -636,6 +676,19 @@ export default function DecisionConsole() {
           <ConnectionDot connected={connected || mode !== 'live'} />
         </div>
         <div className="dc-header-right">
+          <div className="dc-refresh-meta">
+            <span className="dc-refresh-age">
+              {minutesSinceLatestBar == null ? 'Bar age: —' : `Bar age: ${minutesSinceLatestBar}m since last hourly bar`}
+            </span>
+            <button
+              className="dc-refresh-btn"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing || positionsLoadInFlight.current}
+              title="Manually refresh decision data"
+            >
+              {isRefreshing ? 'Refreshing...' : '↻ Refresh'}
+            </button>
+          </div>
           <KpiStrip heartbeat={heartbeat} positions={positions} />
         </div>
       </div>
@@ -695,7 +748,7 @@ export default function DecisionConsole() {
                       return (
                         <span className="dc-symbol-group-pulse">
                           {changeBadge && (
-                            <span className={`dc-pos-change ${changeBadge.cls}`} title="Change vs previous 15-minute bar">
+                            <span className={`dc-pos-change ${changeBadge.cls}`} title="Change vs previous loaded bar">
                               {changeBadge.text}
                             </span>
                           )}

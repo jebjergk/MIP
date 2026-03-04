@@ -494,6 +494,7 @@ begin
                 v_sell_notional number(18,8);
                 v_sell_fee number(18,8);
                 v_sell_pnl number(18,8);
+                v_sell_cash_after number(18,8);
                 v_position_symbol string;
                 v_position_market_type string;
                 v_position_entry_ts timestamp_ntz;
@@ -527,7 +528,7 @@ begin
                     v_sell_notional := v_sell_exec_price * v_position_qty;
                     v_sell_fee := greatest(coalesce(v_min_fee, 0), abs(v_sell_notional) * v_fee_bps / 10000);
                     v_sell_pnl := v_sell_notional - v_sell_fee - v_position_cost_basis;
-                    v_cash := v_cash + v_sell_notional - v_sell_fee;
+                    v_sell_cash_after := v_cash + v_sell_notional - v_sell_fee;
                     v_trade_candidates := v_trade_candidates + 1;
                     v_trade_day := date_trunc('day', v_bar_ts);
 
@@ -556,7 +557,7 @@ begin
                             :v_position_qty as QUANTITY,
                             :v_sell_notional as NOTIONAL,
                             :v_sell_pnl as REALIZED_PNL,
-                            :v_cash as CASH_AFTER,
+                            :v_sell_cash_after as CASH_AFTER,
                             :v_position_entry_score as SCORE,
                             :v_trade_day as TRADE_DAY
                     ) as source
@@ -603,6 +604,7 @@ begin
 
                     v_trade_rows_affected := SQLROWCOUNT;
                     if (v_trade_rows_affected > 0) then
+                        v_cash := v_sell_cash_after;
                         v_trade_inserted := v_trade_inserted + v_trade_rows_affected;
                         v_trade_count := v_trade_count + v_trade_rows_affected;
                     else
@@ -686,6 +688,7 @@ begin
                     v_buy_notional number(18,8);
                     v_buy_fee number(18,8);
                     v_total_cost number(18,8);
+                    v_buy_cash_after number(18,8);
                     v_signal_symbol string;
                     v_signal_market_type string;
                     v_signal_entry_ts timestamp_ntz;
@@ -739,7 +742,7 @@ begin
                                     :v_signal_hold_until_index
                                 );
 
-                                v_cash := v_cash - v_total_cost;
+                                v_buy_cash_after := v_cash - v_total_cost;
                                 v_trade_candidates := v_trade_candidates + 1;
                                 v_trade_day := date_trunc('day', v_signal_entry_ts);
 
@@ -759,7 +762,7 @@ begin
                                         :v_buy_qty as QUANTITY,
                                         :v_buy_notional as NOTIONAL,
                                         null as REALIZED_PNL,
-                                        :v_cash as CASH_AFTER,
+                                        :v_buy_cash_after as CASH_AFTER,
                                         :v_signal_score as SCORE,
                                         :v_trade_day as TRADE_DAY
                                 ) as source
@@ -805,6 +808,7 @@ begin
 
                                 v_trade_rows_affected := SQLROWCOUNT;
                                 if (v_trade_rows_affected > 0) then
+                                    v_cash := v_buy_cash_after;
                                     v_trade_inserted := v_trade_inserted + v_trade_rows_affected;
                                     v_trade_count := v_trade_count + v_trade_rows_affected;
                                 else

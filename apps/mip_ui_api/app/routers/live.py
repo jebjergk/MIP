@@ -8,11 +8,34 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, HTTPException
+from pydantic import BaseModel, Field
 
 from app.config import get_snowflake_config
 from app.db import get_connection, fetch_all, serialize_row, serialize_rows, SnowflakeAuthError
 
 router = APIRouter(prefix="/live", tags=["live"])
+
+
+class CreateLiveActionRequest(BaseModel):
+    portfolio_id: int
+    symbol: str
+    side: str = Field(pattern="^(BUY|SELL)$")
+    proposed_qty: float
+    proposed_price: float | None = None
+    asset_class: str | None = None
+    proposal_id: int | None = None
+    validity_window_hours: int = 4
+
+
+class PmAcceptRequest(BaseModel):
+    actor: str
+
+
+class ComplianceDecisionRequest(BaseModel):
+    actor: str
+    decision: str = Field(pattern="^(APPROVE|DENY)$")
+    notes: str | None = None
+    reference_id: str | None = None
 
 
 def _summary_hint_from_status_and_details(status: str | None, details: dict | None) -> str | None:
@@ -413,6 +436,228 @@ def get_latest_live_snapshot(
             "positions": serialize_rows(positions),
             "open_orders": serialize_rows(open_orders),
             "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/trades/actions")
+def list_live_trade_actions(
+    portfolio_id: int | None = Query(None),
+    pending_only: bool = Query(True),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        wheres = ["1=1"]
+        params = []
+        if portfolio_id is not None:
+            wheres.append("PORTFOLIO_ID = %s")
+            params.append(portfolio_id)
+        if pending_only:
+            wheres.append(
+                "STATUS in ('PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL')"
+            )
+        params.append(limit)
+        sql = f"""
+        select
+          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
+          STATUS, VALIDITY_WINDOW_END,
+          PM_APPROVED_BY, PM_APPROVED_TS,
+          COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
+          REVALIDATION_TS, REVALIDATION_PRICE, PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT,
+          ONE_MIN_BAR_TS, ONE_MIN_BAR_CLOSE, EXECUTION_PRICE_SOURCE,
+          CREATED_AT, UPDATED_AT
+        from MIP.LIVE.LIVE_ACTIONS
+        where {' and '.join(wheres)}
+        order by coalesce(COMPLIANCE_DECISION_TS, PM_APPROVED_TS, CREATED_AT) desc
+        limit %s
+        """
+        cur.execute(sql, params)
+        rows = fetch_all(cur)
+        return {"actions": serialize_rows(rows), "count": len(rows)}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions")
+def create_live_trade_action(req: CreateLiveActionRequest):
+    action_id = str(__import__("uuid").uuid4())
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            insert into MIP.LIVE.LIVE_ACTIONS (
+              ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
+              STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, CREATED_AT, UPDATED_AT
+            )
+            values (
+              %s, %s, %s, %s, %s, %s, %s, %s,
+              'PROPOSED', dateadd(hour, %s, current_timestamp()), 'PENDING', current_timestamp(), current_timestamp()
+            )
+            """,
+            (
+                action_id,
+                req.proposal_id,
+                req.portfolio_id,
+                req.symbol.upper(),
+                req.side.upper(),
+                req.proposed_qty,
+                req.proposed_price,
+                req.asset_class,
+                req.validity_window_hours,
+            ),
+        )
+        return {"ok": True, "action_id": action_id}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/pm-accept")
+def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = 'PM_ACCEPTED',
+                   PM_APPROVED_BY = %s,
+                   PM_APPROVED_TS = current_timestamp(),
+                   COMPLIANCE_STATUS = 'PENDING',
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (req.actor, action_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        return {"ok": True, "action_id": action_id, "status": "PM_ACCEPTED"}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/compliance")
+def compliance_decide_live_action(action_id: str, req: ComplianceDecisionRequest):
+    status = "COMPLIANCE_APPROVED" if req.decision == "APPROVE" else "COMPLIANCE_DENIED"
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = %s,
+                   COMPLIANCE_STATUS = %s,
+                   COMPLIANCE_APPROVED_BY = %s,
+                   COMPLIANCE_DECISION_TS = current_timestamp(),
+                   COMPLIANCE_NOTES = %s,
+                   COMPLIANCE_REFERENCE_ID = %s,
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (status, req.decision, req.actor, req.notes, req.reference_id, action_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        return {"ok": True, "action_id": action_id, "status": status}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/revalidate")
+def revalidate_live_action(action_id: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select ACTION_ID, PORTFOLIO_ID, SYMBOL, PROPOSED_PRICE
+            from MIP.LIVE.LIVE_ACTIONS
+            where ACTION_ID = %s
+            """,
+            (action_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        _, portfolio_id, symbol, proposed_price = row
+
+        cur.execute(
+            """
+            select TS, CLOSE
+            from MIP.MART.MARKET_BARS
+            where SYMBOL = %s
+              and INTERVAL_MINUTES = 1
+            order by TS desc
+            limit 1
+            """,
+            (symbol,),
+        )
+        bar = cur.fetchone()
+        source = "ONE_MINUTE_BAR"
+        if bar:
+            ref_ts, ref_price = bar
+        else:
+            cur.execute(
+                """
+                select TS, CLOSE
+                from MIP.MART.MARKET_BARS
+                where SYMBOL = %s
+                  and INTERVAL_MINUTES in (15, 60, 1440)
+                order by TS desc
+                limit 1
+                """,
+                (symbol,),
+            )
+            fallback = cur.fetchone()
+            if not fallback:
+                raise HTTPException(status_code=400, detail="No market bar found for symbol, revalidation blocked.")
+            ref_ts, ref_price = fallback
+            source = "BAR_FALLBACK"
+
+        deviation = None
+        if proposed_price and ref_price:
+            try:
+                deviation = abs(float(ref_price) - float(proposed_price)) / max(float(proposed_price), 1e-9)
+            except Exception:
+                deviation = None
+        guard_pass = deviation is None or deviation <= 0.02
+        status = "REVALIDATED_PASS" if guard_pass else "REVALIDATED_FAIL"
+
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set REVALIDATION_TS = current_timestamp(),
+                   REVALIDATION_PRICE = %s,
+                   PRICE_DEVIATION_PCT = %s,
+                   PRICE_GUARD_RESULT = %s,
+                   ONE_MIN_BAR_TS = %s,
+                   ONE_MIN_BAR_CLOSE = %s,
+                   EXECUTION_PRICE_SOURCE = %s,
+                   STATUS = %s,
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (
+                ref_price,
+                deviation,
+                "PASS" if guard_pass else "FAIL",
+                ref_ts if source == "ONE_MINUTE_BAR" else None,
+                ref_price if source == "ONE_MINUTE_BAR" else None,
+                source,
+                status,
+                action_id,
+            ),
+        )
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": status,
+            "price_source": source,
+            "revalidation_price": float(ref_price) if ref_price is not None else None,
+            "price_deviation_pct": float(deviation) if deviation is not None else None,
         }
     finally:
         conn.close()

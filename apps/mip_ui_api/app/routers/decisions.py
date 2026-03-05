@@ -180,6 +180,13 @@ def get_open_positions():
             from latest_bars_ranked
             group by SYMBOL, MARKET_TYPE
         ),
+        latest_monitor as (
+            select max(EVENT_TS) as LATEST_MONITOR_TS
+            from MIP.APP.MIP_AUDIT_LOG
+            where EVENT_TYPE = 'EARLY_EXIT_PIPELINE'
+              and EVENT_NAME = 'SP_RUN_HOURLY_EARLY_EXIT_MONITOR'
+              and STATUS = 'SUCCESS'
+        ),
         news_cfg as (
             select
                 coalesce(max(try_to_number(case when CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES' then CONFIG_VALUE end)), 180) as STALENESS_MINUTES
@@ -358,6 +365,7 @@ def get_open_positions():
 
             lb.CURRENT_CLOSE as CURRENT_PRICE,
             lb.LATEST_BAR_TS as LATEST_BAR_TS,
+            lm.LATEST_MONITOR_TS as LATEST_MONITOR_TS,
             case when op.ENTRY_PRICE > 0 and lb.CURRENT_CLOSE is not null
                       and lb.LATEST_BAR_TS > op.ENTRY_TS
                  then (lb.CURRENT_CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE
@@ -418,6 +426,7 @@ def get_open_positions():
         from open_positions_scope op
         join MIP.APP.PORTFOLIO p on p.PORTFOLIO_ID = op.PORTFOLIO_ID
         cross join news_cfg cfg
+        cross join latest_monitor lm
         left join MIP.APP.EARLY_EXIT_POSITION_STATE ps
           on ps.PORTFOLIO_ID = op.PORTFOLIO_ID
          and ps.SYMBOL = op.SYMBOL

@@ -2,10 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { API_BASE } from '../App'
 import InfoTooltip from './InfoTooltip'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
-import useVisibleInterval from '../hooks/useVisibleInterval'
 import './LiveHeader.css'
-
-const POLL_INTERVAL_MS = 900_000
 
 /** Human-readable relative time (e.g. "2 min ago", "1 hour ago"). */
 function relativeTime(isoOrDate) {
@@ -29,15 +26,13 @@ export default function LiveHeader() {
   const [metrics, setMetrics] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [lastFetchedAt, setLastFetchedAt] = useState(null)
-  const [tick, setTick] = useState(0)
+  const [, setTick] = useState(0)
 
   const fetchMetrics = useCallback(() => {
     fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((data) => {
         setMetrics(data)
-        setLastFetchedAt(Date.now())
         setError(null)
       })
       .catch((e) => {
@@ -47,16 +42,16 @@ export default function LiveHeader() {
       .finally(() => setLoading(false))
   }, [defaultPortfolioId])
 
-  // Poll Snowflake only while the tab is visible (prevents overnight warehouse spin)
-  useVisibleInterval(fetchMetrics, POLL_INTERVAL_MS)
-
-  // 1-second UI tick for relative time display (pure client-side, no cost)
+  // Manual-refresh-first behavior: load once on mount/portfolio change.
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    fetchMetrics()
+  }, [fetchMetrics])
+
+  // 1-minute UI tick for relative time display (pure client-side, no backend calls)
+  useEffect(() => {
+    const id = setInterval(() => setTick((v) => v + 1), 60000)
     return () => clearInterval(id)
   }, [])
-
-  const displaySeconds = lastFetchedAt != null ? Math.max(0, Math.floor((Date.now() - lastFetchedAt) / 1000)) : null
 
   if (loading && !metrics) {
     return (
@@ -115,12 +110,6 @@ export default function LiveHeader() {
         <span className="live-header-item" title={undefined}>
           Data freshness: outcomes updated {relativeTime(lastCalculatedAt)} ago
           <InfoTooltip scope="live" entryKey="data_freshness" variant="short" />
-        </span>
-      )}
-
-      {displaySeconds != null && (
-        <span className="live-header-item live-header-meta">
-          Next refresh in {Math.max(0, Math.floor(POLL_INTERVAL_MS / 1000) - displaySeconds)} sec
         </span>
       )}
 

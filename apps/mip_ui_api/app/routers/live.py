@@ -3,12 +3,14 @@ GET /live/metrics — lightweight live metrics for header and Suggestions.
 Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outcomes.
 """
 import json
+import subprocess
+from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 
 from app.config import get_snowflake_config
-from app.db import get_connection, fetch_all, serialize_row, SnowflakeAuthError
+from app.db import get_connection, fetch_all, serialize_row, serialize_rows, SnowflakeAuthError
 
 router = APIRouter(prefix="/live", tags=["live"])
 
@@ -218,3 +220,199 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
         "last_brief": last_brief,
         "outcomes": outcomes,
     }
+
+
+def _project_root() -> Path:
+    # .../MIP/apps/mip_ui_api/app/routers/live.py -> repo root
+    return Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+
+
+def _run_on_demand_snapshot_sync(
+    host: str,
+    port: int,
+    client_id: int,
+    account: str | None,
+    portfolio_id: int | None,
+) -> dict:
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "sync_ibkr_paper_snapshot.py"
+    if not py.exists() or not script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Snapshot sync runtime not found (cursorfiles venv or sync script missing).",
+        )
+
+    cmd = [str(py), str(script), "--once", "--host", host, "--port", str(port), "--client-id", str(client_id)]
+    if account:
+        cmd.extend(["--account", account])
+    if portfolio_id is not None:
+        cmd.extend(["--portfolio-id", str(portfolio_id)])
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "On-demand snapshot sync failed.",
+                "stderr": proc.stderr[-4000:],
+                "stdout": proc.stdout[-4000:],
+            },
+        )
+    out = (proc.stdout or "").strip()
+    # script prints JSON payload on success
+    try:
+        json_start = out.rfind("{")
+        payload = json.loads(out[json_start:]) if json_start >= 0 else {}
+    except Exception:
+        payload = {"raw_output": out}
+    return payload
+
+
+@router.post("/snapshot/refresh")
+def refresh_live_snapshot(
+    portfolio_id: int | None = Query(None, description="Optional LIVE portfolio ID to stamp snapshot rows"),
+    account: str | None = Query(None, description="IBKR account code (optional if only one managed account)"),
+    host: str = Query("127.0.0.1", description="IB Gateway/TWS host"),
+    port: int = Query(4002, description="IB paper port (4002 for Gateway paper, 7497 for TWS paper)"),
+    client_id: int = Query(9402, description="IB client id"),
+):
+    """
+    On-demand snapshot refresh.
+    Triggers a single IBKR read-only pull and stores results in MIP.LIVE.BROKER_SNAPSHOTS.
+    Intended for:
+      - opening Live Portfolio page
+      - opening Live Trade/Approval page
+      - pre-trade and post-trade refresh
+    """
+    result = _run_on_demand_snapshot_sync(
+        host=host,
+        port=port,
+        client_id=client_id,
+        account=account,
+        portfolio_id=portfolio_id,
+    )
+    return {
+        "ok": True,
+        "mode": "on_demand",
+        "result": result,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/snapshot/latest")
+def get_latest_live_snapshot(
+    portfolio_id: int | None = Query(None, description="Optional portfolio filter"),
+    account: str | None = Query(None, description="Optional IBKR account filter"),
+):
+    """
+    Latest snapshot records from MIP.LIVE for display.
+    Returns latest NAV, cash rows, positions, and open orders (trimmed).
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        where = []
+        params: list = []
+        if portfolio_id is not None:
+            where.append("PORTFOLIO_ID = %s")
+            params.append(portfolio_id)
+        if account:
+            where.append("IBKR_ACCOUNT_ID = %s")
+            params.append(account)
+        where_sql = (" where " + " and ".join(where)) if where else ""
+
+        nav_sql = f"""
+        select SNAPSHOT_TS, IBKR_ACCOUNT_ID, PORTFOLIO_ID, CURRENCY,
+               NET_LIQUIDATION_EUR, TOTAL_CASH_EUR, GROSS_POSITION_VALUE_EUR
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        {where_sql}
+          and SNAPSHOT_TYPE = 'NAV'
+        order by SNAPSHOT_TS desc
+        limit 1
+        """ if where else """
+        select SNAPSHOT_TS, IBKR_ACCOUNT_ID, PORTFOLIO_ID, CURRENCY,
+               NET_LIQUIDATION_EUR, TOTAL_CASH_EUR, GROSS_POSITION_VALUE_EUR
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        where SNAPSHOT_TYPE = 'NAV'
+        order by SNAPSHOT_TS desc
+        limit 1
+        """
+        if params:
+            cur.execute(nav_sql, tuple(params))
+        else:
+            cur.execute(nav_sql)
+        nav_row = cur.fetchone()
+        nav_cols = [d[0] for d in cur.description] if cur.description else []
+        nav = serialize_row(dict(zip(nav_cols, nav_row))) if nav_row else None
+
+        # Determine timestamp/account from latest nav when possible
+        latest_ts = nav.get("SNAPSHOT_TS") if nav else None
+        latest_account = nav.get("IBKR_ACCOUNT_ID") if nav else account
+
+        cash = []
+        positions = []
+        open_orders = []
+        if latest_ts and latest_account:
+            cur.execute(
+                """
+                select SNAPSHOT_TS, IBKR_ACCOUNT_ID, CURRENCY, CASH_BALANCE, SETTLED_CASH
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'CASH'
+                  and SNAPSHOT_TS = %s
+                  and IBKR_ACCOUNT_ID = %s
+                order by CURRENCY
+                """,
+                (latest_ts, latest_account),
+            )
+            cash = fetch_all(cur)
+
+            cur.execute(
+                """
+                select SNAPSHOT_TS, IBKR_ACCOUNT_ID, SYMBOL, SECURITY_TYPE, EXCHANGE, CURRENCY,
+                       POSITION_QTY, AVG_COST
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'POSITION'
+                  and SNAPSHOT_TS = %s
+                  and IBKR_ACCOUNT_ID = %s
+                order by SYMBOL
+                limit 200
+                """,
+                (latest_ts, latest_account),
+            )
+            positions = fetch_all(cur)
+
+            cur.execute(
+                """
+                select SNAPSHOT_TS, IBKR_ACCOUNT_ID, OPEN_ORDER_ID, OPEN_ORDER_STATUS,
+                       SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED, OPEN_ORDER_REMAINING,
+                       OPEN_ORDER_LIMIT_PRICE
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'OPEN_ORDER'
+                  and SNAPSHOT_TS = %s
+                  and IBKR_ACCOUNT_ID = %s
+                order by OPEN_ORDER_ID
+                limit 200
+                """,
+                (latest_ts, latest_account),
+            )
+            open_orders = fetch_all(cur)
+
+        return {
+            "ok": True,
+            "mode": "on_demand",
+            "latest_nav": nav,
+            "cash": serialize_rows(cash),
+            "positions": serialize_rows(positions),
+            "open_orders": serialize_rows(open_orders),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    finally:
+        conn.close()

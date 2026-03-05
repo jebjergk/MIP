@@ -482,6 +482,8 @@ export default function DecisionConsole() {
   const [pinnedSymbols, setPinnedSymbols] = useState(new Set())
   const [positionChanges, setPositionChanges] = useState({})
   const [latestBarTs, setLatestBarTs] = useState(null)
+  const [latestEvalTs, setLatestEvalTs] = useState(null)
+  const [latestMonitorTs, setLatestMonitorTs] = useState(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [clockTick, setClockTick] = useState(Date.now())
   const positionsLoadInFlight = useRef(false)
@@ -515,7 +517,24 @@ export default function DecisionConsole() {
       })
 
       const latestTsMs = nextPositions.reduce((acc, p) => {
-        const ts = p?.LATEST_BAR_TS
+        const candidates = [p?.LATEST_BAR_TS, p?.LAST_EVALUATED_TS]
+        const maxForRow = candidates.reduce((rowAcc, ts) => {
+          if (!ts) return rowAcc
+          const parsed = new Date(ts).getTime()
+          if (!Number.isFinite(parsed)) return rowAcc
+          return Math.max(rowAcc, parsed)
+        }, 0)
+        return Math.max(acc, maxForRow)
+      }, 0)
+      const latestEvalTsMs = nextPositions.reduce((acc, p) => {
+        const ts = p?.LAST_EVALUATED_TS
+        if (!ts) return acc
+        const parsed = new Date(ts).getTime()
+        if (!Number.isFinite(parsed)) return acc
+        return Math.max(acc, parsed)
+      }, 0)
+      const latestMonitorTsMs = nextPositions.reduce((acc, p) => {
+        const ts = p?.LATEST_MONITOR_TS
         if (!ts) return acc
         const parsed = new Date(ts).getTime()
         if (!Number.isFinite(parsed)) return acc
@@ -525,6 +544,8 @@ export default function DecisionConsole() {
       setPositionChanges(nextChanges)
       setPositions(nextPositions)
       setLatestBarTs(latestTsMs > 0 ? new Date(latestTsMs).toISOString() : null)
+      setLatestEvalTs(latestEvalTsMs > 0 ? new Date(latestEvalTsMs).toISOString() : null)
+      setLatestMonitorTs(latestMonitorTsMs > 0 ? new Date(latestMonitorTsMs).toISOString() : null)
       setError(null)
     } catch (e) {
       setError(e.message)
@@ -622,6 +643,20 @@ export default function DecisionConsole() {
     const diffMinutes = Math.floor((clockTick - latestMs) / 60000)
     return Math.max(diffMinutes, 0)
   }, [latestBarTs, clockTick])
+  const minutesSinceLatestEval = useMemo(() => {
+    if (!latestEvalTs) return null
+    const latestMs = new Date(latestEvalTs).getTime()
+    if (!Number.isFinite(latestMs)) return null
+    const diffMinutes = Math.floor((clockTick - latestMs) / 60000)
+    return Math.max(diffMinutes, 0)
+  }, [latestEvalTs, clockTick])
+  const minutesSinceLatestMonitor = useMemo(() => {
+    if (!latestMonitorTs) return null
+    const latestMs = new Date(latestMonitorTs).getTime()
+    if (!Number.isFinite(latestMs)) return null
+    const diffMinutes = Math.floor((clockTick - latestMs) / 60000)
+    return Math.max(diffMinutes, 0)
+  }, [latestMonitorTs, clockTick])
 
   const handleManualRefresh = useCallback(async () => {
     setIsRefreshing(true)
@@ -678,7 +713,11 @@ export default function DecisionConsole() {
         <div className="dc-header-right">
           <div className="dc-refresh-meta">
             <span className="dc-refresh-age">
-              {minutesSinceLatestBar == null ? 'Bar age: —' : `Bar age: ${minutesSinceLatestBar}m since last hourly bar`}
+              {minutesSinceLatestEval != null
+                ? `Decision age: ${fmtMins(minutesSinceLatestMonitor ?? minutesSinceLatestEval)} since last hourly refresh`
+                : (minutesSinceLatestBar == null
+                    ? 'Decision age: —'
+                    : `Bar age: ${fmtMins(minutesSinceLatestBar)} since latest bar update`)}
             </span>
             <button
               className="dc-refresh-btn"

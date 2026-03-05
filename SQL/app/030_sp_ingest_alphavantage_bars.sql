@@ -309,7 +309,7 @@ def _load_ingest_universe(session: Session, interval_filter=None) -> Tuple[List[
         order by PRIORITY desc, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES
     """).collect()
     total_rows = len(rows)
-    return rows[:25], total_rows, total_rows > 25
+    return rows, total_rows, False
 
 def run(session: Session, p_interval_filter=None) -> Dict:
     run_id_row = session.sql(

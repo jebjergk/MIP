@@ -139,7 +139,15 @@ def get_open_positions():
     try:
         cur = conn.cursor()
         sql = """
-        with latest_bars_ranked as (
+        with bar_cfg as (
+            select
+                coalesce(
+                    max(try_to_number(case when CONFIG_KEY = 'EARLY_EXIT_INTERVAL_MINUTES' then CONFIG_VALUE end)),
+                    60
+                ) as PREF_INTERVAL
+            from MIP.APP.APP_CONFIG
+        ),
+        latest_bars_ranked as (
             select
                 SYMBOL,
                 MARKET_TYPE,
@@ -149,11 +157,17 @@ def get_open_positions():
                 row_number() over (
                     partition by SYMBOL, MARKET_TYPE
                     order by
-                        case when INTERVAL_MINUTES = 15 then 0 else 1 end,
+                        case
+                            when INTERVAL_MINUTES = cfg.PREF_INTERVAL then 0
+                            when INTERVAL_MINUTES = 15 then 1
+                            when INTERVAL_MINUTES = 1440 then 2
+                            else 9
+                        end,
                         TS desc
                 ) as RN
             from MIP.MART.MARKET_BARS
-            where INTERVAL_MINUTES in (15, 1440)
+            cross join bar_cfg cfg
+            where INTERVAL_MINUTES in (15, 60, 1440)
         ),
         latest_bars as (
             select
@@ -285,7 +299,7 @@ def get_open_positions():
             join MIP.MART.MARKET_BARS mb
               on mb.SYMBOL = op.SYMBOL
              and mb.MARKET_TYPE = op.MARKET_TYPE
-             and mb.INTERVAL_MINUTES = 15
+             and mb.INTERVAL_MINUTES = (select PREF_INTERVAL from bar_cfg)
              and mb.TS::date = current_date()
              and mb.TS > op.ENTRY_TS
             group by op.PORTFOLIO_ID, op.SYMBOL, op.MARKET_TYPE, op.ENTRY_TS

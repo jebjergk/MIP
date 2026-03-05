@@ -237,7 +237,9 @@ begin
                and px.MARKET_TYPE = pp.MARKET_TYPE
              where pp.PORTFOLIO_ID = :v_portfolio_id
                and (pp.EPISODE_ID = :v_episode_id or (:v_episode_id is null and pp.EPISODE_ID is null))
-               and pp.ENTRY_TS < :v_episode_start_ts;
+               -- Treat only prior-DAY positions as carry-in. Same-day entries may
+               -- have midnight timestamps while episode START_TS has intraday time.
+               and date_trunc('day', pp.ENTRY_TS) < date_trunc('day', :v_episode_start_ts);
         exception
             when other then
                 v_carry_in_market_value := 0;

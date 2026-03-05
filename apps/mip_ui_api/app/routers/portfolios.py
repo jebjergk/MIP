@@ -159,24 +159,13 @@ def list_portfolios():
                         partition by d.PORTFOLIO_ID
                         order by d.TS desc, d.CREATED_AT desc nulls last
                     ) = 1
-                ),
-                latest_trade_cash as (
-                    select
-                        t.PORTFOLIO_ID,
-                        t.CASH_AFTER
-                    from MIP.APP.PORTFOLIO_TRADES t
-                    qualify row_number() over (
-                        partition by t.PORTFOLIO_ID
-                        order by t.TRADE_TS desc, t.TRADE_ID desc
-                    ) = 1
                 )
                 select
                     p.PORTFOLIO_ID,
-                    coalesce(ltc.CASH_AFTER, ldc.CASH, p.STARTING_CASH, 0) + coalesce(omv.OPEN_MARKET_VALUE, 0) as CURRENT_EQUITY
+                    coalesce(ldc.CASH, p.STARTING_CASH, 0) + coalesce(omv.OPEN_MARKET_VALUE, 0) as CURRENT_EQUITY
                 from MIP.APP.PORTFOLIO p
                 left join open_market_value omv on omv.PORTFOLIO_ID = p.PORTFOLIO_ID
                 left join latest_daily_cash ldc on ldc.PORTFOLIO_ID = p.PORTFOLIO_ID
-                left join latest_trade_cash ltc on ltc.PORTFOLIO_ID = p.PORTFOLIO_ID
                 """
             )
             for r in serialize_rows(fetch_all(cur)):
@@ -236,6 +225,34 @@ def list_portfolios():
             result.append(row)
         
         return result
+    finally:
+        conn.close()
+
+
+@router.get("/reality-check")
+def get_portfolio_reality_check(only_mismatches: bool = Query(True)):
+    """
+    Reconciliation endpoint (non-destructive):
+    compares header/daily/ledger/canonical-open states and exposes drift flags.
+    """
+    sql = """
+    select *
+    from MIP.MART.V_PORTFOLIO_REALITY_CHECK
+    {where_clause}
+    order by PORTFOLIO_ID
+    """
+    where_clause = ""
+    if only_mismatches:
+        where_clause = """
+        where FLAG_OPEN_POSITION_MISMATCH
+           or FLAG_CASH_MISMATCH
+           or FLAG_TOTAL_EQUITY_MISMATCH
+        """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql.format(where_clause=where_clause))
+        return serialize_rows(fetch_all(cur))
     finally:
         conn.close()
 

@@ -80,6 +80,9 @@ declare
     v_spread_bps number(18,8);
     v_last_sim_run_id string;
     v_effective_from_ts timestamp_ntz;
+    v_effective_start_cash number(18,2);
+    v_episode_start_equity number(18,2);
+    v_carry_in_market_value number(18,2) := 0;
     v_error_query_id string;
 begin
     -- Declare episode variables
@@ -112,11 +115,11 @@ begin
         on prof.PROFILE_ID = p.PROFILE_ID
      where p.PORTFOLIO_ID = :v_portfolio_id;
 
-    -- Get the active episode ID and start timestamp
+    -- Get the active episode ID and start timestamp/equity
     -- This scopes all data to the current episode lifecycle
     begin
-        select EPISODE_ID, START_TS
-          into :v_episode_id, :v_episode_start_ts
+        select EPISODE_ID, START_TS, START_EQUITY
+          into :v_episode_id, :v_episode_start_ts, :v_episode_start_equity
           from MIP.APP.PORTFOLIO_EPISODE
          where PORTFOLIO_ID = :v_portfolio_id
            and STATUS = 'ACTIVE'
@@ -126,6 +129,7 @@ begin
         when other then
             v_episode_id := null;
             v_episode_start_ts := null;
+            v_episode_start_equity := null;
     end;
 
     -- Determine effective_from_ts with episode boundary awareness:
@@ -204,9 +208,47 @@ begin
     v_bust_equity_pct := coalesce(v_bust_equity_pct, 0.60);
     v_bust_action := coalesce(v_bust_action, 'ALLOW_EXITS_ONLY');
     v_drawdown_stop_pct := coalesce(v_drawdown_stop_pct, 0.10);
-    v_cash := v_starting_cash;
-    v_total_equity := v_starting_cash;
-    v_peak_equity := v_starting_cash;
+
+    -- Episode-aware cash baseline:
+    -- If an episode starts while positions are still open (carry-in), using
+    -- PORTFOLIO.STARTING_CASH can double count assets (cash reset + carried
+    -- positions). Derive effective start cash from episode start equity minus
+    -- carry-in market value at episode start day.
+    v_effective_start_cash := v_starting_cash;
+    if (v_episode_id is not null and v_episode_start_ts is not null and v_episode_start_equity is not null) then
+        begin
+            select coalesce(sum(pp.QUANTITY * px.CLOSE), 0)
+              into :v_carry_in_market_value
+              from MIP.APP.PORTFOLIO_POSITIONS pp
+              left join (
+                  select
+                      vb.SYMBOL,
+                      vb.MARKET_TYPE,
+                      vb.CLOSE
+                  from MIP.MART.V_BAR_INDEX vb
+                  where vb.INTERVAL_MINUTES = 1440
+                    and vb.TS <= date_trunc('day', :v_episode_start_ts)
+                  qualify row_number() over (
+                      partition by vb.SYMBOL, vb.MARKET_TYPE
+                      order by vb.TS desc
+                  ) = 1
+              ) px
+                on px.SYMBOL = pp.SYMBOL
+               and px.MARKET_TYPE = pp.MARKET_TYPE
+             where pp.PORTFOLIO_ID = :v_portfolio_id
+               and (pp.EPISODE_ID = :v_episode_id or (:v_episode_id is null and pp.EPISODE_ID is null))
+               and pp.ENTRY_TS < :v_episode_start_ts;
+        exception
+            when other then
+                v_carry_in_market_value := 0;
+        end;
+
+        v_effective_start_cash := greatest(0, coalesce(v_episode_start_equity, v_starting_cash) - coalesce(v_carry_in_market_value, 0));
+    end if;
+
+    v_cash := v_effective_start_cash;
+    v_total_equity := v_effective_start_cash;
+    v_peak_equity := v_effective_start_cash;
 
     -- COOLDOWN enforcement: block new entries if still within cooldown window.
     -- COOLDOWN_UNTIL_TS is set by SP_CHECK_CRYSTALLIZE after profit target hit.
@@ -362,7 +404,7 @@ begin
         let v_computed_cash number(18,2) := null;
         let v_cash_event_delta number(18,2) := 0;
         begin
-            select :v_starting_cash + coalesce(sum(
+            select :v_effective_start_cash + coalesce(sum(
                 case
                     when SIDE = 'BUY'
                         then -(NOTIONAL + greatest(coalesce(:v_min_fee, 0), abs(NOTIONAL) * :v_fee_bps / 10000))
@@ -924,7 +966,7 @@ begin
         TRADE_ID,
         TRADE_TS,
         TRADE_DAY,
-        :v_starting_cash + sum(CASH_DELTA) over (
+        :v_effective_start_cash + sum(CASH_DELTA) over (
             order by TRADE_TS, TRADE_ID
             rows between unbounded preceding and current row
         ) as CORRECT_CASH_AFTER
@@ -961,7 +1003,7 @@ begin
               coalesce(
                   tc.CASH_AFTER,
                   last_value(tc.CASH_AFTER ignore nulls) over (order by snap.TS rows between unbounded preceding and current row),
-                  :v_starting_cash
+                  :v_effective_start_cash
               ) as CORRECT_CASH
           from TEMP_DAILY_SNAPSHOT snap
           left join TEMP_TRADE_CASH_TIMELINE tc
@@ -984,10 +1026,11 @@ begin
     -- that date.
     -- ============================================================
 
-    -- Step 1: Use BUY trades (not PORTFOLIO_POSITIONS) as the authoritative
-    -- source of position openings. PORTFOLIO_POSITIONS may have gaps from
-    -- data repairs. Cross-join each bar date with BUY trades on or before it.
-    -- Rank per symbol in FIFO order (earliest buy first).
+    -- Step 1: Use PORTFOLIO_POSITIONS as the authoritative source of position
+    -- openings for episode state. This preserves carry-in positions that may
+    -- not have a BUY trade inside the current episode.
+    -- Cross-join each bar date with positions on or before it, then rank FIFO
+    -- per symbol (earliest entry first).
     --
     -- CARRY-FORWARD PRICING: use the latest bar ON OR BEFORE each snapshot
     -- date per symbol. This ensures stock positions retain their last known
@@ -1010,25 +1053,24 @@ begin
     create or replace temporary table TEMP_POSITION_TIMELINE as
     select
         snap.TS as BAR_TS,
-        bt.SYMBOL,
-        bt.MARKET_TYPE,
-        bt.QUANTITY,
-        bt.TRADE_TS as ENTRY_TS,
+        pp.SYMBOL,
+        pp.MARKET_TYPE,
+        pp.QUANTITY,
+        pp.ENTRY_TS,
         cfp.CLOSE as BAR_CLOSE,
         row_number() over (
-            partition by snap.TS, bt.SYMBOL, bt.MARKET_TYPE
-            order by bt.TRADE_TS, bt.TRADE_ID
+            partition by snap.TS, pp.SYMBOL, pp.MARKET_TYPE
+            order by pp.ENTRY_TS, pp.RUN_ID
         ) as POS_RANK
     from TEMP_DAILY_SNAPSHOT snap
-    cross join MIP.APP.PORTFOLIO_TRADES bt
+    cross join MIP.APP.PORTFOLIO_POSITIONS pp
     left join TEMP_CF_PRICES cfp
-      on cfp.SYMBOL = bt.SYMBOL
-     and cfp.MARKET_TYPE = bt.MARKET_TYPE
+      on cfp.SYMBOL = pp.SYMBOL
+     and cfp.MARKET_TYPE = pp.MARKET_TYPE
      and cfp.BAR_TS = snap.TS
-    where bt.PORTFOLIO_ID = :v_portfolio_id
-      and (bt.EPISODE_ID = :v_episode_id or (:v_episode_id is null and bt.EPISODE_ID is null))
-      and bt.SIDE = 'BUY'
-      and date_trunc('day', bt.TRADE_TS) <= snap.TS;
+    where pp.PORTFOLIO_ID = :v_portfolio_id
+      and (pp.EPISODE_ID = :v_episode_id or (:v_episode_id is null and pp.EPISODE_ID is null))
+      and date_trunc('day', pp.ENTRY_TS) <= snap.TS;
 
     -- Step 2: Count cumulative sells per symbol per bar date.
     create or replace temporary table TEMP_SELL_COUNTS as

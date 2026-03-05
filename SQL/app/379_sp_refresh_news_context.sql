@@ -22,12 +22,19 @@ declare
     v_ingest_rows_inserted number := 0;
     v_ingest_error_count number := 0;
     v_ingest_errors variant;
+    v_seed_subs variant;
+    v_seed_status string;
+    v_seed_subs_total number := 0;
+    v_seed_subs_enabled number := 0;
     v_map variant;
     v_map_status string;
     v_map_rows_merged number := 0;
     v_compute variant;
     v_compute_status string;
     v_compute_rows_written number := 0;
+    v_agg variant;
+    v_agg_status string;
+    v_agg_rows_written number := 0;
     v_refresh_failed number := 0;
 begin
     v_event_run_id := (
@@ -64,6 +71,27 @@ begin
             'errors', :v_ingest_errors
         ),
         iff(:v_ingest_error_count > 0, 'One or more sources failed during ingest.', null),
+        :v_run_id,
+        :v_event_run_id
+    );
+
+    v_seed_subs := (call MIP.NEWS.SP_SEED_NEWS_SOURCE_SUBSCRIPTIONS_FROM_UNIVERSE());
+    v_seed_status := coalesce(v_seed_subs:"status"::string, 'UNKNOWN');
+    v_seed_subs_total := coalesce(v_seed_subs:"subscriptions_total"::number, 0);
+    v_seed_subs_enabled := coalesce(v_seed_subs:"subscriptions_enabled"::number, 0);
+
+    call MIP.APP.SP_LOG_EVENT(
+        'NEWS_PIPELINE',
+        'NEWS_SUBSCRIPTION_SEED',
+        iff(:v_seed_status = 'SUCCESS', 'SUCCESS', 'WARN'),
+        :v_seed_subs_enabled,
+        object_construct(
+            'run_id', :v_run_id,
+            'seed_status', :v_seed_status,
+            'subscriptions_total', :v_seed_subs_total,
+            'subscriptions_enabled', :v_seed_subs_enabled
+        ),
+        null,
         :v_run_id,
         :v_event_run_id
     );
@@ -106,6 +134,25 @@ begin
         :v_event_run_id
     );
 
+    v_agg := (call MIP.NEWS.SP_AGGREGATE_NEWS_EVENTS(current_timestamp(), :v_run_id));
+    v_agg_status := coalesce(v_agg:"status"::string, 'UNKNOWN');
+    v_agg_rows_written := coalesce(v_agg:"rows_written"::number, 0);
+
+    call MIP.APP.SP_LOG_EVENT(
+        'NEWS_PIPELINE',
+        'NEWS_AGGREGATE',
+        iff(:v_agg_status = 'SUCCESS', 'SUCCESS', 'WARN'),
+        :v_agg_rows_written,
+        object_construct(
+            'run_id', :v_run_id,
+            'aggregate_status', :v_agg_status,
+            'rows_written', :v_agg_rows_written
+        ),
+        null,
+        :v_run_id,
+        :v_event_run_id
+    );
+
     if (v_ingest_rows_staged = 0 and v_ingest_error_count > 0) then
         call MIP.APP.SP_LOG_EVENT(
             'NEWS_PIPELINE',
@@ -136,6 +183,8 @@ begin
             'ingest_status', :v_ingest_status,
             'map_status', :v_map_status,
             'compute_status', :v_compute_status
+            ,
+            'aggregate_status', :v_agg_status
         ),
         null,
         :v_run_id,
@@ -146,8 +195,10 @@ begin
         'status', 'SUCCESS',
         'run_id', :v_run_id,
         'ingest', :v_ingest,
+        'seed_subscriptions', :v_seed_subs,
         'map', :v_map,
-        'compute', :v_compute
+        'compute', :v_compute,
+        'aggregate', :v_agg
     );
 end;
 $$;

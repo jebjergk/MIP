@@ -93,19 +93,99 @@ def _load_config(session):
         out[str(r["CONFIG_KEY"])] = r["CONFIG_VALUE"]
     return out
 
-def _load_sources(session, source_ids, source_limit):
-    where = "where ALLOWED_FLAG = true and IS_ACTIVE = true"
+def _safe_int(v, default_value):
+    try:
+        return int(v)
+    except Exception:
+        return int(default_value)
+
+def _load_global_sources(session, source_ids, source_limit):
+    where = """
+        where ALLOWED_FLAG = true
+          and IS_ACTIVE = true
+          and coalesce(ENABLED_FLAG, true)
+          and upper(coalesce(SOURCE_TYPE, 'GLOBAL_RSS')) = 'GLOBAL_RSS'
+    """
     if source_ids:
         escaped = ",".join(["'" + str(sid).replace("'", "''") + "'" for sid in source_ids])
         where += f" and SOURCE_ID in ({escaped})"
     limit_clause = f" limit {int(source_limit)}" if source_limit is not None else ""
     return session.sql(f"""
-        select SOURCE_ID, SOURCE_NAME, FEED_URL
+        select
+            SOURCE_ID,
+            SOURCE_NAME,
+            FEED_URL,
+            upper(coalesce(SYMBOL_SCOPE, 'ALL')) as SYMBOL_SCOPE,
+            coalesce(POLL_MINUTES, INGEST_CADENCE_MINUTES, 30) as POLL_MINUTES,
+            upper(coalesce(SOURCE_TYPE, 'GLOBAL_RSS')) as SOURCE_TYPE
         from MIP.NEWS.NEWS_SOURCE_REGISTRY
         {where}
         order by SOURCE_ID
         {limit_clause}
     """).collect()
+
+def _load_ticker_subscriptions(session, source_ids, source_limit):
+    where = """
+        where r.ALLOWED_FLAG = true
+          and r.IS_ACTIVE = true
+          and coalesce(r.ENABLED_FLAG, true)
+          and upper(coalesce(r.SOURCE_TYPE, 'GLOBAL_RSS')) = 'TICKER_RSS'
+          and coalesce(s.ENABLED_FLAG, true)
+    """
+    if source_ids:
+        escaped = ",".join(["'" + str(sid).replace("'", "''") + "'" for sid in source_ids])
+        where += f" and r.SOURCE_ID in ({escaped})"
+    limit_clause = f" limit {int(source_limit)}" if source_limit is not None else ""
+    return session.sql(f"""
+        select
+            s.SUBSCRIPTION_ID,
+            s.SOURCE_ID,
+            r.SOURCE_NAME,
+            s.SYMBOL,
+            s.MARKET_TYPE,
+            s.RSS_URL_RESOLVED as FEED_URL,
+            upper(coalesce(r.SYMBOL_SCOPE, 'ALL')) as SYMBOL_SCOPE,
+            coalesce(r.POLL_MINUTES, r.INGEST_CADENCE_MINUTES, 120) as POLL_MINUTES,
+            upper(coalesce(r.SOURCE_TYPE, 'TICKER_RSS')) as SOURCE_TYPE
+        from MIP.NEWS.NEWS_SOURCE_SUBSCRIPTIONS s
+        join MIP.NEWS.NEWS_SOURCE_REGISTRY r
+          on r.SOURCE_ID = s.SOURCE_ID
+        {where}
+        order by s.SOURCE_ID, s.SYMBOL, s.MARKET_TYPE
+        {limit_clause}
+    """).collect()
+
+def _load_last_ingested_by_source(session):
+    rows = session.sql("""
+        select SOURCE_ID, max(INGESTED_AT) as LAST_INGESTED_AT
+        from MIP.NEWS.NEWS_RAW
+        group by SOURCE_ID
+    """).collect()
+    out = {}
+    for r in rows:
+        out[str(r["SOURCE_ID"])] = r["LAST_INGESTED_AT"]
+    return out
+
+def _load_last_ingested_by_subscription(session):
+    rows = session.sql("""
+        select SUBSCRIPTION_ID, max(INGESTED_AT) as LAST_INGESTED_AT
+        from MIP.NEWS.NEWS_RAW
+        where SUBSCRIPTION_ID is not null
+        group by SUBSCRIPTION_ID
+    """).collect()
+    out = {}
+    for r in rows:
+        out[str(r["SUBSCRIPTION_ID"])] = r["LAST_INGESTED_AT"]
+    return out
+
+def _should_poll(last_ingested_at, poll_minutes, now_ts):
+    if last_ingested_at is None:
+        return True
+    try:
+        age_minutes = (now_ts - last_ingested_at).total_seconds() / 60.0
+    except Exception:
+        return True
+    return age_minutes >= max(1, int(poll_minutes))
 
 def _mock_feed_entries(source_id, source_name, feed_url):
     # Deterministic mock rows for idempotency checks.
@@ -181,7 +261,16 @@ def _fetch_rss_entries(feed_url, max_attempts=4):
                 time.sleep(min(8, 2 ** (attempt - 1)))
     raise RuntimeError(f"FETCH_FAILED after {max_attempts} attempts: {last_error}")
 
-def _normalize_entry(source_id, source_name, entry, snapshot_ts):
+def _normalize_entry(
+    source_id,
+    source_name,
+    source_type,
+    subscription_id,
+    symbol_hint,
+    market_type_hint,
+    entry,
+    snapshot_ts
+):
     title = _clean_text(entry.get("title"))
     summary = _clean_text(entry.get("summary") or entry.get("description"))
     raw_url = _clean_text(entry.get("link") or entry.get("url"))
@@ -196,7 +285,8 @@ def _normalize_entry(source_id, source_name, entry, snapshot_ts):
     content_fingerprint = f"{title_norm}|{summary_norm}|{canonical_url}"
     content_hash = _sha256(content_fingerprint)
     canonical_url_hash = _sha256(canonical_url)
-    news_id = _sha256(f"{source_id}|{canonical_url_hash}|{published_at.isoformat()}|{title_norm}")
+    id_scope = subscription_id if subscription_id else source_id
+    news_id = _sha256(f"{id_scope}|{canonical_url_hash}|{published_at.isoformat()}|{title_norm}")
     dedup_cluster_id = _sha256(f"URL|{canonical_url_hash}")
 
     row = {
@@ -218,6 +308,10 @@ def _normalize_entry(source_id, source_name, entry, snapshot_ts):
         "ERROR_REASON": None,
         "SNAPSHOT_TS": snapshot_ts,
         "RUN_ID": _sha256(f"{snapshot_ts.isoformat()}|{source_id}")[:32],
+        "SUBSCRIPTION_ID": subscription_id,
+        "SYMBOL_HINT": symbol_hint,
+        "MARKET_TYPE_HINT": market_type_hint,
+        "SOURCE_TYPE": source_type,
     }
     return row, None
 
@@ -243,13 +337,71 @@ def run(session, p_test_mode=False, p_source_limit=None):
         }
 
     snapshot_ts = _utc_now()
-    source_rows = _load_sources(session, source_ids, p_source_limit)
-    if not source_rows:
+    default_global_poll = _safe_int(cfg.get("NEWS_GLOBAL_POLL_MINUTES", "30"), 30)
+    default_ticker_poll = _safe_int(cfg.get("NEWS_TICKER_POLL_MINUTES", "120"), 120)
+
+    global_rows = _load_global_sources(session, source_ids, p_source_limit)
+    ticker_rows = _load_ticker_subscriptions(session, source_ids, p_source_limit)
+
+    if not global_rows and not ticker_rows:
         return {
             "status": "SUCCESS",
             "test_mode": bool(p_test_mode),
             "news_enabled": news_enabled,
             "sources_considered": 0,
+            "ticker_subscriptions_considered": 0,
+            "rows_staged": 0,
+            "rows_inserted": 0,
+            "dedup_clusters_upserted": 0,
+            "errors": [],
+        }
+
+    last_by_source = _load_last_ingested_by_source(session)
+    last_by_sub = _load_last_ingested_by_subscription(session)
+
+    targets = []
+    for s in global_rows:
+        source_id = str(s["SOURCE_ID"])
+        poll_minutes = _safe_int(s["POLL_MINUTES"], default_global_poll)
+        if (not p_test_mode) and (not _should_poll(last_by_source.get(source_id), poll_minutes, snapshot_ts)):
+            continue
+        targets.append({
+            "target_type": "GLOBAL",
+            "source_id": source_id,
+            "source_name": str(s["SOURCE_NAME"]),
+            "feed_url": str(s["FEED_URL"]),
+            "source_type": str(s["SOURCE_TYPE"]),
+            "subscription_id": None,
+            "symbol_hint": None,
+            "market_type_hint": None,
+            "poll_minutes": poll_minutes,
+        })
+
+    for s in ticker_rows:
+        subscription_id = str(s["SUBSCRIPTION_ID"])
+        poll_minutes = _safe_int(s["POLL_MINUTES"], default_ticker_poll)
+        if (not p_test_mode) and (not _should_poll(last_by_sub.get(subscription_id), poll_minutes, snapshot_ts)):
+            continue
+        targets.append({
+            "target_type": "TICKER",
+            "source_id": str(s["SOURCE_ID"]),
+            "source_name": str(s["SOURCE_NAME"]),
+            "feed_url": str(s["FEED_URL"]),
+            "source_type": str(s["SOURCE_TYPE"]),
+            "subscription_id": subscription_id,
+            "symbol_hint": str(s["SYMBOL"]),
+            "market_type_hint": str(s["MARKET_TYPE"]),
+            "poll_minutes": poll_minutes,
+        })
+
+    if not targets:
+        return {
+            "status": "SUCCESS_SKIPPED_POLL_WINDOW",
+            "test_mode": bool(p_test_mode),
+            "news_enabled": news_enabled,
+            "sources_considered": len(global_rows),
+            "ticker_subscriptions_considered": len(ticker_rows),
+            "targets_polled": 0,
             "rows_staged": 0,
             "rows_inserted": 0,
             "dedup_clusters_upserted": 0,
@@ -260,10 +412,14 @@ def run(session, p_test_mode=False, p_source_limit=None):
     errors = []
     per_source = []
 
-    for s in source_rows:
-        source_id = str(s["SOURCE_ID"])
-        source_name = str(s["SOURCE_NAME"])
-        feed_url = str(s["FEED_URL"])
+    for t in targets:
+        source_id = t["source_id"]
+        source_name = t["source_name"]
+        feed_url = t["feed_url"]
+        source_type = t["source_type"]
+        subscription_id = t["subscription_id"]
+        symbol_hint = t["symbol_hint"]
+        market_type_hint = t["market_type_hint"]
         entry_count = 0
         staged_count = 0
         try:
@@ -274,23 +430,49 @@ def run(session, p_test_mode=False, p_source_limit=None):
             entry_count = len(entries)
 
             for e in entries:
-                row, err = _normalize_entry(source_id, source_name, e, snapshot_ts)
+                row, err = _normalize_entry(
+                    source_id,
+                    source_name,
+                    source_type,
+                    subscription_id,
+                    symbol_hint,
+                    market_type_hint,
+                    e,
+                    snapshot_ts
+                )
                 if row is not None:
                     normalized.append(row)
                     staged_count += 1
                 elif err:
-                    errors.append({"source_id": source_id, "error": err})
+                    errors.append({
+                        "source_id": source_id,
+                        "subscription_id": subscription_id,
+                        "symbol_hint": symbol_hint,
+                        "error": err
+                    })
 
             per_source.append({
                 "source_id": source_id,
+                "source_type": source_type,
+                "subscription_id": subscription_id,
+                "symbol_hint": symbol_hint,
                 "entries_seen": entry_count,
                 "rows_staged": staged_count,
                 "status": "SUCCESS",
             })
         except Exception as exc:
-            errors.append({"source_id": source_id, "error": str(exc)})
+            errors.append({
+                "source_id": source_id,
+                "source_type": source_type,
+                "subscription_id": subscription_id,
+                "symbol_hint": symbol_hint,
+                "error": str(exc)
+            })
             per_source.append({
                 "source_id": source_id,
+                "source_type": source_type,
+                "subscription_id": subscription_id,
+                "symbol_hint": symbol_hint,
                 "entries_seen": entry_count,
                 "rows_staged": staged_count,
                 "status": "FAIL",
@@ -301,7 +483,9 @@ def run(session, p_test_mode=False, p_source_limit=None):
             "status": "SUCCESS_WITH_NO_ROWS",
             "test_mode": bool(p_test_mode),
             "news_enabled": news_enabled,
-            "sources_considered": len(source_rows),
+            "sources_considered": len(global_rows),
+            "ticker_subscriptions_considered": len(ticker_rows),
+            "targets_polled": len(targets),
             "rows_staged": 0,
             "rows_inserted": 0,
             "dedup_clusters_upserted": 0,
@@ -325,12 +509,14 @@ def run(session, p_test_mode=False, p_source_limit=None):
           insert (
             NEWS_ID, SOURCE_ID, SOURCE_NAME, PUBLISHED_AT, INGESTED_AT, TITLE, SUMMARY,
             FULL_TEXT_OPTIONAL, URL, LANGUAGE, RAW_PAYLOAD_VARIANT, CONTENT_HASH, CANONICAL_URL_HASH,
-            DEDUP_CLUSTER_ID, PARSE_STATUS, ERROR_REASON, SNAPSHOT_TS, RUN_ID
+            DEDUP_CLUSTER_ID, PARSE_STATUS, ERROR_REASON, SNAPSHOT_TS, RUN_ID,
+            SUBSCRIPTION_ID, SYMBOL_HINT, MARKET_TYPE_HINT, SOURCE_TYPE
           )
           values (
             s.NEWS_ID, s.SOURCE_ID, s.SOURCE_NAME, s.PUBLISHED_AT, s.INGESTED_AT, s.TITLE, s.SUMMARY,
             s.FULL_TEXT_OPTIONAL, s.URL, s.LANGUAGE, s.RAW_PAYLOAD_VARIANT, s.CONTENT_HASH, s.CANONICAL_URL_HASH,
-            s.DEDUP_CLUSTER_ID, s.PARSE_STATUS, s.ERROR_REASON, s.SNAPSHOT_TS, s.RUN_ID
+            s.DEDUP_CLUSTER_ID, s.PARSE_STATUS, s.ERROR_REASON, s.SNAPSHOT_TS, s.RUN_ID,
+            s.SUBSCRIPTION_ID, s.SYMBOL_HINT, s.MARKET_TYPE_HINT, s.SOURCE_TYPE
           )
     """
     session.sql(merge_sql).collect()
@@ -379,7 +565,9 @@ def run(session, p_test_mode=False, p_source_limit=None):
         "test_mode": bool(p_test_mode),
         "news_enabled": news_enabled,
         "snapshot_ts": snapshot_ts.isoformat(),
-        "sources_considered": len(source_rows),
+        "sources_considered": len(global_rows),
+        "ticker_subscriptions_considered": len(ticker_rows),
+        "targets_polled": len(targets),
         "rows_staged": len(normalized),
         "rows_inserted": int(rows_inserted),
         "dedup_clusters_upserted": int(dedup_clusters),

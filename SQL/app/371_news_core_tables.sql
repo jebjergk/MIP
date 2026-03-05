@@ -37,6 +37,15 @@ create table if not exists MIP.NEWS.NEWS_RAW (
     constraint PK_NEWS_RAW primary key (NEWS_ID)
 );
 
+alter table if exists MIP.NEWS.NEWS_RAW
+    add column if not exists SUBSCRIPTION_ID string;
+alter table if exists MIP.NEWS.NEWS_RAW
+    add column if not exists SYMBOL_HINT string;
+alter table if exists MIP.NEWS.NEWS_RAW
+    add column if not exists MARKET_TYPE_HINT string;
+alter table if exists MIP.NEWS.NEWS_RAW
+    add column if not exists SOURCE_TYPE string;
+
 create table if not exists MIP.NEWS.NEWS_SYMBOL_MAP (
     NEWS_ID                 string         not null,
     SYMBOL                  string         not null,
@@ -90,6 +99,18 @@ create table if not exists MIP.NEWS.SYMBOL_ALIAS_DICT (
     CREATED_AT              timestamp_ntz  not null default current_timestamp(),
     UPDATED_AT              timestamp_ntz  not null default current_timestamp(),
     constraint PK_SYMBOL_ALIAS_DICT primary key (SYMBOL, MARKET_TYPE, ALIAS)
+);
+
+create table if not exists MIP.NEWS.NEWS_SOURCE_SUBSCRIPTIONS (
+    SUBSCRIPTION_ID          string         not null,
+    SOURCE_ID                string         not null,
+    SYMBOL                   string         not null,
+    MARKET_TYPE              string         not null,
+    RSS_URL_RESOLVED         string         not null,
+    ENABLED_FLAG             boolean        not null default true,
+    CREATED_AT               timestamp_ntz  not null default current_timestamp(),
+    UPDATED_AT               timestamp_ntz  not null default current_timestamp(),
+    constraint PK_NEWS_SOURCE_SUBSCRIPTIONS primary key (SUBSCRIPTION_ID)
 );
 
 -- v1 contract enforcement: no full text storage.

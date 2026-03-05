@@ -67,7 +67,7 @@ def run(session, p_news_id_filter=None):
         raw_where = f" where NEWS_ID = '{esc}' "
 
     raw_rows = session.sql(f"""
-        select NEWS_ID, TITLE, SUMMARY, URL
+        select NEWS_ID, TITLE, SUMMARY, URL, upper(SYMBOL_HINT) as SYMBOL_HINT, upper(MARKET_TYPE_HINT) as MARKET_TYPE_HINT
         from MIP.NEWS.NEWS_RAW
         {raw_where}
     """).collect()
@@ -107,6 +107,23 @@ def run(session, p_news_id_filter=None):
     for row in raw_rows:
         news_id = str(row["NEWS_ID"])
         text_up = _upper(row["TITLE"]) + " " + _upper(row["SUMMARY"]) + " " + _upper(row["URL"])
+        hinted_symbol = str(row["SYMBOL_HINT"]) if row["SYMBOL_HINT"] is not None else None
+        hinted_market = str(row["MARKET_TYPE_HINT"]) if row["MARKET_TYPE_HINT"] is not None else None
+
+        # 0) Fast-path deterministic symbol hint from ticker RSS subscriptions.
+        if hinted_symbol and hinted_market:
+            key = (news_id, hinted_symbol, hinted_market, "subscription_hint")
+            if key not in seen:
+                seen.add(key)
+                staged.append({
+                    "NEWS_ID": news_id,
+                    "SYMBOL": hinted_symbol,
+                    "MARKET_TYPE": hinted_market,
+                    "MATCH_METHOD": "subscription_hint",
+                    "MATCH_CONFIDENCE": 0.99,
+                    "CREATED_AT": now_ts,
+                    "RUN_ID": run_id,
+                })
 
         for symbol, market_type in symbol_pairs:
             # 1) Ticker regex path

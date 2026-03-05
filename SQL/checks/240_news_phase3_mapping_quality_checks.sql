@@ -46,11 +46,11 @@ with base_checks as (
     select
         'MATCH_METHOD_ENUM_VALID',
         iff(
-            coalesce(count_if(upper(MATCH_METHOD) not in ('TICKER_REGEX', 'ALIAS_DICT', 'COMPANY_NAME_MATCH')), 0) = 0,
+            coalesce(count_if(upper(MATCH_METHOD) not in ('TICKER_REGEX', 'ALIAS_DICT', 'COMPANY_NAME_MATCH', 'SUBSCRIPTION_HINT')), 0) = 0,
             'PASS',
             'FAIL'
         ),
-        coalesce(count_if(upper(MATCH_METHOD) not in ('TICKER_REGEX', 'ALIAS_DICT', 'COMPANY_NAME_MATCH')), 0)::string,
+        coalesce(count_if(upper(MATCH_METHOD) not in ('TICKER_REGEX', 'ALIAS_DICT', 'COMPANY_NAME_MATCH', 'SUBSCRIPTION_HINT')), 0)::string,
         '0 rows with invalid match_method'
     from MIP.NEWS.NEWS_SYMBOL_MAP
 ),

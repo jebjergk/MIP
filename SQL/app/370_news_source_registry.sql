@@ -31,6 +31,18 @@ create table if not exists MIP.NEWS.NEWS_SOURCE_REGISTRY (
     constraint PK_NEWS_SOURCE_REGISTRY primary key (SOURCE_ID)
 );
 
+-- Phase A extensions for scalable ticker feed management.
+alter table if exists MIP.NEWS.NEWS_SOURCE_REGISTRY
+    add column if not exists SOURCE_TYPE string default 'GLOBAL_RSS';
+alter table if exists MIP.NEWS.NEWS_SOURCE_REGISTRY
+    add column if not exists URL_TEMPLATE string;
+alter table if exists MIP.NEWS.NEWS_SOURCE_REGISTRY
+    add column if not exists SYMBOL_SCOPE string default 'ALL';
+alter table if exists MIP.NEWS.NEWS_SOURCE_REGISTRY
+    add column if not exists ENABLED_FLAG boolean default true;
+alter table if exists MIP.NEWS.NEWS_SOURCE_REGISTRY
+    add column if not exists POLL_MINUTES number default 30;
+
 merge into MIP.NEWS.NEWS_SOURCE_REGISTRY t
 using (
     select
@@ -43,7 +55,12 @@ using (
         false as REPUBLISH_OK_FLAG,
         'UTC' as NORMALIZATION_TIMEZONE,
         30 as INGEST_CADENCE_MINUTES,
-        true as IS_ACTIVE
+        true as IS_ACTIVE,
+        'GLOBAL_RSS' as SOURCE_TYPE,
+        null as URL_TEMPLATE,
+        'ALL' as SYMBOL_SCOPE,
+        true as ENABLED_FLAG,
+        30 as POLL_MINUTES
     union all
     select
         'GLOBENEWSWIRE_RSS',
@@ -55,7 +72,12 @@ using (
         false,
         'UTC',
         30,
-        true
+        true,
+        'GLOBAL_RSS',
+        null,
+        'STOCK_ONLY',
+        true,
+        120
     union all
     select
         'MARKETWATCH_RSS',
@@ -67,7 +89,12 @@ using (
         false,
         'UTC',
         30,
-        true
+        true,
+        'GLOBAL_RSS',
+        null,
+        'STOCK_ONLY',
+        true,
+        120
     union all
     select
         'FED_RSS',
@@ -79,7 +106,12 @@ using (
         false,
         'UTC',
         30,
-        true
+        true,
+        'GLOBAL_RSS',
+        null,
+        'FX_ONLY',
+        true,
+        60
     union all
     select
         'ECB_RSS',
@@ -91,7 +123,12 @@ using (
         false,
         'UTC',
         30,
-        true
+        true,
+        'GLOBAL_RSS',
+        null,
+        'FX_ONLY',
+        true,
+        60
     union all
     select
         'SEC_RSS_INDEX',
@@ -103,7 +140,63 @@ using (
         false,
         'UTC',
         30,
-        true
+        true,
+        'GLOBAL_RSS',
+        null,
+        'ALL',
+        false,
+        240
+    union all
+    select
+        'SEEKING_ALPHA_TICKER_RSS',
+        'Seeking Alpha Combined Symbol RSS',
+        'https://seekingalpha.com/api/sa/combined/AAPL.xml',
+        'https://seekingalpha.com/page/terms-of-use',
+        'Ticker template feed. Validate licensing/terms before production use.',
+        true,
+        false,
+        'UTC',
+        120,
+        true,
+        'TICKER_RSS',
+        'https://seekingalpha.com/api/sa/combined/{SYMBOL}.xml',
+        'STOCK_ONLY',
+        false,
+        120
+    union all
+    select
+        'NASDAQ_TICKER_RSS',
+        'Nasdaq Symbol News RSS',
+        'https://www.nasdaq.com/feed/rssoutbound?symbol=AAPL',
+        'https://www.nasdaq.com/terms-and-conditions',
+        'Ticker template feed. Validate endpoint stability and terms before use.',
+        true,
+        false,
+        'UTC',
+        120,
+        true,
+        'TICKER_RSS',
+        'https://www.nasdaq.com/feed/rssoutbound?symbol={SYMBOL}',
+        'STOCK_ONLY',
+        false,
+        120
+    union all
+    select
+        'YAHOO_TICKER_RSS',
+        'Yahoo Finance Symbol RSS',
+        'https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL&region=US&lang=en-US',
+        'https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html',
+        'Ticker template feed. Validate endpoint stability and terms before use.',
+        true,
+        false,
+        'UTC',
+        120,
+        true,
+        'TICKER_RSS',
+        'https://feeds.finance.yahoo.com/rss/2.0/headline?s={SYMBOL}&region=US&lang=en-US',
+        'STOCK_ONLY',
+        false,
+        120
 ) s
 on t.SOURCE_ID = s.SOURCE_ID
 when matched then update set
@@ -116,6 +209,11 @@ when matched then update set
     t.NORMALIZATION_TIMEZONE = s.NORMALIZATION_TIMEZONE,
     t.INGEST_CADENCE_MINUTES = s.INGEST_CADENCE_MINUTES,
     t.IS_ACTIVE = s.IS_ACTIVE,
+    t.SOURCE_TYPE = s.SOURCE_TYPE,
+    t.URL_TEMPLATE = s.URL_TEMPLATE,
+    t.SYMBOL_SCOPE = s.SYMBOL_SCOPE,
+    t.ENABLED_FLAG = s.ENABLED_FLAG,
+    t.POLL_MINUTES = s.POLL_MINUTES,
     t.UPDATED_AT = current_timestamp()
 when not matched then insert (
     SOURCE_ID,
@@ -128,6 +226,11 @@ when not matched then insert (
     NORMALIZATION_TIMEZONE,
     INGEST_CADENCE_MINUTES,
     IS_ACTIVE,
+    SOURCE_TYPE,
+    URL_TEMPLATE,
+    SYMBOL_SCOPE,
+    ENABLED_FLAG,
+    POLL_MINUTES,
     UPDATED_AT
 ) values (
     s.SOURCE_ID,
@@ -140,6 +243,11 @@ when not matched then insert (
     s.NORMALIZATION_TIMEZONE,
     s.INGEST_CADENCE_MINUTES,
     s.IS_ACTIVE,
+    s.SOURCE_TYPE,
+    s.URL_TEMPLATE,
+    s.SYMBOL_SCOPE,
+    s.ENABLED_FLAG,
+    s.POLL_MINUTES,
     current_timestamp()
 );
 
@@ -152,6 +260,11 @@ select
     REPUBLISH_OK_FLAG,
     NORMALIZATION_TIMEZONE,
     INGEST_CADENCE_MINUTES,
-    IS_ACTIVE
+    IS_ACTIVE,
+    SOURCE_TYPE,
+    URL_TEMPLATE,
+    SYMBOL_SCOPE,
+    ENABLED_FLAG,
+    POLL_MINUTES
 from MIP.NEWS.NEWS_SOURCE_REGISTRY
 order by SOURCE_ID;

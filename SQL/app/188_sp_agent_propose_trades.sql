@@ -334,6 +334,11 @@ begin
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_UNCERTAINTY_HIGH', CONFIG_VALUE, null))), 0.08) as NEWS_UNCERTAINTY_HIGH,
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_EVENT_RISK_HIGH', CONFIG_VALUE, null))), 0.10) as NEWS_EVENT_RISK_HIGH,
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_SCORE_MAX_ABS', CONFIG_VALUE, null))), 0.20) as NEWS_SCORE_MAX_ABS,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_HOT_PRESSURE', CONFIG_VALUE, null))), 2.5) as NEWS_HOT_PRESSURE,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_CONFLICT_HIGH', CONFIG_VALUE, null))), 0.60) as NEWS_CONFLICT_HIGH,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_SCORE_CAP', CONFIG_VALUE, null))), 0.20) as NEWS_SCORE_CAP,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_SIZE_MULT_CAUTION', CONFIG_VALUE, null))), 0.75) as NEWS_SIZE_MULT_CAUTION,
+                coalesce(max(iff(CONFIG_KEY = 'NEWS_BLOCK_ON_CONFLICT', lower(CONFIG_VALUE), null)), 'true') as NEWS_BLOCK_ON_CONFLICT,
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES', CONFIG_VALUE, null))), 180) as NEWS_STALE_MINUTES
             from MIP.APP.APP_CONFIG
         ),
@@ -413,6 +418,41 @@ begin
             from news_feature_candidates
             where RN = 1
         ),
+        news_agg_candidates as (
+            select
+                s.RECOMMENDATION_ID,
+                a.INFO_PRESSURE,
+                a.NOVELTY,
+                a.CONFLICT,
+                a.BADGE,
+                a.TOP_CLUSTERS,
+                a.LAST_PUBLISHED_AT,
+                a.LAST_INGESTED_AT,
+                a.AS_OF_TS_BUCKET,
+                row_number() over (
+                    partition by s.RECOMMENDATION_ID
+                    order by a.AS_OF_TS_BUCKET desc
+                ) as RN
+            from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+            left join MIP.NEWS.NEWS_AGGREGATED_EVENTS a
+              on a.SYMBOL = s.SYMBOL
+             and a.MARKET_TYPE = s.MARKET_TYPE
+             and a.AS_OF_TS_BUCKET <= s.SIGNAL_TS
+        ),
+        news_agg_latest as (
+            select
+                RECOMMENDATION_ID,
+                INFO_PRESSURE,
+                NOVELTY,
+                CONFLICT,
+                BADGE,
+                TOP_CLUSTERS,
+                LAST_PUBLISHED_AT,
+                LAST_INGESTED_AT,
+                AS_OF_TS_BUCKET
+            from news_agg_candidates
+            where RN = 1
+        ),
         eligible_candidates as (
             select
                 s.*,
@@ -424,6 +464,11 @@ begin
                 cfg.NEWS_UNCERTAINTY_HIGH,
                 cfg.NEWS_EVENT_RISK_HIGH,
                 cfg.NEWS_SCORE_MAX_ABS,
+                cfg.NEWS_HOT_PRESSURE,
+                cfg.NEWS_CONFLICT_HIGH,
+                cfg.NEWS_SCORE_CAP,
+                cfg.NEWS_SIZE_MULT_CAUTION,
+                cfg.NEWS_BLOCK_ON_CONFLICT,
                 cfg.NEWS_STALE_MINUTES,
                 nl.NEWS_COUNT as NEWS_COUNT,
                 nl.NEWS_CONTEXT_BADGE as NEWS_CONTEXT_BADGE,
@@ -442,6 +487,12 @@ begin
                 nfl.MACRO_HEAT as NEWS_FEATURE_MACRO_HEAT,
                 nfl.TOP_EVENTS as NEWS_FEATURE_TOP_EVENTS,
                 nfl.FEATURE_SNAPSHOT_TS as NEWS_FEATURE_SNAPSHOT_TS,
+                na.INFO_PRESSURE as NEWS_AGG_INFO_PRESSURE,
+                na.NOVELTY as NEWS_AGG_NOVELTY,
+                na.CONFLICT as NEWS_AGG_CONFLICT,
+                na.BADGE as NEWS_AGG_BADGE,
+                na.TOP_CLUSTERS as NEWS_AGG_TOP_CLUSTERS,
+                na.AS_OF_TS_BUCKET as NEWS_AGG_BUCKET_TS,
                 iff(
                     coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS) is null,
                     null,
@@ -463,6 +514,8 @@ begin
               on nl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
             left join news_feature_latest nfl
               on nfl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
+            left join news_agg_latest na
+              on na.RECOMMENDATION_ID = s.RECOMMENDATION_ID
         ),
         deduped_candidates as (
             select
@@ -491,6 +544,11 @@ begin
                     else 0.0
                 end as LEGACY_NEWS_PRESSURE_SCORE,
                 coalesce(
+                    iff(
+                        coalesce(d.NEWS_AGG_INFO_PRESSURE, 0) > 0 and abs(coalesce(d.NEWS_HOT_PRESSURE, 0)) > 0,
+                        least(d.NEWS_AGG_INFO_PRESSURE / nullif(abs(d.NEWS_HOT_PRESSURE), 0), 2.0),
+                        null
+                    ),
                     d.NEWS_FEATURE_SENTIMENT,
                     case upper(coalesce(d.NEWS_CONTEXT_BADGE, ''))
                         when 'HOT' then 1.0
@@ -507,6 +565,7 @@ begin
                     greatest(
                         greatest(
                             coalesce(d.NEWS_FEATURE_EVENT_RISK_SCORE, d.NEWS_BURST_SCORE, 0.0),
+                            coalesce(d.NEWS_AGG_CONFLICT, 0.0),
                             coalesce(d.NEWS_FEATURE_UNCERTAINTY_SCORE, iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)),
                             iff(coalesce(d.NEWS_IS_STALE, false), 1.0, 0.0),
                             coalesce(d.NEWS_FEATURE_MACRO_HEAT, 0.0)
@@ -526,7 +585,8 @@ begin
                     iff(coalesce(e.NEWS_UNCERTAINTY_PROXY, 0) >= 0.60, 'UNCERTAINTY_HIGH', null),
                     iff(coalesce(e.NEWS_IS_STALE, false), 'SNAPSHOT_STALE', null),
                     iff(e.NEWS_EVENT_RISK_PROXY >= 0.90, 'EVENT_RISK_HIGH', null),
-                    iff(coalesce(e.NEWS_FEATURE_MACRO_HEAT, 0) >= 0.60, 'MACRO_HEAT_HIGH', null)
+                    iff(coalesce(e.NEWS_FEATURE_MACRO_HEAT, 0) >= 0.60, 'MACRO_HEAT_HIGH', null),
+                    iff(coalesce(e.NEWS_AGG_CONFLICT, 0) >= coalesce(e.NEWS_CONFLICT_HIGH, 0.60), 'CONFLICT_HIGH', null)
                 ) as NEWS_REASONS,
                 least(
                     greatest(
@@ -540,9 +600,9 @@ begin
                             ),
                             0.0
                         ),
-                        -abs(e.NEWS_SCORE_MAX_ABS)
+                        -abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
                     ),
-                    abs(e.NEWS_SCORE_MAX_ABS)
+                    abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
                 ) as NEWS_SCORE_ADJ_SHADOW,
                 least(
                     greatest(
@@ -558,9 +618,9 @@ begin
                             ),
                             0.0
                         ),
-                        -abs(e.NEWS_SCORE_MAX_ABS)
+                        -abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
                     ),
-                    abs(e.NEWS_SCORE_MAX_ABS)
+                    abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
                 ) as NEWS_SCORE_ADJ_APPLIED
             from enriched_news e
         ),
@@ -568,7 +628,19 @@ begin
             select
                 s.*,
                 iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY,
-                (s.SCORE + s.NEWS_SCORE_ADJ_APPLIED) as FINAL_SCORE,
+                (
+                    s.SCORE
+                    + s.NEWS_SCORE_ADJ_APPLIED
+                    + iff(
+                        s.NEWS_ENABLED = 'true'
+                        and s.NEWS_INFLUENCE_ENABLED = 'true'
+                        and s.NEWS_DISPLAY_ONLY <> 'true'
+                        and upper(coalesce(s.NEWS_AGG_BADGE, '')) = 'HOT'
+                        and coalesce(s.NEWS_AGG_CONFLICT, 0.0) < coalesce(s.NEWS_CONFLICT_HIGH, 0.60),
+                        least(abs(coalesce(s.NEWS_SCORE_CAP, s.NEWS_SCORE_MAX_ABS)), 0.05),
+                        0.0
+                    )
+                ) as FINAL_SCORE,
                 iff(
                     s.NEWS_ENABLED = 'true'
                     and s.NEWS_INFLUENCE_ENABLED = 'true'
@@ -576,6 +648,11 @@ begin
                     and (
                         coalesce(s.NEWS_IS_STALE, false)
                         or s.NEWS_EVENT_RISK_PROXY >= 0.90
+                        or (
+                            coalesce(s.NEWS_BLOCK_ON_CONFLICT, 'true') = 'true'
+                            and upper(coalesce(s.NEWS_AGG_BADGE, '')) = 'HOT'
+                            and coalesce(s.NEWS_AGG_CONFLICT, 0.0) >= coalesce(s.NEWS_CONFLICT_HIGH, 0.60)
+                        )
                     ),
                     true,
                     false
@@ -692,7 +769,13 @@ begin
                 0.01,
                 least(
                     :v_max_position_pct,
-                    :v_target_weight * (1 + coalesce(s.NEWS_SCORE_ADJ_APPLIED, 0))
+                    :v_target_weight
+                    * iff(
+                        coalesce(s.NEWS_AGG_CONFLICT, 0.0) >= coalesce(s.NEWS_CONFLICT_HIGH, 0.60),
+                        coalesce(s.NEWS_SIZE_MULT_CAUTION, 0.75),
+                        1.0
+                    )
+                    * (1 + coalesce(s.NEWS_SCORE_ADJ_APPLIED, 0))
                 )
             ) as TARGET_WEIGHT,
             s.RECOMMENDATION_ID,
@@ -728,6 +811,11 @@ begin
                 'news_uncertainty_high', s.NEWS_UNCERTAINTY_HIGH,
                 'news_event_risk_high', s.NEWS_EVENT_RISK_HIGH,
                 'news_score_max_abs', s.NEWS_SCORE_MAX_ABS,
+                'news_hot_pressure', s.NEWS_HOT_PRESSURE,
+                'news_conflict_high', s.NEWS_CONFLICT_HIGH,
+                'news_score_cap', s.NEWS_SCORE_CAP,
+                'news_size_mult_caution', s.NEWS_SIZE_MULT_CAUTION,
+                'news_block_on_conflict', iff(s.NEWS_BLOCK_ON_CONFLICT = 'true', true, false),
                 'news_score_adj_shadow', s.NEWS_SCORE_ADJ_SHADOW,
                 'news_score_adj_applied', s.NEWS_SCORE_ADJ_APPLIED,
                 'news_score_adj', s.NEWS_SCORE_ADJ_APPLIED,
@@ -740,6 +828,20 @@ begin
                 ),
                 'news_event_risk_proxy', s.NEWS_EVENT_RISK_PROXY,
                 'news_uncertainty_proxy', s.NEWS_UNCERTAINTY_PROXY,
+                'news_agg', iff(
+                    s.NEWS_AGG_BUCKET_TS is null,
+                    null,
+                    object_construct(
+                        'bucket_ts', s.NEWS_AGG_BUCKET_TS,
+                        'badge', s.NEWS_AGG_BADGE,
+                        'info_pressure', s.NEWS_AGG_INFO_PRESSURE,
+                        'novelty', s.NEWS_AGG_NOVELTY,
+                        'conflict', s.NEWS_AGG_CONFLICT,
+                        'top_clusters', s.NEWS_AGG_TOP_CLUSTERS,
+                        'last_published_at', s.NEWS_LAST_PUBLISHED_AT,
+                        'last_ingested_at', s.NEWS_LAST_INGESTED_AT
+                    )
+                ),
                 'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
                 'news_reasons', s.NEWS_REASONS,
                 'news_staleness_threshold_minutes', s.NEWS_STALE_MINUTES,
@@ -787,6 +889,9 @@ begin
                 'news_score_adj_shadow', s.NEWS_SCORE_ADJ_SHADOW,
                 'news_score_adj_applied', s.NEWS_SCORE_ADJ_APPLIED,
                 'news_score_adj', s.NEWS_SCORE_ADJ_APPLIED,
+                'news_agg_badge', s.NEWS_AGG_BADGE,
+                'news_agg_info_pressure', s.NEWS_AGG_INFO_PRESSURE,
+                'news_agg_conflict', s.NEWS_AGG_CONFLICT,
                 'news_influence_applied', iff(
                     s.NEWS_ENABLED = 'true'
                     and s.NEWS_INFLUENCE_ENABLED = 'true'

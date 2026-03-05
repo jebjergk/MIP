@@ -51,7 +51,7 @@ def _normalize_headlines(raw: Any) -> list[dict[str, Any]]:
     for h in raw:
         if not isinstance(h, dict):
             continue
-        title = h.get("title") or h.get("TITLE")
+        title = h.get("title") or h.get("TITLE") or h.get("headline") or h.get("HEADLINE")
         if not title:
             continue
         url = _normalize_url(h.get("url") or h.get("URL"))
@@ -125,26 +125,39 @@ def get_news_intelligence(
 
         cur.execute(
             """
+            with cfg as (
+                select
+                    coalesce(max(try_to_number(case when CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES' then CONFIG_VALUE end)), 180) as STALENESS_MINUTES,
+                    coalesce(max(try_to_double(case when CONFIG_KEY = 'NEWS_CONFLICT_HIGH' then CONFIG_VALUE end)), 0.60) as CONFLICT_HIGH
+                from MIP.APP.APP_CONFIG
+                where CONFIG_KEY in ('NEWS_STALENESS_THRESHOLD_MINUTES', 'NEWS_CONFLICT_HIGH')
+            )
             select
-                n.AS_OF_DATE,
+                cast(n.AS_OF_TS_BUCKET as date) as AS_OF_DATE,
                 n.SYMBOL,
                 n.MARKET_TYPE,
-                n.NEWS_COUNT,
-                n.NEWS_CONTEXT_BADGE,
-                n.NOVELTY_SCORE,
-                n.BURST_SCORE,
-                n.UNCERTAINTY_FLAG,
-                n.TOP_HEADLINES,
-                n.LAST_NEWS_PUBLISHED_AT,
-                n.LAST_INGESTED_AT,
+                coalesce(n.ITEMS_TOTAL, 0) as NEWS_COUNT,
+                coalesce(n.BADGE, 'NORMAL') as NEWS_CONTEXT_BADGE,
+                n.NOVELTY as NOVELTY_SCORE,
+                n.INFO_PRESSURE as BURST_SCORE,
+                iff(coalesce(n.CONFLICT, 0) >= cfg.CONFLICT_HIGH, true, false) as UNCERTAINTY_FLAG,
+                n.TOP_CLUSTERS as TOP_HEADLINES,
+                n.LAST_PUBLISHED_AT as LAST_NEWS_PUBLISHED_AT,
+                n.LAST_INGESTED_AT as LAST_INGESTED_AT,
                 n.SNAPSHOT_TS,
-                n.NEWS_SNAPSHOT_AGE_MINUTES,
-                n.NEWS_IS_STALE,
-                n.NEWS_STALENESS_THRESHOLD_MINUTES
-            from MIP.MART.V_NEWS_INFO_STATE_LATEST_DAILY n
+                datediff('minute', coalesce(n.LAST_INGESTED_AT, n.SNAPSHOT_TS), current_timestamp()) as NEWS_SNAPSHOT_AGE_MINUTES,
+                iff(
+                    datediff('minute', coalesce(n.LAST_INGESTED_AT, n.SNAPSHOT_TS), current_timestamp()) > cfg.STALENESS_MINUTES,
+                    true,
+                    false
+                ) as NEWS_IS_STALE,
+                cfg.STALENESS_MINUTES as NEWS_STALENESS_THRESHOLD_MINUTES
+            from MIP.MART.V_NEWS_AGG_LATEST n
+            cross join cfg
             order by
-                n.NEWS_IS_STALE asc,
-                n.NEWS_COUNT desc,
+                NEWS_IS_STALE asc,
+                BURST_SCORE desc nulls last,
+                NEWS_COUNT desc,
                 n.SYMBOL
             """
         )
@@ -282,8 +295,8 @@ def get_news_intelligence(
                     "snapshot_ts": _safe_iso(row.get("SNAPSHOT_TS")),
                     "top_headlines": _normalize_headlines(row.get("TOP_HEADLINES"))[:3],
                     "evidence": {
-                        "source_table": "MIP.MART.V_NEWS_INFO_STATE_LATEST_DAILY",
-                        "join_contract": "symbol+market_type latest snapshot_ts <= as_of_ts",
+                        "source_table": "MIP.MART.V_NEWS_AGG_LATEST",
+                        "join_contract": "symbol+market_type latest as_of_ts_bucket <= as_of_ts",
                     },
                 }
             )
@@ -305,7 +318,8 @@ def get_news_intelligence(
             src = _to_obj(row.get("SOURCE_SIGNALS"))
             rat = _to_obj(row.get("RATIONALE"))
             news_ctx = _to_obj(src.get("news_context"))
-            has_context = bool(news_ctx)
+            news_agg = _to_obj(src.get("news_agg"))
+            has_context = bool(news_ctx) or bool(news_agg)
             if has_context:
                 with_context += 1
 
@@ -348,7 +362,7 @@ def get_news_intelligence(
                     "news_block_new_entry": bool(blocked_entry) if blocked_entry is not None else False,
                     "news_snapshot_age_minutes": _to_float(src.get("news_snapshot_age_minutes")),
                     "news_is_stale": _to_bool(src.get("news_is_stale")),
-                    "news_badge": news_ctx.get("news_context_badge"),
+                    "news_badge": news_agg.get("badge") or news_ctx.get("news_context_badge"),
                     "reasons": reasons[:3],
                 }
             )
@@ -399,7 +413,7 @@ def get_news_intelligence(
             },
             "lineage": {
                 "tables": [
-                    "MIP.MART.V_NEWS_INFO_STATE_LATEST_DAILY",
+                    "MIP.MART.V_NEWS_AGG_LATEST",
                     "MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL",
                     "MIP.MART.MARKET_BARS",
                     "MIP.AGENT_OUT.ORDER_PROPOSALS",

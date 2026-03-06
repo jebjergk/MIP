@@ -3,6 +3,7 @@ GET /live/metrics — lightweight live metrics for header and Suggestions.
 Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outcomes.
 """
 import json
+import os
 import subprocess
 import uuid
 from pathlib import Path
@@ -297,9 +298,17 @@ def _run_on_demand_snapshot_sync(
     if portfolio_id is not None:
         cmd.extend(["--portfolio-id", str(portfolio_id)])
 
+    # Ensure the snapshot script resolves credentials from .env.agent instead of
+    # inheriting API process Snowflake env (read-only role).
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
     proc = subprocess.run(
         cmd,
         cwd=str(root),
+        env=child_env,
         capture_output=True,
         text=True,
         timeout=90,

@@ -99,6 +99,31 @@ def _normalize_sp_result(result):
     return str(result)
 
 
+def _sql_literal(value):
+    """Render a safe SQL literal for direct CALL statements."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
+def _render_call_sql(sql: str, params: tuple) -> str:
+    """Inline params into CALL SQL to avoid connector CALL binding quirks."""
+    parts = sql.split("%s")
+    if len(parts) - 1 != len(params):
+        raise ValueError("CALL SQL placeholder count does not match params")
+    out = []
+    for i, part in enumerate(parts):
+        out.append(part)
+        if i < len(params):
+            out.append(_sql_literal(params[i]))
+    return "".join(out)
+
+
 def _call_sp(sql: str, params: tuple) -> dict:
     """Call a Snowflake stored procedure and return its VARIANT result as a dict."""
     logger.info("[_call_sp] SQL: %s", sql)
@@ -106,7 +131,12 @@ def _call_sp(sql: str, params: tuple) -> dict:
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, params)
+        if sql.strip().upper().startswith("CALL "):
+            rendered = _render_call_sql(sql, params)
+            logger.info("[_call_sp] Rendered CALL SQL: %s", rendered)
+            cur.execute(rendered)
+        else:
+            cur.execute(sql, params)
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=500, detail="Stored procedure returned no result")
@@ -143,7 +173,7 @@ def _call_sp(sql: str, params: tuple) -> dict:
 def create_portfolio(body: PortfolioCreate):
     """Create a new portfolio with starting cash and profile."""
     return _call_sp(
-        "CALL MIP.APP.SP_UPSERT_PORTFOLIO(%s, %s, %s, %s, %s, %s)",
+        "CALL MIP.APP.SP_UPSERT_PORTFOLIO(%s::number, %s::varchar, %s::varchar, %s::number(18,2), %s::number, %s::varchar)",
         (None, body.name, body.base_currency, body.starting_cash, body.profile_id, body.notes),
     )
 
@@ -152,7 +182,7 @@ def create_portfolio(body: PortfolioCreate):
 def update_portfolio(portfolio_id: int, body: PortfolioUpdate):
     """Update allowed portfolio fields (name, currency, notes). Starting cash cannot be changed here."""
     return _call_sp(
-        "CALL MIP.APP.SP_UPSERT_PORTFOLIO(%s, %s, %s, %s, %s, %s)",
+        "CALL MIP.APP.SP_UPSERT_PORTFOLIO(%s::number, %s::varchar, %s::varchar, %s::number(18,2), %s::number, %s::varchar)",
         (portfolio_id, body.name, body.base_currency, None, None, body.notes),
     )
 

@@ -134,9 +134,23 @@ export default function LivePortfolioConfig() {
         </button>
       </div>
 
+      <div className="lpc-guide">
+        <h3>What This Page Represents</h3>
+        <p>
+          <b>Live Portfolio ID</b> is an internal MIP execution container ID, not an IB field.
+          It groups approvals, revalidation, risk limits, and audit events for one live workflow.
+        </p>
+        <ul>
+          <li><b>IBKR Account ID</b>: your real broker account (e.g. DU...)</li>
+          <li><b>SIM Portfolio ID</b>: optional research twin that provides proposals</li>
+          <li><b>Cash/positions truth</b>: always mirrored from IB snapshots, not from simulation tables</li>
+          <li><b>Risk fields here</b>: pre-trade execution guards enforced by MIP before submit</li>
+        </ul>
+      </div>
+
       <div className="lpc-top-row">
         <label>
-          Live Portfolio ID
+          Live Portfolio ID (MIP internal)
           <input
             value={selectedPortfolioId}
             onChange={(e) => setSelectedPortfolioId(e.target.value)}
@@ -157,7 +171,7 @@ export default function LivePortfolioConfig() {
       {status.ok ? <div className="lpc-msg lpc-msg-ok">{status.ok}</div> : null}
 
       <div className="lpc-grid">
-        <label>SIM Portfolio ID<input value={form.sim_portfolio_id} onChange={(e) => setForm((v) => ({ ...v, sim_portfolio_id: e.target.value }))} /></label>
+        <label>SIM Portfolio ID (research twin)<input value={form.sim_portfolio_id} onChange={(e) => setForm((v) => ({ ...v, sim_portfolio_id: e.target.value }))} /></label>
         <label>IBKR Account ID<input value={form.ibkr_account_id} onChange={(e) => setForm((v) => ({ ...v, ibkr_account_id: e.target.value }))} /></label>
         <label>Adapter Mode
           <select value={form.adapter_mode} onChange={(e) => setForm((v) => ({ ...v, adapter_mode: e.target.value }))}>

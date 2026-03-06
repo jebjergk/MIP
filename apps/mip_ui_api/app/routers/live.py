@@ -18,17 +18,6 @@ from app.db import get_connection, fetch_all, serialize_row, serialize_rows, Sno
 router = APIRouter(prefix="/live", tags=["live"])
 
 
-class CreateLiveActionRequest(BaseModel):
-    portfolio_id: int
-    symbol: str
-    side: str = Field(pattern="^(BUY|SELL)$")
-    proposed_qty: float
-    proposed_price: float | None = None
-    asset_class: str | None = None
-    proposal_id: int | None = None
-    validity_window_hours: int = 4
-
-
 class PmAcceptRequest(BaseModel):
     actor: str
 
@@ -562,40 +551,6 @@ def list_live_trade_actions(
         cur.execute(sql, params)
         rows = fetch_all(cur)
         return {"actions": serialize_rows(rows), "count": len(rows)}
-    finally:
-        conn.close()
-
-
-@router.post("/trades/actions")
-def create_live_trade_action(req: CreateLiveActionRequest):
-    action_id = str(__import__("uuid").uuid4())
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            """
-            insert into MIP.LIVE.LIVE_ACTIONS (
-              ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
-              STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, CREATED_AT, UPDATED_AT
-            )
-            values (
-              %s, %s, %s, %s, %s, %s, %s, %s,
-              'PROPOSED', dateadd(hour, %s, current_timestamp()), 'PENDING', current_timestamp(), current_timestamp()
-            )
-            """,
-            (
-                action_id,
-                req.proposal_id,
-                req.portfolio_id,
-                req.symbol.upper(),
-                req.side.upper(),
-                req.proposed_qty,
-                req.proposed_price,
-                req.asset_class,
-                req.validity_window_hours,
-            ),
-        )
-        return {"ok": True, "action_id": action_id}
     finally:
         conn.close()
 

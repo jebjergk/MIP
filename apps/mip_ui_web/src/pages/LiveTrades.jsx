@@ -30,13 +30,6 @@ export default function LiveTrades() {
   const [bridgeLivePortfolioId, setBridgeLivePortfolioId] = useState('1')
   const [bridgeRunId, setBridgeRunId] = useState('')
   const [bridgeResult, setBridgeResult] = useState(null)
-  const [createForm, setCreateForm] = useState({
-    portfolio_id: 1,
-    symbol: '',
-    side: 'BUY',
-    proposed_qty: 0,
-    proposed_price: '',
-  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -113,35 +106,6 @@ export default function LiveTrades() {
     }
   }, [load])
 
-  const createAction = useCallback(async () => {
-    setBusyId('create')
-    setError('')
-    try {
-      const payload = {
-        portfolio_id: Number(createForm.portfolio_id),
-        symbol: createForm.symbol.trim().toUpperCase(),
-        side: createForm.side,
-        proposed_qty: Number(createForm.proposed_qty),
-        proposed_price: createForm.proposed_price === '' ? null : Number(createForm.proposed_price),
-      }
-      const resp = await fetch(`${API_BASE}/live/trades/actions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!resp.ok) {
-        const msg = await resp.text()
-        throw new Error(msg || `Create failed (${resp.status})`)
-      }
-      setCreateForm((v) => ({ ...v, symbol: '', proposed_qty: 0, proposed_price: '' }))
-      await load()
-    } catch (e) {
-      setError(e.message || 'Failed to create action.')
-    } finally {
-      setBusyId(null)
-    }
-  }, [createForm, load])
-
   const importFromResearchProposals = useCallback(async () => {
     setBusyId('bridge')
     setError('')
@@ -176,11 +140,24 @@ export default function LiveTrades() {
       <div className="live-trades-header">
         <div>
           <h2>Live Trades</h2>
-          <p>Compliance ledger for pending entry approvals and revalidation.</p>
+          <p>Compliance ledger for system-generated trade actions from research proposals.</p>
         </div>
         <button className="lt-btn" disabled={busyId === 'snapshot'} onClick={refreshSnapshot}>
           {busyId === 'snapshot' ? 'Refreshing...' : 'Refresh IBKR Snapshot'}
         </button>
+      </div>
+
+      <div className="lt-create-card">
+        <h3>How To Read This Page</h3>
+        <div className="lt-summary">
+          <b>Refresh IBKR Snapshot</b> pulls latest account/cash/positions/open-orders from IB Gateway into MIP snapshot tables (read-only sync).
+        </div>
+        <div className="lt-summary">
+          <b>Live Portfolio ID</b> is an internal MIP execution container. It is not an IB field.
+        </div>
+        <div className="lt-summary">
+          <b>IBKR Account</b> shown in header is the broker truth source used for live state.
+        </div>
       </div>
 
       {latestNav && (
@@ -191,42 +168,6 @@ export default function LiveTrades() {
           <span>Snapshot: <b>{fmtTs(latestNav.SNAPSHOT_TS)}</b></span>
         </div>
       )}
-
-      <div className="lt-create-card">
-        <h3>Create Trade Intent</h3>
-        <div className="lt-form-row">
-          <input
-            value={createForm.portfolio_id}
-            onChange={(e) => setCreateForm((v) => ({ ...v, portfolio_id: e.target.value }))}
-            placeholder="Portfolio ID"
-          />
-          <input
-            value={createForm.symbol}
-            onChange={(e) => setCreateForm((v) => ({ ...v, symbol: e.target.value }))}
-            placeholder="Symbol"
-          />
-          <select
-            value={createForm.side}
-            onChange={(e) => setCreateForm((v) => ({ ...v, side: e.target.value }))}
-          >
-            <option value="BUY">BUY</option>
-            <option value="SELL">SELL</option>
-          </select>
-          <input
-            value={createForm.proposed_qty}
-            onChange={(e) => setCreateForm((v) => ({ ...v, proposed_qty: e.target.value }))}
-            placeholder="Quantity"
-          />
-          <input
-            value={createForm.proposed_price}
-            onChange={(e) => setCreateForm((v) => ({ ...v, proposed_price: e.target.value }))}
-            placeholder="Proposed Price"
-          />
-          <button className="lt-btn" onClick={createAction} disabled={busyId === 'create'}>
-            {busyId === 'create' ? 'Creating...' : 'Create'}
-          </button>
-        </div>
-      </div>
 
       <div className="lt-actors-card">
         <label>
@@ -249,7 +190,7 @@ export default function LiveTrades() {
           <input
             value={bridgeLivePortfolioId}
             onChange={(e) => setBridgeLivePortfolioId(e.target.value)}
-            placeholder="Live Portfolio ID"
+            placeholder="Live Portfolio ID (MIP internal)"
           />
           <input
             value={bridgeRunId}

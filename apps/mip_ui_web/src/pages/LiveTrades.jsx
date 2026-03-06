@@ -26,6 +26,7 @@ export default function LiveTrades() {
   const [latestNav, setLatestNav] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
   const [pmActor, setPmActor] = useState('portfolio_manager')
+  const [executionActor, setExecutionActor] = useState('execution_operator')
   const [bridgeLivePortfolioId, setBridgeLivePortfolioId] = useState('1')
   const [bridgeRunId, setBridgeRunId] = useState('')
   const [bridgeResult, setBridgeResult] = useState(null)
@@ -77,7 +78,17 @@ export default function LiveTrades() {
         body: body ? JSON.stringify(body) : undefined,
       })
       if (!resp.ok) {
-        const msg = await resp.text()
+        let msg = ''
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes && Array.isArray(j.detail.reason_codes)) {
+            msg = `${j.detail.message || 'Action blocked'}: ${j.detail.reason_codes.join(', ')}`
+          } else {
+            msg = j?.detail ? JSON.stringify(j.detail) : ''
+          }
+        } catch {
+          msg = await resp.text()
+        }
         throw new Error(msg || `Action failed (${resp.status})`)
       }
       await load()
@@ -226,6 +237,10 @@ export default function LiveTrades() {
           Compliance actor
           <input value={complianceActor} onChange={(e) => setComplianceActor(e.target.value)} />
         </label>
+        <label>
+          Execution actor
+          <input value={executionActor} onChange={(e) => setExecutionActor(e.target.value)} />
+        </label>
       </div>
 
       <div className="lt-create-card">
@@ -289,6 +304,7 @@ export default function LiveTrades() {
                 <td>
                   <div>{a.STATUS}</div>
                   <div>{a.COMPLIANCE_STATUS || '—'}</div>
+                  <div>{Array.isArray(a.REASON_CODES) && a.REASON_CODES.length ? a.REASON_CODES.join(', ') : '—'}</div>
                 </td>
                 <td>
                   <div>Qty: {fmtNum(a.PROPOSED_QTY, 0)}</div>
@@ -310,14 +326,14 @@ export default function LiveTrades() {
                   <div className="lt-actions">
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID}
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'PROPOSED'}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/pm-accept`, { actor: pmActor })}
                     >
                       PM Accept
                     </button>
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID}
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'PM_ACCEPTED'}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/compliance`, {
                         actor: complianceActor,
                         decision: 'APPROVE',
@@ -327,7 +343,7 @@ export default function LiveTrades() {
                     </button>
                     <button
                       className="lt-btn lt-btn-danger"
-                      disabled={busyId === a.ACTION_ID}
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'PM_ACCEPTED'}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/compliance`, {
                         actor: complianceActor,
                         decision: 'DENY',
@@ -337,10 +353,22 @@ export default function LiveTrades() {
                     </button>
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID}
+                      disabled={busyId === a.ACTION_ID || !['COMPLIANCE_APPROVED', 'REVALIDATED_FAIL'].includes(a.STATUS)}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/revalidate`)}
                     >
                       Revalidate
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'REVALIDATED_PASS'}
+                      onClick={() =>
+                        runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/execute`, {
+                          actor: executionActor,
+                          attempt_n: 1,
+                        })
+                      }
+                    >
+                      Execute (Paper)
                     </button>
                   </div>
                 </td>

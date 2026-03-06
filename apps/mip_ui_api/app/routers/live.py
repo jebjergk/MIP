@@ -64,6 +64,56 @@ class ImportLiveActionsFromProposalsRequest(BaseModel):
     limit: int = Field(default=100, ge=1, le=1000)
 
 
+class ExecuteLiveActionRequest(BaseModel):
+    actor: str
+    attempt_n: int = 1
+
+
+_ALLOWED_TRANSITIONS = {
+    "PROPOSED": {"PM_ACCEPTED"},
+    "PM_ACCEPTED": {"COMPLIANCE_APPROVED", "COMPLIANCE_DENIED"},
+    "COMPLIANCE_APPROVED": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
+    "REVALIDATED_FAIL": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
+    "REVALIDATED_PASS": {"EXECUTION_REQUESTED"},
+}
+
+
+def _fetch_live_action(cur, action_id: str) -> dict | None:
+    cur.execute(
+        """
+        select
+          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE,
+          STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
+          PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE
+        from MIP.LIVE.LIVE_ACTIONS
+        where ACTION_ID = %s
+        """,
+        (action_id,),
+    )
+    rows = fetch_all(cur)
+    return rows[0] if rows else None
+
+
+def _assert_transition_allowed(current_status: str | None, target_status: str) -> None:
+    allowed = _ALLOWED_TRANSITIONS.get((current_status or "").upper(), set())
+    if target_status not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invalid status transition: {current_status} -> {target_status}",
+        )
+
+
+def _write_reason_codes(cur, action_id: str, reason_codes: list[str]) -> None:
+    cur.execute(
+        """
+        update MIP.LIVE.LIVE_ACTIONS
+           set REASON_CODES = parse_json(%s),
+               UPDATED_AT = current_timestamp()
+         where ACTION_ID = %s
+        """,
+        (json.dumps(reason_codes), action_id),
+    )
+
 def _summary_hint_from_status_and_details(status: str | None, details: dict | None) -> str | None:
     """Derive a short summary hint for the run (same as runs router)."""
     if not status:
@@ -491,7 +541,7 @@ def list_live_trade_actions(
             params.append(portfolio_id)
         if pending_only:
             wheres.append(
-                "STATUS in ('PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL')"
+                "STATUS in ('PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
             )
         params.append(limit)
         sql = f"""
@@ -501,6 +551,7 @@ def list_live_trade_actions(
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
           REVALIDATION_TS, REVALIDATION_PRICE, PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT,
+          REASON_CODES,
           ONE_MIN_BAR_TS, ONE_MIN_BAR_CLOSE, EXECUTION_PRICE_SOURCE,
           CREATED_AT, UPDATED_AT
         from MIP.LIVE.LIVE_ACTIONS
@@ -554,6 +605,10 @@ def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
     conn = get_connection()
     try:
         cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        _assert_transition_allowed(action.get("STATUS"), "PM_ACCEPTED")
         cur.execute(
             """
             update MIP.LIVE.LIVE_ACTIONS
@@ -561,13 +616,12 @@ def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
                    PM_APPROVED_BY = %s,
                    PM_APPROVED_TS = current_timestamp(),
                    COMPLIANCE_STATUS = 'PENDING',
+                   REASON_CODES = null,
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
             """,
             (req.actor, action_id),
         )
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Action not found.")
         return {"ok": True, "action_id": action_id, "status": "PM_ACCEPTED"}
     finally:
         conn.close()
@@ -579,6 +633,10 @@ def compliance_decide_live_action(action_id: str, req: ComplianceDecisionRequest
     conn = get_connection()
     try:
         cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        _assert_transition_allowed(action.get("STATUS"), status)
         cur.execute(
             """
             update MIP.LIVE.LIVE_ACTIONS
@@ -588,13 +646,12 @@ def compliance_decide_live_action(action_id: str, req: ComplianceDecisionRequest
                    COMPLIANCE_DECISION_TS = current_timestamp(),
                    COMPLIANCE_NOTES = %s,
                    COMPLIANCE_REFERENCE_ID = %s,
+                   REASON_CODES = null,
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
             """,
             (status, req.decision, req.actor, req.notes, req.reference_id, action_id),
         )
-        if cur.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Action not found.")
         return {"ok": True, "action_id": action_id, "status": status}
     finally:
         conn.close()
@@ -605,18 +662,21 @@ def revalidate_live_action(action_id: str):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            select ACTION_ID, PORTFOLIO_ID, SYMBOL, PROPOSED_PRICE
-            from MIP.LIVE.LIVE_ACTIONS
-            where ACTION_ID = %s
-            """,
-            (action_id,),
-        )
-        row = cur.fetchone()
-        if not row:
+        action = _fetch_live_action(cur, action_id)
+        if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
-        _, portfolio_id, symbol, proposed_price = row
+        current_status = action.get("STATUS")
+        if current_status == "COMPLIANCE_APPROVED":
+            _assert_transition_allowed(current_status, "REVALIDATED_PASS")
+        elif current_status == "REVALIDATED_FAIL":
+            _assert_transition_allowed(current_status, "REVALIDATED_PASS")
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Revalidation allowed only from COMPLIANCE_APPROVED/REVALIDATED_FAIL (current: {current_status})",
+            )
+        symbol = action.get("SYMBOL")
+        proposed_price = action.get("PROPOSED_PRICE")
 
         cur.execute(
             """
@@ -659,6 +719,7 @@ def revalidate_live_action(action_id: str):
                 deviation = None
         guard_pass = deviation is None or deviation <= 0.02
         status = "REVALIDATED_PASS" if guard_pass else "REVALIDATED_FAIL"
+        reason_codes = [] if guard_pass else ["PRICE_GUARD_FAIL"]
 
         cur.execute(
             """
@@ -671,6 +732,7 @@ def revalidate_live_action(action_id: str):
                    ONE_MIN_BAR_CLOSE = %s,
                    EXECUTION_PRICE_SOURCE = %s,
                    STATUS = %s,
+                   REASON_CODES = parse_json(%s),
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
             """,
@@ -682,6 +744,7 @@ def revalidate_live_action(action_id: str):
                 ref_price if source == "ONE_MINUTE_BAR" else None,
                 source,
                 status,
+                json.dumps(reason_codes),
                 action_id,
             ),
         )
@@ -692,6 +755,225 @@ def revalidate_live_action(action_id: str):
             "price_source": source,
             "revalidation_price": float(ref_price) if ref_price is not None else None,
             "price_deviation_pct": float(deviation) if deviation is not None else None,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/execute")
+def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        _assert_transition_allowed(action.get("STATUS"), "EXECUTION_REQUESTED")
+
+        cur.execute(
+            """
+            select
+              IBKR_ACCOUNT_ID, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, IS_ACTIVE
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (action.get("PORTFOLIO_ID"),),
+        )
+        cfg_rows = fetch_all(cur)
+        if not cfg_rows:
+            raise HTTPException(status_code=400, detail="Live portfolio config missing.")
+        cfg = cfg_rows[0]
+        if cfg.get("IS_ACTIVE") is False:
+            raise HTTPException(status_code=400, detail="Live portfolio config is inactive.")
+
+        reason_codes: list[str] = []
+        now_utc = datetime.now(timezone.utc)
+
+        validity_window_end = action.get("VALIDITY_WINDOW_END")
+        if validity_window_end and hasattr(validity_window_end, "replace"):
+            vw = validity_window_end.replace(tzinfo=timezone.utc)
+            if vw < now_utc:
+                reason_codes.append("ACTION_EXPIRED")
+
+        revalidation_ts = action.get("REVALIDATION_TS")
+        if not revalidation_ts:
+            reason_codes.append("MISSING_REVALIDATION")
+        else:
+            rv_ts = revalidation_ts.replace(tzinfo=timezone.utc)
+            rv_age_sec = (now_utc - rv_ts).total_seconds()
+            max_reval_age = cfg.get("VALIDITY_WINDOW_SEC") or 14400
+            if rv_age_sec > max_reval_age:
+                reason_codes.append("REVALIDATION_STALE")
+
+        if (action.get("PRICE_GUARD_RESULT") or "").upper() != "PASS":
+            reason_codes.append("PRICE_GUARD_FAIL")
+
+        account_id = cfg.get("IBKR_ACCOUNT_ID")
+        cur.execute(
+            """
+            select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'NAV'
+              and IBKR_ACCOUNT_ID = %s
+            order by SNAPSHOT_TS desc
+            limit 1
+            """,
+            (account_id,),
+        )
+        nav_rows = fetch_all(cur)
+        if not nav_rows:
+            reason_codes.append("MISSING_SNAPSHOT")
+            nav_eur = None
+            cash_eur = None
+            snapshot_ts = None
+        else:
+            nav_row = nav_rows[0]
+            snapshot_ts = nav_row.get("SNAPSHOT_TS")
+            nav_eur = float(nav_row.get("NET_LIQUIDATION_EUR") or 0.0)
+            cash_eur = float(nav_row.get("TOTAL_CASH_EUR") or 0.0)
+            if snapshot_ts:
+                snap_age_sec = (now_utc - snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds()
+                max_snap_age = cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC") or 300
+                if snap_age_sec > max_snap_age:
+                    reason_codes.append("SNAPSHOT_STALE")
+
+        cur.execute(
+            """
+            select count(distinct SYMBOL) as OPEN_POSITIONS
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'POSITION'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS = (
+                select max(SNAPSHOT_TS)
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'POSITION'
+                  and IBKR_ACCOUNT_ID = %s
+              )
+              and coalesce(POSITION_QTY, 0) <> 0
+            """,
+            (account_id, account_id),
+        )
+        pos_rows = fetch_all(cur)
+        open_positions = int((pos_rows[0] or {}).get("OPEN_POSITIONS") or 0)
+
+        max_positions = cfg.get("MAX_POSITIONS")
+        if max_positions is not None and open_positions >= int(max_positions):
+            reason_codes.append("MAX_POSITIONS_EXCEEDED")
+
+        proposed_qty = action.get("PROPOSED_QTY")
+        px = action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE")
+        if proposed_qty is None or px is None:
+            reason_codes.append("MISSING_NOTIONAL_INPUT")
+            est_notional = None
+        else:
+            est_notional = abs(float(proposed_qty) * float(px))
+
+        max_position_pct = cfg.get("MAX_POSITION_PCT")
+        if est_notional is not None and nav_eur and max_position_pct is not None and nav_eur > 0:
+            if (est_notional / nav_eur) > float(max_position_pct):
+                reason_codes.append("MAX_POSITION_PCT_EXCEEDED")
+
+        if est_notional is not None and nav_eur and (action.get("SIDE") or "").upper() == "BUY":
+            cash_buffer_pct = float(cfg.get("CASH_BUFFER_PCT") or 0.0)
+            min_cash_after = nav_eur * cash_buffer_pct
+            if (cash_eur - est_notional) < min_cash_after:
+                reason_codes.append("CASH_BUFFER_BREACH")
+
+        cur.execute(
+            """
+            select ORDER_ID
+            from MIP.LIVE.LIVE_ORDERS
+            where ACTION_ID = %s
+              and STATUS in ('SUBMITTED','ACKNOWLEDGED','PARTIAL_FILL','FILLED')
+            limit 1
+            """,
+            (action_id,),
+        )
+        if cur.fetchone():
+            reason_codes.append("DUPLICATE_EXECUTION_BLOCKED")
+
+        if reason_codes:
+            _write_reason_codes(cur, action_id, sorted(set(reason_codes)))
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Execution blocked by safety gates.", "reason_codes": sorted(set(reason_codes))},
+            )
+
+        order_id = str(uuid.uuid4())
+        proposal_or_action = action.get("PROPOSAL_ID") if action.get("PROPOSAL_ID") is not None else action_id
+        idempotency_key = f"{action.get('PORTFOLIO_ID')}:{proposal_or_action}:{req.attempt_n}"
+
+        cur.execute(
+            """
+            insert into MIP.LIVE.LIVE_ORDERS (
+              ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, STATUS,
+              SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+              SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
+            )
+            values (
+              %s, %s, %s, %s, %s, 'ACKNOWLEDGED',
+              %s, %s, 'MKT_PAPER', %s, %s,
+              current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
+            )
+            """,
+            (
+                order_id,
+                action_id,
+                action.get("PORTFOLIO_ID"),
+                account_id,
+                idempotency_key,
+                action.get("SYMBOL"),
+                action.get("SIDE"),
+                proposed_qty,
+                action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"),
+            ),
+        )
+
+        cur.execute(
+            """
+            insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+              EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
+              IDEMPOTENCY_KEY, BROKER_ORDER_ID, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
+            )
+            values (
+              %s, current_timestamp(), 'EXECUTION_REQUESTED', %s, %s, %s,
+              %s, %s, %s, %s, %s, %s, parse_json(%s)
+            )
+            """,
+            (
+                str(uuid.uuid4()),
+                action.get("PORTFOLIO_ID"),
+                action.get("PROPOSAL_ID"),
+                action_id,
+                idempotency_key,
+                order_id,
+                action.get("SYMBOL"),
+                action.get("SIDE"),
+                proposed_qty,
+                action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"),
+                json.dumps({"actor": req.actor, "mode": "PAPER_PLACEHOLDER"}),
+            ),
+        )
+
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = 'EXECUTION_REQUESTED',
+                   REASON_CODES = parse_json(%s),
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (json.dumps(["EXECUTION_REQUESTED"]), action_id),
+        )
+
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": "EXECUTION_REQUESTED",
+            "order_id": order_id,
+            "idempotency_key": idempotency_key,
+            "mode": "PAPER_PLACEHOLDER",
         }
     finally:
         conn.close()

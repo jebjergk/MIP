@@ -37,6 +37,7 @@ const NAV_GROUPS = [
     label: 'Operations',
     items: [
       { to: '/live-trades', icon: '\uD83E\uDDFE', label: 'Live Trades' },
+      { to: '/live-portfolio-config', icon: '\u2699\uFE0F', label: 'Live Portfolio Config' },
       { to: '/decision-console', icon: '\u26A1', label: 'Decision Console' },
       { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
       { to: '/runs',  icon: '\u25B6\uFE0F', label: 'Runs (Audit)' },

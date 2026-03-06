@@ -26,6 +26,9 @@ export default function LiveTrades() {
   const [latestNav, setLatestNav] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
   const [pmActor, setPmActor] = useState('portfolio_manager')
+  const [bridgeLivePortfolioId, setBridgeLivePortfolioId] = useState('1')
+  const [bridgeRunId, setBridgeRunId] = useState('')
+  const [bridgeResult, setBridgeResult] = useState(null)
   const [createForm, setCreateForm] = useState({
     portfolio_id: 1,
     symbol: '',
@@ -128,6 +131,35 @@ export default function LiveTrades() {
     }
   }, [createForm, load])
 
+  const importFromResearchProposals = useCallback(async () => {
+    setBusyId('bridge')
+    setError('')
+    setBridgeResult(null)
+    try {
+      const payload = {
+        live_portfolio_id: Number(bridgeLivePortfolioId),
+        run_id: bridgeRunId.trim() ? bridgeRunId.trim() : null,
+        limit: 200,
+      }
+      const resp = await fetch(`${API_BASE}/live/trades/actions/import-proposals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!resp.ok) {
+        const msg = await resp.text()
+        throw new Error(msg || `Import failed (${resp.status})`)
+      }
+      const data = await resp.json()
+      setBridgeResult(data)
+      await load()
+    } catch (e) {
+      setError(e.message || 'Failed to import proposals.')
+    } finally {
+      setBusyId(null)
+    }
+  }, [bridgeLivePortfolioId, bridgeRunId, load])
+
   return (
     <div className="page live-trades-page">
       <div className="live-trades-header">
@@ -194,6 +226,31 @@ export default function LiveTrades() {
           Compliance actor
           <input value={complianceActor} onChange={(e) => setComplianceActor(e.target.value)} />
         </label>
+      </div>
+
+      <div className="lt-create-card">
+        <h3>Bridge Research Proposals -> Live Actions</h3>
+        <div className="lt-form-row">
+          <input
+            value={bridgeLivePortfolioId}
+            onChange={(e) => setBridgeLivePortfolioId(e.target.value)}
+            placeholder="Live Portfolio ID"
+          />
+          <input
+            value={bridgeRunId}
+            onChange={(e) => setBridgeRunId(e.target.value)}
+            placeholder="Optional run_id filter"
+          />
+          <button className="lt-btn" onClick={importFromResearchProposals} disabled={busyId === 'bridge'}>
+            {busyId === 'bridge' ? 'Importing...' : 'Import Proposals'}
+          </button>
+        </div>
+        {bridgeResult ? (
+          <div className="lt-summary">
+            Imported {bridgeResult.imported_count} / {bridgeResult.candidate_count} candidate proposals
+            (skipped existing: {bridgeResult.skipped_existing_count}, invalid: {bridgeResult.skipped_invalid_count}).
+          </div>
+        ) : null}
       </div>
 
       {error ? <div className="lt-error">{error}</div> : null}

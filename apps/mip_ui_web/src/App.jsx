@@ -14,6 +14,7 @@ import ParallelWorlds from './pages/ParallelWorlds'
 import DecisionConsole from './pages/DecisionConsole'
 import NewsIntelligence from './pages/NewsIntelligence'
 import LiveTrades from './pages/LiveTrades'
+import LivePortfolioConfig from './pages/LivePortfolioConfig'
 import AppLayout from './components/AppLayout'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
 import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPage'
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/decision-console" element={<DecisionConsole />} />
         <Route path="/live-trades" element={<LiveTrades />} />
+        <Route path="/live-portfolio-config" element={<LivePortfolioConfig />} />
         <Route path="/news-intelligence" element={<NewsIntelligence />} />
         <Route path="/intraday/dashboard" element={<IntradayDashboardPage />} />
         <Route path="/intraday/pattern/:patternId" element={<IntradayPatternDetailPage />} />

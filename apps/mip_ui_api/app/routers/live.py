@@ -4,6 +4,7 @@ Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outco
 """
 import json
 import subprocess
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -36,6 +37,30 @@ class ComplianceDecisionRequest(BaseModel):
     decision: str = Field(pattern="^(APPROVE|DENY)$")
     notes: str | None = None
     reference_id: str | None = None
+
+
+class LivePortfolioConfigUpsertRequest(BaseModel):
+    sim_portfolio_id: int | None = None
+    ibkr_account_id: str | None = None
+    adapter_mode: str | None = Field(default=None, pattern="^(PAPER|LIVE)$")
+    base_currency: str | None = None
+    max_positions: int | None = None
+    max_position_pct: float | None = None
+    cash_buffer_pct: float | None = None
+    max_slippage_pct: float | None = None
+    validity_window_sec: int | None = None
+    quote_freshness_threshold_sec: int | None = None
+    snapshot_freshness_threshold_sec: int | None = None
+    drawdown_stop_pct: float | None = None
+    bust_pct: float | None = None
+    cooldown_bars: int | None = None
+    is_active: bool | None = None
+
+
+class ImportLiveActionsFromProposalsRequest(BaseModel):
+    live_portfolio_id: int
+    run_id: str | None = None
+    limit: int = Field(default=100, ge=1, le=1000)
 
 
 def _summary_hint_from_status_and_details(status: str | None, details: dict | None) -> str | None:
@@ -658,6 +683,303 @@ def revalidate_live_action(action_id: str):
             "price_source": source,
             "revalidation_price": float(ref_price) if ref_price is not None else None,
             "price_deviation_pct": float(deviation) if deviation is not None else None,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/portfolio-config")
+def list_live_portfolio_configs():
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            order by PORTFOLIO_ID
+            """
+        )
+        rows = fetch_all(cur)
+        return {"configs": serialize_rows(rows), "count": len(rows)}
+    finally:
+        conn.close()
+
+
+@router.get("/portfolio-config/{portfolio_id}")
+def get_live_portfolio_config(portfolio_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (portfolio_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Live portfolio config not found.")
+        return {"config": serialize_row(rows[0])}
+    finally:
+        conn.close()
+
+
+@router.put("/portfolio-config/{portfolio_id}")
+def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpsertRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "select PORTFOLIO_ID, IBKR_ACCOUNT_ID, CONFIG_VERSION from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = %s",
+            (portfolio_id,),
+        )
+        existing = cur.fetchone()
+
+        if existing:
+            cur.execute(
+                """
+                update MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                   set SIM_PORTFOLIO_ID = coalesce(%s, SIM_PORTFOLIO_ID),
+                       IBKR_ACCOUNT_ID = coalesce(%s, IBKR_ACCOUNT_ID),
+                       ADAPTER_MODE = coalesce(%s, ADAPTER_MODE),
+                       BASE_CURRENCY = coalesce(%s, BASE_CURRENCY),
+                       MAX_POSITIONS = coalesce(%s, MAX_POSITIONS),
+                       MAX_POSITION_PCT = coalesce(%s, MAX_POSITION_PCT),
+                       CASH_BUFFER_PCT = coalesce(%s, CASH_BUFFER_PCT),
+                       MAX_SLIPPAGE_PCT = coalesce(%s, MAX_SLIPPAGE_PCT),
+                       VALIDITY_WINDOW_SEC = coalesce(%s, VALIDITY_WINDOW_SEC),
+                       QUOTE_FRESHNESS_THRESHOLD_SEC = coalesce(%s, QUOTE_FRESHNESS_THRESHOLD_SEC),
+                       SNAPSHOT_FRESHNESS_THRESHOLD_SEC = coalesce(%s, SNAPSHOT_FRESHNESS_THRESHOLD_SEC),
+                       DRAWDOWN_STOP_PCT = coalesce(%s, DRAWDOWN_STOP_PCT),
+                       BUST_PCT = coalesce(%s, BUST_PCT),
+                       COOLDOWN_BARS = coalesce(%s, COOLDOWN_BARS),
+                       IS_ACTIVE = coalesce(%s, IS_ACTIVE),
+                       CONFIG_VERSION = coalesce(CONFIG_VERSION, 1) + 1,
+                       UPDATED_AT = current_timestamp()
+                 where PORTFOLIO_ID = %s
+                """,
+                (
+                    req.sim_portfolio_id,
+                    req.ibkr_account_id,
+                    req.adapter_mode,
+                    req.base_currency.upper() if req.base_currency else None,
+                    req.max_positions,
+                    req.max_position_pct,
+                    req.cash_buffer_pct,
+                    req.max_slippage_pct,
+                    req.validity_window_sec,
+                    req.quote_freshness_threshold_sec,
+                    req.snapshot_freshness_threshold_sec,
+                    req.drawdown_stop_pct,
+                    req.bust_pct,
+                    req.cooldown_bars,
+                    req.is_active,
+                    portfolio_id,
+                ),
+            )
+        else:
+            if not req.ibkr_account_id:
+                raise HTTPException(status_code=400, detail="ibkr_account_id is required when creating config.")
+            cur.execute(
+                """
+                insert into MIP.LIVE.LIVE_PORTFOLIO_CONFIG (
+                  PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+                  MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
+                  VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+                  DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
+                  CREATED_AT, UPDATED_AT
+                )
+                values (
+                  %s, %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
+                  %s, %s, %s, %s,
+                  coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
+                  %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
+                  current_timestamp(), current_timestamp()
+                )
+                """,
+                (
+                    portfolio_id,
+                    req.sim_portfolio_id,
+                    req.ibkr_account_id,
+                    req.adapter_mode,
+                    req.base_currency.upper() if req.base_currency else None,
+                    req.max_positions,
+                    req.max_position_pct,
+                    req.cash_buffer_pct,
+                    req.max_slippage_pct,
+                    req.validity_window_sec,
+                    req.quote_freshness_threshold_sec,
+                    req.snapshot_freshness_threshold_sec,
+                    req.drawdown_stop_pct,
+                    req.bust_pct,
+                    req.cooldown_bars,
+                    req.is_active,
+                ),
+            )
+
+        cur.execute(
+            """
+            select
+              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (portfolio_id,),
+        )
+        rows = fetch_all(cur)
+        return {"ok": True, "config": serialize_row(rows[0]) if rows else None}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/import-proposals")
+def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            select SIM_PORTFOLIO_ID, coalesce(VALIDITY_WINDOW_SEC, 14400) as VALIDITY_WINDOW_SEC
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+              and coalesce(IS_ACTIVE, true) = true
+            """,
+            (req.live_portfolio_id,),
+        )
+        cfg = cur.fetchone()
+        if not cfg:
+            raise HTTPException(
+                status_code=400,
+                detail="Live portfolio config not found or inactive.",
+            )
+        sim_portfolio_id, validity_window_sec = cfg
+        if sim_portfolio_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="SIM_PORTFOLIO_ID is not configured for this live portfolio.",
+            )
+
+        wheres = [
+            "PORTFOLIO_ID = %s",
+            "STATUS in ('PROPOSED', 'APPROVED')",
+            "SYMBOL is not null",
+            "SIDE in ('BUY', 'SELL')",
+        ]
+        params = [sim_portfolio_id]
+        if req.run_id:
+            wheres.append("RUN_ID_VARCHAR = %s")
+            params.append(req.run_id)
+        params.append(req.limit)
+
+        cur.execute(
+            f"""
+            select
+              PROPOSAL_ID, RUN_ID_VARCHAR, SYMBOL, MARKET_TYPE, SIDE, TARGET_WEIGHT,
+              STATUS, SIGNAL_PATTERN_ID, RECOMMENDATION_ID, PROPOSED_AT
+            from MIP.AGENT_OUT.ORDER_PROPOSALS
+            where {' and '.join(wheres)}
+            order by PROPOSED_AT desc
+            limit %s
+            """,
+            tuple(params),
+        )
+        proposals = fetch_all(cur)
+
+        imported = 0
+        skipped_existing = 0
+        skipped_invalid = 0
+        imported_action_ids: list[str] = []
+
+        for p in proposals:
+            proposal_id = p.get("PROPOSAL_ID")
+            if proposal_id is None:
+                skipped_invalid += 1
+                continue
+
+            cur.execute(
+                """
+                select ACTION_ID
+                from MIP.LIVE.LIVE_ACTIONS
+                where PORTFOLIO_ID = %s
+                  and PROPOSAL_ID = %s
+                limit 1
+                """,
+                (req.live_portfolio_id, proposal_id),
+            )
+            if cur.fetchone():
+                skipped_existing += 1
+                continue
+
+            action_id = str(uuid.uuid4())
+            snapshot_payload = json.dumps(
+                {
+                    "source": "ORDER_PROPOSALS",
+                    "sim_portfolio_id": sim_portfolio_id,
+                    "run_id": p.get("RUN_ID_VARCHAR"),
+                    "proposal_status": p.get("STATUS"),
+                    "signal_pattern_id": p.get("SIGNAL_PATTERN_ID"),
+                    "recommendation_id": p.get("RECOMMENDATION_ID"),
+                    "target_weight": p.get("TARGET_WEIGHT"),
+                    "proposed_at": str(p.get("PROPOSED_AT")) if p.get("PROPOSED_AT") is not None else None,
+                }
+            )
+
+            cur.execute(
+                """
+                insert into MIP.LIVE.LIVE_ACTIONS (
+                  ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, ASSET_CLASS,
+                  STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT,
+                  CREATED_AT, UPDATED_AT
+                )
+                values (
+                  %s, %s, %s, %s, %s, %s, %s,
+                  'PROPOSED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s),
+                  current_timestamp(), current_timestamp()
+                )
+                """,
+                (
+                    action_id,
+                    proposal_id,
+                    req.live_portfolio_id,
+                    (p.get("SYMBOL") or "").upper(),
+                    (p.get("SIDE") or "").upper(),
+                    None,
+                    p.get("MARKET_TYPE"),
+                    int(validity_window_sec) if validity_window_sec is not None else 14400,
+                    snapshot_payload,
+                ),
+            )
+            imported += 1
+            imported_action_ids.append(action_id)
+
+        return {
+            "ok": True,
+            "live_portfolio_id": req.live_portfolio_id,
+            "sim_portfolio_id": sim_portfolio_id,
+            "run_id_filter": req.run_id,
+            "candidate_count": len(proposals),
+            "imported_count": imported,
+            "skipped_existing_count": skipped_existing,
+            "skipped_invalid_count": skipped_invalid,
+            "imported_action_ids": imported_action_ids[:50],
         }
     finally:
         conn.close()

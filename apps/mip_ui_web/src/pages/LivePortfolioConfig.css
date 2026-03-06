@@ -1,0 +1,81 @@
+.lpc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lpc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.lpc-top-row {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.lpc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.lpc-grid label,
+.lpc-top-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.lpc-grid input,
+.lpc-grid select,
+.lpc-top-row input,
+.lpc-top-row select {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.lpc-checkbox {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.lpc-actions {
+  display: flex;
+}
+
+.lpc-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+
+.lpc-btn-primary {
+  background: rgba(70, 140, 255, 0.25);
+}
+
+.lpc-msg {
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.lpc-msg-error {
+  border: 1px solid rgba(220, 80, 80, 0.45);
+  background: rgba(220, 80, 80, 0.15);
+}
+
+.lpc-msg-ok {
+  border: 1px solid rgba(80, 180, 120, 0.45);
+  background: rgba(80, 180, 120, 0.15);
+}

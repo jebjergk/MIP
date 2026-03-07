@@ -1012,6 +1012,61 @@ begin
             'skipped_held_count', :v_skipped_held_count
         );
 
+    -- Learning-to-Decision ledger append (non-fatal).
+    begin
+        call MIP.APP.SP_LEDGER_APPEND_EVENT(
+            'DECISION_EVENT',
+            'PROPOSAL_SELECTION',
+            'SUCCESS',
+            :P_RUN_ID,
+            :P_PARENT_RUN_ID,
+            :P_PORTFOLIO_ID,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            object_construct(
+                'news_influence_enabled', (
+                    select coalesce(max(lower(CONFIG_VALUE)), 'false')
+                    from MIP.APP.APP_CONFIG
+                    where CONFIG_KEY = 'NEWS_INFLUENCE_ENABLED'
+                )
+            ),
+            object_construct(
+                'candidate_count_raw', :v_candidate_count_raw,
+                'candidate_count_trusted', :v_candidate_count_trusted,
+                'remaining_capacity', :v_remaining_capacity
+            ),
+            object_construct(
+                'proposal_selected', :v_selected_count,
+                'proposal_inserted', :v_inserted_count,
+                'picked_stock', :v_selected_stock,
+                'picked_fx', :v_selected_fx
+            ),
+            object_construct(
+                'eligibility_changed', iff(:v_candidate_count_raw != :v_candidate_count_trusted, true, false),
+                'ranking_adjustment_active', true,
+                'size_profile', object_construct(
+                    'target_weight', :v_target_weight,
+                    'max_position_pct', :v_max_position_pct
+                ),
+                'trusted_rejected_count', :v_trusted_rejected_count
+            ),
+            object_construct(
+                'run_id', :P_RUN_ID,
+                'portfolio_id', :P_PORTFOLIO_ID,
+                'event_source', 'SP_AGENT_PROPOSE_TRADES'
+            ),
+            null,
+            null
+        );
+    exception
+        when other then null;
+    end;
+
     return object_construct(
         'status', 'SUCCESS',
         'run_id', :P_RUN_ID,

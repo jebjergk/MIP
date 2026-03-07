@@ -755,6 +755,56 @@ begin
       )
     qualify row_number() over (partition by t.TRADE_ID order by ts.AVG_RETURN desc, ts.HORIZON_BARS) = 1;
 
+    -- Learning-to-Decision ledger append (non-fatal).
+    begin
+        call MIP.APP.SP_LEDGER_APPEND_EVENT(
+            'DECISION_EVENT',
+            'PROPOSAL_VALIDATION_EXECUTION',
+            'SUCCESS',
+            :P_RUN_ID,
+            :P_PARENT_RUN_ID,
+            :P_PORTFOLIO_ID,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            object_construct(
+                'entries_blocked', :v_entries_blocked,
+                'stop_reason', :v_stop_reason
+            ),
+            object_construct(
+                'proposal_count', :v_proposal_count,
+                'approved_count', :v_approved_count,
+                'rejected_count', :v_rejected_count,
+                'buy_proposals_blocked', :v_buy_proposals_blocked
+            ),
+            object_construct(
+                'executed_count', :v_executed_count,
+                'exposure_rejected', :v_exposure_rejected,
+                'position_rejected', :v_position_rejected
+            ),
+            object_construct(
+                'eligibility_blocked', :v_entries_blocked,
+                'size_constraints_applied', true,
+                'live_execution_candidates', :v_executed_count
+            ),
+            object_construct(
+                'run_id', :P_RUN_ID,
+                'portfolio_id', :P_PORTFOLIO_ID,
+                'event_source', 'SP_VALIDATE_AND_EXECUTE_PROPOSALS'
+            ),
+            object_construct(
+                'executed_count', :v_executed_count
+            ),
+            null
+        );
+    exception
+        when other then null;
+    end;
+
     return object_construct(
         'status', 'SUCCESS',
         'run_id', :P_RUN_ID,

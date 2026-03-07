@@ -322,6 +322,43 @@ Rules:
         );
         v_narrative_count := :v_narrative_count + 1;
 
+        -- Learning-to-Decision ledger append for global training event (non-fatal).
+        begin
+            call MIP.APP.SP_LEDGER_APPEND_EVENT(
+                'TRAINING_EVENT',
+                'TRAINING_DIGEST_GLOBAL',
+                iff(:v_cortex_succeeded, 'SUCCESS', 'FALLBACK'),
+                :v_run_id,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                :v_model_name,
+                null,
+                object_construct('scope', 'GLOBAL_TRAINING'),
+                :v_prior_snapshot,
+                :v_snapshot,
+                object_construct(
+                    'fired_detectors', :v_fired_detectors,
+                    'snapshot_count', :v_snapshot_count,
+                    'narrative_count', :v_narrative_count
+                ),
+                object_construct(
+                    'run_id', :v_run_id,
+                    'as_of_ts', :v_as_of_ts,
+                    'event_source', 'SP_AGENT_GENERATE_TRAINING_DIGEST'
+                ),
+                null,
+                :v_facts_hash
+            );
+        exception
+            when other then null;
+        end;
+
         v_results := array_append(:v_results, object_construct(
             'scope', 'GLOBAL_TRAINING',
             'facts_hash', :v_facts_hash,

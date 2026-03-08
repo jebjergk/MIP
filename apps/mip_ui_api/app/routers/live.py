@@ -50,7 +50,7 @@ class LivePortfolioConfigUpsertRequest(BaseModel):
 
 class ImportLiveActionsFromProposalsRequest(BaseModel):
     live_portfolio_id: int
-    source_portfolio_id: int
+    source_portfolio_id: int | None = None
     run_id: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
 
@@ -3882,8 +3882,17 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 status_code=400,
                 detail="Live portfolio config not found or inactive.",
             )
-        _, validity_window_sec = cfg
-        source_portfolio_id = req.source_portfolio_id
+        cfg_sim_portfolio_id, validity_window_sec = cfg
+        source_portfolio_id = (
+            int(req.source_portfolio_id)
+            if req.source_portfolio_id is not None
+            else (int(cfg_sim_portfolio_id) if cfg_sim_portfolio_id is not None else None)
+        )
+        if source_portfolio_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No source research portfolio resolved. Set LIVE_PORTFOLIO_CONFIG.SIM_PORTFOLIO_ID or pass source_portfolio_id.",
+            )
         source_origin = "request"
 
         wheres = [
@@ -3991,7 +4000,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   COMMITTEE_REQUIRED, COMMITTEE_STATUS,
                   CREATED_AT, UPDATED_AT
                 )
-                values (
+                select
                   %s, %s, %s, %s, %s, %s, %s,
                   'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   parse_json(%s), %s, %s, %s,
@@ -3999,7 +4008,6 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   parse_json(%s), %s, %s, %s, %s,
                   true, 'PENDING',
                   current_timestamp(), current_timestamp()
-                )
                 """,
                 (
                     action_id,

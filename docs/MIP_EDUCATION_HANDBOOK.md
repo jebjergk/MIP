@@ -15,6 +15,8 @@
 7. [Portfolios -- Simulated Investing](#chapter-7-portfolios----simulated-investing)
 8. [The Daily Pipeline and Advanced Features](#chapter-8-the-daily-pipeline-and-advanced-features)
 9. [Using the MIP Dashboard](#chapter-9-using-the-mip-dashboard)
+10. [The Early-Exit Layer and Decision Console](#chapter-10-the-early-exit-layer-and-decision-console)
+11. [Live Agentic Workflow and News Context (New)](#chapter-11-live-agentic-workflow-and-news-context-new)
 - [Appendix A: Glossary](#appendix-a-glossary)
 - [Appendix B: Frequently Asked Questions](#appendix-b-frequently-asked-questions)
 
@@ -979,6 +981,126 @@ MIP also includes **News Intelligence** as a deterministic context layer:
 
 ---
 
+## Chapter 11: Live Agentic Workflow and News Context (New)
+
+This chapter summarizes the major platform evolution delivered over the last week. The goal is to keep MIP's research strengths while adding a controlled, auditable live-linked decision path.
+
+### What Changed at a High Level
+
+MIP now supports a **structured live-paper workflow** with:
+
+- A separation between research proposals and live-executable actions
+- A **multi-role AI committee** for decision support
+- Mandatory first-session and pre-execution revalidation gates
+- Mandatory human PM/compliance approval before execution
+- IBKR-linked paper execution with broker-truth protections
+- A Learning-to-Decision Ledger that captures causality and explanations
+- Active, bounded news-context integration into decisioning and monitoring
+
+### New Canonical Decision Flow
+
+The operating sequence is now:
+
+`daily signal -> training qualification -> Parallel Worlds evidence -> news-context enrichment -> agent committee review -> first-session validation -> intent approval -> fresh revalidation -> human approval -> execution -> monitoring -> post-trade review -> learning ledger`
+
+### Agent Roles (Committee)
+
+The core committee uses specialized AI roles:
+
+- **Proposer**
+- **Trader / Execution Reviewer**
+- **Risk Manager**
+- **Challenger**
+- **Portfolio Manager**
+- **Post-Trade Reviewer / Learning Auditor**
+
+Each role works from persisted evidence and contributes bounded, structured outputs. No role can bypass deterministic hard controls.
+
+### Safety and Control Gates
+
+The live path is now intentionally fail-closed:
+
+1. Research proposal is imported as a **candidate**, not as executable intent.
+2. Candidate must pass first-session tradability checks.
+3. Trade intent must be explicitly submitted and approved.
+4. A fresh revalidation runs right before execution (with optional 1-minute refresh support).
+5. Human PM/compliance approval remains mandatory.
+6. Broker drift/staleness checks can block execution.
+
+### Broker-Truth Principle
+
+For the linked live-paper portfolio, **IBKR is the source of truth** for orders, fills, positions, and cash state.  
+MIP mirrors and reconciles broker state and includes restart-safety controls to avoid duplicate submit behavior.
+
+### Active News Integration (Bounded Context Layer)
+
+News is now used as **structured context evidence**, not as free-form trade generation.
+
+#### News can influence:
+
+- Tradability
+- Confidence
+- Ranking
+- Size
+- Monitoring sensitivity
+- Exit caution
+
+#### News does not:
+
+- Generate standalone trades
+- Bypass policy or approval gates
+- Replace training evidence
+- Replace first-session realism checks
+
+### Structured News Outputs
+
+The live workflow now carries normalized fields such as:
+
+- `freshness_bucket`
+- `intensity_level`
+- `context_state`
+- `event_shock_flag`
+- `relevance`
+- `theme_labels`
+- `interpretation_confidence`
+
+Timing context is distinguished as:
+
+- Overnight
+- Same-session fresh
+- Older background
+
+### Explainability and Learning
+
+The Learning-to-Decision Ledger now surfaces news and role-driven influence, including:
+
+- Which context was considered
+- Which role used it
+- What changed (rank/size/block/escalation)
+- Whether that influence later helped or hurt
+
+This turns the ledger into an operational "why" surface, not just an audit table.
+
+### Dashboard Surfaces Added/Enhanced
+
+Recent UI updates include:
+
+- **Live Trades**: visible news context state/freshness/shock indicators
+- **Learning Ledger**: news-influenced event counts and effectiveness metrics
+- **Decision chain views**: richer causal linking across proposal -> committee -> revalidation -> execution -> monitoring -> post-trade outcomes
+
+### Why This Matters
+
+MIP now behaves more like a controlled decision platform:
+
+- Research stays systematic and evidence-based
+- Live execution becomes realism-aware and approval-gated
+- Agent reasoning is transparent and reviewable
+- News context is operationally useful but policy-bounded
+- Post-trade learning can evaluate which decisions actually added value
+
+---
+
 ## Appendix A: Glossary
 
 A plain-language reference for every term used in MIP, organized alphabetically.
@@ -1166,13 +1288,32 @@ The configured set of symbols that MIP tracks. Only assets in the universe recei
 **Z-Score**
 A statistical measure of how unusual a value is compared to normal. A z-score of 0 means "perfectly average." A z-score of 2 means "about twice as far from average as typical." MIP uses z-scores to identify price movements that are notably stronger than usual for that asset.
 
+**Learning-to-Decision Ledger**
+An immutable event chain that links learning state changes to decision impacts, execution outcomes, and post-trade evaluation. It is used to explain *why* MIP changed behavior.
+
+**Live Candidate**
+A research proposal that has entered the live-linked path but is not executable yet. It must pass live validation, committee review, and approvals before execution.
+
+**Intent Approval**
+A required stage where a trade intent is explicitly approved before execution can proceed. Approval alone is still insufficient without fresh revalidation.
+
+**Revalidation**
+A final freshness and policy check run immediately before execution. It can downgrade, block, or resize actions based on latest data and context.
+
+**News Context State**
+A structured interpretation of current symbol news (supportive, neutral, cautionary, destabilizing) used as bounded decision evidence.
+
+**Event Shock Flag**
+A high-risk news marker indicating potentially abnormal repricing conditions, typically triggering stricter live caution or execution blocking.
+
 ---
 
 ## Appendix B: Frequently Asked Questions
 
 ### Is MIP trading with real money?
 
-**No.** MIP is a paper trading system. All money is virtual, all trades are simulated, and no real financial transactions occur. MIP has no connection to any broker or exchange. The numbers in MIP represent what *would* have happened if you had made those trades, but no actual money is at risk.
+**No real-money trading by default.** MIP operates in paper mode and uses virtual capital for standard operation.  
+MIP now includes an IBKR-linked paper workflow where broker events are mirrored for realism and control testing, but this remains non-live-money unless explicitly moved to a controlled real deployment stage.
 
 ### Can MIP lose my money?
 

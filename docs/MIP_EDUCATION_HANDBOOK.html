@@ -555,7 +555,7 @@
   <h1>MIP Education Handbook</h1>
   <p class="subtitle">A complete, illustrated guide to the Market Intelligence Platform &mdash; written for everyone, no trading experience required.</p>
   <div class="edition">
-    Market Intelligence Platform &bull; Version 0.7 &bull; February 2026<br>
+    Market Intelligence Platform &bull; Version 0.7 &bull; March 2026<br>
     <em>Open in your browser and press Ctrl+P &rarr; Save as PDF</em>
   </div>
 </div>
@@ -574,6 +574,7 @@
     <li><span class="toc-num">8.</span> <a href="#ch8">The Daily Pipeline and Advanced Features</a></li>
     <li><span class="toc-num">9.</span> <a href="#ch9">Using the MIP Dashboard</a></li>
     <li><span class="toc-num">10.</span> <a href="#ch10">The Early-Exit Layer and Decision Console</a></li>
+    <li><span class="toc-num">11.</span> <a href="#ch11">Live Agentic Workflow and News Context (New)</a></li>
     <li><span class="toc-num">A.</span> <a href="#glossary">Glossary</a></li>
     <li><span class="toc-num">B.</span> <a href="#faq">Frequently Asked Questions</a></li>
   </ol>
@@ -1626,6 +1627,127 @@
   </div>
 </div>
 
+<!-- ═══════════════════ CHAPTER 11 ═══════════════════ -->
+<div class="chapter" id="ch11">
+  <div class="chapter-number">Chapter 11</div>
+  <h2>Live Agentic Workflow and News Context (New)</h2>
+
+  <p>This chapter summarizes the major platform evolution delivered over the last week. The goal is to keep MIP's research strengths while adding a controlled, auditable live-linked decision path.</p>
+
+  <h3>What Changed at a High Level</h3>
+  <ul>
+    <li>Research proposals are now separated from live-executable actions.</li>
+    <li>A multi-role AI committee contributes structured role opinions.</li>
+    <li>First-session validation and pre-execution revalidation are mandatory.</li>
+    <li>Human PM/compliance approval remains mandatory and non-bypassable.</li>
+    <li>IBKR-linked paper execution is mirrored with broker-truth protections.</li>
+    <li>The Learning-to-Decision Ledger now captures richer causality and explainability.</li>
+    <li>Active, policy-bounded news context is integrated into decisioning and monitoring.</li>
+  </ul>
+
+  <h3>Canonical Decision Flow</h3>
+  <div class="concept">
+    <div class="concept-title">Operating Sequence</div>
+    <p>daily signal &rarr; training qualification &rarr; Parallel Worlds evidence &rarr; news-context enrichment &rarr; agent committee review &rarr; first-session validation &rarr; intent approval &rarr; fresh revalidation &rarr; human approval &rarr; execution &rarr; monitoring &rarr; post-trade review &rarr; learning ledger</p>
+  </div>
+
+  <h3>Agent Roles in the Committee</h3>
+  <table>
+    <thead><tr><th>Role</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Proposer</strong></td><td>Builds the trade case using evidence from signal, training, and scenario context.</td></tr>
+      <tr><td><strong>Trader / Execution Reviewer</strong></td><td>Assesses tradability under current session conditions and timing realism.</td></tr>
+      <tr><td><strong>Risk Manager</strong></td><td>Constrains size, concentration, and risk posture.</td></tr>
+      <tr><td><strong>Challenger</strong></td><td>Stress-tests assumptions and argues against weak comparability.</td></tr>
+      <tr><td><strong>Portfolio Manager</strong></td><td>Ranks candidate capital allocation versus competing ideas.</td></tr>
+      <tr><td><strong>Post-Trade Reviewer / Learning Auditor</strong></td><td>Evaluates whether decisions improved outcomes and updates learning signals.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Safety and Control Gates</h3>
+  <div class="timeline">
+    <div class="timeline-item">
+      <div class="timeline-label">1. Candidate, Not Execution</div>
+      <div class="timeline-desc">Research proposals enter live as candidates only.</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-label">2. First-Session Validation</div>
+      <div class="timeline-desc">Tradability must pass open-session realism checks.</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-label">3. Intent Approval</div>
+      <div class="timeline-desc">Trade intent must be submitted and approved before execution stage.</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-label">4. Fresh Revalidation</div>
+      <div class="timeline-desc">Final data freshness and policy check occurs right before execution.</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-label">5. Human Final Gate</div>
+      <div class="timeline-desc">PM/compliance approval remains mandatory.</div>
+    </div>
+    <div class="timeline-item">
+      <div class="timeline-label">6. Broker Safeguards</div>
+      <div class="timeline-desc">Drift/staleness checks and duplicate prevention can block action.</div>
+    </div>
+  </div>
+
+  <h3>Broker-Truth Principle</h3>
+  <div class="important">
+    <div class="important-title">Single Source of Truth</div>
+    <p>For the linked live-paper portfolio, IBKR is the source of truth for positions, cash, orders, and fills. MIP mirrors and reconciles this state and includes restart safety to avoid duplicate order behavior.</p>
+  </div>
+
+  <h3>Active News Integration (Bounded Context Layer)</h3>
+  <p>News is now used as structured context evidence &mdash; not as free-form trade generation.</p>
+  <div class="compare">
+    <div class="compare-col compare-col--yes">
+      <h4>News CAN Influence</h4>
+      <ul>
+        <li>Tradability</li>
+        <li>Confidence</li>
+        <li>Ranking</li>
+        <li>Size</li>
+        <li>Monitoring sensitivity</li>
+        <li>Exit caution</li>
+      </ul>
+    </div>
+    <div class="compare-col compare-col--no">
+      <h4>News CANNOT Do</h4>
+      <ul>
+        <li>Create standalone trades</li>
+        <li>Bypass deterministic policy controls</li>
+        <li>Replace training evidence</li>
+        <li>Replace first-session realism checks</li>
+        <li>Act as unrestricted narrative override</li>
+      </ul>
+    </div>
+  </div>
+
+  <h4>Structured News Fields</h4>
+  <p>The workflow carries normalized fields such as <code>freshness_bucket</code>, <code>intensity_level</code>, <code>context_state</code>, <code>event_shock_flag</code>, <code>relevance</code>, <code>theme_labels</code>, and <code>interpretation_confidence</code>.</p>
+  <p>Timing context is distinguished between overnight, same-session fresh, and older background news.</p>
+
+  <h3>Explainability and Learning</h3>
+  <div class="scenario">
+    <div class="scenario-title">What the Ledger Now Shows</div>
+    <ul>
+      <li>Whether news context was considered</li>
+      <li>Which role used that context</li>
+      <li>What changed (rank, size, block, escalation)</li>
+      <li>Whether the influence later helped or hurt</li>
+    </ul>
+    <p>This turns the Learning-to-Decision Ledger into an operational "why" surface, not just a record table.</p>
+  </div>
+
+  <h3>UI Surfaces Updated</h3>
+  <ul>
+    <li><strong>Live Trades:</strong> visible news context state, freshness, and shock indicators.</li>
+    <li><strong>Learning Ledger:</strong> news-influenced counts and effectiveness metrics.</li>
+    <li><strong>Decision chains:</strong> clearer links across proposal, committee, revalidation, execution, monitoring, and post-trade outcomes.</li>
+  </ul>
+</div>
+
 <!-- ═══════════════════ GLOSSARY ═══════════════════ -->
 <div class="chapter" id="glossary">
   <div class="chapter-number">Appendix A</div>
@@ -1847,7 +1969,7 @@
   <div class="faq">
     <div class="faq-q">Is MIP trading with real money?</div>
     <div class="faq-a">
-      <p><strong>No.</strong> MIP is a paper trading system. All money is virtual, all trades are simulated, and no real financial transactions occur. MIP has no connection to any broker or exchange.</p>
+      <p><strong>No real-money trading by default.</strong> MIP runs in paper mode with virtual capital. It now includes an IBKR-linked paper workflow for realism and control testing, but this remains non-live-money unless explicitly moved to a controlled real deployment stage.</p>
     </div>
 
     <div class="faq-q">Can MIP lose my money?</div>
@@ -1922,7 +2044,7 @@
   <p class="subtitle">This handbook is a living document.<br>As MIP evolves with new features, this guide will be updated to reflect them.</p>
   <div class="edition">
     Market Intelligence Platform &bull; mip_0.7<br>
-    Generated February 2026
+    Generated March 2026
   </div>
 </div>
 

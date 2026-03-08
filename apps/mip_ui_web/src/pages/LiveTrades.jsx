@@ -22,6 +22,7 @@ export default function LiveTrades() {
   const [actions, setActions] = useState([])
   const [orders, setOrders] = useState([])
   const [portfolios, setPortfolios] = useState([])
+  const [liveConfigs, setLiveConfigs] = useState([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [error, setError] = useState('')
@@ -37,7 +38,6 @@ export default function LiveTrades() {
   const [executionActor, setExecutionActor] = useState('execution_operator')
   const [orderActor, setOrderActor] = useState('broker_sync_operator')
   const [bridgeLivePortfolioId, setBridgeLivePortfolioId] = useState('1')
-  const [bridgeSourcePortfolioId, setBridgeSourcePortfolioId] = useState('')
   const [bridgeRunId, setBridgeRunId] = useState('')
   const [bridgeResult, setBridgeResult] = useState(null)
 
@@ -45,13 +45,14 @@ export default function LiveTrades() {
     setLoading(true)
     setError('')
     try {
-      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp, portfoliosResp] = await Promise.all([
+      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp, portfoliosResp, cfgResp] = await Promise.all([
         fetch(`${API_BASE}/live/trades/actions?pending_only=true&limit=300`),
         fetch(`${API_BASE}/live/trades/orders?limit=300`),
         fetch(`${API_BASE}/live/snapshot/latest`),
         fetch(`${API_BASE}/live/early-exit/status?limit=10`),
         fetch(`${API_BASE}/live/drift/status`),
         fetch(`${API_BASE}/portfolios`),
+        fetch(`${API_BASE}/live/portfolio-config`),
       ])
       if (!actionsResp.ok) throw new Error(`Failed to load actions (${actionsResp.status})`)
       if (!ordersResp.ok) throw new Error(`Failed to load orders (${ordersResp.status})`)
@@ -64,12 +65,14 @@ export default function LiveTrades() {
       const earlyExitJson = await earlyExitResp.json()
       const driftJson = await driftResp.json()
       const portfoliosJson = portfoliosResp.ok ? await portfoliosResp.json() : []
+      const cfgJson = cfgResp.ok ? await cfgResp.json() : { configs: [] }
       setActions(actionsJson.actions || [])
       setOrders(ordersJson.orders || [])
       setLatestNav(snapJson.latest_nav || null)
       setEarlyExit(earlyExitJson || null)
       setDriftStatus(driftJson || null)
       setPortfolios(Array.isArray(portfoliosJson) ? portfoliosJson : [])
+      setLiveConfigs(Array.isArray(cfgJson?.configs) ? cfgJson.configs : [])
     } catch (e) {
       setError(e.message || 'Failed to load live trades data.')
     } finally {
@@ -149,17 +152,19 @@ export default function LiveTrades() {
   }, [load])
 
   const importFromResearchProposals = useCallback(async () => {
-    if (!bridgeSourcePortfolioId) {
-      setError('Select a Research Source Portfolio for import.')
-      return
-    }
     setBusyId('bridge')
     setError('')
     setBridgeResult(null)
     try {
+      const selectedCfg = liveConfigs.find((c) => String(c.PORTFOLIO_ID) === String(bridgeLivePortfolioId))
+      const linkedSourcePortfolioId = selectedCfg?.SIM_PORTFOLIO_ID
+      if (linkedSourcePortfolioId == null || Number.isNaN(Number(linkedSourcePortfolioId))) {
+        setError('Selected Live Portfolio has no linked research source (SIM_PORTFOLIO_ID).')
+        return
+      }
       const payload = {
         live_portfolio_id: Number(bridgeLivePortfolioId),
-        source_portfolio_id: Number(bridgeSourcePortfolioId),
+        source_portfolio_id: Number(linkedSourcePortfolioId),
         run_id: bridgeRunId.trim() ? bridgeRunId.trim() : null,
         limit: 200,
       }
@@ -180,7 +185,16 @@ export default function LiveTrades() {
     } finally {
       setBusyId(null)
     }
-  }, [bridgeLivePortfolioId, bridgeRunId, bridgeSourcePortfolioId, load])
+  }, [bridgeLivePortfolioId, bridgeRunId, liveConfigs, load])
+
+  const selectedLiveConfig = useMemo(
+    () => liveConfigs.find((c) => String(c.PORTFOLIO_ID) === String(bridgeLivePortfolioId)) || null,
+    [bridgeLivePortfolioId, liveConfigs]
+  )
+  const linkedSourcePortfolio = useMemo(
+    () => portfolios.find((p) => String(p.PORTFOLIO_ID ?? p.portfolio_id) === String(selectedLiveConfig?.SIM_PORTFOLIO_ID ?? '')) || null,
+    [portfolios, selectedLiveConfig]
+  )
 
   const runOrderStatus = useCallback(async (order, status) => {
     const orderBusyId = `order:${order.ORDER_ID}:${status}`
@@ -279,36 +293,39 @@ export default function LiveTrades() {
       <div className="lt-actors-card">
         <label>
           PM actor
-          <input value={pmActor} onChange={(e) => setPmActor(e.target.value)} />
+          <input value={pmActor} readOnly disabled />
         </label>
         <label>
           Compliance actor
-          <input value={complianceActor} onChange={(e) => setComplianceActor(e.target.value)} />
+          <input value={complianceActor} readOnly disabled />
         </label>
         <label>
           Committee actor
-          <input value={committeeActor} onChange={(e) => setCommitteeActor(e.target.value)} />
+          <input value={committeeActor} readOnly disabled />
         </label>
         <label>
           Committee model
-          <input value={committeeModel} onChange={(e) => setCommitteeModel(e.target.value)} />
+          <input value={committeeModel} readOnly disabled />
         </label>
         <label>
           Intent submit actor
-          <input value={intentSubmitActor} onChange={(e) => setIntentSubmitActor(e.target.value)} />
+          <input value={intentSubmitActor} readOnly disabled />
         </label>
         <label>
           Intent approve actor
-          <input value={intentApproveActor} onChange={(e) => setIntentApproveActor(e.target.value)} />
+          <input value={intentApproveActor} readOnly disabled />
         </label>
         <label>
           Execution actor
-          <input value={executionActor} onChange={(e) => setExecutionActor(e.target.value)} />
+          <input value={executionActor} readOnly disabled />
         </label>
         <label>
           Order status actor
-          <input value={orderActor} onChange={(e) => setOrderActor(e.target.value)} />
+          <input value={orderActor} readOnly disabled />
         </label>
+      </div>
+      <div className="lt-summary">
+        Actor identities are fixed defaults for auditability and to avoid accidental workflow drift from UI edits.
       </div>
 
       <div className="lt-create-card">
@@ -318,7 +335,8 @@ export default function LiveTrades() {
           compliance approval, and revalidation pass.
         </div>
         <div className="lt-summary">
-          Proposal source is selected <b>at import time</b> (not by persistent SIM linkage in live config).
+          Import only copies candidate proposals into the live approval queue.
+          Simulation portfolios continue their normal autonomous learning/trading path unchanged.
         </div>
         <div className="lt-form-row">
           <input
@@ -326,21 +344,12 @@ export default function LiveTrades() {
             onChange={(e) => setBridgeLivePortfolioId(e.target.value)}
             placeholder="Live Portfolio ID (MIP internal)"
           />
-          <select
-            value={bridgeSourcePortfolioId}
-            onChange={(e) => setBridgeSourcePortfolioId(e.target.value)}
-          >
-            <option value="">{portfolios.length ? 'Select Research Source Portfolio' : 'No portfolios available'}</option>
-            {portfolios.map((p) => {
-              const pid = p.PORTFOLIO_ID ?? p.portfolio_id
-              const name = p.NAME ?? p.name ?? `Portfolio ${pid}`
-              return (
-                <option key={String(pid)} value={String(pid)}>
-                  {pid} - {name}
-                </option>
-              )
-            })}
-          </select>
+          <input
+            value={selectedLiveConfig?.SIM_PORTFOLIO_ID ?? ''}
+            readOnly
+            placeholder="Linked source portfolio (SIM_PORTFOLIO_ID)"
+            title="Source comes from LIVE_PORTFOLIO_CONFIG.SIM_PORTFOLIO_ID"
+          />
           <input
             value={bridgeRunId}
             onChange={(e) => setBridgeRunId(e.target.value)}
@@ -357,6 +366,9 @@ export default function LiveTrades() {
             {' '}Source portfolio: <b>{bridgeResult.source_portfolio_id ?? '—'}</b>.
           </div>
         ) : null}
+        <div className="lt-summary">
+          Linked source portfolio name: <b>{linkedSourcePortfolio ? (linkedSourcePortfolio.NAME ?? linkedSourcePortfolio.name ?? `Portfolio ${selectedLiveConfig?.SIM_PORTFOLIO_ID}`) : '—'}</b>
+        </div>
       </div>
 
       {error ? <div className="lt-error">{error}</div> : null}

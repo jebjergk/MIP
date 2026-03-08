@@ -58,6 +58,15 @@ class ExecuteLiveActionRequest(BaseModel):
     attempt_n: int = 1
 
 
+class UpdateLiveOrderStatusRequest(BaseModel):
+    actor: str
+    status: str = Field(pattern="^(PARTIAL_FILL|FILLED|CANCELED|REJECTED)$")
+    qty_filled: float | None = None
+    avg_fill_price: float | None = None
+    broker_order_id: str | None = None
+    notes: str | None = None
+
+
 _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
     "PROPOSED": {"PM_ACCEPTED"},
@@ -844,6 +853,110 @@ def run_early_exit_monitor():
     return {"ok": True, "result": serialize_row(result), "status": status}
 
 
+@router.get("/drift/status")
+def get_broker_drift_status(portfolio_id: int | None = Query(None, description="Live portfolio ID (optional)")):
+    """
+    Broker-truth drift status for a live portfolio.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        if portfolio_id is None:
+            cur.execute(
+                """
+                select
+                  PORTFOLIO_ID,
+                  IBKR_ACCOUNT_ID,
+                  DRIFT_STATUS,
+                  SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+                  QUOTE_FRESHNESS_THRESHOLD_SEC,
+                  UPDATED_AT
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where coalesce(IS_ACTIVE, true) = true
+                order by PORTFOLIO_ID
+                limit 1
+                """
+            )
+        else:
+            cur.execute(
+                """
+                select
+                  PORTFOLIO_ID,
+                  IBKR_ACCOUNT_ID,
+                  DRIFT_STATUS,
+                  SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+                  QUOTE_FRESHNESS_THRESHOLD_SEC,
+                  UPDATED_AT
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                """,
+                (portfolio_id,),
+            )
+        cfg_rows = fetch_all(cur)
+        if not cfg_rows:
+            return {
+                "portfolio_id": portfolio_id,
+                "ibkr_account_id": None,
+                "drift_status": "NO_CONFIG",
+                "snapshot_freshness_threshold_sec": None,
+                "latest_snapshot": None,
+                "snapshot_age_sec": None,
+                "unresolved_drift_count": 0,
+                "latest_unresolved_drift": None,
+            }
+        cfg = cfg_rows[0]
+        resolved_portfolio_id = cfg.get("PORTFOLIO_ID")
+        account_id = cfg.get("IBKR_ACCOUNT_ID")
+
+        cur.execute(
+            """
+            select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'NAV'
+              and IBKR_ACCOUNT_ID = %s
+            order by SNAPSHOT_TS desc
+            limit 1
+            """,
+            (account_id,),
+        )
+        nav_rows = fetch_all(cur)
+        nav = nav_rows[0] if nav_rows else {}
+        snapshot_ts = nav.get("SNAPSHOT_TS")
+        snapshot_age_sec = None
+        if snapshot_ts and hasattr(snapshot_ts, "replace"):
+            snapshot_age_sec = int((datetime.now(timezone.utc) - snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds())
+
+        cur.execute(
+            """
+            select
+              DRIFT_ID, RECONCILIATION_TS, NAV_DRIFT_PCT, CASH_DRIFT_EUR, POSITION_DRIFT_COUNT, DRIFT_DETECTED,
+              RESOLUTION_TS, RESOLUTION_METHOD, DETAILS
+            from MIP.LIVE.DRIFT_LOG
+            where PORTFOLIO_ID = %s
+              and coalesce(DRIFT_DETECTED, false) = true
+            order by RECONCILIATION_TS desc
+            limit 20
+            """,
+            (resolved_portfolio_id,),
+        )
+        drift_rows = fetch_all(cur)
+        unresolved = [r for r in drift_rows if not r.get("RESOLUTION_TS")]
+        latest_unresolved = unresolved[0] if unresolved else None
+
+        return {
+            "portfolio_id": resolved_portfolio_id,
+            "ibkr_account_id": account_id,
+            "drift_status": cfg.get("DRIFT_STATUS"),
+            "snapshot_freshness_threshold_sec": cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"),
+            "latest_snapshot": serialize_row(nav) if nav else None,
+            "snapshot_age_sec": snapshot_age_sec,
+            "unresolved_drift_count": len(unresolved),
+            "latest_unresolved_drift": serialize_row(latest_unresolved) if latest_unresolved else None,
+        }
+    finally:
+        conn.close()
+
+
 @router.get("/trades/actions")
 def list_live_trade_actions(
     portfolio_id: int | None = Query(None),
@@ -1122,7 +1235,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             """
             select
               IBKR_ACCOUNT_ID, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT,
-              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, IS_ACTIVE
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
             """,
@@ -1134,6 +1247,28 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         cfg = cfg_rows[0]
         if cfg.get("IS_ACTIVE") is False:
             raise HTTPException(status_code=400, detail="Live portfolio config is inactive.")
+        drift_status = (cfg.get("DRIFT_STATUS") or "").upper()
+        if drift_status and drift_status not in ("OK", "CLEAR", "HEALTHY"):
+            reason_codes.append("BROKER_TRUTH_DRIFT_UNRESOLVED")
+
+        unresolved_drift_row = None
+        cur.execute(
+            """
+            select
+              DRIFT_ID, RECONCILIATION_TS, NAV_DRIFT_PCT, CASH_DRIFT_EUR, POSITION_DRIFT_COUNT, DETAILS
+            from MIP.LIVE.DRIFT_LOG
+            where PORTFOLIO_ID = %s
+              and coalesce(DRIFT_DETECTED, false) = true
+              and RESOLUTION_TS is null
+            order by RECONCILIATION_TS desc
+            limit 1
+            """,
+            (action.get("PORTFOLIO_ID"),),
+        )
+        unresolved_drift_rows = fetch_all(cur)
+        if unresolved_drift_rows:
+            unresolved_drift_row = unresolved_drift_rows[0]
+            reason_codes.append("UNRESOLVED_DRIFT_LOG_PRESENT")
 
         validity_window_end = action.get("VALIDITY_WINDOW_END")
         if validity_window_end and hasattr(validity_window_end, "replace"):
@@ -1260,6 +1395,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "actor": req.actor,
                     "required_status": "REVALIDATED_PASS",
                     "required_compliance": "APPROVE",
+                    "drift_status": drift_status,
+                    "latest_unresolved_drift": serialize_row(unresolved_drift_row) if unresolved_drift_row else None,
                 },
             )
             raise HTTPException(
@@ -1270,6 +1407,27 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         order_id = str(uuid.uuid4())
         proposal_or_action = action.get("PROPOSAL_ID") if action.get("PROPOSAL_ID") is not None else action_id
         idempotency_key = f"{action.get('PORTFOLIO_ID')}:{proposal_or_action}:{req.attempt_n}"
+        cur.execute(
+            """
+            select ORDER_ID, STATUS
+            from MIP.LIVE.LIVE_ORDERS
+            where IDEMPOTENCY_KEY = %s
+            limit 1
+            """,
+            (idempotency_key,),
+        )
+        existing_order_rows = fetch_all(cur)
+        if existing_order_rows:
+            existing_order = existing_order_rows[0]
+            return {
+                "ok": True,
+                "action_id": action_id,
+                "status": "EXECUTION_REQUESTED",
+                "order_id": existing_order.get("ORDER_ID"),
+                "idempotency_key": idempotency_key,
+                "mode": "PAPER_PLACEHOLDER",
+                "idempotent_replay": True,
+            }
 
         cur.execute(
             """
@@ -1359,6 +1517,186 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             "order_id": order_id,
             "idempotency_key": idempotency_key,
             "mode": "PAPER_PLACEHOLDER",
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/trades/orders")
+def list_live_orders(
+    portfolio_id: int | None = Query(None),
+    action_id: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        wheres = ["1=1"]
+        params: list = []
+        if portfolio_id is not None:
+            wheres.append("PORTFOLIO_ID = %s")
+            params.append(portfolio_id)
+        if action_id:
+            wheres.append("ACTION_ID = %s")
+            params.append(action_id)
+        params.append(limit)
+        cur.execute(
+            f"""
+            select
+              ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID,
+              STATUS, SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+              QTY_FILLED, AVG_FILL_PRICE,
+              SUBMITTED_AT, ACKNOWLEDGED_AT, FILLED_AT, LAST_UPDATED_AT, CREATED_AT
+            from MIP.LIVE.LIVE_ORDERS
+            where {' and '.join(wheres)}
+            order by LAST_UPDATED_AT desc, CREATED_AT desc
+            limit %s
+            """,
+            tuple(params),
+        )
+        rows = fetch_all(cur)
+        return {"orders": serialize_rows(rows), "count": len(rows)}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/orders/{order_id}/status")
+def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID,
+              STATUS, SYMBOL, SIDE, QTY_ORDERED, QTY_FILLED, AVG_FILL_PRICE
+            from MIP.LIVE.LIVE_ORDERS
+            where ORDER_ID = %s
+            """,
+            (order_id,),
+        )
+        order_rows = fetch_all(cur)
+        if not order_rows:
+            raise HTTPException(status_code=404, detail="Order not found.")
+        order = order_rows[0]
+        target_status = req.status.upper()
+        current_status = (order.get("STATUS") or "").upper()
+        if current_status == target_status:
+            return {"ok": True, "order_id": order_id, "status": target_status, "idempotent_replay": True}
+
+        qty_ordered = float(order.get("QTY_ORDERED") or 0.0)
+        existing_qty_filled = float(order.get("QTY_FILLED") or 0.0)
+        new_qty_filled = req.qty_filled if req.qty_filled is not None else existing_qty_filled
+        if target_status == "PARTIAL_FILL":
+            if new_qty_filled <= 0 or (qty_ordered > 0 and new_qty_filled >= qty_ordered):
+                raise HTTPException(status_code=400, detail="PARTIAL_FILL requires qty_filled between 0 and qty_ordered.")
+        if target_status == "FILLED":
+            new_qty_filled = qty_ordered if qty_ordered > 0 else (req.qty_filled or existing_qty_filled)
+
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ORDERS
+               set STATUS = %s,
+                   BROKER_ORDER_ID = coalesce(%s, BROKER_ORDER_ID),
+                   QTY_FILLED = %s,
+                   AVG_FILL_PRICE = coalesce(%s, AVG_FILL_PRICE),
+                   FILLED_AT = case when %s = 'FILLED' then current_timestamp() else FILLED_AT end,
+                   LAST_UPDATED_AT = current_timestamp()
+             where ORDER_ID = %s
+            """,
+            (
+                target_status,
+                req.broker_order_id,
+                new_qty_filled,
+                req.avg_fill_price,
+                target_status,
+                order_id,
+            ),
+        )
+
+        action_id = order.get("ACTION_ID")
+        if action_id:
+            action_status = None
+            action_reason_codes: list[str] | None = None
+            if target_status == "FILLED":
+                action_status = "EXECUTED"
+                action_reason_codes = ["ORDER_FILLED"]
+            elif target_status == "PARTIAL_FILL":
+                action_status = "EXECUTION_PARTIAL"
+                action_reason_codes = ["ORDER_PARTIAL_FILL"]
+            elif target_status == "CANCELED":
+                action_status = "EXECUTION_CANCELED"
+                action_reason_codes = ["ORDER_CANCELED"]
+            elif target_status == "REJECTED":
+                action_status = "EXECUTION_REJECTED"
+                action_reason_codes = ["ORDER_REJECTED"]
+
+            if action_status:
+                cur.execute(
+                    """
+                    update MIP.LIVE.LIVE_ACTIONS
+                       set STATUS = %s,
+                           REASON_CODES = parse_json(%s),
+                           UPDATED_AT = current_timestamp()
+                     where ACTION_ID = %s
+                    """,
+                    (action_status, json.dumps(action_reason_codes), action_id),
+                )
+
+        cur.execute(
+            """
+            insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+              EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, ACTION_ID,
+              IDEMPOTENCY_KEY, BROKER_ORDER_ID, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
+            )
+            values (
+              %s, current_timestamp(), %s, %s, %s,
+              %s, %s, %s, %s, %s, %s, parse_json(%s)
+            )
+            """,
+            (
+                str(uuid.uuid4()),
+                f"ORDER_{target_status}",
+                order.get("PORTFOLIO_ID"),
+                action_id,
+                order.get("IDEMPOTENCY_KEY"),
+                req.broker_order_id or order.get("BROKER_ORDER_ID"),
+                order.get("SYMBOL"),
+                order.get("SIDE"),
+                new_qty_filled if target_status in ("PARTIAL_FILL", "FILLED") else (order.get("QTY_ORDERED") or 0.0),
+                req.avg_fill_price if req.avg_fill_price is not None else order.get("AVG_FILL_PRICE"),
+                json.dumps({"actor": req.actor, "notes": req.notes}),
+            ),
+        )
+
+        if action_id:
+            action_after = _fetch_live_action(cur, action_id)
+            _append_learning_ledger_event(
+                cur,
+                event_name="LIVE_ORDER_STATUS_UPDATE",
+                status=target_status,
+                action_before=None,
+                action_after=action_after,
+                policy_version=LIVE_POLICY_VERSION,
+                influence_delta={
+                    "order_id": order_id,
+                    "from_status": current_status,
+                    "to_status": target_status,
+                    "qty_filled": new_qty_filled,
+                },
+                outcome_state={
+                    "actor": req.actor,
+                    "broker_order_id": req.broker_order_id or order.get("BROKER_ORDER_ID"),
+                    "notes": req.notes,
+                },
+            )
+
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "status": target_status,
+            "qty_filled": new_qty_filled,
+            "avg_fill_price": req.avg_fill_price if req.avg_fill_price is not None else order.get("AVG_FILL_PRICE"),
         }
     finally:
         conn.close()

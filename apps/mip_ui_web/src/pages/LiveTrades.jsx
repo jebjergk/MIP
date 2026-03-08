@@ -25,6 +25,7 @@ export default function LiveTrades() {
   const [error, setError] = useState('')
   const [latestNav, setLatestNav] = useState(null)
   const [earlyExit, setEarlyExit] = useState(null)
+  const [driftStatus, setDriftStatus] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
   const [pmActor, setPmActor] = useState('portfolio_manager')
   const [executionActor, setExecutionActor] = useState('execution_operator')
@@ -36,20 +37,24 @@ export default function LiveTrades() {
     setLoading(true)
     setError('')
     try {
-      const [actionsResp, snapshotResp, earlyExitResp] = await Promise.all([
+      const [actionsResp, snapshotResp, earlyExitResp, driftResp] = await Promise.all([
         fetch(`${API_BASE}/live/trades/actions?pending_only=true&limit=300`),
         fetch(`${API_BASE}/live/snapshot/latest`),
         fetch(`${API_BASE}/live/early-exit/status?limit=10`),
+        fetch(`${API_BASE}/live/drift/status`),
       ])
       if (!actionsResp.ok) throw new Error(`Failed to load actions (${actionsResp.status})`)
       if (!snapshotResp.ok) throw new Error(`Failed to load snapshot (${snapshotResp.status})`)
       if (!earlyExitResp.ok) throw new Error(`Failed to load early-exit monitor (${earlyExitResp.status})`)
+      if (!driftResp.ok) throw new Error(`Failed to load drift status (${driftResp.status})`)
       const actionsJson = await actionsResp.json()
       const snapJson = await snapshotResp.json()
       const earlyExitJson = await earlyExitResp.json()
+      const driftJson = await driftResp.json()
       setActions(actionsJson.actions || [])
       setLatestNav(snapJson.latest_nav || null)
       setEarlyExit(earlyExitJson || null)
+      setDriftStatus(driftJson || null)
     } catch (e) {
       setError(e.message || 'Failed to load live trades data.')
     } finally {
@@ -204,6 +209,16 @@ export default function LiveTrades() {
         <button className="lt-btn" disabled={busyId === 'early-exit'} onClick={runEarlyExitMonitor}>
           {busyId === 'early-exit' ? 'Running...' : 'Run Early-Exit Monitor'}
         </button>
+      </div>
+
+      <div className="lt-create-card">
+        <h3>Broker Drift Guard</h3>
+        <div className="lt-summary">
+          Drift status: <b>{driftStatus?.drift_status || '—'}</b> | Unresolved drift count: <b>{driftStatus?.unresolved_drift_count ?? '—'}</b>
+        </div>
+        <div className="lt-summary">
+          Latest NAV snapshot age (sec): <b>{driftStatus?.snapshot_age_sec ?? '—'}</b>
+        </div>
       </div>
 
       <div className="lt-actors-card">

@@ -24,6 +24,7 @@ export default function LiveTrades() {
   const [busyId, setBusyId] = useState(null)
   const [error, setError] = useState('')
   const [latestNav, setLatestNav] = useState(null)
+  const [earlyExit, setEarlyExit] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
   const [pmActor, setPmActor] = useState('portfolio_manager')
   const [executionActor, setExecutionActor] = useState('execution_operator')
@@ -35,16 +36,20 @@ export default function LiveTrades() {
     setLoading(true)
     setError('')
     try {
-      const [actionsResp, snapshotResp] = await Promise.all([
+      const [actionsResp, snapshotResp, earlyExitResp] = await Promise.all([
         fetch(`${API_BASE}/live/trades/actions?pending_only=true&limit=300`),
         fetch(`${API_BASE}/live/snapshot/latest`),
+        fetch(`${API_BASE}/live/early-exit/status?limit=10`),
       ])
       if (!actionsResp.ok) throw new Error(`Failed to load actions (${actionsResp.status})`)
       if (!snapshotResp.ok) throw new Error(`Failed to load snapshot (${snapshotResp.status})`)
+      if (!earlyExitResp.ok) throw new Error(`Failed to load early-exit monitor (${earlyExitResp.status})`)
       const actionsJson = await actionsResp.json()
       const snapJson = await snapshotResp.json()
+      const earlyExitJson = await earlyExitResp.json()
       setActions(actionsJson.actions || [])
       setLatestNav(snapJson.latest_nav || null)
+      setEarlyExit(earlyExitJson || null)
     } catch (e) {
       setError(e.message || 'Failed to load live trades data.')
     } finally {
@@ -101,6 +106,23 @@ export default function LiveTrades() {
       await load()
     } catch (e) {
       setError(e.message || 'Snapshot refresh failed.')
+    } finally {
+      setBusyId(null)
+    }
+  }, [load])
+
+  const runEarlyExitMonitor = useCallback(async () => {
+    setBusyId('early-exit')
+    setError('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/early-exit/run`, { method: 'POST' })
+      if (!resp.ok) {
+        const msg = await resp.text()
+        throw new Error(msg || `Early-exit monitor failed (${resp.status})`)
+      }
+      await load()
+    } catch (e) {
+      setError(e.message || 'Early-exit monitor failed.')
     } finally {
       setBusyId(null)
     }
@@ -169,6 +191,21 @@ export default function LiveTrades() {
         </div>
       )}
 
+      <div className="lt-create-card">
+        <h3>Hourly Early-Exit Monitor (60m)</h3>
+        <div className="lt-summary">
+          Enabled: <b>{earlyExit?.enabled ? 'Yes' : 'No'}</b> | Interval: <b>{earlyExit?.interval_minutes ?? '—'}m</b>
+          {' '}| Latest status: <b>{earlyExit?.latest?.status || '—'}</b>
+        </div>
+        <div className="lt-summary">
+          Latest run: <b>{earlyExit?.latest?.run_id || '—'}</b> at <b>{fmtTs(earlyExit?.latest?.event_ts)}</b>
+          {' '}| Exits executed: <b>{earlyExit?.latest?.exits_executed ?? 0}</b>
+        </div>
+        <button className="lt-btn" disabled={busyId === 'early-exit'} onClick={runEarlyExitMonitor}>
+          {busyId === 'early-exit' ? 'Running...' : 'Run Early-Exit Monitor'}
+        </button>
+      </div>
+
       <div className="lt-actors-card">
         <label>
           PM actor
@@ -185,7 +222,7 @@ export default function LiveTrades() {
       </div>
 
       <div className="lt-create-card">
-        <h3>Bridge Research Proposals -> Live Actions</h3>
+        <h3>Bridge Research Proposals -&gt; Live Actions</h3>
         <div className="lt-summary">
           Imported candidates start in <b>RESEARCH_IMPORTED</b> and are non-executable until PM accept,
           compliance approval, and revalidation pass.

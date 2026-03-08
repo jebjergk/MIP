@@ -80,7 +80,7 @@ begin
     exception
         when other then
             v_ingest_status := 'FAIL';
-            v_ingest_result := object_construct('status', 'FAIL', 'error', sqlerrm);
+            v_ingest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
             v_pipeline_status := 'PARTIAL';
     end;
 
@@ -94,7 +94,7 @@ begin
     exception
         when other then
             v_early_exit_status := 'FAIL';
-            v_early_exit_result := object_construct('status', 'FAIL', 'error', sqlerrm);
+            v_early_exit_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
             if (:v_pipeline_status = 'SUCCESS') then
                 v_pipeline_status := 'PARTIAL';
             end if;
@@ -153,7 +153,7 @@ exception
             'FAIL',
             0,
             object_construct('run_id', :v_run_id),
-            sqlerrm,
+            :sqlerrm,
             :v_run_id,
             null
         );

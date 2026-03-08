@@ -249,6 +249,27 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     return reason_codes, details
 
 
+def _safe_early_exit_details(details: dict) -> dict:
+    steps = details.get("steps") if isinstance(details, dict) else {}
+    ingestion = steps.get("ingestion") if isinstance(steps, dict) else {}
+    early_exit = steps.get("early_exit") if isinstance(steps, dict) else {}
+    return {
+        "run_id": details.get("run_id"),
+        "started_at": details.get("started_at"),
+        "completed_at": details.get("completed_at"),
+        "interval_minutes": details.get("interval_minutes"),
+        "bars_ingested": details.get("bars_ingested"),
+        "symbols_processed": details.get("symbols_processed"),
+        "positions_evaluated": details.get("positions_evaluated"),
+        "exit_signals": details.get("exit_signals"),
+        "exits_executed": details.get("exits_executed"),
+        "steps": {
+            "ingestion_status": ingestion.get("status") if isinstance(ingestion, dict) else None,
+            "early_exit_status": early_exit.get("status") if isinstance(early_exit, dict) else None,
+        },
+    }
+
+
 def _summary_hint_from_status_and_details(status: str | None, details: dict | None) -> str | None:
     """Derive a short summary hint for the run (same as runs router)."""
     if not status:
@@ -517,6 +538,55 @@ def _run_on_demand_snapshot_sync(
     return payload
 
 
+def _run_agent_snowflake_query(query: str, timeout_sec: int = 120) -> list | dict:
+    """
+    Execute a Snowflake query via agent runtime (.env.agent / CURSOR_AGENT).
+    """
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "query_snowflake.py"
+    if not py.exists() or not script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Agent Snowflake runtime not found (cursorfiles venv or query script missing).",
+        )
+
+    cmd = [str(py), str(script), "-q", query, "--json"]
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "Agent Snowflake query failed.",
+                "stderr": proc.stderr[-4000:],
+                "stdout": proc.stdout[-4000:],
+            },
+        )
+
+    out = (proc.stdout or "").strip()
+    json_start = out.find("[")
+    if json_start < 0:
+        json_start = out.find("{")
+    if json_start < 0:
+        return []
+    try:
+        return json.loads(out[json_start:])
+    except Exception:
+        return []
+
+
 @router.post("/snapshot/refresh")
 def refresh_live_snapshot(
     portfolio_id: int | None = Query(None, description="Optional LIVE portfolio ID to stamp snapshot rows"),
@@ -658,6 +728,119 @@ def get_latest_live_snapshot(
         }
     finally:
         conn.close()
+
+
+@router.get("/early-exit/status")
+def get_early_exit_status(
+    limit: int = Query(25, ge=1, le=200),
+    include_raw: bool = Query(False, description="Include raw DETAILS payload from audit log"),
+):
+    """
+    Hourly early-exit monitor status and recent run history.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              max(case when CONFIG_KEY = 'EARLY_EXIT_ENABLED' then CONFIG_VALUE end) as EARLY_EXIT_ENABLED,
+              max(case when CONFIG_KEY = 'EARLY_EXIT_INTERVAL_MINUTES' then CONFIG_VALUE end) as EARLY_EXIT_INTERVAL_MINUTES
+            from MIP.APP.APP_CONFIG
+            where CONFIG_KEY in ('EARLY_EXIT_ENABLED', 'EARLY_EXIT_INTERVAL_MINUTES')
+            """
+        )
+        cfg_rows = fetch_all(cur)
+        cfg = cfg_rows[0] if cfg_rows else {}
+        enabled = str(cfg.get("EARLY_EXIT_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
+        interval_minutes = int(cfg.get("EARLY_EXIT_INTERVAL_MINUTES") or 60)
+
+        cur.execute(
+            """
+            select
+              EVENT_TS,
+              RUN_ID,
+              STATUS,
+              ROWS_AFFECTED,
+              DETAILS
+            from MIP.APP.MIP_AUDIT_LOG
+            where EVENT_TYPE = 'EARLY_EXIT_PIPELINE'
+              and EVENT_NAME = 'SP_RUN_HOURLY_EARLY_EXIT_MONITOR'
+            order by EVENT_TS desc
+            limit %s
+            """,
+            (limit,),
+        )
+        rows = fetch_all(cur)
+        runs = []
+        for r in rows:
+            details = _parse_variant(r.get("DETAILS"))
+            safe_details = _safe_early_exit_details(details)
+            runs.append({
+                "event_ts": r.get("EVENT_TS"),
+                "run_id": r.get("RUN_ID"),
+                "status": r.get("STATUS"),
+                "rows_affected": r.get("ROWS_AFFECTED"),
+                "interval_minutes": safe_details.get("interval_minutes"),
+                "bars_ingested": safe_details.get("bars_ingested"),
+                "positions_evaluated": safe_details.get("positions_evaluated"),
+                "exit_signals": safe_details.get("exit_signals"),
+                "exits_executed": safe_details.get("exits_executed"),
+                "details": safe_details,
+                "details_raw": details if include_raw else None,
+            })
+
+        return {
+            "enabled": enabled,
+            "interval_minutes": interval_minutes,
+            "latest": serialize_row(runs[0]) if runs else None,
+            "runs": serialize_rows(runs),
+            "count": len(runs),
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/early-exit/run")
+def run_early_exit_monitor():
+    """
+    Trigger one on-demand hourly early-exit monitor run.
+    """
+    raw_results = _run_agent_snowflake_query("call MIP.APP.SP_RUN_HOURLY_EARLY_EXIT_MONITOR()", timeout_sec=300)
+    raw = raw_results[0] if isinstance(raw_results, list) and raw_results else (raw_results if isinstance(raw_results, dict) else {})
+    payload = raw
+    if isinstance(raw, dict) and len(raw) == 1:
+        payload = next(iter(raw.values()))
+    result = _parse_variant(payload) if not isinstance(payload, dict) else payload
+    status = str(result.get("status") or "UNKNOWN").upper()
+
+    # Best-effort local ledger append through API connection.
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_EARLY_EXIT_MONITOR_RUN",
+            status=status,
+            action_before=None,
+            action_after={
+                "RUN_ID_VARCHAR": result.get("run_id"),
+                "PARAM_SNAPSHOT": {
+                    "interval_minutes": result.get("interval_minutes"),
+                },
+            },
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "positions_evaluated": result.get("positions_evaluated"),
+                "exit_signals": result.get("exit_signals"),
+                "exits_executed": result.get("exits_executed"),
+            },
+            outcome_state=result,
+        )
+    finally:
+        conn.close()
+
+    return {"ok": True, "result": serialize_row(result), "status": status}
 
 
 @router.get("/trades/actions")

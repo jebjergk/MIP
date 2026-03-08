@@ -74,6 +74,12 @@ class SimulatePaperWorkflowRequest(BaseModel):
     scenario: str = Field(default="PARTIAL_THEN_FILL", pattern="^(PARTIAL_THEN_FILL|CANCEL|REJECT)$")
 
 
+class RebuildLiveStateRequest(BaseModel):
+    portfolio_id: int | None = None
+    dry_run: bool = True
+    actor: str = "system_rebuild"
+
+
 _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
     "PROPOSED": {"PM_ACCEPTED"},
@@ -1824,6 +1830,120 @@ def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
         "order_id": order_id,
         "steps": steps,
     }
+
+
+@router.post("/trades/rebuild-state")
+def rebuild_live_action_state(req: RebuildLiveStateRequest):
+    """
+    Restart-safe rebuild of LIVE_ACTIONS status from persisted LIVE_ORDERS.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        wheres = ["1=1"]
+        params: list = []
+        if req.portfolio_id is not None:
+            wheres.append("a.PORTFOLIO_ID = %s")
+            params.append(req.portfolio_id)
+
+        cur.execute(
+            f"""
+            select
+              a.ACTION_ID,
+              a.PORTFOLIO_ID,
+              a.STATUS as ACTION_STATUS,
+              count(o.ORDER_ID) as ORDER_COUNT,
+              count_if(o.STATUS in ('SUBMITTED', 'ACKNOWLEDGED')) as OPEN_COUNT,
+              count_if(o.STATUS = 'PARTIAL_FILL') as PARTIAL_COUNT,
+              count_if(o.STATUS = 'FILLED') as FILLED_COUNT,
+              count_if(o.STATUS = 'CANCELED') as CANCELED_COUNT,
+              count_if(o.STATUS = 'REJECTED') as REJECTED_COUNT,
+              max(o.LAST_UPDATED_AT) as LAST_ORDER_UPDATED_AT
+            from MIP.LIVE.LIVE_ACTIONS a
+            left join MIP.LIVE.LIVE_ORDERS o
+              on o.ACTION_ID = a.ACTION_ID
+            where {' and '.join(wheres)}
+            group by a.ACTION_ID, a.PORTFOLIO_ID, a.STATUS
+            having count(o.ORDER_ID) > 0
+            order by LAST_ORDER_UPDATED_AT desc nulls last
+            """,
+            tuple(params),
+        )
+        rows = fetch_all(cur)
+
+        changes: list[dict] = []
+        inspected = 0
+        for r in rows:
+            inspected += 1
+            current_status = (r.get("ACTION_STATUS") or "").upper()
+            target_status = None
+            reason_codes = None
+            if (r.get("FILLED_COUNT") or 0) > 0:
+                target_status = "EXECUTED"
+                reason_codes = ["ORDER_FILLED_REBUILT"]
+            elif (r.get("PARTIAL_COUNT") or 0) > 0:
+                target_status = "EXECUTION_PARTIAL"
+                reason_codes = ["ORDER_PARTIAL_FILL_REBUILT"]
+            elif (r.get("OPEN_COUNT") or 0) > 0:
+                target_status = "EXECUTION_REQUESTED"
+                reason_codes = ["ORDER_OPEN_REBUILT"]
+            elif (r.get("CANCELED_COUNT") or 0) > 0:
+                target_status = "EXECUTION_CANCELED"
+                reason_codes = ["ORDER_CANCELED_REBUILT"]
+            elif (r.get("REJECTED_COUNT") or 0) > 0:
+                target_status = "EXECUTION_REJECTED"
+                reason_codes = ["ORDER_REJECTED_REBUILT"]
+
+            if target_status and target_status != current_status:
+                changes.append(
+                    {
+                        "action_id": r.get("ACTION_ID"),
+                        "portfolio_id": r.get("PORTFOLIO_ID"),
+                        "from_status": current_status,
+                        "to_status": target_status,
+                        "reason_codes": reason_codes,
+                    }
+                )
+                if not req.dry_run:
+                    cur.execute(
+                        """
+                        update MIP.LIVE.LIVE_ACTIONS
+                           set STATUS = %s,
+                               REASON_CODES = parse_json(%s),
+                               UPDATED_AT = current_timestamp()
+                         where ACTION_ID = %s
+                        """,
+                        (target_status, json.dumps(reason_codes), r.get("ACTION_ID")),
+                    )
+
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_REBUILD_STATE",
+            status="DRY_RUN" if req.dry_run else "SUCCESS",
+            action_before=None,
+            action_after={"PORTFOLIO_ID": req.portfolio_id},
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "inspected_actions": inspected,
+                "changed_actions": len(changes),
+                "dry_run": req.dry_run,
+            },
+            outcome_state={
+                "actor": req.actor,
+                "sample_changes": changes[:25],
+            },
+        )
+
+        return {
+            "ok": True,
+            "portfolio_id_filter": req.portfolio_id,
+            "dry_run": req.dry_run,
+            "inspected_actions": inspected,
+            "changed_actions": len(changes),
+            "changes": changes[:200],
+        }
+    finally:
+        conn.close()
 
 
 @router.get("/portfolio-config")

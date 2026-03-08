@@ -15,6 +15,7 @@ function fmtNum(v, d = 4) {
 }
 
 export default function AiAgentDecisions() {
+  const [mode, setMode] = useState('simulation') // simulation | live
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -28,56 +29,119 @@ export default function AiAgentDecisions() {
     setLoading(true)
     setError('')
     try {
-      const qs = new URLSearchParams({ limit: '200' })
-      if (runId.trim()) qs.set('run_id', runId.trim())
-      if (status) qs.set('status', status)
-      const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${qs.toString()}`)
-      if (!resp.ok) throw new Error(`Failed to load AI decisions (${resp.status})`)
-      const data = await resp.json()
-      setRows(Array.isArray(data?.decisions) ? data.decisions : [])
+      if (mode === 'simulation') {
+        const qs = new URLSearchParams({ limit: '200' })
+        if (runId.trim()) qs.set('run_id', runId.trim())
+        if (status) qs.set('status', status)
+        const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${qs.toString()}`)
+        if (!resp.ok) throw new Error(`Failed to load simulation AI decisions (${resp.status})`)
+        const data = await resp.json()
+        setRows(Array.isArray(data?.decisions) ? data.decisions : [])
+      } else {
+        const qs = new URLSearchParams({ pending_only: 'false', limit: '300' })
+        const resp = await fetch(`${API_BASE}/live/trades/actions?${qs.toString()}`)
+        if (!resp.ok) throw new Error(`Failed to load live AI decisions (${resp.status})`)
+        const data = await resp.json()
+        const actions = Array.isArray(data?.actions) ? data.actions : []
+        const mapped = actions
+          .filter((a) => !status || String(a.STATUS || '').toUpperCase() === status)
+          .map((a) => ({
+            action_id: a.ACTION_ID,
+            portfolio_id: a.PORTFOLIO_ID,
+            symbol: a.SYMBOL,
+            market_type: a.ASSET_CLASS,
+            side: a.SIDE,
+            status: a.STATUS,
+            proposed_at: a.CREATED_AT,
+            committee_status: a.COMMITTEE_STATUS,
+            committee_verdict: a.COMMITTEE_VERDICT,
+            revalidation_outcome: a.REVALIDATION_OUTCOME,
+            reason_codes: Array.isArray(a.REASON_CODES) ? a.REASON_CODES : [],
+          }))
+        setRows(mapped)
+      }
     } catch (e) {
       setError(e.message || 'Failed to load AI decisions.')
       setRows([])
     } finally {
       setLoading(false)
     }
-  }, [runId, status])
+  }, [mode, runId, status])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    setSelected(null)
+    setDetail(null)
+    setDetailError('')
+    load()
+  }, [load])
 
-  const loadDetail = useCallback(async (proposalId) => {
-    setSelected(proposalId)
+  const loadDetail = useCallback(async (id) => {
+    setSelected(id)
     setDetail(null)
     setDetailError('')
     try {
-      const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions/${proposalId}`)
-      if (!resp.ok) throw new Error(`Failed to load decision detail (${resp.status})`)
-      const data = await resp.json()
-      setDetail(data)
+      if (mode === 'simulation') {
+        const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions/${id}`)
+        if (!resp.ok) throw new Error(`Failed to load decision detail (${resp.status})`)
+        const data = await resp.json()
+        setDetail({ mode: 'simulation', ...data })
+      } else {
+        const base = rows.find((r) => r.action_id === id)
+        const committeeResp = await fetch(`${API_BASE}/live/trades/actions/${id}/committee`)
+        const committee = committeeResp.ok ? await committeeResp.json() : { role_outputs: [], verdict: null }
+        setDetail({
+          mode: 'live',
+          ...base,
+          committee,
+        })
+      }
     } catch (e) {
       setDetailError(e.message || 'Failed to load detail.')
     }
-  }, [])
+  }, [mode, rows])
 
   return (
     <div className="page ai-agent-decisions-page">
       <div className="aad-header">
         <div>
           <h2>AI Agent Decisions</h2>
-          <p>Simulation committee decisions with joint outcomes and transcript.</p>
+          <p>Committee outcomes and transcripts across simulation and live workflows.</p>
         </div>
+      </div>
+
+      <div className="aad-tabs">
+        <button
+          className={`aad-tab ${mode === 'simulation' ? 'is-active' : ''}`}
+          onClick={() => setMode('simulation')}
+        >
+          Simulation Decisions
+        </button>
+        <button
+          className={`aad-tab ${mode === 'live' ? 'is-active' : ''}`}
+          onClick={() => setMode('live')}
+        >
+          Live Decisions
+        </button>
       </div>
 
       <div className="aad-filters">
         <input
           value={runId}
           onChange={(e) => setRunId(e.target.value)}
-          placeholder="Optional run_id filter"
+          placeholder={mode === 'simulation' ? 'Optional run_id filter' : 'run_id not used in live list'}
+          disabled={mode !== 'simulation'}
         />
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
+          <option value="RESEARCH_IMPORTED">RESEARCH_IMPORTED</option>
           <option value="PROPOSED">PROPOSED</option>
           <option value="APPROVED">APPROVED</option>
+          <option value="PM_ACCEPTED">PM_ACCEPTED</option>
+          <option value="COMPLIANCE_APPROVED">COMPLIANCE_APPROVED</option>
+          <option value="INTENT_SUBMITTED">INTENT_SUBMITTED</option>
+          <option value="INTENT_APPROVED">INTENT_APPROVED</option>
+          <option value="REVALIDATED_PASS">REVALIDATED_PASS</option>
+          <option value="REVALIDATED_FAIL">REVALIDATED_FAIL</option>
           <option value="REJECTED">REJECTED</option>
           <option value="EXECUTED">EXECUTED</option>
         </select>
@@ -85,7 +149,7 @@ export default function AiAgentDecisions() {
       </div>
 
       {error ? <div className="aad-error">{error}</div> : null}
-      {loading ? <div>Loading AI agent decisions...</div> : null}
+      {loading ? <div>Loading {mode} AI agent decisions...</div> : null}
 
       <div className="aad-layout">
         <div className="aad-table-wrap">
@@ -93,7 +157,7 @@ export default function AiAgentDecisions() {
             <thead>
               <tr>
                 <th>Proposed</th>
-                <th>Symbol</th>
+                <th>{mode === 'simulation' ? 'Proposal' : 'Action'}</th>
                 <th>Status</th>
                 <th>Joint Decision</th>
                 <th>Summary</th>
@@ -102,27 +166,45 @@ export default function AiAgentDecisions() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={6}>No simulation AI decisions found.</td></tr>
+                <tr><td colSpan={6}>No {mode} AI decisions found.</td></tr>
               )}
               {rows.map((r) => (
-                <tr key={r.proposal_id} className={selected === r.proposal_id ? 'is-selected' : ''}>
+                <tr
+                  key={mode === 'simulation' ? r.proposal_id : r.action_id}
+                  className={selected === (mode === 'simulation' ? r.proposal_id : r.action_id) ? 'is-selected' : ''}
+                >
                   <td>{fmtTs(r.proposed_at)}</td>
                   <td>
                     <div><b>{r.symbol}</b> ({r.side})</div>
-                    <div>Proposal #{r.proposal_id}</div>
-                    <div>Portfolio {r.portfolio_id}</div>
+                    {mode === 'simulation' ? <div>Proposal #{r.proposal_id}</div> : <div>Action #{r.action_id}</div>}
+                    <div>{mode === 'simulation' ? 'Sim' : 'Live'} Portfolio {r.portfolio_id}</div>
                   </td>
                   <td>{r.status || '—'}</td>
                   <td>
-                    <div>Enter: {r.joint_decision?.should_enter == null ? '—' : (r.joint_decision.should_enter ? 'Yes' : 'No')}</div>
-                    <div>Size: {fmtNum(r.joint_decision?.size_factor, 2)}</div>
-                    <div>Target: {fmtNum(r.joint_decision?.target_return, 3)}</div>
-                    <div>Hold bars: {r.joint_decision?.hold_bars ?? '—'}</div>
-                    <div>Early-exit: {fmtNum(r.joint_decision?.early_exit_target_return, 3)}</div>
+                    {mode === 'simulation' ? (
+                      <>
+                        <div>Enter: {r.joint_decision?.should_enter == null ? '—' : (r.joint_decision.should_enter ? 'Yes' : 'No')}</div>
+                        <div>Size: {fmtNum(r.joint_decision?.size_factor, 2)}</div>
+                        <div>Target: {fmtNum(r.joint_decision?.target_return, 3)}</div>
+                        <div>Hold bars: {r.joint_decision?.hold_bars ?? '—'}</div>
+                        <div>Early-exit: {fmtNum(r.joint_decision?.early_exit_target_return, 3)}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div>Committee: {r.committee_status || '—'}</div>
+                        <div>Verdict: {r.committee_verdict || '—'}</div>
+                        <div>Revalidation: {r.revalidation_outcome || '—'}</div>
+                      </>
+                    )}
                   </td>
-                  <td>{r.summary || '—'}</td>
+                  <td>{mode === 'simulation' ? (r.summary || '—') : (r.reason_codes?.join(', ') || '—')}</td>
                   <td>
-                    <button className="aad-btn" onClick={() => loadDetail(r.proposal_id)}>View</button>
+                    <button
+                      className="aad-btn"
+                      onClick={() => loadDetail(mode === 'simulation' ? r.proposal_id : r.action_id)}
+                    >
+                      View
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -131,33 +213,50 @@ export default function AiAgentDecisions() {
         </div>
 
         <div className="aad-detail">
-          <h3>Conversation Transcript</h3>
+          <h3>{mode === 'simulation' ? 'Simulation Transcript' : 'Live Committee Transcript'}</h3>
           {!selected ? <p>Select a row to view transcript.</p> : null}
           {detailError ? <div className="aad-error">{detailError}</div> : null}
           {detail ? (
             <>
               <div className="aad-meta">
-                <div><b>Proposal:</b> #{detail.proposal_id}</div>
-                <div><b>Run:</b> {detail.run_id || '—'}</div>
+                <div><b>{mode === 'simulation' ? 'Proposal' : 'Action'}:</b> #{mode === 'simulation' ? detail.proposal_id : detail.action_id}</div>
+                <div><b>Run:</b> {detail.run_id || detail.committee?.run?.RUN_ID || '—'}</div>
                 <div><b>Status:</b> {detail.status || '—'}</div>
               </div>
               <div className="aad-meta">
                 <div><b>Joint decision:</b></div>
-                <div>Enter: {detail.joint_decision?.should_enter == null ? '—' : (detail.joint_decision.should_enter ? 'Yes' : 'No')}</div>
-                <div>Size: {fmtNum(detail.joint_decision?.size_factor, 2)}</div>
-                <div>Target: {fmtNum(detail.joint_decision?.target_return, 3)}</div>
-                <div>Hold bars: {detail.joint_decision?.hold_bars ?? '—'}</div>
-                <div>Early-exit target: {fmtNum(detail.joint_decision?.early_exit_target_return, 3)}</div>
+                {mode === 'simulation' ? (
+                  <>
+                    <div>Enter: {detail.joint_decision?.should_enter == null ? '—' : (detail.joint_decision.should_enter ? 'Yes' : 'No')}</div>
+                    <div>Size: {fmtNum(detail.joint_decision?.size_factor, 2)}</div>
+                    <div>Target: {fmtNum(detail.joint_decision?.target_return, 3)}</div>
+                    <div>Hold bars: {detail.joint_decision?.hold_bars ?? '—'}</div>
+                    <div>Early-exit target: {fmtNum(detail.joint_decision?.early_exit_target_return, 3)}</div>
+                  </>
+                ) : (
+                  <>
+                    <div>Recommendation: {detail.committee?.verdict?.RECOMMENDATION || '—'}</div>
+                    <div>Size factor: {fmtNum(detail.committee?.verdict?.SIZE_FACTOR, 2)}</div>
+                    <div>Confidence: {fmtNum(detail.committee?.verdict?.CONFIDENCE, 2)}</div>
+                    <div>Blocked: {detail.committee?.verdict?.IS_BLOCKED == null ? '—' : (detail.committee?.verdict?.IS_BLOCKED ? 'Yes' : 'No')}</div>
+                  </>
+                )}
               </div>
               <div className="aad-transcript">
-                {(detail.agent_dialogue || []).length === 0 ? (
-                  <div className="aad-line">No transcript payload recorded for this proposal.</div>
+                {(mode === 'simulation' ? (detail.agent_dialogue || []) : (detail.committee?.role_outputs || [])).length === 0 ? (
+                  <div className="aad-line">No transcript payload recorded.</div>
                 ) : (
-                  detail.agent_dialogue.map((m, idx) => (
-                    <div key={`${detail.proposal_id}_${idx}`} className="aad-line">
-                      <b>{m?.role || `Agent ${idx + 1}`}:</b> {m?.message || '—'}
-                    </div>
-                  ))
+                  mode === 'simulation'
+                    ? detail.agent_dialogue.map((m, idx) => (
+                        <div key={`${detail.proposal_id}_${idx}`} className="aad-line">
+                          <b>{m?.role || `Agent ${idx + 1}`}:</b> {m?.message || '—'}
+                        </div>
+                      ))
+                    : detail.committee.role_outputs.map((m, idx) => (
+                        <div key={`${detail.action_id}_${idx}`} className="aad-line">
+                          <b>{m?.ROLE_NAME || `Agent ${idx + 1}`}:</b> {m?.SUMMARY || '—'}
+                        </div>
+                      ))
                 )}
               </div>
             </>

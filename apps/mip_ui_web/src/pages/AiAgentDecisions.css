@@ -19,6 +19,24 @@
   align-items: center;
 }
 
+.aad-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.aad-tab {
+  padding: 6px 10px;
+  border: 1px solid #d0d0d0;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.aad-tab.is-active {
+  background: #eef5ff;
+  border-color: #87aef8;
+}
+
 .aad-filters input,
 .aad-filters select {
   padding: 6px 8px;

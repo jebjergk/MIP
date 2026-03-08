@@ -22,7 +22,6 @@ export default function LiveTrades() {
   const [actions, setActions] = useState([])
   const [orders, setOrders] = useState([])
   const [portfolios, setPortfolios] = useState([])
-  const [liveConfigs, setLiveConfigs] = useState([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [error, setError] = useState('')
@@ -45,14 +44,13 @@ export default function LiveTrades() {
     setLoading(true)
     setError('')
     try {
-      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp, portfoliosResp, cfgResp] = await Promise.all([
+      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp, portfoliosResp] = await Promise.all([
         fetch(`${API_BASE}/live/trades/actions?pending_only=true&limit=300`),
         fetch(`${API_BASE}/live/trades/orders?limit=300`),
         fetch(`${API_BASE}/live/snapshot/latest`),
         fetch(`${API_BASE}/live/early-exit/status?limit=10`),
         fetch(`${API_BASE}/live/drift/status`),
         fetch(`${API_BASE}/portfolios`),
-        fetch(`${API_BASE}/live/portfolio-config`),
       ])
       if (!actionsResp.ok) throw new Error(`Failed to load actions (${actionsResp.status})`)
       if (!ordersResp.ok) throw new Error(`Failed to load orders (${ordersResp.status})`)
@@ -65,14 +63,12 @@ export default function LiveTrades() {
       const earlyExitJson = await earlyExitResp.json()
       const driftJson = await driftResp.json()
       const portfoliosJson = portfoliosResp.ok ? await portfoliosResp.json() : []
-      const cfgJson = cfgResp.ok ? await cfgResp.json() : { configs: [] }
       setActions(actionsJson.actions || [])
       setOrders(ordersJson.orders || [])
       setLatestNav(snapJson.latest_nav || null)
       setEarlyExit(earlyExitJson || null)
       setDriftStatus(driftJson || null)
       setPortfolios(Array.isArray(portfoliosJson) ? portfoliosJson : [])
-      setLiveConfigs(Array.isArray(cfgJson?.configs) ? cfgJson.configs : [])
     } catch (e) {
       setError(e.message || 'Failed to load live trades data.')
     } finally {
@@ -156,15 +152,9 @@ export default function LiveTrades() {
     setError('')
     setBridgeResult(null)
     try {
-      const selectedCfg = liveConfigs.find((c) => String(c.PORTFOLIO_ID) === String(bridgeLivePortfolioId))
-      const linkedSourcePortfolioId = selectedCfg?.SIM_PORTFOLIO_ID
-      if (linkedSourcePortfolioId == null || Number.isNaN(Number(linkedSourcePortfolioId))) {
-        setError('Selected Live Portfolio has no linked research source (SIM_PORTFOLIO_ID).')
-        return
-      }
       const payload = {
         live_portfolio_id: Number(bridgeLivePortfolioId),
-        source_portfolio_id: Number(linkedSourcePortfolioId),
+        source_portfolio_id: null,
         run_id: bridgeRunId.trim() ? bridgeRunId.trim() : null,
         limit: 200,
       }
@@ -185,16 +175,7 @@ export default function LiveTrades() {
     } finally {
       setBusyId(null)
     }
-  }, [bridgeLivePortfolioId, bridgeRunId, liveConfigs, load])
-
-  const selectedLiveConfig = useMemo(
-    () => liveConfigs.find((c) => String(c.PORTFOLIO_ID) === String(bridgeLivePortfolioId)) || null,
-    [bridgeLivePortfolioId, liveConfigs]
-  )
-  const linkedSourcePortfolio = useMemo(
-    () => portfolios.find((p) => String(p.PORTFOLIO_ID ?? p.portfolio_id) === String(selectedLiveConfig?.SIM_PORTFOLIO_ID ?? '')) || null,
-    [portfolios, selectedLiveConfig]
-  )
+  }, [bridgeLivePortfolioId, bridgeRunId, load])
 
   const runOrderStatus = useCallback(async (order, status) => {
     const orderBusyId = `order:${order.ORDER_ID}:${status}`
@@ -335,6 +316,10 @@ export default function LiveTrades() {
           compliance approval, and revalidation pass.
         </div>
         <div className="lt-summary">
+          Import reads from the proposal stream without requiring a sim-portfolio selection.
+          Use optional <b>run_id</b> to narrow to a specific generation batch.
+        </div>
+        <div className="lt-summary">
           Import only copies candidate proposals into the live approval queue.
           Simulation portfolios continue their normal autonomous learning/trading path unchanged.
         </div>
@@ -343,12 +328,6 @@ export default function LiveTrades() {
             value={bridgeLivePortfolioId}
             onChange={(e) => setBridgeLivePortfolioId(e.target.value)}
             placeholder="Live Portfolio ID (MIP internal)"
-          />
-          <input
-            value={selectedLiveConfig?.SIM_PORTFOLIO_ID ?? ''}
-            readOnly
-            placeholder="Linked source portfolio (SIM_PORTFOLIO_ID)"
-            title="Source comes from LIVE_PORTFOLIO_CONFIG.SIM_PORTFOLIO_ID"
           />
           <input
             value={bridgeRunId}
@@ -363,12 +342,10 @@ export default function LiveTrades() {
           <div className="lt-summary">
             Imported {bridgeResult.imported_count} / {bridgeResult.candidate_count} candidate proposals
             (skipped existing: {bridgeResult.skipped_existing_count}, invalid: {bridgeResult.skipped_invalid_count}).
-            {' '}Source portfolio: <b>{bridgeResult.source_portfolio_id ?? '—'}</b>.
+            {' '}Source scope: <b>{bridgeResult.source_origin || '—'}</b>
+            {bridgeResult.source_portfolio_id != null ? ` (portfolio ${bridgeResult.source_portfolio_id})` : ''}.
           </div>
         ) : null}
-        <div className="lt-summary">
-          Linked source portfolio name: <b>{linkedSourcePortfolio ? (linkedSourcePortfolio.NAME ?? linkedSourcePortfolio.name ?? `Portfolio ${selectedLiveConfig?.SIM_PORTFOLIO_ID}`) : '—'}</b>
-        </div>
       </div>
 
       {error ? <div className="lt-error">{error}</div> : null}

@@ -3869,7 +3869,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
 
         cur.execute(
             """
-            select SIM_PORTFOLIO_ID, coalesce(VALIDITY_WINDOW_SEC, 14400) as VALIDITY_WINDOW_SEC
+            select coalesce(VALIDITY_WINDOW_SEC, 14400) as VALIDITY_WINDOW_SEC
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
               and coalesce(IS_ACTIVE, true) = true
@@ -3882,26 +3882,19 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 status_code=400,
                 detail="Live portfolio config not found or inactive.",
             )
-        cfg_sim_portfolio_id, validity_window_sec = cfg
-        source_portfolio_id = (
-            int(req.source_portfolio_id)
-            if req.source_portfolio_id is not None
-            else (int(cfg_sim_portfolio_id) if cfg_sim_portfolio_id is not None else None)
-        )
-        if source_portfolio_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="No source research portfolio resolved. Set LIVE_PORTFOLIO_CONFIG.SIM_PORTFOLIO_ID or pass source_portfolio_id.",
-            )
-        source_origin = "request"
+        (validity_window_sec,) = cfg
+        source_portfolio_id = int(req.source_portfolio_id) if req.source_portfolio_id is not None else None
+        source_origin = "request" if source_portfolio_id is not None else "all_portfolios"
 
         wheres = [
-            "PORTFOLIO_ID = %s",
             "STATUS in ('PROPOSED', 'APPROVED')",
             "SYMBOL is not null",
             "SIDE in ('BUY', 'SELL')",
         ]
-        params = [source_portfolio_id]
+        params = []
+        if source_portfolio_id is not None:
+            wheres.append("PORTFOLIO_ID = %s")
+            params.append(source_portfolio_id)
         if req.run_id:
             wheres.append("RUN_ID_VARCHAR = %s")
             params.append(req.run_id)

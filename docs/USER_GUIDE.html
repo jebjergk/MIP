@@ -377,6 +377,7 @@
         <li><a href="#screens">2. Understanding the Screens</a></li>
         <li><a href="#decision-console-news">2.11 Decision Console &amp; 2.12 News Intelligence</a></li>
         <li><a href="#ask-mip-assistant">2.13 Ask MIP Assistant</a></li>
+        <li><a href="#live-portfolio-config-screen">2.14 Live Portfolio Config</a></li>
         <li><a href="#backend">3. How the Backend Works</a></li>
         <li><a href="#concepts">4. Key Concepts</a></li>
         <li><a href="#troubleshooting">5. Troubleshooting</a></li>
@@ -689,6 +690,22 @@
       <li>Starter prompts include News Intelligence impact interpretation and Decision Console trace behavior</li>
     </ul>
     <p>Ask MIP is guidance-only; it does not execute trades or change data.</p>
+
+    <h3 id="live-portfolio-config-screen">⚙️ Live Portfolio Config (2.14)</h3>
+    <p><strong>What it shows:</strong> The live configuration binding map between SIM research source, MIP live container, and IBKR truth account.</p>
+    <table>
+      <thead>
+        <tr><th>Area</th><th>What it means</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Connection Schematic</strong></td><td>Green = connected, Red = blocking issue, Gray = not configured.</td></tr>
+        <tr><td><strong>Create New Live Config</strong></td><td>System assigns a new live portfolio config ID automatically (no manual ID entry).</td></tr>
+        <tr><td><strong>SIM Portfolio selector</strong></td><td>Choose the research portfolio that supplies proposals to this live workflow.</td></tr>
+        <tr><td><strong>IBKR Account ID</strong></td><td>Broker-truth account mirrored for snapshot/drift safety checks.</td></tr>
+        <tr><td><strong>Guard Details</strong></td><td>Shows exactly why activation is blocked or eligible.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Important:</strong> Saving config persists governance settings, but execution still requires realism checks, approvals, revalidation, and drift/freshness pass.</p>
 </section>
 
 <!-- Section 3: Backend -->

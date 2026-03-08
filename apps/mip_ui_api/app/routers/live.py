@@ -2430,47 +2430,46 @@ def delete_live_portfolio_config(
     portfolio_id: int,
     force: bool = Query(False, description="Force delete even when dependent live rows exist."),
 ):
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "select PORTFOLIO_ID from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = %s",
-            (portfolio_id,),
+    # Use agent runtime role (CURSOR_AGENT / MIP_ADMIN_ROLE) because API runtime
+    # role can be read-only for LIVE schema writes.
+    existing_rows = _run_agent_snowflake_query(
+        f"select PORTFOLIO_ID from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = {int(portfolio_id)}"
+    )
+    if not isinstance(existing_rows, list) or not existing_rows:
+        raise HTTPException(status_code=404, detail="Live portfolio config not found.")
+
+    action_rows = _run_agent_snowflake_query(
+        f"select count(*) as CNT from MIP.LIVE.LIVE_ACTIONS where PORTFOLIO_ID = {int(portfolio_id)}"
+    )
+    actions_count = int(((action_rows[0] if isinstance(action_rows, list) and action_rows else {}) or {}).get("CNT") or 0)
+
+    order_rows = _run_agent_snowflake_query(
+        f"select count(*) as CNT from MIP.LIVE.LIVE_ORDERS where PORTFOLIO_ID = {int(portfolio_id)}"
+    )
+    orders_count = int(((order_rows[0] if isinstance(order_rows, list) and order_rows else {}) or {}).get("CNT") or 0)
+
+    if not force and (actions_count > 0 or orders_count > 0):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Delete blocked: linked live actions/orders exist for this portfolio.",
+                "portfolio_id": portfolio_id,
+                "actions_count": actions_count,
+                "orders_count": orders_count,
+                "hint": "Use force=true only if you intentionally want to remove config despite historical linkage.",
+            },
         )
-        existing_rows = fetch_all(cur)
-        if not existing_rows:
-            raise HTTPException(status_code=404, detail="Live portfolio config not found.")
 
-        cur.execute("select count(*) as CNT from MIP.LIVE.LIVE_ACTIONS where PORTFOLIO_ID = %s", (portfolio_id,))
-        action_rows = fetch_all(cur)
-        actions_count = int((action_rows[0] or {}).get("CNT") or 0)
-
-        cur.execute("select count(*) as CNT from MIP.LIVE.LIVE_ORDERS where PORTFOLIO_ID = %s", (portfolio_id,))
-        order_rows = fetch_all(cur)
-        orders_count = int((order_rows[0] or {}).get("CNT") or 0)
-
-        if not force and (actions_count > 0 or orders_count > 0):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Delete blocked: linked live actions/orders exist for this portfolio.",
-                    "portfolio_id": portfolio_id,
-                    "actions_count": actions_count,
-                    "orders_count": orders_count,
-                    "hint": "Use force=true only if you intentionally want to remove config despite historical linkage.",
-                },
-            )
-
-        cur.execute("delete from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = %s", (portfolio_id,))
-        return {
-            "ok": True,
-            "deleted_portfolio_id": portfolio_id,
-            "forced": force,
-            "actions_count": actions_count,
-            "orders_count": orders_count,
-        }
-    finally:
-        conn.close()
+    _run_agent_snowflake_query(
+        f"delete from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = {int(portfolio_id)}"
+    )
+    return {
+        "ok": True,
+        "deleted_portfolio_id": portfolio_id,
+        "forced": force,
+        "actions_count": actions_count,
+        "orders_count": orders_count,
+    }
 
 
 @router.post("/trades/actions/import-proposals")

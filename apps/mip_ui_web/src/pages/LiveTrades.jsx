@@ -186,6 +186,10 @@ export default function LiveTrades() {
 
       <div className="lt-create-card">
         <h3>Bridge Research Proposals -> Live Actions</h3>
+        <div className="lt-summary">
+          Imported candidates start in <b>RESEARCH_IMPORTED</b> and are non-executable until PM accept,
+          compliance approval, and revalidation pass.
+        </div>
         <div className="lt-form-row">
           <input
             value={bridgeLivePortfolioId}
@@ -267,7 +271,7 @@ export default function LiveTrades() {
                   <div className="lt-actions">
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'PROPOSED'}
+                      disabled={busyId === a.ACTION_ID || !['RESEARCH_IMPORTED', 'PROPOSED'].includes(a.STATUS)}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/pm-accept`, { actor: pmActor })}
                     >
                       PM Accept

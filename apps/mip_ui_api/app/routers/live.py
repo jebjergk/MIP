@@ -59,12 +59,15 @@ class ExecuteLiveActionRequest(BaseModel):
 
 
 _ALLOWED_TRANSITIONS = {
+    "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
     "PROPOSED": {"PM_ACCEPTED"},
     "PM_ACCEPTED": {"COMPLIANCE_APPROVED", "COMPLIANCE_DENIED"},
     "COMPLIANCE_APPROVED": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
     "REVALIDATED_FAIL": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
     "REVALIDATED_PASS": {"EXECUTION_REQUESTED"},
 }
+
+LIVE_POLICY_VERSION = "phase2_session_realism_v1"
 
 
 def _fetch_live_action(cur, action_id: str) -> dict | None:
@@ -73,7 +76,8 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
         select
           ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE,
           STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
-          PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE
+          PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
+          PARAM_SNAPSHOT, ONE_MIN_BAR_TS
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
         """,
@@ -102,6 +106,148 @@ def _write_reason_codes(cur, action_id: str, reason_codes: list[str]) -> None:
         """,
         (json.dumps(reason_codes), action_id),
     )
+
+
+def _append_learning_ledger_event(
+    cur,
+    *,
+    event_name: str,
+    status: str,
+    action_before: dict | None,
+    action_after: dict | None,
+    influence_delta: dict | None = None,
+    outcome_state: dict | None = None,
+    policy_version: str | None = None,
+) -> None:
+    """
+    Best-effort append to canonical learning ledger.
+    Never raise to caller.
+    """
+    try:
+        after = action_after or {}
+        before = action_before or {}
+        after_snapshot = _parse_variant(after.get("PARAM_SNAPSHOT"))
+        before_snapshot = _parse_variant(before.get("PARAM_SNAPSHOT"))
+        run_id = (
+            after.get("RUN_ID_VARCHAR")
+            or before.get("RUN_ID_VARCHAR")
+            or after_snapshot.get("run_id")
+            or before_snapshot.get("run_id")
+            or None
+        )
+        portfolio_id = after.get("PORTFOLIO_ID") or before.get("PORTFOLIO_ID")
+        proposal_id = after.get("PROPOSAL_ID") or before.get("PROPOSAL_ID")
+        symbol = after.get("SYMBOL") or before.get("SYMBOL")
+        market_type = after.get("ASSET_CLASS") or before.get("ASSET_CLASS")
+        live_action_id = after.get("ACTION_ID") or before.get("ACTION_ID")
+
+        cur.execute(
+            """
+            call MIP.APP.SP_LEDGER_APPEND_EVENT(
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                try_parse_json(%s), try_parse_json(%s), try_parse_json(%s), try_parse_json(%s), try_parse_json(%s), %s
+            )
+            """,
+            (
+                "LIVE_EVENT",
+                event_name,
+                status,
+                run_id,
+                run_id,
+                portfolio_id,
+                proposal_id,
+                live_action_id,
+                None,  # live_order_id
+                symbol,
+                market_type,
+                None,  # training_version
+                policy_version,
+                None,  # source facts hash
+                json.dumps({"source": "live_router"}),
+                json.dumps(before),
+                json.dumps(after),
+                json.dumps(influence_delta or {}),
+                json.dumps({
+                    "action_id": live_action_id,
+                    "proposal_id": proposal_id,
+                    "run_id": run_id,
+                }),
+                json.dumps(outcome_state or {}),
+            ),
+        )
+    except Exception:
+        # Non-fatal by design.
+        return
+
+
+def _parse_variant(v):
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return {}
+    return {}
+
+
+def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[str], dict]:
+    """
+    Fail-closed realism checks:
+    require 1m-bar-sourced revalidation and fresh 1m market data.
+    """
+    reason_codes: list[str] = []
+    symbol = action.get("SYMBOL")
+    if not symbol:
+        reason_codes.append("FIRST_SESSION_REALISM_MISSING_SYMBOL")
+        return reason_codes, {"has_symbol": False}
+
+    source = (action.get("EXECUTION_PRICE_SOURCE") or "").upper()
+    if source != "ONE_MINUTE_BAR":
+        reason_codes.append("FIRST_SESSION_REALISM_SOURCE_REQUIRED")
+
+    one_min_bar_ts = action.get("ONE_MIN_BAR_TS")
+    if not one_min_bar_ts:
+        reason_codes.append("FIRST_SESSION_REALISM_MISSING_1M_REFERENCE")
+
+    cur.execute(
+        """
+        select TS, CLOSE
+        from MIP.MART.MARKET_BARS
+        where SYMBOL = %s
+          and INTERVAL_MINUTES = 1
+        order by TS desc
+        limit 1
+        """,
+        (symbol,),
+    )
+    latest_bar = cur.fetchone()
+    latest_ts = latest_bar[0] if latest_bar else None
+    latest_close = latest_bar[1] if latest_bar else None
+    if not latest_ts:
+        reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
+    else:
+        now_utc = datetime.now(timezone.utc)
+        bar_ts_utc = latest_ts.replace(tzinfo=timezone.utc)
+        bar_age_sec = (now_utc - bar_ts_utc).total_seconds()
+        max_age_sec = int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60)
+        if bar_age_sec > max_age_sec:
+            reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
+        if one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
+            reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
+
+    details = {
+        "symbol": symbol,
+        "execution_price_source": source or None,
+        "one_min_bar_ts": one_min_bar_ts,
+        "latest_one_min_bar_ts": latest_ts,
+        "latest_one_min_close": latest_close,
+        "quote_freshness_threshold_sec": cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC"),
+    }
+    return reason_codes, details
+
 
 def _summary_hint_from_status_and_details(status: str | None, details: dict | None) -> str | None:
     """Derive a short summary hint for the run (same as runs router)."""
@@ -530,7 +676,7 @@ def list_live_trade_actions(
             params.append(portfolio_id)
         if pending_only:
             wheres.append(
-                "STATUS in ('PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
+                "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
             )
         params.append(limit)
         sql = f"""
@@ -577,6 +723,19 @@ def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
             """,
             (req.actor, action_id),
         )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_PM_ACCEPT",
+            status="PM_ACCEPTED",
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "approval_transition": f"{action.get('STATUS')}->PM_ACCEPTED",
+                "actor": req.actor,
+            },
+        )
         return {"ok": True, "action_id": action_id, "status": "PM_ACCEPTED"}
     finally:
         conn.close()
@@ -606,6 +765,24 @@ def compliance_decide_live_action(action_id: str, req: ComplianceDecisionRequest
              where ACTION_ID = %s
             """,
             (status, req.decision, req.actor, req.notes, req.reference_id, action_id),
+        )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_COMPLIANCE_DECISION",
+            status=status,
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "approval_transition": f"{action.get('STATUS')}->{status}",
+                "decision": req.decision,
+                "actor": req.actor,
+            },
+            outcome_state={
+                "compliance_notes": req.notes,
+                "compliance_reference_id": req.reference_id,
+            },
         )
         return {"ok": True, "action_id": action_id, "status": status}
     finally:
@@ -703,6 +880,20 @@ def revalidate_live_action(action_id: str):
                 action_id,
             ),
         )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_REVALIDATION",
+            status=status,
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "price_deviation_pct": float(deviation) if deviation is not None else None,
+                "price_guard_result": "PASS" if guard_pass else "FAIL",
+                "price_source": source,
+            },
+        )
         return {
             "ok": True,
             "action_id": action_id,
@@ -763,6 +954,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
 
         if (action.get("PRICE_GUARD_RESULT") or "").upper() != "PASS":
             reason_codes.append("PRICE_GUARD_FAIL")
+        realism_reason_codes, realism_details = _first_session_realism_checks(cur, action, cfg)
+        reason_codes.extend(realism_reason_codes)
 
         account_id = cfg.get("IBKR_ACCOUNT_ID")
         cur.execute(
@@ -849,10 +1042,28 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             reason_codes.append("DUPLICATE_EXECUTION_BLOCKED")
 
         if reason_codes:
-            _write_reason_codes(cur, action_id, sorted(set(reason_codes)))
+            final_reason_codes = sorted(set(reason_codes))
+            _write_reason_codes(cur, action_id, final_reason_codes)
+            _append_learning_ledger_event(
+                cur,
+                event_name="LIVE_EXECUTION_BLOCKED",
+                status="BLOCKED",
+                action_before=action,
+                action_after=_fetch_live_action(cur, action_id),
+                policy_version=LIVE_POLICY_VERSION,
+                influence_delta={
+                    "safety_gates_passed": False,
+                    "reason_codes": final_reason_codes,
+                },
+                outcome_state={
+                    "validator": "FIRST_SESSION_REALISM",
+                    "realism_details": realism_details,
+                    "actor": req.actor,
+                },
+            )
             raise HTTPException(
                 status_code=409,
-                detail={"message": "Execution blocked by safety gates.", "reason_codes": sorted(set(reason_codes))},
+                detail={"message": "Execution blocked by safety gates.", "reason_codes": final_reason_codes},
             )
 
         order_id = str(uuid.uuid4())
@@ -920,6 +1131,24 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
              where ACTION_ID = %s
             """,
             (json.dumps(["EXECUTION_REQUESTED"]), action_id),
+        )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_EXECUTION_REQUESTED",
+            status="EXECUTION_REQUESTED",
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "safety_gates_passed": True,
+                "idempotency_key": idempotency_key,
+                "actor": req.actor,
+            },
+            outcome_state={
+                "order_id": order_id,
+                "mode": "PAPER_PLACEHOLDER",
+            },
         )
 
         return {
@@ -1188,16 +1417,20 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 }
             )
 
+            import_reason_codes = [
+                "RESEARCH_IMPORTED",
+                "NON_EXECUTABLE_UNTIL_PM_COMPLIANCE_REVALIDATION",
+            ]
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_ACTIONS (
                   ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, ASSET_CLASS,
-                  STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT,
+                  STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
                   CREATED_AT, UPDATED_AT
                 )
                 values (
                   %s, %s, %s, %s, %s, %s, %s,
-                  'PROPOSED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s),
+                  'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   current_timestamp(), current_timestamp()
                 )
                 """,
@@ -1211,7 +1444,38 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     p.get("MARKET_TYPE"),
                     int(validity_window_sec) if validity_window_sec is not None else 14400,
                     snapshot_payload,
+                    json.dumps(import_reason_codes),
                 ),
+            )
+            _append_learning_ledger_event(
+                cur,
+                event_name="LIVE_RESEARCH_IMPORT",
+                status="RESEARCH_IMPORTED",
+                action_before=None,
+                action_after={
+                    "ACTION_ID": action_id,
+                    "PROPOSAL_ID": proposal_id,
+                    "PORTFOLIO_ID": req.live_portfolio_id,
+                    "SYMBOL": (p.get("SYMBOL") or "").upper(),
+                    "SIDE": (p.get("SIDE") or "").upper(),
+                    "ASSET_CLASS": p.get("MARKET_TYPE"),
+                    "RUN_ID_VARCHAR": p.get("RUN_ID_VARCHAR"),
+                },
+                influence_delta={
+                    "default_executable": False,
+                    "required_sequence": [
+                        "PM_ACCEPTED",
+                        "COMPLIANCE_APPROVED",
+                        "REVALIDATED_PASS",
+                        "EXECUTION_REQUESTED",
+                    ],
+                    "proposal_status_source": p.get("STATUS"),
+                },
+                policy_version=LIVE_POLICY_VERSION,
+                outcome_state={
+                    "import_source": "ORDER_PROPOSALS",
+                    "reason_codes": import_reason_codes,
+                },
             )
             imported += 1
             imported_action_ids.append(action_id)

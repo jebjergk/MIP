@@ -380,7 +380,7 @@ def get_learning_ledger_feed(
 
 @router.get("/detail")
 def get_learning_ledger_detail(
-    run_id: str = Query(...),
+    run_id: Optional[str] = Query(None),
     event_name: Optional[str] = Query(None),
     portfolio_id: Optional[int] = Query(None),
     ledger_id: Optional[int] = Query(None),
@@ -398,7 +398,8 @@ def get_learning_ledger_detail(
 
         # 0) Optional canonical ledger event payload
         ledger_row = None
-        if ledger_id is not None and _ledger_table_exists(cur):
+        has_ledger = _ledger_table_exists(cur)
+        if ledger_id is not None and has_ledger:
             cur.execute(
                 """
                 select *
@@ -411,52 +412,61 @@ def get_learning_ledger_detail(
             lr = fetch_all(cur)
             ledger_row = serialize_row(lr[0]) if lr else None
 
-        # 1) Audit trail for the run
-        wheres = ["RUN_ID = %s OR PARENT_RUN_ID = %s"]
-        params = [run_id, run_id]
-        if event_name:
-            wheres.append("EVENT_NAME = %s")
-            params.append(event_name)
-        if portfolio_id is not None:
-            wheres.append("try_to_number(DETAILS:portfolio_id::string) = %s")
-            params.append(portfolio_id)
+        effective_run_id = run_id
+        if not effective_run_id and ledger_row:
+            effective_run_id = ledger_row.get("RUN_ID") or ledger_row.get("run_id")
 
-        cur.execute(
-            f"""
-            select
-              EVENT_TS, EVENT_TYPE, EVENT_NAME, STATUS, ROWS_AFFECTED, DETAILS,
-              ERROR_MESSAGE, ERROR_SQLSTATE, ERROR_QUERY_ID
-            from MIP.APP.MIP_AUDIT_LOG
-            where ({' and '.join(wheres)})
-            order by EVENT_TS desc
-            limit 200
-            """,
-            tuple(params),
-        )
-        audit_rows = fetch_all(cur)
-        if not audit_rows:
-            raise HTTPException(status_code=404, detail="No matching ledger detail for this run.")
+        if not effective_run_id and not ledger_row:
+            raise HTTPException(status_code=400, detail="Provide run_id or ledger_id.")
+
+        # 1) Audit trail for the run
+        audit_rows = []
+        if effective_run_id:
+            wheres = ["(RUN_ID = %s OR PARENT_RUN_ID = %s)"]
+            params = [effective_run_id, effective_run_id]
+            if event_name:
+                wheres.append("EVENT_NAME = %s")
+                params.append(event_name)
+            if portfolio_id is not None:
+                wheres.append("try_to_number(DETAILS:portfolio_id::string) = %s")
+                params.append(portfolio_id)
+
+            cur.execute(
+                f"""
+                select
+                  EVENT_TS, EVENT_TYPE, EVENT_NAME, STATUS, ROWS_AFFECTED, DETAILS,
+                  ERROR_MESSAGE, ERROR_SQLSTATE, ERROR_QUERY_ID
+                from MIP.APP.MIP_AUDIT_LOG
+                where {' and '.join(wheres)}
+                order by EVENT_TS desc
+                limit 200
+                """,
+                tuple(params),
+            )
+            audit_rows = fetch_all(cur)
 
         # 2) Proposals for run
-        proposal_wheres = ["RUN_ID_VARCHAR = %s"]
-        proposal_params = [run_id]
-        if portfolio_id is not None:
-            proposal_wheres.append("PORTFOLIO_ID = %s")
-            proposal_params.append(portfolio_id)
+        proposal_rows = []
+        if effective_run_id:
+            proposal_wheres = ["RUN_ID_VARCHAR = %s"]
+            proposal_params = [effective_run_id]
+            if portfolio_id is not None:
+                proposal_wheres.append("PORTFOLIO_ID = %s")
+                proposal_params.append(portfolio_id)
 
-        cur.execute(
-            f"""
-            select
-              PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, MARKET_TYPE, SIDE, TARGET_WEIGHT,
-              STATUS, SIGNAL_PATTERN_ID, SIGNAL_TS, APPROVED_AT, EXECUTED_AT, RATIONALE, SOURCE_SIGNALS
-            from MIP.AGENT_OUT.ORDER_PROPOSALS
-            where {' and '.join(proposal_wheres)}
-            order by PROPOSAL_ID desc
-            limit 300
-            """,
-            tuple(proposal_params),
-        )
-        proposal_rows = fetch_all(cur)
+            cur.execute(
+                f"""
+                select
+                  PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, MARKET_TYPE, SIDE, TARGET_WEIGHT,
+                  STATUS, SIGNAL_PATTERN_ID, SIGNAL_TS, APPROVED_AT, EXECUTED_AT, RATIONALE, SOURCE_SIGNALS
+                from MIP.AGENT_OUT.ORDER_PROPOSALS
+                where {' and '.join(proposal_wheres)}
+                order by PROPOSAL_ID desc
+                limit 300
+                """,
+                tuple(proposal_params),
+            )
+            proposal_rows = fetch_all(cur)
 
         # 3) Linked live actions/orders from those proposals
         if proposal_rows:
@@ -502,20 +512,22 @@ def get_learning_ledger_detail(
                 order_rows = fetch_all(cur)
 
         # 4) Nearest training snapshot for run
-        cur.execute(
-            """
-            select
-              AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
-            from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT
-            where SCOPE = 'GLOBAL_TRAINING'
-              and RUN_ID = %s
-            order by CREATED_AT desc
-            limit 1
-            """,
-            (run_id,),
-        )
-        training_rows = fetch_all(cur)
-        training_snapshot = training_rows[0] if training_rows else None
+        training_snapshot = None
+        if effective_run_id:
+            cur.execute(
+                """
+                select
+                  AS_OF_TS, RUN_ID, SNAPSHOT_JSON, SOURCE_FACTS_HASH, CREATED_AT
+                from MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT
+                where SCOPE = 'GLOBAL_TRAINING'
+                  and RUN_ID = %s
+                order by CREATED_AT desc
+                limit 1
+                """,
+                (effective_run_id,),
+            )
+            training_rows = fetch_all(cur)
+            training_snapshot = training_rows[0] if training_rows else None
 
         summary = {
             "audit_event_count": len(audit_rows),
@@ -529,7 +541,7 @@ def get_learning_ledger_detail(
         }
 
         return {
-            "run_id": run_id,
+            "run_id": effective_run_id,
             "ledger_id": ledger_id,
             "event_name_filter": event_name,
             "portfolio_id_filter": portfolio_id,

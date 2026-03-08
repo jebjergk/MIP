@@ -53,6 +53,12 @@
 .lpc-guide p { margin: 0 0 8px 0; font-size: 12px; opacity: 0.92; }
 .lpc-guide ul { margin: 0; padding-left: 18px; font-size: 12px; opacity: 0.9; }
 .lpc-faint { margin-top: 6px; opacity: 0.72; }
+.lpc-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
 
 .lpc-panels {
   display: grid;
@@ -138,6 +144,7 @@
 }
 
 .lpc-btn-primary { background: rgba(70, 140, 255, 0.25); }
+.lpc-btn-danger { background: rgba(220, 70, 70, 0.2); border-color: rgba(220, 70, 70, 0.45); }
 
 .lpc-msg { border-radius: 8px; padding: 8px 10px; }
 .lpc-msg-error { border: 1px solid rgba(220, 80, 80, 0.45); background: rgba(220, 80, 80, 0.15); }

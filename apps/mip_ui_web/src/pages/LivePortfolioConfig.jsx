@@ -30,6 +30,9 @@ export default function LivePortfolioConfig() {
   const [configs, setConfigs] = useState([])
   const [simPortfolios, setSimPortfolios] = useState([])
   const [selectedPortfolioId, setSelectedPortfolioId] = useState('')
+  const [editorMode, setEditorMode] = useState('edit')
+  const [draftPortfolioId, setDraftPortfolioId] = useState('')
+  const [showAdvancedGuards, setShowAdvancedGuards] = useState(false)
   const [status, setStatus] = useState({ loading: true, error: '', ok: '' })
   const [guard, setGuard] = useState(null)
   const [smokeResult, setSmokeResult] = useState(null)
@@ -84,25 +87,29 @@ export default function LivePortfolioConfig() {
   }, [loadConfigs])
 
   const selectedConfig = useMemo(
-    () => configs.find((c) => String(c.PORTFOLIO_ID) === String(selectedPortfolioId)) || null,
-    [configs, selectedPortfolioId]
+    () => (editorMode === 'create'
+      ? null
+      : configs.find((c) => String(c.PORTFOLIO_ID) === String(selectedPortfolioId)) || null),
+    [configs, editorMode, selectedPortfolioId]
   )
-  const normalizedPortfolioId = useMemo(() => normalizePortfolioId(selectedPortfolioId), [selectedPortfolioId])
+  const normalizedSelectedPortfolioId = useMemo(() => normalizePortfolioId(selectedPortfolioId), [selectedPortfolioId])
+  const normalizedDraftPortfolioId = useMemo(() => normalizePortfolioId(draftPortfolioId), [draftPortfolioId])
+  const activePortfolioId = editorMode === 'create' ? normalizedDraftPortfolioId : normalizedSelectedPortfolioId
 
   const loadGuard = useCallback(async () => {
-    if (!selectedPortfolioId) {
+    if (!activePortfolioId || editorMode === 'create') {
       setGuard(null)
       return
     }
     try {
-      const resp = await fetch(`${API_BASE}/live/activation/guard?portfolio_id=${encodeURIComponent(selectedPortfolioId)}`)
+      const resp = await fetch(`${API_BASE}/live/activation/guard?portfolio_id=${encodeURIComponent(activePortfolioId)}`)
       if (!resp.ok) throw new Error(`Guard check failed (${resp.status})`)
       const data = await resp.json()
       setGuard(data)
     } catch (e) {
       setGuard({ error: e.message || 'Failed to load guard.' })
     }
-  }, [selectedPortfolioId])
+  }, [activePortfolioId, editorMode])
 
   const refreshAll = useCallback(async () => {
     await loadConfigs()
@@ -154,53 +161,59 @@ export default function LivePortfolioConfig() {
   }), [form])
 
   const createNewConfig = useCallback(async () => {
-    if (!form.sim_portfolio_id) {
-      setStatus((s) => ({ ...s, error: 'Select a SIM Portfolio before creating a live config.', ok: '' }))
+    if (editorMode === 'create') {
+      setStatus((s) => ({ ...s, ok: `Already in create mode for Live Config #${normalizedDraftPortfolioId || 'new'}. Click Save Config to persist.` }))
       return
     }
-    if (!form.ibkr_account_id) {
-      setStatus((s) => ({ ...s, error: 'IBKR Account ID is required when creating a new config.', ok: '' }))
-      return
-    }
-    setStatus((s) => ({ ...s, loading: true, error: '', ok: '' }))
-    try {
-      const nextId = Math.max(0, ...configs.map((c) => Number(c.PORTFOLIO_ID) || 0)) + 1
-      const resp = await fetch(`${API_BASE}/live/portfolio-config/${nextId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
-      })
-      if (!resp.ok) {
-        const txt = await resp.text()
-        throw new Error(txt || `Create failed (${resp.status})`)
-      }
-      const data = await resp.json()
-      const savedCfg = data?.config || null
-      if (savedCfg) {
-        setConfigs((prev) => {
-          const others = prev.filter((c) => String(c.PORTFOLIO_ID) !== String(savedCfg.PORTFOLIO_ID))
-          return [...others, savedCfg].sort((a, b) => Number(a.PORTFOLIO_ID) - Number(b.PORTFOLIO_ID))
-        })
-        setSelectedPortfolioId(String(savedCfg.PORTFOLIO_ID))
-      } else {
-        setSelectedPortfolioId(String(nextId))
-      }
-      await loadConfigs()
-      await loadGuard()
-      setStatus((s) => ({ ...s, loading: false, ok: `Created new Live Portfolio Config #${savedCfg?.PORTFOLIO_ID || nextId}.` }))
-    } catch (e) {
-      setStatus((s) => ({ ...s, loading: false, error: e.message || 'Failed to create config.', ok: '' }))
-    }
-  }, [buildPayload, configs, form.ibkr_account_id, form.sim_portfolio_id, loadConfigs, loadGuard])
+    const nextId = Math.max(0, ...configs.map((c) => Number(c.PORTFOLIO_ID) || 0)) + 1
+    setEditorMode('create')
+    setDraftPortfolioId(String(nextId))
+    setGuard(null)
+    setShowAdvancedGuards(false)
+    setForm((prev) => ({
+      ...prev,
+      sim_portfolio_id: prev.sim_portfolio_id || '',
+      ibkr_account_id: prev.ibkr_account_id || '',
+      adapter_mode: 'PAPER',
+      base_currency: 'EUR',
+      max_positions: '',
+      max_position_pct: '',
+      cash_buffer_pct: '',
+      max_slippage_pct: '',
+      drawdown_stop_pct: '',
+      bust_pct: '',
+      validity_window_sec: '',
+      quote_freshness_threshold_sec: '',
+      snapshot_freshness_threshold_sec: '',
+      cooldown_bars: '',
+      is_active: true,
+    }))
+    setStatus((s) => ({
+      ...s,
+      error: '',
+      ok: `Create mode started for Live Config #${nextId}. Nothing is saved until you click Save Config.`,
+    }))
+  }, [configs, editorMode, normalizedDraftPortfolioId])
+
+  const cancelCreateMode = useCallback(() => {
+    setEditorMode('edit')
+    setDraftPortfolioId('')
+    setShowAdvancedGuards(false)
+    setStatus((s) => ({ ...s, error: '', ok: 'Create mode cancelled. No new config was saved.' }))
+  }, [])
 
   const onSave = useCallback(async () => {
-    const portfolioIdNum = Number(normalizedPortfolioId)
-    if (!normalizedPortfolioId || !Number.isInteger(portfolioIdNum) || portfolioIdNum <= 0) {
+    const portfolioIdNum = Number(activePortfolioId)
+    if (!activePortfolioId || !Number.isInteger(portfolioIdNum) || portfolioIdNum <= 0) {
       setStatus((s) => ({ ...s, error: 'Select an existing Live Config first, or click Create New Live Config.', ok: '' }))
       return
     }
-    if (!selectedConfig && !form.ibkr_account_id) {
+    if (editorMode === 'create' && !form.ibkr_account_id) {
       setStatus((s) => ({ ...s, error: 'IBKR Account ID is required when creating a new config.', ok: '' }))
+      return
+    }
+    if (editorMode === 'create' && !form.sim_portfolio_id) {
+      setStatus((s) => ({ ...s, error: 'Select a SIM Portfolio before saving a new live config.', ok: '' }))
       return
     }
     setStatus((s) => ({ ...s, error: '', ok: '' }))
@@ -223,16 +236,27 @@ export default function LivePortfolioConfig() {
           return [...others, savedCfg].sort((a, b) => Number(a.PORTFOLIO_ID) - Number(b.PORTFOLIO_ID))
         })
       }
+      if (editorMode === 'create') {
+        setSelectedPortfolioId(String(portfolioIdNum))
+        setDraftPortfolioId('')
+        setEditorMode('edit')
+      }
       await loadConfigs()
       await loadGuard()
-      setStatus({ loading: false, error: '', ok: `Saved config for Live Portfolio ID ${portfolioIdNum}.` })
+      setStatus({
+        loading: false,
+        error: '',
+        ok: editorMode === 'create'
+          ? `Created and saved Live Config #${portfolioIdNum}.`
+          : `Saved config for Live Portfolio ID ${portfolioIdNum}.`,
+      })
     } catch (e) {
       setStatus((s) => ({ ...s, error: e.message || 'Failed to save config.', ok: '' }))
     }
-  }, [buildPayload, form.ibkr_account_id, loadConfigs, loadGuard, normalizedPortfolioId, selectedConfig])
+  }, [activePortfolioId, buildPayload, editorMode, form.ibkr_account_id, form.sim_portfolio_id, loadConfigs, loadGuard])
 
   const mapStatus = useMemo(() => {
-    const hasLiveId = Boolean(normalizedPortfolioId)
+    const hasLiveId = Boolean(activePortfolioId)
     const hasSim = Boolean(form.sim_portfolio_id)
     const hasIbkr = Boolean(form.ibkr_account_id)
     const hasSavedConfig = Boolean(selectedConfig)
@@ -252,7 +276,7 @@ export default function LivePortfolioConfig() {
       linkLiveGuard: guardPass ? 'ok' : guardFail ? 'bad' : 'na',
       linkGuardReady: guardPass ? 'ok' : guardFail ? 'bad' : 'na',
     }
-  }, [form.ibkr_account_id, form.sim_portfolio_id, guard, normalizedPortfolioId, selectedConfig])
+  }, [activePortfolioId, form.ibkr_account_id, form.sim_portfolio_id, guard, selectedConfig])
 
   const runPhaseGateSmoke = useCallback(async () => {
     setStatus((s) => ({ ...s, error: '', ok: '' }))
@@ -276,6 +300,10 @@ export default function LivePortfolioConfig() {
   }, [])
 
   const enableLive = useCallback(async (force = false) => {
+    if (editorMode === 'create') {
+      setStatus((s) => ({ ...s, error: 'Save the new config first before changing activation mode.', ok: '' }))
+      return
+    }
     if (!selectedPortfolioId) return
     setStatus((s) => ({ ...s, error: '', ok: '' }))
     try {
@@ -294,9 +322,13 @@ export default function LivePortfolioConfig() {
     } catch (e) {
       setStatus((s) => ({ ...s, error: e.message || 'Failed to enable LIVE mode.' }))
     }
-  }, [selectedPortfolioId, loadConfigs, loadGuard])
+  }, [editorMode, selectedPortfolioId, loadConfigs, loadGuard])
 
   const disableLive = useCallback(async () => {
+    if (editorMode === 'create') {
+      setStatus((s) => ({ ...s, error: 'Save the new config first before changing activation mode.', ok: '' }))
+      return
+    }
     if (!selectedPortfolioId) return
     setStatus((s) => ({ ...s, error: '', ok: '' }))
     try {
@@ -315,13 +347,44 @@ export default function LivePortfolioConfig() {
     } catch (e) {
       setStatus((s) => ({ ...s, error: e.message || 'Failed to disable LIVE mode.' }))
     }
-  }, [selectedPortfolioId, loadConfigs, loadGuard])
+  }, [editorMode, selectedPortfolioId, loadConfigs, loadGuard])
+
+  const deleteCurrentConfig = useCallback(async () => {
+    if (editorMode === 'create') {
+      setStatus((s) => ({ ...s, error: 'Cancel or save create mode first.', ok: '' }))
+      return
+    }
+    if (!selectedPortfolioId) {
+      setStatus((s) => ({ ...s, error: 'Select a live config first.', ok: '' }))
+      return
+    }
+    const ok = window.confirm(
+      `Delete Live Portfolio Link #${selectedPortfolioId}?\n\nThis removes only the config row. ` +
+      `If linked live actions/orders exist, deletion will be blocked unless forced.`
+    )
+    if (!ok) return
+
+    setStatus((s) => ({ ...s, error: '', ok: '' }))
+    try {
+      const resp = await fetch(`${API_BASE}/live/portfolio-config/${selectedPortfolioId}`, { method: 'DELETE' })
+      if (!resp.ok) {
+        const txt = await resp.text()
+        throw new Error(txt || `Delete failed (${resp.status})`)
+      }
+      await loadConfigs()
+      setSelectedPortfolioId('')
+      setGuard(null)
+      setStatus((s) => ({ ...s, ok: `Deleted Live Portfolio Link #${selectedPortfolioId}.` }))
+    } catch (e) {
+      setStatus((s) => ({ ...s, error: e.message || 'Failed to delete live config.', ok: '' }))
+    }
+  }, [editorMode, loadConfigs, selectedPortfolioId])
 
   return (
     <div className="page lpc-page">
       <div className="lpc-header">
         <div>
-          <h2>Live Portfolio Configuration</h2>
+          <h2>Live Portfolio Link</h2>
           <p className="lpc-subtitle">Bind MIP live container to research + IBKR with explicit readiness gates.</p>
         </div>
       </div>
@@ -336,7 +399,14 @@ export default function LivePortfolioConfig() {
       <div className="lpc-top-row">
         <label className="lpc-top-control">
           Live Config (system-created ID)
-          <select value={selectedPortfolioId} onChange={(e) => setSelectedPortfolioId(e.target.value)}>
+          <select
+            value={editorMode === 'create' ? '' : selectedPortfolioId}
+            onChange={(e) => {
+              setSelectedPortfolioId(e.target.value)
+              setEditorMode('edit')
+              setDraftPortfolioId('')
+            }}
+          >
             <option value="">{configs.length ? 'Select existing config' : 'No saved configs yet'}</option>
             {configs.map((c) => (
               <option key={c.PORTFOLIO_ID} value={String(c.PORTFOLIO_ID)}>
@@ -348,8 +418,13 @@ export default function LivePortfolioConfig() {
         </label>
         <div className="lpc-top-actions">
           <button className="lpc-btn lpc-btn-primary" onClick={createNewConfig} disabled={status.loading}>
-            Create New Live Config
+            {editorMode === 'create' ? 'Create Mode Active' : 'Create New Live Config'}
           </button>
+          {editorMode === 'create' ? (
+            <button className="lpc-btn" onClick={cancelCreateMode} disabled={status.loading}>
+              Cancel Create
+            </button>
+          ) : null}
           <button className="lpc-btn" onClick={refreshAll} disabled={status.loading}>
             {status.loading ? 'Loading...' : 'Refresh'}
           </button>
@@ -376,7 +451,11 @@ export default function LivePortfolioConfig() {
           <div className={`lpc-link ${statusClass(mapStatus.linkLiveSim)}`} />
           <div className={`lpc-node ${statusClass(mapStatus.live)}`}>
             <h4>MIP Live Portfolio</h4>
-            <p>{normalizedPortfolioId || 'Not selected'}</p>
+            <p>
+              {activePortfolioId
+                ? (editorMode === 'create' ? `#${activePortfolioId} (draft)` : `#${activePortfolioId}`)
+                : 'Not selected'}
+            </p>
           </div>
           <div className={`lpc-link ${statusClass(mapStatus.linkLiveIbkr)}`} />
           <div className={`lpc-node ${statusClass(mapStatus.ibkr)}`}>
@@ -449,6 +528,10 @@ export default function LivePortfolioConfig() {
             <li><b>SIM_PORTFOLIO_ID</b>: research source for proposal import.</li>
             <li><b>IBKR_ACCOUNT_ID</b>: broker truth account mirrored by snapshots.</li>
           </ul>
+          <p>
+            <b>Link contract:</b> SIM linkage is read-context only (proposal sourcing). Live execution writes stay in
+            live-domain tables and must not mutate research truth tables.
+          </p>
           <p className="lpc-faint">
             Saved config: <b>{selectedConfig ? 'Yes' : 'No'}</b>
             {' '}| Config version: <b>{selectedConfig?.CONFIG_VERSION ?? '—'}</b>
@@ -488,50 +571,80 @@ export default function LivePortfolioConfig() {
         </div>
       </div>
 
-      <div className="lpc-form-section">
-        <h3>Sizing & Risk Limits</h3>
-        <div className="lpc-grid">
-        <label>Max Positions<input value={form.max_positions} onChange={(e) => setForm((v) => ({ ...v, max_positions: e.target.value }))} /><span className="lpc-hint">Hard cap on concurrently open positions.</span></label>
-        <label>Max Position %<input value={form.max_position_pct} onChange={(e) => setForm((v) => ({ ...v, max_position_pct: e.target.value }))} /><span className="lpc-hint">Per-position size cap (% of equity).</span></label>
-        <label>Cash Buffer %<input value={form.cash_buffer_pct} onChange={(e) => setForm((v) => ({ ...v, cash_buffer_pct: e.target.value }))} /><span className="lpc-hint">Minimum reserve cash before submit.</span></label>
-        <label>Max Slippage %<input value={form.max_slippage_pct} onChange={(e) => setForm((v) => ({ ...v, max_slippage_pct: e.target.value }))} /><span className="lpc-hint">Max tolerated slippage on execution checks.</span></label>
-        <label>Drawdown Stop %<input value={form.drawdown_stop_pct} onChange={(e) => setForm((v) => ({ ...v, drawdown_stop_pct: e.target.value }))} /><span className="lpc-hint">Portfolio-level drawdown kill-switch threshold.</span></label>
-        <label>Bust %<input value={form.bust_pct} onChange={(e) => setForm((v) => ({ ...v, bust_pct: e.target.value }))} /><span className="lpc-hint">Emergency safety threshold for catastrophic loss.</span></label>
-        </div>
-      </div>
-
-      <div className="lpc-form-section">
-        <h3>Freshness & Lifecycle Controls</h3>
-        <div className="lpc-grid">
-        <label>Validity Window Sec<input value={form.validity_window_sec} onChange={(e) => setForm((v) => ({ ...v, validity_window_sec: e.target.value }))} /><span className="lpc-hint">How long candidate remains valid before expiry.</span></label>
-        <label>Quote Freshness Sec<input value={form.quote_freshness_threshold_sec} onChange={(e) => setForm((v) => ({ ...v, quote_freshness_threshold_sec: e.target.value }))} /><span className="lpc-hint">Max age of market data used for checks.</span></label>
-        <label>Snapshot Freshness Sec<input value={form.snapshot_freshness_threshold_sec} onChange={(e) => setForm((v) => ({ ...v, snapshot_freshness_threshold_sec: e.target.value }))} /><span className="lpc-hint">Max age of broker snapshot allowed before block.</span></label>
-        <label>Cooldown Bars<input value={form.cooldown_bars} onChange={(e) => setForm((v) => ({ ...v, cooldown_bars: e.target.value }))} /><span className="lpc-hint">Bars to wait after exit before re-entry.</span></label>
-        <label className="lpc-checkbox">Active
+      <div className="lpc-guide">
+        <h3>Live Guardrails vs SIM Settings</h3>
+        <p>
+          Linking a SIM portfolio provides <b>proposal source</b>. The controls below are <b>live execution guardrails</b>
+          for broker-side safety (freshness, sizing limits, drawdown brakes). They are separate on purpose.
+        </p>
+        <label className="lpc-toggle-row">
           <input
             type="checkbox"
-            checked={Boolean(form.is_active)}
-            onChange={(e) => setForm((v) => ({ ...v, is_active: e.target.checked }))}
+            checked={showAdvancedGuards}
+            onChange={(e) => setShowAdvancedGuards(e.target.checked)}
           />
+          <span>Show advanced live guardrail controls</span>
         </label>
-        </div>
       </div>
 
+      {showAdvancedGuards ? (
+        <>
+          <div className="lpc-form-section">
+            <h3>Sizing & Risk Limits</h3>
+            <div className="lpc-grid">
+            <label>Max Positions<input value={form.max_positions} onChange={(e) => setForm((v) => ({ ...v, max_positions: e.target.value }))} /><span className="lpc-hint">Hard cap on concurrently open positions.</span></label>
+            <label>Max Position %<input value={form.max_position_pct} onChange={(e) => setForm((v) => ({ ...v, max_position_pct: e.target.value }))} /><span className="lpc-hint">Per-position size cap (% of equity).</span></label>
+            <label>Cash Buffer %<input value={form.cash_buffer_pct} onChange={(e) => setForm((v) => ({ ...v, cash_buffer_pct: e.target.value }))} /><span className="lpc-hint">Minimum reserve cash before submit.</span></label>
+            <label>Max Slippage %<input value={form.max_slippage_pct} onChange={(e) => setForm((v) => ({ ...v, max_slippage_pct: e.target.value }))} /><span className="lpc-hint">Max tolerated slippage on execution checks.</span></label>
+            <label>Drawdown Stop %<input value={form.drawdown_stop_pct} onChange={(e) => setForm((v) => ({ ...v, drawdown_stop_pct: e.target.value }))} /><span className="lpc-hint">Portfolio-level drawdown kill-switch threshold.</span></label>
+            <label>Bust %<input value={form.bust_pct} onChange={(e) => setForm((v) => ({ ...v, bust_pct: e.target.value }))} /><span className="lpc-hint">Emergency safety threshold for catastrophic loss.</span></label>
+            </div>
+          </div>
+
+          <div className="lpc-form-section">
+            <h3>Freshness & Lifecycle Controls</h3>
+            <div className="lpc-grid">
+            <label>Validity Window Sec<input value={form.validity_window_sec} onChange={(e) => setForm((v) => ({ ...v, validity_window_sec: e.target.value }))} /><span className="lpc-hint">How long candidate remains valid before expiry.</span></label>
+            <label>Quote Freshness Sec<input value={form.quote_freshness_threshold_sec} onChange={(e) => setForm((v) => ({ ...v, quote_freshness_threshold_sec: e.target.value }))} /><span className="lpc-hint">Max age of market data used for checks.</span></label>
+            <label>Snapshot Freshness Sec<input value={form.snapshot_freshness_threshold_sec} onChange={(e) => setForm((v) => ({ ...v, snapshot_freshness_threshold_sec: e.target.value }))} /><span className="lpc-hint">Max age of broker snapshot allowed before block.</span></label>
+            <label>Cooldown Bars<input value={form.cooldown_bars} onChange={(e) => setForm((v) => ({ ...v, cooldown_bars: e.target.value }))} /><span className="lpc-hint">Bars to wait after exit before re-entry.</span></label>
+            <label className="lpc-checkbox">Active
+              <input
+                type="checkbox"
+                checked={Boolean(form.is_active)}
+                onChange={(e) => setForm((v) => ({ ...v, is_active: e.target.checked }))}
+              />
+            </label>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="lpc-guide">
+          <p>
+            Advanced live guardrail fields are hidden. MIP will keep existing guardrail values
+            (or defaults for brand-new configs).
+          </p>
+        </div>
+      )}
+
       <div className="lpc-actions">
-        <button className="lpc-btn lpc-btn-primary" onClick={onSave} disabled={!normalizedPortfolioId || status.loading}>
+        <button className="lpc-btn lpc-btn-primary" onClick={onSave} disabled={!activePortfolioId || status.loading}>
           Save Config
         </button>
-        <button className="lpc-btn" onClick={() => enableLive(false)} disabled={!selectedPortfolioId || status.loading}>
+        <button className="lpc-btn" onClick={() => enableLive(false)} disabled={!selectedPortfolioId || editorMode === 'create' || status.loading}>
           Enable LIVE (Guarded)
         </button>
-        <button className="lpc-btn" onClick={() => enableLive(true)} disabled={!selectedPortfolioId || status.loading}>
+        <button className="lpc-btn" onClick={() => enableLive(true)} disabled={!selectedPortfolioId || editorMode === 'create' || status.loading}>
           Force Enable LIVE
         </button>
-        <button className="lpc-btn" onClick={disableLive} disabled={!selectedPortfolioId || status.loading}>
+        <button className="lpc-btn" onClick={disableLive} disabled={!selectedPortfolioId || editorMode === 'create' || status.loading}>
           Disable LIVE (Rollback)
         </button>
         <button className="lpc-btn" onClick={runPhaseGateSmoke} disabled={status.loading}>
           Run Phase-Gate Smoke
+        </button>
+        <button className="lpc-btn lpc-btn-danger" onClick={deleteCurrentConfig} disabled={!selectedPortfolioId || editorMode === 'create' || status.loading}>
+          Delete Live Link
         </button>
       </div>
 

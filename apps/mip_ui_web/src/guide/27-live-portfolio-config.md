@@ -1,4 +1,4 @@
-# 27. Live Portfolio Config
+# 27. Live Portfolio Link
 
 This page binds live execution controls to broker truth and research source in one place.
 
@@ -14,9 +14,15 @@ This page binds live execution controls to broker truth and research source in o
 
 1. Pick a SIM Portfolio from the dropdown.
 2. Enter IBKR Account ID (for example `DU...`).
-3. Click **Create New Live Config** (MIP assigns the ID automatically).
-4. Tune risk/freshness controls and click **Save Config**.
-5. Confirm the schematic turns green and guard shows eligible.
+3. Click **Create New Live Config** to enter draft/create mode.
+4. Review fields, then click **Save Config** to persist.
+5. Confirm schematic and guard status.
+
+Important behavior:
+
+- Clicking **Create New Live Config** does **not** insert into database.
+- The row is only written when **Save Config** is pressed.
+- You can cancel draft mode using **Cancel Create**.
 
 ## Connection Schematic (Color Meaning)
 
@@ -52,6 +58,10 @@ This is a governance/control record. It does not place orders by itself.
 ### Why no manual Live Portfolio ID entry?
 
 IDs are now system-created to reduce operator error and ensure stable linkage.
+
+### Why are sizing/risk controls separate from SIM portfolio?
+
+SIM linkage supplies proposal source only. Live guardrails govern broker-side execution safety and can be configured independently.
 
 ### Why is execution still blocked if config is saved?
 

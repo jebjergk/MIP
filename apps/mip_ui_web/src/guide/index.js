@@ -65,7 +65,7 @@ const sections = [
   { id: 'early-exit',       number: 24, title: 'Intraday Early Exit',          part: 1, markdown: earlyExit,           route: null },
   { id: 'page-decisions',   number: 25, title: 'Decision Console',             part: 2, markdown: decisionConsole,     route: '/decision-console' },
   { id: 'page-news',        number: 26, title: 'News Intelligence',            part: 2, markdown: newsIntelligence,    route: '/news-intelligence' },
-  { id: 'page-live-config', number: 27, title: 'Live Portfolio Config',        part: 2, markdown: livePortfolioConfig, route: '/live-portfolio-config' },
+  { id: 'page-live-config', number: 27, title: 'Live Portfolio Link',          part: 2, markdown: livePortfolioConfig, route: '/live-portfolio-config' },
 ]
 
 export default sections

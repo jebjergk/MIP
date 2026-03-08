@@ -20,7 +20,7 @@ const NAV_GROUPS = [
     items: [
       { to: '/manage',     icon: '\uD83D\uDCCB', label: 'Management' },
       { to: '/portfolios', icon: '\uD83D\uDCC8', label: 'Activity' },
-      { to: '/live-portfolio-config', icon: '\u2699\uFE0F', label: 'Live Portfolio Config' },
+      { to: '/live-portfolio-config', icon: '\u2699\uFE0F', label: 'Live Portfolio Link' },
     ],
   },
   {

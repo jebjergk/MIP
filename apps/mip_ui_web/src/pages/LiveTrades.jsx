@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { API_BASE } from '../App'
 import './LiveTrades.css'
 
@@ -21,7 +21,9 @@ function fmtNum(v, digits = 4) {
 export default function LiveTrades() {
   const [actions, setActions] = useState([])
   const [orders, setOrders] = useState([])
-  const [portfolios, setPortfolios] = useState([])
+  const [liveConfigs, setLiveConfigs] = useState([])
+  const [proposalInbox, setProposalInbox] = useState([])
+  const [proposalInboxMeta, setProposalInboxMeta] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [error, setError] = useState('')
@@ -39,18 +41,20 @@ export default function LiveTrades() {
   const [bridgeLivePortfolioId, setBridgeLivePortfolioId] = useState('1')
   const [bridgeRunId, setBridgeRunId] = useState('')
   const [bridgeResult, setBridgeResult] = useState(null)
+  const [committeeByAction, setCommitteeByAction] = useState({})
+  const [expandedActionId, setExpandedActionId] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp, portfoliosResp] = await Promise.all([
+      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp, cfgResp] = await Promise.all([
         fetch(`${API_BASE}/live/trades/actions?pending_only=true&limit=300`),
         fetch(`${API_BASE}/live/trades/orders?limit=300`),
         fetch(`${API_BASE}/live/snapshot/latest`),
         fetch(`${API_BASE}/live/early-exit/status?limit=10`),
         fetch(`${API_BASE}/live/drift/status`),
-        fetch(`${API_BASE}/portfolios`),
+        fetch(`${API_BASE}/live/portfolio-config`),
       ])
       if (!actionsResp.ok) throw new Error(`Failed to load actions (${actionsResp.status})`)
       if (!ordersResp.ok) throw new Error(`Failed to load orders (${ordersResp.status})`)
@@ -62,23 +66,72 @@ export default function LiveTrades() {
       const snapJson = await snapshotResp.json()
       const earlyExitJson = await earlyExitResp.json()
       const driftJson = await driftResp.json()
-      const portfoliosJson = portfoliosResp.ok ? await portfoliosResp.json() : []
+      const cfgJson = cfgResp.ok ? await cfgResp.json() : { configs: [] }
       setActions(actionsJson.actions || [])
       setOrders(ordersJson.orders || [])
       setLatestNav(snapJson.latest_nav || null)
       setEarlyExit(earlyExitJson || null)
       setDriftStatus(driftJson || null)
-      setPortfolios(Array.isArray(portfoliosJson) ? portfoliosJson : [])
+      const cfgs = Array.isArray(cfgJson?.configs) ? cfgJson.configs : []
+      setLiveConfigs(cfgs)
+      if ((!bridgeLivePortfolioId || bridgeLivePortfolioId === '1') && cfgs.length > 0) {
+        setBridgeLivePortfolioId(String(cfgs[0].PORTFOLIO_ID))
+      }
     } catch (e) {
       setError(e.message || 'Failed to load live trades data.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [bridgeLivePortfolioId])
 
   useEffect(() => {
     load()
   }, [load])
+
+  const loadProposalInbox = useCallback(async () => {
+    try {
+      const qp = new URLSearchParams({
+        live_portfolio_id: String(Number(bridgeLivePortfolioId) || 1),
+        latest_batch_only: 'true',
+        limit: '120',
+      })
+      if (bridgeRunId.trim()) qp.set('run_id', bridgeRunId.trim())
+      const resp = await fetch(`${API_BASE}/live/trades/proposal-candidates?${qp.toString()}`)
+      if (!resp.ok) throw new Error(`Failed to load proposal inbox (${resp.status})`)
+      const data = await resp.json()
+      setProposalInbox(Array.isArray(data?.candidates) ? data.candidates : [])
+      setProposalInboxMeta(data || null)
+    } catch (e) {
+      setProposalInbox([])
+      setProposalInboxMeta({ error: e.message || 'Failed to load proposal inbox.' })
+    }
+  }, [bridgeLivePortfolioId, bridgeRunId])
+
+  useEffect(() => {
+    loadProposalInbox()
+  }, [loadProposalInbox])
+
+  const loadCommittee = useCallback(async (actionId) => {
+    try {
+      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee`)
+      if (!resp.ok) throw new Error(`Failed committee fetch (${resp.status})`)
+      const data = await resp.json()
+      setCommitteeByAction((prev) => ({ ...prev, [actionId]: data }))
+    } catch (e) {
+      setCommitteeByAction((prev) => ({ ...prev, [actionId]: { error: e.message || 'Failed to load committee reasoning.' } }))
+    }
+  }, [])
+
+  const toggleCommitteeDetails = useCallback(async (actionId) => {
+    if (expandedActionId === actionId) {
+      setExpandedActionId(null)
+      return
+    }
+    setExpandedActionId(actionId)
+    if (!committeeByAction[actionId]) {
+      await loadCommittee(actionId)
+    }
+  }, [committeeByAction, expandedActionId, loadCommittee])
 
   const pendingCompliance = useMemo(
     () => actions.filter((a) => a.STATUS === 'PM_ACCEPTED' || a.COMPLIANCE_STATUS === 'PENDING'),
@@ -157,6 +210,7 @@ export default function LiveTrades() {
         source_portfolio_id: null,
         run_id: bridgeRunId.trim() ? bridgeRunId.trim() : null,
         limit: 200,
+        latest_batch_only: true,
       }
       const resp = await fetch(`${API_BASE}/live/trades/actions/import-proposals`, {
         method: 'POST',
@@ -169,13 +223,13 @@ export default function LiveTrades() {
       }
       const data = await resp.json()
       setBridgeResult(data)
-      await load()
+      await Promise.all([load(), loadProposalInbox()])
     } catch (e) {
       setError(e.message || 'Failed to import proposals.')
     } finally {
       setBusyId(null)
     }
-  }, [bridgeLivePortfolioId, bridgeRunId, load])
+  }, [bridgeLivePortfolioId, bridgeRunId, load, loadProposalInbox])
 
   const runOrderStatus = useCallback(async (order, status) => {
     const orderBusyId = `order:${order.ORDER_ID}:${status}`
@@ -217,7 +271,7 @@ export default function LiveTrades() {
       <div className="live-trades-header">
         <div>
           <h2>Live Trades</h2>
-          <p>Compliance ledger for system-generated trade actions from research proposals.</p>
+          <p>Live approval queue and broker-linked execution controls.</p>
         </div>
         <button className="lt-btn" disabled={busyId === 'snapshot'} onClick={refreshSnapshot}>
           {busyId === 'snapshot' ? 'Refreshing...' : 'Refresh IBKR Snapshot'}
@@ -310,40 +364,100 @@ export default function LiveTrades() {
       </div>
 
       <div className="lt-create-card">
-        <h3>Bridge Research Proposals -&gt; Live Actions</h3>
+        <h3>Research Proposal Inbox</h3>
         <div className="lt-summary">
-          Imported candidates start in <b>RESEARCH_IMPORTED</b> and are non-executable until PM accept,
+          This is read-only source data from `ORDER_PROPOSALS`. It does not execute anything.
+        </div>
+        <div className="lt-summary">
+          Scope: <b>{proposalInboxMeta?.scope || '—'}</b>
+          {' '}| Latest batch day: <b>{proposalInboxMeta?.latest_batch_date || '—'}</b>
+          {' '}| Rows shown: <b>{proposalInbox.length}</b>
+        </div>
+        {proposalInboxMeta?.error ? (
+          <div className="lt-error">{proposalInboxMeta.error}</div>
+        ) : null}
+        <div className="lt-table-wrap">
+          <table className="lt-table">
+            <thead>
+              <tr>
+                <th>Proposed</th>
+                <th>Proposal</th>
+                <th>Research Source</th>
+                <th>Status</th>
+                <th>Queued?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {proposalInbox.length === 0 && (
+                <tr>
+                  <td colSpan={5}>No proposal candidates in current scope.</td>
+                </tr>
+              )}
+              {proposalInbox.map((p) => (
+                <tr key={p.PROPOSAL_ID}>
+                  <td>{fmtTs(p.PROPOSED_AT)}</td>
+                  <td>
+                    <div><b>{p.SYMBOL}</b> ({p.SIDE})</div>
+                    <div>Proposal #{p.PROPOSAL_ID}</div>
+                  </td>
+                  <td>
+                    <div>Portfolio {p.PORTFOLIO_ID}</div>
+                    <div>Run: {p.RUN_ID_VARCHAR || '—'}</div>
+                  </td>
+                  <td>{p.STATUS || '—'}</td>
+                  <td>{p.ALREADY_QUEUED ? 'Yes' : 'No'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="lt-create-card">
+        <h3>Queue Proposals to Live Review</h3>
+        <div className="lt-summary">
+          Queued candidates start in <b>RESEARCH_IMPORTED</b> and are non-executable until PM accept,
           compliance approval, and revalidation pass.
         </div>
         <div className="lt-summary">
-          Import reads from the proposal stream without requiring a sim-portfolio selection.
+          Queue action reads the latest proposal batch by default.
           Use optional <b>run_id</b> to narrow to a specific generation batch.
         </div>
         <div className="lt-summary">
-          Import only copies candidate proposals into the live approval queue.
+          Queueing only copies candidate proposals into the live approval queue.
           Simulation portfolios continue their normal autonomous learning/trading path unchanged.
         </div>
         <div className="lt-form-row">
-          <input
+          <select
             value={bridgeLivePortfolioId}
             onChange={(e) => setBridgeLivePortfolioId(e.target.value)}
-            placeholder="Live Portfolio ID (MIP internal)"
-          />
+            title="Target live execution container"
+          >
+            {liveConfigs.length === 0 ? (
+              <option value="">No live configs found</option>
+            ) : (
+              liveConfigs.map((cfg) => (
+                <option key={String(cfg.PORTFOLIO_ID)} value={String(cfg.PORTFOLIO_ID)}>
+                  Live #{cfg.PORTFOLIO_ID} | {cfg.IBKR_ACCOUNT_ID || 'No IBKR'} | {cfg.ADAPTER_MODE || 'PAPER'}
+                </option>
+              ))
+            )}
+          </select>
           <input
             value={bridgeRunId}
             onChange={(e) => setBridgeRunId(e.target.value)}
             placeholder="Optional run_id filter"
           />
           <button className="lt-btn" onClick={importFromResearchProposals} disabled={busyId === 'bridge'}>
-            {busyId === 'bridge' ? 'Importing...' : 'Import Proposals'}
+            {busyId === 'bridge' ? 'Queueing...' : 'Queue Proposals'}
           </button>
         </div>
         {bridgeResult ? (
           <div className="lt-summary">
-            Imported {bridgeResult.imported_count} / {bridgeResult.candidate_count} candidate proposals
+            Queued {bridgeResult.imported_count} / {bridgeResult.candidate_count} candidate proposals
             (skipped existing: {bridgeResult.skipped_existing_count}, invalid: {bridgeResult.skipped_invalid_count}).
-            {' '}Source scope: <b>{bridgeResult.source_origin || '—'}</b>
-            {bridgeResult.source_portfolio_id != null ? ` (portfolio ${bridgeResult.source_portfolio_id})` : ''}.
+            {' '}Scope: <b>{bridgeResult.source_scope || bridgeResult.source_origin || '—'}</b>.
+            {' '}Distinct symbols: <b>{bridgeResult.distinct_symbol_count ?? '—'}</b>.
           </div>
         ) : null}
       </div>
@@ -375,11 +489,13 @@ export default function LiveTrades() {
               </tr>
             )}
             {actions.map((a) => (
-              <tr key={a.ACTION_ID}>
+              <Fragment key={a.ACTION_ID}>
+              <tr>
                 <td>{fmtTs(a.CREATED_AT)}</td>
                 <td>
                   <div><b>{a.SYMBOL}</b> ({a.SIDE})</div>
-                  <div>Portfolio {a.PORTFOLIO_ID}</div>
+                  <div>Live Portfolio #{a.PORTFOLIO_ID}</div>
+                  <div>Action: {a.ACTION_ID}</div>
                 </td>
                 <td>
                   <div>{a.STATUS}</div>
@@ -437,6 +553,13 @@ export default function LiveTrades() {
                       })}
                     >
                       Run Committee
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === a.ACTION_ID}
+                      onClick={() => toggleCommitteeDetails(a.ACTION_ID)}
+                    >
+                      {expandedActionId === a.ACTION_ID ? 'Hide Reasoning' : 'View Reasoning'}
                     </button>
                     <button
                       className="lt-btn"
@@ -510,6 +633,43 @@ export default function LiveTrades() {
                   </div>
                 </td>
               </tr>
+              {expandedActionId === a.ACTION_ID ? (
+                <tr key={`${a.ACTION_ID}__details`}>
+                  <td colSpan={7}>
+                    <div className="lt-summary"><b>Committee & Revalidation Details</b></div>
+                    {committeeByAction[a.ACTION_ID]?.error ? (
+                      <div className="lt-error">{committeeByAction[a.ACTION_ID].error}</div>
+                    ) : (
+                      <>
+                        <div className="lt-summary">
+                          Committee recommendation: <b>{committeeByAction[a.ACTION_ID]?.verdict?.RECOMMENDATION || '—'}</b>
+                          {' '}| blocked: <b>{committeeByAction[a.ACTION_ID]?.verdict?.IS_BLOCKED == null ? '—' : (committeeByAction[a.ACTION_ID]?.verdict?.IS_BLOCKED ? 'Yes' : 'No')}</b>
+                          {' '}| confidence: <b>{committeeByAction[a.ACTION_ID]?.verdict?.CONFIDENCE ?? '—'}</b>
+                        </div>
+                        <div className="lt-summary">
+                          Revalidation outcome: <b>{a.REVALIDATION_OUTCOME || '—'}</b>
+                          {' '}| policy: <b>{a.REVALIDATION_POLICY_VERSION || '—'}</b>
+                          {' '}| data source: <b>{a.REVALIDATION_DATA_SOURCE || '—'}</b>
+                        </div>
+                        <div className="lt-summary">
+                          Reason codes: <b>{Array.isArray(a.REASON_CODES) && a.REASON_CODES.length ? a.REASON_CODES.join(', ') : '—'}</b>
+                        </div>
+                        <div className="lt-summary">
+                          Role summaries:
+                          {' '}
+                          {(committeeByAction[a.ACTION_ID]?.role_outputs || []).length === 0 ? 'No committee run recorded yet.' : ''}
+                        </div>
+                        {(committeeByAction[a.ACTION_ID]?.role_outputs || []).map((r) => (
+                          <div key={`${a.ACTION_ID}_${r.ROLE_NAME}`} className="lt-summary">
+                            <b>{r.ROLE_NAME}</b>: {r.STANCE || '—'} | conf {r.CONFIDENCE ?? '—'} | {r.SUMMARY || '—'}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ) : null}
+              </Fragment>
             ))}
           </tbody>
         </table>

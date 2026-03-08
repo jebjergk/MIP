@@ -53,6 +53,7 @@ class ImportLiveActionsFromProposalsRequest(BaseModel):
     source_portfolio_id: int | None = None
     run_id: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
+    latest_batch_only: bool = True
 
 
 class ExecuteLiveActionRequest(BaseModel):
@@ -3895,15 +3896,33 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         if source_portfolio_id is not None:
             wheres.append("PORTFOLIO_ID = %s")
             params.append(source_portfolio_id)
+        scope = "all_active"
+        latest_batch_date = None
         if req.run_id:
             wheres.append("RUN_ID_VARCHAR = %s")
             params.append(req.run_id)
+            scope = "run_id"
+        elif req.latest_batch_only:
+            cur.execute(
+                f"""
+                select max(to_date(PROPOSED_AT)) as LATEST_DAY
+                from MIP.AGENT_OUT.ORDER_PROPOSALS
+                where {' and '.join(wheres)}
+                """,
+                tuple(params),
+            )
+            row = cur.fetchone()
+            latest_batch_date = row[0] if row else None
+            if latest_batch_date is not None:
+                wheres.append("to_date(PROPOSED_AT) = %s")
+                params.append(latest_batch_date)
+                scope = "latest_batch_day"
         params.append(req.limit)
 
         cur.execute(
             f"""
             select
-              PROPOSAL_ID, RUN_ID_VARCHAR, SYMBOL, MARKET_TYPE, SIDE, TARGET_WEIGHT,
+              PROPOSAL_ID, PORTFOLIO_ID, RUN_ID_VARCHAR, SYMBOL, MARKET_TYPE, SIDE, TARGET_WEIGHT,
               STATUS, SIGNAL_PATTERN_ID, RECOMMENDATION_ID, PROPOSED_AT, SOURCE_SIGNALS, RATIONALE
             from MIP.AGENT_OUT.ORDER_PROPOSALS
             where {' and '.join(wheres)}
@@ -3918,12 +3937,18 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         skipped_existing = 0
         skipped_invalid = 0
         imported_action_ids: list[str] = []
+        source_portfolios: set[int] = set()
+        distinct_symbols: set[str] = set()
 
         for p in proposals:
             proposal_id = p.get("PROPOSAL_ID")
             if proposal_id is None:
                 skipped_invalid += 1
                 continue
+            if p.get("PORTFOLIO_ID") is not None:
+                source_portfolios.add(int(p.get("PORTFOLIO_ID")))
+            if p.get("SYMBOL"):
+                distinct_symbols.add((p.get("SYMBOL") or "").upper())
 
             cur.execute(
                 """
@@ -4081,12 +4106,105 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "live_portfolio_id": req.live_portfolio_id,
             "source_portfolio_id": source_portfolio_id,
             "source_origin": source_origin,
+            "source_scope": scope,
+            "latest_batch_date": str(latest_batch_date) if latest_batch_date is not None else None,
+            "source_portfolio_ids": sorted(list(source_portfolios)),
+            "distinct_symbol_count": len(distinct_symbols),
             "run_id_filter": req.run_id,
             "candidate_count": len(proposals),
             "imported_count": imported,
             "skipped_existing_count": skipped_existing,
             "skipped_invalid_count": skipped_invalid,
             "imported_action_ids": imported_action_ids[:50],
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/trades/proposal-candidates")
+def list_live_proposal_candidates(
+    live_portfolio_id: int | None = Query(default=None),
+    source_portfolio_id: int | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    latest_batch_only: bool = Query(default=True),
+    limit: int = Query(default=100, ge=1, le=1000),
+):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        wheres = [
+            "op.STATUS in ('PROPOSED', 'APPROVED')",
+            "op.SYMBOL is not null",
+            "op.SIDE in ('BUY', 'SELL')",
+        ]
+        params: list[object] = []
+        if source_portfolio_id is not None:
+            wheres.append("op.PORTFOLIO_ID = %s")
+            params.append(int(source_portfolio_id))
+
+        scope = "all_active"
+        latest_batch_date = None
+        if run_id:
+            wheres.append("op.RUN_ID_VARCHAR = %s")
+            params.append(run_id)
+            scope = "run_id"
+        elif latest_batch_only:
+            cur.execute(
+                f"""
+                select max(to_date(op.PROPOSED_AT)) as LATEST_DAY
+                from MIP.AGENT_OUT.ORDER_PROPOSALS op
+                where {' and '.join(wheres)}
+                """,
+                tuple(params),
+            )
+            row = cur.fetchone()
+            latest_batch_date = row[0] if row else None
+            if latest_batch_date is not None:
+                wheres.append("to_date(op.PROPOSED_AT) = %s")
+                params.append(latest_batch_date)
+                scope = "latest_batch_day"
+
+        queued_filter_sql = ""
+        if live_portfolio_id is not None:
+            queued_filter_sql = "and la.PORTFOLIO_ID = %s"
+            params.append(int(live_portfolio_id))
+
+        params.append(limit)
+        cur.execute(
+            f"""
+            select
+              op.PROPOSAL_ID,
+              op.PORTFOLIO_ID,
+              op.RUN_ID_VARCHAR,
+              op.SYMBOL,
+              op.MARKET_TYPE,
+              op.SIDE,
+              op.TARGET_WEIGHT,
+              op.STATUS,
+              op.PROPOSED_AT,
+              exists(
+                select 1
+                from MIP.LIVE.LIVE_ACTIONS la
+                where la.PROPOSAL_ID = op.PROPOSAL_ID
+                  {queued_filter_sql}
+              ) as ALREADY_QUEUED
+            from MIP.AGENT_OUT.ORDER_PROPOSALS op
+            where {' and '.join(wheres)}
+            order by op.PROPOSED_AT desc
+            limit %s
+            """,
+            tuple(params),
+        )
+        rows = fetch_all(cur)
+        return {
+            "ok": True,
+            "scope": scope,
+            "latest_batch_date": str(latest_batch_date) if latest_batch_date is not None else None,
+            "source_portfolio_id_filter": source_portfolio_id,
+            "run_id_filter": run_id,
+            "live_portfolio_id_filter": live_portfolio_id,
+            "count": len(rows),
+            "candidates": serialize_rows(rows),
         }
     finally:
         conn.close()

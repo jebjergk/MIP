@@ -49,6 +49,7 @@ class LivePortfolioConfigUpsertRequest(BaseModel):
 
 class ImportLiveActionsFromProposalsRequest(BaseModel):
     live_portfolio_id: int
+    source_portfolio_id: int | None = None
     run_id: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
 
@@ -2493,11 +2494,13 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 status_code=400,
                 detail="Live portfolio config not found or inactive.",
             )
-        sim_portfolio_id, validity_window_sec = cfg
-        if sim_portfolio_id is None:
+        cfg_sim_portfolio_id, validity_window_sec = cfg
+        source_portfolio_id = req.source_portfolio_id or cfg_sim_portfolio_id
+        source_origin = "request" if req.source_portfolio_id is not None else "config_fallback"
+        if source_portfolio_id is None:
             raise HTTPException(
                 status_code=400,
-                detail="SIM_PORTFOLIO_ID is not configured for this live portfolio.",
+                detail="source_portfolio_id is required (or configure legacy SIM_PORTFOLIO_ID fallback).",
             )
 
         wheres = [
@@ -2506,7 +2509,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "SYMBOL is not null",
             "SIDE in ('BUY', 'SELL')",
         ]
-        params = [sim_portfolio_id]
+        params = [source_portfolio_id]
         if req.run_id:
             wheres.append("RUN_ID_VARCHAR = %s")
             params.append(req.run_id)
@@ -2555,7 +2558,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             snapshot_payload = json.dumps(
                 {
                     "source": "ORDER_PROPOSALS",
-                    "sim_portfolio_id": sim_portfolio_id,
+                    "source_portfolio_id": source_portfolio_id,
+                    "source_origin": source_origin,
+                    "legacy_sim_portfolio_id": cfg_sim_portfolio_id,
                     "run_id": p.get("RUN_ID_VARCHAR"),
                     "proposal_status": p.get("STATUS"),
                     "signal_pattern_id": p.get("SIGNAL_PATTERN_ID"),
@@ -2631,7 +2636,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         return {
             "ok": True,
             "live_portfolio_id": req.live_portfolio_id,
-            "sim_portfolio_id": sim_portfolio_id,
+            "source_portfolio_id": source_portfolio_id,
+            "source_origin": source_origin,
+            "legacy_sim_portfolio_id": cfg_sim_portfolio_id,
             "run_id_filter": req.run_id,
             "candidate_count": len(proposals),
             "imported_count": imported,

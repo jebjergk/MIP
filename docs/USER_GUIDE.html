@@ -692,7 +692,7 @@
     <p>Ask MIP is guidance-only; it does not execute trades or change data.</p>
 
     <h3 id="live-portfolio-config-screen">⚙️ Live Portfolio Link (2.14)</h3>
-    <p><strong>What it shows:</strong> The live configuration binding map between SIM research source, MIP live container, and IBKR truth account.</p>
+    <p><strong>What it shows:</strong> The live configuration binding map between MIP live container and IBKR truth account. Research source is chosen at import-time in Live Trades.</p>
     <table>
       <thead>
         <tr><th>Area</th><th>What it means</th></tr>
@@ -700,7 +700,7 @@
       <tbody>
         <tr><td><strong>Connection Schematic</strong></td><td>Green = connected, Red = blocking issue, Gray = not configured.</td></tr>
         <tr><td><strong>Create New Live Config</strong></td><td>Enters draft create mode with system-assigned ID (no manual ID entry).</td></tr>
-        <tr><td><strong>SIM Portfolio selector</strong></td><td>Choose the research portfolio that supplies proposals to this live workflow.</td></tr>
+        <tr><td><strong>Default Source Portfolio</strong></td><td>Optional legacy fallback only. Preferred flow is selecting source portfolio during proposal import in Live Trades.</td></tr>
         <tr><td><strong>IBKR Account ID</strong></td><td>Broker-truth account mirrored for snapshot/drift safety checks.</td></tr>
         <tr><td><strong>Guard Details</strong></td><td>Shows exactly why activation is blocked or eligible.</td></tr>
       </tbody>

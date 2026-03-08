@@ -1,22 +1,23 @@
 # 27. Live Portfolio Link
 
-This page binds live execution controls to broker truth and research source in one place.
+This page binds live execution controls to broker truth.
+Research proposal source is selected at import time in Live Trades.
 
 ## What This Page Is For
 
 - Create or select a **Live Config** (system-assigned ID)
-- Link a **SIM Portfolio** (proposal source)
+- Optionally set a **default source portfolio fallback** (legacy behavior)
 - Link an **IBKR Account** (broker truth source)
 - Configure pre-trade controls (size, freshness, risk limits)
 - Verify readiness using the **Activation Guard**
 
 ## Setup Flow
 
-1. Pick a SIM Portfolio from the dropdown.
-2. Enter IBKR Account ID (for example `DU...`).
-3. Click **Create New Live Config** to enter draft/create mode.
-4. Review fields, then click **Save Config** to persist.
-5. Confirm schematic and guard status.
+1. Enter IBKR Account ID (for example `DU...`).
+2. Click **Create New Live Config** to enter draft/create mode.
+3. Review fields, then click **Save Config** to persist.
+4. Confirm schematic and guard status.
+5. In Live Trades, choose source research portfolio at import time.
 
 Important behavior:
 
@@ -32,7 +33,7 @@ Important behavior:
 
 Main chain:
 
-- `SIM Portfolio -> MIP Live Portfolio -> IBKR Account`
+- `Source Portfolio (import-time) -> MIP Live Portfolio -> IBKR Account`
 - `MIP Live Portfolio -> Activation Guard -> Execution Readiness`
 
 ## What Save Actually Does
@@ -45,7 +46,7 @@ This is a governance/control record. It does not place orders by itself.
 
 ## Field Meaning (Practical)
 
-- **SIM Portfolio**: research proposal source for import
+- **Default Source Portfolio**: legacy fallback only (optional)
 - **IBKR Account ID**: broker account used as truth mirror
 - **Adapter Mode**: PAPER vs LIVE policy mode
 - **Max Position % / Max Positions / Cash Buffer %**: sizing guardrails
@@ -59,9 +60,9 @@ This is a governance/control record. It does not place orders by itself.
 
 IDs are now system-created to reduce operator error and ensure stable linkage.
 
-### Why are sizing/risk controls separate from SIM portfolio?
+### Why are sizing/risk controls separate from research portfolio?
 
-SIM linkage supplies proposal source only. Live guardrails govern broker-side execution safety and can be configured independently.
+Research source selection controls what gets imported. Live guardrails govern broker-side execution safety and are configured independently.
 
 ### Why is execution still blocked if config is saved?
 

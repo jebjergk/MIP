@@ -544,9 +544,9 @@ export default function LivePortfolioConfig() {
       <div className="lpc-form-section">
         <h3>Identity & Linkage</h3>
         <div className="lpc-grid">
-        <label>SIM Portfolio (research twin)
+        <label>Default Source Portfolio (legacy fallback)
           <select value={form.sim_portfolio_id} onChange={(e) => setForm((v) => ({ ...v, sim_portfolio_id: e.target.value }))}>
-            <option value="">{simPortfolios.length ? 'Select SIM portfolio' : 'No portfolios available'}</option>
+            <option value="">{simPortfolios.length ? 'Optional: select fallback source portfolio' : 'No portfolios available'}</option>
             {simPortfolios.map((p) => {
               const pid = p.PORTFOLIO_ID ?? p.portfolio_id
               const name = p.NAME ?? p.name ?? `Portfolio ${pid}`
@@ -557,7 +557,7 @@ export default function LivePortfolioConfig() {
               )
             })}
           </select>
-          <span className="lpc-hint">Choose the research portfolio that supplies proposals for this live config.</span>
+          <span className="lpc-hint">Optional legacy fallback only. Preferred flow: choose source portfolio directly on Live Trades import.</span>
         </label>
         <label>IBKR Account ID<input value={form.ibkr_account_id} onChange={(e) => setForm((v) => ({ ...v, ibkr_account_id: e.target.value }))} /><span className="lpc-hint">Paper/live account code (required for create).</span></label>
         <label>Adapter Mode

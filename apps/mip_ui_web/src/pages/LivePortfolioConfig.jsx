@@ -441,6 +441,8 @@ export default function LivePortfolioConfig() {
               ) : (
                 <>
                   <p>
+                    Mode: <b>{selectedConfig?.ADAPTER_MODE || 'PAPER'}</b>
+                    {' '}|{' '}
                     Eligible: <b>{guard?.eligible ? 'Yes' : 'No'}</b>
                     {' '}| Drift: <b>{guard?.checks?.drift_status ?? '—'}</b>
                     {' '}| Snapshot age sec: <b>{guard?.checks?.snapshot_age_sec ?? '—'}</b>

@@ -1131,6 +1131,8 @@ def enable_live_activation(req: SetLiveActivationRequest):
             """,
             (req.portfolio_id,),
         )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Live portfolio config not found.")
 
         try:
             cur.execute(
@@ -1166,10 +1168,25 @@ def enable_live_activation(req: SetLiveActivationRequest):
             outcome_state={"actor": req.actor, "reasons": guard.get("reasons", [])},
         )
 
+        cur.execute(
+            """
+            select ADAPTER_MODE
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (req.portfolio_id,),
+        )
+        mode_rows = fetch_all(cur)
+        mode_after = (mode_rows[0] or {}).get("ADAPTER_MODE") if mode_rows else None
+        if (mode_after or "").upper() != "LIVE":
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Activation update did not persist LIVE mode.", "mode_after": mode_after},
+            )
         return {
             "ok": True,
             "portfolio_id": req.portfolio_id,
-            "adapter_mode": "LIVE",
+            "adapter_mode": mode_after,
             "forced": req.force,
             "guard": guard,
         }
@@ -1191,6 +1208,8 @@ def disable_live_activation(req: DisableLiveActivationRequest):
             """,
             (req.portfolio_id,),
         )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Live portfolio config not found.")
 
         try:
             cur.execute(
@@ -1223,10 +1242,25 @@ def disable_live_activation(req: DisableLiveActivationRequest):
             outcome_state={"actor": req.actor, "reason": req.reason},
         )
 
+        cur.execute(
+            """
+            select ADAPTER_MODE
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (req.portfolio_id,),
+        )
+        mode_rows = fetch_all(cur)
+        mode_after = (mode_rows[0] or {}).get("ADAPTER_MODE") if mode_rows else None
+        if (mode_after or "").upper() != "PAPER":
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Disable update did not persist PAPER mode.", "mode_after": mode_after},
+            )
         return {
             "ok": True,
             "portfolio_id": req.portfolio_id,
-            "adapter_mode": "PAPER",
+            "adapter_mode": mode_after,
             "reason": req.reason,
         }
     finally:

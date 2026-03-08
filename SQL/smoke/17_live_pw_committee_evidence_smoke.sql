@@ -1,0 +1,24 @@
+use role MIP_ADMIN_ROLE;
+use database MIP;
+
+select 'V_LIVE_ACTION_PW_EVIDENCE_EXISTS' as check_name, count(*) as cnt
+from MIP.INFORMATION_SCHEMA.VIEWS
+where TABLE_SCHEMA = 'APP'
+  and TABLE_NAME = 'V_LIVE_ACTION_PARALLEL_WORLDS_EVIDENCE';
+
+select
+    'PW_EVIDENCE_ROWS' as check_name,
+    count(*) as cnt
+from MIP.APP.V_LIVE_ACTION_PARALLEL_WORLDS_EVIDENCE;
+
+select
+    'PW_EVIDENCE_SAMPLE' as check_name,
+    ACTION_ID,
+    PORTFOLIO_ID,
+    PW_AS_OF_TS,
+    array_size(TOP_OUTPERFORMERS) as TOP_OUTPERFORMERS_COUNT,
+    array_size(TOP_RECOMMENDATIONS) as TOP_RECOMMENDATIONS_COUNT
+from MIP.APP.V_LIVE_ACTION_PARALLEL_WORLDS_EVIDENCE
+order by PW_AS_OF_TS desc nulls last
+limit 5;
+

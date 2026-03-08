@@ -778,6 +778,40 @@ def _force_refresh_latest_one_minute_bars(cur) -> dict:
         return {"attempted": True, "status": "FAIL", "error": str(exc)}
 
 
+def _fetch_committee_pw_evidence(cur, action_id: str, portfolio_id: int | None) -> dict:
+    if portfolio_id is None:
+        return {"available": False, "reason": "MISSING_PORTFOLIO_ID"}
+    try:
+        cur.execute(
+            """
+            select
+              ACTION_ID,
+              PORTFOLIO_ID,
+              PW_AS_OF_TS,
+              TOP_OUTPERFORMERS,
+              TOP_RECOMMENDATIONS,
+              EVIDENCE_SUMMARY
+            from MIP.APP.V_LIVE_ACTION_PARALLEL_WORLDS_EVIDENCE
+            where ACTION_ID = %s
+            limit 1
+            """,
+            (action_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return {"available": False, "reason": "NO_EVIDENCE_ROW"}
+        row = rows[0]
+        return {
+            "available": True,
+            "as_of_ts": row.get("PW_AS_OF_TS"),
+            "top_outperformers": _parse_variant(row.get("TOP_OUTPERFORMERS")),
+            "top_recommendations": _parse_variant(row.get("TOP_RECOMMENDATIONS")),
+            "summary": _parse_variant(row.get("EVIDENCE_SUMMARY")),
+        }
+    except Exception as exc:
+        return {"available": False, "reason": f"QUERY_FAILED: {exc}"}
+
+
 def _extract_cortex_text(raw) -> str:
     if raw is None:
         return ""
@@ -1642,6 +1676,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 (symbol,),
             )
             latest_bar = cur.fetchone()
+        pw_evidence = _fetch_committee_pw_evidence(cur, action_id, action.get("PORTFOLIO_ID"))
         context = {
             "action_id": action.get("ACTION_ID"),
             "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -1654,6 +1689,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "ts": latest_bar[0].isoformat() if latest_bar and hasattr(latest_bar[0], "isoformat") else (latest_bar[0] if latest_bar else None),
                 "close": float(latest_bar[1]) if latest_bar and latest_bar[1] is not None else None,
             },
+            "parallel_worlds_evidence": pw_evidence,
         }
 
         outputs: list[dict] = []
@@ -1752,7 +1788,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "size_factor": verdict["size_factor"],
                 "blocked": verdict["blocked"],
             },
-            outcome_state={"roles": COMMITTEE_ROLES},
+            outcome_state={"roles": COMMITTEE_ROLES, "parallel_worlds_evidence": pw_evidence},
         )
         return {
             "ok": True,

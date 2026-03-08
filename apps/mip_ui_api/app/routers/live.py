@@ -135,6 +135,7 @@ LIVE_POLICY_VERSION = "phase2_session_realism_v1"
 EXECUTION_CLICK_MAX_REVALIDATION_SEC = 300
 LIVE_ACTIVATION_POLICY_VERSION = "phase7_controlled_live_v1"
 TRAINING_QUALIFICATION_POLICY_VERSION = "phase5_training_qualification_v1"
+NEWS_CONTEXT_POLICY_VERSION = "phaseA_news_context_v1"
 COMMITTEE_ROLES = [
     "PROPOSER",
     "TRADER_EXECUTION_REVIEWER",
@@ -157,6 +158,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
           TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
+          NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
@@ -271,6 +273,20 @@ def _parse_variant(v):
         except Exception:
             return {}
     return {}
+
+
+def _parse_list_variant(v):
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
 
 
 def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[str], dict]:
@@ -1035,6 +1051,235 @@ def _build_target_expectation_snapshot(
     }
 
 
+def _to_dt_utc(v):
+    if v is None:
+        return None
+    if hasattr(v, "replace"):
+        try:
+            return v.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _news_freshness_bucket(snapshot_age_minutes: float | None) -> str:
+    if snapshot_age_minutes is None:
+        return "UNKNOWN"
+    if snapshot_age_minutes <= 90:
+        return "FRESH"
+    if snapshot_age_minutes <= 16 * 60:
+        return "OVERNIGHT"
+    if snapshot_age_minutes <= 48 * 60:
+        return "WARM"
+    return "STALE"
+
+
+def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal_ts=None) -> dict:
+    source_signals = _parse_variant(source_signals_raw)
+    rationale = _parse_variant(rationale_raw)
+    news_context = _parse_variant(source_signals.get("news_context"))
+    news_agg = _parse_variant(source_signals.get("news_agg"))
+    news_features = _parse_variant(source_signals.get("news_features"))
+
+    snapshot_age_minutes = source_signals.get("news_snapshot_age_minutes")
+    try:
+        snapshot_age_minutes = float(snapshot_age_minutes) if snapshot_age_minutes is not None else None
+    except Exception:
+        snapshot_age_minutes = None
+    freshness_bucket = _news_freshness_bucket(snapshot_age_minutes)
+
+    badge = str(news_context.get("news_context_badge") or news_agg.get("badge") or "NEUTRAL").upper()
+    conflict = bool(source_signals.get("news_conflict_high")) or bool(news_agg.get("conflict"))
+    uncertainty = bool(source_signals.get("news_uncertainty_high")) or bool(news_context.get("uncertainty_flag"))
+    event_risk = bool(source_signals.get("news_event_risk_high")) or bool(source_signals.get("news_block_new_entry"))
+    info_pressure = float(news_agg.get("info_pressure") or news_features.get("news_pressure") or 0.0)
+    is_stale = bool(source_signals.get("news_is_stale")) or freshness_bucket == "STALE"
+
+    if event_risk and freshness_bucket in ("FRESH", "OVERNIGHT"):
+        context_state = "DESTABILIZING"
+    elif conflict or uncertainty or badge in ("HOT", "ALERT"):
+        context_state = "CAUTIONARY"
+    elif badge in ("COOL", "LOW") and not event_risk:
+        context_state = "SUPPORTIVE"
+    else:
+        context_state = "NEUTRAL"
+
+    if info_pressure >= 0.75:
+        intensity_level = "HIGH"
+    elif info_pressure >= 0.35:
+        intensity_level = "MEDIUM"
+    else:
+        intensity_level = "LOW"
+
+    proposal_dt = _to_dt_utc(proposal_ts)
+    last_pub_dt = _to_dt_utc(news_context.get("last_news_published_at") or news_agg.get("last_published_at"))
+    timing_model = "OLDER_BACKGROUND"
+    if proposal_dt and last_pub_dt:
+        delta_min = (proposal_dt - last_pub_dt).total_seconds() / 60.0
+        if 0 <= delta_min <= 90:
+            timing_model = "SAME_SESSION_FRESH"
+        elif 0 <= delta_min <= 16 * 60:
+            timing_model = "OVERNIGHT"
+
+    top_clusters = news_agg.get("top_clusters") if isinstance(news_agg.get("top_clusters"), list) else []
+    top_events = news_features.get("top_events") if isinstance(news_features.get("top_events"), list) else []
+    theme_labels = []
+    for x in (top_clusters + top_events):
+        if isinstance(x, dict):
+            lbl = x.get("label") or x.get("name") or x.get("event_type")
+            if lbl:
+                theme_labels.append(str(lbl))
+        elif x:
+            theme_labels.append(str(x))
+    theme_labels = list(dict.fromkeys(theme_labels))[:8]
+
+    interpretation_confidence = 0.85
+    if is_stale:
+        interpretation_confidence = 0.45
+    elif context_state in ("CAUTIONARY", "DESTABILIZING"):
+        interpretation_confidence = 0.75
+
+    reason_codes = list(source_signals.get("news_reasons") or rationale.get("news_reasons") or [])
+    if not isinstance(reason_codes, list):
+        reason_codes = []
+    if is_stale:
+        reason_codes.append("NEWS_CONTEXT_STALE")
+    if context_state == "DESTABILIZING":
+        reason_codes.append("NEWS_CONTEXT_DESTABILIZING")
+    reason_codes = list(dict.fromkeys([str(r) for r in reason_codes]))[:20]
+
+    return {
+        "policy_version": NEWS_CONTEXT_POLICY_VERSION,
+        "as_of_ts": datetime.now(timezone.utc).isoformat(),
+        "freshness_bucket": freshness_bucket,
+        "timing_model": timing_model,
+        "intensity_level": intensity_level,
+        "context_state": context_state,
+        "event_shock_flag": bool(event_risk and freshness_bucket in ("FRESH", "OVERNIGHT")),
+        "relevance": "SYMBOL_LINKED" if (news_context or news_agg or news_features) else "LOW",
+        "theme_labels": theme_labels,
+        "interpretation_confidence": interpretation_confidence,
+        "snapshot_age_minutes": snapshot_age_minutes,
+        "is_stale": is_stale,
+        "badge": badge,
+        "news_count": news_context.get("news_count"),
+        "news_reasons": reason_codes,
+        "raw": {
+            "news_context": news_context,
+            "news_agg": news_agg,
+            "news_features": news_features,
+        },
+    }
+
+
+def _fetch_latest_symbol_news_context(cur, symbol: str | None, market_type: str | None) -> dict:
+    symbol_norm = (symbol or "").upper().strip()
+    market_type_norm = (market_type or "").upper().strip()
+    if not symbol_norm or not market_type_norm:
+        return {"available": False, "reason": "MISSING_SYMBOL_OR_MARKET_TYPE"}
+    try:
+        cur.execute(
+            """
+            select
+              AS_OF_TS_BUCKET, SYMBOL, MARKET_TYPE, INFO_PRESSURE, NOVELTY, CONFLICT, BADGE,
+              LAST_PUBLISHED_AT, LAST_INGESTED_AT, SNAPSHOT_TS, TOP_CLUSTERS
+            from MIP.MART.V_NEWS_AGG_LATEST
+            where SYMBOL = %s
+              and MARKET_TYPE = %s
+            limit 1
+            """,
+            (symbol_norm, market_type_norm),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return {"available": False, "reason": "NO_NEWS_CONTEXT_ROW"}
+        row = rows[0]
+        now_utc = datetime.now(timezone.utc)
+        snap_dt = _to_dt_utc(row.get("SNAPSHOT_TS"))
+        age_minutes = None
+        if snap_dt:
+            age_minutes = max(0.0, (now_utc - snap_dt).total_seconds() / 60.0)
+        normalized = {
+            "policy_version": NEWS_CONTEXT_POLICY_VERSION,
+            "as_of_ts": now_utc.isoformat(),
+            "freshness_bucket": _news_freshness_bucket(age_minutes),
+            "timing_model": "SAME_SESSION_FRESH" if (age_minutes is not None and age_minutes <= 90) else ("OVERNIGHT" if (age_minutes is not None and age_minutes <= 16 * 60) else "OLDER_BACKGROUND"),
+            "intensity_level": "HIGH" if float(row.get("INFO_PRESSURE") or 0.0) >= 0.75 else ("MEDIUM" if float(row.get("INFO_PRESSURE") or 0.0) >= 0.35 else "LOW"),
+            "context_state": "DESTABILIZING" if str(row.get("BADGE") or "").upper() in ("HOT", "ALERT") and bool(row.get("CONFLICT")) else ("CAUTIONARY" if bool(row.get("CONFLICT")) else "NEUTRAL"),
+            "event_shock_flag": str(row.get("BADGE") or "").upper() in ("HOT", "ALERT") and (_news_freshness_bucket(age_minutes) in ("FRESH", "OVERNIGHT")),
+            "relevance": "SYMBOL_LINKED",
+            "theme_labels": row.get("TOP_CLUSTERS") if isinstance(row.get("TOP_CLUSTERS"), list) else [],
+            "interpretation_confidence": 0.8 if age_minutes is not None and age_minutes <= 16 * 60 else 0.55,
+            "snapshot_age_minutes": age_minutes,
+            "is_stale": _news_freshness_bucket(age_minutes) == "STALE",
+            "badge": str(row.get("BADGE") or "NEUTRAL").upper(),
+            "news_reasons": [],
+            "raw": serialize_row(row),
+        }
+        return {"available": True, **normalized}
+    except Exception as exc:
+        return {"available": False, "reason": f"NEWS_QUERY_FAILED: {exc}"}
+
+
+def _collect_news_monitoring_escalations(cur) -> dict:
+    try:
+        cur.execute(
+            """
+            with latest_positions as (
+                select s.SYMBOL
+                from MIP.LIVE.BROKER_SNAPSHOTS s
+                where s.SNAPSHOT_TYPE = 'POSITION'
+                  and s.SNAPSHOT_TS = (
+                    select max(SNAPSHOT_TS)
+                    from MIP.LIVE.BROKER_SNAPSHOTS
+                    where SNAPSHOT_TYPE = 'POSITION'
+                  )
+                  and coalesce(s.POSITION_QTY, 0) <> 0
+            )
+            select
+                p.SYMBOL,
+                n.BADGE,
+                n.CONFLICT,
+                n.INFO_PRESSURE,
+                n.LAST_PUBLISHED_AT,
+                n.SNAPSHOT_TS
+            from latest_positions p
+            left join MIP.MART.V_NEWS_AGG_LATEST n
+              on n.SYMBOL = p.SYMBOL
+             and n.MARKET_TYPE = 'STOCK'
+            """
+        )
+        rows = fetch_all(cur)
+        escalations = []
+        for r in rows:
+            snap = _fetch_latest_symbol_news_context(cur, r.get("SYMBOL"), "STOCK")
+            if not snap.get("available"):
+                continue
+            if snap.get("context_state") in ("CAUTIONARY", "DESTABILIZING"):
+                escalations.append(
+                    {
+                        "symbol": r.get("SYMBOL"),
+                        "context_state": snap.get("context_state"),
+                        "event_shock_flag": bool(snap.get("event_shock_flag")),
+                        "freshness_bucket": snap.get("freshness_bucket"),
+                        "intensity_level": snap.get("intensity_level"),
+                    }
+                )
+        return {
+            "positions_with_news_escalation": len(escalations),
+            "escalation_symbols": escalations[:20],
+        }
+    except Exception as exc:
+        return {
+            "positions_with_news_escalation": 0,
+            "escalation_symbols": [],
+            "error": str(exc),
+        }
+
+
 def _fetch_committee_pw_evidence(cur, action_id: str, portfolio_id: int | None) -> dict:
     if portfolio_id is None:
         return {"available": False, "reason": "MISSING_PORTFOLIO_ID"}
@@ -1407,6 +1652,7 @@ def run_early_exit_monitor():
     conn = get_connection()
     try:
         cur = conn.cursor()
+        news_monitoring = _collect_news_monitoring_escalations(cur)
         _append_learning_ledger_event(
             cur,
             event_name="LIVE_EARLY_EXIT_MONITOR_RUN",
@@ -1423,13 +1669,14 @@ def run_early_exit_monitor():
                 "positions_evaluated": result.get("positions_evaluated"),
                 "exit_signals": result.get("exit_signals"),
                 "exits_executed": result.get("exits_executed"),
+                "news_monitoring_escalation": news_monitoring.get("positions_with_news_escalation"),
             },
-            outcome_state=result,
+            outcome_state={**result, "news_monitoring": news_monitoring},
         )
     finally:
         conn.close()
 
-    return {"ok": True, "result": serialize_row(result), "status": status}
+    return {"ok": True, "result": serialize_row(result), "status": status, "news_monitoring": news_monitoring}
 
 
 @router.get("/drift/status")
@@ -1810,6 +2057,7 @@ def list_live_trade_actions(
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
           TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
+          NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
@@ -1942,6 +2190,10 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         action_target_snapshot = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
         if not action_target_snapshot:
             action_target_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("target_expectation")
+        action_news_snapshot = _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT"))
+        if not action_news_snapshot:
+            action_news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
+        latest_news_snapshot = _fetch_latest_symbol_news_context(cur, symbol, action.get("ASSET_CLASS"))
         context = {
             "action_id": action.get("ACTION_ID"),
             "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -1956,6 +2208,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             },
             "training_qualification_snapshot": action_training_snapshot,
             "target_expectation_snapshot": action_target_snapshot,
+            "news_context_snapshot": action_news_snapshot,
+            "latest_symbol_news_context": latest_news_snapshot,
             "parallel_worlds_evidence": pw_evidence,
         }
 
@@ -2054,11 +2308,15 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "recommendation": verdict["recommendation"],
                 "size_factor": verdict["size_factor"],
                 "blocked": verdict["blocked"],
+                "news_context_state": action_news_snapshot.get("context_state"),
+                "news_event_shock_flag": bool(action_news_snapshot.get("event_shock_flag")),
             },
             outcome_state={
                 "roles": COMMITTEE_ROLES,
                 "training_qualification_snapshot": action_training_snapshot,
                 "target_expectation_snapshot": action_target_snapshot,
+                "news_context_snapshot": action_news_snapshot,
+                "latest_symbol_news_context": latest_news_snapshot,
                 "parallel_worlds_evidence": pw_evidence,
             },
         )
@@ -2340,6 +2598,23 @@ def revalidate_live_action(
             reason_codes.append("PRICE_GUARD_FAIL")
 
         source_effective = "FORCED_REFRESH_1M" if req.force_refresh_1m else source
+        latest_news_snapshot = _fetch_latest_symbol_news_context(cur, action.get("SYMBOL"), action.get("ASSET_CLASS"))
+        news_for_policy = latest_news_snapshot if latest_news_snapshot.get("available") else _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT"))
+        news_context_state = str(news_for_policy.get("context_state") or "NEUTRAL").upper()
+        news_event_shock = bool(news_for_policy.get("event_shock_flag"))
+        news_freshness = str(news_for_policy.get("freshness_bucket") or "UNKNOWN").upper()
+        news_causes_caution = news_context_state in ("CAUTIONARY", "DESTABILIZING")
+        if news_event_shock and news_freshness in ("FRESH", "OVERNIGHT"):
+            if revalidation_outcome == "PASS":
+                revalidation_outcome = "PASS_WITH_REDUCED_SIZE"
+                status = "REVALIDATED_PASS"
+                reduced_size_factor = min(reduced_size_factor or 1.0, 0.5)
+                reason_codes.append("NEWS_REVALIDATION_CAUTION")
+            elif revalidation_outcome == "FAIL":
+                reason_codes.append("NEWS_EVENT_SHOCK_BLOCK")
+        elif news_causes_caution and revalidation_outcome == "PASS":
+            reason_codes.append("NEWS_REVALIDATION_CAUTION")
+
         target_snapshot_before = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
         target_snapshot_after = _build_target_expectation_snapshot(
             cur,
@@ -2367,6 +2642,11 @@ def revalidate_live_action(
                    TARGET_EXPECTATION_SNAPSHOT = parse_json(%s),
                    TARGET_OPEN_CONDITION_FACTOR = %s,
                    TARGET_EXPECTATION_POLICY_VERSION = %s,
+                   NEWS_CONTEXT_SNAPSHOT = parse_json(%s),
+                   NEWS_CONTEXT_STATE = %s,
+                   NEWS_EVENT_SHOCK_FLAG = %s,
+                   NEWS_FRESHNESS_BUCKET = %s,
+                   NEWS_CONTEXT_POLICY_VERSION = %s,
                    STATUS = %s,
                    PROPOSED_QTY = case
                        when %s is not null and PROPOSED_QTY is not null then greatest(PROPOSED_QTY * %s, 1)
@@ -2389,6 +2669,11 @@ def revalidate_live_action(
                 json.dumps(target_snapshot_after),
                 float(target_open_condition_factor),
                 target_snapshot_after.get("policy_version"),
+                json.dumps(news_for_policy),
+                news_context_state,
+                bool(news_event_shock),
+                news_freshness,
+                news_for_policy.get("policy_version") or NEWS_CONTEXT_POLICY_VERSION,
                 status,
                 reduced_size_factor,
                 reduced_size_factor,
@@ -2412,9 +2697,15 @@ def revalidate_live_action(
                 "target_open_condition_factor_before": target_snapshot_before.get("open_condition_factor"),
                 "target_open_condition_factor_after": target_snapshot_after.get("open_condition_factor"),
                 "target_bands_after": _parse_variant(target_snapshot_after).get("bands"),
+                "news_context_state": news_context_state,
+                "news_event_shock_flag": bool(news_event_shock),
+                "news_freshness_bucket": news_freshness,
                 "force_refresh_1m": bool(req.force_refresh_1m),
             },
-            outcome_state={"target_expectation_snapshot": target_snapshot_after},
+            outcome_state={
+                "target_expectation_snapshot": target_snapshot_after,
+                "news_context_snapshot": news_for_policy,
+            },
         )
         return {
             "ok": True,
@@ -2523,6 +2814,16 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             reason_codes.append("PRICE_GUARD_FAIL")
         realism_reason_codes, realism_details = _first_session_realism_checks(cur, action, cfg)
         reason_codes.extend(realism_reason_codes)
+        news_snapshot = _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT"))
+        if not news_snapshot:
+            news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
+        news_context_state = str(news_snapshot.get("context_state") or "").upper()
+        news_event_shock_flag = bool(news_snapshot.get("event_shock_flag"))
+        news_freshness_bucket = str(news_snapshot.get("freshness_bucket") or "").upper()
+        if news_event_shock_flag and news_freshness_bucket in ("FRESH", "OVERNIGHT"):
+            reason_codes.append("NEWS_EXECUTION_BLOCKED_EVENT_SHOCK")
+        elif news_context_state in ("CAUTIONARY", "DESTABILIZING"):
+            reason_codes.append("NEWS_EXECUTION_CAUTION")
 
         account_id = cfg.get("IBKR_ACCOUNT_ID")
         cur.execute(
@@ -2659,6 +2960,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "required_compliance": "APPROVE",
                     "drift_status": drift_status,
                     "latest_unresolved_drift": serialize_row(unresolved_drift_row) if unresolved_drift_row else None,
+                    "news_context_snapshot": news_snapshot,
                 },
             )
             raise HTTPException(
@@ -2744,11 +3046,15 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "actor": req.actor,
                 "target_open_condition_factor": action.get("TARGET_OPEN_CONDITION_FACTOR"),
                 "target_bands": _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT")).get("bands"),
+                "news_context_state": news_context_state,
+                "news_event_shock_flag": news_event_shock_flag,
+                "news_freshness_bucket": news_freshness_bucket,
             },
             outcome_state={
                 "order_id": order_id,
                 "mode": "PAPER_PLACEHOLDER",
                 "target_expectation_snapshot": _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT")),
+                "news_context_snapshot": news_snapshot,
             },
         )
 
@@ -2925,11 +3231,14 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                     "from_status": current_status,
                     "to_status": target_status,
                     "qty_filled": new_qty_filled,
+                    "news_context_state": _parse_variant(action_after.get("NEWS_CONTEXT_SNAPSHOT")).get("context_state"),
+                    "news_influenced_block": "NEWS_EXECUTION_BLOCKED_EVENT_SHOCK" in (_parse_list_variant(action_after.get("REASON_CODES")) if action_after else []),
                 },
                 outcome_state={
                     "actor": req.actor,
                     "broker_order_id": req.broker_order_id or order.get("BROKER_ORDER_ID"),
                     "notes": req.notes,
+                    "news_context_snapshot": _parse_variant(action_after.get("NEWS_CONTEXT_SNAPSHOT")) if action_after else {},
                 },
             )
 
@@ -3593,7 +3902,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             f"""
             select
               PROPOSAL_ID, RUN_ID_VARCHAR, SYMBOL, MARKET_TYPE, SIDE, TARGET_WEIGHT,
-              STATUS, SIGNAL_PATTERN_ID, RECOMMENDATION_ID, PROPOSED_AT
+              STATUS, SIGNAL_PATTERN_ID, RECOMMENDATION_ID, PROPOSED_AT, SOURCE_SIGNALS, RATIONALE
             from MIP.AGENT_OUT.ORDER_PROPOSALS
             where {' and '.join(wheres)}
             order by PROPOSED_AT desc
@@ -3645,6 +3954,11 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 interval_minutes=1440,
                 open_condition_factor=1.0,
             )
+            news_snapshot = _normalize_news_context_snapshot(
+                p.get("SOURCE_SIGNALS"),
+                p.get("RATIONALE"),
+                proposal_ts=p.get("PROPOSED_AT"),
+            )
             snapshot_payload = json.dumps(
                 {
                     "source": "ORDER_PROPOSALS",
@@ -3658,6 +3972,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "proposed_at": str(p.get("PROPOSED_AT")) if p.get("PROPOSED_AT") is not None else None,
                     "training_qualification": training_snapshot,
                     "target_expectation": target_snapshot,
+                    "news_context": news_snapshot,
                 }
             )
 
@@ -3672,6 +3987,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
                   TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
                   TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
+                  NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
                   COMMITTEE_REQUIRED, COMMITTEE_STATUS,
                   CREATED_AT, UPDATED_AT
                 )
@@ -3680,6 +3996,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   parse_json(%s), %s, %s, %s,
                   parse_json(%s), %s, %s,
+                  parse_json(%s), %s, %s, %s, %s,
                   true, 'PENDING',
                   current_timestamp(), current_timestamp()
                 )
@@ -3702,6 +4019,11 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     json.dumps(target_snapshot),
                     float(target_snapshot.get("open_condition_factor") or 1.0),
                     target_snapshot.get("policy_version"),
+                    json.dumps(news_snapshot),
+                    news_snapshot.get("context_state"),
+                    bool(news_snapshot.get("event_shock_flag")),
+                    news_snapshot.get("freshness_bucket"),
+                    news_snapshot.get("policy_version"),
                 ),
             )
             _append_learning_ledger_event(
@@ -3737,6 +4059,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "training_trusted_level": training_snapshot.get("trusted_level"),
                     "target_bands": _parse_variant(target_snapshot).get("bands"),
                     "target_open_condition_factor": target_snapshot.get("open_condition_factor"),
+                    "news_context_state": news_snapshot.get("context_state"),
+                    "news_event_shock_flag": bool(news_snapshot.get("event_shock_flag")),
+                    "news_freshness_bucket": news_snapshot.get("freshness_bucket"),
                 },
                 policy_version=LIVE_POLICY_VERSION,
                 outcome_state={
@@ -3744,6 +4069,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "reason_codes": import_reason_codes,
                     "training_qualification_snapshot": training_snapshot,
                     "target_expectation_snapshot": target_snapshot,
+                    "news_context_snapshot": news_snapshot,
                 },
             )
             imported += 1

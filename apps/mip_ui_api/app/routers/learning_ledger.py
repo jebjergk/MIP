@@ -53,6 +53,8 @@ def _as_dt(v) -> datetime:
 def _taxonomy_for_event(event_name: str | None, event_type: str | None) -> str:
     name = (event_name or "").upper()
     et = (event_type or "").upper()
+    if "NEWS" in name:
+        return "NEWS_CONTEXT"
     if name.startswith("LIVE_") or et == "LIVE_EVENT":
         return "LIVE_EXECUTION"
     if name.startswith("TRAINING_") or et == "TRAINING_EVENT":
@@ -254,8 +256,15 @@ def _build_canonical_feed(cur, limit: int, portfolio_id: Optional[int], event_ty
     out = []
     for r in rows:
         influence = _parse_json(r.get("INFLUENCE_DELTA"))
+        outcome = _parse_json(r.get("OUTCOME_STATE"))
         status = (r.get("STATUS") or "").upper()
         event_name = r.get("EVENT_NAME") or "LEDGER_EVENT"
+        news_influence = bool(
+            influence.get("news_context_state") is not None
+            or influence.get("news_event_shock_flag") is not None
+            or outcome.get("news_context_snapshot") is not None
+            or outcome.get("news_monitoring") is not None
+        )
         severity = "high" if status in ("FAIL", "ERROR") else ("medium" if status in ("FALLBACK", "PARTIAL") else "info")
         out.append({
             "event_key": f"ledger::{r.get('LEDGER_ID')}",
@@ -277,6 +286,7 @@ def _build_canonical_feed(cur, limit: int, portfolio_id: Optional[int], event_ty
             "training_version": r.get("TRAINING_VERSION"),
             "policy_version": r.get("POLICY_VERSION"),
             "impact": serialize_row(influence),
+            "news_influence_used": news_influence,
             "taxonomy_category": _taxonomy_for_event(event_name, r.get("EVENT_TYPE")),
             "chain_key": _chain_key_for_event(r),
             "chain_stage": _chain_stage_for_event(event_name),
@@ -700,6 +710,7 @@ def get_learning_effectiveness(
         cur = conn.cursor()
         has_ledger = _ledger_table_exists(cur)
         ledger_summary = {}
+        news_effectiveness = {}
         if has_ledger:
             wheres = ["EVENT_TS >= dateadd(day, -%s, current_timestamp())"]
             params: list = [days]
@@ -719,6 +730,26 @@ def get_learning_effectiveness(
                 tuple(params),
             )
             ledger_summary = serialize_rows(fetch_all(cur))
+            cur.execute(
+                f"""
+                select
+                  count(*) as NEWS_INFLUENCED_EVENTS,
+                  count_if(EVENT_NAME = 'LIVE_EXECUTION_BLOCKED') as NEWS_BLOCK_EVENTS,
+                  count_if(EVENT_NAME = 'LIVE_REVALIDATION') as NEWS_REVALIDATION_EVENTS,
+                  count_if(EVENT_NAME = 'LIVE_EARLY_EXIT_MONITOR_RUN') as NEWS_MONITOR_EVENTS
+                from MIP.AGENT_OUT.LEARNING_DECISION_LEDGER
+                where {' and '.join(wheres)}
+                  and (
+                    INFLUENCE_DELTA:news_context_state is not null
+                    or INFLUENCE_DELTA:news_event_shock_flag is not null
+                    or OUTCOME_STATE:news_context_snapshot is not null
+                    or OUTCOME_STATE:news_monitoring is not null
+                  )
+                """,
+                tuple(params),
+            )
+            rows = fetch_all(cur)
+            news_effectiveness = serialize_row(rows[0]) if rows else {}
 
         proposal_wheres = ["PROPOSED_AT >= dateadd(day, -%s, current_timestamp())"]
         proposal_params: list = [days]
@@ -763,6 +794,7 @@ def get_learning_effectiveness(
             "portfolio_id_filter": portfolio_id,
             "ledger_source_present": has_ledger,
             "ledger_event_breakdown": ledger_summary,
+            "news_effectiveness": news_effectiveness,
             "proposal_summary": proposal_summary,
             "live_summary": live_summary,
         }

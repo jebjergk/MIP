@@ -121,7 +121,8 @@ export default function LearningLedger() {
     const trainingCount = events.filter((e) => e.event_type === 'TRAINING_EVENT').length
     const decisionCount = events.filter((e) => e.event_type === 'DECISION_EVENT').length
     const highCount = events.filter((e) => (e.severity || '').toLowerCase() === 'high').length
-    return { trainingCount, decisionCount, highCount, total: events.length }
+    const newsInfluencedCount = events.filter((e) => e.news_influence_used).length
+    return { trainingCount, decisionCount, highCount, newsInfluencedCount, total: events.length }
   }, [events])
 
   if (loading) {
@@ -159,6 +160,7 @@ export default function LearningLedger() {
         <div className="ledger-stat-card"><span>Causal chains</span><b>{chains.length}</b></div>
         <div className="ledger-stat-card"><span>Training events</span><b>{stats.trainingCount}</b></div>
         <div className="ledger-stat-card"><span>Decision events</span><b>{stats.decisionCount}</b></div>
+        <div className="ledger-stat-card"><span>News-influenced</span><b>{stats.newsInfluencedCount}</b></div>
         <div className="ledger-stat-card"><span>High severity</span><b>{stats.highCount}</b></div>
       </section>
       <section className="ledger-source-banner">
@@ -174,6 +176,8 @@ export default function LearningLedger() {
             <div><span>Executed proposals</span><b>{effectiveness?.proposal_summary?.EXECUTED_COUNT ?? effectiveness?.proposal_summary?.executed_count ?? 0}</b></div>
             <div><span>Live actions</span><b>{effectiveness?.live_summary?.LIVE_ACTION_COUNT ?? effectiveness?.live_summary?.live_action_count ?? 0}</b></div>
             <div><span>Filled/partial orders</span><b>{effectiveness?.live_summary?.FILLED_OR_PARTIAL_COUNT ?? effectiveness?.live_summary?.filled_or_partial_count ?? 0}</b></div>
+            <div><span>News-influenced ledger events</span><b>{effectiveness?.news_effectiveness?.NEWS_INFLUENCED_EVENTS ?? effectiveness?.news_effectiveness?.news_influenced_events ?? 0}</b></div>
+            <div><span>News-driven blocks</span><b>{effectiveness?.news_effectiveness?.NEWS_BLOCK_EVENTS ?? effectiveness?.news_effectiveness?.news_block_events ?? 0}</b></div>
           </div>
         </section>
       ) : null}

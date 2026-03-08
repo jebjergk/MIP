@@ -407,6 +407,13 @@ export default function LiveTrades() {
                     {' '}| B {fmtNum(a.TARGET_EXPECTATION_SNAPSHOT?.bands?.base ?? a.TARGET_EXPECTATION_SNAPSHOT?.BANDS?.BASE, 3)}
                     {' '}| S {fmtNum(a.TARGET_EXPECTATION_SNAPSHOT?.bands?.strong ?? a.TARGET_EXPECTATION_SNAPSHOT?.BANDS?.STRONG, 3)}
                   </div>
+                  <div>
+                    News: {a.NEWS_CONTEXT_STATE || a.NEWS_CONTEXT_SNAPSHOT?.context_state || a.NEWS_CONTEXT_SNAPSHOT?.CONTEXT_STATE || '—'}
+                    {' '}| Freshness: {a.NEWS_FRESHNESS_BUCKET || a.NEWS_CONTEXT_SNAPSHOT?.freshness_bucket || a.NEWS_CONTEXT_SNAPSHOT?.FRESHNESS_BUCKET || '—'}
+                  </div>
+                  <div>
+                    News shock: {a.NEWS_EVENT_SHOCK_FLAG == null ? '—' : (a.NEWS_EVENT_SHOCK_FLAG ? 'Yes' : 'No')}
+                  </div>
                   <div>{a.COMPLIANCE_STATUS || '—'}</div>
                   <div>{Array.isArray(a.REASON_CODES) && a.REASON_CODES.length ? a.REASON_CODES.join(', ') : '—'}</div>
                 </td>

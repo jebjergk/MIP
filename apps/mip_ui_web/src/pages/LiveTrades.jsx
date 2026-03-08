@@ -29,6 +29,8 @@ export default function LiveTrades() {
   const [earlyExit, setEarlyExit] = useState(null)
   const [driftStatus, setDriftStatus] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
+  const [intentSubmitActor, setIntentSubmitActor] = useState('intent_submitter')
+  const [intentApproveActor, setIntentApproveActor] = useState('intent_approver')
   const [pmActor, setPmActor] = useState('portfolio_manager')
   const [executionActor, setExecutionActor] = useState('execution_operator')
   const [orderActor, setOrderActor] = useState('broker_sync_operator')
@@ -282,6 +284,14 @@ export default function LiveTrades() {
           <input value={complianceActor} onChange={(e) => setComplianceActor(e.target.value)} />
         </label>
         <label>
+          Intent submit actor
+          <input value={intentSubmitActor} onChange={(e) => setIntentSubmitActor(e.target.value)} />
+        </label>
+        <label>
+          Intent approve actor
+          <input value={intentApproveActor} onChange={(e) => setIntentApproveActor(e.target.value)} />
+        </label>
+        <label>
           Execution actor
           <input value={executionActor} onChange={(e) => setExecutionActor(e.target.value)} />
         </label>
@@ -392,6 +402,8 @@ export default function LiveTrades() {
                   <div>By: {a.COMPLIANCE_APPROVED_BY || '—'}</div>
                   <div>At: {fmtTs(a.COMPLIANCE_DECISION_TS)}</div>
                   <div>Ref: {a.COMPLIANCE_REFERENCE_ID || '—'}</div>
+                  <div>Intent submit: {a.INTENT_SUBMITTED_BY || '—'} @ {fmtTs(a.INTENT_SUBMITTED_TS)}</div>
+                  <div>Intent approve: {a.INTENT_APPROVED_BY || '—'} @ {fmtTs(a.INTENT_APPROVED_TS)}</div>
                 </td>
                 <td>
                   <div className="lt-actions">
@@ -424,7 +436,26 @@ export default function LiveTrades() {
                     </button>
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID || !['COMPLIANCE_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(a.STATUS)}
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'COMPLIANCE_APPROVED'}
+                      onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/intent-submit`, {
+                        actor: intentSubmitActor,
+                        reference_id: `UI_INTENT_${Date.now()}`,
+                      })}
+                    >
+                      Submit Intent
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'INTENT_SUBMITTED'}
+                      onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/intent-approve`, {
+                        actor: intentApproveActor,
+                      })}
+                    >
+                      Approve Intent
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === a.ACTION_ID || !['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(a.STATUS)}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/revalidate`)}
                     >
                       Revalidate

@@ -63,6 +63,15 @@ class RevalidateLiveActionRequest(BaseModel):
     force_refresh_1m: bool = False
 
 
+class IntentSubmitRequest(BaseModel):
+    actor: str
+    reference_id: str | None = None
+
+
+class IntentApproveRequest(BaseModel):
+    actor: str
+
+
 class UpdateLiveOrderStatusRequest(BaseModel):
     actor: str
     status: str = Field(pattern="^(PARTIAL_FILL|FILLED|CANCELED|REJECTED)$")
@@ -108,7 +117,9 @@ _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
     "PROPOSED": {"PM_ACCEPTED"},
     "PM_ACCEPTED": {"COMPLIANCE_APPROVED", "COMPLIANCE_DENIED"},
-    "COMPLIANCE_APPROVED": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
+    "COMPLIANCE_APPROVED": {"INTENT_SUBMITTED"},
+    "INTENT_SUBMITTED": {"INTENT_APPROVED"},
+    "INTENT_APPROVED": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
     "REVALIDATED_FAIL": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
     "REVALIDATED_PASS": {"REVALIDATED_PASS", "EXECUTION_REQUESTED"},
 }
@@ -126,6 +137,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
           PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
           PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
+          INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
@@ -1375,7 +1387,7 @@ def list_live_trade_actions(
             params.append(portfolio_id)
         if pending_only:
             wheres.append(
-                "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
+                "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
             )
         params.append(limit)
         sql = f"""
@@ -1384,6 +1396,7 @@ def list_live_trade_actions(
           STATUS, VALIDITY_WINDOW_END,
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
+          INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
           REVALIDATION_TS, REVALIDATION_PRICE, PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE,
           REASON_CODES,
@@ -1489,6 +1502,86 @@ def compliance_decide_live_action(action_id: str, req: ComplianceDecisionRequest
         conn.close()
 
 
+@router.post("/trades/actions/{action_id}/intent-submit")
+def submit_live_trade_intent(action_id: str, req: IntentSubmitRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        _assert_transition_allowed(action.get("STATUS"), "INTENT_SUBMITTED")
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = 'INTENT_SUBMITTED',
+                   INTENT_SUBMITTED_BY = %s,
+                   INTENT_SUBMITTED_TS = current_timestamp(),
+                   INTENT_REFERENCE_ID = coalesce(%s, INTENT_REFERENCE_ID),
+                   REASON_CODES = null,
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (req.actor, req.reference_id, action_id),
+        )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_INTENT_SUBMITTED",
+            status="INTENT_SUBMITTED",
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "intent_transition": f"{action.get('STATUS')}->INTENT_SUBMITTED",
+                "actor": req.actor,
+            },
+            outcome_state={"intent_reference_id": req.reference_id},
+        )
+        return {"ok": True, "action_id": action_id, "status": "INTENT_SUBMITTED"}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/intent-approve")
+def approve_live_trade_intent(action_id: str, req: IntentApproveRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        _assert_transition_allowed(action.get("STATUS"), "INTENT_APPROVED")
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = 'INTENT_APPROVED',
+                   INTENT_APPROVED_BY = %s,
+                   INTENT_APPROVED_TS = current_timestamp(),
+                   REASON_CODES = null,
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (req.actor, action_id),
+        )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_INTENT_APPROVED",
+            status="INTENT_APPROVED",
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "intent_transition": f"{action.get('STATUS')}->INTENT_APPROVED",
+                "actor": req.actor,
+            },
+        )
+        return {"ok": True, "action_id": action_id, "status": "INTENT_APPROVED"}
+    finally:
+        conn.close()
+
+
 @router.post("/trades/actions/{action_id}/revalidate")
 def revalidate_live_action(
     action_id: str,
@@ -1501,7 +1594,7 @@ def revalidate_live_action(
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
         current_status = action.get("STATUS")
-        if current_status == "COMPLIANCE_APPROVED":
+        if current_status == "INTENT_APPROVED":
             _assert_transition_allowed(current_status, "REVALIDATED_PASS")
         elif current_status == "REVALIDATED_FAIL":
             _assert_transition_allowed(current_status, "REVALIDATED_PASS")
@@ -1510,7 +1603,7 @@ def revalidate_live_action(
         else:
             raise HTTPException(
                 status_code=409,
-                detail=f"Revalidation allowed only from COMPLIANCE_APPROVED/REVALIDATED_FAIL/REVALIDATED_PASS (current: {current_status})",
+                detail=f"Revalidation allowed only from INTENT_APPROVED/REVALIDATED_FAIL/REVALIDATED_PASS (current: {current_status})",
             )
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
@@ -2242,6 +2335,18 @@ def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
         ComplianceDecisionRequest(actor="smoke_compliance", decision="APPROVE"),
     )
     steps.append({"step": "compliance_approve", "result": compliance_result})
+
+    intent_submit_result = submit_live_trade_intent(
+        action_id,
+        IntentSubmitRequest(actor="smoke_intent_submit", reference_id="SMOKE_INTENT"),
+    )
+    steps.append({"step": "intent_submit", "result": intent_submit_result})
+
+    intent_approve_result = approve_live_trade_intent(
+        action_id,
+        IntentApproveRequest(actor="smoke_intent_approver"),
+    )
+    steps.append({"step": "intent_approve", "result": intent_approve_result})
 
     revalidate_result = revalidate_live_action(action_id)
     steps.append({"step": "revalidate", "result": revalidate_result})

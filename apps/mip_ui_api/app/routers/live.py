@@ -149,13 +149,14 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
     cur.execute(
         """
         select
-          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE,
+          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
           STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
           PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
           PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
+          TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
@@ -938,6 +939,102 @@ def _build_training_qualification_snapshot(
     }
 
 
+def _clamp_float(v: float, low: float, high: float) -> float:
+    return max(low, min(high, v))
+
+
+def _build_target_expectation_snapshot(
+    cur,
+    *,
+    symbol: str | None,
+    market_type: str | None,
+    pattern_id,
+    interval_minutes: int = 1440,
+    open_condition_factor: float = 1.0,
+) -> dict:
+    symbol_norm = (symbol or "").upper().strip()
+    market_type_norm = (market_type or "").upper().strip()
+    reasons: list[str] = []
+
+    base_return = None
+    if symbol_norm and market_type_norm and pattern_id is not None:
+        cur.execute(
+            """
+            select
+              avg(case when o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null then o.REALIZED_RETURN end) as AVG_RETURN,
+              count_if(o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null) as N_RET
+            from MIP.APP.RECOMMENDATION_LOG r
+            join MIP.APP.RECOMMENDATION_OUTCOMES o
+              on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+            where upper(r.SYMBOL) = %s
+              and upper(r.MARKET_TYPE) = %s
+              and r.PATTERN_ID = %s
+              and r.INTERVAL_MINUTES = %s
+              and o.HORIZON_BARS = 5
+            """,
+            (symbol_norm, market_type_norm, pattern_id, interval_minutes),
+        )
+        rows = fetch_all(cur)
+        m = rows[0] if rows else {}
+        n_ret = int(m.get("N_RET") or 0)
+        if n_ret >= 10 and m.get("AVG_RETURN") is not None:
+            base_return = float(m.get("AVG_RETURN"))
+            reasons.append("BASE_FROM_SYMBOL_PATTERN_H5")
+
+    if base_return is None and market_type_norm and pattern_id is not None:
+        cur.execute(
+            """
+            select
+              avg(case when o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null then o.REALIZED_RETURN end) as AVG_RETURN,
+              count_if(o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null) as N_RET
+            from MIP.APP.RECOMMENDATION_LOG r
+            join MIP.APP.RECOMMENDATION_OUTCOMES o
+              on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+            where upper(r.MARKET_TYPE) = %s
+              and r.PATTERN_ID = %s
+              and r.INTERVAL_MINUTES = %s
+              and o.HORIZON_BARS = 5
+            """,
+            (market_type_norm, pattern_id, interval_minutes),
+        )
+        rows = fetch_all(cur)
+        m = rows[0] if rows else {}
+        n_ret = int(m.get("N_RET") or 0)
+        if n_ret >= 30 and m.get("AVG_RETURN") is not None:
+            base_return = float(m.get("AVG_RETURN"))
+            reasons.append("BASE_FROM_MARKET_PATTERN_H5")
+
+    if base_return is None:
+        base_return = 0.02
+        reasons.append("BASE_DEFAULT_FALLBACK")
+
+    # Keep expected move bands realistic and bounded.
+    base_return = _clamp_float(base_return, 0.005, 0.12)
+    open_factor = _clamp_float(float(open_condition_factor or 1.0), 0.5, 1.0)
+    conservative = _clamp_float(base_return * 0.7 * open_factor, 0.003, 0.12)
+    base = _clamp_float(base_return * open_factor, 0.004, 0.14)
+    strong = _clamp_float(base_return * 1.3 * open_factor, 0.005, 0.18)
+
+    if open_factor < 1.0:
+        reasons.append("OPEN_CONDITION_COMPRESSION_APPLIED")
+
+    return {
+        "policy_version": "phase6_target_bands_v1",
+        "as_of_ts": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol_norm or None,
+        "market_type": market_type_norm or None,
+        "pattern_id": int(pattern_id) if pattern_id is not None else None,
+        "interval_minutes": int(interval_minutes),
+        "open_condition_factor": open_factor,
+        "bands": {
+            "conservative": round(conservative, 6),
+            "base": round(base, 6),
+            "strong": round(strong, 6),
+        },
+        "reason_codes": reasons,
+    }
+
+
 def _fetch_committee_pw_evidence(cur, action_id: str, portfolio_id: int | None) -> dict:
     if portfolio_id is None:
         return {"available": False, "reason": "MISSING_PORTFOLIO_ID"}
@@ -1712,6 +1809,7 @@ def list_live_trade_actions(
           STATUS, VALIDITY_WINDOW_END,
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
+          TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
@@ -1841,6 +1939,9 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         action_training_snapshot = _parse_variant(action.get("TRAINING_QUALIFICATION_SNAPSHOT"))
         if not action_training_snapshot:
             action_training_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("training_qualification")
+        action_target_snapshot = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
+        if not action_target_snapshot:
+            action_target_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("target_expectation")
         context = {
             "action_id": action.get("ACTION_ID"),
             "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -1854,6 +1955,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "close": float(latest_bar[1]) if latest_bar and latest_bar[1] is not None else None,
             },
             "training_qualification_snapshot": action_training_snapshot,
+            "target_expectation_snapshot": action_target_snapshot,
             "parallel_worlds_evidence": pw_evidence,
         }
 
@@ -1956,6 +2058,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             outcome_state={
                 "roles": COMMITTEE_ROLES,
                 "training_qualification_snapshot": action_training_snapshot,
+                "target_expectation_snapshot": action_target_snapshot,
                 "parallel_worlds_evidence": pw_evidence,
             },
         )
@@ -2217,22 +2320,36 @@ def revalidate_live_action(
         status = "REVALIDATED_FAIL"
         reason_codes: list[str] = []
         reduced_size_factor = None
+        target_open_condition_factor = 1.0
 
         if deviation is None or deviation <= 0.02:
             revalidation_outcome = "PASS"
             status = "REVALIDATED_PASS"
+            target_open_condition_factor = 1.0
         elif deviation <= 0.04:
             # Latency-aware compromise: keep candidate valid but force a reduced-size execution envelope.
             revalidation_outcome = "PASS_WITH_REDUCED_SIZE"
             status = "REVALIDATED_PASS"
             reduced_size_factor = 0.5
+            target_open_condition_factor = 0.8
             reason_codes.append("REDUCED_SIZE_DUE_TO_PRICE_DEVIATION")
         else:
             revalidation_outcome = "FAIL"
             status = "REVALIDATED_FAIL"
+            target_open_condition_factor = 0.65
             reason_codes.append("PRICE_GUARD_FAIL")
 
         source_effective = "FORCED_REFRESH_1M" if req.force_refresh_1m else source
+        target_snapshot_before = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
+        target_snapshot_after = _build_target_expectation_snapshot(
+            cur,
+            symbol=action.get("SYMBOL"),
+            market_type=action.get("ASSET_CLASS"),
+            pattern_id=_parse_variant(action.get("PARAM_SNAPSHOT")).get("signal_pattern_id"),
+            interval_minutes=1440,
+            open_condition_factor=target_open_condition_factor,
+        )
+        guard_result = "PASS" if status == "REVALIDATED_PASS" else "FAIL"
 
         cur.execute(
             """
@@ -2247,6 +2364,9 @@ def revalidate_live_action(
                    REVALIDATION_OUTCOME = %s,
                    REVALIDATION_POLICY_VERSION = %s,
                    REVALIDATION_DATA_SOURCE = %s,
+                   TARGET_EXPECTATION_SNAPSHOT = parse_json(%s),
+                   TARGET_OPEN_CONDITION_FACTOR = %s,
+                   TARGET_EXPECTATION_POLICY_VERSION = %s,
                    STATUS = %s,
                    PROPOSED_QTY = case
                        when %s is not null and PROPOSED_QTY is not null then greatest(PROPOSED_QTY * %s, 1)
@@ -2259,13 +2379,16 @@ def revalidate_live_action(
             (
                 ref_price,
                 deviation,
-                "PASS" if guard_pass else "FAIL",
+                guard_result,
                 ref_ts if source == "ONE_MINUTE_BAR" else None,
                 ref_price if source == "ONE_MINUTE_BAR" else None,
                 source,
                 revalidation_outcome,
                 LIVE_POLICY_VERSION,
                 source_effective,
+                json.dumps(target_snapshot_after),
+                float(target_open_condition_factor),
+                target_snapshot_after.get("policy_version"),
                 status,
                 reduced_size_factor,
                 reduced_size_factor,
@@ -2286,8 +2409,12 @@ def revalidate_live_action(
                 "price_guard_result": revalidation_outcome,
                 "price_source": source_effective,
                 "reduced_size_factor": reduced_size_factor,
+                "target_open_condition_factor_before": target_snapshot_before.get("open_condition_factor"),
+                "target_open_condition_factor_after": target_snapshot_after.get("open_condition_factor"),
+                "target_bands_after": _parse_variant(target_snapshot_after).get("bands"),
                 "force_refresh_1m": bool(req.force_refresh_1m),
             },
+            outcome_state={"target_expectation_snapshot": target_snapshot_after},
         )
         return {
             "ok": True,
@@ -2299,6 +2426,8 @@ def revalidate_live_action(
             "revalidation_price": float(ref_price) if ref_price is not None else None,
             "price_deviation_pct": float(deviation) if deviation is not None else None,
             "reduced_size_factor": reduced_size_factor,
+            "target_open_condition_factor": float(target_open_condition_factor),
+            "target_expectation_snapshot": target_snapshot_after,
             "force_refresh_1m": bool(req.force_refresh_1m),
             "refresh": refresh_info,
         }
@@ -2607,10 +2736,13 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "safety_gates_passed": True,
                 "idempotency_key": idempotency_key,
                 "actor": req.actor,
+                "target_open_condition_factor": action.get("TARGET_OPEN_CONDITION_FACTOR"),
+                "target_bands": _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT")).get("bands"),
             },
             outcome_state={
                 "order_id": order_id,
                 "mode": "PAPER_PLACEHOLDER",
+                "target_expectation_snapshot": _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT")),
             },
         )
 
@@ -3454,6 +3586,14 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 interval_minutes=1440,
                 target_weight=p.get("TARGET_WEIGHT"),
             )
+            target_snapshot = _build_target_expectation_snapshot(
+                cur,
+                symbol=(p.get("SYMBOL") or "").upper(),
+                market_type=p.get("MARKET_TYPE"),
+                pattern_id=p.get("SIGNAL_PATTERN_ID"),
+                interval_minutes=1440,
+                open_condition_factor=1.0,
+            )
             snapshot_payload = json.dumps(
                 {
                     "source": "ORDER_PROPOSALS",
@@ -3466,6 +3606,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "target_weight": p.get("TARGET_WEIGHT"),
                     "proposed_at": str(p.get("PROPOSED_AT")) if p.get("PROPOSED_AT") is not None else None,
                     "training_qualification": training_snapshot,
+                    "target_expectation": target_snapshot,
                 }
             )
 
@@ -3479,6 +3620,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, ASSET_CLASS,
                   STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
                   TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
+                  TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
                   COMMITTEE_REQUIRED, COMMITTEE_STATUS,
                   CREATED_AT, UPDATED_AT
                 )
@@ -3486,6 +3628,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   %s, %s, %s, %s, %s, %s, %s,
                   'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   parse_json(%s), %s, %s, %s,
+                  parse_json(%s), %s, %s,
                   true, 'PENDING',
                   current_timestamp(), current_timestamp()
                 )
@@ -3505,6 +3648,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     bool(training_snapshot.get("live_eligible")),
                     training_snapshot.get("rank_impact"),
                     float(training_snapshot.get("size_cap_factor") or 0.0),
+                    json.dumps(target_snapshot),
+                    float(target_snapshot.get("open_condition_factor") or 1.0),
+                    target_snapshot.get("policy_version"),
                 ),
             )
             _append_learning_ledger_event(
@@ -3538,12 +3684,15 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "training_size_cap_factor": training_snapshot.get("size_cap_factor"),
                     "training_maturity_stage": training_snapshot.get("maturity_stage"),
                     "training_trusted_level": training_snapshot.get("trusted_level"),
+                    "target_bands": _parse_variant(target_snapshot).get("bands"),
+                    "target_open_condition_factor": target_snapshot.get("open_condition_factor"),
                 },
                 policy_version=LIVE_POLICY_VERSION,
                 outcome_state={
                     "import_source": "ORDER_PROPOSALS",
                     "reason_codes": import_reason_codes,
                     "training_qualification_snapshot": training_snapshot,
+                    "target_expectation_snapshot": target_snapshot,
                 },
             )
             imported += 1

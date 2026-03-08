@@ -402,6 +402,11 @@ export default function LiveTrades() {
                   <div>
                     Rank: {a.TRAINING_RANK_IMPACT || '—'} | Size cap: {a.TRAINING_SIZE_CAP_FACTOR == null ? '—' : fmtNum(a.TRAINING_SIZE_CAP_FACTOR, 2)}
                   </div>
+                  <div>
+                    Target bands: C {fmtNum(a.TARGET_EXPECTATION_SNAPSHOT?.bands?.conservative ?? a.TARGET_EXPECTATION_SNAPSHOT?.BANDS?.CONSERVATIVE, 3)}
+                    {' '}| B {fmtNum(a.TARGET_EXPECTATION_SNAPSHOT?.bands?.base ?? a.TARGET_EXPECTATION_SNAPSHOT?.BANDS?.BASE, 3)}
+                    {' '}| S {fmtNum(a.TARGET_EXPECTATION_SNAPSHOT?.bands?.strong ?? a.TARGET_EXPECTATION_SNAPSHOT?.BANDS?.STRONG, 3)}
+                  </div>
                   <div>{a.COMPLIANCE_STATUS || '—'}</div>
                   <div>{Array.isArray(a.REASON_CODES) && a.REASON_CODES.length ? a.REASON_CODES.join(', ') : '—'}</div>
                 </td>
@@ -415,6 +420,7 @@ export default function LiveTrades() {
                   <div>Px: {fmtNum(a.REVALIDATION_PRICE, 4)}</div>
                   <div>Dev: {a.PRICE_DEVIATION_PCT != null ? `${fmtNum(a.PRICE_DEVIATION_PCT * 100, 2)}%` : '—'}</div>
                   <div>Guard: {a.PRICE_GUARD_RESULT || '—'}</div>
+                  <div>Open factor: {a.TARGET_OPEN_CONDITION_FACTOR == null ? '—' : fmtNum(a.TARGET_OPEN_CONDITION_FACTOR, 2)}</div>
                 </td>
                 <td>
                   <div>By: {a.COMPLIANCE_APPROVED_BY || '—'}</div>

@@ -20,6 +20,7 @@ function fmtNum(v, digits = 4) {
 
 export default function LiveTrades() {
   const [actions, setActions] = useState([])
+  const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
   const [error, setError] = useState('')
@@ -29,6 +30,7 @@ export default function LiveTrades() {
   const [complianceActor, setComplianceActor] = useState('compliance_user')
   const [pmActor, setPmActor] = useState('portfolio_manager')
   const [executionActor, setExecutionActor] = useState('execution_operator')
+  const [orderActor, setOrderActor] = useState('broker_sync_operator')
   const [bridgeLivePortfolioId, setBridgeLivePortfolioId] = useState('1')
   const [bridgeRunId, setBridgeRunId] = useState('')
   const [bridgeResult, setBridgeResult] = useState(null)
@@ -37,21 +39,25 @@ export default function LiveTrades() {
     setLoading(true)
     setError('')
     try {
-      const [actionsResp, snapshotResp, earlyExitResp, driftResp] = await Promise.all([
+      const [actionsResp, ordersResp, snapshotResp, earlyExitResp, driftResp] = await Promise.all([
         fetch(`${API_BASE}/live/trades/actions?pending_only=true&limit=300`),
+        fetch(`${API_BASE}/live/trades/orders?limit=300`),
         fetch(`${API_BASE}/live/snapshot/latest`),
         fetch(`${API_BASE}/live/early-exit/status?limit=10`),
         fetch(`${API_BASE}/live/drift/status`),
       ])
       if (!actionsResp.ok) throw new Error(`Failed to load actions (${actionsResp.status})`)
+      if (!ordersResp.ok) throw new Error(`Failed to load orders (${ordersResp.status})`)
       if (!snapshotResp.ok) throw new Error(`Failed to load snapshot (${snapshotResp.status})`)
       if (!earlyExitResp.ok) throw new Error(`Failed to load early-exit monitor (${earlyExitResp.status})`)
       if (!driftResp.ok) throw new Error(`Failed to load drift status (${driftResp.status})`)
       const actionsJson = await actionsResp.json()
+      const ordersJson = await ordersResp.json()
       const snapJson = await snapshotResp.json()
       const earlyExitJson = await earlyExitResp.json()
       const driftJson = await driftResp.json()
       setActions(actionsJson.actions || [])
+      setOrders(ordersJson.orders || [])
       setLatestNav(snapJson.latest_nav || null)
       setEarlyExit(earlyExitJson || null)
       setDriftStatus(driftJson || null)
@@ -162,6 +168,41 @@ export default function LiveTrades() {
     }
   }, [bridgeLivePortfolioId, bridgeRunId, load])
 
+  const runOrderStatus = useCallback(async (order, status) => {
+    const orderBusyId = `order:${order.ORDER_ID}:${status}`
+    setBusyId(orderBusyId)
+    setError('')
+    try {
+      let qtyFilled = null
+      if (status === 'PARTIAL_FILL') {
+        const ordered = Number(order.QTY_ORDERED || 0)
+        if (ordered > 0) qtyFilled = Math.max(1, Math.floor(ordered * 0.5))
+      } else if (status === 'FILLED') {
+        qtyFilled = Number(order.QTY_ORDERED || 0) || null
+      }
+      const payload = {
+        actor: orderActor,
+        status,
+        qty_filled: qtyFilled,
+        avg_fill_price: order.LIMIT_PRICE != null ? Number(order.LIMIT_PRICE) : null,
+      }
+      const resp = await fetch(`${API_BASE}/live/trades/orders/${order.ORDER_ID}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!resp.ok) {
+        const msg = await resp.text()
+        throw new Error(msg || `Order status update failed (${resp.status})`)
+      }
+      await load()
+    } catch (e) {
+      setError(e.message || 'Order status update failed.')
+    } finally {
+      setBusyId(null)
+    }
+  }, [load, orderActor])
+
   return (
     <div className="page live-trades-page">
       <div className="live-trades-header">
@@ -233,6 +274,10 @@ export default function LiveTrades() {
         <label>
           Execution actor
           <input value={executionActor} onChange={(e) => setExecutionActor(e.target.value)} />
+        </label>
+        <label>
+          Order status actor
+          <input value={orderActor} onChange={(e) => setOrderActor(e.target.value)} />
         </label>
       </div>
 
@@ -366,6 +411,83 @@ export default function LiveTrades() {
                       }
                     >
                       Execute (Paper)
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="lt-summary">
+        Live orders tracked: <b>{orders.length}</b>
+      </div>
+
+      <div className="lt-table-wrap">
+        <table className="lt-table">
+          <thead>
+            <tr>
+              <th>Updated</th>
+              <th>Order</th>
+              <th>Status</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.length === 0 && (
+              <tr>
+                <td colSpan={6}>No live orders yet.</td>
+              </tr>
+            )}
+            {orders.map((o) => (
+              <tr key={o.ORDER_ID}>
+                <td>{fmtTs(o.LAST_UPDATED_AT || o.CREATED_AT)}</td>
+                <td>
+                  <div><b>{o.SYMBOL}</b> ({o.SIDE})</div>
+                  <div>Order: {o.ORDER_ID}</div>
+                  <div>Action: {o.ACTION_ID}</div>
+                </td>
+                <td>{o.STATUS || '—'}</td>
+                <td>
+                  <div>Ordered: {fmtNum(o.QTY_ORDERED, 0)}</div>
+                  <div>Filled: {fmtNum(o.QTY_FILLED, 0)}</div>
+                </td>
+                <td>
+                  <div>Limit: {fmtNum(o.LIMIT_PRICE, 4)}</div>
+                  <div>Avg fill: {fmtNum(o.AVG_FILL_PRICE, 4)}</div>
+                </td>
+                <td>
+                  <div className="lt-actions">
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === `order:${o.ORDER_ID}:PARTIAL_FILL` || ['FILLED', 'CANCELED', 'REJECTED'].includes(o.STATUS)}
+                      onClick={() => runOrderStatus(o, 'PARTIAL_FILL')}
+                    >
+                      Partial Fill
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === `order:${o.ORDER_ID}:FILLED` || ['FILLED', 'CANCELED', 'REJECTED'].includes(o.STATUS)}
+                      onClick={() => runOrderStatus(o, 'FILLED')}
+                    >
+                      Fill
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={busyId === `order:${o.ORDER_ID}:CANCELED` || ['FILLED', 'CANCELED', 'REJECTED'].includes(o.STATUS)}
+                      onClick={() => runOrderStatus(o, 'CANCELED')}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="lt-btn lt-btn-danger"
+                      disabled={busyId === `order:${o.ORDER_ID}:REJECTED` || ['FILLED', 'CANCELED', 'REJECTED'].includes(o.STATUS)}
+                      onClick={() => runOrderStatus(o, 'REJECTED')}
+                    >
+                      Reject
                     </button>
                   </div>
                 </td>

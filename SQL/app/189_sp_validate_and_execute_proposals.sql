@@ -33,6 +33,7 @@ declare
     v_buy_proposals_blocked number := 0;
     v_exposure_rejected number := 0;
     v_position_rejected number := 0;
+    v_committee_blocked number := 0;
     v_slippage_bps number(18,8);
     v_fee_bps number(18,8);
     v_min_fee number(18,8);
@@ -248,13 +249,184 @@ begin
      where p.PROPOSAL_ID = v.PROPOSAL_ID
        and array_size(v.validation_errors) > 0;
 
+    -- Simulation committee enrichment:
+    -- run a structured multi-agent-style decision prompt per valid proposal and
+    -- apply committee outputs for enter/size/target/hold/early-exit.
+    -- Any failure in this block must fail open to deterministic behavior.
+    begin
+        create or replace temporary table TMP_PROPOSAL_COMMITTEE as
+        with candidate as (
+            select
+                p.PROPOSAL_ID,
+                p.SYMBOL,
+                p.MARKET_TYPE,
+                p.SIDE,
+                p.TARGET_WEIGHT,
+                p.SOURCE_SIGNALS,
+                p.RATIONALE
+            from MIP.AGENT_OUT.ORDER_PROPOSALS p
+            join TMP_PROPOSAL_VALIDATION v
+              on v.PROPOSAL_ID = p.PROPOSAL_ID
+            where p.RUN_ID_VARCHAR = :P_RUN_ID
+              and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+              and p.STATUS = 'PROPOSED'
+              and array_size(v.validation_errors) = 0
+        ),
+        llm_raw as (
+            select
+                c.PROPOSAL_ID,
+                snowflake.cortex.complete(
+                    'mistral-large2',
+                    'You are a simulation trade committee. Return ONLY JSON with keys: '
+                    || '{"should_enter":true|false,'
+                    || '"size_factor":0.0-1.0,'
+                    || '"target_return":number,'
+                    || '"hold_bars":integer,'
+                    || '"early_exit_target_return":number,'
+                    || '"summary":"...",'
+                    || '"reason_codes":["..."],'
+                    || '"agent_dialogue":[{"role":"...","message":"..."}]}'
+                    || ' Context: '
+                    || to_json(
+                        object_construct(
+                            'symbol', c.SYMBOL,
+                            'market_type', c.MARKET_TYPE,
+                            'side', c.SIDE,
+                            'target_weight', c.TARGET_WEIGHT,
+                            'source_signals', c.SOURCE_SIGNALS,
+                            'rationale', c.RATIONALE
+                        )
+                    )
+                ) as RESPONSE
+            from candidate c
+        ),
+        parsed as (
+            select
+                r.PROPOSAL_ID,
+                try_parse_json(
+                    regexp_replace(
+                        regexp_replace(
+                            trim(
+                                coalesce(
+                                    r.RESPONSE:choices[0]:messages::string,
+                                    r.RESPONSE:choices[0]:message:content::string,
+                                    r.RESPONSE::string
+                                )
+                            ),
+                            '^```json\\s*',
+                            ''
+                        ),
+                        '\\s*```$',
+                        ''
+                    )
+                ) as OUT_JSON
+            from llm_raw r
+        )
+        select
+            p.PROPOSAL_ID,
+            coalesce(p.OUT_JSON:should_enter::boolean, true) as SHOULD_ENTER,
+            least(greatest(coalesce(p.OUT_JSON:size_factor::float, 1.0), 0.0), 1.0) as SIZE_FACTOR,
+            p.OUT_JSON:target_return::float as TARGET_RETURN,
+            p.OUT_JSON:hold_bars::number as HOLD_BARS,
+            p.OUT_JSON:early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN,
+            coalesce(p.OUT_JSON:summary::string, 'Committee default (fallback).') as SUMMARY,
+            coalesce(p.OUT_JSON:reason_codes, array_construct()) as REASON_CODES,
+            coalesce(p.OUT_JSON:agent_dialogue, array_construct()) as AGENT_DIALOGUE,
+            coalesce(p.OUT_JSON, object_construct()) as OUT_JSON
+        from parsed p;
+    exception
+        when other then
+            create or replace temporary table TMP_PROPOSAL_COMMITTEE as
+            select
+                p.PROPOSAL_ID,
+                true as SHOULD_ENTER,
+                1.0 as SIZE_FACTOR,
+                null::float as TARGET_RETURN,
+                null::number as HOLD_BARS,
+                null::float as EARLY_EXIT_TARGET_RETURN,
+                'Committee fallback: deterministic path (Cortex unavailable).' as SUMMARY,
+                array_construct('COMMITTEE_FALLBACK') as REASON_CODES,
+                array_construct() as AGENT_DIALOGUE,
+                object_construct('fallback', true) as OUT_JSON
+            from MIP.AGENT_OUT.ORDER_PROPOSALS p
+            join TMP_PROPOSAL_VALIDATION v
+              on v.PROPOSAL_ID = p.PROPOSAL_ID
+            where p.RUN_ID_VARCHAR = :P_RUN_ID
+              and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+              and p.STATUS = 'PROPOSED'
+              and array_size(v.validation_errors) = 0;
+    end;
+
+    -- Apply committee decision details to proposal rationale and size.
+    update MIP.AGENT_OUT.ORDER_PROPOSALS p
+       set TARGET_WEIGHT = greatest(
+               0.01,
+               least(
+                   :v_max_position_pct,
+                   coalesce(p.TARGET_WEIGHT, 0.05) * coalesce(c.SIZE_FACTOR, 1.0)
+               )
+           ),
+           RATIONALE = object_insert(
+               coalesce(p.RATIONALE, object_construct()),
+               'sim_committee',
+               object_construct(
+                   'should_enter', c.SHOULD_ENTER,
+                   'size_factor', c.SIZE_FACTOR,
+                   'target_return', c.TARGET_RETURN,
+                   'hold_bars', c.HOLD_BARS,
+                   'early_exit_target_return', c.EARLY_EXIT_TARGET_RETURN,
+                   'summary', c.SUMMARY,
+                   'reason_codes', c.REASON_CODES,
+                   'agent_dialogue', c.AGENT_DIALOGUE
+               ),
+               true
+           )
+      from TMP_PROPOSAL_COMMITTEE c
+     where p.PROPOSAL_ID = c.PROPOSAL_ID
+       and p.RUN_ID_VARCHAR = :P_RUN_ID
+       and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+       and p.STATUS = 'PROPOSED';
+
+    -- Committee can block entering a position in simulation.
+    update MIP.AGENT_OUT.ORDER_PROPOSALS p
+       set STATUS = 'REJECTED',
+           VALIDATION_ERRORS = array_cat(
+               coalesce(p.VALIDATION_ERRORS, array_construct()),
+               array_construct('SIM_COMMITTEE_BLOCKED')
+           ),
+           APPROVED_AT = null
+      from TMP_PROPOSAL_COMMITTEE c
+     where p.PROPOSAL_ID = c.PROPOSAL_ID
+       and p.RUN_ID_VARCHAR = :P_RUN_ID
+       and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+       and p.STATUS = 'PROPOSED'
+       and coalesce(c.SHOULD_ENTER, true) = false;
+
+    v_committee_blocked := SQLROWCOUNT;
+
     update MIP.AGENT_OUT.ORDER_PROPOSALS as p
        set STATUS = 'APPROVED',
            APPROVED_AT = current_timestamp(),
            VALIDATION_ERRORS = null
       from TMP_PROPOSAL_VALIDATION v
+      left join TMP_PROPOSAL_COMMITTEE c
+        on c.PROPOSAL_ID = v.PROPOSAL_ID
      where p.PROPOSAL_ID = v.PROPOSAL_ID
-       and array_size(v.validation_errors) = 0;
+       and p.RUN_ID_VARCHAR = :P_RUN_ID
+       and p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+       and p.STATUS = 'PROPOSED'
+       and array_size(v.validation_errors) = 0
+       and coalesce(c.SHOULD_ENTER, true) = true;
+
+    -- Recompute approval/rejection counts after committee step.
+    select
+        count_if(STATUS = 'APPROVED'),
+        count_if(STATUS = 'REJECTED')
+      into :v_approved_count,
+           :v_rejected_count
+      from MIP.AGENT_OUT.ORDER_PROPOSALS
+     where RUN_ID_VARCHAR = :P_RUN_ID
+       and PORTFOLIO_ID = :P_PORTFOLIO_ID;
 
     v_total_equity := coalesce(
         (
@@ -727,7 +899,7 @@ begin
         t.NOTIONAL as COST_BASIS,
         t.SCORE as ENTRY_SCORE,
         bi.BAR_INDEX as ENTRY_INDEX,
-        bi.BAR_INDEX + coalesce(ts.HORIZON_BARS, 5) as HOLD_UNTIL_INDEX
+        bi.BAR_INDEX + coalesce(try_to_number(op.RATIONALE:sim_committee:hold_bars::string), ts.HORIZON_BARS, 5) as HOLD_UNTIL_INDEX
     from MIP.APP.PORTFOLIO_TRADES t
     cross join (
         select max(BAR_INDEX) as BAR_INDEX
@@ -779,7 +951,8 @@ begin
                 'proposal_count', :v_proposal_count,
                 'approved_count', :v_approved_count,
                 'rejected_count', :v_rejected_count,
-                'buy_proposals_blocked', :v_buy_proposals_blocked
+                'buy_proposals_blocked', :v_buy_proposals_blocked,
+                'committee_blocked_count', :v_committee_blocked
             ),
             object_construct(
                 'executed_count', :v_executed_count,
@@ -789,7 +962,8 @@ begin
             object_construct(
                 'eligibility_blocked', :v_entries_blocked,
                 'size_constraints_applied', true,
-                'live_execution_candidates', :v_executed_count
+                'live_execution_candidates', :v_executed_count,
+                'sim_committee_applied', true
             ),
             object_construct(
                 'run_id', :P_RUN_ID,
@@ -816,7 +990,8 @@ begin
         'entries_blocked', :v_entries_blocked,
         'stop_reason', :v_stop_reason,
         'allowed_actions', :v_allowed_actions,
-        'buy_proposals_blocked', :v_buy_proposals_blocked
+        'buy_proposals_blocked', :v_buy_proposals_blocked,
+        'committee_blocked_count', :v_committee_blocked
     );
 end;
 $$;

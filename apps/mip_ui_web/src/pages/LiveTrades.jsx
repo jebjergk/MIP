@@ -43,6 +43,10 @@ export default function LiveTrades() {
   const [bridgeResult, setBridgeResult] = useState(null)
   const [committeeByAction, setCommitteeByAction] = useState({})
   const [expandedActionId, setExpandedActionId] = useState(null)
+  const [livePromptActionId, setLivePromptActionId] = useState(null)
+  const [livePromptStage, setLivePromptStage] = useState(null)
+  const [livePromptLogs, setLivePromptLogs] = useState([])
+  const [livePromptStatus, setLivePromptStatus] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -132,6 +136,65 @@ export default function LiveTrades() {
       await loadCommittee(actionId)
     }
   }, [committeeByAction, expandedActionId, loadCommittee])
+
+  const startLivePrompt = useCallback((actionId, stage) => {
+    setLivePromptActionId(actionId)
+    setLivePromptStage(stage)
+    setLivePromptLogs([])
+    setLivePromptStatus('Connecting...')
+    const base =
+      stage === 'revalidate'
+        ? `${API_BASE}/live/trades/actions/${actionId}/revalidate/live-prompt`
+        : `${API_BASE}/live/trades/actions/${actionId}/committee/live-prompt?actor=${encodeURIComponent(committeeActor)}&model=${encodeURIComponent(committeeModel)}`
+    const es = new EventSource(base)
+    es.addEventListener('start', () => setLivePromptStatus('Running...'))
+    es.addEventListener('agent_turn', (evt) => {
+      try {
+        const data = JSON.parse(evt.data)
+        setLivePromptLogs((prev) => [...prev, data])
+      } catch {
+        // ignore malformed frames
+      }
+    })
+    es.addEventListener('role_summary', (evt) => {
+      try {
+        const data = JSON.parse(evt.data)
+        setLivePromptLogs((prev) => [...prev, data])
+      } catch {
+        // ignore malformed frames
+      }
+    })
+    es.addEventListener('joint_decision', (evt) => {
+      try {
+        const data = JSON.parse(evt.data)
+        setLivePromptLogs((prev) => [...prev, { type: 'joint_decision', ...data }])
+      } catch {
+        // ignore malformed frames
+      }
+    })
+    es.addEventListener('final', (evt) => {
+      try {
+        const data = JSON.parse(evt.data)
+        setLivePromptLogs((prev) => [...prev, { type: 'final', ...data }])
+      } catch {
+        // ignore malformed frames
+      }
+      setLivePromptStatus('Completed')
+      es.close()
+    })
+    es.addEventListener('error', (evt) => {
+      try {
+        if (evt?.data) {
+          const data = JSON.parse(evt.data)
+          setLivePromptLogs((prev) => [...prev, { type: 'error', ...data }])
+        }
+      } catch {
+        // ignore malformed frames
+      }
+      setLivePromptStatus('Stopped')
+      es.close()
+    })
+  }, [committeeActor, committeeModel])
 
   const pendingCompliance = useMemo(
     () => actions.filter((a) => a.STATUS === 'PM_ACCEPTED' || a.COMPLIANCE_STATUS === 'PENDING'),
@@ -563,6 +626,13 @@ export default function LiveTrades() {
                     </button>
                     <button
                       className="lt-btn"
+                      disabled={busyId === a.ACTION_ID}
+                      onClick={() => startLivePrompt(a.ACTION_ID, 'committee')}
+                    >
+                      Live Committee Prompt
+                    </button>
+                    <button
+                      className="lt-btn"
                       disabled={
                         busyId === a.ACTION_ID
                         || !['RESEARCH_IMPORTED', 'PROPOSED'].includes(a.STATUS)
@@ -620,6 +690,13 @@ export default function LiveTrades() {
                     </button>
                     <button
                       className="lt-btn"
+                      disabled={busyId === a.ACTION_ID || !['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(a.STATUS)}
+                      onClick={() => startLivePrompt(a.ACTION_ID, 'revalidate')}
+                    >
+                      Live Revalidate Prompt
+                    </button>
+                    <button
+                      className="lt-btn"
                       disabled={busyId === a.ACTION_ID || a.STATUS !== 'REVALIDATED_PASS' || a.COMPLIANCE_STATUS !== 'APPROVE'}
                       onClick={() =>
                         runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/execute`, {
@@ -647,6 +724,17 @@ export default function LiveTrades() {
                           {' '}| confidence: <b>{committeeByAction[a.ACTION_ID]?.verdict?.CONFIDENCE ?? '—'}</b>
                         </div>
                         <div className="lt-summary">
+                          Joint decision: enter <b>{
+                            committeeByAction[a.ACTION_ID]?.verdict?.VERDICT_JSON?.joint_decision?.should_enter == null
+                              ? '—'
+                              : (committeeByAction[a.ACTION_ID]?.verdict?.VERDICT_JSON?.joint_decision?.should_enter ? 'Yes' : 'No')
+                          }</b>
+                          {' '}| size <b>{committeeByAction[a.ACTION_ID]?.verdict?.VERDICT_JSON?.joint_decision?.position_size_factor ?? '—'}</b>
+                          {' '}| target <b>{committeeByAction[a.ACTION_ID]?.verdict?.VERDICT_JSON?.joint_decision?.realistic_target_return ?? '—'}</b>
+                          {' '}| hold bars <b>{committeeByAction[a.ACTION_ID]?.verdict?.VERDICT_JSON?.joint_decision?.hold_bars ?? '—'}</b>
+                          {' '}| early-exit target <b>{committeeByAction[a.ACTION_ID]?.verdict?.VERDICT_JSON?.joint_decision?.acceptable_early_exit_target_return ?? '—'}</b>
+                        </div>
+                        <div className="lt-summary">
                           Revalidation outcome: <b>{a.REVALIDATION_OUTCOME || '—'}</b>
                           {' '}| policy: <b>{a.REVALIDATION_POLICY_VERSION || '—'}</b>
                           {' '}| data source: <b>{a.REVALIDATION_DATA_SOURCE || '—'}</b>
@@ -664,6 +752,16 @@ export default function LiveTrades() {
                             <b>{r.ROLE_NAME}</b>: {r.STANCE || '—'} | conf {r.CONFIDENCE ?? '—'} | {r.SUMMARY || '—'}
                           </div>
                         ))}
+                        {livePromptActionId === a.ACTION_ID ? (
+                          <div className="lt-summary">
+                            <b>Live {livePromptStage} prompt:</b> {livePromptStatus || '—'}
+                            {(livePromptLogs || []).map((x, idx) => (
+                              <div key={`${a.ACTION_ID}_lp_${idx}`}>
+                                {x.round ? `[R${x.round}] ` : ''}{x.role || x.type || 'event'}: {x.output?.summary || x.summary || JSON.stringify(x.joint_decision || x.verdict || x)}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                       </>
                     )}
                   </td>

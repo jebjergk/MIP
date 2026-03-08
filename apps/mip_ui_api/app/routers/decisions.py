@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.db import get_connection, fetch_all, serialize_rows
@@ -128,6 +128,22 @@ def _flt(v):
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_variant_json(v):
+    if v is None:
+        return None
+    if isinstance(v, (dict, list)):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            return json.loads(s)
+        except Exception:
+            return None
+    return None
 
 
 # ── REST endpoints ───────────────────────────────────────────────────
@@ -819,3 +835,152 @@ async def stream_events(
 
 def _sse_msg(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+# ── Simulation Agent Decisions ───────────────────────────────────────
+
+@router.get("/sim-agent-decisions")
+def get_sim_agent_decisions(
+    portfolio_id: Optional[int] = Query(None),
+    run_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        wheres = ["RATIONALE:sim_committee is not null"]
+        params = []
+        if portfolio_id is not None:
+            wheres.append("PORTFOLIO_ID = %s")
+            params.append(portfolio_id)
+        if run_id:
+            wheres.append("RUN_ID_VARCHAR = %s")
+            params.append(run_id)
+        if status:
+            wheres.append("STATUS = %s")
+            params.append(status.upper())
+        params.append(limit)
+        cur.execute(
+            f"""
+            select
+              PROPOSAL_ID,
+              PORTFOLIO_ID,
+              RUN_ID_VARCHAR,
+              SYMBOL,
+              MARKET_TYPE,
+              SIDE,
+              TARGET_WEIGHT,
+              STATUS,
+              PROPOSED_AT,
+              APPROVED_AT,
+              EXECUTED_AT,
+              VALIDATION_ERRORS,
+              SOURCE_SIGNALS,
+              RATIONALE
+            from MIP.AGENT_OUT.ORDER_PROPOSALS
+            where {' and '.join(wheres)}
+            order by PROPOSED_AT desc
+            limit %s
+            """,
+            tuple(params),
+        )
+        rows = fetch_all(cur)
+        out = []
+        for r in rows:
+            rationale = _parse_variant_json(r.get("RATIONALE")) or {}
+            sim = rationale.get("sim_committee") if isinstance(rationale, dict) else {}
+            out.append(
+                {
+                    "proposal_id": r.get("PROPOSAL_ID"),
+                    "portfolio_id": r.get("PORTFOLIO_ID"),
+                    "run_id": r.get("RUN_ID_VARCHAR"),
+                    "symbol": r.get("SYMBOL"),
+                    "market_type": r.get("MARKET_TYPE"),
+                    "side": r.get("SIDE"),
+                    "status": r.get("STATUS"),
+                    "target_weight": _flt(r.get("TARGET_WEIGHT")),
+                    "proposed_at": _iso(r.get("PROPOSED_AT")),
+                    "approved_at": _iso(r.get("APPROVED_AT")),
+                    "executed_at": _iso(r.get("EXECUTED_AT")),
+                    "validation_errors": _parse_variant_json(r.get("VALIDATION_ERRORS")),
+                    "joint_decision": {
+                        "should_enter": sim.get("should_enter"),
+                        "size_factor": _flt(sim.get("size_factor")),
+                        "target_return": _flt(sim.get("target_return")),
+                        "hold_bars": sim.get("hold_bars"),
+                        "early_exit_target_return": _flt(sim.get("early_exit_target_return")),
+                    },
+                    "summary": sim.get("summary"),
+                    "reason_codes": sim.get("reason_codes") if isinstance(sim.get("reason_codes"), list) else [],
+                    "has_dialogue": isinstance(sim.get("agent_dialogue"), list) and len(sim.get("agent_dialogue")) > 0,
+                }
+            )
+        return {"count": len(out), "decisions": out}
+    finally:
+        conn.close()
+
+
+@router.get("/sim-agent-decisions/{proposal_id}")
+def get_sim_agent_decision_detail(proposal_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              PROPOSAL_ID,
+              PORTFOLIO_ID,
+              RUN_ID_VARCHAR,
+              SYMBOL,
+              MARKET_TYPE,
+              SIDE,
+              TARGET_WEIGHT,
+              STATUS,
+              PROPOSED_AT,
+              APPROVED_AT,
+              EXECUTED_AT,
+              VALIDATION_ERRORS,
+              SOURCE_SIGNALS,
+              RATIONALE
+            from MIP.AGENT_OUT.ORDER_PROPOSALS
+            where PROPOSAL_ID = %s
+            limit 1
+            """,
+            (proposal_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Simulation decision not found.")
+        r = rows[0]
+        rationale = _parse_variant_json(r.get("RATIONALE")) or {}
+        source_signals = _parse_variant_json(r.get("SOURCE_SIGNALS")) or {}
+        sim = rationale.get("sim_committee") if isinstance(rationale, dict) else {}
+        return {
+            "proposal_id": r.get("PROPOSAL_ID"),
+            "portfolio_id": r.get("PORTFOLIO_ID"),
+            "run_id": r.get("RUN_ID_VARCHAR"),
+            "symbol": r.get("SYMBOL"),
+            "market_type": r.get("MARKET_TYPE"),
+            "side": r.get("SIDE"),
+            "status": r.get("STATUS"),
+            "target_weight": _flt(r.get("TARGET_WEIGHT")),
+            "proposed_at": _iso(r.get("PROPOSED_AT")),
+            "approved_at": _iso(r.get("APPROVED_AT")),
+            "executed_at": _iso(r.get("EXECUTED_AT")),
+            "validation_errors": _parse_variant_json(r.get("VALIDATION_ERRORS")),
+            "source_signals": source_signals,
+            "joint_decision": {
+                "should_enter": sim.get("should_enter"),
+                "size_factor": _flt(sim.get("size_factor")),
+                "target_return": _flt(sim.get("target_return")),
+                "hold_bars": sim.get("hold_bars"),
+                "early_exit_target_return": _flt(sim.get("early_exit_target_return")),
+            },
+            "summary": sim.get("summary"),
+            "reason_codes": sim.get("reason_codes") if isinstance(sim.get("reason_codes"), list) else [],
+            "agent_dialogue": sim.get("agent_dialogue") if isinstance(sim.get("agent_dialogue"), list) else [],
+            "raw_sim_committee": sim if isinstance(sim, dict) else {},
+        }
+    finally:
+        conn.close()

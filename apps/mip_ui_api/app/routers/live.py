@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, HTTPException, Body
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_snowflake_config
@@ -1360,17 +1361,26 @@ def _committee_fallback(role: str) -> dict:
     }
 
 
-def _committee_prompt(role: str, context: dict) -> str:
+def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages: list[dict] | None = None) -> str:
+    prior_messages = prior_messages or []
     return (
-        "You are one role in an institutional trade committee.\n"
+        "You are one role in an institutional multi-agent trade committee.\n"
         "Return ONLY a JSON object with keys:\n"
         "{\"stance\":\"SUPPORT|CONDITIONAL|BLOCK\",\"confidence\":0.0-1.0,"
-        "\"summary\":\"...\",\"size_factor\":0.0-1.0,\"reasons\":[\"...\"],\"assumptions\":[\"...\"]}\n"
+        "\"summary\":\"...\",\"size_factor\":0.0-1.0,"
+        "\"should_enter\":true|false,"
+        "\"target_return\":number,"
+        "\"hold_bars\":integer,"
+        "\"early_exit_target_return\":number,"
+        "\"reasons\":[\"...\"],\"assumptions\":[\"...\"]}\n"
         "Rules:\n"
         "- Be strict and risk-aware.\n"
         "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
+        "- Contribute to joint decision dimensions: enter/size/target/hold/early-exit.\n"
         "- Do not include markdown.\n"
+        f"Round: {round_n}\n"
         f"Role: {role}\n"
+        f"Prior agent messages JSON: {json.dumps(prior_messages)}\n"
         f"Context JSON: {json.dumps(context)}\n"
     )
 
@@ -1389,12 +1399,31 @@ def _normalize_role_output(role: str, out: dict) -> dict:
     except Exception:
         size_factor = 1.0
     size_factor = max(0.0, min(1.0, size_factor))
+    should_enter = bool(out.get("should_enter", stance != "BLOCK"))
+    try:
+        target_return = float(out.get("target_return")) if out.get("target_return") is not None else None
+    except Exception:
+        target_return = None
+    try:
+        hold_bars = int(out.get("hold_bars")) if out.get("hold_bars") is not None else None
+    except Exception:
+        hold_bars = None
+    try:
+        early_exit_target_return = (
+            float(out.get("early_exit_target_return")) if out.get("early_exit_target_return") is not None else None
+        )
+    except Exception:
+        early_exit_target_return = None
     return {
         "role": role,
         "stance": stance,
         "confidence": confidence,
         "summary": str(out.get("summary", ""))[:4000],
         "size_factor": size_factor,
+        "should_enter": should_enter,
+        "target_return": target_return,
+        "hold_bars": hold_bars,
+        "early_exit_target_return": early_exit_target_return,
         "reasons": out.get("reasons") if isinstance(out.get("reasons"), list) else [],
         "assumptions": out.get("assumptions") if isinstance(out.get("assumptions"), list) else [],
     }
@@ -1411,15 +1440,155 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
         recommendation = "PROCEED"
     size_factor = min(size_factors) if size_factors else 1.0
     size_factor = max(0.0, min(1.0, size_factor))
+    should_enter_votes = [bool(o.get("should_enter")) for o in outputs]
+    should_enter = bool(sum(1 for v in should_enter_votes if v) >= max(1, (len(should_enter_votes) + 1) // 2))
+    target_returns = [float(o["target_return"]) for o in outputs if o.get("target_return") is not None]
+    hold_bars_vals = [int(o["hold_bars"]) for o in outputs if o.get("hold_bars") is not None]
+    early_exit_targets = [float(o["early_exit_target_return"]) for o in outputs if o.get("early_exit_target_return") is not None]
     confidence = 0.0
     if outputs:
         confidence = sum(float(o.get("confidence", 0.0)) for o in outputs) / len(outputs)
+    target_return = (sum(target_returns) / len(target_returns)) if target_returns else None
+    hold_bars = int(round(sum(hold_bars_vals) / len(hold_bars_vals))) if hold_bars_vals else None
+    early_exit_target_return = (sum(early_exit_targets) / len(early_exit_targets)) if early_exit_targets else None
     return {
         "recommendation": recommendation,
         "size_factor": size_factor,
         "confidence": round(confidence, 4),
         "blocked": recommendation == "BLOCK",
+        "joint_decision": {
+            "should_enter": should_enter and recommendation != "BLOCK",
+            "position_size_factor": round(size_factor, 4),
+            "realistic_target_return": target_return,
+            "hold_bars": hold_bars,
+            "acceptable_early_exit_target_return": early_exit_target_return,
+        },
     }
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _run_multiagent_dialogue(
+    cur,
+    *,
+    model: str,
+    context: dict,
+    persist_run_id: str | None = None,
+    emit=None,
+) -> tuple[list[dict], dict]:
+    """Run two dialogue rounds across committee roles."""
+    round1: list[dict] = []
+    prior_messages: list[dict] = []
+    for role in COMMITTEE_ROLES:
+        try:
+            role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=1, prior_messages=[]))
+        except Exception:
+            role_out_raw = _committee_fallback(role)
+        role_out = _normalize_role_output(role, role_out_raw)
+        round1.append(role_out)
+        prior_messages.append({"role": role, "summary": role_out.get("summary"), "stance": role_out.get("stance")})
+        if emit:
+            emit("agent_turn", {"round": 1, "role": role, "output": role_out})
+        if persist_run_id:
+            cur.execute(
+                """
+                insert into MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
+                  RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+                )
+                values (%s, %s, %s, %s, %s, parse_json(%s), current_timestamp())
+                """,
+                (
+                    persist_run_id,
+                    f"R1_{role}",
+                    role_out["stance"],
+                    role_out["confidence"],
+                    role_out["summary"],
+                    json.dumps(role_out),
+                ),
+            )
+
+    round2: list[dict] = []
+    for role in COMMITTEE_ROLES:
+        try:
+            role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=2, prior_messages=prior_messages))
+        except Exception:
+            role_out_raw = _committee_fallback(role)
+        role_out = _normalize_role_output(role, role_out_raw)
+        round2.append(role_out)
+        if emit:
+            emit("agent_turn", {"round": 2, "role": role, "output": role_out})
+        if persist_run_id:
+            cur.execute(
+                """
+                insert into MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
+                  RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+                )
+                values (%s, %s, %s, %s, %s, parse_json(%s), current_timestamp())
+                """,
+                (
+                    persist_run_id,
+                    role,
+                    role_out["stance"],
+                    role_out["confidence"],
+                    role_out["summary"],
+                    json.dumps(role_out),
+                ),
+            )
+
+    final_outputs = round2 if round2 else round1
+    verdict = _aggregate_committee(final_outputs)
+    if emit:
+        emit("joint_decision", {"verdict": verdict})
+    return final_outputs, verdict
+
+
+def _build_action_decision_context(cur, action: dict) -> dict:
+    symbol = action.get("SYMBOL")
+    latest_bar = None
+    if symbol:
+        cur.execute(
+            """
+            select TS, CLOSE
+            from MIP.MART.MARKET_BARS
+            where SYMBOL = %s and INTERVAL_MINUTES = 1
+            order by TS desc
+            limit 1
+            """,
+            (symbol,),
+        )
+        latest_bar = cur.fetchone()
+    pw_evidence = _fetch_committee_pw_evidence(cur, action.get("ACTION_ID"), action.get("PORTFOLIO_ID"))
+    action_training_snapshot = _parse_variant(action.get("TRAINING_QUALIFICATION_SNAPSHOT"))
+    if not action_training_snapshot:
+        action_training_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("training_qualification")
+    action_target_snapshot = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
+    if not action_target_snapshot:
+        action_target_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("target_expectation")
+    action_news_snapshot = _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT"))
+    if not action_news_snapshot:
+        action_news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
+    latest_news_snapshot = _fetch_latest_symbol_news_context(cur, symbol, action.get("ASSET_CLASS"))
+    context = {
+        "action_id": action.get("ACTION_ID"),
+        "portfolio_id": action.get("PORTFOLIO_ID"),
+        "symbol": symbol,
+        "side": action.get("SIDE"),
+        "proposed_qty": action.get("PROPOSED_QTY"),
+        "proposed_price": action.get("PROPOSED_PRICE"),
+        "status": action.get("STATUS"),
+        "latest_one_minute_bar": {
+            "ts": latest_bar[0].isoformat() if latest_bar and hasattr(latest_bar[0], "isoformat") else (latest_bar[0] if latest_bar else None),
+            "close": float(latest_bar[1]) if latest_bar and latest_bar[1] is not None else None,
+        },
+        "training_qualification_snapshot": action_training_snapshot,
+        "target_expectation_snapshot": action_target_snapshot,
+        "news_context_snapshot": action_news_snapshot,
+        "latest_symbol_news_context": latest_news_snapshot,
+        "parallel_worlds_evidence": pw_evidence,
+    }
+    return context
 
 
 @router.post("/snapshot/refresh")
@@ -2170,76 +2339,20 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             ),
         )
 
-        symbol = action.get("SYMBOL")
-        latest_bar = None
-        if symbol:
-            cur.execute(
-                """
-                select TS, CLOSE
-                from MIP.MART.MARKET_BARS
-                where SYMBOL = %s and INTERVAL_MINUTES = 1
-                order by TS desc
-                limit 1
-                """,
-                (symbol,),
-            )
-            latest_bar = cur.fetchone()
-        pw_evidence = _fetch_committee_pw_evidence(cur, action_id, action.get("PORTFOLIO_ID"))
-        action_training_snapshot = _parse_variant(action.get("TRAINING_QUALIFICATION_SNAPSHOT"))
-        if not action_training_snapshot:
-            action_training_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("training_qualification")
-        action_target_snapshot = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
-        if not action_target_snapshot:
-            action_target_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("target_expectation")
-        action_news_snapshot = _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT"))
-        if not action_news_snapshot:
-            action_news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
-        latest_news_snapshot = _fetch_latest_symbol_news_context(cur, symbol, action.get("ASSET_CLASS"))
-        context = {
-            "action_id": action.get("ACTION_ID"),
-            "portfolio_id": action.get("PORTFOLIO_ID"),
-            "symbol": symbol,
-            "side": action.get("SIDE"),
-            "proposed_qty": action.get("PROPOSED_QTY"),
-            "proposed_price": action.get("PROPOSED_PRICE"),
-            "status": action.get("STATUS"),
-            "latest_one_minute_bar": {
-                "ts": latest_bar[0].isoformat() if latest_bar and hasattr(latest_bar[0], "isoformat") else (latest_bar[0] if latest_bar else None),
-                "close": float(latest_bar[1]) if latest_bar and latest_bar[1] is not None else None,
-            },
-            "training_qualification_snapshot": action_training_snapshot,
-            "target_expectation_snapshot": action_target_snapshot,
-            "news_context_snapshot": action_news_snapshot,
-            "latest_symbol_news_context": latest_news_snapshot,
-            "parallel_worlds_evidence": pw_evidence,
-        }
+        context = _build_action_decision_context(cur, action)
+        action_training_snapshot = context.get("training_qualification_snapshot") or {}
+        action_target_snapshot = context.get("target_expectation_snapshot") or {}
+        action_news_snapshot = context.get("news_context_snapshot") or {}
+        latest_news_snapshot = context.get("latest_symbol_news_context") or {}
+        pw_evidence = context.get("parallel_worlds_evidence")
 
-        outputs: list[dict] = []
-        for role in COMMITTEE_ROLES:
-            try:
-                role_out_raw = _call_cortex_json(cur, req.model, _committee_prompt(role, context))
-            except Exception:
-                role_out_raw = _committee_fallback(role)
-            role_out = _normalize_role_output(role, role_out_raw)
-            outputs.append(role_out)
-            cur.execute(
-                """
-                insert into MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
-                  RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
-                )
-                values (%s, %s, %s, %s, %s, parse_json(%s), current_timestamp())
-                """,
-                (
-                    run_id,
-                    role,
-                    role_out["stance"],
-                    role_out["confidence"],
-                    role_out["summary"],
-                    json.dumps(role_out),
-                ),
-            )
-
-        verdict = _aggregate_committee(outputs)
+        outputs, verdict = _run_multiagent_dialogue(
+            cur,
+            model=req.model,
+            context=context,
+            persist_run_id=run_id,
+            emit=None,
+        )
         reason_codes = []
         if verdict["blocked"]:
             reason_codes.append("COMMITTEE_BLOCKED")
@@ -2262,7 +2375,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 verdict["confidence"],
                 verdict["blocked"],
                 json.dumps(reason_codes),
-                json.dumps({"verdict": verdict, "outputs": outputs}),
+                json.dumps({"verdict": verdict, "outputs": outputs, "joint_decision": verdict.get("joint_decision")}),
             ),
         )
         cur.execute(
@@ -2274,7 +2387,14 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
              where RUN_ID = %s
             """,
             (
-                json.dumps({"actor": req.actor, "role_count": len(outputs), "recommendation": verdict["recommendation"]}),
+                json.dumps(
+                    {
+                        "actor": req.actor,
+                        "role_count": len(outputs),
+                        "recommendation": verdict["recommendation"],
+                        "joint_decision": verdict.get("joint_decision"),
+                    }
+                ),
                 run_id,
             ),
         )
@@ -2319,6 +2439,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "news_context_snapshot": action_news_snapshot,
                 "latest_symbol_news_context": latest_news_snapshot,
                 "parallel_worlds_evidence": pw_evidence,
+                "joint_decision": verdict.get("joint_decision"),
             },
         )
         return {
@@ -2327,9 +2448,101 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             "run_id": run_id,
             "status": "COMPLETED",
             "verdict": verdict,
+            "joint_decision": verdict.get("joint_decision"),
         }
     finally:
         conn.close()
+
+
+@router.get("/trades/actions/{action_id}/committee/live-prompt")
+def stream_live_trade_committee_prompt(
+    action_id: str,
+    actor: str = Query(default="committee_orchestrator"),
+    model: str = Query(default="mistral-large2"),
+):
+    def event_stream():
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            action = _fetch_live_action(cur, action_id)
+            if not action:
+                yield _sse_event("error", {"message": "Action not found."})
+                return
+            context = _build_action_decision_context(cur, action)
+            yield _sse_event("start", {"action_id": action_id, "actor": actor, "model": model})
+            event_log: list[tuple[str, dict]] = []
+
+            def cb(ev_name: str, payload: dict):
+                event_log.append((ev_name, {"action_id": action_id, **payload}))
+
+            outputs, verdict = _run_multiagent_dialogue(
+                cur,
+                model=model,
+                context=context,
+                persist_run_id=None,
+                emit=cb,
+            )
+            for ev_name, payload in event_log:
+                yield _sse_event(ev_name, payload)
+            for out in outputs:
+                yield _sse_event(
+                    "role_summary",
+                    {
+                        "action_id": action_id,
+                        "role": out.get("role"),
+                        "stance": out.get("stance"),
+                        "confidence": out.get("confidence"),
+                        "summary": out.get("summary"),
+                    },
+                )
+            yield _sse_event("final", {"action_id": action_id, "joint_decision": verdict.get("joint_decision"), "verdict": verdict})
+        except Exception as exc:
+            yield _sse_event("error", {"action_id": action_id, "message": str(exc)})
+        finally:
+            conn.close()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/trades/actions/{action_id}/revalidate/live-prompt")
+def stream_revalidate_prompt(
+    action_id: str,
+    model: str = Query(default="mistral-large2"),
+):
+    def event_stream():
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            action = _fetch_live_action(cur, action_id)
+            if not action:
+                yield _sse_event("error", {"message": "Action not found."})
+                return
+            context = _build_action_decision_context(cur, action)
+            context["stage"] = "REVALIDATION_PREVIEW"
+            context["revalidation"] = {
+                "last_outcome": action.get("REVALIDATION_OUTCOME"),
+                "last_ts": str(action.get("REVALIDATION_TS")) if action.get("REVALIDATION_TS") is not None else None,
+            }
+            yield _sse_event("start", {"action_id": action_id, "stage": "revalidation", "model": model})
+            outputs, verdict = _run_multiagent_dialogue(cur, model=model, context=context, persist_run_id=None, emit=None)
+            for out in outputs:
+                yield _sse_event(
+                    "agent_turn",
+                    {
+                        "action_id": action_id,
+                        "role": out.get("role"),
+                        "stance": out.get("stance"),
+                        "confidence": out.get("confidence"),
+                        "summary": out.get("summary"),
+                    },
+                )
+            yield _sse_event("final", {"action_id": action_id, "joint_decision": verdict.get("joint_decision"), "verdict": verdict})
+        except Exception as exc:
+            yield _sse_event("error", {"action_id": action_id, "message": str(exc)})
+        finally:
+            conn.close()
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/trades/actions/{action_id}/pm-accept")

@@ -67,6 +67,13 @@ class UpdateLiveOrderStatusRequest(BaseModel):
     notes: str | None = None
 
 
+class SimulatePaperWorkflowRequest(BaseModel):
+    live_portfolio_id: int
+    run_id: str | None = None
+    limit: int = Field(default=50, ge=1, le=500)
+    scenario: str = Field(default="PARTIAL_THEN_FILL", pattern="^(PARTIAL_THEN_FILL|CANCEL|REJECT)$")
+
+
 _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
     "PROPOSED": {"PM_ACCEPTED"},
@@ -1700,6 +1707,123 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
         }
     finally:
         conn.close()
+
+
+@router.post("/trades/smoke/paper-workflow")
+def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
+    """
+    One-click paper workflow simulation:
+    import -> PM accept -> compliance approve -> revalidate -> execute -> order status progression.
+    """
+    steps: list[dict] = []
+
+    import_result = import_live_actions_from_proposals(
+        ImportLiveActionsFromProposalsRequest(
+            live_portfolio_id=req.live_portfolio_id,
+            run_id=req.run_id,
+            limit=req.limit,
+        )
+    )
+    steps.append({"step": "import_proposals", "result": import_result})
+
+    action_id = None
+    imported_action_ids = import_result.get("imported_action_ids") or []
+    if imported_action_ids:
+        action_id = imported_action_ids[0]
+    else:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                select ACTION_ID
+                from MIP.LIVE.LIVE_ACTIONS
+                where PORTFOLIO_ID = %s
+                  and STATUS in ('RESEARCH_IMPORTED', 'PROPOSED')
+                order by CREATED_AT desc
+                limit 1
+                """,
+                (req.live_portfolio_id,),
+            )
+            rows = fetch_all(cur)
+            action_id = rows[0].get("ACTION_ID") if rows else None
+        finally:
+            conn.close()
+    if not action_id:
+        raise HTTPException(
+            status_code=409,
+            detail="No importable or pending action found for workflow smoke.",
+        )
+
+    pm_result = pm_accept_live_action(action_id, PmAcceptRequest(actor="smoke_pm"))
+    steps.append({"step": "pm_accept", "result": pm_result})
+
+    compliance_result = compliance_decide_live_action(
+        action_id,
+        ComplianceDecisionRequest(actor="smoke_compliance", decision="APPROVE"),
+    )
+    steps.append({"step": "compliance_approve", "result": compliance_result})
+
+    revalidate_result = revalidate_live_action(action_id)
+    steps.append({"step": "revalidate", "result": revalidate_result})
+
+    execute_result = execute_live_action(
+        action_id,
+        ExecuteLiveActionRequest(actor="smoke_execution", attempt_n=1),
+    )
+    steps.append({"step": "execute", "result": execute_result})
+
+    order_id = execute_result.get("order_id")
+    if order_id:
+        if req.scenario == "PARTIAL_THEN_FILL":
+            partial_result = update_live_order_status(
+                order_id,
+                UpdateLiveOrderStatusRequest(
+                    actor="smoke_broker",
+                    status="PARTIAL_FILL",
+                    qty_filled=1,
+                    notes="smoke partial fill",
+                ),
+            )
+            steps.append({"step": "order_partial_fill", "result": partial_result})
+            filled_result = update_live_order_status(
+                order_id,
+                UpdateLiveOrderStatusRequest(
+                    actor="smoke_broker",
+                    status="FILLED",
+                    notes="smoke fill",
+                ),
+            )
+            steps.append({"step": "order_filled", "result": filled_result})
+        elif req.scenario == "CANCEL":
+            canceled_result = update_live_order_status(
+                order_id,
+                UpdateLiveOrderStatusRequest(
+                    actor="smoke_broker",
+                    status="CANCELED",
+                    notes="smoke cancel",
+                ),
+            )
+            steps.append({"step": "order_canceled", "result": canceled_result})
+        elif req.scenario == "REJECT":
+            rejected_result = update_live_order_status(
+                order_id,
+                UpdateLiveOrderStatusRequest(
+                    actor="smoke_broker",
+                    status="REJECTED",
+                    notes="smoke reject",
+                ),
+            )
+            steps.append({"step": "order_rejected", "result": rejected_result})
+
+    return {
+        "ok": True,
+        "scenario": req.scenario,
+        "live_portfolio_id": req.live_portfolio_id,
+        "action_id": action_id,
+        "order_id": order_id,
+        "steps": steps,
+    }
 
 
 @router.get("/portfolio-config")

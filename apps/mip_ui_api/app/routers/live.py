@@ -63,6 +63,12 @@ class RevalidateLiveActionRequest(BaseModel):
     force_refresh_1m: bool = False
 
 
+class CommitteeRunRequest(BaseModel):
+    actor: str = "committee_orchestrator"
+    model: str = "mistral-large2"
+    force_rerun: bool = False
+
+
 class IntentSubmitRequest(BaseModel):
     actor: str
     reference_id: str | None = None
@@ -127,6 +133,14 @@ _ALLOWED_TRANSITIONS = {
 LIVE_POLICY_VERSION = "phase2_session_realism_v1"
 EXECUTION_CLICK_MAX_REVALIDATION_SEC = 300
 LIVE_ACTIVATION_POLICY_VERSION = "phase7_controlled_live_v1"
+COMMITTEE_ROLES = [
+    "PROPOSER",
+    "TRADER_EXECUTION_REVIEWER",
+    "RISK_MANAGER",
+    "CHALLENGER",
+    "PORTFOLIO_MANAGER",
+    "POST_TRADE_REVIEWER",
+]
 
 
 def _fetch_live_action(cur, action_id: str) -> dict | None:
@@ -138,6 +152,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
           PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
+          COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
@@ -761,6 +776,113 @@ def _force_refresh_latest_one_minute_bars(cur) -> dict:
         return {"attempted": True, "status": "SUCCESS", "payload": payload}
     except Exception as exc:
         return {"attempted": True, "status": "FAIL", "error": str(exc)}
+
+
+def _extract_cortex_text(raw) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, dict):
+        choices = raw.get("choices", [])
+        if choices:
+            msg = choices[0].get("messages", "") or choices[0].get("message", "")
+            if isinstance(msg, dict):
+                return str(msg.get("content", "") or "")
+            return str(msg or "")
+        return json.dumps(raw)
+    if isinstance(raw, str):
+        return raw
+    return str(raw)
+
+
+def _call_cortex_json(cur, model: str, prompt: str) -> dict:
+    cur.execute("select snowflake.cortex.complete(%s, %s) as response", (model, prompt))
+    row = cur.fetchone()
+    raw = row[0] if row else None
+    text = _extract_cortex_text(raw).strip()
+    if text.startswith("```json"):
+        text = text[7:].strip()
+    elif text.startswith("```"):
+        text = text[3:].strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+    parsed = json.loads(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("Cortex response was not a JSON object.")
+    return parsed
+
+
+def _committee_fallback(role: str) -> dict:
+    return {
+        "role": role,
+        "stance": "CONDITIONAL",
+        "confidence": 0.45,
+        "summary": "Fallback committee output due to model/unparseable response.",
+        "size_factor": 0.5,
+        "reasons": ["MODEL_FALLBACK"],
+        "assumptions": ["Use deterministic risk gates before execution."],
+    }
+
+
+def _committee_prompt(role: str, context: dict) -> str:
+    return (
+        "You are one role in an institutional trade committee.\n"
+        "Return ONLY a JSON object with keys:\n"
+        "{\"stance\":\"SUPPORT|CONDITIONAL|BLOCK\",\"confidence\":0.0-1.0,"
+        "\"summary\":\"...\",\"size_factor\":0.0-1.0,\"reasons\":[\"...\"],\"assumptions\":[\"...\"]}\n"
+        "Rules:\n"
+        "- Be strict and risk-aware.\n"
+        "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
+        "- Do not include markdown.\n"
+        f"Role: {role}\n"
+        f"Context JSON: {json.dumps(context)}\n"
+    )
+
+
+def _normalize_role_output(role: str, out: dict) -> dict:
+    stance = str(out.get("stance", "CONDITIONAL")).upper()
+    if stance not in ("SUPPORT", "CONDITIONAL", "BLOCK"):
+        stance = "CONDITIONAL"
+    try:
+        confidence = float(out.get("confidence", 0.5))
+    except Exception:
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+    try:
+        size_factor = float(out.get("size_factor", 1.0))
+    except Exception:
+        size_factor = 1.0
+    size_factor = max(0.0, min(1.0, size_factor))
+    return {
+        "role": role,
+        "stance": stance,
+        "confidence": confidence,
+        "summary": str(out.get("summary", ""))[:4000],
+        "size_factor": size_factor,
+        "reasons": out.get("reasons") if isinstance(out.get("reasons"), list) else [],
+        "assumptions": out.get("assumptions") if isinstance(out.get("assumptions"), list) else [],
+    }
+
+
+def _aggregate_committee(outputs: list[dict]) -> dict:
+    stances = [o.get("stance", "CONDITIONAL") for o in outputs]
+    size_factors = [float(o.get("size_factor", 1.0)) for o in outputs if o.get("size_factor") is not None]
+    if any(s == "BLOCK" for s in stances):
+        recommendation = "BLOCK"
+    elif any(s == "CONDITIONAL" for s in stances):
+        recommendation = "PROCEED_REDUCED"
+    else:
+        recommendation = "PROCEED"
+    size_factor = min(size_factors) if size_factors else 1.0
+    size_factor = max(0.0, min(1.0, size_factor))
+    confidence = 0.0
+    if outputs:
+        confidence = sum(float(o.get("confidence", 0.0)) for o in outputs) / len(outputs)
+    return {
+        "recommendation": recommendation,
+        "size_factor": size_factor,
+        "confidence": round(confidence, 4),
+        "blocked": recommendation == "BLOCK",
+    }
 
 
 @router.post("/snapshot/refresh")
@@ -1394,6 +1516,7 @@ def list_live_trade_actions(
         select
           ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
           STATUS, VALIDITY_WINDOW_END,
+          COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
@@ -1414,6 +1537,234 @@ def list_live_trade_actions(
         conn.close()
 
 
+@router.get("/trades/actions/{action_id}/committee")
+def get_live_trade_committee(action_id: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select RUN_ID, ACTION_ID, PORTFOLIO_ID, STATUS, MODEL_NAME, STARTED_AT, COMPLETED_AT, DETAILS
+            from MIP.LIVE.COMMITTEE_RUN
+            where ACTION_ID = %s
+            order by STARTED_AT desc
+            limit 1
+            """,
+            (action_id,),
+        )
+        runs = fetch_all(cur)
+        if not runs:
+            return {"ok": True, "run": None, "role_outputs": [], "verdict": None}
+        run = runs[0]
+        run_id = run.get("RUN_ID")
+        cur.execute(
+            """
+            select ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+            from MIP.LIVE.COMMITTEE_ROLE_OUTPUT
+            where RUN_ID = %s
+            order by ROLE_NAME
+            """,
+            (run_id,),
+        )
+        role_outputs = fetch_all(cur)
+        cur.execute(
+            """
+            select RECOMMENDATION, SIZE_FACTOR, CONFIDENCE, IS_BLOCKED, REASON_CODES, VERDICT_JSON, CREATED_AT
+            from MIP.LIVE.COMMITTEE_VERDICT
+            where RUN_ID = %s
+            limit 1
+            """,
+            (run_id,),
+        )
+        verdict_rows = fetch_all(cur)
+        return {
+            "ok": True,
+            "run": serialize_row(run),
+            "role_outputs": serialize_rows(role_outputs),
+            "verdict": serialize_row(verdict_rows[0]) if verdict_rows else None,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/committee/run")
+def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+
+        if not req.force_rerun:
+            cur.execute(
+                """
+                select RUN_ID, STATUS
+                from MIP.LIVE.COMMITTEE_RUN
+                where ACTION_ID = %s
+                order by STARTED_AT desc
+                limit 1
+                """,
+                (action_id,),
+            )
+            existing = fetch_all(cur)
+            if existing and (existing[0].get("STATUS") or "").upper() == "COMPLETED":
+                return {"ok": True, "action_id": action_id, "run_id": existing[0].get("RUN_ID"), "status": "COMPLETED", "idempotent_replay": True}
+
+        run_id = str(uuid.uuid4())
+        cur.execute(
+            """
+            insert into MIP.LIVE.COMMITTEE_RUN (
+              RUN_ID, ACTION_ID, PORTFOLIO_ID, STATUS, MODEL_NAME, STARTED_AT, DETAILS
+            )
+            values (%s, %s, %s, 'RUNNING', %s, current_timestamp(), parse_json(%s))
+            """,
+            (
+                run_id,
+                action_id,
+                action.get("PORTFOLIO_ID"),
+                req.model,
+                json.dumps({"actor": req.actor}),
+            ),
+        )
+
+        symbol = action.get("SYMBOL")
+        latest_bar = None
+        if symbol:
+            cur.execute(
+                """
+                select TS, CLOSE
+                from MIP.MART.MARKET_BARS
+                where SYMBOL = %s and INTERVAL_MINUTES = 1
+                order by TS desc
+                limit 1
+                """,
+                (symbol,),
+            )
+            latest_bar = cur.fetchone()
+        context = {
+            "action_id": action.get("ACTION_ID"),
+            "portfolio_id": action.get("PORTFOLIO_ID"),
+            "symbol": symbol,
+            "side": action.get("SIDE"),
+            "proposed_qty": action.get("PROPOSED_QTY"),
+            "proposed_price": action.get("PROPOSED_PRICE"),
+            "status": action.get("STATUS"),
+            "latest_one_minute_bar": {
+                "ts": latest_bar[0].isoformat() if latest_bar and hasattr(latest_bar[0], "isoformat") else (latest_bar[0] if latest_bar else None),
+                "close": float(latest_bar[1]) if latest_bar and latest_bar[1] is not None else None,
+            },
+        }
+
+        outputs: list[dict] = []
+        for role in COMMITTEE_ROLES:
+            try:
+                role_out_raw = _call_cortex_json(cur, req.model, _committee_prompt(role, context))
+            except Exception:
+                role_out_raw = _committee_fallback(role)
+            role_out = _normalize_role_output(role, role_out_raw)
+            outputs.append(role_out)
+            cur.execute(
+                """
+                insert into MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
+                  RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+                )
+                values (%s, %s, %s, %s, %s, parse_json(%s), current_timestamp())
+                """,
+                (
+                    run_id,
+                    role,
+                    role_out["stance"],
+                    role_out["confidence"],
+                    role_out["summary"],
+                    json.dumps(role_out),
+                ),
+            )
+
+        verdict = _aggregate_committee(outputs)
+        reason_codes = []
+        if verdict["blocked"]:
+            reason_codes.append("COMMITTEE_BLOCKED")
+        elif verdict["recommendation"] == "PROCEED_REDUCED":
+            reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        cur.execute(
+            """
+            insert into MIP.LIVE.COMMITTEE_VERDICT (
+              RUN_ID, ACTION_ID, PORTFOLIO_ID, RECOMMENDATION, SIZE_FACTOR, CONFIDENCE, IS_BLOCKED,
+              REASON_CODES, VERDICT_JSON, CREATED_AT
+            )
+            values (%s, %s, %s, %s, %s, %s, %s, parse_json(%s), parse_json(%s), current_timestamp())
+            """,
+            (
+                run_id,
+                action_id,
+                action.get("PORTFOLIO_ID"),
+                verdict["recommendation"],
+                verdict["size_factor"],
+                verdict["confidence"],
+                verdict["blocked"],
+                json.dumps(reason_codes),
+                json.dumps({"verdict": verdict, "outputs": outputs}),
+            ),
+        )
+        cur.execute(
+            """
+            update MIP.LIVE.COMMITTEE_RUN
+               set STATUS = 'COMPLETED',
+                   COMPLETED_AT = current_timestamp(),
+                   DETAILS = parse_json(%s)
+             where RUN_ID = %s
+            """,
+            (
+                json.dumps({"actor": req.actor, "role_count": len(outputs), "recommendation": verdict["recommendation"]}),
+                run_id,
+            ),
+        )
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set COMMITTEE_STATUS = 'COMPLETED',
+                   COMMITTEE_RUN_ID = %s,
+                   COMMITTEE_COMPLETED_TS = current_timestamp(),
+                   COMMITTEE_VERDICT = %s,
+                   REASON_CODES = parse_json(%s),
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (
+                run_id,
+                verdict["recommendation"],
+                json.dumps(reason_codes),
+                action_id,
+            ),
+        )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_COMMITTEE_COMPLETED",
+            status="COMPLETED",
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "committee_run_id": run_id,
+                "recommendation": verdict["recommendation"],
+                "size_factor": verdict["size_factor"],
+                "blocked": verdict["blocked"],
+            },
+            outcome_state={"roles": COMMITTEE_ROLES},
+        )
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "run_id": run_id,
+            "status": "COMPLETED",
+            "verdict": verdict,
+        }
+    finally:
+        conn.close()
+
+
 @router.post("/trades/actions/{action_id}/pm-accept")
 def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
     conn = get_connection()
@@ -1422,6 +1773,13 @@ def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
+        committee_required = bool(action.get("COMMITTEE_REQUIRED")) if action.get("COMMITTEE_REQUIRED") is not None else True
+        committee_status = (action.get("COMMITTEE_STATUS") or "").upper()
+        if committee_required and committee_status != "COMPLETED":
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Committee output is required before PM accept.", "reason_codes": ["COMMITTEE_REQUIRED_BEFORE_PM_ACCEPT"]},
+            )
         _assert_transition_allowed(action.get("STATUS"), "PM_ACCEPTED")
         cur.execute(
             """
@@ -2327,6 +2685,9 @@ def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
             detail="No importable or pending action found for workflow smoke.",
         )
 
+    committee_result = run_live_trade_committee(action_id, CommitteeRunRequest(actor="smoke_committee"))
+    steps.append({"step": "committee_run", "result": committee_result})
+
     pm_result = pm_accept_live_action(action_id, PmAcceptRequest(actor="smoke_pm"))
     steps.append({"step": "pm_accept", "result": pm_result})
 
@@ -2896,18 +3257,20 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
 
             import_reason_codes = [
                 "RESEARCH_IMPORTED",
-                "NON_EXECUTABLE_UNTIL_PM_COMPLIANCE_REVALIDATION",
+                "NON_EXECUTABLE_UNTIL_COMMITTEE_PM_COMPLIANCE_INTENT_REVALIDATION",
             ]
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_ACTIONS (
                   ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, ASSET_CLASS,
                   STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
+                  COMMITTEE_REQUIRED, COMMITTEE_STATUS,
                   CREATED_AT, UPDATED_AT
                 )
                 values (
                   %s, %s, %s, %s, %s, %s, %s,
                   'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
+                  true, 'PENDING',
                   current_timestamp(), current_timestamp()
                 )
                 """,
@@ -2941,8 +3304,11 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 influence_delta={
                     "default_executable": False,
                     "required_sequence": [
+                        "COMMITTEE_COMPLETED",
                         "PM_ACCEPTED",
                         "COMPLIANCE_APPROVED",
+                        "INTENT_SUBMITTED",
+                        "INTENT_APPROVED",
                         "REVALIDATED_PASS",
                         "EXECUTION_REQUESTED",
                     ],

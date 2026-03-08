@@ -29,6 +29,8 @@ export default function LiveTrades() {
   const [earlyExit, setEarlyExit] = useState(null)
   const [driftStatus, setDriftStatus] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
+  const [committeeActor, setCommitteeActor] = useState('committee_orchestrator')
+  const [committeeModel, setCommitteeModel] = useState('mistral-large2')
   const [intentSubmitActor, setIntentSubmitActor] = useState('intent_submitter')
   const [intentApproveActor, setIntentApproveActor] = useState('intent_approver')
   const [pmActor, setPmActor] = useState('portfolio_manager')
@@ -284,6 +286,14 @@ export default function LiveTrades() {
           <input value={complianceActor} onChange={(e) => setComplianceActor(e.target.value)} />
         </label>
         <label>
+          Committee actor
+          <input value={committeeActor} onChange={(e) => setCommitteeActor(e.target.value)} />
+        </label>
+        <label>
+          Committee model
+          <input value={committeeModel} onChange={(e) => setCommitteeModel(e.target.value)} />
+        </label>
+        <label>
           Intent submit actor
           <input value={intentSubmitActor} onChange={(e) => setIntentSubmitActor(e.target.value)} />
         </label>
@@ -384,6 +394,7 @@ export default function LiveTrades() {
                 </td>
                 <td>
                   <div>{a.STATUS}</div>
+                  <div>Committee: {a.COMMITTEE_STATUS || '—'} ({a.COMMITTEE_VERDICT || '—'})</div>
                   <div>{a.COMPLIANCE_STATUS || '—'}</div>
                   <div>{Array.isArray(a.REASON_CODES) && a.REASON_CODES.length ? a.REASON_CODES.join(', ') : '—'}</div>
                 </td>
@@ -409,7 +420,22 @@ export default function LiveTrades() {
                   <div className="lt-actions">
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID || !['RESEARCH_IMPORTED', 'PROPOSED'].includes(a.STATUS)}
+                      disabled={busyId === a.ACTION_ID || !['RESEARCH_IMPORTED', 'PROPOSED', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED'].includes(a.STATUS)}
+                      onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/committee/run`, {
+                        actor: committeeActor,
+                        model: committeeModel,
+                        force_rerun: false,
+                      })}
+                    >
+                      Run Committee
+                    </button>
+                    <button
+                      className="lt-btn"
+                      disabled={
+                        busyId === a.ACTION_ID
+                        || !['RESEARCH_IMPORTED', 'PROPOSED'].includes(a.STATUS)
+                        || ((a.COMMITTEE_REQUIRED ?? true) && a.COMMITTEE_STATUS !== 'COMPLETED')
+                      }
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/pm-accept`, { actor: pmActor })}
                     >
                       PM Accept

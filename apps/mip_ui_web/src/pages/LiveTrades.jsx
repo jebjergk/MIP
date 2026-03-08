@@ -335,14 +335,14 @@ export default function LiveTrades() {
                     </button>
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID || !['COMPLIANCE_APPROVED', 'REVALIDATED_FAIL'].includes(a.STATUS)}
+                      disabled={busyId === a.ACTION_ID || !['COMPLIANCE_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(a.STATUS)}
                       onClick={() => runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/revalidate`)}
                     >
                       Revalidate
                     </button>
                     <button
                       className="lt-btn"
-                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'REVALIDATED_PASS'}
+                      disabled={busyId === a.ACTION_ID || a.STATUS !== 'REVALIDATED_PASS' || a.COMPLIANCE_STATUS !== 'APPROVE'}
                       onClick={() =>
                         runAction(a.ACTION_ID, `/live/trades/actions/${a.ACTION_ID}/execute`, {
                           actor: executionActor,

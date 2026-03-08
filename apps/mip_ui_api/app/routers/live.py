@@ -64,10 +64,11 @@ _ALLOWED_TRANSITIONS = {
     "PM_ACCEPTED": {"COMPLIANCE_APPROVED", "COMPLIANCE_DENIED"},
     "COMPLIANCE_APPROVED": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
     "REVALIDATED_FAIL": {"REVALIDATED_PASS", "REVALIDATED_FAIL"},
-    "REVALIDATED_PASS": {"EXECUTION_REQUESTED"},
+    "REVALIDATED_PASS": {"REVALIDATED_PASS", "EXECUTION_REQUESTED"},
 }
 
 LIVE_POLICY_VERSION = "phase2_session_realism_v1"
+EXECUTION_CLICK_MAX_REVALIDATION_SEC = 300
 
 
 def _fetch_live_action(cur, action_id: str) -> dict | None:
@@ -985,10 +986,12 @@ def revalidate_live_action(action_id: str):
             _assert_transition_allowed(current_status, "REVALIDATED_PASS")
         elif current_status == "REVALIDATED_FAIL":
             _assert_transition_allowed(current_status, "REVALIDATED_PASS")
+        elif current_status == "REVALIDATED_PASS":
+            _assert_transition_allowed(current_status, "REVALIDATED_PASS")
         else:
             raise HTTPException(
                 status_code=409,
-                detail=f"Revalidation allowed only from COMPLIANCE_APPROVED/REVALIDATED_FAIL (current: {current_status})",
+                detail=f"Revalidation allowed only from COMPLIANCE_APPROVED/REVALIDATED_FAIL/REVALIDATED_PASS (current: {current_status})",
             )
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
@@ -1097,7 +1100,23 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
-        _assert_transition_allowed(action.get("STATUS"), "EXECUTION_REQUESTED")
+
+        reason_codes: list[str] = []
+        now_utc = datetime.now(timezone.utc)
+        current_status = (action.get("STATUS") or "").upper()
+        compliance_status = (action.get("COMPLIANCE_STATUS") or "").upper()
+        if current_status != "REVALIDATED_PASS":
+            reason_codes.append("EXECUTION_REQUIRES_REVALIDATED_PASS")
+        if compliance_status != "APPROVE":
+            reason_codes.append("COMPLIANCE_NOT_APPROVED")
+
+        compliance_decision_ts = action.get("COMPLIANCE_DECISION_TS")
+        revalidation_ts = action.get("REVALIDATION_TS")
+        if compliance_decision_ts and revalidation_ts:
+            cd_ts = compliance_decision_ts.replace(tzinfo=timezone.utc)
+            rv_ts = revalidation_ts.replace(tzinfo=timezone.utc)
+            if rv_ts <= cd_ts:
+                reason_codes.append("REVALIDATION_REQUIRED_AFTER_COMPLIANCE")
 
         cur.execute(
             """
@@ -1116,24 +1135,21 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         if cfg.get("IS_ACTIVE") is False:
             raise HTTPException(status_code=400, detail="Live portfolio config is inactive.")
 
-        reason_codes: list[str] = []
-        now_utc = datetime.now(timezone.utc)
-
         validity_window_end = action.get("VALIDITY_WINDOW_END")
         if validity_window_end and hasattr(validity_window_end, "replace"):
             vw = validity_window_end.replace(tzinfo=timezone.utc)
             if vw < now_utc:
                 reason_codes.append("ACTION_EXPIRED")
 
-        revalidation_ts = action.get("REVALIDATION_TS")
         if not revalidation_ts:
             reason_codes.append("MISSING_REVALIDATION")
         else:
             rv_ts = revalidation_ts.replace(tzinfo=timezone.utc)
             rv_age_sec = (now_utc - rv_ts).total_seconds()
-            max_reval_age = cfg.get("VALIDITY_WINDOW_SEC") or 14400
+            validity_window_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
+            max_reval_age = min(validity_window_sec, EXECUTION_CLICK_MAX_REVALIDATION_SEC)
             if rv_age_sec > max_reval_age:
-                reason_codes.append("REVALIDATION_STALE")
+                reason_codes.append("EXECUTION_CLICK_REVALIDATION_STALE")
 
         if (action.get("PRICE_GUARD_RESULT") or "").upper() != "PASS":
             reason_codes.append("PRICE_GUARD_FAIL")
@@ -1242,6 +1258,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "validator": "FIRST_SESSION_REALISM",
                     "realism_details": realism_details,
                     "actor": req.actor,
+                    "required_status": "REVALIDATED_PASS",
+                    "required_compliance": "APPROVE",
                 },
             )
             raise HTTPException(

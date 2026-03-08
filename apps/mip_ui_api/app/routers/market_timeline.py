@@ -197,6 +197,20 @@ def get_overview(
               {"and t.PORTFOLIO_ID = %s" if portfolio_id else ""}
             group by t.SYMBOL, t.MARKET_TYPE
         ),
+        live_trade_counts as (
+            select
+                upper(o.SYMBOL) as SYMBOL,
+                coalesce(a.ASSET_CLASS, 'STOCK') as MARKET_TYPE,
+                count(*) as live_trade_count
+            from MIP.LIVE.LIVE_ORDERS o
+            join MIP.LIVE.LIVE_ACTIONS a
+              on a.ACTION_ID = o.ACTION_ID
+            where o.LAST_UPDATED_AT >= %s
+              and o.STATUS in ('PARTIAL_FILL', 'FILLED')
+              and o.SYMBOL is not null
+              {"and a.PORTFOLIO_ID = %s" if portfolio_id else ""}
+            group by upper(o.SYMBOL), coalesce(a.ASSET_CLASS, 'STOCK')
+        ),
         trust_labels as (
             select
                 SYMBOL,
@@ -232,7 +246,9 @@ def get_overview(
             coalesce(sc.signal_count, 0) as signal_count,
             coalesce(pc.proposal_count, 0) as proposal_count,
             coalesce(pc.today_proposal_count, 0) as today_proposal_count,
-            coalesce(tc.trade_count, 0) as trade_count,
+            coalesce(tc.trade_count, 0) as sim_trade_count,
+            coalesce(ltc.live_trade_count, 0) as live_trade_count,
+            coalesce(tc.trade_count, 0) + coalesce(ltc.live_trade_count, 0) as trade_count,
             tl.latest_trust_label as trust_label,
             lb.latest_bar_ts,
             lb.latest_close
@@ -240,9 +256,10 @@ def get_overview(
         left join signal_counts sc on sc.SYMBOL = s.SYMBOL and sc.MARKET_TYPE = s.MARKET_TYPE
         left join proposal_counts pc on pc.SYMBOL = s.SYMBOL and pc.MARKET_TYPE = s.MARKET_TYPE
         left join trade_counts tc on tc.SYMBOL = s.SYMBOL and tc.MARKET_TYPE = s.MARKET_TYPE
+        left join live_trade_counts ltc on ltc.SYMBOL = s.SYMBOL and ltc.MARKET_TYPE = s.MARKET_TYPE
         left join trust_labels tl on tl.SYMBOL = s.SYMBOL and tl.MARKET_TYPE = s.MARKET_TYPE
         left join latest_bars lb on lb.SYMBOL = s.SYMBOL and lb.MARKET_TYPE = s.MARKET_TYPE
-        {"where coalesce(pc.proposal_count, 0) + coalesce(tc.trade_count, 0) > 0" if portfolio_id else ""}
+        {"where coalesce(pc.proposal_count, 0) + coalesce(tc.trade_count, 0) + coalesce(ltc.live_trade_count, 0) > 0" if portfolio_id else ""}
         order by s.MARKET_TYPE, s.SYMBOL
         """
         
@@ -263,6 +280,9 @@ def get_overview(
         query_params.append(window_start)  # trade_counts
         if portfolio_id:
             query_params.append(portfolio_id)
+        query_params.append(window_start)  # live_trade_counts
+        if portfolio_id:
+            query_params.append(portfolio_id)
         query_params.append(window_start)  # trust_labels
         query_params.append(interval_minutes)  # latest_bars
         
@@ -280,6 +300,8 @@ def get_overview(
                 "proposal_count": row.get("PROPOSAL_COUNT") or row.get("proposal_count") or 0,
                 "today_proposal_count": row.get("TODAY_PROPOSAL_COUNT") or row.get("today_proposal_count") or 0,
                 "trade_count": row.get("TRADE_COUNT") or row.get("trade_count") or 0,
+                "sim_trade_count": row.get("SIM_TRADE_COUNT") or row.get("sim_trade_count") or 0,
+                "live_trade_count": row.get("LIVE_TRADE_COUNT") or row.get("live_trade_count") or 0,
                 "trust_label": row.get("TRUST_LABEL") or row.get("trust_label"),
                 "latest_bar_ts": row.get("LATEST_BAR_TS") or row.get("latest_bar_ts"),
                 "latest_close": row.get("LATEST_CLOSE") or row.get("latest_close"),
@@ -450,7 +472,7 @@ def get_detail(
                 })
         
         # Get trade events
-        trades = []
+        sim_trades = []
         if window_start:
             trade_sql = """
                 select 
@@ -477,9 +499,10 @@ def get_detail(
             cur.execute(trade_sql, params)
             for row in fetch_all(cur):
                 ts = row.get("TRADE_TS")
-                trades.append({
+                sim_trades.append({
                     "type": "TRADE",
                     "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "trade_source": "SIM",
                     "trade_id": row.get("TRADE_ID"),
                     "proposal_id": row.get("PROPOSAL_ID"),
                     "portfolio_id": row.get("PORTFOLIO_ID"),
@@ -488,6 +511,53 @@ def get_detail(
                     "price": float(row.get("PRICE")) if row.get("PRICE") is not None else None,
                     "notional": float(row.get("NOTIONAL")) if row.get("NOTIONAL") is not None else None,
                     "realized_pnl": float(row.get("REALIZED_PNL")) if row.get("REALIZED_PNL") is not None else None,
+                })
+
+        live_trades = []
+        if window_start:
+            live_trade_sql = """
+                select
+                    o.ORDER_ID,
+                    a.PROPOSAL_ID,
+                    a.PORTFOLIO_ID,
+                    o.LAST_UPDATED_AT,
+                    o.SIDE,
+                    o.QTY_FILLED,
+                    o.QTY_ORDERED,
+                    o.AVG_FILL_PRICE,
+                    o.LIMIT_PRICE,
+                    o.STATUS
+                from MIP.LIVE.LIVE_ORDERS o
+                join MIP.LIVE.LIVE_ACTIONS a
+                  on a.ACTION_ID = o.ACTION_ID
+                where upper(o.SYMBOL) = upper(%s)
+                  and coalesce(a.ASSET_CLASS, 'STOCK') = %s
+                  and o.LAST_UPDATED_AT >= %s
+                  and o.STATUS in ('PARTIAL_FILL', 'FILLED')
+            """
+            params = [symbol, market_type, window_start]
+            if portfolio_id:
+                live_trade_sql += " and a.PORTFOLIO_ID = %s"
+                params.append(portfolio_id)
+            live_trade_sql += " order by o.LAST_UPDATED_AT"
+            cur.execute(live_trade_sql, params)
+            for row in fetch_all(cur):
+                ts = row.get("LAST_UPDATED_AT")
+                qty = row.get("QTY_FILLED") if row.get("QTY_FILLED") is not None else row.get("QTY_ORDERED")
+                price = row.get("AVG_FILL_PRICE") if row.get("AVG_FILL_PRICE") is not None else row.get("LIMIT_PRICE")
+                live_trades.append({
+                    "type": "TRADE",
+                    "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    "trade_source": "LIVE",
+                    "trade_id": row.get("ORDER_ID"),
+                    "proposal_id": row.get("PROPOSAL_ID"),
+                    "portfolio_id": row.get("PORTFOLIO_ID"),
+                    "side": row.get("SIDE"),
+                    "quantity": float(qty) if qty is not None else None,
+                    "price": float(price) if price is not None else None,
+                    "notional": None,
+                    "realized_pnl": None,
+                    "status": row.get("STATUS"),
                 })
         
         # Get trust classification history (latest per pattern)
@@ -523,6 +593,7 @@ def get_detail(
             pass  # Trust view may not exist
         
         # Combine events for overlay
+        trades = sim_trades + live_trades
         events = signals + proposals + trades
         events.sort(key=lambda e: e.get("ts", ""))
         
@@ -622,6 +693,8 @@ def get_detail(
                 "signals": len(signals),
                 "proposals": len(proposals),
                 "trades": len(trades),
+                "sim_trades": len(sim_trades),
+                "live_trades": len(live_trades),
             },
         }
     finally:

@@ -52,7 +52,9 @@ function ChartTooltip({ active, payload, label }) {
         <div className="mtd-tooltip-events">
           {data.events.map((e, i) => (
             <div key={i} className={`mtd-tooltip-event event-${e.type?.toLowerCase()}`}>
-              {e.type}: {e.side || ''} {e.type === 'TRADE' && e.quantity ? `${e.quantity} @ ${e.price?.toFixed(2)}` : ''}
+              {e.type}
+              {e.type === 'TRADE' && e.trade_source ? ` (${e.trade_source})` : ''}: {e.side || ''}{' '}
+              {e.type === 'TRADE' && e.quantity ? `${e.quantity} @ ${e.price?.toFixed(2)}` : ''}
             </div>
           ))}
         </div>
@@ -337,6 +339,11 @@ export default function MarketTimelineDetail({
         <span className="mtd-count mtd-count-trade">
           <strong>{counts.trades || 0}</strong> trades
         </span>
+        {(counts.sim_trades != null || counts.live_trades != null) && (
+          <span className="mtd-count-breakdown">
+            (sim {counts.sim_trades || 0} · live {counts.live_trades || 0})
+          </span>
+        )}
       </div>
       
       {/* Chart mode toggle */}

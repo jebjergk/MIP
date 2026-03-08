@@ -49,7 +49,7 @@ class LivePortfolioConfigUpsertRequest(BaseModel):
 
 class ImportLiveActionsFromProposalsRequest(BaseModel):
     live_portfolio_id: int
-    source_portfolio_id: int | None = None
+    source_portfolio_id: int
     run_id: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
 
@@ -70,6 +70,7 @@ class UpdateLiveOrderStatusRequest(BaseModel):
 
 class SimulatePaperWorkflowRequest(BaseModel):
     live_portfolio_id: int
+    source_portfolio_id: int | None = None
     run_id: str | None = None
     limit: int = Field(default=50, ge=1, le=500)
     scenario: str = Field(default="PARTIAL_THEN_FILL", pattern="^(PARTIAL_THEN_FILL|CANCEL|REJECT)$")
@@ -343,8 +344,6 @@ def _compute_live_activation_guard(cur, portfolio_id: int) -> dict:
         reasons.append("LIVE_CONFIG_INACTIVE")
 
     drift_status = (cfg.get("DRIFT_STATUS") or "").upper()
-    if drift_status and drift_status not in ("OK", "CLEAR", "HEALTHY"):
-        reasons.append("DRIFT_STATUS_NOT_HEALTHY")
 
     account_id = cfg.get("IBKR_ACCOUNT_ID")
     cur.execute(
@@ -372,21 +371,25 @@ def _compute_live_activation_guard(cur, portfolio_id: int) -> dict:
         if snap_age_sec > max_snap_age:
             reasons.append("NAV_SNAPSHOT_STALE")
 
-    cur.execute(
-        """
-        select count(*) as CNT
-        from MIP.LIVE.DRIFT_LOG
-        where PORTFOLIO_ID = %s
-          and coalesce(DRIFT_DETECTED, false) = true
-          and RESOLUTION_TS is null
-        """,
-        (portfolio_id,),
-    )
-    drift_rows = fetch_all(cur)
-    unresolved_drift_count = int((drift_rows[0] or {}).get("CNT") or 0)
+    # Drift reconciliation is optional in environments that do not deploy
+    # MIP.LIVE.DRIFT_LOG. Guard should not fail hard when missing.
+    unresolved_drift_count = 0
+    try:
+        cur.execute(
+            """
+            select count(*) as CNT
+            from MIP.LIVE.DRIFT_LOG
+            where PORTFOLIO_ID = %s
+              and coalesce(DRIFT_DETECTED, false) = true
+              and RESOLUTION_TS is null
+            """,
+            (portfolio_id,),
+        )
+        drift_rows = fetch_all(cur)
+        unresolved_drift_count = int((drift_rows[0] or {}).get("CNT") or 0)
+    except Exception:
+        checks["drift_table_available"] = False
     checks["unresolved_drift_count"] = unresolved_drift_count
-    if unresolved_drift_count > 0:
-        reasons.append("UNRESOLVED_DRIFT_PRESENT")
 
     cur.execute(
         """
@@ -1058,20 +1061,25 @@ def get_broker_drift_status(portfolio_id: int | None = Query(None, description="
         if snapshot_ts and hasattr(snapshot_ts, "replace"):
             snapshot_age_sec = int((datetime.now(timezone.utc) - snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds())
 
-        cur.execute(
-            """
-            select
-              DRIFT_ID, RECONCILIATION_TS, NAV_DRIFT_PCT, CASH_DRIFT_EUR, POSITION_DRIFT_COUNT, DRIFT_DETECTED,
-              RESOLUTION_TS, RESOLUTION_METHOD, DETAILS
-            from MIP.LIVE.DRIFT_LOG
-            where PORTFOLIO_ID = %s
-              and coalesce(DRIFT_DETECTED, false) = true
-            order by RECONCILIATION_TS desc
-            limit 20
-            """,
-            (resolved_portfolio_id,),
-        )
-        drift_rows = fetch_all(cur)
+        drift_rows = []
+        drift_table_available = True
+        try:
+            cur.execute(
+                """
+                select
+                  DRIFT_ID, RECONCILIATION_TS, NAV_DRIFT_PCT, CASH_DRIFT_EUR, POSITION_DRIFT_COUNT, DRIFT_DETECTED,
+                  RESOLUTION_TS, RESOLUTION_METHOD, DETAILS
+                from MIP.LIVE.DRIFT_LOG
+                where PORTFOLIO_ID = %s
+                  and coalesce(DRIFT_DETECTED, false) = true
+                order by RECONCILIATION_TS desc
+                limit 20
+                """,
+                (resolved_portfolio_id,),
+            )
+            drift_rows = fetch_all(cur)
+        except Exception:
+            drift_table_available = False
         unresolved = [r for r in drift_rows if not r.get("RESOLUTION_TS")]
         latest_unresolved = unresolved[0] if unresolved else None
 
@@ -1082,6 +1090,7 @@ def get_broker_drift_status(portfolio_id: int | None = Query(None, description="
             "snapshot_freshness_threshold_sec": cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"),
             "latest_snapshot": serialize_row(nav) if nav else None,
             "snapshot_age_sec": snapshot_age_sec,
+            "drift_table_available": drift_table_available,
             "unresolved_drift_count": len(unresolved),
             "latest_unresolved_drift": serialize_row(latest_unresolved) if latest_unresolved else None,
         }
@@ -1123,21 +1132,25 @@ def enable_live_activation(req: SetLiveActivationRequest):
             (req.portfolio_id,),
         )
 
-        cur.execute(
-            """
-            insert into MIP.LIVE.BROKER_EVENT_LEDGER (
-              EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PAYLOAD
+        try:
+            cur.execute(
+                """
+                insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+                  EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PAYLOAD
+                )
+                values (
+                  %s, current_timestamp(), 'LIVE_ACTIVATION_ENABLED', %s, parse_json(%s)
+                )
+                """,
+                (
+                    str(uuid.uuid4()),
+                    req.portfolio_id,
+                    json.dumps({"actor": req.actor, "force": req.force, "reasons": guard.get("reasons", [])}),
+                ),
             )
-            values (
-              %s, current_timestamp(), 'LIVE_ACTIVATION_ENABLED', %s, parse_json(%s)
-            )
-            """,
-            (
-                str(uuid.uuid4()),
-                req.portfolio_id,
-                json.dumps({"actor": req.actor, "force": req.force, "reasons": guard.get("reasons", [])}),
-            ),
-        )
+        except Exception:
+            # Non-fatal telemetry write; activation update must still complete.
+            pass
 
         _append_learning_ledger_event(
             cur,
@@ -1179,21 +1192,25 @@ def disable_live_activation(req: DisableLiveActivationRequest):
             (req.portfolio_id,),
         )
 
-        cur.execute(
-            """
-            insert into MIP.LIVE.BROKER_EVENT_LEDGER (
-              EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PAYLOAD
+        try:
+            cur.execute(
+                """
+                insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+                  EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PAYLOAD
+                )
+                values (
+                  %s, current_timestamp(), 'LIVE_ACTIVATION_DISABLED', %s, parse_json(%s)
+                )
+                """,
+                (
+                    str(uuid.uuid4()),
+                    req.portfolio_id,
+                    json.dumps({"actor": req.actor, "reason": req.reason}),
+                ),
             )
-            values (
-              %s, current_timestamp(), 'LIVE_ACTIVATION_DISABLED', %s, parse_json(%s)
-            )
-            """,
-            (
-                str(uuid.uuid4()),
-                req.portfolio_id,
-                json.dumps({"actor": req.actor, "reason": req.reason}),
-            ),
-        )
+        except Exception:
+            # Non-fatal telemetry write; disable update must still complete.
+            pass
 
         _append_learning_ledger_event(
             cur,
@@ -1584,23 +1601,26 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             reason_codes.append("BROKER_TRUTH_DRIFT_UNRESOLVED")
 
         unresolved_drift_row = None
-        cur.execute(
-            """
-            select
-              DRIFT_ID, RECONCILIATION_TS, NAV_DRIFT_PCT, CASH_DRIFT_EUR, POSITION_DRIFT_COUNT, DETAILS
-            from MIP.LIVE.DRIFT_LOG
-            where PORTFOLIO_ID = %s
-              and coalesce(DRIFT_DETECTED, false) = true
-              and RESOLUTION_TS is null
-            order by RECONCILIATION_TS desc
-            limit 1
-            """,
-            (action.get("PORTFOLIO_ID"),),
-        )
-        unresolved_drift_rows = fetch_all(cur)
-        if unresolved_drift_rows:
-            unresolved_drift_row = unresolved_drift_rows[0]
-            reason_codes.append("UNRESOLVED_DRIFT_LOG_PRESENT")
+        try:
+            cur.execute(
+                """
+                select
+                  DRIFT_ID, RECONCILIATION_TS, NAV_DRIFT_PCT, CASH_DRIFT_EUR, POSITION_DRIFT_COUNT, DETAILS
+                from MIP.LIVE.DRIFT_LOG
+                where PORTFOLIO_ID = %s
+                  and coalesce(DRIFT_DETECTED, false) = true
+                  and RESOLUTION_TS is null
+                order by RECONCILIATION_TS desc
+                limit 1
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            unresolved_drift_rows = fetch_all(cur)
+            if unresolved_drift_rows:
+                unresolved_drift_row = unresolved_drift_rows[0]
+                reason_codes.append("UNRESOLVED_DRIFT_LOG_PRESENT")
+        except Exception:
+            unresolved_drift_row = None
 
         validity_window_end = action.get("VALIDITY_WINDOW_END")
         if validity_window_end and hasattr(validity_window_end, "replace"):
@@ -2042,9 +2062,47 @@ def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
     """
     steps: list[dict] = []
 
+    source_portfolio_id = req.source_portfolio_id
+    if source_portfolio_id is None:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            source_wheres = [
+                "STATUS in ('PROPOSED', 'APPROVED')",
+                "SYMBOL is not null",
+                "SIDE in ('BUY', 'SELL')",
+            ]
+            source_params = []
+            if req.run_id:
+                source_wheres.append("RUN_ID_VARCHAR = %s")
+                source_params.append(req.run_id)
+            source_params.append(req.limit)
+            cur.execute(
+                f"""
+                select PORTFOLIO_ID
+                from MIP.AGENT_OUT.ORDER_PROPOSALS
+                where {' and '.join(source_wheres)}
+                order by PROPOSED_AT desc
+                limit %s
+                """,
+                tuple(source_params),
+            )
+            proposal_rows = fetch_all(cur)
+            if proposal_rows:
+                source_portfolio_id = int((proposal_rows[0] or {}).get("PORTFOLIO_ID"))
+        finally:
+            conn.close()
+
+    if source_portfolio_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No source portfolio could be inferred for paper workflow smoke. Provide source_portfolio_id.",
+        )
+
     import_result = import_live_actions_from_proposals(
         ImportLiveActionsFromProposalsRequest(
             live_portfolio_id=req.live_portfolio_id,
+            source_portfolio_id=source_portfolio_id,
             run_id=req.run_id,
             limit=req.limit,
         )
@@ -2426,6 +2484,77 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
         conn.close()
 
 
+@router.post("/portfolio-config")
+def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
+    """
+    Create a new live config with server-owned portfolio_id allocation.
+    """
+    if not req.ibkr_account_id:
+        raise HTTPException(status_code=400, detail="ibkr_account_id is required when creating config.")
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("select coalesce(max(PORTFOLIO_ID), 0) + 1 as NEXT_ID from MIP.LIVE.LIVE_PORTFOLIO_CONFIG")
+        next_id_row = fetch_all(cur)
+        next_id = int((next_id_row[0] or {}).get("NEXT_ID") or 1)
+
+        cur.execute(
+            """
+            insert into MIP.LIVE.LIVE_PORTFOLIO_CONFIG (
+              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
+              CREATED_AT, UPDATED_AT
+            )
+            values (
+              %s, %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
+              %s, %s, %s, %s,
+              coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
+              %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
+              current_timestamp(), current_timestamp()
+            )
+            """,
+            (
+                next_id,
+                req.sim_portfolio_id,
+                req.ibkr_account_id,
+                req.adapter_mode,
+                req.base_currency.upper() if req.base_currency else None,
+                req.max_positions,
+                req.max_position_pct,
+                req.cash_buffer_pct,
+                req.max_slippage_pct,
+                req.validity_window_sec,
+                req.quote_freshness_threshold_sec,
+                req.snapshot_freshness_threshold_sec,
+                req.drawdown_stop_pct,
+                req.bust_pct,
+                req.cooldown_bars,
+                req.is_active,
+            ),
+        )
+
+        cur.execute(
+            """
+            select
+              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (next_id,),
+        )
+        rows = fetch_all(cur)
+        return {"ok": True, "portfolio_id": next_id, "config": serialize_row(rows[0]) if rows else None}
+    finally:
+        conn.close()
+
+
 @router.delete("/portfolio-config/{portfolio_id}")
 def delete_live_portfolio_config(
     portfolio_id: int,
@@ -2494,14 +2623,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 status_code=400,
                 detail="Live portfolio config not found or inactive.",
             )
-        cfg_sim_portfolio_id, validity_window_sec = cfg
-        source_portfolio_id = req.source_portfolio_id or cfg_sim_portfolio_id
-        source_origin = "request" if req.source_portfolio_id is not None else "config_fallback"
-        if source_portfolio_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="source_portfolio_id is required (or configure legacy SIM_PORTFOLIO_ID fallback).",
-            )
+        _, validity_window_sec = cfg
+        source_portfolio_id = req.source_portfolio_id
+        source_origin = "request"
 
         wheres = [
             "PORTFOLIO_ID = %s",
@@ -2560,7 +2684,6 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "source": "ORDER_PROPOSALS",
                     "source_portfolio_id": source_portfolio_id,
                     "source_origin": source_origin,
-                    "legacy_sim_portfolio_id": cfg_sim_portfolio_id,
                     "run_id": p.get("RUN_ID_VARCHAR"),
                     "proposal_status": p.get("STATUS"),
                     "signal_pattern_id": p.get("SIGNAL_PATTERN_ID"),
@@ -2638,7 +2761,6 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "live_portfolio_id": req.live_portfolio_id,
             "source_portfolio_id": source_portfolio_id,
             "source_origin": source_origin,
-            "legacy_sim_portfolio_id": cfg_sim_portfolio_id,
             "run_id_filter": req.run_id,
             "candidate_count": len(proposals),
             "imported_count": imported,

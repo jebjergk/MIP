@@ -5,25 +5,25 @@ Research proposal source is selected at import time in Live Trades.
 
 ## What This Page Is For
 
-- Create or select a **Live Config** (system-assigned ID)
-- Optionally set a **default source portfolio fallback** (legacy behavior)
+- View a **cloud-style list** of all live configs with wiring status
+- Create or edit a **Live Config** (system-assigned ID)
 - Link an **IBKR Account** (broker truth source)
 - Configure pre-trade controls (size, freshness, risk limits)
 - Verify readiness using the **Activation Guard**
 
 ## Setup Flow
 
-1. Enter IBKR Account ID (for example `DU...`).
-2. Click **Create New Live Config** to enter draft/create mode.
-3. Review fields, then click **Save Config** to persist.
+1. From the list page, click **Create New Live Config** or **Edit** on an existing row.
+2. Enter IBKR Account ID (for example `DU...`) and execution mode.
+3. Set risk/freshness controls and click **Save Config**.
 4. Confirm schematic and guard status.
 5. In Live Trades, choose source research portfolio at import time.
 
 Important behavior:
 
-- Clicking **Create New Live Config** does **not** insert into database.
-- The row is only written when **Save Config** is pressed.
-- You can cancel draft mode using **Cancel Create**.
+- Config IDs are assigned by the backend on create.
+- No SIM fallback is stored in this page.
+- Research proposal source is selected explicitly in Live Trades import.
 
 ## Connection Schematic (Color Meaning)
 

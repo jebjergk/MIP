@@ -109,6 +109,11 @@
   font-weight: bold;
 }
 
+.mtd-count-breakdown {
+  color: #666;
+  font-size: 0.78rem;
+}
+
 /* Chart mode toggle */
 .mtd-chart-toggle {
   display: flex;

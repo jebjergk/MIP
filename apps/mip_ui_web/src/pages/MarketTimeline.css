@@ -59,6 +59,11 @@
   gap: 0.25rem;
 }
 
+.market-timeline-legend-note {
+  opacity: 0.8;
+  font-style: italic;
+}
+
 .legend-signal {
   display: inline-block;
   width: 18px;

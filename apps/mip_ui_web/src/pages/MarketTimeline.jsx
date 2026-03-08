@@ -116,7 +116,7 @@ export default function MarketTimeline() {
     <div className="market-timeline-page">
       <h1>Market Timeline</h1>
       <p className="market-timeline-subtitle">
-        End-to-end observability: signals → proposals → trades per symbol.
+        End-to-end observability: signals → proposals → trades per symbol (SIM + LIVE).
         Click a symbol to see the OHLC chart with event overlays and decision narrative.
       </p>
       
@@ -165,6 +165,7 @@ export default function MarketTimeline() {
         <span className="legend-item"><span className="legend-signal">S</span> Signals</span>
         <span className="legend-item"><span className="legend-proposal">P</span> Proposals</span>
         <span className="legend-item"><span className="legend-trade">T</span> Trades</span>
+        <span className="legend-item market-timeline-legend-note">T = SIM + LIVE fills</span>
       </div>
       
       {symbols.length === 0 ? (
@@ -260,6 +261,8 @@ export default function MarketTimeline() {
             <strong> {symbols.reduce((acc, s) => acc + s.signal_count, 0)}</strong> signals · 
             <strong> {symbols.reduce((acc, s) => acc + s.proposal_count, 0)}</strong> proposals · 
             <strong> {symbols.reduce((acc, s) => acc + s.trade_count, 0)}</strong> trades
+            {' '}(<strong>{symbols.reduce((acc, s) => acc + (s.sim_trade_count || 0), 0)}</strong> sim,
+            {' '}<strong>{symbols.reduce((acc, s) => acc + (s.live_trade_count || 0), 0)}</strong> live)
           </p>
         </div>
       )}

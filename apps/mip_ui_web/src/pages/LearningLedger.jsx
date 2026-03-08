@@ -30,6 +30,7 @@ function severityClass(sev) {
 
 export default function LearningLedger() {
   const [events, setEvents] = useState([])
+  const [chains, setChains] = useState([])
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
   const [effectiveness, setEffectiveness] = useState(null)
@@ -44,16 +45,18 @@ export default function LearningLedger() {
     setLoading(true)
     setError('')
     try {
-      const params = new URLSearchParams({ limit: '120' })
+      const params = new URLSearchParams({ limit: '120', group_by_chain: 'true' })
       if (eventTypeFilter) params.set('event_type', eventTypeFilter)
       if (portfolioFilter.trim()) params.set('portfolio_id', portfolioFilter.trim())
       const resp = await fetch(`${API_BASE}/learning-ledger/feed?${params.toString()}`)
       if (!resp.ok) throw new Error(`Failed to load feed (${resp.status})`)
       const data = await resp.json()
       const rows = data?.events || []
+      const chainRows = data?.chains || []
       setFeedSource(data?.source || 'derived_fallback')
       setEvents(rows)
-      setSelected(rows[0] || null)
+      setChains(chainRows)
+      setSelected((chainRows[0]?.events && chainRows[0].events[0]) || rows[0] || null)
     } catch (e) {
       setError(e.message || 'Failed to load learning ledger feed.')
     } finally {
@@ -153,6 +156,7 @@ export default function LearningLedger() {
 
       <section className="ledger-stats">
         <div className="ledger-stat-card"><span>Total events</span><b>{stats.total}</b></div>
+        <div className="ledger-stat-card"><span>Causal chains</span><b>{chains.length}</b></div>
         <div className="ledger-stat-card"><span>Training events</span><b>{stats.trainingCount}</b></div>
         <div className="ledger-stat-card"><span>Decision events</span><b>{stats.decisionCount}</b></div>
         <div className="ledger-stat-card"><span>High severity</span><b>{stats.highCount}</b></div>
@@ -202,7 +206,28 @@ export default function LearningLedger() {
       ) : (
         <section className="ledger-grid">
           <div className="ledger-feed">
-            {events.map((e) => (
+            {chains.length > 0 ? chains.map((c) => {
+              const e = (c.events && c.events[c.events.length - 1]) || {}
+              return (
+              <button
+                type="button"
+                key={c.chain_key}
+                className={`ledger-event ${selected?.event_key === e.event_key ? 'ledger-event-selected' : ''}`}
+                onClick={() => setSelected(e)}
+              >
+                <div className="ledger-event-top">
+                  <span className={severityClass(e.severity)}>{(e.severity || 'info').toUpperCase()}</span>
+                  <span className="ledger-ts">{fmtTs(c.latest_event_ts || e.event_ts)}</span>
+                </div>
+                <h3>{c.latest_title || e.title}</h3>
+                <p>{c.latest_summary || e.summary}</p>
+                <div className="ledger-meta">
+                  <span>{c.taxonomy_category || e.event_type}</span>
+                  <span>chain events: {c.event_count ?? (c.events?.length || 0)}</span>
+                  <span>run: {c.run_id || e.run_id || '—'}</span>
+                </div>
+              </button>
+            )}) : events.map((e) => (
               <button
                 type="button"
                 key={e.event_key}
@@ -273,6 +298,37 @@ export default function LearningLedger() {
                         </pre>
                       ) : (
                         <p>No canonical influence delta found for this selected event.</p>
+                      )}
+                    </section>
+                    <section>
+                      <h3>Causal Chain (Canonical)</h3>
+                      {(detail.causal_chain || []).length ? (
+                        <div className="ledger-table-wrap">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Time</th>
+                                <th>Event</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                                <th>Order</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(detail.causal_chain || []).slice(-30).map((r) => (
+                                <tr key={`${r.LEDGER_ID || r.ledger_id}`}>
+                                  <td>{fmtTs(r.EVENT_TS || r.event_ts)}</td>
+                                  <td>{r.EVENT_NAME || r.event_name}</td>
+                                  <td>{r.STATUS || r.status}</td>
+                                  <td>{r.LIVE_ACTION_ID || r.live_action_id || '—'}</td>
+                                  <td>{r.LIVE_ORDER_ID || r.live_order_id || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p>No canonical chain records found for this selection.</p>
                       )}
                     </section>
                     <section>

@@ -50,6 +50,89 @@ def _as_dt(v) -> datetime:
         return datetime.min
 
 
+def _taxonomy_for_event(event_name: str | None, event_type: str | None) -> str:
+    name = (event_name or "").upper()
+    et = (event_type or "").upper()
+    if name.startswith("LIVE_") or et == "LIVE_EVENT":
+        return "LIVE_EXECUTION"
+    if name.startswith("TRAINING_") or et == "TRAINING_EVENT":
+        return "TRAINING"
+    if "PARALLEL_WORLD" in name or "PW_" in name:
+        return "PARALLEL_WORLDS"
+    if "COMMITTEE" in name:
+        return "COMMITTEE"
+    if "INTENT" in name or "COMPLIANCE" in name or "PM_" in name:
+        return "APPROVALS"
+    return "GENERAL"
+
+
+def _chain_stage_for_event(event_name: str | None) -> str:
+    name = (event_name or "").upper()
+    if "RESEARCH_IMPORT" in name:
+        return "RESEARCH_IMPORT"
+    if "COMMITTEE" in name:
+        return "COMMITTEE"
+    if "PM_ACCEPT" in name:
+        return "PM_APPROVAL"
+    if "COMPLIANCE" in name:
+        return "COMPLIANCE"
+    if "INTENT_SUBMITTED" in name:
+        return "INTENT_SUBMITTED"
+    if "INTENT_APPROVED" in name:
+        return "INTENT_APPROVED"
+    if "REVALIDATION" in name:
+        return "REVALIDATION"
+    if "EXECUTION_REQUESTED" in name:
+        return "EXECUTION_REQUESTED"
+    if "ORDER_STATUS_UPDATE" in name:
+        return "ORDER_STATUS"
+    if "REBUILD_STATE" in name:
+        return "RECOVERY"
+    return "OTHER"
+
+
+def _chain_key_for_event(row: dict) -> str:
+    action_id = row.get("LIVE_ACTION_ID") or row.get("live_action_id")
+    proposal_id = row.get("PROPOSAL_ID") or row.get("proposal_id")
+    run_id = row.get("RUN_ID") or row.get("run_id")
+    if action_id:
+        return f"action::{action_id}"
+    if proposal_id:
+        return f"proposal::{proposal_id}"
+    if run_id:
+        return f"run::{run_id}"
+    return "unknown"
+
+
+def _group_events_into_chains(events: list[dict]) -> list[dict]:
+    grouped: dict[str, list[dict]] = {}
+    for e in events:
+        key = e.get("chain_key") or "unknown"
+        grouped.setdefault(key, []).append(e)
+    chains: list[dict] = []
+    for key, items in grouped.items():
+        ordered = sorted(items, key=lambda x: _as_dt(x.get("event_ts")))
+        latest = ordered[-1] if ordered else {}
+        chains.append(
+            {
+                "chain_key": key,
+                "taxonomy_category": latest.get("taxonomy_category"),
+                "latest_event_ts": latest.get("event_ts"),
+                "latest_title": latest.get("title"),
+                "latest_summary": latest.get("summary"),
+                "run_id": latest.get("run_id"),
+                "portfolio_id": latest.get("portfolio_id"),
+                "live_action_id": latest.get("live_action_id"),
+                "proposal_id": latest.get("proposal_id"),
+                "event_count": len(ordered),
+                "stages": [e.get("chain_stage") for e in ordered if e.get("chain_stage")],
+                "events": ordered,
+            }
+        )
+    chains.sort(key=lambda c: _as_dt(c.get("latest_event_ts")), reverse=True)
+    return chains
+
+
 def _ledger_table_exists(cur) -> bool:
     try:
         cur.execute(
@@ -194,6 +277,9 @@ def _build_canonical_feed(cur, limit: int, portfolio_id: Optional[int], event_ty
             "training_version": r.get("TRAINING_VERSION"),
             "policy_version": r.get("POLICY_VERSION"),
             "impact": serialize_row(influence),
+            "taxonomy_category": _taxonomy_for_event(event_name, r.get("EVENT_TYPE")),
+            "chain_key": _chain_key_for_event(r),
+            "chain_stage": _chain_stage_for_event(event_name),
         })
     return out
 
@@ -353,6 +439,7 @@ def get_learning_ledger_feed(
     limit: int = Query(80, ge=10, le=300),
     portfolio_id: Optional[int] = Query(None),
     event_type: Optional[str] = Query(None, description="TRAINING_EVENT or DECISION_EVENT"),
+    group_by_chain: bool = Query(False, description="Group canonical feed into causal chains."),
 ):
     """
     Combined activity feed:
@@ -364,7 +451,17 @@ def get_learning_ledger_feed(
         cur = conn.cursor()
         if _ledger_table_exists(cur):
             events = _build_canonical_feed(cur, limit, portfolio_id, event_type)
-            return {"events": serialize_rows(events), "count": len(events), "source": "canonical_ledger"}
+            if group_by_chain:
+                chains = _group_events_into_chains(events)
+                return {
+                    "events": serialize_rows(events),
+                    "chains": serialize_rows(chains),
+                    "chain_count": len(chains),
+                    "count": len(events),
+                    "source": "canonical_ledger",
+                    "group_by_chain": True,
+                }
+            return {"events": serialize_rows(events), "count": len(events), "source": "canonical_ledger", "group_by_chain": False}
 
         training_events = _build_training_events(cur, max(20, limit // 2))
         decision_events = _build_decision_events(cur, max(20, limit // 2), portfolio_id)
@@ -399,6 +496,7 @@ def get_learning_ledger_detail(
         # 0) Optional canonical ledger event payload
         ledger_row = None
         has_ledger = _ledger_table_exists(cur)
+        causal_chain_rows = []
         if ledger_id is not None and has_ledger:
             cur.execute(
                 """
@@ -418,6 +516,34 @@ def get_learning_ledger_detail(
 
         if not effective_run_id and not ledger_row:
             raise HTTPException(status_code=400, detail="Provide run_id or ledger_id.")
+
+        if has_ledger and (ledger_row or effective_run_id):
+            chain_wheres = []
+            chain_params: list = []
+            if ledger_row and (ledger_row.get("LIVE_ACTION_ID") or ledger_row.get("live_action_id")):
+                chain_wheres.append("LIVE_ACTION_ID = %s")
+                chain_params.append(ledger_row.get("LIVE_ACTION_ID") or ledger_row.get("live_action_id"))
+            elif ledger_row and (ledger_row.get("PROPOSAL_ID") or ledger_row.get("proposal_id")):
+                chain_wheres.append("PROPOSAL_ID = %s")
+                chain_params.append(ledger_row.get("PROPOSAL_ID") or ledger_row.get("proposal_id"))
+            elif effective_run_id:
+                chain_wheres.append("(RUN_ID = %s OR PARENT_RUN_ID = %s)")
+                chain_params.extend([effective_run_id, effective_run_id])
+            if chain_wheres:
+                cur.execute(
+                    f"""
+                    select
+                      LEDGER_ID, EVENT_TS, EVENT_TYPE, EVENT_NAME, STATUS,
+                      RUN_ID, PORTFOLIO_ID, PROPOSAL_ID, LIVE_ACTION_ID, LIVE_ORDER_ID,
+                      INFLUENCE_DELTA, OUTCOME_STATE
+                    from MIP.AGENT_OUT.LEARNING_DECISION_LEDGER
+                    where {' and '.join(chain_wheres)}
+                    order by EVENT_TS asc, LEDGER_ID asc
+                    limit 500
+                    """,
+                    tuple(chain_params),
+                )
+                causal_chain_rows = fetch_all(cur)
 
         # 1) Audit trail for the run
         audit_rows = []
@@ -548,6 +674,7 @@ def get_learning_ledger_detail(
             "ledger_event": ledger_row,
             "summary": serialize_row(summary),
             "training_snapshot": serialize_row(training_snapshot) if training_snapshot else None,
+            "causal_chain": serialize_rows(causal_chain_rows),
             "audit_events": serialize_rows(audit_rows),
             "proposals": serialize_rows(proposal_rows),
             "live_actions": serialize_rows(action_rows),

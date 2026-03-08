@@ -2595,9 +2595,33 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             if (cash_eur - est_notional) < min_cash_after:
                 reason_codes.append("CASH_BUFFER_BREACH")
 
+        proposal_or_action = action.get("PROPOSAL_ID") if action.get("PROPOSAL_ID") is not None else action_id
+        idempotency_key = f"{action.get('PORTFOLIO_ID')}:{proposal_or_action}:{req.attempt_n}"
         cur.execute(
             """
-            select ORDER_ID
+            select ORDER_ID, STATUS
+            from MIP.LIVE.LIVE_ORDERS
+            where IDEMPOTENCY_KEY = %s
+            limit 1
+            """,
+            (idempotency_key,),
+        )
+        existing_order_rows = fetch_all(cur)
+        if existing_order_rows:
+            existing_order = existing_order_rows[0]
+            return {
+                "ok": True,
+                "action_id": action_id,
+                "status": "EXECUTION_REQUESTED",
+                "order_id": existing_order.get("ORDER_ID"),
+                "idempotency_key": idempotency_key,
+                "mode": "PAPER_PLACEHOLDER",
+                "idempotent_replay": True,
+            }
+
+        cur.execute(
+            """
+            select ORDER_ID, STATUS, IDEMPOTENCY_KEY
             from MIP.LIVE.LIVE_ORDERS
             where ACTION_ID = %s
               and STATUS in ('SUBMITTED','ACKNOWLEDGED','PARTIAL_FILL','FILLED')
@@ -2605,8 +2629,13 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             """,
             (action_id,),
         )
-        if cur.fetchone():
-            reason_codes.append("DUPLICATE_EXECUTION_BLOCKED")
+        existing_action_order = fetch_all(cur)
+        if existing_action_order:
+            status_existing = (existing_action_order[0].get("STATUS") or "").upper()
+            if status_existing in ("SUBMITTED", "ACKNOWLEDGED", "PARTIAL_FILL"):
+                reason_codes.append("ACTIVE_ORDER_EXISTS_DIFFERENT_ATTEMPT")
+            else:
+                reason_codes.append("ACTION_ALREADY_EXECUTED")
 
         if reason_codes:
             final_reason_codes = sorted(set(reason_codes))
@@ -2638,29 +2667,6 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             )
 
         order_id = str(uuid.uuid4())
-        proposal_or_action = action.get("PROPOSAL_ID") if action.get("PROPOSAL_ID") is not None else action_id
-        idempotency_key = f"{action.get('PORTFOLIO_ID')}:{proposal_or_action}:{req.attempt_n}"
-        cur.execute(
-            """
-            select ORDER_ID, STATUS
-            from MIP.LIVE.LIVE_ORDERS
-            where IDEMPOTENCY_KEY = %s
-            limit 1
-            """,
-            (idempotency_key,),
-        )
-        existing_order_rows = fetch_all(cur)
-        if existing_order_rows:
-            existing_order = existing_order_rows[0]
-            return {
-                "ok": True,
-                "action_id": action_id,
-                "status": "EXECUTION_REQUESTED",
-                "order_id": existing_order.get("ORDER_ID"),
-                "idempotency_key": idempotency_key,
-                "mode": "PAPER_PLACEHOLDER",
-                "idempotent_replay": True,
-            }
 
         cur.execute(
             """
@@ -3191,6 +3197,51 @@ def rebuild_live_action_state(req: RebuildLiveStateRequest):
                         """,
                         (target_status, json.dumps(reason_codes), r.get("ACTION_ID")),
                     )
+
+        cur.execute(
+            """
+            select
+              a.ACTION_ID,
+              a.PORTFOLIO_ID,
+              a.STATUS as ACTION_STATUS
+            from MIP.LIVE.LIVE_ACTIONS a
+            where (%s is null or a.PORTFOLIO_ID = %s)
+              and a.STATUS in ('EXECUTION_REQUESTED', 'EXECUTION_PARTIAL')
+              and not exists (
+                select 1
+                from MIP.LIVE.LIVE_ORDERS o
+                where o.ACTION_ID = a.ACTION_ID
+              )
+            order by a.UPDATED_AT desc
+            limit 500
+            """,
+            (req.portfolio_id, req.portfolio_id),
+        )
+        orphan_rows = fetch_all(cur)
+        for r in orphan_rows:
+            inspected += 1
+            target_status = "REVALIDATED_PASS"
+            reason_codes = ["REBUILD_MISSING_ORDER_RESET"]
+            changes.append(
+                {
+                    "action_id": r.get("ACTION_ID"),
+                    "portfolio_id": r.get("PORTFOLIO_ID"),
+                    "from_status": (r.get("ACTION_STATUS") or "").upper(),
+                    "to_status": target_status,
+                    "reason_codes": reason_codes,
+                }
+            )
+            if not req.dry_run:
+                cur.execute(
+                    """
+                    update MIP.LIVE.LIVE_ACTIONS
+                       set STATUS = %s,
+                           REASON_CODES = parse_json(%s),
+                           UPDATED_AT = current_timestamp()
+                     where ACTION_ID = %s
+                    """,
+                    (target_status, json.dumps(reason_codes), r.get("ACTION_ID")),
+                )
 
         _append_learning_ledger_event(
             cur,

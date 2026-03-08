@@ -395,6 +395,13 @@ export default function LiveTrades() {
                 <td>
                   <div>{a.STATUS}</div>
                   <div>Committee: {a.COMMITTEE_STATUS || '—'} ({a.COMMITTEE_VERDICT || '—'})</div>
+                  <div>
+                    Training: {(a.TRAINING_QUALIFICATION_SNAPSHOT?.maturity_stage || a.TRAINING_QUALIFICATION_SNAPSHOT?.MATURITY_STAGE || '—')}
+                    {' '}| Eligible: {a.TRAINING_LIVE_ELIGIBLE == null ? '—' : (a.TRAINING_LIVE_ELIGIBLE ? 'Yes' : 'No')}
+                  </div>
+                  <div>
+                    Rank: {a.TRAINING_RANK_IMPACT || '—'} | Size cap: {a.TRAINING_SIZE_CAP_FACTOR == null ? '—' : fmtNum(a.TRAINING_SIZE_CAP_FACTOR, 2)}
+                  </div>
                   <div>{a.COMPLIANCE_STATUS || '—'}</div>
                   <div>{Array.isArray(a.REASON_CODES) && a.REASON_CODES.length ? a.REASON_CODES.join(', ') : '—'}</div>
                 </td>

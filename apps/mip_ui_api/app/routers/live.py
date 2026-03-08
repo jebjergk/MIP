@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_snowflake_config
 from app.db import get_connection, fetch_all, serialize_row, serialize_rows, SnowflakeAuthError
+from app.training_status import score_training_status_row, DEFAULT_MIN_SIGNALS
 
 router = APIRouter(prefix="/live", tags=["live"])
 
@@ -133,6 +134,7 @@ _ALLOWED_TRANSITIONS = {
 LIVE_POLICY_VERSION = "phase2_session_realism_v1"
 EXECUTION_CLICK_MAX_REVALIDATION_SEC = 300
 LIVE_ACTIVATION_POLICY_VERSION = "phase7_controlled_live_v1"
+TRAINING_QUALIFICATION_POLICY_VERSION = "phase5_training_qualification_v1"
 COMMITTEE_ROLES = [
     "PROPOSER",
     "TRADER_EXECUTION_REVIEWER",
@@ -153,6 +155,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
+          TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
@@ -776,6 +779,163 @@ def _force_refresh_latest_one_minute_bars(cur) -> dict:
         return {"attempted": True, "status": "SUCCESS", "payload": payload}
     except Exception as exc:
         return {"attempted": True, "status": "FAIL", "error": str(exc)}
+
+
+def _fetch_training_min_signals(cur) -> int:
+    try:
+        cur.execute(
+            """
+            select MIN_SIGNALS
+            from MIP.APP.TRAINING_GATE_PARAMS
+            where IS_ACTIVE
+            qualify row_number() over (order by PARAM_SET) = 1
+            """
+        )
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            return int(row[0])
+    except Exception:
+        pass
+    return int(DEFAULT_MIN_SIGNALS)
+
+
+def _fetch_training_version(cur) -> str | None:
+    try:
+        cur.execute(
+            """
+            select TRAINING_VERSION
+            from MIP.APP.V_TRAINING_VERSION_CURRENT
+            where POLICY_NAME = 'DAILY_POLICY'
+            limit 1
+            """
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _build_training_qualification_snapshot(
+    cur,
+    *,
+    symbol: str | None,
+    market_type: str | None,
+    pattern_id,
+    interval_minutes: int = 1440,
+    target_weight=None,
+) -> dict:
+    symbol_norm = (symbol or "").upper().strip()
+    market_type_norm = (market_type or "").upper().strip()
+    if not symbol_norm or not market_type_norm:
+        return {
+            "available": False,
+            "reason": "MISSING_SYMBOL_OR_MARKET_TYPE",
+            "policy_version": TRAINING_QUALIFICATION_POLICY_VERSION,
+        }
+    if pattern_id is None:
+        return {
+            "available": False,
+            "reason": "MISSING_PATTERN_ID",
+            "symbol": symbol_norm,
+            "market_type": market_type_norm,
+            "policy_version": TRAINING_QUALIFICATION_POLICY_VERSION,
+        }
+
+    min_signals = _fetch_training_min_signals(cur)
+    training_version = _fetch_training_version(cur)
+    cur.execute(
+        """
+        with recs as (
+            select RECOMMENDATION_ID
+            from MIP.APP.RECOMMENDATION_LOG
+            where upper(SYMBOL) = %s
+              and upper(MARKET_TYPE) = %s
+              and PATTERN_ID = %s
+              and INTERVAL_MINUTES = %s
+        )
+        select
+            count(*) as RECS_TOTAL,
+            count_if(o.EVAL_STATUS = 'SUCCESS') as OUTCOMES_TOTAL,
+            count(distinct iff(o.EVAL_STATUS = 'SUCCESS', o.HORIZON_BARS, null)) as HORIZONS_COVERED
+        from recs r
+        left join MIP.APP.RECOMMENDATION_OUTCOMES o
+          on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+        """,
+        (symbol_norm, market_type_norm, pattern_id, interval_minutes),
+    )
+    rows = fetch_all(cur)
+    metric = rows[0] if rows else {}
+    recs_total = int(metric.get("RECS_TOTAL") or 0)
+    outcomes_total = int(metric.get("OUTCOMES_TOTAL") or 0)
+    horizons_covered = int(metric.get("HORIZONS_COVERED") or 0)
+    score = score_training_status_row(recs_total, outcomes_total, horizons_covered, min_signals=min_signals)
+
+    cur.execute(
+        """
+        select TRUSTED_LEVEL, READY_FLAG, REASON
+        from MIP.MART.V_SYMBOL_TRAINING_READINESS
+        where upper(SYMBOL) = %s
+        limit 1
+        """,
+        (symbol_norm,),
+    )
+    readiness_rows = fetch_all(cur)
+    readiness = readiness_rows[0] if readiness_rows else {}
+
+    trusted_level = str(readiness.get("TRUSTED_LEVEL") or "UNTRUSTED")
+    ready_flag = bool(readiness.get("READY_FLAG")) if readiness.get("READY_FLAG") is not None else False
+    readiness_reason = str(readiness.get("REASON") or "READINESS_UNKNOWN")
+
+    live_eligible = bool(ready_flag and score.maturity_stage in ("LEARNING", "CONFIDENT"))
+    if score.maturity_stage == "CONFIDENT" and trusted_level == "TRUSTED":
+        size_cap_factor = 1.0
+        rank_impact = "PROMOTE"
+    elif score.maturity_stage in ("LEARNING", "CONFIDENT") and trusted_level in ("TRUSTED", "WATCH"):
+        size_cap_factor = 0.75
+        rank_impact = "NEUTRAL"
+    elif score.maturity_stage == "WARMING_UP":
+        size_cap_factor = 0.5
+        rank_impact = "DEMOTE"
+    else:
+        size_cap_factor = 0.0
+        rank_impact = "DEMOTE"
+
+    proposed_target_weight = float(target_weight) if target_weight is not None else None
+    capped_target_weight = (proposed_target_weight * size_cap_factor) if proposed_target_weight is not None else None
+    reason_codes: list[str] = []
+    if not live_eligible:
+        reason_codes.append("TRAINING_NOT_LIVE_ELIGIBLE")
+    if size_cap_factor < 1.0:
+        reason_codes.append("TRAINING_SIZE_CAP_APPLIED")
+    if trusted_level != "TRUSTED":
+        reason_codes.append(f"TRAINING_TRUST_{trusted_level}")
+    reason_codes.append(f"TRAINING_MATURITY_{score.maturity_stage}")
+
+    return {
+        "available": True,
+        "policy_version": TRAINING_QUALIFICATION_POLICY_VERSION,
+        "training_version": training_version,
+        "as_of_ts": datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol_norm,
+        "market_type": market_type_norm,
+        "pattern_id": int(pattern_id),
+        "interval_minutes": int(interval_minutes),
+        "recs_total": recs_total,
+        "outcomes_total": outcomes_total,
+        "horizons_covered": horizons_covered,
+        "min_signals": int(min_signals),
+        "maturity_score": float(score.maturity_score),
+        "maturity_stage": score.maturity_stage,
+        "trusted_level": trusted_level,
+        "ready_flag": ready_flag,
+        "readiness_reason": readiness_reason,
+        "live_eligible": live_eligible,
+        "rank_impact": rank_impact,
+        "size_cap_factor": float(size_cap_factor),
+        "proposed_target_weight": proposed_target_weight,
+        "capped_target_weight": capped_target_weight,
+        "reason_codes": reason_codes,
+    }
 
 
 def _fetch_committee_pw_evidence(cur, action_id: str, portfolio_id: int | None) -> dict:
@@ -1551,6 +1711,7 @@ def list_live_trade_actions(
           ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
           STATUS, VALIDITY_WINDOW_END,
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
+          TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
@@ -1677,6 +1838,9 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             )
             latest_bar = cur.fetchone()
         pw_evidence = _fetch_committee_pw_evidence(cur, action_id, action.get("PORTFOLIO_ID"))
+        action_training_snapshot = _parse_variant(action.get("TRAINING_QUALIFICATION_SNAPSHOT"))
+        if not action_training_snapshot:
+            action_training_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("training_qualification")
         context = {
             "action_id": action.get("ACTION_ID"),
             "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -1689,6 +1853,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "ts": latest_bar[0].isoformat() if latest_bar and hasattr(latest_bar[0], "isoformat") else (latest_bar[0] if latest_bar else None),
                 "close": float(latest_bar[1]) if latest_bar and latest_bar[1] is not None else None,
             },
+            "training_qualification_snapshot": action_training_snapshot,
             "parallel_worlds_evidence": pw_evidence,
         }
 
@@ -1788,7 +1953,11 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "size_factor": verdict["size_factor"],
                 "blocked": verdict["blocked"],
             },
-            outcome_state={"roles": COMMITTEE_ROLES, "parallel_worlds_evidence": pw_evidence},
+            outcome_state={
+                "roles": COMMITTEE_ROLES,
+                "training_qualification_snapshot": action_training_snapshot,
+                "parallel_worlds_evidence": pw_evidence,
+            },
         )
         return {
             "ok": True,
@@ -3277,6 +3446,14 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 continue
 
             action_id = str(uuid.uuid4())
+            training_snapshot = _build_training_qualification_snapshot(
+                cur,
+                symbol=(p.get("SYMBOL") or "").upper(),
+                market_type=p.get("MARKET_TYPE"),
+                pattern_id=p.get("SIGNAL_PATTERN_ID"),
+                interval_minutes=1440,
+                target_weight=p.get("TARGET_WEIGHT"),
+            )
             snapshot_payload = json.dumps(
                 {
                     "source": "ORDER_PROPOSALS",
@@ -3288,6 +3465,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "recommendation_id": p.get("RECOMMENDATION_ID"),
                     "target_weight": p.get("TARGET_WEIGHT"),
                     "proposed_at": str(p.get("PROPOSED_AT")) if p.get("PROPOSED_AT") is not None else None,
+                    "training_qualification": training_snapshot,
                 }
             )
 
@@ -3300,12 +3478,14 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 insert into MIP.LIVE.LIVE_ACTIONS (
                   ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, ASSET_CLASS,
                   STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
+                  TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
                   COMMITTEE_REQUIRED, COMMITTEE_STATUS,
                   CREATED_AT, UPDATED_AT
                 )
                 values (
                   %s, %s, %s, %s, %s, %s, %s,
                   'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
+                  parse_json(%s), %s, %s, %s,
                   true, 'PENDING',
                   current_timestamp(), current_timestamp()
                 )
@@ -3321,6 +3501,10 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     int(validity_window_sec) if validity_window_sec is not None else 14400,
                     snapshot_payload,
                     json.dumps(import_reason_codes),
+                    json.dumps(training_snapshot),
+                    bool(training_snapshot.get("live_eligible")),
+                    training_snapshot.get("rank_impact"),
+                    float(training_snapshot.get("size_cap_factor") or 0.0),
                 ),
             )
             _append_learning_ledger_event(
@@ -3349,11 +3533,17 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                         "EXECUTION_REQUESTED",
                     ],
                     "proposal_status_source": p.get("STATUS"),
+                    "training_live_eligible": training_snapshot.get("live_eligible"),
+                    "training_rank_impact": training_snapshot.get("rank_impact"),
+                    "training_size_cap_factor": training_snapshot.get("size_cap_factor"),
+                    "training_maturity_stage": training_snapshot.get("maturity_stage"),
+                    "training_trusted_level": training_snapshot.get("trusted_level"),
                 },
                 policy_version=LIVE_POLICY_VERSION,
                 outcome_state={
                     "import_source": "ORDER_PROPOSALS",
                     "reason_codes": import_reason_codes,
+                    "training_qualification_snapshot": training_snapshot,
                 },
             )
             imported += 1

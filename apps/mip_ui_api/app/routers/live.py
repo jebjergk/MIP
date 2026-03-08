@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Body
 from pydantic import BaseModel, Field
 
 from app.config import get_snowflake_config
@@ -57,6 +57,10 @@ class ImportLiveActionsFromProposalsRequest(BaseModel):
 class ExecuteLiveActionRequest(BaseModel):
     actor: str
     attempt_n: int = 1
+
+
+class RevalidateLiveActionRequest(BaseModel):
+    force_refresh_1m: bool = False
 
 
 class UpdateLiveOrderStatusRequest(BaseModel):
@@ -121,7 +125,8 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE,
           STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
           PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
-          PARAM_SNAPSHOT, ONE_MIN_BAR_TS
+          PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
+          REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
         """,
@@ -730,6 +735,20 @@ def _run_agent_snowflake_query(query: str, timeout_sec: int = 120) -> list | dic
         return json.loads(out[json_start:])
     except Exception:
         return []
+
+
+def _force_refresh_latest_one_minute_bars(cur) -> dict:
+    """
+    Best-effort 1-minute bar refresh before revalidation.
+    Non-fatal; caller still proceeds with currently available data.
+    """
+    try:
+        cur.execute("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(1)")
+        row = cur.fetchone()
+        payload = row[0] if row else None
+        return {"attempted": True, "status": "SUCCESS", "payload": payload}
+    except Exception as exc:
+        return {"attempted": True, "status": "FAIL", "error": str(exc)}
 
 
 @router.post("/snapshot/refresh")
@@ -1366,6 +1385,7 @@ def list_live_trade_actions(
           PM_APPROVED_BY, PM_APPROVED_TS,
           COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
           REVALIDATION_TS, REVALIDATION_PRICE, PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT,
+          REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE,
           REASON_CODES,
           ONE_MIN_BAR_TS, ONE_MIN_BAR_CLOSE, EXECUTION_PRICE_SOURCE,
           CREATED_AT, UPDATED_AT
@@ -1470,7 +1490,10 @@ def compliance_decide_live_action(action_id: str, req: ComplianceDecisionRequest
 
 
 @router.post("/trades/actions/{action_id}/revalidate")
-def revalidate_live_action(action_id: str):
+def revalidate_live_action(
+    action_id: str,
+    req: RevalidateLiveActionRequest = Body(default_factory=RevalidateLiveActionRequest),
+):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -1491,6 +1514,9 @@ def revalidate_live_action(action_id: str):
             )
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
+        refresh_info = {"attempted": False}
+        if req.force_refresh_1m:
+            refresh_info = _force_refresh_latest_one_minute_bars(cur)
 
         cur.execute(
             """
@@ -1531,9 +1557,26 @@ def revalidate_live_action(action_id: str):
                 deviation = abs(float(ref_price) - float(proposed_price)) / max(float(proposed_price), 1e-9)
             except Exception:
                 deviation = None
-        guard_pass = deviation is None or deviation <= 0.02
-        status = "REVALIDATED_PASS" if guard_pass else "REVALIDATED_FAIL"
-        reason_codes = [] if guard_pass else ["PRICE_GUARD_FAIL"]
+        revalidation_outcome = "FAIL"
+        status = "REVALIDATED_FAIL"
+        reason_codes: list[str] = []
+        reduced_size_factor = None
+
+        if deviation is None or deviation <= 0.02:
+            revalidation_outcome = "PASS"
+            status = "REVALIDATED_PASS"
+        elif deviation <= 0.04:
+            # Latency-aware compromise: keep candidate valid but force a reduced-size execution envelope.
+            revalidation_outcome = "PASS_WITH_REDUCED_SIZE"
+            status = "REVALIDATED_PASS"
+            reduced_size_factor = 0.5
+            reason_codes.append("REDUCED_SIZE_DUE_TO_PRICE_DEVIATION")
+        else:
+            revalidation_outcome = "FAIL"
+            status = "REVALIDATED_FAIL"
+            reason_codes.append("PRICE_GUARD_FAIL")
+
+        source_effective = "FORCED_REFRESH_1M" if req.force_refresh_1m else source
 
         cur.execute(
             """
@@ -1545,7 +1588,14 @@ def revalidate_live_action(action_id: str):
                    ONE_MIN_BAR_TS = %s,
                    ONE_MIN_BAR_CLOSE = %s,
                    EXECUTION_PRICE_SOURCE = %s,
+                   REVALIDATION_OUTCOME = %s,
+                   REVALIDATION_POLICY_VERSION = %s,
+                   REVALIDATION_DATA_SOURCE = %s,
                    STATUS = %s,
+                   PROPOSED_QTY = case
+                       when %s is not null and PROPOSED_QTY is not null then greatest(PROPOSED_QTY * %s, 1)
+                       else PROPOSED_QTY
+                   end,
                    REASON_CODES = parse_json(%s),
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
@@ -1557,7 +1607,12 @@ def revalidate_live_action(action_id: str):
                 ref_ts if source == "ONE_MINUTE_BAR" else None,
                 ref_price if source == "ONE_MINUTE_BAR" else None,
                 source,
+                revalidation_outcome,
+                LIVE_POLICY_VERSION,
+                source_effective,
                 status,
+                reduced_size_factor,
+                reduced_size_factor,
                 json.dumps(reason_codes),
                 action_id,
             ),
@@ -1572,17 +1627,24 @@ def revalidate_live_action(action_id: str):
             policy_version=LIVE_POLICY_VERSION,
             influence_delta={
                 "price_deviation_pct": float(deviation) if deviation is not None else None,
-                "price_guard_result": "PASS" if guard_pass else "FAIL",
-                "price_source": source,
+                "price_guard_result": revalidation_outcome,
+                "price_source": source_effective,
+                "reduced_size_factor": reduced_size_factor,
+                "force_refresh_1m": bool(req.force_refresh_1m),
             },
         )
         return {
             "ok": True,
             "action_id": action_id,
             "status": status,
-            "price_source": source,
+            "revalidation_outcome": revalidation_outcome,
+            "policy_version": LIVE_POLICY_VERSION,
+            "price_source": source_effective,
             "revalidation_price": float(ref_price) if ref_price is not None else None,
             "price_deviation_pct": float(deviation) if deviation is not None else None,
+            "reduced_size_factor": reduced_size_factor,
+            "force_refresh_1m": bool(req.force_refresh_1m),
+            "refresh": refresh_info,
         }
     finally:
         conn.close()

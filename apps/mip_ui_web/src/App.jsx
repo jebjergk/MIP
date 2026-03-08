@@ -11,7 +11,7 @@ import MarketTimeline from './pages/MarketTimeline'
 import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
-import DecisionConsole from './pages/DecisionConsole'
+import AiAgentDecisions from './pages/AiAgentDecisions'
 import NewsIntelligence from './pages/NewsIntelligence'
 import LiveTrades from './pages/LiveTrades'
 import LivePortfolioConfig from './pages/LivePortfolioConfig'
@@ -44,7 +44,7 @@ export default function App() {
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/learning-ledger" element={<LearningLedger />} />
-        <Route path="/decision-console" element={<DecisionConsole />} />
+        <Route path="/decision-console" element={<AiAgentDecisions />} />
         <Route path="/live-trades" element={<LiveTrades />} />
         <Route path="/live-portfolio-config" element={<LivePortfolioConfig />} />
         <Route path="/news-intelligence" element={<NewsIntelligence />} />

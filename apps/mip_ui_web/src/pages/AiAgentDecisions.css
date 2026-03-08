@@ -1,0 +1,100 @@
+.ai-agent-decisions-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aad-header h2 {
+  margin: 0 0 4px;
+}
+
+.aad-header p {
+  margin: 0;
+  color: #666;
+}
+
+.aad-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.aad-filters input,
+.aad-filters select {
+  padding: 6px 8px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+}
+
+.aad-btn {
+  padding: 6px 10px;
+  border: 1px solid #c9c9c9;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.aad-layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+.aad-table-wrap,
+.aad-detail {
+  border: 1px solid #e1e1e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.aad-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.aad-table th,
+.aad-table td {
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #efefef;
+  padding: 8px;
+}
+
+.aad-table tr.is-selected {
+  background: #f8fbff;
+}
+
+.aad-detail {
+  padding: 10px;
+}
+
+.aad-detail h3 {
+  margin: 0 0 8px;
+}
+
+.aad-meta {
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.aad-transcript {
+  border-top: 1px solid #efefef;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.aad-line {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.aad-error {
+  background: #ffe8e8;
+  border: 1px solid #f2bcbc;
+  color: #7e1e1e;
+  border-radius: 6px;
+  padding: 8px;
+}

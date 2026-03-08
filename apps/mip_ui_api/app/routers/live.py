@@ -80,6 +80,24 @@ class RebuildLiveStateRequest(BaseModel):
     actor: str = "system_rebuild"
 
 
+class SetLiveActivationRequest(BaseModel):
+    portfolio_id: int
+    actor: str
+    force: bool = False
+
+
+class DisableLiveActivationRequest(BaseModel):
+    portfolio_id: int
+    actor: str
+    reason: str | None = None
+
+
+class SmokeGateRequest(BaseModel):
+    phase: str = Field(default="phase6_7", pattern="^(phase4|phase5|phase6_7|full)$")
+    include_db_checks: bool = True
+    include_write_checks: bool = False
+
+
 _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
     "PROPOSED": {"PM_ACCEPTED"},
@@ -91,6 +109,7 @@ _ALLOWED_TRANSITIONS = {
 
 LIVE_POLICY_VERSION = "phase2_session_realism_v1"
 EXECUTION_CLICK_MAX_REVALIDATION_SEC = 300
+LIVE_ACTIVATION_POLICY_VERSION = "phase7_controlled_live_v1"
 
 
 def _fetch_live_action(cur, action_id: str) -> dict | None:
@@ -290,6 +309,105 @@ def _safe_early_exit_details(details: dict) -> dict:
             "ingestion_status": ingestion.get("status") if isinstance(ingestion, dict) else None,
             "early_exit_status": early_exit.get("status") if isinstance(early_exit, dict) else None,
         },
+    }
+
+
+def _compute_live_activation_guard(cur, portfolio_id: int) -> dict:
+    cur.execute(
+        """
+        select
+          PORTFOLIO_ID,
+          IBKR_ACCOUNT_ID,
+          ADAPTER_MODE,
+          DRIFT_STATUS,
+          IS_ACTIVE,
+          SNAPSHOT_FRESHNESS_THRESHOLD_SEC
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where PORTFOLIO_ID = %s
+        """,
+        (portfolio_id,),
+    )
+    cfg_rows = fetch_all(cur)
+    if not cfg_rows:
+        return {"eligible": False, "reasons": ["LIVE_CONFIG_NOT_FOUND"], "config": None, "checks": {}}
+
+    cfg = cfg_rows[0]
+    reasons: list[str] = []
+    checks: dict = {
+        "is_active": bool(cfg.get("IS_ACTIVE")),
+        "drift_status": cfg.get("DRIFT_STATUS"),
+        "adapter_mode": cfg.get("ADAPTER_MODE"),
+    }
+    if cfg.get("IS_ACTIVE") is False:
+        reasons.append("LIVE_CONFIG_INACTIVE")
+
+    drift_status = (cfg.get("DRIFT_STATUS") or "").upper()
+    if drift_status and drift_status not in ("OK", "CLEAR", "HEALTHY"):
+        reasons.append("DRIFT_STATUS_NOT_HEALTHY")
+
+    account_id = cfg.get("IBKR_ACCOUNT_ID")
+    cur.execute(
+        """
+        select SNAPSHOT_TS
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        where SNAPSHOT_TYPE = 'NAV'
+          and IBKR_ACCOUNT_ID = %s
+        order by SNAPSHOT_TS desc
+        limit 1
+        """,
+        (account_id,),
+    )
+    nav_rows = fetch_all(cur)
+    latest_nav = nav_rows[0] if nav_rows else None
+    if not latest_nav or not latest_nav.get("SNAPSHOT_TS"):
+        reasons.append("MISSING_NAV_SNAPSHOT")
+        checks["snapshot_age_sec"] = None
+    else:
+        snap_ts = latest_nav.get("SNAPSHOT_TS")
+        snap_age_sec = int((datetime.now(timezone.utc) - snap_ts.replace(tzinfo=timezone.utc)).total_seconds())
+        max_snap_age = int(cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC") or 300)
+        checks["snapshot_age_sec"] = snap_age_sec
+        checks["snapshot_max_age_sec"] = max_snap_age
+        if snap_age_sec > max_snap_age:
+            reasons.append("NAV_SNAPSHOT_STALE")
+
+    cur.execute(
+        """
+        select count(*) as CNT
+        from MIP.LIVE.DRIFT_LOG
+        where PORTFOLIO_ID = %s
+          and coalesce(DRIFT_DETECTED, false) = true
+          and RESOLUTION_TS is null
+        """,
+        (portfolio_id,),
+    )
+    drift_rows = fetch_all(cur)
+    unresolved_drift_count = int((drift_rows[0] or {}).get("CNT") or 0)
+    checks["unresolved_drift_count"] = unresolved_drift_count
+    if unresolved_drift_count > 0:
+        reasons.append("UNRESOLVED_DRIFT_PRESENT")
+
+    cur.execute(
+        """
+        select count(*) as CNT
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where coalesce(IS_ACTIVE, true) = true
+          and upper(coalesce(ADAPTER_MODE, 'PAPER')) = 'LIVE'
+          and PORTFOLIO_ID <> %s
+        """,
+        (portfolio_id,),
+    )
+    live_rows = fetch_all(cur)
+    other_live_count = int((live_rows[0] or {}).get("CNT") or 0)
+    checks["other_live_portfolios"] = other_live_count
+    if other_live_count > 0:
+        reasons.append("OTHER_LIVE_PORTFOLIO_ACTIVE")
+
+    return {
+        "eligible": len(reasons) == 0,
+        "reasons": reasons,
+        "config": serialize_row(cfg),
+        "checks": checks,
     }
 
 
@@ -968,6 +1086,206 @@ def get_broker_drift_status(portfolio_id: int | None = Query(None, description="
         }
     finally:
         conn.close()
+
+
+@router.get("/activation/guard")
+def get_live_activation_guard(portfolio_id: int = Query(..., description="Live portfolio ID")):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        guard = _compute_live_activation_guard(cur, portfolio_id)
+        return {"portfolio_id": portfolio_id, **guard}
+    finally:
+        conn.close()
+
+
+@router.post("/activation/enable")
+def enable_live_activation(req: SetLiveActivationRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        guard = _compute_live_activation_guard(cur, req.portfolio_id)
+        if (not guard.get("eligible")) and (not req.force):
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Live activation blocked by safety guards.", "reasons": guard.get("reasons")},
+            )
+
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+               set ADAPTER_MODE = 'LIVE',
+                   IS_ACTIVE = true,
+                   UPDATED_AT = current_timestamp()
+             where PORTFOLIO_ID = %s
+            """,
+            (req.portfolio_id,),
+        )
+
+        cur.execute(
+            """
+            insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+              EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PAYLOAD
+            )
+            values (
+              %s, current_timestamp(), 'LIVE_ACTIVATION_ENABLED', %s, parse_json(%s)
+            )
+            """,
+            (
+                str(uuid.uuid4()),
+                req.portfolio_id,
+                json.dumps({"actor": req.actor, "force": req.force, "reasons": guard.get("reasons", [])}),
+            ),
+        )
+
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_ACTIVATION_ENABLE",
+            status="SUCCESS" if guard.get("eligible") else "FORCED",
+            action_before=None,
+            action_after={"PORTFOLIO_ID": req.portfolio_id},
+            policy_version=LIVE_ACTIVATION_POLICY_VERSION,
+            influence_delta={
+                "eligible": guard.get("eligible"),
+                "forced": req.force,
+            },
+            outcome_state={"actor": req.actor, "reasons": guard.get("reasons", [])},
+        )
+
+        return {
+            "ok": True,
+            "portfolio_id": req.portfolio_id,
+            "adapter_mode": "LIVE",
+            "forced": req.force,
+            "guard": guard,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/activation/disable")
+def disable_live_activation(req: DisableLiveActivationRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+               set ADAPTER_MODE = 'PAPER',
+                   UPDATED_AT = current_timestamp()
+             where PORTFOLIO_ID = %s
+            """,
+            (req.portfolio_id,),
+        )
+
+        cur.execute(
+            """
+            insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+              EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PAYLOAD
+            )
+            values (
+              %s, current_timestamp(), 'LIVE_ACTIVATION_DISABLED', %s, parse_json(%s)
+            )
+            """,
+            (
+                str(uuid.uuid4()),
+                req.portfolio_id,
+                json.dumps({"actor": req.actor, "reason": req.reason}),
+            ),
+        )
+
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_ACTIVATION_DISABLE",
+            status="SUCCESS",
+            action_before=None,
+            action_after={"PORTFOLIO_ID": req.portfolio_id},
+            policy_version=LIVE_ACTIVATION_POLICY_VERSION,
+            influence_delta={"adapter_mode_after": "PAPER"},
+            outcome_state={"actor": req.actor, "reason": req.reason},
+        )
+
+        return {
+            "ok": True,
+            "portfolio_id": req.portfolio_id,
+            "adapter_mode": "PAPER",
+            "reason": req.reason,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/smoke/phase-gate")
+def run_phase_gate_smoke(req: SmokeGateRequest):
+    """
+    Phase-gated smoke/non-regression checks for live path continuity.
+    """
+    checks: list[dict] = []
+
+    def _record(name: str, ok: bool, detail=None):
+        checks.append({"name": name, "ok": ok, "detail": detail})
+
+    # Read-only HTTP checks against current API runtime.
+    try:
+        conn = get_connection()
+        _record("api_connection", True)
+    except Exception as exc:
+        _record("api_connection", False, str(exc))
+        return {"ok": False, "phase": req.phase, "checks": checks}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    # Endpoint-level checks
+    for name, fn in [
+        ("early_exit_status", lambda: get_early_exit_status(limit=1, include_raw=False)),
+        ("drift_status", lambda: get_broker_drift_status(portfolio_id=None)),
+        ("orders_list", lambda: list_live_orders(portfolio_id=None, action_id=None, limit=5)),
+        ("actions_list", lambda: list_live_trade_actions(portfolio_id=None, pending_only=True, limit=5)),
+    ]:
+        try:
+            payload = fn()
+            _record(name, True, {"keys": list(payload.keys()) if isinstance(payload, dict) else None})
+        except Exception as exc:
+            _record(name, False, str(exc))
+
+    # Optional DB checks (read-only)
+    if req.include_db_checks:
+        db_queries = {
+            "db_live_actions_exists": "select count(*) as CNT from MIP.LIVE.LIVE_ACTIONS",
+            "db_live_orders_exists": "select count(*) as CNT from MIP.LIVE.LIVE_ORDERS",
+            "db_ledger_exists": "select count(*) as CNT from MIP.AGENT_OUT.LEARNING_DECISION_LEDGER",
+            "db_audit_recent": "select count(*) as CNT from MIP.APP.MIP_AUDIT_LOG where EVENT_TS >= dateadd(day,-7,current_timestamp())",
+        }
+        for name, q in db_queries.items():
+            try:
+                rows = _run_agent_snowflake_query(q, timeout_sec=60)
+                cnt = None
+                if isinstance(rows, list) and rows:
+                    cnt = rows[0].get("CNT")
+                _record(name, True, {"count": cnt})
+            except Exception as exc:
+                _record(name, False, str(exc))
+
+    # Optional write checks kept guarded by explicit flag.
+    if req.include_write_checks:
+        try:
+            result = rebuild_live_action_state(RebuildLiveStateRequest(portfolio_id=None, dry_run=True, actor="phase_gate_smoke"))
+            _record("write_path_rebuild_dry_run", True, {"changed_actions": result.get("changed_actions")})
+        except Exception as exc:
+            _record("write_path_rebuild_dry_run", False, str(exc))
+
+    ok = all(c["ok"] for c in checks)
+    return {
+        "ok": ok,
+        "phase": req.phase,
+        "include_db_checks": req.include_db_checks,
+        "include_write_checks": req.include_write_checks,
+        "checks": checks,
+        "failed": [c for c in checks if not c["ok"]],
+    }
 
 
 @router.get("/trades/actions")

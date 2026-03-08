@@ -75,6 +75,8 @@
 
 .lpc-actions {
   display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .lpc-btn {

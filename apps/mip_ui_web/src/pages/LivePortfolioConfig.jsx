@@ -20,6 +20,8 @@ export default function LivePortfolioConfig() {
   const [configs, setConfigs] = useState([])
   const [selectedPortfolioId, setSelectedPortfolioId] = useState('')
   const [status, setStatus] = useState({ loading: true, error: '', ok: '' })
+  const [guard, setGuard] = useState(null)
+  const [smokeResult, setSmokeResult] = useState(null)
   const [form, setForm] = useState({
     sim_portfolio_id: '',
     ibkr_account_id: '',
@@ -64,6 +66,21 @@ export default function LivePortfolioConfig() {
     [configs, selectedPortfolioId]
   )
 
+  const loadGuard = useCallback(async () => {
+    if (!selectedPortfolioId) {
+      setGuard(null)
+      return
+    }
+    try {
+      const resp = await fetch(`${API_BASE}/live/activation/guard?portfolio_id=${encodeURIComponent(selectedPortfolioId)}`)
+      if (!resp.ok) throw new Error(`Guard check failed (${resp.status})`)
+      const data = await resp.json()
+      setGuard(data)
+    } catch (e) {
+      setGuard({ error: e.message || 'Failed to load guard.' })
+    }
+  }, [selectedPortfolioId])
+
   useEffect(() => {
     if (!selectedConfig) return
     setForm({
@@ -84,6 +101,10 @@ export default function LivePortfolioConfig() {
       is_active: selectedConfig.IS_ACTIVE ?? true,
     })
   }, [selectedConfig])
+
+  useEffect(() => {
+    loadGuard()
+  }, [loadGuard])
 
   const onSave = useCallback(async () => {
     if (!selectedPortfolioId) {
@@ -119,11 +140,75 @@ export default function LivePortfolioConfig() {
         throw new Error(txt || `Save failed (${resp.status})`)
       }
       await loadConfigs()
+      await loadGuard()
       setStatus({ loading: false, error: '', ok: 'Saved live portfolio config.' })
     } catch (e) {
       setStatus((s) => ({ ...s, error: e.message || 'Failed to save config.', ok: '' }))
     }
-  }, [form, loadConfigs, selectedPortfolioId])
+  }, [form, loadConfigs, loadGuard, selectedPortfolioId])
+
+  const runPhaseGateSmoke = useCallback(async () => {
+    setStatus((s) => ({ ...s, error: '', ok: '' }))
+    setSmokeResult(null)
+    try {
+      const resp = await fetch(`${API_BASE}/live/smoke/phase-gate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phase: 'phase6_7', include_db_checks: true, include_write_checks: false }),
+      })
+      if (!resp.ok) {
+        const txt = await resp.text()
+        throw new Error(txt || `Phase smoke failed (${resp.status})`)
+      }
+      const data = await resp.json()
+      setSmokeResult(data)
+      setStatus((s) => ({ ...s, ok: data.ok ? 'Phase-gate smoke passed.' : 'Phase-gate smoke reported failures.' }))
+    } catch (e) {
+      setStatus((s) => ({ ...s, error: e.message || 'Failed to run phase-gate smoke.' }))
+    }
+  }, [])
+
+  const enableLive = useCallback(async (force = false) => {
+    if (!selectedPortfolioId) return
+    setStatus((s) => ({ ...s, error: '', ok: '' }))
+    try {
+      const resp = await fetch(`${API_BASE}/live/activation/enable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portfolio_id: Number(selectedPortfolioId), actor: 'ui_operator', force }),
+      })
+      if (!resp.ok) {
+        const txt = await resp.text()
+        throw new Error(txt || `Enable failed (${resp.status})`)
+      }
+      await loadConfigs()
+      await loadGuard()
+      setStatus((s) => ({ ...s, ok: force ? 'LIVE mode force-enabled.' : 'LIVE mode enabled.' }))
+    } catch (e) {
+      setStatus((s) => ({ ...s, error: e.message || 'Failed to enable LIVE mode.' }))
+    }
+  }, [selectedPortfolioId, loadConfigs, loadGuard])
+
+  const disableLive = useCallback(async () => {
+    if (!selectedPortfolioId) return
+    setStatus((s) => ({ ...s, error: '', ok: '' }))
+    try {
+      const resp = await fetch(`${API_BASE}/live/activation/disable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portfolio_id: Number(selectedPortfolioId), actor: 'ui_operator', reason: 'manual rollback' }),
+      })
+      if (!resp.ok) {
+        const txt = await resp.text()
+        throw new Error(txt || `Disable failed (${resp.status})`)
+      }
+      await loadConfigs()
+      await loadGuard()
+      setStatus((s) => ({ ...s, ok: 'LIVE mode disabled (rollback to PAPER).' }))
+    } catch (e) {
+      setStatus((s) => ({ ...s, error: e.message || 'Failed to disable LIVE mode.' }))
+    }
+  }, [selectedPortfolioId, loadConfigs, loadGuard])
 
   return (
     <div className="page lpc-page">
@@ -170,6 +255,28 @@ export default function LivePortfolioConfig() {
       {status.error ? <div className="lpc-msg lpc-msg-error">{status.error}</div> : null}
       {status.ok ? <div className="lpc-msg lpc-msg-ok">{status.ok}</div> : null}
 
+      <div className="lpc-guide">
+        <h3>Activation Guard</h3>
+        {guard?.error ? (
+          <p>{guard.error}</p>
+        ) : (
+          <>
+            <p>
+              Eligible: <b>{guard?.eligible ? 'Yes' : 'No'}</b>
+              {' '}| Drift status: <b>{guard?.checks?.drift_status ?? '—'}</b>
+              {' '}| Snapshot age sec: <b>{guard?.checks?.snapshot_age_sec ?? '—'}</b>
+            </p>
+            {Array.isArray(guard?.reasons) && guard.reasons.length > 0 ? (
+              <ul>
+                {guard.reasons.map((r) => (<li key={r}>{r}</li>))}
+              </ul>
+            ) : (
+              <p>No blocking reasons.</p>
+            )}
+          </>
+        )}
+      </div>
+
       <div className="lpc-grid">
         <label>SIM Portfolio ID (research twin)<input value={form.sim_portfolio_id} onChange={(e) => setForm((v) => ({ ...v, sim_portfolio_id: e.target.value }))} /></label>
         <label>IBKR Account ID<input value={form.ibkr_account_id} onChange={(e) => setForm((v) => ({ ...v, ibkr_account_id: e.target.value }))} /></label>
@@ -203,7 +310,26 @@ export default function LivePortfolioConfig() {
         <button className="lpc-btn lpc-btn-primary" onClick={onSave} disabled={!selectedPortfolioId || status.loading}>
           Save Config
         </button>
+        <button className="lpc-btn" onClick={() => enableLive(false)} disabled={!selectedPortfolioId || status.loading}>
+          Enable LIVE (Guarded)
+        </button>
+        <button className="lpc-btn" onClick={() => enableLive(true)} disabled={!selectedPortfolioId || status.loading}>
+          Force Enable LIVE
+        </button>
+        <button className="lpc-btn" onClick={disableLive} disabled={!selectedPortfolioId || status.loading}>
+          Disable LIVE (Rollback)
+        </button>
+        <button className="lpc-btn" onClick={runPhaseGateSmoke} disabled={status.loading}>
+          Run Phase-Gate Smoke
+        </button>
       </div>
+
+      {smokeResult ? (
+        <div className="lpc-guide">
+          <h3>Latest Smoke Result</h3>
+          <p>Overall: <b>{smokeResult.ok ? 'PASS' : 'FAIL'}</b> | Checks: <b>{(smokeResult.checks || []).length}</b></p>
+        </div>
+      ) : null}
     </div>
   )
 }

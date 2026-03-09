@@ -25,6 +25,11 @@ function fmtPct(v) {
   return `${(n * 100).toFixed(2)}%`
 }
 
+function fmtMaybePending(v, formatter) {
+  if (v == null) return 'Pending'
+  return formatter(v)
+}
+
 function stateClass(value) {
   const v = String(value || '').toUpperCase()
   if (v === 'FRESH' || v === 'CLEAR' || v === 'FILLED') return 'ok'
@@ -187,7 +192,6 @@ export default function LivePortfolioActivity() {
   const orders = overview?.orders || []
   const executions = overview?.executions || []
   const readiness = overview?.readiness || {}
-  const counts = overview?.counts || {}
   const outsideHours = readiness.market_open === false
 
   return (
@@ -221,40 +225,16 @@ export default function LivePortfolioActivity() {
             <div className={`lpa-kpi lpa-kpi--${stateClass(readiness.drift_state)}`}>
               <span>Drift</span><b>{readiness.drift_state || '—'}</b>
             </div>
-            <div className="lpa-kpi">
-              <span>Actionability</span><b>{readiness.actionable ? 'READY' : 'BLOCKED'}</b>
-            </div>
-            <div className="lpa-kpi">
-              <span>Snapshot Age (sec)</span><b>{kpis.snapshot_age_sec ?? '—'}</b>
-            </div>
-            <div className="lpa-kpi">
-              <span>Unresolved Drift</span><b>{kpis.unresolved_drift_count ?? 0}</b>
-            </div>
-            <div className="lpa-kpi">
-              <span>Pending Decisions</span><b>{counts.pending_decisions ?? 0}</b>
-            </div>
-            <div className="lpa-kpi">
-              <span>Executions</span><b>{counts.executions ?? 0}</b>
-            </div>
           </div>
-          {Array.isArray(readiness.blocking_reasons) && readiness.blocking_reasons.length > 0 ? (
-            <div className="lpa-warn">
-              Blocked reasons: {readiness.blocking_reasons.join(', ')}
-            </div>
-          ) : null}
-          {outsideHours ? (
-            <div className="lpa-warn">
-              Outside operating hours. Open/submit is disabled until market window ({fmtTs(readiness.market_window_open_utc)} to {fmtTs(readiness.market_window_close_utc)}).
-            </div>
-          ) : null}
 
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
               Decisions not yet broker-opened. Submit path keeps approval/revalidation/execution lifecycle traceable.
             </div>
+            {outsideHours ? <div className="lpa-subtle">Outside operating hours: actions are disabled.</div> : null}
             <div className="lpa-table-wrap">
-              <table className="lpa-table">
+              <table className="lpa-table lpa-table--pending">
                 <thead>
                   <tr>
                     <th>Decision</th>
@@ -281,14 +261,16 @@ export default function LivePortfolioActivity() {
                         <div>Protected: {d.protection?.state || 'NONE'}</div>
                       </td>
                       <td>
-                        <div>Qty preview: {fmtNum(d.sizing?.final_qty_preview, 0)}</div>
-                        <div>Proposed qty: {fmtNum(d.sizing?.proposed_qty, 0)}</div>
-                        <div>Price: {fmtNum(d.sizing?.proposed_price, 4)}</div>
-                        <div>Notional: {fmtNum(d.sizing?.estimated_notional_eur, 2)}</div>
-                        <div>Position %: {fmtPct(d.sizing?.estimated_position_pct)}</div>
-                        <div>Committee factor: {fmtNum(d.sizing?.committee_size_factor, 2)}</div>
-                        <div>Cap factor: {fmtNum(d.sizing?.training_size_cap_factor, 2)}</div>
-                        <div>Open factor: {fmtNum(d.sizing?.target_open_condition_factor, 2)}</div>
+                        <div className="lpa-kv-list">
+                          <div className="lpa-kv"><span>Qty preview</span><b>{fmtMaybePending(d.sizing?.final_qty_preview, (n) => fmtNum(n, 0))}</b></div>
+                          <div className="lpa-kv"><span>Proposed qty</span><b>{fmtMaybePending(d.sizing?.proposed_qty, (n) => fmtNum(n, 0))}</b></div>
+                          <div className="lpa-kv"><span>Price</span><b>{fmtMaybePending(d.sizing?.proposed_price, (n) => fmtNum(n, 4))}</b></div>
+                          <div className="lpa-kv"><span>Notional</span><b>{fmtMaybePending(d.sizing?.estimated_notional_eur, (n) => fmtNum(n, 2))}</b></div>
+                          <div className="lpa-kv"><span>Position %</span><b>{fmtMaybePending(d.sizing?.estimated_position_pct, fmtPct)}</b></div>
+                          <div className="lpa-kv"><span>Committee factor</span><b>{fmtMaybePending(d.sizing?.committee_size_factor, (n) => fmtNum(n, 2))}</b></div>
+                          <div className="lpa-kv"><span>Cap factor</span><b>{fmtMaybePending(d.sizing?.training_size_cap_factor, (n) => fmtNum(n, 2))}</b></div>
+                          <div className="lpa-kv"><span>Open factor</span><b>{fmtMaybePending(d.sizing?.target_open_condition_factor, (n) => fmtNum(n, 2))}</b></div>
+                        </div>
                         {d.sizing?.availability_reason ? (
                           <div className="lpa-subtle">{d.sizing.availability_reason}</div>
                         ) : null}
@@ -298,6 +280,7 @@ export default function LivePortfolioActivity() {
                         <div className="lpa-subtle">Next: {d.required_next_step || '—'}</div>
                       </td>
                       <td>
+                        <div className="lpa-actions">
                         <button
                           className="lpa-btn"
                           disabled={busy === d.action_id || !d.submission_allowed || outsideHours}
@@ -315,6 +298,7 @@ export default function LivePortfolioActivity() {
                         {!d.submission_allowed ? (
                           <div className="lpa-subtle">Blocked until gates are clear.</div>
                         ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}

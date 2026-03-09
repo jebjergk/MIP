@@ -11,7 +11,7 @@ select
   "state" as STATE,
   "schedule" as SCHEDULE,
   iff(
-    ("name" = 'TASK_RUN_DAILY_PIPELINE' and "schedule" = 'USING CRON 0 16 * * MON-FRI America/New_York') or
+    ("name" = 'TASK_RUN_DAILY_PIPELINE' and "schedule" = 'USING CRON 0 17 * * MON-FRI America/New_York') or
     ("name" = 'TASK_RUN_INTRADAY_PIPELINE' and "schedule" = 'USING CRON 2,17,32,47 10-15 * * MON-FRI America/New_York') or
     ("name" = 'TASK_RUN_HOURLY_EARLY_EXIT_MONITOR' and "schedule" = 'USING CRON 5 10-15 * * MON-FRI America/New_York') or
     ("name" = 'TASK_INGEST_RSS_NEWS' and "schedule" = 'USING CRON 0,30 8-15 * * MON-FRI America/New_York') or
@@ -48,7 +48,7 @@ where STATE = 'started'
   and (
     (NAME in ('TASK_RUN_DAILY_PIPELINE', 'TASK_RUN_HOURLY_EARLY_EXIT_MONITOR')
       and SCHEDULE not in (
-        'USING CRON 0 16 * * MON-FRI America/New_York',
+        'USING CRON 0 17 * * MON-FRI America/New_York',
         'USING CRON 5 10-15 * * MON-FRI America/New_York'
       )
     ) or

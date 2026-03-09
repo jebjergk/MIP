@@ -2839,22 +2839,22 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
         cur.execute(
             """
             select
-              ACTION_ID, PROPOSAL_ID, SYMBOL, SIDE, STATUS, COMPLIANCE_STATUS,
-              COMMITTEE_VERDICT, COMMITTEE_STATUS, COMMITTEE_REQUIRED, REASON_CODES,
+              la.ACTION_ID, la.PROPOSAL_ID, la.SYMBOL, la.SIDE, la.STATUS, la.COMPLIANCE_STATUS,
+              la.COMMITTEE_VERDICT, la.COMMITTEE_STATUS, la.COMMITTEE_REQUIRED, la.REASON_CODES,
               cv.SIZE_FACTOR as COMMITTEE_SIZE_FACTOR,
               cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
-              PROPOSED_QTY, PROPOSED_PRICE, TARGET_OPEN_CONDITION_FACTOR, TRAINING_SIZE_CAP_FACTOR,
-              TARGET_EXPECTATION_SNAPSHOT, CREATED_AT, UPDATED_AT
-            from MIP.LIVE.LIVE_ACTIONS
+              la.PROPOSED_QTY, la.PROPOSED_PRICE, la.TARGET_OPEN_CONDITION_FACTOR, la.TRAINING_SIZE_CAP_FACTOR,
+              la.TARGET_EXPECTATION_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT
+            from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
-              on cv.RUN_ID = LIVE_ACTIONS.COMMITTEE_RUN_ID
-            where PORTFOLIO_ID = %s
-              and STATUS in (
+              on cv.RUN_ID = la.COMMITTEE_RUN_ID
+            where la.PORTFOLIO_ID = %s
+              and la.STATUS in (
                 'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
                 'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
                 'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
               )
-            order by LIVE_ACTIONS.CREATED_AT desc
+            order by la.CREATED_AT desc
             limit %s
             """,
             (portfolio_id, limit),

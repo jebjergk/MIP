@@ -53,8 +53,12 @@ function ChartTooltip({ active, payload, label }) {
           {data.events.map((e, i) => (
             <div key={i} className={`mtd-tooltip-event event-${e.type?.toLowerCase()}`}>
               {e.type}
+              {e.type === 'PROPOSAL' && e.event_source === 'LIVE_ACTION' ? ' (LIVE)' : ''}
               {e.type === 'TRADE' && e.trade_source ? ` (${e.trade_source})` : ''}: {e.side || ''}{' '}
               {e.type === 'TRADE' && e.quantity ? `${e.quantity} @ ${e.price?.toFixed(2)}` : ''}
+              {e.type === 'PROPOSAL' && (e.action_status || e.committee_status || e.committee_verdict) ? (
+                ` ${[e.action_status, e.committee_status, e.committee_verdict].filter(Boolean).join(' · ')}`
+              ) : ''}
             </div>
           ))}
         </div>
@@ -141,11 +145,20 @@ function SignalChainTree({ chains }) {
                 {branch.proposal?.target_weight != null && (
                   <span className="mtd-tree-detail">Weight {branch.proposal.target_weight.toFixed(2)}</span>
                 )}
+                {branch.proposal?.action_status && (
+                  <span className="mtd-tree-detail">Live {branch.proposal.action_status}</span>
+                )}
+                {branch.proposal?.committee_verdict && (
+                  <span className="mtd-tree-detail">Committee {branch.proposal.committee_verdict}</span>
+                )}
                 {branch.status === 'REJECTED' && (
                   <span className="mtd-tree-badge rejected">Rejected</span>
                 )}
                 {branch.status === 'PROPOSED' && (
                   <span className="mtd-tree-badge proposed">Pending</span>
+                )}
+                {branch.proposal?.committee_verdict === 'BLOCK' && (
+                  <span className="mtd-tree-badge rejected">Committee Blocked</span>
                 )}
               </div>
 
@@ -335,6 +348,9 @@ export default function MarketTimelineDetail({
         <span className="mtd-count mtd-count-proposal">
           <strong>{counts.proposals || 0}</strong> proposals
         </span>
+        {counts.live_actions != null && (
+          <span className="mtd-count-breakdown">({counts.live_actions} live actions)</span>
+        )}
         <span className="mtd-count-arrow">→</span>
         <span className="mtd-count mtd-count-trade">
           <strong>{counts.trades || 0}</strong> trades
@@ -438,7 +454,7 @@ export default function MarketTimelineDetail({
         <div className="legend-section legend-events">
           <span className="legend-title">Events:</span>
           <span className="legend-item"><span className="legend-dot signal"></span> Signal (pattern fired)</span>
-          <span className="legend-item"><span className="legend-dot proposal"></span> Proposal (order suggested)</span>
+          <span className="legend-item"><span className="legend-dot proposal"></span> Proposal / Live action stage</span>
           <span className="legend-item"><span className="legend-dot trade"></span> Trade (executed)</span>
         </div>
       </div>

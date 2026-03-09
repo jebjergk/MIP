@@ -9,6 +9,7 @@ Endpoints:
 - GET /market-timeline/detail - Full OHLC + overlays + narrative for one symbol
 """
 from datetime import datetime, timedelta
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -427,7 +428,7 @@ def get_detail(
                     "score": float(row.get("SCORE")) if row.get("SCORE") is not None else None,
                 })
         
-        # Get proposal events
+        # Get proposal events (research proposal source)
         proposals = []
         if window_start:
             proposal_sql = """
@@ -462,6 +463,7 @@ def get_detail(
                     "type": "PROPOSAL",
                     "ts": chart_ts.isoformat() if hasattr(chart_ts, "isoformat") else str(chart_ts),
                     "proposed_at": proposed_at.isoformat() if hasattr(proposed_at, "isoformat") else str(proposed_at),
+                    "signal_ts": signal_ts.isoformat() if hasattr(signal_ts, "isoformat") else str(signal_ts) if signal_ts else None,
                     "proposal_id": row.get("PROPOSAL_ID"),
                     "recommendation_id": row.get("RECOMMENDATION_ID"),
                     "portfolio_id": row.get("PORTFOLIO_ID"),
@@ -469,7 +471,91 @@ def get_detail(
                     "target_weight": float(row.get("TARGET_WEIGHT")) if row.get("TARGET_WEIGHT") is not None else None,
                     "status": row.get("STATUS"),
                     "executed_at": row.get("EXECUTED_AT").isoformat() if row.get("EXECUTED_AT") else None,
+                    "event_source": "ORDER_PROPOSALS",
                 })
+
+        # Get live action events (committee-based proposal lifecycle)
+        live_actions = []
+        if window_start:
+            live_action_sql = """
+                select
+                    la.ACTION_ID,
+                    la.PROPOSAL_ID,
+                    la.PORTFOLIO_ID,
+                    la.CREATED_AT,
+                    la.STATUS,
+                    la.SIDE,
+                    la.COMMITTEE_STATUS,
+                    la.COMMITTEE_VERDICT,
+                    la.REVALIDATION_OUTCOME,
+                    la.REASON_CODES,
+                    op.SIGNAL_TS as SOURCE_SIGNAL_TS,
+                    op.PROPOSED_AT as SOURCE_PROPOSED_AT
+                from MIP.LIVE.LIVE_ACTIONS la
+                left join MIP.AGENT_OUT.ORDER_PROPOSALS op
+                  on op.PROPOSAL_ID = la.PROPOSAL_ID
+                where upper(la.SYMBOL) = upper(%s)
+                  and coalesce(la.ASSET_CLASS, 'STOCK') = %s
+                  and la.CREATED_AT >= %s
+            """
+            params = [symbol, market_type, window_start]
+            if portfolio_id:
+                live_action_sql += " and la.PORTFOLIO_ID = %s"
+                params.append(portfolio_id)
+            live_action_sql += " order by la.CREATED_AT"
+            cur.execute(live_action_sql, params)
+            for row in fetch_all(cur):
+                created_at = row.get("CREATED_AT")
+                source_signal_ts = row.get("SOURCE_SIGNAL_TS")
+                source_proposed_at = row.get("SOURCE_PROPOSED_AT")
+                # Anchor to trading timeline date so marker is visible on chart bars.
+                chart_ts = source_signal_ts or source_proposed_at or created_at
+                reason_codes = row.get("REASON_CODES")
+                if isinstance(reason_codes, str):
+                    try:
+                        reason_codes = json.loads(reason_codes)
+                    except Exception:
+                        reason_codes = []
+                if not isinstance(reason_codes, list):
+                    reason_codes = []
+                live_actions.append({
+                    "type": "PROPOSAL",
+                    "ts": chart_ts.isoformat() if hasattr(chart_ts, "isoformat") else str(chart_ts),
+                    "proposed_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                    "signal_ts": source_signal_ts.isoformat() if hasattr(source_signal_ts, "isoformat") else str(source_signal_ts) if source_signal_ts else None,
+                    "source_proposed_at": source_proposed_at.isoformat() if hasattr(source_proposed_at, "isoformat") else str(source_proposed_at) if source_proposed_at else None,
+                    "action_id": row.get("ACTION_ID"),
+                    "proposal_id": row.get("PROPOSAL_ID"),
+                    "portfolio_id": row.get("PORTFOLIO_ID"),
+                    "side": row.get("SIDE"),
+                    "status": row.get("STATUS"),
+                    "action_status": row.get("STATUS"),
+                    "committee_status": row.get("COMMITTEE_STATUS"),
+                    "committee_verdict": row.get("COMMITTEE_VERDICT"),
+                    "revalidation_outcome": row.get("REVALIDATION_OUTCOME"),
+                    "reason_codes": reason_codes,
+                    "event_source": "LIVE_ACTION",
+                })
+
+        # Enrich proposal rows with latest linked live action stage when available.
+        live_action_by_proposal = {}
+        for action in live_actions:
+            proposal_id = action.get("proposal_id")
+            if proposal_id is None:
+                continue
+            existing = live_action_by_proposal.get(proposal_id)
+            if existing is None or (action.get("ts") or "") >= (existing.get("ts") or ""):
+                live_action_by_proposal[proposal_id] = action
+        for proposal in proposals:
+            action = live_action_by_proposal.get(proposal.get("proposal_id"))
+            if not action:
+                continue
+            proposal["action_id"] = action.get("action_id")
+            proposal["action_status"] = action.get("action_status")
+            proposal["committee_status"] = action.get("committee_status")
+            proposal["committee_verdict"] = action.get("committee_verdict")
+            proposal["revalidation_outcome"] = action.get("revalidation_outcome")
+            proposal["action_created_at"] = action.get("proposed_at")
         
         # Get trade events
         sim_trades = []
@@ -592,17 +678,26 @@ def get_detail(
         except Exception:
             pass  # Trust view may not exist
         
+        source_proposal_count = len(proposals)
+        live_action_count = len(live_actions)
+        effective_proposal_count = max(source_proposal_count, live_action_count)
+
         # Combine events for overlay
         trades = sim_trades + live_trades
-        events = signals + proposals + trades
+        events = signals + proposals + live_actions + trades
         events.sort(key=lambda e: e.get("ts", ""))
         
         # Build signal chains: signal -> [branches], each branch = proposal -> buy -> sell
         proposal_by_rec = {}
+        proposal_by_signal_date = {}
         for p in proposals:
             rid = p.get("recommendation_id")
             if rid is not None:
                 proposal_by_rec.setdefault(rid, []).append(p)
+            signal_anchor = p.get("signal_ts") or p.get("ts")
+            signal_date = (signal_anchor or "")[:10]
+            if signal_date:
+                proposal_by_signal_date.setdefault(signal_date, []).append(p)
         trade_by_proposal = {}
         for t in trades:
             pid = t.get("proposal_id")
@@ -620,6 +715,9 @@ def get_detail(
         for sig in signals:
             rec_id = sig.get("recommendation_id")
             matched_proposals = proposal_by_rec.get(rec_id, [])
+            if not matched_proposals:
+                signal_date = (sig.get("ts") or "")[:10]
+                matched_proposals = proposal_by_signal_date.get(signal_date, [])
             branches = []
             for prop in matched_proposals:
                 branch = {
@@ -668,7 +766,7 @@ def get_detail(
             market_type=market_type,
             portfolio_id=portfolio_id,
             signal_count=len(signals),
-            proposal_count=len(proposals),
+            proposal_count=effective_proposal_count,
             trade_count=len(trades),
             trust_events=trust_events,
             window_start=window_start,
@@ -691,7 +789,9 @@ def get_detail(
             "narrative": narrative,
             "counts": {
                 "signals": len(signals),
-                "proposals": len(proposals),
+                "proposals": effective_proposal_count,
+                "source_proposals": source_proposal_count,
+                "live_actions": live_action_count,
                 "trades": len(trades),
                 "sim_trades": len(sim_trades),
                 "live_trades": len(live_trades),

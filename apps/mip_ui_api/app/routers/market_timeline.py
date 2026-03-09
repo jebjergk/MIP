@@ -380,12 +380,89 @@ def get_detail(
         today_str = _date.today().isoformat()
         if ohlc and ohlc[-1]["ts"][:10] < today_str:
             last = ohlc[-1]
+            synthetic_px = last["close"]
+
+            # If there are trades today, anchor synthetic day to today's opening bar
+            # (instead of yesterday's close) so today's trade markers are visually truthful.
+            has_today_trade = False
+            sim_trade_exists_sql = """
+                select count(*) as CNT
+                from MIP.APP.PORTFOLIO_TRADES t
+                where upper(t.SYMBOL) = upper(%s)
+                  and t.MARKET_TYPE = %s
+                  and t.TRADE_TS::date = current_date()
+                  {portfolio_filter}
+            """
+            sim_params = [symbol, market_type]
+            if portfolio_id:
+                sim_trade_exists_sql = sim_trade_exists_sql.format(portfolio_filter="and t.PORTFOLIO_ID = %s")
+                sim_params.append(portfolio_id)
+            else:
+                sim_trade_exists_sql = sim_trade_exists_sql.format(portfolio_filter="")
+            cur.execute(sim_trade_exists_sql, sim_params)
+            sim_cnt_row = cur.fetchone()
+            sim_cnt = sim_cnt_row[0] if sim_cnt_row else 0
+
+            live_trade_exists_sql = """
+                select count(*) as CNT
+                from MIP.LIVE.LIVE_ORDERS o
+                join MIP.LIVE.LIVE_ACTIONS a
+                  on a.ACTION_ID = o.ACTION_ID
+                where upper(o.SYMBOL) = upper(%s)
+                  and coalesce(a.ASSET_CLASS, 'STOCK') = %s
+                  and o.LAST_UPDATED_AT::date = current_date()
+                  and o.STATUS in ('PARTIAL_FILL', 'FILLED')
+                  {portfolio_filter}
+            """
+            live_params = [symbol, market_type]
+            if portfolio_id:
+                live_trade_exists_sql = live_trade_exists_sql.format(portfolio_filter="and a.PORTFOLIO_ID = %s")
+                live_params.append(portfolio_id)
+            else:
+                live_trade_exists_sql = live_trade_exists_sql.format(portfolio_filter="")
+            cur.execute(live_trade_exists_sql, live_params)
+            live_cnt_row = cur.fetchone()
+            live_cnt = live_cnt_row[0] if live_cnt_row else 0
+
+            has_today_trade = (sim_cnt or 0) > 0 or (live_cnt or 0) > 0
+
+            if has_today_trade:
+                cur.execute(
+                    """
+                    select OPEN, CLOSE
+                    from MIP.MART.MARKET_BARS
+                    where SYMBOL = %s
+                      and MARKET_TYPE = %s
+                      and TS::date = current_date()
+                      and INTERVAL_MINUTES in (15, 60, 1440, %s)
+                    order by
+                        case
+                            when INTERVAL_MINUTES = 15 then 0
+                            when INTERVAL_MINUTES = 60 then 1
+                            when INTERVAL_MINUTES = %s then 2
+                            when INTERVAL_MINUTES = 1440 then 3
+                            else 9
+                        end,
+                        TS asc
+                    limit 1
+                    """,
+                    (symbol, market_type, interval_minutes, interval_minutes),
+                )
+                open_row = cur.fetchone()
+                if open_row:
+                    open_px = open_row[0]
+                    close_px = open_row[1]
+                    if open_px is not None:
+                        synthetic_px = float(open_px)
+                    elif close_px is not None:
+                        synthetic_px = float(close_px)
+
             ohlc.append({
                 "ts": today_str + "T00:00:00",
-                "open": last["close"],
-                "high": last["close"],
-                "low": last["close"],
-                "close": last["close"],
+                "open": synthetic_px,
+                "high": synthetic_px,
+                "low": synthetic_px,
+                "close": synthetic_px,
                 "volume": None,
             })
 

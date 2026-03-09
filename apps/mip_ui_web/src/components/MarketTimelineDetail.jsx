@@ -99,7 +99,6 @@ function SignalChainTree({ chains }) {
     if (chain.signal?.ts) tsList.push(chain.signal.ts)
     ;(chain.branches || []).forEach((branch) => {
       const p = branch.proposal || {}
-      if (p.action_created_at) tsList.push(p.action_created_at)
       if (p.proposed_at) tsList.push(p.proposed_at)
       if (p.executed_at) tsList.push(p.executed_at)
       if (p.ts) tsList.push(p.ts)
@@ -163,20 +162,11 @@ function SignalChainTree({ chains }) {
                 {branch.proposal?.target_weight != null && (
                   <span className="mtd-tree-detail">Weight {branch.proposal.target_weight.toFixed(2)}</span>
                 )}
-                {branch.proposal?.action_status && (
-                  <span className="mtd-tree-detail">Live {branch.proposal.action_status}</span>
-                )}
-                {branch.proposal?.committee_verdict && (
-                  <span className="mtd-tree-detail">Committee {branch.proposal.committee_verdict}</span>
-                )}
                 {branch.status === 'REJECTED' && (
                   <span className="mtd-tree-badge rejected">Rejected</span>
                 )}
                 {branch.status === 'PROPOSED' && (
                   <span className="mtd-tree-badge proposed">Pending</span>
-                )}
-                {branch.proposal?.committee_verdict === 'BLOCK' && (
-                  <span className="mtd-tree-badge rejected">Committee Blocked</span>
                 )}
               </div>
 
@@ -250,12 +240,10 @@ export default function MarketTimelineDetail({
   useEffect(() => {
     if (cachedData) {
       setData(cachedData)
-      setLoading(false)
-      return
     }
     
     let cancelled = false
-    setLoading(true)
+    setLoading(!cachedData)
     setError(null)
     
     const params = new URLSearchParams()

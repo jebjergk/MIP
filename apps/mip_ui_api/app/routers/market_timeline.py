@@ -559,25 +559,6 @@ def get_detail(
                 })
 
         # Enrich proposal rows with latest linked live action stage when available.
-        live_action_by_proposal = {}
-        for action in live_actions:
-            proposal_id = action.get("proposal_id")
-            if proposal_id is None:
-                continue
-            existing = live_action_by_proposal.get(proposal_id)
-            if existing is None or (action.get("ts") or "") >= (existing.get("ts") or ""):
-                live_action_by_proposal[proposal_id] = action
-        for proposal in proposals:
-            action = live_action_by_proposal.get(proposal.get("proposal_id"))
-            if not action:
-                continue
-            proposal["action_id"] = action.get("action_id")
-            proposal["action_status"] = action.get("action_status")
-            proposal["committee_status"] = action.get("committee_status")
-            proposal["committee_verdict"] = action.get("committee_verdict")
-            proposal["revalidation_outcome"] = action.get("revalidation_outcome")
-            proposal["action_created_at"] = action.get("proposed_at")
-        
         # Get trade events
         sim_trades = []
         if window_start:

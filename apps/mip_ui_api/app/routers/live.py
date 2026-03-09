@@ -68,7 +68,7 @@ class RevalidateLiveActionRequest(BaseModel):
 
 class CommitteeRunRequest(BaseModel):
     actor: str = "committee_orchestrator"
-    model: str = "mistral-large2"
+    model: str = "claude-3-5-sonnet"
     force_rerun: bool = False
 
 
@@ -2458,7 +2458,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
 def stream_live_trade_committee_prompt(
     action_id: str,
     actor: str = Query(default="committee_orchestrator"),
-    model: str = Query(default="mistral-large2"),
+    model: str = Query(default="claude-3-5-sonnet"),
 ):
     def event_stream():
         conn = get_connection()
@@ -2507,7 +2507,7 @@ def stream_live_trade_committee_prompt(
 @router.get("/trades/actions/{action_id}/revalidate/live-prompt")
 def stream_revalidate_prompt(
     action_id: str,
-    model: str = Query(default="mistral-large2"),
+    model: str = Query(default="claude-3-5-sonnet"),
 ):
     def event_stream():
         conn = get_connection()

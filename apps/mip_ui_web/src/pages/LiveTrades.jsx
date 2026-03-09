@@ -32,7 +32,7 @@ export default function LiveTrades() {
   const [driftStatus, setDriftStatus] = useState(null)
   const [complianceActor, setComplianceActor] = useState('compliance_user')
   const [committeeActor, setCommitteeActor] = useState('committee_orchestrator')
-  const [committeeModel, setCommitteeModel] = useState('mistral-large2')
+  const [committeeModel, setCommitteeModel] = useState('claude-3-5-sonnet')
   const [intentSubmitActor, setIntentSubmitActor] = useState('intent_submitter')
   const [intentApproveActor, setIntentApproveActor] = useState('intent_approver')
   const [pmActor, setPmActor] = useState('portfolio_manager')

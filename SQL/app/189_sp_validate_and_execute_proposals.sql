@@ -276,7 +276,7 @@ begin
             select
                 c.PROPOSAL_ID,
                 snowflake.cortex.complete(
-                    'mistral-large2',
+                    'claude-3-5-sonnet',
                     'You are a simulation trade committee. Return ONLY JSON with keys: '
                     || '{"should_enter":true|false,'
                     || '"size_factor":0.0-1.0,'

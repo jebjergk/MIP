@@ -396,6 +396,17 @@ def get_detail(
         else:
             window_start = None
             window_end = None
+
+        # Build datetime anchors so non-bar events can be aligned to nearest bar.
+        bar_ts_anchors = []
+        for b in ohlc:
+            ts_raw = b.get("ts")
+            if not ts_raw:
+                continue
+            try:
+                bar_ts_anchors.append(datetime.fromisoformat(str(ts_raw)))
+            except Exception:
+                continue
         
         # Get signal events
         signals = []
@@ -477,6 +488,14 @@ def get_detail(
         # Get live action events (committee-based proposal lifecycle)
         live_actions = []
         if window_start:
+            def _align_to_prev_bar(ts_value):
+                if ts_value is None or not bar_ts_anchors:
+                    return None
+                candidates = [bts for bts in bar_ts_anchors if bts <= ts_value]
+                if candidates:
+                    return max(candidates)
+                return min(bar_ts_anchors)
+
             live_action_sql = """
                 select
                     la.ACTION_ID,
@@ -508,8 +527,9 @@ def get_detail(
                 created_at = row.get("CREATED_AT")
                 source_signal_ts = row.get("SOURCE_SIGNAL_TS")
                 source_proposed_at = row.get("SOURCE_PROPOSED_AT")
-                # Anchor to trading timeline date so marker is visible on chart bars.
-                chart_ts = source_signal_ts or source_proposed_at or created_at
+                # Anchor to nearest prior bar so weekend/off-session committee actions are visible.
+                aligned_bar_ts = _align_to_prev_bar(created_at) if created_at else None
+                chart_ts = aligned_bar_ts or source_signal_ts or source_proposed_at or created_at
                 reason_codes = row.get("REASON_CODES")
                 if isinstance(reason_codes, str):
                     try:
@@ -534,6 +554,7 @@ def get_detail(
                     "committee_verdict": row.get("COMMITTEE_VERDICT"),
                     "revalidation_outcome": row.get("REVALIDATION_OUTCOME"),
                     "reason_codes": reason_codes,
+                    "aligned_to_bar": aligned_bar_ts is not None,
                     "event_source": "LIVE_ACTION",
                 })
 
@@ -686,6 +707,13 @@ def get_detail(
         trades = sim_trades + live_trades
         events = signals + proposals + live_actions + trades
         events.sort(key=lambda e: e.get("ts", ""))
+
+        latest_live_action = None
+        if live_actions:
+            latest_live_action = max(
+                live_actions,
+                key=lambda a: a.get("proposed_at") or a.get("ts") or "",
+            )
         
         # Build signal chains: signal -> [branches], each branch = proposal -> buy -> sell
         proposal_by_rec = {}
@@ -712,6 +740,7 @@ def get_detail(
 
         chains = []
         used_sell_ids = set()
+        used_proposal_ids = set()
         for sig in signals:
             rec_id = sig.get("recommendation_id")
             matched_proposals = proposal_by_rec.get(rec_id, [])
@@ -720,6 +749,8 @@ def get_detail(
                 matched_proposals = proposal_by_signal_date.get(signal_date, [])
             branches = []
             for prop in matched_proposals:
+                if prop.get("proposal_id") is not None:
+                    used_proposal_ids.add(prop.get("proposal_id"))
                 branch = {
                     "proposal": prop,
                     "buy": None,
@@ -759,6 +790,45 @@ def get_detail(
             }
             chains.append(chain)
 
+        # Include committee/live-action branches that have no signal linkage in window.
+        # This surfaces blocked/approved committee outcomes even when signal context is stale/missing.
+        unmatched_live_actions = []
+        for action in live_actions:
+            pid = action.get("proposal_id")
+            if pid is not None and pid in used_proposal_ids:
+                continue
+            unmatched_live_actions.append(action)
+
+        for action in unmatched_live_actions:
+            branch_status = "PROPOSED"
+            verdict = (action.get("committee_verdict") or "").upper()
+            action_status = (action.get("action_status") or "").upper()
+            if verdict == "BLOCK" or action_status in {"OPEN_BLOCKED", "REJECTED"}:
+                branch_status = "REJECTED"
+            elif action_status in {"EXECUTED"}:
+                branch_status = "OPEN"
+
+            synthetic_signal = {
+                "type": "SIGNAL",
+                "ts": action.get("signal_ts") or action.get("ts"),
+                "recommendation_id": None,
+                "pattern_id": None,
+                "score": None,
+                "synthetic": True,
+                "label": "Committee action (no linked signal in window)",
+                "action_id": action.get("action_id"),
+            }
+            chains.append({
+                "signal": synthetic_signal,
+                "branches": [{
+                    "proposal": action,
+                    "buy": None,
+                    "sell": None,
+                    "status": branch_status,
+                }],
+                "status": branch_status,
+            })
+
         # Build decision narrative
         narrative = _build_narrative(
             cur,
@@ -771,6 +841,18 @@ def get_detail(
             trust_events=trust_events,
             window_start=window_start,
         )
+        if latest_live_action and latest_live_action.get("committee_verdict"):
+            verdict = latest_live_action.get("committee_verdict")
+            status = latest_live_action.get("action_status")
+            ts_label = (latest_live_action.get("proposed_at") or "")[:10] or "latest"
+            if verdict == "BLOCK":
+                narrative["bullets"].append(
+                    f"Latest committee review ({ts_label}) blocked entry ({status or 'OPEN_BLOCKED'})."
+                )
+            else:
+                narrative["bullets"].append(
+                    f"Latest committee review ({ts_label}) returned {verdict} ({status or 'workflow active'})."
+                )
         
         return {
             "symbol": symbol,
@@ -787,6 +869,15 @@ def get_detail(
             "chains": chains,
             "trust_summary": trust_events,
             "narrative": narrative,
+            "latest_live_action": {
+                "action_id": latest_live_action.get("action_id"),
+                "portfolio_id": latest_live_action.get("portfolio_id"),
+                "proposed_at": latest_live_action.get("proposed_at"),
+                "action_status": latest_live_action.get("action_status"),
+                "committee_status": latest_live_action.get("committee_status"),
+                "committee_verdict": latest_live_action.get("committee_verdict"),
+                "reason_codes": latest_live_action.get("reason_codes") or [],
+            } if latest_live_action else None,
             "counts": {
                 "signals": len(signals),
                 "proposals": effective_proposal_count,

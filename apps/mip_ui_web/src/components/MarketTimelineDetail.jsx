@@ -94,7 +94,21 @@ function SignalChainTree({ chains }) {
 
   const active = chains.filter((c) => c.status !== 'SIGNAL_ONLY')
   const orphanCount = chains.length - active.length
-  const sorted = [...active].sort((a, b) => (b.signal?.ts || '').localeCompare(a.signal?.ts || ''))
+  const latestTsForChain = (chain) => {
+    const tsList = []
+    if (chain.signal?.ts) tsList.push(chain.signal.ts)
+    ;(chain.branches || []).forEach((branch) => {
+      const p = branch.proposal || {}
+      if (p.action_created_at) tsList.push(p.action_created_at)
+      if (p.proposed_at) tsList.push(p.proposed_at)
+      if (p.executed_at) tsList.push(p.executed_at)
+      if (p.ts) tsList.push(p.ts)
+      if (branch.buy?.ts) tsList.push(branch.buy.ts)
+      if (branch.sell?.ts) tsList.push(branch.sell.ts)
+    })
+    return tsList.sort().slice(-1)[0] || ''
+  }
+  const sorted = [...active].sort((a, b) => latestTsForChain(b).localeCompare(latestTsForChain(a)))
 
   const fmtDate = (ts) => {
     if (!ts) return '—'
@@ -120,9 +134,13 @@ function SignalChainTree({ chains }) {
           {/* Level 0: Signal */}
           <div className="mtd-tree-node mtd-tree-l0">
             <span className="mtd-tree-dot signal" />
-            <span className="mtd-tree-type">Signal</span>
+            <span className="mtd-tree-type">{chain.signal?.synthetic ? 'Committee' : 'Signal'}</span>
             <span className="mtd-tree-date">{fmtDate(chain.signal?.ts)}</span>
-            <span className="mtd-tree-detail">Pattern {chain.signal?.pattern_id}</span>
+            {chain.signal?.synthetic ? (
+              <span className="mtd-tree-detail">{chain.signal?.label || 'No linked signal in window'}</span>
+            ) : (
+              <span className="mtd-tree-detail">Pattern {chain.signal?.pattern_id}</span>
+            )}
             {chain.signal?.score != null && (
               <span className="mtd-tree-detail">Score {chain.signal.score.toFixed(4)}</span>
             )}
@@ -287,6 +305,7 @@ export default function MarketTimelineDetail({
   const chains = data.chains || []
   const narrative = data.narrative || {}
   const counts = data.counts || {}
+  const latestLiveAction = data.latest_live_action || null
   
   // Create a map of events by date
   const eventsByDate = {}
@@ -335,6 +354,11 @@ export default function MarketTimelineDetail({
           <span className={`mtd-decision-badge ${decisionClass}`}>
             {decisionStatus}
           </span>
+          {latestLiveAction?.committee_verdict && (
+            <span className={`mtd-decision-badge ${latestLiveAction.committee_verdict === 'BLOCK' ? 'status-skipped' : 'status-proposed'}`}>
+              Committee {latestLiveAction.committee_verdict}
+            </span>
+          )}
         </div>
         <button className="mtd-close-btn" onClick={onClose} aria-label="Close">×</button>
       </div>
@@ -462,6 +486,17 @@ export default function MarketTimelineDetail({
       {/* Narrative */}
       <div className="mtd-narrative">
         <h4>Decision Narrative</h4>
+        {latestLiveAction && (
+          <div className="mtd-reason" style={{ marginBottom: '0.5rem' }}>
+            <span className="mtd-reason-code">LIVE_COMMITTEE</span>
+            <span className="mtd-reason-title">
+              {latestLiveAction.action_status || '—'} · {latestLiveAction.committee_status || '—'} · {latestLiveAction.committee_verdict || '—'}
+            </span>
+            {latestLiveAction.proposed_at && (
+              <span className="mtd-reason-evidence">{latestLiveAction.proposed_at}</span>
+            )}
+          </div>
+        )}
         <div className="mtd-narrative-bullets">
           {narrative.bullets?.map((bullet, i) => (
             <p key={i} className="mtd-bullet">• {bullet}</p>

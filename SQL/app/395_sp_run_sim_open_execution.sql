@@ -25,6 +25,7 @@ declare
     v_run_id string;
     v_results array := array_construct();
     v_result variant;
+    v_notify_result variant := object_construct('status', 'SKIPPED', 'reason', 'NOT_ATTEMPTED');
     v_executed_portfolios number := 0;
 begin
     select coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_OPEN_STABILIZATION_MINUTES' then CONFIG_VALUE end)), 5)
@@ -96,12 +97,24 @@ begin
         v_results := array_append(v_results, v_result);
     end for;
 
+    begin
+        v_notify_result := (call MIP.APP.SP_NOTIFY_OPENING_BAR_PENDING_APPROVALS(:P_RUN_ID));
+    exception
+        when other then
+            v_notify_result := object_construct(
+                'status', 'WARN',
+                'reason', 'EMAIL_NOTIFY_FAILED',
+                'error', sqlerrm
+            );
+    end;
+
     return object_construct(
         'status', 'SUCCESS',
         'now_ny', to_varchar(v_now_ny),
         'stabilization_minutes', v_stabilization_minutes,
         'executed_portfolios', v_executed_portfolios,
-        'results', v_results
+        'results', v_results,
+        'notification_result', v_notify_result
     );
 end;
 $$;

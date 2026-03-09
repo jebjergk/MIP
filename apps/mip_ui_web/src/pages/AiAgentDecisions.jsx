@@ -16,6 +16,7 @@ function fmtNum(v, d = 4) {
 
 export default function AiAgentDecisions() {
   const [mode, setMode] = useState('simulation') // simulation | live
+  const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -43,7 +44,7 @@ export default function AiAgentDecisions() {
         if (!resp.ok) throw new Error(`Failed to load live AI decisions (${resp.status})`)
         const data = await resp.json()
         const actions = Array.isArray(data?.actions) ? data.actions : []
-        const mapped = actions
+        let mapped = actions
           .filter((a) => !status || String(a.STATUS || '').toUpperCase() === status)
           .map((a) => ({
             action_id: a.ACTION_ID,
@@ -58,6 +59,18 @@ export default function AiAgentDecisions() {
             revalidation_outcome: a.REVALIDATION_OUTCOME,
             reason_codes: Array.isArray(a.REASON_CODES) ? a.REASON_CODES : [],
           }))
+        if (liveLatestPerSymbol) {
+          const perSymbol = new Map()
+          mapped.forEach((r) => {
+            const key = String(r.symbol || '').toUpperCase()
+            if (!key) return
+            const prev = perSymbol.get(key)
+            const prevTs = prev?.proposed_at ? new Date(prev.proposed_at).getTime() : -1
+            const nextTs = r?.proposed_at ? new Date(r.proposed_at).getTime() : -1
+            if (!prev || nextTs >= prevTs) perSymbol.set(key, r)
+          })
+          mapped = Array.from(perSymbol.values()).sort((a, b) => new Date(b.proposed_at || 0) - new Date(a.proposed_at || 0))
+        }
         setRows(mapped)
       }
     } catch (e) {
@@ -66,7 +79,7 @@ export default function AiAgentDecisions() {
     } finally {
       setLoading(false)
     }
-  }, [mode, runId, status])
+  }, [mode, runId, status, liveLatestPerSymbol])
 
   useEffect(() => {
     setSelected(null)
@@ -133,6 +146,12 @@ export default function AiAgentDecisions() {
         />
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
+          <option value="PENDING_OPEN_VALIDATION">PENDING_OPEN_VALIDATION</option>
+          <option value="OPEN_BLOCKED">OPEN_BLOCKED</option>
+          <option value="OPEN_CAUTION">OPEN_CAUTION</option>
+          <option value="OPEN_ELIGIBLE">OPEN_ELIGIBLE</option>
+          <option value="PENDING_OPEN_STABILITY_REVIEW">PENDING_OPEN_STABILITY_REVIEW</option>
+          <option value="READY_FOR_APPROVAL_FLOW">READY_FOR_APPROVAL_FLOW</option>
           <option value="RESEARCH_IMPORTED">RESEARCH_IMPORTED</option>
           <option value="PROPOSED">PROPOSED</option>
           <option value="APPROVED">APPROVED</option>
@@ -145,6 +164,16 @@ export default function AiAgentDecisions() {
           <option value="REJECTED">REJECTED</option>
           <option value="EXECUTED">EXECUTED</option>
         </select>
+        {mode === 'live' ? (
+          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={liveLatestPerSymbol}
+              onChange={(e) => setLiveLatestPerSymbol(e.target.checked)}
+            />
+            Latest action per symbol
+          </label>
+        ) : null}
         <button className="aad-btn" onClick={load}>Refresh</button>
       </div>
 

@@ -56,6 +56,8 @@ class ImportLiveActionsFromProposalsRequest(BaseModel):
     run_id: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
     latest_batch_only: bool = True
+    dedupe_by_symbol: bool = True
+    max_proposal_age_days: int = Field(default=7, ge=1, le=180)
 
 
 class ExecuteLiveActionRequest(BaseModel):
@@ -1734,7 +1736,7 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
     )
 
 
-def _normalize_role_output(role: str, out: dict) -> dict:
+def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> dict:
     stance = str(out.get("stance", "CONDITIONAL")).upper()
     if stance not in ("SUPPORT", "CONDITIONAL", "BLOCK"):
         stance = "CONDITIONAL"
@@ -1763,17 +1765,24 @@ def _normalize_role_output(role: str, out: dict) -> dict:
         )
     except Exception:
         early_exit_target_return = None
+    summary = str(out.get("summary", "")).strip()[:4000]
+    symbol_norm = (symbol or "").upper().strip()
+    if symbol_norm and symbol_norm not in summary.upper():
+        summary = f"{symbol_norm}: {summary}" if summary else f"{symbol_norm}: no summary provided."
+    reasons = out.get("reasons") if isinstance(out.get("reasons"), list) else []
+    if not reasons:
+        reasons = ["MISSING_EXPLICIT_REASONS"]
     return {
         "role": role,
         "stance": stance,
         "confidence": confidence,
-        "summary": str(out.get("summary", ""))[:4000],
+        "summary": summary,
         "size_factor": size_factor,
         "should_enter": should_enter,
         "target_return": target_return,
         "hold_bars": hold_bars,
         "early_exit_target_return": early_exit_target_return,
-        "reasons": out.get("reasons") if isinstance(out.get("reasons"), list) else [],
+        "reasons": reasons,
         "assumptions": out.get("assumptions") if isinstance(out.get("assumptions"), list) else [],
     }
 
@@ -1815,6 +1824,32 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
     }
 
 
+def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
+    out = dict(verdict or {})
+    jd = dict((out.get("joint_decision") or {}))
+    target_snapshot = _parse_variant(context.get("target_expectation_snapshot"))
+    bands = _parse_variant(target_snapshot.get("bands"))
+    if jd.get("realistic_target_return") is None:
+        base = bands.get("base")
+        if base is not None:
+            try:
+                jd["realistic_target_return"] = float(base)
+            except Exception:
+                pass
+    if jd.get("acceptable_early_exit_target_return") is None:
+        conservative = bands.get("conservative")
+        if conservative is not None:
+            try:
+                jd["acceptable_early_exit_target_return"] = float(conservative)
+            except Exception:
+                pass
+    if jd.get("hold_bars") is None:
+        jd["hold_bars"] = 5
+    out["joint_decision"] = jd
+    out["quality_backfilled"] = True
+    return out
+
+
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
@@ -1835,7 +1870,7 @@ def _run_multiagent_dialogue(
             role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=1, prior_messages=[]))
         except Exception as exc:
             role_out_raw = _committee_fallback(role, str(exc))
-        role_out = _normalize_role_output(role, role_out_raw)
+        role_out = _normalize_role_output(role, role_out_raw, context.get("symbol"))
         round1.append(role_out)
         prior_messages.append({"role": role, "summary": role_out.get("summary"), "stance": role_out.get("stance")})
         if emit:
@@ -1864,7 +1899,7 @@ def _run_multiagent_dialogue(
             role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=2, prior_messages=prior_messages))
         except Exception as exc:
             role_out_raw = _committee_fallback(role, str(exc))
-        role_out = _normalize_role_output(role, role_out_raw)
+        role_out = _normalize_role_output(role, role_out_raw, context.get("symbol"))
         round2.append(role_out)
         if emit:
             emit("agent_turn", {"round": 2, "role": role, "output": role_out})
@@ -2774,11 +2809,20 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             persist_run_id=run_id,
             emit=None,
         )
+        jd = _parse_variant(verdict.get("joint_decision"))
+        if not verdict.get("blocked") and (
+            jd.get("realistic_target_return") is None
+            or jd.get("hold_bars") is None
+            or jd.get("acceptable_early_exit_target_return") is None
+        ):
+            verdict = _backfill_joint_decision_from_policy(verdict, context)
         reason_codes = []
         if verdict["blocked"]:
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        if verdict.get("quality_backfilled"):
+            reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
         reason_codes.append("COMMITTEE_REVIEWED")
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
         cur.execute(
@@ -4572,10 +4616,32 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             tuple(params),
         )
         proposals = fetch_all(cur)
+        if req.max_proposal_age_days:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=int(req.max_proposal_age_days))
+            proposals = [
+                p
+                for p in proposals
+                if (p.get("PROPOSED_AT") is not None and p.get("PROPOSED_AT").replace(tzinfo=timezone.utc) >= cutoff)
+            ]
+        skipped_duplicate_symbol = 0
+        if req.dedupe_by_symbol:
+            seen_symbols: set[str] = set()
+            deduped: list[dict] = []
+            for p in proposals:
+                sym = (p.get("SYMBOL") or "").upper().strip()
+                if not sym:
+                    continue
+                if sym in seen_symbols:
+                    skipped_duplicate_symbol += 1
+                    continue
+                seen_symbols.add(sym)
+                deduped.append(p)
+            proposals = deduped
 
         imported = 0
         skipped_existing = 0
         skipped_invalid = 0
+        skipped_symbol_already_queued = 0
         imported_action_ids: list[str] = []
         source_portfolios: set[int] = set()
         distinct_symbols: set[str] = set()
@@ -4602,6 +4668,24 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             )
             if cur.fetchone():
                 skipped_existing += 1
+                continue
+            cur.execute(
+                """
+                select ACTION_ID
+                from MIP.LIVE.LIVE_ACTIONS
+                where PORTFOLIO_ID = %s
+                  and upper(coalesce(SYMBOL, '')) = %s
+                  and STATUS in (
+                    'PENDING_OPEN_VALIDATION','OPEN_CAUTION','OPEN_ELIGIBLE','PENDING_OPEN_STABILITY_REVIEW',
+                    'READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED',
+                    'INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED','EXECUTION_PARTIAL'
+                  )
+                limit 1
+                """,
+                (req.live_portfolio_id, (p.get("SYMBOL") or "").upper()),
+            )
+            if cur.fetchone():
+                skipped_symbol_already_queued += 1
                 continue
 
             action_id = str(uuid.uuid4())
@@ -4758,6 +4842,8 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "imported_count": imported,
             "skipped_existing_count": skipped_existing,
             "skipped_invalid_count": skipped_invalid,
+            "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
+            "skipped_symbol_already_queued_count": skipped_symbol_already_queued,
             "imported_action_ids": imported_action_ids[:50],
         }
     finally:
@@ -4770,6 +4856,8 @@ def list_live_proposal_candidates(
     source_portfolio_id: int | None = Query(default=None),
     run_id: str | None = Query(default=None),
     latest_batch_only: bool = Query(default=True),
+    dedupe_by_symbol: bool = Query(default=True),
+    max_proposal_age_days: int = Query(default=7, ge=1, le=180),
     limit: int = Query(default=100, ge=1, le=1000),
 ):
     conn = get_connection()
@@ -4808,11 +4896,12 @@ def list_live_proposal_candidates(
                 scope = "latest_batch_day"
 
         queued_filter_sql = ""
+        query_params: list[object] = []
         if live_portfolio_id is not None:
             queued_filter_sql = "and la.PORTFOLIO_ID = %s"
-            params.append(int(live_portfolio_id))
-
-        params.append(limit)
+            query_params.append(int(live_portfolio_id))
+        query_params.extend(params)
+        query_params.append(limit)
         cur.execute(
             f"""
             select
@@ -4836,9 +4925,26 @@ def list_live_proposal_candidates(
             order by op.PROPOSED_AT desc
             limit %s
             """,
-            tuple(params),
+            tuple(query_params),
         )
         rows = fetch_all(cur)
+        if max_proposal_age_days:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=int(max_proposal_age_days))
+            rows = [
+                r
+                for r in rows
+                if (r.get("PROPOSED_AT") is not None and r.get("PROPOSED_AT").replace(tzinfo=timezone.utc) >= cutoff)
+            ]
+        deduped_out = rows
+        if dedupe_by_symbol:
+            seen_symbols: set[str] = set()
+            deduped_out = []
+            for r in rows:
+                sym = (r.get("SYMBOL") or "").upper().strip()
+                if not sym or sym in seen_symbols:
+                    continue
+                seen_symbols.add(sym)
+                deduped_out.append(r)
         return {
             "ok": True,
             "scope": scope,
@@ -4846,8 +4952,10 @@ def list_live_proposal_candidates(
             "source_portfolio_id_filter": source_portfolio_id,
             "run_id_filter": run_id,
             "live_portfolio_id_filter": live_portfolio_id,
-            "count": len(rows),
-            "candidates": serialize_rows(rows),
+            "count": len(deduped_out),
+            "dedupe_by_symbol": dedupe_by_symbol,
+            "max_proposal_age_days": max_proposal_age_days,
+            "candidates": serialize_rows(deduped_out),
         }
     finally:
         conn.close()

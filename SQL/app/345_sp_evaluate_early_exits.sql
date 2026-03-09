@@ -28,6 +28,12 @@ declare
     v_slippage_bps      number(18,8) := 2;
     v_fee_bps           number(18,8) := 1;
     v_spread_bps        number(18,8) := 0;
+    v_giveback_pct      number(18,8) := 0.40;
+    v_no_new_high_bars  number := 3;
+    v_quick_payoff_mins number := 60;
+    v_quick_giveback_pct number(18,8) := 0.25;
+    v_min_net_edge_bps  number(18,8) := 5;
+    v_min_capture_frac  number(18,8) := 0.60;
 
     v_positions         resultset;
     v_pos_portfolio_id  number;
@@ -63,6 +69,18 @@ declare
     v_hold_end_pnl      number(18,4);
     v_pnl_delta         number(18,4);
     v_reason_codes      variant;
+    v_payoff_reached    boolean;
+    v_giveback_from_peak number(18,8);
+    v_giveback_pct_realized number(18,8);
+    v_dynamic_giveback_pct number(18,8);
+    v_recent_bar_count  number;
+    v_recent_max_return number(18,8);
+    v_no_new_high_count number;
+    v_giveback_triggered boolean;
+    v_fees_return_floor number(18,8);
+    v_min_retained_return number(18,8);
+    v_min_allowed_return number(18,8);
+    v_current_return_net number(18,8);
 
     v_cash_after        number(18,4);
     v_sell_notional      number(18,4);
@@ -84,11 +102,19 @@ begin
             coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_PAYOFF_MULTIPLIER' then CONFIG_VALUE::number(18,4) end), 3.0),
             coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_PORTFOLIOS' then CONFIG_VALUE end), 'ALL'),
             coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_MARKET_TYPES' then CONFIG_VALUE end), 'STOCK,FX,ETF'),
+            coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_GIVEBACK_PCT' then CONFIG_VALUE::number(18,8) end), 0.40),
+            coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_NO_NEW_HIGH_BARS' then CONFIG_VALUE::number end), 3),
+            coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_QUICK_PAYOFF_MINS' then CONFIG_VALUE::number end), 60),
+            coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_QUICK_GIVEBACK_PCT' then CONFIG_VALUE::number(18,8) end), 0.25),
+            coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_MIN_NET_EDGE_BPS' then CONFIG_VALUE::number(18,8) end), 5),
+            coalesce(max(case when CONFIG_KEY = 'EARLY_EXIT_MIN_CAPTURE_FRACTION' then CONFIG_VALUE::number(18,8) end), 0.60),
             coalesce(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE::number(18,4) end), 2),
             coalesce(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE::number(18,4) end), 1),
             coalesce(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE::number(18,4) end), 0)
         into :v_enabled, :v_mode, :v_interval_minutes,
              :v_payoff_mult, :v_portfolio_filter, :v_market_types,
+             :v_giveback_pct, :v_no_new_high_bars, :v_quick_payoff_mins, :v_quick_giveback_pct,
+             :v_min_net_edge_bps, :v_min_capture_frac,
              :v_slippage_bps, :v_fee_bps, :v_spread_bps
         from MIP.APP.APP_CONFIG
         where CONFIG_KEY like 'EARLY_EXIT_%'
@@ -100,6 +126,10 @@ begin
     if (not :v_enabled) then
         return object_construct('status', 'SKIPPED', 'reason', 'EARLY_EXIT_ENABLED is false');
     end if;
+
+    v_no_new_high_bars := greatest(coalesce(:v_no_new_high_bars, 3), 1);
+    v_min_capture_frac := least(greatest(coalesce(:v_min_capture_frac, 0.60), 0), 1);
+    v_quick_payoff_mins := greatest(coalesce(:v_quick_payoff_mins, 60), 1);
 
     -- ═══ LOAD OPEN DAILY POSITIONS ═══
     v_positions := (
@@ -272,19 +302,74 @@ begin
             v_unrealized_return := (:v_current_price - :v_pos_entry_price) / :v_pos_entry_price;
             v_evaluated := :v_evaluated + 1;
 
-            -- ═══ SINGLE THRESHOLD CHECK ═══
-            v_exit_signal := (:v_first_hit_ts is not null);
-
-            -- Exit price = close of the current evaluation bar (with fees).
-            -- Trigger remains based on first threshold hit, but execution is real-time.
+            -- ═══ TWO-STAGE PAYOFF + REVERSAL CHECK ═══
             v_fees := (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0;
-            if (:v_exit_signal) then
-                v_exit_price := :v_current_price * (1 - :v_fees);
-                v_early_pnl := (:v_exit_price - :v_pos_entry_price) * :v_pos_quantity;
-            else
-                v_exit_price := :v_current_price * (1 - :v_fees);
-                v_early_pnl := (:v_exit_price - :v_pos_entry_price) * :v_pos_quantity;
+            v_payoff_reached := (:v_first_hit_ts is not null);
+            v_giveback_from_peak := null;
+            v_giveback_pct_realized := null;
+            v_dynamic_giveback_pct := :v_giveback_pct;
+            v_recent_bar_count := 0;
+            v_recent_max_return := null;
+            v_no_new_high_count := 0;
+            v_giveback_triggered := false;
+            v_fees_return_floor := :v_fees + (:v_min_net_edge_bps / 10000.0);
+            v_min_retained_return := :v_effective_target * :v_min_capture_frac;
+            v_min_allowed_return := greatest(:v_fees_return_floor, :v_min_retained_return);
+            v_current_return_net := :v_unrealized_return - :v_fees;
+
+            if (:v_payoff_reached) then
+                if (datediff('minute', :v_pos_entry_ts, :v_first_hit_ts) <= :v_quick_payoff_mins) then
+                    v_dynamic_giveback_pct := :v_quick_giveback_pct;
+                end if;
+
+                v_giveback_from_peak := greatest(coalesce(:v_mfe_return, 0) - :v_unrealized_return, 0);
+                if (coalesce(:v_mfe_return, 0) > 0) then
+                    v_giveback_pct_realized := :v_giveback_from_peak / :v_mfe_return;
+                end if;
+
+                begin
+                    select
+                        count(*),
+                        max((b.CLOSE - :v_pos_entry_price) / :v_pos_entry_price)
+                    into :v_recent_bar_count, :v_recent_max_return
+                    from (
+                        select CLOSE, TS
+                        from MIP.MART.MARKET_BARS
+                        where SYMBOL = :v_pos_symbol
+                          and MARKET_TYPE = :v_pos_market_type
+                          and INTERVAL_MINUTES = :v_interval_minutes
+                          and TS > :v_pos_entry_ts
+                        order by TS desc
+                        limit :v_no_new_high_bars
+                    ) b;
+                exception when other then
+                    v_recent_bar_count := 0;
+                    v_recent_max_return := null;
+                end;
+
+                if (
+                    :v_recent_bar_count = :v_no_new_high_bars
+                    and coalesce(:v_recent_max_return, -999) < coalesce(:v_mfe_return, 0) - 0.000001
+                ) then
+                    v_no_new_high_count := :v_no_new_high_bars;
+                else
+                    v_no_new_high_count := 0;
+                end if;
+
+                v_giveback_triggered := (
+                    coalesce(:v_giveback_pct_realized, 0) >= :v_dynamic_giveback_pct
+                    and :v_no_new_high_count >= :v_no_new_high_bars
+                );
             end if;
+
+            v_exit_signal := (
+                :v_payoff_reached
+                and :v_giveback_triggered
+                and :v_unrealized_return >= :v_min_allowed_return
+            );
+
+            v_exit_price := :v_current_price * (1 - :v_fees);
+            v_early_pnl := (:v_exit_price - :v_pos_entry_price) * :v_pos_quantity;
 
             -- Hold-to-end return (from RECOMMENDATION_OUTCOMES if available)
             begin
@@ -330,13 +415,21 @@ begin
 
             -- Build reason codes
             v_reason_codes := object_construct(
-                'threshold_reached', :v_exit_signal,
+                'threshold_reached', :v_payoff_reached,
+                'giveback_triggered', :v_giveback_triggered,
                 'expected_payoff_pct', round(:v_target_return * 100, 4),
                 'multiplier', :v_payoff_mult,
                 'effective_target_pct', round(:v_effective_target * 100, 4),
                 'current_return_pct', round(:v_unrealized_return * 100, 4),
+                'current_return_net_pct', round(:v_current_return_net * 100, 4),
+                'min_allowed_return_pct', round(:v_min_allowed_return * 100, 4),
                 'mfe_return_pct', round(:v_mfe_return * 100, 4),
-                'first_hit_return_pct', round(coalesce(:v_first_hit_return, 0) * 100, 4)
+                'first_hit_return_pct', round(coalesce(:v_first_hit_return, 0) * 100, 4),
+                'giveback_from_peak_pct', round(coalesce(:v_giveback_from_peak, 0) * 100, 4),
+                'giveback_pct', round(coalesce(:v_giveback_pct_realized, 0) * 100, 4),
+                'giveback_threshold_pct', round(:v_dynamic_giveback_pct * 100, 4),
+                'no_new_high_bars_required', :v_no_new_high_bars,
+                'no_new_high_bars_observed', :v_no_new_high_count
             );
 
             if (:v_exit_signal) then
@@ -361,9 +454,9 @@ begin
                 :v_bar_close_ts, :v_decision_ts,
                 :v_target_return, :v_payoff_mult, :v_effective_target,
                 :v_current_price, :v_unrealized_return, :v_mfe_return, :v_mfe_ts,
-                :v_exit_signal, :v_first_hit_ts,
+                :v_payoff_reached, :v_first_hit_ts,
                 iff(:v_first_hit_ts is not null, datediff('minute', :v_pos_entry_ts, :v_first_hit_ts), null),
-                null, null, null, false,
+                :v_giveback_from_peak, :v_giveback_pct_realized, :v_no_new_high_count, :v_giveback_triggered,
                 :v_exit_signal, :v_exit_price, :v_fees, :v_early_pnl,
                 :v_hold_end_return, :v_hold_end_pnl, :v_pnl_delta,
                 :v_mode,
@@ -444,7 +537,11 @@ begin
         'skipped', :v_skipped_count,
         'errors', :v_error_count,
         'config', object_construct(
-            'payoff_multiplier', :v_payoff_mult
+            'payoff_multiplier', :v_payoff_mult,
+            'giveback_pct', :v_giveback_pct,
+            'quick_giveback_pct', :v_quick_giveback_pct,
+            'min_net_edge_bps', :v_min_net_edge_bps,
+            'min_capture_fraction', :v_min_capture_frac
         )
     );
 end;

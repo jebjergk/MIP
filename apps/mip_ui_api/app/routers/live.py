@@ -65,6 +65,19 @@ class ExecuteLiveActionRequest(BaseModel):
     attempt_n: int = 1
 
 
+class ApproveAndSubmitLiveDecisionRequest(BaseModel):
+    pm_actor: str = "portfolio_manager"
+    compliance_actor: str = "compliance_user"
+    intent_submit_actor: str = "intent_submitter"
+    intent_approve_actor: str = "intent_approver"
+    execution_actor: str = "execution_operator"
+    committee_actor: str = "committee_orchestrator"
+    committee_model: str = "claude-3-5-sonnet"
+    attempt_n: int = 1
+    force_refresh_1m: bool = True
+    committee_recheck_before_submit: bool = True
+
+
 class RevalidateLiveActionRequest(BaseModel):
     force_refresh_1m: bool = False
 
@@ -206,6 +219,69 @@ def _write_reason_codes(cur, action_id: str, reason_codes: list[str]) -> None:
         """,
         (json.dumps(reason_codes), action_id),
     )
+
+
+def _fetch_live_action_state(action_id: str) -> dict | None:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select ACTION_ID, STATUS, COMPLIANCE_STATUS, REASON_CODES, PORTFOLIO_ID, SYMBOL, SIDE
+            from MIP.LIVE.LIVE_ACTIONS
+            where ACTION_ID = %s
+            """,
+            (action_id,),
+        )
+        rows = fetch_all(cur)
+        return rows[0] if rows else None
+    finally:
+        conn.close()
+
+
+def _compute_snapshot_freshness_state(snapshot_age_sec: int | None, threshold_sec: int | None) -> str:
+    if snapshot_age_sec is None:
+        return "BLOCKED"
+    threshold = int(threshold_sec or 300)
+    if snapshot_age_sec <= threshold:
+        return "FRESH"
+    if snapshot_age_sec <= threshold * 2:
+        return "AGING"
+    if snapshot_age_sec <= threshold * 4:
+        return "STALE"
+    return "BLOCKED"
+
+
+def _compute_drift_state(drift_status: str | None, unresolved_count: int) -> str:
+    status = (drift_status or "").upper()
+    if unresolved_count > 0:
+        return "BLOCKED"
+    if status in ("", "OK", "CLEAR", "HEALTHY"):
+        return "CLEAR"
+    if status in ("WARN", "WARNING", "CAUTION"):
+        return "WARNING"
+    return "BLOCKED"
+
+
+def _required_next_step_for_status(status: str) -> str:
+    status_upper = (status or "").upper()
+    mapping = {
+        "RESEARCH_IMPORTED": "Run committee review",
+        "PROPOSED": "Run committee review",
+        "PENDING_OPEN_VALIDATION": "Pass opening validation",
+        "OPEN_ELIGIBLE": "Run committee review",
+        "OPEN_CAUTION": "Run committee review (caution)",
+        "PENDING_OPEN_STABILITY_REVIEW": "Wait for stabilization window",
+        "READY_FOR_APPROVAL_FLOW": "PM accept",
+        "PM_ACCEPTED": "Compliance decision",
+        "COMPLIANCE_APPROVED": "Submit intent",
+        "INTENT_SUBMITTED": "Approve intent",
+        "INTENT_APPROVED": "Revalidate price and gates",
+        "REVALIDATED_FAIL": "Revalidate again",
+        "REVALIDATED_PASS": "Ready to submit order",
+        "EXECUTION_REQUESTED": "Await broker/order lifecycle update",
+    }
+    return mapping.get(status_upper, "Review action details")
 
 
 def _append_learning_ledger_event(
@@ -2654,6 +2730,421 @@ def list_live_trade_actions(
         return {"actions": serialize_rows(rows), "count": len(rows)}
     finally:
         conn.close()
+
+
+@router.get("/activity/overview")
+def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, DRIFT_STATUS, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              MAX_POSITIONS, MAX_POSITION_PCT, BUST_PCT, IS_ACTIVE, UPDATED_AT
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where coalesce(IS_ACTIVE, true) = true
+            order by PORTFOLIO_ID
+            limit 1
+            """
+        )
+        cfg_rows = fetch_all(cur)
+        if not cfg_rows:
+            return {
+                "ok": True,
+                "portfolio": None,
+                "readiness": {"snapshot_state": "BLOCKED", "drift_state": "BLOCKED", "actionable": False},
+                "account_kpis": {},
+                "open_positions": [],
+                "open_orders": [],
+                "orders": [],
+                "executions": [],
+                "pending_decisions": [],
+                "counts": {},
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        cfg = cfg_rows[0]
+        portfolio_id = cfg.get("PORTFOLIO_ID")
+        account_id = cfg.get("IBKR_ACCOUNT_ID")
+
+        cur.execute(
+            """
+            select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR, GROSS_POSITION_VALUE_EUR
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'NAV'
+              and IBKR_ACCOUNT_ID = %s
+            order by SNAPSHOT_TS desc
+            limit 1
+            """,
+            (account_id,),
+        )
+        nav_rows = fetch_all(cur)
+        nav = nav_rows[0] if nav_rows else {}
+        latest_snapshot_ts = nav.get("SNAPSHOT_TS")
+        snapshot_age_sec = None
+        if latest_snapshot_ts and hasattr(latest_snapshot_ts, "replace"):
+            snapshot_age_sec = int((datetime.now(timezone.utc) - latest_snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds())
+
+        open_positions = []
+        open_orders = []
+        if latest_snapshot_ts:
+            cur.execute(
+                """
+                select
+                  SYMBOL, SECURITY_TYPE, EXCHANGE, CURRENCY, POSITION_QTY, AVG_COST,
+                  MARKET_VALUE, UNREALIZED_PNL, REALIZED_PNL
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'POSITION'
+                  and IBKR_ACCOUNT_ID = %s
+                  and SNAPSHOT_TS = %s
+                  and coalesce(POSITION_QTY, 0) <> 0
+                order by abs(POSITION_QTY) desc, SYMBOL
+                limit %s
+                """,
+                (account_id, latest_snapshot_ts, limit),
+            )
+            open_positions = fetch_all(cur)
+
+            cur.execute(
+                """
+                select
+                  OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED,
+                  OPEN_ORDER_REMAINING, OPEN_ORDER_LIMIT_PRICE
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'OPEN_ORDER'
+                  and IBKR_ACCOUNT_ID = %s
+                  and SNAPSHOT_TS = %s
+                order by OPEN_ORDER_ID
+                limit %s
+                """,
+                (account_id, latest_snapshot_ts, limit),
+            )
+            open_orders = fetch_all(cur)
+
+        cur.execute(
+            """
+            select
+              ORDER_ID, ACTION_ID, BROKER_ORDER_ID, STATUS, SYMBOL, SIDE, ORDER_TYPE,
+              QTY_ORDERED, LIMIT_PRICE, QTY_FILLED, AVG_FILL_PRICE,
+              SUBMITTED_AT, ACKNOWLEDGED_AT, FILLED_AT, LAST_UPDATED_AT, CREATED_AT
+            from MIP.LIVE.LIVE_ORDERS
+            where PORTFOLIO_ID = %s
+            order by LAST_UPDATED_AT desc, CREATED_AT desc
+            limit %s
+            """,
+            (portfolio_id, limit),
+        )
+        orders = fetch_all(cur)
+
+        cur.execute(
+            """
+            select
+              ACTION_ID, PROPOSAL_ID, SYMBOL, SIDE, STATUS, COMPLIANCE_STATUS,
+              COMMITTEE_VERDICT, COMMITTEE_STATUS, COMMITTEE_REQUIRED, REASON_CODES,
+              PROPOSED_QTY, PROPOSED_PRICE, TARGET_OPEN_CONDITION_FACTOR, TRAINING_SIZE_CAP_FACTOR,
+              TARGET_EXPECTATION_SNAPSHOT, CREATED_AT, UPDATED_AT
+            from MIP.LIVE.LIVE_ACTIONS
+            where PORTFOLIO_ID = %s
+              and STATUS in (
+                'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
+                'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
+                'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
+              )
+            order by CREATED_AT desc
+            limit %s
+            """,
+            (portfolio_id, limit),
+        )
+        action_rows = fetch_all(cur)
+
+        unresolved_drift_count = 0
+        try:
+            cur.execute(
+                """
+                select count(*) as CNT
+                from MIP.LIVE.DRIFT_LOG
+                where PORTFOLIO_ID = %s
+                  and coalesce(DRIFT_DETECTED, false) = true
+                  and RESOLUTION_TS is null
+                """,
+                (portfolio_id,),
+            )
+            unresolved_rows = fetch_all(cur)
+            unresolved_drift_count = int((unresolved_rows[0] or {}).get("CNT") or 0)
+        except Exception:
+            unresolved_drift_count = 0
+
+        snapshot_state = _compute_snapshot_freshness_state(snapshot_age_sec, cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"))
+        drift_state = _compute_drift_state(cfg.get("DRIFT_STATUS"), unresolved_drift_count)
+        page_actionable = snapshot_state in ("FRESH", "AGING") and drift_state != "BLOCKED"
+        held_symbols = {str((r.get("SYMBOL") or "")).upper() for r in open_positions}
+        nav_eur = float(nav.get("NET_LIQUIDATION_EUR") or 0.0) if nav else 0.0
+
+        pending_decisions = []
+        for row in action_rows:
+            symbol = str(row.get("SYMBOL") or "").upper()
+            proposed_qty = float(row.get("PROPOSED_QTY")) if row.get("PROPOSED_QTY") is not None else None
+            proposed_price = float(row.get("PROPOSED_PRICE")) if row.get("PROPOSED_PRICE") is not None else None
+            estimated_notional = (abs(proposed_qty) * abs(proposed_price)) if (proposed_qty is not None and proposed_price is not None) else None
+            position_pct = (estimated_notional / nav_eur) if (estimated_notional is not None and nav_eur > 0) else None
+            size_cap_factor = float(row.get("TRAINING_SIZE_CAP_FACTOR")) if row.get("TRAINING_SIZE_CAP_FACTOR") is not None else None
+            target_open_factor = (
+                float(row.get("TARGET_OPEN_CONDITION_FACTOR"))
+                if row.get("TARGET_OPEN_CONDITION_FACTOR") is not None
+                else 1.0
+            )
+            final_qty_preview = proposed_qty
+            if final_qty_preview is not None and size_cap_factor is not None:
+                final_qty_preview = max(final_qty_preview * size_cap_factor, 1.0)
+            if final_qty_preview is not None and target_open_factor is not None:
+                final_qty_preview = max(final_qty_preview * target_open_factor, 1.0)
+
+            status = (row.get("STATUS") or "").upper()
+            action_reason_codes = _parse_list_variant(row.get("REASON_CODES"))
+            blocked = status == "OPEN_BLOCKED" or bool(action_reason_codes and any("BLOCK" in str(x).upper() for x in action_reason_codes))
+            submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
+            submit_allowed = submit_allowed and page_actionable and (not blocked)
+            in_position = symbol in held_symbols
+
+            if status != "EXECUTION_REQUESTED" and not in_position:
+                pending_decisions.append(
+                    {
+                        "action_id": row.get("ACTION_ID"),
+                        "proposal_id": row.get("PROPOSAL_ID"),
+                        "symbol": row.get("SYMBOL"),
+                        "side": row.get("SIDE"),
+                        "status": row.get("STATUS"),
+                        "compliance_status": row.get("COMPLIANCE_STATUS"),
+                        "committee_verdict": row.get("COMMITTEE_VERDICT"),
+                        "committee_status": row.get("COMMITTEE_STATUS"),
+                        "committee_required": bool(row.get("COMMITTEE_REQUIRED")) if row.get("COMMITTEE_REQUIRED") is not None else True,
+                        "reason_codes": action_reason_codes,
+                        "required_next_step": _required_next_step_for_status(status),
+                        "submission_allowed": bool(submit_allowed),
+                        "is_blocked": bool(blocked),
+                        "held_in_broker_position": bool(in_position),
+                        "sizing": {
+                            "proposed_qty": proposed_qty,
+                            "proposed_price": proposed_price,
+                            "account_basis_nav_eur": nav_eur if nav_eur > 0 else None,
+                            "estimated_notional_eur": estimated_notional,
+                            "estimated_position_pct": position_pct,
+                            "training_size_cap_factor": size_cap_factor,
+                            "target_open_condition_factor": target_open_factor,
+                            "final_qty_preview": final_qty_preview,
+                            "max_position_pct_limit": float(cfg.get("MAX_POSITION_PCT")) if cfg.get("MAX_POSITION_PCT") is not None else None,
+                        },
+                        "protection": {"planned": False, "state": "NONE"},
+                        "timestamps": {
+                            "created_at": row.get("CREATED_AT"),
+                            "updated_at": row.get("UPDATED_AT"),
+                        },
+                    }
+                )
+
+        executions = []
+        for order in orders:
+            status = (order.get("STATUS") or "").upper()
+            qty_filled = order.get("QTY_FILLED")
+            is_exec = status in ("PARTIAL_FILL", "FILLED") or (qty_filled is not None and float(qty_filled) > 0)
+            if not is_exec:
+                continue
+            executions.append(
+                {
+                    "order_id": order.get("ORDER_ID"),
+                    "action_id": order.get("ACTION_ID"),
+                    "broker_order_id": order.get("BROKER_ORDER_ID"),
+                    "symbol": order.get("SYMBOL"),
+                    "side": order.get("SIDE"),
+                    "qty_filled": float(qty_filled) if qty_filled is not None else None,
+                    "avg_fill_price": float(order.get("AVG_FILL_PRICE")) if order.get("AVG_FILL_PRICE") is not None else None,
+                    "status": order.get("STATUS"),
+                    "execution_ts": order.get("FILLED_AT") or order.get("LAST_UPDATED_AT"),
+                    "source": "MIP_BROKER_LEDGER",
+                }
+            )
+
+        return {
+            "ok": True,
+            "portfolio": {
+                "portfolio_id": portfolio_id,
+                "ibkr_account_id": account_id,
+                "is_active": bool(cfg.get("IS_ACTIVE")) if cfg.get("IS_ACTIVE") is not None else True,
+                "config_updated_at": cfg.get("UPDATED_AT"),
+            },
+            "readiness": {
+                "snapshot_state": snapshot_state,
+                "drift_state": drift_state,
+                "actionable": page_actionable,
+                "blocking_reasons": [
+                    reason
+                    for reason, active in [
+                        ("SNAPSHOT_STALE_OR_MISSING", snapshot_state in ("STALE", "BLOCKED")),
+                        ("DRIFT_UNRESOLVED", drift_state == "BLOCKED"),
+                    ]
+                    if active
+                ],
+            },
+            "account_kpis": {
+                "equity_nav_eur": float(nav.get("NET_LIQUIDATION_EUR")) if nav.get("NET_LIQUIDATION_EUR") is not None else None,
+                "cash_eur": float(nav.get("TOTAL_CASH_EUR")) if nav.get("TOTAL_CASH_EUR") is not None else None,
+                "gross_exposure_eur": float(nav.get("GROSS_POSITION_VALUE_EUR")) if nav.get("GROSS_POSITION_VALUE_EUR") is not None else None,
+                "open_positions_count": len(open_positions),
+                "open_orders_count": len(open_orders),
+                "snapshot_ts": latest_snapshot_ts,
+                "snapshot_age_sec": snapshot_age_sec,
+                "snapshot_freshness_threshold_sec": cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"),
+                "drift_status": cfg.get("DRIFT_STATUS"),
+                "unresolved_drift_count": unresolved_drift_count,
+                "max_positions": cfg.get("MAX_POSITIONS"),
+                "max_position_pct": cfg.get("MAX_POSITION_PCT"),
+                "bust_pct": cfg.get("BUST_PCT"),
+            },
+            "open_positions": serialize_rows(open_positions),
+            "open_orders": serialize_rows(open_orders),
+            "orders": serialize_rows(orders),
+            "executions": serialize_rows(executions),
+            "pending_decisions": serialize_rows(pending_decisions),
+            "counts": {
+                "pending_decisions": len(pending_decisions),
+                "orders": len(orders),
+                "executions": len(executions),
+                "open_positions": len(open_positions),
+                "open_orders": len(open_orders),
+            },
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/decisions/{action_id}/approve-and-submit")
+def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDecisionRequest):
+    steps: list[str] = []
+    action = _fetch_live_action_state(action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found.")
+
+    def refresh_state() -> dict:
+        latest = _fetch_live_action_state(action_id)
+        if not latest:
+            raise HTTPException(status_code=404, detail="Action disappeared during workflow.")
+        return latest
+
+    action = refresh_state()
+    status = (action.get("STATUS") or "").upper()
+
+    if status in ("EXECUTION_REQUESTED", "EXECUTED"):
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": status,
+            "idempotent_replay": True,
+            "steps": steps,
+        }
+
+    if status in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
+        validation_resp = run_opening_validation(
+            action_id,
+            OpeningValidationRequest(force_refresh_1m=req.force_refresh_1m),
+        )
+        steps.append("opening_validate")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+        if status == "OPEN_BLOCKED":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Opening validation blocked submit.",
+                    "reason_codes": validation_resp.get("reason_codes") or _parse_list_variant(action.get("REASON_CODES")),
+                },
+            )
+
+    if status in ("OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
+        run_live_trade_committee(
+            action_id,
+            CommitteeRunRequest(
+                actor=req.committee_actor,
+                model=req.committee_model,
+                force_rerun=req.committee_recheck_before_submit,
+            ),
+        )
+        steps.append("committee_run")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+        if status == "OPEN_BLOCKED":
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Decision blocked in committee/opening stage.", "reason_codes": _parse_list_variant(action.get("REASON_CODES"))},
+            )
+
+    if status == "READY_FOR_APPROVAL_FLOW":
+        pm_accept_live_action(action_id, PmAcceptRequest(actor=req.pm_actor))
+        steps.append("pm_accept")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "PM_ACCEPTED":
+        compliance_decide_live_action(
+            action_id,
+            ComplianceDecisionRequest(actor=req.compliance_actor, decision="APPROVE"),
+        )
+        steps.append("compliance_approve")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "COMPLIANCE_APPROVED":
+        submit_live_trade_intent(
+            action_id,
+            IntentSubmitRequest(
+                actor=req.intent_submit_actor,
+                reference_id=f"LIVE_ACTIVITY_{int(datetime.now(timezone.utc).timestamp())}",
+            ),
+        )
+        steps.append("intent_submit")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "INTENT_SUBMITTED":
+        approve_live_trade_intent(action_id, IntentApproveRequest(actor=req.intent_approve_actor))
+        steps.append("intent_approve")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS"):
+        revalidate_live_action(
+            action_id,
+            RevalidateLiveActionRequest(force_refresh_1m=req.force_refresh_1m),
+        )
+        steps.append("revalidate")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "REVALIDATED_PASS":
+        execute_resp = execute_live_action(
+            action_id,
+            ExecuteLiveActionRequest(actor=req.execution_actor, attempt_n=req.attempt_n),
+        )
+        steps.append("execute")
+        action = refresh_state()
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": action.get("STATUS"),
+            "steps": steps,
+            "execute_result": execute_resp,
+            "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+        }
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "Decision did not reach executable state.",
+            "status": status,
+            "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+            "steps": steps,
+        },
+    )
 
 
 @router.get("/trades/actions/{action_id}/committee")

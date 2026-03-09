@@ -30,6 +30,18 @@ using (
         ('EARLY_EXIT_QUICK_GIVEBACK_PCT','0.25',
          'Giveback threshold for quick-payoff trades (stricter than normal)'),
 
+        ('EARLY_EXIT_MIN_NET_EDGE_BPS',  '5',
+         'Minimum extra net return (in bps) above estimated execution costs required to allow early exit'),
+
+        ('EARLY_EXIT_MIN_CAPTURE_FRACTION','0.60',
+         'Minimum fraction of effective target that must still be retained at decision time (0.60 = keep at least 60%)'),
+
+        ('SIM_COMMITTEE_EARLY_EXIT_MIN_EDGE_BPS','5',
+         'Minimum early-exit edge above estimated costs used to clamp simulation committee early_exit_target_return'),
+
+        ('SIM_COMMITTEE_EARLY_EXIT_MIN_CAPTURE_PCT','0.60',
+         'Minimum fraction of committee target_return retained in committee early_exit_target_return after normalization'),
+
         ('EARLY_EXIT_INTERVAL_MINUTES', '60',
          'Bar interval used for early-exit evaluation (must match ingest cadence)'),
 

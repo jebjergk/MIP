@@ -39,6 +39,9 @@ declare
     v_min_fee number(18,8);
     v_spread_bps number(18,8);
     v_execution_price_interval_minutes number := 1;
+    v_sim_committee_min_edge_bps number(18,8) := 5;
+    v_sim_committee_min_capture_pct number(18,8) := 0.60;
+    v_sim_committee_fee_floor_return number(18,8);
 begin
     v_profile := (
         select object_construct(
@@ -72,13 +75,19 @@ begin
         coalesce(try_to_number(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE end)), 1),
         coalesce(try_to_number(max(case when CONFIG_KEY = 'MIN_FEE' then CONFIG_VALUE end)), 0),
         coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0),
-        coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_EXECUTION_PRICE_INTERVAL_MINUTES' then CONFIG_VALUE end)), 1)
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_EXECUTION_PRICE_INTERVAL_MINUTES' then CONFIG_VALUE end)), 1),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_COMMITTEE_EARLY_EXIT_MIN_EDGE_BPS' then CONFIG_VALUE end)), 5),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_COMMITTEE_EARLY_EXIT_MIN_CAPTURE_PCT' then CONFIG_VALUE end)), 0.60)
       into v_slippage_bps,
            v_fee_bps,
            v_min_fee,
            v_spread_bps,
-           v_execution_price_interval_minutes
+           v_execution_price_interval_minutes,
+           v_sim_committee_min_edge_bps,
+           v_sim_committee_min_capture_pct
       from MIP.APP.APP_CONFIG;
+
+    v_sim_committee_fee_floor_return := (coalesce(v_slippage_bps, 0) + coalesce(v_fee_bps, 0) + coalesce(v_spread_bps, 0) / 2.0) / 10000.0;
 
     -- CRIT-001: Entry gate enforcement - check if entries are blocked
     select
@@ -426,6 +435,68 @@ begin
               and p.STATUS = 'PROPOSED'
               and array_size(v.validation_errors) = 0;
     end;
+
+    -- Normalize committee outputs with deterministic, fee-aware guardrails.
+    create or replace temporary table TMP_PROPOSAL_COMMITTEE_NORMALIZED as
+    with base as (
+        select
+            c.PROPOSAL_ID,
+            c.SHOULD_ENTER,
+            c.SIZE_FACTOR,
+            iff(c.TARGET_RETURN is not null and c.TARGET_RETURN > 0, c.TARGET_RETURN, null) as TARGET_RETURN,
+            c.HOLD_BARS,
+            c.EARLY_EXIT_TARGET_RETURN,
+            c.SUMMARY,
+            iff(is_array(c.REASON_CODES), c.REASON_CODES, array_construct()) as REASON_CODES,
+            c.AGENT_DIALOGUE,
+            c.OUT_JSON
+        from TMP_PROPOSAL_COMMITTEE c
+    ),
+    normalized as (
+        select
+            b.PROPOSAL_ID,
+            b.SHOULD_ENTER,
+            b.SIZE_FACTOR,
+            b.TARGET_RETURN,
+            b.HOLD_BARS,
+            iff(
+                b.EARLY_EXIT_TARGET_RETURN is null,
+                null,
+                greatest(
+                    b.EARLY_EXIT_TARGET_RETURN,
+                    :v_sim_committee_fee_floor_return + (:v_sim_committee_min_edge_bps / 10000.0),
+                    iff(
+                        b.TARGET_RETURN is not null and b.TARGET_RETURN > 0,
+                        b.TARGET_RETURN * :v_sim_committee_min_capture_pct,
+                        0
+                    )
+                )
+            ) as EARLY_EXIT_TARGET_RETURN,
+            b.SUMMARY,
+            array_cat(
+                b.REASON_CODES,
+                iff(
+                    b.EARLY_EXIT_TARGET_RETURN is not null
+                    and b.EARLY_EXIT_TARGET_RETURN < greatest(
+                        :v_sim_committee_fee_floor_return + (:v_sim_committee_min_edge_bps / 10000.0),
+                        iff(
+                            b.TARGET_RETURN is not null and b.TARGET_RETURN > 0,
+                            b.TARGET_RETURN * :v_sim_committee_min_capture_pct,
+                            0
+                        )
+                    ),
+                    array_construct('EARLY_EXIT_TARGET_CLAMPED_TO_FLOOR'),
+                    array_construct()
+                )
+            ) as REASON_CODES,
+            b.AGENT_DIALOGUE,
+            b.OUT_JSON
+        from base b
+    )
+    select * from normalized;
+
+    create or replace temporary table TMP_PROPOSAL_COMMITTEE as
+    select * from TMP_PROPOSAL_COMMITTEE_NORMALIZED;
 
     -- Apply committee decision details to proposal rationale and size.
     update MIP.AGENT_OUT.ORDER_PROPOSALS p

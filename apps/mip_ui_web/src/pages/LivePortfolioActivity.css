@@ -1,0 +1,165 @@
+.lpa-page {
+  display: grid;
+  gap: 16px;
+}
+
+.lpa-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.lpa-header h2 {
+  margin: 0;
+}
+
+.lpa-header p {
+  margin: 4px 0 0;
+  color: #5f6b7a;
+}
+
+.lpa-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.lpa-kpi {
+  border: 1px solid #d7dce4;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  display: grid;
+  gap: 4px;
+}
+
+.lpa-kpi span {
+  color: #6a7685;
+  font-size: 12px;
+}
+
+.lpa-kpi--ok {
+  border-color: #7dc48b;
+  background: #f3fff6;
+}
+
+.lpa-kpi--warn {
+  border-color: #f1c46f;
+  background: #fffaf0;
+}
+
+.lpa-kpi--bad {
+  border-color: #e48a8a;
+  background: #fff4f4;
+}
+
+.lpa-section {
+  border: 1px solid #d7dce4;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.lpa-section h3 {
+  margin: 0 0 8px;
+}
+
+.lpa-table-wrap {
+  overflow: auto;
+}
+
+.lpa-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.lpa-table th,
+.lpa-table td {
+  border-top: 1px solid #edf1f5;
+  padding: 8px 10px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.lpa-table th {
+  border-top: none;
+  color: #5f6b7a;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.lpa-btn {
+  border: 1px solid #3069f0;
+  background: #3069f0;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.lpa-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.lpa-btn-secondary {
+  margin-top: 8px;
+  background: #fff;
+  color: #3069f0;
+}
+
+.lpa-error {
+  border: 1px solid #e48a8a;
+  background: #fff4f4;
+  color: #8a2c2c;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.lpa-warn {
+  border: 1px solid #f1c46f;
+  background: #fffaf0;
+  color: #6e4a00;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.lpa-subtle {
+  color: #6a7685;
+  font-size: 12px;
+}
+
+.lpa-status {
+  font-weight: 600;
+}
+
+.lpa-status--ok {
+  color: #1f7a32;
+}
+
+.lpa-status--warn {
+  color: #925f00;
+}
+
+.lpa-status--bad {
+  color: #9d1f1f;
+}
+
+.lpa-stream {
+  margin-top: 12px;
+  border: 1px solid #d7dce4;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.lpa-stream-line {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  color: #334155;
+}

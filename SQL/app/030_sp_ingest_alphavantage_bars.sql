@@ -1,11 +1,21 @@
 use role ACCOUNTADMIN;  -- or a role with the necessary privileges
 
 ---------------------------------
--- 1. Network rule: AlphaVantage
+-- 1. Network rule: market + news egress hosts
 ---------------------------------
 create or replace network rule MIP_ALPHA_NETWORK_RULE
   type = HOST_PORT
-  value_list = ('www.alphavantage.co:443')
+  value_list = (
+    'www.alphavantage.co:443',
+    'www.ecb.europa.eu:443',
+    'www.federalreserve.gov:443',
+    'www.globenewswire.com:443',
+    'www.marketwatch.com:443',
+    'www.sec.gov:443',
+    'www.nasdaq.com:443',
+    'seekingalpha.com:443',
+    'feeds.finance.yahoo.com:443'
+  )
   mode = EGRESS;
 
 ---------------------------------

@@ -7,7 +7,8 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, HTTPException, Body
 from fastapi.responses import StreamingResponse
@@ -72,6 +73,11 @@ class CommitteeRunRequest(BaseModel):
     force_rerun: bool = False
 
 
+class OpeningValidationRequest(BaseModel):
+    force_refresh_1m: bool = False
+    now_utc_iso: str | None = None
+
+
 class IntentSubmitRequest(BaseModel):
     actor: str
     reference_id: str | None = None
@@ -123,8 +129,14 @@ class SmokeGateRequest(BaseModel):
 
 
 _ALLOWED_TRANSITIONS = {
-    "RESEARCH_IMPORTED": {"PM_ACCEPTED"},
-    "PROPOSED": {"PM_ACCEPTED"},
+    "RESEARCH_IMPORTED": {"PENDING_OPEN_VALIDATION"},
+    "PROPOSED": {"PENDING_OPEN_VALIDATION"},
+    "PENDING_OPEN_VALIDATION": {"OPEN_BLOCKED", "OPEN_CAUTION", "OPEN_ELIGIBLE"},
+    "OPEN_ELIGIBLE": {"PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW", "OPEN_BLOCKED"},
+    "OPEN_CAUTION": {"PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW", "OPEN_BLOCKED"},
+    "PENDING_OPEN_STABILITY_REVIEW": {"READY_FOR_APPROVAL_FLOW", "OPEN_BLOCKED"},
+    "COMMITTEE_REVIEWED": {"READY_FOR_APPROVAL_FLOW"},
+    "READY_FOR_APPROVAL_FLOW": {"PM_ACCEPTED"},
     "PM_ACCEPTED": {"COMPLIANCE_APPROVED", "COMPLIANCE_DENIED"},
     "COMPLIANCE_APPROVED": {"INTENT_SUBMITTED"},
     "INTENT_SUBMITTED": {"INTENT_APPROVED"},
@@ -138,6 +150,8 @@ EXECUTION_CLICK_MAX_REVALIDATION_SEC = 300
 LIVE_ACTIVATION_POLICY_VERSION = "phase7_controlled_live_v1"
 TRAINING_QUALIFICATION_POLICY_VERSION = "phase5_training_qualification_v1"
 NEWS_CONTEXT_POLICY_VERSION = "phaseA_news_context_v1"
+OPENING_VALIDATION_POLICY_VERSION = "phase_opening_validation_v1"
+NY_TZ = ZoneInfo("America/New_York")
 COMMITTEE_ROLES = [
     "PROPOSER",
     "TRADER_EXECUTION_REVIEWER",
@@ -290,6 +304,283 @@ def _parse_list_variant(v):
             return []
     return []
 
+
+def _parse_iso_utc(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _market_session_bounds_utc(now_utc: datetime) -> tuple[datetime, datetime]:
+    now_ny = now_utc.astimezone(NY_TZ)
+    open_ny = now_ny.replace(hour=9, minute=30, second=0, microsecond=0)
+    close_ny = now_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+    return open_ny.astimezone(timezone.utc), close_ny.astimezone(timezone.utc)
+
+
+def _is_market_open_ny(now_utc: datetime) -> bool:
+    now_ny = now_utc.astimezone(NY_TZ)
+    if now_ny.weekday() >= 5:
+        return False
+    open_utc, close_utc = _market_session_bounds_utc(now_utc)
+    return open_utc <= now_utc <= close_utc
+
+
+def _read_app_config(cur, keys: list[str]) -> dict[str, str]:
+    if not keys:
+        return {}
+    placeholders = ",".join(["%s"] * len(keys))
+    cur.execute(
+        f"""
+        select CONFIG_KEY, CONFIG_VALUE
+        from MIP.APP.APP_CONFIG
+        where CONFIG_KEY in ({placeholders})
+        """,
+        tuple(keys),
+    )
+    rows = fetch_all(cur)
+    return {str(r.get("CONFIG_KEY")): str(r.get("CONFIG_VALUE")) for r in rows if r.get("CONFIG_KEY") is not None}
+
+
+def _opening_policy(cur, cfg: dict, action: dict) -> dict:
+    cfg_map = _read_app_config(
+        cur,
+        [
+            "LIVE_OPENING_POLICY_MODE",
+            "LIVE_OPENING_STABILIZATION_MINUTES",
+            "LIVE_OPENING_FIRST_HOUR_CONFIRM_MINUTES",
+            "LIVE_OPENING_SNAPSHOT_MAX_AGE_SEC",
+            "LIVE_OPENING_GAP_CAUTION_PCT",
+            "LIVE_OPENING_GAP_BLOCK_PCT",
+        ],
+    )
+    mode = str(cfg_map.get("LIVE_OPENING_POLICY_MODE", "SHORT_STABILIZATION_REQUIRED")).upper()
+    if mode not in ("IMMEDIATE_ELIGIBLE", "SHORT_STABILIZATION_REQUIRED", "FIRST_HOUR_CONFIRM_REQUIRED"):
+        mode = "SHORT_STABILIZATION_REQUIRED"
+    stabilization_minutes = int(float(cfg_map.get("LIVE_OPENING_STABILIZATION_MINUTES", "5")))
+    first_hour_minutes = int(float(cfg_map.get("LIVE_OPENING_FIRST_HOUR_CONFIRM_MINUTES", "60")))
+    snapshot_max_age_sec = int(
+        float(cfg_map.get("LIVE_OPENING_SNAPSHOT_MAX_AGE_SEC", str(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60)))
+    )
+    gap_caution_pct = float(cfg_map.get("LIVE_OPENING_GAP_CAUTION_PCT", "0.02"))
+    gap_block_pct = float(cfg_map.get("LIVE_OPENING_GAP_BLOCK_PCT", "0.04"))
+
+    training_snapshot = _parse_variant(action.get("TRAINING_QUALIFICATION_SNAPSHOT"))
+    trusted_level = str(training_snapshot.get("trusted_level") or "").upper()
+    live_eligible = bool(training_snapshot.get("live_eligible"))
+    mode_effective = mode
+    if mode == "IMMEDIATE_ELIGIBLE" and (not live_eligible or trusted_level not in ("TRUSTED", "HIGH")):
+        mode_effective = "SHORT_STABILIZATION_REQUIRED"
+
+    return {
+        "mode_requested": mode,
+        "mode_effective": mode_effective,
+        "stabilization_minutes": max(stabilization_minutes, 0),
+        "first_hour_confirm_minutes": max(first_hour_minutes, 5),
+        "snapshot_max_age_sec": max(snapshot_max_age_sec, 15),
+        "gap_caution_pct": max(gap_caution_pct, 0.0),
+        "gap_block_pct": max(gap_block_pct, gap_caution_pct),
+        "policy_version": OPENING_VALIDATION_POLICY_VERSION,
+    }
+
+
+def _expected_entry_reference(cur, action: dict) -> float | None:
+    if action.get("PROPOSED_PRICE") is not None:
+        try:
+            return float(action.get("PROPOSED_PRICE"))
+        except Exception:
+            pass
+    symbol = action.get("SYMBOL")
+    if not symbol:
+        return None
+    cur.execute(
+        """
+        select CLOSE
+        from MIP.MART.MARKET_BARS
+        where SYMBOL = %s
+          and INTERVAL_MINUTES = 1440
+        order by TS desc
+        limit 1
+        """,
+        (symbol,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    try:
+        return float(row[0]) if row[0] is not None else None
+    except Exception:
+        return None
+
+
+def _persist_opening_snapshot(cur, action: dict, new_status: str, reason_codes: list[str], opening_payload: dict):
+    current_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    current_snapshot["opening_validation"] = opening_payload
+    cur.execute(
+        """
+        update MIP.LIVE.LIVE_ACTIONS
+           set STATUS = %s,
+               REASON_CODES = parse_json(%s),
+               PARAM_SNAPSHOT = parse_json(%s),
+               UPDATED_AT = current_timestamp()
+         where ACTION_ID = %s
+        """,
+        (new_status, json.dumps(reason_codes), json.dumps(current_snapshot), action.get("ACTION_ID")),
+    )
+
+
+def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = False, now_utc: datetime | None = None) -> dict:
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    portfolio_id = action.get("PORTFOLIO_ID")
+    cur.execute(
+        """
+        select
+          IBKR_ACCOUNT_ID, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where PORTFOLIO_ID = %s
+        """,
+        (portfolio_id,),
+    )
+    cfg_rows = fetch_all(cur)
+    if not cfg_rows:
+        raise HTTPException(status_code=400, detail="Live portfolio config missing for opening validation.")
+    cfg = cfg_rows[0]
+    policy = _opening_policy(cur, cfg, action)
+    refresh_result = {"attempted": False}
+    if force_refresh_1m:
+        refresh_result = _force_refresh_latest_one_minute_bars(cur)
+
+    symbol = action.get("SYMBOL")
+    cur.execute(
+        """
+        select TS, CLOSE
+        from MIP.MART.MARKET_BARS
+        where SYMBOL = %s
+          and INTERVAL_MINUTES = 1
+        order by TS desc
+        limit 1
+        """,
+        (symbol,),
+    )
+    bar = cur.fetchone()
+    bar_ts = bar[0] if bar else None
+    bar_px = float(bar[1]) if bar and bar[1] is not None else None
+    bar_age_sec = None
+    if bar_ts is not None:
+        bar_age_sec = (now_utc - bar_ts.replace(tzinfo=timezone.utc)).total_seconds()
+
+    expected_entry_px = _expected_entry_reference(cur, action)
+    gap_pct = None
+    if expected_entry_px and bar_px:
+        try:
+            gap_pct = abs(bar_px - expected_entry_px) / max(abs(expected_entry_px), 1e-9)
+        except Exception:
+            gap_pct = None
+
+    open_utc, _ = _market_session_bounds_utc(now_utc)
+    wait_minutes = 0
+    mode_effective = policy["mode_effective"]
+    if mode_effective == "SHORT_STABILIZATION_REQUIRED":
+        wait_minutes = int(policy["stabilization_minutes"])
+    elif mode_effective == "FIRST_HOUR_CONFIRM_REQUIRED":
+        wait_minutes = int(policy["first_hour_confirm_minutes"])
+    ready_after_utc = open_utc + timedelta(minutes=wait_minutes)
+    stability_ready = now_utc >= ready_after_utc
+
+    hard_reasons: list[str] = []
+    caution_reasons: list[str] = []
+    if not _is_market_open_ny(now_utc):
+        hard_reasons.append("OPEN_MARKET_CLOSED")
+    if not symbol:
+        hard_reasons.append("OPEN_MISSING_SYMBOL")
+    if bar_ts is None:
+        hard_reasons.append("OPEN_SNAPSHOT_MISSING")
+    elif bar_age_sec is not None and bar_age_sec > float(policy["snapshot_max_age_sec"]):
+        hard_reasons.append("OPEN_SNAPSHOT_STALE")
+    if gap_pct is not None:
+        if gap_pct > float(policy["gap_block_pct"]):
+            hard_reasons.append("OPEN_GAP_BLOCK")
+        elif gap_pct > float(policy["gap_caution_pct"]):
+            caution_reasons.append("OPEN_GAP_CAUTION")
+    else:
+        caution_reasons.append("OPEN_GAP_UNAVAILABLE")
+
+    guard = _compute_live_activation_guard(cur, int(portfolio_id))
+    if not guard.get("eligible", False):
+        hard_reasons.append("OPEN_LIVE_GUARD_FAILED")
+
+    news_snapshot = _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT")) or _parse_variant(_parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context"))
+    news_shock = bool(news_snapshot.get("event_shock_flag"))
+    news_freshness = str(news_snapshot.get("freshness_bucket") or "").upper()
+    if news_shock and news_freshness in ("FRESH", "OVERNIGHT"):
+        caution_reasons.append("OPEN_NEWS_SHOCK_CAUTION")
+
+    if hard_reasons:
+        result = "OPEN_BLOCKED"
+    elif caution_reasons:
+        result = "OPEN_CAUTION"
+    else:
+        result = "OPEN_ELIGIBLE"
+    reason_codes = hard_reasons + caution_reasons
+    opening_payload = {
+        "result": result,
+        "checked_at_utc": now_utc.isoformat(),
+        "session_date_ny": now_utc.astimezone(NY_TZ).date().isoformat(),
+        "market_open_ts_utc": open_utc.isoformat(),
+        "symbol": symbol,
+        "opening_snapshot_ts": bar_ts.isoformat() if bar_ts is not None else None,
+        "opening_reference_price": bar_px,
+        "opening_snapshot_age_sec": bar_age_sec,
+        "expected_entry_reference_price": expected_entry_px,
+        "gap_vs_expected_entry_pct": gap_pct,
+        "stabilization": {
+            "mode_requested": policy["mode_requested"],
+            "mode_effective": mode_effective,
+            "ready_after_utc": ready_after_utc.isoformat(),
+            "is_ready": bool(stability_ready),
+            "wait_minutes": wait_minutes,
+        },
+        "policy": policy,
+        "reasons": reason_codes,
+        "live_guard": {
+            "eligible": bool(guard.get("eligible", False)),
+            "reasons": guard.get("reasons") or [],
+            "checks": guard.get("checks") or {},
+        },
+        "news_context": {
+            "context_state": news_snapshot.get("context_state"),
+            "event_shock_flag": news_shock,
+            "freshness_bucket": news_snapshot.get("freshness_bucket"),
+        },
+        "refresh": refresh_result,
+    }
+    _persist_opening_snapshot(cur, action, result, reason_codes, opening_payload)
+    action_after = _fetch_live_action(cur, action.get("ACTION_ID"))
+    _append_learning_ledger_event(
+        cur,
+        event_name="LIVE_OPENING_SANITY_GATE",
+        status=result,
+        action_before=action,
+        action_after=action_after,
+        policy_version=OPENING_VALIDATION_POLICY_VERSION,
+        influence_delta={
+            "opening_result": result,
+            "gap_vs_expected_entry_pct": gap_pct,
+            "opening_snapshot_age_sec": bar_age_sec,
+            "stability_mode_effective": mode_effective,
+            "stability_wait_minutes": wait_minutes,
+            "stability_ready": bool(stability_ready),
+        },
+        outcome_state={"opening_validation": opening_payload},
+    )
+    return {"result": result, "reason_codes": reason_codes, "opening_validation": opening_payload}
 
 def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[str], dict]:
     """
@@ -2217,7 +2508,7 @@ def list_live_trade_actions(
             params.append(portfolio_id)
         if pending_only:
             wheres.append(
-                "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
+                "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION','PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
             )
         params.append(limit)
         sql = f"""
@@ -2298,6 +2589,31 @@ def get_live_trade_committee(action_id: str):
         conn.close()
 
 
+@router.post("/trades/actions/{action_id}/opening/validate")
+def run_opening_validation(action_id: str, req: OpeningValidationRequest = Body(default_factory=OpeningValidationRequest)):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        now_utc = _parse_iso_utc(req.now_utc_iso) if req.now_utc_iso else datetime.now(timezone.utc)
+        if now_utc is None:
+            raise HTTPException(status_code=400, detail="Invalid now_utc_iso format. Use ISO-8601.")
+        gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=req.force_refresh_1m, now_utc=now_utc)
+        action_after = _fetch_live_action(cur, action_id)
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": action_after.get("STATUS") if action_after else gate.get("result"),
+            "opening_result": gate.get("result"),
+            "reason_codes": gate.get("reason_codes") or [],
+            "opening_validation": gate.get("opening_validation") or {},
+        }
+    finally:
+        conn.close()
+
+
 @router.post("/trades/actions/{action_id}/committee/run")
 def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
     conn = get_connection()
@@ -2306,6 +2622,52 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
+        status_upper = (action.get("STATUS") or "").upper()
+        if status_upper in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
+            opening_gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=False, now_utc=datetime.now(timezone.utc))
+            action = _fetch_live_action(cur, action_id)
+            status_upper = (action.get("STATUS") or "").upper()
+            if status_upper == "OPEN_BLOCKED":
+                return {
+                    "ok": False,
+                    "action_id": action_id,
+                    "status": "OPEN_BLOCKED",
+                    "blocked_stage": "OPENING_SANITY_GATE",
+                    "reason_codes": opening_gate.get("reason_codes") or [],
+                    "opening_validation": opening_gate.get("opening_validation") or {},
+                }
+
+        if status_upper not in ("OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Committee run blocked until opening validation passes (current: {status_upper}).",
+            )
+
+        opening_validation = _parse_variant(_parse_variant(action.get("PARAM_SNAPSHOT")).get("opening_validation"))
+        stabilization = _parse_variant(opening_validation.get("stabilization"))
+        ready_after = stabilization.get("ready_after_utc")
+        ready_after_dt = _parse_iso_utc(ready_after)
+        is_ready = bool(stabilization.get("is_ready"))
+        if ready_after_dt is not None:
+            is_ready = datetime.now(timezone.utc) >= ready_after_dt
+            stabilization["is_ready"] = bool(is_ready)
+            opening_validation["stabilization"] = stabilization
+        if status_upper != "READY_FOR_APPROVAL_FLOW" and not is_ready:
+            _persist_opening_snapshot(
+                cur,
+                action,
+                "PENDING_OPEN_STABILITY_REVIEW",
+                _parse_list_variant(action.get("REASON_CODES")) + ["OPEN_STABILITY_WAIT_REQUIRED"],
+                opening_validation,
+            )
+            return {
+                "ok": False,
+                "action_id": action_id,
+                "status": "PENDING_OPEN_STABILITY_REVIEW",
+                "blocked_stage": "OPENING_STABILITY_REVIEW",
+                "ready_after_utc": ready_after,
+                "opening_validation": opening_validation,
+            }
 
         if not req.force_rerun:
             cur.execute(
@@ -2358,6 +2720,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        reason_codes.append("COMMITTEE_REVIEWED")
+        next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
         cur.execute(
             """
             insert into MIP.LIVE.COMMITTEE_VERDICT (
@@ -2405,6 +2769,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                    COMMITTEE_RUN_ID = %s,
                    COMMITTEE_COMPLETED_TS = current_timestamp(),
                    COMMITTEE_VERDICT = %s,
+                   STATUS = %s,
                    REASON_CODES = parse_json(%s),
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
@@ -2412,6 +2777,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             (
                 run_id,
                 verdict["recommendation"],
+                next_status,
                 json.dumps(reason_codes),
                 action_id,
             ),
@@ -2447,6 +2813,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             "action_id": action_id,
             "run_id": run_id,
             "status": "COMPLETED",
+            "action_status": next_status,
             "verdict": verdict,
             "joint_decision": verdict.get("joint_decision"),
         }
@@ -4218,7 +4585,8 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
 
             import_reason_codes = [
                 "RESEARCH_IMPORTED",
-                "NON_EXECUTABLE_UNTIL_COMMITTEE_PM_COMPLIANCE_INTENT_REVALIDATION",
+                "PENDING_OPENING_VALIDATION",
+                "NON_EXECUTABLE_UNTIL_OPENING_SANITY_STABILITY_COMMITTEE_PM_COMPLIANCE_INTENT_REVALIDATION",
             ]
             cur.execute(
                 """
@@ -4233,7 +4601,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 )
                 select
                   %s, %s, %s, %s, %s, %s, %s,
-                  'RESEARCH_IMPORTED', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
+                  'PENDING_OPEN_VALIDATION', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   parse_json(%s), %s, %s, %s,
                   parse_json(%s), %s, %s,
                   parse_json(%s), %s, %s, %s, %s,
@@ -4268,7 +4636,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             _append_learning_ledger_event(
                 cur,
                 event_name="LIVE_RESEARCH_IMPORT",
-                status="RESEARCH_IMPORTED",
+                status="PENDING_OPEN_VALIDATION",
                 action_before=None,
                 action_after={
                     "ACTION_ID": action_id,
@@ -4282,6 +4650,8 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 influence_delta={
                     "default_executable": False,
                     "required_sequence": [
+                        "OPENING_SANITY_GATE",
+                        "OPENING_STABILITY_REVIEW",
                         "COMMITTEE_COMPLETED",
                         "PM_ACCEPTED",
                         "COMPLIANCE_APPROVED",

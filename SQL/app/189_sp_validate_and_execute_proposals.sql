@@ -294,7 +294,72 @@ begin
                             'side', c.SIDE,
                             'target_weight', c.TARGET_WEIGHT,
                             'source_signals', c.SOURCE_SIGNALS,
-                            'rationale', c.RATIONALE
+                            'rationale', c.RATIONALE,
+                            'parallel_worlds_evidence', object_construct(
+                                'as_of_ts', (
+                                    select max(d.AS_OF_TS)
+                                    from MIP.MART.V_PARALLEL_WORLD_DIFF d
+                                    where d.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                                ),
+                                'top_outperformers', (
+                                    select array_agg(
+                                        object_construct(
+                                            'scenario_name', x.SCENARIO_NAME,
+                                            'scenario_type', x.SCENARIO_TYPE,
+                                            'pnl_delta', x.PNL_DELTA,
+                                            'return_pct_delta', x.RETURN_PCT_DELTA,
+                                            'drawdown_delta', x.DRAWDOWN_DELTA
+                                        )
+                                    ) within group (order by x.PNL_DELTA desc)
+                                    from (
+                                        select
+                                            d.SCENARIO_NAME,
+                                            d.SCENARIO_TYPE,
+                                            d.PNL_DELTA,
+                                            d.RETURN_PCT_DELTA,
+                                            d.DRAWDOWN_DELTA
+                                        from MIP.MART.V_PARALLEL_WORLD_DIFF d
+                                        where d.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                                          and d.AS_OF_TS = (
+                                              select max(d2.AS_OF_TS)
+                                              from MIP.MART.V_PARALLEL_WORLD_DIFF d2
+                                              where d2.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                                          )
+                                          and coalesce(d.OUTPERFORMED, false) = true
+                                        order by d.PNL_DELTA desc
+                                        limit 3
+                                    ) x
+                                ),
+                                'latest_recommendations', (
+                                    select array_agg(
+                                        object_construct(
+                                            'type', y.RECOMMENDATION_TYPE,
+                                            'domain', y.DOMAIN,
+                                            'recommended_value', y.RECOMMENDED_VALUE,
+                                            'expected_daily_delta', y.EXPECTED_DAILY_DELTA,
+                                            'confidence_class', y.CONFIDENCE_CLASS
+                                        )
+                                    ) within group (order by y.REC_RANK)
+                                    from (
+                                        select
+                                            r.RECOMMENDATION_TYPE,
+                                            r.DOMAIN,
+                                            r.RECOMMENDED_VALUE,
+                                            r.EXPECTED_DAILY_DELTA,
+                                            r.CONFIDENCE_CLASS,
+                                            r.REC_RANK
+                                        from MIP.MART.V_PW_RECOMMENDATIONS r
+                                        where r.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                                          and r.AS_OF_TS = (
+                                              select max(r2.AS_OF_TS)
+                                              from MIP.MART.V_PW_RECOMMENDATIONS r2
+                                              where r2.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                                          )
+                                        order by r.REC_RANK
+                                        limit 3
+                                    ) y
+                                )
+                            )
                         )
                     )
                 ) as RESPONSE

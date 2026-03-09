@@ -200,9 +200,9 @@ function DrillLinks({ whereToLook, links }) {
     })
   }
   if (links) {
-    ['signals', 'training', 'portfolio', 'market_timeline', 'digest'].forEach((key) => {
+    ['decision_console', 'training', 'portfolio', 'market_timeline', 'digest'].forEach((key) => {
       if (links[key] && !allLinks.find((l) => l.to === links[key])) {
-        const labels = { signals: 'Signals', training: 'Training', portfolio: 'Portfolio', market_timeline: 'Timeline', digest: 'Digest' }
+        const labels = { decision_console: 'AI Decisions', training: 'Training', portfolio: 'Portfolio', market_timeline: 'Timeline', digest: 'Digest' }
         allLinks.push({ to: links[key], label: labels[key] || key })
       }
     })
@@ -291,80 +291,6 @@ function MarketIndexChart({ indexSeries }) {
         </AreaChart>
       </ResponsiveContainer>
     </div>
-  )
-}
-
-/* ── Intraday Top Movers Row ──────────────────────────── */
-
-function IntradayTopMovers({ symbols }) {
-  if (!symbols?.length) return null
-  const withReturn = symbols.filter(s => s.session_return != null)
-  const top3 = withReturn.slice(0, 3)
-  const bottom3 = withReturn.slice(-3).reverse()
-  if (!top3.length && !bottom3.length) return null
-
-  return (
-    <div className="ck-movers">
-      <div className="ck-movers-group">
-        <h4 className="ck-movers-label ck-movers-label--up">Top Gainers</h4>
-        {top3.map((s, i) => (
-          <div key={i} className="ck-mover ck-mover--up">
-            <span className="ck-mover-symbol">{s.symbol}</span>
-            <span className="ck-mover-return">+{(s.session_return * 100).toFixed(2)}%</span>
-          </div>
-        ))}
-      </div>
-      <div className="ck-movers-group">
-        <h4 className="ck-movers-label ck-movers-label--down">Top Losers</h4>
-        {bottom3.map((s, i) => (
-          <div key={i} className="ck-mover ck-mover--down">
-            <span className="ck-mover-symbol">{s.symbol}</span>
-            <span className="ck-mover-return">{(s.session_return * 100).toFixed(2)}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/* ── Intraday Return Bar Chart ───────────────────────── */
-
-function IntradayReturnChart({ symbols }) {
-  if (!symbols?.length) return null
-  const data = symbols
-    .filter(s => s.session_return != null)
-    .map(s => ({ symbol: s.symbol, return_pct: +(s.session_return * 100).toFixed(2) }))
-    .sort((a, b) => b.return_pct - a.return_pct)
-  if (!data.length) return null
-
-  return (
-    <div className="ck-market-chart">
-      <h4 className="ck-chart-title">Session Returns by Symbol</h4>
-      <ResponsiveContainer width="100%" height={Math.max(280, data.length * 24)}>
-        <BarChart data={data} layout="vertical" margin={{ left: 50, right: 20, top: 5, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis type="number" tickFormatter={(v) => `${v}%`} fontSize={11} />
-          <YAxis type="category" dataKey="symbol" width={50} fontSize={11} tick={{ fill: '#495057' }} />
-          <Tooltip formatter={(v) => [`${v}%`, 'Return']} />
-          <ReferenceLine x={0} stroke="#adb5bd" />
-          <Bar dataKey="return_pct" radius={[0, 3, 3, 0]}>
-            {data.map((entry, i) => (
-              <Cell key={i} fill={entry.return_pct >= 0 ? '#198754' : '#dc3545'} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
-
-/* ── Intraday Session Badge ──────────────────────────── */
-
-function SessionBadge({ isToday }) {
-  return (
-    <span className={`ck-badge ${isToday ? 'ck-badge--fresh' : 'ck-badge--stale'}`}>
-      {isToday ? 'Live Session' : 'Previous Session'}
-    </span>
   )
 }
 
@@ -616,7 +542,6 @@ export default function Cockpit() {
   const [trainingGlobal, setTrainingGlobal] = useState(null)
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
-  const [intradayPulse, setIntradayPulse] = useState(null)
   const [loading, setLoading] = useState(true)
 
   // Parallel fetch non-portfolio data sources
@@ -630,16 +555,14 @@ export default function Cockpit() {
       fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/market/pulse/intraday`).then(r => r.ok ? r.json() : null).catch(() => null),
     ]
 
-    Promise.all(fetches).then(([dg, tg, td, mp, ip]) => {
+    Promise.all(fetches).then(([dg, tg, td, mp]) => {
       if (cancelled) return
       setDigestGlobal(dg)
       setTrainingGlobal(tg)
       setTodayData(td)
       setMarketPulse(mp)
-      setIntradayPulse(ip)
       setLoading(false)
     })
 
@@ -650,11 +573,6 @@ export default function Cockpit() {
   const aggregate = marketPulse?.aggregate || {}
   const marketSymbols = marketPulse?.symbols || []
   const indexSeries = marketPulse?.index_series || []
-
-  const intradayAgg = intradayPulse?.aggregate || {}
-  const intradaySymbols = intradayPulse?.symbols || []
-  const intradaySessionDate = intradayPulse?.session_date
-  const intradayIsToday = intradayPulse?.is_today
 
   // Attention levels for right-column stories
   const globalAttention = useMemo(() => {
@@ -715,43 +633,13 @@ export default function Cockpit() {
     return `Average return ${avgPct >= 0 ? '+' : ''}${avgPct}%. Top: ${top?.symbol} (+${((top?.day_return || 0) * 100).toFixed(1)}%), Bottom: ${bottom?.symbol} (${((bottom?.day_return || 0) * 100).toFixed(1)}%).`
   }, [marketSymbols, aggregate])
 
-  // Intraday market pulse attention / headline / summary
-  const intradayAttention = useMemo(() => {
-    if (!intradayAgg.direction || intradayAgg.direction === 'NO_DATA') return 'neutral'
-    if (intradayAgg.direction === 'DOWN') return 'warning'
-    if (intradayAgg.direction === 'UP') return 'positive'
-    return 'info'
-  }, [intradayAgg])
-
-  const intradayDateLabel = useMemo(() => {
-    if (!intradaySessionDate) return ''
-    try {
-      return new Date(intradaySessionDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-    } catch { return intradaySessionDate }
-  }, [intradaySessionDate])
-
-  const intradayHeadline = useMemo(() => {
-    if (!intradayAgg.direction || intradayAgg.direction === 'NO_DATA') return 'Intraday Pulse \u2014 Awaiting Data'
-    return `Intraday Pulse \u2014 ${intradayAgg.up_count} of ${intradayAgg.total_symbols} symbols up this session`
-  }, [intradayAgg])
-
-  const intradaySummary = useMemo(() => {
-    if (!intradaySymbols.length) return 'No intraday data available.'
-    const withReturn = intradaySymbols.filter(s => s.session_return != null)
-    if (!withReturn.length) return 'Session data loading.'
-    const top = withReturn[0]
-    const bottom = withReturn[withReturn.length - 1]
-    const avgPct = intradayAgg.avg_return_pct ?? 0
-    return `${intradayDateLabel} \u2014 Avg return ${avgPct >= 0 ? '+' : ''}${avgPct}%. Top: ${top?.symbol} (+${((top?.session_return || 0) * 100).toFixed(1)}%), Bottom: ${bottom?.symbol} (${((bottom?.session_return || 0) * 100).toFixed(1)}%).`
-  }, [intradaySymbols, intradayAgg, intradayDateLabel])
-
   // Signal headline
   const signalHeadline = insights.length > 0
-    ? `${insights.length} Signal Candidate${insights.length > 1 ? 's' : ''} Today`
-    : 'Signal Candidates \u2014 None Today'
+    ? `${insights.length} Committee Candidate${insights.length > 1 ? 's' : ''} Today`
+    : 'Committee Candidates \u2014 None Today'
 
   const signalSummary = useMemo(() => {
-    if (insights.length === 0) return 'No eligible signals found today.'
+    if (insights.length === 0) return 'No committee-ready candidates found today.'
     const top = insights[0]
     return `Top candidate: ${top.symbol} (${top.maturity_stage}, score ${top.maturity_score}). ${top.why_this_is_here || ''}`
   }, [insights])
@@ -779,6 +667,13 @@ export default function Cockpit() {
     return portfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() !== 'ACTIVE')
   }, [portfolios])
 
+  const gatedPortfoliosCount = useMemo(() => (
+    portfolios.filter((p) => {
+      const gate = (_get(p, 'GATE_STATE', 'gate_state') || 'SAFE').toUpperCase()
+      return gate !== 'SAFE'
+    }).length
+  ), [portfolios])
+
   if (loading) {
     return (
       <>
@@ -792,6 +687,26 @@ export default function Cockpit() {
     <div className="ck-page">
       <div className="ck-page-header">
         <h1>Cockpit</h1>
+      </div>
+      <div className="ck-summary-strip">
+        <div className="ck-summary-card">
+          <span className="ck-summary-label">Active portfolios</span>
+          <span className="ck-summary-value">{activePortfolios.length}</span>
+        </div>
+        <div className="ck-summary-card">
+          <span className="ck-summary-label">Gated portfolios</span>
+          <span className={`ck-summary-value ${gatedPortfoliosCount > 0 ? 'ck-kpi--negative' : 'ck-kpi--positive'}`}>
+            {gatedPortfoliosCount}
+          </span>
+        </div>
+        <div className="ck-summary-card">
+          <span className="ck-summary-label">Committee candidates</span>
+          <span className="ck-summary-value">{insights.length}</span>
+        </div>
+        <div className="ck-summary-card">
+          <span className="ck-summary-label">Market breadth</span>
+          <span className="ck-summary-value">{aggregate.breadth_pct ?? '—'}%</span>
+        </div>
       </div>
 
       {/* ═══ Two-Column News Layout ═══ */}
@@ -823,9 +738,9 @@ export default function Cockpit() {
           )}
         </div>
 
-        {/* ── RIGHT COLUMN: Market, System, Signals, Training ── */}
+        {/* ── RIGHT COLUMN: Market, System, Committee, Training ── */}
         <div className="ck-news-column">
-          <div className="ck-column-label">Market & System</div>
+          <div className="ck-column-label">Market, System & Committee</div>
 
           {/* Story: Market Pulse */}
           <StoryCard
@@ -873,59 +788,6 @@ export default function Cockpit() {
             )}
           </StoryCard>
 
-          {/* Story: Intraday Market Pulse */}
-          <StoryCard
-            attention={intradayAttention}
-            headline={intradayHeadline}
-            summary={intradaySummary}
-            accent="market"
-            defaultOpen={false}
-            badges={
-              <>
-                {intradayPulse && <SessionBadge isToday={intradayIsToday} />}
-                <DirectionBadge direction={intradayAgg.direction} />
-              </>
-            }
-          >
-            {intradayPulse && intradayAgg.direction !== 'NO_DATA' ? (
-              <>
-                <div className="ck-market-kpi-strip">
-                  <div className="ck-market-kpi">
-                    <span className="ck-market-kpi-val ck-kpi--positive">{intradayAgg.up_count}</span>
-                    <span className="ck-market-kpi-label">Up</span>
-                  </div>
-                  <div className="ck-market-kpi">
-                    <span className="ck-market-kpi-val ck-kpi--negative">{intradayAgg.down_count}</span>
-                    <span className="ck-market-kpi-label">Down</span>
-                  </div>
-                  <div className="ck-market-kpi">
-                    <span className="ck-market-kpi-val">{intradayAgg.flat_count}</span>
-                    <span className="ck-market-kpi-label">Flat</span>
-                  </div>
-                  <div className="ck-market-kpi">
-                    <span className={`ck-market-kpi-val ${intradayAgg.avg_return_pct >= 0 ? 'ck-kpi--positive' : 'ck-kpi--negative'}`}>
-                      {intradayAgg.avg_return_pct >= 0 ? '+' : ''}{intradayAgg.avg_return_pct}%
-                    </span>
-                    <span className="ck-market-kpi-label">Avg Return</span>
-                  </div>
-                  <div className="ck-market-kpi">
-                    <span className="ck-market-kpi-val">{intradayAgg.breadth_pct}%</span>
-                    <span className="ck-market-kpi-label">Breadth</span>
-                  </div>
-                  <div className="ck-market-kpi">
-                    <span className="ck-market-kpi-val">{intradayAgg.total_symbols}</span>
-                    <span className="ck-market-kpi-label">Symbols</span>
-                  </div>
-                </div>
-
-                <IntradayTopMovers symbols={intradaySymbols} />
-                <IntradayReturnChart symbols={intradaySymbols} />
-              </>
-            ) : (
-              <EmptyState title="No intraday data" action="Intraday pulse will appear after the pipeline ingests 15-min bars." />
-            )}
-          </StoryCard>
-
           {/* Story: System Overview */}
           <StoryCard
             attention={globalAttention}
@@ -953,7 +815,7 @@ export default function Cockpit() {
             )}
           </StoryCard>
 
-          {/* Story: Signal Candidates */}
+          {/* Story: Committee Candidates */}
           <StoryCard
             attention={signalAttention}
             headline={signalHeadline}
@@ -976,9 +838,12 @@ export default function Cockpit() {
                     <p className="ck-insight-mini-why">{item.why_this_is_here || '\u2014'}</p>
                   </div>
                 ))}
+                <div className="ck-drill-links">
+                  <Link to="/decision-console" className="ck-drill-link">Open AI Agent Decisions &rarr;</Link>
+                </div>
               </div>
             ) : (
-              <EmptyState title="No signal candidates today" action="Signals appear when eligible symbols have sufficient maturity." />
+              <EmptyState title="No committee candidates today" action="Candidates appear when symbols have sufficient maturity and pass policy checks." />
             )}
           </StoryCard>
 

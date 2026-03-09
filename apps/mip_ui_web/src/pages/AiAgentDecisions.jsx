@@ -30,8 +30,10 @@ export default function AiAgentDecisions() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [runId, setRunId] = useState('')
-  const [status, setStatus] = useState('')
+  const [info, setInfo] = useState('')
+  const [simRunId, setSimRunId] = useState('')
+  const [simStatus, setSimStatus] = useState('')
+  const [liveStatus, setLiveStatus] = useState('')
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
   const [detailError, setDetailError] = useState('')
@@ -39,16 +41,29 @@ export default function AiAgentDecisions() {
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
+    setInfo('')
     try {
       if (mode === 'simulation') {
         const qs = new URLSearchParams({ limit: '200' })
-        if (runId.trim()) qs.set('run_id', runId.trim())
-        if (status) qs.set('status', status)
+        if (simRunId.trim()) qs.set('run_id', simRunId.trim())
+        if (simStatus) qs.set('status', simStatus)
         qs.set('committee_only', 'true')
-        const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${qs.toString()}`)
+        let resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${qs.toString()}`)
         if (!resp.ok) throw new Error(`Failed to load simulation AI decisions (${resp.status})`)
-        const data = await resp.json()
+        let data = await resp.json()
         let decisions = Array.isArray(data?.decisions) ? data.decisions : []
+        if (decisions.length === 0) {
+          const fallbackQs = new URLSearchParams({ limit: '200' })
+          if (simRunId.trim()) fallbackQs.set('run_id', simRunId.trim())
+          if (simStatus) fallbackQs.set('status', simStatus)
+          resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${fallbackQs.toString()}`)
+          if (!resp.ok) throw new Error(`Failed to load simulation fallback decisions (${resp.status})`)
+          data = await resp.json()
+          decisions = Array.isArray(data?.decisions) ? data.decisions : []
+          if (decisions.length > 0) {
+            setInfo('No simulation committee outputs found yet; showing latest simulation proposals instead.')
+          }
+        }
         if (simLatestPerSymbol) {
           const perSymbol = new Map()
           decisions.forEach((r) => {
@@ -71,7 +86,7 @@ export default function AiAgentDecisions() {
         const data = await resp.json()
         const actions = Array.isArray(data?.actions) ? data.actions : []
         let mapped = actions
-          .filter((a) => !status || String(a.STATUS || '').toUpperCase() === status)
+          .filter((a) => !liveStatus || String(a.STATUS || '').toUpperCase() === liveStatus)
           .map((a) => ({
             action_id: a.ACTION_ID,
             portfolio_id: a.PORTFOLIO_ID,
@@ -107,7 +122,7 @@ export default function AiAgentDecisions() {
     } finally {
       setLoading(false)
     }
-  }, [mode, runId, status, liveLatestPerSymbol, simLatestPerSymbol])
+  }, [mode, simRunId, simStatus, liveStatus, liveLatestPerSymbol, simLatestPerSymbol])
 
   useEffect(() => {
     setSelected(null)
@@ -167,30 +182,44 @@ export default function AiAgentDecisions() {
 
       <div className="aad-filters">
         <input
-          value={runId}
-          onChange={(e) => setRunId(e.target.value)}
+          value={simRunId}
+          onChange={(e) => setSimRunId(e.target.value)}
           placeholder={mode === 'simulation' ? 'Optional run_id filter' : 'run_id not used in live list'}
           disabled={mode !== 'simulation'}
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select
+          value={mode === 'simulation' ? simStatus : liveStatus}
+          onChange={(e) => (mode === 'simulation' ? setSimStatus(e.target.value) : setLiveStatus(e.target.value))}
+        >
           <option value="">All statuses</option>
-          <option value="PENDING_OPEN_VALIDATION">PENDING_OPEN_VALIDATION</option>
-          <option value="OPEN_BLOCKED">OPEN_BLOCKED</option>
-          <option value="OPEN_CAUTION">OPEN_CAUTION</option>
-          <option value="OPEN_ELIGIBLE">OPEN_ELIGIBLE</option>
-          <option value="PENDING_OPEN_STABILITY_REVIEW">PENDING_OPEN_STABILITY_REVIEW</option>
-          <option value="READY_FOR_APPROVAL_FLOW">READY_FOR_APPROVAL_FLOW</option>
-          <option value="RESEARCH_IMPORTED">RESEARCH_IMPORTED</option>
-          <option value="PROPOSED">PROPOSED</option>
-          <option value="APPROVED">APPROVED</option>
-          <option value="PM_ACCEPTED">PM_ACCEPTED</option>
-          <option value="COMPLIANCE_APPROVED">COMPLIANCE_APPROVED</option>
-          <option value="INTENT_SUBMITTED">INTENT_SUBMITTED</option>
-          <option value="INTENT_APPROVED">INTENT_APPROVED</option>
-          <option value="REVALIDATED_PASS">REVALIDATED_PASS</option>
-          <option value="REVALIDATED_FAIL">REVALIDATED_FAIL</option>
-          <option value="REJECTED">REJECTED</option>
-          <option value="EXECUTED">EXECUTED</option>
+          {mode === 'simulation' ? (
+            <>
+              <option value="PROPOSED">PROPOSED</option>
+              <option value="APPROVED">APPROVED</option>
+              <option value="REJECTED">REJECTED</option>
+              <option value="EXECUTED">EXECUTED</option>
+            </>
+          ) : (
+            <>
+              <option value="PENDING_OPEN_VALIDATION">PENDING_OPEN_VALIDATION</option>
+              <option value="OPEN_BLOCKED">OPEN_BLOCKED</option>
+              <option value="OPEN_CAUTION">OPEN_CAUTION</option>
+              <option value="OPEN_ELIGIBLE">OPEN_ELIGIBLE</option>
+              <option value="PENDING_OPEN_STABILITY_REVIEW">PENDING_OPEN_STABILITY_REVIEW</option>
+              <option value="READY_FOR_APPROVAL_FLOW">READY_FOR_APPROVAL_FLOW</option>
+              <option value="RESEARCH_IMPORTED">RESEARCH_IMPORTED</option>
+              <option value="PROPOSED">PROPOSED</option>
+              <option value="APPROVED">APPROVED</option>
+              <option value="PM_ACCEPTED">PM_ACCEPTED</option>
+              <option value="COMPLIANCE_APPROVED">COMPLIANCE_APPROVED</option>
+              <option value="INTENT_SUBMITTED">INTENT_SUBMITTED</option>
+              <option value="INTENT_APPROVED">INTENT_APPROVED</option>
+              <option value="REVALIDATED_PASS">REVALIDATED_PASS</option>
+              <option value="REVALIDATED_FAIL">REVALIDATED_FAIL</option>
+              <option value="REJECTED">REJECTED</option>
+              <option value="EXECUTED">EXECUTED</option>
+            </>
+          )}
         </select>
         {mode === 'live' ? (
           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
@@ -217,6 +246,7 @@ export default function AiAgentDecisions() {
       </div>
 
       {error ? <div className="aad-error">{error}</div> : null}
+      {info ? <div className="aad-error" style={{ background: '#f0f9ff', borderColor: '#bfdbfe', color: '#1e3a8a' }}>{info}</div> : null}
       {loading ? <div>Loading {mode} AI agent decisions...</div> : null}
 
       <div className="aad-layout">

@@ -98,6 +98,13 @@ export default function LivePortfolioConfig() {
     }
   }, [])
 
+  const refreshAll = useCallback(async () => {
+    await loadConfigs()
+    if (view === 'edit' && selectedConfigId) {
+      await loadGuard(selectedConfigId)
+    }
+  }, [loadConfigs, loadGuard, selectedConfigId, view])
+
   const buildPayload = useCallback(() => ({
     ibkr_account_id: form.ibkr_account_id || null,
     base_currency: form.base_currency || null,
@@ -200,14 +207,22 @@ export default function LivePortfolioConfig() {
 
   const refreshBrokerSnapshot = useCallback(async () => {
     if (!selectedConfigId) return
-    const resp = await fetch(
-      `${API_BASE}/live/snapshot/refresh?portfolio_id=${encodeURIComponent(selectedConfigId)}`,
-      { method: 'POST' }
-    )
-    if (!resp.ok) {
-      throw new Error((await resp.text()) || `Snapshot refresh failed (${resp.status})`)
+    setStatus((s) => ({ ...s, error: '', ok: '' }))
+    try {
+      const resp = await fetch(
+        `${API_BASE}/live/snapshot/refresh?portfolio_id=${encodeURIComponent(selectedConfigId)}`,
+        { method: 'POST' }
+      )
+      if (!resp.ok) {
+        throw new Error((await resp.text()) || `Snapshot refresh failed (${resp.status})`)
+      }
+      await loadConfigs()
+      await loadGuard(selectedConfigId)
+      setStatus((s) => ({ ...s, ok: 'Broker snapshot refreshed and guard re-evaluated.' }))
+    } catch (e) {
+      setStatus((s) => ({ ...s, error: e.message || 'Failed to refresh broker snapshot.' }))
     }
-  }, [selectedConfigId])
+  }, [loadConfigs, loadGuard, selectedConfigId])
 
   const enableLive = useCallback(async (force = false) => {
     if (!selectedConfigId) return
@@ -305,7 +320,7 @@ export default function LivePortfolioConfig() {
           <p className="lpc-subtitle">Cloud-style live config management: list, wiring health, create/edit lifecycle.</p>
         </div>
         <div className="lpc-header-actions">
-          <button className="lpc-btn" onClick={loadConfigs} disabled={status.loading}>{status.loading ? 'Refreshing...' : 'Refresh'}</button>
+          <button className="lpc-btn" onClick={refreshAll} disabled={status.loading}>{status.loading ? 'Refreshing...' : 'Refresh'}</button>
           {view === 'list' ? (
             <button className="lpc-btn lpc-btn-primary" onClick={openCreate}>Create New Live Config</button>
           ) : null}
@@ -336,7 +351,11 @@ export default function LivePortfolioConfig() {
                 <tbody>
                   {configs.map((cfg) => {
                     const guardInfo = wiringById[cfg.PORTFOLIO_ID]
-                    const wired = !!(cfg.IBKR_ACCOUNT_ID && guardInfo?.eligible)
+                    const wired = !!cfg.IBKR_ACCOUNT_ID
+                    const guardKnown = guardInfo && !guardInfo?.error
+                    let wiredLabel = 'Needs setup'
+                    if (wired) wiredLabel = 'Wired'
+                    if (wired && guardKnown && guardInfo?.eligible === false) wiredLabel = 'Wired (guard blocked)'
                     return (
                       <tr key={cfg.PORTFOLIO_ID}>
                         <td>#{cfg.PORTFOLIO_ID}</td>
@@ -344,7 +363,7 @@ export default function LivePortfolioConfig() {
                         <td>{cfg.ADAPTER_MODE || 'PAPER'}</td>
                         <td>
                           <span className={`lpc-inline-pill ${wired ? 'wired' : 'not-wired'}`}>
-                            {wired ? 'Fully wired' : 'Needs setup'}
+                            {wiredLabel}
                           </span>
                         </td>
                         <td>{cfg.UPDATED_AT || '—'}</td>

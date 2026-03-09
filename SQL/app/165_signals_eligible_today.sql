@@ -24,12 +24,24 @@ with recs as (
         ) as RUN_GENERATED_AT
     from MIP.APP.RECOMMENDATION_LOG r
 ),
-interval_flags as (
+latest_interval_day as (
     select
         INTERVAL_MINUTES,
-        count_if(LOG_RUN_ID is not null and GENERATED_AT::date = current_date()) > 0 as HAS_RUN_ID
+        max(GENERATED_AT::date) as LATEST_GENERATED_DATE
     from recs
     group by INTERVAL_MINUTES
+),
+interval_flags as (
+    select
+        r.INTERVAL_MINUTES,
+        count_if(
+            r.LOG_RUN_ID is not null
+            and r.GENERATED_AT::date = d.LATEST_GENERATED_DATE
+        ) > 0 as HAS_RUN_ID
+    from recs r
+    join latest_interval_day d
+      on d.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+    group by r.INTERVAL_MINUTES
 )
 select
     coalesce(r.LOG_RUN_ID, to_varchar(r.RUN_GENERATED_AT, 'YYYYMMDD"T"HH24MISS')) as RUN_ID,
@@ -52,6 +64,8 @@ select
     ) as IS_ELIGIBLE,
     c.GATING_REASON
 from recs r
+join latest_interval_day d
+  on d.INTERVAL_MINUTES = r.INTERVAL_MINUTES
 join interval_flags f
   on f.INTERVAL_MINUTES = r.INTERVAL_MINUTES
 left join MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION c
@@ -60,5 +74,5 @@ left join MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION c
  and c.INTERVAL_MINUTES = r.INTERVAL_MINUTES
  and c.TS = r.TS
  and c.PATTERN_ID = r.PATTERN_ID
-where r.GENERATED_AT::date = current_date()
+where r.GENERATED_AT::date = d.LATEST_GENERATED_DATE
   and (f.HAS_RUN_ID = false or r.LOG_RUN_ID is not null);

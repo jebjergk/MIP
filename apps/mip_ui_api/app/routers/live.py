@@ -2841,16 +2841,20 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             select
               ACTION_ID, PROPOSAL_ID, SYMBOL, SIDE, STATUS, COMPLIANCE_STATUS,
               COMMITTEE_VERDICT, COMMITTEE_STATUS, COMMITTEE_REQUIRED, REASON_CODES,
+              cv.SIZE_FACTOR as COMMITTEE_SIZE_FACTOR,
+              cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
               PROPOSED_QTY, PROPOSED_PRICE, TARGET_OPEN_CONDITION_FACTOR, TRAINING_SIZE_CAP_FACTOR,
               TARGET_EXPECTATION_SNAPSHOT, CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_ACTIONS
+            left join MIP.LIVE.COMMITTEE_VERDICT cv
+              on cv.RUN_ID = LIVE_ACTIONS.COMMITTEE_RUN_ID
             where PORTFOLIO_ID = %s
               and STATUS in (
                 'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
                 'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
                 'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
               )
-            order by CREATED_AT desc
+            order by LIVE_ACTIONS.CREATED_AT desc
             limit %s
             """,
             (portfolio_id, limit),
@@ -2874,9 +2878,12 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
         except Exception:
             unresolved_drift_count = 0
 
+        now_utc = datetime.now(timezone.utc)
+        market_open = _is_market_open_ny(now_utc)
+        open_utc, close_utc = _market_session_bounds_utc(now_utc)
         snapshot_state = _compute_snapshot_freshness_state(snapshot_age_sec, cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"))
         drift_state = _compute_drift_state(cfg.get("DRIFT_STATUS"), unresolved_drift_count)
-        page_actionable = snapshot_state in ("FRESH", "AGING") and drift_state != "BLOCKED"
+        page_actionable = snapshot_state in ("FRESH", "AGING") and drift_state != "BLOCKED" and market_open
         held_symbols = {str((r.get("SYMBOL") or "")).upper() for r in open_positions}
         nav_eur = float(nav.get("NET_LIQUIDATION_EUR") or 0.0) if nav else 0.0
 
@@ -2887,6 +2894,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             proposed_price = float(row.get("PROPOSED_PRICE")) if row.get("PROPOSED_PRICE") is not None else None
             estimated_notional = (abs(proposed_qty) * abs(proposed_price)) if (proposed_qty is not None and proposed_price is not None) else None
             position_pct = (estimated_notional / nav_eur) if (estimated_notional is not None and nav_eur > 0) else None
+            committee_size_factor = float(row.get("COMMITTEE_SIZE_FACTOR")) if row.get("COMMITTEE_SIZE_FACTOR") is not None else None
             size_cap_factor = float(row.get("TRAINING_SIZE_CAP_FACTOR")) if row.get("TRAINING_SIZE_CAP_FACTOR") is not None else None
             target_open_factor = (
                 float(row.get("TARGET_OPEN_CONDITION_FACTOR"))
@@ -2894,10 +2902,19 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                 else 1.0
             )
             final_qty_preview = proposed_qty
+            if final_qty_preview is not None and committee_size_factor is not None:
+                final_qty_preview = max(final_qty_preview * committee_size_factor, 1.0)
             if final_qty_preview is not None and size_cap_factor is not None:
                 final_qty_preview = max(final_qty_preview * size_cap_factor, 1.0)
             if final_qty_preview is not None and target_open_factor is not None:
                 final_qty_preview = max(final_qty_preview * target_open_factor, 1.0)
+            sizing_reason = None
+            if proposed_qty is None and proposed_price is None:
+                sizing_reason = "Quantity/price not finalized yet (revalidation will price from latest bar)."
+            elif proposed_qty is None:
+                sizing_reason = "Quantity not finalized yet."
+            elif proposed_price is None:
+                sizing_reason = "Price not finalized yet (revalidation pending)."
 
             status = (row.get("STATUS") or "").upper()
             action_reason_codes = _parse_list_variant(row.get("REASON_CODES"))
@@ -2929,9 +2946,11 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                             "account_basis_nav_eur": nav_eur if nav_eur > 0 else None,
                             "estimated_notional_eur": estimated_notional,
                             "estimated_position_pct": position_pct,
+                            "committee_size_factor": committee_size_factor,
                             "training_size_cap_factor": size_cap_factor,
                             "target_open_condition_factor": target_open_factor,
                             "final_qty_preview": final_qty_preview,
+                            "availability_reason": sizing_reason,
                             "max_position_pct_limit": float(cfg.get("MAX_POSITION_PCT")) if cfg.get("MAX_POSITION_PCT") is not None else None,
                         },
                         "protection": {"planned": False, "state": "NONE"},
@@ -2981,9 +3000,13 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                     for reason, active in [
                         ("SNAPSHOT_STALE_OR_MISSING", snapshot_state in ("STALE", "BLOCKED")),
                         ("DRIFT_UNRESOLVED", drift_state == "BLOCKED"),
+                        ("OUTSIDE_OPERATING_HOURS", not market_open),
                     ]
                     if active
                 ],
+                "market_open": market_open,
+                "market_window_open_utc": open_utc,
+                "market_window_close_utc": close_utc,
             },
             "account_kpis": {
                 "equity_nav_eur": float(nav.get("NET_LIQUIDATION_EUR")) if nav.get("NET_LIQUIDATION_EUR") is not None else None,

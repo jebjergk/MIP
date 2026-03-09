@@ -92,13 +92,21 @@ export default function LivePortfolioActivity() {
     }
     setStreamActionId(actionId)
     setStreamStatus('Connecting...')
-    setStreamLogs([])
+    setStreamLogs([{ type: 'system', summary: 'Starting committee stream...' }])
     const es = new EventSource(
       `${API_BASE}/live/trades/actions/${actionId}/committee/live-prompt?actor=committee_orchestrator&model=claude-3-5-sonnet`,
     )
     streamRef.current = es
 
-    es.addEventListener('start', () => setStreamStatus('Running...'))
+    es.addEventListener('start', (evt) => {
+      setStreamStatus('Running...')
+      try {
+        const data = JSON.parse(evt.data)
+        setStreamLogs((prev) => [...prev, { type: 'start', ...data }])
+      } catch {
+        setStreamLogs((prev) => [...prev, { type: 'start', summary: 'Committee run started.' }])
+      }
+    })
     es.addEventListener('agent_turn', (evt) => {
       try {
         setStreamLogs((prev) => [...prev, JSON.parse(evt.data)])
@@ -124,7 +132,17 @@ export default function LivePortfolioActivity() {
       es.close()
       streamRef.current = null
     })
-    es.addEventListener('error', () => {
+    es.addEventListener('error', (evt) => {
+      let detail = 'Stream stopped.'
+      try {
+        if (evt?.data) {
+          const data = JSON.parse(evt.data)
+          detail = data?.message || detail
+        }
+      } catch {
+        // ignore parse errors
+      }
+      setStreamLogs((prev) => [...prev, { type: 'error', summary: detail }])
       setStreamStatus('Stopped')
       es.close()
       streamRef.current = null
@@ -170,6 +188,7 @@ export default function LivePortfolioActivity() {
   const executions = overview?.executions || []
   const readiness = overview?.readiness || {}
   const counts = overview?.counts || {}
+  const outsideHours = readiness.market_open === false
 
   return (
     <div className="page lpa-page">
@@ -223,6 +242,11 @@ export default function LivePortfolioActivity() {
               Blocked reasons: {readiness.blocking_reasons.join(', ')}
             </div>
           ) : null}
+          {outsideHours ? (
+            <div className="lpa-warn">
+              Outside operating hours. Open/submit is disabled until market window ({fmtTs(readiness.market_window_open_utc)} to {fmtTs(readiness.market_window_close_utc)}).
+            </div>
+          ) : null}
 
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
@@ -262,7 +286,12 @@ export default function LivePortfolioActivity() {
                         <div>Price: {fmtNum(d.sizing?.proposed_price, 4)}</div>
                         <div>Notional: {fmtNum(d.sizing?.estimated_notional_eur, 2)}</div>
                         <div>Position %: {fmtPct(d.sizing?.estimated_position_pct)}</div>
+                        <div>Committee factor: {fmtNum(d.sizing?.committee_size_factor, 2)}</div>
                         <div>Cap factor: {fmtNum(d.sizing?.training_size_cap_factor, 2)}</div>
+                        <div>Open factor: {fmtNum(d.sizing?.target_open_condition_factor, 2)}</div>
+                        {d.sizing?.availability_reason ? (
+                          <div className="lpa-subtle">{d.sizing.availability_reason}</div>
+                        ) : null}
                       </td>
                       <td>
                         <div>{(d.reason_codes || []).join(', ') || '—'}</div>
@@ -271,16 +300,17 @@ export default function LivePortfolioActivity() {
                       <td>
                         <button
                           className="lpa-btn"
-                          disabled={busy === d.action_id || !d.submission_allowed}
+                          disabled={busy === d.action_id || !d.submission_allowed || outsideHours}
                           onClick={() => approveAndSubmit(d.action_id)}
                         >
                           {busy === d.action_id ? 'Submitting...' : 'Approve + Submit'}
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
+                          disabled={outsideHours}
                           onClick={() => openCommitteeStream(d.action_id)}
                         >
-                          Stream Committee
+                          Committee revalidation
                         </button>
                         {!d.submission_allowed ? (
                           <div className="lpa-subtle">Blocked until gates are clear.</div>

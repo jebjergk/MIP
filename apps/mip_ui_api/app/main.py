@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest, management, market_pulse, parallel_worlds, ask, decisions, intraday, news, learning_ledger
+from app.routers import runs, portfolios, briefs, training, performance, status, today, live, signals, market_timeline, digest, training_digest, management, market_pulse, parallel_worlds, ask, decisions, intraday, news, learning_ledger, performance_dashboard
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,6 +39,7 @@ app.include_router(decisions.router)
 app.include_router(intraday.router)
 app.include_router(news.router)
 app.include_router(learning_ledger.router)
+app.include_router(performance_dashboard.router)
 
 
 @app.get("/")

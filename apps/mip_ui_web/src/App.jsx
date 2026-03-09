@@ -16,6 +16,7 @@ import NewsIntelligence from './pages/NewsIntelligence'
 import LiveTrades from './pages/LiveTrades'
 import LivePortfolioConfig from './pages/LivePortfolioConfig'
 import LearningLedger from './pages/LearningLedger'
+import PerformanceDashboard from './pages/PerformanceDashboard'
 import AppLayout from './components/AppLayout'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
 import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPage'
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/learning-ledger" element={<LearningLedger />} />
+        <Route path="/performance-dashboard" element={<PerformanceDashboard />} />
         <Route path="/decision-console" element={<AiAgentDecisions />} />
         <Route path="/live-trades" element={<LiveTrades />} />
         <Route path="/live-portfolio-config" element={<LivePortfolioConfig />} />

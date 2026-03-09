@@ -13,6 +13,7 @@ const NAV_GROUPS = [
     items: [
       { to: '/cockpit', icon: '\uD83D\uDCCA', label: 'Cockpit' },
       { to: '/home',    icon: '\uD83C\uDFE0', label: 'Home' },
+      { to: '/performance-dashboard', icon: '\uD83D\uDCC9', label: 'Performance' },
     ],
   },
   {

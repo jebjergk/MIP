@@ -1,0 +1,98 @@
+.perf-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.perf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.perf-controls select {
+  margin-left: 0.5rem;
+}
+
+.perf-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.perf-tabs button {
+  border: 1px solid #d0d7de;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 8px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+
+.perf-tabs button.active {
+  background: #e3f2fd;
+  border-color: #90caf9;
+}
+
+.perf-kpi-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.perf-kpi-card,
+.perf-panel,
+.perf-verdict {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 0.9rem;
+}
+
+.perf-kpi-card {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.perf-kpi-label {
+  font-size: 0.78rem;
+  color: #6b7280;
+}
+
+.perf-kpi-value {
+  font-size: 1.15rem;
+}
+
+.perf-kpi-hint {
+  font-size: 0.72rem;
+  color: #6b7280;
+}
+
+.perf-charts-grid,
+.perf-impact-grid,
+.perf-diagnostics-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.perf-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.perf-panel h3,
+.perf-verdict h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.98rem;
+}
+
+.perf-simple-table {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.perf-row {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed #e5e7eb;
+  padding-bottom: 0.25rem;
+}

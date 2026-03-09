@@ -13,7 +13,7 @@ function formatActionStatus(status) {
   if (s.includes('REJECTED') || s.includes('BLOCKED') || s.includes('FAIL')) return 'Needs review'
   if (s.includes('EXECUTED') || s.includes('APPROVED') || s.includes('PASS')) return 'Completed'
   if (s.includes('PENDING') || s.includes('READY') || s.includes('PROPOSED')) return 'Pending'
-  return s.replaceAll('_', ' ').toLowerCase()
+  return s.replace(/_/g, ' ').toLowerCase()
 }
 
 export default function Home() {

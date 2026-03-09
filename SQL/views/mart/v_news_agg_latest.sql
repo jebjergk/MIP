@@ -36,7 +36,7 @@ latest as (
     ) = 1
 )
 select
-    coalesce(l.AS_OF_TS_BUCKET, to_timestamp_ntz('1970-01-01 00:00:00')) as AS_OF_TS_BUCKET,
+    l.AS_OF_TS_BUCKET as AS_OF_TS_BUCKET,
     u.SYMBOL,
     u.MARKET_TYPE,
     coalesce(l.ITEMS_TOTAL, 0) as ITEMS_TOTAL,
@@ -50,7 +50,7 @@ select
     coalesce(l.BADGE, 'NO_NEWS') as BADGE,
     l.LAST_PUBLISHED_AT,
     l.LAST_INGESTED_AT,
-    coalesce(l.SNAPSHOT_TS, to_timestamp_ntz('1970-01-01 00:00:00')) as SNAPSHOT_TS
+    l.SNAPSHOT_TS as SNAPSHOT_TS
 from universe u
 left join latest l
   on l.SYMBOL = u.SYMBOL

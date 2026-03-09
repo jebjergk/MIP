@@ -43,7 +43,11 @@ def _normalize_headlines(raw: Any) -> list[dict[str, Any]]:
     if raw is None:
         return []
     if isinstance(raw, str):
-        return []
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return []
+        raw = parsed
     if not isinstance(raw, list):
         return []
     out: list[dict[str, Any]] = []
@@ -228,8 +232,13 @@ def get_news_intelligence(
             news = by_symbol.get(key)
             if not news:
                 continue
-            is_risk = _to_bool(news.get("NEWS_IS_STALE")) or _to_bool(news.get("UNCERTAINTY_FLAG")) or (
-                (news.get("NEWS_CONTEXT_BADGE") or "").upper() == "HOT"
+            # "Exposure at risk" applies only when symbol has actual news context.
+            # Symbols with NO_NEWS / zero count are tracked in coverage, not risk%.
+            has_news_context = (_to_float(news.get("NEWS_COUNT")) or 0) > 0
+            is_risk = has_news_context and (
+                _to_bool(news.get("NEWS_IS_STALE"))
+                or _to_bool(news.get("UNCERTAINTY_FLAG"))
+                or ((news.get("NEWS_CONTEXT_BADGE") or "").upper() == "HOT")
             )
             if is_risk:
                 risk_market_value += max(mv, 0.0)

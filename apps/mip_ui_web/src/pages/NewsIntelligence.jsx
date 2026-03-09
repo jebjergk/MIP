@@ -41,24 +41,13 @@ function fmtSigned(v, digits = 3) {
 
 export default function NewsIntelligence() {
   const [data, setData] = useState(null)
-  const [portfolios, setPortfolios] = useState([])
-  const [portfolioId, setPortfolioId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    fetch(`${API_BASE}/portfolios`)
-      .then((r) => (r.ok ? r.json() : Promise.resolve([])))
-      .then((rows) => setPortfolios(Array.isArray(rows) ? rows : []))
-      .catch(() => setPortfolios([]))
-  }, [])
-
-  useEffect(() => {
-    const params = new URLSearchParams()
-    if (portfolioId) params.set('portfolio_id', portfolioId)
     setLoading(true)
     setError(null)
-    fetch(`${API_BASE}/news/intelligence?${params.toString()}`)
+    fetch(`${API_BASE}/news/intelligence`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((payload) => {
         setData(payload)
@@ -68,7 +57,7 @@ export default function NewsIntelligence() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [portfolioId])
+  }, [])
 
   const cards = useMemo(() => data?.symbol_cards || [], [data])
   const bullets = useMemo(() => data?.summary_bullets || [], [data])
@@ -98,19 +87,6 @@ export default function NewsIntelligence() {
           <p className="news-intel-subtitle">
             Deterministic, evidence-backed summaries from stored news features.
           </p>
-        </div>
-        <div className="news-intel-controls">
-          <label>
-            Portfolio scope
-            <select value={portfolioId} onChange={(e) => setPortfolioId(e.target.value)}>
-              <option value="">All open portfolios</option>
-              {portfolios.map((p) => (
-                <option key={p.PORTFOLIO_ID || p.portfolio_id} value={p.PORTFOLIO_ID || p.portfolio_id}>
-                  {p.NAME || p.name || `Portfolio ${p.PORTFOLIO_ID || p.portfolio_id}`}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
       </div>
 

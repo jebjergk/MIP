@@ -39,6 +39,7 @@ export default function MarketTimeline() {
     let cancelled = false
     setLoading(true)
     setError(null)
+    detailCacheRef.current = {}
     
     const params = new URLSearchParams()
     params.set('window_bars', String(windowBars))

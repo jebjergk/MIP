@@ -106,7 +106,7 @@ function DrillDownCards({ links, whereToLook }) {
   // Standard links as fallback / supplement
   if (links) {
     const standardLinks = [
-      { key: 'signals', label: 'Decision Explorer' },
+      { key: 'decision_console', label: 'AI Agent Decisions' },
       { key: 'training', label: 'Training Status' },
       { key: 'portfolio', label: 'Portfolio' },
       { key: 'market_timeline', label: 'Market Timeline' },

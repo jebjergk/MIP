@@ -32,7 +32,7 @@ def _build_links(symbol=None, market_type=None) -> dict:
     """Build drill-down links for training digest."""
     base = {
         "training": "/training",
-        "signals": "/signals",
+        "decision_console": "/decision-console",
         "digest": "/digest",
         "market_timeline": "/market-timeline",
     }

@@ -35,7 +35,7 @@ export default function Home() {
           <div className="home-hero-overlay" />
           <div className="home-hero-content">
             <h1 className="home-hero-title">Market Intelligence Platform</h1>
-            <p className="home-hero-subtext">Daily-bar research • outcomes-based learning • explainable suggestions</p>
+            <p className="home-hero-subtext">Daily-bar research • outcomes-based learning • committee decisions</p>
           </div>
         </div>
         <LoadingState message="Loading…" />
@@ -59,7 +59,7 @@ export default function Home() {
             <InfoTooltip scope="home" entryKey="hero_headline" variant="short" />
           </h1>
           <p className="home-hero-subtext">
-            Daily-bar research • outcomes-based learning • explainable suggestions
+            Daily-bar research • outcomes-based learning • committee decisions
             <InfoTooltip scope="home" entryKey="hero_subtext" variant="short" />
           </p>
         </div>
@@ -89,9 +89,9 @@ export default function Home() {
             <span className="home-card-title">Open Training Status</span>
             <span className="home-card-desc">Maturity by symbol/pattern</span>
           </Link>
-          <Link to="/suggestions" className="home-card home-card--link">
-            <span className="home-card-title">Open Suggestions</span>
-            <span className="home-card-desc">Ranked symbol/pattern candidates</span>
+          <Link to="/decision-console" className="home-card home-card--link">
+            <span className="home-card-title">Open AI Agent Decisions</span>
+            <span className="home-card-desc">Committee outcomes and transcripts</span>
           </Link>
         </div>
       </section>

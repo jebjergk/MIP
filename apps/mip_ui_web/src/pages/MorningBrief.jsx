@@ -289,33 +289,32 @@ function ExecutiveSummary({ brief, onShowTrades }) {
   )
 }
 
-// Build URL for Decision Explorer page with filters
-function buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId) {
+// Build URL for current decision flow page.
+function buildDecisionConsoleUrl() {
+  return '/decision-console'
+}
+
+function buildTrainingUrl(opportunity) {
   const params = new URLSearchParams()
-  if (portfolioId) params.set('portfolioId', String(portfolioId))
-  if (asOfTs) params.set('asOf', asOfTs)
-  if (pipelineRunId) params.set('pipelineRunId', pipelineRunId)
   if (opportunity.market_type) params.set('market_type', opportunity.market_type)
   if (opportunity.symbol && opportunity.symbol !== '—') params.set('symbol', opportunity.symbol)
   if (opportunity.pattern_id) params.set('pattern_id', String(opportunity.pattern_id))
-  if (opportunity.horizon_bars) params.set('horizon_bars', String(opportunity.horizon_bars))
-  if (opportunity.trust_label) params.set('trust_label', opportunity.trust_label)
-  params.set('from', 'brief')
   const query = params.toString()
-  return query ? `/signals?${query}` : '/signals'
+  return query ? `/training?${query}` : '/training'
 }
 
 // Opportunity Card component
-function OpportunityCard({ opportunity, portfolioId, asOfTs, pipelineRunId }) {
+function OpportunityCard({ opportunity }) {
   const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why, pattern_id, status, target_weight, is_proposal } = opportunity
-  const signalsUrl = buildSignalsUrl(opportunity, portfolioId, asOfTs, pipelineRunId)
+  const trainingUrl = buildTrainingUrl(opportunity)
+  const decisionConsoleUrl = buildDecisionConsoleUrl()
   const displaySymbol = symbol && symbol !== '—' ? symbol : (pattern_id ? `Pattern ${pattern_id}` : '—')
   
-  // For proposals, link to market timeline; for patterns, link to signals
+  // For proposals, link to market timeline; for patterns, link to training.
   const linkUrl = is_proposal && symbol && symbol !== '—' 
     ? `/market-timeline?symbol=${symbol}&market_type=${market_type}`
-    : signalsUrl
-  const linkText = is_proposal ? 'View in Market Timeline →' : 'View in Signals →'
+    : trainingUrl
+  const linkText = is_proposal ? 'View in Market Timeline →' : 'View in Training →'
   
   // Status badge styling
   const statusClass = status === 'EXECUTED' ? 'status-executed' 
@@ -347,13 +346,18 @@ function OpportunityCard({ opportunity, portfolioId, asOfTs, pipelineRunId }) {
         <Link to={linkUrl} className="opp-link">
           {linkText}
         </Link>
+        {is_proposal && (
+          <Link to={decisionConsoleUrl} className="opp-link">
+            View AI Agent Decisions →
+          </Link>
+        )}
       </div>
     </div>
   )
 }
 
 // Opportunities Section
-function OpportunitiesSection({ opportunities, portfolioId, asOfTs, pipelineRunId }) {
+function OpportunitiesSection({ opportunities }) {
   const proposalCount = opportunities?.filter(o => o.is_proposal).length || 0
   const patternCount = opportunities?.filter(o => !o.is_proposal).length || 0
   
@@ -384,9 +388,6 @@ function OpportunitiesSection({ opportunities, portfolioId, asOfTs, pipelineRunI
           <OpportunityCard 
             key={opp.proposal_id || opp.pattern_id || idx} 
             opportunity={opp} 
-            portfolioId={portfolioId}
-            asOfTs={asOfTs}
-            pipelineRunId={pipelineRunId}
           />
         ))}
       </div>
@@ -705,12 +706,7 @@ export default function MorningBrief() {
             onShowTrades={() => setShowTradesModal(true)}
           />
           <PortfolioActionsCard actions={brief.portfolio_actions} />
-          <OpportunitiesSection 
-            opportunities={brief.opportunities} 
-            portfolioId={brief.portfolio_id}
-            asOfTs={brief.as_of_ts}
-            pipelineRunId={brief.pipeline_run_id}
-          />
+          <OpportunitiesSection opportunities={brief.opportunities} />
           <RiskSection risk={brief.risk} />
           <DeltasSection deltas={brief.deltas} />
           <RawJsonPanel rawJson={brief.raw_json} />

@@ -18,7 +18,7 @@ Five shortcut cards that take you directly to key pages:
 | **Default Portfolio** | /portfolios/1 | Quick link to your primary portfolio |
 | **Open Cockpit** | /cockpit | AI narratives, portfolio status, training |
 | **Open Training Status** | /training | Maturity by symbol and pattern |
-| **Open Suggestions** | /suggestions | Ranked candidates from outcome history |
+| **Open AI Agent Decisions** | /decision-console | Committee outcomes and live decision status |
 
 ### System at a Glance — Three Metric Cards
 

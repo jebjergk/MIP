@@ -4,8 +4,6 @@ import Home from './pages/Home'
 import Portfolio from './pages/Portfolio'
 import AuditViewer from './pages/AuditViewer'
 import TrainingStatus from './pages/TrainingStatus'
-import Suggestions from './pages/Suggestions'
-import Signals from './pages/Signals'
 import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
 import PortfolioManagement from './pages/PortfolioManagement'
@@ -39,8 +37,6 @@ export default function App() {
         <Route path="/runs" element={<AuditViewer />} />
         <Route path="/runs/:runId" element={<AuditViewer />} />
         <Route path="/training" element={<TrainingStatus />} />
-        <Route path="/suggestions" element={<Suggestions />} />
-        <Route path="/signals" element={<Signals />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
@@ -57,6 +53,8 @@ export default function App() {
         <Route path="/debug" element={<Debug />} />
         <Route path="/guide" element={<UserGuide />} />
         {/* Redirects for old routes */}
+        <Route path="/suggestions" element={<Navigate to="/cockpit" replace />} />
+        <Route path="/signals" element={<Navigate to="/decision-console" replace />} />
         <Route path="/today" element={<Navigate to="/cockpit" replace />} />
         <Route path="/brief" element={<Navigate to="/cockpit" replace />} />
         <Route path="/digest" element={<Navigate to="/cockpit" replace />} />

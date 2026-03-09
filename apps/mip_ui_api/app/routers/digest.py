@@ -31,10 +31,9 @@ def _parse_json(value):
 def _build_links(portfolio_id=None, scope="PORTFOLIO") -> dict:
     """Build drill-down links for digest page."""
     base = {
-        "signals": "/signals",
+        "decision_console": "/decision-console",
         "training": "/training",
         "market_timeline": "/market-timeline",
-        "suggestions": "/suggestions",
         "runs": "/runs",
     }
     if scope == "GLOBAL":

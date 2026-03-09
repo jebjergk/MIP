@@ -55,7 +55,7 @@ When you click to expand a portfolio card, you see:
   - **What Matters** — Bullets explaining important observations and implications
   - **Waiting For** — Bullets describing upcoming triggers or thresholds
   - **Drill Links** — Links to related pages (Signals, Training, Portfolio detail)
-- **Navigation Links:** "Full Portfolio →" and "Suggestions →" links at the bottom
+- **Navigation Links:** "Full Portfolio →" and "AI Agent Decisions →" links at the bottom
 
 ---
 

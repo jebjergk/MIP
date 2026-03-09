@@ -601,7 +601,7 @@ function PortfolioStory({ portfolio }) {
       {/* Link to full portfolio page */}
       <div className="ck-drill-links" style={{ marginTop: '0.5rem' }}>
         <Link to={`/portfolios/${pid}`} className="ck-drill-link">Full Portfolio &rarr;</Link>
-        <Link to={`/suggestions?portfolio_id=${pid}`} className="ck-drill-link">Suggestions &rarr;</Link>
+        <Link to="/decision-console" className="ck-drill-link">AI Agent Decisions &rarr;</Link>
       </div>
     </StoryCard>
   )

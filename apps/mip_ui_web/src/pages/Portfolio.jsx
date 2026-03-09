@@ -546,7 +546,7 @@ export default function Portfolio() {
                     </div>
                   )}
                   <div className="risk-gate-actions">
-                    <Link to="/suggestions" className="risk-gate-link">Open Suggestions</Link>
+                    <Link to="/decision-console" className="risk-gate-link">Open AI Agent Decisions</Link>
                     <a href="#portfolio-positions" className="risk-gate-link">View Positions</a>
                     <button type="button" className="risk-gate-link risk-gate-link--button" onClick={() => setShowRestartModal(true)}>How to restart episode</button>
                   </div>

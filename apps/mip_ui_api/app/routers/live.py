@@ -2690,7 +2690,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             insert into MIP.LIVE.COMMITTEE_RUN (
               RUN_ID, ACTION_ID, PORTFOLIO_ID, STATUS, MODEL_NAME, STARTED_AT, DETAILS
             )
-            values (%s, %s, %s, 'RUNNING', %s, current_timestamp(), parse_json(%s))
+            select
+              %s, %s, %s, 'RUNNING', %s, current_timestamp(), try_parse_json(%s)
             """,
             (
                 run_id,
@@ -2728,7 +2729,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
               RUN_ID, ACTION_ID, PORTFOLIO_ID, RECOMMENDATION, SIZE_FACTOR, CONFIDENCE, IS_BLOCKED,
               REASON_CODES, VERDICT_JSON, CREATED_AT
             )
-            values (%s, %s, %s, %s, %s, %s, %s, parse_json(%s), parse_json(%s), current_timestamp())
+            select
+              %s, %s, %s, %s, %s, %s, %s, try_parse_json(%s), try_parse_json(%s), current_timestamp()
             """,
             (
                 run_id,

@@ -425,10 +425,16 @@ begin
                             select
                                 coalesce(sum(case
                                     when rl.SCORE >= (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta)
+                                     and coalesce(try_to_double(rl.DETAILS:deviation_pct::string), coalesce(pd.PARAMS_JSON:min_zscore::float, 0))
+                                         >= (coalesce(pd.PARAMS_JSON:min_zscore::float, 0) + :v_zscore_delta)
                                      and ps.RECOMMENDATION_ID is null
                                     then 1 else 0 end), 0),
                                 coalesce(sum(case
-                                    when rl.SCORE < (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta)
+                                    when (
+                                        rl.SCORE < (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta)
+                                        or coalesce(try_to_double(rl.DETAILS:deviation_pct::string), coalesce(pd.PARAMS_JSON:min_zscore::float, 0))
+                                           < (coalesce(pd.PARAMS_JSON:min_zscore::float, 0) + :v_zscore_delta)
+                                    )
                                      and ps.RECOMMENDATION_ID is not null
                                     then 1 else 0 end), 0)
                             into :v_newly_eligible, :v_newly_excluded
@@ -463,6 +469,8 @@ begin
                                 where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440
                                   and ps.RECOMMENDATION_ID is null
                                   and rl.SCORE >= (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta)
+                                  and coalesce(try_to_double(rl.DETAILS:deviation_pct::string), coalesce(pd.PARAMS_JSON:min_zscore::float, 0))
+                                      >= (coalesce(pd.PARAMS_JSON:min_zscore::float, 0) + :v_zscore_delta)
                                 qualify row_number() over (partition by rl.RECOMMENDATION_ID order by ro.HORIZON_BARS) = 1
                             );
                         exception when other then
@@ -477,31 +485,42 @@ begin
                         v_sim_cash := :v_actual_cash;
 
                         -- Build threshold-specific trades detail
-                        v_cf_trades_json := (
-                            select coalesce(array_agg(object_construct(
-                                'symbol', rl.SYMBOL,
-                                'market_type', rl.MARKET_TYPE,
-                                'score', round(rl.SCORE, 6),
-                                'orig_min_return', coalesce(pd.PARAMS_JSON:min_return::float, 0.002),
-                                'adj_min_return', round(coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta, 6),
-                                'was_trusted', iff(ps.RECOMMENDATION_ID is not null, true, false),
-                                'passes_adjusted', iff(rl.SCORE >= (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta), true, false),
-                                'trust_label', coalesce(tc.TRUST_LABEL, 'UNKNOWN')
-                            )), array_construct())
-                            from MIP.APP.RECOMMENDATION_LOG rl
-                            join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = rl.PATTERN_ID
-                            left join (
-                                select distinct RECOMMENDATION_ID
-                                from MIP.MART.V_PORTFOLIO_SIGNALS
-                            ) ps on ps.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
-                            left join MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION tc
-                              on tc.SYMBOL = rl.SYMBOL
-                             and tc.MARKET_TYPE = rl.MARKET_TYPE
-                             and tc.INTERVAL_MINUTES = rl.INTERVAL_MINUTES
-                             and tc.TS = rl.TS
-                             and tc.PATTERN_ID = rl.PATTERN_ID
-                            where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440
-                        );
+                        begin
+                            v_cf_trades_json := (
+                                select coalesce(array_agg(object_construct(
+                                    'symbol', rl.SYMBOL,
+                                    'market_type', rl.MARKET_TYPE,
+                                    'score', round(rl.SCORE, 6),
+                                    'signal_zscore', round(coalesce(try_to_double(rl.DETAILS:deviation_pct::string), coalesce(pd.PARAMS_JSON:min_zscore::float, 0)), 6),
+                                    'orig_min_zscore', coalesce(pd.PARAMS_JSON:min_zscore::float, 0),
+                                    'adj_min_zscore', round(coalesce(pd.PARAMS_JSON:min_zscore::float, 0) + :v_zscore_delta, 6),
+                                    'orig_min_return', coalesce(pd.PARAMS_JSON:min_return::float, 0.002),
+                                    'adj_min_return', round(coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta, 6),
+                                    'was_trusted', iff(ps.RECOMMENDATION_ID is not null, true, false),
+                                    'passes_adjusted', iff(
+                                        rl.SCORE >= (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta)
+                                        and coalesce(try_to_double(rl.DETAILS:deviation_pct::string), coalesce(pd.PARAMS_JSON:min_zscore::float, 0))
+                                            >= (coalesce(pd.PARAMS_JSON:min_zscore::float, 0) + :v_zscore_delta),
+                                        true, false),
+                                    'trust_label', coalesce(tc.TRUST_LABEL, 'UNKNOWN')
+                                )), array_construct())
+                                from MIP.APP.RECOMMENDATION_LOG rl
+                                join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = rl.PATTERN_ID
+                                left join (
+                                    select distinct RECOMMENDATION_ID
+                                    from MIP.MART.V_PORTFOLIO_SIGNALS
+                                ) ps on ps.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+                                left join MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION tc
+                                  on tc.SYMBOL = rl.SYMBOL
+                                 and tc.MARKET_TYPE = rl.MARKET_TYPE
+                                 and tc.INTERVAL_MINUTES = rl.INTERVAL_MINUTES
+                                 and tc.TS = rl.TS
+                                 and tc.PATTERN_ID = rl.PATTERN_ID
+                                where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440
+                            );
+                        exception when other then
+                            v_cf_trades_json := array_construct();
+                        end;
 
                         v_cf_decision_trace := object_construct(
                             'world', 'COUNTERFACTUAL', 'scenario', :v_scenario_name,
@@ -529,26 +548,31 @@ begin
                         -- as return * notional. Compare against actual PnL.
                         begin
                             select
-                                coalesce(sum(ro.REALIZED_RETURN * t.NOTIONAL), 0),
-                                count(ro.REALIZED_RETURN)
+                                coalesce(sum(src.PNL_EST), 0),
+                                count(src.PNL_EST)
                             into :v_horizon_pnl, :v_horizon_count
-                            from MIP.APP.PORTFOLIO_TRADES t
-                            left join MIP.AGENT_OUT.ORDER_PROPOSALS op
-                              on op.PROPOSAL_ID = t.PROPOSAL_ID
-                            join MIP.APP.RECOMMENDATION_LOG rl
-                              on rl.SYMBOL = t.SYMBOL
-                             and rl.MARKET_TYPE = t.MARKET_TYPE
-                             and rl.INTERVAL_MINUTES = 1440
-                             and rl.TS::date = t.TRADE_TS::date
-                            join MIP.APP.RECOMMENDATION_OUTCOMES ro
-                              on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
-                             and ro.HORIZON_BARS = :v_hold_horizon
-                             and ro.REALIZED_RETURN is not null
-                            where t.PORTFOLIO_ID = :v_portfolio_id
-                              and t.TRADE_TS::date = :v_as_of_ts::date
-                              and t.SIDE = 'BUY'
-                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
-                            qualify row_number() over (partition by t.TRADE_ID order by rl.RECOMMENDATION_ID) = 1;
+                            from (
+                                select
+                                    t.TRADE_ID,
+                                    ro.REALIZED_RETURN * t.NOTIONAL as PNL_EST
+                                from MIP.APP.PORTFOLIO_TRADES t
+                                left join MIP.AGENT_OUT.ORDER_PROPOSALS op
+                                  on op.PROPOSAL_ID = t.PROPOSAL_ID
+                                join MIP.APP.RECOMMENDATION_LOG rl
+                                  on rl.SYMBOL = t.SYMBOL
+                                 and rl.MARKET_TYPE = t.MARKET_TYPE
+                                 and rl.INTERVAL_MINUTES = 1440
+                                 and rl.TS::date = t.TRADE_TS::date
+                                join MIP.APP.RECOMMENDATION_OUTCOMES ro
+                                  on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
+                                 and ro.HORIZON_BARS = :v_hold_horizon
+                                 and ro.REALIZED_RETURN is not null
+                                where t.PORTFOLIO_ID = :v_portfolio_id
+                                  and t.TRADE_TS::date = :v_as_of_ts::date
+                                  and t.SIDE = 'BUY'
+                                  and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                                qualify row_number() over (partition by t.TRADE_ID order by rl.RECOMMENDATION_ID) = 1
+                            ) src;
                         exception when other then
                             v_horizon_pnl := 0;
                             v_horizon_count := 0;
@@ -561,43 +585,57 @@ begin
                         v_sim_positions := :v_actual_positions;
                         v_sim_cash := :v_actual_cash;
 
-                        v_cf_trades_json := (
-                            select coalesce(array_agg(object_construct(
-                                'symbol', t.SYMBOL,
-                                'notional', round(t.NOTIONAL, 2),
-                                'actual_horizon', pp.HOLD_UNTIL_INDEX - pp.ENTRY_INDEX,
-                                'alt_horizon', :v_hold_horizon,
-                                'alt_return', round(ro.REALIZED_RETURN, 6),
-                                'alt_pnl', round(ro.REALIZED_RETURN * t.NOTIONAL, 2),
-                                'actual_pnl', round(coalesce(t_sell.REALIZED_PNL, 0), 2)
-                            )), array_construct())
-                            from MIP.APP.PORTFOLIO_TRADES t
-                            left join MIP.AGENT_OUT.ORDER_PROPOSALS op2
-                              on op2.PROPOSAL_ID = t.PROPOSAL_ID
-                            join MIP.APP.RECOMMENDATION_LOG rl2
-                              on rl2.SYMBOL = t.SYMBOL
-                             and rl2.MARKET_TYPE = t.MARKET_TYPE
-                             and rl2.INTERVAL_MINUTES = 1440
-                             and rl2.TS::date = t.TRADE_TS::date
-                            join MIP.APP.RECOMMENDATION_OUTCOMES ro
-                              on ro.RECOMMENDATION_ID = rl2.RECOMMENDATION_ID
-                             and ro.HORIZON_BARS = :v_hold_horizon
-                             and ro.REALIZED_RETURN is not null
-                            left join MIP.APP.PORTFOLIO_POSITIONS pp
-                              on pp.PORTFOLIO_ID = t.PORTFOLIO_ID
-                             and pp.SYMBOL = t.SYMBOL
-                             and pp.ENTRY_TS = t.TRADE_TS
-                            left join MIP.APP.PORTFOLIO_TRADES t_sell
-                              on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
-                             and t_sell.SYMBOL = t.SYMBOL
-                             and t_sell.SIDE = 'SELL'
-                             and t_sell.TRADE_TS > t.TRADE_TS
-                            where t.PORTFOLIO_ID = :v_portfolio_id
-                              and t.TRADE_TS::date = :v_as_of_ts::date
-                              and t.SIDE = 'BUY'
-                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
-                            qualify row_number() over (partition by t.TRADE_ID order by rl2.RECOMMENDATION_ID) = 1
-                        );
+                        begin
+                            v_cf_trades_json := (
+                                select coalesce(array_agg(object_construct(
+                                    'symbol', src.SYMBOL,
+                                    'notional', round(src.NOTIONAL, 2),
+                                    'actual_horizon', src.ACTUAL_HORIZON,
+                                    'alt_horizon', :v_hold_horizon,
+                                    'alt_return', round(src.ALT_RETURN, 6),
+                                    'alt_pnl', round(src.ALT_PNL, 2),
+                                    'actual_pnl', round(src.ACTUAL_PNL, 2)
+                                )), array_construct())
+                                from (
+                                    select
+                                        t.TRADE_ID,
+                                        t.SYMBOL,
+                                        t.NOTIONAL,
+                                        pp.HOLD_UNTIL_INDEX - pp.ENTRY_INDEX as ACTUAL_HORIZON,
+                                        ro.REALIZED_RETURN as ALT_RETURN,
+                                        ro.REALIZED_RETURN * t.NOTIONAL as ALT_PNL,
+                                        coalesce(t_sell.REALIZED_PNL, 0) as ACTUAL_PNL
+                                    from MIP.APP.PORTFOLIO_TRADES t
+                                    left join MIP.AGENT_OUT.ORDER_PROPOSALS op2
+                                      on op2.PROPOSAL_ID = t.PROPOSAL_ID
+                                    join MIP.APP.RECOMMENDATION_LOG rl2
+                                      on rl2.SYMBOL = t.SYMBOL
+                                     and rl2.MARKET_TYPE = t.MARKET_TYPE
+                                     and rl2.INTERVAL_MINUTES = 1440
+                                     and rl2.TS::date = t.TRADE_TS::date
+                                    join MIP.APP.RECOMMENDATION_OUTCOMES ro
+                                      on ro.RECOMMENDATION_ID = rl2.RECOMMENDATION_ID
+                                     and ro.HORIZON_BARS = :v_hold_horizon
+                                     and ro.REALIZED_RETURN is not null
+                                    left join MIP.APP.PORTFOLIO_POSITIONS pp
+                                      on pp.PORTFOLIO_ID = t.PORTFOLIO_ID
+                                     and pp.SYMBOL = t.SYMBOL
+                                     and pp.ENTRY_TS = t.TRADE_TS
+                                    left join MIP.APP.PORTFOLIO_TRADES t_sell
+                                      on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
+                                     and t_sell.SYMBOL = t.SYMBOL
+                                     and t_sell.SIDE = 'SELL'
+                                     and t_sell.TRADE_TS > t.TRADE_TS
+                                    where t.PORTFOLIO_ID = :v_portfolio_id
+                                      and t.TRADE_TS::date = :v_as_of_ts::date
+                                      and t.SIDE = 'BUY'
+                                      and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                                    qualify row_number() over (partition by t.TRADE_ID order by rl2.RECOMMENDATION_ID) = 1
+                                ) src
+                            );
+                        exception when other then
+                            v_cf_trades_json := array_construct();
+                        end;
 
                         v_cf_decision_trace := object_construct(
                             'world', 'COUNTERFACTUAL', 'scenario', :v_scenario_name,
@@ -627,55 +665,54 @@ begin
                         -- If no:  use actual hold-to-horizon P&L.
                         begin
                             select
-                                coalesce(sum(
+                                coalesce(sum(src.ALT_PNL), 0),
+                                count(*),
+                                coalesce(sum(iff(src.WOULD_EARLY_EXIT, 1, 0)), 0)
+                            into :v_ee_pnl, :v_ee_count, :v_ee_exit_count
+                            from (
+                                select
+                                    t.TRADE_ID,
+                                    iff(es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult, true, false) as WOULD_EARLY_EXIT,
                                     case
                                         when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult
                                         then (ts.AVG_RETURN * :v_alt_payoff_mult
                                               - (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0
                                              ) * t.NOTIONAL
                                         else coalesce(t_sell.REALIZED_PNL, 0)
-                                    end
-                                ), 0),
-                                count(*),
-                                coalesce(sum(
-                                    case when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult then 1 else 0 end
-                                ), 0)
-                            into :v_ee_pnl, :v_ee_count, :v_ee_exit_count
-                            from MIP.APP.PORTFOLIO_TRADES t
-                            -- Get the trusted signal target return for this trade
-                            join MIP.APP.RECOMMENDATION_LOG rl
-                              on rl.SYMBOL = t.SYMBOL
-                             and rl.MARKET_TYPE = t.MARKET_TYPE
-                             and rl.INTERVAL_MINUTES = 1440
-                             and rl.TS::date = t.TRADE_TS::date
-                            join MIP.MART.V_TRUSTED_SIGNALS ts
-                              on ts.PATTERN_ID = rl.PATTERN_ID
-                             and ts.MARKET_TYPE = rl.MARKET_TYPE
-                             and ts.INTERVAL_MINUTES = 1440
-                             and ts.IS_TRUSTED = true
-                            -- Get MFE from early exit position state
-                            left join MIP.APP.EARLY_EXIT_POSITION_STATE es
-                              on es.PORTFOLIO_ID = t.PORTFOLIO_ID
-                             and es.SYMBOL = t.SYMBOL
-                             and es.ENTRY_TS = t.TRADE_TS
-                            -- Get actual sell P&L for hold-to-horizon baseline
-                            left join (
-                                select PORTFOLIO_ID, SYMBOL, SIDE, REALIZED_PNL,
-                                       lag(TRADE_TS) over (partition by PORTFOLIO_ID, SYMBOL order by TRADE_TS) as BUY_TS
-                                from MIP.APP.PORTFOLIO_TRADES
-                                where SIDE = 'SELL'
-                            ) t_sell
-                              on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
-                             and t_sell.SYMBOL = t.SYMBOL
-                             and t_sell.BUY_TS = t.TRADE_TS
-                            where t.PORTFOLIO_ID = :v_portfolio_id
-                              and t.TRADE_TS::date = :v_as_of_ts::date
-                              and t.SIDE = 'BUY'
-                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
-                            qualify row_number() over (
-                                partition by t.TRADE_ID
-                                order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID
-                            ) = 1;
+                                    end as ALT_PNL
+                                from MIP.APP.PORTFOLIO_TRADES t
+                                join MIP.APP.RECOMMENDATION_LOG rl
+                                  on rl.SYMBOL = t.SYMBOL
+                                 and rl.MARKET_TYPE = t.MARKET_TYPE
+                                 and rl.INTERVAL_MINUTES = 1440
+                                 and rl.TS::date = t.TRADE_TS::date
+                                join MIP.MART.V_TRUSTED_SIGNALS ts
+                                  on ts.PATTERN_ID = rl.PATTERN_ID
+                                 and ts.MARKET_TYPE = rl.MARKET_TYPE
+                                 and ts.INTERVAL_MINUTES = 1440
+                                 and ts.IS_TRUSTED = true
+                                left join MIP.APP.EARLY_EXIT_POSITION_STATE es
+                                  on es.PORTFOLIO_ID = t.PORTFOLIO_ID
+                                 and es.SYMBOL = t.SYMBOL
+                                 and es.ENTRY_TS = t.TRADE_TS
+                                left join (
+                                    select PORTFOLIO_ID, SYMBOL, SIDE, REALIZED_PNL,
+                                           lag(TRADE_TS) over (partition by PORTFOLIO_ID, SYMBOL order by TRADE_TS) as BUY_TS
+                                    from MIP.APP.PORTFOLIO_TRADES
+                                    where SIDE = 'SELL'
+                                ) t_sell
+                                  on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
+                                 and t_sell.SYMBOL = t.SYMBOL
+                                 and t_sell.BUY_TS = t.TRADE_TS
+                                where t.PORTFOLIO_ID = :v_portfolio_id
+                                  and t.TRADE_TS::date = :v_as_of_ts::date
+                                  and t.SIDE = 'BUY'
+                                  and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                                qualify row_number() over (
+                                    partition by t.TRADE_ID
+                                    order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID
+                                ) = 1
+                            ) src;
                         exception when other then
                             v_ee_pnl := 0;
                             v_ee_count := 0;
@@ -689,58 +726,73 @@ begin
                         v_sim_positions := :v_actual_positions;
                         v_sim_cash := :v_actual_cash;
 
-                        v_cf_trades_json := (
-                            select coalesce(array_agg(object_construct(
-                                'symbol', t.SYMBOL,
-                                'notional', round(t.NOTIONAL, 2),
-                                'target_return', round(ts.AVG_RETURN, 6),
-                                'alt_payoff_mult', :v_alt_payoff_mult,
-                                'alt_threshold', round(ts.AVG_RETURN * :v_alt_payoff_mult, 6),
-                                'mfe_return', round(coalesce(es.MFE_RETURN, 0), 6),
-                                'would_early_exit', iff(es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult, true, false),
-                                'alt_pnl', round(
-                                    case
-                                        when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult
-                                        then (ts.AVG_RETURN * :v_alt_payoff_mult
-                                              - (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0
-                                             ) * t.NOTIONAL
-                                        else coalesce(t_sell.REALIZED_PNL, 0)
-                                    end, 2),
-                                'actual_pnl', round(coalesce(t_sell.REALIZED_PNL, 0), 2)
-                            )), array_construct())
-                            from MIP.APP.PORTFOLIO_TRADES t
-                            join MIP.APP.RECOMMENDATION_LOG rl
-                              on rl.SYMBOL = t.SYMBOL
-                             and rl.MARKET_TYPE = t.MARKET_TYPE
-                             and rl.INTERVAL_MINUTES = 1440
-                             and rl.TS::date = t.TRADE_TS::date
-                            join MIP.MART.V_TRUSTED_SIGNALS ts
-                              on ts.PATTERN_ID = rl.PATTERN_ID
-                             and ts.MARKET_TYPE = rl.MARKET_TYPE
-                             and ts.INTERVAL_MINUTES = 1440
-                             and ts.IS_TRUSTED = true
-                            left join MIP.APP.EARLY_EXIT_POSITION_STATE es
-                              on es.PORTFOLIO_ID = t.PORTFOLIO_ID
-                             and es.SYMBOL = t.SYMBOL
-                             and es.ENTRY_TS = t.TRADE_TS
-                            left join (
-                                select PORTFOLIO_ID, SYMBOL, SIDE, REALIZED_PNL,
-                                       lag(TRADE_TS) over (partition by PORTFOLIO_ID, SYMBOL order by TRADE_TS) as BUY_TS
-                                from MIP.APP.PORTFOLIO_TRADES
-                                where SIDE = 'SELL'
-                            ) t_sell
-                              on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
-                             and t_sell.SYMBOL = t.SYMBOL
-                             and t_sell.BUY_TS = t.TRADE_TS
-                            where t.PORTFOLIO_ID = :v_portfolio_id
-                              and t.TRADE_TS::date = :v_as_of_ts::date
-                              and t.SIDE = 'BUY'
-                              and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
-                            qualify row_number() over (
-                                partition by t.TRADE_ID
-                                order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID
-                            ) = 1
-                        );
+                        begin
+                            v_cf_trades_json := (
+                                select coalesce(array_agg(object_construct(
+                                    'symbol', src.SYMBOL,
+                                    'notional', round(src.NOTIONAL, 2),
+                                    'target_return', round(src.TARGET_RETURN, 6),
+                                    'alt_payoff_mult', :v_alt_payoff_mult,
+                                    'alt_threshold', round(src.ALT_THRESHOLD, 6),
+                                    'mfe_return', round(src.MFE_RETURN, 6),
+                                    'would_early_exit', src.WOULD_EARLY_EXIT,
+                                    'alt_pnl', round(src.ALT_PNL, 2),
+                                    'actual_pnl', round(src.ACTUAL_PNL, 2)
+                                )), array_construct())
+                                from (
+                                    select
+                                        t.TRADE_ID,
+                                        t.SYMBOL,
+                                        t.NOTIONAL,
+                                        ts.AVG_RETURN as TARGET_RETURN,
+                                        ts.AVG_RETURN * :v_alt_payoff_mult as ALT_THRESHOLD,
+                                        coalesce(es.MFE_RETURN, 0) as MFE_RETURN,
+                                        iff(es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult, true, false) as WOULD_EARLY_EXIT,
+                                        case
+                                            when es.MFE_RETURN >= ts.AVG_RETURN * :v_alt_payoff_mult
+                                            then (ts.AVG_RETURN * :v_alt_payoff_mult
+                                                  - (:v_slippage_bps + :v_fee_bps + :v_spread_bps / 2.0) / 10000.0
+                                                 ) * t.NOTIONAL
+                                            else coalesce(t_sell.REALIZED_PNL, 0)
+                                        end as ALT_PNL,
+                                        coalesce(t_sell.REALIZED_PNL, 0) as ACTUAL_PNL
+                                    from MIP.APP.PORTFOLIO_TRADES t
+                                    join MIP.APP.RECOMMENDATION_LOG rl
+                                      on rl.SYMBOL = t.SYMBOL
+                                     and rl.MARKET_TYPE = t.MARKET_TYPE
+                                     and rl.INTERVAL_MINUTES = 1440
+                                     and rl.TS::date = t.TRADE_TS::date
+                                    join MIP.MART.V_TRUSTED_SIGNALS ts
+                                      on ts.PATTERN_ID = rl.PATTERN_ID
+                                     and ts.MARKET_TYPE = rl.MARKET_TYPE
+                                     and ts.INTERVAL_MINUTES = 1440
+                                     and ts.IS_TRUSTED = true
+                                    left join MIP.APP.EARLY_EXIT_POSITION_STATE es
+                                      on es.PORTFOLIO_ID = t.PORTFOLIO_ID
+                                     and es.SYMBOL = t.SYMBOL
+                                     and es.ENTRY_TS = t.TRADE_TS
+                                    left join (
+                                        select PORTFOLIO_ID, SYMBOL, SIDE, REALIZED_PNL,
+                                               lag(TRADE_TS) over (partition by PORTFOLIO_ID, SYMBOL order by TRADE_TS) as BUY_TS
+                                        from MIP.APP.PORTFOLIO_TRADES
+                                        where SIDE = 'SELL'
+                                    ) t_sell
+                                      on t_sell.PORTFOLIO_ID = t.PORTFOLIO_ID
+                                     and t_sell.SYMBOL = t.SYMBOL
+                                     and t_sell.BUY_TS = t.TRADE_TS
+                                    where t.PORTFOLIO_ID = :v_portfolio_id
+                                      and t.TRADE_TS::date = :v_as_of_ts::date
+                                      and t.SIDE = 'BUY'
+                                      and (t.EPISODE_ID = :v_episode_id or (:v_episode_id is null and t.EPISODE_ID is null))
+                                    qualify row_number() over (
+                                        partition by t.TRADE_ID
+                                        order by ts.AVG_RETURN desc, rl.RECOMMENDATION_ID
+                                    ) = 1
+                                ) src
+                            );
+                        exception when other then
+                            v_cf_trades_json := array_construct();
+                        end;
 
                         v_cf_decision_trace := object_construct(
                             'world', 'COUNTERFACTUAL', 'scenario', :v_scenario_name,

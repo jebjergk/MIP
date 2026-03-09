@@ -139,7 +139,11 @@ def get_results(
     WHERE {where}
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY d.PORTFOLIO_ID, d.SCENARIO_ID
-        ORDER BY d.AS_OF_TS DESC
+        ORDER BY
+            d.AS_OF_TS DESC,
+            CASE WHEN d.PNL_DELTA IS NULL THEN 1 ELSE 0 END,
+            ABS(COALESCE(d.PNL_DELTA, 0)) DESC,
+            d.RUN_ID DESC
     ) = 1
     ORDER BY d.PNL_DELTA DESC
     """

@@ -26,7 +26,6 @@ function parseMaybeJson(v) {
 export default function AiAgentDecisions() {
   const [mode, setMode] = useState('simulation') // simulation | live
   const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
-  const [simCommitteeOnly, setSimCommitteeOnly] = useState(false)
   const [simLatestPerSymbol, setSimLatestPerSymbol] = useState(true)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -45,7 +44,7 @@ export default function AiAgentDecisions() {
         const qs = new URLSearchParams({ limit: '200' })
         if (runId.trim()) qs.set('run_id', runId.trim())
         if (status) qs.set('status', status)
-        if (simCommitteeOnly) qs.set('committee_only', 'true')
+        qs.set('committee_only', 'true')
         const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${qs.toString()}`)
         if (!resp.ok) throw new Error(`Failed to load simulation AI decisions (${resp.status})`)
         const data = await resp.json()
@@ -108,7 +107,7 @@ export default function AiAgentDecisions() {
     } finally {
       setLoading(false)
     }
-  }, [mode, runId, status, liveLatestPerSymbol, simCommitteeOnly, simLatestPerSymbol])
+  }, [mode, runId, status, liveLatestPerSymbol, simLatestPerSymbol])
 
   useEffect(() => {
     setSelected(null)
@@ -204,14 +203,6 @@ export default function AiAgentDecisions() {
           </label>
         ) : (
           <>
-            <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-              <input
-                type="checkbox"
-                checked={simCommitteeOnly}
-                onChange={(e) => setSimCommitteeOnly(e.target.checked)}
-              />
-              Committee output only
-            </label>
             <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
               <input
                 type="checkbox"

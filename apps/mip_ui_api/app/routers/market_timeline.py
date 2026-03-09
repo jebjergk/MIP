@@ -717,15 +717,10 @@ def get_detail(
         
         # Build signal chains: signal -> [branches], each branch = proposal -> buy -> sell
         proposal_by_rec = {}
-        proposal_by_signal_date = {}
         for p in proposals:
             rid = p.get("recommendation_id")
             if rid is not None:
                 proposal_by_rec.setdefault(rid, []).append(p)
-            signal_anchor = p.get("signal_ts") or p.get("ts")
-            signal_date = (signal_anchor or "")[:10]
-            if signal_date:
-                proposal_by_signal_date.setdefault(signal_date, []).append(p)
         trade_by_proposal = {}
         for t in trades:
             pid = t.get("proposal_id")
@@ -740,17 +735,11 @@ def get_detail(
 
         chains = []
         used_sell_ids = set()
-        used_proposal_ids = set()
         for sig in signals:
             rec_id = sig.get("recommendation_id")
             matched_proposals = proposal_by_rec.get(rec_id, [])
-            if not matched_proposals:
-                signal_date = (sig.get("ts") or "")[:10]
-                matched_proposals = proposal_by_signal_date.get(signal_date, [])
             branches = []
             for prop in matched_proposals:
-                if prop.get("proposal_id") is not None:
-                    used_proposal_ids.add(prop.get("proposal_id"))
                 branch = {
                     "proposal": prop,
                     "buy": None,
@@ -789,45 +778,6 @@ def get_detail(
                 ),
             }
             chains.append(chain)
-
-        # Include committee/live-action branches that have no signal linkage in window.
-        # This surfaces blocked/approved committee outcomes even when signal context is stale/missing.
-        unmatched_live_actions = []
-        for action in live_actions:
-            pid = action.get("proposal_id")
-            if pid is not None and pid in used_proposal_ids:
-                continue
-            unmatched_live_actions.append(action)
-
-        for action in unmatched_live_actions:
-            branch_status = "PROPOSED"
-            verdict = (action.get("committee_verdict") or "").upper()
-            action_status = (action.get("action_status") or "").upper()
-            if verdict == "BLOCK" or action_status in {"OPEN_BLOCKED", "REJECTED"}:
-                branch_status = "REJECTED"
-            elif action_status in {"EXECUTED"}:
-                branch_status = "OPEN"
-
-            synthetic_signal = {
-                "type": "SIGNAL",
-                "ts": action.get("signal_ts") or action.get("ts"),
-                "recommendation_id": None,
-                "pattern_id": None,
-                "score": None,
-                "synthetic": True,
-                "label": "Committee action (no linked signal in window)",
-                "action_id": action.get("action_id"),
-            }
-            chains.append({
-                "signal": synthetic_signal,
-                "branches": [{
-                    "proposal": action,
-                    "buy": None,
-                    "sell": None,
-                    "status": branch_status,
-                }],
-                "status": branch_status,
-            })
 
         # Build decision narrative
         narrative = _build_narrative(

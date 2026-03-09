@@ -1712,6 +1712,14 @@ def _committee_fallback(role: str, error_hint: str | None = None) -> dict:
 
 def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages: list[dict] | None = None) -> str:
     prior_messages = prior_messages or []
+    role_focus = {
+        "PROPOSER": "Build the strongest symbol-specific case with concrete target/hold assumptions.",
+        "TRADER_EXECUTION_REVIEWER": "Focus on execution realism, opening behavior, slippage, and timing constraints.",
+        "RISK_MANAGER": "Focus on size, drawdown/correlation, and explicit risk controls.",
+        "CHALLENGER": "Provide the strongest falsification and what could break this setup.",
+        "PORTFOLIO_MANAGER": "Focus on cross-candidate capital allocation priority and portfolio fit.",
+        "POST_TRADE_REVIEWER": "Focus on ex-ante evaluability and what would validate/invalidate this call later.",
+    }.get(role, "Provide role-specific analysis.")
     return (
         "You are one role in an institutional multi-agent trade committee.\n"
         "Return ONLY a JSON object with keys:\n"
@@ -1729,8 +1737,11 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "- Return ONE valid JSON object only, no preface/suffix.\n"
         "- Do not include markdown or code fences.\n"
         "- If uncertain, still return schema with null fields where needed.\n"
+        "- Include at least one symbol-specific reason with concrete values from context.\n"
+        "- Do not repeat prior messages verbatim; add a unique angle for this role.\n"
         f"Round: {round_n}\n"
         f"Role: {role}\n"
+        f"Role focus: {role_focus}\n"
         f"Prior agent messages JSON: {json.dumps(prior_messages, default=str)}\n"
         f"Context JSON: {json.dumps(context, default=str)}\n"
     )
@@ -2603,26 +2614,39 @@ def list_live_trade_actions(
             wheres.append(
                 "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION','PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
             )
+        wheres_aliased = [w.replace("PORTFOLIO_ID", "la.PORTFOLIO_ID").replace("STATUS in", "la.STATUS in") for w in wheres]
         params.append(limit)
         sql = f"""
+        with proposer_summary as (
+          select RUN_ID, SUMMARY
+          from MIP.LIVE.COMMITTEE_ROLE_OUTPUT
+          where ROLE_NAME = 'PROPOSER'
+          qualify row_number() over (partition by RUN_ID order by CREATED_AT desc) = 1
+        )
         select
-          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
-          STATUS, VALIDITY_WINDOW_END,
-          COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
-          TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
-          TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
-          NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
-          PM_APPROVED_BY, PM_APPROVED_TS,
-          COMPLIANCE_STATUS, COMPLIANCE_APPROVED_BY, COMPLIANCE_DECISION_TS, COMPLIANCE_NOTES, COMPLIANCE_REFERENCE_ID,
-          INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
-          REVALIDATION_TS, REVALIDATION_PRICE, PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT,
-          REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE,
-          REASON_CODES,
-          ONE_MIN_BAR_TS, ONE_MIN_BAR_CLOSE, EXECUTION_PRICE_SOURCE,
-          CREATED_AT, UPDATED_AT
-        from MIP.LIVE.LIVE_ACTIONS
-        where {' and '.join(wheres)}
-        order by coalesce(COMPLIANCE_DECISION_TS, PM_APPROVED_TS, CREATED_AT) desc
+          la.ACTION_ID, la.PROPOSAL_ID, la.PORTFOLIO_ID, la.SYMBOL, la.SIDE, la.PROPOSED_QTY, la.PROPOSED_PRICE, la.ASSET_CLASS,
+          la.STATUS, la.VALIDITY_WINDOW_END,
+          la.COMMITTEE_REQUIRED, la.COMMITTEE_STATUS, la.COMMITTEE_RUN_ID, la.COMMITTEE_COMPLETED_TS, la.COMMITTEE_VERDICT,
+          cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
+          ps.SUMMARY as COMMITTEE_SUMMARY,
+          la.TRAINING_QUALIFICATION_SNAPSHOT, la.TRAINING_LIVE_ELIGIBLE, la.TRAINING_RANK_IMPACT, la.TRAINING_SIZE_CAP_FACTOR,
+          la.TARGET_EXPECTATION_SNAPSHOT, la.TARGET_OPEN_CONDITION_FACTOR, la.TARGET_EXPECTATION_POLICY_VERSION,
+          la.NEWS_CONTEXT_SNAPSHOT, la.NEWS_CONTEXT_STATE, la.NEWS_EVENT_SHOCK_FLAG, la.NEWS_FRESHNESS_BUCKET, la.NEWS_CONTEXT_POLICY_VERSION,
+          la.PM_APPROVED_BY, la.PM_APPROVED_TS,
+          la.COMPLIANCE_STATUS, la.COMPLIANCE_APPROVED_BY, la.COMPLIANCE_DECISION_TS, la.COMPLIANCE_NOTES, la.COMPLIANCE_REFERENCE_ID,
+          la.INTENT_SUBMITTED_BY, la.INTENT_SUBMITTED_TS, la.INTENT_APPROVED_BY, la.INTENT_APPROVED_TS, la.INTENT_REFERENCE_ID,
+          la.REVALIDATION_TS, la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.PRICE_GUARD_RESULT,
+          la.REVALIDATION_OUTCOME, la.REVALIDATION_POLICY_VERSION, la.REVALIDATION_DATA_SOURCE,
+          la.REASON_CODES,
+          la.ONE_MIN_BAR_TS, la.ONE_MIN_BAR_CLOSE, la.EXECUTION_PRICE_SOURCE,
+          la.CREATED_AT, la.UPDATED_AT
+        from MIP.LIVE.LIVE_ACTIONS la
+        left join MIP.LIVE.COMMITTEE_VERDICT cv
+          on cv.RUN_ID = la.COMMITTEE_RUN_ID
+        left join proposer_summary ps
+          on ps.RUN_ID = la.COMMITTEE_RUN_ID
+        where {' and '.join(wheres_aliased)}
+        order by coalesce(la.COMPLIANCE_DECISION_TS, la.PM_APPROVED_TS, la.CREATED_AT) desc
         limit %s
         """
         cur.execute(sql, params)

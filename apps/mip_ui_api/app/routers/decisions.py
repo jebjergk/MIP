@@ -844,12 +844,13 @@ def get_sim_agent_decisions(
     portfolio_id: Optional[int] = Query(None),
     run_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    committee_only: bool = Query(False),
     limit: int = Query(200, ge=1, le=1000),
 ):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        wheres = ["RATIONALE:sim_committee is not null"]
+        wheres = ["1=1"]
         params = []
         if portfolio_id is not None:
             wheres.append("PORTFOLIO_ID = %s")
@@ -860,6 +861,8 @@ def get_sim_agent_decisions(
         if status:
             wheres.append("STATUS = %s")
             params.append(status.upper())
+        if committee_only:
+            wheres.append("RATIONALE:sim_committee is not null")
         params.append(limit)
         cur.execute(
             f"""
@@ -890,6 +893,8 @@ def get_sim_agent_decisions(
         for r in rows:
             rationale = _parse_variant_json(r.get("RATIONALE")) or {}
             sim = rationale.get("sim_committee") if isinstance(rationale, dict) else {}
+            if not isinstance(sim, dict):
+                sim = {}
             out.append(
                 {
                     "proposal_id": r.get("PROPOSAL_ID"),
@@ -914,6 +919,7 @@ def get_sim_agent_decisions(
                     "summary": sim.get("summary"),
                     "reason_codes": sim.get("reason_codes") if isinstance(sim.get("reason_codes"), list) else [],
                     "has_dialogue": isinstance(sim.get("agent_dialogue"), list) and len(sim.get("agent_dialogue")) > 0,
+                    "has_sim_committee": isinstance(sim, dict) and len(sim) > 0,
                 }
             )
         return {"count": len(out), "decisions": out}

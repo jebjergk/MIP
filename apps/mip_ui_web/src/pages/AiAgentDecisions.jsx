@@ -14,6 +14,15 @@ function fmtNum(v, d = 4) {
   return n.toFixed(d)
 }
 
+function parseMaybeJson(v) {
+  if (!v) return null
+  if (typeof v === 'object') return v
+  if (typeof v === 'string') {
+    try { return JSON.parse(v) } catch { return null }
+  }
+  return null
+}
+
 export default function AiAgentDecisions() {
   const [mode, setMode] = useState('simulation') // simulation | live
   const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
@@ -56,6 +65,8 @@ export default function AiAgentDecisions() {
             proposed_at: a.CREATED_AT,
             committee_status: a.COMMITTEE_STATUS,
             committee_verdict: a.COMMITTEE_VERDICT,
+            committee_summary: a.COMMITTEE_SUMMARY,
+            committee_joint_decision: parseMaybeJson(a.COMMITTEE_JOINT_DECISION),
             revalidation_outcome: a.REVALIDATION_OUTCOME,
             reason_codes: Array.isArray(a.REASON_CODES) ? a.REASON_CODES : [],
           }))
@@ -222,11 +233,19 @@ export default function AiAgentDecisions() {
                       <>
                         <div>Committee: {r.committee_status || '—'}</div>
                         <div>Verdict: {r.committee_verdict || '—'}</div>
+                        <div>Size: {fmtNum(r.committee_joint_decision?.position_size_factor, 2)}</div>
+                        <div>Target: {fmtNum(r.committee_joint_decision?.realistic_target_return, 3)}</div>
+                        <div>Hold bars: {r.committee_joint_decision?.hold_bars ?? '—'}</div>
+                        <div>Early-exit: {fmtNum(r.committee_joint_decision?.acceptable_early_exit_target_return, 3)}</div>
                         <div>Revalidation: {r.revalidation_outcome || '—'}</div>
                       </>
                     )}
                   </td>
-                  <td>{mode === 'simulation' ? (r.summary || '—') : (r.reason_codes?.join(', ') || '—')}</td>
+                  <td>
+                    {mode === 'simulation'
+                      ? (r.summary || (r.has_sim_committee ? '—' : 'No sim committee output yet'))
+                      : (r.committee_summary || r.reason_codes?.join(', ') || '—')}
+                  </td>
                   <td>
                     <button
                       className="aad-btn"
@@ -268,6 +287,9 @@ export default function AiAgentDecisions() {
                     <div>Size factor: {fmtNum(detail.committee?.verdict?.SIZE_FACTOR, 2)}</div>
                     <div>Confidence: {fmtNum(detail.committee?.verdict?.CONFIDENCE, 2)}</div>
                     <div>Blocked: {detail.committee?.verdict?.IS_BLOCKED == null ? '—' : (detail.committee?.verdict?.IS_BLOCKED ? 'Yes' : 'No')}</div>
+                    <div>Target: {fmtNum(parseMaybeJson(detail.committee?.verdict?.VERDICT_JSON)?.verdict?.joint_decision?.realistic_target_return, 3)}</div>
+                    <div>Hold bars: {parseMaybeJson(detail.committee?.verdict?.VERDICT_JSON)?.verdict?.joint_decision?.hold_bars ?? '—'}</div>
+                    <div>Early-exit target: {fmtNum(parseMaybeJson(detail.committee?.verdict?.VERDICT_JSON)?.verdict?.joint_decision?.acceptable_early_exit_target_return, 3)}</div>
                   </>
                 )}
               </div>

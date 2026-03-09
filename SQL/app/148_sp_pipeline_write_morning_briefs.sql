@@ -46,11 +46,12 @@ begin
                 :v_parent_run_id
             ));
 
-            v_validate_result := (call MIP.APP.SP_VALIDATE_AND_EXECUTE_PROPOSALS(
-                :v_portfolio_id,
-                :v_run_id,
-                :v_parent_run_id
-            ));
+            -- Simulation execution is now handled by the open-session executor
+            -- so daily pipeline writes proposals/briefs only.
+            v_validate_result := object_construct(
+                'status', 'SKIPPED',
+                'reason', 'OPEN_SESSION_EXECUTOR_REQUIRED'
+            );
         else
             v_propose_result := object_construct('status', 'SKIPPED', 'reason', 'NO_RUN_ID');
             v_validate_result := object_construct('status', 'SKIPPED', 'reason', 'NO_RUN_ID');

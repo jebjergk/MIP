@@ -839,6 +839,28 @@ def _sse_msg(event_type: str, data: dict) -> str:
 
 # ── Simulation Agent Decisions ───────────────────────────────────────
 
+@router.post("/sim/open-execution/run")
+def run_sim_open_execution(
+    portfolio_id: Optional[int] = Query(None),
+    run_id: Optional[str] = Query(None),
+):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "call MIP.APP.SP_RUN_SIM_OPEN_EXECUTION(%s, %s)",
+            (portfolio_id, run_id),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return {"ok": True, "result": None}
+        first_row = rows[0]
+        first_val = next(iter(first_row.values()), None) if isinstance(first_row, dict) else None
+        parsed = _parse_variant_json(first_val)
+        return {"ok": True, "result": parsed if parsed is not None else first_row}
+    finally:
+        conn.close()
+
 @router.get("/sim-agent-decisions")
 def get_sim_agent_decisions(
     portfolio_id: Optional[int] = Query(None),
@@ -962,6 +984,8 @@ def get_sim_agent_decision_detail(proposal_id: int):
         rationale = _parse_variant_json(r.get("RATIONALE")) or {}
         source_signals = _parse_variant_json(r.get("SOURCE_SIGNALS")) or {}
         sim = rationale.get("sim_committee") if isinstance(rationale, dict) else {}
+        if not isinstance(sim, dict):
+            sim = {}
         return {
             "proposal_id": r.get("PROPOSAL_ID"),
             "portfolio_id": r.get("PORTFOLIO_ID"),

@@ -38,6 +38,7 @@ declare
     v_fee_bps number(18,8);
     v_min_fee number(18,8);
     v_spread_bps number(18,8);
+    v_execution_price_interval_minutes number := 1;
 begin
     v_profile := (
         select object_construct(
@@ -70,11 +71,13 @@ begin
         coalesce(try_to_number(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then CONFIG_VALUE end)), 2),
         coalesce(try_to_number(max(case when CONFIG_KEY = 'FEE_BPS' then CONFIG_VALUE end)), 1),
         coalesce(try_to_number(max(case when CONFIG_KEY = 'MIN_FEE' then CONFIG_VALUE end)), 0),
-        coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0)
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SPREAD_BPS' then CONFIG_VALUE end)), 0),
+        coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_EXECUTION_PRICE_INTERVAL_MINUTES' then CONFIG_VALUE end)), 1)
       into v_slippage_bps,
            v_fee_bps,
            v_min_fee,
-           v_spread_bps
+           v_spread_bps,
+           v_execution_price_interval_minutes
       from MIP.APP.APP_CONFIG;
 
     -- CRIT-001: Entry gate enforcement - check if entries are blocked
@@ -148,10 +151,12 @@ begin
             CLOSE,
             row_number() over (
                 partition by SYMBOL, MARKET_TYPE
-                order by TS desc
+                order by
+                    case when INTERVAL_MINUTES = :v_execution_price_interval_minutes then 0 else 1 end,
+                    TS desc
             ) as rn
         from MIP.MART.MARKET_BARS
-        where INTERVAL_MINUTES = 1440
+        where INTERVAL_MINUTES in (:v_execution_price_interval_minutes, 1440)
     ),
     proposals as (
         select
@@ -724,10 +729,12 @@ begin
                     CLOSE,
                     row_number() over (
                         partition by SYMBOL, MARKET_TYPE
-                        order by TS desc
+                        order by
+                            case when INTERVAL_MINUTES = :v_execution_price_interval_minutes then 0 else 1 end,
+                            TS desc
                     ) as rn
                 from MIP.MART.MARKET_BARS
-                where INTERVAL_MINUTES = 1440
+                where INTERVAL_MINUTES in (:v_execution_price_interval_minutes, 1440)
             )
             where rn = 1
         ),

@@ -26,6 +26,8 @@ function parseMaybeJson(v) {
 export default function AiAgentDecisions() {
   const [mode, setMode] = useState('simulation') // simulation | live
   const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
+  const [simCommitteeOnly, setSimCommitteeOnly] = useState(false)
+  const [simLatestPerSymbol, setSimLatestPerSymbol] = useState(true)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -43,10 +45,26 @@ export default function AiAgentDecisions() {
         const qs = new URLSearchParams({ limit: '200' })
         if (runId.trim()) qs.set('run_id', runId.trim())
         if (status) qs.set('status', status)
+        if (simCommitteeOnly) qs.set('committee_only', 'true')
         const resp = await fetch(`${API_BASE}/decisions/sim-agent-decisions?${qs.toString()}`)
         if (!resp.ok) throw new Error(`Failed to load simulation AI decisions (${resp.status})`)
         const data = await resp.json()
-        setRows(Array.isArray(data?.decisions) ? data.decisions : [])
+        let decisions = Array.isArray(data?.decisions) ? data.decisions : []
+        if (simLatestPerSymbol) {
+          const perSymbol = new Map()
+          decisions.forEach((r) => {
+            const sym = String(r?.symbol || '').toUpperCase()
+            const pid = String(r?.portfolio_id ?? '')
+            if (!sym) return
+            const key = `${pid}|${sym}`
+            const prev = perSymbol.get(key)
+            const prevTs = prev?.proposed_at ? new Date(prev.proposed_at).getTime() : -1
+            const nextTs = r?.proposed_at ? new Date(r.proposed_at).getTime() : -1
+            if (!prev || nextTs >= prevTs) perSymbol.set(key, r)
+          })
+          decisions = Array.from(perSymbol.values()).sort((a, b) => new Date(b.proposed_at || 0) - new Date(a.proposed_at || 0))
+        }
+        setRows(decisions)
       } else {
         const qs = new URLSearchParams({ pending_only: 'false', limit: '300' })
         const resp = await fetch(`${API_BASE}/live/trades/actions?${qs.toString()}`)
@@ -90,7 +108,7 @@ export default function AiAgentDecisions() {
     } finally {
       setLoading(false)
     }
-  }, [mode, runId, status, liveLatestPerSymbol])
+  }, [mode, runId, status, liveLatestPerSymbol, simCommitteeOnly, simLatestPerSymbol])
 
   useEffect(() => {
     setSelected(null)
@@ -184,7 +202,26 @@ export default function AiAgentDecisions() {
             />
             Latest action per symbol
           </label>
-        ) : null}
+        ) : (
+          <>
+            <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={simCommitteeOnly}
+                onChange={(e) => setSimCommitteeOnly(e.target.checked)}
+              />
+              Committee output only
+            </label>
+            <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={simLatestPerSymbol}
+                onChange={(e) => setSimLatestPerSymbol(e.target.checked)}
+              />
+              Latest proposal per symbol+portfolio
+            </label>
+          </>
+        )}
         <button className="aad-btn" onClick={load}>Refresh</button>
       </div>
 

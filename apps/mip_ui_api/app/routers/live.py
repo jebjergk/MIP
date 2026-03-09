@@ -1623,31 +1623,87 @@ def _extract_cortex_text(raw) -> str:
     return str(raw)
 
 
+def _extract_first_json_object(text: str) -> str | None:
+    """
+    Extract first balanced JSON object from mixed text.
+    Handles braces inside quoted strings.
+    """
+    if not text:
+        return None
+    start = text.find("{")
+    while start >= 0:
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == "\"":
+                    in_str = False
+                continue
+            if ch == "\"":
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        start = text.find("{", start + 1)
+    return None
+
+
+def _parse_cortex_json_text(text: str) -> dict:
+    if not text:
+        raise ValueError("Empty model response.")
+    cleaned = text.strip()
+    # Normalize fenced blocks if present.
+    if "```" in cleaned:
+        cleaned = cleaned.replace("```json", "```").replace("```JSON", "```")
+        parts = cleaned.split("```")
+        fenced = [p.strip() for p in parts if p.strip()]
+        if fenced:
+            # Prefer first fenced body.
+            cleaned = fenced[0]
+    # 1) direct parse
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    # 2) parse first object from mixed prose+json
+    candidate = _extract_first_json_object(cleaned)
+    if candidate:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError("Cortex response was not parseable JSON object.")
+
+
 def _call_cortex_json(cur, model: str, prompt: str) -> dict:
     cur.execute("select snowflake.cortex.complete(%s, %s) as response", (model, prompt))
     row = cur.fetchone()
     raw = row[0] if row else None
     text = _extract_cortex_text(raw).strip()
-    if text.startswith("```json"):
-        text = text[7:].strip()
-    elif text.startswith("```"):
-        text = text[3:].strip()
-    if text.endswith("```"):
-        text = text[:-3].strip()
-    parsed = json.loads(text)
-    if not isinstance(parsed, dict):
-        raise ValueError("Cortex response was not a JSON object.")
-    return parsed
+    return _parse_cortex_json_text(text)
 
 
-def _committee_fallback(role: str) -> dict:
+def _committee_fallback(role: str, error_hint: str | None = None) -> dict:
+    err = (error_hint or "").strip()
+    if len(err) > 240:
+        err = err[:240] + "..."
     return {
         "role": role,
         "stance": "CONDITIONAL",
         "confidence": 0.45,
         "summary": "Fallback committee output due to model/unparseable response.",
         "size_factor": 0.5,
-        "reasons": ["MODEL_FALLBACK"],
+        "reasons": ["MODEL_FALLBACK"] + ([f"MODEL_ERROR:{err}"] if err else []),
         "assumptions": ["Use deterministic risk gates before execution."],
     }
 
@@ -1668,11 +1724,13 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "- Be strict and risk-aware.\n"
         "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
         "- Contribute to joint decision dimensions: enter/size/target/hold/early-exit.\n"
-        "- Do not include markdown.\n"
+        "- Return ONE valid JSON object only, no preface/suffix.\n"
+        "- Do not include markdown or code fences.\n"
+        "- If uncertain, still return schema with null fields where needed.\n"
         f"Round: {round_n}\n"
         f"Role: {role}\n"
-        f"Prior agent messages JSON: {json.dumps(prior_messages)}\n"
-        f"Context JSON: {json.dumps(context)}\n"
+        f"Prior agent messages JSON: {json.dumps(prior_messages, default=str)}\n"
+        f"Context JSON: {json.dumps(context, default=str)}\n"
     )
 
 
@@ -1775,8 +1833,8 @@ def _run_multiagent_dialogue(
     for role in COMMITTEE_ROLES:
         try:
             role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=1, prior_messages=[]))
-        except Exception:
-            role_out_raw = _committee_fallback(role)
+        except Exception as exc:
+            role_out_raw = _committee_fallback(role, str(exc))
         role_out = _normalize_role_output(role, role_out_raw)
         round1.append(role_out)
         prior_messages.append({"role": role, "summary": role_out.get("summary"), "stance": role_out.get("stance")})
@@ -1788,7 +1846,7 @@ def _run_multiagent_dialogue(
                 insert into MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
                   RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
                 )
-                values (%s, %s, %s, %s, %s, parse_json(%s), current_timestamp())
+                select %s, %s, %s, %s, %s, parse_json(%s), current_timestamp()
                 """,
                 (
                     persist_run_id,
@@ -1804,8 +1862,8 @@ def _run_multiagent_dialogue(
     for role in COMMITTEE_ROLES:
         try:
             role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=2, prior_messages=prior_messages))
-        except Exception:
-            role_out_raw = _committee_fallback(role)
+        except Exception as exc:
+            role_out_raw = _committee_fallback(role, str(exc))
         role_out = _normalize_role_output(role, role_out_raw)
         round2.append(role_out)
         if emit:
@@ -1816,7 +1874,7 @@ def _run_multiagent_dialogue(
                 insert into MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
                   RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
                 )
-                values (%s, %s, %s, %s, %s, parse_json(%s), current_timestamp())
+                select %s, %s, %s, %s, %s, parse_json(%s), current_timestamp()
                 """,
                 (
                     persist_run_id,

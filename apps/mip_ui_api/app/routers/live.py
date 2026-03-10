@@ -2891,6 +2891,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             select
               la.ACTION_ID, la.PROPOSAL_ID, la.SYMBOL, la.SIDE, la.STATUS, la.COMPLIANCE_STATUS,
               la.COMMITTEE_VERDICT, la.COMMITTEE_STATUS, la.COMMITTEE_REQUIRED, la.REASON_CODES,
+              la.COMMITTEE_RUN_ID, la.COMMITTEE_COMPLETED_TS,
               cv.SIZE_FACTOR as COMMITTEE_SIZE_FACTOR,
               cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
               la.PROPOSED_QTY, la.PROPOSED_PRICE, la.TARGET_OPEN_CONDITION_FACTOR, la.TRAINING_SIZE_CAP_FACTOR,
@@ -2991,6 +2992,8 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                         "compliance_status": row.get("COMPLIANCE_STATUS"),
                         "committee_verdict": row.get("COMMITTEE_VERDICT"),
                         "committee_status": row.get("COMMITTEE_STATUS"),
+                        "committee_run_id": row.get("COMMITTEE_RUN_ID"),
+                        "committee_completed_ts": row.get("COMMITTEE_COMPLETED_TS"),
                         "committee_required": bool(row.get("COMMITTEE_REQUIRED")) if row.get("COMMITTEE_REQUIRED") is not None else True,
                         "reason_codes": action_reason_codes,
                         "required_next_step": _required_next_step_for_status(status),

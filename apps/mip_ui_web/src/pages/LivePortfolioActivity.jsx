@@ -133,6 +133,43 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
+  const finalizeCommitteeRevalidation = useCallback(async (actionId) => {
+    setBusy(`committee:${actionId}`)
+    setError('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'committee_orchestrator',
+          model: 'claude-3-5-sonnet',
+          force_rerun: true,
+        }),
+      })
+      if (!resp.ok) {
+        let msg = `Committee revalidation failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Committee revalidation blocked'}: ${j.detail.reason_codes.join(', ')}`
+          } else if (j?.detail) {
+            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+          }
+        } catch {
+          // fallback message
+        }
+        throw new Error(msg)
+      }
+      setStreamStatus('Completed')
+      await load()
+    } catch (e) {
+      setError(e.message || 'Committee revalidation failed.')
+      setStreamStatus('Stopped')
+    } finally {
+      setBusy('')
+    }
+  }, [load])
+
   const openCommitteeStream = useCallback((actionId) => {
     if (streamRef.current) {
       streamRef.current.close()
@@ -187,9 +224,10 @@ export default function LivePortfolioActivity() {
       } catch {
         // Ignore malformed frame
       }
-      setStreamStatus('Completed')
+      setStreamStatus('Finalizing...')
       es.close()
       streamRef.current = null
+      void finalizeCommitteeRevalidation(actionId)
     })
     es.addEventListener('error', (evt) => {
       let detail = 'Stream stopped.'
@@ -207,7 +245,7 @@ export default function LivePortfolioActivity() {
       es.close()
       streamRef.current = null
     })
-  }, [])
+  }, [finalizeCommitteeRevalidation])
 
   const approveAndSubmit = useCallback(async (actionId) => {
     setBusy(actionId)
@@ -236,41 +274,6 @@ export default function LivePortfolioActivity() {
       await load()
     } catch (e) {
       setError(e.message || 'Submit failed.')
-    } finally {
-      setBusy('')
-    }
-  }, [load])
-
-  const runCommitteeRevalidation = useCallback(async (actionId) => {
-    setBusy(`committee:${actionId}`)
-    setError('')
-    try {
-      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          actor: 'committee_orchestrator',
-          model: 'claude-3-5-sonnet',
-          force_rerun: true,
-        }),
-      })
-      if (!resp.ok) {
-        let msg = `Committee revalidation failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Committee revalidation blocked'}: ${j.detail.reason_codes.join(', ')}`
-          } else if (j?.detail) {
-            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
-          }
-        } catch {
-          // fallback message
-        }
-        throw new Error(msg)
-      }
-      await load()
-    } catch (e) {
-      setError(e.message || 'Committee revalidation failed.')
     } finally {
       setBusy('')
     }
@@ -380,6 +383,8 @@ export default function LivePortfolioActivity() {
                       <td>
                         <div>{d.status || '—'}</div>
                         <div>Compliance: {d.compliance_status || '—'}</div>
+                        <div>Committee run: {d.committee_run_id || '—'}</div>
+                        <div>Committee at: {fmtTs(d.committee_completed_ts)}</div>
                         <div>Protected: {d.protection?.state || 'NONE'}</div>
                         <div>Plan: {d.protection?.planned ? 'TP/SL expected' : 'No bracket planned'}</div>
                       </td>
@@ -413,13 +418,12 @@ export default function LivePortfolioActivity() {
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
-                          disabled={busy === `committee:${d.action_id}`}
+                          disabled={busy === `committee:${d.action_id}` || streamActionId === d.action_id}
                           onClick={() => {
                             openCommitteeStream(d.action_id)
-                            runCommitteeRevalidation(d.action_id)
                           }}
                         >
-                          {busy === `committee:${d.action_id}` ? 'Running...' : 'Committee revalidation'}
+                          {busy === `committee:${d.action_id}` || streamActionId === d.action_id ? 'Running...' : 'Committee revalidation'}
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"

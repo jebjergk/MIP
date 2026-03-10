@@ -56,6 +56,19 @@ function stateClass(value) {
   return 'neutral'
 }
 
+function isStaleRevalidationState(decision) {
+  const reasons = Array.isArray(decision?.reason_codes) ? decision.reason_codes.map((r) => String(r || '').toUpperCase()) : []
+  const staleSignals = new Set([
+    'FIRST_SESSION_REALISM_1M_STALE',
+    'EXECUTION_CLICK_REVALIDATION_STALE',
+    'SNAPSHOT_STALE',
+    'ACTION_EXPIRED',
+    'MISSING_REVALIDATION',
+    'FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST',
+  ])
+  return reasons.some((r) => staleSignals.has(r))
+}
+
 export default function LivePortfolioActivity() {
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -421,7 +434,7 @@ export default function LivePortfolioActivity() {
                   )}
                   {pending.map((d) => (
                     <Fragment key={d.action_id}>
-                    <tr>
+                    <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
                       <td>
                         <div><b>{d.symbol}</b> ({d.side})</div>
                         <div>Action: {d.action_id}</div>
@@ -458,9 +471,14 @@ export default function LivePortfolioActivity() {
                       </td>
                       <td>
                         <div className="lpa-actions">
+                        {isStaleRevalidationState(d) ? (
+                          <div className="lpa-warning-inline">
+                            Revalidation expired - run Committee revalidation before submit.
+                          </div>
+                        ) : null}
                         <button
                           className="lpa-btn"
-                          disabled={busy === d.action_id || !d.submission_allowed || outsideHours}
+                          disabled={busy === d.action_id || !d.submission_allowed || outsideHours || isStaleRevalidationState(d)}
                           onClick={() => approveAndSubmit(d.action_id)}
                         >
                           {busy === d.action_id ? 'Submitting...' : 'Approve + Submit'}

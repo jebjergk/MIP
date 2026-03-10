@@ -82,6 +82,10 @@
   text-align: left;
 }
 
+.lpa-row-stale td {
+  background: #fff9ee;
+}
+
 .lpa-table th {
   border-top: none;
   color: #5f6b7a;
@@ -122,6 +126,15 @@
 
 .lpa-actions .lpa-btn {
   width: 100%;
+}
+
+.lpa-warning-inline {
+  border: 1px solid #f1c46f;
+  background: #fff4d6;
+  color: #7a4f00;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
 }
 
 .lpa-ready-chip {

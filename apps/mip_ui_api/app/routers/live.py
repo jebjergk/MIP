@@ -3283,13 +3283,13 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
         status = (action.get("STATUS") or "").upper()
 
     if status == "REVALIDATED_PASS":
-        # Deterministic pre-execution hardening: refresh broker snapshot + renew validity.
+        # Deterministic pre-execution hardening: refresh broker snapshot only when stale.
         conn = get_connection()
         try:
             cur = conn.cursor()
             cur.execute(
                 """
-                select IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC
+                select IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC
                 from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                 where PORTFOLIO_ID = %s
                 """,
@@ -3299,6 +3299,21 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
             cfg = cfg_rows[0] if cfg_rows else {}
             account_id = cfg.get("IBKR_ACCOUNT_ID")
             validity_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
+            snapshot_freshness_threshold_sec = int(cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC") or 300)
+
+            cur.execute(
+                """
+                select SNAPSHOT_TS
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'NAV'
+                  and IBKR_ACCOUNT_ID = %s
+                order by SNAPSHOT_TS desc
+                limit 1
+                """,
+                (account_id,),
+            )
+            nav_rows = fetch_all(cur)
+            latest_snapshot_ts = (nav_rows[0] or {}).get("SNAPSHOT_TS") if nav_rows else None
         finally:
             conn.close()
 
@@ -3307,16 +3322,25 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
                 status_code=409,
                 detail={"message": "Cannot refresh broker snapshot: IBKR account is missing.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
             )
-        try:
-            _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
-            steps.append("snapshot_refresh")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={"message": "Snapshot refresh failed before execution.", "reason_codes": ["SNAPSHOT_REFRESH_FAILED"], "error": str(exc)},
-            )
+
+        snapshot_is_fresh = False
+        if latest_snapshot_ts and hasattr(latest_snapshot_ts, "replace"):
+            snapshot_age_sec = int((datetime.now(timezone.utc) - latest_snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds())
+            snapshot_is_fresh = snapshot_age_sec <= snapshot_freshness_threshold_sec
+
+        if snapshot_is_fresh:
+            steps.append("snapshot_already_fresh")
+        else:
+            try:
+                _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
+                steps.append("snapshot_refresh")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "Snapshot refresh failed before execution.", "reason_codes": ["SNAPSHOT_REFRESH_FAILED"], "error": str(exc)},
+                )
 
         conn = get_connection()
         try:
@@ -3333,6 +3357,25 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
         finally:
             conn.close()
         steps.append("validity_renew")
+
+        # Re-run revalidation right before execution so 1m realism checks use freshest bar reference.
+        revalidate_live_action(
+            action_id,
+            RevalidateLiveActionRequest(force_refresh_1m=True),
+        )
+        steps.append("pre_execute_revalidate")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+        if status != "REVALIDATED_PASS":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Pre-execution revalidation failed.",
+                    "status": status,
+                    "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+                    "steps": steps,
+                },
+            )
 
         execute_resp = execute_live_action(
             action_id,

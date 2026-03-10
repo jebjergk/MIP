@@ -25,6 +25,24 @@ function fmtPct(v) {
   return `${(n * 100).toFixed(2)}%`
 }
 
+function fmtAge(ts) {
+  if (!ts) return '—'
+  const dt = new Date(ts)
+  if (Number.isNaN(dt.getTime())) return '—'
+  const mins = Math.floor((Date.now() - dt.getTime()) / 60000)
+  if (mins < 60) return `${Math.max(mins, 0)}m`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 48) return `${hrs}h`
+  return `${Math.floor(hrs / 24)}d`
+}
+
+function isNewDecision(ts) {
+  if (!ts) return false
+  const dt = new Date(ts)
+  if (Number.isNaN(dt.getTime())) return false
+  return (Date.now() - dt.getTime()) <= 24 * 60 * 60 * 1000
+}
+
 function fmtMaybePending(v, formatter) {
   if (v == null) return 'Pending'
   return formatter(v)
@@ -186,6 +204,70 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
+  const runCommitteeRevalidation = useCallback(async (actionId) => {
+    setBusy(`committee:${actionId}`)
+    setError('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'committee_orchestrator',
+          model: 'claude-3-5-sonnet',
+          force_rerun: true,
+        }),
+      })
+      if (!resp.ok) {
+        let msg = `Committee revalidation failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Committee revalidation blocked'}: ${j.detail.reason_codes.join(', ')}`
+          } else if (j?.detail) {
+            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+          }
+        } catch {
+          // fallback message
+        }
+        throw new Error(msg)
+      }
+      await load()
+    } catch (e) {
+      setError(e.message || 'Committee revalidation failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load])
+
+  const rejectStale = useCallback(async (actionId) => {
+    setBusy(`reject:${actionId}`)
+    setError('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/reject-stale`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor: 'portfolio_manager' }),
+      })
+      if (!resp.ok) {
+        let msg = `Reject stale failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Reject stale blocked'}: ${j.detail.reason_codes.join(', ')}`
+          }
+        } catch {
+          // fallback
+        }
+        throw new Error(msg)
+      }
+      await load()
+    } catch (e) {
+      setError(e.message || 'Reject stale failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load])
+
   const kpis = overview?.account_kpis || {}
   const pending = overview?.pending_decisions || []
   const openPositions = overview?.open_positions || []
@@ -253,6 +335,8 @@ export default function LivePortfolioActivity() {
                       <td>
                         <div><b>{d.symbol}</b> ({d.side})</div>
                         <div>Action: {d.action_id}</div>
+                        <div>Created: {fmtTs(d.timestamps?.created_at)} ({fmtAge(d.timestamps?.created_at)} ago)</div>
+                        {isNewDecision(d.timestamps?.created_at) ? <div className="lpa-subtle">NEW</div> : null}
                         <div>Committee: {d.committee_verdict || '—'}</div>
                       </td>
                       <td>
@@ -291,10 +375,23 @@ export default function LivePortfolioActivity() {
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
-                          disabled={outsideHours}
+                          disabled={busy === `committee:${d.action_id}`}
+                          onClick={() => runCommitteeRevalidation(d.action_id)}
+                        >
+                          {busy === `committee:${d.action_id}` ? 'Running...' : 'Committee revalidation'}
+                        </button>
+                        <button
+                          className="lpa-btn lpa-btn-secondary"
                           onClick={() => openCommitteeStream(d.action_id)}
                         >
-                          Committee revalidation
+                          Stream
+                        </button>
+                        <button
+                          className="lpa-btn lpa-btn-secondary"
+                          disabled={busy === `reject:${d.action_id}`}
+                          onClick={() => rejectStale(d.action_id)}
+                        >
+                          {busy === `reject:${d.action_id}` ? 'Rejecting...' : 'Reject stale'}
                         </button>
                         {!d.submission_allowed ? (
                           <div className="lpa-subtle">Blocked until gates are clear.</div>

@@ -25,6 +25,11 @@ class PmAcceptRequest(BaseModel):
     actor: str
 
 
+class RejectStaleActionRequest(BaseModel):
+    actor: str = "portfolio_manager"
+    notes: str | None = None
+
+
 class ComplianceDecisionRequest(BaseModel):
     actor: str
     decision: str = Field(pattern="^(APPROVE|DENY)$")
@@ -3658,6 +3663,71 @@ def pm_accept_live_action(action_id: str, req: PmAcceptRequest):
             },
         )
         return {"ok": True, "action_id": action_id, "status": "PM_ACCEPTED"}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/reject-stale")
+def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+
+        current_status = (action.get("STATUS") or "").upper()
+        allowed_statuses = {
+            "RESEARCH_IMPORTED",
+            "PROPOSED",
+            "PENDING_OPEN_VALIDATION",
+            "OPEN_ELIGIBLE",
+            "OPEN_CAUTION",
+            "PENDING_OPEN_STABILITY_REVIEW",
+            "READY_FOR_APPROVAL_FLOW",
+            "PM_ACCEPTED",
+            "COMPLIANCE_APPROVED",
+            "INTENT_SUBMITTED",
+            "INTENT_APPROVED",
+            "REVALIDATED_FAIL",
+            "REVALIDATED_PASS",
+        }
+        if current_status not in allowed_statuses:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": f"Cannot stale-reject from status {current_status}.",
+                    "reason_codes": ["STALE_REJECT_NOT_ALLOWED_STATUS"],
+                },
+            )
+
+        existing_reason_codes = _parse_list_variant(action.get("REASON_CODES"))
+        merged_reasons = sorted(set(existing_reason_codes + ["STALE_REJECTED_MANUAL"]))
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = 'OPEN_BLOCKED',
+                   REASON_CODES = parse_json(%s),
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (json.dumps(merged_reasons), action_id),
+        )
+        action_after = _fetch_live_action(cur, action_id)
+        _append_learning_ledger_event(
+            cur,
+            event_name="LIVE_STALE_REJECTED",
+            status="OPEN_BLOCKED",
+            action_before=action,
+            action_after=action_after,
+            policy_version=LIVE_POLICY_VERSION,
+            influence_delta={
+                "actor": req.actor,
+                "reason_codes": merged_reasons,
+            },
+            outcome_state={"notes": req.notes},
+        )
+        return {"ok": True, "action_id": action_id, "status": "OPEN_BLOCKED", "reason_codes": merged_reasons}
     finally:
         conn.close()
 

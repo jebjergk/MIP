@@ -129,14 +129,13 @@ begin
                   'There are currently no pending approvals waiting for action.';
     end if;
 
-    select system$send_email(
-               :v_email_integration,
-               :v_recipients,
-               :v_subject,
-               :v_body,
-               'text/plain'
-           )
-      into :v_email_result;
+    call system$send_email(
+        :v_email_integration,
+        :v_recipients,
+        :v_subject,
+        :v_body
+    );
+    v_email_result := object_construct('status', 'CALLED');
 
     merge into MIP.APP.APP_CONFIG t
     using (

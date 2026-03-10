@@ -3245,6 +3245,41 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
         status = (action.get("STATUS") or "").upper()
 
     if status == "REVALIDATED_PASS":
+        # Best effort: refresh broker snapshot and renew validity window right before execution.
+        try:
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    select IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC
+                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                    where PORTFOLIO_ID = %s
+                    """,
+                    (action.get("PORTFOLIO_ID"),),
+                )
+                cfg_rows = fetch_all(cur)
+                cfg = cfg_rows[0] if cfg_rows else {}
+                validity_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
+                cur.execute(
+                    """
+                    update MIP.LIVE.LIVE_ACTIONS
+                       set VALIDITY_WINDOW_END = dateadd(second, %s, current_timestamp()),
+                           UPDATED_AT = current_timestamp()
+                     where ACTION_ID = %s
+                    """,
+                    (validity_sec, action_id),
+                )
+                account_id = cfg.get("IBKR_ACCOUNT_ID")
+            finally:
+                conn.close()
+            _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
+            steps.append("snapshot_refresh")
+            steps.append("validity_renew")
+        except Exception:
+            # Non-fatal: execute_live_action still enforces hard safety gates.
+            pass
+
         execute_resp = execute_live_action(
             action_id,
             ExecuteLiveActionRequest(actor=req.execution_actor, attempt_n=req.attempt_n),

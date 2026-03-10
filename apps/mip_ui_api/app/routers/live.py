@@ -1119,6 +1119,129 @@ def _run_on_demand_snapshot_sync(
     return payload
 
 
+def _submit_ibkr_order_bundle(
+    *,
+    account: str,
+    symbol: str,
+    side: str,
+    qty: float,
+    entry_price: float | None,
+    tp_price: float | None,
+    sl_price: float | None,
+    tif: str = "DAY",
+) -> dict:
+    """
+    Submit parent + optional TP/SL bundle to IBKR through cursorfiles runtime.
+    """
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "place_ibkr_order.py"
+    if not py.exists() or not script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="IBKR order runtime not found (cursorfiles venv or place script missing).",
+        )
+
+    host = os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
+    port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
+    client_id = int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
+    connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
+    exchange = os.getenv("IBKR_EXEC_EXCHANGE", "SMART")
+    currency = os.getenv("IBKR_EXEC_CURRENCY", "USD")
+    outside_rth = os.getenv("IBKR_EXEC_OUTSIDE_RTH", "0").strip().lower() in ("1", "true", "yes", "on")
+
+    cmd = [
+        str(py),
+        str(script),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--client-id",
+        str(client_id),
+        "--connect-timeout-sec",
+        str(connect_timeout_sec),
+        "--account",
+        str(account),
+        "--symbol",
+        str(symbol).upper(),
+        "--side",
+        str(side).upper(),
+        "--qty",
+        str(float(qty)),
+        "--tif",
+        str(tif or "DAY").upper(),
+        "--exchange",
+        exchange,
+        "--currency",
+        currency,
+    ]
+    if entry_price is not None:
+        cmd.extend(["--entry-price", str(float(entry_price))])
+    if tp_price is not None:
+        cmd.extend(["--tp-price", str(float(tp_price))])
+    if sl_price is not None:
+        cmd.extend(["--sl-price", str(float(sl_price))])
+    if outside_rth:
+        cmd.append("--outside-rth")
+
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "IBKR order submission failed.",
+                "reason_codes": ["IBKR_SUBMIT_FAILED"],
+                "stderr": stderr[-4000:],
+                "stdout": stdout[-4000:],
+            },
+        )
+
+    json_blob = None
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        chunks = [s.strip() for s in stream.splitlines() if s.strip()]
+        if stream.strip():
+            chunks.append(stream.strip())
+        for maybe in reversed(chunks):
+            try:
+                parsed = json.loads(maybe)
+                if isinstance(parsed, dict):
+                    json_blob = parsed
+                    break
+            except Exception:
+                continue
+        if isinstance(json_blob, dict):
+            break
+    if not isinstance(json_blob, dict) or not json_blob.get("ok"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "IBKR order submission returned unexpected payload.",
+                "reason_codes": ["IBKR_SUBMIT_BAD_PAYLOAD"],
+                "stdout": stdout[-4000:],
+                "stderr": stderr[-4000:],
+            },
+        )
+    return json_blob
+
+
 def _run_agent_snowflake_query(query: str, timeout_sec: int = 120) -> list | dict:
     """
     Execute a Snowflake query via agent runtime (.env.agent / CURSOR_AGENT).
@@ -4582,7 +4705,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         cur.execute(
             """
             select
-              IBKR_ACCOUNT_ID, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT,
+              IBKR_ACCOUNT_ID, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
@@ -4800,6 +4923,13 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         qty_ordered = float(proposed_qty)
         side = str(action.get("SIDE") or "").upper()
         exit_side = "SELL" if side == "BUY" else "BUY"
+        adapter_mode = str(cfg.get("ADAPTER_MODE") or "PAPER").upper()
+        execution_mode = str(os.getenv("LIVE_EXECUTION_MODE", "AUTO")).upper()
+        use_ibkr_submit = adapter_mode == "LIVE"
+        if execution_mode == "IBKR":
+            use_ibkr_submit = True
+        elif execution_mode == "PLACEHOLDER":
+            use_ibkr_submit = False
 
         cur.execute(
             """
@@ -4835,50 +4965,102 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 sl_price = max(entry_price * (1 - stop_loss_pct), 0.0001)
             elif side == "SELL":
                 sl_price = entry_price * (1 + stop_loss_pct)
+        order_legs = []
+        broker_submit_payload = None
+        if use_ibkr_submit:
+            broker_submit_payload = _submit_ibkr_order_bundle(
+                account=str(account_id),
+                symbol=str(action.get("SYMBOL")),
+                side=side,
+                qty=qty_ordered,
+                entry_price=float(entry_price) if entry_price is not None else None,
+                tp_price=float(tp_price) if tp_price is not None else None,
+                sl_price=float(sl_price) if sl_price is not None else None,
+                tif="DAY",
+            )
+            ib_orders = broker_submit_payload.get("orders") or []
+            for ib_leg in ib_orders:
+                role = str(ib_leg.get("role") or "").upper()
+                if role == "TAKE_PROFIT":
+                    idem = f"{idempotency_key}:TP"
+                elif role == "STOP_LOSS":
+                    idem = f"{idempotency_key}:SL"
+                else:
+                    idem = idempotency_key
+                order_legs.append(
+                    {
+                        "order_id": str(uuid.uuid4()),
+                        "broker_order_id": str(ib_leg.get("perm_id") or ib_leg.get("order_id") or ""),
+                        "idempotency_key": idem,
+                        "side": side if role == "PARENT" else exit_side,
+                        "order_type": str(ib_leg.get("order_type") or ("MKT" if role == "PARENT" else "LMT")),
+                        "limit_price": (
+                            float(ib_leg.get("lmt_price"))
+                            if ib_leg.get("lmt_price") is not None
+                            else (float(tp_price) if role == "TAKE_PROFIT" and tp_price is not None else (float(sl_price) if role == "STOP_LOSS" and sl_price is not None else float(entry_price)))
+                        ),
+                        "role": role or "PARENT",
+                        "status": str(ib_leg.get("status") or "SUBMITTED").upper(),
+                    }
+                )
+            if not order_legs:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"message": "IBKR submission returned no orders.", "reason_codes": ["IBKR_EMPTY_ORDER_BUNDLE"]},
+                )
+        else:
+            order_legs = [
+                {
+                    "order_id": order_id,
+                    "broker_order_id": None,
+                    "idempotency_key": idempotency_key,
+                    "side": side,
+                    "order_type": "MKT_PAPER",
+                    "limit_price": entry_price,
+                    "role": "PARENT",
+                    "status": "ACKNOWLEDGED",
+                }
+            ]
+            if tp_price is not None:
+                order_legs.append(
+                    {
+                        "order_id": str(uuid.uuid4()),
+                        "broker_order_id": None,
+                        "idempotency_key": f"{idempotency_key}:TP",
+                        "side": exit_side,
+                        "order_type": "LMT_TP_PAPER",
+                        "limit_price": float(tp_price),
+                        "role": "TAKE_PROFIT",
+                        "status": "ACKNOWLEDGED",
+                    }
+                )
+            if sl_price is not None:
+                order_legs.append(
+                    {
+                        "order_id": str(uuid.uuid4()),
+                        "broker_order_id": None,
+                        "idempotency_key": f"{idempotency_key}:SL",
+                        "side": exit_side,
+                        "order_type": "STP_SL_PAPER",
+                        "limit_price": float(sl_price),
+                        "role": "STOP_LOSS",
+                        "status": "ACKNOWLEDGED",
+                    }
+                )
 
-        order_legs = [
-            {
-                "order_id": order_id,
-                "idempotency_key": idempotency_key,
-                "side": side,
-                "order_type": "MKT_PAPER",
-                "limit_price": entry_price,
-                "role": "PARENT",
-            }
-        ]
-        if tp_price is not None:
-            order_legs.append(
-                {
-                    "order_id": str(uuid.uuid4()),
-                    "idempotency_key": f"{idempotency_key}:TP",
-                    "side": exit_side,
-                    "order_type": "LMT_TP_PAPER",
-                    "limit_price": float(tp_price),
-                    "role": "TAKE_PROFIT",
-                }
-            )
-        if sl_price is not None:
-            order_legs.append(
-                {
-                    "order_id": str(uuid.uuid4()),
-                    "idempotency_key": f"{idempotency_key}:SL",
-                    "side": exit_side,
-                    "order_type": "STP_SL_PAPER",
-                    "limit_price": float(sl_price),
-                    "role": "STOP_LOSS",
-                }
-            )
+        # Keep API response anchored to the parent leg order id.
+        order_id = str((order_legs[0] or {}).get("order_id") or order_id)
 
         for leg in order_legs:
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_ORDERS (
-                  ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, STATUS,
+                  ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
                   SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
                   SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                 )
                 values (
-                  %s, %s, %s, %s, %s, 'ACKNOWLEDGED',
+                  %s, %s, %s, %s, %s, %s, %s,
                   %s, %s, %s, %s, %s,
                   current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
                 )
@@ -4889,6 +5071,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     action.get("PORTFOLIO_ID"),
                     account_id,
                     leg["idempotency_key"],
+                    leg.get("broker_order_id"),
+                    leg.get("status") or "ACKNOWLEDGED",
                     action.get("SYMBOL"),
                     leg["side"],
                     leg["order_type"],
@@ -4922,13 +5106,15 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 json.dumps(
                     {
                         "actor": req.actor,
-                        "mode": "PAPER_PLACEHOLDER",
+                        "mode": "IBKR_GATEWAY" if use_ibkr_submit else "PAPER_PLACEHOLDER",
+                        "adapter_mode": adapter_mode,
                         "protection_state": (
                             "FULL"
                             if (tp_price is not None and sl_price is not None)
                             else ("PARTIAL" if (tp_price is not None or sl_price is not None) else "NONE")
                         ),
                         "legs": order_legs,
+                        "broker_submit_payload": broker_submit_payload,
                     }
                 ),
             ),
@@ -4964,7 +5150,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             },
             outcome_state={
                 "order_id": order_id,
-                "mode": "PAPER_PLACEHOLDER",
+                "mode": "IBKR_GATEWAY" if use_ibkr_submit else "PAPER_PLACEHOLDER",
                 "order_legs": order_legs,
                 "target_expectation_snapshot": _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT")),
                 "news_context_snapshot": news_snapshot,
@@ -4984,7 +5170,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 else ("PARTIAL" if (tp_price is not None or sl_price is not None) else "NONE")
             ),
             "idempotency_key": idempotency_key,
-            "mode": "PAPER_PLACEHOLDER",
+            "mode": "IBKR_GATEWAY" if use_ibkr_submit else "PAPER_PLACEHOLDER",
+            "broker_submit_payload": broker_submit_payload,
         }
     finally:
         conn.close()

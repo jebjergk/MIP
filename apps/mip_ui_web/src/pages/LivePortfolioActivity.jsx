@@ -456,7 +456,7 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Workflow: Committee Revalidation -> Approve -> Submit.
+              Decisions not yet broker-opened. Workflow: Committee Revalidation, then Approve, then Submit.
             </div>
             {outsideHours ? <div className="lpa-subtle">Outside operating hours: actions are disabled.</div> : null}
             <div className="lpa-table-wrap">

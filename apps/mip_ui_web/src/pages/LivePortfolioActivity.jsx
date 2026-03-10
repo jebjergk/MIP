@@ -57,6 +57,14 @@ function stateClass(value) {
 }
 
 function isStaleRevalidationState(decision) {
+  const status = String(decision?.status || '').toUpperCase()
+  const staleRelevantStatuses = new Set([
+    'INTENT_APPROVED',
+    'REVALIDATED_FAIL',
+    'REVALIDATED_PASS',
+    'EXECUTION_REQUESTED',
+  ])
+  if (!staleRelevantStatuses.has(status)) return false
   const reasons = Array.isArray(decision?.reason_codes) ? decision.reason_codes.map((r) => String(r || '').toUpperCase()) : []
   const staleSignals = new Set([
     'FIRST_SESSION_REALISM_1M_STALE',
@@ -185,46 +193,36 @@ export default function LivePortfolioActivity() {
         }
         throw new Error(msg)
       }
-      const data = await resp.json()
-      setOverview((prev) => {
-        if (!prev || !Array.isArray(prev.pending_decisions)) return prev
-        const actionable = Boolean(prev?.readiness?.actionable)
-        const updatedPending = prev.pending_decisions.map((row) => {
-          if (row.action_id !== actionId) return row
-          const nextStatus = data?.action_status || row.status
-          const committeeVerdict = data?.verdict?.recommendation || row.committee_verdict
-          const blocked = nextStatus === 'OPEN_BLOCKED' || Boolean(data?.verdict?.blocked)
-          const derivedPrice = data?.derived_sizing?.proposed_price
-          const derivedQty = data?.derived_sizing?.proposed_qty
-          const currentSizing = row.sizing || {}
-          const sizing = {
-            ...currentSizing,
-            proposed_price: derivedPrice ?? currentSizing.proposed_price,
-            proposed_qty: derivedQty ?? currentSizing.proposed_qty,
-          }
-          if (sizing.proposed_price != null && sizing.proposed_qty != null) {
-            sizing.estimated_notional_eur = Math.abs(Number(sizing.proposed_price) * Number(sizing.proposed_qty))
-            sizing.final_qty_preview = sizing.proposed_qty
-          }
-          const submissionAllowed = (
-            ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED', 'PM_ACCEPTED', 'READY_FOR_APPROVAL_FLOW']
-              .includes(String(nextStatus || '').toUpperCase())
-          ) && actionable && !blocked
-          return {
-            ...row,
-            status: nextStatus,
-            committee_verdict: committeeVerdict,
-            committee_status: 'COMPLETED',
-            committee_run_id: data?.run_id || row.committee_run_id,
-            committee_completed_ts: new Date().toISOString(),
-            is_blocked: blocked,
-            reason_codes: blocked ? ['COMMITTEE_BLOCKED', ...(row.reason_codes || [])] : row.reason_codes,
-            sizing,
-            submission_allowed: submissionAllowed,
-          }
+      const applyData = await resp.json()
+      const nextStatus = String(applyData?.action_status || '').toUpperCase()
+      const canRunRevalidate = ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(nextStatus)
+      if (canRunRevalidate) {
+        setStreamStatus('Revalidating 1m freshness...')
+        setLiveLineTarget('Applying committee result and forcing 1m-bar revalidation...')
+        const revalResp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/revalidate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force_refresh_1m: true }),
         })
-        return { ...prev, pending_decisions: updatedPending }
-      })
+        if (!revalResp.ok) {
+          let msg = `Revalidation failed (${revalResp.status})`
+          try {
+            const j = await revalResp.json()
+            if (j?.detail?.reason_codes?.length) {
+              msg = `${j.detail.message || 'Revalidation blocked'}: ${j.detail.reason_codes.join(', ')}`
+            } else if (j?.detail) {
+              msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+            }
+          } catch {
+            // keep fallback
+          }
+          throw new Error(msg)
+        }
+        setLiveLineTarget('Revalidation complete. If gates are clear, decision is ready to submit.')
+      } else {
+        setLiveLineTarget('Committee updated. Decision is ready for approval flow; submit will run final gates.')
+      }
+      await load()
       setStreamStatus('Completed')
       setReadyPulseActionId(actionId)
       setTimeout(() => setReadyPulseActionId(''), 20000)

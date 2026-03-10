@@ -3117,6 +3117,29 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
         nav_eur = float(nav.get("NET_LIQUIDATION_EUR") or 0.0) if nav else 0.0
 
         pending_decisions = []
+        suppress_pending_symbols: set[str] = set()
+        for row in action_rows:
+            symbol = str(row.get("SYMBOL") or "").upper()
+            if not symbol:
+                continue
+            status = (row.get("STATUS") or "").upper()
+            action_id = str(row.get("ACTION_ID") or "")
+            action_orders = order_groups.get(action_id) or []
+            action_order_statuses = {str(o.get("STATUS") or "").upper() for o in action_orders}
+            has_active_order = any(
+                st in (
+                    "SUBMITTED",
+                    "ACKNOWLEDGED",
+                    "PENDINGSUBMIT",
+                    "PRESUBMITTED",
+                    "PARTIAL_FILL",
+                    "PARTIALLYFILLED",
+                )
+                for st in action_order_statuses
+            )
+            if status == "EXECUTION_REQUESTED" or has_active_order or (symbol in held_symbols):
+                suppress_pending_symbols.add(symbol)
+
         for row in action_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
             joint_decision = _parse_variant(row.get("COMMITTEE_JOINT_DECISION"))
@@ -3172,7 +3195,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                 or joint_decision.get("acceptable_early_exit_target_return") is not None
             )
 
-            if status != "EXECUTION_REQUESTED" and (not has_active_order) and not in_position:
+            if status != "EXECUTION_REQUESTED" and (not has_active_order) and not in_position and symbol not in suppress_pending_symbols:
                 pending_decisions.append(
                     {
                         "action_id": row.get("ACTION_ID"),
@@ -6336,6 +6359,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         skipped_existing = 0
         skipped_invalid = 0
         skipped_symbol_already_queued = 0
+        skipped_symbol_existing_any = 0
         imported_action_ids: list[str] = []
         source_portfolios: set[int] = set()
         distinct_symbols: set[str] = set()
@@ -6380,6 +6404,21 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             )
             if cur.fetchone():
                 skipped_symbol_already_queued += 1
+                continue
+
+            cur.execute(
+                """
+                select ACTION_ID
+                from MIP.LIVE.LIVE_ACTIONS
+                where PORTFOLIO_ID = %s
+                  and upper(coalesce(SYMBOL, '')) = %s
+                  and CREATED_AT >= dateadd(day, -%s, current_timestamp())
+                limit 1
+                """,
+                (req.live_portfolio_id, (p.get("SYMBOL") or "").upper(), int(req.max_proposal_age_days or 7)),
+            )
+            if cur.fetchone():
+                skipped_symbol_existing_any += 1
                 continue
 
             action_id = str(uuid.uuid4())
@@ -6538,6 +6577,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "skipped_invalid_count": skipped_invalid,
             "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
             "skipped_symbol_already_queued_count": skipped_symbol_already_queued,
+            "skipped_symbol_existing_any_count": skipped_symbol_existing_any,
             "imported_action_ids": imported_action_ids[:50],
         }
     finally:

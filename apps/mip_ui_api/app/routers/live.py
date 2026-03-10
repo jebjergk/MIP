@@ -8,6 +8,8 @@ import subprocess
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+from queue import Empty, Queue
+from threading import Event, Thread
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, HTTPException, Body
@@ -3429,6 +3431,78 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
         reason_codes.append("COMMITTEE_REVIEWED")
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
+        proposed_price_derived = None
+        proposed_qty_derived = None
+        try:
+            cur.execute(
+                """
+                select CLOSE
+                from MIP.MART.MARKET_BARS
+                where SYMBOL = %s
+                  and INTERVAL_MINUTES = 1
+                order by TS desc
+                limit 1
+                """,
+                (action.get("SYMBOL"),),
+            )
+            bar_rows = fetch_all(cur)
+            if bar_rows and bar_rows[0].get("CLOSE") is not None:
+                proposed_price_derived = float(bar_rows[0].get("CLOSE"))
+            else:
+                cur.execute(
+                    """
+                    select CLOSE
+                    from MIP.MART.MARKET_BARS
+                    where SYMBOL = %s
+                      and INTERVAL_MINUTES in (15, 60, 1440)
+                    order by TS desc
+                    limit 1
+                    """,
+                    (action.get("SYMBOL"),),
+                )
+                fallback_rows = fetch_all(cur)
+                if fallback_rows and fallback_rows[0].get("CLOSE") is not None:
+                    proposed_price_derived = float(fallback_rows[0].get("CLOSE"))
+        except Exception:
+            proposed_price_derived = None
+
+        try:
+            param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
+            target_weight = param_snapshot.get("target_weight")
+            target_weight_abs = abs(float(target_weight)) if target_weight is not None else None
+            committee_size_factor = float(verdict.get("size_factor") or 1.0)
+            training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
+            open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
+            effective_weight = None
+            if target_weight_abs is not None:
+                effective_weight = target_weight_abs * committee_size_factor * training_size_cap * open_factor
+
+            if proposed_price_derived is not None and effective_weight is not None and effective_weight > 0:
+                cur.execute(
+                    """
+                    select
+                      c.IBKR_ACCOUNT_ID,
+                      s.NET_LIQUIDATION_EUR
+                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+                    left join MIP.LIVE.BROKER_SNAPSHOTS s
+                      on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
+                     and s.SNAPSHOT_TYPE = 'NAV'
+                    where c.PORTFOLIO_ID = %s
+                    qualify row_number() over (
+                        partition by c.PORTFOLIO_ID
+                        order by s.SNAPSHOT_TS desc nulls last
+                    ) = 1
+                    """,
+                    (action.get("PORTFOLIO_ID"),),
+                )
+                nav_rows = fetch_all(cur)
+                nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+                if nav_eur > 0:
+                    est_notional = nav_eur * effective_weight
+                    proposed_qty_derived = max(int(est_notional / max(proposed_price_derived, 1e-9)), 1)
+        except Exception:
+            proposed_qty_derived = None
+
         cur.execute(
             """
             insert into MIP.LIVE.COMMITTEE_VERDICT (
@@ -3478,6 +3552,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                    COMMITTEE_COMPLETED_TS = current_timestamp(),
                    COMMITTEE_VERDICT = %s,
                    STATUS = %s,
+                   PROPOSED_PRICE = coalesce(%s, PROPOSED_PRICE),
+                   PROPOSED_QTY = coalesce(%s, PROPOSED_QTY),
                    REASON_CODES = parse_json(%s),
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
@@ -3486,6 +3562,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 run_id,
                 verdict["recommendation"],
                 next_status,
+                proposed_price_derived,
+                proposed_qty_derived,
                 json.dumps(reason_codes),
                 action_id,
             ),
@@ -3524,6 +3602,10 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             "action_status": next_status,
             "verdict": verdict,
             "joint_decision": verdict.get("joint_decision"),
+            "derived_sizing": {
+                "proposed_price": proposed_price_derived,
+                "proposed_qty": proposed_qty_derived,
+            },
         }
     finally:
         conn.close()
@@ -3536,45 +3618,69 @@ def stream_live_trade_committee_prompt(
     model: str = Query(default="claude-3-5-sonnet"),
 ):
     def event_stream():
-        conn = get_connection()
-        try:
-            cur = conn.cursor()
-            action = _fetch_live_action(cur, action_id)
-            if not action:
-                yield _sse_event("error", {"message": "Action not found."})
-                return
-            context = _build_action_decision_context(cur, action)
-            yield _sse_event("start", {"action_id": action_id, "actor": actor, "model": model})
-            event_log: list[tuple[str, dict]] = []
+        out_queue: Queue = Queue()
+        done = Event()
+        result: dict = {"outputs": [], "verdict": None, "error": None}
 
-            def cb(ev_name: str, payload: dict):
-                event_log.append((ev_name, {"action_id": action_id, **payload}))
+        def worker():
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                action = _fetch_live_action(cur, action_id)
+                if not action:
+                    result["error"] = "Action not found."
+                    return
+                context = _build_action_decision_context(cur, action)
 
-            outputs, verdict = _run_multiagent_dialogue(
-                cur,
-                model=model,
-                context=context,
-                persist_run_id=None,
-                emit=cb,
-            )
-            for ev_name, payload in event_log:
-                yield _sse_event(ev_name, payload)
-            for out in outputs:
-                yield _sse_event(
-                    "role_summary",
-                    {
-                        "action_id": action_id,
-                        "role": out.get("role"),
-                        "stance": out.get("stance"),
-                        "confidence": out.get("confidence"),
-                        "summary": out.get("summary"),
-                    },
+                def cb(ev_name: str, payload: dict):
+                    out_queue.put((ev_name, {"action_id": action_id, **payload}))
+
+                outputs, verdict = _run_multiagent_dialogue(
+                    cur,
+                    model=model,
+                    context=context,
+                    persist_run_id=None,
+                    emit=cb,
                 )
-            yield _sse_event("final", {"action_id": action_id, "joint_decision": verdict.get("joint_decision"), "verdict": verdict})
-        except Exception as exc:
-            yield _sse_event("error", {"action_id": action_id, "message": str(exc)})
-        finally:
-            conn.close()
+                result["outputs"] = outputs or []
+                result["verdict"] = verdict or {}
+            except Exception as exc:
+                result["error"] = str(exc)
+            finally:
+                conn.close()
+                done.set()
+
+        Thread(target=worker, daemon=True).start()
+        yield _sse_event("start", {"action_id": action_id, "actor": actor, "model": model})
+        heartbeat_n = 0
+
+        while not done.is_set() or not out_queue.empty():
+            try:
+                ev_name, payload = out_queue.get(timeout=0.4)
+                yield _sse_event(ev_name, payload)
+            except Empty:
+                heartbeat_n += 1
+                if heartbeat_n % 3 == 0:
+                    yield _sse_event("heartbeat", {"action_id": action_id, "status": "running"})
+                continue
+
+        if result.get("error"):
+            yield _sse_event("error", {"action_id": action_id, "message": result.get("error")})
+            return
+
+        for out in result.get("outputs") or []:
+            yield _sse_event(
+                "role_summary",
+                {
+                    "action_id": action_id,
+                    "role": out.get("role"),
+                    "stance": out.get("stance"),
+                    "confidence": out.get("confidence"),
+                    "summary": out.get("summary"),
+                },
+            )
+        verdict = result.get("verdict") or {}
+        yield _sse_event("final", {"action_id": action_id, "joint_decision": verdict.get("joint_decision"), "verdict": verdict})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

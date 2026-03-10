@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { API_BASE } from '../App'
 import './LivePortfolioActivity.css'
 
@@ -64,7 +64,10 @@ export default function LivePortfolioActivity() {
   const [streamActionId, setStreamActionId] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
+  const [liveLineTarget, setLiveLineTarget] = useState('')
+  const [liveLineDisplay, setLiveLineDisplay] = useState('')
   const streamRef = useRef(null)
+  const streamPaneRef = useRef(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -94,6 +97,28 @@ export default function LivePortfolioActivity() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!streamPaneRef.current) return
+    streamPaneRef.current.scrollTop = streamPaneRef.current.scrollHeight
+  }, [streamLogs, streamStatus])
+
+  useEffect(() => {
+    if (!liveLineTarget) {
+      setLiveLineDisplay('')
+      return undefined
+    }
+    let idx = 0
+    setLiveLineDisplay('')
+    const timer = setInterval(() => {
+      idx += 1
+      setLiveLineDisplay(liveLineTarget.slice(0, idx))
+      if (idx >= liveLineTarget.length) {
+        clearInterval(timer)
+      }
+    }, 12)
+    return () => clearInterval(timer)
+  }, [liveLineTarget])
+
   const refreshBroker = useCallback(async () => {
     setBusy('refresh')
     setError('')
@@ -116,6 +141,7 @@ export default function LivePortfolioActivity() {
     setStreamActionId(actionId)
     setStreamStatus('Connecting...')
     setStreamLogs([{ type: 'system', summary: 'Starting committee stream...' }])
+    setLiveLineTarget('Starting committee stream...')
     const es = new EventSource(
       `${API_BASE}/live/trades/actions/${actionId}/committee/live-prompt?actor=committee_orchestrator&model=claude-3-5-sonnet`,
     )
@@ -126,28 +152,38 @@ export default function LivePortfolioActivity() {
       try {
         const data = JSON.parse(evt.data)
         setStreamLogs((prev) => [...prev, { type: 'start', ...data }])
+        setLiveLineTarget(`start: ${JSON.stringify(data)}`)
       } catch {
         setStreamLogs((prev) => [...prev, { type: 'start', summary: 'Committee run started.' }])
+        setLiveLineTarget('Committee run started.')
       }
     })
     es.addEventListener('agent_turn', (evt) => {
       try {
-        setStreamLogs((prev) => [...prev, JSON.parse(evt.data)])
+        const data = JSON.parse(evt.data)
+        setStreamLogs((prev) => [...prev, data])
+        setLiveLineTarget(`${data.role || data.type || 'agent'}: ${data.output?.summary || data.summary || '...'}`)
       } catch {
         // Ignore malformed frame
       }
     })
     es.addEventListener('role_summary', (evt) => {
       try {
-        setStreamLogs((prev) => [...prev, JSON.parse(evt.data)])
+        const data = JSON.parse(evt.data)
+        setStreamLogs((prev) => [...prev, data])
+        setLiveLineTarget(`${data.role || 'role'}: ${data.summary || '...'}`)
       } catch {
         // Ignore malformed frame
       }
+    })
+    es.addEventListener('heartbeat', () => {
+      setLiveLineTarget('Agents are thinking...')
     })
     es.addEventListener('final', (evt) => {
       try {
         const data = JSON.parse(evt.data)
         setStreamLogs((prev) => [...prev, { type: 'final', ...data }])
+        setLiveLineTarget(`final: ${JSON.stringify(data?.joint_decision || data?.verdict || {})}`)
       } catch {
         // Ignore malformed frame
       }
@@ -166,6 +202,7 @@ export default function LivePortfolioActivity() {
         // ignore parse errors
       }
       setStreamLogs((prev) => [...prev, { type: 'error', summary: detail }])
+      setLiveLineTarget(`error: ${detail}`)
       setStreamStatus('Stopped')
       es.close()
       streamRef.current = null
@@ -331,7 +368,8 @@ export default function LivePortfolioActivity() {
                     <tr><td colSpan={5}>No pending decisions.</td></tr>
                   )}
                   {pending.map((d) => (
-                    <tr key={d.action_id}>
+                    <Fragment key={d.action_id}>
+                    <tr>
                       <td>
                         <div><b>{d.symbol}</b> ({d.side})</div>
                         <div>Action: {d.action_id}</div>
@@ -376,15 +414,12 @@ export default function LivePortfolioActivity() {
                         <button
                           className="lpa-btn lpa-btn-secondary"
                           disabled={busy === `committee:${d.action_id}`}
-                          onClick={() => runCommitteeRevalidation(d.action_id)}
+                          onClick={() => {
+                            openCommitteeStream(d.action_id)
+                            runCommitteeRevalidation(d.action_id)
+                          }}
                         >
                           {busy === `committee:${d.action_id}` ? 'Running...' : 'Committee revalidation'}
-                        </button>
-                        <button
-                          className="lpa-btn lpa-btn-secondary"
-                          onClick={() => openCommitteeStream(d.action_id)}
-                        >
-                          Stream
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
@@ -399,26 +434,34 @@ export default function LivePortfolioActivity() {
                         </div>
                       </td>
                     </tr>
+                    {streamActionId === d.action_id ? (
+                      <tr>
+                        <td colSpan={5}>
+                          <div className="lpa-stream">
+                            <div>
+                              <b>Live Committee Stream</b> for {streamActionId} ({streamStatus || 'Idle'})
+                            </div>
+                            <div className="lpa-live-line">{liveLineDisplay}<span className="lpa-caret">|</span></div>
+                            <div ref={streamPaneRef} className="lpa-stream-body">
+                            {(streamLogs || []).length === 0 ? (
+                              <div className="lpa-subtle">No events yet.</div>
+                            ) : (
+                              (streamLogs || []).map((entry, idx) => (
+                                <div key={`${streamActionId}_${idx}`} className="lpa-stream-line">
+                                  {entry.round ? `[R${entry.round}] ` : ''}{entry.role || entry.type || 'event'}: {entry.output?.summary || entry.summary || JSON.stringify(entry.joint_decision || entry.verdict || entry)}
+                                </div>
+                              ))
+                            )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
             </div>
-            {streamActionId ? (
-              <div className="lpa-stream">
-                <div>
-                  <b>Live Committee Stream</b> for {streamActionId} ({streamStatus || 'Idle'})
-                </div>
-                {(streamLogs || []).length === 0 ? (
-                  <div className="lpa-subtle">No events yet.</div>
-                ) : (
-                  (streamLogs || []).map((entry, idx) => (
-                    <div key={`${streamActionId}_${idx}`} className="lpa-stream-line">
-                      {entry.round ? `[R${entry.round}] ` : ''}{entry.role || entry.type || 'event'}: {entry.output?.summary || entry.summary || JSON.stringify(entry.joint_decision || entry.verdict || entry)}
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : null}
           </section>
 
           <section className="lpa-section">

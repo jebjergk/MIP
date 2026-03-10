@@ -182,8 +182,30 @@
   padding: 10px;
   display: grid;
   gap: 6px;
-  max-height: 260px;
+}
+
+.lpa-stream-body {
+  max-height: 220px;
   overflow: auto;
+}
+
+.lpa-live-line {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.lpa-caret {
+  display: inline-block;
+  margin-left: 2px;
+  animation: lpa-blink 1s steps(1) infinite;
+}
+
+@keyframes lpa-blink {
+  50% { opacity: 0; }
 }
 
 .lpa-stream-line {

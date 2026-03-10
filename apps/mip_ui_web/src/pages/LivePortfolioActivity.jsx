@@ -458,7 +458,7 @@ export default function LivePortfolioActivity() {
             <div className="lpa-subtle">
               Decisions not yet broker-opened. Workflow: Committee Revalidation, then Approve, then Submit.
             </div>
-            {outsideHours ? <div className="lpa-subtle">Outside operating hours: actions are disabled.</div> : null}
+            {outsideHours ? <div className="lpa-subtle">Market is closed. Approve is still available; Submit sends DAY orders that IB queues for next session.</div> : null}
             <div className="lpa-table-wrap">
               <table className="lpa-table lpa-table--pending">
                 <thead>
@@ -526,14 +526,14 @@ export default function LivePortfolioActivity() {
                         ) : null}
                         <button
                           className="lpa-btn"
-                          disabled={busy === `approve:${d.action_id}` || outsideHours || !canApprove}
+                          disabled={busy === `approve:${d.action_id}` || !canApprove}
                           onClick={() => approveFlow(d.action_id)}
                         >
                           {busy === `approve:${d.action_id}` ? 'Approving...' : 'Approve'}
                         </button>
                         <button
                           className="lpa-btn"
-                          disabled={busy === `submit:${d.action_id}` || outsideHours || !canSubmit || isStaleRevalidationState(d)}
+                          disabled={busy === `submit:${d.action_id}` || !canSubmit || isStaleRevalidationState(d)}
                           onClick={() => submitOnly(d.action_id)}
                         >
                           {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}

@@ -35,7 +35,6 @@ declare
     v_agg variant;
     v_agg_status string;
     v_agg_rows_written number := 0;
-    v_refresh_failed number := 0;
 begin
     v_event_run_id := (
         call MIP.APP.SP_LOG_EVENT(
@@ -157,7 +156,7 @@ begin
         call MIP.APP.SP_LOG_EVENT(
             'NEWS_PIPELINE',
             'SP_REFRESH_NEWS_CONTEXT',
-            'FAIL',
+            'WARN',
             0,
             object_construct(
                 'run_id', :v_run_id,
@@ -165,12 +164,10 @@ begin
                 'ingest_error_count', :v_ingest_error_count,
                 'errors', :v_ingest_errors
             ),
-            'All sources failed during ingestion; no rows staged.',
+            'All sources failed during ingestion; keeping prior news snapshot and avoiding task auto-suspend.',
             :v_run_id,
             :v_event_run_id
         );
-        -- Force task failure so TASK_HISTORY reflects a real failure.
-        v_refresh_failed := 1 / 0;
     end if;
 
     call MIP.APP.SP_LOG_EVENT(

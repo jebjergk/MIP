@@ -9,6 +9,7 @@ use database MIP;
 create or replace task MIP.NEWS.TASK_NEWS_TUESDAY_CATCHUP
     warehouse = MIP_WH_XS
     schedule = 'USING CRON 30 7 * * MON-FRI America/New_York'
+    suspend_task_after_num_failures = 0
     user_task_timeout_ms = 600000
     comment = 'Weekday pre-open kickoff refresh for decision-time news context.'
 as

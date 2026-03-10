@@ -4253,32 +4253,106 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             )
 
         order_id = str(uuid.uuid4())
+        entry_price = float(action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"))
+        qty_ordered = float(proposed_qty)
+        side = str(action.get("SIDE") or "").upper()
+        exit_side = "SELL" if side == "BUY" else "BUY"
 
         cur.execute(
             """
-            insert into MIP.LIVE.LIVE_ORDERS (
-              ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, STATUS,
-              SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
-              SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
-            )
-            values (
-              %s, %s, %s, %s, %s, 'ACKNOWLEDGED',
-              %s, %s, 'MKT_PAPER', %s, %s,
-              current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
-            )
+            select
+              VERDICT_JSON:verdict:joint_decision:realistic_target_return::float as TARGET_RETURN,
+              VERDICT_JSON:verdict:joint_decision:acceptable_early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN
+            from MIP.LIVE.COMMITTEE_VERDICT
+            where RUN_ID = %s
+            limit 1
             """,
-            (
-                order_id,
-                action_id,
-                action.get("PORTFOLIO_ID"),
-                account_id,
-                idempotency_key,
-                action.get("SYMBOL"),
-                action.get("SIDE"),
-                proposed_qty,
-                action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"),
-            ),
+            (action.get("COMMITTEE_RUN_ID"),),
         )
+        verdict_rows = fetch_all(cur)
+        verdict = verdict_rows[0] if verdict_rows else {}
+        realistic_target_return = verdict.get("TARGET_RETURN")
+        early_exit_target_return = verdict.get("EARLY_EXIT_TARGET_RETURN")
+        target_return = (
+            float(early_exit_target_return)
+            if early_exit_target_return is not None
+            else (float(realistic_target_return) if realistic_target_return is not None else None)
+        )
+        stop_loss_pct = float(cfg.get("BUST_PCT")) if cfg.get("BUST_PCT") is not None else None
+
+        tp_price = None
+        sl_price = None
+        if target_return is not None:
+            if side == "BUY":
+                tp_price = entry_price * (1 + target_return)
+            elif side == "SELL":
+                tp_price = max(entry_price * (1 - target_return), 0.0001)
+        if stop_loss_pct is not None:
+            if side == "BUY":
+                sl_price = max(entry_price * (1 - stop_loss_pct), 0.0001)
+            elif side == "SELL":
+                sl_price = entry_price * (1 + stop_loss_pct)
+
+        order_legs = [
+            {
+                "order_id": order_id,
+                "idempotency_key": idempotency_key,
+                "side": side,
+                "order_type": "MKT_PAPER",
+                "limit_price": entry_price,
+                "role": "PARENT",
+            }
+        ]
+        if tp_price is not None:
+            order_legs.append(
+                {
+                    "order_id": str(uuid.uuid4()),
+                    "idempotency_key": f"{idempotency_key}:TP",
+                    "side": exit_side,
+                    "order_type": "LMT_TP_PAPER",
+                    "limit_price": float(tp_price),
+                    "role": "TAKE_PROFIT",
+                }
+            )
+        if sl_price is not None:
+            order_legs.append(
+                {
+                    "order_id": str(uuid.uuid4()),
+                    "idempotency_key": f"{idempotency_key}:SL",
+                    "side": exit_side,
+                    "order_type": "STP_SL_PAPER",
+                    "limit_price": float(sl_price),
+                    "role": "STOP_LOSS",
+                }
+            )
+
+        for leg in order_legs:
+            cur.execute(
+                """
+                insert into MIP.LIVE.LIVE_ORDERS (
+                  ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, STATUS,
+                  SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+                  SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
+                )
+                values (
+                  %s, %s, %s, %s, %s, 'ACKNOWLEDGED',
+                  %s, %s, %s, %s, %s,
+                  current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
+                )
+                """,
+                (
+                    leg["order_id"],
+                    action_id,
+                    action.get("PORTFOLIO_ID"),
+                    account_id,
+                    leg["idempotency_key"],
+                    action.get("SYMBOL"),
+                    leg["side"],
+                    leg["order_type"],
+                    qty_ordered,
+                    leg["limit_price"],
+                ),
+            )
 
         cur.execute(
             """
@@ -4299,10 +4373,21 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 idempotency_key,
                 order_id,
                 action.get("SYMBOL"),
-                action.get("SIDE"),
-                proposed_qty,
-                action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"),
-                json.dumps({"actor": req.actor, "mode": "PAPER_PLACEHOLDER"}),
+                side,
+                qty_ordered,
+                entry_price,
+                json.dumps(
+                    {
+                        "actor": req.actor,
+                        "mode": "PAPER_PLACEHOLDER",
+                        "protection_state": (
+                            "FULL"
+                            if (tp_price is not None and sl_price is not None)
+                            else ("PARTIAL" if (tp_price is not None or sl_price is not None) else "NONE")
+                        ),
+                        "legs": order_legs,
+                    }
+                ),
             ),
         )
 
@@ -4337,6 +4422,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             outcome_state={
                 "order_id": order_id,
                 "mode": "PAPER_PLACEHOLDER",
+                "order_legs": order_legs,
                 "target_expectation_snapshot": _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT")),
                 "news_context_snapshot": news_snapshot,
             },
@@ -4347,6 +4433,13 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             "action_id": action_id,
             "status": "EXECUTION_REQUESTED",
             "order_id": order_id,
+            "order_ids": [leg["order_id"] for leg in order_legs],
+            "order_legs": order_legs,
+            "protection_state": (
+                "FULL"
+                if (tp_price is not None and sl_price is not None)
+                else ("PARTIAL" if (tp_price is not None or sl_price is not None) else "NONE")
+            ),
             "idempotency_key": idempotency_key,
             "mode": "PAPER_PLACEHOLDER",
         }

@@ -49,9 +49,14 @@ declare
     v_trusted_rejected_count number := 0;
     -- Diagnostic variables for enhanced logging
     v_latest_bar_ts timestamp_ntz;
+    v_latest_daily_bar_ts timestamp_ntz;
     v_latest_rec_ts timestamp_ntz;
     v_trusted_pattern_count number := 0;
     v_no_candidates_reason string := null;
+    v_daily_stale_block_enabled boolean := true;
+    v_daily_bar_max_age_hours number := 30;
+    v_daily_bar_age_hours number := null;
+    v_daily_data_stale boolean := false;
 begin
     select
         p.PROFILE_ID,
@@ -140,8 +145,37 @@ begin
 
     -- Get diagnostic timestamps for logging
     v_latest_bar_ts := (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440);
+    v_latest_daily_bar_ts := :v_latest_bar_ts;
     v_latest_rec_ts := (select max(TS) from MIP.APP.RECOMMENDATION_LOG where INTERVAL_MINUTES = 1440);
     v_trusted_pattern_count := (select count(*) from MIP.MART.V_TRUSTED_PATTERN_HORIZONS);
+    begin
+        select
+            coalesce(max(iff(CONFIG_KEY = 'DAILY_BAR_STALE_BLOCK_ENABLED', try_to_boolean(CONFIG_VALUE), null)), true),
+            coalesce(max(iff(CONFIG_KEY = 'DAILY_BAR_MAX_AGE_HOURS', try_to_number(CONFIG_VALUE), null)), 30)
+          into :v_daily_stale_block_enabled, :v_daily_bar_max_age_hours
+          from MIP.APP.APP_CONFIG
+         where CONFIG_KEY in ('DAILY_BAR_STALE_BLOCK_ENABLED', 'DAILY_BAR_MAX_AGE_HOURS');
+    exception when other then
+        v_daily_stale_block_enabled := true;
+        v_daily_bar_max_age_hours := 30;
+    end;
+    if (:v_latest_daily_bar_ts is not null) then
+        v_daily_bar_age_hours := datediff('hour', :v_latest_daily_bar_ts, current_timestamp());
+    end if;
+    v_daily_data_stale := (
+        :v_latest_daily_bar_ts is null
+        or :v_daily_bar_age_hours is null
+        or :v_daily_bar_age_hours > :v_daily_bar_max_age_hours
+    );
+    if (
+        not :v_entries_blocked
+        and :v_daily_stale_block_enabled
+        and :v_daily_data_stale
+    ) then
+        v_entries_blocked := true;
+        v_stop_reason := 'STALE_DAILY_BARS';
+        v_allowed_actions := 'ALLOW_EXITS_ONLY';
+    end if;
 
     if (v_entries_blocked) then
         -- Count raw signals at latest TS (no RUN_ID filter - views are already date-scoped)
@@ -190,6 +224,11 @@ begin
                 'trusted_rejected_count', :v_trusted_rejected_count,
                 'diagnostics', object_construct(
                     'latest_bar_ts', :v_latest_bar_ts,
+                    'latest_daily_bar_ts', :v_latest_daily_bar_ts,
+                    'daily_bar_age_hours', :v_daily_bar_age_hours,
+                    'daily_bar_max_age_hours', :v_daily_bar_max_age_hours,
+                    'daily_stale_block_enabled', :v_daily_stale_block_enabled,
+                    'daily_data_stale', :v_daily_data_stale,
                     'latest_rec_ts', :v_latest_rec_ts,
                     'trusted_pattern_count', :v_trusted_pattern_count,
                     'rec_ts_matches_bar_ts', :v_latest_rec_ts = :v_latest_bar_ts

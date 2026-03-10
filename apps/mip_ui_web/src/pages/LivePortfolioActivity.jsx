@@ -69,6 +69,16 @@ function isStaleRevalidationState(decision) {
   return reasons.some((r) => staleSignals.has(r))
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export default function LivePortfolioActivity() {
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -313,14 +323,14 @@ export default function LivePortfolioActivity() {
     setBusy(actionId)
     setError('')
     try {
-      const resp = await fetch(`${API_BASE}/live/decisions/${actionId}/approve-and-submit`, {
+      const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/approve-and-submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           force_refresh_1m: true,
           committee_recheck_before_submit: true,
         }),
-      })
+      }, 180000)
       if (!resp.ok) {
         let msg = `Submit failed (${resp.status})`
         try {
@@ -335,7 +345,11 @@ export default function LivePortfolioActivity() {
       }
       await load()
     } catch (e) {
-      setError(e.message || 'Submit failed.')
+      if (e?.name === 'AbortError') {
+        setError('Submit request timed out. The backend may still be processing; click Refresh From IB to reconcile latest state.')
+      } else {
+        setError(e.message || 'Submit failed.')
+      }
     } finally {
       setBusy('')
     }

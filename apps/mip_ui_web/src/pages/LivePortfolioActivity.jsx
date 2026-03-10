@@ -65,6 +65,7 @@ export default function LivePortfolioActivity() {
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
   const [activeStreamActionId, setActiveStreamActionId] = useState('')
+  const [readyPulseActionId, setReadyPulseActionId] = useState('')
   const [liveLineTarget, setLiveLineTarget] = useState('')
   const [liveLineDisplay, setLiveLineDisplay] = useState('')
   const streamRef = useRef(null)
@@ -134,17 +135,17 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
-  const finalizeCommitteeRevalidation = useCallback(async (actionId) => {
+  const finalizeCommitteeRevalidation = useCallback(async (actionId, verdict) => {
     setBusy(`committee:${actionId}`)
     setError('')
     try {
-      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee/run`, {
+      const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee/apply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           actor: 'committee_orchestrator',
           model: 'claude-3-5-sonnet',
-          force_rerun: true,
+          verdict: verdict || {},
         }),
       })
       if (!resp.ok) {
@@ -161,9 +162,50 @@ export default function LivePortfolioActivity() {
         }
         throw new Error(msg)
       }
+      const data = await resp.json()
+      setOverview((prev) => {
+        if (!prev || !Array.isArray(prev.pending_decisions)) return prev
+        const actionable = Boolean(prev?.readiness?.actionable)
+        const updatedPending = prev.pending_decisions.map((row) => {
+          if (row.action_id !== actionId) return row
+          const nextStatus = data?.action_status || row.status
+          const committeeVerdict = data?.verdict?.recommendation || row.committee_verdict
+          const blocked = nextStatus === 'OPEN_BLOCKED' || Boolean(data?.verdict?.blocked)
+          const derivedPrice = data?.derived_sizing?.proposed_price
+          const derivedQty = data?.derived_sizing?.proposed_qty
+          const currentSizing = row.sizing || {}
+          const sizing = {
+            ...currentSizing,
+            proposed_price: derivedPrice ?? currentSizing.proposed_price,
+            proposed_qty: derivedQty ?? currentSizing.proposed_qty,
+          }
+          if (sizing.proposed_price != null && sizing.proposed_qty != null) {
+            sizing.estimated_notional_eur = Math.abs(Number(sizing.proposed_price) * Number(sizing.proposed_qty))
+            sizing.final_qty_preview = sizing.proposed_qty
+          }
+          const submissionAllowed = (
+            ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED', 'PM_ACCEPTED', 'READY_FOR_APPROVAL_FLOW']
+              .includes(String(nextStatus || '').toUpperCase())
+          ) && actionable && !blocked
+          return {
+            ...row,
+            status: nextStatus,
+            committee_verdict: committeeVerdict,
+            committee_status: 'COMPLETED',
+            committee_run_id: data?.run_id || row.committee_run_id,
+            committee_completed_ts: new Date().toISOString(),
+            is_blocked: blocked,
+            reason_codes: blocked ? ['COMMITTEE_BLOCKED', ...(row.reason_codes || [])] : row.reason_codes,
+            sizing,
+            submission_allowed: submissionAllowed,
+          }
+        })
+        return { ...prev, pending_decisions: updatedPending }
+      })
       setStreamStatus('Completed')
+      setReadyPulseActionId(actionId)
+      setTimeout(() => setReadyPulseActionId(''), 20000)
       setActiveStreamActionId('')
-      await load()
     } catch (e) {
       setError(e.message || 'Committee revalidation failed.')
       setStreamStatus('Stopped')
@@ -221,8 +263,10 @@ export default function LivePortfolioActivity() {
       setLiveLineTarget('Agents are thinking...')
     })
     es.addEventListener('final', (evt) => {
+      let verdictPayload = {}
       try {
         const data = JSON.parse(evt.data)
+        verdictPayload = data?.verdict || {}
         setStreamLogs((prev) => [...prev, { type: 'final', ...data }])
         setLiveLineTarget(`final: ${JSON.stringify(data?.joint_decision || data?.verdict || {})}`)
       } catch {
@@ -231,7 +275,7 @@ export default function LivePortfolioActivity() {
       setStreamStatus('Finalizing...')
       es.close()
       streamRef.current = null
-      void finalizeCommitteeRevalidation(actionId)
+      void finalizeCommitteeRevalidation(actionId, verdictPayload)
     })
     es.addEventListener('error', (evt) => {
       let detail = 'Stream stopped.'
@@ -437,6 +481,9 @@ export default function LivePortfolioActivity() {
                         >
                           {busy === `reject:${d.action_id}` ? 'Rejecting...' : 'Reject stale'}
                         </button>
+                        {readyPulseActionId === d.action_id ? (
+                          <div className="lpa-ready-chip">Ready to submit</div>
+                        ) : null}
                         {!d.submission_allowed ? (
                           <div className="lpa-subtle">Blocked until gates are clear.</div>
                         ) : null}

@@ -95,6 +95,12 @@ class CommitteeRunRequest(BaseModel):
     force_rerun: bool = False
 
 
+class ApplyCommitteeVerdictRequest(BaseModel):
+    actor: str = "committee_orchestrator"
+    model: str = "claude-3-5-sonnet"
+    verdict: dict = Field(default_factory=dict)
+
+
 class OpeningValidationRequest(BaseModel):
     force_refresh_1m: bool = False
     now_utc_iso: str | None = None
@@ -3051,6 +3057,38 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                     }
                 )
 
+        # Keep one pending row per symbol (most relevant/latest) to avoid queue bloat in UI.
+        pending_by_symbol: dict[str, dict] = {}
+        for row in pending_decisions:
+            symbol_key = str(row.get("symbol") or "").upper().strip()
+            if not symbol_key:
+                continue
+            existing = pending_by_symbol.get(symbol_key)
+            if existing is None:
+                pending_by_symbol[symbol_key] = row
+                continue
+
+            row_allowed = bool(row.get("submission_allowed"))
+            existing_allowed = bool(existing.get("submission_allowed"))
+            if row_allowed and not existing_allowed:
+                pending_by_symbol[symbol_key] = row
+                continue
+            if existing_allowed and not row_allowed:
+                continue
+
+            row_ts = (row.get("timestamps") or {}).get("updated_at") or (row.get("timestamps") or {}).get("created_at")
+            existing_ts = (existing.get("timestamps") or {}).get("updated_at") or (existing.get("timestamps") or {}).get("created_at")
+            if row_ts and existing_ts:
+                try:
+                    if row_ts > existing_ts:
+                        pending_by_symbol[symbol_key] = row
+                except Exception:
+                    pass
+            elif row_ts and not existing_ts:
+                pending_by_symbol[symbol_key] = row
+
+        pending_decisions = list(pending_by_symbol.values())
+
         executions = []
         for order in orders:
             status = (order.get("STATUS") or "").upper()
@@ -3245,40 +3283,56 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
         status = (action.get("STATUS") or "").upper()
 
     if status == "REVALIDATED_PASS":
-        # Best effort: refresh broker snapshot and renew validity window right before execution.
+        # Deterministic pre-execution hardening: refresh broker snapshot + renew validity.
+        conn = get_connection()
         try:
-            conn = get_connection()
-            try:
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    select IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC
-                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-                    where PORTFOLIO_ID = %s
-                    """,
-                    (action.get("PORTFOLIO_ID"),),
-                )
-                cfg_rows = fetch_all(cur)
-                cfg = cfg_rows[0] if cfg_rows else {}
-                validity_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
-                cur.execute(
-                    """
-                    update MIP.LIVE.LIVE_ACTIONS
-                       set VALIDITY_WINDOW_END = dateadd(second, %s, current_timestamp()),
-                           UPDATED_AT = current_timestamp()
-                     where ACTION_ID = %s
-                    """,
-                    (validity_sec, action_id),
-                )
-                account_id = cfg.get("IBKR_ACCOUNT_ID")
-            finally:
-                conn.close()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                select IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            cfg_rows = fetch_all(cur)
+            cfg = cfg_rows[0] if cfg_rows else {}
+            account_id = cfg.get("IBKR_ACCOUNT_ID")
+            validity_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
+        finally:
+            conn.close()
+
+        if not account_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Cannot refresh broker snapshot: IBKR account is missing.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+            )
+        try:
             _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
             steps.append("snapshot_refresh")
-            steps.append("validity_renew")
-        except Exception:
-            # Non-fatal: execute_live_action still enforces hard safety gates.
-            pass
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Snapshot refresh failed before execution.", "reason_codes": ["SNAPSHOT_REFRESH_FAILED"], "error": str(exc)},
+            )
+
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                update MIP.LIVE.LIVE_ACTIONS
+                   set VALIDITY_WINDOW_END = dateadd(second, %s, current_timestamp()),
+                       UPDATED_AT = current_timestamp()
+                 where ACTION_ID = %s
+                """,
+                (validity_sec, action_id),
+            )
+        finally:
+            conn.close()
+        steps.append("validity_renew")
 
         execute_resp = execute_live_action(
             action_id,
@@ -3674,6 +3728,208 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "proposed_price": proposed_price_derived,
                 "proposed_qty": proposed_qty_derived,
             },
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/trades/actions/{action_id}/committee/apply")
+def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+
+        status_upper = (action.get("STATUS") or "").upper()
+        if status_upper not in (
+            "OPEN_ELIGIBLE",
+            "OPEN_CAUTION",
+            "PENDING_OPEN_STABILITY_REVIEW",
+            "READY_FOR_APPROVAL_FLOW",
+            "PM_ACCEPTED",
+            "COMPLIANCE_APPROVED",
+            "INTENT_SUBMITTED",
+            "INTENT_APPROVED",
+            "REVALIDATED_FAIL",
+            "REVALIDATED_PASS",
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Committee apply blocked for current status: {status_upper}.",
+            )
+
+        verdict_in = dict(req.verdict or {})
+        jd = _parse_variant(verdict_in.get("joint_decision"))
+        recommendation = str(verdict_in.get("recommendation") or ("BLOCK" if not bool(jd.get("should_enter", True)) else "PROCEED_REDUCED")).upper()
+        size_factor = float(verdict_in.get("size_factor") or jd.get("position_size_factor") or 1.0)
+        confidence = float(verdict_in.get("confidence") or 0.5)
+        blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (jd.get("should_enter") is False)
+        verdict = {
+            "recommendation": recommendation,
+            "size_factor": max(0.0, min(1.0, size_factor)),
+            "confidence": max(0.0, min(1.0, confidence)),
+            "blocked": blocked,
+            "joint_decision": jd,
+        }
+        verdict = _backfill_joint_decision_from_policy(verdict, _build_action_decision_context(cur, action))
+        jd = _parse_variant(verdict.get("joint_decision"))
+
+        reason_codes = []
+        if verdict["blocked"]:
+            reason_codes.append("COMMITTEE_BLOCKED")
+        elif verdict["recommendation"] == "PROCEED_REDUCED":
+            reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        if verdict.get("quality_backfilled"):
+            reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
+        reason_codes.append("COMMITTEE_REVIEWED")
+        next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
+
+        # Derive proposed price/qty so row no longer remains fully pending.
+        proposed_price_derived = None
+        proposed_qty_derived = None
+        try:
+            cur.execute(
+                """
+                select CLOSE
+                from MIP.MART.MARKET_BARS
+                where SYMBOL = %s
+                  and INTERVAL_MINUTES = 1
+                order by TS desc
+                limit 1
+                """,
+                (action.get("SYMBOL"),),
+            )
+            bar_rows = fetch_all(cur)
+            if bar_rows and bar_rows[0].get("CLOSE") is not None:
+                proposed_price_derived = float(bar_rows[0].get("CLOSE"))
+            else:
+                cur.execute(
+                    """
+                    select CLOSE
+                    from MIP.MART.MARKET_BARS
+                    where SYMBOL = %s
+                      and INTERVAL_MINUTES in (15, 60, 1440)
+                    order by TS desc
+                    limit 1
+                    """,
+                    (action.get("SYMBOL"),),
+                )
+                fallback_rows = fetch_all(cur)
+                if fallback_rows and fallback_rows[0].get("CLOSE") is not None:
+                    proposed_price_derived = float(fallback_rows[0].get("CLOSE"))
+        except Exception:
+            proposed_price_derived = None
+
+        try:
+            param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
+            target_weight = param_snapshot.get("target_weight")
+            target_weight_abs = abs(float(target_weight)) if target_weight is not None else None
+            committee_size_factor = float(verdict.get("size_factor") or 1.0)
+            training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
+            open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
+            effective_weight = None
+            if target_weight_abs is not None:
+                effective_weight = target_weight_abs * committee_size_factor * training_size_cap * open_factor
+
+            if proposed_price_derived is not None and effective_weight is not None and effective_weight > 0:
+                cur.execute(
+                    """
+                    select
+                      c.IBKR_ACCOUNT_ID,
+                      s.NET_LIQUIDATION_EUR
+                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+                    left join MIP.LIVE.BROKER_SNAPSHOTS s
+                      on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
+                     and s.SNAPSHOT_TYPE = 'NAV'
+                    where c.PORTFOLIO_ID = %s
+                    qualify row_number() over (
+                        partition by c.PORTFOLIO_ID
+                        order by s.SNAPSHOT_TS desc nulls last
+                    ) = 1
+                    """,
+                    (action.get("PORTFOLIO_ID"),),
+                )
+                nav_rows = fetch_all(cur)
+                nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+                if nav_eur > 0:
+                    est_notional = nav_eur * effective_weight
+                    proposed_qty_derived = max(int(est_notional / max(proposed_price_derived, 1e-9)), 1)
+        except Exception:
+            proposed_qty_derived = None
+
+        run_id = str(uuid.uuid4())
+        cur.execute(
+            """
+            insert into MIP.LIVE.COMMITTEE_RUN (
+              RUN_ID, ACTION_ID, PORTFOLIO_ID, STATUS, MODEL_NAME, STARTED_AT, COMPLETED_AT, DETAILS
+            )
+            select
+              %s, %s, %s, 'COMPLETED', %s, current_timestamp(), current_timestamp(), try_parse_json(%s)
+            """,
+            (
+                run_id,
+                action_id,
+                action.get("PORTFOLIO_ID"),
+                req.model,
+                json.dumps({"actor": req.actor, "source": "STREAM_APPLY"}),
+            ),
+        )
+        cur.execute(
+            """
+            insert into MIP.LIVE.COMMITTEE_VERDICT (
+              RUN_ID, ACTION_ID, PORTFOLIO_ID, RECOMMENDATION, SIZE_FACTOR, CONFIDENCE, IS_BLOCKED,
+              REASON_CODES, VERDICT_JSON, CREATED_AT
+            )
+            select
+              %s, %s, %s, %s, %s, %s, %s, try_parse_json(%s), try_parse_json(%s), current_timestamp()
+            """,
+            (
+                run_id,
+                action_id,
+                action.get("PORTFOLIO_ID"),
+                verdict["recommendation"],
+                verdict["size_factor"],
+                verdict["confidence"],
+                verdict["blocked"],
+                json.dumps(reason_codes),
+                json.dumps({"verdict": verdict, "joint_decision": verdict.get("joint_decision")}),
+            ),
+        )
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set COMMITTEE_STATUS = 'COMPLETED',
+                   COMMITTEE_RUN_ID = %s,
+                   COMMITTEE_COMPLETED_TS = current_timestamp(),
+                   COMMITTEE_VERDICT = %s,
+                   STATUS = %s,
+                   PROPOSED_PRICE = coalesce(%s, PROPOSED_PRICE),
+                   PROPOSED_QTY = coalesce(%s, PROPOSED_QTY),
+                   REASON_CODES = parse_json(%s),
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (
+                run_id,
+                verdict["recommendation"],
+                next_status,
+                proposed_price_derived,
+                proposed_qty_derived,
+                json.dumps(reason_codes),
+                action_id,
+            ),
+        )
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "run_id": run_id,
+            "status": "COMPLETED",
+            "action_status": next_status,
+            "verdict": verdict,
+            "joint_decision": verdict.get("joint_decision"),
+            "derived_sizing": {"proposed_price": proposed_price_derived, "proposed_qty": proposed_qty_derived},
         }
     finally:
         conn.close()

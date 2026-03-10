@@ -124,6 +124,21 @@
   width: 100%;
 }
 
+.lpa-ready-chip {
+  border: 1px solid #7dc48b;
+  background: #f3fff6;
+  color: #1f7a32;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  animation: lpa-ready-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes lpa-ready-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(58, 176, 92, 0.35); }
+  100% { box-shadow: 0 0 0 8px rgba(58, 176, 92, 0); }
+}
+
 .lpa-kv-list {
   display: grid;
   gap: 2px;

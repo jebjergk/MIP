@@ -1903,6 +1903,7 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
     target_return = (sum(target_returns) / len(target_returns)) if target_returns else None
     hold_bars = int(round(sum(hold_bars_vals) / len(hold_bars_vals))) if hold_bars_vals else None
     early_exit_target_return = (sum(early_exit_targets) / len(early_exit_targets)) if early_exit_targets else None
+    early_exit_target_return = _normalize_early_exit_target(target_return, early_exit_target_return)
     return {
         "recommendation": recommendation,
         "size_factor": size_factor,
@@ -1916,6 +1917,31 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
             "acceptable_early_exit_target_return": early_exit_target_return,
         },
     }
+
+
+def _normalize_early_exit_target(target_return, early_exit_target_return):
+    """
+    Enforce policy: acceptable early-exit target must be above the base target.
+    """
+    try:
+        t = float(target_return) if target_return is not None else None
+    except Exception:
+        t = None
+    try:
+        e = float(early_exit_target_return) if early_exit_target_return is not None else None
+    except Exception:
+        e = None
+
+    if t is None:
+        return e
+
+    # Require at least +0.15% absolute OR +10% relative above target.
+    floor = max(t + 0.0015, t * 1.10)
+    if e is None or e <= t:
+        return floor
+    if e < floor:
+        return floor
+    return e
 
 
 def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
@@ -1939,6 +1965,10 @@ def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
                 pass
     if jd.get("hold_bars") is None:
         jd["hold_bars"] = 5
+    jd["acceptable_early_exit_target_return"] = _normalize_early_exit_target(
+        jd.get("realistic_target_return"),
+        jd.get("acceptable_early_exit_target_return"),
+    )
     out["joint_decision"] = jd
     out["quality_backfilled"] = True
     return out

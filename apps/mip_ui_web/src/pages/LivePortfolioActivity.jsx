@@ -64,6 +64,7 @@ export default function LivePortfolioActivity() {
   const [streamActionId, setStreamActionId] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
+  const [activeStreamActionId, setActiveStreamActionId] = useState('')
   const [liveLineTarget, setLiveLineTarget] = useState('')
   const [liveLineDisplay, setLiveLineDisplay] = useState('')
   const streamRef = useRef(null)
@@ -161,10 +162,12 @@ export default function LivePortfolioActivity() {
         throw new Error(msg)
       }
       setStreamStatus('Completed')
+      setActiveStreamActionId('')
       await load()
     } catch (e) {
       setError(e.message || 'Committee revalidation failed.')
       setStreamStatus('Stopped')
+      setActiveStreamActionId('')
     } finally {
       setBusy('')
     }
@@ -176,6 +179,7 @@ export default function LivePortfolioActivity() {
       streamRef.current = null
     }
     setStreamActionId(actionId)
+    setActiveStreamActionId(actionId)
     setStreamStatus('Connecting...')
     setStreamLogs([{ type: 'system', summary: 'Starting committee stream...' }])
     setLiveLineTarget('Starting committee stream...')
@@ -242,6 +246,7 @@ export default function LivePortfolioActivity() {
       setStreamLogs((prev) => [...prev, { type: 'error', summary: detail }])
       setLiveLineTarget(`error: ${detail}`)
       setStreamStatus('Stopped')
+      setActiveStreamActionId('')
       es.close()
       streamRef.current = null
     })
@@ -418,12 +423,12 @@ export default function LivePortfolioActivity() {
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
-                          disabled={busy === `committee:${d.action_id}` || streamActionId === d.action_id}
+                          disabled={busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id}
                           onClick={() => {
                             openCommitteeStream(d.action_id)
                           }}
                         >
-                          {busy === `committee:${d.action_id}` || streamActionId === d.action_id ? 'Running...' : 'Committee revalidation'}
+                          {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id ? 'Running...' : 'Committee revalidation'}
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"

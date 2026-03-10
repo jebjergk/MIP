@@ -2835,6 +2835,49 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             (portfolio_id, limit),
         )
         orders = fetch_all(cur)
+        order_groups: dict[str, list[dict]] = {}
+        for order in orders:
+            key = str(order.get("ACTION_ID") or "")
+            if not key:
+                continue
+            order_groups.setdefault(key, []).append(order)
+
+        protection_by_action: dict[str, dict] = {}
+        for action_id, action_orders in order_groups.items():
+            parent_leg = None
+            take_profit_leg = None
+            stop_loss_leg = None
+            for ord_row in action_orders:
+                order_type = str(ord_row.get("ORDER_TYPE") or "").upper()
+                status = str(ord_row.get("STATUS") or "").upper()
+                leg = {
+                    "order_id": ord_row.get("ORDER_ID"),
+                    "broker_order_id": ord_row.get("BROKER_ORDER_ID"),
+                    "status": status,
+                    "order_type": order_type,
+                }
+                if any(token in order_type for token in ("STOP", "STP", "SL")):
+                    if stop_loss_leg is None:
+                        stop_loss_leg = leg
+                elif any(token in order_type for token in ("TP", "TAKE_PROFIT", "LIMIT_TP")):
+                    if take_profit_leg is None:
+                        take_profit_leg = leg
+                else:
+                    if parent_leg is None:
+                        parent_leg = leg
+
+            if take_profit_leg and stop_loss_leg:
+                protection_state = "FULL"
+            elif take_profit_leg or stop_loss_leg:
+                protection_state = "PARTIAL"
+            else:
+                protection_state = "NONE"
+            protection_by_action[action_id] = {
+                "state": protection_state,
+                "parent": parent_leg,
+                "take_profit": take_profit_leg,
+                "stop_loss": stop_loss_leg,
+            }
 
         cur.execute(
             """
@@ -2890,6 +2933,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
         pending_decisions = []
         for row in action_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
+            joint_decision = _parse_variant(row.get("COMMITTEE_JOINT_DECISION"))
             proposed_qty = float(row.get("PROPOSED_QTY")) if row.get("PROPOSED_QTY") is not None else None
             proposed_price = float(row.get("PROPOSED_PRICE")) if row.get("PROPOSED_PRICE") is not None else None
             estimated_notional = (abs(proposed_qty) * abs(proposed_price)) if (proposed_qty is not None and proposed_price is not None) else None
@@ -2922,6 +2966,12 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
             submit_allowed = submit_allowed and page_actionable and (not blocked)
             in_position = symbol in held_symbols
+            action_id = str(row.get("ACTION_ID") or "")
+            protection_details = protection_by_action.get(action_id) or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None}
+            protection_planned = bool(
+                joint_decision.get("realistic_target_return") is not None
+                or joint_decision.get("acceptable_early_exit_target_return") is not None
+            )
 
             if status != "EXECUTION_REQUESTED" and not in_position:
                 pending_decisions.append(
@@ -2953,7 +3003,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                             "availability_reason": sizing_reason,
                             "max_position_pct_limit": float(cfg.get("MAX_POSITION_PCT")) if cfg.get("MAX_POSITION_PCT") is not None else None,
                         },
-                        "protection": {"planned": False, "state": "NONE"},
+                        "protection": {"planned": protection_planned, **protection_details},
                         "timestamps": {
                             "created_at": row.get("CREATED_AT"),
                             "updated_at": row.get("UPDATED_AT"),
@@ -2980,6 +3030,17 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                     "status": order.get("STATUS"),
                     "execution_ts": order.get("FILLED_AT") or order.get("LAST_UPDATED_AT"),
                     "source": "MIP_BROKER_LEDGER",
+                }
+            )
+
+        orders_enriched = []
+        for ord_row in orders:
+            action_key = str(ord_row.get("ACTION_ID") or "")
+            orders_enriched.append(
+                {
+                    **ord_row,
+                    "PROTECTION": protection_by_action.get(action_key)
+                    or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None},
                 }
             )
 
@@ -3025,7 +3086,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             },
             "open_positions": serialize_rows(open_positions),
             "open_orders": serialize_rows(open_orders),
-            "orders": serialize_rows(orders),
+            "orders": serialize_rows(orders_enriched),
             "executions": serialize_rows(executions),
             "pending_decisions": serialize_rows(pending_decisions),
             "counts": {

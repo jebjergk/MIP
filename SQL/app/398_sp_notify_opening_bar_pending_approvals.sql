@@ -67,7 +67,7 @@ begin
       into :v_pending_count
       from MIP.AGENT_OUT.ORDER_PROPOSALS p
      where p.STATUS = 'PROPOSED'
-       and (P_RUN_ID is null or p.RUN_ID_VARCHAR = P_RUN_ID)
+       and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
        and p.PROPOSED_AT >= dateadd(day, -1, current_timestamp());
 
     if (v_pending_count > 0) then
@@ -87,7 +87,7 @@ begin
           into :v_state_signature
           from MIP.AGENT_OUT.ORDER_PROPOSALS p
          where p.STATUS = 'PROPOSED'
-           and (P_RUN_ID is null or p.RUN_ID_VARCHAR = P_RUN_ID)
+           and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
            and p.PROPOSED_AT >= dateadd(day, -1, current_timestamp());
     else
         v_state_signature := 'NONE';
@@ -116,12 +116,12 @@ begin
                 ' | ' || coalesce(p.SIDE, '?') ||
                 ' | run ' || coalesce(p.RUN_ID_VARCHAR, '?') ||
                 ' | proposed ' || to_varchar(p.PROPOSED_AT, 'YYYY-MM-DD HH24:MI:SS'),
-                char(10)
+                '\n'
             ) within group (order by p.PROPOSED_AT, p.PROPOSAL_ID)
           into :v_body
           from MIP.AGENT_OUT.ORDER_PROPOSALS p
          where p.STATUS = 'PROPOSED'
-           and (P_RUN_ID is null or p.RUN_ID_VARCHAR = P_RUN_ID)
+           and (:P_RUN_ID is null or p.RUN_ID_VARCHAR = :P_RUN_ID)
            and p.PROPOSED_AT >= dateadd(day, -1, current_timestamp());
     else
         v_subject := 'MIP Opening Bar: no pending approvals';

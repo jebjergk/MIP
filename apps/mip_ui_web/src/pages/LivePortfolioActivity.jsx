@@ -259,6 +259,7 @@ export default function LivePortfolioActivity() {
                         <div>{d.status || '—'}</div>
                         <div>Compliance: {d.compliance_status || '—'}</div>
                         <div>Protected: {d.protection?.state || 'NONE'}</div>
+                        <div>Plan: {d.protection?.planned ? 'TP/SL expected' : 'No bracket planned'}</div>
                       </td>
                       <td>
                         <div className="lpa-kv-list">
@@ -362,11 +363,12 @@ export default function LivePortfolioActivity() {
                     <th>Status</th>
                     <th>Qty</th>
                     <th>Price</th>
+                    <th>Protection</th>
                     <th>Timestamps</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.length === 0 && <tr><td colSpan={5}>No broker orders.</td></tr>}
+                  {orders.length === 0 && <tr><td colSpan={6}>No broker orders.</td></tr>}
                   {orders.map((o) => (
                     <tr key={o.ORDER_ID}>
                       <td>
@@ -383,6 +385,12 @@ export default function LivePortfolioActivity() {
                       <td>
                         <div>Limit: {fmtNum(o.LIMIT_PRICE, 4)}</div>
                         <div>Avg fill: {fmtNum(o.AVG_FILL_PRICE, 4)}</div>
+                      </td>
+                      <td>
+                        <div><b>{o.PROTECTION?.state || 'NONE'}</b></div>
+                        <div>Parent: {o.PROTECTION?.parent?.status || '—'}</div>
+                        <div>TP: {o.PROTECTION?.take_profit?.status || '—'}</div>
+                        <div>SL: {o.PROTECTION?.stop_loss?.status || '—'}</div>
                       </td>
                       <td>
                         <div>Submitted: {fmtTs(o.SUBMITTED_AT)}</div>

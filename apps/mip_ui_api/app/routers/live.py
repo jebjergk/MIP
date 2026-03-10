@@ -85,6 +85,18 @@ class ApproveAndSubmitLiveDecisionRequest(BaseModel):
     committee_recheck_before_submit: bool = True
 
 
+class ApproveLiveDecisionRequest(BaseModel):
+    pm_actor: str = "portfolio_manager"
+    compliance_actor: str = "compliance_user"
+    intent_submit_actor: str = "intent_submitter"
+    intent_approve_actor: str = "intent_approver"
+
+
+class SubmitLiveDecisionRequest(BaseModel):
+    execution_actor: str = "execution_operator"
+    attempt_n: int = 1
+
+
 class RevalidateLiveActionRequest(BaseModel):
     force_refresh_1m: bool = False
 
@@ -3524,6 +3536,224 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
             "steps": steps,
         },
     )
+
+
+@router.post("/decisions/{action_id}/approve-flow")
+def approve_live_decision_flow(action_id: str, req: ApproveLiveDecisionRequest):
+    steps: list[str] = []
+    action = _fetch_live_action_state(action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found.")
+
+    def refresh_state() -> dict:
+        latest = _fetch_live_action_state(action_id)
+        if not latest:
+            raise HTTPException(status_code=404, detail="Action disappeared during workflow.")
+        return latest
+
+    action = refresh_state()
+    status = (action.get("STATUS") or "").upper()
+    if status in ("EXECUTION_REQUESTED", "EXECUTED"):
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": status,
+            "idempotent_replay": True,
+            "steps": steps,
+        }
+
+    if status == "READY_FOR_APPROVAL_FLOW":
+        pm_accept_live_action(action_id, PmAcceptRequest(actor=req.pm_actor))
+        steps.append("pm_accept")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "PM_ACCEPTED":
+        compliance_decide_live_action(
+            action_id,
+            ComplianceDecisionRequest(actor=req.compliance_actor, decision="APPROVE"),
+        )
+        steps.append("compliance_approve")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "COMPLIANCE_APPROVED":
+        submit_live_trade_intent(
+            action_id,
+            IntentSubmitRequest(
+                actor=req.intent_submit_actor,
+                reference_id=f"LIVE_ACTIVITY_{int(datetime.now(timezone.utc).timestamp())}",
+            ),
+        )
+        steps.append("intent_submit")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "INTENT_SUBMITTED":
+        approve_live_trade_intent(action_id, IntentApproveRequest(actor=req.intent_approve_actor))
+        steps.append("intent_approve")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
+    if status == "INTENT_APPROVED":
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": status,
+            "steps": steps,
+            "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+            "next_required_step": "Run committee revalidation before submit",
+        }
+
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": "Decision is not in approval-flow stage.",
+            "status": status,
+            "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+            "steps": steps,
+            "next_required_step": _required_next_step_for_status(status),
+        },
+    )
+
+
+@router.post("/decisions/{action_id}/submit-only")
+def submit_live_decision_only(action_id: str, req: SubmitLiveDecisionRequest):
+    steps: list[str] = []
+    action = _fetch_live_action_state(action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found.")
+
+    def refresh_state() -> dict:
+        latest = _fetch_live_action_state(action_id)
+        if not latest:
+            raise HTTPException(status_code=404, detail="Action disappeared during workflow.")
+        return latest
+
+    action = refresh_state()
+    status = (action.get("STATUS") or "").upper()
+    if status in ("EXECUTION_REQUESTED", "EXECUTED"):
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "status": status,
+            "idempotent_replay": True,
+            "steps": steps,
+        }
+
+    if status != "REVALIDATED_PASS":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Submit requires manual revalidation pass.",
+                "status": status,
+                "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+                "next_required_step": _required_next_step_for_status(status),
+            },
+        )
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (action.get("PORTFOLIO_ID"),),
+        )
+        cfg_rows = fetch_all(cur)
+        cfg = cfg_rows[0] if cfg_rows else {}
+        account_id = cfg.get("IBKR_ACCOUNT_ID")
+        validity_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
+        snapshot_freshness_threshold_sec = int(cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC") or 300)
+
+        cur.execute(
+            """
+            select SNAPSHOT_TS
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'NAV'
+              and IBKR_ACCOUNT_ID = %s
+            order by SNAPSHOT_TS desc
+            limit 1
+            """,
+            (account_id,),
+        )
+        nav_rows = fetch_all(cur)
+        latest_snapshot_ts = (nav_rows[0] or {}).get("SNAPSHOT_TS") if nav_rows else None
+    finally:
+        conn.close()
+
+    if not account_id:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Cannot refresh broker snapshot: IBKR account is missing.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+        )
+
+    snapshot_is_fresh = False
+    if latest_snapshot_ts and hasattr(latest_snapshot_ts, "replace"):
+        snapshot_age_sec = int((datetime.now(timezone.utc) - latest_snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds())
+        snapshot_is_fresh = snapshot_age_sec <= snapshot_freshness_threshold_sec
+
+    if snapshot_is_fresh:
+        steps.append("snapshot_already_fresh")
+    else:
+        try:
+            _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
+            steps.append("snapshot_refresh")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Snapshot refresh failed before execution.", "reason_codes": ["SNAPSHOT_REFRESH_FAILED"], "error": str(exc)},
+            )
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set VALIDITY_WINDOW_END = dateadd(second, %s, current_timestamp()),
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (validity_sec, action_id),
+        )
+    finally:
+        conn.close()
+    steps.append("validity_renew")
+
+    # Safety-critical: stale realism must fail submission; user must revalidate manually again.
+    action = refresh_state()
+    status = (action.get("STATUS") or "").upper()
+    if status != "REVALIDATED_PASS":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Submit requires latest manual revalidation pass.",
+                "status": status,
+                "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+                "steps": steps,
+            },
+        )
+
+    execute_resp = execute_live_action(
+        action_id,
+        ExecuteLiveActionRequest(actor=req.execution_actor, attempt_n=req.attempt_n),
+    )
+    steps.append("execute")
+    action = refresh_state()
+    return {
+        "ok": True,
+        "action_id": action_id,
+        "status": action.get("STATUS"),
+        "steps": steps,
+        "execute_result": execute_resp,
+        "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+    }
 
 
 @router.get("/trades/actions/{action_id}/committee")

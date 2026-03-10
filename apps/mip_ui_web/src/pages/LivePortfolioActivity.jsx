@@ -317,17 +317,47 @@ export default function LivePortfolioActivity() {
     })
   }, [finalizeCommitteeRevalidation])
 
-  const approveAndSubmit = useCallback(async (actionId) => {
-    setBusy(actionId)
+  const approveFlow = useCallback(async (actionId) => {
+    setBusy(`approve:${actionId}`)
     setError('')
     try {
-      const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/approve-and-submit`, {
+      const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          force_refresh_1m: true,
-          committee_recheck_before_submit: true,
-        }),
+        body: JSON.stringify({}),
+      }, 180000)
+      if (!resp.ok) {
+        let msg = `Approve failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Approve blocked'}: ${j.detail.reason_codes.join(', ')}`
+          }
+        } catch {
+          // Keep fallback error message
+        }
+        throw new Error(msg)
+      }
+      await load()
+    } catch (e) {
+      if (e?.name === 'AbortError') {
+        setError('Approve request timed out. The backend may still be processing; click Refresh From IB to reconcile latest state.')
+      } else {
+        setError(e.message || 'Approve failed.')
+      }
+    } finally {
+      setBusy('')
+    }
+  }, [load])
+
+  const submitOnly = useCallback(async (actionId) => {
+    setBusy(`submit:${actionId}`)
+    setError('')
+    try {
+      const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/submit-only`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
       }, 180000)
       if (!resp.ok) {
         let msg = `Submit failed (${resp.status})`
@@ -426,7 +456,7 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Submit path keeps approval/revalidation/execution lifecycle traceable.
+              Decisions not yet broker-opened. Workflow: Committee Revalidation -> Approve -> Submit.
             </div>
             {outsideHours ? <div className="lpa-subtle">Outside operating hours: actions are disabled.</div> : null}
             <div className="lpa-table-wrap">
@@ -446,6 +476,12 @@ export default function LivePortfolioActivity() {
                   )}
                   {pending.map((d) => (
                     <Fragment key={d.action_id}>
+                    {(() => {
+                      const statusUpper = String(d.status || '').toUpperCase()
+                      const approveEnabledStatuses = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED']
+                      const canApprove = approveEnabledStatuses.includes(statusUpper)
+                      const canSubmit = statusUpper === 'REVALIDATED_PASS'
+                      return (
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
                       <td>
                         <div><b>{d.symbol}</b> ({d.side})</div>
@@ -490,10 +526,17 @@ export default function LivePortfolioActivity() {
                         ) : null}
                         <button
                           className="lpa-btn"
-                          disabled={busy === d.action_id || !d.submission_allowed || outsideHours || isStaleRevalidationState(d)}
-                          onClick={() => approveAndSubmit(d.action_id)}
+                          disabled={busy === `approve:${d.action_id}` || outsideHours || !canApprove}
+                          onClick={() => approveFlow(d.action_id)}
                         >
-                          {busy === d.action_id ? 'Submitting...' : 'Approve + Submit'}
+                          {busy === `approve:${d.action_id}` ? 'Approving...' : 'Approve'}
+                        </button>
+                        <button
+                          className="lpa-btn"
+                          disabled={busy === `submit:${d.action_id}` || outsideHours || !canSubmit || isStaleRevalidationState(d)}
+                          onClick={() => submitOnly(d.action_id)}
+                        >
+                          {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
@@ -514,12 +557,14 @@ export default function LivePortfolioActivity() {
                         {readyPulseActionId === d.action_id ? (
                           <div className="lpa-ready-chip">Ready to submit</div>
                         ) : null}
-                        {!d.submission_allowed ? (
-                          <div className="lpa-subtle">Blocked until gates are clear.</div>
+                        {!canApprove && !canSubmit ? (
+                          <div className="lpa-subtle">Run Committee revalidation first.</div>
                         ) : null}
                         </div>
                       </td>
                     </tr>
+                      )
+                    })()}
                     {streamActionId === d.action_id ? (
                       <tr>
                         <td colSpan={5}>

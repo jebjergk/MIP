@@ -3641,6 +3641,16 @@ def submit_live_decision_only(action_id: str, req: SubmitLiveDecisionRequest):
             "steps": steps,
         }
 
+    # Streamlined UX: if user presses Submit from pre-intent states, auto-run approval chain.
+    if status in ("READY_FOR_APPROVAL_FLOW", "PM_ACCEPTED", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED"):
+        approve_live_decision_flow(
+            action_id,
+            ApproveLiveDecisionRequest(),
+        )
+        steps.append("auto_approve_flow")
+        action = refresh_state()
+        status = (action.get("STATUS") or "").upper()
+
     if status != "REVALIDATED_PASS":
         raise HTTPException(
             status_code=409,

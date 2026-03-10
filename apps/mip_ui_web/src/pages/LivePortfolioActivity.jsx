@@ -195,7 +195,31 @@ export default function LivePortfolioActivity() {
       }
       const applyData = await resp.json()
       const nextStatus = String(applyData?.action_status || '').toUpperCase()
-      const canRunRevalidate = ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(nextStatus)
+      const canRunApproveFlow = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED'].includes(nextStatus)
+      if (canRunApproveFlow) {
+        setStreamStatus('Advancing approval flow...')
+        setLiveLineTarget('Committee complete. Advancing PM/Compliance/Intent approvals...')
+        const approveResp = await fetch(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+        if (!approveResp.ok) {
+          let msg = `Approve flow failed (${approveResp.status})`
+          try {
+            const j = await approveResp.json()
+            if (j?.detail?.reason_codes?.length) {
+              msg = `${j.detail.message || 'Approve flow blocked'}: ${j.detail.reason_codes.join(', ')}`
+            } else if (j?.detail) {
+              msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+            }
+          } catch {
+            // fallback
+          }
+          throw new Error(msg)
+        }
+      }
+      const canRunRevalidate = ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(nextStatus) || canRunApproveFlow
       if (canRunRevalidate) {
         setStreamStatus('Revalidating 1m freshness...')
         setLiveLineTarget('Applying committee result and forcing 1m-bar revalidation...')
@@ -220,7 +244,7 @@ export default function LivePortfolioActivity() {
         }
         setLiveLineTarget('Revalidation complete. If gates are clear, decision is ready to submit.')
       } else {
-        setLiveLineTarget('Committee updated. Decision is ready for approval flow; submit will run final gates.')
+        setLiveLineTarget('Committee updated. No further revalidation step available for this status yet.')
       }
       await load()
       setStreamStatus('Completed')
@@ -316,39 +340,6 @@ export default function LivePortfolioActivity() {
       streamRef.current = null
     })
   }, [finalizeCommitteeRevalidation])
-
-  const approveFlow = useCallback(async (actionId) => {
-    setBusy(`approve:${actionId}`)
-    setError('')
-    try {
-      const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      }, 180000)
-      if (!resp.ok) {
-        let msg = `Approve failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Approve blocked'}: ${j.detail.reason_codes.join(', ')}`
-          }
-        } catch {
-          // Keep fallback error message
-        }
-        throw new Error(msg)
-      }
-      await load()
-    } catch (e) {
-      if (e?.name === 'AbortError') {
-        setError('Approve request timed out. The backend may still be processing; click Refresh From IB to reconcile latest state.')
-      } else {
-        setError(e.message || 'Approve failed.')
-      }
-    } finally {
-      setBusy('')
-    }
-  }, [load])
 
   const submitOnly = useCallback(async (actionId) => {
     setBusy(`submit:${actionId}`)
@@ -456,9 +447,9 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Workflow: Committee Revalidation, then Approve, then Submit.
+              Decisions not yet broker-opened. Workflow: Committee Revalidation, then Submit.
             </div>
-            {outsideHours ? <div className="lpa-subtle">Market is closed. Approve is still available; Submit sends DAY orders that IB queues for next session.</div> : null}
+            {outsideHours ? <div className="lpa-subtle">Market is closed. Submit sends DAY orders that IB queues for next session.</div> : null}
             <div className="lpa-table-wrap">
               <table className="lpa-table lpa-table--pending">
                 <thead>
@@ -478,8 +469,6 @@ export default function LivePortfolioActivity() {
                     <Fragment key={d.action_id}>
                     {(() => {
                       const statusUpper = String(d.status || '').toUpperCase()
-                      const approveEnabledStatuses = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED']
-                      const canApprove = approveEnabledStatuses.includes(statusUpper)
                       const canSubmit = statusUpper === 'REVALIDATED_PASS'
                       return (
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
@@ -526,13 +515,6 @@ export default function LivePortfolioActivity() {
                         ) : null}
                         <button
                           className="lpa-btn"
-                          disabled={busy === `approve:${d.action_id}` || !canApprove}
-                          onClick={() => approveFlow(d.action_id)}
-                        >
-                          {busy === `approve:${d.action_id}` ? 'Approving...' : 'Approve'}
-                        </button>
-                        <button
-                          className="lpa-btn"
                           disabled={busy === `submit:${d.action_id}` || !canSubmit || isStaleRevalidationState(d)}
                           onClick={() => submitOnly(d.action_id)}
                         >
@@ -557,8 +539,8 @@ export default function LivePortfolioActivity() {
                         {readyPulseActionId === d.action_id ? (
                           <div className="lpa-ready-chip">Ready to submit</div>
                         ) : null}
-                        {!canApprove && !canSubmit ? (
-                          <div className="lpa-subtle">Run Committee revalidation first.</div>
+                        {!canSubmit ? (
+                          <div className="lpa-subtle">Run Committee revalidation. If committee says go, Submit will be enabled.</div>
                         ) : null}
                         </div>
                       </td>

@@ -41,7 +41,18 @@ begin
             ts.SOURCE_ID,
             u.SYMBOL,
             u.MARKET_TYPE,
-            replace(ts.URL_TEMPLATE, '{SYMBOL}', u.SYMBOL) as RSS_URL_RESOLVED,
+            replace(
+                replace(
+                    ts.URL_TEMPLATE,
+                    '{SYMBOL_QUERY}',
+                    case
+                        when ts.SOURCE_ID = 'YAHOO_TICKER_RSS' and u.MARKET_TYPE = 'FX' then concat(u.SYMBOL, '=X')
+                        else u.SYMBOL
+                    end
+                ),
+                '{SYMBOL}',
+                u.SYMBOL
+            ) as RSS_URL_RESOLVED,
             ts.ENABLED_FLAG
         from ticker_sources ts
         join universe u

@@ -718,25 +718,32 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     latest_bar = cur.fetchone()
     latest_ts = latest_bar[0] if latest_bar else None
     latest_close = latest_bar[1] if latest_bar else None
+    now_utc = datetime.now(timezone.utc)
+    market_open = _is_market_open_ny(now_utc)
+    open_utc, close_utc = _market_session_bounds_utc(now_utc)
     if not latest_ts:
         reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
     else:
-        now_utc = datetime.now(timezone.utc)
         bar_ts_utc = latest_ts.replace(tzinfo=timezone.utc)
         bar_age_sec = (now_utc - bar_ts_utc).total_seconds()
-        max_age_sec = int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60)
-        if bar_age_sec > max_age_sec:
+        # 60s proved too strict for committee runtime; enforce practical lower bound.
+        max_age_sec = max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300)
+        # Out-of-hours: allow submit with latest regular-session bar.
+        if market_open and bar_age_sec > max_age_sec:
             reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
         if one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
             reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
 
     details = {
         "symbol": symbol,
+        "market_open_ny": market_open,
+        "market_open_ts_utc": open_utc.isoformat(),
+        "market_close_ts_utc": close_utc.isoformat(),
         "execution_price_source": source or None,
         "one_min_bar_ts": one_min_bar_ts,
         "latest_one_min_bar_ts": latest_ts,
         "latest_one_min_close": latest_close,
-        "quote_freshness_threshold_sec": cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC"),
+        "quote_freshness_threshold_sec": max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300),
     }
     return reason_codes, details
 
@@ -3146,13 +3153,26 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             submit_allowed = submit_allowed and page_actionable and (not blocked)
             in_position = symbol in held_symbols
             action_id = str(row.get("ACTION_ID") or "")
+            action_orders = order_groups.get(action_id) or []
+            action_order_statuses = {str(o.get("STATUS") or "").upper() for o in action_orders}
+            has_active_order = any(
+                st in (
+                    "SUBMITTED",
+                    "ACKNOWLEDGED",
+                    "PENDINGSUBMIT",
+                    "PRESUBMITTED",
+                    "PARTIAL_FILL",
+                    "PARTIALLYFILLED",
+                )
+                for st in action_order_statuses
+            )
             protection_details = protection_by_action.get(action_id) or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None}
             protection_planned = bool(
                 joint_decision.get("realistic_target_return") is not None
                 or joint_decision.get("acceptable_early_exit_target_return") is not None
             )
 
-            if status != "EXECUTION_REQUESTED" and not in_position:
+            if status != "EXECUTION_REQUESTED" and (not has_active_order) and not in_position:
                 pending_decisions.append(
                     {
                         "action_id": row.get("ACTION_ID"),
@@ -5321,16 +5341,28 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 ),
             )
 
+        # Mark execution requested before non-critical telemetry writes so retries
+        # cannot duplicate intent when downstream insert fails.
+        cur.execute(
+            """
+            update MIP.LIVE.LIVE_ACTIONS
+               set STATUS = 'EXECUTION_REQUESTED',
+                   REASON_CODES = parse_json(%s),
+                   UPDATED_AT = current_timestamp()
+             where ACTION_ID = %s
+            """,
+            (json.dumps(["EXECUTION_REQUESTED"]), action_id),
+        )
+
         cur.execute(
             """
             insert into MIP.LIVE.BROKER_EVENT_LEDGER (
               EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
               IDEMPOTENCY_KEY, BROKER_ORDER_ID, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
             )
-            values (
+            select
               %s, current_timestamp(), 'EXECUTION_REQUESTED', %s, %s, %s,
-              %s, %s, %s, %s, %s, %s, parse_json(%s)
-            )
+              %s, %s, %s, %s, %s, %s, try_parse_json(%s)
             """,
             (
                 str(uuid.uuid4()),

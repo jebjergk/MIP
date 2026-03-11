@@ -157,6 +157,8 @@ def get_overview(
             market_filter = "and b.MARKET_TYPE = %s"
             params.append(market_type)
         
+        batch_date = latest_ts.date() if hasattr(latest_ts, "date") else latest_ts
+
         # Get all symbols with bar data in window
         sql = f"""
         with symbols_in_window as (
@@ -177,19 +179,12 @@ def get_overview(
             group by r.SYMBOL, r.MARKET_TYPE
         ),
         proposal_counts as (
-            with latest_proposal_batch as (
-                select max(p0.PROPOSED_AT::date) as latest_batch_date
-                from MIP.AGENT_OUT.ORDER_PROPOSALS p0
-                where p0.PROPOSED_AT >= %s
-                  {"and p0.PORTFOLIO_ID = %s" if portfolio_id else ""}
-            )
             select
                 p.SYMBOL,
                 p.MARKET_TYPE,
                 count(*) as proposal_count,
-                count(case when p.PROPOSED_AT::date = lpb.latest_batch_date then 1 end) as today_proposal_count
+                count(case when p.PROPOSED_AT::date = %s then 1 end) as today_proposal_count
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
-            cross join latest_proposal_batch lpb
             where p.PROPOSED_AT >= %s
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}
             group by p.SYMBOL, p.MARKET_TYPE
@@ -280,10 +275,8 @@ def get_overview(
         query_params.extend([
             window_start,      # signal_counts
             interval_minutes,  # signal_counts
-            window_start,      # proposal_counts latest_proposal_batch
+            batch_date,        # proposal_counts actionable batch date (latest bar day)
         ])
-        if portfolio_id:
-            query_params.append(portfolio_id)
         query_params.extend([
             window_start,      # proposal_counts
         ])

@@ -590,6 +590,7 @@ def get_detail(
                     la.PROPOSAL_ID,
                     la.PORTFOLIO_ID,
                     la.CREATED_AT,
+                    la.VALIDITY_WINDOW_END,
                     la.STATUS,
                     la.SIDE,
                     la.COMMITTEE_STATUS,
@@ -604,6 +605,14 @@ def get_detail(
                 where upper(la.SYMBOL) = upper(%s)
                   and coalesce(la.ASSET_CLASS, 'STOCK') = %s
                   and la.CREATED_AT >= %s
+                  and (
+                    la.STATUS not in (
+                      'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
+                      'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
+                      'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
+                    )
+                    or coalesce(la.VALIDITY_WINDOW_END, la.CREATED_AT) >= current_timestamp()
+                  )
             """
             params = [symbol, market_type, window_start]
             if portfolio_id:

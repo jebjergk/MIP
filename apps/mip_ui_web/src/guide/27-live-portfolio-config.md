@@ -1,7 +1,7 @@
 # 27. Live Portfolio Link
 
 This page binds live execution controls to broker truth.
-Research proposal source is selected at import time in Live Trades.
+Research proposal source is selected at import time in Live Portfolio Activity.
 
 ## What This Page Is For
 
@@ -17,13 +17,13 @@ Research proposal source is selected at import time in Live Trades.
 2. Enter IBKR Account ID (for example `DU...`) and execution mode.
 3. Set risk/freshness controls and click **Save Config**.
 4. Confirm schematic and guard status.
-5. In Live Trades, choose source research portfolio at import time.
+5. In Live Portfolio Activity, choose source research portfolio at import time.
 
 Important behavior:
 
 - Config IDs are assigned by the backend on create.
 - No SIM fallback is stored in this page.
-- Research proposal source is selected explicitly in Live Trades import.
+- Research proposal source is selected explicitly in Live Portfolio Activity import.
 
 ## Connection Schematic (Color Meaning)
 

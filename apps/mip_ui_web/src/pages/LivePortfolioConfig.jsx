@@ -389,7 +389,7 @@ export default function LivePortfolioConfig() {
               <label>
                 {view === 'create' ? 'Live Config ID' : 'Editing Live Config'}
                 <input value={view === 'create' ? 'Assigned on save' : `#${selectedConfigId}`} disabled />
-                <span className="lpc-hint">Research source portfolio is selected in Live Trades at import time.</span>
+                <span className="lpc-hint">Research source portfolio is selected in Live Portfolio Activity at import time.</span>
               </label>
             </div>
             <div className="lpc-top-actions" />
@@ -407,7 +407,7 @@ export default function LivePortfolioConfig() {
             <div className="lpc-map-grid">
               <div className={`lpc-node ${statusClass(mapStatus.research)}`}>
                 <h4>Research Proposals</h4>
-                <p>Chosen in Live Trades import</p>
+                <p>Chosen in Live Portfolio Activity import</p>
               </div>
               <div className={`lpc-link ${statusClass(mapStatus.linkResearchLive)}`} />
               <div className={`lpc-node ${statusClass(mapStatus.live)}`}>

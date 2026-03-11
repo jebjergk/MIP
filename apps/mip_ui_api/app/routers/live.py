@@ -63,6 +63,7 @@ class ImportLiveActionsFromProposalsRequest(BaseModel):
     run_id: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
     latest_batch_only: bool = True
+    allow_stale_import: bool = False
     dedupe_by_symbol: bool = True
     max_proposal_age_days: int = Field(default=7, ge=1, le=180)
 
@@ -2876,6 +2877,9 @@ def list_live_trade_actions(
                 "STATUS in ('RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION','PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED')"
             )
         wheres_aliased = [w.replace("PORTFOLIO_ID", "la.PORTFOLIO_ID").replace("STATUS in", "la.STATUS in") for w in wheres]
+        if pending_only:
+            # Expired pending actions are stale and must not stay in the actionable queue.
+            wheres_aliased.append("coalesce(la.VALIDITY_WINDOW_END, la.CREATED_AT) >= current_timestamp()")
         params.append(limit)
         sql = f"""
         with proposer_summary as (
@@ -6303,7 +6307,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             wheres.append("RUN_ID_VARCHAR = %s")
             params.append(req.run_id)
             scope = "run_id"
-        elif req.latest_batch_only:
+        else:
             cur.execute(
                 f"""
                 select max(to_date(PROPOSED_AT)) as LATEST_DAY
@@ -6314,10 +6318,12 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             )
             row = cur.fetchone()
             latest_batch_date = row[0] if row else None
-            if latest_batch_date is not None:
+            if latest_batch_date is not None and (req.latest_batch_only or not req.allow_stale_import):
                 wheres.append("to_date(PROPOSED_AT) = %s")
                 params.append(latest_batch_date)
                 scope = "latest_batch_day"
+            elif req.allow_stale_import and not req.latest_batch_only:
+                scope = "all_active_with_stale"
         params.append(req.limit)
 
         cur.execute(
@@ -6333,6 +6339,12 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             tuple(params),
         )
         proposals = fetch_all(cur)
+        if latest_batch_date is not None and req.run_id is None and not req.allow_stale_import:
+            proposals = [
+                p
+                for p in proposals
+                if (p.get("PROPOSED_AT") is not None and p.get("PROPOSED_AT").date() == latest_batch_date)
+            ]
         if req.max_proposal_age_days:
             cutoff = datetime.now(timezone.utc) - timedelta(days=int(req.max_proposal_age_days))
             proposals = [
@@ -6590,6 +6602,7 @@ def list_live_proposal_candidates(
     source_portfolio_id: int | None = Query(default=None),
     run_id: str | None = Query(default=None),
     latest_batch_only: bool = Query(default=True),
+    allow_stale: bool = Query(default=False),
     dedupe_by_symbol: bool = Query(default=True),
     max_proposal_age_days: int = Query(default=7, ge=1, le=180),
     limit: int = Query(default=100, ge=1, le=1000),
@@ -6613,7 +6626,7 @@ def list_live_proposal_candidates(
             wheres.append("op.RUN_ID_VARCHAR = %s")
             params.append(run_id)
             scope = "run_id"
-        elif latest_batch_only:
+        else:
             cur.execute(
                 f"""
                 select max(to_date(op.PROPOSED_AT)) as LATEST_DAY
@@ -6624,10 +6637,12 @@ def list_live_proposal_candidates(
             )
             row = cur.fetchone()
             latest_batch_date = row[0] if row else None
-            if latest_batch_date is not None:
+            if latest_batch_date is not None and (latest_batch_only or not allow_stale):
                 wheres.append("to_date(op.PROPOSED_AT) = %s")
                 params.append(latest_batch_date)
                 scope = "latest_batch_day"
+            elif allow_stale and not latest_batch_only:
+                scope = "all_active_with_stale"
 
         queued_filter_sql = ""
         query_params: list[object] = []
@@ -6662,6 +6677,12 @@ def list_live_proposal_candidates(
             tuple(query_params),
         )
         rows = fetch_all(cur)
+        if latest_batch_date is not None and run_id is None and not allow_stale:
+            rows = [
+                r
+                for r in rows
+                if (r.get("PROPOSED_AT") is not None and r.get("PROPOSED_AT").date() == latest_batch_date)
+            ]
         if max_proposal_age_days:
             cutoff = datetime.now(timezone.utc) - timedelta(days=int(max_proposal_age_days))
             rows = [
@@ -6687,6 +6708,7 @@ def list_live_proposal_candidates(
             "run_id_filter": run_id,
             "live_portfolio_id_filter": live_portfolio_id,
             "count": len(deduped_out),
+            "allow_stale": allow_stale,
             "dedupe_by_symbol": dedupe_by_symbol,
             "max_proposal_age_days": max_proposal_age_days,
             "candidates": serialize_rows(deduped_out),

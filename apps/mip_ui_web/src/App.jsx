@@ -11,7 +11,6 @@ import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
 import AiAgentDecisions from './pages/AiAgentDecisions'
 import NewsIntelligence from './pages/NewsIntelligence'
-import LiveTrades from './pages/LiveTrades'
 import LivePortfolioActivity from './pages/LivePortfolioActivity'
 import LivePortfolioConfig from './pages/LivePortfolioConfig'
 import LearningLedger from './pages/LearningLedger'
@@ -44,7 +43,6 @@ export default function App() {
         <Route path="/learning-ledger" element={<LearningLedger />} />
         <Route path="/performance-dashboard" element={<PerformanceDashboard />} />
         <Route path="/decision-console" element={<AiAgentDecisions />} />
-        <Route path="/live-trades" element={<LiveTrades />} />
         <Route path="/live-portfolio-activity" element={<LivePortfolioActivity />} />
         <Route path="/live-portfolio-config" element={<LivePortfolioConfig />} />
         <Route path="/news-intelligence" element={<NewsIntelligence />} />

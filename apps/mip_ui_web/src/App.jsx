@@ -10,6 +10,7 @@ import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
 import AiAgentDecisions from './pages/AiAgentDecisions'
+import DecisionConsole from './pages/DecisionConsole'
 import NewsIntelligence from './pages/NewsIntelligence'
 import LivePortfolioActivity from './pages/LivePortfolioActivity'
 import LivePortfolioConfig from './pages/LivePortfolioConfig'
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/learning-ledger" element={<LearningLedger />} />
         <Route path="/performance-dashboard" element={<PerformanceDashboard />} />
         <Route path="/decision-console" element={<AiAgentDecisions />} />
+        <Route path="/intraday/early-exit" element={<DecisionConsole />} />
         <Route path="/live-portfolio-activity" element={<LivePortfolioActivity />} />
         <Route path="/live-portfolio-config" element={<LivePortfolioConfig />} />
         <Route path="/news-intelligence" element={<NewsIntelligence />} />

@@ -193,6 +193,14 @@ TRAINING_QUALIFICATION_POLICY_VERSION = "phase5_training_qualification_v1"
 NEWS_CONTEXT_POLICY_VERSION = "phaseA_news_context_v1"
 OPENING_VALIDATION_POLICY_VERSION = "phase_opening_validation_v1"
 NY_TZ = ZoneInfo("America/New_York")
+LIVE_ORDER_ACTIVE_STATUSES = {
+    "SUBMITTED",
+    "ACKNOWLEDGED",
+    "PENDINGSUBMIT",
+    "PRESUBMITTED",
+    "PARTIAL_FILL",
+    "PARTIALLYFILLED",
+}
 COMMITTEE_ROLES = [
     "PROPOSER",
     "TRADER_EXECUTION_REVIEWER",
@@ -263,6 +271,87 @@ def _fetch_live_action_state(action_id: str) -> dict | None:
         return rows[0] if rows else None
     finally:
         conn.close()
+
+
+def _normalize_broker_order_id(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) -> dict:
+    cur.execute(
+        """
+        select SNAPSHOT_TS
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        where SNAPSHOT_TYPE = 'NAV'
+          and IBKR_ACCOUNT_ID = %s
+        order by SNAPSHOT_TS desc
+        limit 1
+        """,
+        (account_id,),
+    )
+    nav_rows = fetch_all(cur)
+    latest_snapshot_ts = (nav_rows[0] or {}).get("SNAPSHOT_TS") if nav_rows else None
+    if not latest_snapshot_ts:
+        return {
+            "snapshot_ts": None,
+            "open_order_ids": set(),
+            "open_orders": [],
+            "symbol_position_qty": 0.0,
+            "has_symbol_position": False,
+        }
+
+    cur.execute(
+        """
+        select OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED, OPEN_ORDER_REMAINING
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        where SNAPSHOT_TYPE = 'OPEN_ORDER'
+          and IBKR_ACCOUNT_ID = %s
+          and SNAPSHOT_TS = %s
+        """,
+        (account_id, latest_snapshot_ts),
+    )
+    open_orders = fetch_all(cur)
+    open_order_ids = {
+        _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))
+        for r in open_orders
+        if _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))
+    }
+
+    symbol_position_qty = 0.0
+    has_symbol_position = False
+    if symbol:
+        cur.execute(
+            """
+            select coalesce(sum(POSITION_QTY), 0) as POSITION_QTY
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'POSITION'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS = %s
+              and upper(SYMBOL) = upper(%s)
+            """,
+            (account_id, latest_snapshot_ts, symbol),
+        )
+        pos_rows = fetch_all(cur)
+        symbol_position_qty = float((pos_rows[0] or {}).get("POSITION_QTY") or 0.0)
+        has_symbol_position = abs(symbol_position_qty) > 0
+
+    return {
+        "snapshot_ts": latest_snapshot_ts,
+        "open_order_ids": open_order_ids,
+        "open_orders": open_orders,
+        "symbol_position_qty": symbol_position_qty,
+        "has_symbol_position": has_symbol_position,
+    }
+
+
+def _is_order_active_in_broker_truth(order_row: dict, broker_open_order_ids: set[str]) -> bool:
+    status = str(order_row.get("STATUS") or "").upper()
+    if status not in LIVE_ORDER_ACTIVE_STATUSES:
+        return False
+    broker_order_id = _normalize_broker_order_id(order_row.get("BROKER_ORDER_ID"))
+    return bool(broker_order_id and broker_order_id in broker_open_order_ids)
 
 
 def _compute_snapshot_freshness_state(snapshot_age_sec: int | None, threshold_sec: int | None) -> str:
@@ -3024,6 +3113,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             (portfolio_id, limit),
         )
         orders = fetch_all(cur)
+        broker_open_order_ids = {_normalize_broker_order_id(r.get("OPEN_ORDER_ID")) for r in open_orders if _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))}
         order_groups: dict[str, list[dict]] = {}
         for order in orders:
             key = str(order.get("ACTION_ID") or "")
@@ -3129,18 +3219,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             status = (row.get("STATUS") or "").upper()
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
-            action_order_statuses = {str(o.get("STATUS") or "").upper() for o in action_orders}
-            has_active_order = any(
-                st in (
-                    "SUBMITTED",
-                    "ACKNOWLEDGED",
-                    "PENDINGSUBMIT",
-                    "PRESUBMITTED",
-                    "PARTIAL_FILL",
-                    "PARTIALLYFILLED",
-                )
-                for st in action_order_statuses
-            )
+            has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
             if status == "EXECUTION_REQUESTED" or has_active_order or (symbol in held_symbols):
                 suppress_pending_symbols.add(symbol)
 
@@ -3181,18 +3260,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             in_position = symbol in held_symbols
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
-            action_order_statuses = {str(o.get("STATUS") or "").upper() for o in action_orders}
-            has_active_order = any(
-                st in (
-                    "SUBMITTED",
-                    "ACKNOWLEDGED",
-                    "PENDINGSUBMIT",
-                    "PRESUBMITTED",
-                    "PARTIAL_FILL",
-                    "PARTIALLYFILLED",
-                )
-                for st in action_order_statuses
-            )
+            has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
             protection_details = protection_by_action.get(action_id) or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None}
             protection_planned = bool(
                 joint_decision.get("realistic_target_return") is not None
@@ -3296,9 +3364,20 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
         orders_enriched = []
         for ord_row in orders:
             action_key = str(ord_row.get("ACTION_ID") or "")
+            status_upper = str(ord_row.get("STATUS") or "").upper()
+            broker_truth_active = _is_order_active_in_broker_truth(ord_row, broker_open_order_ids)
+            symbol_upper = str(ord_row.get("SYMBOL") or "").upper()
+            broker_truth_in_position = symbol_upper in held_symbols
+            status_for_display = ord_row.get("STATUS")
+            if status_upper in LIVE_ORDER_ACTIVE_STATUSES and not broker_truth_active and not broker_truth_in_position:
+                # Enforce IBKR truth in display: local active states must be broker-confirmed.
+                status_for_display = "NOT_ACTIVE_AT_BROKER"
             orders_enriched.append(
                 {
                     **ord_row,
+                    "STATUS": status_for_display,
+                    "BROKER_TRUTH_ACTIVE": broker_truth_active,
+                    "BROKER_TRUTH_IN_POSITION": broker_truth_in_position,
                     "PROTECTION": protection_by_action.get(action_key)
                     or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None},
                 }
@@ -5254,16 +5333,117 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 sl_price = entry_price * (1 + stop_loss_pct)
         order_legs = []
         broker_submit_payload = None
+        broker_truth_check = None
         if use_ibkr_submit:
-            broker_submit_payload = _submit_ibkr_order_bundle(
-                account=str(account_id),
-                symbol=str(action.get("SYMBOL")),
-                side=side,
-                qty=qty_ordered,
-                entry_price=float(entry_price) if entry_price is not None else None,
-                tp_price=float(tp_price) if tp_price is not None else None,
-                sl_price=float(sl_price) if sl_price is not None else None,
-                tif="DAY",
+            submit_attempt_payload = {
+                "account": str(account_id),
+                "symbol": str(action.get("SYMBOL")),
+                "side": side,
+                "qty": qty_ordered,
+                "entry_price": float(entry_price) if entry_price is not None else None,
+                "tp_price": float(tp_price) if tp_price is not None else None,
+                "sl_price": float(sl_price) if sl_price is not None else None,
+                "tif": "DAY",
+                "runtime": {
+                    "host": os.getenv("IBKR_EXEC_HOST", "127.0.0.1"),
+                    "port": int(os.getenv("IBKR_EXEC_PORT", "4002")),
+                    "client_id": int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410")),
+                    "connect_timeout_sec": int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12")),
+                    "exchange": os.getenv("IBKR_EXEC_EXCHANGE", "SMART"),
+                    "currency": os.getenv("IBKR_EXEC_CURRENCY", "USD"),
+                    "outside_rth": os.getenv("IBKR_EXEC_OUTSIDE_RTH", "0").strip().lower() in ("1", "true", "yes", "on"),
+                },
+            }
+            cur.execute(
+                """
+                insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+                  EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
+                  IDEMPOTENCY_KEY, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
+                )
+                values (
+                  %s, current_timestamp(), 'EXECUTION_SUBMIT_ATTEMPT', %s, %s, %s,
+                  %s, %s, %s, %s, %s, parse_json(%s)
+                )
+                """,
+                (
+                    str(uuid.uuid4()),
+                    action.get("PORTFOLIO_ID"),
+                    action.get("PROPOSAL_ID"),
+                    action_id,
+                    idempotency_key,
+                    action.get("SYMBOL"),
+                    side,
+                    qty_ordered,
+                    entry_price,
+                    json.dumps(submit_attempt_payload),
+                ),
+            )
+            try:
+                broker_submit_payload = _submit_ibkr_order_bundle(
+                    account=str(account_id),
+                    symbol=str(action.get("SYMBOL")),
+                    side=side,
+                    qty=qty_ordered,
+                    entry_price=float(entry_price) if entry_price is not None else None,
+                    tp_price=float(tp_price) if tp_price is not None else None,
+                    sl_price=float(sl_price) if sl_price is not None else None,
+                    tif="DAY",
+                )
+            except HTTPException as exc:
+                cur.execute(
+                    """
+                    insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+                      EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
+                      IDEMPOTENCY_KEY, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
+                    )
+                    values (
+                      %s, current_timestamp(), 'EXECUTION_SUBMIT_FAILED', %s, %s, %s,
+                      %s, %s, %s, %s, %s, parse_json(%s)
+                    )
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        action.get("PORTFOLIO_ID"),
+                        action.get("PROPOSAL_ID"),
+                        action_id,
+                        idempotency_key,
+                        action.get("SYMBOL"),
+                        side,
+                        qty_ordered,
+                        entry_price,
+                        json.dumps(
+                            {
+                                "message": "IBKR submission raised HTTPException",
+                                "detail": exc.detail,
+                                "attempt": submit_attempt_payload,
+                            }
+                        ),
+                    ),
+                )
+                raise
+            cur.execute(
+                """
+                insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+                  EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
+                  IDEMPOTENCY_KEY, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
+                )
+                values (
+                  %s, current_timestamp(), 'EXECUTION_SUBMIT_RESULT', %s, %s, %s,
+                  %s, %s, %s, %s, %s, parse_json(%s)
+                )
+                """,
+                (
+                    str(uuid.uuid4()),
+                    action.get("PORTFOLIO_ID"),
+                    action.get("PROPOSAL_ID"),
+                    action_id,
+                    idempotency_key,
+                    action.get("SYMBOL"),
+                    side,
+                    qty_ordered,
+                    entry_price,
+                    json.dumps(broker_submit_payload or {}),
+                ),
             )
             ib_orders = broker_submit_payload.get("orders") or []
             for ib_leg in ib_orders:
@@ -5294,6 +5474,33 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 raise HTTPException(
                     status_code=409,
                     detail={"message": "IBKR submission returned no orders.", "reason_codes": ["IBKR_EMPTY_ORDER_BUNDLE"]},
+                )
+            # Fail closed: do not accept local execution state unless broker-truth snapshot confirms it.
+            _run_on_demand_snapshot_sync(account=str(account_id), portfolio_id=action.get("PORTFOLIO_ID"))
+            broker_truth_raw = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+            broker_order_ids = {
+                _normalize_broker_order_id(leg.get("broker_order_id"))
+                for leg in order_legs
+                if _normalize_broker_order_id(leg.get("broker_order_id"))
+            }
+            broker_open_ids = broker_truth_raw.get("open_order_ids") or set()
+            has_open_order = bool(broker_order_ids and broker_order_ids.intersection(broker_open_ids))
+            has_position = bool(broker_truth_raw.get("has_symbol_position"))
+            broker_truth_check = {
+                **broker_truth_raw,
+                "open_order_ids": sorted(broker_open_ids),
+            }
+            if not has_open_order and not has_position:
+                final_reason_codes = ["IBKR_TRUTH_MISSING_ORDER_ACK"]
+                _write_reason_codes(cur, action_id, final_reason_codes)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "IBKR did not confirm open-order or position after submit; execution blocked to prevent drift.",
+                        "reason_codes": final_reason_codes,
+                        "broker_order_ids": sorted(broker_order_ids),
+                        "snapshot_ts": broker_truth_raw.get("snapshot_ts"),
+                    },
                 )
         else:
             order_legs = [
@@ -5407,6 +5614,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "actor": req.actor,
                         "mode": "IBKR_GATEWAY" if use_ibkr_submit else "PAPER_PLACEHOLDER",
                         "adapter_mode": adapter_mode,
+                        "broker_truth_check": broker_truth_check,
                         "protection_state": (
                             "FULL"
                             if (tp_price is not None and sl_price is not None)

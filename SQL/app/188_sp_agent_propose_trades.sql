@@ -643,59 +643,17 @@ begin
                     ),
                     abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
                 ) as NEWS_SCORE_ADJ_SHADOW,
-                least(
-                    greatest(
-                        iff(
-                            e.NEWS_ENABLED = 'true'
-                            and e.NEWS_INFLUENCE_ENABLED = 'true'
-                            and e.NEWS_DISPLAY_ONLY <> 'true',
-                            e.NEWS_RECENCY_WEIGHT
-                            * (
-                                e.NEWS_PRESSURE_SCORE * abs(e.NEWS_PRESSURE_HOT)
-                                - (coalesce(e.NEWS_UNCERTAINTY_PROXY, 0.0) * abs(e.NEWS_UNCERTAINTY_HIGH))
-                                - (e.NEWS_EVENT_RISK_PROXY * abs(e.NEWS_EVENT_RISK_HIGH))
-                            ),
-                            0.0
-                        ),
-                        -abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
-                    ),
-                    abs(coalesce(e.NEWS_SCORE_CAP, e.NEWS_SCORE_MAX_ABS))
-                ) as NEWS_SCORE_ADJ_APPLIED
+                -- News is diagnostic context at proposal time. Proposal ranking
+                -- and blocking are trust-gate driven; committee handles news.
+                0.0 as NEWS_SCORE_ADJ_APPLIED
             from enriched_news e
         ),
         prioritized as (
             select
                 s.*,
                 iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY,
-                (
-                    s.SCORE
-                    + s.NEWS_SCORE_ADJ_APPLIED
-                    + iff(
-                        s.NEWS_ENABLED = 'true'
-                        and s.NEWS_INFLUENCE_ENABLED = 'true'
-                        and s.NEWS_DISPLAY_ONLY <> 'true'
-                        and upper(coalesce(s.NEWS_AGG_BADGE, '')) = 'HOT'
-                        and coalesce(s.NEWS_AGG_CONFLICT, 0.0) < coalesce(s.NEWS_CONFLICT_HIGH, 0.60),
-                        least(abs(coalesce(s.NEWS_SCORE_CAP, s.NEWS_SCORE_MAX_ABS)), 0.05),
-                        0.0
-                    )
-                ) as FINAL_SCORE,
-                iff(
-                    s.NEWS_ENABLED = 'true'
-                    and s.NEWS_INFLUENCE_ENABLED = 'true'
-                    and s.NEWS_DISPLAY_ONLY <> 'true'
-                    and (
-                        coalesce(s.NEWS_IS_STALE, false)
-                        or s.NEWS_EVENT_RISK_PROXY >= 0.90
-                        or (
-                            coalesce(s.NEWS_BLOCK_ON_CONFLICT, 'true') = 'true'
-                            and upper(coalesce(s.NEWS_AGG_BADGE, '')) = 'HOT'
-                            and coalesce(s.NEWS_AGG_CONFLICT, 0.0) >= coalesce(s.NEWS_CONFLICT_HIGH, 0.60)
-                        )
-                    ),
-                    true,
-                    false
-                ) as NEWS_BLOCK_NEW_ENTRY
+                s.SCORE as FINAL_SCORE,
+                false as NEWS_BLOCK_NEW_ENTRY
             from scored_candidates s
             left join held_symbols h
               on h.SYMBOL = s.SYMBOL
@@ -752,7 +710,6 @@ begin
                 q.*
             from quota_limited q
             where q.QUOTA_ORDER <= :v_remaining_capacity
-              and q.NEWS_BLOCK_NEW_ENTRY = false
         ),
         remaining_slots as (
             select greatest(
@@ -767,7 +724,6 @@ begin
             left join primary_selected p
               on p.RECOMMENDATION_ID = r.RECOMMENDATION_ID
             where p.RECOMMENDATION_ID is null
-              and r.NEWS_BLOCK_NEW_ENTRY = false
         ),
         backfill_ranked as (
             select
@@ -809,12 +765,6 @@ begin
                 least(
                     :v_max_position_pct,
                     :v_target_weight
-                    * iff(
-                        coalesce(s.NEWS_AGG_CONFLICT, 0.0) >= coalesce(s.NEWS_CONFLICT_HIGH, 0.60),
-                        coalesce(s.NEWS_SIZE_MULT_CAUTION, 0.75),
-                        1.0
-                    )
-                    * (1 + coalesce(s.NEWS_SCORE_ADJ_APPLIED, 0))
                 )
             ) as TARGET_WEIGHT,
             s.RECOMMENDATION_ID,

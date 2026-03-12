@@ -20,18 +20,24 @@
 }
 
 .lpa-kpis {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
 }
 
 .lpa-kpi {
   border: 1px solid #d7dce4;
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: #fff;
   display: grid;
   gap: 4px;
+  flex: 0 0 auto;
+  min-width: 116px;
+  white-space: nowrap;
 }
 
 .lpa-kpi span {

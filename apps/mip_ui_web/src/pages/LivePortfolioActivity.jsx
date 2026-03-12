@@ -25,6 +25,16 @@ function fmtPct(v) {
   return `${(n * 100).toFixed(2)}%`
 }
 
+function fmtSigned(v, digits = 2) {
+  if (v == null) return '—'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  const abs = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  if (n > 0) return `+${abs}`
+  if (n < 0) return `-${abs}`
+  return abs
+}
+
 function fmtAge(ts) {
   if (!ts) return '—'
   const dt = new Date(ts)
@@ -87,11 +97,37 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 120000) {
   }
 }
 
+function MiniSparkline({ points = [], color = '#1565c0' }) {
+  const width = 220
+  const height = 48
+  const pad = 4
+  const values = (points || []).map((v) => Number(v)).filter((v) => Number.isFinite(v))
+  if (values.length < 2) return <div className="lpa-subtle">Not enough points yet.</div>
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const spread = max - min || 1
+  const xStep = (width - pad * 2) / (values.length - 1)
+  const path = values.map((v, i) => {
+    const x = pad + i * xStep
+    const y = height - pad - ((v - min) / spread) * (height - pad * 2)
+    return `${i === 0 ? 'M' : 'L'}${x},${y}`
+  }).join(' ')
+  return (
+    <svg className="lpa-sparkline" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden>
+      <path d={path} fill="none" stroke={color} strokeWidth="2" />
+    </svg>
+  )
+}
+
 export default function LivePortfolioActivity() {
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
+  const [ordersLookbackDays, setOrdersLookbackDays] = useState(30)
+  const [ordersLimit, setOrdersLimit] = useState(120)
+  const [executionsLimit, setExecutionsLimit] = useState(60)
+  const [snapshotLookbackDays, setSnapshotLookbackDays] = useState(14)
   const [streamActionId, setStreamActionId] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
@@ -106,7 +142,13 @@ export default function LivePortfolioActivity() {
     setLoading(true)
     setError('')
     try {
-      const resp = await fetch(`${API_BASE}/live/activity/overview`)
+      const params = new URLSearchParams({
+        order_lookback_days: String(ordersLookbackDays),
+        order_limit: String(ordersLimit),
+        execution_limit: String(executionsLimit),
+        snapshot_lookback_days: String(snapshotLookbackDays),
+      })
+      const resp = await fetch(`${API_BASE}/live/activity/overview?${params.toString()}`)
       if (!resp.ok) throw new Error(`Failed to load activity overview (${resp.status})`)
       const data = await resp.json()
       setOverview(data)
@@ -115,7 +157,7 @@ export default function LivePortfolioActivity() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays])
 
   useEffect(() => {
     load()
@@ -409,7 +451,24 @@ export default function LivePortfolioActivity() {
   const orders = overview?.orders || []
   const executions = overview?.executions || []
   const readiness = overview?.readiness || {}
+  const navTrend = overview?.activity_trends?.nav || []
+  const positionTrend = overview?.activity_trends?.positions || []
   const outsideHours = readiness.market_open === false
+  const posCount = openPositions.length
+  const totalMarketValue = openPositions.reduce((sum, p) => sum + Number(p?.MARKET_VALUE || 0), 0)
+  const totalUnrealized = openPositions.reduce((sum, p) => sum + Number(p?.UNREALIZED_PNL || 0), 0)
+  const winners = openPositions.filter((p) => Number(p?.UNREALIZED_PNL || 0) > 0).length
+  const losers = openPositions.filter((p) => Number(p?.UNREALIZED_PNL || 0) < 0).length
+  const tradeNotional = executions.reduce((sum, e) => {
+    const q = Number(e?.qty_filled || 0)
+    const px = Number(e?.avg_fill_price || 0)
+    if (!Number.isFinite(q) || !Number.isFinite(px)) return sum
+    return sum + Math.abs(q * px)
+  }, 0)
+  const trendWindowDays = Number(overview?.account_kpis?.trend_window_days || snapshotLookbackDays)
+  const navChangeAbs = overview?.account_kpis?.trend_nav_change_abs
+  const navChangePct = overview?.account_kpis?.trend_nav_change_pct
+  const trendUnrealizedChange = overview?.account_kpis?.trend_unrealized_change_abs
 
   return (
     <div className="page lpa-page">
@@ -443,6 +502,52 @@ export default function LivePortfolioActivity() {
               <span>Drift</span><b>{readiness.drift_state || '—'}</b>
             </div>
           </div>
+
+          <section className="lpa-section">
+            <div className="lpa-visuals-head">
+              <div>
+                <h3>Snapshot Trends</h3>
+                <div className="lpa-subtle">Useful visuals from stored IB snapshots (refresh creates a new point).</div>
+              </div>
+              <label className="lpa-control">
+                <span>Trend Window</span>
+                <select value={snapshotLookbackDays} onChange={(e) => setSnapshotLookbackDays(Number(e.target.value))}>
+                  <option value={1}>1 day</option>
+                  <option value={7}>7 days</option>
+                  <option value={14}>14 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={90}>90 days</option>
+                </select>
+              </label>
+            </div>
+            <div className="lpa-spark-grid">
+              <div className="lpa-spark-card">
+                <div className="lpa-spark-title">NAV</div>
+                <div className="lpa-spark-value">{fmtNum(kpis.equity_nav_eur, 2)}</div>
+                <div className={`lpa-spark-delta ${(Number(navChangeAbs || 0) >= 0) ? 'lpa-pos' : 'lpa-neg'}`}>
+                  {fmtSigned(navChangeAbs, 2)} ({fmtPct(navChangePct)})
+                </div>
+                <MiniSparkline points={navTrend.map((p) => p.nav_eur)} color="#1565c0" />
+                <div className="lpa-subtle">{trendWindowDays}d window</div>
+              </div>
+              <div className="lpa-spark-card">
+                <div className="lpa-spark-title">Unrealized P&L</div>
+                <div className={`lpa-spark-value ${totalUnrealized >= 0 ? 'lpa-pos' : 'lpa-neg'}`}>{fmtSigned(totalUnrealized, 2)}</div>
+                <div className={`lpa-spark-delta ${(Number(trendUnrealizedChange || 0) >= 0) ? 'lpa-pos' : 'lpa-neg'}`}>
+                  {fmtSigned(trendUnrealizedChange, 2)}
+                </div>
+                <MiniSparkline points={positionTrend.map((p) => p.total_unrealized_pnl)} color="#2e7d32" />
+                <div className="lpa-subtle">{trendWindowDays}d change</div>
+              </div>
+              <div className="lpa-spark-card">
+                <div className="lpa-spark-title">Gross Exposure</div>
+                <div className="lpa-spark-value">{fmtNum(kpis.gross_exposure_eur, 2)}</div>
+                <div className="lpa-spark-delta lpa-subtle">Cash: {fmtNum(kpis.cash_eur, 2)}</div>
+                <MiniSparkline points={navTrend.map((p) => p.gross_exposure_eur)} color="#6a1b9a" />
+                <div className="lpa-subtle">Open positions: {kpis.open_positions_count ?? 0}</div>
+              </div>
+            </div>
+          </section>
 
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
@@ -593,36 +698,36 @@ export default function LivePortfolioActivity() {
           </section>
 
           <section className="lpa-section">
-            <h3>Open Positions (IBKR Truth)</h3>
-            <div className="lpa-table-wrap">
-              <table className="lpa-table">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Qty</th>
-                    <th>Avg Cost</th>
-                    <th>Market Value</th>
-                    <th>Unrealized P&L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {openPositions.length === 0 && <tr><td colSpan={5}>No open broker positions.</td></tr>}
-                  {openPositions.map((p, idx) => (
-                    <tr key={`${p.SYMBOL || 'SYM'}_${idx}`}>
-                      <td>{p.SYMBOL || '—'}</td>
-                      <td>{fmtNum(p.POSITION_QTY, 0)}</td>
-                      <td>{fmtNum(p.AVG_COST, 4)}</td>
-                      <td>{fmtNum(p.MARKET_VALUE, 2)}</td>
-                      <td>{fmtNum(p.UNREALIZED_PNL, 2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="lpa-section">
             <h3>Orders (Broker Lifecycle)</h3>
+            <div className="lpa-controls">
+              <label className="lpa-control">
+                <span>Orders Lookback</span>
+                <select value={ordersLookbackDays} onChange={(e) => setOrdersLookbackDays(Number(e.target.value))}>
+                  <option value={7}>7d</option>
+                  <option value={30}>30d</option>
+                  <option value={90}>90d</option>
+                  <option value={180}>180d</option>
+                </select>
+              </label>
+              <label className="lpa-control">
+                <span>Order Rows</span>
+                <select value={ordersLimit} onChange={(e) => setOrdersLimit(Number(e.target.value))}>
+                  <option value={60}>60</option>
+                  <option value={120}>120</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                </select>
+              </label>
+              <label className="lpa-control">
+                <span>Trade Rows</span>
+                <select value={executionsLimit} onChange={(e) => setExecutionsLimit(Number(e.target.value))}>
+                  <option value={30}>30</option>
+                  <option value={60}>60</option>
+                  <option value={120}>120</option>
+                  <option value={250}>250</option>
+                </select>
+              </label>
+            </div>
             <div className="lpa-table-wrap">
               <table className="lpa-table">
                 <thead>
@@ -672,35 +777,88 @@ export default function LivePortfolioActivity() {
           </section>
 
           <section className="lpa-section">
-            <h3>Executions / Trades</h3>
-            <div className="lpa-table-wrap">
-              <table className="lpa-table">
-                <thead>
-                  <tr>
-                    <th>Execution</th>
-                    <th>Status</th>
-                    <th>Filled Qty</th>
-                    <th>Fill Price</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {executions.length === 0 && <tr><td colSpan={5}>No executions yet.</td></tr>}
-                  {executions.map((e) => (
-                    <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
-                      <td>
-                        <div><b>{e.symbol}</b> ({e.side})</div>
-                        <div>Order: {e.order_id}</div>
-                        <div>Action: {e.action_id || '—'}</div>
-                      </td>
-                      <td className={`lpa-status lpa-status--${stateClass(e.status)}`}>{e.status || '—'}</td>
-                      <td>{fmtNum(e.qty_filled, 0)}</td>
-                      <td>{fmtNum(e.avg_fill_price, 4)}</td>
-                      <td>{fmtTs(e.execution_ts)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="lpa-split">
+              <div className="lpa-panel lpa-panel--positions">
+                <h3>Open Positions (IBKR Truth)</h3>
+                <div className="lpa-subtle">Snapshot-stored broker truth. Updated on refresh.</div>
+                <div className="lpa-mini-kpis">
+                  <div><span>Positions</span><b>{posCount}</b></div>
+                  <div><span>Mkt Value</span><b>{fmtNum(totalMarketValue, 2)}</b></div>
+                  <div><span>Unrealized P&L</span><b className={totalUnrealized >= 0 ? 'lpa-pos' : 'lpa-neg'}>{fmtSigned(totalUnrealized, 2)}</b></div>
+                  <div><span>Winners / Losers</span><b>{winners} / {losers}</b></div>
+                </div>
+                <div className="lpa-table-wrap">
+                  <table className="lpa-table">
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Qty</th>
+                        <th>Avg Cost</th>
+                        <th>Mkt Value</th>
+                        <th>P&L</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {openPositions.length === 0 && <tr><td colSpan={5}>No open broker positions.</td></tr>}
+                      {openPositions.map((p, idx) => (
+                        <tr key={`${p.SYMBOL || 'SYM'}_${idx}`}>
+                          <td>
+                            <div><b>{p.SYMBOL || '—'}</b></div>
+                            <div className="lpa-subtle">{p.SECURITY_TYPE || '—'}</div>
+                          </td>
+                          <td>{fmtNum(p.POSITION_QTY, 0)}</td>
+                          <td>{fmtNum(p.AVG_COST, 4)}</td>
+                          <td>{fmtNum(p.MARKET_VALUE, 2)}</td>
+                          <td className={Number(p.UNREALIZED_PNL || 0) >= 0 ? 'lpa-pos' : 'lpa-neg'}>{fmtSigned(p.UNREALIZED_PNL, 2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="lpa-panel lpa-panel--trades">
+                <h3>Trades</h3>
+                <div className="lpa-subtle">Executed fills from broker lifecycle.</div>
+                <div className="lpa-mini-kpis">
+                  <div><span>Lookback</span><b>{executions.length} total</b></div>
+                  <div><span>Notional</span><b>{fmtNum(tradeNotional, 2)}</b></div>
+                </div>
+                <div className="lpa-table-wrap">
+                  <table className="lpa-table">
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Qty</th>
+                        <th>Notional</th>
+                        <th>P&L</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {executions.length === 0 && <tr><td colSpan={5}>No executions yet.</td></tr>}
+                      {executions.map((e) => {
+                        const side = String(e.side || '').toUpperCase()
+                        const qty = Number(e.qty_filled || 0)
+                        const px = Number(e.avg_fill_price || 0)
+                        const notional = Number.isFinite(qty) && Number.isFinite(px) ? Math.abs(qty * px) : null
+                        return (
+                          <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
+                            <td>
+                              <div><b>{e.symbol}</b></div>
+                              <div className="lpa-subtle">{fmtTs(e.execution_ts)}</div>
+                            </td>
+                            <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}`}>{side || '—'}</span></td>
+                            <td>{fmtNum(e.qty_filled, 0)}</td>
+                            <td>{fmtNum(notional, 2)}</td>
+                            <td>—</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           </section>
         </>

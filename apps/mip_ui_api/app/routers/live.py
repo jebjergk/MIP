@@ -3047,7 +3047,13 @@ def list_live_trade_actions(
 
 
 @router.get("/activity/overview")
-def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
+def get_live_activity_overview(
+    limit: int = Query(200, ge=50, le=1000),
+    order_limit: int = Query(120, ge=20, le=1000),
+    execution_limit: int = Query(60, ge=10, le=500),
+    order_lookback_days: int = Query(30, ge=1, le=365),
+    snapshot_lookback_days: int = Query(14, ge=1, le=365),
+):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -3074,6 +3080,8 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                 "orders": [],
                 "executions": [],
                 "pending_decisions": [],
+                "activity_trends": {"nav": [], "positions": []},
+                "ui_hints": {},
                 "counts": {},
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -3098,6 +3106,55 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
         snapshot_age_sec = None
         if latest_snapshot_ts and hasattr(latest_snapshot_ts, "replace"):
             snapshot_age_sec = int((datetime.now(timezone.utc) - latest_snapshot_ts.replace(tzinfo=timezone.utc)).total_seconds())
+
+        cur.execute(
+            """
+            select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR, GROSS_POSITION_VALUE_EUR
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'NAV'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+            order by SNAPSHOT_TS asc
+            """,
+            (account_id, snapshot_lookback_days),
+        )
+        nav_trend_rows = fetch_all(cur)
+        nav_trend = [
+            {
+                "snapshot_ts": r.get("SNAPSHOT_TS"),
+                "nav_eur": float(r.get("NET_LIQUIDATION_EUR")) if r.get("NET_LIQUIDATION_EUR") is not None else None,
+                "cash_eur": float(r.get("TOTAL_CASH_EUR")) if r.get("TOTAL_CASH_EUR") is not None else None,
+                "gross_exposure_eur": float(r.get("GROSS_POSITION_VALUE_EUR")) if r.get("GROSS_POSITION_VALUE_EUR") is not None else None,
+            }
+            for r in nav_trend_rows
+        ]
+
+        cur.execute(
+            """
+            select
+              SNAPSHOT_TS,
+              sum(coalesce(UNREALIZED_PNL, 0)) as TOTAL_UNREALIZED_PNL,
+              sum(abs(coalesce(MARKET_VALUE, 0))) as TOTAL_MARKET_VALUE,
+              count_if(coalesce(POSITION_QTY, 0) <> 0) as OPEN_POSITION_COUNT
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'POSITION'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+            group by SNAPSHOT_TS
+            order by SNAPSHOT_TS asc
+            """,
+            (account_id, snapshot_lookback_days),
+        )
+        position_trend_rows = fetch_all(cur)
+        position_trend = [
+            {
+                "snapshot_ts": r.get("SNAPSHOT_TS"),
+                "total_unrealized_pnl": float(r.get("TOTAL_UNREALIZED_PNL")) if r.get("TOTAL_UNREALIZED_PNL") is not None else None,
+                "total_market_value": float(r.get("TOTAL_MARKET_VALUE")) if r.get("TOTAL_MARKET_VALUE") is not None else None,
+                "open_position_count": int(r.get("OPEN_POSITION_COUNT") or 0),
+            }
+            for r in position_trend_rows
+        ]
 
         open_positions = []
         open_orders = []
@@ -3143,10 +3200,11 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
               SUBMITTED_AT, ACKNOWLEDGED_AT, FILLED_AT, LAST_UPDATED_AT, CREATED_AT
             from MIP.LIVE.LIVE_ORDERS
             where PORTFOLIO_ID = %s
+              and coalesce(LAST_UPDATED_AT, CREATED_AT) >= dateadd(day, -%s, current_timestamp())
             order by LAST_UPDATED_AT desc, CREATED_AT desc
             limit %s
             """,
-            (portfolio_id, limit),
+            (portfolio_id, order_lookback_days, order_limit),
         )
         orders = fetch_all(cur)
         broker_open_order_ids = {_normalize_broker_order_id(r.get("OPEN_ORDER_ID")) for r in open_orders if _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))}
@@ -3396,6 +3454,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                     "source": "MIP_BROKER_LEDGER",
                 }
             )
+        executions = executions[:execution_limit]
 
         orders_enriched = []
         for ord_row in orders:
@@ -3418,6 +3477,18 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                     or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None},
                 }
             )
+
+        nav_change_abs = None
+        nav_change_pct = None
+        if nav_trend and nav_trend[0].get("nav_eur") is not None and nav_trend[-1].get("nav_eur") is not None:
+            start_nav = float(nav_trend[0]["nav_eur"])
+            end_nav = float(nav_trend[-1]["nav_eur"])
+            nav_change_abs = end_nav - start_nav
+            nav_change_pct = (nav_change_abs / start_nav) if start_nav else None
+
+        pnl_change_abs = None
+        if position_trend and position_trend[0].get("total_unrealized_pnl") is not None and position_trend[-1].get("total_unrealized_pnl") is not None:
+            pnl_change_abs = float(position_trend[-1]["total_unrealized_pnl"]) - float(position_trend[0]["total_unrealized_pnl"])
 
         return {
             "ok": True,
@@ -3458,6 +3529,21 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
                 "max_positions": cfg.get("MAX_POSITIONS"),
                 "max_position_pct": cfg.get("MAX_POSITION_PCT"),
                 "bust_pct": cfg.get("BUST_PCT"),
+                "trend_nav_change_abs": nav_change_abs,
+                "trend_nav_change_pct": nav_change_pct,
+                "trend_unrealized_change_abs": pnl_change_abs,
+                "trend_window_days": snapshot_lookback_days,
+                "trend_points": len(nav_trend),
+            },
+            "activity_trends": {
+                "nav": serialize_rows(nav_trend),
+                "positions": serialize_rows(position_trend),
+            },
+            "ui_hints": {
+                "order_lookback_days": order_lookback_days,
+                "order_limit": order_limit,
+                "execution_limit": execution_limit,
+                "snapshot_lookback_days": snapshot_lookback_days,
             },
             "open_positions": serialize_rows(open_positions),
             "open_orders": serialize_rows(open_orders),
@@ -5959,10 +6045,9 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
               EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, ACTION_ID,
               IDEMPOTENCY_KEY, BROKER_ORDER_ID, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
             )
-            values (
+            select
               %s, current_timestamp(), %s, %s, %s,
-              %s, %s, %s, %s, %s, %s, parse_json(%s)
-            )
+              %s, %s, %s, %s, %s, %s, try_parse_json(%s)
             """,
             (
                 str(uuid.uuid4()),

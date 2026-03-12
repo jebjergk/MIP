@@ -171,7 +171,8 @@ def get_overview(
             select 
                 r.SYMBOL,
                 r.MARKET_TYPE,
-                count(*) as signal_count
+                count(*) as signal_count,
+                count(case when r.TS::date = %s then 1 end) as latest_bar_signal_count
             from MIP.APP.RECOMMENDATION_LOG r
             where r.TS >= %s
               and r.INTERVAL_MINUTES = %s
@@ -183,6 +184,7 @@ def get_overview(
                 p.MARKET_TYPE,
                 count(*) as proposal_count,
                 count(case when p.PROPOSED_AT::date = current_date() then 1 end) as today_proposal_count,
+                count(case when coalesce(p.SIGNAL_TS::date, p.PROPOSED_AT::date) = %s then 1 end) as latest_bar_proposal_count,
                 count(
                     case
                         when coalesce(p.SIGNAL_TS::date, p.PROPOSED_AT::date) = %s
@@ -199,7 +201,8 @@ def get_overview(
             select
                 t.SYMBOL,
                 t.MARKET_TYPE,
-                count(*) as trade_count
+                count(*) as trade_count,
+                count(case when t.TRADE_TS::date = %s then 1 end) as latest_bar_sim_trade_count
             from MIP.APP.PORTFOLIO_TRADES t
             where t.TRADE_TS >= %s
               {"and t.PORTFOLIO_ID = %s" if portfolio_id else ""}
@@ -209,7 +212,8 @@ def get_overview(
             select
                 upper(o.SYMBOL) as SYMBOL,
                 coalesce(a.ASSET_CLASS, 'STOCK') as MARKET_TYPE,
-                count(*) as live_trade_count
+                count(*) as live_trade_count,
+                count(case when o.LAST_UPDATED_AT::date = %s then 1 end) as latest_bar_live_trade_count
             from MIP.LIVE.LIVE_ORDERS o
             join MIP.LIVE.LIVE_ACTIONS a
               on a.ACTION_ID = o.ACTION_ID
@@ -252,12 +256,17 @@ def get_overview(
             s.SYMBOL,
             s.MARKET_TYPE,
             coalesce(sc.signal_count, 0) as signal_count,
+            coalesce(sc.latest_bar_signal_count, 0) as latest_bar_signal_count,
             coalesce(pc.proposal_count, 0) as proposal_count,
             coalesce(pc.today_proposal_count, 0) as today_proposal_count,
+            coalesce(pc.latest_bar_proposal_count, 0) as latest_bar_proposal_count,
             coalesce(pc.actionable_proposal_count, 0) as actionable_proposal_count,
             coalesce(tc.trade_count, 0) as sim_trade_count,
+            coalesce(tc.latest_bar_sim_trade_count, 0) as latest_bar_sim_trade_count,
             coalesce(ltc.live_trade_count, 0) as live_trade_count,
+            coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_live_trade_count,
             coalesce(tc.trade_count, 0) + coalesce(ltc.live_trade_count, 0) as trade_count,
+            coalesce(tc.latest_bar_sim_trade_count, 0) + coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_trade_count,
             tl.latest_trust_label as trust_label,
             lb.latest_bar_ts,
             lb.latest_close
@@ -280,8 +289,10 @@ def get_overview(
         if market_type:
             query_params.append(market_type)
         query_params.extend([
+            batch_date,        # signal_counts latest bar
             window_start,      # signal_counts
             interval_minutes,  # signal_counts
+            batch_date,        # proposal_counts latest bar
             batch_date,        # proposal_counts actionable batch date
         ])
         query_params.extend([
@@ -289,9 +300,11 @@ def get_overview(
         ])
         if portfolio_id:
             query_params.append(portfolio_id)
+        query_params.append(batch_date)  # trade_counts latest bar
         query_params.append(window_start)  # trade_counts
         if portfolio_id:
             query_params.append(portfolio_id)
+        query_params.append(batch_date)  # live_trade_counts latest bar
         query_params.append(window_start)  # live_trade_counts
         if portfolio_id:
             query_params.append(portfolio_id)
@@ -309,12 +322,17 @@ def get_overview(
                 "symbol": row.get("SYMBOL") or row.get("symbol"),
                 "market_type": row.get("MARKET_TYPE") or row.get("market_type"),
                 "signal_count": row.get("SIGNAL_COUNT") or row.get("signal_count") or 0,
+                "latest_bar_signal_count": row.get("LATEST_BAR_SIGNAL_COUNT") or row.get("latest_bar_signal_count") or 0,
                 "proposal_count": row.get("PROPOSAL_COUNT") or row.get("proposal_count") or 0,
                 "today_proposal_count": row.get("TODAY_PROPOSAL_COUNT") or row.get("today_proposal_count") or 0,
+                "latest_bar_proposal_count": row.get("LATEST_BAR_PROPOSAL_COUNT") or row.get("latest_bar_proposal_count") or 0,
                 "actionable_proposal_count": row.get("ACTIONABLE_PROPOSAL_COUNT") or row.get("actionable_proposal_count") or 0,
                 "trade_count": row.get("TRADE_COUNT") or row.get("trade_count") or 0,
+                "latest_bar_trade_count": row.get("LATEST_BAR_TRADE_COUNT") or row.get("latest_bar_trade_count") or 0,
                 "sim_trade_count": row.get("SIM_TRADE_COUNT") or row.get("sim_trade_count") or 0,
+                "latest_bar_sim_trade_count": row.get("LATEST_BAR_SIM_TRADE_COUNT") or row.get("latest_bar_sim_trade_count") or 0,
                 "live_trade_count": row.get("LIVE_TRADE_COUNT") or row.get("live_trade_count") or 0,
+                "latest_bar_live_trade_count": row.get("LATEST_BAR_LIVE_TRADE_COUNT") or row.get("latest_bar_live_trade_count") or 0,
                 "trust_label": row.get("TRUST_LABEL") or row.get("trust_label"),
                 "latest_bar_ts": row.get("LATEST_BAR_TS") or row.get("latest_bar_ts"),
                 "latest_close": row.get("LATEST_CLOSE") or row.get("latest_close"),

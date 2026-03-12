@@ -179,14 +179,29 @@ export default function MarketTimeline() {
             const hasSignals = sym.signal_count > 0
             const hasProposals = sym.proposal_count > 0
             const hasTrades = sym.trade_count > 0
+            const latestBarSignalCount = sym.latest_bar_signal_count
+            const latestBarProposalCount = sym.latest_bar_proposal_count
+            const latestBarTradeCount = sym.latest_bar_trade_count
+            const hasLatestBarFields =
+              latestBarSignalCount != null || latestBarProposalCount != null || latestBarTradeCount != null
+            const hasLatestSignals = Number(latestBarSignalCount || 0) > 0
+            const hasLatestProposals = Number(latestBarProposalCount || 0) > 0
+            const hasLatestTrades = Number(latestBarTradeCount || 0) > 0
             const hasActionableProposals = (sym.actionable_proposal_count ?? sym.today_proposal_count ?? 0) > 0
             const cachedDetail = detailCacheRef.current[key]
             
-            // Determine tile status class
+            // Determine tile status class from latest-bar activity only.
+            // Fall back to window-based counts only when latest-bar fields are absent.
             let statusClass = 'tile-inactive'
-            if (hasTrades) statusClass = 'tile-executed'
-            else if (hasProposals) statusClass = 'tile-proposed'
-            else if (hasSignals) statusClass = 'tile-signals-only'
+            if (hasLatestBarFields) {
+              if (hasLatestTrades) statusClass = 'tile-executed'
+              else if (hasLatestProposals) statusClass = 'tile-proposed'
+              else if (hasLatestSignals) statusClass = 'tile-signals-only'
+            } else {
+              if (hasTrades) statusClass = 'tile-executed'
+              else if (hasProposals) statusClass = 'tile-proposed'
+              else if (hasSignals) statusClass = 'tile-signals-only'
+            }
             
             // Keep actionable highlight until the next daily bar batch arrives.
             const todayHighlight = hasActionableProposals ? 'tile-today-actionable' : ''

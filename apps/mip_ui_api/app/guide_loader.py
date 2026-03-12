@@ -39,8 +39,8 @@ def get_guide_content() -> str:
     if not _GUIDE_DIR.is_dir():
         logger.warning("Guide directory not found at %s — using fallback.", _GUIDE_DIR)
         _cached_content = (
-            "The MIP User Guide content is not available. "
-            "Answer based on your general knowledge of MIP as described in this conversation."
+            "The MIP User Guide content is currently unavailable. "
+            "Do not invent facts. Ask the user for context and direct them to verify in the UI."
         )
         return _cached_content
 

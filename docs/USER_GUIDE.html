@@ -1,1007 +1,285 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MIP User Guide</title>
-    <style>
-        :root {
-            --primary: #2563eb;
-            --primary-dark: #1d4ed8;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --gray-50: #f9fafb;
-            --gray-100: #f3f4f6;
-            --gray-200: #e5e7eb;
-            --gray-300: #d1d5db;
-            --gray-600: #4b5563;
-            --gray-700: #374151;
-            --gray-800: #1f2937;
-            --gray-900: #111827;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: var(--gray-800);
-            background: var(--gray-50);
-        }
-
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-
-        /* Header */
-        header {
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            color: white;
-            padding: 3rem 2rem;
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-
-        header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            font-weight: 700;
-        }
-
-        header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-
-        /* Navigation */
-        nav {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        nav h2 {
-            font-size: 1.1rem;
-            color: var(--gray-600);
-            margin-bottom: 1rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        nav ol {
-            list-style: none;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 0.5rem;
-        }
-
-        nav a {
-            color: var(--primary);
-            text-decoration: none;
-            padding: 0.5rem;
-            border-radius: 6px;
-            display: block;
-            transition: background 0.2s;
-        }
-
-        nav a:hover {
-            background: var(--gray-100);
-        }
-
-        /* Sections */
-        section {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            padding: 2rem;
-            margin-bottom: 2rem;
-        }
-
-        h2 {
-            font-size: 1.75rem;
-            color: var(--gray-900);
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 2px solid var(--primary);
-        }
-
-        h3 {
-            font-size: 1.35rem;
-            color: var(--gray-800);
-            margin: 1.5rem 0 1rem 0;
-        }
-
-        h4 {
-            font-size: 1.1rem;
-            color: var(--gray-700);
-            margin: 1.25rem 0 0.75rem 0;
-        }
-
-        p {
-            margin-bottom: 1rem;
-            color: var(--gray-700);
-        }
-
-        /* Tables */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 1rem 0 1.5rem 0;
-            font-size: 0.95rem;
-        }
-
-        th {
-            background: var(--gray-100);
-            color: var(--gray-800);
-            font-weight: 600;
-            text-align: left;
-            padding: 0.75rem 1rem;
-            border-bottom: 2px solid var(--gray-200);
-        }
-
-        td {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--gray-200);
-            vertical-align: top;
-        }
-
-        tr:hover {
-            background: var(--gray-50);
-        }
-
-        /* Code and pre */
-        code {
-            background: var(--gray-100);
-            padding: 0.2rem 0.4rem;
-            border-radius: 4px;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 0.9em;
-            color: var(--primary-dark);
-        }
-
-        pre {
-            background: var(--gray-800);
-            color: #e5e7eb;
-            padding: 1.5rem;
-            border-radius: 8px;
-            overflow-x: auto;
-            margin: 1rem 0;
-            font-family: 'SF Mono', Consolas, monospace;
-            font-size: 0.9rem;
-            line-height: 1.5;
-        }
-
-        /* Badges */
-        .badge {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 9999px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-
-        .badge-safe { background: #d1fae5; color: #065f46; }
-        .badge-caution { background: #fef3c7; color: #92400e; }
-        .badge-stopped { background: #fee2e2; color: #991b1b; }
-        .badge-trusted { background: #dbeafe; color: #1e40af; }
-        .badge-watch { background: #fef3c7; color: #92400e; }
-        .badge-untrusted { background: #f3f4f6; color: #4b5563; }
-
-        /* Info boxes */
-        .info-box {
-            padding: 1rem 1.25rem;
-            border-radius: 8px;
-            margin: 1rem 0;
-            border-left: 4px solid;
-        }
-
-        .info-box.tip {
-            background: #eff6ff;
-            border-color: var(--primary);
-        }
-
-        .info-box.warning {
-            background: #fffbeb;
-            border-color: var(--warning);
-        }
-
-        .info-box.important {
-            background: #fef2f2;
-            border-color: var(--danger);
-        }
-
-        /* Flow diagram */
-        .flow-diagram {
-            background: var(--gray-100);
-            padding: 1.5rem;
-            border-radius: 8px;
-            margin: 1rem 0;
-        }
-
-        .flow-step {
-            display: flex;
-            align-items: center;
-            margin: 0.5rem 0;
-        }
-
-        .flow-number {
-            background: var(--primary);
-            color: white;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            font-size: 0.85rem;
-            margin-right: 1rem;
-            flex-shrink: 0;
-        }
-
-        .flow-arrow {
-            color: var(--gray-400);
-            margin-left: 0.5rem;
-        }
-
-        /* Cards */
-        .card-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-            margin: 1rem 0;
-        }
-
-        .card {
-            background: var(--gray-50);
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            padding: 1.25rem;
-        }
-
-        .card h5 {
-            font-size: 1rem;
-            color: var(--gray-800);
-            margin-bottom: 0.5rem;
-        }
-
-        .card p {
-            font-size: 0.9rem;
-            color: var(--gray-600);
-            margin-bottom: 0;
-        }
-
-        /* Data flow visual */
-        .data-flow {
-            background: linear-gradient(180deg, var(--gray-50) 0%, white 100%);
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            padding: 1.5rem;
-            margin: 1.5rem 0;
-        }
-
-        .data-flow-item {
-            background: white;
-            border: 2px solid var(--gray-200);
-            border-radius: 8px;
-            padding: 0.75rem 1rem;
-            text-align: center;
-            margin: 0.5rem auto;
-            max-width: 300px;
-            font-weight: 500;
-        }
-
-        .data-flow-item.primary {
-            border-color: var(--primary);
-            background: #eff6ff;
-        }
-
-        .data-flow-arrow {
-            text-align: center;
-            color: var(--gray-400);
-            font-size: 1.5rem;
-        }
-
-        /* Screen cards */
-        .screen-header {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-        }
-
-        .screen-icon {
-            width: 40px;
-            height: 40px;
-            background: var(--primary);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 1.25rem;
-        }
-
-        /* Lists */
-        ul, ol {
-            margin: 0.5rem 0 1rem 1.5rem;
-        }
-
-        li {
-            margin-bottom: 0.5rem;
-            color: var(--gray-700);
-        }
-
-        /* Footer */
-        footer {
-            text-align: center;
-            padding: 2rem;
-            color: var(--gray-500);
-            font-size: 0.9rem;
-        }
-
-        /* Print styles */
-        @media print {
-            body { background: white; }
-            .container { max-width: 100%; }
-            section { box-shadow: none; border: 1px solid var(--gray-200); }
-            nav { page-break-after: always; }
-            h2 { page-break-after: avoid; }
-            table { page-break-inside: avoid; }
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIP User Guide (Training Edition)</title>
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --card: #ffffff;
+      --ink: #1f2937;
+      --muted: #4b5563;
+      --line: #dbe3f0;
+      --brand: #1f3b8f;
+      --brand-soft: #e8edff;
+    }
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+    main {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 28px 16px 48px;
+    }
+    .hero {
+      background: linear-gradient(130deg, #1f3b8f, #2e4db3);
+      color: #fff;
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 18px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+    }
+    .hero p {
+      margin: 0;
+      opacity: 0.95;
+    }
+    .toc, section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    h2 {
+      margin: 0 0 12px;
+      color: var(--brand);
+      font-size: 22px;
+    }
+    h3 {
+      margin: 14px 0 8px;
+      color: #263246;
+      font-size: 18px;
+    }
+    ul, ol { margin: 8px 0 12px 20px; }
+    li { margin-bottom: 4px; }
+    code {
+      background: #eef2ff;
+      border: 1px solid #dbe5ff;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: Consolas, monospace;
+      font-size: 0.92em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--brand-soft);
+      color: #1d2d62;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 8px;
+      margin: 10px 0 6px;
+    }
+    .flow div {
+      background: #f8faff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 13px;
+      text-align: center;
+    }
+    .note {
+      background: #eff8ff;
+      border: 1px solid #c7defa;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #1f3d67;
+      font-size: 14px;
+      margin-top: 8px;
+    }
+    .footer {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+      margin-top: 6px;
+    }
+    @media (max-width: 800px) {
+      .flow { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .hero h1 { font-size: 24px; }
+    }
+  </style>
 </head>
 <body>
+  <main>
+    <header class="hero">
+      <h1>MIP User Guide (Training Edition)</h1>
+      <p>Plain-English training for the Market Intelligence Platform, with practical examples and event-by-event learning.</p>
+    </header>
 
-<header>
-    <h1>📊 MIP User Guide</h1>
-    <p>Market Intelligence Platform — Complete Reference Guide</p>
-</header>
-
-<div class="container">
-
-<!-- Table of Contents -->
-<nav>
-    <h2>Table of Contents</h2>
-    <ol>
-        <li><a href="#introduction">1. Introduction</a></li>
-        <li><a href="#screens">2. Understanding the Screens</a></li>
-        <li><a href="#decision-console-news">2.11 Decision Console &amp; 2.12 News Intelligence</a></li>
-        <li><a href="#ask-mip-assistant">2.13 Ask MIP Assistant</a></li>
-        <li><a href="#live-portfolio-config-screen">2.14 Live Portfolio Link</a></li>
-        <li><a href="#backend">3. How the Backend Works</a></li>
-        <li><a href="#concepts">4. Key Concepts</a></li>
-        <li><a href="#troubleshooting">5. Troubleshooting</a></li>
-        <li><a href="#glossary">6. Glossary</a></li>
-    </ol>
-</nav>
-
-<!-- Section 1: Introduction -->
-<section id="introduction">
-    <h2>1. Introduction</h2>
-    
-    <p>MIP (Market Intelligence Platform) is a paper trading system that automatically:</p>
-    
-    <div class="flow-diagram">
-        <div class="flow-step"><span class="flow-number">1</span> Collects market data from financial APIs</div>
-        <div class="flow-step"><span class="flow-number">2</span> Detects patterns in price movements</div>
-        <div class="flow-step"><span class="flow-number">3</span> Generates trading signals based on those patterns</div>
-        <div class="flow-step"><span class="flow-number">4</span> Evaluates signal quality over time</div>
-        <div class="flow-step"><span class="flow-number">5</span> Simulates portfolios with risk management</div>
-        <div class="flow-step"><span class="flow-number">6</span> Proposes and executes trades (paper trading)</div>
-        <div class="flow-step"><span class="flow-number">7</span> Generates daily briefs summarizing opportunities</div>
+    <div class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#what">What MIP actually does</a></li>
+        <li><a href="#sequence">Core event sequence (bottom-up)</a></li>
+        <li><a href="#concepts">Key concepts (no jargon)</a></li>
+        <li><a href="#metrics">How to read MIP metrics</a></li>
+        <li><a href="#pages">Page-by-page guide</a></li>
+        <li><a href="#routine">Daily operating routine</a></li>
+        <li><a href="#ask">Ask MIP assistant</a></li>
+        <li><a href="#examples">Practical examples</a></li>
+        <li><a href="#troubleshooting">Troubleshooting shortlist</a></li>
+      </ol>
     </div>
 
-    <div class="info-box tip">
-        <strong>When does it run?</strong> The system runs automatically every day at 07:00 (Europe/Berlin), but you can also trigger it manually anytime.
-    </div>
-</section>
+    <section id="what">
+      <h2>1) What MIP Actually Does</h2>
+      <p>MIP is an evidence-first trading system. It does not guess exact future prices. It checks what happened historically after repeatable patterns and acts only when evidence is strong.</p>
+      <h3>Simple analogy</h3>
+      <p>Imagine a football scout: watch matches, log repeated behavior, review outcomes, trust proven patterns, then recommend plays.</p>
+    </section>
 
-<!-- Section 2: Screens -->
-<section id="screens">
-    <h2>2. Understanding the Screens</h2>
-
-    <!-- Home -->
-    <h3>🏠 Home</h3>
-    <p><strong>What it shows:</strong> A quick overview of the system status and shortcuts to common actions.</p>
-    
-    <table>
+    <section id="sequence">
+      <h2>2) The Core Event Sequence</h2>
+      <p><code>Market bars -&gt; Signals -&gt; Outcome evaluation -&gt; Training metrics -&gt; Trust -&gt; Proposals -&gt; Execution -&gt; Narrative</code></p>
+      <div class="flow">
+        <div>1. Ingest bars</div>
+        <div>2. Detect signals</div>
+        <div>3. Evaluate outcomes</div>
+        <div>4. Update metrics</div>
+        <div>5. Recompute trust</div>
+        <div>6. Generate proposals</div>
+        <div>7. Risk + execution</div>
+        <div>8. Publish narrative</div>
+      </div>
+      <table>
         <thead>
-            <tr><th>Element</th><th>What it means</th></tr>
+          <tr><th>Event step</th><th>Best page to verify</th></tr>
         </thead>
         <tbody>
-            <tr><td><strong>Last Pipeline Run</strong></td><td>When the system last processed data. Shows time ago (e.g., "2 hours ago")</td></tr>
-            <tr><td><strong>New Evaluations</strong></td><td>How many signals were evaluated since the last run</td></tr>
-            <tr><td><strong>Latest Brief</strong></td><td>When the last morning brief was generated</td></tr>
-            <tr><td><strong>Quick Action Cards</strong></td><td>Shortcuts to Portfolios, Morning Brief, Training Status, and Suggestions</td></tr>
+          <tr><td>Pipeline run health</td><td>Runs (Audit Viewer)</td></tr>
+          <tr><td>Signals generated</td><td>Market Timeline</td></tr>
+          <tr><td>Learning metrics</td><td>Training Status</td></tr>
+          <tr><td>Proposal decisions</td><td>AI Agent Decisions</td></tr>
+          <tr><td>Position monitoring/exits</td><td>Decision Console</td></tr>
+          <tr><td>Portfolio impact</td><td>Portfolio</td></tr>
+          <tr><td>Day summary</td><td>Cockpit</td></tr>
         </tbody>
-    </table>
+      </table>
+    </section>
 
-    <div class="info-box tip">
-        <strong>Tip:</strong> Start here to see if everything is running normally. If the "Last Pipeline Run" is old, something may be wrong.
-    </div>
-
-    <!-- Today -->
-    <h3>📅 Today</h3>
-    <p><strong>What it shows:</strong> Everything you need to know about today's trading situation.</p>
-    
-    <table>
+    <section id="concepts">
+      <h2>3) Key Concepts (No Jargon Version)</h2>
+      <table>
         <thead>
-            <tr><th>Section</th><th>What it means</th></tr>
+          <tr><th>Term</th><th>Meaning</th></tr>
         </thead>
         <tbody>
-            <tr><td><strong>System Status</strong></td><td>Is the database connection working? Green = OK</td></tr>
-            <tr><td><strong>Portfolio Selector</strong></td><td>Switch between different portfolios</td></tr>
-            <tr><td><strong>Risk Gate</strong></td><td>Are entries allowed? Shows <span class="badge badge-safe">SAFE</span>, <span class="badge badge-caution">CAUTION</span>, or <span class="badge badge-stopped">STOPPED</span></td></tr>
-            <tr><td><strong>Recent Run Events</strong></td><td>What happened in the last pipeline run</td></tr>
-            <tr><td><strong>Today's Insights</strong></td><td>Ranked list of trading candidates for today</td></tr>
-            <tr><td><strong>Latest Brief</strong></td><td>The most recent morning brief (collapsible)</td></tr>
+          <tr><td>Signal</td><td>"I saw a setup."</td></tr>
+          <tr><td>Outcome</td><td>"Did the setup work after a forward time window?"</td></tr>
+          <tr><td>Maturity</td><td>"How much evidence do we have?"</td></tr>
+          <tr><td>Coverage</td><td>"How much evidence is measurable already?"</td></tr>
+          <tr><td>Trust</td><td>"Is this reliable enough to influence trading?"</td></tr>
+          <tr><td>Proposal</td><td>Suggested trade before final checks.</td></tr>
+          <tr><td>Risk Gate</td><td>SAFE / CAUTION / STOPPED safety state.</td></tr>
+          <tr><td>Episode</td><td>A portfolio lifecycle segment.</td></tr>
         </tbody>
-    </table>
+      </table>
+    </section>
 
-    <h4>Today's Insights explained:</h4>
-    <table>
+    <section id="metrics">
+      <h2>4) How To Read MIP Metrics</h2>
+      <ul>
+        <li><strong>H1/H3/H5...</strong> represent average outcome after those forward windows.</li>
+        <li><strong>Maturity</strong> is evidence confidence, not certainty.</li>
+        <li><strong>Gate</strong> tells whether new entries are allowed now.</li>
+      </ul>
+      <div class="note">
+        Example: <code>Avg H5 = +0.008</code> means roughly +0.8% average after 5 periods.
+      </div>
+    </section>
+
+    <section id="pages">
+      <h2>5) Page-by-Page Guide</h2>
+      <ul>
+        <li><strong>Home:</strong> pre-flight checks and shortcuts.</li>
+        <li><strong>Cockpit:</strong> what changed, what matters, what to watch.</li>
+        <li><strong>Portfolio:</strong> equity, drawdown, gate, open positions.</li>
+        <li><strong>Portfolio Management:</strong> setup, cash/profile changes, lifecycle.</li>
+        <li><strong>Training Status:</strong> evidence depth by symbol/pattern.</li>
+        <li><strong>Market Timeline:</strong> signal-to-proposal-to-trade trail.</li>
+        <li><strong>Runs:</strong> operational truth source and diagnostics.</li>
+        <li><strong>AI Agent Decisions:</strong> committee verdicts and reason codes.</li>
+        <li><strong>Decision Console:</strong> open position monitoring and trace.</li>
+        <li><strong>News Intelligence:</strong> evidence-backed news impact context.</li>
+      </ul>
+    </section>
+
+    <section id="routine">
+      <h2>6) Daily Operating Routine</h2>
+      <ol>
+        <li>Home: confirm latest successful run.</li>
+        <li>Cockpit: read overnight changes.</li>
+        <li>Portfolio: inspect gate and risk changes.</li>
+        <li>Training Status: validate evidence quality.</li>
+        <li>AI Agent Decisions: inspect accept/reject rationale.</li>
+        <li>Runs: verify details if anything seems wrong.</li>
+      </ol>
+    </section>
+
+    <section id="ask">
+      <h2>7) Ask MIP Assistant</h2>
+      <p>Ask MIP is route-aware help. For better answers, include portfolio/symbol/time scope.</p>
+      <ul>
+        <li>"Explain this page in plain English."</li>
+        <li>"What does this metric mean and what is a healthy value?"</li>
+        <li>"Why are proposals present but no trades executed?"</li>
+      </ul>
+    </section>
+
+    <section id="examples">
+      <h2>8) Practical Examples</h2>
+      <h3>No trades today</h3>
+      <ol>
+        <li>Runs: confirm success/freshness.</li>
+        <li>Training: check maturity + coverage.</li>
+        <li>Portfolio: check gate/capacity.</li>
+        <li>AI Agent Decisions: inspect rejections.</li>
+      </ol>
+      <h3>Metric seems wrong</h3>
+      <ol>
+        <li>Confirm episode scope in Portfolio.</li>
+        <li>Compare run timestamps/as-of dates.</li>
+        <li>Check for recent profile/cash lifecycle events.</li>
+      </ol>
+    </section>
+
+    <section id="troubleshooting">
+      <h2>9) Troubleshooting Shortlist</h2>
+      <table>
         <thead>
-            <tr><th>Field</th><th>Meaning</th></tr>
+          <tr><th>Symptom</th><th>Likely cause</th><th>First check</th></tr>
         </thead>
         <tbody>
-            <tr><td><strong>Symbol/Pattern</strong></td><td>Which stock and what pattern was detected</td></tr>
-            <tr><td><strong>Maturity Score</strong></td><td>How confident we are in this pattern (0-100%)</td></tr>
-            <tr><td><strong>Today Score</strong></td><td>How strong the signal is today</td></tr>
-            <tr><td><strong>Why Shown</strong></td><td>The reason this candidate appears</td></tr>
+          <tr><td>Digest looks old</td><td>Narrative behind current run</td><td>Cockpit + Runs</td></tr>
+          <tr><td>No proposals</td><td>Weak evidence/trust or no fresh signals</td><td>Training + Timeline</td></tr>
+          <tr><td>Proposals but no execution</td><td>Gate/limits/rejections</td><td>Portfolio + AI Agent Decisions</td></tr>
+          <tr><td>Editing disabled</td><td>Pipeline lock active</td><td>Portfolio Management banner</td></tr>
         </tbody>
-    </table>
-
-    <!-- Portfolio -->
-    <h3>💼 Portfolio</h3>
-    <p><strong>What it shows:</strong> Detailed view of a trading portfolio's performance and current state.</p>
-
-    <h4>List View (all portfolios)</h4>
-    <table>
-        <thead>
-            <tr><th>Column</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Gate</strong></td><td>Risk status (<span class="badge badge-safe">SAFE</span> / <span class="badge badge-caution">CAUTION</span> / <span class="badge badge-stopped">STOPPED</span>)</td></tr>
-            <tr><td><strong>Health</strong></td><td>Overall portfolio health indicator</td></tr>
-            <tr><td><strong>Equity</strong></td><td>Current total value</td></tr>
-            <tr><td><strong>Paid Out</strong></td><td>Money withdrawn/distributed</td></tr>
-            <tr><td><strong>Active Episode</strong></td><td>Current trading period</td></tr>
-            <tr><td><strong>Status</strong></td><td>ACTIVE, BUST, or STOPPED</td></tr>
-        </tbody>
-    </table>
-
-    <h4>Header Metrics (Detail View)</h4>
-    <table>
-        <thead>
-            <tr><th>Metric</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Starting Cash</strong></td><td>How much money the portfolio started with</td></tr>
-            <tr><td><strong>Final Equity</strong></td><td>Current total value (cash + positions)</td></tr>
-            <tr><td><strong>Total Return</strong></td><td>Percentage gain or loss</td></tr>
-            <tr><td><strong>Max Drawdown</strong></td><td>Largest peak-to-trough decline (worst case)</td></tr>
-            <tr><td><strong>Win Days</strong></td><td>Days with positive returns</td></tr>
-            <tr><td><strong>Loss Days</strong></td><td>Days with negative returns</td></tr>
-        </tbody>
-    </table>
-
-    <h4>Portfolio Charts</h4>
-    <div class="card-grid">
-        <div class="card">
-            <h5>📈 Equity Chart</h5>
-            <p>Portfolio value over time. Blue dot = current value. Red dashed line = bust threshold.</p>
-        </div>
-        <div class="card">
-            <h5>📉 Drawdown Chart</h5>
-            <p>Current decline from peak. More negative = worse. Dotted line = warning threshold.</p>
-        </div>
-        <div class="card">
-            <h5>📊 Trades per Day</h5>
-            <p>Bar chart of trading activity over time.</p>
-        </div>
-        <div class="card">
-            <h5>🚦 Risk Regime</h5>
-            <p>Color strip showing SAFE (green), CAUTION (yellow), STOPPED (red) over time.</p>
-        </div>
-    </div>
-
-    <!-- Morning Brief -->
-    <h3>☀️ Morning Brief</h3>
-    <p><strong>What it shows:</strong> A daily summary of opportunities, risks, and portfolio actions.</p>
-
-    <table>
-        <thead>
-            <tr><th>Section</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Executive Summary</strong></td><td>High-level status: Are entries allowed? How many suggestions? Any executed trades?</td></tr>
-            <tr><td><strong>Portfolio Actions</strong></td><td>Live state: open positions, trades this run, last simulation</td></tr>
-            <tr><td><strong>Today's Proposals</strong></td><td>Suggested trades (NOT yet executed)</td></tr>
-            <tr><td><strong>Risk & Guardrails</strong></td><td>Current risk state, profile thresholds, allowed actions</td></tr>
-            <tr><td><strong>Changes Since Last Brief</strong></td><td>What changed: equity, return, drawdown, positions</td></tr>
-        </tbody>
-    </table>
-
-    <div class="info-box warning">
-        <strong>Staleness indicator:</strong><br>
-        • <strong>CURRENT</strong> (green): Brief matches the latest pipeline run<br>
-        • <strong>STALE</strong> (yellow): A newer pipeline run exists; brief may be outdated
-    </div>
-
-    <!-- Signals -->
-    <h3>📡 Signals</h3>
-    <p><strong>What it shows:</strong> A searchable list of all trading signals generated by the system.</p>
-
-    <table>
-        <thead>
-            <tr><th>Column</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Symbol</strong></td><td>The stock/asset (e.g., AAPL, GOOGL)</td></tr>
-            <tr><td><strong>Market</strong></td><td>Type of asset (STOCK, ETF, FX)</td></tr>
-            <tr><td><strong>Pattern</strong></td><td>Which pattern detected this signal</td></tr>
-            <tr><td><strong>Score</strong></td><td>Signal strength (higher = stronger)</td></tr>
-            <tr><td><strong>Trust</strong></td><td><span class="badge badge-trusted">TRUSTED</span>, <span class="badge badge-watch">WATCH</span>, or <span class="badge badge-untrusted">UNTRUSTED</span></td></tr>
-            <tr><td><strong>Action</strong></td><td>BUY or SELL</td></tr>
-            <tr><td><strong>Eligible</strong></td><td>Can this signal be traded today?</td></tr>
-        </tbody>
-    </table>
-
-    <!-- Market Timeline -->
-    <h3>📈 Market Timeline</h3>
-    <p><strong>What it shows:</strong> End-to-end view of what happened with each symbol — from signals to proposals to trades.</p>
-
-    <div class="card-grid">
-        <div class="card">
-            <h5>Symbol Grid</h5>
-            <p>Each card shows a symbol with counts of signals, proposals, and trades.</p>
-        </div>
-        <div class="card">
-            <h5>OHLC Chart</h5>
-            <p>Price candlesticks with event overlays (signals, proposals, trades marked).</p>
-        </div>
-        <div class="card">
-            <h5>Decision Narrative</h5>
-            <p>AI-generated explanation of what happened with this symbol.</p>
-        </div>
-        <div class="card">
-            <h5>Trust Summary</h5>
-            <p>Trust levels by pattern for this symbol.</p>
-        </div>
-    </div>
-
-    <!-- Suggestions -->
-    <h3>💡 Suggestions</h3>
-    <p><strong>What it shows:</strong> Ranked list of trading opportunities based on historical performance.</p>
-
-    <table>
-        <thead>
-            <tr><th>Category</th><th>Meaning</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Strong Candidates</strong></td><td>Patterns with 10+ recommendations (more reliable)</td></tr>
-            <tr><td><strong>Early Signals</strong></td><td>Patterns with 3-9 recommendations (still learning)</td></tr>
-        </tbody>
-    </table>
-
-    <h4>For each suggestion:</h4>
-    <table>
-        <thead>
-            <tr><th>Element</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Rank</strong></td><td>Overall ranking based on suggestion score</td></tr>
-            <tr><td><strong>Suggestion Score</strong></td><td>Combined score (higher = better opportunity)</td></tr>
-            <tr><td><strong>Maturity Stage</strong></td><td>INSUFFICIENT → WARMING_UP → LEARNING → CONFIDENT</td></tr>
-            <tr><td><strong>Horizon Strip</strong></td><td>Performance at 1, 3, 5, 10, 20 bars forward</td></tr>
-        </tbody>
-    </table>
-
-    <!-- Training Status -->
-    <h3>🎓 Training Status</h3>
-    <p><strong>What it shows:</strong> How well the system has learned each pattern for each symbol.</p>
-
-    <table>
-        <thead>
-            <tr><th>Column</th><th>What it means</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Maturity</strong></td><td>Learning stage and confidence score</td></tr>
-            <tr><td><strong>Sample Size</strong></td><td>How many times this pattern was observed</td></tr>
-            <tr><td><strong>Coverage</strong></td><td>Percentage of observations that have been evaluated</td></tr>
-            <tr><td><strong>Avg Outcomes</strong></td><td>Average returns at each horizon (H1, H3, H5, H10, H20)</td></tr>
-        </tbody>
-    </table>
-
-    <h4>Maturity Stages:</h4>
-    <table>
-        <thead>
-            <tr><th>Stage</th><th>Meaning</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>INSUFFICIENT</strong></td><td>Not enough data to draw conclusions</td></tr>
-            <tr><td><strong>WARMING_UP</strong></td><td>Starting to gather data</td></tr>
-            <tr><td><strong>LEARNING</strong></td><td>Building confidence</td></tr>
-            <tr><td><strong>CONFIDENT</strong></td><td>Enough data for reliable predictions</td></tr>
-        </tbody>
-    </table>
-
-    <!-- Audit Viewer -->
-    <h3>🔍 Audit Viewer (Run Explorer)</h3>
-    <p><strong>What it shows:</strong> Detailed history of all pipeline runs, including errors.</p>
-
-    <div class="card-grid">
-        <div class="card">
-            <h5>Run List</h5>
-            <p>All pipeline runs with status, duration, and timestamp. Filter by status or date range.</p>
-        </div>
-        <div class="card">
-            <h5>Run Narrative</h5>
-            <p>Plain English: what happened, why, impact, next steps.</p>
-        </div>
-        <div class="card">
-            <h5>Error Panel</h5>
-            <p>If failed: error message, SQL query ID, debug SQL to investigate.</p>
-        </div>
-        <div class="card">
-            <h5>Step Timeline</h5>
-            <p>Visual flow of each step with success/failure status.</p>
-        </div>
-    </div>
-
-    <h3 id="decision-console-news">⚡ Decision Console (2.11)</h3>
-    <p><strong>What it shows:</strong> Real-time monitoring of open daily positions and early-exit decision traces.</p>
-    <ul style="margin:0 0 1rem 1rem;">
-      <li>Open Positions grouped by <strong>symbol</strong>, with portfolio rows underneath</li>
-      <li>Click any portfolio row to open inline inspector (news context, decision diff, gate trace)</li>
-      <li>Live Decisions uses SSE event cards; History replays past events by date</li>
-      <li>Open Positions refreshes every <strong>15 minutes</strong></li>
-    </ul>
-
-    <h3>📰 News Intelligence (2.12)</h3>
-    <p><strong>What it shows:</strong> deterministic, evidence-backed news context and proposal-impact diagnostics.</p>
-    <table>
-      <thead>
-        <tr><th>Section</th><th>Meaning</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><strong>Market Context</strong></td><td>Coverage, stale snapshots, HOT symbols, snapshot age</td></tr>
-        <tr><td><strong>Symbol Cards</strong></td><td>Per-symbol badge/count/freshness/novelty/burst metrics</td></tr>
-        <tr><td><strong>Decision Impact</strong></td><td>Evidence-only rows from proposal payload fields (`news_context`, `news_score_adj`, block/reasons)</td></tr>
-      </tbody>
-    </table>
-    <p><strong>Note:</strong> <code>proposals_scoped</code> can be high while impact rows are empty if proposals carry no news evidence.</p>
-
-    <h3 id="ask-mip-assistant">🤖 Ask MIP Assistant (2.13)</h3>
-    <p><strong>What it is:</strong> A route-aware guide assistant available from the floating Ask MIP button.</p>
-    <ul style="margin:0 0 1rem 1rem;">
-      <li>Automatically uses the guide section for the page you are on</li>
-      <li>Best for metric interpretation and page-level navigation help</li>
-      <li>Starter prompts include News Intelligence impact interpretation and Decision Console trace behavior</li>
-    </ul>
-    <p>Ask MIP is guidance-only; it does not execute trades or change data.</p>
-
-    <h3 id="live-portfolio-config-screen">⚙️ Live Portfolio Link (2.14)</h3>
-    <p><strong>What it shows:</strong> The live configuration binding map between MIP live container and IBKR truth account. Research source is chosen at import-time in Live Trades.</p>
-    <table>
-      <thead>
-        <tr><th>Area</th><th>What it means</th></tr>
-      </thead>
-      <tbody>
-        <tr><td><strong>Connection Schematic</strong></td><td>Green = connected, Red = blocking issue, Gray = not configured.</td></tr>
-        <tr><td><strong>Configs List View</strong></td><td>Cloud-style table with wiring indicator and actions (Edit/Delete/Create).</td></tr>
-        <tr><td><strong>Create New Live Config</strong></td><td>Opens a dedicated create page; ID is assigned by backend on save.</td></tr>
-        <tr><td><strong>Research Source</strong></td><td>No fallback stored here. Source portfolio is selected explicitly during proposal import in Live Trades.</td></tr>
-        <tr><td><strong>IBKR Account ID</strong></td><td>Broker-truth account mirrored for snapshot/drift safety checks.</td></tr>
-        <tr><td><strong>Guard Details</strong></td><td>Shows exactly why activation is blocked or eligible.</td></tr>
-      </tbody>
-    </table>
-    <p><strong>Important:</strong> Draft mode does not write data. The config row is inserted/updated only when <strong>Save Config</strong> is pressed. Saving persists governance settings, but execution still requires realism checks, approvals, revalidation, and drift/freshness pass.</p>
-</section>
-
-<!-- Section 3: Backend -->
-<section id="backend">
-    <h2>3. How the Backend Works</h2>
-
-    <h3>3.1 Pipeline Overview</h3>
-    <p>The system runs a daily pipeline that processes data through these steps:</p>
-
-    <div class="flow-diagram">
-        <div class="flow-step"><span class="flow-number">1</span> <strong>INGESTION</strong> — Fetch market data from API</div>
-        <div class="flow-step"><span class="flow-number">2</span> <strong>RETURNS</strong> — Calculate price returns</div>
-        <div class="flow-step"><span class="flow-number">3</span> <strong>RECOMMENDATIONS</strong> — Generate trading signals</div>
-        <div class="flow-step"><span class="flow-number">4</span> <strong>EVALUATION</strong> — Measure signal quality</div>
-        <div class="flow-step"><span class="flow-number">5</span> <strong>SIMULATION</strong> — Run portfolio paper trading</div>
-        <div class="flow-step"><span class="flow-number">6</span> <strong>PROPOSALS</strong> — Create trade suggestions</div>
-        <div class="flow-step"><span class="flow-number">7</span> <strong>EXECUTION</strong> — Execute approved trades (paper)</div>
-        <div class="flow-step"><span class="flow-number">8</span> <strong>MORNING BRIEF</strong> — Generate daily summary</div>
-    </div>
-
-    <h3>3.2 Step-by-Step Breakdown</h3>
-
-    <h4>Step 1: Ingestion</h4>
-    <p><strong>What happens:</strong> Fetches OHLC (Open, High, Low, Close) price data from AlphaVantage API.</p>
-    <table>
-        <tr><td><strong>Table affected:</strong></td><td><code>MARKET_BARS</code> — Stores all price data</td></tr>
-        <tr><td><strong>Key behavior:</strong></td><td>Checks if new data exists since last run. If rate-limited, may skip downstream steps.</td></tr>
-    </table>
-
-    <h4>Step 2: Returns Refresh</h4>
-    <p><strong>What happens:</strong> Calculates daily returns from price data.</p>
-    <table>
-        <tr><td><strong>View affected:</strong></td><td><code>MARKET_RETURNS</code> — Shows percentage changes</td></tr>
-        <tr><td><strong>Calculations:</strong></td><td>Simple returns: (today - yesterday) / yesterday<br>Log returns: ln(today / yesterday)</td></tr>
-    </table>
-
-    <h4>Step 3: Generate Recommendations</h4>
-    <p><strong>What happens:</strong> Runs pattern detection algorithms to find trading signals.</p>
-    <table>
-        <tr><td><strong>Table affected:</strong></td><td><code>RECOMMENDATION_LOG</code> — Stores all detected signals</td></tr>
-        <tr><td><strong>Markets scanned:</strong></td><td>STOCK, ETF, FX</td></tr>
-    </table>
-
-    <h4>Step 4: Evaluate Recommendations</h4>
-    <p><strong>What happens:</strong> Measures how well past signals performed.</p>
-    <table>
-        <tr><td><strong>Table affected:</strong></td><td><code>RECOMMENDATION_OUTCOMES</code> — Stores evaluation results</td></tr>
-        <tr><td><strong>Horizons measured:</strong></td><td>1, 3, 5, 10, and 20 bars forward</td></tr>
-    </table>
-
-    <h4>Step 5: Portfolio Simulation</h4>
-    <p><strong>What happens:</strong> Runs paper trading simulation for each active portfolio.</p>
-    <table>
-        <tr><td><strong>Tables affected:</strong></td><td><code>PORTFOLIO_DAILY</code>, <code>PORTFOLIO_TRADES</code>, <code>PORTFOLIO_POSITIONS</code></td></tr>
-        <tr><td><strong>Key behavior:</strong></td><td>Uses trusted signals, applies risk rules, updates portfolio metrics</td></tr>
-    </table>
-
-    <h4>Step 6: Trade Proposals</h4>
-    <p><strong>What happens:</strong> Creates trade suggestions from eligible signals.</p>
-    <table>
-        <tr><td><strong>Table affected:</strong></td><td><code>ORDER_PROPOSALS</code> — Suggested trades</td></tr>
-        <tr><td><strong>Filters applied:</strong></td><td>Trusted patterns, within limits, not duplicating positions</td></tr>
-    </table>
-
-    <h4>Step 7: Execution</h4>
-    <p><strong>What happens:</strong> Validates and executes approved proposals.</p>
-    <table>
-        <tr><td><strong>Tables affected:</strong></td><td><code>ORDER_PROPOSALS</code> (status update), <code>PORTFOLIO_TRADES</code>, <code>PORTFOLIO_POSITIONS</code></td></tr>
-        <tr><td><strong>Checks:</strong></td><td>Risk gate status, position limits</td></tr>
-    </table>
-
-    <h4>Step 8: Morning Brief</h4>
-    <p><strong>What happens:</strong> Generates a JSON summary of the day.</p>
-    <table>
-        <tr><td><strong>Table affected:</strong></td><td><code>MORNING_BRIEF</code> — Stores the brief</td></tr>
-        <tr><td><strong>Contents:</strong></td><td>Opportunities, risks, portfolio state, deltas from yesterday</td></tr>
-    </table>
-
-    <h3>3.3 Data Flow</h3>
-
-    <div class="data-flow">
-        <div class="data-flow-item">AlphaVantage API</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item primary">MARKET_BARS (raw prices)</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item">MARKET_RETURNS (calculated returns)</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item primary">RECOMMENDATION_LOG (signals)</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item">RECOMMENDATION_OUTCOMES (evaluated)</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item">V_TRUSTED_SIGNALS (trust classification)</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item primary">PORTFOLIO_DAILY / TRADES / POSITIONS</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item">ORDER_PROPOSALS (suggestions)</div>
-        <div class="data-flow-arrow">↓</div>
-        <div class="data-flow-item primary">MORNING_BRIEF (final output)</div>
-    </div>
-</section>
-
-<!-- Section 4: Key Concepts -->
-<section id="concepts">
-    <h2>4. Key Concepts</h2>
-
-    <h3>4.1 Episodes</h3>
-    <p><strong>What is an episode?</strong> A lifecycle period for a portfolio. Think of it as a "trading season" with a clear start and end.</p>
-
-    <table>
-        <thead>
-            <tr><th>State</th><th>Meaning</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>ACTIVE</strong></td><td>Currently trading</td></tr>
-            <tr><td><strong>ENDED</strong></td><td>Finished normally</td></tr>
-            <tr><td><strong>CRYSTALLIZED</strong></td><td>Profit target hit, gains locked in</td></tr>
-            <tr><td><strong>STOPPED</strong></td><td>Risk limits breached</td></tr>
-            <tr><td><strong>BUST</strong></td><td>Lost too much, trading halted</td></tr>
-        </tbody>
-    </table>
-
-    <div class="info-box tip">
-        <strong>Why episodes matter:</strong> All portfolio data is scoped to the current episode. When you "reset" a portfolio, you end the current episode and start a new one. Historical episodes are preserved for analysis.
-    </div>
-
-    <h3>4.2 Run IDs</h3>
-    <p><strong>What is a Run ID?</strong> A unique identifier that tracks every pipeline execution and simulation run.</p>
-
-    <table>
-        <thead>
-            <tr><th>Type</th><th>Format</th><th>Used for</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Pipeline Run ID</strong></td><td>UUID (e.g., <code>05a39214-cc22-...</code>)</td><td>Tracking the overall pipeline</td></tr>
-            <tr><td><strong>Simulation Run ID</strong></td><td>UUID</td><td>Per-portfolio simulation</td></tr>
-        </tbody>
-    </table>
-
-    <h3>4.3 Risk Gates</h3>
-    <p><strong>What is a risk gate?</strong> A safety mechanism that can block new trades when risk thresholds are breached.</p>
-
-    <table>
-        <thead>
-            <tr><th>State</th><th>Meaning</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><span class="badge badge-safe">SAFE</span></td><td>Normal operation, entries allowed</td></tr>
-            <tr><td><span class="badge badge-caution">CAUTION</span></td><td>Warning level, monitor closely</td></tr>
-            <tr><td><span class="badge badge-stopped">STOPPED</span></td><td>Entries blocked, only exits allowed</td></tr>
-        </tbody>
-    </table>
-
-    <h4>What triggers STOPPED?</h4>
-    <ul>
-        <li><strong>Drawdown stop:</strong> Portfolio dropped too much from peak (e.g., 10%)</li>
-        <li><strong>Bust threshold:</strong> Portfolio value fell below bust level (e.g., 60% of starting cash)</li>
-    </ul>
-
-    <h4>Profile thresholds:</h4>
-    <table>
-        <thead>
-            <tr><th>Threshold</th><th>Meaning</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Drawdown Stop %</strong></td><td>Max allowed decline from peak (e.g., 10%)</td></tr>
-            <tr><td><strong>Bust Equity %</strong></td><td>Minimum value before bust (e.g., 60%)</td></tr>
-            <tr><td><strong>Max Positions</strong></td><td>Maximum number of holdings</td></tr>
-            <tr><td><strong>Max Position %</strong></td><td>Maximum size of any single position</td></tr>
-        </tbody>
-    </table>
-
-    <h3>4.4 Trust Levels</h3>
-    <p><strong>What is trust?</strong> A classification of how reliable a pattern is, based on historical performance.</p>
-
-    <table>
-        <thead>
-            <tr><th>Level</th><th>Meaning</th><th>Threshold</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><span class="badge badge-trusted">TRUSTED</span></td><td>Reliable, can trade</td><td>30+ successes, 80%+ coverage, positive returns</td></tr>
-            <tr><td><span class="badge badge-watch">WATCH</span></td><td>Promising, needs more data</td><td>Some successes, still monitoring</td></tr>
-            <tr><td><span class="badge badge-untrusted">UNTRUSTED</span></td><td>Not reliable, avoid</td><td>Negative returns or insufficient data</td></tr>
-        </tbody>
-    </table>
-
-    <div class="info-box important">
-        <strong>Important:</strong> Only <span class="badge badge-trusted">TRUSTED</span> patterns are used for actual trade proposals. WATCH patterns are monitored but not traded.
-    </div>
-
-    <h3>4.5 Proposals vs Trades</h3>
-
-    <table>
-        <thead>
-            <tr><th>Concept</th><th>What it is</th><th>Where to see it</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Signal</strong></td><td>A pattern detection (raw opportunity)</td><td>Signals page</td></tr>
-            <tr><td><strong>Proposal</strong></td><td>A suggested trade (passed filters)</td><td>Morning Brief</td></tr>
-            <tr><td><strong>Trade</strong></td><td>An executed transaction (paper)</td><td>Portfolio page</td></tr>
-        </tbody>
-    </table>
-
-    <p><strong>The journey:</strong></p>
-    <pre>SIGNAL → [Trust check] → [Eligibility check] → PROPOSAL → [Risk check] → TRADE</pre>
-
-    <h4>Status progression:</h4>
-    <table>
-        <thead>
-            <tr><th>Status</th><th>Meaning</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>PROPOSED</strong></td><td>Suggestion created, awaiting validation</td></tr>
-            <tr><td><strong>APPROVED</strong></td><td>Passed all checks, ready to execute</td></tr>
-            <tr><td><strong>REJECTED</strong></td><td>Failed validation (risk gate, limits, etc.)</td></tr>
-            <tr><td><strong>EXECUTED</strong></td><td>Successfully traded (paper)</td></tr>
-        </tbody>
-    </table>
-</section>
-
-<!-- Section 5: Troubleshooting -->
-<section id="troubleshooting">
-    <h2>5. Troubleshooting</h2>
-
-    <h3>"STALE" brief showing</h3>
-    <table>
-        <tr><td><strong>Symptom:</strong></td><td>Morning Brief shows "STALE" badge</td></tr>
-        <tr><td><strong>Cause:</strong></td><td>A newer pipeline run completed but the brief is from an older run</td></tr>
-        <tr><td><strong>Solution:</strong></td><td>Check Audit Viewer for recent pipeline runs. If a run completed successfully, the brief should refresh.</td></tr>
-    </table>
-
-    <h3>No trades happening</h3>
-    <table>
-        <thead>
-            <tr><th>Possible Cause</th><th>How to check</th></tr>
-        </thead>
-        <tbody>
-            <tr><td>Risk gate STOPPED</td><td>Check Portfolio page → Risk Gate card</td></tr>
-            <tr><td>No trusted patterns</td><td>Check Training Status for maturity</td></tr>
-            <tr><td>No new market data</td><td>Check if pipeline shows "NO_NEW_BARS"</td></tr>
-            <tr><td>Position limits full</td><td>Check Open Positions vs Max Positions</td></tr>
-        </tbody>
-    </table>
-
-    <h3>Wrong metrics (drawdown, win/loss days)</h3>
-    <table>
-        <tr><td><strong>Symptom:</strong></td><td>Metrics don't match expected values</td></tr>
-        <tr><td><strong>Possible cause:</strong></td><td>Historical data from before episode reset</td></tr>
-        <tr><td><strong>Solution:</strong></td><td>Run the episode cleanup migration, then re-run the pipeline</td></tr>
-    </table>
-
-    <h3>Pipeline shows "SUCCESS_WITH_SKIPS"</h3>
-    <table>
-        <tr><td><strong>Meaning:</strong></td><td>Some steps were skipped, usually because no new market data or rate limit hit</td></tr>
-        <tr><td><strong>Is this a problem?</strong></td><td>Usually not. This is normal when there's no new data to process.</td></tr>
-    </table>
-</section>
-
-<!-- Section 6: Glossary -->
-<section id="glossary">
-    <h2>6. Glossary</h2>
-
-    <table>
-        <thead>
-            <tr><th>Term</th><th>Definition</th></tr>
-        </thead>
-        <tbody>
-            <tr><td><strong>Bar</strong></td><td>A single OHLC price data point (Open, High, Low, Close)</td></tr>
-            <tr><td><strong>Bust</strong></td><td>When portfolio value drops below the bust threshold</td></tr>
-            <tr><td><strong>Crystallize</strong></td><td>Lock in gains when profit target is hit</td></tr>
-            <tr><td><strong>Drawdown</strong></td><td>Decline from peak equity (expressed as %)</td></tr>
-            <tr><td><strong>Episode</strong></td><td>A portfolio lifecycle period with defined start/end</td></tr>
-            <tr><td><strong>Equity</strong></td><td>Total portfolio value (cash + positions)</td></tr>
-            <tr><td><strong>Hit Rate</strong></td><td>Percentage of signals that went in the predicted direction</td></tr>
-            <tr><td><strong>Horizon</strong></td><td>Forward time period for evaluation (1, 3, 5, 10, 20 bars)</td></tr>
-            <tr><td><strong>Idempotent</strong></td><td>Can be run multiple times without creating duplicates</td></tr>
-            <tr><td><strong>Maturity</strong></td><td>How well the system has learned a pattern</td></tr>
-            <tr><td><strong>OHLC</strong></td><td>Open, High, Low, Close — standard price bar format</td></tr>
-            <tr><td><strong>Pattern</strong></td><td>A price behavior that signals a trading opportunity</td></tr>
-            <tr><td><strong>Pipeline</strong></td><td>The automated sequence of data processing steps</td></tr>
-            <tr><td><strong>Position</strong></td><td>A holding in an asset (shares owned)</td></tr>
-            <tr><td><strong>Proposal</strong></td><td>A suggested trade that passed initial filters</td></tr>
-            <tr><td><strong>Risk Gate</strong></td><td>Safety mechanism controlling trade entries</td></tr>
-            <tr><td><strong>Run ID</strong></td><td>Unique identifier for a pipeline or simulation execution</td></tr>
-            <tr><td><strong>Signal</strong></td><td>A detected trading opportunity from pattern matching</td></tr>
-            <tr><td><strong>Simulation</strong></td><td>Paper trading that doesn't use real money</td></tr>
-            <tr><td><strong>Trust</strong></td><td>Reliability classification of a pattern</td></tr>
-        </tbody>
-    </table>
-</section>
-
-</div>
-
-<footer>
-    <p>MIP User Guide — Last updated: March 2026</p>
-</footer>
-
+      </table>
+      <div class="note"><strong>Reminder:</strong> MIP is a learning system, not a certainty machine. Follow the event sequence when diagnosing issues.</div>
+    </section>
+
+    <p class="footer">Last updated: March 12, 2026</p>
+  </main>
 </body>
 </html>

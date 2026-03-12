@@ -18,7 +18,7 @@ export default function AskMipPanel({ open, onClose, pathname }) {
   const inputRef = useRef(null)
 
   // Resolve the guide section for the current page
-  const guideSection = sectionForRoute(pathname)
+  const guideSection = pathname === '/guide' ? null : sectionForRoute(pathname)
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -142,11 +142,14 @@ export default function AskMipPanel({ open, onClose, pathname }) {
           <div className="ask-mip-empty">
             <p className="ask-mip-empty-title">Ask me anything about MIP</p>
             <p className="ask-mip-empty-hint">
-              How does News Intelligence determine decision impact? Why is proposals scoped high but impacts empty?
-              Explain Decision Console grouped symbols and inline gate trace.
-              What does HOT ticker in sidebar mean, and when does it clear?
-              How is news_score_adj bounded and when can news block new entries?
+              Try one of these:
             </p>
+            <ul className="ask-mip-empty-examples">
+              <li>What should I check first every morning in MIP?</li>
+              <li>Why is this portfolio blocked from new entries?</li>
+              <li>Explain this page in plain English with a simple example.</li>
+              <li>What does this metric mean, and what is a good value?</li>
+            </ul>
           </div>
         )}
         {messages.map((msg, i) => (

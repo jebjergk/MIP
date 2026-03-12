@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import sections from '../guide/index'
@@ -11,13 +11,9 @@ const PART_LABELS = {
 }
 
 export default function UserGuide() {
-  const [activeId, setActiveId] = useState(null)
-
   const part1 = useMemo(() => sections.filter(s => s.part === 1), [])
   const part2 = useMemo(() => sections.filter(s => s.part === 2), [])
   const part3 = useMemo(() => sections.filter(s => s.part === 3), [])
-
-  const activeSection = activeId ? sections.find(s => s.id === activeId) : null
 
   return (
     <div className="user-guide">
@@ -36,7 +32,7 @@ export default function UserGuide() {
             <ol>
               {part1.map(s => (
                 <li key={s.id}>
-                  <a href={`#${s.id}`} onClick={() => setActiveId(null)}>
+                  <a href={`#${s.id}`}>
                     {s.title}
                   </a>
                 </li>
@@ -48,7 +44,19 @@ export default function UserGuide() {
             <ol start={11}>
               {part2.map(s => (
                 <li key={s.id}>
-                  <a href={`#${s.id}`} onClick={() => setActiveId(null)}>
+                  <a href={`#${s.id}`}>
+                    {s.title}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="guide-toc-col">
+            <h4>{PART_LABELS[3]}</h4>
+            <ol start={22}>
+              {part3.map(s => (
+                <li key={s.id}>
+                  <a href={`#${s.id}`}>
                     {s.title}
                   </a>
                 </li>

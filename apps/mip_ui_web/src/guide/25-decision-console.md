@@ -2,6 +2,8 @@
 
 The Decision Console is MIP's position-monitoring control center. It combines open-position state, live event flow, and full decision traceability.
 
+If AI Agent Decisions is the **proposal courtroom**, Decision Console is the **position ICU monitor**.
+
 ## Three Modes
 
 ### Open Positions
@@ -16,6 +18,8 @@ Default mode, optimized for portfolio monitoring.
   - 🔴 **Exited**
 - **Portfolio-row metrics** — current vs target, distance, time in trade, MFE, news badge/age
 - **Inline inspector** — clicking a row expands trace content directly below that row
+
+Plain-English meaning: "Which open trades are healthy, drifting, or close to exit logic."
 
 ### Live Decisions
 

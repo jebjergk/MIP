@@ -414,3 +414,29 @@
   background: #fce4ec;
   color: #c62828;
 }
+
+.lpa-exit-setup {
+  display: grid;
+  gap: 2px;
+}
+
+.lpa-protect-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.lpa-protect-chip--armed {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.lpa-protect-chip--idle {
+  background: #fff8e1;
+  color: #925f00;
+  border: 1px solid #ffe082;
+}

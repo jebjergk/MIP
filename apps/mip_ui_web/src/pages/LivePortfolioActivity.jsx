@@ -119,6 +119,20 @@ function MiniSparkline({ points = [], color = '#1565c0' }) {
   )
 }
 
+function pickBetterProtection(current, candidate) {
+  if (!current) return candidate
+  const score = (p) => {
+    const state = String(p?.state || '').toUpperCase()
+    const active = Boolean(p?.activeAtBroker)
+    if (active && state === 'FULL') return 4
+    if (active && state === 'PARTIAL') return 3
+    if (!active && state === 'FULL') return 2
+    if (!active && state === 'PARTIAL') return 1
+    return 0
+  }
+  return score(candidate) > score(current) ? candidate : current
+}
+
 export default function LivePortfolioActivity() {
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -469,6 +483,31 @@ export default function LivePortfolioActivity() {
   const navChangeAbs = overview?.account_kpis?.trend_nav_change_abs
   const navChangePct = overview?.account_kpis?.trend_nav_change_pct
   const trendUnrealizedChange = overview?.account_kpis?.trend_unrealized_change_abs
+  const protectionBySymbol = orders.reduce((acc, o) => {
+    const symbol = String(o?.SYMBOL || '').toUpperCase()
+    if (!symbol) return acc
+    const prot = o?.PROTECTION || {}
+    const tp = prot?.take_profit || null
+    const sl = prot?.stop_loss || null
+    const activeAtBroker = Boolean(tp?.broker_truth_active || sl?.broker_truth_active)
+    const summary = {
+      state: String(prot?.state || 'NONE').toUpperCase(),
+      activeAtBroker,
+      tpStatus: tp?.status || null,
+      tpPrice: tp?.limit_price,
+      slStatus: sl?.status || null,
+      slPrice: sl?.limit_price,
+      updatedAt: o?.LAST_UPDATED_AT || o?.CREATED_AT || null,
+    }
+    const existing = acc.get(symbol)
+    const better = pickBetterProtection(existing, summary)
+    if (better === existing && existing && summary.updatedAt && existing.updatedAt && summary.updatedAt > existing.updatedAt) {
+      acc.set(symbol, summary)
+      return acc
+    }
+    acc.set(symbol, better)
+    return acc
+  }, new Map())
 
   return (
     <div className="page lpa-page">
@@ -796,22 +835,44 @@ export default function LivePortfolioActivity() {
                         <th>Avg Cost</th>
                         <th>Mkt Value</th>
                         <th>P&L</th>
+                        <th>Exit Setup</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {openPositions.length === 0 && <tr><td colSpan={5}>No open broker positions.</td></tr>}
-                      {openPositions.map((p, idx) => (
-                        <tr key={`${p.SYMBOL || 'SYM'}_${idx}`}>
-                          <td>
-                            <div><b>{p.SYMBOL || '—'}</b></div>
-                            <div className="lpa-subtle">{p.SECURITY_TYPE || '—'}</div>
-                          </td>
-                          <td>{fmtNum(p.POSITION_QTY, 0)}</td>
-                          <td>{fmtNum(p.AVG_COST, 4)}</td>
-                          <td>{fmtNum(p.MARKET_VALUE, 2)}</td>
-                          <td className={Number(p.UNREALIZED_PNL || 0) >= 0 ? 'lpa-pos' : 'lpa-neg'}>{fmtSigned(p.UNREALIZED_PNL, 2)}</td>
-                        </tr>
-                      ))}
+                      {openPositions.length === 0 && <tr><td colSpan={6}>No open broker positions.</td></tr>}
+                      {openPositions.map((p, idx) => {
+                        const symbol = String(p.SYMBOL || '').toUpperCase()
+                        const exit = protectionBySymbol.get(symbol)
+                        const hasExit = exit && exit.state !== 'NONE'
+                        return (
+                          <tr key={`${p.SYMBOL || 'SYM'}_${idx}`}>
+                            <td>
+                              <div><b>{p.SYMBOL || '—'}</b></div>
+                              <div className="lpa-subtle">{p.SECURITY_TYPE || '—'}</div>
+                            </td>
+                            <td>{fmtNum(p.POSITION_QTY, 0)}</td>
+                            <td>{fmtNum(p.AVG_COST, 4)}</td>
+                            <td>{fmtNum(p.MARKET_VALUE, 2)}</td>
+                            <td className={Number(p.UNREALIZED_PNL || 0) >= 0 ? 'lpa-pos' : 'lpa-neg'}>{fmtSigned(p.UNREALIZED_PNL, 2)}</td>
+                            <td>
+                              {!hasExit ? (
+                                <div className="lpa-subtle">No TP/SL linked in latest order bundle.</div>
+                              ) : (
+                                <div className="lpa-exit-setup">
+                                  <div>
+                                    <span className={`lpa-protect-chip lpa-protect-chip--${exit.activeAtBroker ? 'armed' : 'idle'}`}>
+                                      {exit.activeAtBroker ? 'Armed at IB' : 'Not armed'}
+                                    </span>
+                                  </div>
+                                  <div>State: <b>{exit.state}</b></div>
+                                  <div>TP: {exit.tpStatus || '—'} {exit.tpPrice != null ? `@ ${fmtNum(exit.tpPrice, 4)}` : ''}</div>
+                                  <div>SL: {exit.slStatus || '—'} {exit.slPrice != null ? `@ ${fmtNum(exit.slPrice, 4)}` : ''}</div>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

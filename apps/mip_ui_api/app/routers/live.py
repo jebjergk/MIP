@@ -3228,6 +3228,12 @@ def get_live_activity_overview(
                     "broker_order_id": ord_row.get("BROKER_ORDER_ID"),
                     "status": status,
                     "order_type": order_type,
+                    "side": ord_row.get("SIDE"),
+                    "limit_price": float(ord_row.get("LIMIT_PRICE")) if ord_row.get("LIMIT_PRICE") is not None else None,
+                    "avg_fill_price": float(ord_row.get("AVG_FILL_PRICE")) if ord_row.get("AVG_FILL_PRICE") is not None else None,
+                    "qty_ordered": float(ord_row.get("QTY_ORDERED")) if ord_row.get("QTY_ORDERED") is not None else None,
+                    "qty_filled": float(ord_row.get("QTY_FILLED")) if ord_row.get("QTY_FILLED") is not None else None,
+                    "broker_truth_active": _is_order_active_in_broker_truth(ord_row, broker_open_order_ids),
                 }
                 if any(token in order_type for token in ("STOP", "STP", "SL")):
                     if stop_loss_leg is None:

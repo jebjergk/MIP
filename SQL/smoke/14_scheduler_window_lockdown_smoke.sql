@@ -14,8 +14,8 @@ select
     ("name" = 'TASK_RUN_DAILY_PIPELINE' and "schedule" = 'USING CRON 0 17 * * MON-FRI America/New_York') or
     ("name" = 'TASK_RUN_INTRADAY_PIPELINE' and "schedule" = 'USING CRON 2,17,32,47 10-15 * * MON-FRI America/New_York') or
     ("name" = 'TASK_RUN_HOURLY_EARLY_EXIT_MONITOR' and "schedule" = 'USING CRON 5 10-15 * * MON-FRI America/New_York') or
-    ("name" = 'TASK_INGEST_RSS_NEWS' and "schedule" = 'USING CRON 0,30 8-15 * * MON-FRI America/New_York') or
-    ("name" = 'TASK_NEWS_TUESDAY_CATCHUP' and "schedule" = 'USING CRON 30 7 * * MON-FRI America/New_York') or
+    ("name" = 'TASK_INGEST_RSS_NEWS' and "schedule" = 'USING CRON 0,30 7-8 * * MON-FRI America/New_York') or
+    ("name" = 'TASK_NEWS_PRECOMMITTEE_0900' and "schedule" = 'USING CRON 0 9 * * MON-FRI America/New_York') or
     ("name" = 'TASK_COMPUTE_NEWS_INFO_STATE_DAILY' and "schedule" = 'USING CRON 0 16 * * MON-FRI America/New_York'),
     'PASS',
     'FAIL'
@@ -28,7 +28,7 @@ where "database_name" = 'MIP'
     'TASK_RUN_INTRADAY_PIPELINE',
     'TASK_RUN_HOURLY_EARLY_EXIT_MONITOR',
     'TASK_INGEST_RSS_NEWS',
-    'TASK_NEWS_TUESDAY_CATCHUP',
+    'TASK_NEWS_PRECOMMITTEE_0900',
     'TASK_COMPUTE_NEWS_INFO_STATE_DAILY'
   )
 order by "schema_name", "name";
@@ -52,10 +52,10 @@ where STATE = 'started'
         'USING CRON 5 10-15 * * MON-FRI America/New_York'
       )
     ) or
-    (NAME in ('TASK_INGEST_RSS_NEWS', 'TASK_NEWS_TUESDAY_CATCHUP', 'TASK_COMPUTE_NEWS_INFO_STATE_DAILY')
+    (NAME in ('TASK_INGEST_RSS_NEWS', 'TASK_NEWS_PRECOMMITTEE_0900', 'TASK_COMPUTE_NEWS_INFO_STATE_DAILY')
       and SCHEDULE not in (
-        'USING CRON 0,30 8-15 * * MON-FRI America/New_York',
-        'USING CRON 30 7 * * MON-FRI America/New_York',
+        'USING CRON 0,30 7-8 * * MON-FRI America/New_York',
+        'USING CRON 0 9 * * MON-FRI America/New_York',
         'USING CRON 0 16 * * MON-FRI America/New_York'
       )
     )

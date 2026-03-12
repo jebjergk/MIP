@@ -1260,6 +1260,7 @@ def _submit_ibkr_order_bundle(
     tp_price: float | None,
     sl_price: float | None,
     tif: str = "DAY",
+    child_tif: str | None = None,
 ) -> dict:
     """
     Submit parent + optional TP/SL bundle to IBKR through cursorfiles runtime.
@@ -1307,6 +1308,8 @@ def _submit_ibkr_order_bundle(
         "--currency",
         currency,
     ]
+    if child_tif:
+        cmd.extend(["--child-tif", str(child_tif).upper()])
     if entry_price is not None:
         cmd.extend(["--entry-price", str(float(entry_price))])
     if tp_price is not None:
@@ -1623,10 +1626,37 @@ def _build_target_expectation_snapshot(
     reasons: list[str] = []
 
     base_return = None
+    optimal_horizon_bars = None
+
+    def _pick_horizon(rows: list[dict], min_obs: int) -> tuple[float | None, int | None, bool]:
+        candidates = []
+        for r in rows:
+            try:
+                h = int(r.get("HORIZON_BARS"))
+                avg_ret = float(r.get("AVG_RETURN")) if r.get("AVG_RETURN") is not None else None
+                n_ret = int(r.get("N_RET") or 0)
+            except Exception:
+                continue
+            if avg_ret is None:
+                continue
+            candidates.append({"h": h, "avg": avg_ret, "n": n_ret})
+        if not candidates:
+            return None, None, False
+
+        strong = [c for c in candidates if c["n"] >= min_obs]
+        low_sample = False
+        universe = strong
+        if not universe:
+            universe = sorted(candidates, key=lambda x: (x["n"], x["avg"]), reverse=True)[:3]
+            low_sample = True
+        best = sorted(universe, key=lambda x: (x["avg"], x["n"]), reverse=True)[0]
+        return float(best["avg"]), int(best["h"]), low_sample
+
     if symbol_norm and market_type_norm and pattern_id is not None:
         cur.execute(
             """
             select
+              o.HORIZON_BARS,
               avg(case when o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null then o.REALIZED_RETURN end) as AVG_RETURN,
               count_if(o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null) as N_RET
             from MIP.APP.RECOMMENDATION_LOG r
@@ -1636,21 +1666,24 @@ def _build_target_expectation_snapshot(
               and upper(r.MARKET_TYPE) = %s
               and r.PATTERN_ID = %s
               and r.INTERVAL_MINUTES = %s
-              and o.HORIZON_BARS = 5
+            group by o.HORIZON_BARS
             """,
             (symbol_norm, market_type_norm, pattern_id, interval_minutes),
         )
         rows = fetch_all(cur)
-        m = rows[0] if rows else {}
-        n_ret = int(m.get("N_RET") or 0)
-        if n_ret >= 10 and m.get("AVG_RETURN") is not None:
-            base_return = float(m.get("AVG_RETURN"))
-            reasons.append("BASE_FROM_SYMBOL_PATTERN_H5")
+        sel_ret, sel_h, low_sample = _pick_horizon(rows, min_obs=10)
+        if sel_ret is not None:
+            base_return = sel_ret
+            optimal_horizon_bars = sel_h
+            reasons.append(f"BASE_FROM_SYMBOL_PATTERN_OPTIMAL_H{sel_h}")
+            if low_sample:
+                reasons.append("OPTIMAL_HORIZON_LOW_SAMPLE")
 
     if base_return is None and market_type_norm and pattern_id is not None:
         cur.execute(
             """
             select
+              o.HORIZON_BARS,
               avg(case when o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null then o.REALIZED_RETURN end) as AVG_RETURN,
               count_if(o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null) as N_RET
             from MIP.APP.RECOMMENDATION_LOG r
@@ -1659,19 +1692,22 @@ def _build_target_expectation_snapshot(
             where upper(r.MARKET_TYPE) = %s
               and r.PATTERN_ID = %s
               and r.INTERVAL_MINUTES = %s
-              and o.HORIZON_BARS = 5
+            group by o.HORIZON_BARS
             """,
             (market_type_norm, pattern_id, interval_minutes),
         )
         rows = fetch_all(cur)
-        m = rows[0] if rows else {}
-        n_ret = int(m.get("N_RET") or 0)
-        if n_ret >= 30 and m.get("AVG_RETURN") is not None:
-            base_return = float(m.get("AVG_RETURN"))
-            reasons.append("BASE_FROM_MARKET_PATTERN_H5")
+        sel_ret, sel_h, low_sample = _pick_horizon(rows, min_obs=30)
+        if sel_ret is not None:
+            base_return = sel_ret
+            optimal_horizon_bars = sel_h
+            reasons.append(f"BASE_FROM_MARKET_PATTERN_OPTIMAL_H{sel_h}")
+            if low_sample:
+                reasons.append("OPTIMAL_HORIZON_LOW_SAMPLE")
 
     if base_return is None:
         base_return = 0.02
+        optimal_horizon_bars = 5
         reasons.append("BASE_DEFAULT_FALLBACK")
 
     # Keep expected move bands realistic and bounded.
@@ -1692,6 +1728,8 @@ def _build_target_expectation_snapshot(
         "pattern_id": int(pattern_id) if pattern_id is not None else None,
         "interval_minutes": int(interval_minutes),
         "open_condition_factor": open_factor,
+        "optimal_horizon_bars": int(optimal_horizon_bars) if optimal_horizon_bars is not None else 5,
+        "max_hold_trading_days": int(max(1, round((optimal_horizon_bars or 5) * (interval_minutes / 1440.0)))),
         "bands": {
             "conservative": round(conservative, 6),
             "base": round(base, 6),
@@ -2082,6 +2120,7 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "\"summary\":\"...\",\"size_factor\":0.0-1.0,"
         "\"should_enter\":true|false,"
         "\"target_return\":number,"
+        "\"stop_loss_pct\":number,"
         "\"hold_bars\":integer,"
         "\"early_exit_target_return\":number,"
         "\"reasons\":[\"...\"],\"assumptions\":[\"...\"]}\n"
@@ -2090,7 +2129,8 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
         "- When discussing news freshness, explicitly cite source as ACTION_NEWS (news_context_snapshot) or LATEST_NEWS (latest_symbol_news_context).\n"
         "- If ACTION_NEWS and LATEST_NEWS conflict, state the conflict explicitly and prioritize LATEST_NEWS recency for risk gating.\n"
-        "- Contribute to joint decision dimensions: enter/size/target/hold/early-exit.\n"
+        "- Contribute to joint decision dimensions: enter/size/target/stop/hold/early-exit.\n"
+        "- stop_loss_pct must be positive and risk-aware versus expected edge after fees.\n"
         "- Return ONE valid JSON object only, no preface/suffix.\n"
         "- Do not include markdown or code fences.\n"
         "- If uncertain, still return schema with null fields where needed.\n"
@@ -2124,6 +2164,12 @@ def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> d
     except Exception:
         target_return = None
     try:
+        stop_loss_pct = float(out.get("stop_loss_pct")) if out.get("stop_loss_pct") is not None else None
+    except Exception:
+        stop_loss_pct = None
+    if stop_loss_pct is not None:
+        stop_loss_pct = max(0.0005, min(stop_loss_pct, 0.95))
+    try:
         hold_bars = int(out.get("hold_bars")) if out.get("hold_bars") is not None else None
     except Exception:
         hold_bars = None
@@ -2148,6 +2194,7 @@ def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> d
         "size_factor": size_factor,
         "should_enter": should_enter,
         "target_return": target_return,
+        "stop_loss_pct": stop_loss_pct,
         "hold_bars": hold_bars,
         "early_exit_target_return": early_exit_target_return,
         "reasons": reasons,
@@ -2169,12 +2216,14 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
     should_enter_votes = [bool(o.get("should_enter")) for o in outputs]
     should_enter = bool(sum(1 for v in should_enter_votes if v) >= max(1, (len(should_enter_votes) + 1) // 2))
     target_returns = [float(o["target_return"]) for o in outputs if o.get("target_return") is not None]
+    stop_losses = [float(o["stop_loss_pct"]) for o in outputs if o.get("stop_loss_pct") is not None]
     hold_bars_vals = [int(o["hold_bars"]) for o in outputs if o.get("hold_bars") is not None]
     early_exit_targets = [float(o["early_exit_target_return"]) for o in outputs if o.get("early_exit_target_return") is not None]
     confidence = 0.0
     if outputs:
         confidence = sum(float(o.get("confidence", 0.0)) for o in outputs) / len(outputs)
     target_return = (sum(target_returns) / len(target_returns)) if target_returns else None
+    stop_loss_pct = (sum(stop_losses) / len(stop_losses)) if stop_losses else None
     hold_bars = int(round(sum(hold_bars_vals) / len(hold_bars_vals))) if hold_bars_vals else None
     early_exit_target_return = (sum(early_exit_targets) / len(early_exit_targets)) if early_exit_targets else None
     early_exit_target_return = _normalize_early_exit_target(target_return, early_exit_target_return)
@@ -2187,6 +2236,7 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
             "should_enter": should_enter and recommendation != "BLOCK",
             "position_size_factor": round(size_factor, 4),
             "realistic_target_return": target_return,
+            "stop_loss_pct": stop_loss_pct,
             "hold_bars": hold_bars,
             "acceptable_early_exit_target_return": early_exit_target_return,
         },
@@ -2223,6 +2273,7 @@ def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
     jd = dict((out.get("joint_decision") or {}))
     target_snapshot = _parse_variant(context.get("target_expectation_snapshot"))
     bands = _parse_variant(target_snapshot.get("bands"))
+    risk_cfg = _parse_variant(context.get("execution_risk_config"))
     if jd.get("realistic_target_return") is None:
         base = bands.get("base")
         if base is not None:
@@ -2238,7 +2289,24 @@ def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
             except Exception:
                 pass
     if jd.get("hold_bars") is None:
-        jd["hold_bars"] = 5
+        horizon_bars = target_snapshot.get("optimal_horizon_bars")
+        try:
+            jd["hold_bars"] = int(horizon_bars) if horizon_bars is not None else 5
+        except Exception:
+            jd["hold_bars"] = 5
+    if jd.get("max_hold_trading_days") is None:
+        max_hold_days = target_snapshot.get("max_hold_trading_days")
+        try:
+            jd["max_hold_trading_days"] = int(max_hold_days) if max_hold_days is not None else max(1, int(jd.get("hold_bars") or 5))
+        except Exception:
+            jd["max_hold_trading_days"] = max(1, int(jd.get("hold_bars") or 5))
+    if jd.get("stop_loss_pct") is None:
+        bust = risk_cfg.get("bust_pct")
+        if bust is not None:
+            try:
+                jd["stop_loss_pct"] = float(bust)
+            except Exception:
+                pass
     jd["acceptable_early_exit_target_return"] = _normalize_early_exit_target(
         jd.get("realistic_target_return"),
         jd.get("acceptable_early_exit_target_return"),
@@ -2352,6 +2420,27 @@ def _build_action_decision_context(cur, action: dict) -> dict:
     if not action_news_snapshot:
         action_news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
     latest_news_snapshot = _fetch_latest_symbol_news_context(cur, symbol, action.get("ASSET_CLASS"))
+    risk_cfg = {}
+    if action.get("PORTFOLIO_ID") is not None:
+        try:
+            cur.execute(
+                """
+                select BUST_PCT, MAX_SLIPPAGE_PCT, MAX_POSITION_PCT
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                limit 1
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            cfg_rows = fetch_all(cur)
+            if cfg_rows:
+                risk_cfg = {
+                    "bust_pct": float(cfg_rows[0].get("BUST_PCT")) if cfg_rows[0].get("BUST_PCT") is not None else None,
+                    "max_slippage_pct": float(cfg_rows[0].get("MAX_SLIPPAGE_PCT")) if cfg_rows[0].get("MAX_SLIPPAGE_PCT") is not None else None,
+                    "max_position_pct": float(cfg_rows[0].get("MAX_POSITION_PCT")) if cfg_rows[0].get("MAX_POSITION_PCT") is not None else None,
+                }
+        except Exception:
+            risk_cfg = {}
     context = {
         "action_id": action.get("ACTION_ID"),
         "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -2369,6 +2458,7 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "news_context_snapshot": action_news_snapshot,
         "latest_symbol_news_context": latest_news_snapshot,
         "parallel_worlds_evidence": pw_evidence,
+        "execution_risk_config": risk_cfg,
     }
     return context
 
@@ -4227,6 +4317,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         jd = _parse_variant(verdict.get("joint_decision"))
         if not verdict.get("blocked") and (
             jd.get("realistic_target_return") is None
+            or jd.get("stop_loss_pct") is None
             or jd.get("hold_bars") is None
             or jd.get("acceptable_early_exit_target_return") is None
         ):
@@ -5536,7 +5627,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             """
             select
               VERDICT_JSON:verdict:joint_decision:realistic_target_return::float as TARGET_RETURN,
-              VERDICT_JSON:verdict:joint_decision:acceptable_early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN
+              VERDICT_JSON:verdict:joint_decision:acceptable_early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN,
+              VERDICT_JSON:verdict:joint_decision:stop_loss_pct::float as STOP_LOSS_PCT
             from MIP.LIVE.COMMITTEE_VERDICT
             where RUN_ID = %s
             limit 1
@@ -5547,12 +5639,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         verdict = verdict_rows[0] if verdict_rows else {}
         realistic_target_return = verdict.get("TARGET_RETURN")
         early_exit_target_return = verdict.get("EARLY_EXIT_TARGET_RETURN")
+        committee_stop_loss_pct = verdict.get("STOP_LOSS_PCT")
         target_return = (
             float(early_exit_target_return)
             if early_exit_target_return is not None
             else (float(realistic_target_return) if realistic_target_return is not None else None)
         )
-        stop_loss_pct = float(cfg.get("BUST_PCT")) if cfg.get("BUST_PCT") is not None else None
+        stop_loss_pct_default = float(cfg.get("BUST_PCT")) if cfg.get("BUST_PCT") is not None else None
+        stop_loss_pct = float(committee_stop_loss_pct) if committee_stop_loss_pct is not None else stop_loss_pct_default
+        if stop_loss_pct is not None and stop_loss_pct_default is not None:
+            # Never allow committee stop wider than configured portfolio bust guard.
+            stop_loss_pct = min(float(stop_loss_pct), float(stop_loss_pct_default))
 
         tp_price = None
         sl_price = None
@@ -5566,6 +5663,55 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 sl_price = max(entry_price * (1 - stop_loss_pct), 0.0001)
             elif side == "SELL":
                 sl_price = entry_price * (1 + stop_loss_pct)
+        if use_ibkr_submit:
+            risk_reason_codes = []
+            if target_return is None or target_return <= 0:
+                risk_reason_codes.append("LIVE_TP_REQUIRED_MISSING")
+            if stop_loss_pct is None or stop_loss_pct <= 0:
+                risk_reason_codes.append("LIVE_SL_REQUIRED_MISSING")
+            if tp_price is None or sl_price is None:
+                risk_reason_codes.append("LIVE_BRACKET_REQUIRED")
+            slippage_bps = 2.0
+            fee_bps = 1.0
+            spread_bps = 0.0
+            try:
+                cur.execute(
+                    """
+                    select
+                      coalesce(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then try_to_number(CONFIG_VALUE) end), 2) as SLIPPAGE_BPS,
+                      coalesce(max(case when CONFIG_KEY = 'FEE_BPS' then try_to_number(CONFIG_VALUE) end), 1) as FEE_BPS,
+                      coalesce(max(case when CONFIG_KEY = 'SPREAD_BPS' then try_to_number(CONFIG_VALUE) end), 0) as SPREAD_BPS
+                    from MIP.APP.APP_CONFIG
+                    where CONFIG_KEY in ('SLIPPAGE_BPS','FEE_BPS','SPREAD_BPS')
+                    """
+                )
+                fee_rows = fetch_all(cur)
+                if fee_rows:
+                    slippage_bps = float(fee_rows[0].get("SLIPPAGE_BPS") or slippage_bps)
+                    fee_bps = float(fee_rows[0].get("FEE_BPS") or fee_bps)
+                    spread_bps = float(fee_rows[0].get("SPREAD_BPS") or spread_bps)
+            except Exception:
+                pass
+            fee_return_floor = (slippage_bps + fee_bps + (spread_bps / 2.0)) / 10000.0
+            min_net_tp_bps = float(os.getenv("LIVE_MIN_NET_TP_BPS", "5"))
+            min_rr = float(os.getenv("LIVE_MIN_R_MULTIPLE", "1.10"))
+            min_tp_required = fee_return_floor + (min_net_tp_bps / 10000.0)
+            if target_return is not None and target_return <= min_tp_required:
+                risk_reason_codes.append("LIVE_TP_NET_EDGE_TOO_LOW")
+            if target_return is not None and stop_loss_pct is not None and stop_loss_pct > 0:
+                rr_multiple = float(target_return) / float(stop_loss_pct)
+                if rr_multiple < min_rr:
+                    risk_reason_codes.append("LIVE_RISK_REWARD_TOO_LOW")
+            if risk_reason_codes:
+                final_reason_codes = sorted(set(reason_codes + risk_reason_codes))
+                _write_reason_codes(cur, action_id, final_reason_codes)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Execution blocked: live IB trades require valid TP/SL and minimum risk-reward edge.",
+                        "reason_codes": final_reason_codes,
+                    },
+                )
         order_legs = []
         broker_submit_payload = None
         broker_truth_check = None
@@ -5587,6 +5733,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "exchange": os.getenv("IBKR_EXEC_EXCHANGE", "SMART"),
                     "currency": os.getenv("IBKR_EXEC_CURRENCY", "USD"),
                     "outside_rth": os.getenv("IBKR_EXEC_OUTSIDE_RTH", "0").strip().lower() in ("1", "true", "yes", "on"),
+                    "child_tif": os.getenv("IBKR_EXEC_CHILD_TIF", "GTC").upper(),
                 },
             }
             cur.execute(
@@ -5622,6 +5769,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     tp_price=float(tp_price) if tp_price is not None else None,
                     sl_price=float(sl_price) if sl_price is not None else None,
                     tif="DAY",
+                    child_tif=os.getenv("IBKR_EXEC_CHILD_TIF", "GTC"),
                 )
             except HTTPException as exc:
                 cur.execute(

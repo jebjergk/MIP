@@ -243,14 +243,17 @@ def _mock_feed_entries(source_id, source_name, feed_url):
         ]
     return base
 
-def _fetch_rss_entries(feed_url, max_attempts=4):
+def _fetch_rss_entries(feed_url, max_attempts=2, connect_timeout_sec=5, read_timeout_sec=12):
     headers = {
         "User-Agent": "MIP-News-Ingest/1.0 (+https://mip.local)"
     }
     last_error = None
+    max_attempts = max(1, int(max_attempts))
+    connect_timeout_sec = max(1, int(connect_timeout_sec))
+    read_timeout_sec = max(2, int(read_timeout_sec))
     for attempt in range(1, max_attempts + 1):
         try:
-            r = requests.get(feed_url, timeout=(10, 30), headers=headers)
+            r = requests.get(feed_url, timeout=(connect_timeout_sec, read_timeout_sec), headers=headers)
             r.raise_for_status()
             parsed = feedparser.parse(r.content)
             entries = parsed.entries or []
@@ -258,7 +261,7 @@ def _fetch_rss_entries(feed_url, max_attempts=4):
         except Exception as exc:
             last_error = exc
             if attempt < max_attempts:
-                time.sleep(min(8, 2 ** (attempt - 1)))
+                time.sleep(min(3, attempt))
     raise RuntimeError(f"FETCH_FAILED after {max_attempts} attempts: {last_error}")
 
 def _normalize_entry(
@@ -318,6 +321,16 @@ def _normalize_entry(
 def run(session, p_test_mode=False, p_source_limit=None):
     cfg = _load_config(session)
     news_enabled = str(cfg.get("NEWS_ENABLED", "false")).lower() == "true"
+    max_targets_per_run = _safe_int(cfg.get("NEWS_MAX_TARGETS_PER_RUN", "20"), 20)
+    fetch_max_attempts = _safe_int(cfg.get("NEWS_FETCH_MAX_ATTEMPTS", "2"), 2)
+    fetch_connect_timeout_sec = _safe_int(cfg.get("NEWS_FETCH_CONNECT_TIMEOUT_SEC", "5"), 5)
+    fetch_read_timeout_sec = _safe_int(cfg.get("NEWS_FETCH_READ_TIMEOUT_SEC", "12"), 12)
+    fetch_budget_seconds = _safe_int(cfg.get("NEWS_FETCH_BUDGET_SECONDS", "240"), 240)
+    max_targets_per_run = max(1, max_targets_per_run)
+    fetch_max_attempts = max(1, fetch_max_attempts)
+    fetch_connect_timeout_sec = max(1, fetch_connect_timeout_sec)
+    fetch_read_timeout_sec = max(2, fetch_read_timeout_sec)
+    fetch_budget_seconds = max(30, fetch_budget_seconds)
     source_cfg = cfg.get("NEWS_SOURCES")
     try:
         source_ids = json.loads(source_cfg) if source_cfg else None
@@ -363,6 +376,7 @@ def run(session, p_test_mode=False, p_source_limit=None):
     for s in global_rows:
         source_id = str(s["SOURCE_ID"])
         poll_minutes = _safe_int(s["POLL_MINUTES"], default_global_poll)
+        last_ingested_at = last_by_source.get(source_id)
         if (not p_test_mode) and (not _should_poll(last_by_source.get(source_id), poll_minutes, snapshot_ts)):
             continue
         targets.append({
@@ -375,11 +389,13 @@ def run(session, p_test_mode=False, p_source_limit=None):
             "symbol_hint": None,
             "market_type_hint": None,
             "poll_minutes": poll_minutes,
+            "last_ingested_at": last_ingested_at,
         })
 
     for s in ticker_rows:
         subscription_id = str(s["SUBSCRIPTION_ID"])
         poll_minutes = _safe_int(s["POLL_MINUTES"], default_ticker_poll)
+        last_ingested_at = last_by_sub.get(subscription_id)
         if (not p_test_mode) and (not _should_poll(last_by_sub.get(subscription_id), poll_minutes, snapshot_ts)):
             continue
         targets.append({
@@ -392,7 +408,16 @@ def run(session, p_test_mode=False, p_source_limit=None):
             "symbol_hint": str(s["SYMBOL"]),
             "market_type_hint": str(s["MARKET_TYPE"]),
             "poll_minutes": poll_minutes,
+            "last_ingested_at": last_ingested_at,
         })
+
+    def _target_sort_key(t):
+        last_ts = t.get("last_ingested_at")
+        return (last_ts is not None, last_ts or datetime(1970, 1, 1))
+
+    targets.sort(key=_target_sort_key)
+    if (not p_test_mode) and max_targets_per_run and len(targets) > max_targets_per_run:
+        targets = targets[:max_targets_per_run]
 
     if not targets:
         return {
@@ -411,8 +436,13 @@ def run(session, p_test_mode=False, p_source_limit=None):
     normalized = []
     errors = []
     per_source = []
+    skipped_due_to_budget = 0
+    fetch_started_at = time.time()
 
     for t in targets:
+        if (not p_test_mode) and ((time.time() - fetch_started_at) >= fetch_budget_seconds):
+            skipped_due_to_budget += 1
+            continue
         source_id = t["source_id"]
         source_name = t["source_name"]
         feed_url = t["feed_url"]
@@ -426,7 +456,12 @@ def run(session, p_test_mode=False, p_source_limit=None):
             if p_test_mode:
                 entries = _mock_feed_entries(source_id, source_name, feed_url)
             else:
-                entries = _fetch_rss_entries(feed_url)
+                entries = _fetch_rss_entries(
+                    feed_url,
+                    max_attempts=fetch_max_attempts,
+                    connect_timeout_sec=fetch_connect_timeout_sec,
+                    read_timeout_sec=fetch_read_timeout_sec,
+                )
             entry_count = len(entries)
 
             for e in entries:
@@ -486,10 +521,18 @@ def run(session, p_test_mode=False, p_source_limit=None):
             "sources_considered": len(global_rows),
             "ticker_subscriptions_considered": len(ticker_rows),
             "targets_polled": len(targets),
+            "targets_skipped_budget": int(skipped_due_to_budget),
             "rows_staged": 0,
             "rows_inserted": 0,
             "dedup_clusters_upserted": 0,
             "sources": per_source,
+            "runtime_controls": {
+                "max_targets_per_run": int(max_targets_per_run),
+                "fetch_budget_seconds": int(fetch_budget_seconds),
+                "fetch_max_attempts": int(fetch_max_attempts),
+                "fetch_connect_timeout_sec": int(fetch_connect_timeout_sec),
+                "fetch_read_timeout_sec": int(fetch_read_timeout_sec),
+            },
             "errors": errors,
         }
 
@@ -568,9 +611,17 @@ def run(session, p_test_mode=False, p_source_limit=None):
         "sources_considered": len(global_rows),
         "ticker_subscriptions_considered": len(ticker_rows),
         "targets_polled": len(targets),
+        "targets_skipped_budget": int(skipped_due_to_budget),
         "rows_staged": len(normalized),
         "rows_inserted": int(rows_inserted),
         "dedup_clusters_upserted": int(dedup_clusters),
+        "runtime_controls": {
+            "max_targets_per_run": int(max_targets_per_run),
+            "fetch_budget_seconds": int(fetch_budget_seconds),
+            "fetch_max_attempts": int(fetch_max_attempts),
+            "fetch_connect_timeout_sec": int(fetch_connect_timeout_sec),
+            "fetch_read_timeout_sec": int(fetch_read_timeout_sec),
+        },
         "sources": per_source,
         "errors": errors,
     }

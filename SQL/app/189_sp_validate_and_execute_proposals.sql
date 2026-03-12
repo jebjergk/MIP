@@ -289,7 +289,7 @@ begin
         llm_raw as (
             select
                 c.PROPOSAL_ID,
-                snowflake.cortex.complete(
+                snowflake.cortex.try_complete(
                     'claude-3-5-sonnet',
                     'You are a simulation trade committee. Return ONLY JSON with keys: '
                     || '{"should_enter":true|false,'
@@ -408,10 +408,22 @@ begin
             p.OUT_JSON:target_return::float as TARGET_RETURN,
             p.OUT_JSON:hold_bars::number as HOLD_BARS,
             p.OUT_JSON:early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN,
-            coalesce(p.OUT_JSON:summary::string, 'Committee default (fallback).') as SUMMARY,
-            coalesce(p.OUT_JSON:reason_codes, array_construct()) as REASON_CODES,
-            coalesce(p.OUT_JSON:agent_dialogue, array_construct()) as AGENT_DIALOGUE,
-            coalesce(p.OUT_JSON, object_construct()) as OUT_JSON
+            coalesce(p.OUT_JSON:summary::string, 'Committee fallback: deterministic path (Cortex unavailable/unparseable).') as SUMMARY,
+            iff(
+                p.OUT_JSON is null,
+                array_construct('COMMITTEE_FALLBACK', 'COMMITTEE_PARSE_FAILED'),
+                coalesce(p.OUT_JSON:reason_codes, array_construct())
+            ) as REASON_CODES,
+            iff(
+                p.OUT_JSON is null,
+                array_construct(),
+                coalesce(p.OUT_JSON:agent_dialogue, array_construct())
+            ) as AGENT_DIALOGUE,
+            iff(
+                p.OUT_JSON is null,
+                object_construct('fallback', true, 'fallback_reason', 'CORTEX_NULL_OR_UNPARSEABLE'),
+                p.OUT_JSON
+            ) as OUT_JSON
         from parsed p;
     exception
         when other then
@@ -1042,7 +1054,15 @@ begin
         t.NOTIONAL as COST_BASIS,
         t.SCORE as ENTRY_SCORE,
         bi.BAR_INDEX as ENTRY_INDEX,
-        bi.BAR_INDEX + coalesce(try_to_number(op.RATIONALE:sim_committee:hold_bars::string), ts.HORIZON_BARS, 5) as HOLD_UNTIL_INDEX
+        bi.BAR_INDEX + coalesce(
+            try_to_number(op.RATIONALE:sim_committee:hold_bars::string),
+            iff(
+                array_contains('COMMITTEE_FALLBACK'::variant, op.RATIONALE:sim_committee:reason_codes),
+                5,
+                ts.HORIZON_BARS
+            ),
+            5
+        ) as HOLD_UNTIL_INDEX
     from MIP.APP.PORTFOLIO_TRADES t
     cross join (
         select max(BAR_INDEX) as BAR_INDEX

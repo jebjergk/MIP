@@ -510,6 +510,18 @@ def _parse_iso_utc(s: str | None) -> datetime | None:
         return None
 
 
+def _market_bar_ts_to_utc(ts: datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+    try:
+        if ts.tzinfo is None:
+            # MARKET_BARS.TS is stored as NY session clock time (NTZ).
+            return ts.replace(tzinfo=NY_TZ).astimezone(timezone.utc)
+        return ts.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
 def _market_session_bounds_utc(now_utc: datetime) -> tuple[datetime, datetime]:
     now_ny = now_utc.astimezone(NY_TZ)
     open_ny = now_ny.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -667,7 +679,9 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
     bar_px = float(bar[1]) if bar and bar[1] is not None else None
     bar_age_sec = None
     if bar_ts is not None:
-        bar_age_sec = (now_utc - bar_ts.replace(tzinfo=timezone.utc)).total_seconds()
+        bar_ts_utc = _market_bar_ts_to_utc(bar_ts)
+        if bar_ts_utc is not None:
+            bar_age_sec = (now_utc - bar_ts_utc).total_seconds()
 
     expected_entry_px = _expected_entry_reference(cur, action)
     gap_pct = None
@@ -814,12 +828,12 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     if not latest_ts:
         reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
     else:
-        bar_ts_utc = latest_ts.replace(tzinfo=timezone.utc)
-        bar_age_sec = (now_utc - bar_ts_utc).total_seconds()
+        bar_ts_utc = _market_bar_ts_to_utc(latest_ts)
+        bar_age_sec = (now_utc - bar_ts_utc).total_seconds() if bar_ts_utc is not None else None
         # 60s proved too strict for committee runtime; enforce practical lower bound.
         max_age_sec = max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300)
         # Out-of-hours: allow submit with latest regular-session bar.
-        if market_open and bar_age_sec > max_age_sec:
+        if market_open and bar_age_sec is not None and bar_age_sec > max_age_sec:
             reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
         if one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
             reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
@@ -1228,6 +1242,14 @@ def _run_on_demand_snapshot_sync(
     return payload
 
 
+def _default_snapshot_sync_params() -> dict:
+    return {
+        "host": os.getenv("IBKR_SNAPSHOT_HOST", os.getenv("IBKR_EXEC_HOST", "127.0.0.1")),
+        "port": int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002"))),
+        "client_id": int(os.getenv("IBKR_SNAPSHOT_CLIENT_ID", "9402")),
+    }
+
+
 def _submit_ibkr_order_bundle(
     *,
     account: str,
@@ -1406,12 +1428,24 @@ def _force_refresh_latest_one_minute_bars(cur) -> dict:
     Non-fatal; caller still proceeds with currently available data.
     """
     try:
-        cur.execute("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(1)")
-        row = cur.fetchone()
-        payload = row[0] if row else None
-        return {"attempted": True, "status": "SUCCESS", "payload": payload}
-    except Exception as exc:
-        return {"attempted": True, "status": "FAIL", "error": str(exc)}
+        # Use agent runtime credentials for writes/calls to avoid API-role privilege drift.
+        agent_rows = _run_agent_snowflake_query("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(1)")
+        payload = (agent_rows[0] if isinstance(agent_rows, list) and agent_rows else agent_rows)
+        return {"attempted": True, "status": "SUCCESS", "payload": payload, "executor": "agent_runtime"}
+    except Exception as agent_exc:
+        # Backward-compatible fallback for environments where API runtime has execute grants.
+        try:
+            cur.execute("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(1)")
+            row = cur.fetchone()
+            payload = row[0] if row else None
+            return {"attempted": True, "status": "SUCCESS", "payload": payload, "executor": "api_runtime"}
+        except Exception as exc:
+            return {
+                "attempted": True,
+                "status": "FAIL",
+                "error": str(exc),
+                "agent_error": str(agent_exc),
+            }
 
 
 def _fetch_training_min_signals(cur) -> int:
@@ -3222,7 +3256,7 @@ def get_live_activity_overview(limit: int = Query(200, ge=50, le=1000)):
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
             has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
-            if status == "EXECUTION_REQUESTED" or has_active_order or (symbol in held_symbols):
+            if has_active_order or (symbol in held_symbols):
                 suppress_pending_symbols.add(symbol)
 
         for row in action_rows:
@@ -3595,7 +3629,11 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
             steps.append("snapshot_already_fresh")
         else:
             try:
-                _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
+                _run_on_demand_snapshot_sync(
+                    **_default_snapshot_sync_params(),
+                    account=account_id,
+                    portfolio_id=action.get("PORTFOLIO_ID"),
+                )
                 steps.append("snapshot_refresh")
             except HTTPException:
                 raise
@@ -3838,7 +3876,11 @@ def submit_live_decision_only(action_id: str, req: SubmitLiveDecisionRequest):
         steps.append("snapshot_already_fresh")
     else:
         try:
-            _run_on_demand_snapshot_sync(account=account_id, portfolio_id=action.get("PORTFOLIO_ID"))
+            _run_on_demand_snapshot_sync(
+                **_default_snapshot_sync_params(),
+                account=account_id,
+                portfolio_id=action.get("PORTFOLIO_ID"),
+            )
             steps.append("snapshot_refresh")
         except HTTPException:
             raise
@@ -4691,6 +4733,8 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
             "INTENT_APPROVED",
             "REVALIDATED_FAIL",
             "REVALIDATED_PASS",
+            "EXECUTION_REQUESTED",
+            "EXECUTION_PARTIAL",
         }
         if current_status not in allowed_statuses:
             raise HTTPException(
@@ -4701,8 +4745,68 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
                 },
             )
 
+        execution_cleanup = {}
+        if current_status in {"EXECUTION_REQUESTED", "EXECUTION_PARTIAL"}:
+            cur.execute(
+                """
+                select IBKR_ACCOUNT_ID
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                limit 1
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            cfg_rows = fetch_all(cur)
+            account_id = (cfg_rows[0] or {}).get("IBKR_ACCOUNT_ID") if cfg_rows else None
+            if account_id:
+                broker_truth = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+                broker_open_ids = broker_truth.get("open_order_ids") or set()
+                cur.execute(
+                    """
+                    select ORDER_ID, BROKER_ORDER_ID, STATUS
+                    from MIP.LIVE.LIVE_ORDERS
+                    where ACTION_ID = %s
+                    """,
+                    (action_id,),
+                )
+                action_orders = fetch_all(cur)
+                active_order_ids = []
+                for ord_row in action_orders:
+                    if _is_order_active_in_broker_truth(ord_row, broker_open_ids):
+                        active_order_ids.append(ord_row.get("ORDER_ID"))
+                if active_order_ids or broker_truth.get("has_symbol_position"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": "Cannot stale-reject execution while IB broker truth still shows active order/position.",
+                            "reason_codes": ["STALE_REJECT_BLOCKED_BROKER_ACTIVE"],
+                            "active_order_ids": active_order_ids,
+                            "has_symbol_position": bool(broker_truth.get("has_symbol_position")),
+                        },
+                    )
+                cur.execute(
+                    """
+                    update MIP.LIVE.LIVE_ORDERS
+                       set STATUS = case
+                                      when upper(coalesce(STATUS, '')) in ('SUBMITTED','ACKNOWLEDGED','PENDINGSUBMIT','PRESUBMITTED')
+                                        then 'CANCELED'
+                                      else STATUS
+                                    end,
+                           LAST_UPDATED_AT = current_timestamp()
+                     where ACTION_ID = %s
+                    """,
+                    (action_id,),
+                )
+                execution_cleanup = {
+                    "account_id": account_id,
+                    "snapshot_ts": broker_truth.get("snapshot_ts"),
+                    "orders_marked_canceled": True,
+                }
+
         existing_reason_codes = _parse_list_variant(action.get("REASON_CODES"))
         merged_reasons = sorted(set(existing_reason_codes + ["STALE_REJECTED_MANUAL"]))
+        if current_status in {"EXECUTION_REQUESTED", "EXECUTION_PARTIAL"}:
+            merged_reasons = sorted(set(merged_reasons + ["EXECUTION_NOT_ACTIVE_AT_BROKER"]))
         cur.execute(
             """
             update MIP.LIVE.LIVE_ACTIONS
@@ -4726,7 +4830,7 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
                 "actor": req.actor,
                 "reason_codes": merged_reasons,
             },
-            outcome_state={"notes": req.notes},
+            outcome_state={"notes": req.notes, "execution_cleanup": execution_cleanup},
         )
         return {"ok": True, "action_id": action_id, "status": "REJECTED", "reason_codes": merged_reasons}
     finally:
@@ -5399,10 +5503,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                   EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
                   IDEMPOTENCY_KEY, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
                 )
-                values (
+                select
                   %s, current_timestamp(), 'EXECUTION_SUBMIT_ATTEMPT', %s, %s, %s,
-                  %s, %s, %s, %s, %s, parse_json(%s)
-                )
+                  %s, %s, %s, %s, %s, try_parse_json(%s)
                 """,
                 (
                     str(uuid.uuid4()),
@@ -5435,10 +5538,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
                       IDEMPOTENCY_KEY, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
                     )
-                    values (
+                    select
                       %s, current_timestamp(), 'EXECUTION_SUBMIT_FAILED', %s, %s, %s,
-                      %s, %s, %s, %s, %s, parse_json(%s)
-                    )
+                      %s, %s, %s, %s, %s, try_parse_json(%s)
                     """,
                     (
                         str(uuid.uuid4()),
@@ -5466,10 +5568,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                   EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, PROPOSAL_ID, ACTION_ID,
                   IDEMPOTENCY_KEY, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
                 )
-                values (
+                select
                   %s, current_timestamp(), 'EXECUTION_SUBMIT_RESULT', %s, %s, %s,
-                  %s, %s, %s, %s, %s, parse_json(%s)
-                )
+                  %s, %s, %s, %s, %s, try_parse_json(%s)
                 """,
                 (
                     str(uuid.uuid4()),
@@ -5515,7 +5616,11 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     detail={"message": "IBKR submission returned no orders.", "reason_codes": ["IBKR_EMPTY_ORDER_BUNDLE"]},
                 )
             # Fail closed: do not accept local execution state unless broker-truth snapshot confirms it.
-            _run_on_demand_snapshot_sync(account=str(account_id), portfolio_id=action.get("PORTFOLIO_ID"))
+            _run_on_demand_snapshot_sync(
+                **_default_snapshot_sync_params(),
+                account=str(account_id),
+                portfolio_id=action.get("PORTFOLIO_ID"),
+            )
             broker_truth_raw = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
             broker_order_ids = {
                 _normalize_broker_order_id(leg.get("broker_order_id"))
@@ -5538,7 +5643,11 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "message": "IBKR did not confirm open-order or position after submit; execution blocked to prevent drift.",
                         "reason_codes": final_reason_codes,
                         "broker_order_ids": sorted(broker_order_ids),
-                        "snapshot_ts": broker_truth_raw.get("snapshot_ts"),
+                        "snapshot_ts": (
+                            broker_truth_raw.get("snapshot_ts").isoformat()
+                            if hasattr(broker_truth_raw.get("snapshot_ts"), "isoformat")
+                            else broker_truth_raw.get("snapshot_ts")
+                        ),
                     },
                 )
         else:

@@ -2054,6 +2054,8 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "Rules:\n"
         "- Be strict and risk-aware.\n"
         "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
+        "- When discussing news freshness, explicitly cite source as ACTION_NEWS (news_context_snapshot) or LATEST_NEWS (latest_symbol_news_context).\n"
+        "- If ACTION_NEWS and LATEST_NEWS conflict, state the conflict explicitly and prioritize LATEST_NEWS recency for risk gating.\n"
         "- Contribute to joint decision dimensions: enter/size/target/hold/early-exit.\n"
         "- Return ONE valid JSON object only, no preface/suffix.\n"
         "- Do not include markdown or code fences.\n"
@@ -3955,6 +3957,25 @@ def run_opening_validation(action_id: str, req: OpeningValidationRequest = Body(
             raise HTTPException(status_code=400, detail="Invalid now_utc_iso format. Use ISO-8601.")
         gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=req.force_refresh_1m, now_utc=now_utc)
         action_after = _fetch_live_action(cur, action_id)
+        # Opening-gate block means committee should be treated as skipped-at-gate, not still pending.
+        if (
+            action_after
+            and str(action_after.get("STATUS") or "").upper() == "OPEN_BLOCKED"
+            and str(action_after.get("COMMITTEE_STATUS") or "").upper() != "COMPLETED"
+        ):
+            cur.execute(
+                """
+                update MIP.LIVE.LIVE_ACTIONS
+                   set COMMITTEE_STATUS = 'SKIPPED',
+                       COMMITTEE_VERDICT = 'BLOCK_OPENING_GUARD',
+                       COMMITTEE_RUN_ID = null,
+                       COMMITTEE_COMPLETED_TS = current_timestamp(),
+                       UPDATED_AT = current_timestamp()
+                 where ACTION_ID = %s
+                """,
+                (action_id,),
+            )
+            action_after = _fetch_live_action(cur, action_id)
         return {
             "ok": True,
             "action_id": action_id,
@@ -4485,6 +4506,22 @@ def stream_live_trade_committee_prompt(
                 action = _fetch_live_action(cur, action_id)
                 if not action:
                     result["error"] = "Action not found."
+                    return
+                status_upper = str(action.get("STATUS") or "").upper()
+                allowed_for_stream = {
+                    "OPEN_ELIGIBLE",
+                    "OPEN_CAUTION",
+                    "PENDING_OPEN_STABILITY_REVIEW",
+                    "READY_FOR_APPROVAL_FLOW",
+                    "PM_ACCEPTED",
+                    "COMPLIANCE_APPROVED",
+                    "INTENT_SUBMITTED",
+                    "INTENT_APPROVED",
+                    "REVALIDATED_FAIL",
+                    "REVALIDATED_PASS",
+                }
+                if status_upper not in allowed_for_stream:
+                    result["error"] = f"Committee stream blocked until opening validation passes (current: {status_upper})."
                     return
                 context = _build_action_decision_context(cur, action)
 

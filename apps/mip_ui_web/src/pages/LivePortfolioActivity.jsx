@@ -470,6 +470,18 @@ export default function LivePortfolioActivity() {
                     {(() => {
                       const statusUpper = String(d.status || '').toUpperCase()
                       const canSubmit = statusUpper === 'REVALIDATED_PASS'
+                      const canRunCommittee = [
+                        'OPEN_ELIGIBLE',
+                        'OPEN_CAUTION',
+                        'PENDING_OPEN_STABILITY_REVIEW',
+                        'READY_FOR_APPROVAL_FLOW',
+                        'PM_ACCEPTED',
+                        'COMPLIANCE_APPROVED',
+                        'INTENT_SUBMITTED',
+                        'INTENT_APPROVED',
+                        'REVALIDATED_FAIL',
+                        'REVALIDATED_PASS',
+                      ].includes(statusUpper)
                       return (
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
                       <td>
@@ -522,7 +534,7 @@ export default function LivePortfolioActivity() {
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
-                          disabled={busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id}
+                          disabled={busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id || !canRunCommittee}
                           onClick={() => {
                             openCommitteeStream(d.action_id)
                           }}
@@ -541,6 +553,9 @@ export default function LivePortfolioActivity() {
                         ) : null}
                         {!canSubmit ? (
                           <div className="lpa-subtle">Run Committee revalidation. If committee says go, Submit will be enabled.</div>
+                        ) : null}
+                        {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
+                          <div className="lpa-subtle">Blocked by opening guard. Use Reject stale to clear, or wait for fresher opening data.</div>
                         ) : null}
                         </div>
                       </td>

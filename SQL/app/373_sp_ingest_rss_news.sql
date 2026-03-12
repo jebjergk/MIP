@@ -413,7 +413,8 @@ def run(session, p_test_mode=False, p_source_limit=None):
 
     def _target_sort_key(t):
         last_ts = t.get("last_ingested_at")
-        return (last_ts is not None, last_ts or datetime(1970, 1, 1))
+        target_priority = 0 if str(t.get("target_type") or "").upper() == "GLOBAL" else 1
+        return (target_priority, last_ts is not None, last_ts or datetime(1970, 1, 1))
 
     targets.sort(key=_target_sort_key)
     if (not p_test_mode) and max_targets_per_run and len(targets) > max_targets_per_run:

@@ -6501,7 +6501,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         source_origin = "request" if source_portfolio_id is not None else "all_portfolios"
 
         wheres = [
-            "STATUS in ('PROPOSED', 'APPROVED')",
+            "STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')",
             "SYMBOL is not null",
             "SIDE in ('BUY', 'SELL')",
         ]
@@ -6819,7 +6819,7 @@ def list_live_proposal_candidates(
     try:
         cur = conn.cursor()
         wheres = [
-            "op.STATUS in ('PROPOSED', 'APPROVED')",
+            "op.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')",
             "op.SYMBOL is not null",
             "op.SIDE in ('BUY', 'SELL')",
         ]

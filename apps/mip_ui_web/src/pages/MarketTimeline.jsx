@@ -179,7 +179,7 @@ export default function MarketTimeline() {
             const hasSignals = sym.signal_count > 0
             const hasProposals = sym.proposal_count > 0
             const hasTrades = sym.trade_count > 0
-            const hasTodayProposals = sym.today_proposal_count > 0
+            const hasActionableProposals = (sym.actionable_proposal_count ?? sym.today_proposal_count ?? 0) > 0
             const cachedDetail = detailCacheRef.current[key]
             
             // Determine tile status class
@@ -188,8 +188,8 @@ export default function MarketTimeline() {
             else if (hasProposals) statusClass = 'tile-proposed'
             else if (hasSignals) statusClass = 'tile-signals-only'
             
-            // Add highlight class for today's actionable proposals
-            const todayHighlight = hasTodayProposals ? 'tile-today-actionable' : ''
+            // Keep actionable highlight until the next daily bar batch arrives.
+            const todayHighlight = hasActionableProposals ? 'tile-today-actionable' : ''
             
             return (
               <React.Fragment key={key}>
@@ -208,7 +208,7 @@ export default function MarketTimeline() {
                   </div>
                   
                   <div className="tile-badges">
-                    {hasTodayProposals && (
+                    {hasActionableProposals && (
                       <span className="tile-action-badge">ACTION</span>
                     )}
                     {sym.trust_label && (

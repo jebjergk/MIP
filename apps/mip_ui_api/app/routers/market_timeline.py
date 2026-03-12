@@ -156,9 +156,8 @@ def get_overview(
         if market_type:
             market_filter = "and b.MARKET_TYPE = %s"
             params.append(market_type)
-        
         batch_date = latest_ts.date() if hasattr(latest_ts, "date") else latest_ts
-
+        
         # Get all symbols with bar data in window
         sql = f"""
         with symbols_in_window as (
@@ -183,7 +182,14 @@ def get_overview(
                 p.SYMBOL,
                 p.MARKET_TYPE,
                 count(*) as proposal_count,
-                count(case when p.PROPOSED_AT::date = %s then 1 end) as today_proposal_count
+                count(case when p.PROPOSED_AT::date = current_date() then 1 end) as today_proposal_count,
+                count(
+                    case
+                        when coalesce(p.SIGNAL_TS::date, p.PROPOSED_AT::date) = %s
+                         and coalesce(upper(p.STATUS), 'PROPOSED') not in ('EXECUTED', 'REJECTED', 'CANCELLED', 'EXPIRED')
+                        then 1
+                    end
+                ) as actionable_proposal_count
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
             where p.PROPOSED_AT >= %s
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}
@@ -248,6 +254,7 @@ def get_overview(
             coalesce(sc.signal_count, 0) as signal_count,
             coalesce(pc.proposal_count, 0) as proposal_count,
             coalesce(pc.today_proposal_count, 0) as today_proposal_count,
+            coalesce(pc.actionable_proposal_count, 0) as actionable_proposal_count,
             coalesce(tc.trade_count, 0) as sim_trade_count,
             coalesce(ltc.live_trade_count, 0) as live_trade_count,
             coalesce(tc.trade_count, 0) + coalesce(ltc.live_trade_count, 0) as trade_count,
@@ -275,7 +282,7 @@ def get_overview(
         query_params.extend([
             window_start,      # signal_counts
             interval_minutes,  # signal_counts
-            batch_date,        # proposal_counts actionable batch date (latest bar day)
+            batch_date,        # proposal_counts actionable batch date
         ])
         query_params.extend([
             window_start,      # proposal_counts
@@ -304,6 +311,7 @@ def get_overview(
                 "signal_count": row.get("SIGNAL_COUNT") or row.get("signal_count") or 0,
                 "proposal_count": row.get("PROPOSAL_COUNT") or row.get("proposal_count") or 0,
                 "today_proposal_count": row.get("TODAY_PROPOSAL_COUNT") or row.get("today_proposal_count") or 0,
+                "actionable_proposal_count": row.get("ACTIONABLE_PROPOSAL_COUNT") or row.get("actionable_proposal_count") or 0,
                 "trade_count": row.get("TRADE_COUNT") or row.get("trade_count") or 0,
                 "sim_trade_count": row.get("SIM_TRADE_COUNT") or row.get("sim_trade_count") or 0,
                 "live_trade_count": row.get("LIVE_TRADE_COUNT") or row.get("live_trade_count") or 0,
@@ -379,7 +387,8 @@ def get_detail(
                 "volume": int(r.get("VOLUME")) if r.get("VOLUME") is not None else None,
             })
         
-        # Extend to today if the last bar is before today
+        # Extend to today only when we have same-day executed trades but no daily bar yet.
+        # This keeps event markers visible without manufacturing a misleading duplicate OHLC day.
         from datetime import date as _date
         today_str = _date.today().isoformat()
         if ohlc and ohlc[-1]["ts"][:10] < today_str:
@@ -460,15 +469,14 @@ def get_detail(
                         synthetic_px = float(open_px)
                     elif close_px is not None:
                         synthetic_px = float(close_px)
-
-            ohlc.append({
-                "ts": today_str + "T00:00:00",
-                "open": synthetic_px,
-                "high": synthetic_px,
-                "low": synthetic_px,
-                "close": synthetic_px,
-                "volume": None,
-            })
+                ohlc.append({
+                    "ts": today_str + "T00:00:00",
+                    "open": synthetic_px,
+                    "high": synthetic_px,
+                    "low": synthetic_px,
+                    "close": synthetic_px,
+                    "volume": None,
+                })
 
         # Determine window bounds
         if ohlc:

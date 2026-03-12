@@ -380,16 +380,23 @@ begin
             from candidate c
         ),
         parsed as (
+            with normalized as (
+                select
+                    r.PROPOSAL_ID,
+                    r.RESPONSE::string as RESPONSE_TEXT,
+                    try_parse_json(r.RESPONSE::string) as RESPONSE_JSON
+                from llm_raw r
+            )
             select
-                r.PROPOSAL_ID,
+                n.PROPOSAL_ID,
                 try_parse_json(
                     regexp_replace(
                         regexp_replace(
                             trim(
                                 coalesce(
-                                    r.RESPONSE:choices[0]:messages::string,
-                                    r.RESPONSE:choices[0]:message:content::string,
-                                    r.RESPONSE::string
+                                    n.RESPONSE_JSON:choices[0]:messages::string,
+                                    n.RESPONSE_JSON:choices[0]:message:content::string,
+                                    n.RESPONSE_TEXT
                                 )
                             ),
                             '^```json\\s*',
@@ -399,7 +406,7 @@ begin
                         ''
                     )
                 ) as OUT_JSON
-            from llm_raw r
+            from normalized n
         )
         select
             p.PROPOSAL_ID,

@@ -4643,6 +4643,7 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
             "RESEARCH_IMPORTED",
             "PROPOSED",
             "PENDING_OPEN_VALIDATION",
+            "OPEN_BLOCKED",
             "OPEN_ELIGIBLE",
             "OPEN_CAUTION",
             "PENDING_OPEN_STABILITY_REVIEW",
@@ -4668,7 +4669,8 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
         cur.execute(
             """
             update MIP.LIVE.LIVE_ACTIONS
-               set STATUS = 'OPEN_BLOCKED',
+               set STATUS = 'REJECTED',
+                   COMPLIANCE_STATUS = 'REJECTED',
                    REASON_CODES = parse_json(%s),
                    UPDATED_AT = current_timestamp()
              where ACTION_ID = %s
@@ -4679,7 +4681,7 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
         _append_learning_ledger_event(
             cur,
             event_name="LIVE_STALE_REJECTED",
-            status="OPEN_BLOCKED",
+            status="REJECTED",
             action_before=action,
             action_after=action_after,
             policy_version=LIVE_POLICY_VERSION,
@@ -4689,7 +4691,7 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
             },
             outcome_state={"notes": req.notes},
         )
-        return {"ok": True, "action_id": action_id, "status": "OPEN_BLOCKED", "reason_codes": merged_reasons}
+        return {"ok": True, "action_id": action_id, "status": "REJECTED", "reason_codes": merged_reasons}
     finally:
         conn.close()
 

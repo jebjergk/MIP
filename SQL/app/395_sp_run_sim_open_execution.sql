@@ -28,6 +28,27 @@ declare
     v_notify_result variant := object_construct('status', 'SKIPPED', 'reason', 'NOT_ATTEMPTED');
     v_executed_portfolios number := 0;
 begin
+    if (
+        not coalesce(
+            try_to_boolean(
+                (
+                    select CONFIG_VALUE
+                    from MIP.APP.APP_CONFIG
+                    where CONFIG_KEY = 'SIM_EXECUTION_ENABLED'
+                    limit 1
+                )
+            ),
+            false
+        )
+    ) then
+        return object_construct(
+            'status', 'SKIPPED_SIM_DISABLED',
+            'reason', 'SIM_EXECUTION_ENABLED=false',
+            'executed_portfolios', 0,
+            'results', array_construct()
+        );
+    end if;
+
     select coalesce(try_to_number(max(case when CONFIG_KEY = 'SIM_OPEN_STABILIZATION_MINUTES' then CONFIG_VALUE end)), 5)
       into :v_stabilization_minutes
       from MIP.APP.APP_CONFIG;

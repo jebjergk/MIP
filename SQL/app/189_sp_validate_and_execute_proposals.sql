@@ -42,7 +42,34 @@ declare
     v_sim_committee_min_edge_bps number(18,8) := 5;
     v_sim_committee_min_capture_pct number(18,8) := 0.60;
     v_sim_committee_fee_floor_return number(18,8);
+    v_sim_execution_enabled boolean := false;
 begin
+    begin
+        v_sim_execution_enabled := coalesce(
+            try_to_boolean(
+                (
+                    select CONFIG_VALUE
+                    from MIP.APP.APP_CONFIG
+                    where CONFIG_KEY = 'SIM_EXECUTION_ENABLED'
+                    limit 1
+                )
+            ),
+            false
+        );
+    exception
+        when other then
+            v_sim_execution_enabled := false;
+    end;
+
+    if (not v_sim_execution_enabled) then
+        return object_construct(
+            'status', 'SKIPPED_SIM_DISABLED',
+            'run_id', :P_RUN_ID,
+            'portfolio_id', :P_PORTFOLIO_ID,
+            'message', 'SIM execution is disabled (SIM_EXECUTION_ENABLED=false).'
+        );
+    end if;
+
     v_profile := (
         select object_construct(
             'profile_id', p.PROFILE_ID,

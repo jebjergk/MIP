@@ -373,7 +373,7 @@ def _build_training_events(cur, limit: int) -> list[dict]:
 def _build_decision_events(cur, limit: int, portfolio_id: Optional[int]) -> list[dict]:
     wheres = [
         "EVENT_TYPE = 'AGENT'",
-        "EVENT_NAME in ('SP_AGENT_PROPOSE_TRADES', 'SP_VALIDATE_AND_EXECUTE_PROPOSALS')",
+        "EVENT_NAME in ('SP_AGENT_PROPOSE_TRADES')",
     ]
     params: list = []
     if portfolio_id is not None:
@@ -422,7 +422,7 @@ def _build_decision_events(cur, limit: int, portfolio_id: Optional[int]) -> list
             "event_key": f"decision::{run_id}::{event_name}::{_to_iso(r.get('EVENT_TS'))}",
             "event_type": "DECISION_EVENT",
             "event_ts": _to_iso(r.get("EVENT_TS")),
-            "severity": "high" if event_name == "SP_VALIDATE_AND_EXECUTE_PROPOSALS" and (executed_count or 0) > 0 else "info",
+            "severity": "info",
             "title": "Learning-adjusted decision step",
             "summary": summary,
             "run_id": run_id,

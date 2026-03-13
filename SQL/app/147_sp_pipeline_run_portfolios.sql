@@ -32,7 +32,62 @@ declare
     v_audit_status string;
     v_duration_ms number;
     v_error_query_id string;
+    v_sim_execution_enabled boolean := false;
 begin
+    v_step_start := current_timestamp();
+
+    begin
+        v_sim_execution_enabled := coalesce(
+            try_to_boolean(
+                (
+                    select CONFIG_VALUE
+                    from MIP.APP.APP_CONFIG
+                    where CONFIG_KEY = 'SIM_EXECUTION_ENABLED'
+                    limit 1
+                )
+            ),
+            false
+        );
+    exception
+        when other then
+            v_sim_execution_enabled := false;
+    end;
+
+    if (not v_sim_execution_enabled) then
+        v_step_end := current_timestamp();
+        v_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_parent_run_id,
+            'PORTFOLIO_SIMULATION',
+            'SKIPPED_SIM_DISABLED',
+            0,
+            object_construct(
+                'step_name', 'portfolio_simulation',
+                'scope', 'PORTFOLIO',
+                'scope_key', to_varchar(:v_portfolio_id),
+                'portfolio_id', :v_portfolio_id,
+                'from_ts', :v_from_ts,
+                'to_ts', :v_to_ts,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'SIM_EXECUTION_ENABLED=false'
+            ),
+            null,
+            null,
+            null,
+            null,
+            :v_duration_ms
+        );
+        return object_construct(
+            'status', 'SKIPPED_SIM_DISABLED',
+            'portfolio_id', :v_portfolio_id,
+            'run_id', :v_run_id,
+            'from_ts', :v_from_ts,
+            'to_ts', :v_to_ts,
+            'trades', 0
+        );
+    end if;
+
     v_step_start := current_timestamp();
 
     begin

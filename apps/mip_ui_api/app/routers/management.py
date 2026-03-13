@@ -21,11 +21,14 @@ Endpoints:
 
 import json
 import logging
+import os
+import subprocess
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Any, Optional
 
 from app.db import get_connection, fetch_all, serialize_rows, serialize_row
 
@@ -406,3 +409,77 @@ def update_profile(profile_id: int, body: ProfileUpsert):
             body.description,
         ),
     )
+
+
+@router.post("/ib/daily-job/run")
+def run_ib_manual_daily_job(
+    target_date: str = Query("current_date()", description="Snowflake date literal, e.g. current_date() or '2026-03-13'"),
+    dry_run: bool = Query(False),
+    skip_ingest: bool = Query(False),
+):
+    """
+    Manual IB-only daily operator run:
+    - Optional IBKR 1440m bar ingest
+    - Snowflake catch-up replay for missing eligible days
+    """
+    project_root = Path(__file__).resolve().parents[5]
+    py = project_root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    runner = project_root / "cursorfiles" / "run_ib_manual_daily_job.py"
+    if not py.exists() or not runner.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Manual IB daily runner runtime not found (cursorfiles venv or script missing).",
+        )
+
+    cmd = [str(py), str(runner), "--target-date", target_date]
+    if dry_run:
+        cmd.append("--dry-run")
+    if skip_ingest:
+        cmd.append("--skip-ingest")
+
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(project_root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+
+    payload: Any = None
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        idx_arr = stream.find("[")
+        idx_obj = stream.find("{")
+        idx = idx_arr if idx_arr >= 0 and (idx_obj < 0 or idx_arr < idx_obj) else idx_obj
+        if idx < 0:
+            continue
+        try:
+            payload = json.loads(stream[idx:])
+            break
+        except Exception:
+            continue
+
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Manual IB daily job failed.",
+                "payload": payload,
+                "stdout": stdout[-4000:],
+                "stderr": stderr[-4000:],
+            },
+        )
+
+    return {
+        "status": "SUCCESS",
+        "payload": payload,
+    }

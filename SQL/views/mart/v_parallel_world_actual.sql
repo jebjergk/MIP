@@ -1,14 +1,6 @@
 -- v_parallel_world_actual.sql
--- Purpose: Derives ACTUAL-world baseline metrics per portfolio-day from existing tables.
--- Produces the same metric shape as PARALLEL_WORLD_RESULT for join compatibility
--- with the diff view. Episode-scoped to the active episode.
---
--- Sources:
---   MIP.APP.PORTFOLIO_DAILY     — daily equity snapshots (cash, equity, drawdown)
---   MIP.APP.PORTFOLIO_TRADES    — trade counts and realized PnL
---   MIP.APP.PORTFOLIO           — starting cash and profile
---   MIP.APP.PORTFOLIO_EPISODE   — active episode scoping
---   MIP.APP.PORTFOLIO_PROFILE   — max positions, max position pct
+-- Purpose: Derive ACTUAL-world baseline from research artifacts only.
+-- No dependency on simulated execution tables (PORTFOLIO_DAILY/TRADES/POSITIONS).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
@@ -33,88 +25,111 @@ create or replace view MIP.MART.V_PARALLEL_WORLD_ACTUAL (
     MAX_POSITIONS,
     MAX_POSITION_PCT
 ) as
-with
--- Active episode per portfolio
-active_episode as (
+with portfolio_cfg as (
     select
-        PORTFOLIO_ID,
-        EPISODE_ID,
-        START_TS,
-        START_EQUITY
-    from MIP.APP.PORTFOLIO_EPISODE
-    where STATUS = 'ACTIVE'
-    qualify row_number() over (partition by PORTFOLIO_ID order by START_TS desc) = 1
+        p.PORTFOLIO_ID,
+        coalesce(p.STARTING_CASH, 100000)::number(18,4) as STARTING_CASH,
+        coalesce(pp.MAX_POSITIONS, 5) as MAX_POSITIONS,
+        coalesce(pp.MAX_POSITION_PCT, 0.05)::number(18,6) as MAX_POSITION_PCT
+    from MIP.APP.PORTFOLIO p
+    left join MIP.APP.PORTFOLIO_PROFILE pp
+      on pp.PROFILE_ID = p.PROFILE_ID
+    where p.STATUS = 'ACTIVE'
 ),
-
--- Daily snapshots scoped to active episode
+proposal_day as (
+    select
+        op.PORTFOLIO_ID,
+        op.RECOMMENDATION_ID,
+        upper(coalesce(op.SIDE, 'BUY')) as SIDE,
+        coalesce(op.TARGET_WEIGHT, 0.05)::number(18,6) as TARGET_WEIGHT,
+        coalesce(op.EXECUTED_AT, op.APPROVED_AT, op.PROPOSED_AT)::timestamp_ntz as EVENT_TS
+    from MIP.AGENT_OUT.ORDER_PROPOSALS op
+    where op.PORTFOLIO_ID is not null
+      and coalesce(op.EXECUTED_AT, op.APPROVED_AT, op.PROPOSED_AT) is not null
+      and op.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')
+),
+outcome_best as (
+    select
+        ro.RECOMMENDATION_ID,
+        ro.REALIZED_RETURN
+    from MIP.APP.RECOMMENDATION_OUTCOMES ro
+    where ro.REALIZED_RETURN is not null
+    qualify row_number() over (
+        partition by ro.RECOMMENDATION_ID
+        order by
+            case when ro.EVAL_STATUS = 'SUCCESS' then 0 else 1 end,
+            ro.HORIZON_BARS asc
+    ) = 1
+),
 daily as (
     select
-        d.PORTFOLIO_ID,
-        d.TS as AS_OF_TS,
-        d.EPISODE_ID,
-        d.CASH,
-        d.EQUITY_VALUE,
-        d.TOTAL_EQUITY,
-        d.OPEN_POSITIONS,
-        d.DAILY_PNL,
-        d.DAILY_RETURN,
-        d.PEAK_EQUITY,
-        d.DRAWDOWN
-    from MIP.APP.PORTFOLIO_DAILY d
-    left join active_episode ae
-      on ae.PORTFOLIO_ID = d.PORTFOLIO_ID
-    where (
-        (d.EPISODE_ID is not null and d.EPISODE_ID = ae.EPISODE_ID)
-        or (d.EPISODE_ID is null and (ae.EPISODE_ID is null or d.TS >= ae.START_TS))
-    )
+        pd.PORTFOLIO_ID,
+        date_trunc('day', pd.EVENT_TS)::timestamp_ntz as AS_OF_TS,
+        count(*) as TRADES_ACTUAL,
+        count_if(pd.SIDE = 'BUY') as BUY_COUNT,
+        count_if(pd.SIDE = 'SELL') as SELL_COUNT,
+        sum(
+            cfg.STARTING_CASH
+            * least(cfg.MAX_POSITION_PCT, greatest(pd.TARGET_WEIGHT, 0))
+            * coalesce(ob.REALIZED_RETURN, 0)
+        )::number(18,4) as REALIZED_PNL,
+        sum(
+            iff(pd.SIDE = 'BUY',
+                cfg.STARTING_CASH * least(cfg.MAX_POSITION_PCT, greatest(pd.TARGET_WEIGHT, 0)),
+                0
+            )
+        )::number(18,4) as BUY_NOTIONAL
+    from proposal_day pd
+    join portfolio_cfg cfg
+      on cfg.PORTFOLIO_ID = pd.PORTFOLIO_ID
+    left join outcome_best ob
+      on ob.RECOMMENDATION_ID = pd.RECOMMENDATION_ID
+    group by pd.PORTFOLIO_ID, date_trunc('day', pd.EVENT_TS)
 ),
-
--- Trade counts per portfolio-day (scoped to active episode)
-trades_per_day as (
+finalized as (
     select
-        t.PORTFOLIO_ID,
-        t.TRADE_TS::date as TRADE_DATE,
-        count(*)                                  as TRADE_COUNT,
-        sum(case when t.SIDE = 'BUY' then 1 else 0 end)  as BUY_COUNT,
-        sum(case when t.SIDE = 'SELL' then 1 else 0 end) as SELL_COUNT,
-        sum(coalesce(t.REALIZED_PNL, 0))          as REALIZED_PNL
-    from MIP.APP.PORTFOLIO_TRADES t
-    left join active_episode ae
-      on ae.PORTFOLIO_ID = t.PORTFOLIO_ID
-    where (
-        (t.EPISODE_ID is not null and t.EPISODE_ID = ae.EPISODE_ID)
-        or (t.EPISODE_ID is null and (ae.EPISODE_ID is null or t.TRADE_TS >= ae.START_TS))
-    )
-    group by t.PORTFOLIO_ID, t.TRADE_TS::date
+        d.PORTFOLIO_ID,
+        d.AS_OF_TS,
+        cast(null as number) as EPISODE_ID,
+        cfg.STARTING_CASH,
+        d.TRADES_ACTUAL,
+        d.BUY_COUNT,
+        d.SELL_COUNT,
+        d.REALIZED_PNL,
+        (cfg.STARTING_CASH + d.REALIZED_PNL)::number(18,4) as TOTAL_EQUITY,
+        greatest(cfg.STARTING_CASH - d.BUY_NOTIONAL, 0)::number(18,4) as CASH,
+        ((cfg.STARTING_CASH + d.REALIZED_PNL) - greatest(cfg.STARTING_CASH - d.BUY_NOTIONAL, 0))::number(18,4) as EQUITY_VALUE,
+        greatest(d.BUY_COUNT - d.SELL_COUNT, 0) as OPEN_POSITIONS,
+        d.REALIZED_PNL::number(18,4) as DAILY_PNL,
+        iff(cfg.STARTING_CASH > 0, d.REALIZED_PNL / cfg.STARTING_CASH, 0)::number(18,8) as DAILY_RETURN,
+        max((cfg.STARTING_CASH + d.REALIZED_PNL)) over (
+            partition by d.PORTFOLIO_ID
+            order by d.AS_OF_TS
+            rows between unbounded preceding and current row
+        )::number(18,4) as PEAK_EQUITY,
+        cfg.MAX_POSITIONS,
+        cfg.MAX_POSITION_PCT
+    from daily d
+    join portfolio_cfg cfg
+      on cfg.PORTFOLIO_ID = d.PORTFOLIO_ID
 )
-
 select
-    d.PORTFOLIO_ID,
-    d.AS_OF_TS,
-    d.EPISODE_ID,
-    coalesce(ae.START_EQUITY, p.STARTING_CASH) as STARTING_CASH,
-    coalesce(tpd.TRADE_COUNT, 0) as TRADES_ACTUAL,
-    coalesce(tpd.BUY_COUNT, 0)   as BUY_COUNT,
-    coalesce(tpd.SELL_COUNT, 0)  as SELL_COUNT,
-    coalesce(tpd.REALIZED_PNL, 0) as REALIZED_PNL,
-    d.TOTAL_EQUITY,
-    d.CASH,
-    d.EQUITY_VALUE,
-    d.OPEN_POSITIONS,
-    d.DAILY_PNL,
-    d.DAILY_RETURN,
-    d.PEAK_EQUITY,
-    d.DRAWDOWN,
-    coalesce(pp.MAX_POSITIONS, 5)    as MAX_POSITIONS,
-    coalesce(pp.MAX_POSITION_PCT, 0.05) as MAX_POSITION_PCT
-from daily d
-join MIP.APP.PORTFOLIO p
-  on p.PORTFOLIO_ID = d.PORTFOLIO_ID
-left join MIP.APP.PORTFOLIO_PROFILE pp
-  on pp.PROFILE_ID = p.PROFILE_ID
-left join active_episode ae
-  on ae.PORTFOLIO_ID = d.PORTFOLIO_ID
-left join trades_per_day tpd
-  on tpd.PORTFOLIO_ID = d.PORTFOLIO_ID
- and tpd.TRADE_DATE = d.AS_OF_TS::date
-where p.STATUS = 'ACTIVE';
+    PORTFOLIO_ID,
+    AS_OF_TS,
+    EPISODE_ID,
+    STARTING_CASH,
+    TRADES_ACTUAL,
+    BUY_COUNT,
+    SELL_COUNT,
+    REALIZED_PNL,
+    TOTAL_EQUITY,
+    CASH,
+    EQUITY_VALUE,
+    OPEN_POSITIONS,
+    DAILY_PNL,
+    DAILY_RETURN,
+    PEAK_EQUITY,
+    iff(PEAK_EQUITY > 0, (TOTAL_EQUITY - PEAK_EQUITY) / PEAK_EQUITY, 0)::number(18,8) as DRAWDOWN,
+    MAX_POSITIONS,
+    MAX_POSITION_PCT
+from finalized;

@@ -5,7 +5,7 @@
 -- Flags scenarios that only work in one regime ("regime fragile").
 --
 -- Sources:
---   MIP.APP.PORTFOLIO_DAILY           — daily portfolio metrics (for volatility)
+--   MIP.MART.V_PARALLEL_WORLD_ACTUAL  — research-only daily metrics (for volatility)
 --   MIP.APP.PARALLEL_WORLD_RESULT     — sweep simulation results
 --   MIP.APP.PARALLEL_WORLD_SCENARIO   — scenario definitions
 --   MIP.MART.V_PARALLEL_WORLD_DIFF    — actual vs counterfactual deltas
@@ -37,14 +37,14 @@ with daily_vol as (
     -- Compute rolling 10-day stddev of daily PnL per portfolio
     select
         PORTFOLIO_ID,
-        TS as AS_OF_TS,
+        AS_OF_TS,
         DAILY_PNL,
         stddev(DAILY_PNL) over (
             partition by PORTFOLIO_ID
-            order by TS
+            order by AS_OF_TS
             rows between 9 preceding and current row
         ) as ROLLING_VOL
-    from MIP.APP.PORTFOLIO_DAILY
+    from MIP.MART.V_PARALLEL_WORLD_ACTUAL
 ),
 regime_tagged as (
     -- Tag each day with a regime based on percentile of rolling volatility

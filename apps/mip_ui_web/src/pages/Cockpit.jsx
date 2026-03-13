@@ -649,6 +649,32 @@ export default function Cockpit() {
   const [ibHealthCheckedAt, setIbHealthCheckedAt] = useState(null)
   const [ibHealthLoading, setIbHealthLoading] = useState(false)
 
+  const loadLiveOverview = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/live/activity/overview`)
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        throw new Error(data?.detail || `Live overview load failed (${resp.status})`)
+      }
+      setLiveOverview(data || null)
+      setLiveOverviewError('')
+      return true
+    } catch (e) {
+      setLiveOverview(null)
+      setLiveOverviewError(e?.message || 'Live overview load failed')
+      return false
+    }
+  }, [])
+
+  const runSnapshotRefresh = useCallback(async () => {
+    const resp = await fetch(`${API_BASE}/live/snapshot/refresh`, { method: 'POST' })
+    const payload = await resp.json().catch(() => ({}))
+    if (!resp.ok) {
+      throw new Error(payload?.detail || `Snapshot refresh failed (${resp.status})`)
+    }
+    return payload
+  }, [])
+
   const loadIbDailyHealth = useCallback(async () => {
     setIbHealthLoading(true)
     try {
@@ -671,44 +697,38 @@ export default function Cockpit() {
     if (portfoliosLoading) return
     let cancelled = false
     setLoading(true)
+    ;(async () => {
+      try {
+        // Automation-first: refresh broker snapshot before cockpit data render.
+        try {
+          await runSnapshotRefresh()
+        } catch {
+          // Non-fatal: still render cockpit with best available data.
+        }
 
-    const fetches = [
-      fetch(`${API_BASE}/digest/latest?scope=GLOBAL`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/news/intelligence/overview`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${API_BASE}/live/activity/overview`)
-        .then(async (r) => {
-          if (!r.ok) throw new Error(`Live overview load failed (${r.status})`)
-          return await r.json()
-        })
-        .catch((e) => ({ __error: e?.message || 'Live overview load failed' })),
-    ]
-
-    Promise.all(fetches).then(([dg, tg, td, mp, no, lo]) => {
-      if (cancelled) return
-      setDigestGlobal(dg)
-      setTrainingGlobal(tg)
-      setTodayData(td)
-      setMarketPulse(mp)
-      setNewsOverview(no)
-      if (lo && lo.__error) {
-        setLiveOverview(null)
-        setLiveOverviewError(lo.__error)
-      } else {
-        setLiveOverview(lo || null)
-        setLiveOverviewError('')
+        const fetches = [
+          fetch(`${API_BASE}/digest/latest?scope=GLOBAL`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch(`${API_BASE}/news/intelligence/overview`).then(r => r.ok ? r.json() : null).catch(() => null),
+          loadLiveOverview(),
+          loadIbDailyHealth(),
+        ]
+        const [dg, tg, td, mp, no] = await Promise.all(fetches)
+        if (cancelled) return
+        setDigestGlobal(dg)
+        setTrainingGlobal(tg)
+        setTodayData(td)
+        setMarketPulse(mp)
+        setNewsOverview(no)
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      setLoading(false)
-    })
+    })()
 
     return () => { cancelled = true }
-  }, [portfoliosLoading])
-
-  useEffect(() => {
-    loadIbDailyHealth()
-  }, [loadIbDailyHealth])
+  }, [portfoliosLoading, loadLiveOverview, loadIbDailyHealth, runSnapshotRefresh])
 
   const insights = todayData?.insights || []
   const aggregate = marketPulse?.aggregate || {}
@@ -873,28 +893,40 @@ export default function Cockpit() {
 
   const ibFreshness = useMemo(() => {
     if (ibHealthLoading && !ibDailyHealth) {
-      return { text: 'Loading bar freshness...', tone: 'neutral' }
+      return { text: 'Checking daily data status...', tone: 'neutral' }
     }
     if (!ibDailyHealth) {
-      return { text: 'Bar freshness unavailable.', tone: 'neutral' }
+      return { text: 'Daily data status unavailable right now.', tone: 'neutral' }
     }
     if (ibDailyHealth.status === 'ERROR') {
       return {
-        text: `Bar freshness unavailable (${ibDailyHealth.error || 'health check failed'}).`,
+        text: 'Daily data status unavailable. Open Debug if this persists.',
         tone: 'error',
       }
     }
     const c = ibDailyHealth.coverage || {}
-    const barsDate = c.latest_daily_bar_date || '—'
+    const barsDate = c.latest_daily_bar_date || null
     const lag = c.bars_lag_days
-    const lagLabel = lag == null ? 'unknown lag' : `${lag}d lag`
-    const symbols = `${c.bar_symbols_on_latest_date ?? '—'}/${c.universe_symbols ?? '—'} symbols`
-    const pipelineDate = ibDailyHealth?.pipeline?.latest_effective_to_date || '—'
+    const barSymbols = Number(c.bar_symbols_on_latest_date ?? 0)
+    const universeSymbols = Number(c.universe_symbols ?? 0)
+    const missingSymbols = Number(c.missing_symbols_on_latest_date ?? 0)
+    const pipelineDate = ibDailyHealth?.pipeline?.latest_effective_to_date || null
     const checkedAt = ibHealthCheckedAt ? formatTs(ibHealthCheckedAt) : '—'
-    const tone = ibDailyHealth.up_to_date ? 'ok' : 'warn'
+    const hasGaps = universeSymbols > 0 && missingSymbols > 0
+    const lagged = typeof lag === 'number' ? lag > 0 : false
+    const pipelineBehind = Boolean(barsDate && pipelineDate && pipelineDate < barsDate)
+    const shouldRun = hasGaps || lagged || pipelineBehind
+
+    if (shouldRun) {
+      return {
+        text: `Run IB Daily Job now. Data is not ready yet (${barSymbols}/${universeSymbols} symbols loaded${barsDate ? ` for ${barsDate}` : ''}${pipelineDate ? `; pipeline currently at ${pipelineDate}` : ''}). Checked ${checkedAt}.`,
+        tone: 'warn',
+      }
+    }
+
     return {
-      text: `Bars: ${barsDate} (${lagLabel}), ${symbols}, pipeline: ${pipelineDate}, checked: ${checkedAt}.`,
-      tone,
+      text: `No action needed. Daily data is complete${barsDate ? ` for ${barsDate}` : ''}. Checked ${checkedAt}.`,
+      tone: 'ok',
     }
   }, [ibDailyHealth, ibHealthCheckedAt, ibHealthLoading])
 

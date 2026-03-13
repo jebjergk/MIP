@@ -51,8 +51,8 @@ begin
     v_do_train    := coalesce(P_DO_TRAIN, true);
 
     if (v_do_ingest) then
-        call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS();
-        -- select RESULT into v_msg_ingest from table(MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS());
+        call MIP.APP.SP_INGEST_MARKET_BARS();
+        -- select RESULT into v_msg_ingest from table(MIP.APP.SP_INGEST_MARKET_BARS());
     end if;
 
     if (v_do_signals) then

@@ -35,6 +35,12 @@ declare
     v_agg variant;
     v_agg_status string;
     v_agg_rows_written number := 0;
+    v_window_enforced boolean := true;
+    v_now_et timestamp_tz;
+    v_hour_et number;
+    v_minute_et number;
+    v_is_weekday boolean;
+    v_is_valid_slot boolean;
 begin
     v_event_run_id := (
         call MIP.APP.SP_LOG_EVENT(
@@ -48,6 +54,59 @@ begin
             null
         )
     );
+
+    v_window_enforced := (
+        select
+            iff(
+                lower(
+                    coalesce(
+                        max(case when CONFIG_KEY = 'NEWS_COMMITTEE_WINDOW_ENFORCED' then CONFIG_VALUE end),
+                        'true'
+                    )
+                ) = 'true',
+                true,
+                false
+            )
+        from MIP.APP.APP_CONFIG
+        where CONFIG_KEY in ('NEWS_COMMITTEE_WINDOW_ENFORCED')
+    );
+
+    v_now_et := convert_timezone('America/New_York', current_timestamp());
+    v_hour_et := date_part(hour, v_now_et);
+    v_minute_et := date_part(minute, v_now_et);
+    v_is_weekday := dayofweekiso(v_now_et) between 1 and 5;
+    v_is_valid_slot := (
+        v_is_weekday and (
+            (v_hour_et in (7, 8) and v_minute_et in (0, 30))
+            or (v_hour_et = 9 and v_minute_et = 0)
+        )
+    );
+
+    if (v_window_enforced and not v_is_valid_slot) then
+        call MIP.APP.SP_LOG_EVENT(
+            'NEWS_PIPELINE',
+            'SP_REFRESH_NEWS_CONTEXT',
+            'WARN',
+            0,
+            object_construct(
+                'run_id', :v_run_id,
+                'window_enforced', :v_window_enforced,
+                'current_et', to_varchar(:v_now_et),
+                'valid_slots_et', array_construct('07:00', '07:30', '08:00', '08:30', '09:00')
+            ),
+            'Skipped refresh outside committee window (07:00-09:00 ET slots).',
+            :v_run_id,
+            :v_event_run_id
+        );
+
+        return object_construct(
+            'status', 'SKIPPED_OUTSIDE_COMMITTEE_WINDOW',
+            'run_id', :v_run_id,
+            'window_enforced', :v_window_enforced,
+            'current_et', to_varchar(:v_now_et),
+            'valid_slots_et', array_construct('07:00', '07:30', '08:00', '08:30', '09:00')
+        );
+    end if;
 
     v_ingest := (call MIP.NEWS.SP_INGEST_RSS_NEWS(false, null));
     v_ingest_status := coalesce(v_ingest:"status"::string, 'UNKNOWN');

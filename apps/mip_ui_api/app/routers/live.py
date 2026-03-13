@@ -660,7 +660,7 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
     policy = _opening_policy(cur, cfg, action)
     refresh_result = {"attempted": False}
     if force_refresh_1m:
-        refresh_result = _force_refresh_latest_one_minute_bars(cur)
+        refresh_result = _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
 
     symbol = action.get("SYMBOL")
     cur.execute(
@@ -669,7 +669,7 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
         from MIP.MART.MARKET_BARS
         where SYMBOL = %s
           and INTERVAL_MINUTES = 1
-        order by TS desc
+        order by case when upper(coalesce(SOURCE, '')) = 'IBKR' then 0 else 1 end, TS desc
         limit 1
         """,
         (symbol,),
@@ -1425,29 +1425,124 @@ def _run_agent_snowflake_query(query: str, timeout_sec: int = 120) -> list | dic
         return []
 
 
-def _force_refresh_latest_one_minute_bars(cur) -> dict:
+def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> dict:
+    """
+    Execute IBKR bar ingest via agent runtime (local Gateway + .env.agent Snowflake).
+    """
+    if not symbol:
+        return {"attempted": False, "status": "SKIPPED", "reason": "MISSING_SYMBOL"}
+
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "ingest_ibkr_bars.py"
+    if not py.exists() or not script.exists():
+        return {
+            "attempted": False,
+            "status": "SKIPPED",
+            "reason": "IBKR_INGEST_RUNTIME_NOT_FOUND",
+        }
+
+    cmd = [
+        str(py),
+        str(script),
+        "--interval-minutes",
+        "1",
+        "--duration-str",
+        "2 D",
+        "--symbols",
+        str(symbol).upper(),
+        "--max-symbols",
+        "1",
+        "--use-rth",
+    ]
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+    )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    payload = {}
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        start_idx = stream.find("{")
+        if start_idx < 0:
+            continue
+        try:
+            parsed = json.loads(stream[start_idx:])
+            if isinstance(parsed, dict):
+                payload = parsed
+                break
+        except Exception:
+            continue
+
+    if proc.returncode != 0:
+        return {
+            "attempted": True,
+            "status": "FAIL",
+            "executor": "agent_runtime_ibkr",
+            "payload": payload or None,
+            "stderr": stderr[-2000:],
+            "stdout": stdout[-2000:],
+        }
+
+    return {
+        "attempted": True,
+        "status": "SUCCESS",
+        "executor": "agent_runtime_ibkr",
+        "payload": payload,
+    }
+
+
+def _force_refresh_latest_one_minute_bars(cur, symbol: str | None = None) -> dict:
     """
     Best-effort 1-minute bar refresh before revalidation.
     Non-fatal; caller still proceeds with currently available data.
     """
+    ibkr_result = _run_agent_ibkr_bar_refresh(symbol)
+    if ibkr_result.get("status") == "SUCCESS":
+        return ibkr_result
+
     try:
-        # Use agent runtime credentials for writes/calls to avoid API-role privilege drift.
-        agent_rows = _run_agent_snowflake_query("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(1)")
+        # Fallback path when IBKR refresh is unavailable.
+        agent_rows = _run_agent_snowflake_query("call MIP.APP.SP_INGEST_MARKET_BARS(1)")
         payload = (agent_rows[0] if isinstance(agent_rows, list) and agent_rows else agent_rows)
-        return {"attempted": True, "status": "SUCCESS", "payload": payload, "executor": "agent_runtime"}
+        return {
+            "attempted": True,
+            "status": "SUCCESS",
+            "payload": payload,
+            "executor": "agent_runtime_sql_fallback",
+            "ibkr_attempt": ibkr_result,
+        }
     except Exception as agent_exc:
-        # Backward-compatible fallback for environments where API runtime has execute grants.
         try:
-            cur.execute("call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(1)")
+            cur.execute("call MIP.APP.SP_INGEST_MARKET_BARS(1)")
             row = cur.fetchone()
             payload = row[0] if row else None
-            return {"attempted": True, "status": "SUCCESS", "payload": payload, "executor": "api_runtime"}
+            return {
+                "attempted": True,
+                "status": "SUCCESS",
+                "payload": payload,
+                "executor": "api_runtime_sql_fallback",
+                "ibkr_attempt": ibkr_result,
+            }
         except Exception as exc:
             return {
                 "attempted": True,
                 "status": "FAIL",
                 "error": str(exc),
                 "agent_error": str(agent_exc),
+                "ibkr_attempt": ibkr_result,
             }
 
 
@@ -5175,7 +5270,7 @@ def revalidate_live_action(
         proposed_price = action.get("PROPOSED_PRICE")
         refresh_info = {"attempted": False}
         if req.force_refresh_1m:
-            refresh_info = _force_refresh_latest_one_minute_bars(cur)
+            refresh_info = _force_refresh_latest_one_minute_bars(cur, symbol)
 
         cur.execute(
             """
@@ -5183,7 +5278,7 @@ def revalidate_live_action(
             from MIP.MART.MARKET_BARS
             where SYMBOL = %s
               and INTERVAL_MINUTES = 1
-            order by TS desc
+            order by case when upper(coalesce(SOURCE, '')) = 'IBKR' then 0 else 1 end, TS desc
             limit 1
             """,
             (symbol,),

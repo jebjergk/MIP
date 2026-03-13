@@ -29,7 +29,7 @@ begin
       from MIP.MART.MARKET_BARS;
 
     begin
-        v_ingest_result := (call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS());
+        v_ingest_result := (call MIP.APP.SP_INGEST_MARKET_BARS());
         v_ingest_status := coalesce(:v_ingest_result:"status"::string, 'UNKNOWN');
         v_rate_limit_hit := coalesce(:v_ingest_result:"rate_limit_hit"::boolean, false);
 

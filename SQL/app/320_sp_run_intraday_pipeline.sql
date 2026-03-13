@@ -88,7 +88,7 @@ begin
 
     -- ── STEP 1: Ingest intraday bars ──────────────────────────────────
     begin
-        v_ingest_result := (call MIP.APP.SP_INGEST_ALPHAVANTAGE_BARS(:v_interval_minutes));
+        v_ingest_result := (call MIP.APP.SP_INGEST_MARKET_BARS(:v_interval_minutes));
         v_ingest_status := coalesce(:v_ingest_result:status::string, 'UNKNOWN');
         v_bars_ingested := coalesce(:v_ingest_result:rows_inserted::number, 0);
         v_symbols_processed := coalesce(:v_ingest_result:symbols_processed::number, 0);

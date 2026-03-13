@@ -50,6 +50,10 @@ using (
          'Default poll cadence for global RSS sources'),
         ('NEWS_TICKER_POLL_MINUTES', '120',
          'Default poll cadence for per-symbol ticker RSS sources'),
+        ('NEWS_COMMITTEE_WINDOW_ENFORCED', 'true',
+         'When true, SP_REFRESH_NEWS_CONTEXT only runs during committee slots unless explicitly overridden'),
+        ('NEWS_COMMITTEE_WINDOW_TZ', 'America/New_York',
+         'Committee window timezone (Nasdaq time) used for run-slot enforcement'),
         ('NEWS_AGG_TAU_HOURS', '24',
          'Decay control for aggregated info_pressure computation'),
         ('NEWS_AGG_BADGE_HOT_THRESHOLD', '2.50',
@@ -59,7 +63,9 @@ using (
         ('NEWS_RETENTION_DAYS_HOT', '90',
          'Hot retention window in days for NEWS schema tables'),
         ('NEWS_RETENTION_DAYS_ARCHIVE', '365',
-         'Archive retention target for older news records')
+         'Archive retention target for older news records'),
+        ('NEWS_FEED_HEALTH_STALE_MINUTES', '90',
+         'Feed monitor threshold: source marked stale when last ingest age exceeds this many minutes')
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

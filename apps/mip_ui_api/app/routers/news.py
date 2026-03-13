@@ -434,3 +434,137 @@ def get_news_intelligence(
         }
     finally:
         conn.close()
+
+
+@router.get("/feed-health")
+def get_news_feed_health():
+    """
+    Committee-window feed stability monitor for 07:00-09:00 ET rounds.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+                ET_DATE,
+                SOURCE_ID,
+                SOURCE_NAME,
+                SOURCE_TYPE,
+                ENABLED_FLAG,
+                POLL_MINUTES,
+                ENTRIES_TODAY,
+                SYMBOLS_COVERED_TODAY,
+                LAST_INGESTED_AT_UTC,
+                LAST_INGESTED_AT_ET,
+                LAST_INGEST_AGE_MINUTES,
+                ROUNDS_EXPECTED,
+                ROUNDS_WITH_DATA,
+                ROUND_SUCCESS_RATE,
+                ROUND_0700_OK,
+                ROUND_0730_OK,
+                ROUND_0800_OK,
+                ROUND_0830_OK,
+                ROUND_0900_OK,
+                MISSING_ROUNDS,
+                STALE_THRESHOLD_MINUTES,
+                IS_STALE,
+                HEALTH_STATUS
+            from MIP.MART.V_NEWS_FEED_HEALTH
+            order by
+                case HEALTH_STATUS
+                    when 'CRITICAL' then 1
+                    when 'DEGRADED' then 2
+                    when 'STALE' then 3
+                    when 'WARN' then 4
+                    else 5
+                end,
+                SOURCE_ID
+            """
+        )
+        rows = serialize_rows(fetch_all(cur))
+
+        status_counts = {"HEALTHY": 0, "WARN": 0, "STALE": 0, "DEGRADED": 0, "CRITICAL": 0}
+        total_sources = len(rows)
+        stale_sources = 0
+        round_coverage_total = 0.0
+        biggest_gaps: list[dict[str, Any]] = []
+
+        for r in rows:
+            st = str(r.get("HEALTH_STATUS") or "WARN").upper()
+            if st not in status_counts:
+                status_counts[st] = 0
+            status_counts[st] += 1
+
+            if _to_bool(r.get("IS_STALE")):
+                stale_sources += 1
+
+            rr = _to_float(r.get("ROUND_SUCCESS_RATE")) or 0.0
+            round_coverage_total += rr
+            missing = _to_list(r.get("MISSING_ROUNDS"))
+            if missing:
+                biggest_gaps.append(
+                    {
+                        "source_id": r.get("SOURCE_ID"),
+                        "source_name": r.get("SOURCE_NAME"),
+                        "health_status": st,
+                        "missing_rounds": missing,
+                        "last_ingest_age_minutes": _to_float(r.get("LAST_INGEST_AGE_MINUTES")),
+                    }
+                )
+
+        biggest_gaps.sort(
+            key=lambda x: (
+                len(x.get("missing_rounds") or []),
+                x.get("last_ingest_age_minutes") or 0.0,
+            ),
+            reverse=True,
+        )
+
+        avg_round_coverage_pct = (round_coverage_total / total_sources * 100.0) if total_sources else 0.0
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "window_contract": {
+                "timezone": "America/New_York",
+                "committee_rounds": ["07:00", "07:30", "08:00", "08:30", "09:00"],
+                "latest_allowed_load": "09:00",
+            },
+            "summary": {
+                "sources_total": total_sources,
+                "status_counts": status_counts,
+                "stale_sources": stale_sources,
+                "avg_round_coverage_pct": avg_round_coverage_pct,
+            },
+            "largest_gaps": biggest_gaps[:10],
+            "sources": [
+                {
+                    "et_date": _safe_iso(r.get("ET_DATE")),
+                    "source_id": r.get("SOURCE_ID"),
+                    "source_name": r.get("SOURCE_NAME"),
+                    "source_type": r.get("SOURCE_TYPE"),
+                    "enabled_flag": _to_bool(r.get("ENABLED_FLAG")),
+                    "poll_minutes": _to_float(r.get("POLL_MINUTES")),
+                    "entries_today": _to_float(r.get("ENTRIES_TODAY")),
+                    "symbols_covered_today": _to_float(r.get("SYMBOLS_COVERED_TODAY")),
+                    "last_ingested_at_utc": _safe_iso(r.get("LAST_INGESTED_AT_UTC")),
+                    "last_ingested_at_et": _safe_iso(r.get("LAST_INGESTED_AT_ET")),
+                    "last_ingest_age_minutes": _to_float(r.get("LAST_INGEST_AGE_MINUTES")),
+                    "rounds_expected": _to_float(r.get("ROUNDS_EXPECTED")),
+                    "rounds_with_data": _to_float(r.get("ROUNDS_WITH_DATA")),
+                    "round_success_rate": _to_float(r.get("ROUND_SUCCESS_RATE")),
+                    "round_0700_ok": _to_bool(r.get("ROUND_0700_OK")),
+                    "round_0730_ok": _to_bool(r.get("ROUND_0730_OK")),
+                    "round_0800_ok": _to_bool(r.get("ROUND_0800_OK")),
+                    "round_0830_ok": _to_bool(r.get("ROUND_0830_OK")),
+                    "round_0900_ok": _to_bool(r.get("ROUND_0900_OK")),
+                    "missing_rounds": _to_list(r.get("MISSING_ROUNDS")),
+                    "stale_threshold_minutes": _to_float(r.get("STALE_THRESHOLD_MINUTES")),
+                    "is_stale": _to_bool(r.get("IS_STALE")),
+                    "health_status": str(r.get("HEALTH_STATUS") or "").upper(),
+                }
+                for r in rows
+            ],
+        }
+    finally:
+        conn.close()

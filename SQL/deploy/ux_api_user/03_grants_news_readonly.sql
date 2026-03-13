@@ -16,3 +16,4 @@ grant select on table MIP.NEWS.SYMBOL_ALIAS_DICT     to role MIP_UI_API_ROLE;
 grant select on table MIP.NEWS.NEWS_SOURCE_SUBSCRIPTIONS to role MIP_UI_API_ROLE;
 grant select on table MIP.NEWS.NEWS_AGGREGATED_EVENTS to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_NEWS_AGG_LATEST to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_NEWS_FEED_HEALTH to role MIP_UI_API_ROLE;

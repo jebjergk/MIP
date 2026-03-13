@@ -378,7 +378,12 @@ begin
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_SCORE_CAP', CONFIG_VALUE, null))), 0.20) as NEWS_SCORE_CAP,
                 coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_SIZE_MULT_CAUTION', CONFIG_VALUE, null))), 0.75) as NEWS_SIZE_MULT_CAUTION,
                 coalesce(max(iff(CONFIG_KEY = 'NEWS_BLOCK_ON_CONFLICT', lower(CONFIG_VALUE), null)), 'true') as NEWS_BLOCK_ON_CONFLICT,
-                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES', CONFIG_VALUE, null))), 180) as NEWS_STALE_MINUTES
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'NEWS_STALENESS_THRESHOLD_MINUTES', CONFIG_VALUE, null))), 180) as NEWS_STALE_MINUTES,
+                coalesce(max(iff(CONFIG_KEY = 'SYMBOL_LOCAL_GATE_ENABLED', lower(CONFIG_VALUE), null)), 'true') as SYMBOL_LOCAL_GATE_ENABLED,
+                coalesce(max(iff(CONFIG_KEY = 'SYMBOL_LOCAL_GATE_ENFORCE', lower(CONFIG_VALUE), null)), 'false') as SYMBOL_LOCAL_GATE_ENFORCE,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECENT_HIT_RATE', CONFIG_VALUE, null))), 0.50) as SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN', CONFIG_VALUE, null))), 0.00) as SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN,
+                coalesce(max(try_to_number(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECS', CONFIG_VALUE, null))), 8) as SYMBOL_LOCAL_MIN_RECS
             from MIP.APP.APP_CONFIG
         ),
         news_candidates as (
@@ -532,6 +537,11 @@ begin
                 na.BADGE as NEWS_AGG_BADGE,
                 na.TOP_CLUSTERS as NEWS_AGG_TOP_CLUSTERS,
                 na.AS_OF_TS_BUCKET as NEWS_AGG_BUCKET_TS,
+                cfg.SYMBOL_LOCAL_GATE_ENABLED,
+                cfg.SYMBOL_LOCAL_GATE_ENFORCE,
+                cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
+                cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN,
+                cfg.SYMBOL_LOCAL_MIN_RECS,
                 iff(
                     coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS) is null,
                     null,
@@ -565,9 +575,53 @@ begin
                 order by e.SCORE desc, e.RECOMMENDATION_ID
             ) = 1
         ),
+        symbol_local_health as (
+            select
+                d.*,
+                snap.SNAPSHOT_JSON:trust:trust_label::string as SYMBOL_LOCAL_TRUST_LABEL,
+                coalesce(
+                    try_to_double(snap.SNAPSHOT_JSON:trust:reason:recent_hit_rate::string),
+                    try_to_double(snap.SNAPSHOT_JSON:evidence:hit_rate::string)
+                ) as SYMBOL_LOCAL_RECENT_HIT_RATE,
+                coalesce(
+                    try_to_double(snap.SNAPSHOT_JSON:trust:reason:recent_avg_return::string),
+                    try_to_double(snap.SNAPSHOT_JSON:evidence:avg_return::string)
+                ) as SYMBOL_LOCAL_RECENT_AVG_RETURN,
+                coalesce(
+                    try_to_number(snap.SNAPSHOT_JSON:evidence:recs_total::string),
+                    0
+                ) as SYMBOL_LOCAL_RECS_TOTAL,
+                coalesce(
+                    snap.SNAPSHOT_JSON:threshold_gaps:hit_rate_met::boolean,
+                    false
+                ) as SYMBOL_LOCAL_HIT_RATE_MET,
+                coalesce(
+                    snap.SNAPSHOT_JSON:threshold_gaps:avg_return_met::boolean,
+                    false
+                ) as SYMBOL_LOCAL_AVG_RETURN_MET,
+                coalesce(
+                    snap.SNAPSHOT_JSON:threshold_gaps:signals_met::boolean,
+                    false
+                ) as SYMBOL_LOCAL_SIGNALS_MET
+            from deduped_candidates d
+            left join MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL snap
+              on snap.SYMBOL = d.SYMBOL
+             and snap.MARKET_TYPE = d.MARKET_TYPE
+             and snap.PATTERN_ID = d.PATTERN_ID
+        ),
         enriched_news as (
             select
                 d.*,
+                iff(
+                    d.SYMBOL_LOCAL_GATE_ENABLED = 'true'
+                    and (
+                        coalesce(d.SYMBOL_LOCAL_RECENT_HIT_RATE, -1) < d.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE
+                        or coalesce(d.SYMBOL_LOCAL_RECENT_AVG_RETURN, -999) < d.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN
+                        or coalesce(d.SYMBOL_LOCAL_RECS_TOTAL, 0) < d.SYMBOL_LOCAL_MIN_RECS
+                    ),
+                    true,
+                    false
+                ) as SYMBOL_LOCAL_GATE_WOULD_BLOCK,
                 iff(
                     d.NEWS_SNAPSHOT_AGE_MINUTES is null,
                     0.0,
@@ -613,7 +667,7 @@ begin
                     ),
                     1.0
                 ) as NEWS_EVENT_RISK_PROXY
-            from deduped_candidates d
+            from symbol_local_health d
         ),
         scored_candidates as (
             select
@@ -795,6 +849,19 @@ begin
                 'news_enabled', iff(s.NEWS_ENABLED = 'true', true, false),
                 'news_display_only', iff(s.NEWS_DISPLAY_ONLY = 'true', true, false),
                 'news_influence_enabled', iff(s.NEWS_INFLUENCE_ENABLED = 'true', true, false),
+                'symbol_local_gate_enabled', iff(s.SYMBOL_LOCAL_GATE_ENABLED = 'true', true, false),
+                'symbol_local_gate_enforce', iff(s.SYMBOL_LOCAL_GATE_ENFORCE = 'true', true, false),
+                'symbol_local_gate_would_block', s.SYMBOL_LOCAL_GATE_WOULD_BLOCK,
+                'symbol_local_trust_label', s.SYMBOL_LOCAL_TRUST_LABEL,
+                'symbol_local_recent_hit_rate', s.SYMBOL_LOCAL_RECENT_HIT_RATE,
+                'symbol_local_recent_avg_return', s.SYMBOL_LOCAL_RECENT_AVG_RETURN,
+                'symbol_local_recs_total', s.SYMBOL_LOCAL_RECS_TOTAL,
+                'symbol_local_min_recent_hit_rate', s.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
+                'symbol_local_min_recent_avg_return', s.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN,
+                'symbol_local_min_recs', s.SYMBOL_LOCAL_MIN_RECS,
+                'symbol_local_hit_rate_met', s.SYMBOL_LOCAL_HIT_RATE_MET,
+                'symbol_local_avg_return_met', s.SYMBOL_LOCAL_AVG_RETURN_MET,
+                'symbol_local_signals_met', s.SYMBOL_LOCAL_SIGNALS_MET,
                 'news_decay_tau_hours', s.NEWS_DECAY_TAU_HOURS,
                 'news_pressure_hot', s.NEWS_PRESSURE_HOT,
                 'news_uncertainty_high', s.NEWS_UNCERTAINTY_HIGH,
@@ -878,6 +945,10 @@ begin
                 'news_score_adj_shadow', s.NEWS_SCORE_ADJ_SHADOW,
                 'news_score_adj_applied', s.NEWS_SCORE_ADJ_APPLIED,
                 'news_score_adj', s.NEWS_SCORE_ADJ_APPLIED,
+                'symbol_local_gate_would_block', s.SYMBOL_LOCAL_GATE_WOULD_BLOCK,
+                'symbol_local_recent_hit_rate', s.SYMBOL_LOCAL_RECENT_HIT_RATE,
+                'symbol_local_recent_avg_return', s.SYMBOL_LOCAL_RECENT_AVG_RETURN,
+                'symbol_local_recs_total', s.SYMBOL_LOCAL_RECS_TOTAL,
                 'news_agg_badge', s.NEWS_AGG_BADGE,
                 'news_agg_info_pressure', s.NEWS_AGG_INFO_PRESSURE,
                 'news_agg_conflict', s.NEWS_AGG_CONFLICT,

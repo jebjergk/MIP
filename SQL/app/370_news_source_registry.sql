@@ -148,6 +148,23 @@ using (
         240
     union all
     select
+        'IBKR_NEWS_API',
+        'Interactive Brokers News API',
+        'ibkr://news',
+        'https://www.interactivebrokers.com/en/general/api-notes-beta.php',
+        'IBKR API-backed headline ingest from local gateway runtime (title/link only).',
+        true,
+        false,
+        'UTC',
+        30,
+        true,
+        'IBKR_API',
+        null,
+        'STOCK_ONLY',
+        true,
+        30
+    union all
+    select
         'SEEKING_ALPHA_TICKER_RSS',
         'Seeking Alpha Combined Symbol RSS',
         'https://seekingalpha.com/api/sa/combined/AAPL.xml',

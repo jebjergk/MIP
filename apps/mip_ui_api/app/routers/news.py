@@ -1,5 +1,8 @@
 import json
+import os
+import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Query
@@ -7,6 +10,10 @@ from fastapi import APIRouter, Query
 from app.db import fetch_all, get_connection, serialize_rows
 
 router = APIRouter(prefix="/news", tags=["news"])
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[5]
 
 
 def _to_float(v: Any) -> Optional[float]:
@@ -818,3 +825,93 @@ def get_news_feed_health():
         }
     finally:
         conn.close()
+
+
+@router.post("/refresh-ibkr")
+def refresh_ibkr_news(
+    max_symbols: int = Query(20, ge=1, le=200, description="Max symbols to request from IB"),
+    max_headlines_per_symbol: int = Query(5, ge=1, le=20, description="Headlines per symbol"),
+):
+    """
+    Run IBKR headline ingest in local agent runtime and refresh derived news context.
+    """
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    ingest_script = root / "cursorfiles" / "ingest_ibkr_news.py"
+    if not py.exists() or not ingest_script.exists():
+        return {
+            "status": "SKIPPED",
+            "reason": "IBKR_NEWS_RUNTIME_NOT_FOUND",
+            "detail": "cursorfiles venv or ingest_ibkr_news.py is missing",
+        }
+
+    cmd = [
+        str(py),
+        str(ingest_script),
+        "--max-symbols",
+        str(max_symbols),
+        "--max-headlines-per-symbol",
+        str(max_headlines_per_symbol),
+    ]
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+
+    ingest_payload: dict[str, Any] = {}
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        idx = stream.find("{")
+        if idx < 0:
+            continue
+        try:
+            parsed = json.loads(stream[idx:])
+            if isinstance(parsed, dict):
+                ingest_payload = parsed
+                break
+        except Exception:
+            continue
+
+    if proc.returncode != 0:
+        return {
+            "status": "FAIL",
+            "step": "IBKR_INGEST",
+            "ingest": ingest_payload or None,
+            "stderr": stderr[-2000:],
+            "stdout": stdout[-2000:],
+        }
+
+    # Rebuild symbol mapping and aggregates after direct NEWS_RAW inserts.
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("call MIP.NEWS.SP_MAP_NEWS_SYMBOLS(null)")
+        map_out = serialize_rows(fetch_all(cur))
+        cur.execute("call MIP.NEWS.SP_COMPUTE_INFO_STATE_DAILY(current_timestamp(), null)")
+        compute_out = serialize_rows(fetch_all(cur))
+        cur.execute("call MIP.NEWS.SP_AGGREGATE_NEWS_EVENTS(current_timestamp(), null)")
+        agg_out = serialize_rows(fetch_all(cur))
+    finally:
+        conn.close()
+
+    return {
+        "status": "SUCCESS",
+        "ingest": ingest_payload,
+        "post_refresh": {
+            "map": map_out[0] if map_out else None,
+            "compute": compute_out[0] if compute_out else None,
+            "aggregate": agg_out[0] if agg_out else None,
+        },
+    }

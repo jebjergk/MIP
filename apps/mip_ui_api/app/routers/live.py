@@ -394,6 +394,7 @@ def _required_next_step_for_status(status: str) -> str:
         "RESEARCH_IMPORTED": "Run committee review",
         "PROPOSED": "Run committee review",
         "PENDING_OPEN_VALIDATION": "Pass opening validation",
+        "OPEN_BLOCKED": "Wait for market open and fresh opening snapshot, then run committee revalidation",
         "OPEN_ELIGIBLE": "Run committee review",
         "OPEN_CAUTION": "Run committee review (caution)",
         "PENDING_OPEN_STABILITY_REVIEW": "Wait for stabilization window",
@@ -7258,7 +7259,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         source_origin = "request" if source_portfolio_id is not None else "all_portfolios"
 
         wheres = [
-            "STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')",
+            "STATUS in ('PROPOSED', 'APPROVED')",
             "SYMBOL is not null",
             "SIDE in ('BUY', 'SELL')",
         ]
@@ -7425,6 +7426,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     "source": "ORDER_PROPOSALS",
                     "source_portfolio_id": source_portfolio_id,
                     "source_origin": source_origin,
+                    "source_scope": scope,
                     "run_id": p.get("RUN_ID_VARCHAR"),
                     "proposal_status": p.get("STATUS"),
                     "signal_pattern_id": p.get("SIGNAL_PATTERN_ID"),
@@ -7576,7 +7578,7 @@ def list_live_proposal_candidates(
     try:
         cur = conn.cursor()
         wheres = [
-            "op.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')",
+            "op.STATUS in ('PROPOSED', 'APPROVED')",
             "op.SYMBOL is not null",
             "op.SIDE in ('BUY', 'SELL')",
         ]

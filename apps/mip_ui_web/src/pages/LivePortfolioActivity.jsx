@@ -58,6 +58,19 @@ function fmtMaybePending(v, formatter) {
   return formatter(v)
 }
 
+function explainReasonCode(code) {
+  const c = String(code || '').toUpperCase()
+  const map = {
+    OPEN_MARKET_CLOSED: 'Market is closed right now',
+    OPEN_SNAPSHOT_MISSING: 'No fresh opening snapshot yet',
+    OPEN_LIVE_GUARD_FAILED: 'Opening safety checks failed',
+    OPEN_GAP_UNAVAILABLE: 'Opening gap data is unavailable',
+    SNAPSHOT_STALE: 'Latest market snapshot is stale',
+    ACTION_EXPIRED: 'This action has expired and needs refresh',
+  }
+  return map[c] || c.replaceAll('_', ' ')
+}
+
 function stateClass(value) {
   const v = String(value || '').toUpperCase()
   if (v === 'FRESH' || v === 'CLEAR' || v === 'FILLED') return 'ok'
@@ -659,8 +672,19 @@ export default function LivePortfolioActivity() {
                         ) : null}
                       </td>
                       <td>
-                        <div>{(d.reason_codes || []).join(', ') || '—'}</div>
-                        <div className="lpa-subtle">Next: {d.required_next_step || '—'}</div>
+                        {Array.isArray(d.reason_codes) && d.reason_codes.length > 0 ? (
+                          <ul className="lpa-reason-list">
+                            {d.reason_codes.map((code, idx) => (
+                              <li key={`${d.action_id}:reason:${idx}`}>
+                                <span className="lpa-reason-human">{explainReasonCode(code)}</span>
+                                <span className="lpa-reason-code-inline">{String(code || '—')}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div>—</div>
+                        )}
+                        <div className="lpa-subtle lpa-next-step">Next: {d.required_next_step || '—'}</div>
                       </td>
                       <td>
                         <div className="lpa-actions">

@@ -496,6 +496,68 @@ def get_detail(
                     "volume": None,
                 })
 
+        # FX daily bars can legitimately lag one day behind intraday ingestion after close.
+        # When that happens, append a daily proxy bar from intraday OHLC so timeline charts
+        # still include the latest completed run date.
+        if ohlc and market_type == "FX" and interval_minutes == 1440:
+            try:
+                last_daily_date = ohlc[-1]["ts"][:10]
+                cur.execute(
+                    """
+                    select max(TS::date) as latest_market_date
+                    from MIP.MART.MARKET_BARS
+                    where INTERVAL_MINUTES = %s
+                    """,
+                    (interval_minutes,),
+                )
+                latest_market_row = cur.fetchone()
+                latest_market_date = latest_market_row[0] if latest_market_row else None
+                latest_market_date_str = (
+                    latest_market_date.isoformat()
+                    if hasattr(latest_market_date, "isoformat")
+                    else str(latest_market_date)
+                    if latest_market_date is not None
+                    else None
+                )
+
+                if latest_market_date_str and last_daily_date < latest_market_date_str:
+                    cur.execute(
+                        """
+                        with intraday_by_interval as (
+                            select
+                                INTERVAL_MINUTES,
+                                min_by(OPEN, TS) as OPEN_PX,
+                                max(HIGH) as HIGH_PX,
+                                min(LOW) as LOW_PX,
+                                max_by(CLOSE, TS) as CLOSE_PX
+                            from MIP.MART.MARKET_BARS
+                            where SYMBOL = %s
+                              and MARKET_TYPE = %s
+                              and TS::date = %s
+                              and INTERVAL_MINUTES in (15, 60)
+                            group by INTERVAL_MINUTES
+                        )
+                        select OPEN_PX, HIGH_PX, LOW_PX, CLOSE_PX
+                        from intraday_by_interval
+                        order by case when INTERVAL_MINUTES = 15 then 0 else 1 end
+                        limit 1
+                        """,
+                        (symbol, market_type, latest_market_date),
+                    )
+                    fx_proxy = cur.fetchone()
+                    if fx_proxy and all(v is not None for v in fx_proxy):
+                        ohlc.append({
+                            "ts": latest_market_date_str + "T00:00:00",
+                            "open": float(fx_proxy[0]),
+                            "high": float(fx_proxy[1]),
+                            "low": float(fx_proxy[2]),
+                            "close": float(fx_proxy[3]),
+                            "volume": None,
+                        })
+            except Exception:
+                # Keep chart API resilient; default to raw 1440 bars if proxy build fails.
+                pass
+
         # Determine window bounds
         if ohlc:
             window_start = ohlc[0]["ts"]

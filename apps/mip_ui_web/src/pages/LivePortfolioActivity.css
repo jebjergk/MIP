@@ -139,6 +139,11 @@
   min-width: max-content;
 }
 
+.lpa-table--pending {
+  min-width: 0;
+  table-layout: fixed;
+}
+
 .lpa-table th,
 .lpa-table td {
   border-top: 1px solid #edf1f5;
@@ -158,11 +163,47 @@
   font-size: 12px;
 }
 
-.lpa-table--pending th:nth-child(1) { min-width: 220px; }
-.lpa-table--pending th:nth-child(2) { min-width: 180px; }
-.lpa-table--pending th:nth-child(3) { min-width: 260px; }
-.lpa-table--pending th:nth-child(4) { min-width: 220px; }
-.lpa-table--pending th:nth-child(5) { min-width: 190px; }
+.lpa-table--pending th:nth-child(1) { width: 20%; min-width: 170px; }
+.lpa-table--pending th:nth-child(2) { width: 16%; min-width: 140px; }
+.lpa-table--pending th:nth-child(3) { width: 24%; min-width: 180px; }
+.lpa-table--pending th:nth-child(4) { width: 24%; min-width: 180px; }
+.lpa-table--pending th:nth-child(5) { width: 16%; min-width: 150px; }
+
+.lpa-table--pending td:nth-child(4),
+.lpa-table--pending td:nth-child(5) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.lpa-reason-list {
+  margin: 0 0 6px;
+  padding-left: 16px;
+  display: grid;
+  gap: 2px;
+}
+
+.lpa-reason-list li {
+  margin: 0;
+  line-height: 1.25;
+  display: grid;
+  gap: 2px;
+}
+
+.lpa-reason-human {
+  color: #1f2937;
+}
+
+.lpa-reason-code-inline {
+  color: #6a7685;
+  font-size: 11px;
+  font-family: Consolas, "Courier New", monospace;
+  word-break: break-word;
+}
+
+.lpa-next-step {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 .lpa-btn {
   border: 1px solid #3069f0;

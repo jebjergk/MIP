@@ -41,6 +41,54 @@ def _build_links(symbol=None, market_type=None) -> dict:
     return base
 
 
+def _normalize_symbol_narrative(snapshot_json: dict, narrative_json: dict) -> dict:
+    """
+    Guardrail for AI narrative consistency.
+    If symbol trust_label is TRUSTED, remove waiting bullets that imply trust is not earned yet.
+    """
+    if not isinstance(snapshot_json, dict) or not isinstance(narrative_json, dict):
+        return narrative_json
+
+    trust_label = str(
+        (((snapshot_json.get("trust") or {}).get("trust_label")) or "")
+    ).upper()
+    if trust_label != "TRUSTED":
+        return narrative_json
+
+    waiting = narrative_json.get("waiting_for")
+    if isinstance(waiting, list):
+        blocked_phrases = (
+            "hit rate to reach",
+            "earn trust",
+            "become trusted",
+            "eligible for trust",
+        )
+        cleaned = []
+        for b in waiting:
+            text = str(b)
+            if any(p in text.lower() for p in blocked_phrases):
+                continue
+            cleaned.append(text)
+
+        if not cleaned:
+            threshold = snapshot_json.get("threshold_gaps") or {}
+            signals_gap = threshold.get("signals_gap")
+            min_signals = threshold.get("min_signals")
+            recs_total = (snapshot_json.get("evidence") or {}).get("recs_total")
+            if isinstance(signals_gap, (int, float)) and signals_gap > 0:
+                cleaned.append(
+                    f"Waiting for signals to reach {min_signals} (today: {recs_total}, gap: {int(signals_gap)}). "
+                    "This is a training completeness target; trust is already granted."
+                )
+            else:
+                cleaned.append(
+                    "Waiting for additional evaluated outcomes to stabilize symbol-local confidence; trust is already granted."
+                )
+        narrative_json["waiting_for"] = cleaned
+
+    return narrative_json
+
+
 def _format_response(data, scope="GLOBAL_TRAINING"):
     """Build standard training digest response from a row dict."""
     snapshot_json = _parse_json(data.get("snapshot_json"))
@@ -53,6 +101,9 @@ def _format_response(data, scope="GLOBAL_TRAINING"):
     symbol = data.get("symbol")
     market_type = data.get("market_type")
     pattern_id = data.get("pattern_id")
+
+    if row_scope == "SYMBOL_TRAINING":
+        narrative_json = _normalize_symbol_narrative(snapshot_json, narrative_json)
 
     return {
         "found": True,

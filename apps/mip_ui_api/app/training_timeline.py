@@ -81,7 +81,8 @@ PENDING_EVALUATIONS_SQL = """
 select 
     count(*) as pending_count,
     min(r.TS) as oldest_pending,
-    max(r.TS) as newest_pending
+    max(r.TS) as newest_pending,
+    max(o.CALCULATED_AT) as latest_pending_calculated_at
 from MIP.APP.RECOMMENDATION_LOG r
 join MIP.APP.RECOMMENDATION_OUTCOMES o
   on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
@@ -267,6 +268,7 @@ def generate_narrative(
     first_signal_ts: datetime | None,
     params: GateParams,
     symbol: str,
+    pattern_trust: dict[str, Any] | None = None,
 ) -> list[str]:
     """
     Generate 3-6 narrative bullets explaining the training journey.
@@ -336,6 +338,12 @@ def generate_narrative(
         bullets.append(f"Currently in WATCH mode with {latest_count} outcomes (hit rate: {hr_str}). Needs higher hit rate to trust.")
     else:
         bullets.append(f"Currently UNTRUSTED with {latest_count} outcomes. More evidence needed.")
+
+    # Clarify local chart state vs pattern-level gate used by proposal flow.
+    if pattern_trust and pattern_trust.get("is_trusted"):
+        bullets.append(
+            "Pattern-level gate is currently TRUSTED across symbols; this chart shows only symbol-local evaluated outcomes."
+        )
     
     return bullets[:6]  # Cap at 6 bullets
 
@@ -462,7 +470,7 @@ def build_training_timeline(
     first_signal_ts = first_signal_row[0] if first_signal_row else None
     
     # Get pending evaluations (waiting for future bars)
-    pending_info = {"count": 0, "oldest": None, "newest": None}
+    pending_info = {"count": 0, "oldest": None, "newest": None, "latest_calculated_at": None}
     try:
         cur.execute(PENDING_EVALUATIONS_SQL, {
             "symbol": symbol,
@@ -477,6 +485,7 @@ def build_training_timeline(
                 "count": int(pending_row[0]),
                 "oldest": pending_row[1].isoformat() if hasattr(pending_row[1], 'isoformat') else str(pending_row[1]) if pending_row[1] else None,
                 "newest": pending_row[2].isoformat() if hasattr(pending_row[2], 'isoformat') else str(pending_row[2]) if pending_row[2] else None,
+                "latest_calculated_at": pending_row[3].isoformat() if len(pending_row) > 3 and hasattr(pending_row[3], 'isoformat') else str(pending_row[3]) if len(pending_row) > 3 and pending_row[3] else None,
             }
     except Exception:
         pass
@@ -572,11 +581,13 @@ def build_training_timeline(
         series = series[-max_points:]
     
     # Generate narrative
-    narrative = generate_narrative(series, first_signal_ts, params, symbol)
+    narrative = generate_narrative(series, first_signal_ts, params, symbol, pattern_trust)
     
     # Add pending info to narrative if any
     if pending_info["count"] > 0:
         narrative.append(f"{pending_info['count']} recent signal(s) pending evaluation (need {horizon_bars} more bars).")
+
+    latest_evaluated_signal_ts = series[-1].get("ts") if series else None
     
     return {
         "symbol": symbol,
@@ -591,6 +602,8 @@ def build_training_timeline(
         },
         "pattern_trust": pattern_trust,
         "pending_evaluations": pending_info,
+        "latest_evaluated_signal_ts": latest_evaluated_signal_ts,
+        "latest_pending_signal_ts": pending_info.get("newest"),
         "series": series,
         "narrative": narrative,
     }

@@ -84,6 +84,11 @@ class ApproveAndSubmitLiveDecisionRequest(BaseModel):
     attempt_n: int = 1
     force_refresh_1m: bool = True
     committee_recheck_before_submit: bool = True
+    committee_refresh_ibkr_news: bool = True
+    committee_ibkr_news_max_symbols: int = 20
+    committee_ibkr_news_max_headlines_per_symbol: int = 5
+    committee_ibkr_news_min_symbols_covered: int = 1
+    committee_ibkr_news_max_age_minutes: int = 120
 
 
 class ApproveLiveDecisionRequest(BaseModel):
@@ -106,6 +111,11 @@ class CommitteeRunRequest(BaseModel):
     actor: str = "committee_orchestrator"
     model: str = "claude-3-5-sonnet"
     force_rerun: bool = False
+    refresh_ibkr_news: bool = True
+    ibkr_news_max_symbols: int = 20
+    ibkr_news_max_headlines_per_symbol: int = 5
+    ibkr_news_min_symbols_covered: int = 1
+    ibkr_news_max_age_minutes: int = 120
 
 
 class ApplyCommitteeVerdictRequest(BaseModel):
@@ -1501,6 +1511,181 @@ def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> d
         "status": "SUCCESS",
         "executor": "agent_runtime_ibkr",
         "payload": payload,
+    }
+
+
+def _run_agent_ibkr_news_refresh(
+    *,
+    max_symbols: int = 20,
+    max_headlines_per_symbol: int = 5,
+    timeout_sec: int = 180,
+) -> dict:
+    """
+    Execute IBKR news ingest via agent runtime and return structured result.
+    """
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "ingest_ibkr_news.py"
+    if not py.exists() or not script.exists():
+        return {
+            "attempted": False,
+            "status": "SKIPPED",
+            "reason": "IBKR_NEWS_RUNTIME_NOT_FOUND",
+        }
+
+    cmd = [
+        str(py),
+        str(script),
+        "--max-symbols",
+        str(max(1, int(max_symbols))),
+        "--max-headlines-per-symbol",
+        str(max(1, int(max_headlines_per_symbol))),
+    ]
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+    )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    payload = {}
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        start_idx = stream.find("{")
+        if start_idx < 0:
+            continue
+        try:
+            parsed = json.loads(stream[start_idx:])
+            if isinstance(parsed, dict):
+                payload = parsed
+                break
+        except Exception:
+            continue
+
+    if proc.returncode != 0:
+        return {
+            "attempted": True,
+            "status": "FAIL",
+            "executor": "agent_runtime_ibkr_news",
+            "payload": payload or None,
+            "stderr": stderr[-2000:],
+            "stdout": stdout[-2000:],
+        }
+
+    return {
+        "attempted": True,
+        "status": "SUCCESS",
+        "executor": "agent_runtime_ibkr_news",
+        "payload": payload or None,
+    }
+
+
+def _refresh_news_context_chain(cur) -> dict:
+    """
+    Recompute NEWS layers after direct NEWS_RAW ingest.
+    """
+    cur.execute("call MIP.NEWS.SP_MAP_NEWS_SYMBOLS(null)")
+    map_rows = fetch_all(cur)
+    cur.execute("call MIP.NEWS.SP_COMPUTE_INFO_STATE_DAILY(current_timestamp(), null)")
+    compute_rows = fetch_all(cur)
+    cur.execute("call MIP.NEWS.SP_AGGREGATE_NEWS_EVENTS(current_timestamp(), null)")
+    agg_rows = fetch_all(cur)
+    return {
+        "map": serialize_row(map_rows[0]) if map_rows else None,
+        "compute": serialize_row(compute_rows[0]) if compute_rows else None,
+        "aggregate": serialize_row(agg_rows[0]) if agg_rows else None,
+    }
+
+
+def _evaluate_ibkr_news_readiness(
+    cur,
+    *,
+    symbol: str | None,
+    min_symbols_covered: int = 1,
+    max_age_minutes: int = 120,
+) -> dict:
+    """
+    Determine if IBKR_NEWS_API is fresh enough for committee usage.
+    """
+    reasons: list[str] = []
+    symbol_norm = (symbol or "").upper().strip()
+
+    cur.execute(
+        """
+        select
+          SOURCE_ID,
+          HEALTH_STATUS,
+          ENTRIES_TODAY,
+          SYMBOLS_COVERED_TODAY,
+          LAST_INGESTED_AT_ET,
+          LAST_INGEST_AGE_MINUTES,
+          MISSING_ROUNDS,
+          IS_STALE
+        from MIP.MART.V_NEWS_FEED_HEALTH
+        where SOURCE_ID = 'IBKR_NEWS_API'
+        limit 1
+        """
+    )
+    feed_rows = fetch_all(cur)
+    feed_row = serialize_row(feed_rows[0]) if feed_rows else None
+    if not feed_row:
+        reasons.append("IBKR_NEWS_SOURCE_NOT_REGISTERED")
+        return {
+            "ready": False,
+            "reason_codes": reasons,
+            "feed_health": None,
+            "symbol_coverage": None,
+        }
+
+    entries_today = int(feed_row.get("ENTRIES_TODAY") or 0)
+    symbols_covered_today = int(feed_row.get("SYMBOLS_COVERED_TODAY") or 0)
+    age_minutes_raw = feed_row.get("LAST_INGEST_AGE_MINUTES")
+    age_minutes = float(age_minutes_raw) if age_minutes_raw is not None else None
+
+    if entries_today <= 0:
+        reasons.append("IBKR_NEWS_NO_TODAY_ROWS")
+    if symbols_covered_today < max(1, int(min_symbols_covered)):
+        reasons.append("IBKR_NEWS_MIN_COVERAGE_NOT_MET")
+    if age_minutes is None:
+        reasons.append("IBKR_NEWS_AGE_UNKNOWN")
+    elif age_minutes > float(max_age_minutes):
+        reasons.append("IBKR_NEWS_STALE")
+
+    symbol_coverage = None
+    if symbol_norm:
+        cur.execute(
+            """
+            select
+              count(*) as SYMBOL_ROWS_TODAY,
+              max(INGESTED_AT) as LAST_INGESTED_AT
+            from MIP.NEWS.NEWS_RAW
+            where SOURCE_ID = 'IBKR_NEWS_API'
+              and upper(SYMBOL_HINT) = %s
+              and cast(convert_timezone('UTC', 'America/New_York', INGESTED_AT) as date)
+                  = cast(convert_timezone('America/New_York', current_timestamp()) as date)
+            """,
+            (symbol_norm,),
+        )
+        symbol_rows = fetch_all(cur)
+        symbol_coverage = serialize_row(symbol_rows[0]) if symbol_rows else {}
+        if int((symbol_coverage or {}).get("SYMBOL_ROWS_TODAY") or 0) <= 0:
+            reasons.append("IBKR_NEWS_SYMBOL_NOT_COVERED")
+
+    return {
+        "ready": len(reasons) == 0,
+        "reason_codes": reasons,
+        "feed_health": feed_row,
+        "symbol_coverage": symbol_coverage,
     }
 
 
@@ -3796,13 +3981,19 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
                 },
             )
 
+    committee_result = None
     if status in ("OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
-        run_live_trade_committee(
+        committee_result = run_live_trade_committee(
             action_id,
             CommitteeRunRequest(
                 actor=req.committee_actor,
                 model=req.committee_model,
                 force_rerun=req.committee_recheck_before_submit,
+                refresh_ibkr_news=req.committee_refresh_ibkr_news,
+                ibkr_news_max_symbols=req.committee_ibkr_news_max_symbols,
+                ibkr_news_max_headlines_per_symbol=req.committee_ibkr_news_max_headlines_per_symbol,
+                ibkr_news_min_symbols_covered=req.committee_ibkr_news_min_symbols_covered,
+                ibkr_news_max_age_minutes=req.committee_ibkr_news_max_age_minutes,
             ),
         )
         steps.append("committee_run")
@@ -3811,7 +4002,11 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
         if status == "OPEN_BLOCKED":
             raise HTTPException(
                 status_code=409,
-                detail={"message": "Decision blocked in committee/opening stage.", "reason_codes": _parse_list_variant(action.get("REASON_CODES"))},
+                detail={
+                    "message": "Decision blocked in committee/opening stage.",
+                    "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
+                    "committee_news": (committee_result or {}).get("news_runtime"),
+                },
             )
 
     if status == "READY_FOR_APPROVAL_FLOW":
@@ -3966,6 +4161,7 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
             "action_id": action_id,
             "status": action.get("STATUS"),
             "steps": steps,
+            "committee_result": committee_result,
             "execute_result": execute_resp,
             "reason_codes": _parse_list_variant(action.get("REASON_CODES")),
         }
@@ -4315,6 +4511,32 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
+        news_ingest = {"attempted": False, "status": "SKIPPED", "reason": "DISABLED"}
+        news_recompute = None
+        news_readiness = {
+            "ready": False,
+            "reason_codes": ["IBKR_NEWS_NOT_CHECKED"],
+            "feed_health": None,
+            "symbol_coverage": None,
+        }
+        news_fallback_active = True
+        if req.refresh_ibkr_news:
+            news_ingest = _run_agent_ibkr_news_refresh(
+                max_symbols=req.ibkr_news_max_symbols,
+                max_headlines_per_symbol=req.ibkr_news_max_headlines_per_symbol,
+            )
+            if str(news_ingest.get("status") or "").upper() == "SUCCESS":
+                try:
+                    news_recompute = _refresh_news_context_chain(cur)
+                except Exception as exc:
+                    news_recompute = {"status": "FAIL", "error": str(exc)}
+        news_readiness = _evaluate_ibkr_news_readiness(
+            cur,
+            symbol=action.get("SYMBOL"),
+            min_symbols_covered=req.ibkr_news_min_symbols_covered,
+            max_age_minutes=req.ibkr_news_max_age_minutes,
+        )
+        news_fallback_active = not bool(news_readiness.get("ready"))
         status_upper = (action.get("STATUS") or "").upper()
         if status_upper in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
             opening_gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=False, now_utc=datetime.now(timezone.utc))
@@ -4328,6 +4550,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                     "blocked_stage": "OPENING_SANITY_GATE",
                     "reason_codes": opening_gate.get("reason_codes") or [],
                     "opening_validation": opening_gate.get("opening_validation") or {},
+                    "news_runtime": {
+                        "refresh_ibkr_news": bool(req.refresh_ibkr_news),
+                        "ibkr_ingest": news_ingest,
+                        "news_recompute": news_recompute,
+                        "ibkr_readiness": news_readiness,
+                        "fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
+                    },
                 }
 
         if status_upper not in ("OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
@@ -4360,6 +4589,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "blocked_stage": "OPENING_STABILITY_REVIEW",
                 "ready_after_utc": ready_after,
                 "opening_validation": opening_validation,
+                "news_runtime": {
+                    "refresh_ibkr_news": bool(req.refresh_ibkr_news),
+                    "ibkr_ingest": news_ingest,
+                    "news_recompute": news_recompute,
+                    "ibkr_readiness": news_readiness,
+                    "fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
+                },
             }
 
         if not req.force_rerun:
@@ -4391,7 +4627,18 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 action_id,
                 action.get("PORTFOLIO_ID"),
                 req.model,
-                json.dumps({"actor": req.actor}),
+                json.dumps(
+                    {
+                        "actor": req.actor,
+                        "news_runtime": {
+                            "refresh_ibkr_news": bool(req.refresh_ibkr_news),
+                            "ibkr_ingest": news_ingest,
+                            "news_recompute": news_recompute,
+                            "ibkr_readiness": news_readiness,
+                            "fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
+                        },
+                    }
+                ),
             ),
         )
 
@@ -4418,6 +4665,11 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         ):
             verdict = _backfill_joint_decision_from_policy(verdict, context)
         reason_codes = []
+        if news_fallback_active:
+            reason_codes.append("NEWS_FALLBACK_RSS_ONLY")
+        for rc in (news_readiness.get("reason_codes") or []):
+            if rc and rc not in reason_codes:
+                reason_codes.append(str(rc))
         if verdict["blocked"]:
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
@@ -4534,6 +4786,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                         "role_count": len(outputs),
                         "recommendation": verdict["recommendation"],
                         "joint_decision": verdict.get("joint_decision"),
+                        "news_runtime": {
+                            "refresh_ibkr_news": bool(req.refresh_ibkr_news),
+                            "ibkr_ingest": news_ingest,
+                            "news_recompute": news_recompute,
+                            "ibkr_readiness": news_readiness,
+                            "fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
+                        },
                     }
                 ),
                 run_id,
@@ -4578,6 +4837,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "blocked": verdict["blocked"],
                 "news_context_state": action_news_snapshot.get("context_state"),
                 "news_event_shock_flag": bool(action_news_snapshot.get("event_shock_flag")),
+                "news_fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
+                "ibkr_news_reason_codes": news_readiness.get("reason_codes") or [],
             },
             outcome_state={
                 "roles": COMMITTEE_ROLES,
@@ -4585,6 +4846,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "target_expectation_snapshot": action_target_snapshot,
                 "news_context_snapshot": action_news_snapshot,
                 "latest_symbol_news_context": latest_news_snapshot,
+                "news_runtime": {
+                    "refresh_ibkr_news": bool(req.refresh_ibkr_news),
+                    "ibkr_ingest": news_ingest,
+                    "news_recompute": news_recompute,
+                    "ibkr_readiness": news_readiness,
+                    "fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
+                },
                 "parallel_worlds_evidence": pw_evidence,
                 "joint_decision": verdict.get("joint_decision"),
             },
@@ -4600,6 +4868,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             "derived_sizing": {
                 "proposed_price": proposed_price_derived,
                 "proposed_qty": proposed_qty_derived,
+            },
+            "news_runtime": {
+                "refresh_ibkr_news": bool(req.refresh_ibkr_news),
+                "ibkr_ingest": news_ingest,
+                "news_recompute": news_recompute,
+                "ibkr_readiness": news_readiness,
+                "fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
             },
         }
     finally:

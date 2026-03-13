@@ -3,6 +3,10 @@
   gap: 16px;
 }
 
+.lpa-page > * {
+  min-width: 0;
+}
+
 .lpa-header {
   display: flex;
   justify-content: space-between;
@@ -117,6 +121,7 @@
   border-radius: 12px;
   padding: 12px;
   background: #fafafa;
+  min-width: 0;
 }
 
 .lpa-section h3 {
@@ -125,6 +130,7 @@
 
 .lpa-table-wrap {
   overflow: auto;
+  max-width: 100%;
 }
 
 .lpa-table {

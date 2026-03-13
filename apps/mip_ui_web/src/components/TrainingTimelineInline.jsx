@@ -248,6 +248,12 @@ export default function TrainingTimelineInline({
           <p className="training-timeline-inline-subtitle">
             This is derived from evaluated outcomes, not a model weight.
           </p>
+          {(data.latest_evaluated_signal_ts || data.latest_pending_signal_ts) && (
+            <p className="training-timeline-inline-subtitle">
+              Chart through last fully evaluated signal: <strong>{data.latest_evaluated_signal_ts ? String(data.latest_evaluated_signal_ts).slice(0, 10) : '—'}</strong>
+              {data.latest_pending_signal_ts ? `; newest pending signal: ${String(data.latest_pending_signal_ts).slice(0, 10)}.` : '.'}
+            </p>
+          )}
         </div>
         {onClose && (
           <button className="timeline-inline-close" onClick={onClose} aria-label="Collapse details">
@@ -390,7 +396,7 @@ export default function TrainingTimelineInline({
 
       {/* UX coherence note */}
       <p className="training-timeline-note-inline">
-        Confidence increases as outcomes are evaluated. Opportunities may be shown even when evidence is still insufficient to act.
+        The chart is symbol-local and only updates when outcomes are fully evaluated at this horizon; proposal eligibility may still use broader pattern-level trust.
       </p>
     </div>
   )

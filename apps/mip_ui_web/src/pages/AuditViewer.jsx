@@ -594,7 +594,7 @@ export default function AuditViewer() {
     setRuns([])
     try {
       const params = new URLSearchParams()
-      params.set('limit', '200')
+      params.set('limit', '100')
       if (filters.status) params.set('status', filters.status)
       if (filters.fromDate) params.set('from_ts', new Date(filters.fromDate).toISOString())
       if (filters.toDate) params.set('to_ts', new Date(filters.toDate).toISOString())
@@ -625,7 +625,7 @@ export default function AuditViewer() {
     try {
       const endpoint = mode === 'intraday'
         ? `${API_BASE}/runs/intraday/${encodeURIComponent(runId)}`
-        : `${API_BASE}/runs/${encodeURIComponent(runId)}`
+        : `${API_BASE}/runs/${encodeURIComponent(runId)}?max_events=500`
       const res = await fetch(endpoint)
       if (!res.ok) throw new Error(res.statusText)
       const data = await res.json()

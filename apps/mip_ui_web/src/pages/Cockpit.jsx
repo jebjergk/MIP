@@ -477,6 +477,7 @@ function UpcomingSymbolsDetail({ trainingData }) {
 
 function PortfolioStory({ portfolio }) {
   const pid = _get(portfolio, 'PORTFOLIO_ID', 'portfolio_id')
+  const isLiveCard = Boolean(_get(portfolio, 'IS_LIVE_CARD', 'is_live_card'))
   const name = _get(portfolio, 'NAME', 'name') || `Portfolio ${pid}`
   const status = (_get(portfolio, 'STATUS', 'status') || 'ACTIVE').toUpperCase()
   const gateState = (_get(portfolio, 'GATE_STATE', 'gate_state') || 'SAFE').toUpperCase()
@@ -519,6 +520,7 @@ function PortfolioStory({ portfolio }) {
 
   // Lazy-fetch digest on expand
   const handleOpen = useCallback(() => {
+    if (isLiveCard) return
     if (digestFetched || digestLoading) return
     setDigestLoading(true)
     fetch(`${API_BASE}/digest/latest?portfolio_id=${pid}`)
@@ -529,7 +531,7 @@ function PortfolioStory({ portfolio }) {
         setDigestLoading(false)
         setDigestFetched(true)
       })
-  }, [pid, digestFetched, digestLoading])
+  }, [pid, digestFetched, digestLoading, isLiveCard])
 
   return (
     <StoryCard
@@ -537,7 +539,7 @@ function PortfolioStory({ portfolio }) {
       headline={headline}
       summary={summary}
       accent="portfolio"
-      onOpen={handleOpen}
+      onOpen={isLiveCard ? undefined : handleOpen}
       badges={
         <>
           <GateBadge gateState={gateState} />
@@ -581,10 +583,16 @@ function PortfolioStory({ portfolio }) {
 
       {gateTooltip && <p className="ck-gate-explanation">{gateTooltip}</p>}
 
-      {/* Digest content (lazy loaded) */}
-      {digestLoading && <p className="ck-loading-inline">Loading digest...</p>}
+      {isLiveCard && (
+        <p className="ck-empty">
+          Live broker-truth card. Research digest text is hidden here to prevent SIM-era narrative bleed-through.
+        </p>
+      )}
 
-      {digest?.found && (
+      {/* Digest content (lazy loaded) */}
+      {!isLiveCard && digestLoading && <p className="ck-loading-inline">Loading digest...</p>}
+
+      {!isLiveCard && digest?.found && (
         <div className="ck-digest-detail">
           <p className="ck-headline">{digest.narrative?.headline || 'Portfolio digest available'}</p>
           {digest.is_ai_narrative && (
@@ -600,14 +608,23 @@ function PortfolioStory({ portfolio }) {
         </div>
       )}
 
-      {digestFetched && !digest?.found && (
+      {!isLiveCard && digestFetched && !digest?.found && (
         <p className="ck-empty">No digest yet for this portfolio. Run the pipeline to generate.</p>
       )}
 
       {/* Link to full portfolio page */}
       <div className="ck-drill-links" style={{ marginTop: '0.5rem' }}>
-        <Link to={`/portfolios/${pid}`} className="ck-drill-link">Full Portfolio &rarr;</Link>
-        <Link to="/decision-console" className="ck-drill-link">AI Agent Decisions &rarr;</Link>
+        {isLiveCard ? (
+          <>
+            <Link to="/live-portfolio-activity" className="ck-drill-link">Live Portfolio Activity &rarr;</Link>
+            <Link to="/decision-console" className="ck-drill-link">AI Agent Decisions &rarr;</Link>
+          </>
+        ) : (
+          <>
+            <Link to={`/portfolios/${pid}`} className="ck-drill-link">Full Portfolio &rarr;</Link>
+            <Link to="/decision-console" className="ck-drill-link">AI Agent Decisions &rarr;</Link>
+          </>
+        )}
       </div>
     </StoryCard>
   )
@@ -616,13 +633,15 @@ function PortfolioStory({ portfolio }) {
 /* ── Main Cockpit Page ───────────────────────────────── */
 
 export default function Cockpit() {
-  const { portfolios, loading: portfoliosLoading } = usePortfolios()
+  const { loading: portfoliosLoading } = usePortfolios()
 
   const [digestGlobal, setDigestGlobal] = useState(null)
   const [trainingGlobal, setTrainingGlobal] = useState(null)
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
   const [newsOverview, setNewsOverview] = useState(null)
+  const [liveOverview, setLiveOverview] = useState(null)
+  const [liveOverviewError, setLiveOverviewError] = useState('')
   const [loading, setLoading] = useState(true)
   const [ibJobRunning, setIbJobRunning] = useState(false)
   const [ibJobNotice, setIbJobNotice] = useState({ type: '', text: '' })
@@ -659,15 +678,28 @@ export default function Cockpit() {
       fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/news/intelligence/overview`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${API_BASE}/live/activity/overview`)
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`Live overview load failed (${r.status})`)
+          return await r.json()
+        })
+        .catch((e) => ({ __error: e?.message || 'Live overview load failed' })),
     ]
 
-    Promise.all(fetches).then(([dg, tg, td, mp, no]) => {
+    Promise.all(fetches).then(([dg, tg, td, mp, no, lo]) => {
       if (cancelled) return
       setDigestGlobal(dg)
       setTrainingGlobal(tg)
       setTodayData(td)
       setMarketPulse(mp)
       setNewsOverview(no)
+      if (lo && lo.__error) {
+        setLiveOverview(null)
+        setLiveOverviewError(lo.__error)
+      } else {
+        setLiveOverview(lo || null)
+        setLiveOverviewError('')
+      }
       setLoading(false)
     })
 
@@ -787,21 +819,57 @@ export default function Cockpit() {
     return 'No near-miss symbols. Expand for training details.'
   }, [trainingGlobal])
 
-  // Split portfolios: active first, then others
+  const liveCardPortfolio = useMemo(() => {
+    const p = liveOverview?.portfolio || {}
+    const pid = Number(p?.portfolio_id)
+    if (!Number.isFinite(pid)) return null
+    const k = liveOverview?.account_kpis || {}
+    const readiness = liveOverview?.readiness || {}
+    const reasons = Array.isArray(readiness?.blocking_reasons) ? readiness.blocking_reasons : []
+    const reasonText = reasons.length ? reasons.join(', ') : 'No blocking reasons.'
+    const snapshotState = String(readiness?.snapshot_state || '').toUpperCase()
+    const driftState = String(readiness?.drift_state || '').toUpperCase()
+    const healthState = snapshotState === 'READY'
+      ? 'OK'
+      : (k?.snapshot_ts ? 'STALE' : 'BROKEN')
+    const gateState = readiness?.actionable ? 'SAFE' : (driftState === 'BLOCKED' ? 'STOPPED' : 'CAUTION')
+    return {
+      IS_LIVE_CARD: true,
+      PORTFOLIO_ID: pid,
+      NAME: `Live Portfolio #${pid}`,
+      STATUS: p?.is_active === false ? 'INACTIVE' : 'ACTIVE',
+      GATE_STATE: gateState,
+      GATE_REASON: reasonText,
+      gate_tooltip: reasonText,
+      health_state: healthState,
+      last_day_close_equity: k?.equity_nav_eur ?? null,
+      current_equity: k?.equity_nav_eur ?? null,
+      FINAL_EQUITY: k?.equity_nav_eur ?? null,
+      TOTAL_RETURN: null,
+      MAX_DRAWDOWN: null,
+      TOTAL_PAID_OUT: 0,
+    }
+  }, [liveOverview])
+
+  const cockpitPortfolios = useMemo(() => {
+    return liveCardPortfolio ? [liveCardPortfolio] : []
+  }, [liveCardPortfolio])
+
+  // Split portfolios: active first, then others (live-only scope)
   const activePortfolios = useMemo(() => {
-    return portfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() === 'ACTIVE')
-  }, [portfolios])
+    return cockpitPortfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() === 'ACTIVE')
+  }, [cockpitPortfolios])
 
   const otherPortfolios = useMemo(() => {
-    return portfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() !== 'ACTIVE')
-  }, [portfolios])
+    return cockpitPortfolios.filter(p => (_get(p, 'STATUS', 'status') || '').toUpperCase() !== 'ACTIVE')
+  }, [cockpitPortfolios])
 
   const gatedPortfoliosCount = useMemo(() => (
-    portfolios.filter((p) => {
+    cockpitPortfolios.filter((p) => {
       const gate = (_get(p, 'GATE_STATE', 'gate_state') || 'SAFE').toUpperCase()
       return gate !== 'SAFE'
     }).length
-  ), [portfolios])
+  ), [cockpitPortfolios])
 
   const ibFreshness = useMemo(() => {
     if (ibHealthLoading && !ibDailyHealth) {
@@ -878,6 +946,11 @@ export default function Cockpit() {
       {ibJobNotice.text ? (
         <div className={`ck-op-msg ${ibJobNotice.type === 'ok' ? 'ck-op-msg--ok' : 'ck-op-msg--error'}`}>
           {ibJobNotice.text}
+        </div>
+      ) : null}
+      {liveOverviewError ? (
+        <div className="ck-op-msg ck-op-msg--error">
+          Live scope warning: {liveOverviewError}
         </div>
       ) : null}
       <div className={`ck-refresh-line ck-refresh-line--${ibFreshness.tone}`}>

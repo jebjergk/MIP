@@ -136,7 +136,6 @@ def list_runs(
         RUN_ID,
         STATUS,
         ROWS_AFFECTED,
-        DETAILS,
         ERROR_MESSAGE,
         ERROR_SQLSTATE,
         ERROR_QUERY_ID
@@ -195,12 +194,6 @@ def list_runs(
             continue
         ts = r.get("EVENT_TS")
         row_status = r.get("STATUS") or ""
-        details = r.get("DETAILS")
-        if isinstance(details, str):
-            try:
-                details = json.loads(details) if details else {}
-            except Exception:
-                details = {}
         error_message = r.get("ERROR_MESSAGE")
         error_sqlstate = r.get("ERROR_SQLSTATE")
         error_query_id = r.get("ERROR_QUERY_ID")
@@ -210,7 +203,7 @@ def list_runs(
                 "started_at": ts, 
                 "completed_at": ts, 
                 "status": row_status, 
-                "details": details,
+                "details": {},
                 "error_message": error_message,
                 "error_sqlstate": error_sqlstate,
                 "error_query_id": error_query_id
@@ -223,7 +216,7 @@ def list_runs(
                 if run["completed_at"] is None or (ts > run["completed_at"]):
                     run["completed_at"] = ts
                     run["status"] = row_status
-                    run["details"] = details
+                    run["details"] = {}
                     if error_message:
                         run["error_message"] = error_message
                     if error_sqlstate:
@@ -388,32 +381,40 @@ def get_intraday_run(run_id: str):
 
 
 @router.get("/{run_id}")
-def get_run(run_id: str):
+def get_run(
+    run_id: str,
+    max_events: int = Query(500, ge=50, le=2000, description="Maximum timeline events to return for this run.")
+):
     """All audit events for the run (ordered by EVENT_TS) + interpreted narrative, error details, step timeline, and debug SQL."""
     sql = """
-    SELECT
-        EVENT_TS,
-        RUN_ID,
-        PARENT_RUN_ID,
-        EVENT_TYPE,
-        EVENT_NAME,
-        STATUS,
-        ROWS_AFFECTED,
-        ERROR_MESSAGE,
-        ERROR_SQLSTATE,
-        ERROR_QUERY_ID,
-        ERROR_CONTEXT,
-        DURATION_MS,
-        DETAILS
-    FROM MIP.APP.MIP_AUDIT_LOG
-    WHERE RUN_ID = %s
-       OR PARENT_RUN_ID = %s
+    SELECT *
+    FROM (
+        SELECT
+            EVENT_TS,
+            RUN_ID,
+            PARENT_RUN_ID,
+            EVENT_TYPE,
+            EVENT_NAME,
+            STATUS,
+            ROWS_AFFECTED,
+            ERROR_MESSAGE,
+            ERROR_SQLSTATE,
+            ERROR_QUERY_ID,
+            ERROR_CONTEXT,
+            DURATION_MS,
+            DETAILS
+        FROM MIP.APP.MIP_AUDIT_LOG
+        WHERE RUN_ID = %s
+           OR PARENT_RUN_ID = %s
+        ORDER BY EVENT_TS DESC
+        LIMIT %s
+    ) t
     ORDER BY EVENT_TS
     """
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, (run_id, run_id))
+        cur.execute(sql, (run_id, run_id, max_events))
         rows = fetch_all(cur)
         if not rows:
             raise HTTPException(status_code=404, detail="Run not found")
@@ -503,6 +504,9 @@ def get_run(run_id: str):
             if first_ts and last_ts and hasattr(first_ts, "timestamp") and hasattr(last_ts, "timestamp"):
                 total_duration_ms = int((last_ts.timestamp() - first_ts.timestamp()) * 1000)
                 interpreted["total_duration_ms"] = total_duration_ms
+        interpreted["events_returned"] = len(rows)
+        interpreted["timeline_limited"] = len(rows) >= max_events
+        interpreted["timeline_max_events"] = max_events
         
         return interpreted
     finally:

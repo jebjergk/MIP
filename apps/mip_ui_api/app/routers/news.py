@@ -114,6 +114,50 @@ def _to_list(v: Any) -> list[Any]:
     return []
 
 
+def _headline_signal_profile(
+    sentiment: Optional[float],
+    uncertainty: Optional[float],
+    event_risk: Optional[float],
+    is_stale: Optional[bool],
+) -> dict[str, Any]:
+    """Map numeric news signals to simple UI-friendly tone/effect."""
+    s = _to_float(sentiment)
+    u = _to_float(uncertainty) or 0.0
+    r = _to_float(event_risk) or 0.0
+    stale = bool(is_stale) if is_stale is not None else False
+
+    if stale:
+        return {
+            "icon": "😐",
+            "tone": "NO_EFFECT",
+            "effect_label": "Low immediate effect (stale context)",
+            "committee_note": "Snapshot is stale; treat as watchlist context until refreshed.",
+        }
+
+    if s is not None and s <= -0.20 and u < 0.75 and r >= 0.20:
+        return {
+            "icon": "😠",
+            "tone": "NEGATIVE",
+            "effect_label": "Potential downside risk",
+            "committee_note": "Bias is negative with meaningful risk; require tighter entry discipline.",
+        }
+
+    if s is not None and s >= 0.20 and u < 0.75 and r < 0.70:
+        return {
+            "icon": "😊",
+            "tone": "POSITIVE",
+            "effect_label": "Potential positive tailwind",
+            "committee_note": "Bias is positive; can support conviction if technicals and policy align.",
+        }
+
+    return {
+        "icon": "😐",
+        "tone": "NO_EFFECT",
+        "effect_label": "No clear directional edge",
+        "committee_note": "Signal is mixed/uncertain; keep as context, not a standalone trigger.",
+    }
+
+
 @router.get("/intelligence")
 def get_news_intelligence(
     portfolio_id: Optional[int] = Query(None, description="Optional portfolio scope for exposure overlay"),
@@ -514,6 +558,105 @@ def get_news_intelligence_overview(
         f"for the current scope; committee tone is {tone.replace('_', ' ').title()}."
     )
 
+    symbol_cards = payload.get("symbol_cards") or []
+    card_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for c in symbol_cards:
+        key = (str(c.get("symbol") or ""), str(c.get("market_type") or ""))
+        card_by_key[key] = c
+
+    # Add feature-level sentiment/risk context for symbols shown in key headlines.
+    symbols_for_headlines = [
+        (str(h.get("symbol") or ""), str(h.get("market_type") or ""))
+        for h in top_headlines
+        if h.get("symbol") and h.get("market_type")
+    ]
+    symbols_for_headlines = list({k for k in symbols_for_headlines if k[0] and k[1]})
+
+    feature_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    if symbols_for_headlines:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            values_sql = ", ".join(["(%s, %s)"] * len(symbols_for_headlines))
+            params: list[Any] = []
+            for sym, mt in symbols_for_headlines:
+                params.extend([sym, mt])
+            cur.execute(
+                f"""
+                with targets(symbol, market_type) as (
+                    select column1::varchar, column2::varchar
+                    from values {values_sql}
+                ),
+                latest as (
+                    select
+                        f.SYMBOL,
+                        f.MARKET_TYPE,
+                        f.NEWS_SENTIMENT,
+                        f.UNCERTAINTY_SCORE,
+                        f.EVENT_RISK_SCORE,
+                        f.NEWS_IS_STALE,
+                        row_number() over (
+                            partition by f.SYMBOL, f.MARKET_TYPE
+                            order by f.AS_OF_TS desc, f.SNAPSHOT_TS desc
+                        ) as rn
+                    from MIP.MART.V_NEWS_FEATURES_BY_TS f
+                    join targets t
+                      on t.symbol = f.SYMBOL
+                     and t.market_type = f.MARKET_TYPE
+                )
+                select
+                    SYMBOL, MARKET_TYPE,
+                    NEWS_SENTIMENT, UNCERTAINTY_SCORE, EVENT_RISK_SCORE, NEWS_IS_STALE
+                from latest
+                where rn = 1
+                """,
+                tuple(params),
+            )
+            rows = serialize_rows(fetch_all(cur))
+            for row in rows:
+                key = (str(row.get("SYMBOL") or ""), str(row.get("MARKET_TYPE") or ""))
+                feature_by_key[key] = {
+                    "sentiment": _to_float(row.get("NEWS_SENTIMENT")),
+                    "uncertainty_score": _to_float(row.get("UNCERTAINTY_SCORE")),
+                    "event_risk_score": _to_float(row.get("EVENT_RISK_SCORE")),
+                    "news_is_stale": _to_bool(row.get("NEWS_IS_STALE")),
+                }
+        finally:
+            conn.close()
+
+    enriched_headlines = []
+    for h in top_headlines:
+        sym = h.get("symbol")
+        mt = h.get("market_type")
+        key = (str(sym or ""), str(mt or ""))
+        features = feature_by_key.get(key, {})
+        card = card_by_key.get(key, {})
+        profile = _headline_signal_profile(
+            sentiment=features.get("sentiment"),
+            uncertainty=features.get("uncertainty_score"),
+            event_risk=features.get("event_risk_score"),
+            is_stale=features.get("news_is_stale") if features else card.get("news_is_stale"),
+        )
+        enriched_headlines.append(
+            {
+                "symbol": sym,
+                "market_type": mt,
+                "badge": h.get("badge") or card.get("news_badge"),
+                "title": h.get("title"),
+                "url": h.get("url"),
+                "icon": profile.get("icon"),
+                "tone": profile.get("tone"),
+                "effect_label": profile.get("effect_label"),
+                "committee_note": profile.get("committee_note"),
+                "sentiment": features.get("sentiment"),
+                "uncertainty_score": features.get("uncertainty_score"),
+                "event_risk_score": features.get("event_risk_score"),
+                "news_is_stale": features.get("news_is_stale")
+                if features
+                else card.get("news_is_stale"),
+            }
+        )
+
     return {
         "generated_at": payload.get("generated_at"),
         "portfolio_scope": portfolio_id,
@@ -524,16 +667,7 @@ def get_news_intelligence_overview(
         "executive_summary": executive_summary,
         "summary_bullets": summary_bullets,
         "committee_hint": committee_hint,
-        "key_headlines": [
-            {
-                "symbol": h.get("symbol"),
-                "badge": h.get("badge"),
-                "title": h.get("title"),
-                "url": h.get("url"),
-            }
-            for h in top_headlines
-            if h.get("title")
-        ],
+        "key_headlines": [h for h in enriched_headlines if h.get("title")],
         "impacted_symbols": impacted_symbols[:10],
         "metrics": {
             "symbols_total": symbols_total,

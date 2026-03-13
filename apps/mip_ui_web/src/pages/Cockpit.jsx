@@ -366,10 +366,25 @@ function NewsIntelligenceOverview({ overview }) {
       {headlines.length > 0 && (
         <div className="ck-news-headlines">
           <h4 className="ck-chart-title">Top Headlines</h4>
-          <ul className="ck-bullets">
+          <ul className="ck-news-headline-list">
             {headlines.map((h, i) => (
-              <li key={`${h.symbol}-${i}`} className="ck-bullet">
-                <strong>{h.symbol}</strong> {h.title}
+              <li key={`${h.symbol}-${i}`} className="ck-news-headline-item">
+                <div className="ck-news-headline-main">
+                  <span
+                    className={`ck-news-headline-icon ck-news-headline-icon--${(h.tone || 'NO_EFFECT').toLowerCase()}`}
+                    title={h.effect_label || 'No clear effect'}
+                    aria-label={h.effect_label || 'No clear effect'}
+                  >
+                    {h.icon || '😐'}
+                  </span>
+                  <span className="ck-news-headline-title">
+                    <strong>{h.symbol}</strong> {h.title}
+                  </span>
+                </div>
+                <div className="ck-news-headline-sub">
+                  <span className="ck-news-headline-effect">{h.effect_label || 'No clear directional edge'}</span>
+                  <span className="ck-news-headline-note">{h.committee_note || 'Use as context for committee review.'}</span>
+                </div>
               </li>
             ))}
           </ul>

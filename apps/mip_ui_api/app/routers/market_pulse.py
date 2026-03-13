@@ -85,7 +85,8 @@ def get_market_pulse(
                 end as DAY_RETURN
             from universe u
             left join latest l
-              on l.SYMBOL = u.SYMBOL
+              on regexp_replace(upper(l.SYMBOL), '[^A-Z0-9]', '') =
+                 regexp_replace(upper(u.SYMBOL), '[^A-Z0-9]', '')
              and l.MARKET_TYPE = u.MARKET_TYPE
             order by u.SYMBOL
             """
@@ -103,9 +104,9 @@ def get_market_pulse(
         for r in symbol_rows:
             sym = r.get("SYMBOL") or r.get("symbol")
             mt = r.get("MARKET_TYPE") or r.get("market_type")
-            close_val = r.get("CLOSE") or r.get("close")
-            prev_close = r.get("PREV_CLOSE") or r.get("prev_close")
-            day_return = r.get("DAY_RETURN") or r.get("day_return")
+            close_val = r.get("CLOSE") if r.get("CLOSE") is not None else r.get("close")
+            prev_close = r.get("PREV_CLOSE") if r.get("PREV_CLOSE") is not None else r.get("prev_close")
+            day_return = r.get("DAY_RETURN") if r.get("DAY_RETURN") is not None else r.get("day_return")
 
             if day_return is not None:
                 try:

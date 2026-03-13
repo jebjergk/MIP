@@ -436,6 +436,122 @@ def get_news_intelligence(
         conn.close()
 
 
+@router.get("/intelligence/overview")
+def get_news_intelligence_overview(
+    portfolio_id: Optional[int] = Query(None, description="Optional portfolio scope for exposure overlay"),
+    headlines_limit: int = Query(5, ge=3, le=10, description="Max headlines in overview tile"),
+):
+    """
+    Cockpit-focused news overview with concise committee decision guidance.
+    """
+    payload = get_news_intelligence(portfolio_id=portfolio_id, limit_symbols=30)
+
+    market_context = payload.get("market_context") or {}
+    overlay = payload.get("portfolio_overlay") or {}
+    decision_impact = payload.get("decision_impact") or {}
+    top_headlines = (market_context.get("top_headlines") or [])[:headlines_limit]
+
+    symbols_total = int(market_context.get("symbols_total") or 0)
+    symbols_with_news = int(market_context.get("symbols_with_news") or 0)
+    stale_symbols = int(market_context.get("stale_symbols") or 0)
+    hot_symbols = int(market_context.get("hot_symbols") or 0)
+    blocked_new_entry_count = int(decision_impact.get("blocked_new_entry_count") or 0)
+    proposals_with_news_context = int(decision_impact.get("proposals_with_news_context") or 0)
+    risk_market_value_pct = float(overlay.get("risk_market_value_pct") or 0.0)
+    avg_news_score_adj = _to_float(decision_impact.get("avg_news_score_adj"))
+
+    stale_ratio = (stale_symbols / symbols_total) if symbols_total > 0 else 0.0
+
+    if blocked_new_entry_count > 0 or risk_market_value_pct >= 35.0 or stale_ratio >= 0.4:
+        tone = "HIGH_RISK"
+    elif hot_symbols > 0 or risk_market_value_pct >= 20.0 or proposals_with_news_context >= 3:
+        tone = "CAUTION"
+    else:
+        tone = "BALANCED"
+
+    if tone == "HIGH_RISK":
+        committee_hint = (
+            "High caution: delay new adds until stale or conflicting news context clears, "
+            "and re-check proposal rationale before approval."
+        )
+    elif tone == "CAUTION":
+        committee_hint = (
+            "Selective caution: prioritize symbols with fresh context and require explicit "
+            "news justification for new entries."
+        )
+    else:
+        committee_hint = (
+            "Low immediate news friction: committee can proceed normally while monitoring "
+            "headline drift and snapshot freshness."
+        )
+
+    summary_bullets = [
+        f"{symbols_with_news}/{symbols_total} symbols currently have non-zero news context; {hot_symbols} flagged HOT.",
+        f"{stale_symbols} symbols are stale; scoped exposure-at-risk is {round(risk_market_value_pct, 1)}%.",
+        f"{proposals_with_news_context} proposals carried news context, with {blocked_new_entry_count} blocked new entries.",
+    ]
+    if avg_news_score_adj is not None:
+        summary_bullets.append(f"Average proposal news adjustment is {avg_news_score_adj:+.3f}.")
+
+    impacted_symbols: list[str] = []
+    seen: set[str] = set()
+    for row in (decision_impact.get("top_impacts") or []):
+        sym = row.get("symbol")
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        impacted_symbols.append(sym)
+    for row in top_headlines:
+        sym = row.get("symbol")
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        impacted_symbols.append(sym)
+
+    executive_summary = (
+        f"News coverage is active across {symbols_with_news} symbols with {hot_symbols} HOT and "
+        f"{stale_symbols} stale contexts. Exposure-at-risk is {round(risk_market_value_pct, 1)}% "
+        f"for the current scope; committee tone is {tone.replace('_', ' ').title()}."
+    )
+
+    return {
+        "generated_at": payload.get("generated_at"),
+        "portfolio_scope": portfolio_id,
+        "found": True,
+        "tone": tone,
+        "is_ai_generated": True,
+        "model_info": "NEWS_INTELLIGENCE_OVERVIEW_HEURISTIC_V1",
+        "executive_summary": executive_summary,
+        "summary_bullets": summary_bullets,
+        "committee_hint": committee_hint,
+        "key_headlines": [
+            {
+                "symbol": h.get("symbol"),
+                "badge": h.get("badge"),
+                "title": h.get("title"),
+                "url": h.get("url"),
+            }
+            for h in top_headlines
+            if h.get("title")
+        ],
+        "impacted_symbols": impacted_symbols[:10],
+        "metrics": {
+            "symbols_total": symbols_total,
+            "symbols_with_news": symbols_with_news,
+            "stale_symbols": stale_symbols,
+            "hot_symbols": hot_symbols,
+            "risk_market_value_pct": round(risk_market_value_pct, 1),
+            "proposals_with_news_context": proposals_with_news_context,
+            "blocked_new_entry_count": blocked_new_entry_count,
+            "avg_news_score_adj": avg_news_score_adj,
+        },
+        "links": {
+            "news_intelligence": "/news-intelligence",
+            "decision_console": "/decision-console",
+        },
+    }
+
+
 @router.get("/feed-health")
 def get_news_feed_health():
     """

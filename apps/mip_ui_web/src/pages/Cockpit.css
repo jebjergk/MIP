@@ -785,3 +785,35 @@
   margin: 0 0 0.5rem 0;
   line-height: 1.4;
 }
+
+/* ── News Overview tile ──────────────────────────────── */
+
+.ck-news-overview {
+  margin-top: 0.5rem;
+}
+
+.ck-news-headlines {
+  margin-top: 0.5rem;
+}
+
+.ck-news-headlines .ck-bullet strong {
+  color: #0d47a1;
+  margin-right: 0.25rem;
+}
+
+.ck-news-symbol-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+}
+
+.ck-news-symbol-chip {
+  padding: 0.16rem 0.5rem;
+  border-radius: 12px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 0.7rem;
+  font-weight: 600;
+}

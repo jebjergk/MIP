@@ -325,6 +325,71 @@ function TopMovers({ symbols }) {
   )
 }
 
+/* ── News Intelligence Overview ───────────────────────── */
+
+function NewsIntelligenceOverview({ overview }) {
+  if (!overview?.found) return <p className="ck-empty">No news intelligence overview available.</p>
+
+  const bullets = overview.summary_bullets || []
+  const headlines = overview.key_headlines || []
+  const impacted = overview.impacted_symbols || []
+  const metrics = overview.metrics || {}
+
+  return (
+    <div className="ck-news-overview">
+      <p className="ck-headline">{overview.executive_summary || 'Latest news intelligence summary is available.'}</p>
+
+      <div className="ck-market-kpi-strip">
+        <div className="ck-market-kpi">
+          <span className="ck-market-kpi-val">{metrics.symbols_with_news ?? 0}/{metrics.symbols_total ?? 0}</span>
+          <span className="ck-market-kpi-label">Coverage</span>
+        </div>
+        <div className="ck-market-kpi">
+          <span className="ck-market-kpi-val ck-kpi--negative">{metrics.hot_symbols ?? 0}</span>
+          <span className="ck-market-kpi-label">HOT</span>
+        </div>
+        <div className="ck-market-kpi">
+          <span className="ck-market-kpi-val ck-kpi--negative">{metrics.stale_symbols ?? 0}</span>
+          <span className="ck-market-kpi-label">Stale</span>
+        </div>
+        <div className="ck-market-kpi">
+          <span className={`ck-market-kpi-val ${(metrics.risk_market_value_pct ?? 0) >= 20 ? 'ck-kpi--negative' : ''}`}>
+            {metrics.risk_market_value_pct ?? 0}%
+          </span>
+          <span className="ck-market-kpi-label">At Risk</span>
+        </div>
+      </div>
+
+      <DigestSection title="Committee Summary" icon="&#x1F4F0;" bullets={bullets} variant="matters" />
+      <DigestSection title="Committee Hint" icon="&#x1F9ED;" bullets={[overview.committee_hint]} variant="waiting" />
+
+      {headlines.length > 0 && (
+        <div className="ck-news-headlines">
+          <h4 className="ck-chart-title">Top Headlines</h4>
+          <ul className="ck-bullets">
+            {headlines.map((h, i) => (
+              <li key={`${h.symbol}-${i}`} className="ck-bullet">
+                <strong>{h.symbol}</strong> {h.title}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {impacted.length > 0 && (
+        <div className="ck-news-symbol-chips">
+          {impacted.map((sym) => <span key={sym} className="ck-news-symbol-chip">{sym}</span>)}
+        </div>
+      )}
+
+      <div className="ck-drill-links">
+        <Link to="/news-intelligence" className="ck-drill-link">Open News Intelligence &rarr;</Link>
+        <Link to="/decision-console" className="ck-drill-link">Open AI Agent Decisions &rarr;</Link>
+      </div>
+    </div>
+  )
+}
+
 /* ── Stage Pill ───────────────────────────────────────── */
 
 function StagePill({ stage }) {
@@ -542,6 +607,7 @@ export default function Cockpit() {
   const [trainingGlobal, setTrainingGlobal] = useState(null)
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
+  const [newsOverview, setNewsOverview] = useState(null)
   const [loading, setLoading] = useState(true)
 
   // Parallel fetch non-portfolio data sources
@@ -555,14 +621,16 @@ export default function Cockpit() {
       fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
       fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${API_BASE}/news/intelligence/overview`).then(r => r.ok ? r.json() : null).catch(() => null),
     ]
 
-    Promise.all(fetches).then(([dg, tg, td, mp]) => {
+    Promise.all(fetches).then(([dg, tg, td, mp, no]) => {
       if (cancelled) return
       setDigestGlobal(dg)
       setTrainingGlobal(tg)
       setTodayData(td)
       setMarketPulse(mp)
+      setNewsOverview(no)
       setLoading(false)
     })
 
@@ -597,6 +665,14 @@ export default function Cockpit() {
     if (insights.length >= 3) return 'positive'
     return 'info'
   }, [insights])
+
+  const newsAttention = useMemo(() => {
+    const tone = newsOverview?.tone
+    if (!tone) return 'neutral'
+    if (tone === 'HIGH_RISK') return 'critical'
+    if (tone === 'CAUTION') return 'warning'
+    return 'info'
+  }, [newsOverview])
 
   const trainingAttention = useMemo(() => {
     const snapshot = trainingGlobal?.snapshot || {}
@@ -643,6 +719,18 @@ export default function Cockpit() {
     const top = insights[0]
     return `Top candidate: ${top.symbol} (${top.maturity_stage}, score ${top.maturity_score}). ${top.why_this_is_here || ''}`
   }, [insights])
+
+  const newsHeadline = useMemo(() => {
+    if (!newsOverview?.found) return 'News Intelligence — Awaiting Data'
+    const hot = newsOverview?.metrics?.hot_symbols ?? 0
+    const stale = newsOverview?.metrics?.stale_symbols ?? 0
+    return `News Intelligence — ${hot} HOT, ${stale} stale symbols`
+  }, [newsOverview])
+
+  const newsSummary = useMemo(() => {
+    if (!newsOverview?.found) return 'No news intelligence overview available yet.'
+    return newsOverview.executive_summary || 'Committee-focused headline summary is available.'
+  }, [newsOverview])
 
   // Training headline
   const trainingNarrative = trainingGlobal?.narrative || {}
@@ -845,6 +933,23 @@ export default function Cockpit() {
             ) : (
               <EmptyState title="No committee candidates today" action="Candidates appear when symbols have sufficient maturity and pass policy checks." />
             )}
+          </StoryCard>
+
+          {/* Story: News Intelligence */}
+          <StoryCard
+            attention={newsAttention}
+            headline={newsHeadline}
+            summary={newsSummary}
+            accent="system"
+            badges={
+              <>
+                <span className="ck-badge ck-badge--scope">News</span>
+                {newsOverview?.found && <AiBadge isAi={newsOverview?.is_ai_generated} modelInfo={newsOverview?.model_info} />}
+                {newsOverview?.found && <FreshnessBadge createdAt={newsOverview?.generated_at} />}
+              </>
+            }
+          >
+            <NewsIntelligenceOverview overview={newsOverview} />
           </StoryCard>
 
           {/* Story: Training Progress / Upcoming Symbols */}

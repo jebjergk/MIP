@@ -23,8 +23,12 @@ create table if not exists MIP.APP.APP_CONFIG (
 merge into MIP.APP.APP_CONFIG t
 using (
     select 'ALPHAVANTAGE_API_KEY' as CONFIG_KEY,
-           '7UYJREVV2O8KJ1Q4'        as CONFIG_VALUE,
-           'API key for AlphaVantage market data (set this manually)' as DESCRIPTION
+           '<DISABLED>'              as CONFIG_VALUE,
+           'AlphaVantage API key (set only if provider is intentionally enabled)' as DESCRIPTION
+    union all
+    select 'ALPHAVANTAGE_ENABLED',
+           'false',
+           'Feature flag for AlphaVantage ingestion. Keep false when IBKR is the sole provider.'
     union all
     select 'DEFAULT_STOCK_SYMBOLS',
            'AAPL,MSFT,JNJ,IWM,XLK,JPM,SPY,NVDA,META,KO,QQQ,PG,XOM,AMZN,GOOGL,TSLA,DIA,XLF',
@@ -77,7 +81,7 @@ values (s.CONFIG_KEY, s.CONFIG_VALUE, s.DESCRIPTION, CURRENT_TIMESTAMP());
 select * from MIP.APP.APP_CONFIG;
 
 -- IMPORTANT:
--- After running this script, update the ALPHAVANTAGE_API_KEY row with your real key:
+-- Only update ALPHAVANTAGE_API_KEY if you intentionally re-enable AlphaVantage:
 update MIP.APP.APP_CONFIG
-   set CONFIG_VALUE = '7UYJREVV2O8KJ1Q4'
+   set CONFIG_VALUE = '<DISABLED>'
    where CONFIG_KEY = 'ALPHAVANTAGE_API_KEY';

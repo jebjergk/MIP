@@ -340,9 +340,33 @@ def run(session: Session, p_interval_filter=None) -> Dict:
 
     try:
         cfg = _get_config_map(session)
+        alpha_enabled = str(cfg.get("ALPHAVANTAGE_ENABLED", "true")).strip().lower() in ("1", "true", "yes", "on")
+        if not alpha_enabled:
+            message = "ALPHAVANTAGE ingestion disabled via APP_CONFIG (ALPHAVANTAGE_ENABLED=false)"
+            result = {
+                "status": "FAIL_PROVIDER_DISABLED",
+                "provider": "ALPHAVANTAGE",
+                "rows_inserted": 0,
+                "symbols_processed": 0,
+                "symbols_skipped": 0,
+                "skipped_rate_limit": 0,
+                "rate_limit_hit": False,
+                "error": message,
+            }
+            _log_event(
+                session,
+                "INGESTION",
+                "SP_INGEST_ALPHAVANTAGE_BARS",
+                "FAIL",
+                0,
+                {"reason": "provider_disabled", "result": result},
+                message,
+                run_id,
+            )
+            return result
 
         api_key = cfg.get("ALPHAVANTAGE_API_KEY")
-        if not api_key or api_key == "<PLACEHOLDER>":
+        if not api_key or api_key in ("<PLACEHOLDER>", "<DISABLED>"):
             message = "ALPHAVANTAGE_API_KEY missing"
             result = {
                 "status": "FAIL_MISSING_API_KEY",

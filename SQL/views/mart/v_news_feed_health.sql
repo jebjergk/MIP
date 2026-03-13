@@ -14,10 +14,6 @@ with cfg as (
     from MIP.APP.APP_CONFIG
     where CONFIG_KEY in ('NEWS_FEED_HEALTH_STALE_MINUTES')
 ),
-slots as (
-    select column1 as SLOT_LABEL
-    from values ('07:00'), ('07:30'), ('08:00'), ('08:30'), ('09:00')
-),
 raw_today as (
     select
         r.SOURCE_ID,

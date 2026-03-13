@@ -42,6 +42,7 @@ declare
     v_pipeline_status     string := 'SUCCESS';
     v_compute_start       timestamp_ntz;
     v_compute_seconds     float := 0;
+    v_skip_downstream     boolean := false;
 
     v_from_ts             timestamp_ntz := dateadd(day, -30, current_timestamp()::timestamp_ntz);
     v_to_ts               timestamp_ntz := current_timestamp()::timestamp_ntz;
@@ -92,58 +93,81 @@ begin
         v_ingest_status := coalesce(:v_ingest_result:status::string, 'UNKNOWN');
         v_bars_ingested := coalesce(:v_ingest_result:rows_inserted::number, 0);
         v_symbols_processed := coalesce(:v_ingest_result:symbols_processed::number, 0);
+        if (v_ingest_status not in ('SUCCESS', 'SUCCESS_WITH_SKIPS', 'SUCCESS_EXTERNAL_IBKR')) then
+            v_pipeline_status := 'FAIL';
+            v_skip_downstream := true;
+        end if;
     exception
         when other then
             v_ingest_status := 'FAIL';
             v_ingest_result := object_construct('status', 'FAIL', 'error', sqlerrm);
-            v_pipeline_status := 'PARTIAL';
+            v_pipeline_status := 'FAIL';
+            v_skip_downstream := true;
     end;
 
     -- ── STEP 2: Generate intraday signals ─────────────────────────────
-    begin
-        v_signal_result := (call MIP.APP.SP_INTRADAY_GENERATE_SIGNALS(
-            :v_interval_minutes, :v_run_id
-        ));
-        v_signal_status := coalesce(:v_signal_result:status::string, 'UNKNOWN');
-        v_signals_generated := coalesce(:v_signal_result:total_signals::number, 0);
-    exception
-        when other then
-            v_signal_status := 'FAIL';
-            v_signal_result := object_construct('status', 'FAIL', 'error', sqlerrm);
-            if (:v_pipeline_status = 'SUCCESS') then
-                v_pipeline_status := 'PARTIAL';
-            end if;
-    end;
+    if (v_skip_downstream) then
+        v_signal_status := 'SKIPPED_NO_VALID_INGEST';
+        v_signal_result := object_construct(
+            'status', 'SKIPPED_NO_VALID_INGEST',
+            'reason', 'Ingestion did not complete successfully.'
+        );
+        v_eval_status := 'SKIPPED_NO_VALID_INGEST';
+        v_eval_result := object_construct(
+            'status', 'SKIPPED_NO_VALID_INGEST',
+            'reason', 'Ingestion did not complete successfully.'
+        );
+        v_early_exit_status := 'SKIPPED_NO_VALID_INGEST';
+        v_early_exit_result := object_construct(
+            'status', 'SKIPPED_NO_VALID_INGEST',
+            'reason', 'Ingestion did not complete successfully.'
+        );
+    else
+        begin
+            v_signal_result := (call MIP.APP.SP_INTRADAY_GENERATE_SIGNALS(
+                :v_interval_minutes, :v_run_id
+            ));
+            v_signal_status := coalesce(:v_signal_result:status::string, 'UNKNOWN');
+            v_signals_generated := coalesce(:v_signal_result:total_signals::number, 0);
+        exception
+            when other then
+                v_signal_status := 'FAIL';
+                v_signal_result := object_construct('status', 'FAIL', 'error', sqlerrm);
+                if (:v_pipeline_status = 'SUCCESS') then
+                    v_pipeline_status := 'PARTIAL';
+                end if;
+        end;
 
-    -- ── STEP 3: Evaluate outcomes for intraday recommendations ────────
-    begin
-        v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(
-            :v_from_ts, :v_to_ts, :v_run_id
-        ));
-        v_eval_status := coalesce(:v_eval_result:status::string, 'UNKNOWN');
-        v_outcomes_evaluated := coalesce(:v_eval_result:rows_delta::number, 0);
-    exception
-        when other then
-            v_eval_status := 'FAIL';
-            v_eval_result := object_construct('status', 'FAIL', 'error', sqlerrm);
-            if (:v_pipeline_status = 'SUCCESS') then
-                v_pipeline_status := 'PARTIAL';
-            end if;
-    end;
+        -- ── STEP 3: Evaluate outcomes for intraday recommendations ────────
+        begin
+            v_eval_result := (call MIP.APP.SP_PIPELINE_EVALUATE_RECOMMENDATIONS(
+                :v_from_ts, :v_to_ts, :v_run_id
+            ));
+            v_eval_status := coalesce(:v_eval_result:status::string, 'UNKNOWN');
+            v_outcomes_evaluated := coalesce(:v_eval_result:rows_delta::number, 0);
+        exception
+            when other then
+                v_eval_status := 'FAIL';
+                v_eval_result := object_construct('status', 'FAIL', 'error', sqlerrm);
+                if (:v_pipeline_status = 'SUCCESS') then
+                    v_pipeline_status := 'PARTIAL';
+                end if;
+        end;
 
-    -- ── STEP 4: Evaluate early exits for open daily positions ─────────
-    begin
-        v_early_exit_result := (call MIP.APP.SP_EVALUATE_EARLY_EXITS(:v_run_id));
-        v_early_exit_status := coalesce(:v_early_exit_result:status::string, 'UNKNOWN');
-        v_early_exit_signals := coalesce(:v_early_exit_result:exit_signals::number, 0);
-    exception
-        when other then
-            v_early_exit_status := 'FAIL';
-            v_early_exit_result := object_construct('status', 'FAIL', 'error', sqlerrm);
-            if (:v_pipeline_status = 'SUCCESS') then
-                v_pipeline_status := 'PARTIAL';
-            end if;
-    end;
+        -- ── STEP 4: Evaluate early exits for open daily positions ─────────
+        begin
+            v_early_exit_result := (call MIP.APP.SP_EVALUATE_EARLY_EXITS(:v_run_id));
+            v_early_exit_status := coalesce(:v_early_exit_result:status::string, 'UNKNOWN');
+            v_early_exit_signals := coalesce(:v_early_exit_result:exit_signals::number, 0);
+        exception
+            when other then
+                v_early_exit_status := 'FAIL';
+                v_early_exit_result := object_construct('status', 'FAIL', 'error', sqlerrm);
+                if (:v_pipeline_status = 'SUCCESS') then
+                    v_pipeline_status := 'PARTIAL';
+                end if;
+        end;
+    end if;
 
     -- ── Finalize ──────────────────────────────────────────────────────
     v_completed_at := current_timestamp();

@@ -41,6 +41,8 @@ begin
         v_step_end := current_timestamp();
 
         v_audit_status := case
+            when :v_ingest_status like 'FAIL%' then 'FAIL'
+            when :v_ingest_status like 'SKIPPED%' then 'FAIL'
             when :v_rate_limit_hit then 'SKIP_RATE_LIMIT'
             when :v_ingest_status = 'SUCCESS_WITH_SKIPS' then 'SUCCESS_WITH_SKIPS'
             else 'SUCCESS'

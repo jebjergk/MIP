@@ -5544,6 +5544,23 @@ def revalidate_live_action(
             )
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
+        portfolio_id = action.get("PORTFOLIO_ID")
+        freshness_threshold_sec = 900
+        try:
+            cur.execute(
+                """
+                select coalesce(QUOTE_FRESHNESS_THRESHOLD_SEC, 900)
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                limit 1
+                """,
+                (portfolio_id,),
+            )
+            cfg_row = cur.fetchone()
+            if cfg_row and cfg_row[0] is not None:
+                freshness_threshold_sec = int(cfg_row[0])
+        except Exception:
+            freshness_threshold_sec = 900
         refresh_info = {"attempted": False}
         if req.force_refresh_1m:
             refresh_info = _force_refresh_latest_one_minute_bars(cur, symbol)
@@ -5554,6 +5571,7 @@ def revalidate_live_action(
             from MIP.MART.MARKET_BARS
             where SYMBOL = %s
               and INTERVAL_MINUTES = 1
+              and upper(coalesce(SOURCE, '')) = 'IBKR'
             order by case when upper(coalesce(SOURCE, '')) = 'IBKR' then 0 else 1 end, TS desc
             limit 1
             """,
@@ -5570,6 +5588,7 @@ def revalidate_live_action(
                 from MIP.MART.MARKET_BARS
                 where SYMBOL = %s
                   and INTERVAL_MINUTES in (15, 60, 1440)
+                  and upper(coalesce(SOURCE, '')) = 'IBKR'
                 order by TS desc
                 limit 1
                 """,
@@ -5580,6 +5599,19 @@ def revalidate_live_action(
                 raise HTTPException(status_code=400, detail="No market bar found for symbol, revalidation blocked.")
             ref_ts, ref_price = fallback
             source = "BAR_FALLBACK"
+
+        ref_ts_utc = _market_bar_ts_to_utc(ref_ts)
+        if ref_ts_utc is None:
+            raise HTTPException(status_code=400, detail="Unable to parse market bar timestamp, revalidation blocked.")
+        bar_age_sec = (datetime.now(timezone.utc) - ref_ts_utc).total_seconds()
+        if bar_age_sec > freshness_threshold_sec:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"IBKR bar is stale ({int(bar_age_sec)}s old > {int(freshness_threshold_sec)}s threshold), "
+                    "revalidation blocked."
+                ),
+            )
 
         deviation = None
         if proposed_price and ref_price:

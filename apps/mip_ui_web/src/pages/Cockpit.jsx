@@ -624,6 +624,28 @@ export default function Cockpit() {
   const [marketPulse, setMarketPulse] = useState(null)
   const [newsOverview, setNewsOverview] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [ibJobRunning, setIbJobRunning] = useState(false)
+  const [ibJobNotice, setIbJobNotice] = useState({ type: '', text: '' })
+  const [ibDailyHealth, setIbDailyHealth] = useState(null)
+  const [ibHealthCheckedAt, setIbHealthCheckedAt] = useState(null)
+  const [ibHealthLoading, setIbHealthLoading] = useState(false)
+
+  const loadIbDailyHealth = useCallback(async () => {
+    setIbHealthLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/manage/ib/daily-job/health`)
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        throw new Error(data?.detail || `Failed to load IB health (${resp.status})`)
+      }
+      setIbDailyHealth(data)
+    } catch (e) {
+      setIbDailyHealth({ status: 'ERROR', error: e?.message || 'Failed to load IB health.' })
+    } finally {
+      setIbHealthCheckedAt(new Date().toISOString())
+      setIbHealthLoading(false)
+    }
+  }, [])
 
   // Parallel fetch non-portfolio data sources
   useEffect(() => {
@@ -651,6 +673,10 @@ export default function Cockpit() {
 
     return () => { cancelled = true }
   }, [portfoliosLoading])
+
+  useEffect(() => {
+    loadIbDailyHealth()
+  }, [loadIbDailyHealth])
 
   const insights = todayData?.insights || []
   const aggregate = marketPulse?.aggregate || {}
@@ -777,6 +803,59 @@ export default function Cockpit() {
     }).length
   ), [portfolios])
 
+  const ibFreshness = useMemo(() => {
+    if (ibHealthLoading && !ibDailyHealth) {
+      return { text: 'Loading bar freshness...', tone: 'neutral' }
+    }
+    if (!ibDailyHealth) {
+      return { text: 'Bar freshness unavailable.', tone: 'neutral' }
+    }
+    if (ibDailyHealth.status === 'ERROR') {
+      return {
+        text: `Bar freshness unavailable (${ibDailyHealth.error || 'health check failed'}).`,
+        tone: 'error',
+      }
+    }
+    const c = ibDailyHealth.coverage || {}
+    const barsDate = c.latest_daily_bar_date || '—'
+    const lag = c.bars_lag_days
+    const lagLabel = lag == null ? 'unknown lag' : `${lag}d lag`
+    const symbols = `${c.bar_symbols_on_latest_date ?? '—'}/${c.universe_symbols ?? '—'} symbols`
+    const pipelineDate = ibDailyHealth?.pipeline?.latest_effective_to_date || '—'
+    const checkedAt = ibHealthCheckedAt ? formatTs(ibHealthCheckedAt) : '—'
+    const tone = ibDailyHealth.up_to_date ? 'ok' : 'warn'
+    return {
+      text: `Bars: ${barsDate} (${lagLabel}), ${symbols}, pipeline: ${pipelineDate}, checked: ${checkedAt}.`,
+      tone,
+    }
+  }, [ibDailyHealth, ibHealthCheckedAt, ibHealthLoading])
+
+  const runIbDailyJob = useCallback(async () => {
+    const confirmed = window.confirm('Run full IB daily job now? This ingests bars and executes catch-up replay.')
+    if (!confirmed) return
+    setIbJobRunning(true)
+    setIbJobNotice({ type: '', text: '' })
+    try {
+      const qs = new URLSearchParams()
+      qs.set('dry_run', 'false')
+      qs.set('skip_ingest', 'false')
+      const resp = await fetch(`${API_BASE}/manage/ib/daily-job/run?${qs.toString()}`, {
+        method: 'POST',
+      })
+      const payload = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        throw new Error(payload?.detail?.message || payload?.detail || `IB daily job failed (${resp.status})`)
+      }
+      setIbJobNotice({ type: 'ok', text: 'IB Daily Job completed.' })
+      await loadIbDailyHealth()
+    } catch (e) {
+      setIbJobNotice({ type: 'error', text: e?.message || 'IB Daily Job failed.' })
+      await loadIbDailyHealth()
+    } finally {
+      setIbJobRunning(false)
+    }
+  }, [loadIbDailyHealth])
+
   if (loading) {
     return (
       <>
@@ -790,6 +869,19 @@ export default function Cockpit() {
     <div className="ck-page">
       <div className="ck-page-header">
         <h1>Cockpit</h1>
+        <div className="ck-header-actions">
+          <button className="ck-op-btn" type="button" onClick={runIbDailyJob} disabled={ibJobRunning}>
+            {ibJobRunning ? 'Running IB Daily Job...' : 'Run IB Daily Job'}
+          </button>
+        </div>
+      </div>
+      {ibJobNotice.text ? (
+        <div className={`ck-op-msg ${ibJobNotice.type === 'ok' ? 'ck-op-msg--ok' : 'ck-op-msg--error'}`}>
+          {ibJobNotice.text}
+        </div>
+      ) : null}
+      <div className={`ck-refresh-line ck-refresh-line--${ibFreshness.tone}`}>
+        {ibFreshness.text}
       </div>
       <div className="ck-summary-strip">
         <div className="ck-summary-card">

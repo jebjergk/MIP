@@ -411,6 +411,27 @@ def update_profile(profile_id: int, body: ProfileUpsert):
     )
 
 
+def _try_parse_json_blob(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8", errors="replace")
+        except Exception:
+            return str(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return raw
+    return value
+
+
 @router.post("/ib/daily-job/run")
 def run_ib_manual_daily_job(
     target_date: str = Query("current_date()", description="Snowflake date literal, e.g. current_date() or '2026-03-13'"),
@@ -483,3 +504,129 @@ def run_ib_manual_daily_job(
         "status": "SUCCESS",
         "payload": payload,
     }
+
+
+@router.get("/ib/daily-job/health")
+def get_ib_manual_daily_health():
+    """
+    Operational status for IB-only daily process:
+    - current daily-bar coverage (latest date vs enabled universe)
+    - latest successful daily pipeline date
+    - catch-up dry-run status
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            with latest as (
+                select
+                    max(TS::date) as LATEST_DATE,
+                    max(TS) as LATEST_TS
+                from MIP.MART.MARKET_BARS
+                where INTERVAL_MINUTES = 1440
+            ),
+            u as (
+                select distinct upper(replace(SYMBOL, '/', '')) as SYMBOL_N, upper(MARKET_TYPE) as MARKET_TYPE
+                from MIP.APP.INGEST_UNIVERSE
+                where coalesce(IS_ENABLED, true)
+                  and INTERVAL_MINUTES = 1440
+            ),
+            b as (
+                select distinct
+                    upper(replace(SYMBOL, '/', '')) as SYMBOL_N,
+                    upper(MARKET_TYPE) as MARKET_TYPE
+                from MIP.MART.MARKET_BARS
+                where INTERVAL_MINUTES = 1440
+                  and TS::date = (select LATEST_DATE from latest)
+            )
+            select
+                (select LATEST_DATE from latest) as LATEST_DAILY_BAR_DATE,
+                (select LATEST_TS from latest) as LATEST_DAILY_BAR_TS,
+                (select count(*) from u) as UNIVERSE_SYMBOLS,
+                (select count(*) from b) as BAR_SYMBOLS_ON_LATEST_DATE,
+                (
+                    select count(*)
+                    from u
+                    left join b
+                      on b.SYMBOL_N = u.SYMBOL_N
+                     and b.MARKET_TYPE = u.MARKET_TYPE
+                    where b.SYMBOL_N is null
+                ) as MISSING_SYMBOLS_ON_LATEST_DATE
+            """
+        )
+        coverage_row = fetch_all(cur)[0]
+
+        cur.execute(
+            """
+            select
+                max(EVENT_TS) as LATEST_PIPELINE_EVENT_TS,
+                max(DETAILS:effective_to_ts::timestamp_ntz)::date as LATEST_EFFECTIVE_TO_DATE
+            from MIP.APP.MIP_AUDIT_LOG
+            where EVENT_TYPE = 'PIPELINE'
+              and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+              and STATUS in ('SUCCESS', 'SUCCESS_WITH_SKIPS')
+            """
+        )
+        pipeline_row = fetch_all(cur)[0]
+
+        catchup = None
+        try:
+            cur.execute("call MIP.APP.SP_RUN_IB_DAILY_CATCHUP(current_date(), true)")
+            row = cur.fetchone()
+            catchup_cell = row[0] if row else None
+            catchup = _try_parse_json_blob(catchup_cell)
+            if isinstance(catchup, str):
+                catchup = _try_parse_json_blob(catchup)
+        except Exception as catchup_error:
+            catchup = {
+                "status": "UNAVAILABLE",
+                "error": str(catchup_error),
+                "missing_days": None,
+            }
+
+        latest_date = coverage_row.get("LATEST_DAILY_BAR_DATE")
+        if latest_date is not None and hasattr(latest_date, "isoformat"):
+            latest_date = latest_date.isoformat()
+        latest_ts = coverage_row.get("LATEST_DAILY_BAR_TS")
+        if latest_ts is not None and hasattr(latest_ts, "isoformat"):
+            latest_ts = latest_ts.isoformat()
+        latest_event_ts = pipeline_row.get("LATEST_PIPELINE_EVENT_TS")
+        if latest_event_ts is not None and hasattr(latest_event_ts, "isoformat"):
+            latest_event_ts = latest_event_ts.isoformat()
+        latest_effective = pipeline_row.get("LATEST_EFFECTIVE_TO_DATE")
+        if latest_effective is not None and hasattr(latest_effective, "isoformat"):
+            latest_effective = latest_effective.isoformat()
+
+        missing = int(coverage_row.get("MISSING_SYMBOLS_ON_LATEST_DATE") or 0)
+        bar_symbols = int(coverage_row.get("BAR_SYMBOLS_ON_LATEST_DATE") or 0)
+        universe = int(coverage_row.get("UNIVERSE_SYMBOLS") or 0)
+        up_to_date = bool(universe > 0 and missing == 0 and bar_symbols == universe)
+        bars_lag_days = None
+        raw_latest_date = coverage_row.get("LATEST_DAILY_BAR_DATE")
+        if raw_latest_date is not None and hasattr(raw_latest_date, "toordinal"):
+            bars_lag_days = (datetime.utcnow().date() - raw_latest_date).days
+
+        return {
+            "status": "SUCCESS",
+            "up_to_date": up_to_date,
+            "coverage": {
+                "latest_daily_bar_date": latest_date,
+                "latest_daily_bar_ts": latest_ts,
+                "universe_symbols": universe,
+                "bar_symbols_on_latest_date": bar_symbols,
+                "missing_symbols_on_latest_date": missing,
+                "bars_lag_days": bars_lag_days,
+            },
+            "pipeline": {
+                "latest_pipeline_event_ts": latest_event_ts,
+                "latest_effective_to_date": latest_effective,
+            },
+            "catchup_dry_run": catchup,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load IB daily job health: {e}")
+    finally:
+        conn.close()

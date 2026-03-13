@@ -18,6 +18,53 @@
   cursor: not-allowed;
 }
 
+.debug-ibops {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.8rem;
+  margin: 0.5rem 0 1rem;
+  background: #fafafa;
+}
+
+.debug-ibops h2 {
+  margin: 0 0 0.35rem 0;
+  font-size: 1rem;
+}
+
+.debug-ibops h3 {
+  margin: 0.35rem 0;
+  font-size: 0.9rem;
+}
+
+.debug-ibops p {
+  margin: 0 0 0.65rem;
+  color: #444;
+}
+
+.debug-ibops-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+.debug-ibops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.75rem;
+}
+
+.debug-json {
+  margin: 0;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.5rem;
+  max-height: 300px;
+  overflow: auto;
+  font-size: 0.78rem;
+}
+
 .debug-table {
   border-collapse: collapse;
   margin: 0.5rem 0;

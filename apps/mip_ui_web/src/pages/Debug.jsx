@@ -3,6 +3,16 @@ import { API_BASE } from '../App'
 import LoadingState from '../components/LoadingState'
 import './Debug.css'
 
+async function parseApiResponse(resp) {
+  const text = await resp.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
 function previewFromData(data, isError = false) {
   if (isError) return typeof data === 'string' ? data : String(data)
   if (data == null) return '(null)'
@@ -31,26 +41,20 @@ function previewFromData(data, isError = false) {
 export default function Debug() {
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
+  const [ibHealth, setIbHealth] = useState(null)
+  const [ibDryRun, setIbDryRun] = useState(null)
+  const [ibHealthLoading, setIbHealthLoading] = useState(false)
+  const [ibDryRunLoading, setIbDryRunLoading] = useState(false)
   useEffect(() => {
     let cancelled = false
 
     async function runSmoke() {
       const out = []
 
-      const parseResponse = async (r) => {
-        const text = await r.text()
-        if (!r.ok) return text
-        try {
-          return JSON.parse(text)
-        } catch {
-          return text
-        }
-      }
-
       // 1. /api/status
       try {
         const r = await fetch(`${API_BASE}/status`)
-        const data = await parseResponse(r)
+        const data = await parseApiResponse(r)
         out.push({
           url: `${API_BASE}/status`,
           status: r.status,
@@ -71,7 +75,7 @@ export default function Debug() {
       // 2. /api/runs
       try {
         const r = await fetch(`${API_BASE}/runs`)
-        const data = await parseResponse(r)
+        const data = await parseApiResponse(r)
         out.push({
           url: `${API_BASE}/runs`,
           status: r.status,
@@ -93,7 +97,7 @@ export default function Debug() {
       let portfolioId = null
       try {
         const r = await fetch(`${API_BASE}/portfolios`)
-        const data = await parseResponse(r)
+        const data = await parseApiResponse(r)
         if (r.ok && Array.isArray(data) && data.length > 0) {
           const first = data[0]
           portfolioId = first.portfolio_id ?? first.PORTFOLIO_ID ?? first.id
@@ -120,7 +124,7 @@ export default function Debug() {
         try {
           const url = `${API_BASE}/briefs/latest?portfolio_id=${portfolioId}`
           const r = await fetch(url)
-          const data = await parseResponse(r)
+          const data = await parseApiResponse(r)
           out.push({
             url,
             status: r.status,
@@ -150,7 +154,7 @@ export default function Debug() {
       // 5. /api/training/status
       try {
         const r = await fetch(`${API_BASE}/training/status`)
-        const data = await parseResponse(r)
+        const data = await parseApiResponse(r)
         out.push({
           url: `${API_BASE}/training/status`,
           status: r.status,
@@ -189,10 +193,77 @@ export default function Debug() {
     navigator.clipboard.writeText(JSON.stringify(blob, null, 2))
   }
 
+  const loadIbHealth = async () => {
+    setIbHealthLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/manage/ib/daily-job/health`)
+      const payload = await parseApiResponse(resp)
+      setIbHealth({
+        ok: resp.ok,
+        status: resp.status,
+        payload,
+      })
+    } catch (e) {
+      setIbHealth({
+        ok: false,
+        status: 0,
+        payload: String(e?.message || e),
+      })
+    } finally {
+      setIbHealthLoading(false)
+    }
+  }
+
+  const runIbCatchupDryRun = async () => {
+    setIbDryRunLoading(true)
+    try {
+      const resp = await fetch(`${API_BASE}/manage/ib/daily-job/run?dry_run=true&skip_ingest=true`, {
+        method: 'POST',
+      })
+      const payload = await parseApiResponse(resp)
+      setIbDryRun({
+        ok: resp.ok,
+        status: resp.status,
+        payload,
+      })
+    } catch (e) {
+      setIbDryRun({
+        ok: false,
+        status: 0,
+        payload: String(e?.message || e),
+      })
+    } finally {
+      setIbDryRunLoading(false)
+    }
+  }
+
   return (
     <>
       <h1>Route smoke</h1>
       <p>Quick debug: which endpoints fail and why (404 vs 500 vs CORS vs proxy).</p>
+
+      <section className="debug-ibops">
+        <h2>IB Ops Diagnostics</h2>
+        <p>Operational tracking lives here: use these for troubleshooting data freshness and catch-up planning.</p>
+        <div className="debug-ibops-actions">
+          <button type="button" className="debug-copy-btn" onClick={loadIbHealth} disabled={ibHealthLoading || ibDryRunLoading}>
+            {ibHealthLoading ? 'Loading IB Health...' : 'Load IB Health'}
+          </button>
+          <button type="button" className="debug-copy-btn" onClick={runIbCatchupDryRun} disabled={ibHealthLoading || ibDryRunLoading}>
+            {ibDryRunLoading ? 'Running Dry-Run...' : 'Run Catch-up Dry-Run'}
+          </button>
+        </div>
+        <div className="debug-ibops-grid">
+          <div>
+            <h3>IB Health Result</h3>
+            <pre className="debug-json">{JSON.stringify(ibHealth, null, 2)}</pre>
+          </div>
+          <div>
+            <h3>Catch-up Dry-Run Result</h3>
+            <pre className="debug-json">{JSON.stringify(ibDryRun, null, 2)}</pre>
+          </div>
+        </div>
+      </section>
 
       <button
         type="button"

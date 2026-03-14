@@ -1086,6 +1086,8 @@ function PortfolioTuningTab({ pid, surfaceData, regimeData, recommendations, onL
 export default function ParallelWorlds() {
   const { portfolios } = usePortfolios()
   const [selectedPortfolio, setSelectedPortfolio] = useState(null)
+  const [livePortfolioIds, setLivePortfolioIds] = useState([])
+  const [liveFilterLoaded, setLiveFilterLoaded] = useState(false)
   const [results, setResults] = useState(null)
   const [narrative, setNarrative] = useState(null)
   const [curves, setCurves] = useState(null)
@@ -1103,14 +1105,77 @@ export default function ParallelWorlds() {
   const [expandedRow, setExpandedRow] = useState(null)
   const [showAllScenarios, setShowAllScenarios] = useState(false)
   const scenarioCount = useMemo(() => results?.scenarios?.length || 0, [results])
+  const livePortfolios = useMemo(() => {
+    if (!Array.isArray(portfolios) || portfolios.length === 0) return []
+    const liveIdSet = new Set((livePortfolioIds || []).map(Number))
+    if (liveIdSet.size === 0) return []
+    return portfolios.filter((p) => {
+      const pid = Number(p.portfolio_id || p.PORTFOLIO_ID)
+      return liveIdSet.has(pid)
+    })
+  }, [portfolios, livePortfolioIds])
 
   // Auto-select first portfolio
   useEffect(() => {
-    if (portfolios && portfolios.length > 0 && !selectedPortfolio) {
-      const first = portfolios[0]
+    if (livePortfolios && livePortfolios.length > 0 && !selectedPortfolio) {
+      const first = livePortfolios[0]
       setSelectedPortfolio(first.portfolio_id || first.PORTFOLIO_ID)
     }
-  }, [portfolios, selectedPortfolio])
+  }, [livePortfolios, selectedPortfolio])
+
+  // Fetch active live portfolio ids and use them as selector source-of-truth.
+  useEffect(() => {
+    let cancelled = false
+    setLiveFilterLoaded(false)
+    fetch(`${API_BASE}/live/portfolio-config`)
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then(data => {
+        if (cancelled) return
+        const configs = Array.isArray(data?.configs) ? data.configs : []
+        const ids = configs
+          .filter(c => Boolean(c.is_active ?? c.IS_ACTIVE))
+          .map(c => Number(c.portfolio_id ?? c.PORTFOLIO_ID))
+          .filter(n => Number.isFinite(n))
+        setLivePortfolioIds(ids)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setLivePortfolioIds([])
+      })
+      .finally(() => {
+        if (!cancelled) setLiveFilterLoaded(true)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  // If selected portfolio is no longer in live set, reset to first live portfolio.
+  useEffect(() => {
+    if (!liveFilterLoaded) return
+    if (!selectedPortfolio) return
+    const selected = Number(selectedPortfolio)
+    const liveIdSet = new Set((livePortfolioIds || []).map(Number))
+    if (!liveIdSet.has(selected)) {
+      const first = livePortfolios[0]
+      setSelectedPortfolio(first ? Number(first.portfolio_id || first.PORTFOLIO_ID) : null)
+    }
+  }, [liveFilterLoaded, livePortfolioIds, livePortfolios, selectedPortfolio])
+
+  // Clear stale panel data when there is no selected live portfolio.
+  useEffect(() => {
+    if (selectedPortfolio != null) return
+    setResults(null)
+    setNarrative(null)
+    setCurves(null)
+    setRegret(null)
+    setConfidence(null)
+    setAttribution(null)
+    setDiagnostics(null)
+    setSurfaceData(null)
+    setRegimeData(null)
+    setRecommendations(null)
+    setSafetyCache({})
+    setExpandedRow(null)
+  }, [selectedPortfolio])
 
   const loadData = useCallback(async (pid) => {
     if (!pid) return
@@ -1172,8 +1237,10 @@ export default function ParallelWorlds() {
             value={selectedPortfolio || ''}
             onChange={e => setSelectedPortfolio(Number(e.target.value))}
           >
-            <option value="">Select portfolio...</option>
-            {(portfolios || []).map(p => {
+            <option value="">
+              {liveFilterLoaded ? 'Select live portfolio...' : 'Loading live portfolios...'}
+            </option>
+            {(livePortfolios || []).map(p => {
               const pid = p.portfolio_id || p.PORTFOLIO_ID
               const name = p.name || p.NAME
               return <option key={pid} value={pid}>{name} (#{pid})</option>
@@ -1201,9 +1268,16 @@ export default function ParallelWorlds() {
 
       {loading && <LoadingState message="Loading parallel worlds..." />}
       {error && <div className="pw-error">Error: {error}</div>}
+      {!loading && !error && liveFilterLoaded && livePortfolios.length === 0 && (
+        <EmptyState
+          title="No live portfolios configured"
+          explanation="Parallel Worlds is restricted to live portfolios only."
+          reasons={['Create/activate at least one row in Live Portfolio Config.', 'Sim portfolios are intentionally hidden on this page.']}
+        />
+      )}
 
       {/* Overview Tab */}
-      {!loading && !error && activeTab === 'overview' && (
+      {!loading && !error && livePortfolios.length > 0 && activeTab === 'overview' && (
         <>
           {results && !results.found && (
             <EmptyState
@@ -1272,7 +1346,7 @@ export default function ParallelWorlds() {
       )}
 
       {/* Signal Tuning Tab */}
-      {!loading && !error && activeTab === 'signal-tuning' && (
+      {!loading && !error && livePortfolios.length > 0 && activeTab === 'signal-tuning' && (
         <SignalTuningTab
           pid={selectedPortfolio}
           surfaceData={surfaceData}
@@ -1284,7 +1358,7 @@ export default function ParallelWorlds() {
       )}
 
       {/* Portfolio Tuning Tab */}
-      {!loading && !error && activeTab === 'portfolio-tuning' && (
+      {!loading && !error && livePortfolios.length > 0 && activeTab === 'portfolio-tuning' && (
         <PortfolioTuningTab
           pid={selectedPortfolio}
           surfaceData={surfaceData}

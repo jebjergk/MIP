@@ -94,6 +94,42 @@ function summarizeInfluence(delta) {
   return lines
 }
 
+function parseMaybeJson(v) {
+  if (v == null) return null
+  if (typeof v === 'object') return v
+  if (typeof v === 'string') {
+    try {
+      return JSON.parse(v)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function field(row, ...keys) {
+  for (const key of keys) {
+    if (row?.[key] != null) return row[key]
+  }
+  return null
+}
+
+function proposalWhyText(proposal) {
+  const source = parseMaybeJson(field(proposal, 'SOURCE_SIGNALS', 'source_signals')) || {}
+  const rationale = parseMaybeJson(field(proposal, 'RATIONALE', 'rationale')) || {}
+  const committee = rationale?.sim_committee || {}
+  const parts = []
+  if (source.trust_label) parts.push(`trust ${String(source.trust_label).toLowerCase()}`)
+  if (source.score != null) parts.push(`score ${Number(source.score).toFixed(2)}`)
+  if (source.pattern_id) parts.push(`pattern ${source.pattern_id}`)
+  if (source.news_context?.news_context_badge) parts.push(`news ${String(source.news_context.news_context_badge).toLowerCase()}`)
+  if (committee.should_enter === false) parts.push('committee blocked entry')
+  if (committee.size_factor != null) parts.push(`size factor ${committee.size_factor}`)
+  if (committee.summary) parts.push(String(committee.summary))
+  if (!parts.length) return 'No detailed rationale recorded for this proposal.'
+  return parts.join(' | ')
+}
+
 export default function LearningLedger() {
   const [events, setEvents] = useState([])
   const [chains, setChains] = useState([])
@@ -246,12 +282,15 @@ export default function LearningLedger() {
         ledgerId: r.LEDGER_ID || r.ledger_id,
         ts: r.EVENT_TS || r.event_ts,
         eventName: r.EVENT_NAME || r.event_name,
+        eventType: r.EVENT_TYPE || r.event_type || '',
         status: normalizeStatus(r.STATUS || r.status),
         rawStatus: r.STATUS || r.status || '',
         runId: r.RUN_ID || r.run_id || selectedChain?.run_id || '',
         portfolioId: r.PORTFOLIO_ID || r.portfolio_id || selectedChain?.portfolio_id || null,
         action: r.LIVE_ACTION_ID || r.live_action_id || '',
         order: r.LIVE_ORDER_ID || r.live_order_id || '',
+        influenceDelta: r.INFLUENCE_DELTA || r.influence_delta || null,
+        outcomeState: r.OUTCOME_STATE || r.outcome_state || null,
       }))
     }
     return (selectedChain?.events || []).map((r) => ({
@@ -260,12 +299,15 @@ export default function LearningLedger() {
       ledgerId: r.ledger_id || null,
       ts: r.event_ts,
       eventName: r.event_name || r.title,
+      eventType: r.event_type || '',
       status: normalizeStatus(r.status || r.severity),
       rawStatus: r.status || r.severity || '',
       runId: r.run_id || selectedChain?.run_id || '',
       portfolioId: r.portfolio_id ?? selectedChain?.portfolio_id ?? null,
       action: r.live_action_id || '',
       order: r.live_order_id || '',
+      influenceDelta: r.impact || null,
+      outcomeState: null,
     }))
   }, [detail, selectedChain])
 
@@ -285,9 +327,32 @@ export default function LearningLedger() {
   )
 
   const influenceLines = useMemo(() => {
-    const delta = detail?.ledger_event?.INFLUENCE_DELTA || detail?.ledger_event?.influence_delta || selected?.impact || {}
+    const delta = selectedTimelineRow?.influenceDelta
+      || detail?.ledger_event?.INFLUENCE_DELTA
+      || detail?.ledger_event?.influence_delta
+      || selected?.impact
+      || {}
     return summarizeInfluence(delta)
-  }, [detail, selected])
+  }, [detail, selected, selectedTimelineRow])
+
+  const explainedProposals = useMemo(() => (
+    (detail?.proposals || []).slice(0, 8).map((p) => ({
+      id: field(p, 'PROPOSAL_ID', 'proposal_id'),
+      symbol: field(p, 'SYMBOL', 'symbol'),
+      status: field(p, 'STATUS', 'status'),
+      targetWeight: field(p, 'TARGET_WEIGHT', 'target_weight'),
+      why: proposalWhyText(p),
+    }))
+  ), [detail])
+
+  const looksSparse = useMemo(() => {
+    const chainEvents = selectedChain?.event_count ?? (selectedChain?.events?.length || 0)
+    const summary = detail?.summary || {}
+    return !!selectedChain && chainEvents > 1
+      && (summary.proposal_count ?? 0) === 0
+      && (summary.live_action_count ?? 0) === 0
+      && (summary.live_order_count ?? 0) === 0
+  }, [selectedChain, detail])
 
   const stats = useMemo(() => {
     const trainingCount = events.filter((e) => e.event_type === 'TRAINING_EVENT').length
@@ -299,17 +364,6 @@ export default function LearningLedger() {
 
   const onSelectTimelineRow = useCallback((row) => {
     setSelectedTimelineKey(row.key)
-    setSelected((prev) => ({
-      ...(prev || {}),
-      event_key: row.eventKey || prev?.event_key || row.key,
-      ledger_id: row.ledgerId ?? prev?.ledger_id ?? null,
-      event_name: row.eventName || prev?.event_name || '',
-      event_ts: row.ts || prev?.event_ts || null,
-      status: row.rawStatus || prev?.status || '',
-      run_id: row.runId || prev?.run_id || null,
-      portfolio_id: row.portfolioId ?? prev?.portfolio_id ?? null,
-      title: prettyEventName(row.eventName),
-    }))
   }, [])
 
   if (loading) {
@@ -449,7 +503,7 @@ export default function LearningLedger() {
               <p className="ledger-note">No timeline events found for this chain.</p>
             ) : (
               <ol className="ledger-timeline">
-                {timelineRows.map((r) => (
+                {timelineRows.map((r, idx) => (
                   <li
                     key={r.key}
                     className={`ledger-timeline-item ${selectedTimelineRow?.key === r.key ? 'ledger-timeline-item-selected' : ''}`}
@@ -468,6 +522,9 @@ export default function LearningLedger() {
                     </div>
                     <div className="ledger-timeline-name">{prettyEventName(r.eventName)}</div>
                     <div className="ledger-meta">
+                      <span>step: {idx + 1}/{timelineRows.length}</span>
+                      <span>run: {r.runId || '—'}</span>
+                      <span>portfolio: {r.portfolioId ?? '—'}</span>
                       <span>action: {r.action || '—'}</span>
                       <span>order: {r.order || '—'}</span>
                     </div>
@@ -478,7 +535,7 @@ export default function LearningLedger() {
           </div>
 
           <aside className="ledger-column ledger-context-column">
-            <h2>Why This Happened</h2>
+            <h2>Step Inspector</h2>
             {!selected ? (
               <p className="ledger-note">Select a chain to view context.</p>
             ) : (
@@ -488,12 +545,16 @@ export default function LearningLedger() {
                 </p>
                 <div className="ledger-impact-grid">
                   <div><span>Run</span><b>{selectedTimelineRow?.runId || selected.run_id || '—'}</b></div>
+                  <div><span>Time</span><b>{fmtTs(selectedTimelineRow?.ts || selected.event_ts)}</b></div>
                   <div><span>Event</span><b>{prettyEventName(selectedTimelineRow?.eventName || selected.event_name || selected.title)}</b></div>
                   <div><span>Portfolio</span><b>{selectedTimelineRow?.portfolioId ?? selected.portfolio_id ?? '—'}</b></div>
                   <div><span>Status</span><b>{selectedTimelineRow?.status || normalizeStatus(selected.status || selected.severity)}</b></div>
+                  <div><span>Type</span><b>{selectedTimelineRow?.eventType || selected.event_type || '—'}</b></div>
                   <div><span>Trusted delta</span><b>{selected.impact?.trusted_delta ?? '—'}</b></div>
                   <div><span>Executed</span><b>{detail?.summary?.executed_proposals ?? selected.impact?.executed_count ?? 0}</b></div>
                   <div><span>Live orders</span><b>{detail?.summary?.live_order_count ?? selected.impact?.live_order_count ?? 0}</b></div>
+                  <div><span>Action ID</span><b>{selectedTimelineRow?.action || '—'}</b></div>
+                  <div><span>Order ID</span><b>{selectedTimelineRow?.order || '—'}</b></div>
                   <div><span>Avg target weight</span><b>{fmtPct(selected.impact?.avg_target_weight, 1)}</b></div>
                 </div>
 
@@ -509,7 +570,7 @@ export default function LearningLedger() {
                 </section>
 
                 <section className="ledger-mini-section">
-                  <h3>Influenced proposals (latest)</h3>
+                  <h3>Affected proposals (and why)</h3>
                   <div className="ledger-table-wrap">
                     <table>
                       <thead>
@@ -518,24 +579,36 @@ export default function LearningLedger() {
                           <th>Symbol</th>
                           <th>Status</th>
                           <th>Weight</th>
+                          <th>Why selected/changed</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {(detail?.proposals || []).slice(0, 8).map((p) => (
-                          <tr key={p.PROPOSAL_ID || p.proposal_id}>
-                            <td>{p.PROPOSAL_ID || p.proposal_id}</td>
-                            <td>{p.SYMBOL || p.symbol}</td>
-                            <td>{p.STATUS || p.status}</td>
-                            <td>{fmtPct(p.TARGET_WEIGHT || p.target_weight)}</td>
+                        {explainedProposals.map((p) => (
+                          <tr key={p.id}>
+                            <td>{p.id}</td>
+                            <td>{p.symbol || '—'}</td>
+                            <td>{p.status || '—'}</td>
+                            <td>{fmtPct(p.targetWeight)}</td>
+                            <td>{p.why}</td>
                           </tr>
                         ))}
-                        {(detail?.proposals || []).length === 0 ? (
-                          <tr><td colSpan={4}>No proposals found for this run.</td></tr>
+                        {explainedProposals.length === 0 ? (
+                          <tr><td colSpan={5}>No proposals found for this run.</td></tr>
                         ) : null}
                       </tbody>
                     </table>
                   </div>
                 </section>
+
+                {looksSparse ? (
+                  <section className="ledger-mini-section">
+                    <h3>Data quality warning</h3>
+                    <p className="ledger-note">
+                      This chain has multiple events, but linked proposal/action/order counts are all zero.
+                      That usually means incomplete linkage fields in ledger/audit records for this run.
+                    </p>
+                  </section>
+                ) : null}
 
                 <section className="ledger-mini-section">
                   <h3>Plain-English effects</h3>

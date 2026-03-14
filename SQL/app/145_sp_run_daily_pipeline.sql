@@ -102,6 +102,11 @@ declare
     v_pw_status string := 'SKIPPED';
     v_pw_start timestamp_ntz;
     v_pw_end timestamp_ntz;
+    -- Symbol-oriented shadow-trade learning variables
+    v_pw_shadow_result variant;
+    v_pw_shadow_status string := 'SKIPPED';
+    v_pw_shadow_start timestamp_ntz;
+    v_pw_shadow_end timestamp_ntz;
     -- Error capture variables (used in exception handlers)
     v_ingest_error_query_id string;
     v_ingest_duration_ms number;
@@ -465,6 +470,21 @@ begin
             ),
             null
         );
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'PW_SYMBOL_SHADOW',
+            'SKIPPED_NO_NEW_BARS',
+            0,
+            object_construct(
+                'step_name', 'pw_symbol_shadow',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_step_start,
+                'completed_at', :v_step_end,
+                'reason', 'NO_NEW_BARS'
+            ),
+            null
+        );
         -- Daily digest: ALWAYS generated (tells the story even on "nothing happened" days).
         v_digest_start := current_timestamp();
         v_digest_status := 'SKIPPED';
@@ -541,6 +561,7 @@ begin
             'recommendations', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'pw_symbol_shadow', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
             'daily_digest', object_construct('status', :v_digest_status, 'narrative_mode', :v_digest_result:narrative_mode, 'portfolio_count', :v_digest_result:portfolio_count, 'cortex_success_count', :v_digest_result:cortex_success_count, 'cortex_fallback_count', :v_digest_result:cortex_fallback_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
             'training_digest', object_construct('status', :v_training_digest_status, 'reason', 'TRAINING_DIGEST_DISABLED'),
@@ -1103,6 +1124,42 @@ begin
         v_any_step_skipped_or_degraded := true;
     end if;
 
+    -- [PW SYMBOL SHADOW] Keep background learning state for non-pattern proposals.
+    if (v_run_id is not null) then
+        v_pw_shadow_start := current_timestamp();
+        begin
+            v_pw_shadow_result := (call MIP.APP.SP_REFRESH_PW_SYMBOL_SHADOW_TRADES(
+                :v_run_id,
+                :v_effective_to_ts
+            ));
+            v_pw_shadow_status := coalesce(:v_pw_shadow_result:status::string, 'SUCCESS');
+        exception
+            when other then
+                v_pw_shadow_status := 'FAIL';
+                v_pw_shadow_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
+        end;
+        v_pw_shadow_end := current_timestamp();
+
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'PW_SYMBOL_SHADOW',
+            :v_pw_shadow_status,
+            coalesce(:v_pw_shadow_result:upsert_count::number, 0),
+            object_construct(
+                'step_name', 'pw_symbol_shadow',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_pw_shadow_start,
+                'completed_at', :v_pw_shadow_end,
+                'result', :v_pw_shadow_result
+            ),
+            iff(:v_pw_shadow_status = 'FAIL', :v_pw_shadow_result:error::string, null)
+        );
+    else
+        v_pw_shadow_status := 'SKIPPED_NO_RUN_ID';
+        v_pw_shadow_result := object_construct('status', 'SKIPPED_NO_RUN_ID');
+    end if;
+
     -- [DAILY DIGEST] Generate daily intelligence digest (non-fatal: digest failure must not break pipeline)
     v_digest_start := current_timestamp();
     v_digest_status := 'SKIPPED';
@@ -1342,6 +1399,10 @@ begin
             'status', :v_pw_status,
             'simulation', :v_pw_result,
             'narrative', :v_pw_narrative_result
+        ),
+        'pw_symbol_shadow', object_construct(
+            'status', :v_pw_shadow_status,
+            'result', :v_pw_shadow_result
         ),
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,

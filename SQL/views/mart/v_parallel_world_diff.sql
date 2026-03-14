@@ -84,9 +84,21 @@ select
     -- Classification
     iff(cf.PNL_SIMULATED > act.PNL_SIMULATED, true, false) as OUTPERFORMED,
     -- Gate flags from ACTUAL trace
-    act.RESULT_JSON:decision_trace[0]:risk_status::varchar   as RISK_STATUS,
-    act.RESULT_JSON:decision_trace[0]:entries_blocked::boolean as ENTRIES_BLOCKED,
-    act.RESULT_JSON:decision_trace[1]:status::varchar         as CAPACITY_STATUS,
+    coalesce(
+        act.RESULT_JSON:decision_trace[0]:risk_status::varchar,
+        act.RESULT_JSON:risk_status::varchar,
+        'UNKNOWN'
+    ) as RISK_STATUS,
+    coalesce(
+        act.RESULT_JSON:decision_trace[0]:entries_blocked::boolean,
+        act.RESULT_JSON:entries_blocked::boolean,
+        false
+    ) as ENTRIES_BLOCKED,
+    coalesce(
+        act.RESULT_JSON:decision_trace[1]:status::varchar,
+        act.RESULT_JSON:capacity_status::varchar,
+        'UNKNOWN'
+    ) as CAPACITY_STATUS,
     -- Raw traces
     act.RESULT_JSON                                 as ACTUAL_RESULT_JSON,
     cf.RESULT_JSON                                  as CF_RESULT_JSON

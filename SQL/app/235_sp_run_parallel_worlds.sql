@@ -18,7 +18,11 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
-create or replace procedure MIP.APP.SP_RUN_PARALLEL_WORLDS(
+-- NOTE:
+-- This legacy simulator implementation is retained for reference and controlled
+-- backtests. The canonical runtime proc is MIP.APP.SP_RUN_PARALLEL_WORLDS
+-- from 406_sp_run_parallel_worlds_research_only.sql.
+create or replace procedure MIP.APP.SP_RUN_PARALLEL_WORLDS_LEGACY_SIM(
     P_RUN_ID        varchar,
     P_AS_OF_TS      timestamp_ntz,
     P_PORTFOLIO_ID  number default null,

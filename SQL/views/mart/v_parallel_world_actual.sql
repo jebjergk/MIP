@@ -42,11 +42,13 @@ proposal_day as (
         op.RECOMMENDATION_ID,
         upper(coalesce(op.SIDE, 'BUY')) as SIDE,
         coalesce(op.TARGET_WEIGHT, 0.05)::number(18,6) as TARGET_WEIGHT,
+        coalesce(try_to_double(op.SOURCE_SIGNALS:score::string), 0)::number(18,8) as EST_RETURN,
         coalesce(op.EXECUTED_AT, op.APPROVED_AT, op.PROPOSED_AT)::timestamp_ntz as EVENT_TS
     from MIP.AGENT_OUT.ORDER_PROPOSALS op
     where op.PORTFOLIO_ID is not null
       and coalesce(op.EXECUTED_AT, op.APPROVED_AT, op.PROPOSED_AT) is not null
-      and op.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')
+      -- "ACTUAL" world should represent executed decisions only.
+      and op.STATUS = 'EXECUTED'
 ),
 outcome_best as (
     select
@@ -71,7 +73,7 @@ daily as (
         sum(
             cfg.STARTING_CASH
             * least(cfg.MAX_POSITION_PCT, greatest(pd.TARGET_WEIGHT, 0))
-            * coalesce(ob.REALIZED_RETURN, 0)
+            * coalesce(ob.REALIZED_RETURN, pd.EST_RETURN, 0)
         )::number(18,4) as REALIZED_PNL,
         sum(
             iff(pd.SIDE = 'BUY',

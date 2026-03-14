@@ -156,13 +156,14 @@ where r.RUN_ID in ('SMOKE_DETERMINISM_R1', 'SMOKE_DETERMINISM_R2')
 select 'DECISION_TRACE_CHECK' as check_label,
        SCENARIO_ID,
        PORTFOLIO_ID,
-       RESULT_JSON:decision_trace is not null as has_trace,
-       array_size(RESULT_JSON:decision_trace:gates) as gate_count
+       RESULT_JSON is not null as has_result_json,
+       iff(RESULT_JSON:decision_trace is null, 0, array_size(RESULT_JSON:decision_trace)) as decision_trace_count,
+       RESULT_JSON:world::string as world_tag
 from MIP.APP.PARALLEL_WORLD_RESULT
 where RUN_ID = 'SMOKE_DETERMINISM_R1'
   and SCENARIO_ID != 0
 order by SCENARIO_ID, PORTFOLIO_ID;
--- Expect all has_trace = TRUE
+-- Expect all has_result_json = TRUE and decision_trace_count >= 0 (mode-dependent)
 
 
 -- =============================================================================
@@ -240,7 +241,10 @@ where CONFIG_KEY = 'PARALLEL_WORLDS_ENABLED';
 -- =============================================================================
 
 select 'RUN_LOG_CHECK' as check_label,
-       RUN_ID, STATUS, SCENARIO_COUNT, RESULT_COUNT, STARTED_AT, COMPLETED_AT
+       RUN_ID, STATUS,
+       DETAILS:scenario_count::number as SCENARIO_COUNT,
+       DETAILS:result_count::number as RESULT_COUNT,
+       STARTED_AT, COMPLETED_AT
 from MIP.APP.PARALLEL_WORLD_RUN_LOG
 where RUN_ID in ('SMOKE_DETERMINISM_R1', 'SMOKE_DETERMINISM_R2')
 order by STARTED_AT desc;

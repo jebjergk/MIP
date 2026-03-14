@@ -468,6 +468,9 @@ def get_equity_curves(
     if scenario_id is not None:
         conditions.append("(r.SCENARIO_ID = %s OR r.SCENARIO_ID = 0)")
         params.append(scenario_id)
+    if days is not None and days > 0:
+        conditions.append("r.AS_OF_TS::date >= dateadd(day, -%s, current_date())")
+        params.append(days)
 
     where = " AND ".join(conditions)
 

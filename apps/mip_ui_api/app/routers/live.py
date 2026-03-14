@@ -40,7 +40,6 @@ class ComplianceDecisionRequest(BaseModel):
 
 
 class LivePortfolioConfigUpsertRequest(BaseModel):
-    sim_portfolio_id: int | None = None
     ibkr_account_id: str | None = None
     adapter_mode: str | None = Field(default=None, pattern="^(PAPER|LIVE)$")
     base_currency: str | None = None
@@ -6994,7 +6993,7 @@ def list_live_portfolio_configs():
         cur.execute(
             """
             select
-              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
@@ -7017,7 +7016,7 @@ def get_live_portfolio_config(portfolio_id: int):
         cur.execute(
             """
             select
-              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
@@ -7050,8 +7049,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
             cur.execute(
                 """
                 update MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-                   set SIM_PORTFOLIO_ID = coalesce(%s, SIM_PORTFOLIO_ID),
-                       IBKR_ACCOUNT_ID = coalesce(%s, IBKR_ACCOUNT_ID),
+                   set IBKR_ACCOUNT_ID = coalesce(%s, IBKR_ACCOUNT_ID),
                        ADAPTER_MODE = coalesce(%s, ADAPTER_MODE),
                        BASE_CURRENCY = coalesce(%s, BASE_CURRENCY),
                        MAX_POSITIONS = coalesce(%s, MAX_POSITIONS),
@@ -7070,7 +7068,6 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                  where PORTFOLIO_ID = %s
                 """,
                 (
-                    req.sim_portfolio_id,
                     req.ibkr_account_id,
                     req.adapter_mode,
                     req.base_currency.upper() if req.base_currency else None,
@@ -7094,14 +7091,14 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_PORTFOLIO_CONFIG (
-                  PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+                  PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
                   MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
                   VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
                   DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
                   CREATED_AT, UPDATED_AT
                 )
                 values (
-                  %s, %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
+                  %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
                   %s, %s, %s, %s,
                   coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
                   %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
@@ -7110,7 +7107,6 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                 """,
                 (
                     portfolio_id,
-                    req.sim_portfolio_id,
                     req.ibkr_account_id,
                     req.adapter_mode,
                     req.base_currency.upper() if req.base_currency else None,
@@ -7131,7 +7127,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
         cur.execute(
             """
             select
-              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
@@ -7165,14 +7161,14 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
         cur.execute(
             """
             insert into MIP.LIVE.LIVE_PORTFOLIO_CONFIG (
-              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
               CREATED_AT, UPDATED_AT
             )
             values (
-              %s, %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
+              %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
               %s, %s, %s, %s,
               coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
               %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
@@ -7181,7 +7177,6 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
             """,
             (
                 next_id,
-                req.sim_portfolio_id,
                 req.ibkr_account_id,
                 req.adapter_mode,
                 req.base_currency.upper() if req.base_currency else None,
@@ -7202,7 +7197,7 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
         cur.execute(
             """
             select
-              PORTFOLIO_ID, SIM_PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,

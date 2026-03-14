@@ -37,6 +37,22 @@ with portfolio_cfg as (
     where p.STATUS = 'ACTIVE'
 ),
 proposal_day as (
+    with live_action_latest as (
+        select
+            la.PROPOSAL_ID,
+            upper(coalesce(la.STATUS, '')) as ACTION_STATUS
+        from MIP.LIVE.LIVE_ACTIONS la
+        qualify row_number() over (
+            partition by la.PROPOSAL_ID
+            order by la.UPDATED_AT desc nulls last, la.CREATED_AT desc nulls last
+        ) = 1
+    ),
+    live_cfg_active as (
+        select
+            c.PORTFOLIO_ID
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+        where coalesce(c.IS_ACTIVE, false) = true
+    )
     select
         op.PORTFOLIO_ID,
         op.RECOMMENDATION_ID,
@@ -45,10 +61,20 @@ proposal_day as (
         coalesce(try_to_double(op.SOURCE_SIGNALS:score::string), 0)::number(18,8) as EST_RETURN,
         coalesce(op.EXECUTED_AT, op.APPROVED_AT, op.PROPOSED_AT)::timestamp_ntz as EVENT_TS
     from MIP.AGENT_OUT.ORDER_PROPOSALS op
+    left join live_cfg_active lc
+      on lc.PORTFOLIO_ID = op.PORTFOLIO_ID
+    left join live_action_latest la
+      on la.PROPOSAL_ID = op.PROPOSAL_ID
     where op.PORTFOLIO_ID is not null
       and coalesce(op.EXECUTED_AT, op.APPROVED_AT, op.PROPOSED_AT) is not null
       -- "ACTUAL" world should represent executed decisions only.
       and op.STATUS = 'EXECUTED'
+      -- For active live portfolios, only include proposals that actually completed
+      -- through the live execution path. For non-live portfolios, retain legacy behavior.
+      and (
+            lc.PORTFOLIO_ID is null
+            or coalesce(la.ACTION_STATUS, '') in ('EXECUTION_COMPLETED', 'EXECUTED', 'FILLED', 'PARTIAL_FILL', 'PARTIALLYFILLED')
+          )
 ),
 outcome_best as (
     select

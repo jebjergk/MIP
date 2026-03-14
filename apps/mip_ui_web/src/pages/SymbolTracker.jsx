@@ -1,0 +1,374 @@
+import { useCallback, useMemo, useState } from 'react'
+import {
+  ComposedChart,
+  Line,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  ReferenceArea,
+  ReferenceDot,
+} from 'recharts'
+
+import { API_BASE } from '../App'
+import useVisibleInterval from '../hooks/useVisibleInterval'
+import './SymbolTracker.css'
+
+const SORT_OPTIONS = [
+  { value: 'worst_pnl', label: 'Worst P&L' },
+  { value: 'best_pnl', label: 'Best P&L' },
+  { value: 'closest_tp', label: 'Closest to TP' },
+  { value: 'closest_sl', label: 'Closest to SL' },
+  { value: 'newest', label: 'Newest Position' },
+]
+
+function fmtNum(value, digits = 2) {
+  if (value == null) return '—'
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  return n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+}
+
+function fmtPct(value) {
+  if (value == null) return '—'
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  return `${(n * 100).toFixed(2)}%`
+}
+
+function fmtSigned(value, digits = 2) {
+  if (value == null) return '—'
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  const text = Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  if (n > 0) return `+${text}`
+  if (n < 0) return `-${text}`
+  return text
+}
+
+function toDateLabel(ts) {
+  if (!ts) return ''
+  try {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) return String(ts).slice(0, 10)
+    return d.toISOString().slice(0, 10)
+  } catch {
+    return String(ts).slice(0, 10)
+  }
+}
+
+function TrackerTooltip({ active, payload }) {
+  if (!active || !payload || payload.length === 0) return null
+  const row = payload[0]?.payload
+  if (!row) return null
+  return (
+    <div className="symbol-tracker-tooltip">
+      <div className="symbol-tracker-tooltip-title">{row.label}</div>
+      {row.close != null ? <div>Close: {fmtNum(row.close, 4)}</div> : null}
+      {row.open != null ? <div>Open: {fmtNum(row.open, 4)}</div> : null}
+      {row.high != null ? <div>High: {fmtNum(row.high, 4)}</div> : null}
+      {row.low != null ? <div>Low: {fmtNum(row.low, 4)}</div> : null}
+      {row.projected_center != null ? <div>Training center: {fmtNum(row.projected_center, 4)}</div> : null}
+      {row.projected_upper != null ? <div>Training upper: {fmtNum(row.projected_upper, 4)}</div> : null}
+      {row.projected_lower != null ? <div>Training lower: {fmtNum(row.projected_lower, 4)}</div> : null}
+    </div>
+  )
+}
+
+function TileChart({ tile, mode, chartStyle }) {
+  const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
+  if (bars.length === 0) {
+    return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
+  }
+
+  const chartData = bars.map((bar, idx) => {
+    const isUp = Number(bar.close) >= Number(bar.open)
+    return {
+      ...bar,
+      idx,
+      label: toDateLabel(bar.ts),
+      wick: bar.high != null && bar.low != null ? [bar.low, bar.high] : null,
+      bodyUp: isUp ? [bar.open, bar.close] : null,
+      bodyDown: !isUp ? [bar.close, bar.open] : null,
+      projected_center: null,
+      projected_upper: null,
+      projected_lower: null,
+    }
+  })
+
+  if (mode === 'daily' && tile?.expectation?.is_available) {
+    const lastIdx = chartData.length - 1
+    const centerPath = tile.expectation.center_path || []
+    const upperPath = tile.expectation.upper_path || []
+    const lowerPath = tile.expectation.lower_path || []
+    for (let i = 0; i < centerPath.length; i += 1) {
+      chartData.push({
+        idx: lastIdx + i + 1,
+        label: `+${centerPath[i]?.step ?? i + 1}`,
+        open: null,
+        high: null,
+        low: null,
+        close: null,
+        wick: null,
+        bodyUp: null,
+        bodyDown: null,
+        projected_center: centerPath[i]?.price ?? null,
+        projected_upper: upperPath[i]?.price ?? null,
+        projected_lower: lowerPath[i]?.price ?? null,
+      })
+    }
+  }
+
+  const entry = tile?.overlays?.entry
+  const tp = tile?.overlays?.take_profit
+  const sl = tile?.overlays?.stop_loss
+  const current = tile?.overlays?.current
+  const side = tile?.side
+  const currentIdx = bars.length - 1
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" />
+        <XAxis
+          dataKey="idx"
+          tickFormatter={(idx) => chartData[idx]?.label || ''}
+          tick={{ fontSize: 10 }}
+        />
+        <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
+        <Tooltip content={<TrackerTooltip />} />
+
+        {chartStyle === 'line' ? (
+          <Line type="monotone" dataKey="close" stroke="#60a5fa" strokeWidth={2} dot={false} connectNulls />
+        ) : (
+          <>
+            <Bar dataKey="wick" fill="none" stroke="#9ca3af" strokeWidth={1} barSize={1} />
+            <Bar dataKey="bodyUp" fill="#10b981" stroke="#10b981" barSize={6} />
+            <Bar dataKey="bodyDown" fill="#ef4444" stroke="#ef4444" barSize={6} />
+          </>
+        )}
+
+        {mode === 'daily' && tile?.expectation?.is_available ? (
+          <>
+            <Line type="monotone" dataKey="projected_center" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls />
+            <Line type="monotone" dataKey="projected_upper" stroke="#fbbf24" strokeWidth={1} dot={false} strokeDasharray="4 4" connectNulls />
+            <Line type="monotone" dataKey="projected_lower" stroke="#fbbf24" strokeWidth={1} dot={false} strokeDasharray="4 4" connectNulls />
+          </>
+        ) : null}
+
+        {entry != null ? <ReferenceLine y={entry} stroke="#a78bfa" strokeDasharray="4 3" label="Entry" /> : null}
+        {tp != null ? <ReferenceLine y={tp} stroke="#10b981" strokeDasharray="4 3" label="TP" /> : null}
+        {sl != null ? <ReferenceLine y={sl} stroke="#ef4444" strokeDasharray="4 3" label="SL" /> : null}
+
+        {entry != null && tp != null ? (
+          <ReferenceArea
+            y1={Math.min(entry, tp)}
+            y2={Math.max(entry, tp)}
+            x1={0}
+            x2={chartData.length - 1}
+            fill={side === 'LONG' ? '#064e3b' : '#7c2d12'}
+            fillOpacity={0.15}
+          />
+        ) : null}
+        {entry != null && sl != null ? (
+          <ReferenceArea
+            y1={Math.min(entry, sl)}
+            y2={Math.max(entry, sl)}
+            x1={0}
+            x2={chartData.length - 1}
+            fill={side === 'LONG' ? '#7c2d12' : '#064e3b'}
+            fillOpacity={0.12}
+          />
+        ) : null}
+
+        {current != null ? (
+          <ReferenceDot
+            x={currentIdx}
+            y={current}
+            r={5}
+            fill="#f8fafc"
+            stroke="#0f172a"
+            strokeWidth={1.5}
+            label={{ position: 'top', value: 'Now', fill: '#cbd5e1', fontSize: 10 }}
+          />
+        ) : null}
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
+}
+
+function Tile({ tile, mode, chartStyle }) {
+  const pnl = Number(tile?.unrealized_pnl || 0)
+  const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
+  const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
+  return (
+    <article className="symbol-tracker-tile">
+      <header className="symbol-tracker-tile-head">
+        <div>
+          <h3>{tile.symbol}</h3>
+          <div className="symbol-tracker-subline">
+            {tile.side} · Qty {fmtNum(tile.quantity, 0)} · {tile.market_type}
+          </div>
+        </div>
+        <div className={`symbol-tracker-thesis symbol-tracker-thesis--${thesisClass}`}>
+          {tile?.thesis?.status || 'UNKNOWN'}
+        </div>
+      </header>
+
+      <div className="symbol-tracker-kpi-row">
+        <div><span>Entry</span><b>{fmtNum(tile.entry_price, 4)}</b></div>
+        <div><span>Current</span><b>{fmtNum(tile.current_price, 4)}</b></div>
+        <div><span>Unrealized P&L</span><b className={pnlClass}>{fmtSigned(tile.unrealized_pnl, 2)}</b></div>
+      </div>
+
+      <div className="symbol-tracker-badges">
+        {(tile.position_status_badges || []).map((badge) => (
+          <span key={badge} className="symbol-tracker-badge">{badge}</span>
+        ))}
+      </div>
+
+      <TileChart tile={tile} mode={mode} chartStyle={chartStyle} />
+
+      <div className="symbol-tracker-metrics">
+        <div><span>Distance to TP</span><b>{fmtPct(tile?.progress_metrics?.distance_to_tp_pct)}</b></div>
+        <div><span>Distance to SL</span><b>{fmtPct(tile?.progress_metrics?.distance_to_sl_pct)}</b></div>
+        <div><span>Progress to TP</span><b>{fmtPct(tile?.progress_metrics?.progress_to_tp_pct)}</b></div>
+        <div><span>Expected move reached</span><b>{fmtPct(tile?.progress_metrics?.expected_progress_pct)}</b></div>
+        <div><span>Open R</span><b>{fmtNum(tile?.progress_metrics?.r_multiple_open, 2)}R</b></div>
+        <div><span>Days since entry</span><b>{tile?.holding_context?.days_since_entry ?? '—'}</b></div>
+        <div><span>Bars since entry</span><b>{tile?.holding_context?.bars_since_entry ?? '—'}</b></div>
+        <div><span>Vol regime</span><b>{tile?.volatility_context?.status || 'UNKNOWN'}</b></div>
+      </div>
+
+      {mode === 'daily' ? (
+        <div className="symbol-tracker-expectation-note">
+          <b>Training-implied range ({tile?.expectation?.label || 'Horizon'})</b>: historical distribution context only, not a deterministic forecast.
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
+export default function SymbolTracker() {
+  const [mode, setMode] = useState('intraday')
+  const [chartStyle, setChartStyle] = useState('line')
+  const [sortBy, setSortBy] = useState('worst_pnl')
+  const [longsOnly, setLongsOnly] = useState(false)
+  const [shortsOnly, setShortsOnly] = useState(false)
+  const [activeTpSlOnly, setActiveTpSlOnly] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [data, setData] = useState({ tiles: [], updated_at: null, disclaimer: '' })
+
+  const load = useCallback(async () => {
+    setError('')
+    try {
+      const params = new URLSearchParams({
+        mode,
+        chart_style: chartStyle,
+        horizon_bars: '5',
+        intraday_interval_minutes: '60',
+      })
+      const resp = await fetch(`${API_BASE}/symbol-tracker/tiles?${params.toString()}`)
+      if (!resp.ok) throw new Error(`Failed to load symbol tracker (${resp.status})`)
+      const payload = await resp.json()
+      setData(payload)
+    } catch (e) {
+      setError(e.message || 'Failed to load symbol tracker data.')
+    } finally {
+      setLoading(false)
+    }
+  }, [mode, chartStyle])
+
+  useVisibleInterval(load, 30000)
+
+  const tiles = useMemo(() => {
+    let rows = Array.isArray(data?.tiles) ? [...data.tiles] : []
+    if (longsOnly) rows = rows.filter((t) => t.side === 'LONG')
+    if (shortsOnly) rows = rows.filter((t) => t.side === 'SHORT')
+    if (activeTpSlOnly) {
+      rows = rows.filter((t) => t?.overlays?.take_profit != null || t?.overlays?.stop_loss != null)
+    }
+    rows.sort((a, b) => {
+      if (sortBy === 'best_pnl') return Number(b.unrealized_pnl || 0) - Number(a.unrealized_pnl || 0)
+      if (sortBy === 'worst_pnl') return Number(a.unrealized_pnl || 0) - Number(b.unrealized_pnl || 0)
+      if (sortBy === 'closest_tp') {
+        return Math.abs(Number(a?.progress_metrics?.distance_to_tp_pct ?? 999)) - Math.abs(Number(b?.progress_metrics?.distance_to_tp_pct ?? 999))
+      }
+      if (sortBy === 'closest_sl') {
+        return Math.abs(Number(a?.progress_metrics?.distance_to_sl_pct ?? 999)) - Math.abs(Number(b?.progress_metrics?.distance_to_sl_pct ?? 999))
+      }
+      if (sortBy === 'newest') {
+        return String(b.opened_at || '').localeCompare(String(a.opened_at || ''))
+      }
+      return 0
+    })
+    return rows
+  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy])
+
+  return (
+    <div className="symbol-tracker-page">
+      <div className="symbol-tracker-head">
+        <div>
+          <h2>Symbol Tracker</h2>
+          <p>One tile per open position with live/daily development, TP/SL overlays, and training-implied context.</p>
+        </div>
+        <button type="button" className="symbol-tracker-btn" onClick={load}>Refresh</button>
+      </div>
+
+      <div className="symbol-tracker-controls">
+        <label>
+          Mode
+          <select value={mode} onChange={(e) => setMode(e.target.value)}>
+            <option value="intraday">Live Intraday</option>
+            <option value="daily">Daily</option>
+          </select>
+        </label>
+        <label>
+          Chart
+          <select value={chartStyle} onChange={(e) => setChartStyle(e.target.value)}>
+            <option value="line">Line</option>
+            <option value="candles">Candles</option>
+          </select>
+        </label>
+        <label>
+          Sort
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            {SORT_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="symbol-tracker-check">
+          <input type="checkbox" checked={longsOnly} onChange={(e) => setLongsOnly(e.target.checked)} />
+          Longs only
+        </label>
+        <label className="symbol-tracker-check">
+          <input type="checkbox" checked={shortsOnly} onChange={(e) => setShortsOnly(e.target.checked)} />
+          Shorts only
+        </label>
+        <label className="symbol-tracker-check">
+          <input type="checkbox" checked={activeTpSlOnly} onChange={(e) => setActiveTpSlOnly(e.target.checked)} />
+          Active TP/SL only
+        </label>
+      </div>
+
+      <div className="symbol-tracker-disclaimer">
+        {data?.disclaimer || 'Training-implied range only. Historical context, not a forecast.'}
+      </div>
+
+      {error ? <div className="symbol-tracker-error">{error}</div> : null}
+      {loading ? <div className="symbol-tracker-loading">Loading symbol tracker...</div> : null}
+      {!loading && tiles.length === 0 ? <div className="symbol-tracker-empty">No open positions found.</div> : null}
+
+      <div className="symbol-tracker-grid">
+        {tiles.map((tile) => (
+          <Tile key={tile.symbol} tile={tile} mode={mode} chartStyle={chartStyle} />
+        ))}
+      </div>
+    </div>
+  )
+}

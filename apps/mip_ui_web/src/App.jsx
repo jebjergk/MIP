@@ -6,6 +6,7 @@ import AuditViewer from './pages/AuditViewer'
 import TrainingStatus from './pages/TrainingStatus'
 import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
+import SymbolTracker from './pages/SymbolTracker'
 import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/runs/:runId" element={<AuditViewer />} />
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
+        <Route path="/symbol-tracker" element={<SymbolTracker />} />
         <Route path="/manage" element={<PortfolioManagement />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/learning-ledger" element={<LearningLedger />} />

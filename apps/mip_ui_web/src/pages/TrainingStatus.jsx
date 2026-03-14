@@ -214,8 +214,8 @@ export default function TrainingStatus() {
               <th>Pattern <InfoTooltip scope={SCOPE} key="pattern_id" variant="short" /></th>
               <th>Interval <InfoTooltip scope={SCOPE} key="interval_minutes" variant="short" /></th>
               <th>As of <InfoTooltip scope={SCOPE} key="as_of_ts" variant="short" /></th>
-              <th>Maturity <InfoTooltip scope={SCOPE} key="maturity_score" variant="short" /></th>
-              <th>Trust gate</th>
+              <th>Maturity <InfoTooltip scope={SCOPE} key="maturity_score" variant="long" /></th>
+              <th>Trust gate <InfoTooltip scope={SCOPE} key="trust_gate" variant="long" /></th>
               <th>Sample size <InfoTooltip scope={SCOPE} key="recs_total" variant="short" /></th>
               <th>Coverage <InfoTooltip scope={SCOPE} key="coverage_ratio" variant="short" /></th>
               <th>Horizons <InfoTooltip scope={SCOPE} key="horizons_covered" variant="short" /></th>

@@ -329,11 +329,15 @@
     },
     "maturity_score": {
       "short": "Overall data-quality score 0–100 (sample + coverage + horizons).",
-      "long": "Maturity score is a 0–100 number combining how much data you have (sample size), how complete outcomes are (coverage), and how many time windows have data (horizons). Higher means more reliable."
+      "long": "Maturity score is a 0–100 evidence-quality score combining sample size, outcome coverage, and horizon completeness. It tells you how statistically mature this symbol-pattern row is. Important: maturity does not by itself authorize trading; trust gate is the final policy state used by proposal decisions."
     },
     "maturity_stage": {
       "short": "Label for maturity band (INSUFFICIENT / WARMING_UP / LEARNING / CONFIDENT).",
       "long": "Maturity stage is a simple label: INSUFFICIENT (score &lt;25), WARMING_UP (25–49), LEARNING (50–74), CONFIDENT (75+). It tells you at a glance if the data is enough to trust."
+    },
+    "trust_gate": {
+      "short": "Current symbol-level gate state used for proposal eligibility.",
+      "long": "Trust gate is the symbol-level policy label used by proposal gating. TRUSTED means the symbol currently passes configured hit-rate/return/min-sample thresholds. WATCH means borderline and monitored but not trusted. LOW_EVIDENCE means not enough reliable observations yet. UNTRUSTED means evidence is below policy thresholds. DISABLED appears only if symbol-local gate is turned off in config."
     },
     "reasons": {
       "short": "Plain-language explanations for the score (what happened and why).",

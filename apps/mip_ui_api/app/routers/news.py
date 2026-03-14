@@ -240,7 +240,12 @@ def get_news_intelligence(
             select
                 s.PORTFOLIO_ID,
                 s.SYMBOL,
-                coalesce(s.ASSET_CLASS, 'STOCK') as MARKET_TYPE,
+                case upper(coalesce(s.SECURITY_TYPE, ''))
+                    when 'STK' then 'STOCK'
+                    when 'ETF' then 'ETF'
+                    when 'CASH' then 'FX'
+                    else coalesce(upper(s.SECURITY_TYPE), 'STOCK')
+                end as MARKET_TYPE,
                 s.POSITION_QTY as QUANTITY,
                 s.AVG_COST as COST_BASIS,
                 coalesce(lp.CLOSE, 0) * coalesce(s.POSITION_QTY, 0) as MARKET_VALUE
@@ -250,7 +255,14 @@ def get_news_intelligence(
              and lps.SNAPSHOT_TS = s.SNAPSHOT_TS
             left join latest_price lp
               on upper(lp.SYMBOL) = upper(s.SYMBOL)
-             and upper(lp.MARKET_TYPE) = upper(coalesce(s.ASSET_CLASS, 'STOCK'))
+             and upper(lp.MARKET_TYPE) = (
+                 case upper(coalesce(s.SECURITY_TYPE, ''))
+                     when 'STK' then 'STOCK'
+                     when 'ETF' then 'ETF'
+                     when 'CASH' then 'FX'
+                     else coalesce(upper(s.SECURITY_TYPE), 'STOCK')
+                 end
+             )
             where s.SNAPSHOT_TYPE = 'POSITION'
               and coalesce(s.POSITION_QTY, 0) <> 0
               and (%s is null or s.PORTFOLIO_ID = %s)

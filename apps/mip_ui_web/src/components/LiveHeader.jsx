@@ -63,32 +63,24 @@ export default function LiveHeader() {
   }
 
   const lastRun = metrics?.last_run
-  const lastIntradayRun = metrics?.last_intraday_run
   const lastBrief = metrics?.last_brief
   const outcomes = metrics?.outcomes ?? {}
   const sinceLastRun = outcomes.since_last_run ?? 0
   const lastCalculatedAt = outcomes.last_calculated_at ?? null
+  const lastRunAt = lastRun?.completed_at ?? lastRun?.started_at ?? null
 
   return (
     <div className="live-header" role="region" aria-label="Live metrics">
       <span className="live-header-label">Live</span>
 
       {lastRun && (
-        <span className="live-header-item" title={undefined}>
-          Daily: {relativeTime(lastRun.completed_at ?? lastRun.started_at)}
+        <span className="live-header-item" title={lastRunAt ? `Completed ${new Date(lastRunAt).toLocaleString()}` : undefined}>
+          Daily pipeline
           <span className={`live-header-badge live-header-badge--${(lastRun.status || '').toLowerCase()}`}>
             {lastRun.status ?? '—'}
           </span>
+          {!lastCalculatedAt && lastRunAt ? <span> {relativeTime(lastRunAt)}</span> : null}
           <InfoTooltip scope="live" entryKey="last_pipeline_run" variant="short" />
-        </span>
-      )}
-
-      {lastIntradayRun && (
-        <span className="live-header-item" title={`${lastIntradayRun.bars_ingested ?? 0} bars, ${lastIntradayRun.signals_generated ?? 0} signals, ${lastIntradayRun.symbols_processed ?? 0} symbols`}>
-          Intraday: {relativeTime(lastIntradayRun.completed_at ?? lastIntradayRun.started_at)}
-          <span className={`live-header-badge live-header-badge--${(lastIntradayRun.status || '').toLowerCase()}`}>
-            {lastIntradayRun.status ?? '—'}
-          </span>
         </span>
       )}
 
@@ -108,7 +100,7 @@ export default function LiveHeader() {
 
       {lastCalculatedAt && (
         <span className="live-header-item" title={undefined}>
-          Data freshness: outcomes updated {relativeTime(lastCalculatedAt)} ago
+          Data freshness: outcomes updated {relativeTime(lastCalculatedAt)}
           <InfoTooltip scope="live" entryKey="data_freshness" variant="short" />
         </span>
       )}

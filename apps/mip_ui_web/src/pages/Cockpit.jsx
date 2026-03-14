@@ -39,6 +39,32 @@ function formatMoney(val) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val)
 }
 
+function formatSignedMoney(val) {
+  if (val == null) return '\u2014'
+  const n = Number(val)
+  if (!Number.isFinite(n)) return '\u2014'
+  const abs = formatMoney(Math.abs(n))
+  if (n > 0) return `+${abs}`
+  if (n < 0) return `-${abs}`
+  return abs
+}
+
+function formatQty(val) {
+  if (val == null) return '\u2014'
+  const n = Number(val)
+  if (!Number.isFinite(n)) return '\u2014'
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+}
+
+function formatAgeShort(ts) {
+  const mins = minutesAgo(ts)
+  if (mins == null) return '\u2014'
+  if (mins < 60) return `${Math.max(mins, 0)}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 48) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
+}
+
 function _get(row, ...keys) {
   for (const k of keys) {
     if (row[k] != null) return row[k]
@@ -488,6 +514,20 @@ function PortfolioStory({ portfolio }) {
   const maxDrawdown = _get(portfolio, 'MAX_DRAWDOWN', 'max_drawdown')
   const totalPaidOut = _get(portfolio, 'total_paid_out', 'TOTAL_PAID_OUT') || 0
   const gateTooltip = _get(portfolio, 'gate_tooltip') || ''
+  const liveOverview = _get(portfolio, 'LIVE_OVERVIEW', 'live_overview')
+  const liveSnapshotTs = liveOverview?.account_kpis?.snapshot_ts
+  const liveSnapshotState = String(liveOverview?.readiness?.snapshot_state || '').toUpperCase()
+  const pendingDecisions = Array.isArray(liveOverview?.pending_decisions) ? liveOverview.pending_decisions : []
+  const openPositions = Array.isArray(liveOverview?.open_positions) ? liveOverview.open_positions : []
+  const recentTrades = useMemo(() => {
+    const execs = Array.isArray(liveOverview?.executions) ? [...liveOverview.executions] : []
+    execs.sort((a, b) => {
+      const aTs = new Date(_get(a, 'execution_ts', 'EXECUTION_TS') || 0).getTime()
+      const bTs = new Date(_get(b, 'execution_ts', 'EXECUTION_TS') || 0).getTime()
+      return bTs - aTs
+    })
+    return execs.slice(0, 10)
+  }, [liveOverview])
 
   const [digest, setDigest] = useState(null)
   const [digestLoading, setDigestLoading] = useState(false)
@@ -584,9 +624,86 @@ function PortfolioStory({ portfolio }) {
       {gateTooltip && <p className="ck-gate-explanation">{gateTooltip}</p>}
 
       {isLiveCard && (
-        <p className="ck-empty">
-          Live broker-truth card. Research digest text is hidden here to prevent SIM-era narrative bleed-through.
-        </p>
+        <div className="ck-live-snapshot">
+          <div className="ck-live-meta">
+            <span>Snapshot from latest refresh: <strong>{formatTs(liveSnapshotTs)}</strong></span>
+            <span className={`ck-live-snapshot-state ck-live-snapshot-state--${liveSnapshotState.toLowerCase() || 'unknown'}`}>
+              {liveSnapshotState || 'UNKNOWN'} ({formatAgeShort(liveSnapshotTs)})
+            </span>
+          </div>
+
+          <div className="ck-live-grid">
+            <div className="ck-live-block">
+              <h4 className="ck-chart-title">Pending decisions ({pendingDecisions.length})</h4>
+              {pendingDecisions.length === 0 ? (
+                <p className="ck-empty">No pending decisions right now.</p>
+              ) : (
+                <ul className="ck-live-list">
+                  {pendingDecisions.slice(0, 4).map((d) => {
+                    const actionId = _get(d, 'action_id', 'ACTION_ID') || '—'
+                    const symbol = _get(d, 'symbol', 'SYMBOL') || '—'
+                    const side = String(_get(d, 'side', 'SIDE') || '—').toUpperCase()
+                    const status = _get(d, 'status', 'STATUS') || '—'
+                    const nextStep = _get(d, 'required_next_step', 'REQUIRED_NEXT_STEP')
+                    const createdAt = _get(d, 'created_at', 'CREATED_AT', 'timestamps')?.created_at || _get(d, 'created_at', 'CREATED_AT')
+                    return (
+                      <li key={actionId} className="ck-live-list-item">
+                        <strong>{symbol}</strong> {side} · {status} · {formatAgeShort(createdAt)}
+                        {nextStep ? <span className="ck-live-subline">Next: {String(nextStep).replaceAll('_', ' ')}</span> : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div className="ck-live-block">
+              <h4 className="ck-chart-title">Open positions ({openPositions.length})</h4>
+              {openPositions.length === 0 ? (
+                <p className="ck-empty">No open positions.</p>
+              ) : (
+                <ul className="ck-live-list">
+                  {openPositions.slice(0, 5).map((p, idx) => {
+                    const symbol = _get(p, 'symbol', 'SYMBOL') || '—'
+                    const qty = _get(p, 'position_qty', 'POSITION_QTY')
+                    const pnl = _get(p, 'unrealized_pnl', 'UNREALIZED_PNL')
+                    return (
+                      <li key={`${symbol}_${idx}`} className="ck-live-list-item">
+                        <strong>{symbol}</strong> · Qty {formatQty(qty)} · P&L{' '}
+                        <span className={Number(pnl || 0) >= 0 ? 'ck-kpi--positive' : 'ck-kpi--negative'}>
+                          {formatSignedMoney(pnl)}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="ck-live-block ck-live-block--trades">
+            <h4 className="ck-chart-title">Latest trades (last {recentTrades.length} of 10)</h4>
+            {recentTrades.length === 0 ? (
+              <p className="ck-empty">No recent executions yet.</p>
+            ) : (
+              <ul className="ck-live-list">
+                {recentTrades.map((t, idx) => {
+                  const symbol = _get(t, 'symbol', 'SYMBOL') || '—'
+                  const side = String(_get(t, 'side', 'SIDE') || '—').toUpperCase()
+                  const qty = _get(t, 'qty_filled', 'QTY_FILLED')
+                  const price = _get(t, 'avg_fill_price', 'AVG_FILL_PRICE')
+                  const ts = _get(t, 'execution_ts', 'EXECUTION_TS')
+                  return (
+                    <li key={`${symbol}_${ts || idx}`} className="ck-live-list-item">
+                      <strong>{symbol}</strong> {side} {formatQty(qty)} @ {price != null ? Number(price).toFixed(4) : '\u2014'}
+                      <span className="ck-live-subline">{formatTs(ts)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Digest content (lazy loaded) */}
@@ -849,9 +966,9 @@ export default function Cockpit() {
     const reasonText = reasons.length ? reasons.join(', ') : 'No blocking reasons.'
     const snapshotState = String(readiness?.snapshot_state || '').toUpperCase()
     const driftState = String(readiness?.drift_state || '').toUpperCase()
-    const healthState = snapshotState === 'READY'
+    const healthState = snapshotState === 'FRESH' || snapshotState === 'AGING' || snapshotState === 'READY'
       ? 'OK'
-      : (k?.snapshot_ts ? 'STALE' : 'BROKEN')
+      : (snapshotState === 'STALE' ? 'STALE' : (k?.snapshot_ts ? 'STALE' : 'BROKEN'))
     const gateState = readiness?.actionable ? 'SAFE' : (driftState === 'BLOCKED' ? 'STOPPED' : 'CAUTION')
     return {
       IS_LIVE_CARD: true,
@@ -868,6 +985,7 @@ export default function Cockpit() {
       TOTAL_RETURN: null,
       MAX_DRAWDOWN: null,
       TOTAL_PAID_OUT: 0,
+      LIVE_OVERVIEW: liveOverview,
     }
   }, [liveOverview])
 

@@ -853,6 +853,99 @@
   border-top: 1px solid #f0f0f0;
 }
 
+.ck-live-snapshot {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #f0f0f0;
+}
+
+.ck-live-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  align-items: center;
+  font-size: 0.78rem;
+  color: #4b5563;
+  margin-bottom: 0.55rem;
+}
+
+.ck-live-snapshot-state {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.ck-live-snapshot-state--fresh,
+.ck-live-snapshot-state--aging,
+.ck-live-snapshot-state--ready {
+  background: #ecfdf3;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.ck-live-snapshot-state--stale {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+
+.ck-live-snapshot-state--blocked,
+.ck-live-snapshot-state--unknown {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #9f1239;
+}
+
+.ck-live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.55rem;
+}
+
+.ck-live-block {
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: #fafcff;
+}
+
+.ck-live-block--trades {
+  margin-top: 0.55rem;
+}
+
+.ck-live-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ck-live-list-item {
+  font-size: 0.78rem;
+  color: #1f2937;
+  line-height: 1.35;
+  border-bottom: 1px solid #eef2f7;
+  padding-bottom: 0.25rem;
+}
+
+.ck-live-list-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.ck-live-subline {
+  display: block;
+  margin-top: 0.1rem;
+  color: #64748b;
+  font-size: 0.72rem;
+}
+
 .ck-headline {
   font-size: 0.95rem;
   font-weight: 600;

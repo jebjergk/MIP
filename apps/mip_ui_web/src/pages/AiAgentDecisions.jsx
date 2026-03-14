@@ -23,6 +23,11 @@ function parseMaybeJson(v) {
   return null
 }
 
+function hasTierCConflict(row) {
+  const codes = Array.isArray(row?.reason_codes) ? row.reason_codes.map((x) => String(x).toUpperCase()) : []
+  return codes.includes('TIER_C_CONFLICT_ALERT')
+}
+
 export default function AiAgentDecisions() {
   const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
   const [rows, setRows] = useState([])
@@ -183,6 +188,9 @@ export default function AiAgentDecisions() {
                   <td>
                     <div>Committee: {r.committee_status || '—'}</div>
                     <div>Verdict: {r.committee_verdict || '—'}</div>
+                    {hasTierCConflict(r) ? (
+                      <div className="aad-conflict-pill">Tier C conflict detected</div>
+                    ) : null}
                     <div>Size: {fmtNum(r.committee_joint_decision?.position_size_factor, 2)}</div>
                     <div>Target: {fmtNum(r.committee_joint_decision?.realistic_target_return, 3)}</div>
                     <div>Hold bars: {r.committee_joint_decision?.hold_bars ?? '—'}</div>
@@ -210,6 +218,16 @@ export default function AiAgentDecisions() {
           {detailError ? <div className="aad-error">{detailError}</div> : null}
           {detail ? (
             <>
+              {(() => {
+                const verdictJson = parseMaybeJson(detail?.committee?.verdict?.VERDICT_JSON)
+                const tierC = hasTierCConflict(detail) || Boolean(verdictJson?.verdict?.tier_c_conflict)
+                return tierC ? (
+                  <div className="aad-conflict-banner">
+                    Tier C conflict: committee direction conflicts with Parallel Worlds under elevated risk.
+                    Review this trade manually before proceed/reject.
+                  </div>
+                ) : null
+              })()}
               <div className="aad-meta">
                 <div><b>Action:</b> #{detail.action_id}</div>
                 <div><b>Run:</b> {detail.run_id || detail.committee?.run?.RUN_ID || '—'}</div>

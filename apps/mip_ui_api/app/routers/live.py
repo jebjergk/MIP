@@ -2743,6 +2743,57 @@ def _build_action_decision_context(cur, action: dict) -> dict:
     return context
 
 
+def _extract_pw_bias(pw_evidence: dict) -> str | None:
+    """
+    Map top PW recommendation into a directional bias:
+    - REDUCE: conservative/risk-off
+    - EXPAND: aggressive/risk-on
+    """
+    if not isinstance(pw_evidence, dict) or not pw_evidence.get("available"):
+        return None
+    recs = pw_evidence.get("top_recommendations")
+    if not isinstance(recs, list) or not recs:
+        return None
+    first = recs[0] if isinstance(recs[0], dict) else {}
+    rec_type = str(first.get("recommendation_type") or "").upper()
+    confidence = str(first.get("confidence_class") or "").upper()
+    if confidence not in ("STRONG", "EMERGING"):
+        return None
+    if rec_type == "CONSERVATIVE":
+        return "REDUCE"
+    if rec_type == "AGGRESSIVE":
+        return "EXPAND"
+    return None
+
+
+def _extract_committee_bias(verdict: dict) -> str | None:
+    if not isinstance(verdict, dict):
+        return None
+    rec = str(verdict.get("recommendation") or "").upper()
+    if rec in ("BLOCK", "PROCEED_REDUCED"):
+        return "REDUCE"
+    if rec == "PROCEED":
+        return "EXPAND"
+    return None
+
+
+def _has_tier_c_conflict(verdict: dict, pw_evidence: dict, news_snapshot: dict) -> bool:
+    """
+    Tier C conflict: committee direction opposes high-confidence PW direction
+    while market/news context is cautionary.
+    """
+    pw_bias = _extract_pw_bias(pw_evidence)
+    committee_bias = _extract_committee_bias(verdict)
+    if pw_bias is None or committee_bias is None or pw_bias == committee_bias:
+        return False
+
+    ns = news_snapshot if isinstance(news_snapshot, dict) else {}
+    context_state = str(ns.get("context_state") or "").upper()
+    event_shock = bool(ns.get("event_shock_flag"))
+    risk_high = event_shock or context_state in ("CAUTIONARY", "DESTABILIZING")
+    return risk_high
+
+
 @router.post("/snapshot/refresh")
 def refresh_live_snapshot(
     portfolio_id: int | None = Query(None, description="Optional LIVE portfolio ID to stamp snapshot rows"),
@@ -4674,9 +4725,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
+        if tier_c_conflict:
+            reason_codes.append("TIER_C_CONFLICT_ALERT")
         if verdict.get("quality_backfilled"):
             reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
         reason_codes.append("COMMITTEE_REVIEWED")
+        verdict["tier_c_conflict"] = tier_c_conflict
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
         proposed_price_derived = None
         proposed_qty_derived = None
@@ -4914,6 +4969,10 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         size_factor = float(verdict_in.get("size_factor") or jd.get("position_size_factor") or 1.0)
         confidence = float(verdict_in.get("confidence") or 0.5)
         blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (jd.get("should_enter") is False)
+        context = _build_action_decision_context(cur, action)
+        pw_evidence = context.get("parallel_worlds_evidence") or {}
+        action_news_snapshot = context.get("news_context_snapshot") or {}
+
         verdict = {
             "recommendation": recommendation,
             "size_factor": max(0.0, min(1.0, size_factor)),
@@ -4921,7 +4980,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
             "blocked": blocked,
             "joint_decision": jd,
         }
-        verdict = _backfill_joint_decision_from_policy(verdict, _build_action_decision_context(cur, action))
+        verdict = _backfill_joint_decision_from_policy(verdict, context)
         jd = _parse_variant(verdict.get("joint_decision"))
 
         reason_codes = []
@@ -4929,9 +4988,13 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
+        if tier_c_conflict:
+            reason_codes.append("TIER_C_CONFLICT_ALERT")
         if verdict.get("quality_backfilled"):
             reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
         reason_codes.append("COMMITTEE_REVIEWED")
+        verdict["tier_c_conflict"] = tier_c_conflict
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
 
         # Derive proposed price/qty so row no longer remains fully pending.

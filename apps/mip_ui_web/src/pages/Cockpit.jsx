@@ -15,7 +15,7 @@ import './Cockpit.css'
 function formatTs(ts) {
   if (!ts) return '\u2014'
   try {
-    const d = new Date(ts)
+    const d = new Date(normalizeIsoTs(ts))
     return d.toLocaleString(undefined, {
       month: 'short', day: 'numeric', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
@@ -23,9 +23,19 @@ function formatTs(ts) {
   } catch { return String(ts) }
 }
 
+function normalizeIsoTs(ts) {
+  if (typeof ts !== 'string') return ts
+  const s = ts.trim()
+  if (!s) return ts
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(s)
+  const looksIso = /^\d{4}-\d{2}-\d{2}T/.test(s)
+  if (looksIso && !hasExplicitZone) return `${s}Z`
+  return s
+}
+
 function minutesAgo(ts) {
   if (!ts) return null
-  try { return Math.round((Date.now() - new Date(ts).getTime()) / 60000) }
+  try { return Math.round((Date.now() - new Date(normalizeIsoTs(ts)).getTime()) / 60000) }
   catch { return null }
 }
 
@@ -102,14 +112,15 @@ function FreshnessBadge({ createdAt }) {
   )
 }
 
-function GateBadge({ gateState }) {
+function GateBadge({ gateState, reasonCode }) {
   const map = {
     SAFE: { cls: 'ck-gate--safe', label: 'Safe' },
     CAUTION: { cls: 'ck-gate--caution', label: 'Caution' },
     STOPPED: { cls: 'ck-gate--stopped', label: 'Stopped' },
   }
   const d = map[gateState] || map.SAFE
-  return <span className={`ck-gate-badge ${d.cls}`}>{d.label}</span>
+  const showReason = gateState !== 'SAFE' && reasonCode
+  return <span className={`ck-gate-badge ${d.cls}`}>{showReason ? `${d.label}: ${reasonCode}` : d.label}</span>
 }
 
 function HealthBadge({ healthState }) {
@@ -514,6 +525,7 @@ function PortfolioStory({ portfolio }) {
   const maxDrawdown = _get(portfolio, 'MAX_DRAWDOWN', 'max_drawdown')
   const totalPaidOut = _get(portfolio, 'total_paid_out', 'TOTAL_PAID_OUT') || 0
   const gateTooltip = _get(portfolio, 'gate_tooltip') || ''
+  const gateReasonCode = _get(portfolio, 'GATE_REASON_CODE', 'gate_reason_code')
   const liveOverview = _get(portfolio, 'LIVE_OVERVIEW', 'live_overview')
   const liveSnapshotTs = liveOverview?.account_kpis?.snapshot_ts
   const liveSnapshotState = String(liveOverview?.readiness?.snapshot_state || '').toUpperCase()
@@ -582,7 +594,7 @@ function PortfolioStory({ portfolio }) {
       onOpen={isLiveCard ? undefined : handleOpen}
       badges={
         <>
-          <GateBadge gateState={gateState} />
+          <GateBadge gateState={gateState} reasonCode={gateReasonCode} />
           <HealthBadge healthState={healthState} />
         </>
       }
@@ -964,6 +976,7 @@ export default function Cockpit() {
     const readiness = liveOverview?.readiness || {}
     const reasons = Array.isArray(readiness?.blocking_reasons) ? readiness.blocking_reasons : []
     const reasonText = reasons.length ? reasons.join(', ') : 'No blocking reasons.'
+    const primaryReasonCode = reasons[0] || ''
     const snapshotState = String(readiness?.snapshot_state || '').toUpperCase()
     const driftState = String(readiness?.drift_state || '').toUpperCase()
     const healthState = snapshotState === 'FRESH' || snapshotState === 'AGING' || snapshotState === 'READY'
@@ -977,6 +990,7 @@ export default function Cockpit() {
       STATUS: p?.is_active === false ? 'INACTIVE' : 'ACTIVE',
       GATE_STATE: gateState,
       GATE_REASON: reasonText,
+      GATE_REASON_CODE: primaryReasonCode,
       gate_tooltip: reasonText,
       health_state: healthState,
       last_day_close_equity: k?.equity_nav_eur ?? null,

@@ -230,21 +230,30 @@ def get_news_intelligence(
                     partition by SYMBOL, MARKET_TYPE
                     order by TS desc
                 ) = 1
+            ),
+            latest_position_snap as (
+                select PORTFOLIO_ID, max(SNAPSHOT_TS) as SNAPSHOT_TS
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'POSITION'
+                group by PORTFOLIO_ID
             )
             select
-                p.PORTFOLIO_ID,
-                p.SYMBOL,
-                p.MARKET_TYPE,
-                p.QUANTITY,
-                p.COST_BASIS,
-                coalesce(lp.CLOSE, 0) * coalesce(p.QUANTITY, 0) as MARKET_VALUE
-            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+                s.PORTFOLIO_ID,
+                s.SYMBOL,
+                coalesce(s.ASSET_CLASS, 'STOCK') as MARKET_TYPE,
+                s.POSITION_QTY as QUANTITY,
+                s.AVG_COST as COST_BASIS,
+                coalesce(lp.CLOSE, 0) * coalesce(s.POSITION_QTY, 0) as MARKET_VALUE
+            from MIP.LIVE.BROKER_SNAPSHOTS s
+            join latest_position_snap lps
+              on lps.PORTFOLIO_ID = s.PORTFOLIO_ID
+             and lps.SNAPSHOT_TS = s.SNAPSHOT_TS
             left join latest_price lp
-              on lp.SYMBOL = p.SYMBOL
-             and lp.MARKET_TYPE = p.MARKET_TYPE
-            where p.IS_OPEN = true
-              and p.INTERVAL_MINUTES = 1440
-              and (%s is null or p.PORTFOLIO_ID = %s)
+              on upper(lp.SYMBOL) = upper(s.SYMBOL)
+             and upper(lp.MARKET_TYPE) = upper(coalesce(s.ASSET_CLASS, 'STOCK'))
+            where s.SNAPSHOT_TYPE = 'POSITION'
+              and coalesce(s.POSITION_QTY, 0) <> 0
+              and (%s is null or s.PORTFOLIO_ID = %s)
             """,
             (portfolio_id, portfolio_id),
         )
@@ -474,7 +483,7 @@ def get_news_intelligence(
             "lineage": {
                 "tables": [
                     "MIP.MART.V_NEWS_AGG_LATEST",
-                    "MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL",
+                    "MIP.LIVE.BROKER_SNAPSHOTS",
                     "MIP.MART.MARKET_BARS",
                     "MIP.AGENT_OUT.ORDER_PROPOSALS",
                 ],

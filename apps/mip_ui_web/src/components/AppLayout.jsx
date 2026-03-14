@@ -19,30 +19,40 @@ const NAV_GROUPS = [
   {
     label: 'Portfolio',
     items: [
-      { to: '/manage',     icon: '\uD83D\uDCCB', label: 'Management' },
-      { to: '/portfolios', icon: '\uD83D\uDCC8', label: 'Activity' },
       { to: '/live-portfolio-config', icon: '\u2699\uFE0F', label: 'Live Portfolio Link' },
+      { to: '/live-portfolio-activity', icon: '\uD83D\uDCCA', label: 'Live Portfolio Activity' },
     ],
   },
   {
     label: 'Research',
     items: [
-      { to: '/training',        icon: '\uD83C\uDFAF', label: 'Training Status' },
-      { to: '/intraday/dashboard', icon: '\u23F1\uFE0F', label: 'Intraday Training' },
-      { to: '/learning-ledger', icon: '\uD83E\uDDEE', label: 'Learning Ledger' },
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Market Timeline' },
+      { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
+      { to: '/training',        icon: '\uD83C\uDFAF', label: 'Training Status' },
       { to: '/parallel-worlds', icon: '\uD83C\uDF10', label: 'Parallel Worlds' },
+    ],
+  },
+  {
+    label: 'Decision Executions',
+    items: [
+      { to: '/decision-console', icon: '\u26A1', label: 'AI Agent Decisions' },
+      { to: '/learning-ledger', icon: '\uD83E\uDDEE', label: 'Learning Ledger' },
     ],
   },
   {
     label: 'Operations',
     items: [
-      { to: '/live-portfolio-activity', icon: '\uD83D\uDCCA', label: 'Live Portfolio Activity' },
-      { to: '/intraday/early-exit', icon: '\u23F1\uFE0F', label: 'Intraday Early Exit' },
-      { to: '/decision-console', icon: '\u26A1', label: 'AI Agent Decisions' },
-      { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
       { to: '/runs',  icon: '\u25B6\uFE0F', label: 'Runs (Audit)' },
       { to: '/debug', icon: '\uD83D\uDD27', label: 'Debug' },
+    ],
+  },
+  {
+    label: 'Deprecated',
+    items: [
+      { to: '/manage',     icon: '\uD83D\uDCCB', label: 'Management' },
+      { to: '/portfolios', icon: '\uD83D\uDCC8', label: 'Activity' },
+      { to: '/intraday/dashboard', icon: '\u23F1\uFE0F', label: 'Intraday Training' },
+      { to: '/intraday/early-exit', icon: '\u23F1\uFE0F', label: 'Intraday Early Exit' },
     ],
   },
 ]

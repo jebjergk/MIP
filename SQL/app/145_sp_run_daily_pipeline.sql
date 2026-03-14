@@ -368,11 +368,11 @@ begin
         );
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
-            'PORTFOLIO_SIMULATION',
+            'PORTFOLIO_LIVE_SYNC',
             'SKIPPED_NO_NEW_BARS',
             null,
             object_construct(
-                'step_name', 'portfolio_simulation',
+                'step_name', 'portfolio_live_sync',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_step_start,
@@ -557,7 +557,7 @@ begin
             'returns_refresh', :v_returns_result,
             'recommendations', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'evaluation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
-            'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
+            'portfolio_live_sync', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'pw_symbol_shadow', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
             'daily_digest', object_construct('status', :v_digest_status, 'narrative_mode', :v_digest_result:narrative_mode, 'portfolio_count', :v_digest_result:portfolio_count, 'cortex_success_count', :v_digest_result:cortex_success_count, 'cortex_fallback_count', :v_digest_result:cortex_fallback_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
@@ -751,11 +751,11 @@ begin
             v_sim_duration_ms := timestampdiff(millisecond, v_step_start, v_step_end);
             call MIP.APP.SP_AUDIT_LOG_STEP(
                 :v_run_id,
-                'PORTFOLIO_SIMULATION',
+                'PORTFOLIO_LIVE_SYNC',
                 'FAIL',
                 null,
                 object_construct(
-                    'step_name', 'portfolio_simulation',
+                    'step_name', 'portfolio_live_sync',
                     'scope', 'AGG',
                     'scope_key', null,
                     'started_at', :v_step_start,
@@ -769,7 +769,7 @@ begin
                 :v_sim_error_query_id,
                 object_construct(
                     'proc_name', 'SP_RUN_DAILY_PIPELINE',
-                    'step', 'portfolio_simulation',
+                    'step', 'portfolio_live_sync',
                     'run_id', :v_run_id,
                     'portfolio_count', :v_portfolio_count
                 ),
@@ -795,11 +795,11 @@ begin
 
     call MIP.APP.SP_AUDIT_LOG_STEP(
         :v_run_id,
-        'PORTFOLIO_SIMULATION',
+        'PORTFOLIO_LIVE_SYNC',
         'SUCCESS',
         :v_portfolio_trades,
         object_construct(
-            'step_name', 'portfolio_simulation',
+            'step_name', 'portfolio_live_sync',
             'scope', 'AGG',
             'scope_key', null,
             'started_at', :v_step_start,
@@ -928,7 +928,9 @@ begin
           from MIP.LIVE.LIVE_ORDERS lo
           join MIP.LIVE.LIVE_ACTIONS la
             on la.ACTION_ID = lo.ACTION_ID
-         where la.RUN_ID_VARCHAR = to_varchar(:v_run_id)
+          join MIP.AGENT_OUT.ORDER_PROPOSALS op
+            on op.PROPOSAL_ID = la.PROPOSAL_ID
+         where op.RUN_ID_VARCHAR = to_varchar(:v_run_id)
            and (
                upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
                or coalesce(lo.QTY_FILLED, 0) > 0
@@ -1039,7 +1041,9 @@ begin
           from MIP.LIVE.LIVE_ORDERS lo
           join MIP.LIVE.LIVE_ACTIONS la
             on la.ACTION_ID = lo.ACTION_ID
-         where la.RUN_ID_VARCHAR = to_varchar(:v_run_id)
+          join MIP.AGENT_OUT.ORDER_PROPOSALS op
+            on op.PROPOSAL_ID = la.PROPOSAL_ID
+         where op.RUN_ID_VARCHAR = to_varchar(:v_run_id)
            and (
                upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
                or coalesce(lo.QTY_FILLED, 0) > 0
@@ -1381,7 +1385,7 @@ begin
         'returns_refresh', :v_returns_result,
         'recommendations', :v_recommendation_results,
         'evaluation', :v_eval_result,
-        'portfolio_simulation', :v_portfolio_result,
+        'portfolio_live_sync', :v_portfolio_result,
         'agent_generate_morning_brief', object_construct(
             'status', iff(:v_agent_brief_status = 'SUCCESS', 'SUCCESS', :v_agent_brief_status),
             'brief_id', :v_agent_brief_id

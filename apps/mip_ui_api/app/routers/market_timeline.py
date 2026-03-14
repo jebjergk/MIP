@@ -976,12 +976,14 @@ def _build_narrative(
             
             # Check for portfolio-specific blocks
             if portfolio_id:
-                # Check risk gate
+                # Check live drift/risk block
                 try:
                     cur.execute(
                         """
-                        select ENTRIES_BLOCKED, BLOCK_REASON
-                        from MIP.MART.V_PORTFOLIO_RISK_GATE
+                        select
+                          iff(upper(coalesce(DRIFT_STATUS, '')) = 'BLOCKED', true, false) as ENTRIES_BLOCKED,
+                          iff(upper(coalesce(DRIFT_STATUS, '')) = 'BLOCKED', 'DRIFT_STATUS=BLOCKED', null) as BLOCK_REASON
+                        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                         where PORTFOLIO_ID = %s
                         """,
                         (portfolio_id,),
@@ -995,15 +997,25 @@ def _build_narrative(
                 except Exception:
                     pass
                 
-                # Check if already held
+                # Check if already held from latest broker position snapshot
                 try:
                     cur.execute(
                         """
-                        select count(*) 
-                        from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
-                        where PORTFOLIO_ID = %s and SYMBOL = %s
+                        with latest_pos as (
+                          select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                          from MIP.LIVE.BROKER_SNAPSHOTS
+                          where PORTFOLIO_ID = %s
+                            and SNAPSHOT_TYPE = 'POSITION'
+                        )
+                        select count(*)
+                        from MIP.LIVE.BROKER_SNAPSHOTS s
+                        join latest_pos lp on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
+                        where s.PORTFOLIO_ID = %s
+                          and s.SNAPSHOT_TYPE = 'POSITION'
+                          and upper(s.SYMBOL) = upper(%s)
+                          and coalesce(s.POSITION_QTY, 0) <> 0
                         """,
-                        (portfolio_id, symbol),
+                        (portfolio_id, portfolio_id, symbol),
                     )
                     row = cur.fetchone()
                     if row and row[0] > 0:
@@ -1021,8 +1033,17 @@ def _build_narrative(
                             prof.MAX_POSITIONS
                         from (
                             select count(*) as open_count
-                            from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
-                            where PORTFOLIO_ID = %s
+                            from MIP.LIVE.BROKER_SNAPSHOTS s
+                            join (
+                                select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                                from MIP.LIVE.BROKER_SNAPSHOTS
+                                where PORTFOLIO_ID = %s
+                                  and SNAPSHOT_TYPE = 'POSITION'
+                            ) lp
+                              on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
+                            where s.PORTFOLIO_ID = %s
+                              and s.SNAPSHOT_TYPE = 'POSITION'
+                              and coalesce(s.POSITION_QTY, 0) <> 0
                         ) op
                         cross join (
                             select coalesce(cfg.MAX_POSITIONS, 10) as MAX_POSITIONS
@@ -1030,7 +1051,7 @@ def _build_narrative(
                             where cfg.PORTFOLIO_ID = %s
                         ) prof
                         """,
-                        (portfolio_id, portfolio_id),
+                        (portfolio_id, portfolio_id, portfolio_id),
                     )
                     row = cur.fetchone()
                     if row and row[0] >= row[1]:

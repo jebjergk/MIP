@@ -516,6 +516,20 @@ def get_latest_brief(portfolio_id: int):
           and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
         order by EVENT_TS desc
         limit 1
+    ),
+    open_positions_live as (
+        with latest_pos as (
+          select max(SNAPSHOT_TS) as SNAPSHOT_TS
+          from MIP.LIVE.BROKER_SNAPSHOTS
+          where PORTFOLIO_ID = %s
+            and SNAPSHOT_TYPE = 'POSITION'
+        )
+        select count(*) as OPEN_POSITIONS
+        from MIP.LIVE.BROKER_SNAPSHOTS s
+        join latest_pos lp on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
+        where s.PORTFOLIO_ID = %s
+          and s.SNAPSHOT_TYPE = 'POSITION'
+          and coalesce(s.POSITION_QTY, 0) <> 0
     )
     select
         lb.PORTFOLIO_ID as portfolio_id,
@@ -524,11 +538,11 @@ def get_latest_brief(portfolio_id: int):
         lb.pipeline_run_id,
         lb.AGENT_NAME as agent_name,
         lb.BRIEF as brief_json,
-        rg.ENTRIES_BLOCKED as entries_blocked,
-        rg.BLOCK_REASON as block_reason,
-        rg.RISK_STATUS as risk_status,
-        rg.OPEN_POSITIONS as open_positions,
-        rg.MAX_DRAWDOWN as max_drawdown_current,
+        iff(upper(coalesce(lc.DRIFT_STATUS, '')) = 'BLOCKED', true, false) as entries_blocked,
+        iff(upper(coalesce(lc.DRIFT_STATUS, '')) = 'BLOCKED', 'DRIFT_STATUS=BLOCKED', null) as block_reason,
+        iff(upper(coalesce(lc.DRIFT_STATUS, '')) = 'BLOCKED', 'WARN', 'OK') as risk_status,
+        coalesce(opl.OPEN_POSITIONS, 0) as open_positions,
+        null as max_drawdown_current,
         null as drawdown_stop_pct,
         lc.MAX_POSITIONS as max_positions,
         lc.MAX_POSITION_PCT as max_position_pct,
@@ -544,10 +558,10 @@ def get_latest_brief(portfolio_id: int):
         e.EPISODE_ID as episode_id,
         e.START_TS as episode_start_ts
     from latest_brief lb
-    left join MIP.MART.V_PORTFOLIO_RISK_GATE rg
-        on rg.PORTFOLIO_ID = lb.PORTFOLIO_ID
     left join MIP.LIVE.LIVE_PORTFOLIO_CONFIG lc
         on lc.PORTFOLIO_ID = lb.PORTFOLIO_ID
+    left join open_positions_live opl
+        on 1 = 1
     left join prev_brief pb
         on pb.PORTFOLIO_ID = lb.PORTFOLIO_ID
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
@@ -557,7 +571,7 @@ def get_latest_brief(portfolio_id: int):
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(sql, (portfolio_id, portfolio_id))
+        cur.execute(sql, (portfolio_id, portfolio_id, portfolio_id, portfolio_id))
         row = cur.fetchone()
         if not row:
             return {

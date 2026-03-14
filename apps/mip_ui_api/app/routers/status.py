@@ -21,8 +21,7 @@ def _get_latest_pipeline_run(conn):
     This ensures consistency across the UI - the same run ID is considered "latest"
     everywhere (digests, portfolios, status badge).
     
-    Note: We use audit log, NOT PORTFOLIO.LAST_SIMULATION_RUN_ID, because that field
-    is set by a different procedure (SP_RUN_PORTFOLIO_SIMULATION) with a different run ID.
+    Note: We use audit log as the canonical source for pipeline run identity and freshness.
     """
     try:
         cur = conn.cursor()

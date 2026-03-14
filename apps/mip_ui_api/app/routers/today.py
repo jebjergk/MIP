@@ -154,42 +154,112 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
             if row:
                 resolved_portfolio_id = int(row[0])
 
-        # --- Portfolio: risk state, risk gate, KPIs, run events ---
+        # --- Portfolio: live status, gate, KPIs, run events ---
         if resolved_portfolio_id is not None:
             cur.execute(
-                "select * from MIP.MART.V_PORTFOLIO_RISK_STATE where PORTFOLIO_ID = %s",
-                (resolved_portfolio_id,),
-            )
-            risk_state_rows = fetch_all(cur)
-            cur.execute(
-                "select * from MIP.MART.V_PORTFOLIO_RISK_GATE where PORTFOLIO_ID = %s",
-                (resolved_portfolio_id,),
-            )
-            risk_gate_rows = fetch_all(cur)
-            cur.execute(
                 """
-                select * from MIP.MART.V_PORTFOLIO_RUN_KPIS
+                select
+                  PORTFOLIO_ID,
+                  coalesce(IS_ACTIVE, true) as IS_ACTIVE,
+                  DRIFT_STATUS,
+                  MAX_POSITIONS,
+                  MAX_POSITION_PCT,
+                  UPDATED_AT
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                 where PORTFOLIO_ID = %s
-                order by TO_TS desc
-                limit 5
                 """,
                 (resolved_portfolio_id,),
             )
-            kpis_rows = fetch_all(cur)
+            cfg_rows = fetch_all(cur)
+            cfg = cfg_rows[0] if cfg_rows else {}
+
             cur.execute(
                 """
-                select * from MIP.MART.V_PORTFOLIO_RUN_EVENTS
-                where PORTFOLIO_ID = %s
-                order by RUN_ID desc
+                with latest_nav as (
+                  select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                  from MIP.LIVE.BROKER_SNAPSHOTS
+                  where PORTFOLIO_ID = %s
+                    and SNAPSHOT_TYPE = 'NAV'
+                )
+                select
+                  s.SNAPSHOT_TS,
+                  s.NET_LIQUIDATION_EUR,
+                  s.TOTAL_CASH_EUR,
+                  s.GROSS_POSITION_VALUE_EUR
+                from MIP.LIVE.BROKER_SNAPSHOTS s
+                join latest_nav ln on s.SNAPSHOT_TS = ln.SNAPSHOT_TS
+                where s.PORTFOLIO_ID = %s
+                  and s.SNAPSHOT_TYPE = 'NAV'
+                limit 1
+                """,
+                (resolved_portfolio_id, resolved_portfolio_id),
+            )
+            nav_rows = fetch_all(cur)
+            nav = nav_rows[0] if nav_rows else {}
+
+            cur.execute(
+                """
+                with latest_pos as (
+                  select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                  from MIP.LIVE.BROKER_SNAPSHOTS
+                  where PORTFOLIO_ID = %s
+                    and SNAPSHOT_TYPE = 'POSITION'
+                )
+                select count(*) as OPEN_POSITIONS
+                from MIP.LIVE.BROKER_SNAPSHOTS s
+                join latest_pos lp on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
+                where s.PORTFOLIO_ID = %s
+                  and s.SNAPSHOT_TYPE = 'POSITION'
+                  and coalesce(s.POSITION_QTY, 0) <> 0
+                """,
+                (resolved_portfolio_id, resolved_portfolio_id),
+            )
+            open_pos_row = cur.fetchone()
+            open_positions = int(open_pos_row[0]) if open_pos_row else 0
+
+            cur.execute(
+                """
+                select
+                  RUN_ID,
+                  EVENT_TS,
+                  STATUS,
+                  EVENT_NAME,
+                  DETAILS
+                from MIP.APP.MIP_AUDIT_LOG
+                where EVENT_TYPE = 'PIPELINE_STEP'
+                  and DETAILS:portfolio_id::number = %s
+                order by EVENT_TS desc
                 limit 20
                 """,
                 (resolved_portfolio_id,),
             )
             run_events_rows = fetch_all(cur)
+
+            drift_status = cfg.get("DRIFT_STATUS")
+            entries_blocked = str(drift_status or "").upper() == "BLOCKED"
             portfolio = {
-                "risk_state": _serialize_rows(risk_state_rows)[:1],
-                "risk_gate": _serialize_rows(risk_gate_rows)[:1],
-                "kpis": _serialize_rows(kpis_rows),
+                "risk_state": _serialize_rows([{
+                    "portfolio_id": resolved_portfolio_id,
+                    "is_active": cfg.get("IS_ACTIVE"),
+                    "drift_status": drift_status,
+                    "updated_at": cfg.get("UPDATED_AT"),
+                }]),
+                "risk_gate": _serialize_rows([{
+                    "portfolio_id": resolved_portfolio_id,
+                    "entries_blocked": entries_blocked,
+                    "block_reason": "DRIFT_STATUS=BLOCKED" if entries_blocked else None,
+                    "risk_status": "WARN" if entries_blocked else "OK",
+                    "open_positions": open_positions,
+                    "max_positions": cfg.get("MAX_POSITIONS"),
+                    "max_position_pct": cfg.get("MAX_POSITION_PCT"),
+                }]),
+                "kpis": _serialize_rows([{
+                    "portfolio_id": resolved_portfolio_id,
+                    "snapshot_ts": nav.get("SNAPSHOT_TS"),
+                    "total_equity": nav.get("NET_LIQUIDATION_EUR"),
+                    "cash": nav.get("TOTAL_CASH_EUR"),
+                    "gross_exposure": nav.get("GROSS_POSITION_VALUE_EUR"),
+                }]),
                 "run_events": _serialize_rows(run_events_rows),
             }
 

@@ -521,6 +521,133 @@
   font-style: italic;
 }
 
+/* ── Overview Snapshot ─────────────────────────────── */
+
+.pw-overview-snapshot {
+  border-left: 3px solid #0d6efd;
+}
+.pw-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.pw-kpi {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  background: #f8f9fa;
+}
+.pw-kpi-label {
+  display: block;
+  font-size: 0.72rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.3rem;
+  font-weight: 700;
+}
+.pw-kpi-value {
+  display: block;
+  font-size: 1.03rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+.pw-kpi-sub {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  color: #6c757d;
+}
+
+/* ── Collapsible Panels ────────────────────────────── */
+
+.pw-collapsible {
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+.pw-collapsible-head {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.7rem 0.9rem;
+  border: none;
+  background: #fafbfc;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  text-align: left;
+}
+.pw-collapsible-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+.pw-collapsible-meta {
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+.pw-collapsible-toggle {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #0d6efd;
+}
+.pw-collapsible-body {
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.pw-inline-action {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -0.7rem;
+}
+.pw-inline-btn {
+  border: 1px solid #dbeafe;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-radius: 8px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Heatmap Controls ──────────────────────────────── */
+
+.pw-heatmap-toolbar {
+  display: flex;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+.pw-heatmap-mode {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 7px;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.pw-heatmap-mode--active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+.pw-heatmap-cell--empty {
+  color: #9ca3af;
+}
+.pw-heatmap-3d {
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
 /* ── Regret Attribution ──────────────────────────── */
 
 .pw-attribution-dominant {

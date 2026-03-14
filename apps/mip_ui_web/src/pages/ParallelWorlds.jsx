@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react'
 import { API_BASE } from '../App'
 import { usePortfolios } from '../context/PortfolioContext'
 import LoadingState from '../components/LoadingState'
 import EmptyState from '../components/EmptyState'
+import Plot from 'react-plotly.js'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Legend, ReferenceLine,
@@ -99,6 +100,8 @@ const TYPE_LABELS = {
   SIZING: 'Position Size',
   TIMING: 'Entry Timing',
   BASELINE: 'Baseline',
+  HORIZON: 'Horizon',
+  EARLY_EXIT: 'Early Exit',
 }
 
 /* ── Gate Humanizer ──────────────────────────────────── */
@@ -171,8 +174,9 @@ function humanizeGate(gate) {
 
 /* ── Scenario Table ──────────────────────────────────── */
 
-function ScenarioTable({ results, expandedRow, setExpandedRow, confidenceMap }) {
+function ScenarioTable({ results, expandedRow, setExpandedRow, confidenceMap, maxRows = null }) {
   if (!results || !results.scenarios) return null
+  const visible = maxRows != null ? results.scenarios.slice(0, maxRows) : results.scenarios
 
   return (
     <section className="pw-card">
@@ -202,9 +206,9 @@ function ScenarioTable({ results, expandedRow, setExpandedRow, confidenceMap }) 
             </tr>
           </thead>
           <tbody>
-            {results.scenarios.map((s, i) => (
-              <>
-                <tr key={s.scenario_id} className={s.outperformed ? 'pw-row--outperformed' : ''}>
+            {visible.map((s, i) => (
+              <Fragment key={s.scenario_id}>
+                <tr className={s.outperformed ? 'pw-row--outperformed' : ''}>
                   <td className="pw-scenario-name">{s.display_name || s.scenario_name}</td>
                   <td><span className={`pw-type pw-type--${(s.scenario_type || '').toLowerCase()}`}>{TYPE_LABELS[s.scenario_type] || s.scenario_type}</span></td>
                   <td className="pw-num">{formatMoney(s.cf_pnl)}</td>
@@ -227,7 +231,7 @@ function ScenarioTable({ results, expandedRow, setExpandedRow, confidenceMap }) 
                     </button>
                   </td>
                 </tr>
-                {expandedRow === i && (
+                {expandedRow === i ? (
                   <tr key={`${s.scenario_id}-detail`} className="pw-detail-row">
                     <td colSpan={8}>
                       <div className="pw-detail">
@@ -247,12 +251,72 @@ function ScenarioTable({ results, expandedRow, setExpandedRow, confidenceMap }) 
                       </div>
                     </td>
                   </tr>
-                )}
-              </>
+                ) : null}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+    </section>
+  )
+}
+
+function OverviewSnapshot({ results, confidence, attribution }) {
+  if (!results?.found) return null
+  const scenarios = Array.isArray(results?.scenarios) ? results.scenarios : []
+  const best = scenarios.length > 0
+    ? [...scenarios].sort((a, b) => (b.pnl_delta ?? -Infinity) - (a.pnl_delta ?? -Infinity))[0]
+    : null
+  const confidenceRows = Array.isArray(confidence?.data) ? confidence.data : []
+  const counts = confidenceRows.reduce((acc, row) => {
+    const key = String(row.confidence_class || 'NOISE').toUpperCase()
+    acc[key] = (acc[key] || 0) + 1
+    return acc
+  }, { STRONG: 0, EMERGING: 0, WEAK: 0, NOISE: 0 })
+  const dominant = attribution?.dominant_driver
+
+  return (
+    <section className="pw-card pw-overview-snapshot">
+      <div className="pw-card-header">
+        <h3>Overview Snapshot</h3>
+        <span className="pw-subtitle">Active scenario set only</span>
+      </div>
+      <div className="pw-kpi-grid">
+        <div className="pw-kpi">
+          <span className="pw-kpi-label">Actual PnL</span>
+          <span className={`pw-kpi-value ${deltaColor(results.actual?.pnl)}`}>{formatMoney(results.actual?.pnl)}</span>
+          <span className="pw-kpi-sub">Equity: {formatMoney(results.actual?.equity)}</span>
+        </div>
+        <div className="pw-kpi">
+          <span className="pw-kpi-label">Best Scenario Today</span>
+          <span className="pw-kpi-value">{best?.display_name || best?.scenario_name || '—'}</span>
+          <span className={`pw-kpi-sub ${deltaColor(best?.pnl_delta)}`}>Delta: {formatMoney(best?.pnl_delta)}</span>
+        </div>
+        <div className="pw-kpi">
+          <span className="pw-kpi-label">Signal Mix</span>
+          <span className="pw-kpi-value">{confidenceRows.length}</span>
+          <span className="pw-kpi-sub">Strong {counts.STRONG} | Emerging {counts.EMERGING} | Weak {counts.WEAK} | Noise {counts.NOISE}</span>
+        </div>
+        <div className="pw-kpi">
+          <span className="pw-kpi-label">Biggest Regret Driver</span>
+          <span className="pw-kpi-value">{dominant?.type_label || '—'}</span>
+          <span className="pw-kpi-sub">{dominant ? formatMoney(dominant.total_cumulative_regret) : '—'}</span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function CollapsibleSection({ title, subtitle, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <section className="pw-collapsible">
+      <button className="pw-collapsible-head" onClick={() => setOpen(v => !v)}>
+        <span className="pw-collapsible-title">{title}</span>
+        <span className="pw-collapsible-meta">{subtitle || ''}</span>
+        <span className="pw-collapsible-toggle">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open ? <div className="pw-collapsible-body">{children}</div> : null}
     </section>
   )
 }
@@ -521,6 +585,7 @@ function RegretAttribution({ attribution }) {
 
 function RegretHeatmap({ regretData }) {
   if (!regretData || regretData.length === 0) return null
+  const [viewMode, setViewMode] = useState('2d')
 
   // Group by scenario — prefer display name
   const scenarios = {}
@@ -528,10 +593,13 @@ function RegretHeatmap({ regretData }) {
   regretData.forEach(r => {
     const name = r.scenario_display_name || r.SCENARIO_DISPLAY_NAME || r.scenario_name || r.SCENARIO_NAME
     const date = (r.as_of_ts || r.AS_OF_TS || '').split('T')[0]
-    const delta = r.pnl_delta ?? r.PNL_DELTA ?? 0
+    const delta = r.pnl_delta ?? r.PNL_DELTA
+    if (!date) return
     dates.add(date)
     if (!scenarios[name]) scenarios[name] = {}
-    scenarios[name][date] = delta
+    if (delta != null) {
+      scenarios[name][date] = delta
+    }
   })
 
   const sortedDates = [...dates].sort()
@@ -540,7 +608,10 @@ function RegretHeatmap({ regretData }) {
   if (scenarioNames.length === 0 || sortedDates.length === 0) return null
 
   // Compute max abs delta for color scaling
-  const allDeltas = regretData.map(r => Math.abs(r.pnl_delta ?? r.PNL_DELTA ?? 0))
+  const allDeltas = regretData
+    .map(r => r.pnl_delta ?? r.PNL_DELTA)
+    .filter(v => v != null)
+    .map(v => Math.abs(v))
   const maxDelta = Math.max(...allDeltas, 1)
 
   function cellColor(val) {
@@ -557,36 +628,90 @@ function RegretHeatmap({ regretData }) {
         Each cell shows how much better (green) or worse (red) a scenario would have been on that day.
         $0 means no difference. A row that is consistently green suggests that rule change might genuinely improve results.
       </p>
-      <div className="pw-heatmap-wrap">
-        <table className="pw-heatmap">
-          <thead>
-            <tr>
-              <th>Scenario</th>
-              {sortedDates.map(d => <th key={d}>{formatDate(d)}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {scenarioNames.map(name => (
-              <tr key={name}>
-                <td className="pw-heatmap-label">{name}</td>
-                {sortedDates.map(d => {
-                  const val = scenarios[name]?.[d]
-                  return (
-                    <td
-                      key={d}
-                      className="pw-heatmap-cell"
-                      style={{ backgroundColor: cellColor(val) }}
-                      title={`${name} on ${d}: ${formatMoney(val)}`}
-                    >
-                      {val != null ? formatMoney(val) : ''}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="pw-heatmap-toolbar">
+        <button
+          className={`pw-heatmap-mode ${viewMode === '2d' ? 'pw-heatmap-mode--active' : ''}`}
+          onClick={() => setViewMode('2d')}
+        >
+          2D Grid
+        </button>
+        <button
+          className={`pw-heatmap-mode ${viewMode === '3d' ? 'pw-heatmap-mode--active' : ''}`}
+          onClick={() => setViewMode('3d')}
+        >
+          3D Terrain
+        </button>
       </div>
+      {viewMode === '2d' ? (
+        <div className="pw-heatmap-wrap">
+          <table className="pw-heatmap">
+            <thead>
+              <tr>
+                <th>Scenario</th>
+                {sortedDates.map(d => <th key={d}>{formatDate(d)}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {scenarioNames.map(name => (
+                <tr key={name}>
+                  <td className="pw-heatmap-label">{name}</td>
+                  {sortedDates.map(d => {
+                    const val = scenarios[name]?.[d]
+                    const hasValue = val != null
+                    return (
+                      <td
+                        key={d}
+                        className={`pw-heatmap-cell ${hasValue ? '' : 'pw-heatmap-cell--empty'}`}
+                        style={{ backgroundColor: hasValue ? cellColor(val) : '#ffffff' }}
+                        title={`${name} on ${d}: ${hasValue ? formatMoney(val) : 'No observation'}`}
+                      >
+                        {hasValue ? formatMoney(val) : '\u2014'}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="pw-heatmap-3d">
+          <Plot
+            data={[
+              {
+                type: 'surface',
+                x: sortedDates.map(formatDate),
+                y: scenarioNames,
+                z: scenarioNames.map(name => sortedDates.map(d => {
+                  const val = scenarios[name]?.[d]
+                  return val == null ? null : Number(val)
+                })),
+                colorscale: [
+                  [0.0, '#b91c1c'],
+                  [0.45, '#fecaca'],
+                  [0.5, '#f3f4f6'],
+                  [0.55, '#bbf7d0'],
+                  [1.0, '#15803d'],
+                ],
+                colorbar: { title: 'PnL Delta' },
+                showscale: true,
+              },
+            ]}
+            layout={{
+              autosize: true,
+              margin: { l: 40, r: 20, t: 10, b: 30 },
+              scene: {
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Scenario' },
+                zaxis: { title: 'Delta ($)' },
+                camera: { eye: { x: 1.6, y: 1.3, z: 0.75 } },
+              },
+            }}
+            config={{ displaylogo: false, responsive: true }}
+            style={{ width: '100%', height: '420px' }}
+          />
+        </div>
+      )}
     </section>
   )
 }
@@ -976,6 +1101,8 @@ export default function ParallelWorlds() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [expandedRow, setExpandedRow] = useState(null)
+  const [showAllScenarios, setShowAllScenarios] = useState(false)
+  const scenarioCount = useMemo(() => results?.scenarios?.length || 0, [results])
 
   // Auto-select first portfolio
   useEffect(() => {
@@ -1013,6 +1140,7 @@ export default function ParallelWorlds() {
       setRegimeData(resRegime)
       setRecommendations(resRecs)
       setSafetyCache({})
+      setShowAllScenarios(false)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -1086,22 +1214,58 @@ export default function ParallelWorlds() {
           )}
           {results && results.found && (
             <>
-              <PolicyHealthCard diagnostics={diagnostics} />
-              <NarrativeCard narrative={narrative} isAi={narrative?.is_ai_narrative} />
+              <OverviewSnapshot results={results} confidence={confidence} attribution={attribution} />
               <ScenarioTable
                 results={results}
                 expandedRow={expandedRow}
                 setExpandedRow={setExpandedRow}
+                maxRows={showAllScenarios ? null : 6}
                 confidenceMap={
                   confidence?.data
                     ? Object.fromEntries(confidence.data.map(c => [c.scenario_name, c]))
                     : {}
                 }
               />
-              <ConfidencePanel confidenceData={confidence?.data} />
-              <EquityCurvesChart curves={curves?.curves} />
-              <RegretAttribution attribution={attribution} />
-              <RegretHeatmap regretData={regret?.data} />
+              {scenarioCount > 6 ? (
+                <div className="pw-inline-action">
+                  <button className="pw-inline-btn" onClick={() => setShowAllScenarios(v => !v)}>
+                    {showAllScenarios ? 'Show top 6 only' : `Show all ${scenarioCount} scenarios`}
+                  </button>
+                </div>
+              ) : null}
+
+              <CollapsibleSection
+                title="AI Analysis Narrative"
+                subtitle="Headline + gate interpretation"
+                defaultOpen={false}
+              >
+                <NarrativeCard narrative={narrative} isAi={narrative?.is_ai_narrative} />
+              </CollapsibleSection>
+
+              <CollapsibleSection
+                title="Signal Confidence Details"
+                subtitle="Grouped scenario confidence"
+                defaultOpen={false}
+              >
+                <ConfidencePanel confidenceData={confidence?.data} />
+              </CollapsibleSection>
+
+              <CollapsibleSection
+                title="Equity Curves + Regret Attribution"
+                subtitle="Performance shape and root causes"
+                defaultOpen={true}
+              >
+                <EquityCurvesChart curves={curves?.curves} />
+                <RegretAttribution attribution={attribution} />
+              </CollapsibleSection>
+
+              <CollapsibleSection
+                title="Regret Heatmap"
+                subtitle="2D grid or 3D terrain"
+                defaultOpen={false}
+              >
+                <RegretHeatmap regretData={regret?.data} />
+              </CollapsibleSection>
             </>
           )}
         </>

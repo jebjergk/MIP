@@ -1,8 +1,8 @@
 -- 188_sp_agent_propose_trades.sql
--- Purpose: Deterministic agent proposal generator. Uses V_TRUSTED_SIGNALS_LATEST_TS (trusted-gate v1).
+-- Purpose: Deterministic agent proposal generator with symbol-level trust gating.
 --
--- IMPORTANT: Candidate selection uses V_SIGNALS_LATEST_TS and V_TRUSTED_SIGNALS_LATEST_TS
--- which filter to signals at the LATEST bar date. No RUN_ID filter is applied since
+-- IMPORTANT: Candidate selection starts from latest-day trusted candidates, then enforces
+-- symbol-level trust (from V_TRAINING_DIGEST_SNAPSHOT_SYMBOL). No RUN_ID filter is applied since
 -- the views are already date-scoped.
 
 use role MIP_ADMIN_ROLE;
@@ -183,10 +183,18 @@ begin
           into :v_candidate_count_raw
           from MIP.MART.V_SIGNALS_LATEST_TS;
 
-        -- Count trusted signals (pattern is trusted for at least one horizon)
+        -- Count symbol-trusted signals (aligns with training page trust label).
         select count(*)
           into :v_candidate_count_trusted
-          from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
+          from (
+              select distinct s.RECOMMENDATION_ID
+              from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+              left join MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL snap
+                on snap.SYMBOL = s.SYMBOL
+               and snap.MARKET_TYPE = s.MARKET_TYPE
+               and snap.PATTERN_ID = s.PATTERN_ID
+              where upper(coalesce(snap.SNAPSHOT_JSON:trust:trust_label::string, 'UNTRUSTED')) = 'TRUSTED'
+          );
 
         v_candidate_count := :v_candidate_count_trusted;
         v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
@@ -257,10 +265,18 @@ begin
       into :v_candidate_count_raw
       from MIP.MART.V_SIGNALS_LATEST_TS;
 
-    -- Count trusted signals (pattern is trusted for at least one horizon)
+    -- Count symbol-trusted signals (aligns with training page trust label).
     select count(*)
       into :v_candidate_count_trusted
-      from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS;
+      from (
+          select distinct s.RECOMMENDATION_ID
+          from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
+          left join MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL snap
+            on snap.SYMBOL = s.SYMBOL
+           and snap.MARKET_TYPE = s.MARKET_TYPE
+           and snap.PATTERN_ID = s.PATTERN_ID
+          where upper(coalesce(snap.SNAPSHOT_JSON:trust:trust_label::string, 'UNTRUSTED')) = 'TRUSTED'
+      );
 
     v_candidate_count := :v_candidate_count_trusted;
     v_trusted_rejected_count := greatest(:v_candidate_count_raw - :v_candidate_count_trusted, 0);
@@ -279,7 +295,7 @@ begin
         elseif (v_trusted_pattern_count = 0) then
             v_no_candidates_reason := 'NO_TRUSTED_PATTERNS';
         else
-            v_no_candidates_reason := 'SIGNALS_NOT_FROM_TRUSTED_PATTERNS';
+            v_no_candidates_reason := 'SIGNALS_NOT_SYMBOL_TRUSTED';
         end if;
     elseif (v_remaining_capacity = 0) then
         v_no_candidates_reason := 'MAX_POSITIONS_REACHED';
@@ -609,6 +625,12 @@ begin
              and snap.MARKET_TYPE = d.MARKET_TYPE
              and snap.PATTERN_ID = d.PATTERN_ID
         ),
+        symbol_local_gated as (
+            select
+                d.*
+            from symbol_local_health d
+            where upper(coalesce(d.SYMBOL_LOCAL_TRUST_LABEL, 'UNTRUSTED')) = 'TRUSTED'
+        ),
         enriched_news as (
             select
                 d.*,
@@ -667,7 +689,7 @@ begin
                     ),
                     1.0
                 ) as NEWS_EVENT_RISK_PROXY
-            from symbol_local_health d
+            from symbol_local_gated d
         ),
         scored_candidates as (
             select
@@ -834,7 +856,7 @@ begin
                 'score', s.SCORE,
                 'interval_minutes', s.INTERVAL_MINUTES,
                 'run_id', s.RUN_ID,
-                'trust_label', 'TRUSTED',
+                'trust_label', coalesce(s.SYMBOL_LOCAL_TRUST_LABEL, 'UNKNOWN'),
                 'recommended_action', 'ENABLE',
                 'training_version', s.TRAINING_VERSION,
                 'pattern_target', s.PATTERN_TARGET,
@@ -843,7 +865,7 @@ begin
                 'target_source', s.TARGET_SOURCE,
                 'held_priority', s.HELD_PRIORITY,
                 'market_type_group', s.MARKET_TYPE_GROUP,
-                'trust_reason', s.TRUST_REASON,
+                'trust_reason', 'SYMBOL_LOCAL_TRUSTED',
                 'base_score', s.SCORE,
                 'final_score', s.FINAL_SCORE,
                 'news_enabled', iff(s.NEWS_ENABLED = 'true', true, false),

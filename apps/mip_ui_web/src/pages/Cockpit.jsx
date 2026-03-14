@@ -518,6 +518,26 @@ function DailyReadinessOverview({ readiness }) {
   const counts = readiness?.counts || {}
   const byMarket = Array.isArray(readiness?.training_by_market_type) ? readiness.training_by_market_type : []
   const proposals = Array.isArray(readiness?.proposals_preview) ? readiness.proposals_preview : []
+  const proposalGroups = useMemo(() => {
+    const groups = []
+    const byDay = new Map()
+    proposals.forEach((p) => {
+      const ts = normalizeIsoTs(p?.proposed_at)
+      const d = ts ? new Date(ts) : null
+      const dayKey = d && !Number.isNaN(d.getTime())
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        : 'Unknown Date'
+      const dayLabel = d && !Number.isNaN(d.getTime())
+        ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+        : 'Unknown Date'
+      if (!byDay.has(dayKey)) {
+        byDay.set(dayKey, { key: dayKey, label: dayLabel, items: [] })
+        groups.push(byDay.get(dayKey))
+      }
+      byDay.get(dayKey).items.push(p)
+    })
+    return groups
+  }, [proposals])
 
   const assessmentClass = (a) => {
     const v = String(a || '').toUpperCase()
@@ -571,21 +591,27 @@ function DailyReadinessOverview({ readiness }) {
       {proposals.length === 0 ? (
         <p className="ck-empty">No proposals produced in the latest run.</p>
       ) : (
-        <ul className="ck-live-list">
-          {proposals.map((p) => (
-            <li key={p.proposal_id || `${p.symbol}_${p.proposed_at}`} className="ck-live-list-item">
-              <strong>{p.symbol}</strong> {p.side} ({p.market_type}) · wt {p.target_weight != null ? `${(Number(p.target_weight) * 100).toFixed(1)}%` : '\u2014'}
-              {' '}· {p.status || 'PROPOSED'}
-              <span className={`ck-health-badge ${assessmentClass(p.committee_assessment)}`} style={{ marginLeft: '0.35rem' }}>
-                {p.committee_assessment || 'N/A'}
-              </span>
-              <span className="ck-live-subline">
-                Hist hit {(Number(p.historical_hit_rate || 0) * 100).toFixed(1)}% · avg ret {(Number(p.historical_mean_return || 0) * 100).toFixed(2)}%
-                · hold {p.suggested_hold_bars ?? '\u2014'} bars · n={p.evidence_samples ?? 0}
-              </span>
-            </li>
-          ))}
-        </ul>
+        proposalGroups.map((g) => (
+          <div key={g.key} className="ck-proposal-group">
+            <h5 className="ck-proposal-group-title">{g.label}</h5>
+            <ul className="ck-live-list">
+              {g.items.map((p) => (
+                <li key={p.proposal_id || `${p.symbol}_${p.proposed_at}`} className="ck-live-list-item">
+                  <strong>{p.symbol}</strong> {p.side} ({p.market_type}) · wt {p.target_weight != null ? `${(Number(p.target_weight) * 100).toFixed(1)}%` : '\u2014'}
+                  {' '}· {p.status || 'PROPOSED'}
+                  <span className={`ck-health-badge ${assessmentClass(p.committee_assessment)}`} style={{ marginLeft: '0.35rem' }}>
+                    {p.committee_assessment || 'N/A'}
+                  </span>
+                  <span className="ck-live-subline">
+                    Hist hit {(Number(p.historical_hit_rate || 0) * 100).toFixed(1)}% · avg ret {(Number(p.historical_mean_return || 0) * 100).toFixed(2)}%
+                    · hold {p.suggested_hold_bars ?? '\u2014'} bars · n={p.evidence_samples ?? 0}
+                  </span>
+                  {p.committee_reason ? <span className="ck-live-subline">Why: {p.committee_reason}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
       )}
 
       <div className="ck-drill-links">

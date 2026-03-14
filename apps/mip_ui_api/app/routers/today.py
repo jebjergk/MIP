@@ -86,6 +86,24 @@ def _proposal_committee_assessment(sample_size: int, hit_rate: float, avg_return
         return "WATCH"
     return "WEAK"
 
+def _proposal_committee_reason(sample_size: int, hit_rate: float, avg_return: float) -> str:
+    if sample_size < 10:
+        return f"Only {sample_size} historical outcomes (need >=10 for reliable confidence)."
+    if sample_size >= 30 and hit_rate >= 0.58 and avg_return >= 0.0010:
+        return (
+            f"Strong evidence: n={sample_size}, hit rate {hit_rate * 100:.1f}% "
+            f"and avg return {avg_return * 100:.2f}%."
+        )
+    if sample_size >= 20 and hit_rate >= 0.52 and avg_return >= 0.0003:
+        return (
+            f"Borderline quality: n={sample_size}, hit rate {hit_rate * 100:.1f}%, "
+            f"avg return {avg_return * 100:.2f}% (watch for consistency)."
+        )
+    return (
+        f"Weak edge: n={sample_size}, hit rate {hit_rate * 100:.1f}% "
+        f"and avg return {avg_return * 100:.2f}% below strong thresholds."
+    )
+
 
 @router.get("/today")
 def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID for portfolio/brief sections")):
@@ -111,7 +129,13 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
     try:
         conn = get_connection()
     except Exception:
-        return {"status": status, "portfolio": portfolio, "brief": brief, "insights": insights}
+        return {
+            "status": status,
+            "portfolio": portfolio,
+            "brief": brief,
+            "insights": insights,
+            "daily_readiness": daily_readiness,
+        }
 
     try:
         cur = conn.cursor()
@@ -486,6 +510,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                         "target_weight": _as_float(p.get("TARGET_WEIGHT"), None),
                         "signal_pattern_id": pattern_id,
                         "committee_assessment": _proposal_committee_assessment(sample_size, hit_rate, avg_return),
+                        "committee_reason": _proposal_committee_reason(sample_size, hit_rate, avg_return),
                         "historical_hit_rate": hit_rate,
                         "historical_mean_return": avg_return,
                         "suggested_hold_bars": hold_bars if hold_bars > 0 else None,

@@ -56,11 +56,13 @@ begin
 
     -- Load per-family flags (default ON if sweep is globally enabled)
     begin
+        -- IB-era curated defaults:
+        -- Keep only horizon + early-exit sweep families enabled by default.
         select
-            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_ZSCORE_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
-            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_RETURN_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
-            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_SIZING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
-            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_TIMING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
+            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_ZSCORE_ENABLED' then try_to_boolean(CONFIG_VALUE) end), false),
+            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_RETURN_ENABLED' then try_to_boolean(CONFIG_VALUE) end), false),
+            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_SIZING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), false),
+            coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_TIMING_ENABLED' then try_to_boolean(CONFIG_VALUE) end), false),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_HORIZON_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_EARLY_EXIT_ENABLED' then try_to_boolean(CONFIG_VALUE) end), true),
             coalesce(max(case when CONFIG_KEY = 'PW_SWEEP_MAX_SCENARIOS' then CONFIG_VALUE::number end), 30)

@@ -55,11 +55,51 @@ function summarizeChain(selectedEvent, detail) {
   return `${name} ended as ${status}. Proposals: ${proposalCount ?? 0}. Executed/filled signals: ${executed ?? 0}.`
 }
 
+function getPortfolioIds(chain) {
+  const ids = new Set((chain?.events || []).map((e) => e.portfolio_id).filter((v) => v != null))
+  return Array.from(ids).sort((a, b) => Number(a) - Number(b))
+}
+
+function chainScopeLabel(chain) {
+  if (!chain?.chain_key) return 'General chain'
+  if (chain.chain_key.startsWith('action::')) return 'Live action chain'
+  if (chain.chain_key.startsWith('proposal::')) return 'Proposal chain'
+  if (chain.chain_key.startsWith('run::')) return 'Run chain'
+  if (chain.chain_key.startsWith('ledger::')) return 'Ledger event chain'
+  return 'General chain'
+}
+
+function eventMeaning(eventName) {
+  const k = String(eventName || '').toUpperCase()
+  if (k === 'PROPOSAL_SELECTION') return 'System selected which candidates became proposals.'
+  if (k === 'PROPOSAL_VALIDATION_EXECUTION') return 'System validated proposals against rules and attempted execution.'
+  if (k === 'LIVE_EXECUTION_BLOCKED') return 'Execution was blocked by constraints or risk gates.'
+  if (k === 'LIVE_REVALIDATION') return 'System rechecked live execution eligibility before sending.'
+  if (k === 'TRAINING_DIGEST_SNAPSHOT') return 'Learning snapshot changed trust/confidence state.'
+  if (k === 'SP_AGENT_PROPOSE_TRADES') return 'Proposal generation step from deterministic signals.'
+  return 'One logged step in the learning -> decision -> execution process.'
+}
+
+function summarizeInfluence(delta) {
+  if (!delta || typeof delta !== 'object') return []
+  const lines = []
+  if (delta.eligibility_changed != null) lines.push(`Eligibility changed: ${delta.eligibility_changed ? 'yes' : 'no'}`)
+  if (delta.ranking_adjustment_active != null) lines.push(`Ranking adjustment active: ${delta.ranking_adjustment_active ? 'yes' : 'no'}`)
+  if (delta.size_constraints_applied != null) lines.push(`Size constraints applied: ${delta.size_constraints_applied ? 'yes' : 'no'}`)
+  if (delta.trusted_rejected_count != null) lines.push(`Trusted-rejected count: ${delta.trusted_rejected_count}`)
+  if (delta.live_execution_candidates != null) lines.push(`Live execution candidates: ${delta.live_execution_candidates}`)
+  if (delta.sim_committee_applied != null) lines.push(`Committee applied: ${delta.sim_committee_applied ? 'yes' : 'no'}`)
+  if (delta.max_position_pct != null) lines.push(`Max position pct: ${fmtPct(delta.max_position_pct)}`)
+  if (delta.target_weight != null) lines.push(`Target weight: ${fmtPct(delta.target_weight)}`)
+  return lines
+}
+
 export default function LearningLedger() {
   const [events, setEvents] = useState([])
   const [chains, setChains] = useState([])
   const [selected, setSelected] = useState(null)
   const [selectedChainKey, setSelectedChainKey] = useState('')
+  const [selectedTimelineKey, setSelectedTimelineKey] = useState('')
   const [detail, setDetail] = useState(null)
   const [effectiveness, setEffectiveness] = useState(null)
   const [feedSource, setFeedSource] = useState('derived_fallback')
@@ -192,29 +232,62 @@ export default function LearningLedger() {
 
   useEffect(() => {
     const e = latestChainEvent(selectedChain)
-    if (e) setSelected(e)
+    if (e) {
+      setSelected(e)
+      setSelectedTimelineKey(e.event_key || '')
+    }
   }, [selectedChain])
 
   const timelineRows = useMemo(() => {
     if (detail?.causal_chain?.length) {
       return detail.causal_chain.map((r) => ({
         key: `canonical-${r.LEDGER_ID || r.ledger_id}-${r.EVENT_TS || r.event_ts}`,
+        eventKey: '',
+        ledgerId: r.LEDGER_ID || r.ledger_id,
         ts: r.EVENT_TS || r.event_ts,
         eventName: r.EVENT_NAME || r.event_name,
         status: normalizeStatus(r.STATUS || r.status),
+        rawStatus: r.STATUS || r.status || '',
+        runId: r.RUN_ID || r.run_id || selectedChain?.run_id || '',
+        portfolioId: r.PORTFOLIO_ID || r.portfolio_id || selectedChain?.portfolio_id || null,
         action: r.LIVE_ACTION_ID || r.live_action_id || '',
         order: r.LIVE_ORDER_ID || r.live_order_id || '',
       }))
     }
     return (selectedChain?.events || []).map((r) => ({
       key: r.event_key,
+      eventKey: r.event_key,
+      ledgerId: r.ledger_id || null,
       ts: r.event_ts,
       eventName: r.event_name || r.title,
       status: normalizeStatus(r.status || r.severity),
+      rawStatus: r.status || r.severity || '',
+      runId: r.run_id || selectedChain?.run_id || '',
+      portfolioId: r.portfolio_id ?? selectedChain?.portfolio_id ?? null,
       action: r.live_action_id || '',
       order: r.live_order_id || '',
     }))
   }, [detail, selectedChain])
+
+  useEffect(() => {
+    if (!timelineRows.length) {
+      setSelectedTimelineKey('')
+      return
+    }
+    setSelectedTimelineKey((prev) => (
+      timelineRows.some((r) => r.key === prev) ? prev : timelineRows[timelineRows.length - 1].key
+    ))
+  }, [timelineRows])
+
+  const selectedTimelineRow = useMemo(
+    () => timelineRows.find((r) => r.key === selectedTimelineKey) || timelineRows[timelineRows.length - 1] || null,
+    [timelineRows, selectedTimelineKey],
+  )
+
+  const influenceLines = useMemo(() => {
+    const delta = detail?.ledger_event?.INFLUENCE_DELTA || detail?.ledger_event?.influence_delta || selected?.impact || {}
+    return summarizeInfluence(delta)
+  }, [detail, selected])
 
   const stats = useMemo(() => {
     const trainingCount = events.filter((e) => e.event_type === 'TRAINING_EVENT').length
@@ -223,6 +296,21 @@ export default function LearningLedger() {
     const newsInfluencedCount = events.filter((e) => e.news_influence_used).length
     return { trainingCount, decisionCount, highCount, newsInfluencedCount, total: events.length }
   }, [events])
+
+  const onSelectTimelineRow = useCallback((row) => {
+    setSelectedTimelineKey(row.key)
+    setSelected((prev) => ({
+      ...(prev || {}),
+      event_key: row.eventKey || prev?.event_key || row.key,
+      ledger_id: row.ledgerId ?? prev?.ledger_id ?? null,
+      event_name: row.eventName || prev?.event_name || '',
+      event_ts: row.ts || prev?.event_ts || null,
+      status: row.rawStatus || prev?.status || '',
+      run_id: row.runId || prev?.run_id || null,
+      portfolio_id: row.portfolioId ?? prev?.portfolio_id ?? null,
+      title: prettyEventName(row.eventName),
+    }))
+  }, [])
 
   if (loading) {
     return (
@@ -301,6 +389,14 @@ export default function LearningLedger() {
           />
         </label>
       </section>
+      <section className="ledger-explainer">
+        <b>How to read this page:</b>
+        <span>
+          A <b>chain</b> is a related group of events (same run/proposal/action). An <b>event</b> is one logged step,
+          like proposal selection or validation. Click a chain on the left, then click a timeline row in the middle
+          to inspect that exact step on the right.
+        </span>
+      </section>
 
       {events.length === 0 ? (
         <EmptyState
@@ -330,9 +426,13 @@ export default function LearningLedger() {
                     <h3>{c.latest_title || e.title || prettyEventName(e.event_name)}</h3>
                     <p>{c.latest_summary || e.summary || 'No summary available.'}</p>
                     <div className="ledger-meta">
+                      <span>{chainScopeLabel(c)}</span>
                       <span>{c.taxonomy_category || e.event_type || 'GENERAL'}</span>
                       <span>events: {c.event_count ?? (c.events?.length || 0)}</span>
                       <span>run: {c.run_id || e.run_id || '—'}</span>
+                      <span>
+                        portfolios: {getPortfolioIds(c).length ? getPortfolioIds(c).join(', ') : (c.portfolio_id ?? e.portfolio_id ?? '—')}
+                      </span>
                     </div>
                   </button>
                 )
@@ -343,13 +443,23 @@ export default function LearningLedger() {
           <div className="ledger-column ledger-timeline-column">
             <h2>Timeline</h2>
             <p className="ledger-chain-summary">{summarizeChain(selected, detail)}</p>
+            <p className="ledger-note">Click a row to inspect that exact event step.</p>
             {detailLoading ? <LoadingState /> : null}
             {!detailLoading && timelineRows.length === 0 ? (
               <p className="ledger-note">No timeline events found for this chain.</p>
             ) : (
               <ol className="ledger-timeline">
                 {timelineRows.map((r) => (
-                  <li key={r.key} className="ledger-timeline-item">
+                  <li
+                    key={r.key}
+                    className={`ledger-timeline-item ${selectedTimelineRow?.key === r.key ? 'ledger-timeline-item-selected' : ''}`}
+                    onClick={() => onSelectTimelineRow(r)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') onSelectTimelineRow(r)
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
                     <div className="ledger-timeline-top">
                       <span className="ledger-ts">{fmtTs(r.ts)}</span>
                       <span className={severityClass(r.status === 'FAIL' ? 'high' : r.status === 'BLOCKED' ? 'medium' : 'info')}>
@@ -373,9 +483,14 @@ export default function LearningLedger() {
               <p className="ledger-note">Select a chain to view context.</p>
             ) : (
               <>
+                <p className="ledger-chain-summary">
+                  <b>{prettyEventName(selectedTimelineRow?.eventName || selected.event_name || selected.title)}</b>: {eventMeaning(selectedTimelineRow?.eventName || selected.event_name)}
+                </p>
                 <div className="ledger-impact-grid">
-                  <div><span>Run</span><b>{selected.run_id || '—'}</b></div>
-                  <div><span>Event</span><b>{prettyEventName(selected.event_name || selected.title)}</b></div>
+                  <div><span>Run</span><b>{selectedTimelineRow?.runId || selected.run_id || '—'}</b></div>
+                  <div><span>Event</span><b>{prettyEventName(selectedTimelineRow?.eventName || selected.event_name || selected.title)}</b></div>
+                  <div><span>Portfolio</span><b>{selectedTimelineRow?.portfolioId ?? selected.portfolio_id ?? '—'}</b></div>
+                  <div><span>Status</span><b>{selectedTimelineRow?.status || normalizeStatus(selected.status || selected.severity)}</b></div>
                   <div><span>Trusted delta</span><b>{selected.impact?.trusted_delta ?? '—'}</b></div>
                   <div><span>Executed</span><b>{detail?.summary?.executed_proposals ?? selected.impact?.executed_count ?? 0}</b></div>
                   <div><span>Live orders</span><b>{detail?.summary?.live_order_count ?? selected.impact?.live_order_count ?? 0}</b></div>
@@ -420,6 +535,17 @@ export default function LearningLedger() {
                       </tbody>
                     </table>
                   </div>
+                </section>
+
+                <section className="ledger-mini-section">
+                  <h3>Plain-English effects</h3>
+                  {influenceLines.length ? (
+                    <ul>
+                      {influenceLines.map((line) => <li key={line}>{line}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="ledger-note">No explicit influence-delta fields for this event.</p>
+                  )}
                 </section>
 
                 <details>

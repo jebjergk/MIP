@@ -113,6 +113,18 @@
   min-width: 190px;
 }
 
+.ledger-explainer {
+  border: 1px solid var(--border-color, #d0d0d0);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted, #666);
+  font-size: 0.9rem;
+}
+
 .ledger-workbench {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -163,6 +175,12 @@
   border-radius: 8px;
   padding: 8px;
   background: var(--surface-muted, #f6f7fa);
+  cursor: pointer;
+}
+
+.ledger-timeline-item-selected {
+  border-color: var(--accent-color, #4c7cf3);
+  box-shadow: 0 0 0 1px var(--accent-color, #4c7cf3);
 }
 
 .ledger-timeline-top {

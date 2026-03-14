@@ -764,7 +764,6 @@ function PortfolioStory({ portfolio }) {
 export default function Cockpit() {
   const { loading: portfoliosLoading } = usePortfolios()
 
-  const [digestGlobal, setDigestGlobal] = useState(null)
   const [trainingGlobal, setTrainingGlobal] = useState(null)
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
@@ -836,7 +835,6 @@ export default function Cockpit() {
         }
 
         const fetches = [
-          fetch(`${API_BASE}/digest/latest?scope=GLOBAL`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
@@ -844,9 +842,8 @@ export default function Cockpit() {
           loadLiveOverview(),
           loadIbDailyHealth(),
         ]
-        const [dg, tg, td, mp, no] = await Promise.all(fetches)
+        const [tg, td, mp, no] = await Promise.all(fetches)
         if (cancelled) return
-        setDigestGlobal(dg)
         setTrainingGlobal(tg)
         setTodayData(td)
         setMarketPulse(mp)
@@ -865,16 +862,6 @@ export default function Cockpit() {
   const indexSeries = marketPulse?.index_series || []
 
   // Attention levels for right-column stories
-  const globalAttention = useMemo(() => {
-    if (!digestGlobal?.found) return 'neutral'
-    const detectors = digestGlobal.snapshot?.detectors || []
-    const highFired = detectors.some(d => d.fired && d.severity === 'HIGH')
-    const medFired = detectors.some(d => d.fired && d.severity === 'MEDIUM')
-    if (highFired) return 'critical'
-    if (medFired) return 'warning'
-    return 'info'
-  }, [digestGlobal])
-
   const marketAttention = useMemo(() => {
     if (!aggregate.direction) return 'neutral'
     if (aggregate.direction === 'DOWN') return 'warning'
@@ -902,20 +889,6 @@ export default function Cockpit() {
     if (nearMiss.length > 0) return 'info'
     return 'neutral'
   }, [trainingGlobal])
-
-  // Global digest headline + summary
-  const globalHeadline = digestGlobal?.found
-    ? (digestGlobal.narrative?.headline || 'System Overview')
-    : 'System Overview'
-
-  const globalSummary = useMemo(() => {
-    if (!digestGlobal?.found) return 'No global digest yet. Run the pipeline to generate.'
-    const wc = digestGlobal.narrative?.what_changed || []
-    const wm = digestGlobal.narrative?.what_matters || []
-    if (wc.length > 0) return wc[0]
-    if (wm.length > 0) return wm[0]
-    return 'System digest generated. Expand for full details.'
-  }, [digestGlobal])
 
   // Market headline + summary
   const marketHeadline = useMemo(() => {
@@ -1217,33 +1190,6 @@ export default function Cockpit() {
               </>
             ) : (
               <EmptyState title="No market data" action="Market data will appear after ingestion runs." />
-            )}
-          </StoryCard>
-
-          {/* Story: System Overview */}
-          <StoryCard
-            attention={globalAttention}
-            headline={globalHeadline}
-            summary={globalSummary}
-            accent="system"
-            badges={
-              <>
-                <span className="ck-badge ck-badge--scope">Global</span>
-                {digestGlobal?.found && <AiBadge isAi={digestGlobal.is_ai_narrative} modelInfo={digestGlobal.model_info} />}
-                {digestGlobal?.found && <FreshnessBadge createdAt={digestGlobal.snapshot_created_at} />}
-              </>
-            }
-          >
-            {digestGlobal?.found ? (
-              <>
-                <DetectorPills detectors={digestGlobal.snapshot?.detectors} />
-                <DigestSection title="What Changed" icon="&#x1F504;" bullets={digestGlobal.narrative?.what_changed} variant="changed" />
-                <DigestSection title="What Matters" icon="&#x26A0;&#xFE0F;" bullets={digestGlobal.narrative?.what_matters} variant="matters" />
-                <DigestSection title="Waiting For" icon="&#x23F3;" bullets={digestGlobal.narrative?.waiting_for} variant="waiting" />
-                <DrillLinks whereToLook={digestGlobal.narrative?.where_to_look} links={digestGlobal.links} />
-              </>
-            ) : (
-              <EmptyState title="No global digest yet" action="Run the pipeline to generate." />
             )}
           </StoryCard>
 

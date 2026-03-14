@@ -49,7 +49,21 @@ declare
     v_narrative_count   number := 0;
     v_fired_detectors   variant;
     v_fallback_bullets  array;
+    v_include_global    boolean := false;
 begin
+    -- Global digest is optional and defaults OFF to avoid non-essential Cortex spend.
+    begin
+        v_include_global := coalesce((
+            select try_to_boolean(CONFIG_VALUE)
+            from MIP.APP.APP_CONFIG
+            where CONFIG_KEY = 'DAILY_DIGEST_INCLUDE_GLOBAL'
+            limit 1
+        ), false);
+    exception
+        when other then
+            v_include_global := false;
+    end;
+
     -- Step 0: Determine portfolio scope
     if (:P_PORTFOLIO_ID is not null and :P_PORTFOLIO_ID > 0) then
         v_portfolios := (
@@ -398,8 +412,9 @@ Rules:
     end for;
 
     -- ════════════════════════════════════════════════════════════
-    -- GLOBAL SCOPE: system-wide snapshot + narrative
+    -- GLOBAL SCOPE: system-wide snapshot + narrative (optional)
     -- ════════════════════════════════════════════════════════════
+    if (:v_include_global) then
     begin
         -- Global snapshot from the global view
         v_snapshot := (
@@ -727,6 +742,15 @@ Rules:
                 'error', :sqlerrm
             ));
     end;
+    else
+        v_results := array_append(:v_results, object_construct(
+            'scope', 'GLOBAL',
+            'portfolio_id', null,
+            'status', 'SKIPPED_DISABLED',
+            'cortex_skipped', true,
+            'reason', 'GLOBAL_SCOPE_DISABLED'
+        ));
+    end if;
 
     -- Compute top-level Cortex summary for audit visibility
     let v_cortex_success_count number := 0;
@@ -735,13 +759,17 @@ Rules:
     begin
         select
             count_if(value:cortex_succeeded::boolean = true),
-            count_if(value:cortex_succeeded::boolean = false or value:cortex_succeeded is null)
+            count_if(
+                coalesce(value:cortex_skipped::boolean, false) = false
+                and (value:cortex_succeeded::boolean = false or value:cortex_succeeded is null)
+            )
           into :v_cortex_success_count, :v_cortex_fallback_count
           from table(flatten(input => :v_results));
     exception
         when other then null;
     end;
     v_narrative_mode := case
+        when :v_cortex_success_count = 0 and :v_cortex_fallback_count = 0 then 'SKIPPED'
         when :v_cortex_success_count > 0 and :v_cortex_fallback_count = 0 then 'CORTEX_AI'
         when :v_cortex_success_count = 0 then 'DETERMINISTIC_FALLBACK'
         else 'MIXED'

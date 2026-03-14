@@ -387,13 +387,10 @@ begin
         v_brief_results := array_construct();
         v_brief_count := 0;
         v_portfolios := (
-            select p.PORTFOLIO_ID
-              from MIP.APP.PORTFOLIO p
-              join MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
-                on l.PORTFOLIO_ID = p.PORTFOLIO_ID
-             where p.STATUS = 'ACTIVE'
-               and coalesce(l.IS_ACTIVE, true)
-             order by p.PORTFOLIO_ID
+            select l.PORTFOLIO_ID
+              from MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
+             where coalesce(l.IS_ACTIVE, true)
+             order by l.PORTFOLIO_ID
         );
         for rec in v_portfolios do
             v_portfolio_id := rec.PORTFOLIO_ID;
@@ -715,12 +712,9 @@ begin
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID number);
     insert into MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID)
-    select p.PORTFOLIO_ID
-      from MIP.APP.PORTFOLIO p
-      join MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
-        on l.PORTFOLIO_ID = p.PORTFOLIO_ID
-     where p.STATUS = 'ACTIVE'
-       and coalesce(l.IS_ACTIVE, true);
+    select l.PORTFOLIO_ID
+      from MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
+     where coalesce(l.IS_ACTIVE, true);
 
     v_step_start := current_timestamp();
     begin
@@ -931,8 +925,14 @@ begin
 
         select count(*)
           into :v_trades_before
-          from MIP.APP.PORTFOLIO_TRADES
-         where RUN_ID = to_varchar(:v_run_id);
+          from MIP.LIVE.LIVE_ORDERS lo
+          join MIP.LIVE.LIVE_ACTIONS la
+            on la.ACTION_ID = lo.ACTION_ID
+         where la.RUN_ID_VARCHAR = to_varchar(:v_run_id)
+           and (
+               upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+               or coalesce(lo.QTY_FILLED, 0) > 0
+           );
 
         select count(*)
           into :v_eligible_signal_count
@@ -1036,8 +1036,14 @@ begin
 
         select count(*)
           into :v_trades_after
-          from MIP.APP.PORTFOLIO_TRADES
-         where RUN_ID = to_varchar(:v_run_id);
+          from MIP.LIVE.LIVE_ORDERS lo
+          join MIP.LIVE.LIVE_ACTIONS la
+            on la.ACTION_ID = lo.ACTION_ID
+         where la.RUN_ID_VARCHAR = to_varchar(:v_run_id)
+           and (
+               upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+               or coalesce(lo.QTY_FILLED, 0) > 0
+           );
 
         v_proposals_delta := :v_proposals_after - :v_proposals_before;
         v_executed_delta := :v_executed_after - :v_executed_before;

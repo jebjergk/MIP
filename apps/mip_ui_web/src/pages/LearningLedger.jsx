@@ -88,7 +88,8 @@ function summarizeInfluence(delta) {
   if (delta.size_constraints_applied != null) lines.push(`Size constraints applied: ${delta.size_constraints_applied ? 'yes' : 'no'}`)
   if (delta.trusted_rejected_count != null) lines.push(`Trusted-rejected count: ${delta.trusted_rejected_count}`)
   if (delta.live_execution_candidates != null) lines.push(`Live execution candidates: ${delta.live_execution_candidates}`)
-  if (delta.sim_committee_applied != null) lines.push(`Committee applied: ${delta.sim_committee_applied ? 'yes' : 'no'}`)
+  const committeeApplied = delta.committee_applied ?? delta.live_committee_applied
+  if (committeeApplied != null) lines.push(`Committee applied: ${committeeApplied ? 'yes' : 'no'}`)
   if (delta.max_position_pct != null) lines.push(`Max position pct: ${fmtPct(delta.max_position_pct)}`)
   if (delta.target_weight != null) lines.push(`Target weight: ${fmtPct(delta.target_weight)}`)
   return lines
@@ -117,7 +118,7 @@ function field(row, ...keys) {
 function proposalWhyText(proposal) {
   const source = parseMaybeJson(field(proposal, 'SOURCE_SIGNALS', 'source_signals')) || {}
   const rationale = parseMaybeJson(field(proposal, 'RATIONALE', 'rationale')) || {}
-  const committee = rationale?.sim_committee || {}
+  const committee = rationale?.committee || rationale?.live_committee || {}
   const parts = []
   if (source.trust_label) parts.push(`trust ${String(source.trust_label).toLowerCase()}`)
   if (source.score != null) parts.push(`score ${Number(source.score).toFixed(2)}`)

@@ -260,15 +260,14 @@ def get_latest_run():
     try:
         cur = conn.cursor()
         
-        # Get latest pipeline run from PORTFOLIO table
+        # Get latest daily pipeline run from audit log (live-safe source).
         sql = """
         select
-            LAST_SIMULATION_RUN_ID as run_id,
-            LAST_SIMULATED_AT as run_ts
-        from MIP.APP.PORTFOLIO
-        where STATUS = 'ACTIVE'
-          and LAST_SIMULATION_RUN_ID is not null
-        order by LAST_SIMULATED_AT desc
+            RUN_ID as run_id,
+            EVENT_TS as run_ts
+        from MIP.APP.MIP_AUDIT_LOG
+        where EVENT_TYPE = 'PIPELINE'
+          and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
         limit 1
         """
         cur.execute(sql)
@@ -639,21 +638,27 @@ def get_decisions(
             trade_sql = f"""
             SELECT
                 op.RECOMMENDATION_ID,
-                pt.TRADE_ID,
-                pt.TRADE_TS,
-                pt.SIDE,
-                pt.PRICE,
-                pt.QUANTITY,
-                pt.NOTIONAL,
-                pt.PORTFOLIO_ID
+                lo.ORDER_ID as TRADE_ID,
+                coalesce(lo.FILLED_AT, lo.LAST_UPDATED_AT, lo.CREATED_AT) as TRADE_TS,
+                lo.SIDE,
+                lo.AVG_FILL_PRICE as PRICE,
+                lo.QTY_FILLED as QUANTITY,
+                abs(coalesce(lo.QTY_FILLED, 0) * coalesce(lo.AVG_FILL_PRICE, 0)) as NOTIONAL,
+                lo.PORTFOLIO_ID
             FROM MIP.AGENT_OUT.ORDER_PROPOSALS op
-            INNER JOIN MIP.APP.PORTFOLIO_TRADES pt
-                ON pt.PROPOSAL_ID = op.PROPOSAL_ID
+            INNER JOIN MIP.LIVE.LIVE_ACTIONS la
+                ON la.PROPOSAL_ID = op.PROPOSAL_ID
+            INNER JOIN MIP.LIVE.LIVE_ORDERS lo
+                ON lo.ACTION_ID = la.ACTION_ID
             WHERE op.RECOMMENDATION_ID IN ({ph})
+              AND (
+                upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+                OR coalesce(lo.QTY_FILLED, 0) > 0
+              )
             """
             trade_params = list(rec_ids)
             if portfolio_id:
-                trade_sql += " AND pt.PORTFOLIO_ID = %s"
+                trade_sql += " AND lo.PORTFOLIO_ID = %s"
                 trade_params.append(portfolio_id)
             try:
                 cur.execute(trade_sql, tuple(trade_params))

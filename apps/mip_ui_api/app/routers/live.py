@@ -1003,7 +1003,7 @@ def _summary_hint_from_status_and_details(status: str | None, details: dict | No
 
 
 @router.get("/metrics")
-def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for latest brief")):
+def get_live_metrics(portfolio_id: int | None = Query(None, description="Live portfolio ID for latest brief (auto-resolved when omitted)")):
     """
     Single cheap request for UI to poll every 30–60s.
     Returns: api_ok, snowflake_ok, updated_at, last_run, last_brief, outcomes.
@@ -1016,6 +1016,7 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
     last_run = None
     last_intraday_run = None
     last_brief = {"found": False}
+    resolved_portfolio_id = portfolio_id
     outcomes = {"total": 0, "last_calculated_at": None, "since_last_run": None}
 
     try:
@@ -1039,6 +1040,20 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
 
     try:
         cur = conn.cursor()
+
+        if resolved_portfolio_id is None:
+            cur.execute(
+                """
+                select PORTFOLIO_ID
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where coalesce(IS_ACTIVE, true)
+                order by UPDATED_AT desc, PORTFOLIO_ID asc
+                limit 1
+                """
+            )
+            cfg_row = cur.fetchone()
+            if cfg_row:
+                resolved_portfolio_id = int(cfg_row[0])
 
         # --- Last run: same logic as /runs (MIP_AUDIT_LOG, PIPELINE, SP_RUN_DAILY_PIPELINE), most recent by completion
         runs_sql = """
@@ -1134,12 +1149,15 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
         order by mb.AS_OF_TS desc
         limit 1
         """
-        cur.execute(brief_sql, (portfolio_id,))
-        brief_row = cur.fetchone()
-        if brief_row:
-            cols = [d[0] for d in cur.description]
-            last_brief = serialize_row(dict(zip(cols, brief_row)))
-            last_brief["found"] = True
+        if resolved_portfolio_id is not None:
+            cur.execute(brief_sql, (resolved_portfolio_id,))
+            brief_row = cur.fetchone()
+            if brief_row:
+                cols = [d[0] for d in cur.description]
+                last_brief = serialize_row(dict(zip(cols, brief_row)))
+                last_brief["found"] = True
+            else:
+                last_brief = {"found": False}
         else:
             last_brief = {"found": False}
 
@@ -1184,6 +1202,7 @@ def get_live_metrics(portfolio_id: int = Query(1, description="Portfolio ID for 
         "api_ok": api_ok,
         "snowflake_ok": snowflake_ok,
         "updated_at": updated_at,
+        "portfolio_id": resolved_portfolio_id,
         "last_run": last_run,
         "last_intraday_run": last_intraday_run,
         "last_brief": last_brief,

@@ -201,8 +201,8 @@ declare
 begin
     v_portfolios := (
         select PORTFOLIO_ID
-          from MIP.APP.PORTFOLIO
-         where STATUS = 'ACTIVE'
+          from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+         where coalesce(IS_ACTIVE, true)
          order by PORTFOLIO_ID
     );
 

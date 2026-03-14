@@ -29,7 +29,10 @@ export default function LiveHeader() {
   const [, setTick] = useState(0)
 
   const fetchMetrics = useCallback(() => {
-    fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
+    const url = defaultPortfolioId != null
+      ? `${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`
+      : `${API_BASE}/live/metrics`
+    fetch(url)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then((data) => {
         setMetrics(data)

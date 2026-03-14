@@ -24,7 +24,7 @@ router = APIRouter(prefix="/briefs", tags=["briefs"])
 
 def _get_verified_trades(cur, portfolio_id: int, run_id: str, brief_executed_count: int) -> dict:
     """
-    Query PORTFOLIO_TRADES to get verified trade data for this run.
+    Query LIVE_ORDERS/LIVE_ACTIONS to get verified trade data for this run.
     Returns verification status and actual trade rows.
     
     Returns:
@@ -40,22 +40,28 @@ def _get_verified_trades(cur, portfolio_id: int, run_id: str, brief_executed_cou
         }
     
     try:
-        # Query actual trades from PORTFOLIO_TRADES for this run
+        # Query actual broker executions for this run.
         cur.execute("""
             select
-                TRADE_ID,
-                SYMBOL,
-                MARKET_TYPE,
-                SIDE,
-                QUANTITY,
-                PRICE,
-                NOTIONAL,
-                TRADE_TS,
-                RUN_ID
-            from MIP.APP.PORTFOLIO_TRADES
-            where PORTFOLIO_ID = %s
-              and RUN_ID = %s
-            order by TRADE_TS desc
+                lo.ORDER_ID as TRADE_ID,
+                lo.SYMBOL,
+                la.MARKET_TYPE,
+                lo.SIDE,
+                lo.QTY_FILLED as QUANTITY,
+                lo.AVG_FILL_PRICE as PRICE,
+                abs(coalesce(lo.QTY_FILLED, 0) * coalesce(lo.AVG_FILL_PRICE, 0)) as NOTIONAL,
+                coalesce(lo.FILLED_AT, lo.LAST_UPDATED_AT, lo.CREATED_AT) as TRADE_TS,
+                la.RUN_ID_VARCHAR as RUN_ID
+            from MIP.LIVE.LIVE_ORDERS lo
+            join MIP.LIVE.LIVE_ACTIONS la
+              on la.ACTION_ID = lo.ACTION_ID
+            where lo.PORTFOLIO_ID = %s
+              and la.RUN_ID_VARCHAR = %s
+              and (
+                upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+                or coalesce(lo.QTY_FILLED, 0) > 0
+              )
+            order by coalesce(lo.FILLED_AT, lo.LAST_UPDATED_AT, lo.CREATED_AT) desc
             limit 10
         """, (portfolio_id, run_id))
         
@@ -65,9 +71,15 @@ def _get_verified_trades(cur, portfolio_id: int, run_id: str, brief_executed_cou
         # Get total count for this run
         cur.execute("""
             select count(*) as cnt
-            from MIP.APP.PORTFOLIO_TRADES
-            where PORTFOLIO_ID = %s
-              and RUN_ID = %s
+            from MIP.LIVE.LIVE_ORDERS lo
+            join MIP.LIVE.LIVE_ACTIONS la
+              on la.ACTION_ID = lo.ACTION_ID
+            where lo.PORTFOLIO_ID = %s
+              and la.RUN_ID_VARCHAR = %s
+              and (
+                upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+                or coalesce(lo.QTY_FILLED, 0) > 0
+              )
         """, (portfolio_id, run_id))
         count_row = cur.fetchone()
         verified_count = count_row[0] if count_row else 0
@@ -115,8 +127,8 @@ def _build_summary(brief_json: dict, risk_gate: dict, verified_trades: dict = No
     Build executive summary from brief data and risk gate state.
     
     verified_trades dict contains:
-    - verified_count: int (count from PORTFOLIO_TRADES)
-    - verified_trades_preview: list (actual trades from PORTFOLIO_TRADES)
+    - verified_count: int (count from LIVE_ORDERS/LIVE_ACTIONS)
+    - verified_trades_preview: list (actual executions from LIVE_ORDERS/LIVE_ACTIONS)
     - verification_status: str (VERIFIED, UNVERIFIABLE, EMPTY)
     """
     risk = brief_json.get("risk", {}).get("latest", {}) or {}
@@ -151,18 +163,18 @@ def _build_summary(brief_json: dict, risk_gate: dict, verified_trades: dict = No
 
     # Determine what to display
     if verification_status == "VERIFIED":
-        # We have actual trade rows from PORTFOLIO_TRADES
+        # We have actual execution rows from live order tables.
         executed_count = verified_count
         executed_trades_preview = verified_trades_preview
-        executed_source = "MIP.APP.PORTFOLIO_TRADES"
+        executed_source = "MIP.LIVE.LIVE_ORDERS"
         executed_label = "trades"  # We have actual trades
         executed_note = None
     elif verification_status == "MISMATCH":
-        # Brief says X trades but PORTFOLIO_TRADES shows different count
+        # Brief says X trades but live order tables show different count.
         # Trust the actual trades table
         executed_count = verified_count
         executed_trades_preview = verified_trades_preview
-        executed_source = "MIP.APP.PORTFOLIO_TRADES (brief record shows different count)"
+        executed_source = "MIP.LIVE.LIVE_ORDERS (brief record shows different count)"
         executed_label = "trades"
         executed_note = f"Brief record shows {brief_executed_count}, but trade table shows {verified_count}"
     elif verification_status == "EMPTY" and brief_executed_count > 0:
@@ -454,7 +466,7 @@ def get_latest_brief(portfolio_id: int):
     
     Selection: Latest by CREATED_AT (not AS_OF_TS).
     Staleness: Brief is stale if its pipeline_run_id differs from the latest successful pipeline run.
-              (NOT from PORTFOLIO.LAST_SIMULATION_RUN_ID, which is set by a different procedure.)
+              (Derived from audit log, not legacy sim portfolio state.)
     Reset boundary: Warning if brief is from before active episode START_TS.
     """
     # Main query to get brief + risk gate state + profile thresholds + episode info
@@ -517,11 +529,11 @@ def get_latest_brief(portfolio_id: int):
         rg.RISK_STATUS as risk_status,
         rg.OPEN_POSITIONS as open_positions,
         rg.MAX_DRAWDOWN as max_drawdown_current,
-        pp.DRAWDOWN_STOP_PCT as drawdown_stop_pct,
-        pp.MAX_POSITIONS as max_positions,
-        pp.MAX_POSITION_PCT as max_position_pct,
-        pp.BUST_EQUITY_PCT as bust_equity_pct,
-        pp.NAME as profile_name,
+        null as drawdown_stop_pct,
+        lc.MAX_POSITIONS as max_positions,
+        lc.MAX_POSITION_PCT as max_position_pct,
+        null as bust_equity_pct,
+        'LIVE_CONFIG' as profile_name,
         pb.AS_OF_TS as prev_as_of_ts,
         pb.BRIEF as prev_brief_json,
         -- Latest pipeline run for staleness check (from audit log, not PORTFOLIO table)
@@ -534,10 +546,8 @@ def get_latest_brief(portfolio_id: int):
     from latest_brief lb
     left join MIP.MART.V_PORTFOLIO_RISK_GATE rg
         on rg.PORTFOLIO_ID = lb.PORTFOLIO_ID
-    left join MIP.APP.PORTFOLIO p
-        on p.PORTFOLIO_ID = lb.PORTFOLIO_ID
-    left join MIP.APP.PORTFOLIO_PROFILE pp
-        on pp.PROFILE_ID = p.PROFILE_ID
+    left join MIP.LIVE.LIVE_PORTFOLIO_CONFIG lc
+        on lc.PORTFOLIO_ID = lb.PORTFOLIO_ID
     left join prev_brief pb
         on pb.PORTFOLIO_ID = lb.PORTFOLIO_ID
     left join MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE e
@@ -622,7 +632,7 @@ def get_latest_brief(portfolio_id: int):
         brief_executed_trades = brief_json.get("proposals", {}).get("executed_trades", []) or []
         brief_executed_count = proposals.get("executed", 0) or len(brief_executed_trades)
 
-        # Verify executed trades against actual PORTFOLIO_TRADES table
+        # Verify executed trades against live execution tables.
         verified_trades = _get_verified_trades(cur, portfolio_id, pipeline_run_id, brief_executed_count)
 
         # Build summary with verified trades info
@@ -635,27 +645,53 @@ def get_latest_brief(portfolio_id: int):
             elif summary.get("executed_count", 0) > 0:
                 summary["executed_trades_note"] = (summary.get("executed_trades_note") or "") + " (brief from before reset)"
 
-        # Portfolio actions: current state from actual portfolio tables (not brief record)
+        # Portfolio actions: current state from live broker and action tables (not brief record)
         # This provides ground truth for "what actually happened" vs brief content
         portfolio_actions = None
         try:
-            # Get open positions count from canonical view
+            # Resolve linked IBKR account.
             cur.execute("""
-                select count(*) as open_positions
-                from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL
+                select IBKR_ACCOUNT_ID
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                 where PORTFOLIO_ID = %s
             """, (portfolio_id,))
-            pos_row = cur.fetchone()
-            open_positions = pos_row[0] if pos_row else 0
+            cfg_row = cur.fetchone()
+            ibkr_account_id = cfg_row[0] if cfg_row else None
+
+            # Get open positions count from latest broker position snapshot.
+            open_positions = 0
+            if ibkr_account_id:
+                cur.execute("""
+                    with latest_snap as (
+                      select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                      from MIP.LIVE.BROKER_SNAPSHOTS
+                      where SNAPSHOT_TYPE = 'POSITION'
+                        and IBKR_ACCOUNT_ID = %s
+                    )
+                    select count(*) as open_positions
+                    from MIP.LIVE.BROKER_SNAPSHOTS s
+                    join latest_snap ls on s.SNAPSHOT_TS = ls.SNAPSHOT_TS
+                    where s.SNAPSHOT_TYPE = 'POSITION'
+                      and s.IBKR_ACCOUNT_ID = %s
+                      and coalesce(s.POSITION_QTY, 0) <> 0
+                """, (ibkr_account_id, ibkr_account_id))
+                pos_row = cur.fetchone()
+                open_positions = pos_row[0] if pos_row else 0
             
-            # Get trades count for latest run
+            # Get executed order count for latest run.
             cur.execute("""
                 select 
                     count(*) as trades_today,
-                    max(TRADE_TS) as last_trade_ts
-                from MIP.APP.PORTFOLIO_TRADES
-                where PORTFOLIO_ID = %s
-                  and RUN_ID = %s
+                    max(coalesce(lo.FILLED_AT, lo.LAST_UPDATED_AT, lo.CREATED_AT)) as last_trade_ts
+                from MIP.LIVE.LIVE_ORDERS lo
+                join MIP.LIVE.LIVE_ACTIONS la
+                  on la.ACTION_ID = lo.ACTION_ID
+                where lo.PORTFOLIO_ID = %s
+                  and la.RUN_ID_VARCHAR = %s
+                  and (
+                    upper(coalesce(lo.STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+                    or coalesce(lo.QTY_FILLED, 0) > 0
+                  )
             """, (portfolio_id, pipeline_run_id))
             trades_row = cur.fetchone()
             trades_today = trades_row[0] if trades_row else 0
@@ -663,24 +699,26 @@ def get_latest_brief(portfolio_id: int):
             if last_trade_ts and hasattr(last_trade_ts, 'isoformat'):
                 last_trade_ts = last_trade_ts.isoformat()
             
-            # Get latest simulation run from portfolio
+            # Get latest live action status and timestamp.
             cur.execute("""
-                select LAST_SIMULATION_RUN_ID, LAST_SIMULATED_AT
-                from MIP.APP.PORTFOLIO
+                select STATUS, coalesce(UPDATED_AT, CREATED_AT) as ACTION_TS
+                from MIP.LIVE.LIVE_ACTIONS
                 where PORTFOLIO_ID = %s
+                order by coalesce(UPDATED_AT, CREATED_AT) desc
+                limit 1
             """, (portfolio_id,))
-            port_row = cur.fetchone()
-            last_sim_run_id = port_row[0] if port_row else None
-            last_sim_at = port_row[1] if port_row and len(port_row) > 1 else None
-            if last_sim_at and hasattr(last_sim_at, 'isoformat'):
-                last_sim_at = last_sim_at.isoformat()
+            action_row = cur.fetchone()
+            latest_action_status = action_row[0] if action_row else None
+            latest_action_at = action_row[1] if action_row and len(action_row) > 1 else None
+            if latest_action_at and hasattr(latest_action_at, 'isoformat'):
+                latest_action_at = latest_action_at.isoformat()
             
             portfolio_actions = {
                 "open_positions": open_positions,
                 "trades_this_run": trades_today,
                 "last_trade_ts": last_trade_ts,
-                "last_simulation_run_id": last_sim_run_id,
-                "last_simulated_at": last_sim_at,
+                "latest_live_action_status": latest_action_status,
+                "latest_live_action_at": latest_action_at,
             }
         except Exception:
             portfolio_actions = None

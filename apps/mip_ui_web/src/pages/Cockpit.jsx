@@ -862,7 +862,7 @@ function PortfolioStory({ portfolio }) {
           </>
         ) : (
           <>
-            <Link to={`/portfolios/${pid}`} className="ck-drill-link">Full Portfolio &rarr;</Link>
+            <Link to="/live-portfolio-activity" className="ck-drill-link">Live Portfolio Activity &rarr;</Link>
             <Link to="/decision-console" className="ck-drill-link">AI Agent Decisions &rarr;</Link>
           </>
         )}

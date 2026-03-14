@@ -62,14 +62,35 @@ def get_performance_dashboard_overview(
             _safe_row(
                 cur,
                 """
+                with cfg as (
+                  select
+                    PORTFOLIO_ID,
+                    IBKR_ACCOUNT_ID,
+                    coalesce(IS_ACTIVE, true) as IS_ACTIVE
+                  from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                ),
+                latest_nav as (
+                  select
+                    IBKR_ACCOUNT_ID,
+                    NET_LIQUIDATION_EUR,
+                    TOTAL_CASH_EUR
+                  from MIP.LIVE.BROKER_SNAPSHOTS
+                  where SNAPSHOT_TYPE = 'NAV'
+                  qualify row_number() over (
+                    partition by IBKR_ACCOUNT_ID
+                    order by SNAPSHOT_TS desc
+                  ) = 1
+                )
                 select
-                  count_if(upper(coalesce(STATUS, '')) = 'ACTIVE') as ACTIVE_PORTFOLIOS,
+                  count_if(cfg.IS_ACTIVE) as ACTIVE_PORTFOLIOS,
                   count(*) as PORTFOLIOS_TOTAL,
-                  sum(coalesce(STARTING_CASH, 0)) as STARTING_CASH_TOTAL,
-                  sum(coalesce(FINAL_EQUITY, 0)) as FINAL_EQUITY_TOTAL,
-                  avg(coalesce(TOTAL_RETURN, 0)) as AVG_PORTFOLIO_RETURN,
-                  max(coalesce(MAX_DRAWDOWN, 0)) as MAX_DRAWDOWN
-                from MIP.APP.PORTFOLIO
+                  sum(coalesce(nav.TOTAL_CASH_EUR, 0)) as STARTING_CASH_TOTAL,
+                  sum(coalesce(nav.NET_LIQUIDATION_EUR, 0)) as FINAL_EQUITY_TOTAL,
+                  0::float as AVG_PORTFOLIO_RETURN,
+                  0::float as MAX_DRAWDOWN
+                from cfg
+                left join latest_nav nav
+                  on nav.IBKR_ACCOUNT_ID = cfg.IBKR_ACCOUNT_ID
                 """,
             )
         )
@@ -80,12 +101,13 @@ def get_performance_dashboard_overview(
                 """
                 select
                   count(*) as TRADE_COUNT,
-                  count_if(coalesce(REALIZED_PNL, 0) > 0) as WIN_TRADES,
-                  avg(coalesce(REALIZED_PNL, 0)) as AVG_PNL_PER_TRADE,
-                  sum(coalesce(REALIZED_PNL, 0)) as TOTAL_REALIZED_PNL
-                from MIP.APP.PORTFOLIO_TRADES
-                where upper(coalesce(SIDE, '')) = 'SELL'
-                  and TRADE_TS >= dateadd(day, -%s, current_timestamp())
+                  count_if(false) as WIN_TRADES,
+                  0::float as AVG_PNL_PER_TRADE,
+                  0::float as TOTAL_REALIZED_PNL
+                from MIP.LIVE.LIVE_ORDERS
+                where upper(coalesce(STATUS, '')) in ('FILLED', 'PARTIAL_FILL')
+                  and coalesce(QTY_FILLED, 0) > 0
+                  and coalesce(LAST_UPDATED_AT, CREATED_AT) >= dateadd(day, -%s, current_timestamp())
                 """,
                 (lookback_days,),
             )
@@ -112,12 +134,32 @@ def get_performance_dashboard_overview(
             _safe_rows(
                 cur,
                 """
+                with active_accounts as (
+                  select distinct IBKR_ACCOUNT_ID
+                  from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                  where coalesce(IS_ACTIVE, true)
+                ),
+                latest_nav_per_day as (
+                  select
+                    date_trunc('day', s.SNAPSHOT_TS)::date as DAY,
+                    s.IBKR_ACCOUNT_ID,
+                    s.NET_LIQUIDATION_EUR,
+                    row_number() over (
+                      partition by date_trunc('day', s.SNAPSHOT_TS)::date, s.IBKR_ACCOUNT_ID
+                      order by s.SNAPSHOT_TS desc
+                    ) as RN
+                  from MIP.LIVE.BROKER_SNAPSHOTS s
+                  join active_accounts a
+                    on a.IBKR_ACCOUNT_ID = s.IBKR_ACCOUNT_ID
+                  where s.SNAPSHOT_TYPE = 'NAV'
+                    and s.SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+                )
                 select
-                  TS::date as DAY,
-                  sum(coalesce(TOTAL_EQUITY, 0)) as TOTAL_EQUITY
-                from MIP.APP.PORTFOLIO_DAILY
-                where TS >= dateadd(day, -%s, current_timestamp())
-                group by TS::date
+                  DAY,
+                  sum(coalesce(NET_LIQUIDATION_EUR, 0)) as TOTAL_EQUITY
+                from latest_nav_per_day
+                where RN = 1
+                group by DAY
                 order by DAY
                 """,
                 (lookback_days,),
@@ -203,9 +245,26 @@ def get_performance_dashboard_overview(
                 """
                 select
                   count(*) as TOTAL_DECISIONS,
-                  count_if(try_parse_json(RATIONALE):sim_committee is not null) as COMMITTEE_INFLUENCED,
-                  count_if(coalesce(try_parse_json(RATIONALE):sim_committee:should_enter::boolean, true) = false) as BLOCKED_BY_COMMITTEE,
-                  count_if(abs(coalesce(try_to_double(try_parse_json(RATIONALE):sim_committee:size_factor::string), 1) - 1) > 0.001) as RESIZED_BY_COMMITTEE
+                  count_if(
+                    try_parse_json(RATIONALE):committee is not null
+                    or try_parse_json(RATIONALE):live_committee is not null
+                  ) as COMMITTEE_INFLUENCED,
+                  count_if(
+                    coalesce(
+                      try_parse_json(RATIONALE):committee:should_enter::boolean,
+                      try_parse_json(RATIONALE):live_committee:should_enter::boolean,
+                      true
+                    ) = false
+                  ) as BLOCKED_BY_COMMITTEE,
+                  count_if(
+                    abs(
+                      coalesce(
+                        try_to_double(try_parse_json(RATIONALE):committee:size_factor::string),
+                        try_to_double(try_parse_json(RATIONALE):live_committee:size_factor::string),
+                        1
+                      ) - 1
+                    ) > 0.001
+                  ) as RESIZED_BY_COMMITTEE
                 from MIP.AGENT_OUT.ORDER_PROPOSALS
                 where PROPOSED_AT >= dateadd(day, -%s, current_timestamp())
                 """,
@@ -221,7 +280,12 @@ def get_performance_dashboard_overview(
                   coalesce(value:role::string, value:agent::string, 'UNKNOWN') as ROLE_NAME,
                   count(*) as INFLUENCE_COUNT
                 from MIP.AGENT_OUT.ORDER_PROPOSALS op,
-                     lateral flatten(input => try_parse_json(op.RATIONALE):sim_committee:agent_dialogue)
+                     lateral flatten(
+                       input => coalesce(
+                         try_parse_json(op.RATIONALE):committee:agent_dialogue,
+                         try_parse_json(op.RATIONALE):live_committee:agent_dialogue
+                       )
+                     )
                 where op.PROPOSED_AT >= dateadd(day, -%s, current_timestamp())
                 group by 1
                 order by INFLUENCE_COUNT desc
@@ -347,10 +411,10 @@ def get_performance_dashboard_overview(
                   where CREATED_AT >= dateadd(day, -%s, current_timestamp())
                 ),
                 o as (
-                  select count_if(coalesce(REALIZED_PNL, 0) > 0) as SUCCESSFUL_OUTCOMES
-                  from MIP.APP.PORTFOLIO_TRADES
-                  where upper(coalesce(SIDE, '')) = 'SELL'
-                    and TRADE_TS >= dateadd(day, -%s, current_timestamp())
+                  select count_if(coalesce(REALIZED_RETURN, 0) > 0) as SUCCESSFUL_OUTCOMES
+                  from MIP.APP.RECOMMENDATION_OUTCOMES
+                  where EVAL_STATUS in ('COMPLETED', 'SUCCESS')
+                    and CALCULATED_AT >= dateadd(day, -%s, current_timestamp())
                 )
                 select
                   s.SIGNALS,

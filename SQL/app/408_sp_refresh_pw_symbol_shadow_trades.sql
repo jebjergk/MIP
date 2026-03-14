@@ -74,6 +74,29 @@ begin
                 partition by SYMBOL, MARKET_TYPE
                 order by TS desc
             ) = 1
+        ),
+        live_cfg as (
+            select
+                PORTFOLIO_ID,
+                IBKR_ACCOUNT_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where coalesce(IS_ACTIVE, false) = true
+              and upper(coalesce(ADAPTER_MODE, '')) = 'LIVE'
+        ),
+        latest_nav as (
+            select
+                bs.PORTFOLIO_ID,
+                bs.NET_LIQUIDATION_EUR as BASE_EQUITY
+            from MIP.LIVE.BROKER_SNAPSHOTS bs
+            join live_cfg lc
+              on lc.PORTFOLIO_ID = bs.PORTFOLIO_ID
+            where upper(coalesce(bs.SNAPSHOT_TYPE, '')) = 'NAV'
+              and bs.NET_LIQUIDATION_EUR is not null
+              and bs.SNAPSHOT_TS <= :v_as_of_ts
+            qualify row_number() over (
+                partition by bs.PORTFOLIO_ID
+                order by bs.SNAPSHOT_TS desc, bs.CREATED_AT desc nulls last
+            ) = 1
         )
         select
             op.PROPOSAL_ID,
@@ -91,17 +114,20 @@ begin
             ) as ENTRY_PRICE,
             px.TS as ENTRY_PRICE_TS,
             coalesce(op.TARGET_WEIGHT, 0.05) as TARGET_WEIGHT,
-            coalesce(p.STARTING_CASH, 100000) * coalesce(op.TARGET_WEIGHT, 0.05) as EST_NOTIONAL,
+            coalesce(nav.BASE_EQUITY, 100000) * coalesce(op.TARGET_WEIGHT, 0.05) as EST_NOTIONAL,
             object_construct(
                 'source', 'ORDER_PROPOSALS',
                 'source_kind', 'SYMBOL_ORIENTED_NON_PATTERN',
                 'run_id', op.RUN_ID_VARCHAR,
+                'ibkr_account_id', lc.IBKR_ACCOUNT_ID,
                 'source_signals', op.SOURCE_SIGNALS,
                 'rationale', op.RATIONALE
             ) as DETAILS
         from MIP.AGENT_OUT.ORDER_PROPOSALS op
-        left join MIP.APP.PORTFOLIO p
-          on p.PORTFOLIO_ID = op.PORTFOLIO_ID
+        join live_cfg lc
+          on lc.PORTFOLIO_ID = op.PORTFOLIO_ID
+        left join latest_nav nav
+          on nav.PORTFOLIO_ID = op.PORTFOLIO_ID
         left join latest_px px
           on px.SYMBOL = op.SYMBOL
          and px.MARKET_TYPE = op.MARKET_TYPE

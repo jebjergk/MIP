@@ -24,8 +24,11 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false
+    const metricsUrl = defaultPortfolioId != null
+      ? `${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`
+      : `${API_BASE}/live/metrics`
     Promise.all([
-      fetch(`${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`)
+      fetch(metricsUrl)
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
       fetch(`${API_BASE}/live/trades/actions?pending_only=false&limit=300`)
@@ -147,14 +150,14 @@ export default function Home() {
             <span className="home-card-desc">Verify freshness and pipeline health</span>
           </Link>
           {defaultPortfolioId != null ? (
-            <Link to={`/portfolios/${defaultPortfolioId}`} className="home-card home-card--link">
-              <span className="home-card-title">Default Portfolio</span>
-              <span className="home-card-desc">Portfolio {defaultPortfolioId} positions and risk</span>
+            <Link to="/live-portfolio-activity" className="home-card home-card--link">
+              <span className="home-card-title">Live Portfolio Activity</span>
+              <span className="home-card-desc">Portfolio {defaultPortfolioId} broker truth and risk</span>
             </Link>
           ) : (
-            <Link to="/portfolios" className="home-card home-card--link">
-              <span className="home-card-title">Portfolios</span>
-              <span className="home-card-desc">All portfolios, gates, and exposures</span>
+            <Link to="/live-portfolio-config" className="home-card home-card--link">
+              <span className="home-card-title">Live Portfolio Config</span>
+              <span className="home-card-desc">Configure active IB live portfolios</span>
             </Link>
           )}
           <Link to="/learning-ledger" className="home-card home-card--link">

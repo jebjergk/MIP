@@ -197,17 +197,6 @@ def get_overview(
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}
             group by p.SYMBOL, p.MARKET_TYPE
         ),
-        trade_counts as (
-            select
-                t.SYMBOL,
-                t.MARKET_TYPE,
-                count(*) as trade_count,
-                count(case when t.TRADE_TS::date = %s then 1 end) as latest_bar_sim_trade_count
-            from MIP.APP.PORTFOLIO_TRADES t
-            where t.TRADE_TS >= %s
-              {"and t.PORTFOLIO_ID = %s" if portfolio_id else ""}
-            group by t.SYMBOL, t.MARKET_TYPE
-        ),
         live_trade_counts as (
             select
                 upper(o.SYMBOL) as SYMBOL,
@@ -261,23 +250,20 @@ def get_overview(
             coalesce(pc.today_proposal_count, 0) as today_proposal_count,
             coalesce(pc.latest_bar_proposal_count, 0) as latest_bar_proposal_count,
             coalesce(pc.actionable_proposal_count, 0) as actionable_proposal_count,
-            coalesce(tc.trade_count, 0) as sim_trade_count,
-            coalesce(tc.latest_bar_sim_trade_count, 0) as latest_bar_sim_trade_count,
             coalesce(ltc.live_trade_count, 0) as live_trade_count,
             coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_live_trade_count,
-            coalesce(tc.trade_count, 0) + coalesce(ltc.live_trade_count, 0) as trade_count,
-            coalesce(tc.latest_bar_sim_trade_count, 0) + coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_trade_count,
+            coalesce(ltc.live_trade_count, 0) as trade_count,
+            coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_trade_count,
             tl.latest_trust_label as trust_label,
             lb.latest_bar_ts,
             lb.latest_close
         from symbols_in_window s
         left join signal_counts sc on sc.SYMBOL = s.SYMBOL and sc.MARKET_TYPE = s.MARKET_TYPE
         left join proposal_counts pc on pc.SYMBOL = s.SYMBOL and pc.MARKET_TYPE = s.MARKET_TYPE
-        left join trade_counts tc on tc.SYMBOL = s.SYMBOL and tc.MARKET_TYPE = s.MARKET_TYPE
         left join live_trade_counts ltc on ltc.SYMBOL = s.SYMBOL and ltc.MARKET_TYPE = s.MARKET_TYPE
         left join trust_labels tl on tl.SYMBOL = s.SYMBOL and tl.MARKET_TYPE = s.MARKET_TYPE
         left join latest_bars lb on lb.SYMBOL = s.SYMBOL and lb.MARKET_TYPE = s.MARKET_TYPE
-        {"where coalesce(pc.proposal_count, 0) + coalesce(tc.trade_count, 0) + coalesce(ltc.live_trade_count, 0) > 0" if portfolio_id else ""}
+        {"where coalesce(pc.proposal_count, 0) + coalesce(ltc.live_trade_count, 0) > 0" if portfolio_id else ""}
         order by s.MARKET_TYPE, s.SYMBOL
         """
         
@@ -298,10 +284,6 @@ def get_overview(
         query_params.extend([
             window_start,      # proposal_counts
         ])
-        if portfolio_id:
-            query_params.append(portfolio_id)
-        query_params.append(batch_date)  # trade_counts latest bar
-        query_params.append(window_start)  # trade_counts
         if portfolio_id:
             query_params.append(portfolio_id)
         query_params.append(batch_date)  # live_trade_counts latest bar
@@ -329,8 +311,6 @@ def get_overview(
                 "actionable_proposal_count": row.get("ACTIONABLE_PROPOSAL_COUNT") or row.get("actionable_proposal_count") or 0,
                 "trade_count": row.get("TRADE_COUNT") or row.get("trade_count") or 0,
                 "latest_bar_trade_count": row.get("LATEST_BAR_TRADE_COUNT") or row.get("latest_bar_trade_count") or 0,
-                "sim_trade_count": row.get("SIM_TRADE_COUNT") or row.get("sim_trade_count") or 0,
-                "latest_bar_sim_trade_count": row.get("LATEST_BAR_SIM_TRADE_COUNT") or row.get("latest_bar_sim_trade_count") or 0,
                 "live_trade_count": row.get("LIVE_TRADE_COUNT") or row.get("live_trade_count") or 0,
                 "latest_bar_live_trade_count": row.get("LATEST_BAR_LIVE_TRADE_COUNT") or row.get("latest_bar_live_trade_count") or 0,
                 "trust_label": row.get("TRUST_LABEL") or row.get("trust_label"),
@@ -416,24 +396,6 @@ def get_detail(
             # If there are trades today, anchor synthetic day to today's opening bar
             # (instead of yesterday's close) so today's trade markers are visually truthful.
             has_today_trade = False
-            sim_trade_exists_sql = """
-                select count(*) as CNT
-                from MIP.APP.PORTFOLIO_TRADES t
-                where upper(t.SYMBOL) = upper(%s)
-                  and t.MARKET_TYPE = %s
-                  and t.TRADE_TS::date = current_date()
-                  {portfolio_filter}
-            """
-            sim_params = [symbol, market_type]
-            if portfolio_id:
-                sim_trade_exists_sql = sim_trade_exists_sql.format(portfolio_filter="and t.PORTFOLIO_ID = %s")
-                sim_params.append(portfolio_id)
-            else:
-                sim_trade_exists_sql = sim_trade_exists_sql.format(portfolio_filter="")
-            cur.execute(sim_trade_exists_sql, sim_params)
-            sim_cnt_row = cur.fetchone()
-            sim_cnt = sim_cnt_row[0] if sim_cnt_row else 0
-
             live_trade_exists_sql = """
                 select count(*) as CNT
                 from MIP.LIVE.LIVE_ORDERS o
@@ -455,7 +417,7 @@ def get_detail(
             live_cnt_row = cur.fetchone()
             live_cnt = live_cnt_row[0] if live_cnt_row else 0
 
-            has_today_trade = (sim_cnt or 0) > 0 or (live_cnt or 0) > 0
+            has_today_trade = (live_cnt or 0) > 0
 
             if has_today_trade:
                 cur.execute(
@@ -737,48 +699,6 @@ def get_detail(
                 })
 
         # Enrich proposal rows with latest linked live action stage when available.
-        # Get trade events
-        sim_trades = []
-        if window_start:
-            trade_sql = """
-                select 
-                    t.TRADE_ID,
-                    t.PORTFOLIO_ID,
-                    t.TRADE_TS,
-                    t.SIDE,
-                    t.QUANTITY,
-                    t.PRICE,
-                    t.NOTIONAL,
-                    t.REALIZED_PNL,
-                    t.PROPOSAL_ID
-                from MIP.APP.PORTFOLIO_TRADES t
-                where t.SYMBOL = %s
-                  and t.MARKET_TYPE = %s
-                  and t.TRADE_TS >= %s
-            """
-            params = [symbol, market_type, window_start]
-            if portfolio_id:
-                trade_sql += " and t.PORTFOLIO_ID = %s"
-                params.append(portfolio_id)
-            trade_sql += " order by t.TRADE_TS"
-            
-            cur.execute(trade_sql, params)
-            for row in fetch_all(cur):
-                ts = row.get("TRADE_TS")
-                sim_trades.append({
-                    "type": "TRADE",
-                    "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                    "trade_source": "SIM",
-                    "trade_id": row.get("TRADE_ID"),
-                    "proposal_id": row.get("PROPOSAL_ID"),
-                    "portfolio_id": row.get("PORTFOLIO_ID"),
-                    "side": row.get("SIDE"),
-                    "quantity": float(row.get("QUANTITY")) if row.get("QUANTITY") is not None else None,
-                    "price": float(row.get("PRICE")) if row.get("PRICE") is not None else None,
-                    "notional": float(row.get("NOTIONAL")) if row.get("NOTIONAL") is not None else None,
-                    "realized_pnl": float(row.get("REALIZED_PNL")) if row.get("REALIZED_PNL") is not None else None,
-                })
-
         live_trades = []
         if window_start:
             live_trade_sql = """
@@ -863,7 +783,7 @@ def get_detail(
         effective_proposal_count = max(source_proposal_count, live_action_count)
 
         # Combine events for overlay
-        trades = sim_trades + live_trades
+        trades = live_trades
         events = signals + proposals + live_actions + trades
         events.sort(key=lambda e: e.get("ts", ""))
 
@@ -993,7 +913,6 @@ def get_detail(
                 "source_proposals": source_proposal_count,
                 "live_actions": live_action_count,
                 "trades": len(trades),
-                "sim_trades": len(sim_trades),
                 "live_trades": len(live_trades),
             },
         }
@@ -1106,10 +1025,9 @@ def _build_narrative(
                             where PORTFOLIO_ID = %s
                         ) op
                         cross join (
-                            select coalesce(prof.MAX_POSITIONS, 10) as MAX_POSITIONS
-                            from MIP.APP.PORTFOLIO p
-                            left join MIP.APP.PORTFOLIO_PROFILE prof on prof.PROFILE_ID = p.PROFILE_ID
-                            where p.PORTFOLIO_ID = %s
+                            select coalesce(cfg.MAX_POSITIONS, 10) as MAX_POSITIONS
+                            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG cfg
+                            where cfg.PORTFOLIO_ID = %s
                         ) prof
                         """,
                         (portfolio_id, portfolio_id),

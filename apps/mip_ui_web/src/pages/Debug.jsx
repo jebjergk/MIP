@@ -93,17 +93,17 @@ export default function Debug() {
         })
       }
 
-      // 3. /api/portfolios
+      // 3. /api/live/portfolio-config
       let portfolioId = null
       try {
-        const r = await fetch(`${API_BASE}/portfolios`)
+        const r = await fetch(`${API_BASE}/live/portfolio-config`)
         const data = await parseApiResponse(r)
         if (r.ok && Array.isArray(data) && data.length > 0) {
           const first = data[0]
           portfolioId = first.portfolio_id ?? first.PORTFOLIO_ID ?? first.id
         }
         out.push({
-          url: `${API_BASE}/portfolios`,
+          url: `${API_BASE}/live/portfolio-config`,
           status: r.status,
           ok: r.ok,
           preview: previewFromData(data, !r.ok),
@@ -111,7 +111,7 @@ export default function Debug() {
         })
       } catch (e) {
         out.push({
-          url: `${API_BASE}/portfolios`,
+          url: `${API_BASE}/live/portfolio-config`,
           status: 0,
           ok: false,
           preview: String(e?.message ?? e),

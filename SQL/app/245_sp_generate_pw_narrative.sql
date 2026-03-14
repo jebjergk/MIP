@@ -39,9 +39,21 @@ declare
 begin
     -- Portfolio scope
     if (:P_PORTFOLIO_ID is not null and :P_PORTFOLIO_ID > 0) then
-        v_portfolios := (select PORTFOLIO_ID from MIP.APP.PORTFOLIO where PORTFOLIO_ID = :P_PORTFOLIO_ID and STATUS = 'ACTIVE');
+        v_portfolios := (
+            select PORTFOLIO_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = :P_PORTFOLIO_ID
+              and coalesce(IS_ACTIVE, false) = true
+              and upper(coalesce(ADAPTER_MODE, '')) = 'LIVE'
+        );
     else
-        v_portfolios := (select PORTFOLIO_ID from MIP.APP.PORTFOLIO where STATUS = 'ACTIVE' order by PORTFOLIO_ID);
+        v_portfolios := (
+            select PORTFOLIO_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where coalesce(IS_ACTIVE, false) = true
+              and upper(coalesce(ADAPTER_MODE, '')) = 'LIVE'
+            order by PORTFOLIO_ID
+        );
     end if;
 
     for rec in v_portfolios do

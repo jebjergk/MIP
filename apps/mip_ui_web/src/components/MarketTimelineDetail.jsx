@@ -155,7 +155,7 @@ function SignalChainTree({ chains }) {
                 <span className="mtd-tree-type">{branch.proposal?.side} Proposal</span>
                 <span className="mtd-tree-date">{fmtDate(branch.proposal?.proposed_at || branch.proposal?.ts)}</span>
                 {branch.proposal?.portfolio_id && (
-                  <Link to={`/portfolios/${branch.proposal.portfolio_id}`} className="mtd-portfolio-link">
+                  <Link to="/live-portfolio-activity" className="mtd-portfolio-link">
                     Portfolio {branch.proposal.portfolio_id}
                   </Link>
                 )}
@@ -184,7 +184,7 @@ function SignalChainTree({ chains }) {
                     <span className="mtd-tree-detail">(${Number(branch.buy.notional).toFixed(0)})</span>
                   )}
                   {branch.buy.portfolio_id && (
-                    <Link to={`/portfolios/${branch.buy.portfolio_id}`} className="mtd-portfolio-link">
+                    <Link to="/live-portfolio-activity" className="mtd-portfolio-link">
                       Portfolio {branch.buy.portfolio_id}
                     </Link>
                   )}
@@ -367,9 +367,9 @@ export default function MarketTimelineDetail({
         <span className="mtd-count mtd-count-trade">
           <strong>{counts.trades || 0}</strong> trades
         </span>
-        {(counts.sim_trades != null || counts.live_trades != null) && (
+        {counts.live_trades != null && (
           <span className="mtd-count-breakdown">
-            (sim {counts.sim_trades || 0} · live {counts.live_trades || 0})
+            (live {counts.live_trades || 0})
           </span>
         )}
       </div>

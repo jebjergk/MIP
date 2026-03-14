@@ -48,7 +48,7 @@ function DeltaIndicator({ value, format = 'number', invert = false }) {
 }
 
 // Executed Trades Modal
-function ExecutedTradesModal({ trades, source, portfolioId, verificationStatus, briefRecordCount, executedLabel, onClose }) {
+function ExecutedTradesModal({ trades, source, verificationStatus, briefRecordCount, executedLabel, onClose }) {
   useEffect(() => {
     const handleEsc = (e) => {
       if (e.key === 'Escape') onClose()
@@ -74,7 +74,7 @@ function ExecutedTradesModal({ trades, source, portfolioId, verificationStatus, 
         {isVerified && (
           <div className="modal-verification verified">
             <span className="verification-icon">✓</span>
-            <span>Verified: {trades.length} trade{trades.length !== 1 ? 's' : ''} found in PORTFOLIO_TRADES</span>
+            <span>Verified: {trades.length} trade{trades.length !== 1 ? 's' : ''} found in live broker order history</span>
           </div>
         )}
         {isMismatch && (
@@ -129,11 +129,11 @@ function ExecutedTradesModal({ trades, source, portfolioId, verificationStatus, 
         </div>
         <div className="modal-footer">
           <Link 
-            to={`/portfolios/${portfolioId}`} 
+            to="/live-portfolio-activity"
             className="view-all-link"
             onClick={onClose}
           >
-            View all trades in Portfolio →
+            View all trades in Live Portfolio Activity →
           </Link>
         </div>
       </div>
@@ -172,7 +172,7 @@ function ResetWarningBanner({ warning }) {
 // Verification badge for executed trades
 function VerificationBadge({ status }) {
   if (status === 'VERIFIED') {
-    return <span className="verification-badge verified" title="Count verified against PORTFOLIO_TRADES">✓</span>
+    return <span className="verification-badge verified" title="Count verified against live order tables">✓</span>
   }
   if (status === 'MISMATCH') {
     return <span className="verification-badge mismatch" title="Brief record differs from trade table">⚠</span>
@@ -207,9 +207,9 @@ function PortfolioActionsCard({ actions }) {
           </span>
         </div>
         <div className="action-item">
-          <span className="action-label">Last Simulation Run</span>
+          <span className="action-label">Latest Live Action</span>
           <span className="action-value">
-            <code>{actions.last_simulation_run_id ? actions.last_simulation_run_id.slice(0, 8) + '...' : '—'}</code>
+            <code>{actions.latest_live_action_status || '—'}</code>
           </span>
         </div>
       </div>
@@ -605,9 +605,9 @@ export default function MorningBrief() {
         <h1>Morning Brief</h1>
         <EmptyState
           title="No portfolios yet"
-          action={<>Run pipeline, then <Link to="/portfolios">pick a portfolio</Link>.</>}
+          action={<>Run pipeline, then <Link to="/live-portfolio-config">configure a live portfolio</Link>.</>}
           explanation="Briefs are per portfolio. Load portfolios first by running the pipeline."
-          reasons={['Pipeline has not run yet.', 'No portfolios in MIP.APP.PORTFOLIO.']}
+          reasons={['Pipeline has not run yet.', 'No live portfolios configured in MIP.LIVE.LIVE_PORTFOLIO_CONFIG.']}
         />
       </>
     )
@@ -717,7 +717,6 @@ export default function MorningBrief() {
         <ExecutedTradesModal
           trades={brief.summary.executed_trades_preview || []}
           source={brief.summary.executed_trades_source || 'Portfolio trades'}
-          portfolioId={brief.portfolio_id}
           verificationStatus={brief.summary.verification_status || 'UNVERIFIABLE'}
           briefRecordCount={brief.summary.brief_record_count || 0}
           executedLabel={brief.summary.executed_label || 'trades'}

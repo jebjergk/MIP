@@ -29,18 +29,20 @@ begin
     );
 
     create or replace temporary table TMP_PW_PORTFOLIOS as
-    select p.PORTFOLIO_ID
-    from MIP.APP.PORTFOLIO p
-    where p.STATUS = 'ACTIVE'
-      and (:P_PORTFOLIO_ID is null or p.PORTFOLIO_ID = :P_PORTFOLIO_ID);
+    select c.PORTFOLIO_ID
+    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+    where coalesce(c.IS_ACTIVE, false) = true
+      and upper(coalesce(c.ADAPTER_MODE, '')) = 'LIVE'
+      and (:P_PORTFOLIO_ID is null or c.PORTFOLIO_ID = :P_PORTFOLIO_ID);
 
     create or replace temporary table TMP_PW_ACTUAL as
     with cfg as (
         select
-            p.PORTFOLIO_ID,
-            coalesce(p.STARTING_CASH, 100000)::number(18,4) as STARTING_CASH
-        from MIP.APP.PORTFOLIO p
-        join TMP_PW_PORTFOLIOS tp on tp.PORTFOLIO_ID = p.PORTFOLIO_ID
+            a.PORTFOLIO_ID,
+            min(a.STARTING_CASH)::number(18,4) as STARTING_CASH
+        from MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        join TMP_PW_PORTFOLIOS tp on tp.PORTFOLIO_ID = a.PORTFOLIO_ID
+        group by a.PORTFOLIO_ID
     ),
     day_actual as (
         select
@@ -92,7 +94,7 @@ begin
             a.OPEN_POSITIONS as OPEN_POSITIONS_END,
             object_construct(
                 'world', 'ACTUAL_RESEARCH',
-                'source', 'ORDER_PROPOSALS + RECOMMENDATION_OUTCOMES',
+                'source', 'LIVE.BROKER_SNAPSHOTS + LIVE_ACTIONS',
                 'as_of_ts', a.AS_OF_TS
             ) as RESULT_JSON
         from TMP_PW_ACTUAL a

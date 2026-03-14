@@ -28,7 +28,7 @@ export default function MarketTimeline() {
   
   // Fetch portfolio list once
   useEffect(() => {
-    fetch(`${API_BASE}/portfolios`)
+    fetch(`${API_BASE}/live/portfolio-config`)
       .then((r) => r.ok ? r.json() : [])
       .then((d) => setPortfolios(Array.isArray(d) ? d : []))
       .catch(() => setPortfolios([]))
@@ -117,7 +117,7 @@ export default function MarketTimeline() {
     <div className="market-timeline-page">
       <h1>Market Timeline</h1>
       <p className="market-timeline-subtitle">
-        End-to-end observability: signals → proposals → trades per symbol (SIM + LIVE).
+        End-to-end observability: signals → proposals → broker-truth trades per symbol.
         Click a symbol to see the OHLC chart with event overlays and decision narrative.
       </p>
       
@@ -129,7 +129,7 @@ export default function MarketTimeline() {
             <option value="">All</option>
             {portfolios.map((p) => (
               <option key={p.PORTFOLIO_ID} value={p.PORTFOLIO_ID}>
-                {p.NAME || `Portfolio ${p.PORTFOLIO_ID}`}
+                {(p.IBKR_ACCOUNT_ID ? `${p.IBKR_ACCOUNT_ID} · ` : '') + (p.PORTFOLIO_ID != null ? `Portfolio ${p.PORTFOLIO_ID}` : 'Portfolio')}
               </option>
             ))}
           </select>
@@ -166,7 +166,7 @@ export default function MarketTimeline() {
         <span className="legend-item"><span className="legend-signal">S</span> Signals</span>
         <span className="legend-item"><span className="legend-proposal">P</span> Proposals</span>
         <span className="legend-item"><span className="legend-trade">T</span> Trades</span>
-        <span className="legend-item market-timeline-legend-note">T = SIM + LIVE fills</span>
+        <span className="legend-item market-timeline-legend-note">T = broker fills</span>
       </div>
       
       {symbols.length === 0 ? (
@@ -292,8 +292,9 @@ export default function MarketTimeline() {
             <strong> {symbols.reduce((acc, s) => acc + s.signal_count, 0)}</strong> signals · 
             <strong> {symbols.reduce((acc, s) => acc + s.proposal_count, 0)}</strong> proposals · 
             <strong> {symbols.reduce((acc, s) => acc + s.trade_count, 0)}</strong> trades
-            {' '}(<strong>{symbols.reduce((acc, s) => acc + (s.sim_trade_count || 0), 0)}</strong> sim,
-            {' '}<strong>{symbols.reduce((acc, s) => acc + (s.live_trade_count || 0), 0)}</strong> live)
+            {symbols.some((s) => s.live_trade_count != null) ? (
+              <> {' '}(<strong>{symbols.reduce((acc, s) => acc + (s.live_trade_count || 0), 0)}</strong> live)</>
+            ) : null}
           </p>
         </div>
       )}

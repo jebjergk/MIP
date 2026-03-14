@@ -139,17 +139,31 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
 
     try:
         cur = conn.cursor()
+        resolved_portfolio_id = portfolio_id
+        if resolved_portfolio_id is None:
+            cur.execute(
+                """
+                select PORTFOLIO_ID
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where coalesce(IS_ACTIVE, true)
+                order by UPDATED_AT desc, PORTFOLIO_ID asc
+                limit 1
+                """
+            )
+            row = cur.fetchone()
+            if row:
+                resolved_portfolio_id = int(row[0])
 
         # --- Portfolio: risk state, risk gate, KPIs, run events ---
-        if portfolio_id is not None:
+        if resolved_portfolio_id is not None:
             cur.execute(
                 "select * from MIP.MART.V_PORTFOLIO_RISK_STATE where PORTFOLIO_ID = %s",
-                (portfolio_id,),
+                (resolved_portfolio_id,),
             )
             risk_state_rows = fetch_all(cur)
             cur.execute(
                 "select * from MIP.MART.V_PORTFOLIO_RISK_GATE where PORTFOLIO_ID = %s",
-                (portfolio_id,),
+                (resolved_portfolio_id,),
             )
             risk_gate_rows = fetch_all(cur)
             cur.execute(
@@ -159,7 +173,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 order by TO_TS desc
                 limit 5
                 """,
-                (portfolio_id,),
+                (resolved_portfolio_id,),
             )
             kpis_rows = fetch_all(cur)
             cur.execute(
@@ -169,7 +183,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 order by RUN_ID desc
                 limit 20
                 """,
-                (portfolio_id,),
+                (resolved_portfolio_id,),
             )
             run_events_rows = fetch_all(cur)
             portfolio = {
@@ -180,7 +194,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
             }
 
         # --- Brief: latest for portfolio (ordered by CREATED_AT, not AS_OF_TS) ---
-        if portfolio_id is not None:
+        if resolved_portfolio_id is not None:
             cur.execute(
                 """
                 select
@@ -194,7 +208,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 order by coalesce(mb.CREATED_AT, mb.AS_OF_TS) desc, mb.PIPELINE_RUN_ID desc
                 limit 1
                 """,
-                (portfolio_id,),
+                (resolved_portfolio_id,),
             )
             brief_row = cur.fetchone()
             if brief_row and cur.description:

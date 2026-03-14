@@ -61,6 +61,20 @@ def _clean_narrative_json(raw):
     return _parse_json(raw)
 
 
+def _has_valid_actual_days(cur, portfolio_id: int) -> bool:
+    """True when portfolio has at least one ACTUAL baseline day in current live-aware view."""
+    cur.execute(
+        """
+        select count(*) as N
+        from MIP.MART.V_PARALLEL_WORLD_ACTUAL
+        where PORTFOLIO_ID = %s
+        """,
+        (portfolio_id,),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0] and int(row[0]) > 0)
+
+
 # ──────────────────────────────────────────────────────────────
 # GET /parallel-worlds/scenarios
 # ──────────────────────────────────────────────────────────────
@@ -153,6 +167,12 @@ def get_results(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if not _has_valid_actual_days(cur, portfolio_id):
+            return {
+                "found": False,
+                "message": "No live actual baseline days found for this portfolio yet.",
+                "scenarios": [],
+            }
         cur.execute(sql, tuple(params))
         rows = _fetch_all(cur)
         if not rows:
@@ -230,6 +250,12 @@ def get_regret(
         OUTPERFORM_PCT
     FROM MIP.MART.V_PARALLEL_WORLD_REGRET
     WHERE PORTFOLIO_ID = %s
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        WHERE a.PORTFOLIO_ID = V_PARALLEL_WORLD_REGRET.PORTFOLIO_ID
+          AND a.AS_OF_TS::date = V_PARALLEL_WORLD_REGRET.AS_OF_TS::date
+      )
       AND EXISTS (
         SELECT 1
         FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
@@ -349,6 +375,12 @@ def get_confidence(
     WHERE PORTFOLIO_ID = %s
       AND EXISTS (
         SELECT 1
+        FROM MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        WHERE a.PORTFOLIO_ID = V_PARALLEL_WORLD_CONFIDENCE.PORTFOLIO_ID
+          AND a.AS_OF_TS::date = V_PARALLEL_WORLD_CONFIDENCE.AS_OF_TS::date
+      )
+      AND EXISTS (
+        SELECT 1
         FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
         WHERE s.SCENARIO_ID = V_PARALLEL_WORLD_CONFIDENCE.SCENARIO_ID
           AND s.IS_ACTIVE = true
@@ -409,6 +441,8 @@ def get_policy_diagnostics(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if not _has_valid_actual_days(cur, portfolio_id):
+            return {"found": False, "message": "No live actual baseline days found for this portfolio yet."}
         cur.execute(sql, (portfolio_id,))
         rows = _fetch_all(cur)
         if not rows:
@@ -460,6 +494,13 @@ def get_regret_attribution(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if not _has_valid_actual_days(cur, portfolio_id):
+            return {
+                "portfolio_id": portfolio_id,
+                "data": [],
+                "dominant_driver": None,
+                "count": 0,
+            }
         cur.execute(sql, (portfolio_id,))
         rows = _fetch_all(cur)
         dominant = next((r for r in rows if r.get("is_dominant_driver")), None)
@@ -508,6 +549,12 @@ def get_equity_curves(
     FROM MIP.APP.PARALLEL_WORLD_RESULT r
     LEFT JOIN MIP.APP.PARALLEL_WORLD_SCENARIO s ON s.SCENARIO_ID = r.SCENARIO_ID
     WHERE {where}
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        WHERE a.PORTFOLIO_ID = r.PORTFOLIO_ID
+          AND a.AS_OF_TS::date = r.AS_OF_TS::date
+      )
       AND (r.SCENARIO_ID = 0 OR coalesce(s.IS_ACTIVE, false) = true)
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY r.PORTFOLIO_ID, r.SCENARIO_ID, r.AS_OF_TS::date
@@ -592,6 +639,12 @@ def get_tuning_surface(
     WHERE {where}
       AND EXISTS (
         SELECT 1
+        FROM MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        WHERE a.PORTFOLIO_ID = V_PW_TUNING_SURFACE.PORTFOLIO_ID
+          AND a.AS_OF_TS::date = V_PW_TUNING_SURFACE.AS_OF_TS::date
+      )
+      AND EXISTS (
+        SELECT 1
         FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
         WHERE s.SCENARIO_ID = V_PW_TUNING_SURFACE.SCENARIO_ID
           AND s.IS_ACTIVE = true
@@ -660,6 +713,12 @@ def get_regime_sensitivity(
     WHERE {where}
       AND EXISTS (
         SELECT 1
+        FROM MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        WHERE a.PORTFOLIO_ID = V_PW_REGIME_SENSITIVITY.PORTFOLIO_ID
+          AND a.AS_OF_TS::date = V_PW_REGIME_SENSITIVITY.AS_OF_TS::date
+      )
+      AND EXISTS (
+        SELECT 1
         FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
         WHERE s.SCENARIO_ID = V_PW_REGIME_SENSITIVITY.SCENARIO_ID
           AND s.IS_ACTIVE = true
@@ -713,6 +772,12 @@ def get_recommendations(
         CONFIDENCE_EMOJI, REC_RANK
     FROM MIP.MART.V_PW_RECOMMENDATIONS
     WHERE {where}
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.MART.V_PARALLEL_WORLD_ACTUAL a
+        WHERE a.PORTFOLIO_ID = V_PW_RECOMMENDATIONS.PORTFOLIO_ID
+          AND a.AS_OF_TS::date = V_PW_RECOMMENDATIONS.AS_OF_TS::date
+      )
       AND EXISTS (
         SELECT 1
         FROM MIP.APP.PARALLEL_WORLD_SCENARIO s

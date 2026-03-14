@@ -11,7 +11,7 @@ import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
-const BASE_COLUMN_COUNT = 10 // Columns before horizon columns (expand, market, symbol, pattern, interval, as_of, maturity, sample, coverage, horizons)
+const BASE_COLUMN_COUNT = 11 // Columns before horizon columns (expand, market, symbol, pattern, interval, as_of, maturity, trust gate, sample, coverage, horizons)
 
 function stageGlossaryKey(stage) {
   if (!stage) return 'maturity_stage'
@@ -215,6 +215,7 @@ export default function TrainingStatus() {
               <th>Interval <InfoTooltip scope={SCOPE} key="interval_minutes" variant="short" /></th>
               <th>As of <InfoTooltip scope={SCOPE} key="as_of_ts" variant="short" /></th>
               <th>Maturity <InfoTooltip scope={SCOPE} key="maturity_score" variant="short" /></th>
+              <th>Trust gate</th>
               <th>Sample size <InfoTooltip scope={SCOPE} key="recs_total" variant="short" /></th>
               <th>Coverage <InfoTooltip scope={SCOPE} key="coverage_ratio" variant="short" /></th>
               <th>Horizons <InfoTooltip scope={SCOPE} key="horizons_covered" variant="short" /></th>
@@ -229,6 +230,7 @@ export default function TrainingStatus() {
               const score = get(row, 'maturity_score') != null ? Number(get(row, 'maturity_score')) : 0
               const stageKey = stageGlossaryKey(maturityStage)
               const stageTitle = getGlossaryEntry(SCOPE, stageKey)?.short ?? maturityStage
+              const trustGate = String(get(row, 'trust_gate') ?? 'UNKNOWN').toUpperCase()
               const rowKey = getRowKey(row, get)
               const isExpanded = expandedRowId === rowKey
               const cachedData = timelineCacheRef.current[rowKey]
@@ -267,6 +269,11 @@ export default function TrainingStatus() {
                       </div>
                       <span className="training-score-num" title={getGlossaryEntry(SCOPE, 'maturity_score')?.short}>
                         {formatNum(get(row, 'maturity_score'))}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`training-trust-badge training-trust-${trustGate.toLowerCase().replace('_', '-')}`}>
+                        {trustGate}
                       </span>
                     </td>
                     <td>{formatNum(get(row, 'recs_total'))}</td>

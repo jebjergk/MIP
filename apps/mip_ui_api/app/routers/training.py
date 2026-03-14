@@ -94,6 +94,14 @@ with recs as (
   where r.INTERVAL_MINUTES = {interval_minutes}
   group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
 ),
+gate_cfg as (
+  select
+    coalesce(max(iff(CONFIG_KEY = 'SYMBOL_LOCAL_GATE_ENABLED', lower(CONFIG_VALUE), null)), 'true') as SYMBOL_LOCAL_GATE_ENABLED,
+    coalesce(max(try_to_double(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECENT_HIT_RATE', CONFIG_VALUE, null))), 0.50) as SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
+    coalesce(max(try_to_double(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN', CONFIG_VALUE, null))), 0.00) as SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN,
+    coalesce(max(try_to_number(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECS', CONFIG_VALUE, null))), 8) as SYMBOL_LOCAL_MIN_RECS
+  from MIP.APP.APP_CONFIG
+),
 outcomes_agg as (
   select
     r.MARKET_TYPE,
@@ -101,6 +109,9 @@ outcomes_agg as (
     r.PATTERN_ID,
     r.INTERVAL_MINUTES,
     count(*) as outcomes_total,
+    sum(case when o.EVAL_STATUS = 'SUCCESS' then 1 else 0 end) as success_count,
+    sum(case when o.EVAL_STATUS = 'SUCCESS' and o.HIT_FLAG then 1 else 0 end) as hit_count,
+    avg(case when o.EVAL_STATUS = 'SUCCESS' then o.REALIZED_RETURN end) as avg_return_success,
     count(distinct o.HORIZON_BARS) as horizons_covered,
     {avg_cols}
   from MIP.APP.RECOMMENDATION_LOG r
@@ -114,6 +125,16 @@ select
   recs.PATTERN_ID as pattern_id,
   recs.INTERVAL_MINUTES as interval_minutes,
   recs.as_of_ts as as_of_ts,
+  case
+    when cfg.SYMBOL_LOCAL_GATE_ENABLED <> 'true' then 'DISABLED'
+    when coalesce(recs.recs_total, 0) < cfg.SYMBOL_LOCAL_MIN_RECS then 'LOW_EVIDENCE'
+    when coalesce(o.success_count, 0) = 0 then 'LOW_EVIDENCE'
+    when coalesce(o.hit_count::float / nullif(o.success_count, 0), 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE
+      and coalesce(o.avg_return_success, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN then 'TRUSTED'
+    when coalesce(o.hit_count::float / nullif(o.success_count, 0), 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE * 0.9
+      or coalesce(o.avg_return_success, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN * 0.9 then 'WATCH'
+    else 'UNTRUSTED'
+  end as trust_gate,
   recs.recs_total as recs_total,
   coalesce(o.outcomes_total, 0) as outcomes_total,
   coalesce(o.horizons_covered, 0) as horizons_covered,
@@ -125,6 +146,7 @@ from recs
 left join outcomes_agg o
   on o.MARKET_TYPE = recs.MARKET_TYPE and o.SYMBOL = recs.SYMBOL
   and o.PATTERN_ID = recs.PATTERN_ID and o.INTERVAL_MINUTES = recs.INTERVAL_MINUTES
+cross join gate_cfg cfg
 order by recs.MARKET_TYPE, recs.SYMBOL, recs.PATTERN_ID
 """
 

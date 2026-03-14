@@ -497,34 +497,26 @@ begin
             ),
             null
         );
-        -- [TRAINING DIGEST] Generate training journey digest (non-fatal)
+        -- [TRAINING DIGEST] Disabled (cost/UX alignment; no Cortex generation from daily pipeline)
         v_training_digest_start := current_timestamp();
-        v_training_digest_status := 'SKIPPED';
-        begin
-            v_training_digest_result := (call MIP.APP.SP_AGENT_GENERATE_TRAINING_DIGEST(
-                :v_run_id,
-                :v_effective_to_ts,
-                null, null
-            ));
-            v_training_digest_status := coalesce(:v_training_digest_result:status::string, 'SUCCESS');
-        exception
-            when other then
-                v_training_digest_status := 'FAIL';
-                v_training_digest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
-        end;
+        v_training_digest_status := 'SKIPPED_DISABLED';
+        v_training_digest_result := object_construct(
+            'status', 'SKIPPED_DISABLED',
+            'reason', 'TRAINING_DIGEST_DISABLED'
+        );
         v_training_digest_end := current_timestamp();
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'TRAINING_DIGEST',
             :v_training_digest_status,
-            :v_training_digest_result:snapshot_count::number,
+            0,
             object_construct(
                 'step_name', 'training_digest',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_training_digest_start,
                 'completed_at', :v_training_digest_end,
-                'reason', 'TRAINING_DIGEST_ALWAYS_GENERATED',
+                'reason', 'TRAINING_DIGEST_DISABLED',
                 'results', :v_training_digest_result
             ),
             null
@@ -551,7 +543,7 @@ begin
             'portfolio_simulation', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
             'daily_digest', object_construct('status', :v_digest_status, 'narrative_mode', :v_digest_result:narrative_mode, 'portfolio_count', :v_digest_result:portfolio_count, 'cortex_success_count', :v_digest_result:cortex_success_count, 'cortex_fallback_count', :v_digest_result:cortex_fallback_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
-            'training_digest', object_construct('status', :v_training_digest_status, 'snapshot_count', :v_training_digest_result:snapshot_count, 'narrative_count', :v_training_digest_result:narrative_count, 'reason', 'TRAINING_DIGEST_ALWAYS_GENERATED'),
+            'training_digest', object_construct('status', :v_training_digest_status, 'reason', 'TRAINING_DIGEST_DISABLED'),
             'parallel_worlds', object_construct('enabled', false, 'status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS')
         );
@@ -1168,57 +1160,30 @@ begin
         );
     end if;
 
-    -- [TRAINING DIGEST] Generate training journey digest (non-fatal)
+    -- [TRAINING DIGEST] Disabled (cost/UX alignment; no Cortex generation from daily pipeline)
     v_training_digest_start := current_timestamp();
-    v_training_digest_status := 'SKIPPED';
-    begin
-        v_training_digest_result := (call MIP.APP.SP_AGENT_GENERATE_TRAINING_DIGEST(
-            :v_run_id,
-            :v_effective_to_ts,
-            null, null
-        ));
-        v_training_digest_status := coalesce(:v_training_digest_result:status::string, 'SUCCESS');
-    exception
-        when other then
-            v_training_digest_status := 'FAIL';
-            v_training_digest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
-            call MIP.APP.SP_AUDIT_LOG_STEP(
-                :v_run_id,
-                'TRAINING_DIGEST',
-                'FAIL',
-                null,
-                object_construct(
-                    'step_name', 'training_digest',
-                    'scope', 'AGG',
-                    'scope_key', null,
-                    'started_at', :v_training_digest_start,
-                    'completed_at', current_timestamp(),
-                    'error', :sqlerrm
-                ),
-                :sqlerrm
-            );
-    end;
+    v_training_digest_status := 'SKIPPED_DISABLED';
+    v_training_digest_result := object_construct(
+        'status', 'SKIPPED_DISABLED',
+        'reason', 'TRAINING_DIGEST_DISABLED'
+    );
     v_training_digest_end := current_timestamp();
-
-    if (:v_training_digest_status != 'FAIL') then
-        call MIP.APP.SP_AUDIT_LOG_STEP(
-            :v_run_id,
-            'TRAINING_DIGEST',
-            :v_training_digest_status,
-            :v_training_digest_result:snapshot_count::number,
-            object_construct(
-                'step_name', 'training_digest',
-                'scope', 'AGG',
-                'scope_key', null,
-                'started_at', :v_training_digest_start,
-                'completed_at', :v_training_digest_end,
-                'snapshot_count', :v_training_digest_result:snapshot_count::number,
-                'narrative_count', :v_training_digest_result:narrative_count::number,
-                'results', :v_training_digest_result:results
-            ),
-            null
-        );
-    end if;
+    call MIP.APP.SP_AUDIT_LOG_STEP(
+        :v_run_id,
+        'TRAINING_DIGEST',
+        :v_training_digest_status,
+        0,
+        object_construct(
+            'step_name', 'training_digest',
+            'scope', 'AGG',
+            'scope_key', null,
+            'started_at', :v_training_digest_start,
+            'completed_at', :v_training_digest_end,
+            'reason', 'TRAINING_DIGEST_DISABLED',
+            'results', :v_training_digest_result
+        ),
+        null
+    );
 
     -- ─────────────────────────────────────────────────────────────────────
     -- [PARALLEL WORLDS] Run counterfactual simulations + narrative (config-gated, non-fatal)
@@ -1370,8 +1335,7 @@ begin
         ),
         'training_digest', object_construct(
             'status', :v_training_digest_status,
-            'snapshot_count', :v_training_digest_result:snapshot_count,
-            'narrative_count', :v_training_digest_result:narrative_count
+            'reason', 'TRAINING_DIGEST_DISABLED'
         ),
         'parallel_worlds', object_construct(
             'enabled', :v_pw_enabled,

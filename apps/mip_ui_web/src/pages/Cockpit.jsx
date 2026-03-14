@@ -510,6 +510,92 @@ function UpcomingSymbolsDetail({ trainingData }) {
   )
 }
 
+function DailyReadinessOverview({ readiness }) {
+  if (!readiness?.found) {
+    return <p className="ck-empty">Daily readiness data not available yet.</p>
+  }
+
+  const counts = readiness?.counts || {}
+  const byMarket = Array.isArray(readiness?.training_by_market_type) ? readiness.training_by_market_type : []
+  const proposals = Array.isArray(readiness?.proposals_preview) ? readiness.proposals_preview : []
+
+  const assessmentClass = (a) => {
+    const v = String(a || '').toUpperCase()
+    if (v === 'STRONG') return 'ck-health--ok'
+    if (v === 'WATCH') return 'ck-health--new'
+    if (v === 'LOW_EVIDENCE') return 'ck-health--stale'
+    return 'ck-health--broken'
+  }
+
+  return (
+    <div className="ck-readiness">
+      <div className="ck-market-kpi-strip">
+        <div className="ck-market-kpi">
+          <span className="ck-market-kpi-val">{counts.signals_generated ?? 0}</span>
+          <span className="ck-market-kpi-label">Signals (last run)</span>
+        </div>
+        <div className="ck-market-kpi">
+          <span className="ck-market-kpi-val">{counts.signals_eligible ?? 0}</span>
+          <span className="ck-market-kpi-label">Eligible</span>
+        </div>
+        <div className="ck-market-kpi">
+          <span className="ck-market-kpi-val">{counts.proposals_generated ?? 0}</span>
+          <span className="ck-market-kpi-label">Proposals</span>
+        </div>
+      </div>
+
+      <h4 className="ck-chart-title">Training & trust by market type</h4>
+      {byMarket.length === 0 ? (
+        <p className="ck-empty">No market-type training rows available.</p>
+      ) : (
+        <div className="ck-insights-grid">
+          {byMarket.map((row) => (
+            <div key={row.market_type} className="ck-insight-mini">
+              <div className="ck-insight-mini-header">
+                <span className="ck-insight-mini-symbol">{row.market_type}</span>
+                <span className="ck-insight-mini-score">
+                  Signals {row.signals_generated_last_run ?? 0} · Proposals {row.proposals_generated_last_run ?? 0}
+                </span>
+              </div>
+              <p className="ck-insight-mini-why">
+                Trusted {row.trusted_count ?? 0} · Watch {row.watch_count ?? 0} · Untrusted {row.untrusted_count ?? 0}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <h4 className="ck-chart-title" style={{ marginTop: '0.7rem' }}>
+        Proposal details (latest {proposals.length} of 10)
+      </h4>
+      {proposals.length === 0 ? (
+        <p className="ck-empty">No proposals produced in the latest run.</p>
+      ) : (
+        <ul className="ck-live-list">
+          {proposals.map((p) => (
+            <li key={p.proposal_id || `${p.symbol}_${p.proposed_at}`} className="ck-live-list-item">
+              <strong>{p.symbol}</strong> {p.side} ({p.market_type}) · wt {p.target_weight != null ? `${(Number(p.target_weight) * 100).toFixed(1)}%` : '\u2014'}
+              {' '}· {p.status || 'PROPOSED'}
+              <span className={`ck-health-badge ${assessmentClass(p.committee_assessment)}`} style={{ marginLeft: '0.35rem' }}>
+                {p.committee_assessment || 'N/A'}
+              </span>
+              <span className="ck-live-subline">
+                Hist hit {(Number(p.historical_hit_rate || 0) * 100).toFixed(1)}% · avg ret {(Number(p.historical_mean_return || 0) * 100).toFixed(2)}%
+                · hold {p.suggested_hold_bars ?? '\u2014'} bars · n={p.evidence_samples ?? 0}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="ck-drill-links">
+        <Link to="/training" className="ck-drill-link">Training &rarr;</Link>
+        <Link to="/decision-console" className="ck-drill-link">AI Agent Decisions &rarr;</Link>
+      </div>
+    </div>
+  )
+}
+
 /* ── Portfolio Story Card (lazy-loads digest on expand) ── */
 
 function PortfolioStory({ portfolio }) {
@@ -764,7 +850,6 @@ function PortfolioStory({ portfolio }) {
 export default function Cockpit() {
   const { loading: portfoliosLoading } = usePortfolios()
 
-  const [trainingGlobal, setTrainingGlobal] = useState(null)
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
   const [newsOverview, setNewsOverview] = useState(null)
@@ -835,16 +920,14 @@ export default function Cockpit() {
         }
 
         const fetches = [
-          fetch(`${API_BASE}/training/digest/latest`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetch(`${API_BASE}/today`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetch(`${API_BASE}/market/pulse`).then(r => r.ok ? r.json() : null).catch(() => null),
           fetch(`${API_BASE}/news/intelligence/overview`).then(r => r.ok ? r.json() : null).catch(() => null),
           loadLiveOverview(),
           loadIbDailyHealth(),
         ]
-        const [tg, td, mp, no] = await Promise.all(fetches)
+        const [td, mp, no] = await Promise.all(fetches)
         if (cancelled) return
-        setTrainingGlobal(tg)
         setTodayData(td)
         setMarketPulse(mp)
         setNewsOverview(no)
@@ -883,12 +966,14 @@ export default function Cockpit() {
     return 'info'
   }, [newsOverview])
 
-  const trainingAttention = useMemo(() => {
-    const snapshot = trainingGlobal?.snapshot || {}
-    const nearMiss = snapshot.near_miss_symbols || []
-    if (nearMiss.length > 0) return 'info'
-    return 'neutral'
-  }, [trainingGlobal])
+  const dailyReadiness = todayData?.daily_readiness || null
+  const readinessAttention = useMemo(() => {
+    if (!dailyReadiness?.found) return 'neutral'
+    const proposals = Number(dailyReadiness?.counts?.proposals_generated ?? 0)
+    if (proposals > 0) return 'positive'
+    const signals = Number(dailyReadiness?.counts?.signals_generated ?? 0)
+    return signals > 0 ? 'info' : 'neutral'
+  }, [dailyReadiness])
 
   // Market headline + summary
   const marketHeadline = useMemo(() => {
@@ -927,19 +1012,18 @@ export default function Cockpit() {
     return newsOverview.executive_summary || 'Committee-focused headline summary is available.'
   }, [newsOverview])
 
-  // Training headline
-  const trainingNarrative = trainingGlobal?.narrative || {}
-  const trainingHeadline = trainingNarrative.headline || 'Training Progress'
-  const trainingSummary = useMemo(() => {
-    const snapshot = trainingGlobal?.snapshot || {}
-    const nearMiss = snapshot.near_miss_symbols || []
-    const topConf = snapshot.top_confident_symbols || []
-    if (nearMiss.length > 0) {
-      return `${nearMiss.length} symbol${nearMiss.length > 1 ? 's' : ''} approaching next stage. ${topConf.length} trade-ready.`
-    }
-    if (topConf.length > 0) return `${topConf.length} symbol${topConf.length > 1 ? 's' : ''} trade-ready (CONFIDENT).`
-    return 'No near-miss symbols. Expand for training details.'
-  }, [trainingGlobal])
+  const readinessHeadline = useMemo(() => {
+    if (!dailyReadiness?.found) return 'Daily Trade Readiness — Awaiting Data'
+    const c = dailyReadiness?.counts || {}
+    return `Daily Trade Readiness — ${c.signals_generated ?? 0} signals, ${c.proposals_generated ?? 0} proposals`
+  }, [dailyReadiness])
+
+  const readinessSummary = useMemo(() => {
+    if (!dailyReadiness?.found) return 'No readiness summary yet. Run the daily pipeline.'
+    const run = dailyReadiness?.last_run || {}
+    const c = dailyReadiness?.counts || {}
+    return `Run ${String(run.run_id || '').slice(0, 12)} (${run.status || 'UNKNOWN'}) · Signals ${c.signals_generated ?? 0}, eligible ${c.signals_eligible ?? 0}, proposals ${c.proposals_generated ?? 0}.`
+  }, [dailyReadiness])
 
   const liveCardPortfolio = useMemo(() => {
     const p = liveOverview?.portfolio || {}
@@ -1242,23 +1326,14 @@ export default function Cockpit() {
             <NewsIntelligenceOverview overview={newsOverview} />
           </StoryCard>
 
-          {/* Story: Training Progress / Upcoming Symbols */}
+          {/* Story: Daily Trade Readiness */}
           <StoryCard
-            attention={trainingAttention}
-            headline={trainingHeadline}
-            summary={trainingSummary}
+            attention={readinessAttention}
+            headline={readinessHeadline}
+            summary={readinessSummary}
             accent="training"
           >
-            {trainingGlobal?.found ? (
-              <>
-                <DigestSection title="What Changed" icon="&#x1F504;" bullets={trainingNarrative.what_changed} variant="changed" />
-                <DigestSection title="What Matters" icon="&#x26A0;&#xFE0F;" bullets={trainingNarrative.what_matters} variant="matters" />
-                <DigestSection title="Waiting For" icon="&#x23F3;" bullets={trainingNarrative.waiting_for} variant="waiting" />
-                <UpcomingSymbolsDetail trainingData={trainingGlobal} />
-              </>
-            ) : (
-              <EmptyState title="No training digest yet" action="Run the pipeline to generate." />
-            )}
+            <DailyReadinessOverview readiness={dailyReadiness} />
           </StoryCard>
         </div>
       </div>

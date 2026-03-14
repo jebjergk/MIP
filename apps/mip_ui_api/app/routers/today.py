@@ -61,6 +61,31 @@ def _serialize_row(row):
 def _serialize_rows(rows):
     return [_serialize_row(r) for r in rows] if rows else []
 
+def _as_float(v, default=0.0):
+    try:
+        if v is None:
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+def _as_int(v, default=0):
+    try:
+        if v is None:
+            return default
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+def _proposal_committee_assessment(sample_size: int, hit_rate: float, avg_return: float) -> str:
+    if sample_size < 10:
+        return "LOW_EVIDENCE"
+    if sample_size >= 30 and hit_rate >= 0.58 and avg_return >= 0.0010:
+        return "STRONG"
+    if sample_size >= 20 and hit_rate >= 0.52 and avg_return >= 0.0003:
+        return "WATCH"
+    return "WEAK"
+
 
 @router.get("/today")
 def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID for portfolio/brief sections")):
@@ -72,6 +97,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
     portfolio = None
     brief = None
     insights = []
+    daily_readiness = {"found": False}
 
     if not status["snowflake_ok"]:
         return {
@@ -79,6 +105,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
             "portfolio": portfolio,
             "brief": brief,
             "insights": insights,
+            "daily_readiness": daily_readiness,
         }
 
     try:
@@ -303,6 +330,255 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
             list_insights.sort(key=lambda x: (-x["today_score"], -x["maturity_score"]))
             insights = list_insights[:10]
 
+        # --- Daily readiness block for Cockpit (deterministic, no Cortex) ---
+        try:
+            cur.execute(
+                """
+                select RUN_ID, EVENT_TS, STATUS, DETAILS
+                from MIP.APP.MIP_AUDIT_LOG
+                where EVENT_TYPE = 'PIPELINE'
+                  and EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+                order by EVENT_TS desc
+                limit 1
+                """
+            )
+            latest_run_row = cur.fetchone()
+            latest_run = None
+            if latest_run_row and cur.description:
+                cols = [d[0] for d in cur.description]
+                latest_run = dict(zip(cols, latest_run_row))
+
+            if latest_run and latest_run.get("RUN_ID"):
+                run_id = str(latest_run.get("RUN_ID"))
+                run_details = latest_run.get("DETAILS") if isinstance(latest_run.get("DETAILS"), dict) else {}
+                event_ts = latest_run.get("EVENT_TS")
+                completed_at = event_ts.isoformat() if hasattr(event_ts, "isoformat") else event_ts
+
+                # Signals generated this run (best effort from recommendation log run tagging)
+                cur.execute(
+                    """
+                    select count(*) as signals_generated
+                    from MIP.APP.RECOMMENDATION_LOG
+                    where INTERVAL_MINUTES = 1440
+                      and coalesce(DETAILS:run_id::string, DETAILS:RUN_ID::string) = %s
+                    """,
+                    (run_id,),
+                )
+                sig_row = cur.fetchone()
+                signals_generated = _as_int(sig_row[0] if sig_row else 0, 0)
+
+                if signals_generated == 0:
+                    # Fallback: sum recommendation insert deltas from pipeline details
+                    recs = run_details.get("recommendations") if isinstance(run_details, dict) else None
+                    if isinstance(recs, list):
+                        def _rec_delta(r):
+                            if not isinstance(r, dict):
+                                return 0
+                            return max(
+                                _as_int(r.get("inserted_count"), 0),
+                                _as_int(r.get("rows_delta"), 0),
+                                _as_int(r.get("rows_after"), 0) - _as_int(r.get("rows_before"), 0),
+                            )
+                        signals_generated = sum(_rec_delta(r) for r in recs)
+
+                # Proposal counts and details for this run
+                cur.execute(
+                    """
+                    select
+                      PROPOSAL_ID,
+                      PORTFOLIO_ID,
+                      PROPOSED_AT,
+                      SYMBOL,
+                      MARKET_TYPE,
+                      SIDE,
+                      TARGET_WEIGHT,
+                      SIGNAL_PATTERN_ID,
+                      STATUS
+                    from MIP.AGENT_OUT.ORDER_PROPOSALS
+                    where RUN_ID_VARCHAR = %s
+                    order by PROPOSED_AT desc
+                    """,
+                    (run_id,),
+                )
+                proposal_rows = fetch_all(cur)
+                proposals_total = len(proposal_rows)
+                proposals_preview = []
+
+                for p in proposal_rows[:10]:
+                    symbol = p.get("SYMBOL")
+                    market_type = p.get("MARKET_TYPE")
+                    pattern_id = p.get("SIGNAL_PATTERN_ID")
+
+                    # Historical evidence snapshot for committee-style readout
+                    if pattern_id is not None:
+                        cur.execute(
+                            """
+                            select
+                              o.HORIZON_BARS as horizon_bars,
+                              count(*) as n_outcomes,
+                              avg(o.REALIZED_RETURN) as mean_return,
+                              sum(case when o.REALIZED_RETURN > 0 then 1 else 0 end)::float / nullif(count(*), 0) as hit_rate
+                            from MIP.APP.RECOMMENDATION_LOG r
+                            join MIP.APP.RECOMMENDATION_OUTCOMES o
+                              on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+                            where r.INTERVAL_MINUTES = 1440
+                              and r.SYMBOL = %s
+                              and r.MARKET_TYPE = %s
+                              and r.PATTERN_ID = %s
+                              and o.EVAL_STATUS = 'SUCCESS'
+                              and o.REALIZED_RETURN is not null
+                            group by o.HORIZON_BARS
+                            order by n_outcomes desc, mean_return desc
+                            """,
+                            (symbol, market_type, pattern_id),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            select
+                              o.HORIZON_BARS as horizon_bars,
+                              count(*) as n_outcomes,
+                              avg(o.REALIZED_RETURN) as mean_return,
+                              sum(case when o.REALIZED_RETURN > 0 then 1 else 0 end)::float / nullif(count(*), 0) as hit_rate
+                            from MIP.APP.RECOMMENDATION_LOG r
+                            join MIP.APP.RECOMMENDATION_OUTCOMES o
+                              on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
+                            where r.INTERVAL_MINUTES = 1440
+                              and r.SYMBOL = %s
+                              and r.MARKET_TYPE = %s
+                              and o.EVAL_STATUS = 'SUCCESS'
+                              and o.REALIZED_RETURN is not null
+                            group by o.HORIZON_BARS
+                            order by n_outcomes desc, mean_return desc
+                            """,
+                            (symbol, market_type),
+                        )
+
+                    evidence = fetch_all(cur)
+                    chosen = None
+                    if evidence:
+                        # Prefer horizons with decent sample + better return.
+                        with_sample = [e for e in evidence if _as_int(e.get("N_OUTCOMES") or e.get("n_outcomes"), 0) >= 10]
+                        pool = with_sample if with_sample else evidence
+                        chosen = sorted(
+                            pool,
+                            key=lambda e: (
+                                _as_float(e.get("MEAN_RETURN") or e.get("mean_return"), -999),
+                                _as_float(e.get("HIT_RATE") or e.get("hit_rate"), -999),
+                                _as_int(e.get("N_OUTCOMES") or e.get("n_outcomes"), 0),
+                            ),
+                            reverse=True,
+                        )[0]
+
+                    hold_bars = _as_int((chosen or {}).get("HORIZON_BARS") or (chosen or {}).get("horizon_bars"), 0)
+                    sample_size = _as_int((chosen or {}).get("N_OUTCOMES") or (chosen or {}).get("n_outcomes"), 0)
+                    hit_rate = _as_float((chosen or {}).get("HIT_RATE") or (chosen or {}).get("hit_rate"), 0.0)
+                    avg_return = _as_float((chosen or {}).get("MEAN_RETURN") or (chosen or {}).get("mean_return"), 0.0)
+
+                    proposals_preview.append({
+                        "proposal_id": p.get("PROPOSAL_ID"),
+                        "portfolio_id": p.get("PORTFOLIO_ID"),
+                        "proposed_at": p.get("PROPOSED_AT").isoformat() if hasattr(p.get("PROPOSED_AT"), "isoformat") else p.get("PROPOSED_AT"),
+                        "symbol": symbol,
+                        "market_type": market_type,
+                        "side": p.get("SIDE"),
+                        "status": p.get("STATUS"),
+                        "target_weight": _as_float(p.get("TARGET_WEIGHT"), None),
+                        "signal_pattern_id": pattern_id,
+                        "committee_assessment": _proposal_committee_assessment(sample_size, hit_rate, avg_return),
+                        "historical_hit_rate": hit_rate,
+                        "historical_mean_return": avg_return,
+                        "suggested_hold_bars": hold_bars if hold_bars > 0 else None,
+                        "evidence_samples": sample_size,
+                    })
+
+                # Training/trust distribution by market type
+                cur.execute(
+                    """
+                    select
+                      MARKET_TYPE,
+                      count_if(TRUST_LABEL = 'TRUSTED') as TRUSTED_COUNT,
+                      count_if(TRUST_LABEL = 'WATCH') as WATCH_COUNT,
+                      count_if(TRUST_LABEL = 'UNTRUSTED') as UNTRUSTED_COUNT,
+                      count(*) as TOTAL_COUNT
+                    from MIP.MART.V_TRUSTED_SIGNAL_POLICY
+                    group by MARKET_TYPE
+                    order by MARKET_TYPE
+                    """
+                )
+                trust_rows = fetch_all(cur)
+
+                cur.execute(
+                    """
+                    select
+                      MARKET_TYPE,
+                      count(*) as SIGNALS_GENERATED
+                    from MIP.APP.RECOMMENDATION_LOG
+                    where INTERVAL_MINUTES = 1440
+                      and coalesce(DETAILS:run_id::string, DETAILS:RUN_ID::string) = %s
+                    group by MARKET_TYPE
+                    order by MARKET_TYPE
+                    """,
+                    (run_id,),
+                )
+                run_signal_rows = fetch_all(cur)
+                run_signal_map = {
+                    str(r.get("MARKET_TYPE")): _as_int(r.get("SIGNALS_GENERATED"), 0)
+                    for r in run_signal_rows
+                }
+
+                cur.execute(
+                    """
+                    select
+                      MARKET_TYPE,
+                      count(*) as PROPOSALS_GENERATED
+                    from MIP.AGENT_OUT.ORDER_PROPOSALS
+                    where RUN_ID_VARCHAR = %s
+                    group by MARKET_TYPE
+                    order by MARKET_TYPE
+                    """,
+                    (run_id,),
+                )
+                run_prop_rows = fetch_all(cur)
+                run_prop_map = {
+                    str(r.get("MARKET_TYPE")): _as_int(r.get("PROPOSALS_GENERATED"), 0)
+                    for r in run_prop_rows
+                }
+
+                by_market_type = []
+                for r in trust_rows:
+                    mt = str(r.get("MARKET_TYPE") or "")
+                    by_market_type.append({
+                        "market_type": mt,
+                        "trusted_count": _as_int(r.get("TRUSTED_COUNT"), 0),
+                        "watch_count": _as_int(r.get("WATCH_COUNT"), 0),
+                        "untrusted_count": _as_int(r.get("UNTRUSTED_COUNT"), 0),
+                        "total_count": _as_int(r.get("TOTAL_COUNT"), 0),
+                        "signals_generated_last_run": run_signal_map.get(mt, 0),
+                        "proposals_generated_last_run": run_prop_map.get(mt, 0),
+                    })
+
+                eligible_signals = _as_int(run_details.get("eligible_signals") if isinstance(run_details, dict) else 0, 0)
+                proposals_from_summary = _as_int(run_details.get("proposals_proposed") if isinstance(run_details, dict) else 0, 0)
+
+                daily_readiness = {
+                    "found": True,
+                    "last_run": {
+                        "run_id": run_id,
+                        "status": latest_run.get("STATUS"),
+                        "completed_at": completed_at,
+                    },
+                    "counts": {
+                        "signals_generated": signals_generated,
+                        "signals_eligible": eligible_signals,
+                        "proposals_generated": proposals_total if proposals_total > 0 else proposals_from_summary,
+                    },
+                    "training_by_market_type": by_market_type,
+                    "proposals_preview": proposals_preview,
+                }
+        except Exception:
+            daily_readiness = {"found": False}
+
     except Exception:
         pass
     finally:
@@ -313,4 +589,5 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
         "portfolio": portfolio,
         "brief": brief,
         "insights": insights,
+        "daily_readiness": daily_readiness,
     }

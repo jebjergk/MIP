@@ -1,6 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react'
 import { API_BASE } from '../App'
-import { usePortfolios } from '../context/PortfolioContext'
 import LoadingState from '../components/LoadingState'
 import EmptyState from '../components/EmptyState'
 import Plot from 'react-plotly.js'
@@ -1084,9 +1083,8 @@ function PortfolioTuningTab({ pid, surfaceData, regimeData, recommendations, onL
 /* ── Main Page ───────────────────────────────────────── */
 
 export default function ParallelWorlds() {
-  const { portfolios } = usePortfolios()
   const [selectedPortfolio, setSelectedPortfolio] = useState(null)
-  const [livePortfolioIds, setLivePortfolioIds] = useState([])
+  const [livePortfolios, setLivePortfolios] = useState([])
   const [liveFilterLoaded, setLiveFilterLoaded] = useState(false)
   const [results, setResults] = useState(null)
   const [narrative, setNarrative] = useState(null)
@@ -1105,15 +1103,6 @@ export default function ParallelWorlds() {
   const [expandedRow, setExpandedRow] = useState(null)
   const [showAllScenarios, setShowAllScenarios] = useState(false)
   const scenarioCount = useMemo(() => results?.scenarios?.length || 0, [results])
-  const livePortfolios = useMemo(() => {
-    if (!Array.isArray(portfolios) || portfolios.length === 0) return []
-    const liveIdSet = new Set((livePortfolioIds || []).map(Number))
-    if (liveIdSet.size === 0) return []
-    return portfolios.filter((p) => {
-      const pid = Number(p.portfolio_id || p.PORTFOLIO_ID)
-      return liveIdSet.has(pid)
-    })
-  }, [portfolios, livePortfolioIds])
 
   // Auto-select first portfolio
   useEffect(() => {
@@ -1132,15 +1121,20 @@ export default function ParallelWorlds() {
       .then(data => {
         if (cancelled) return
         const configs = Array.isArray(data?.configs) ? data.configs : []
-        const ids = configs
+        const liveOnly = configs
           .filter(c => Boolean(c.is_active ?? c.IS_ACTIVE))
-          .map(c => Number(c.portfolio_id ?? c.PORTFOLIO_ID))
-          .filter(n => Number.isFinite(n))
-        setLivePortfolioIds(ids)
+          .filter(c => String(c.adapter_mode ?? c.ADAPTER_MODE ?? '').toUpperCase() === 'LIVE')
+          .map(c => ({
+            portfolio_id: Number(c.portfolio_id ?? c.PORTFOLIO_ID),
+            ibkr_account_id: c.ibkr_account_id ?? c.IBKR_ACCOUNT_ID ?? null,
+            adapter_mode: String(c.adapter_mode ?? c.ADAPTER_MODE ?? '').toUpperCase(),
+          }))
+          .filter(c => Number.isFinite(c.portfolio_id))
+        setLivePortfolios(liveOnly)
       })
       .catch(() => {
         if (cancelled) return
-        setLivePortfolioIds([])
+        setLivePortfolios([])
       })
       .finally(() => {
         if (!cancelled) setLiveFilterLoaded(true)
@@ -1153,12 +1147,12 @@ export default function ParallelWorlds() {
     if (!liveFilterLoaded) return
     if (!selectedPortfolio) return
     const selected = Number(selectedPortfolio)
-    const liveIdSet = new Set((livePortfolioIds || []).map(Number))
+    const liveIdSet = new Set((livePortfolios || []).map(p => Number(p.portfolio_id)))
     if (!liveIdSet.has(selected)) {
       const first = livePortfolios[0]
-      setSelectedPortfolio(first ? Number(first.portfolio_id || first.PORTFOLIO_ID) : null)
+      setSelectedPortfolio(first ? Number(first.portfolio_id) : null)
     }
-  }, [liveFilterLoaded, livePortfolioIds, livePortfolios, selectedPortfolio])
+  }, [liveFilterLoaded, livePortfolios, selectedPortfolio])
 
   // Clear stale panel data when there is no selected live portfolio.
   useEffect(() => {
@@ -1241,9 +1235,9 @@ export default function ParallelWorlds() {
               {liveFilterLoaded ? 'Select live portfolio...' : 'Loading live portfolios...'}
             </option>
             {(livePortfolios || []).map(p => {
-              const pid = p.portfolio_id || p.PORTFOLIO_ID
-              const name = p.name || p.NAME
-              return <option key={pid} value={pid}>{name} (#{pid})</option>
+              const pid = Number(p.portfolio_id)
+              const account = p.ibkr_account_id ? ` (${p.ibkr_account_id})` : ''
+              return <option key={pid} value={pid}>{`Live Portfolio #${pid}${account}`}</option>
             })}
           </select>
         </div>

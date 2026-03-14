@@ -33,10 +33,33 @@ function latestChainEvent(chain) {
   return list.length ? list[list.length - 1] : null
 }
 
+function prettyEventName(name) {
+  if (!name) return 'Unknown event'
+  return String(name).replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase())
+}
+
+function normalizeStatus(v, fallback = 'INFO') {
+  const s = String(v || fallback).toUpperCase()
+  if (s === 'SUCCESS' || s === 'INFO' || s === 'APPROVED' || s === 'EXECUTED') return 'SUCCESS'
+  if (s.includes('FAIL') || s.includes('ERROR') || s === 'REJECTED') return 'FAIL'
+  if (s.includes('SKIP') || s.includes('BLOCK') || s.includes('FALLBACK')) return 'BLOCKED'
+  return s
+}
+
+function summarizeChain(selectedEvent, detail) {
+  if (!selectedEvent) return 'Select a chain to see what changed and why.'
+  const status = normalizeStatus(selectedEvent.status || selectedEvent.severity || 'INFO')
+  const name = prettyEventName(selectedEvent.event_name || selectedEvent.title)
+  const proposalCount = detail?.summary?.proposal_count ?? selectedEvent?.impact?.proposal_count
+  const executed = detail?.summary?.filled_or_partial_orders ?? selectedEvent?.impact?.executed_count
+  return `${name} ended as ${status}. Proposals: ${proposalCount ?? 0}. Executed/filled signals: ${executed ?? 0}.`
+}
+
 export default function LearningLedger() {
   const [events, setEvents] = useState([])
   const [chains, setChains] = useState([])
   const [selected, setSelected] = useState(null)
+  const [selectedChainKey, setSelectedChainKey] = useState('')
   const [detail, setDetail] = useState(null)
   const [effectiveness, setEffectiveness] = useState(null)
   const [feedSource, setFeedSource] = useState('derived_fallback')
@@ -61,6 +84,23 @@ export default function LearningLedger() {
       setFeedSource(data?.source || 'derived_fallback')
       setEvents(rows)
       setChains(chainRows)
+      const fallbackChains = chainRows.length > 0
+        ? chainRows
+        : rows.map((e) => ({
+          chain_key: e.event_key,
+          latest_event_ts: e.event_ts,
+          latest_title: e.title,
+          latest_summary: e.summary,
+          taxonomy_category: e.event_type,
+          event_count: 1,
+          run_id: e.run_id,
+          portfolio_id: e.portfolio_id,
+          events: [e],
+        }))
+      setSelectedChainKey((prev) => {
+        if (prev && fallbackChains.some((c) => c.chain_key === prev)) return prev
+        return fallbackChains[0]?.chain_key || ''
+      })
       setSelected((prev) => {
         const chainEvents = chainRows.flatMap((c) => c.events || [])
         const previous = prev?.event_key
@@ -130,6 +170,52 @@ export default function LearningLedger() {
     }
   }, [portfolioFilter, events.length])
 
+  const visibleChains = useMemo(() => {
+    if (chains.length > 0) return chains
+    return events.map((e) => ({
+      chain_key: e.event_key,
+      latest_event_ts: e.event_ts,
+      latest_title: e.title,
+      latest_summary: e.summary,
+      taxonomy_category: e.event_type,
+      event_count: 1,
+      run_id: e.run_id,
+      portfolio_id: e.portfolio_id,
+      events: [e],
+    }))
+  }, [chains, events])
+
+  const selectedChain = useMemo(
+    () => visibleChains.find((c) => c.chain_key === selectedChainKey) || visibleChains[0] || null,
+    [visibleChains, selectedChainKey],
+  )
+
+  useEffect(() => {
+    const e = latestChainEvent(selectedChain)
+    if (e) setSelected(e)
+  }, [selectedChain])
+
+  const timelineRows = useMemo(() => {
+    if (detail?.causal_chain?.length) {
+      return detail.causal_chain.map((r) => ({
+        key: `canonical-${r.LEDGER_ID || r.ledger_id}-${r.EVENT_TS || r.event_ts}`,
+        ts: r.EVENT_TS || r.event_ts,
+        eventName: r.EVENT_NAME || r.event_name,
+        status: normalizeStatus(r.STATUS || r.status),
+        action: r.LIVE_ACTION_ID || r.live_action_id || '',
+        order: r.LIVE_ORDER_ID || r.live_order_id || '',
+      }))
+    }
+    return (selectedChain?.events || []).map((r) => ({
+      key: r.event_key,
+      ts: r.event_ts,
+      eventName: r.event_name || r.title,
+      status: normalizeStatus(r.status || r.severity),
+      action: r.live_action_id || '',
+      order: r.live_order_id || '',
+    }))
+  }, [detail, selectedChain])
+
   const stats = useMemo(() => {
     const trainingCount = events.filter((e) => e.event_type === 'TRAINING_EVENT').length
     const decisionCount = events.filter((e) => e.event_type === 'DECISION_EVENT').length
@@ -170,7 +256,7 @@ export default function LearningLedger() {
 
       <section className="ledger-stats">
         <div className="ledger-stat-card"><span>Total events (feed)</span><b>{stats.total}</b></div>
-        <div className="ledger-stat-card"><span>Causal chains (feed)</span><b>{chains.length}</b></div>
+        <div className="ledger-stat-card"><span>Causal chains (feed)</span><b>{visibleChains.length}</b></div>
         <div className="ledger-stat-card"><span>Training events (feed)</span><b>{stats.trainingCount}</b></div>
         <div className="ledger-stat-card"><span>Decision events (feed)</span><b>{stats.decisionCount}</b></div>
         <div className="ledger-stat-card"><span>News-influenced (feed)</span><b>{stats.newsInfluencedCount}</b></div>
@@ -223,163 +309,137 @@ export default function LearningLedger() {
           action="Adjust filters or refresh."
         />
       ) : (
-        <section className="ledger-grid">
-          <div className="ledger-feed">
-            {chains.length > 0 ? chains.map((c) => {
-              const e = latestChainEvent(c) || {}
-              return (
-              <button
-                type="button"
-                key={c.chain_key}
-                className={`ledger-event ${selected?.event_key === e.event_key ? 'ledger-event-selected' : ''}`}
-                onClick={() => setSelected(e)}
-              >
-                <div className="ledger-event-top">
-                  <span className={severityClass(e.severity)}>{(e.severity || 'info').toUpperCase()}</span>
-                  <span className="ledger-ts">{fmtTs(c.latest_event_ts || e.event_ts)}</span>
-                </div>
-                <h3>{c.latest_title || e.title}</h3>
-                <p>{c.latest_summary || e.summary}</p>
-                <div className="ledger-meta">
-                  <span>{c.taxonomy_category || e.event_type}</span>
-                  <span>chain events: {c.event_count ?? (c.events?.length || 0)}</span>
-                  <span>run: {c.run_id || e.run_id || '—'}</span>
-                </div>
-              </button>
-            )}) : events.map((e) => (
-              <button
-                type="button"
-                key={e.event_key}
-                className={`ledger-event ${selected?.event_key === e.event_key ? 'ledger-event-selected' : ''}`}
-                onClick={() => setSelected(e)}
-              >
-                <div className="ledger-event-top">
-                  <span className={severityClass(e.severity)}>{(e.severity || 'info').toUpperCase()}</span>
-                  <span className="ledger-ts">{fmtTs(e.event_ts)}</span>
-                </div>
-                <h3>{e.title}</h3>
-                <p>{e.summary}</p>
-                <div className="ledger-meta">
-                  <span>{e.event_type}</span>
-                  <span>run: {e.run_id || '—'}</span>
-                  <span>portfolio: {e.portfolio_id ?? '—'}</span>
-                </div>
-              </button>
-            ))}
+        <section className="ledger-workbench">
+          <div className="ledger-column ledger-chain-column">
+            <h2>Chains</h2>
+            <p className="ledger-note">Pick one chain to read a single end-to-end story.</p>
+            <div className="ledger-chain-list">
+              {visibleChains.map((c) => {
+                const e = latestChainEvent(c) || {}
+                return (
+                  <button
+                    type="button"
+                    key={c.chain_key}
+                    className={`ledger-event ${selectedChain?.chain_key === c.chain_key ? 'ledger-event-selected' : ''}`}
+                    onClick={() => setSelectedChainKey(c.chain_key)}
+                  >
+                    <div className="ledger-event-top">
+                      <span className={severityClass(e.severity)}>{(e.severity || 'info').toUpperCase()}</span>
+                      <span className="ledger-ts">{fmtTs(c.latest_event_ts || e.event_ts)}</span>
+                    </div>
+                    <h3>{c.latest_title || e.title || prettyEventName(e.event_name)}</h3>
+                    <p>{c.latest_summary || e.summary || 'No summary available.'}</p>
+                    <div className="ledger-meta">
+                      <span>{c.taxonomy_category || e.event_type || 'GENERAL'}</span>
+                      <span>events: {c.event_count ?? (c.events?.length || 0)}</span>
+                      <span>run: {c.run_id || e.run_id || '—'}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
-          <aside className="ledger-detail">
+          <div className="ledger-column ledger-timeline-column">
+            <h2>Timeline</h2>
+            <p className="ledger-chain-summary">{summarizeChain(selected, detail)}</p>
+            {detailLoading ? <LoadingState /> : null}
+            {!detailLoading && timelineRows.length === 0 ? (
+              <p className="ledger-note">No timeline events found for this chain.</p>
+            ) : (
+              <ol className="ledger-timeline">
+                {timelineRows.map((r) => (
+                  <li key={r.key} className="ledger-timeline-item">
+                    <div className="ledger-timeline-top">
+                      <span className="ledger-ts">{fmtTs(r.ts)}</span>
+                      <span className={severityClass(r.status === 'FAIL' ? 'high' : r.status === 'BLOCKED' ? 'medium' : 'info')}>
+                        {r.status}
+                      </span>
+                    </div>
+                    <div className="ledger-timeline-name">{prettyEventName(r.eventName)}</div>
+                    <div className="ledger-meta">
+                      <span>action: {r.action || '—'}</span>
+                      <span>order: {r.order || '—'}</span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+
+          <aside className="ledger-column ledger-context-column">
+            <h2>Why This Happened</h2>
             {!selected ? (
-              <p>Select an event to view causality details.</p>
+              <p className="ledger-note">Select a chain to view context.</p>
             ) : (
               <>
-                <h2>Audit Drill-down</h2>
-                <p className="ledger-detail-subtitle">{selected.title}</p>
                 <div className="ledger-impact-grid">
                   <div><span>Run</span><b>{selected.run_id || '—'}</b></div>
-                  <div><span>Event</span><b>{selected.event_name || '—'}</b></div>
-                  <div><span>Executed</span><b>{selected.impact?.executed_count ?? '—'}</b></div>
-                  <div><span>Live orders</span><b>{selected.impact?.live_order_count ?? '—'}</b></div>
-                  <div><span>Avg target weight</span><b>{fmtPct(selected.impact?.avg_target_weight, 1)}</b></div>
+                  <div><span>Event</span><b>{prettyEventName(selected.event_name || selected.title)}</b></div>
                   <div><span>Trusted delta</span><b>{selected.impact?.trusted_delta ?? '—'}</b></div>
+                  <div><span>Executed</span><b>{detail?.summary?.executed_proposals ?? selected.impact?.executed_count ?? 0}</b></div>
+                  <div><span>Live orders</span><b>{detail?.summary?.live_order_count ?? selected.impact?.live_order_count ?? 0}</b></div>
+                  <div><span>Avg target weight</span><b>{fmtPct(selected.impact?.avg_target_weight, 1)}</b></div>
                 </div>
 
-                {detailLoading ? <LoadingState /> : null}
+                <section className="ledger-mini-section">
+                  <h3>Causality summary</h3>
+                  <ul>
+                    <li>Audit events: {detail?.summary?.audit_event_count ?? 0}</li>
+                    <li>Proposals: {detail?.summary?.proposal_count ?? 0}</li>
+                    <li>Live actions: {detail?.summary?.live_action_count ?? 0}</li>
+                    <li>Live orders: {detail?.summary?.live_order_count ?? 0}</li>
+                    <li>Filled/partial: {detail?.summary?.filled_or_partial_orders ?? 0}</li>
+                  </ul>
+                </section>
 
-                {!detailLoading && detail ? (
-                  <div className="ledger-detail-sections">
-                    <section>
-                      <h3>Causality Summary</h3>
-                      <ul>
-                        <li>Audit events: {detail.summary?.audit_event_count ?? 0}</li>
-                        <li>Proposals: {detail.summary?.proposal_count ?? 0}</li>
-                        <li>Live actions: {detail.summary?.live_action_count ?? 0}</li>
-                        <li>Live orders: {detail.summary?.live_order_count ?? 0}</li>
-                        <li>Filled/partial: {detail.summary?.filled_or_partial_orders ?? 0}</li>
-                      </ul>
-                    </section>
-                    <section>
-                      <h3>Training Snapshot Link</h3>
-                      {detail.training_snapshot ? (
-                        <ul>
-                          <li>Snapshot as_of: {fmtTs(detail.training_snapshot.AS_OF_TS || detail.training_snapshot.as_of_ts)}</li>
-                          <li>Facts hash: {detail.training_snapshot.SOURCE_FACTS_HASH || detail.training_snapshot.source_facts_hash || '—'}</li>
-                        </ul>
-                      ) : (
-                        <p>No global training snapshot tied to this run.</p>
-                      )}
-                    </section>
-                    <section>
-                      <h3>Influence Delta (Canonical)</h3>
-                      {detail.ledger_event ? (
-                        <pre className="ledger-json">
-                          {JSON.stringify(detail.ledger_event.INFLUENCE_DELTA || detail.ledger_event.influence_delta || {}, null, 2)}
-                        </pre>
-                      ) : (
-                        <p>No canonical influence delta found for this selected event.</p>
-                      )}
-                    </section>
-                    <section>
-                      <h3>Causal Chain (Canonical)</h3>
-                      {(detail.causal_chain || []).length ? (
-                        <div className="ledger-table-wrap">
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Time</th>
-                                <th>Event</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                                <th>Order</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(detail.causal_chain || []).slice(-30).map((r) => (
-                                <tr key={`${r.LEDGER_ID || r.ledger_id}`}>
-                                  <td>{fmtTs(r.EVENT_TS || r.event_ts)}</td>
-                                  <td>{r.EVENT_NAME || r.event_name}</td>
-                                  <td>{r.STATUS || r.status}</td>
-                                  <td>{r.LIVE_ACTION_ID || r.live_action_id || '—'}</td>
-                                  <td>{r.LIVE_ORDER_ID || r.live_order_id || '—'}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <p>No canonical chain records found for this selection.</p>
-                      )}
-                    </section>
-                    <section>
-                      <h3>Influenced Proposals (latest)</h3>
-                      <div className="ledger-table-wrap">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>ID</th>
-                              <th>Symbol</th>
-                              <th>Status</th>
-                              <th>Target Weight</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {(detail.proposals || []).slice(0, 12).map((p) => (
-                              <tr key={p.PROPOSAL_ID || p.proposal_id}>
-                                <td>{p.PROPOSAL_ID || p.proposal_id}</td>
-                                <td>{p.SYMBOL || p.symbol}</td>
-                                <td>{p.STATUS || p.status}</td>
-                                <td>{fmtPct(p.TARGET_WEIGHT || p.target_weight)}</td>
-                              </tr>
-                            ))}
-                            {(detail.proposals || []).length === 0 ? (
-                              <tr><td colSpan={4}>No proposals for this run.</td></tr>
-                            ) : null}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
+                <section className="ledger-mini-section">
+                  <h3>Influenced proposals (latest)</h3>
+                  <div className="ledger-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>Symbol</th>
+                          <th>Status</th>
+                          <th>Weight</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(detail?.proposals || []).slice(0, 8).map((p) => (
+                          <tr key={p.PROPOSAL_ID || p.proposal_id}>
+                            <td>{p.PROPOSAL_ID || p.proposal_id}</td>
+                            <td>{p.SYMBOL || p.symbol}</td>
+                            <td>{p.STATUS || p.status}</td>
+                            <td>{fmtPct(p.TARGET_WEIGHT || p.target_weight)}</td>
+                          </tr>
+                        ))}
+                        {(detail?.proposals || []).length === 0 ? (
+                          <tr><td colSpan={4}>No proposals found for this run.</td></tr>
+                        ) : null}
+                      </tbody>
+                    </table>
                   </div>
-                ) : null}
+                </section>
+
+                <details>
+                  <summary>Influence delta (raw)</summary>
+                  <pre className="ledger-json">
+                    {JSON.stringify(detail?.ledger_event?.INFLUENCE_DELTA || detail?.ledger_event?.influence_delta || {}, null, 2)}
+                  </pre>
+                </details>
+
+                <details>
+                  <summary>Training snapshot link</summary>
+                  {detail?.training_snapshot ? (
+                    <ul>
+                      <li>Snapshot as_of: {fmtTs(detail.training_snapshot.AS_OF_TS || detail.training_snapshot.as_of_ts)}</li>
+                      <li>Facts hash: {detail.training_snapshot.SOURCE_FACTS_HASH || detail.training_snapshot.source_facts_hash || '—'}</li>
+                    </ul>
+                  ) : (
+                    <p className="ledger-note">No training snapshot tied to this run.</p>
+                  )}
+                </details>
               </>
             )}
           </aside>

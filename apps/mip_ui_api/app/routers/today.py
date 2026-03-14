@@ -377,19 +377,45 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 run_details = latest_run.get("DETAILS") if isinstance(latest_run.get("DETAILS"), dict) else {}
                 event_ts = latest_run.get("EVENT_TS")
                 completed_at = event_ts.isoformat() if hasattr(event_ts, "isoformat") else event_ts
+                active_live_portfolio_id = None
 
-                # Signals generated this run (best effort from recommendation log run tagging)
+                # Canonical live portfolio for readiness/proposals: latest active mapping.
                 cur.execute(
                     """
-                    select count(*) as signals_generated
-                    from MIP.APP.RECOMMENDATION_LOG
-                    where INTERVAL_MINUTES = 1440
-                      and coalesce(DETAILS:run_id::string, DETAILS:RUN_ID::string) = %s
+                    select PORTFOLIO_ID
+                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                    where coalesce(IS_ACTIVE, true)
+                    order by UPDATED_AT desc, PORTFOLIO_ID asc
+                    limit 1
+                    """
+                )
+                live_row = cur.fetchone()
+                if live_row:
+                    active_live_portfolio_id = _as_int(live_row[0], None)
+
+                # Signals generated this run from pipeline step audit (run-scoped, deterministic).
+                cur.execute(
+                    """
+                    select ROWS_AFFECTED, DETAILS
+                    from MIP.APP.MIP_AUDIT_LOG
+                    where EVENT_TYPE = 'PIPELINE_STEP'
+                      and PARENT_RUN_ID = %s
+                      and EVENT_NAME = 'RECOMMENDATIONS'
+                      and STATUS = 'SUCCESS'
+                    order by EVENT_TS desc
+                    limit 1
                     """,
                     (run_id,),
                 )
-                sig_row = cur.fetchone()
-                signals_generated = _as_int(sig_row[0] if sig_row else 0, 0)
+                rec_step_row = cur.fetchone()
+                signals_generated = 0
+                rec_details = {}
+                if rec_step_row and cur.description:
+                    rows_aff = rec_step_row[0]
+                    det = rec_step_row[1]
+                    signals_generated = _as_int(rows_aff, 0)
+                    if isinstance(det, dict):
+                        rec_details = det
 
                 if signals_generated == 0:
                     # Fallback: sum recommendation insert deltas from pipeline details
@@ -404,6 +430,47 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                                 _as_int(r.get("rows_after"), 0) - _as_int(r.get("rows_before"), 0),
                             )
                         signals_generated = sum(_rec_delta(r) for r in recs)
+
+                # Per-market signal counts from pipeline step details when available.
+                run_signal_map = {}
+                step_recs = rec_details.get("recommendations")
+                if isinstance(step_recs, list):
+                    for r in step_recs:
+                        if not isinstance(r, dict):
+                            continue
+                        mt = str(r.get("market_type") or r.get("MARKET_TYPE") or "").upper()
+                        if not mt:
+                            continue
+                        delta = max(
+                            _as_int(r.get("inserted_count"), 0),
+                            _as_int(r.get("rows_delta"), 0),
+                            _as_int(r.get("rows_after"), 0) - _as_int(r.get("rows_before"), 0),
+                        )
+                        run_signal_map[mt] = run_signal_map.get(mt, 0) + delta
+
+                if not run_signal_map:
+                    # Final fallback: latest recommendation bar date (not strictly run-scoped, but operationally useful).
+                    cur.execute(
+                        """
+                        with latest as (
+                          select max(TS) as latest_ts
+                          from MIP.APP.RECOMMENDATION_LOG
+                          where INTERVAL_MINUTES = 1440
+                        )
+                        select MARKET_TYPE, count(*) as SIGNALS_GENERATED
+                        from MIP.APP.RECOMMENDATION_LOG r
+                        join latest l on r.TS = l.latest_ts
+                        where r.INTERVAL_MINUTES = 1440
+                        group by MARKET_TYPE
+                        """
+                    )
+                    run_signal_rows = fetch_all(cur)
+                    run_signal_map = {
+                        str(r.get("MARKET_TYPE")): _as_int(r.get("SIGNALS_GENERATED"), 0)
+                        for r in run_signal_rows
+                    }
+                    if signals_generated == 0:
+                        signals_generated = sum(run_signal_map.values())
 
                 # Proposal counts and details for this run
                 cur.execute(
@@ -420,9 +487,10 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                       STATUS
                     from MIP.AGENT_OUT.ORDER_PROPOSALS
                     where RUN_ID_VARCHAR = %s
+                      and (%s is null or PORTFOLIO_ID = %s)
                     order by PROPOSED_AT desc
                     """,
-                    (run_id,),
+                    (run_id, active_live_portfolio_id, active_live_portfolio_id),
                 )
                 proposal_rows = fetch_all(cur)
                 proposals_total = len(proposal_rows)
@@ -537,32 +605,14 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                     """
                     select
                       MARKET_TYPE,
-                      count(*) as SIGNALS_GENERATED
-                    from MIP.APP.RECOMMENDATION_LOG
-                    where INTERVAL_MINUTES = 1440
-                      and coalesce(DETAILS:run_id::string, DETAILS:RUN_ID::string) = %s
-                    group by MARKET_TYPE
-                    order by MARKET_TYPE
-                    """,
-                    (run_id,),
-                )
-                run_signal_rows = fetch_all(cur)
-                run_signal_map = {
-                    str(r.get("MARKET_TYPE")): _as_int(r.get("SIGNALS_GENERATED"), 0)
-                    for r in run_signal_rows
-                }
-
-                cur.execute(
-                    """
-                    select
-                      MARKET_TYPE,
                       count(*) as PROPOSALS_GENERATED
                     from MIP.AGENT_OUT.ORDER_PROPOSALS
                     where RUN_ID_VARCHAR = %s
+                      and (%s is null or PORTFOLIO_ID = %s)
                     group by MARKET_TYPE
                     order by MARKET_TYPE
                     """,
-                    (run_id,),
+                    (run_id, active_live_portfolio_id, active_live_portfolio_id),
                 )
                 run_prop_rows = fetch_all(cur)
                 run_prop_map = {
@@ -592,6 +642,7 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                         "run_id": run_id,
                         "status": latest_run.get("STATUS"),
                         "completed_at": completed_at,
+                        "live_portfolio_id": active_live_portfolio_id,
                     },
                     "counts": {
                         "signals_generated": signals_generated,

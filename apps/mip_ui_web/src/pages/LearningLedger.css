@@ -41,6 +41,12 @@
   align-items: center;
 }
 
+.ledger-note {
+  margin: 0;
+  color: var(--muted, #666);
+  font-size: 0.85rem;
+}
+
 .ledger-effectiveness {
   border: 1px solid var(--border-color, #d0d0d0);
   border-radius: 10px;

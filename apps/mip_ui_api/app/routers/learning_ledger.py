@@ -97,13 +97,20 @@ def _chain_key_for_event(row: dict) -> str:
     action_id = row.get("LIVE_ACTION_ID") or row.get("live_action_id")
     proposal_id = row.get("PROPOSAL_ID") or row.get("proposal_id")
     run_id = row.get("RUN_ID") or row.get("run_id")
+    ledger_id = row.get("LEDGER_ID") or row.get("ledger_id")
+    event_name = row.get("EVENT_NAME") or row.get("event_name") or "UNKNOWN_EVENT"
+    event_ts = row.get("EVENT_TS") or row.get("event_ts") or "UNKNOWN_TS"
+    portfolio_id = row.get("PORTFOLIO_ID") or row.get("portfolio_id") or "UNKNOWN_PORTFOLIO"
     if action_id:
         return f"action::{action_id}"
     if proposal_id:
         return f"proposal::{proposal_id}"
     if run_id:
         return f"run::{run_id}"
-    return "unknown"
+    if ledger_id:
+        return f"ledger::{ledger_id}"
+    # Keep orphan events isolated to avoid false causal grouping.
+    return f"orphan::{portfolio_id}::{event_name}::{event_ts}"
 
 
 def _group_events_into_chains(events: list[dict]) -> list[dict]:

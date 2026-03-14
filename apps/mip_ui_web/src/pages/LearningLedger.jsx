@@ -28,6 +28,11 @@ function severityClass(sev) {
   return 'ledger-chip ledger-chip-info'
 }
 
+function latestChainEvent(chain) {
+  const list = chain?.events || []
+  return list.length ? list[list.length - 1] : null
+}
+
 export default function LearningLedger() {
   const [events, setEvents] = useState([])
   const [chains, setChains] = useState([])
@@ -56,7 +61,14 @@ export default function LearningLedger() {
       setFeedSource(data?.source || 'derived_fallback')
       setEvents(rows)
       setChains(chainRows)
-      setSelected((chainRows[0]?.events && chainRows[0].events[0]) || rows[0] || null)
+      setSelected((prev) => {
+        const chainEvents = chainRows.flatMap((c) => c.events || [])
+        const previous = prev?.event_key
+          ? (chainEvents.find((e) => e.event_key === prev.event_key) || rows.find((e) => e.event_key === prev.event_key))
+          : null
+        if (previous) return previous
+        return latestChainEvent(chainRows[0]) || rows[0] || null
+      })
     } catch (e) {
       setError(e.message || 'Failed to load learning ledger feed.')
     } finally {
@@ -69,7 +81,7 @@ export default function LearningLedger() {
   }, [loadFeed])
 
   useEffect(() => {
-    if (!selected?.run_id) {
+    if (!selected?.run_id && selected?.ledger_id == null) {
       setDetail(null)
       return
     }
@@ -77,7 +89,8 @@ export default function LearningLedger() {
     const loadDetail = async () => {
       setDetailLoading(true)
       try {
-        const params = new URLSearchParams({ run_id: String(selected.run_id) })
+        const params = new URLSearchParams()
+        if (selected.run_id != null) params.set('run_id', String(selected.run_id))
         if (selected.event_name) params.set('event_name', String(selected.event_name))
         if (selected.portfolio_id != null) params.set('portfolio_id', String(selected.portfolio_id))
         if (selected.ledger_id != null) params.set('ledger_id', String(selected.ledger_id))
@@ -156,13 +169,14 @@ export default function LearningLedger() {
       </header>
 
       <section className="ledger-stats">
-        <div className="ledger-stat-card"><span>Total events</span><b>{stats.total}</b></div>
-        <div className="ledger-stat-card"><span>Causal chains</span><b>{chains.length}</b></div>
-        <div className="ledger-stat-card"><span>Training events</span><b>{stats.trainingCount}</b></div>
-        <div className="ledger-stat-card"><span>Decision events</span><b>{stats.decisionCount}</b></div>
-        <div className="ledger-stat-card"><span>News-influenced</span><b>{stats.newsInfluencedCount}</b></div>
-        <div className="ledger-stat-card"><span>High severity</span><b>{stats.highCount}</b></div>
+        <div className="ledger-stat-card"><span>Total events (feed)</span><b>{stats.total}</b></div>
+        <div className="ledger-stat-card"><span>Causal chains (feed)</span><b>{chains.length}</b></div>
+        <div className="ledger-stat-card"><span>Training events (feed)</span><b>{stats.trainingCount}</b></div>
+        <div className="ledger-stat-card"><span>Decision events (feed)</span><b>{stats.decisionCount}</b></div>
+        <div className="ledger-stat-card"><span>News-influenced (feed)</span><b>{stats.newsInfluencedCount}</b></div>
+        <div className="ledger-stat-card"><span>High severity (feed)</span><b>{stats.highCount}</b></div>
       </section>
+      <p className="ledger-note">Feed cards show the latest snapshot window from the feed query, not full-history totals.</p>
       <section className="ledger-source-banner">
         <span>Feed source:</span>
         <b>{feedSource === 'canonical_ledger' ? 'Canonical immutable ledger' : 'Derived fallback (deploy ledger SQL to activate canonical mode)'}</b>
@@ -171,6 +185,7 @@ export default function LearningLedger() {
       {effectiveness ? (
         <section className="ledger-effectiveness">
           <h3>Resulting Impact (30d)</h3>
+          <p className="ledger-note">Portfolio-level 30-day context. This panel is not specific to the currently selected chain/event.</p>
           <div className="ledger-effectiveness-grid">
             <div><span>Proposals</span><b>{effectiveness?.proposal_summary?.PROPOSAL_COUNT ?? effectiveness?.proposal_summary?.proposal_count ?? 0}</b></div>
             <div><span>Executed proposals</span><b>{effectiveness?.proposal_summary?.EXECUTED_COUNT ?? effectiveness?.proposal_summary?.executed_count ?? 0}</b></div>
@@ -211,7 +226,7 @@ export default function LearningLedger() {
         <section className="ledger-grid">
           <div className="ledger-feed">
             {chains.length > 0 ? chains.map((c) => {
-              const e = (c.events && c.events[c.events.length - 1]) || {}
+              const e = latestChainEvent(c) || {}
               return (
               <button
                 type="button"

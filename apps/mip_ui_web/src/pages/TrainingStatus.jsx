@@ -6,7 +6,6 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
-import TrainingDigestPanel from '../components/TrainingDigestPanel'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
 
@@ -168,13 +167,11 @@ export default function TrainingStatus() {
         Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.
       </p>
 
-      <TrainingDigestPanel scope="global" />
-
       <section className="training-status-filters" aria-label="Filters">
         <div className="training-filter-row">
           <label htmlFor="ts-market-type">
             Market type
-            <InfoTooltip scope={SCOPE} key="filter_market_type" variant="short" />
+            <InfoTooltip scope={SCOPE} entryKey="filter_market_type" variant="short" />
           </label>
           <select
             id="ts-market-type"
@@ -191,7 +188,7 @@ export default function TrainingStatus() {
         <div className="training-filter-row">
           <label htmlFor="ts-symbol">
             Symbol
-            <InfoTooltip scope={SCOPE} key="filter_symbol" variant="short" />
+            <InfoTooltip scope={SCOPE} entryKey="filter_symbol" variant="short" />
           </label>
           <input
             id="ts-symbol"
@@ -209,16 +206,16 @@ export default function TrainingStatus() {
           <thead>
             <tr>
               <th className="training-expand-col" aria-label="Expand"></th>
-              <th>Market type <InfoTooltip scope={SCOPE} key="market_type" variant="short" /></th>
-              <th>Symbol <InfoTooltip scope={SCOPE} key="symbol" variant="short" /></th>
-              <th>Pattern <InfoTooltip scope={SCOPE} key="pattern_id" variant="short" /></th>
-              <th>Interval <InfoTooltip scope={SCOPE} key="interval_minutes" variant="short" /></th>
-              <th>As of <InfoTooltip scope={SCOPE} key="as_of_ts" variant="short" /></th>
-              <th>Maturity <InfoTooltip scope={SCOPE} key="maturity_score" variant="long" /></th>
-              <th>Trust gate <InfoTooltip scope={SCOPE} key="trust_gate" variant="long" /></th>
-              <th>Sample size <InfoTooltip scope={SCOPE} key="recs_total" variant="short" /></th>
-              <th>Coverage <InfoTooltip scope={SCOPE} key="coverage_ratio" variant="short" /></th>
-              <th>Horizons <InfoTooltip scope={SCOPE} key="horizons_covered" variant="short" /></th>
+              <th>Market type <InfoTooltip scope={SCOPE} entryKey="market_type" variant="short" /></th>
+              <th>Symbol <InfoTooltip scope={SCOPE} entryKey="symbol" variant="short" /></th>
+              <th>Pattern <InfoTooltip scope={SCOPE} entryKey="pattern_id" variant="short" /></th>
+              <th>Interval <InfoTooltip scope={SCOPE} entryKey="interval_minutes" variant="short" /></th>
+              <th>As of <InfoTooltip scope={SCOPE} entryKey="as_of_ts" variant="short" /></th>
+              <th>Maturity <InfoTooltip scope={SCOPE} entryKey="maturity_score" variant="long" /></th>
+              <th>Trust gate <InfoTooltip scope={SCOPE} entryKey="trust_gate" variant="long" /></th>
+              <th>Sample size <InfoTooltip scope={SCOPE} entryKey="recs_total" variant="short" /></th>
+              <th>Coverage <InfoTooltip scope={SCOPE} entryKey="coverage_ratio" variant="short" /></th>
+              <th>Horizons <InfoTooltip scope={SCOPE} entryKey="horizons_covered" variant="short" /></th>
               {horizonDefs.map((h) => (
                 <th key={h.key} title={h.label}>Avg {h.key}</th>
               ))}
@@ -263,7 +260,7 @@ export default function TrainingStatus() {
                       >
                         {get(row, 'maturity_stage') ?? '—'}
                       </span>
-                      <InfoTooltip scope={SCOPE} key={stageKey} variant="short" />
+                      <InfoTooltip scope={SCOPE} entryKey={stageKey} variant="short" />
                       <div className="training-progress-wrap" title={stageTitle}>
                         <div className="training-progress-bar" style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
                       </div>
@@ -286,13 +283,6 @@ export default function TrainingStatus() {
                   {isExpanded && (
                     <tr className="training-detail-row">
                       <td colSpan={BASE_COLUMN_COUNT + horizonDefs.length + 1} className="training-detail-cell">
-                        <TrainingDigestPanel
-                          scope="symbol"
-                          symbol={get(row, 'symbol')}
-                          marketType={get(row, 'market_type')}
-                          patternId={get(row, 'pattern_id')}
-                          compact
-                        />
                         <TrainingTimelineInline
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}

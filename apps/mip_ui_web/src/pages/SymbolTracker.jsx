@@ -60,6 +60,26 @@ function toDateLabel(ts) {
   }
 }
 
+function fmtEventTs(ts) {
+  if (!ts) return '—'
+  try {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) return String(ts).slice(0, 16)
+    return `${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 16)}`
+  } catch {
+    return String(ts).slice(0, 16)
+  }
+}
+
+function eventStyle(eventType) {
+  const t = String(eventType || '').toUpperCase()
+  if (t === 'NEWS') return { color: '#f59e0b', glyph: 'N', anchor: 'top' }
+  if (t === 'ACTION') return { color: '#22d3ee', glyph: 'A', anchor: 'top' }
+  if (t === 'FILL') return { color: '#34d399', glyph: 'F', anchor: 'bottom' }
+  if (t === 'ENTRY') return { color: '#a78bfa', glyph: 'E', anchor: 'bottom' }
+  return { color: '#94a3b8', glyph: '•', anchor: 'top' }
+}
+
 function TrackerTooltip({ active, payload }) {
   if (!active || !payload || payload.length === 0) return null
   const row = payload[0]?.payload
@@ -128,6 +148,32 @@ function TileChart({ tile, mode, chartStyle }) {
   const current = tile?.overlays?.current
   const side = tile?.side
   const currentIdx = bars.length - 1
+  const barDates = bars.map((b) => String(b.ts || '').slice(0, 10))
+  const dateToIdx = new Map()
+  barDates.forEach((d, idx) => dateToIdx.set(d, idx))
+  const highs = bars.map((b) => Number(b.high)).filter((v) => Number.isFinite(v))
+  const lows = bars.map((b) => Number(b.low)).filter((v) => Number.isFinite(v))
+  const yMax = highs.length > 0 ? Math.max(...highs) : Number(current || entry || 1)
+  const yMin = lows.length > 0 ? Math.min(...lows) : Number(current || entry || 0)
+  const yRange = Math.max(yMax - yMin, 1)
+  const markerEvents = (Array.isArray(tile?.events) ? tile.events : []).slice(0, 6).reverse()
+  const markerPoints = markerEvents.map((event, idx) => {
+    const style = eventStyle(event.type)
+    const eventDate = String(event.ts || '').slice(0, 10)
+    const eventIdx = dateToIdx.has(eventDate) ? dateToIdx.get(eventDate) : currentIdx
+    const laneOffset = (idx % 3) * (yRange * 0.02)
+    const y = style.anchor === 'top'
+      ? (yMax - laneOffset)
+      : (yMin + laneOffset)
+    return {
+      ...event,
+      markerColor: style.color,
+      markerGlyph: style.glyph,
+      markerAnchor: style.anchor,
+      markerIdx: eventIdx,
+      markerY: y,
+    }
+  })
 
   return (
     <ResponsiveContainer width="100%" height={260}>
@@ -195,6 +241,24 @@ function TileChart({ tile, mode, chartStyle }) {
             label={{ position: 'top', value: 'Now', fill: '#cbd5e1', fontSize: 10 }}
           />
         ) : null}
+
+        {markerPoints.map((event, idx) => (
+          <ReferenceDot
+            key={`${event.type || 'EVENT'}_${event.ts || idx}_${idx}`}
+            x={event.markerIdx}
+            y={event.markerY}
+            r={5}
+            fill={event.markerColor}
+            stroke="#0f172a"
+            strokeWidth={1.25}
+            label={{
+              position: event.markerAnchor === 'top' ? 'top' : 'bottom',
+              value: event.markerGlyph,
+              fill: event.markerColor,
+              fontSize: 10,
+            }}
+          />
+        ))}
       </ComposedChart>
     </ResponsiveContainer>
   )
@@ -231,6 +295,27 @@ function Tile({ tile, mode, chartStyle }) {
       </div>
 
       <TileChart tile={tile} mode={mode} chartStyle={chartStyle} />
+
+      {(tile?.events || []).length > 0 ? (
+        <div className="symbol-tracker-events">
+          <div className="symbol-tracker-events-title">Recent events</div>
+          {(tile.events || []).slice(0, 4).map((event, idx) => (
+            <div key={`${event.type || 'event'}_${event.ts || idx}_${idx}`} className="symbol-tracker-event-row">
+              <span className={`symbol-tracker-event-pill symbol-tracker-event-pill--${String(event.type || 'event').toLowerCase()}`}>
+                {event.type || 'EVENT'}
+              </span>
+              <span className="symbol-tracker-event-time">{fmtEventTs(event.ts)}</span>
+              {event.url ? (
+                <a className="symbol-tracker-event-link" href={event.url} target="_blank" rel="noreferrer">
+                  {event.label || 'Open'}
+                </a>
+              ) : (
+                <span className="symbol-tracker-event-label">{event.label || '—'}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="symbol-tracker-metrics">
         <div><span>Distance to TP</span><b>{fmtPct(tile?.progress_metrics?.distance_to_tp_pct)}</b></div>

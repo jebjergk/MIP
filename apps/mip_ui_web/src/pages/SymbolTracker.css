@@ -163,6 +163,79 @@
   color: #94a3b8;
 }
 
+.symbol-tracker-events {
+  border: 1px dashed #334155;
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.symbol-tracker-events-title {
+  color: #93c5fd;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.symbol-tracker-event-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.45rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.symbol-tracker-event-pill {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  color: #e2e8f0;
+}
+
+.symbol-tracker-event-pill--news {
+  border-color: #f59e0b;
+  color: #fcd34d;
+}
+
+.symbol-tracker-event-pill--action {
+  border-color: #22d3ee;
+  color: #67e8f9;
+}
+
+.symbol-tracker-event-pill--fill {
+  border-color: #34d399;
+  color: #86efac;
+}
+
+.symbol-tracker-event-pill--entry {
+  border-color: #a78bfa;
+  color: #c4b5fd;
+}
+
+.symbol-tracker-event-time {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.symbol-tracker-event-label,
+.symbol-tracker-event-link {
+  color: #e2e8f0;
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-tracker-event-link {
+  text-decoration: none;
+}
+
+.symbol-tracker-event-link:hover {
+  text-decoration: underline;
+}
+
 .symbol-tracker-tooltip {
   background: #020617;
   border: 1px solid #334155;

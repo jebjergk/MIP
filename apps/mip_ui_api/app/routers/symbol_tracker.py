@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+import json
 from statistics import pstdev
 from typing import Any, Iterable
 
@@ -63,6 +64,32 @@ def _safe_progress(numerator: float | None, denominator: float | None) -> float 
     if numerator is None or denominator in (None, 0):
         return None
     return numerator / denominator
+
+
+def _normalize_headlines(raw: Any) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    value = raw
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title") or item.get("TITLE") or item.get("headline") or item.get("HEADLINE")
+        if not title:
+            continue
+        url = item.get("url") or item.get("URL")
+        url = str(url).strip() if url is not None else None
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            url = None
+        out.append({"title": str(title), "url": url})
+    return out
 
 
 def _build_projection_path(
@@ -295,6 +322,25 @@ def get_symbol_tracker_tiles(
 
         cur.execute(
             f"""
+            select
+              upper(la.SYMBOL) as SYMBOL,
+              la.ACTION_ID,
+              la.STATUS,
+              la.COMMITTEE_VERDICT,
+              la.CREATED_AT,
+              la.UPDATED_AT
+            from MIP.LIVE.LIVE_ACTIONS la
+            where la.PORTFOLIO_ID = %s
+              and upper(la.SYMBOL) in ({placeholders})
+              and coalesce(la.UPDATED_AT, la.CREATED_AT) >= dateadd(day, -30, current_timestamp())
+            order by coalesce(la.UPDATED_AT, la.CREATED_AT) desc
+            """,
+            [portfolio_id, *symbol_params],
+        )
+        action_rows = fetch_all(cur)
+
+        cur.execute(
+            f"""
             with bars as (
               select
                 SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME,
@@ -334,6 +380,21 @@ def get_symbol_tracker_tiles(
         )
         expectation_rows = fetch_all(cur)
 
+        cur.execute(
+            f"""
+            select
+              n.SYMBOL,
+              n.MARKET_TYPE,
+              coalesce(n.BADGE, 'NORMAL') as NEWS_CONTEXT_BADGE,
+              n.SNAPSHOT_TS,
+              n.TOP_CLUSTERS as TOP_HEADLINES
+            from MIP.MART.V_NEWS_AGG_LATEST n
+            where n.SYMBOL in ({placeholders})
+            """,
+            [*symbol_params],
+        )
+        news_rows = fetch_all(cur)
+
         bars_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
         market_type_by_symbol: dict[str, str] = {}
         for row in bars_rows:
@@ -371,6 +432,7 @@ def get_symbol_tracker_tiles(
         protection_by_symbol: dict[str, dict[str, Any]] = defaultdict(
             lambda: {"tp_price": None, "sl_price": None, "entry_price": None, "opened_at": None, "action_id": None}
         )
+        events_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in order_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
             if not symbol:
@@ -396,6 +458,71 @@ def get_symbol_tracker_tiles(
             if side in {"BUY", "SELL"} and fill_price is not None and protection_by_symbol[symbol]["entry_price"] is None:
                 protection_by_symbol[symbol]["entry_price"] = fill_price
                 protection_by_symbol[symbol]["opened_at"] = fill_ts
+
+            status = str(row.get("STATUS") or "").upper()
+            fill_qty = _to_float(row.get("QTY_FILLED")) or 0.0
+            if status in {"PARTIAL_FILL", "FILLED"} or fill_qty > 0:
+                event_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
+                if event_ts:
+                    events_by_symbol[symbol].append(
+                        {
+                            "type": "FILL",
+                            "ts": _iso(event_ts),
+                            "label": f"{side or 'ORDER'} fill",
+                            "severity": "info",
+                            "meta": {
+                                "status": status,
+                                "qty_filled": fill_qty,
+                                "price": fill_price,
+                            },
+                        }
+                    )
+
+        for row in action_rows:
+            symbol = str(row.get("SYMBOL") or "").upper()
+            if not symbol:
+                continue
+            event_ts = row.get("UPDATED_AT") or row.get("CREATED_AT")
+            if not event_ts:
+                continue
+            status = str(row.get("STATUS") or "").upper()
+            verdict = str(row.get("COMMITTEE_VERDICT") or "").upper()
+            severity = "warn" if verdict == "BLOCK" or status == "OPEN_BLOCKED" else "info"
+            events_by_symbol[symbol].append(
+                {
+                    "type": "ACTION",
+                    "ts": _iso(event_ts),
+                    "label": f"{status or 'ACTION'}{f'/{verdict}' if verdict else ''}",
+                    "severity": severity,
+                    "meta": {
+                        "action_id": row.get("ACTION_ID"),
+                        "status": status,
+                        "committee_verdict": verdict or None,
+                    },
+                }
+            )
+
+        for row in news_rows:
+            symbol = str(row.get("SYMBOL") or "").upper()
+            if not symbol:
+                continue
+            snapshot_ts = row.get("SNAPSHOT_TS")
+            headlines = _normalize_headlines(row.get("TOP_HEADLINES"))
+            badge = str(row.get("NEWS_CONTEXT_BADGE") or "NORMAL").upper()
+            severity = "warn" if badge in {"HOT", "RISK"} else "info"
+            for headline in headlines[:2]:
+                events_by_symbol[symbol].append(
+                    {
+                        "type": "NEWS",
+                        "ts": _iso(snapshot_ts),
+                        "label": headline.get("title"),
+                        "severity": severity,
+                        "url": headline.get("url"),
+                        "meta": {
+                            "badge": badge,
+                        },
+                    }
+                )
 
         tiles = []
         for position in positions:
@@ -425,6 +552,19 @@ def get_symbol_tracker_tiles(
             opened_at = protection.get("opened_at")
             tp_price = protection.get("tp_price")
             sl_price = protection.get("sl_price")
+            tile_events = list(events_by_symbol.get(symbol, []))
+            if opened_at is not None:
+                tile_events.append(
+                    {
+                        "type": "ENTRY",
+                        "ts": _iso(opened_at),
+                        "label": f"{side} entry opened",
+                        "severity": "info",
+                        "meta": {"entry_price": entry_price},
+                    }
+                )
+            tile_events.sort(key=lambda e: e.get("ts") or "", reverse=True)
+            tile_events = tile_events[:10]
 
             exp = expectation_by_symbol.get(symbol)
             expectation_payload = {
@@ -571,6 +711,7 @@ def get_symbol_tracker_tiles(
                         "interval_minutes": interval_minutes,
                         "bars": symbol_bars,
                     },
+                    "events": tile_events,
                     "overlays": {
                         "entry": entry_price,
                         "take_profit": tp_price,

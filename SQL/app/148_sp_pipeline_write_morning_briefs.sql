@@ -141,10 +141,13 @@ declare
     v_portfolio_count number := 0;
 begin
     v_portfolios := (
-        select PORTFOLIO_ID
-          from MIP.APP.PORTFOLIO
-         where STATUS = 'ACTIVE'
-         order by PORTFOLIO_ID
+        select p.PORTFOLIO_ID
+          from MIP.APP.PORTFOLIO p
+          join MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
+            on l.PORTFOLIO_ID = p.PORTFOLIO_ID
+         where p.STATUS = 'ACTIVE'
+           and coalesce(l.IS_ACTIVE, true)
+         order by p.PORTFOLIO_ID
     );
 
     for rec in v_portfolios do

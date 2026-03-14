@@ -382,10 +382,13 @@ begin
         v_brief_results := array_construct();
         v_brief_count := 0;
         v_portfolios := (
-            select PORTFOLIO_ID
-              from MIP.APP.PORTFOLIO
-             where STATUS = 'ACTIVE'
-             order by PORTFOLIO_ID
+            select p.PORTFOLIO_ID
+              from MIP.APP.PORTFOLIO p
+              join MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
+                on l.PORTFOLIO_ID = p.PORTFOLIO_ID
+             where p.STATUS = 'ACTIVE'
+               and coalesce(l.IS_ACTIVE, true)
+             order by p.PORTFOLIO_ID
         );
         for rec in v_portfolios do
             v_portfolio_id := rec.PORTFOLIO_ID;
@@ -699,9 +702,12 @@ begin
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID number);
     insert into MIP.APP.TMP_PIPELINE_PORTFOLIOS (PORTFOLIO_ID)
-    select PORTFOLIO_ID
-      from MIP.APP.PORTFOLIO
-     where STATUS = 'ACTIVE';
+    select p.PORTFOLIO_ID
+      from MIP.APP.PORTFOLIO p
+      join MIP.LIVE.LIVE_PORTFOLIO_CONFIG l
+        on l.PORTFOLIO_ID = p.PORTFOLIO_ID
+     where p.STATUS = 'ACTIVE'
+       and coalesce(l.IS_ACTIVE, true);
 
     v_step_start := current_timestamp();
     begin

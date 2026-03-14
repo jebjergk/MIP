@@ -136,6 +136,9 @@ def get_results(
         d.CAPACITY_STATUS,
         d.CF_RESULT_JSON
     FROM MIP.MART.V_PARALLEL_WORLD_DIFF d
+    JOIN MIP.APP.PARALLEL_WORLD_SCENARIO s
+      ON s.SCENARIO_ID = d.SCENARIO_ID
+     AND s.IS_ACTIVE = true
     WHERE {where}
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY d.PORTFOLIO_ID, d.SCENARIO_ID
@@ -227,6 +230,12 @@ def get_regret(
         OUTPERFORM_PCT
     FROM MIP.MART.V_PARALLEL_WORLD_REGRET
     WHERE PORTFOLIO_ID = %s
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
+        WHERE s.SCENARIO_ID = V_PARALLEL_WORLD_REGRET.SCENARIO_ID
+          AND s.IS_ACTIVE = true
+      )
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY SCENARIO_ID
         ORDER BY AS_OF_TS DESC
@@ -338,6 +347,12 @@ def get_confidence(
         RECOMMENDATION_STRENGTH
     FROM MIP.MART.V_PARALLEL_WORLD_CONFIDENCE
     WHERE PORTFOLIO_ID = %s
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
+        WHERE s.SCENARIO_ID = V_PARALLEL_WORLD_CONFIDENCE.SCENARIO_ID
+          AND s.IS_ACTIVE = true
+      )
     ORDER BY
         CASE CONFIDENCE_CLASS
             WHEN 'STRONG' THEN 1
@@ -434,6 +449,12 @@ def get_regret_attribution(
         IS_DOMINANT_DRIVER
     FROM MIP.MART.V_PARALLEL_WORLD_REGRET_ATTRIBUTION
     WHERE PORTFOLIO_ID = %s
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
+        WHERE s.SCENARIO_TYPE = V_PARALLEL_WORLD_REGRET_ATTRIBUTION.SCENARIO_TYPE
+          AND s.IS_ACTIVE = true
+      )
     ORDER BY REGRET_RANK
     """
     conn = get_connection()
@@ -487,6 +508,7 @@ def get_equity_curves(
     FROM MIP.APP.PARALLEL_WORLD_RESULT r
     LEFT JOIN MIP.APP.PARALLEL_WORLD_SCENARIO s ON s.SCENARIO_ID = r.SCENARIO_ID
     WHERE {where}
+      AND (r.SCENARIO_ID = 0 OR coalesce(s.IS_ACTIVE, false) = true)
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY r.PORTFOLIO_ID, r.SCENARIO_ID, r.AS_OF_TS::date
         ORDER BY r.CREATED_AT DESC
@@ -568,6 +590,12 @@ def get_tuning_surface(
         IS_CURRENT_SETTING
     FROM MIP.MART.V_PW_TUNING_SURFACE
     WHERE {where}
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
+        WHERE s.SCENARIO_ID = V_PW_TUNING_SURFACE.SCENARIO_ID
+          AND s.IS_ACTIVE = true
+      )
     ORDER BY SWEEP_FAMILY, SWEEP_ORDER
     """
     conn = get_connection()
@@ -630,6 +658,12 @@ def get_regime_sensitivity(
         IS_REGIME_FRAGILE
     FROM MIP.MART.V_PW_REGIME_SENSITIVITY
     WHERE {where}
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
+        WHERE s.SCENARIO_ID = V_PW_REGIME_SENSITIVITY.SCENARIO_ID
+          AND s.IS_ACTIVE = true
+      )
     ORDER BY SWEEP_FAMILY, SCENARIO_ID, REGIME
     """
     conn = get_connection()
@@ -679,6 +713,12 @@ def get_recommendations(
         CONFIDENCE_EMOJI, REC_RANK
     FROM MIP.MART.V_PW_RECOMMENDATIONS
     WHERE {where}
+      AND EXISTS (
+        SELECT 1
+        FROM MIP.APP.PARALLEL_WORLD_SCENARIO s
+        WHERE s.SCENARIO_ID = V_PW_RECOMMENDATIONS.SCENARIO_ID
+          AND s.IS_ACTIVE = true
+      )
     ORDER BY REC_RANK
     """
     conn = get_connection()

@@ -108,18 +108,21 @@ def _build_projection_path(
         }
 
     side_sign = 1.0 if side == "LONG" else -1.0
-    center_target = baseline_price * (1 + side_sign * avg_return)
-    upper_target = baseline_price * (1 + side_sign * upper_return)
-    lower_target = baseline_price * (1 + side_sign * lower_return)
+    center_gross = max(1 + side_sign * avg_return, 0.0001)
+    upper_gross = max(1 + side_sign * upper_return, 0.0001)
+    lower_gross = max(1 + side_sign * lower_return, 0.0001)
+
+    center_step_factor = center_gross ** (1 / horizon_bars)
+    upper_step_factor = upper_gross ** (1 / horizon_bars)
+    lower_step_factor = lower_gross ** (1 / horizon_bars)
 
     center_path = []
     upper_path = []
     lower_path = []
     for t in range(1, horizon_bars + 1):
-        ratio = t / horizon_bars
-        center_path.append({"step": t, "price": baseline_price + (center_target - baseline_price) * ratio})
-        upper_path.append({"step": t, "price": baseline_price + (upper_target - baseline_price) * ratio})
-        lower_path.append({"step": t, "price": baseline_price + (lower_target - baseline_price) * ratio})
+        center_path.append({"step": t, "price": baseline_price * (center_step_factor ** t)})
+        upper_path.append({"step": t, "price": baseline_price * (upper_step_factor ** t)})
+        lower_path.append({"step": t, "price": baseline_price * (lower_step_factor ** t)})
 
     return {
         "center_path": center_path,

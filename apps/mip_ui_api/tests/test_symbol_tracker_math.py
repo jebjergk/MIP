@@ -32,6 +32,19 @@ class SymbolTrackerMathTests(unittest.TestCase):
         self.assertLess(out["upper_path"][-1]["price"], out["center_path"][-1]["price"])
         self.assertGreater(out["lower_path"][-1]["price"], out["center_path"][-1]["price"])
 
+    def test_projection_path_uses_geometric_curve(self):
+        out = _build_projection_path(
+            baseline_price=100.0,
+            avg_return=0.21,
+            upper_return=0.30,
+            lower_return=0.10,
+            horizon_bars=2,
+            side="LONG",
+        )
+        # 21% over 2 steps => sqrt(1.21)=1.1 so first step should be exactly 110, not linear 110.5
+        self.assertAlmostEqual(out["center_path"][0]["price"], 110.0, places=6)
+        self.assertAlmostEqual(out["center_path"][-1]["price"], 121.0, places=6)
+
     def test_thesis_invalidates_when_stop_loss_crossed(self):
         long_state = _thesis_status(
             side="LONG",

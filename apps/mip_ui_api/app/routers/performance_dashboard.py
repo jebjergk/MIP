@@ -89,7 +89,46 @@ def get_performance_dashboard_overview(
                     coalesce(IS_ACTIVE, true) as IS_ACTIVE
                   from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                 ),
+                nav_candidates as (
+                  select
+                    s.IBKR_ACCOUNT_ID,
+                    s.NET_LIQUIDATION_EUR,
+                    s.SNAPSHOT_TS
+                  from MIP.LIVE.BROKER_SNAPSHOTS s
+                  join cfg
+                    on cfg.IBKR_ACCOUNT_ID = s.IBKR_ACCOUNT_ID
+                   and cfg.IS_ACTIVE
+                  where upper(coalesce(s.SNAPSHOT_TYPE, '')) = 'NAV'
+                ),
+                nav_after as (
+                  select *
+                  from nav_candidates
+                  where SNAPSHOT_TS >= %s
+                ),
+                nav_anchor as (
+                  select
+                    IBKR_ACCOUNT_ID,
+                    NET_LIQUIDATION_EUR,
+                    SNAPSHOT_TS
+                  from nav_candidates
+                  where SNAPSHOT_TS < %s
+                  qualify row_number() over (
+                    partition by IBKR_ACCOUNT_ID
+                    order by SNAPSHOT_TS desc
+                  ) = 1
+                ),
                 nav_window as (
+                  select * from nav_after
+                  union all
+                  select a.*
+                  from nav_anchor a
+                  where not exists (
+                    select 1
+                    from nav_after f
+                    where f.IBKR_ACCOUNT_ID = a.IBKR_ACCOUNT_ID
+                  )
+                ),
+                nav_ranked as (
                   select
                     IBKR_ACCOUNT_ID,
                     NET_LIQUIDATION_EUR,
@@ -102,16 +141,14 @@ def get_performance_dashboard_overview(
                       partition by IBKR_ACCOUNT_ID
                       order by SNAPSHOT_TS desc
                     ) as RN_DESC
-                  from MIP.LIVE.BROKER_SNAPSHOTS
-                  where SNAPSHOT_TYPE = 'NAV'
-                    and SNAPSHOT_TS >= %s
+                  from nav_window
                 ),
                 nav_rollup as (
                   select
                     IBKR_ACCOUNT_ID,
                     max(case when RN_ASC = 1 then NET_LIQUIDATION_EUR end) as START_EQUITY_EUR,
                     max(case when RN_DESC = 1 then NET_LIQUIDATION_EUR end) as END_EQUITY_EUR
-                  from nav_window
+                  from nav_ranked
                   group by IBKR_ACCOUNT_ID
                 ),
                 drawdown_rollup as (
@@ -145,7 +182,7 @@ def get_performance_dashboard_overview(
                   on dd.IBKR_ACCOUNT_ID = cfg.IBKR_ACCOUNT_ID
                 where cfg.IS_ACTIVE
                 """,
-                (effective_start_ts, effective_start_ts),
+                (effective_start_ts, effective_start_ts, effective_start_ts),
             )
         )
 
@@ -206,20 +243,67 @@ def get_performance_dashboard_overview(
                   from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                   where coalesce(IS_ACTIVE, true)
                 ),
-                latest_nav_per_day as (
+                nav_candidates as (
                   select
-                    date_trunc('day', s.SNAPSHOT_TS)::date as DAY,
                     s.IBKR_ACCOUNT_ID,
                     s.NET_LIQUIDATION_EUR,
-                    row_number() over (
-                      partition by date_trunc('day', s.SNAPSHOT_TS)::date, s.IBKR_ACCOUNT_ID
-                      order by s.SNAPSHOT_TS desc
-                    ) as RN
+                    s.SNAPSHOT_TS
                   from MIP.LIVE.BROKER_SNAPSHOTS s
                   join active_accounts a
                     on a.IBKR_ACCOUNT_ID = s.IBKR_ACCOUNT_ID
-                  where s.SNAPSHOT_TYPE = 'NAV'
-                    and s.SNAPSHOT_TS >= %s
+                  where upper(coalesce(s.SNAPSHOT_TYPE, '')) = 'NAV'
+                ),
+                nav_after as (
+                  select
+                    IBKR_ACCOUNT_ID,
+                    NET_LIQUIDATION_EUR,
+                    SNAPSHOT_TS,
+                    false as IS_ANCHOR
+                  from nav_candidates
+                  where SNAPSHOT_TS >= %s
+                ),
+                nav_anchor as (
+                  select
+                    IBKR_ACCOUNT_ID,
+                    NET_LIQUIDATION_EUR,
+                    SNAPSHOT_TS,
+                    true as IS_ANCHOR
+                  from nav_candidates
+                  where SNAPSHOT_TS < %s
+                  qualify row_number() over (
+                    partition by IBKR_ACCOUNT_ID
+                    order by SNAPSHOT_TS desc
+                  ) = 1
+                ),
+                nav_window as (
+                  select * from nav_after
+                  union all
+                  select a.*
+                  from nav_anchor a
+                  where not exists (
+                    select 1
+                    from nav_after f
+                    where f.IBKR_ACCOUNT_ID = a.IBKR_ACCOUNT_ID
+                  )
+                ),
+                latest_nav_per_day as (
+                  select
+                    case
+                      when w.IS_ANCHOR then date_trunc('day', %s)::date
+                      else date_trunc('day', w.SNAPSHOT_TS)::date
+                    end as DAY,
+                    w.IBKR_ACCOUNT_ID,
+                    w.NET_LIQUIDATION_EUR,
+                    row_number() over (
+                      partition by
+                        case
+                          when w.IS_ANCHOR then date_trunc('day', %s)::date
+                          else date_trunc('day', w.SNAPSHOT_TS)::date
+                        end,
+                        w.IBKR_ACCOUNT_ID
+                      order by w.SNAPSHOT_TS desc
+                    ) as RN
+                  from nav_window w
                 )
                 select
                   DAY,
@@ -229,7 +313,7 @@ def get_performance_dashboard_overview(
                 group by DAY
                 order by DAY
                 """,
-                (effective_start_ts,),
+                (effective_start_ts, effective_start_ts, effective_start_ts, effective_start_ts),
             )
         )
 

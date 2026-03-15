@@ -18,6 +18,59 @@ import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './MarketTimelineDetail.css'
 
 /**
+ * Custom candlestick renderer.
+ * Draw wick + body in a single shape so they always align.
+ */
+function CandlestickShape(props) {
+  const { x, y, width, height, yAxis, yAxisMap, yAxisId, payload } = props
+  if (!payload) return null
+  const { open, high, low, close } = payload
+  if ([open, high, low, close].some((v) => v == null)) return null
+
+  // Recharts may expose the scale via yAxis OR yAxisMap depending on version/composed internals.
+  const mapScale = yAxisId != null
+    ? yAxisMap?.[yAxisId]?.scale
+    : (yAxisMap ? Object.values(yAxisMap)[0]?.scale : null)
+  const scale = yAxis?.scale || mapScale
+
+  const centerX = x + width / 2
+  // Fallback to the provided bar geometry if scale is unavailable.
+  const openY = scale ? scale(open) : y
+  const closeY = scale ? scale(close) : y + height
+  const highY = scale ? scale(high) : Math.min(openY, closeY)
+  const lowY = scale ? scale(low) : Math.max(openY, closeY)
+  const isUp = close >= open
+  const color = isUp ? '#26a69a' : '#ef5350'
+  const bodyTop = Math.min(openY, closeY)
+  const bodyHeight = Math.max(Math.abs(openY - closeY), 1)
+  const bodyWidth = Math.max(Math.min(width * 0.6, 8), 4)
+
+  return (
+    <g>
+      <line
+        x1={centerX}
+        x2={centerX}
+        y1={highY}
+        y2={lowY}
+        stroke="#888"
+        strokeWidth={1}
+        shapeRendering="crispEdges"
+      />
+      <rect
+        x={centerX - bodyWidth / 2}
+        y={bodyTop}
+        width={bodyWidth}
+        height={bodyHeight}
+        fill={color}
+        stroke={color}
+        strokeWidth={1}
+        shapeRendering="crispEdges"
+      />
+    </g>
+  )
+}
+
+/**
  * Custom tooltip for the OHLC chart
  */
 function ChartTooltip({ active, payload, label }) {
@@ -315,7 +368,6 @@ export default function MarketTimelineDetail({
     const hasProposal = barEvents.some((e) => e.type === 'PROPOSAL')
     const hasTrade = barEvents.some((e) => e.type === 'TRADE')
     
-    const isUp = bar.close >= bar.open
     return {
       ...bar,
       date,
@@ -323,10 +375,6 @@ export default function MarketTimelineDetail({
       signalMarker: hasSignal ? bar.low * (hasProposal ? 0.982 : 0.99) : null,
       proposalMarker: hasProposal ? bar.low * 0.99 : null,
       tradeMarker: hasTrade ? bar.high * 1.005 : null,
-      // Candlestick data
-      wick: bar.high != null && bar.low != null ? [bar.low, bar.high] : null,
-      bodyUp: isUp && bar.open != null ? [bar.open, bar.close] : null,
-      bodyDown: !isUp && bar.open != null ? [bar.close, bar.open] : null,
     }
   })
   
@@ -414,9 +462,14 @@ export default function MarketTimelineDetail({
               </>
             ) : (
               <>
-                <Bar dataKey="wick" fill="none" stroke="#888" strokeWidth={1} barSize={1} name="Wick" legendType="none" />
-                <Bar dataKey="bodyUp" fill="#26a69a" stroke="#26a69a" barSize={6} name="Up" legendType="none" />
-                <Bar dataKey="bodyDown" fill="#ef5350" stroke="#ef5350" barSize={6} name="Down" legendType="none" />
+                <Bar
+                  dataKey="close"
+                  name="Candlestick"
+                  legendType="none"
+                  barSize={10}
+                  isAnimationActive={false}
+                  shape={<CandlestickShape />}
+                />
               </>
             )}
 

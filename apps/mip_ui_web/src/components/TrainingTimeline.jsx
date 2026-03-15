@@ -31,6 +31,7 @@ function EventDot(props) {
     ENTERED_TRUSTED: '#2e7d32',
     DROPPED_FROM_TRUSTED: '#c62828',
     MISS_STREAK: '#c62828',
+    SNAPSHOT_NOW: '#6a1b9a',
   }
 
   const color = eventColors[payload.event] || '#666'
@@ -205,6 +206,13 @@ export default function TrainingTimeline({
           <p className="training-timeline-subtitle">
             This is derived from evaluated outcomes, not a model weight.
           </p>
+          {(data.latest_market_bar_ts || data.latest_evaluated_signal_ts || data.latest_pending_signal_ts) && (
+            <p className="training-timeline-subtitle">
+              Chart window through latest market bar: <strong>{data.latest_market_bar_ts ? String(data.latest_market_bar_ts).slice(0, 10) : '—'}</strong>
+              {data.latest_evaluated_signal_ts ? `; last fully evaluated signal: ${String(data.latest_evaluated_signal_ts).slice(0, 10)}` : ''}
+              {data.latest_pending_signal_ts ? `; newest pending signal: ${String(data.latest_pending_signal_ts).slice(0, 10)}.` : '.'}
+            </p>
+          )}
         </div>
         {onClose && <button className="timeline-close-btn" onClick={onClose}>&times;</button>}
       </div>
@@ -252,7 +260,7 @@ export default function TrainingTimeline({
       {/* Narrative bullets - Symbol specific */}
       {data.narrative && data.narrative.length > 0 && (
         <div className="training-journey-card">
-          <h4>Training Journey (This Symbol Only)</h4>
+          <h4>Training Journey (newest first, this symbol)</h4>
           <ul className="training-journey-bullets">
             {data.narrative.map((bullet, i) => (
               <li key={i}>{bullet}</li>

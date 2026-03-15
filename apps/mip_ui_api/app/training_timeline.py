@@ -140,6 +140,26 @@ where r.PATTERN_ID = %(pattern_id)s
   and o.EVAL_STATUS = 'SUCCESS'
 """
 
+SYMBOL_SNAPSHOT_TRUST_SQL = """
+select
+    SNAPSHOT_JSON:trust:trust_label::string as TRUST_LABEL,
+    SNAPSHOT_JSON:trust:recommended_action::string as RECOMMENDED_ACTION,
+    SNAPSHOT_JSON:trust:reason as TRUST_REASON
+from MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL
+where SYMBOL = %(symbol)s
+  and MARKET_TYPE = %(market_type)s
+  and PATTERN_ID = %(pattern_id)s
+limit 1
+"""
+
+LATEST_MARKET_BAR_SQL = """
+select max(TS) as latest_market_ts
+from MIP.MART.MARKET_BARS
+where SYMBOL = %(symbol)s
+  and MARKET_TYPE = %(market_type)s
+  and INTERVAL_MINUTES = %(interval_minutes)s
+"""
+
 
 @dataclass
 class GateParams:
@@ -256,8 +276,8 @@ def detect_event(
         elif curr_state == "WATCH" and prev_state == "TRUSTED":
             return "DROPPED_FROM_TRUSTED"
     
-    # Streak of misses (3+)
-    if recent_misses >= 3:
+    # Emit miss-streak marker once at streak start.
+    if recent_misses == 3:
         return "MISS_STREAK"
     
     return None
@@ -269,83 +289,110 @@ def generate_narrative(
     params: GateParams,
     symbol: str,
     pattern_trust: dict[str, Any] | None = None,
+    snapshot_trust: dict[str, Any] | None = None,
 ) -> list[str]:
     """
     Generate 3-6 narrative bullets explaining the training journey.
     """
     if not series:
         return [f"No evaluated outcomes yet for {symbol} — still observing."]
-    
-    bullets: list[str] = []
-    
-    # 1. First signal date
-    if first_signal_ts:
-        bullets.append(f"Observing since {str(first_signal_ts)[:10]} (first signal).")
-    
-    # 2. First evaluated outcome
-    first_outcome = series[0]
-    if first_outcome.get("ts"):
-        bullets.append(f"First outcomes evaluated on {str(first_outcome['ts'])[:10]}.")
-    
-    # 3. Find when min_signals was reached
-    min_signals_point = None
-    for pt in series:
-        if pt.get("evaluated_count", 0) >= params.min_signals:
-            min_signals_point = pt
-            break
-    if min_signals_point:
-        bullets.append(
-            f"Reached minimum evidence ({params.min_signals} outcomes) on {str(min_signals_point['ts'])[:10]}."
-        )
-    
-    # 4. Find first TRUSTED entry
-    first_trusted = None
-    for pt in series:
-        if pt.get("state") == "TRUSTED":
-            first_trusted = pt
-            break
-    if first_trusted:
-        hr = first_trusted.get("rolling_hit_rate")
-        hr_str = f"{hr*100:.0f}%" if hr is not None else "N/A"
-        bullets.append(
-            f"Entered TRUSTED on {str(first_trusted['ts'])[:10]} with rolling hit rate at {hr_str}."
-        )
-    
-    # 5. Find biggest dip / miss streak
-    max_miss_streak = 0
-    max_miss_date = None
-    current_streak = 0
-    for pt in series:
-        if pt.get("event") == "MISS_STREAK":
-            max_miss_date = pt.get("ts")
-            break  # Just note the first significant miss streak
-    if max_miss_date:
-        bullets.append(
-            f"Confidence dipped after a miss streak around {str(max_miss_date)[:10]}."
-        )
-    
-    # 6. Latest state summary
-    latest = series[-1]
-    latest_state = latest.get("state", "UNTRUSTED")
-    latest_hr = latest.get("rolling_hit_rate")
-    latest_count = latest.get("evaluated_count", 0)
-    
-    if latest_state == "TRUSTED":
-        hr_str = f"{latest_hr*100:.0f}%" if latest_hr is not None else "N/A"
-        bullets.append(f"Currently TRUSTED with {latest_count} evaluated outcomes (hit rate: {hr_str}).")
-    elif latest_state == "WATCH":
-        hr_str = f"{latest_hr*100:.0f}%" if latest_hr is not None else "N/A"
-        bullets.append(f"Currently in WATCH mode with {latest_count} outcomes (hit rate: {hr_str}). Needs higher hit rate to trust.")
-    else:
-        bullets.append(f"Currently UNTRUSTED with {latest_count} outcomes. More evidence needed.")
 
-    # Clarify local chart state vs pattern-level gate used by proposal flow.
-    if pattern_trust and pattern_trust.get("is_trusted"):
+    bullets: list[str] = []
+
+    def _fmt_date(ts_val: str | None) -> str:
+        if not ts_val:
+            return "—"
+        return str(ts_val)[:10]
+
+    def _event_label(pt: dict[str, Any]) -> str | None:
+        ev = pt.get("event")
+        if not ev:
+            return None
+        if ev == "FIRST_OUTCOME":
+            return "First outcome evaluated."
+        if ev == "MIN_SIGNALS_REACHED":
+            return f"Reached minimum evidence ({params.min_signals} outcomes)."
+        if ev == "ENTERED_WATCH":
+            return "Entered WATCH state."
+        if ev == "ENTERED_TRUSTED":
+            return "Entered strong evidence regime."
+        if ev == "DROPPED_FROM_TRUSTED":
+            return "Evidence softened from prior peak."
+        if ev == "MISS_STREAK":
+            return "Miss streak observed."
+        return ev.replace("_", " ").title() + "."
+
+    latest = series[-1]
+    latest_hr = latest.get("rolling_hit_rate")
+    latest_avg = latest.get("rolling_avg_return")
+    latest_count = latest.get("evaluated_count", 0)
+    latest_ts = latest.get("ts")
+
+    # Always lead with current proposal-gate metrics when available.
+    if snapshot_trust:
+        reason = snapshot_trust.get("reason") or {}
+        if isinstance(reason, str):
+            try:
+                import json as _json
+                reason = _json.loads(reason)
+            except Exception:
+                reason = {}
+        recent_hr = reason.get("recent_hit_rate")
+        recent_avg_ret = reason.get("recent_avg_return")
+        recent_n = reason.get("recent_success_count")
+        gate_label = str(snapshot_trust.get("trust_label") or "UNKNOWN").upper()
+        gate_action = str(snapshot_trust.get("recommended_action") or "UNKNOWN").upper()
+        hr_str = f"{float(recent_hr)*100:.1f}%" if recent_hr is not None else "N/A"
+        avg_str = f"{float(recent_avg_ret)*100:.3f}%" if recent_avg_ret is not None else "N/A"
+        n_str = str(int(recent_n)) if recent_n is not None else "N/A"
         bullets.append(
-            "Pattern-level gate is currently TRUSTED across symbols; this chart shows only symbol-local evaluated outcomes."
+            f"Now: proposal gate = {gate_label} ({gate_action}); current hit rate {hr_str}, avg return {avg_str}, recent_n={n_str}."
         )
-    
-    return bullets[:6]  # Cap at 6 bullets
+    else:
+        hr_str = f"{latest_hr*100:.1f}%" if latest_hr is not None else "N/A"
+        avg_str = f"{latest_avg*100:.3f}%" if latest_avg is not None else "N/A"
+        bullets.append(
+            f"{_fmt_date(latest_ts)}: Latest evaluated snapshot with {latest_count} outcomes (hit rate: {hr_str}, avg return: {avg_str})."
+        )
+
+    # Add context on latest evaluated point separately.
+    hr_eval_str = f"{latest_hr*100:.1f}%" if latest_hr is not None else "N/A"
+    avg_eval_str = f"{latest_avg*100:.3f}%" if latest_avg is not None else "N/A"
+    bullets.append(
+        f"{_fmt_date(latest_ts)}: Last fully evaluated signal snapshot (hit rate {hr_eval_str}, avg return {avg_eval_str}, outcomes={latest_count})."
+    )
+
+    # Event journey log: newest to oldest (recent transitions first).
+    event_points: list[tuple[str, str]] = []
+    for pt in series:
+        label = _event_label(pt)
+        ts = pt.get("ts")
+        if label and ts:
+            event_points.append((str(ts), label))
+
+    # Keep most recent meaningful events to avoid overwhelming the card.
+    event_points.sort(key=lambda x: x[0], reverse=True)
+    for ts, label in event_points[:8]:
+        bullets.append(f"{_fmt_date(ts)}: {label}")
+
+    # Historical anchors (oldest context at bottom of log).
+    if first_signal_ts:
+        bullets.append(f"{str(first_signal_ts)[:10]}: First signal observed.")
+    first_outcome_ts = series[0].get("ts")
+    if first_outcome_ts:
+        bullets.append(f"{_fmt_date(first_outcome_ts)}: First outcome evaluated.")
+
+    bullets.append(
+        "This chart reflects evaluated symbol evidence only; proposal eligibility follows the current proposal gate label above."
+    )
+    # De-duplicate while preserving order.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for b in bullets:
+        if b not in seen:
+            deduped.append(b)
+            seen.add(b)
+    return deduped[:10]  # Keep a concise newest-first journey log
 
 
 def get_pattern_trust_status(
@@ -457,6 +504,25 @@ def build_training_timeline(
     
     # Get pattern-level trust status (what actually matters for trading)
     pattern_trust = get_pattern_trust_status(conn, pattern_id, market_type, horizon_bars, params, interval_minutes)
+
+    # Get symbol snapshot trust (source used by Training Status trust badge/proposal gate).
+    snapshot_trust = None
+    try:
+        cur = conn.cursor()
+        cur.execute(SYMBOL_SNAPSHOT_TRUST_SQL, {
+            "symbol": symbol,
+            "market_type": market_type,
+            "pattern_id": pattern_id,
+        })
+        tr = cur.fetchone()
+        if tr:
+            snapshot_trust = {
+                "trust_label": tr[0],
+                "recommended_action": tr[1],
+                "reason": tr[2],
+            }
+    except Exception:
+        snapshot_trust = None
     
     # Get first signal date
     cur = conn.cursor()
@@ -468,6 +534,19 @@ def build_training_timeline(
     })
     first_signal_row = cur.fetchone()
     first_signal_ts = first_signal_row[0] if first_signal_row else None
+
+    # Get latest symbol market bar to extend chart window context.
+    latest_market_ts = None
+    try:
+        cur.execute(LATEST_MARKET_BAR_SQL, {
+            "symbol": symbol,
+            "market_type": market_type,
+            "interval_minutes": interval_minutes,
+        })
+        lm = cur.fetchone()
+        latest_market_ts = lm[0] if lm else None
+    except Exception:
+        latest_market_ts = None
     
     # Get pending evaluations (waiting for future bars)
     pending_info = {"count": 0, "oldest": None, "newest": None, "latest_calculated_at": None}
@@ -575,20 +654,47 @@ def build_training_timeline(
         
         series.append(point)
         prev_state = curr_state
-    
+
+    # Preserve actual last evaluated point before forward padding.
+    latest_evaluated_signal_ts = series[-1].get("ts") if series else None
+
+    # Add one "now snapshot" point (real current metrics) at latest market bar.
+    # This avoids fake flat extension while still showing current gate metrics on chart.
+    if interval_minutes == 1440 and series and latest_market_ts is not None and snapshot_trust is not None:
+        try:
+            latest_eval_dt = datetime.fromisoformat(str(latest_evaluated_signal_ts))
+            latest_market_dt = latest_market_ts if isinstance(latest_market_ts, datetime) else datetime.fromisoformat(str(latest_market_ts))
+            if latest_market_dt.date() > latest_eval_dt.date():
+                reason = snapshot_trust.get("reason") or {}
+                if isinstance(reason, str):
+                    import json as _json
+                    reason = _json.loads(reason)
+                recent_hr = reason.get("recent_hit_rate")
+                recent_avg = reason.get("recent_avg_return")
+                if recent_hr is not None or recent_avg is not None:
+                    series.append({
+                        "ts": latest_market_dt.date().isoformat() + "T00:00:00",
+                        "evaluated_count": series[-1].get("evaluated_count"),
+                        "rolling_hit_rate": float(recent_hr) if recent_hr is not None else None,
+                        "rolling_avg_return": float(recent_avg) if recent_avg is not None else None,
+                        "state": series[-1].get("state"),
+                        "event": "SNAPSHOT_NOW",
+                        "is_snapshot_now": True,
+                    })
+        except Exception:
+            pass
+
     # Limit to last max_points
     if len(series) > max_points:
         series = series[-max_points:]
     
     # Generate narrative
-    narrative = generate_narrative(series, first_signal_ts, params, symbol, pattern_trust)
+    narrative = generate_narrative(series, first_signal_ts, params, symbol, pattern_trust, snapshot_trust)
     
     # Add pending info to narrative if any
     if pending_info["count"] > 0:
         narrative.append(f"{pending_info['count']} recent signal(s) pending evaluation (need {horizon_bars} more bars).")
 
-    latest_evaluated_signal_ts = series[-1].get("ts") if series else None
-    
     return {
         "symbol": symbol,
         "market_type": market_type,
@@ -601,9 +707,11 @@ def build_training_timeline(
             "min_avg_return": params.min_avg_return,
         },
         "pattern_trust": pattern_trust,
+        "snapshot_trust": snapshot_trust,
         "pending_evaluations": pending_info,
         "latest_evaluated_signal_ts": latest_evaluated_signal_ts,
         "latest_pending_signal_ts": pending_info.get("newest"),
+        "latest_market_bar_ts": latest_market_ts.isoformat() if hasattr(latest_market_ts, "isoformat") else str(latest_market_ts) if latest_market_ts else None,
         "series": series,
         "narrative": narrative,
     }

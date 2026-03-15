@@ -4,6 +4,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import MarketTimelineDetail from '../components/MarketTimelineDetail'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './MarketTimeline.css'
 
 /**
@@ -13,6 +14,7 @@ import './MarketTimeline.css'
  * with inline expansion to view OHLC chart + event overlays + decision narrative.
  */
 export default function MarketTimeline() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -175,6 +177,7 @@ export default function MarketTimeline() {
         <div className="market-timeline-grid">
           {symbols.map((sym) => {
             const key = `${sym.market_type}-${sym.symbol}`
+            const displaySymbol = formatSymbolLabel(sym.symbol, sym.market_type)
             const isExpanded = expandedSymbol?.key === key
             const hasSignals = sym.signal_count > 0
             const hasProposals = sym.proposal_count > 0
@@ -221,10 +224,10 @@ export default function MarketTimeline() {
                   tabIndex={0}
                   role="button"
                   aria-expanded={isExpanded}
-                  aria-label={`${sym.symbol} ${sym.market_type}. Signals: ${sym.signal_count}, Proposals: ${sym.proposal_count}, Trades: ${sym.trade_count}. Press Enter to ${isExpanded ? 'collapse' : 'expand'}.`}
+                  aria-label={`${displaySymbol} ${sym.market_type}. Signals: ${sym.signal_count}, Proposals: ${sym.proposal_count}, Trades: ${sym.trade_count}. Press Enter to ${isExpanded ? 'collapse' : 'expand'}.`}
                 >
                   <div className="tile-header">
-                    <span className="tile-symbol">{sym.symbol}</span>
+                    <span className="tile-symbol">{displaySymbol}</span>
                     <span className="tile-market-type">{sym.market_type}</span>
                   </div>
                   

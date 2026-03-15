@@ -8,12 +8,14 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import EpisodeCard from '../components/EpisodeCard'
 import PortfolioMiniGridCharts from '../components/PortfolioMiniGridCharts'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import { relativeTime } from '../components/LiveHeader'
 import { getGlossaryEntry, getGlossaryEntryByDotKey } from '../data/glossary'
 import './Portfolio.css'
 
 export default function Portfolio() {
   const { portfolioId } = useParams()
+  const { formatSymbolLabel } = useSymbolMeta()
   // FreshnessContext removed to avoid background Snowflake polling
   const statusBadgeTitle = getGlossaryEntryByDotKey('ui.status_badge')?.long
   const [portfolios, setPortfolios] = useState([])
@@ -364,7 +366,7 @@ export default function Portfolio() {
                               return (
                                 <tr key={i}>
                                   <td className="pos-symbol">
-                                    <span className="pos-symbol-name">{pos.SYMBOL ?? pos.symbol}</span>
+                                    <span className="pos-symbol-name">{formatSymbolLabel(pos.SYMBOL ?? pos.symbol, pos.MARKET_TYPE ?? pos.market_type)}</span>
                                     <span className="pos-symbol-meta">{pos.MARKET_TYPE ?? pos.market_type}</span>
                                   </td>
                                   <td className="num-cell">{pos.QUANTITY ?? pos.quantity}</td>
@@ -449,7 +451,7 @@ export default function Portfolio() {
                               return (
                                 <tr key={i} className={`trade-row trade-row--${side.toLowerCase()} ${t.from_last_run ? 'portfolio-trade-from-last-run' : ''}`} title={t.from_last_run ? 'From latest run' : undefined}>
                                   <td className="trade-symbol">
-                                    <span className="trade-symbol-name">{t.SYMBOL ?? t.symbol}</span>
+                                    <span className="trade-symbol-name">{formatSymbolLabel(t.SYMBOL ?? t.symbol, t.MARKET_TYPE ?? t.market_type)}</span>
                                     <span className="trade-symbol-date">{(t.TRADE_TS ?? t.trade_ts) ? String(t.TRADE_TS ?? t.trade_ts).slice(0, 10) : ''}</span>
                                   </td>
                                   <td><span className={`trade-side-badge trade-side-badge--${side.toLowerCase()}`}>{side}</span></td>

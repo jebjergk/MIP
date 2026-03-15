@@ -6,6 +6,7 @@ import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'
 import LoadingState from '../components/LoadingState'
 import { usePortfolios } from '../context/PortfolioContext'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import { getGlossaryEntry } from '../data/glossary'
 import './Today.css'
 
@@ -23,6 +24,7 @@ export default function Today() {
   const portfolioIdParam = searchParams.get('portfolio_id')
   const portfolioId = portfolioIdParam ? parseInt(portfolioIdParam, 10) : null
   const { portfolios, defaultPortfolioId, loading: portfoliosLoading } = usePortfolios()
+  const { formatSymbolLabel } = useSymbolMeta()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -190,7 +192,7 @@ export default function Today() {
                 <li key={i} className="today-insight-card">
                   <div className="today-insight-header">
                     <span className="today-insight-rank">#{i + 1}</span>
-                    <span className="today-insight-symbol">{item.symbol ?? '—'}</span>
+                    <span className="today-insight-symbol">{formatSymbolLabel(item.symbol ?? '—', item.market_type)}</span>
                     <span className="today-insight-pattern">pattern {item.pattern_id ?? '—'}</span>
                     <span className="today-insight-market">{item.market_type ?? '—'}</span>
                     <span

@@ -14,6 +14,7 @@ import {
   Scatter,
 } from 'recharts'
 import { API_BASE } from '../App'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './MarketTimelineDetail.css'
 
 /**
@@ -232,6 +233,7 @@ export default function MarketTimelineDetail({
   onDataLoaded,
   onClose,
 }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [data, setData] = useState(cachedData || null)
   const [loading, setLoading] = useState(!cachedData)
   const [error, setError] = useState(null)
@@ -332,13 +334,14 @@ export default function MarketTimelineDetail({
   const decisionStatus = narrative.decision_status || 'SKIPPED'
   const decisionClass = decisionStatus === 'EXECUTED' ? 'status-executed' :
                         decisionStatus === 'PROPOSED' ? 'status-proposed' : 'status-skipped'
+  const displaySymbol = formatSymbolLabel(symbol, marketType)
   
   return (
     <div className="mtd-container">
       {/* Header */}
       <div className="mtd-header">
         <div className="mtd-header-left">
-          <h3>{symbol} <span className="mtd-market-type">{marketType}</span></h3>
+          <h3>{displaySymbol} <span className="mtd-market-type">{marketType}</span></h3>
           <span className={`mtd-decision-badge ${decisionClass}`}>
             {decisionStatus}
           </span>

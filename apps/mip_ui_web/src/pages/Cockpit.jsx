@@ -4,6 +4,7 @@ import { API_BASE } from '../App'
 import EmptyState from '../components/EmptyState'
 import LoadingState from '../components/LoadingState'
 import { usePortfolios } from '../context/PortfolioContext'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, CartesianGrid, ReferenceLine,
@@ -334,6 +335,7 @@ function MarketIndexChart({ indexSeries }) {
 /* ── Top Movers Row ───────────────────────────────────── */
 
 function TopMovers({ symbols }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   if (!symbols?.length) return null
   const top3 = symbols.filter(s => s.day_return != null).slice(0, 3)
   const bottom3 = symbols.filter(s => s.day_return != null).slice(-3).reverse()
@@ -344,7 +346,7 @@ function TopMovers({ symbols }) {
         <h4 className="ck-movers-label ck-movers-label--up">Top Gainers</h4>
         {top3.map((s, i) => (
           <div key={i} className="ck-mover ck-mover--up">
-            <span className="ck-mover-symbol">{s.symbol}</span>
+            <span className="ck-mover-symbol">{formatSymbolLabel(s.symbol, s.market_type)}</span>
             <span className="ck-mover-return">+{(s.day_return * 100).toFixed(2)}%</span>
           </div>
         ))}
@@ -353,7 +355,7 @@ function TopMovers({ symbols }) {
         <h4 className="ck-movers-label ck-movers-label--down">Top Losers</h4>
         {bottom3.map((s, i) => (
           <div key={i} className="ck-mover ck-mover--down">
-            <span className="ck-mover-symbol">{s.symbol}</span>
+            <span className="ck-mover-symbol">{formatSymbolLabel(s.symbol, s.market_type)}</span>
             <span className="ck-mover-return">{(s.day_return * 100).toFixed(2)}%</span>
           </div>
         ))}
@@ -365,6 +367,7 @@ function TopMovers({ symbols }) {
 /* ── News Intelligence Overview ───────────────────────── */
 
 function NewsIntelligenceOverview({ overview }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   if (!overview?.found) return <p className="ck-empty">No news intelligence overview available.</p>
 
   const bullets = overview.summary_bullets || []
@@ -415,7 +418,7 @@ function NewsIntelligenceOverview({ overview }) {
                     {h.icon || '😐'}
                   </span>
                   <span className="ck-news-headline-title">
-                    <strong>{h.symbol}</strong> {h.title}
+                    <strong>{formatSymbolLabel(h.symbol)}</strong> {h.title}
                   </span>
                 </div>
                 <div className="ck-news-headline-sub">
@@ -430,7 +433,7 @@ function NewsIntelligenceOverview({ overview }) {
 
       {impacted.length > 0 && (
         <div className="ck-news-symbol-chips">
-          {impacted.map((sym) => <span key={sym} className="ck-news-symbol-chip">{sym}</span>)}
+          {impacted.map((sym) => <span key={sym} className="ck-news-symbol-chip">{formatSymbolLabel(sym)}</span>)}
         </div>
       )}
 
@@ -452,6 +455,7 @@ function StagePill({ stage }) {
 /* ── Upcoming Symbols Detail ─────────────────────────── */
 
 function UpcomingSymbolsDetail({ trainingData }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   const snapshot = trainingData?.snapshot || {}
   const nearMiss = snapshot.near_miss_symbols || []
   const topConfident = snapshot.top_confident_symbols || []
@@ -473,7 +477,7 @@ function UpcomingSymbolsDetail({ trainingData }) {
               <div key={i} className="ck-upcoming-item">
                 <div className="ck-upcoming-header">
                   <span className="ck-upcoming-rank">#{i + 1}</span>
-                  <Link to={`/training?symbol=${sym.symbol}&market_type=${sym.market_type}`} className="ck-upcoming-symbol">{sym.symbol}</Link>
+                  <Link to={`/training?symbol=${sym.symbol}&market_type=${sym.market_type}`} className="ck-upcoming-symbol">{formatSymbolLabel(sym.symbol, sym.market_type)}</Link>
                   <span className="ck-upcoming-market">{sym.market_type}</span>
                   <StagePill stage={stage} />
                 </div>
@@ -496,7 +500,7 @@ function UpcomingSymbolsDetail({ trainingData }) {
             {topConfident.slice(0, 4).map((sym, i) => (
               <div key={i} className="ck-upcoming-item ck-upcoming-item--confident">
                 <div className="ck-upcoming-header">
-                  <Link to={`/training?symbol=${sym.symbol}&market_type=${sym.market_type}`} className="ck-upcoming-symbol">{sym.symbol}</Link>
+                  <Link to={`/training?symbol=${sym.symbol}&market_type=${sym.market_type}`} className="ck-upcoming-symbol">{formatSymbolLabel(sym.symbol, sym.market_type)}</Link>
                   <span className="ck-upcoming-market">{sym.market_type}</span>
                   <StagePill stage="CONFIDENT" />
                   <span className="ck-upcoming-score">Score: {sym.maturity_score}/100</span>
@@ -511,6 +515,7 @@ function UpcomingSymbolsDetail({ trainingData }) {
 }
 
 function DailyReadinessOverview({ readiness }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   if (!readiness?.found) {
     return <p className="ck-empty">Daily readiness data not available yet.</p>
   }
@@ -597,7 +602,7 @@ function DailyReadinessOverview({ readiness }) {
             <ul className="ck-live-list">
               {g.items.map((p) => (
                 <li key={p.proposal_id || `${p.symbol}_${p.proposed_at}`} className="ck-live-list-item">
-                  <strong>{p.symbol}</strong> {p.side} ({p.market_type}) · wt {p.target_weight != null ? `${(Number(p.target_weight) * 100).toFixed(1)}%` : '\u2014'}
+                  <strong>{formatSymbolLabel(p.symbol, p.market_type)}</strong> {p.side} ({p.market_type}) · wt {p.target_weight != null ? `${(Number(p.target_weight) * 100).toFixed(1)}%` : '\u2014'}
                   {' '}· {p.status || 'PROPOSED'}
                   <span className={`ck-health-badge ${assessmentClass(p.committee_assessment)}`} style={{ marginLeft: '0.35rem' }}>
                     {p.committee_assessment || 'N/A'}
@@ -625,6 +630,7 @@ function DailyReadinessOverview({ readiness }) {
 /* ── Portfolio Story Card (lazy-loads digest on expand) ── */
 
 function PortfolioStory({ portfolio }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   const pid = _get(portfolio, 'PORTFOLIO_ID', 'portfolio_id')
   const isLiveCard = Boolean(_get(portfolio, 'IS_LIVE_CARD', 'is_live_card'))
   const name = _get(portfolio, 'NAME', 'name') || `Portfolio ${pid}`
@@ -766,13 +772,14 @@ function PortfolioStory({ portfolio }) {
                   {pendingDecisions.slice(0, 4).map((d) => {
                     const actionId = _get(d, 'action_id', 'ACTION_ID') || '—'
                     const symbol = _get(d, 'symbol', 'SYMBOL') || '—'
+                    const marketType = _get(d, 'market_type', 'MARKET_TYPE', 'asset_class', 'ASSET_CLASS')
                     const side = String(_get(d, 'side', 'SIDE') || '—').toUpperCase()
                     const status = _get(d, 'status', 'STATUS') || '—'
                     const nextStep = _get(d, 'required_next_step', 'REQUIRED_NEXT_STEP')
                     const createdAt = _get(d, 'created_at', 'CREATED_AT', 'timestamps')?.created_at || _get(d, 'created_at', 'CREATED_AT')
                     return (
                       <li key={actionId} className="ck-live-list-item">
-                        <strong>{symbol}</strong> {side} · {status} · {formatAgeShort(createdAt)}
+                        <strong>{formatSymbolLabel(symbol, marketType)}</strong> {side} · {status} · {formatAgeShort(createdAt)}
                         {nextStep ? <span className="ck-live-subline">Next: {String(nextStep).replaceAll('_', ' ')}</span> : null}
                       </li>
                     )
@@ -789,11 +796,12 @@ function PortfolioStory({ portfolio }) {
                 <ul className="ck-live-list">
                   {openPositions.slice(0, 5).map((p, idx) => {
                     const symbol = _get(p, 'symbol', 'SYMBOL') || '—'
+                    const marketType = _get(p, 'market_type', 'MARKET_TYPE', 'asset_class', 'ASSET_CLASS')
                     const qty = _get(p, 'position_qty', 'POSITION_QTY')
                     const pnl = _get(p, 'unrealized_pnl', 'UNREALIZED_PNL')
                     return (
                       <li key={`${symbol}_${idx}`} className="ck-live-list-item">
-                        <strong>{symbol}</strong> · Qty {formatQty(qty)} · P&L{' '}
+                        <strong>{formatSymbolLabel(symbol, marketType)}</strong> · Qty {formatQty(qty)} · P&L{' '}
                         <span className={Number(pnl || 0) >= 0 ? 'ck-kpi--positive' : 'ck-kpi--negative'}>
                           {formatSignedMoney(pnl)}
                         </span>
@@ -813,13 +821,14 @@ function PortfolioStory({ portfolio }) {
               <ul className="ck-live-list">
                 {recentTrades.map((t, idx) => {
                   const symbol = _get(t, 'symbol', 'SYMBOL') || '—'
+                  const marketType = _get(t, 'market_type', 'MARKET_TYPE', 'asset_class', 'ASSET_CLASS')
                   const side = String(_get(t, 'side', 'SIDE') || '—').toUpperCase()
                   const qty = _get(t, 'qty_filled', 'QTY_FILLED')
                   const price = _get(t, 'avg_fill_price', 'AVG_FILL_PRICE')
                   const ts = _get(t, 'execution_ts', 'EXECUTION_TS')
                   return (
                     <li key={`${symbol}_${ts || idx}`} className="ck-live-list-item">
-                      <strong>{symbol}</strong> {side} {formatQty(qty)} @ {price != null ? Number(price).toFixed(4) : '\u2014'}
+                      <strong>{formatSymbolLabel(symbol, marketType)}</strong> {side} {formatQty(qty)} @ {price != null ? Number(price).toFixed(4) : '\u2014'}
                       <span className="ck-live-subline">{formatTs(ts)}</span>
                     </li>
                   )
@@ -875,6 +884,7 @@ function PortfolioStory({ portfolio }) {
 
 export default function Cockpit() {
   const { loading: portfoliosLoading } = usePortfolios()
+  const { formatSymbolLabel } = useSymbolMeta()
 
   const [todayData, setTodayData] = useState(null)
   const [marketPulse, setMarketPulse] = useState(null)
@@ -1012,8 +1022,10 @@ export default function Cockpit() {
     const top = marketSymbols[0]
     const bottom = marketSymbols[marketSymbols.length - 1]
     const avgPct = aggregate.avg_return_pct ?? 0
-    return `Average return ${avgPct >= 0 ? '+' : ''}${avgPct}%. Top: ${top?.symbol} (+${((top?.day_return || 0) * 100).toFixed(1)}%), Bottom: ${bottom?.symbol} (${((bottom?.day_return || 0) * 100).toFixed(1)}%).`
-  }, [marketSymbols, aggregate])
+    const topLabel = top ? formatSymbolLabel(top.symbol, top.market_type) : '—'
+    const bottomLabel = bottom ? formatSymbolLabel(bottom.symbol, bottom.market_type) : '—'
+    return `Average return ${avgPct >= 0 ? '+' : ''}${avgPct}%. Top: ${topLabel} (+${((top?.day_return || 0) * 100).toFixed(1)}%), Bottom: ${bottomLabel} (${((bottom?.day_return || 0) * 100).toFixed(1)}%).`
+  }, [marketSymbols, aggregate, formatSymbolLabel])
 
   // Signal headline
   const signalHeadline = insights.length > 0
@@ -1023,8 +1035,8 @@ export default function Cockpit() {
   const signalSummary = useMemo(() => {
     if (insights.length === 0) return 'No committee-ready candidates found today.'
     const top = insights[0]
-    return `Top candidate: ${top.symbol} (${top.maturity_stage}, score ${top.maturity_score}). ${top.why_this_is_here || ''}`
-  }, [insights])
+    return `Top candidate: ${formatSymbolLabel(top.symbol, top.market_type)} (${top.maturity_stage}, score ${top.maturity_score}). ${top.why_this_is_here || ''}`
+  }, [insights, formatSymbolLabel])
 
   const newsHeadline = useMemo(() => {
     if (!newsOverview?.found) return 'News Intelligence — Awaiting Data'
@@ -1316,7 +1328,7 @@ export default function Cockpit() {
                   <div key={i} className="ck-insight-mini">
                     <div className="ck-insight-mini-header">
                       <span className="ck-insight-mini-rank">#{i + 1}</span>
-                      <span className="ck-insight-mini-symbol">{item.symbol}</span>
+                      <span className="ck-insight-mini-symbol">{formatSymbolLabel(item.symbol, item.market_type)}</span>
                       <StagePill stage={item.maturity_stage} />
                       <span className="ck-insight-mini-score">{item.maturity_score}/100</span>
                     </div>

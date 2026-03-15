@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation, matchPath } from 'react-router-dom'
 import Cockpit from './pages/Cockpit'
 import Home from './pages/Home'
 import Portfolio from './pages/Portfolio'
@@ -27,7 +28,60 @@ const API_BASE = '/api'
 
 export { API_BASE }
 
+function pageTitleForPath(pathname) {
+  const titleByPattern = [
+    { pattern: '/cockpit', title: 'Cockpit' },
+    { pattern: '/home', title: 'Home' },
+    { pattern: '/portfolios', title: 'Portfolios' },
+    { pattern: '/portfolios/:portfolioId', title: 'Portfolio' },
+    { pattern: '/runs', title: 'Runs' },
+    { pattern: '/runs/:runId', title: 'Run Details' },
+    { pattern: '/training', title: 'Training Status' },
+    { pattern: '/market-timeline', title: 'Market Timeline' },
+    { pattern: '/symbol-tracker', title: 'Symbol Tracker' },
+    { pattern: '/manage', title: 'Portfolio Management' },
+    { pattern: '/parallel-worlds', title: 'Parallel Worlds' },
+    { pattern: '/learning-ledger', title: 'Learning Ledger' },
+    { pattern: '/performance-dashboard', title: 'Performance Dashboard' },
+    { pattern: '/decision-console', title: 'Decision Console' },
+    { pattern: '/intraday/early-exit', title: 'Intraday Early Exit' },
+    { pattern: '/live-portfolio-activity', title: 'Live Portfolio Activity' },
+    { pattern: '/live-portfolio-config', title: 'Live Portfolio Config' },
+    { pattern: '/news-intelligence', title: 'News Intelligence' },
+    { pattern: '/intraday/dashboard', title: 'Intraday Dashboard' },
+    { pattern: '/intraday/pattern/:patternId', title: 'Intraday Pattern' },
+    { pattern: '/intraday/terrain', title: 'Intraday Terrain Explorer' },
+    { pattern: '/intraday/health', title: 'Intraday Pipeline Health' },
+    { pattern: '/debug', title: 'Debug' },
+    { pattern: '/guide', title: 'User Guide' },
+  ]
+
+  for (const entry of titleByPattern) {
+    const match = matchPath({ path: entry.pattern, end: true }, pathname)
+    if (!match) continue
+    if (entry.pattern === '/portfolios/:portfolioId' && match.params.portfolioId) {
+      return `Portfolio ${match.params.portfolioId}`
+    }
+    if (entry.pattern === '/runs/:runId' && match.params.runId) {
+      return `Run ${match.params.runId}`
+    }
+    if (entry.pattern === '/intraday/pattern/:patternId' && match.params.patternId) {
+      return `Pattern ${match.params.patternId}`
+    }
+    return entry.title
+  }
+
+  return 'MIP UI'
+}
+
 export default function App() {
+  const { pathname } = useLocation()
+
+  useEffect(() => {
+    const pageTitle = pageTitleForPath(pathname)
+    document.title = `${pageTitle} | MIP UI`
+  }, [pathname])
+
   return (
     <Routes>
       <Route element={<AppLayout />}>

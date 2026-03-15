@@ -4,7 +4,6 @@ import {
   ComposedChart,
   Line,
   Bar,
-  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -66,6 +65,63 @@ function ChartTooltip({ active, payload, label }) {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Render full candlestick from wick pixel box.
+ * Uses the wick bar geometry (x,y,width,height) so wick/body cannot drift.
+ */
+function CandlestickShape(props) {
+  const { x, y, width, height, payload } = props
+  if (x == null || y == null || width == null || height == null || !payload) return null
+
+  const { high, low, open, close } = payload
+  if ([high, low, open, close].some((v) => v == null)) return null
+
+  const cx = x + width / 2
+  const wickTop = y
+  const wickBottom = y + Math.max(height, 1)
+  const valueRange = high - low
+  const isUpDay = close >= open
+  const color = isUpDay ? '#26a69a' : '#ef5350'
+
+  // Convert open/close values into y-pixels inside current wick span.
+  // This avoids depending on Recharts internal axis scale access.
+  let openY = wickBottom
+  let closeY = wickBottom
+  if (Math.abs(valueRange) > 1e-12) {
+    openY = wickTop + ((high - open) / valueRange) * (wickBottom - wickTop)
+    closeY = wickTop + ((high - close) / valueRange) * (wickBottom - wickTop)
+  }
+
+  const bodyTop = Math.min(openY, closeY)
+  const bodyHeight = Math.max(Math.abs(openY - closeY), 1)
+  const bodyWidth = Math.max(Math.min(width * 0.78, 8), 4)
+  const bodyLeft = cx - bodyWidth / 2
+
+  return (
+    <g>
+      <line
+        x1={cx}
+        x2={cx}
+        y1={wickTop}
+        y2={wickBottom}
+        stroke="#888"
+        strokeWidth={1}
+        shapeRendering="crispEdges"
+      />
+      <rect
+        x={bodyLeft}
+        y={bodyTop}
+        width={bodyWidth}
+        height={bodyHeight}
+        fill={color}
+        stroke={color}
+        strokeWidth={1}
+        shapeRendering="crispEdges"
+      />
+    </g>
   )
 }
 
@@ -297,6 +353,7 @@ export default function MarketTimelineDetail({
   const narrative = data.narrative || {}
   const counts = data.counts || {}
   const latestLiveAction = data.latest_live_action || null
+  const candleBodySize = 7
   
   // Create a map of events by date
   const eventsByDate = {}
@@ -328,10 +385,9 @@ export default function MarketTimelineDetail({
       body: bar.open != null && bar.close != null
         ? [Math.min(bar.open, bar.close), Math.max(bar.open, bar.close)]
         : null,
-      isUpDay: bar.close >= bar.open,
     }
   })
-  
+
   // Determine decision status styling
   const decisionStatus = narrative.decision_status || 'SKIPPED'
   const decisionClass = decisionStatus === 'EXECUTED' ? 'status-executed' :
@@ -421,16 +477,15 @@ export default function MarketTimelineDetail({
               </>
             ) : (
               <>
-                <Bar dataKey="wick" fill="none" stroke="#888" strokeWidth={1} barSize={1} legendType="none" name="Wick" isAnimationActive={false} />
-                <Bar dataKey="body" barSize={7} legendType="none" name="Body" isAnimationActive={false}>
-                  {chartData.map((entry, index) => (
-                    <Cell
-                      key={`body-${index}`}
-                      fill={entry.isUpDay ? '#26a69a' : '#ef5350'}
-                      stroke={entry.isUpDay ? '#26a69a' : '#ef5350'}
-                    />
-                  ))}
-                </Bar>
+                <Bar
+                  dataKey="wick"
+                  fill="transparent"
+                  barSize={candleBodySize}
+                  legendType="none"
+                  name="Candlestick"
+                  isAnimationActive={false}
+                  shape={<CandlestickShape />}
+                />
               </>
             )}
 

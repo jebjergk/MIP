@@ -524,11 +524,6 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender }) 
         <div><span>Vol regime</span><b>{tile?.volatility_context?.status || 'UNKNOWN'}</b></div>
       </div>
 
-      {mode === 'daily' ? (
-        <div className="symbol-tracker-expectation-note">
-          <b>Training-implied range ({tile?.expectation?.label || 'Horizon'})</b>: historical distribution context only, not a deterministic forecast.
-        </div>
-      ) : null}
     </article>
   )
 }
@@ -672,10 +667,6 @@ export default function SymbolTracker() {
           <input type="checkbox" checked={activeTpSlOnly} onChange={(e) => setActiveTpSlOnly(e.target.checked)} />
           Active TP/SL only
         </label>
-      </div>
-
-      <div className="symbol-tracker-disclaimer">
-        {data?.disclaimer || 'Training-implied range only. Historical context, not a forecast.'}
       </div>
 
       {error ? <div className="symbol-tracker-error">{error}</div> : null}

@@ -184,11 +184,24 @@ def get_overview(
                 p.MARKET_TYPE,
                 count(*) as proposal_count,
                 count(case when p.PROPOSED_AT::date = current_date() then 1 end) as today_proposal_count,
-                count(case when coalesce(p.SIGNAL_TS::date, p.PROPOSED_AT::date) = %s then 1 end) as latest_bar_proposal_count,
+                count(
+                    case
+                        when coalesce(p.SIGNAL_TS::date, p.PROPOSED_AT::date) = %s
+                         and (
+                            p.SIDE = 'SELL'
+                            or upper(coalesce(p.SOURCE_SIGNALS:symbol_local_trust_label::string, 'UNTRUSTED')) = 'TRUSTED'
+                         )
+                        then 1
+                    end
+                ) as latest_bar_proposal_count,
                 count(
                     case
                         when coalesce(p.SIGNAL_TS::date, p.PROPOSED_AT::date) = %s
                          and coalesce(upper(p.STATUS), 'PROPOSED') not in ('EXECUTED', 'REJECTED', 'CANCELLED', 'EXPIRED')
+                         and (
+                            p.SIDE = 'SELL'
+                            or upper(coalesce(p.SOURCE_SIGNALS:symbol_local_trust_label::string, 'UNTRUSTED')) = 'TRUSTED'
+                         )
                         then 1
                     end
                 ) as actionable_proposal_count

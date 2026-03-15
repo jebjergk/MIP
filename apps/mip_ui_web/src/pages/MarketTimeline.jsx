@@ -194,20 +194,17 @@ export default function MarketTimeline() {
             const hasDisplaySignals = displaySignalCount > 0
             const hasDisplayProposals = displayProposalCount > 0
             const hasDisplayTrades = displayTradeCount > 0
-            const hasActionableProposals = (sym.actionable_proposal_count ?? sym.today_proposal_count ?? 0) > 0
+            const hasActionableProposals = Number(sym.actionable_proposal_count || 0) > 0
             const cachedDetail = detailCacheRef.current[key]
             
-            // Determine tile status class from latest-bar activity only.
-            // Fall back to window-based counts only when latest-bar fields are absent.
+            // Determine tile status class from latest daily run activity only.
+            // If nothing happened on latest run, keep tile neutral (grey).
             let statusClass = 'tile-inactive'
             if (hasLatestTrades) statusClass = 'tile-executed'
             else if (hasLatestProposals) statusClass = 'tile-proposed'
             else if (hasLatestSignals) statusClass = 'tile-signals-only'
-            else if (hasTrades) statusClass = 'tile-executed'
-            else if (hasProposals) statusClass = 'tile-proposed'
-            else if (hasSignals) statusClass = 'tile-signals-only'
             
-            // Keep actionable highlight until the next daily bar batch arrives.
+            // Action highlight is scoped to latest daily run only.
             const todayHighlight = hasActionableProposals ? 'tile-today-actionable' : ''
             
             return (

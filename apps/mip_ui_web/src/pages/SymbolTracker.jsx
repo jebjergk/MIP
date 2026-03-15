@@ -158,7 +158,7 @@ function TrackerTooltip({ active, payload }) {
   )
 }
 
-function TileChart({ tile, mode, chartStyle, density }) {
+function TileChart({ tile, mode, chartStyle, density, projectionMode }) {
   const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
   if (bars.length === 0) {
     return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
@@ -184,21 +184,58 @@ function TileChart({ tile, mode, chartStyle, density }) {
     const centerPath = tile.expectation.center_path || []
     const upperPath = tile.expectation.upper_path || []
     const lowerPath = tile.expectation.lower_path || []
-    for (let i = 0; i < centerPath.length; i += 1) {
-      chartData.push({
-        idx: lastIdx + i + 1,
-        label: `+${centerPath[i]?.step ?? i + 1}`,
-        open: null,
-        high: null,
-        low: null,
-        close: null,
-        wick: null,
-        bodyUp: null,
-        bodyDown: null,
-        projected_center: centerPath[i]?.price ?? null,
-        projected_upper: upperPath[i]?.price ?? null,
-        projected_lower: lowerPath[i]?.price ?? null,
-      })
+    if (projectionMode === 'stitched' && centerPath.length > 1) {
+      const densify = 6
+      const entryBaseline = Number(tile?.overlays?.entry)
+      for (let i = 0; i < centerPath.length; i += 1) {
+        const step = centerPath[i]?.step ?? i + 1
+        const idxStart = lastIdx + i
+        const prevCenter = i === 0 ? (Number.isFinite(entryBaseline) ? entryBaseline : Number(centerPath[i]?.price)) : Number(centerPath[i - 1]?.price)
+        const prevUpper = i === 0 ? (Number.isFinite(entryBaseline) ? entryBaseline : Number(upperPath[i]?.price)) : Number(upperPath[i - 1]?.price)
+        const prevLower = i === 0 ? (Number.isFinite(entryBaseline) ? entryBaseline : Number(lowerPath[i]?.price)) : Number(lowerPath[i - 1]?.price)
+        const nextCenter = Number(centerPath[i]?.price)
+        const nextUpper = Number(upperPath[i]?.price)
+        const nextLower = Number(lowerPath[i]?.price)
+        for (let sub = 1; sub <= densify; sub += 1) {
+          const frac = sub / densify
+          const interp = (a, b) => {
+            if (!Number.isFinite(a) || !Number.isFinite(b)) return null
+            if (a > 0 && b > 0) return a * ((b / a) ** frac)
+            return a + (b - a) * frac
+          }
+          chartData.push({
+            idx: idxStart + frac,
+            label: sub === densify ? `+${step}` : '',
+            open: null,
+            high: null,
+            low: null,
+            close: null,
+            wick: null,
+            bodyUp: null,
+            bodyDown: null,
+            projected_center: interp(prevCenter, nextCenter),
+            projected_upper: interp(prevUpper, nextUpper),
+            projected_lower: interp(prevLower, nextLower),
+          })
+        }
+      }
+    } else {
+      for (let i = 0; i < centerPath.length; i += 1) {
+        chartData.push({
+          idx: lastIdx + i + 1,
+          label: `+${centerPath[i]?.step ?? i + 1}`,
+          open: null,
+          high: null,
+          low: null,
+          close: null,
+          wick: null,
+          bodyUp: null,
+          bodyDown: null,
+          projected_center: centerPath[i]?.price ?? null,
+          projected_upper: upperPath[i]?.price ?? null,
+          projected_lower: lowerPath[i]?.price ?? null,
+        })
+      }
     }
   }
 
@@ -208,6 +245,11 @@ function TileChart({ tile, mode, chartStyle, density }) {
   const current = tile?.overlays?.current
   const side = tile?.side
   const currentIdx = bars.length - 1
+  const labelByIdx = new Map(
+    chartData
+      .filter((row) => row.label)
+      .map((row) => [String(row.idx), row.label]),
+  )
   const barDates = bars.map((b) => String(b.ts || '').slice(0, 10))
   const dateToIdx = new Map()
   barDates.forEach((d, idx) => dateToIdx.set(d, idx))
@@ -241,7 +283,7 @@ function TileChart({ tile, mode, chartStyle, density }) {
         <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" />
         <XAxis
           dataKey="idx"
-          tickFormatter={(idx) => chartData[idx]?.label || ''}
+          tickFormatter={(idx) => labelByIdx.get(String(idx)) || ''}
           tick={{ fontSize: 10 }}
         />
         <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
@@ -354,7 +396,7 @@ function Tile({ tile, mode, chartStyle, density, projectionMode }) {
         ))}
       </div>
 
-      <TileChart tile={tile} mode={mode} chartStyle={chartStyle} density={density} />
+      <TileChart tile={tile} mode={mode} chartStyle={chartStyle} density={density} projectionMode={projectionMode} />
       {mode === 'daily' && tile?.expectation?.is_available ? (
         <ProjectionDetail tile={tile} projectionMode={projectionMode} />
       ) : null}

@@ -57,15 +57,6 @@
   gap: 0.4rem !important;
 }
 
-.symbol-tracker-disclaimer {
-  border: 1px solid #334155;
-  background: #111827;
-  color: #fbbf24;
-  border-radius: 10px;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.9rem;
-}
-
 .symbol-tracker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
@@ -369,18 +360,6 @@
 
 .symbol-tracker-neg {
   color: #fca5a5 !important;
-}
-
-.symbol-tracker-expectation-note {
-  border-top: 1px dashed #334155;
-  padding-top: 0.45rem;
-  font-size: 0.82rem;
-  color: #facc15;
-}
-
-.symbol-tracker-tile--compact .symbol-tracker-expectation-note {
-  font-size: 0.74rem;
-  padding-top: 0.35rem;
 }
 
 .symbol-tracker-error {

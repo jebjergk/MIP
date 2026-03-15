@@ -541,7 +541,7 @@ export default function SymbolTracker() {
   const [density, setDensity] = useState('comfortable')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [data, setData] = useState({ tiles: [], updated_at: null, disclaimer: '' })
+  const [data, setData] = useState({ tiles: [], updated_at: null })
 
   const load = useCallback(async () => {
     setError('')

@@ -80,6 +80,61 @@ function eventStyle(eventType) {
   return { color: '#94a3b8', glyph: '•', anchor: 'top' }
 }
 
+function ProjectionDetail({ tile, projectionMode }) {
+  const path = tile?.expectation?.center_path || []
+  const entry = Number(tile?.entry_price || tile?.overlays?.entry || 0)
+  if (path.length < 2 || !Number.isFinite(entry) || entry <= 0) return null
+
+  const indexed = path
+    .map((p) => ({ step: Number(p.step), value: (Number(p.price) / entry) * 100 }))
+    .filter((p) => Number.isFinite(p.step) && Number.isFinite(p.value))
+  if (indexed.length < 2) return null
+
+  const width = 230
+  const height = 64
+  const pad = 6
+  const min = Math.min(...indexed.map((p) => p.value))
+  const max = Math.max(...indexed.map((p) => p.value))
+  const spread = Math.max(max - min, 0.0001)
+  const xMax = indexed[indexed.length - 1].step || indexed.length
+  const toXY = (step, value) => {
+    const x = pad + ((step - 1) / Math.max(xMax - 1, 1)) * (width - pad * 2)
+    const y = height - pad - ((value - min) / spread) * (height - pad * 2)
+    return [x, y]
+  }
+  const linePath = indexed
+    .map((p, idx) => {
+      const [x, y] = toXY(p.step, p.value)
+      return `${idx === 0 ? 'M' : 'L'}${x},${y}`
+    })
+    .join(' ')
+
+  const first = indexed[0].value
+  const last = indexed[indexed.length - 1].value
+
+  // Build a linear benchmark to quantify the midpoint difference.
+  const midpointIdx = Math.floor(indexed.length / 2)
+  const midpoint = indexed[midpointIdx]
+  const midpointLinear = first + ((last - first) * midpointIdx) / Math.max(indexed.length - 1, 1)
+  const midpointDeltaBps = (midpoint.value - midpointLinear) * 100
+
+  return (
+    <div className="symbol-tracker-projection-detail">
+      <div className="symbol-tracker-projection-head">
+        <span>Projection detail (index, entry=100)</span>
+        <span>{projectionMode === 'geometric' ? 'Geometric' : 'Linear'} · mid delta {midpointDeltaBps.toFixed(2)} bps</span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="symbol-tracker-projection-svg" preserveAspectRatio="none" aria-hidden>
+        <path d={linePath} fill="none" stroke="#f59e0b" strokeWidth="2" />
+      </svg>
+      <div className="symbol-tracker-projection-foot">
+        <span>Start {first.toFixed(3)}</span>
+        <span>End {last.toFixed(3)}</span>
+      </div>
+    </div>
+  )
+}
+
 function TrackerTooltip({ active, payload }) {
   if (!active || !payload || payload.length === 0) return null
   const row = payload[0]?.payload
@@ -264,7 +319,7 @@ function TileChart({ tile, mode, chartStyle, density }) {
   )
 }
 
-function Tile({ tile, mode, chartStyle, density }) {
+function Tile({ tile, mode, chartStyle, density, projectionMode }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
   const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
@@ -295,6 +350,9 @@ function Tile({ tile, mode, chartStyle, density }) {
       </div>
 
       <TileChart tile={tile} mode={mode} chartStyle={chartStyle} density={density} />
+      {mode === 'daily' && tile?.expectation?.is_available ? (
+        <ProjectionDetail tile={tile} projectionMode={projectionMode} />
+      ) : null}
 
       {(tile?.events || []).length > 0 ? (
         <div className="symbol-tracker-events">
@@ -479,7 +537,14 @@ export default function SymbolTracker() {
 
       <div className={`symbol-tracker-grid ${density === 'compact' ? 'symbol-tracker-grid--compact' : ''}`}>
         {tiles.map((tile) => (
-          <Tile key={tile.symbol} tile={tile} mode={mode} chartStyle={chartStyle} density={density} />
+          <Tile
+            key={tile.symbol}
+            tile={tile}
+            mode={mode}
+            chartStyle={chartStyle}
+            density={density}
+            projectionMode={projectionMode}
+          />
         ))}
       </div>
     </div>

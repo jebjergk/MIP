@@ -75,6 +75,7 @@ export default function PerformanceDashboard() {
   const trends = data?.executive?.trends || {}
   const diag = data?.diagnostics || {}
   const intelligence = data?.executive?.intelligence_impact || {}
+  const defs = data?.definitions || {}
 
   const selectivityData = useMemo(() => {
     return (trends.selectivity_trend || []).map((r) => ({
@@ -119,7 +120,14 @@ export default function PerformanceDashboard() {
   return (
     <div className="perf-page">
       <div className="perf-header">
-        <h1>MIP Performance Dashboard</h1>
+        <div>
+          <h1>MIP Performance Dashboard</h1>
+          {defs.effective_start_ts ? (
+            <small className="perf-baseline-note">
+              Baseline starts at {String(defs.effective_start_ts).replace('T', ' ').slice(0, 19)} (day-0 reset aware)
+            </small>
+          ) : null}
+        </div>
         <div className="perf-controls">
           <label>
             Lookback

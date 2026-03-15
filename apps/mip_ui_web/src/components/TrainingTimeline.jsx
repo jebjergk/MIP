@@ -31,7 +31,7 @@ function EventDot(props) {
     ENTERED_TRUSTED: '#2e7d32',
     DROPPED_FROM_TRUSTED: '#c62828',
     MISS_STREAK: '#c62828',
-    SNAPSHOT_NOW: '#6a1b9a',
+    SNAPSHOT_NOW: '#00897b',
   }
 
   const color = eventColors[payload.event] || '#666'
@@ -393,6 +393,10 @@ export default function TrainingTimeline({
           <span className="legend-item">
             <span className="legend-dot" style={{ background: '#c62828' }} />
             Dropped / miss streak
+          </span>
+          <span className="legend-item">
+            <span className="legend-dot" style={{ background: '#00897b' }} />
+            Snapshot now
           </span>
         </div>
       </div>

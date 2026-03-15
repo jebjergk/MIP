@@ -28,7 +28,7 @@ function EventDot(props) {
     ENTERED_TRUSTED: '#2e7d32',
     DROPPED_FROM_TRUSTED: '#c62828',
     MISS_STREAK: '#c62828',
-    SNAPSHOT_NOW: '#6a1b9a',
+    SNAPSHOT_NOW: '#00897b',
   }
 
   const color = eventColors[payload.event] || '#666'
@@ -390,6 +390,32 @@ export default function TrainingTimelineInline({
               <span className="legend-item-inline">
                 <span className="legend-line-inline legend-line-inline--dashed" style={{ borderColor: '#2e7d32' }} />
                 Trusted threshold
+              </span>
+            </div>
+            <div className="timeline-legend-inline">
+              <span className="legend-item-inline">
+                <span className="legend-line-inline" style={{ background: '#1565c0' }} />
+                First outcome
+              </span>
+              <span className="legend-item-inline">
+                <span className="legend-line-inline" style={{ background: '#7b1fa2' }} />
+                40 outcomes reached
+              </span>
+              <span className="legend-item-inline">
+                <span className="legend-line-inline" style={{ background: '#f57c00' }} />
+                Entered watch
+              </span>
+              <span className="legend-item-inline">
+                <span className="legend-line-inline" style={{ background: '#2e7d32' }} />
+                Entered trusted
+              </span>
+              <span className="legend-item-inline">
+                <span className="legend-line-inline" style={{ background: '#c62828' }} />
+                Miss streak / drop
+              </span>
+              <span className="legend-item-inline">
+                <span className="legend-line-inline" style={{ background: '#00897b' }} />
+                Snapshot now
               </span>
             </div>
           </div>

@@ -4,6 +4,8 @@ import InfoTooltip from './InfoTooltip'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
 import './LiveHeader.css'
 
+const IBKR_LOGO_SRC = '/ibkr-logo.png'
+
 /** Human-readable relative time (e.g. "2 min ago", "1 hour ago"). */
 function relativeTime(isoOrDate) {
   if (isoOrDate == null) return '—'
@@ -21,9 +23,25 @@ function relativeTime(isoOrDate) {
   return `${day} day${day !== 1 ? 's' : ''} ago`
 }
 
+function resolveLiveBroker(configPayload, defaultPortfolioId) {
+  const configs = Array.isArray(configPayload?.configs) ? configPayload.configs : []
+  if (configs.length === 0) return { label: 'Unknown', account: null }
+
+  const target = defaultPortfolioId != null
+    ? configs.find((c) => Number(c?.PORTFOLIO_ID) === Number(defaultPortfolioId))
+    : configs.find((c) => Boolean(c?.IS_ACTIVE)) || configs[0]
+  const cfg = target || configs[0]
+  const account = cfg?.IBKR_ACCOUNT_ID || null
+  if (account) {
+    return { label: 'Interactive Brokers', short: 'IBKR', account: String(account) }
+  }
+  return { label: 'Unknown', short: 'N/A', account: null }
+}
+
 export default function LiveHeader() {
   const defaultPortfolioId = useDefaultPortfolioId()
   const [metrics, setMetrics] = useState(null)
+  const [liveBroker, setLiveBroker] = useState({ label: 'Unknown', short: 'N/A', account: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [, setTick] = useState(0)
@@ -32,10 +50,16 @@ export default function LiveHeader() {
     const url = defaultPortfolioId != null
       ? `${API_BASE}/live/metrics?portfolio_id=${defaultPortfolioId}`
       : `${API_BASE}/live/metrics`
-    fetch(url)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
-      .then((data) => {
-        setMetrics(data)
+    const cfgUrl = `${API_BASE}/live/portfolio-config`
+    Promise.all([
+      fetch(url).then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText)))),
+      fetch(cfgUrl).then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText)))).catch(() => null),
+    ])
+      .then(([metricsData, cfgData]) => {
+        setMetrics(metricsData)
+        if (cfgData) {
+          setLiveBroker(resolveLiveBroker(cfgData, defaultPortfolioId))
+        }
         setError(null)
       })
       .catch((e) => {
@@ -66,7 +90,6 @@ export default function LiveHeader() {
   }
 
   const lastRun = metrics?.last_run
-  const lastBrief = metrics?.last_brief
   const outcomes = metrics?.outcomes ?? {}
   const sinceLastRun = outcomes.since_last_run ?? 0
   const lastCalculatedAt = outcomes.last_calculated_at ?? null
@@ -75,6 +98,20 @@ export default function LiveHeader() {
   return (
     <div className="live-header" role="region" aria-label="Live metrics">
       <span className="live-header-label">Live</span>
+      <span className="live-header-item live-header-item--broker" title={liveBroker?.account ? `Account ${liveBroker.account}` : undefined}>
+        Live Broker
+        {liveBroker?.short === 'IBKR'
+          ? (
+            <img
+              src={IBKR_LOGO_SRC}
+              alt="Interactive Brokers"
+              className="live-broker-logo-image"
+              loading="lazy"
+            />
+          )
+          : <span className="live-broker-fallback">{liveBroker?.short || 'N/A'}</span>}
+        {liveBroker?.account ? <span className="live-header-meta">{liveBroker.account}</span> : null}
+      </span>
 
       {lastRun && (
         <span className="live-header-item" title={lastRunAt ? `Completed ${new Date(lastRunAt).toLocaleString()}` : undefined}>
@@ -84,13 +121,6 @@ export default function LiveHeader() {
           </span>
           {!lastCalculatedAt && lastRunAt ? <span> {relativeTime(lastRunAt)}</span> : null}
           <InfoTooltip scope="live" entryKey="last_pipeline_run" variant="short" />
-        </span>
-      )}
-
-      {lastBrief?.found && (
-        <span className="live-header-item" title={undefined}>
-          Latest digest: {relativeTime(lastBrief.as_of_ts)}
-          <InfoTooltip scope="live" entryKey="latest_brief" variant="short" />
         </span>
       )}
 

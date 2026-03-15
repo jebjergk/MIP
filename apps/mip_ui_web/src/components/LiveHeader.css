@@ -21,6 +21,31 @@
   gap: 0.2rem;
 }
 
+.live-header-item--broker {
+  gap: 0.4rem;
+}
+
+.live-broker-logo-image {
+  height: 1rem;
+  width: auto;
+  display: inline-block;
+  object-fit: contain;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px #d6dee4;
+}
+
+.live-broker-fallback {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid #d6dee4;
+  border-radius: 4px;
+  background: #fff;
+  color: #1d252b;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .live-header-item--pulse {
   animation: live-header-pulse 2s ease-in-out infinite;
 }

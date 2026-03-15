@@ -98,7 +98,7 @@ function TrackerTooltip({ active, payload }) {
   )
 }
 
-function TileChart({ tile, mode, chartStyle }) {
+function TileChart({ tile, mode, chartStyle, density }) {
   const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
   if (bars.length === 0) {
     return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
@@ -176,7 +176,7 @@ function TileChart({ tile, mode, chartStyle }) {
   })
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={density === 'compact' ? 190 : 260}>
       <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" />
         <XAxis
@@ -264,12 +264,12 @@ function TileChart({ tile, mode, chartStyle }) {
   )
 }
 
-function Tile({ tile, mode, chartStyle }) {
+function Tile({ tile, mode, chartStyle, density }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
   const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
   return (
-    <article className="symbol-tracker-tile">
+    <article className={`symbol-tracker-tile ${density === 'compact' ? 'symbol-tracker-tile--compact' : ''}`}>
       <header className="symbol-tracker-tile-head">
         <div>
           <h3>{tile.symbol}</h3>
@@ -294,7 +294,7 @@ function Tile({ tile, mode, chartStyle }) {
         ))}
       </div>
 
-      <TileChart tile={tile} mode={mode} chartStyle={chartStyle} />
+      <TileChart tile={tile} mode={mode} chartStyle={chartStyle} density={density} />
 
       {(tile?.events || []).length > 0 ? (
         <div className="symbol-tracker-events">
@@ -344,6 +344,7 @@ export default function SymbolTracker() {
   const [longsOnly, setLongsOnly] = useState(false)
   const [shortsOnly, setShortsOnly] = useState(false)
   const [activeTpSlOnly, setActiveTpSlOnly] = useState(false)
+  const [density, setDensity] = useState('comfortable')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [data, setData] = useState({ tiles: [], updated_at: null, disclaimer: '' })
@@ -427,6 +428,13 @@ export default function SymbolTracker() {
             ))}
           </select>
         </label>
+        <label>
+          View
+          <select value={density} onChange={(e) => setDensity(e.target.value)}>
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+          </select>
+        </label>
         <label className="symbol-tracker-check">
           <input type="checkbox" checked={longsOnly} onChange={(e) => setLongsOnly(e.target.checked)} />
           Longs only
@@ -449,9 +457,9 @@ export default function SymbolTracker() {
       {loading ? <div className="symbol-tracker-loading">Loading symbol tracker...</div> : null}
       {!loading && tiles.length === 0 ? <div className="symbol-tracker-empty">No open positions found.</div> : null}
 
-      <div className="symbol-tracker-grid">
+      <div className={`symbol-tracker-grid ${density === 'compact' ? 'symbol-tracker-grid--compact' : ''}`}>
         {tiles.map((tile) => (
-          <Tile key={tile.symbol} tile={tile} mode={mode} chartStyle={chartStyle} />
+          <Tile key={tile.symbol} tile={tile} mode={mode} chartStyle={chartStyle} density={density} />
         ))}
       </div>
     </div>

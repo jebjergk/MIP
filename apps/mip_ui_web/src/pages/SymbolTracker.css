@@ -72,6 +72,11 @@
   gap: 1rem;
 }
 
+.symbol-tracker-grid--compact {
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 0.75rem;
+}
+
 .symbol-tracker-tile {
   border: 1px solid #243041;
   background: #0b1220;
@@ -79,6 +84,11 @@
   padding: 0.9rem;
   display: grid;
   gap: 0.75rem;
+}
+
+.symbol-tracker-tile--compact {
+  padding: 0.65rem;
+  gap: 0.55rem;
 }
 
 .symbol-tracker-tile-head {
@@ -92,9 +102,17 @@
   margin: 0;
 }
 
+.symbol-tracker-tile--compact .symbol-tracker-tile-head h3 {
+  font-size: 1rem;
+}
+
 .symbol-tracker-subline {
   color: #94a3b8;
   font-size: 0.85rem;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-subline {
+  font-size: 0.76rem;
 }
 
 .symbol-tracker-thesis {
@@ -126,12 +144,20 @@
   gap: 0.5rem;
 }
 
+.symbol-tracker-tile--compact .symbol-tracker-kpi-row {
+  gap: 0.35rem;
+}
+
 .symbol-tracker-kpi-row div {
   border: 1px solid #1f2937;
   border-radius: 10px;
   padding: 0.45rem 0.55rem;
   display: grid;
   gap: 0.15rem;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-kpi-row div {
+  padding: 0.35rem 0.45rem;
 }
 
 .symbol-tracker-kpi-row span {
@@ -149,12 +175,21 @@
   gap: 0.4rem;
 }
 
+.symbol-tracker-tile--compact .symbol-tracker-badges {
+  gap: 0.25rem;
+}
+
 .symbol-tracker-badge {
   font-size: 0.72rem;
   border: 1px solid #334155;
   color: #cbd5e1;
   border-radius: 999px;
   padding: 0.15rem 0.45rem;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-badge {
+  font-size: 0.66rem;
+  padding: 0.1rem 0.35rem;
 }
 
 .symbol-tracker-chart-empty,
@@ -171,6 +206,11 @@
   gap: 0.35rem;
 }
 
+.symbol-tracker-tile--compact .symbol-tracker-events {
+  padding: 0.35rem 0.45rem;
+  gap: 0.25rem;
+}
+
 .symbol-tracker-events-title {
   color: #93c5fd;
   font-size: 0.78rem;
@@ -183,6 +223,10 @@
   gap: 0.45rem;
   align-items: center;
   min-width: 0;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-event-row {
+  gap: 0.35rem;
 }
 
 .symbol-tracker-event-pill {
@@ -256,11 +300,20 @@
   gap: 0.45rem;
 }
 
+.symbol-tracker-tile--compact .symbol-tracker-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
 .symbol-tracker-metrics div {
   border: 1px solid #1f2937;
   border-radius: 8px;
   padding: 0.35rem 0.45rem;
   display: grid;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-metrics div {
+  padding: 0.3rem 0.4rem;
 }
 
 .symbol-tracker-metrics span {
@@ -271,6 +324,10 @@
 .symbol-tracker-metrics b {
   color: #f1f5f9;
   font-size: 0.82rem;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-metrics b {
+  font-size: 0.76rem;
 }
 
 .symbol-tracker-pos {
@@ -286,6 +343,11 @@
   padding-top: 0.45rem;
   font-size: 0.82rem;
   color: #facc15;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-expectation-note {
+  font-size: 0.74rem;
+  padding-top: 0.35rem;
 }
 
 .symbol-tracker-error {

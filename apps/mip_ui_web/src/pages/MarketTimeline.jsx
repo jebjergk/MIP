@@ -168,7 +168,7 @@ export default function MarketTimeline() {
         <span className="legend-item"><span className="legend-signal">S</span> Signals</span>
         <span className="legend-item"><span className="legend-proposal">P</span> Proposals</span>
         <span className="legend-item"><span className="legend-trade">T</span> Trades</span>
-        <span className="legend-item market-timeline-legend-note">T = broker fills</span>
+        <span className="legend-item market-timeline-legend-note">T = live + sim fills (window total)</span>
       </div>
       
       {symbols.length === 0 ? (
@@ -185,14 +185,12 @@ export default function MarketTimeline() {
             const latestBarSignalCount = sym.latest_bar_signal_count
             const latestBarProposalCount = sym.latest_bar_proposal_count
             const latestBarTradeCount = sym.latest_bar_trade_count
-            const hasLatestBarFields =
-              latestBarSignalCount != null || latestBarProposalCount != null || latestBarTradeCount != null
             const hasLatestSignals = Number(latestBarSignalCount || 0) > 0
             const hasLatestProposals = Number(latestBarProposalCount || 0) > 0
             const hasLatestTrades = Number(latestBarTradeCount || 0) > 0
-            const displaySignalCount = hasLatestBarFields ? Number(latestBarSignalCount || 0) : Number(sym.signal_count || 0)
-            const displayProposalCount = hasLatestBarFields ? Number(latestBarProposalCount || 0) : Number(sym.proposal_count || 0)
-            const displayTradeCount = hasLatestBarFields ? Number(latestBarTradeCount || 0) : Number(sym.trade_count || 0)
+            const displaySignalCount = Number(sym.signal_count || 0)
+            const displayProposalCount = Number(sym.proposal_count || 0)
+            const displayTradeCount = Number(sym.trade_count || 0)
             const hasDisplaySignals = displaySignalCount > 0
             const hasDisplayProposals = displayProposalCount > 0
             const hasDisplayTrades = displayTradeCount > 0
@@ -202,15 +200,12 @@ export default function MarketTimeline() {
             // Determine tile status class from latest-bar activity only.
             // Fall back to window-based counts only when latest-bar fields are absent.
             let statusClass = 'tile-inactive'
-            if (hasLatestBarFields) {
-              if (hasLatestTrades) statusClass = 'tile-executed'
-              else if (hasLatestProposals) statusClass = 'tile-proposed'
-              else if (hasLatestSignals) statusClass = 'tile-signals-only'
-            } else {
-              if (hasTrades) statusClass = 'tile-executed'
-              else if (hasProposals) statusClass = 'tile-proposed'
-              else if (hasSignals) statusClass = 'tile-signals-only'
-            }
+            if (hasLatestTrades) statusClass = 'tile-executed'
+            else if (hasLatestProposals) statusClass = 'tile-proposed'
+            else if (hasLatestSignals) statusClass = 'tile-signals-only'
+            else if (hasTrades) statusClass = 'tile-executed'
+            else if (hasProposals) statusClass = 'tile-proposed'
+            else if (hasSignals) statusClass = 'tile-signals-only'
             
             // Keep actionable highlight until the next daily bar batch arrives.
             const todayHighlight = hasActionableProposals ? 'tile-today-actionable' : ''
@@ -245,19 +240,19 @@ export default function MarketTimeline() {
                   <div className="tile-counts">
                     <span
                       className={`count-badge count-signal ${hasDisplaySignals ? 'has-count' : ''}`}
-                      title={hasLatestBarFields ? `Latest bar signals: ${displaySignalCount} (window total: ${sym.signal_count})` : `Window signals: ${sym.signal_count}`}
+                      title={`Window signals: ${displaySignalCount} (latest bar: ${Number(latestBarSignalCount || 0)})`}
                     >
                       S:{displaySignalCount}
                     </span>
                     <span
                       className={`count-badge count-proposal ${hasDisplayProposals ? 'has-count' : ''}`}
-                      title={hasLatestBarFields ? `Latest bar proposals: ${displayProposalCount} (window total: ${sym.proposal_count})` : `Window proposals: ${sym.proposal_count}`}
+                      title={`Window proposals: ${displayProposalCount} (latest bar: ${Number(latestBarProposalCount || 0)})`}
                     >
                       P:{displayProposalCount}
                     </span>
                     <span
                       className={`count-badge count-trade ${hasDisplayTrades ? 'has-count' : ''}`}
-                      title={hasLatestBarFields ? `Latest bar trades: ${displayTradeCount} (window total: ${sym.trade_count})` : `Window trades: ${sym.trade_count}`}
+                      title={`Window trades: ${displayTradeCount} (latest bar: ${Number(latestBarTradeCount || 0)})`}
                     >
                       T:{displayTradeCount}
                     </span>

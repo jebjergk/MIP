@@ -212,24 +212,30 @@ def get_overview(
               {"and a.PORTFOLIO_ID = %s" if portfolio_id else ""}
             group by upper(o.SYMBOL), coalesce(a.ASSET_CLASS, 'STOCK')
         ),
+        sim_trade_counts as (
+            select
+                t.SYMBOL,
+                t.MARKET_TYPE,
+                count(*) as sim_trade_count,
+                count(case when t.TRADE_TS::date = %s then 1 end) as latest_bar_sim_trade_count
+            from MIP.APP.PORTFOLIO_TRADES t
+            where t.TRADE_TS >= %s
+              {"and t.PORTFOLIO_ID = %s" if portfolio_id else ""}
+            group by t.SYMBOL, t.MARKET_TYPE
+        ),
         trust_labels as (
             select
-                SYMBOL,
-                MARKET_TYPE,
-                case min(
-                    case
-                        when TRUST_LABEL = 'TRUSTED' then 1
-                        when TRUST_LABEL = 'WATCH' then 2
-                        else 3
-                    end
-                )
-                    when 1 then 'TRUSTED'
-                    when 2 then 'WATCH'
+                s.SYMBOL,
+                s.MARKET_TYPE,
+                case
+                    when max(iff(upper(coalesce(s.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN')) = 'TRUSTED', 1, 0)) = 1 then 'TRUSTED'
+                    when max(iff(upper(coalesce(s.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN')) = 'WATCH', 1, 0)) = 1 then 'WATCH'
+                    when max(iff(upper(coalesce(s.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN')) = 'LOW_EVIDENCE', 1, 0)) = 1 then 'LOW_EVIDENCE'
+                    when max(iff(upper(coalesce(s.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN')) = 'DISABLED', 1, 0)) = 1 then 'DISABLED'
                     else 'UNTRUSTED'
                 end as latest_trust_label
-            from MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION
-            where TS >= %s
-            group by SYMBOL, MARKET_TYPE
+            from MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL s
+            group by s.SYMBOL, s.MARKET_TYPE
         ),
         latest_bars as (
             select
@@ -252,8 +258,10 @@ def get_overview(
             coalesce(pc.actionable_proposal_count, 0) as actionable_proposal_count,
             coalesce(ltc.live_trade_count, 0) as live_trade_count,
             coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_live_trade_count,
-            coalesce(ltc.live_trade_count, 0) as trade_count,
-            coalesce(ltc.latest_bar_live_trade_count, 0) as latest_bar_trade_count,
+            coalesce(stc.sim_trade_count, 0) as sim_trade_count,
+            coalesce(stc.latest_bar_sim_trade_count, 0) as latest_bar_sim_trade_count,
+            coalesce(ltc.live_trade_count, 0) + coalesce(stc.sim_trade_count, 0) as trade_count,
+            coalesce(ltc.latest_bar_live_trade_count, 0) + coalesce(stc.latest_bar_sim_trade_count, 0) as latest_bar_trade_count,
             tl.latest_trust_label as trust_label,
             lb.latest_bar_ts,
             lb.latest_close
@@ -261,9 +269,10 @@ def get_overview(
         left join signal_counts sc on sc.SYMBOL = s.SYMBOL and sc.MARKET_TYPE = s.MARKET_TYPE
         left join proposal_counts pc on pc.SYMBOL = s.SYMBOL and pc.MARKET_TYPE = s.MARKET_TYPE
         left join live_trade_counts ltc on ltc.SYMBOL = s.SYMBOL and ltc.MARKET_TYPE = s.MARKET_TYPE
+        left join sim_trade_counts stc on stc.SYMBOL = s.SYMBOL and stc.MARKET_TYPE = s.MARKET_TYPE
         left join trust_labels tl on tl.SYMBOL = s.SYMBOL and tl.MARKET_TYPE = s.MARKET_TYPE
         left join latest_bars lb on lb.SYMBOL = s.SYMBOL and lb.MARKET_TYPE = s.MARKET_TYPE
-        {"where coalesce(pc.proposal_count, 0) + coalesce(ltc.live_trade_count, 0) > 0" if portfolio_id else ""}
+        {"where coalesce(pc.proposal_count, 0) + coalesce(ltc.live_trade_count, 0) + coalesce(stc.sim_trade_count, 0) > 0" if portfolio_id else ""}
         order by s.MARKET_TYPE, s.SYMBOL
         """
         
@@ -290,7 +299,10 @@ def get_overview(
         query_params.append(window_start)  # live_trade_counts
         if portfolio_id:
             query_params.append(portfolio_id)
-        query_params.append(window_start)  # trust_labels
+        query_params.append(batch_date)  # sim_trade_counts latest bar
+        query_params.append(window_start)  # sim_trade_counts
+        if portfolio_id:
+            query_params.append(portfolio_id)
         query_params.append(interval_minutes)  # latest_bars
         
         cur.execute(sql, query_params)
@@ -313,6 +325,8 @@ def get_overview(
                 "latest_bar_trade_count": row.get("LATEST_BAR_TRADE_COUNT") or row.get("latest_bar_trade_count") or 0,
                 "live_trade_count": row.get("LIVE_TRADE_COUNT") or row.get("live_trade_count") or 0,
                 "latest_bar_live_trade_count": row.get("LATEST_BAR_LIVE_TRADE_COUNT") or row.get("latest_bar_live_trade_count") or 0,
+                "sim_trade_count": row.get("SIM_TRADE_COUNT") or row.get("sim_trade_count") or 0,
+                "latest_bar_sim_trade_count": row.get("LATEST_BAR_SIM_TRADE_COUNT") or row.get("latest_bar_sim_trade_count") or 0,
                 "trust_label": row.get("TRUST_LABEL") or row.get("trust_label"),
                 "latest_bar_ts": row.get("LATEST_BAR_TS") or row.get("latest_bar_ts"),
                 "latest_close": row.get("LATEST_CLOSE") or row.get("latest_close"),

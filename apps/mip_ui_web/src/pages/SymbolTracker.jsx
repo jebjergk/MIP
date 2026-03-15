@@ -80,6 +80,65 @@ function eventStyle(eventType) {
   return { color: '#94a3b8', glyph: '•', anchor: 'top' }
 }
 
+function solveLinearSystem(matrix, vector) {
+  const n = matrix.length
+  const a = matrix.map((row) => [...row])
+  const b = [...vector]
+  for (let i = 0; i < n; i += 1) {
+    let maxRow = i
+    for (let k = i + 1; k < n; k += 1) {
+      if (Math.abs(a[k][i]) > Math.abs(a[maxRow][i])) maxRow = k
+    }
+    if (Math.abs(a[maxRow][i]) < 1e-12) return null
+    if (maxRow !== i) {
+      const tempRow = a[i]
+      a[i] = a[maxRow]
+      a[maxRow] = tempRow
+      const tempVal = b[i]
+      b[i] = b[maxRow]
+      b[maxRow] = tempVal
+    }
+    const pivot = a[i][i]
+    for (let j = i; j < n; j += 1) a[i][j] /= pivot
+    b[i] /= pivot
+    for (let k = 0; k < n; k += 1) {
+      if (k === i) continue
+      const factor = a[k][i]
+      for (let j = i; j < n; j += 1) a[k][j] -= factor * a[i][j]
+      b[k] -= factor * b[i]
+    }
+  }
+  return b
+}
+
+function fitPolynomialSeries(xValues, yValues, degree = 3) {
+  const n = xValues.length
+  if (n < 3) return null
+  const d = Math.max(1, Math.min(degree, n - 1))
+  const size = d + 1
+  const normal = Array.from({ length: size }, () => Array(size).fill(0))
+  const rhs = Array(size).fill(0)
+  for (let i = 0; i < n; i += 1) {
+    const x = Number(xValues[i])
+    const y = Number(yValues[i])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    const powers = [1]
+    for (let p = 1; p <= 2 * d; p += 1) powers[p] = powers[p - 1] * x
+    for (let r = 0; r <= d; r += 1) {
+      rhs[r] += y * powers[r]
+      for (let c = 0; c <= d; c += 1) normal[r][c] += powers[r + c]
+    }
+  }
+  return solveLinearSystem(normal, rhs)
+}
+
+function evalPolynomial(coeffs, x) {
+  if (!coeffs) return null
+  let y = 0
+  for (let i = 0; i < coeffs.length; i += 1) y += coeffs[i] * (x ** i)
+  return y
+}
+
 function ProjectionDetail({ tile, projectionMode }) {
   const path = tile?.expectation?.center_path || []
   const entry = Number(tile?.entry_price || tile?.overlays?.entry || 0)
@@ -158,7 +217,7 @@ function TrackerTooltip({ active, payload }) {
   )
 }
 
-function TileChart({ tile, mode, chartStyle, density, projectionMode }) {
+function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRender }) {
   const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
   if (bars.length === 0) {
     return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
@@ -234,6 +293,31 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode }) {
           projected_center: centerPath[i]?.price ?? null,
           projected_upper: upperPath[i]?.price ?? null,
           projected_lower: lowerPath[i]?.price ?? null,
+        })
+      }
+    }
+  }
+
+  if (mode === 'daily' && trendRender === 'soft') {
+    const forwardRows = chartData.filter((row) => row.projected_center != null)
+    if (forwardRows.length >= 4) {
+      const x = forwardRows.map((row) => Number(row.idx))
+      const centerRaw = forwardRows.map((row) => Number(row.projected_center))
+      const upperRaw = forwardRows.map((row) => Number(row.projected_upper))
+      const lowerRaw = forwardRows.map((row) => Number(row.projected_lower))
+      const cCoef = fitPolynomialSeries(x, centerRaw, 3)
+      const uCoef = fitPolynomialSeries(x, upperRaw, 3)
+      const lCoef = fitPolynomialSeries(x, lowerRaw, 3)
+      if (cCoef && uCoef && lCoef) {
+        chartData.forEach((row) => {
+          if (row.projected_center == null) return
+          const px = Number(row.idx)
+          const c = evalPolynomial(cCoef, px)
+          const u = evalPolynomial(uCoef, px)
+          const l = evalPolynomial(lCoef, px)
+          row.projected_center = Number.isFinite(c) ? c : row.projected_center
+          row.projected_upper = Number.isFinite(u) ? u : row.projected_upper
+          row.projected_lower = Number.isFinite(l) ? l : row.projected_lower
         })
       }
     }
@@ -366,7 +450,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode }) {
   )
 }
 
-function Tile({ tile, mode, chartStyle, density, projectionMode }) {
+function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
   const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
@@ -396,7 +480,14 @@ function Tile({ tile, mode, chartStyle, density, projectionMode }) {
         ))}
       </div>
 
-      <TileChart tile={tile} mode={mode} chartStyle={chartStyle} density={density} projectionMode={projectionMode} />
+      <TileChart
+        tile={tile}
+        mode={mode}
+        chartStyle={chartStyle}
+        density={density}
+        projectionMode={projectionMode}
+        trendRender={trendRender}
+      />
       {mode === 'daily' && tile?.expectation?.is_available ? (
         <ProjectionDetail tile={tile} projectionMode={projectionMode} />
       ) : null}
@@ -447,6 +538,7 @@ export default function SymbolTracker() {
   const [chartStyle, setChartStyle] = useState('line')
   const [horizonBars, setHorizonBars] = useState('5')
   const [projectionMode, setProjectionMode] = useState('stitched')
+  const [trendRender, setTrendRender] = useState('soft')
   const [sortBy, setSortBy] = useState('worst_pnl')
   const [longsOnly, setLongsOnly] = useState(false)
   const [shortsOnly, setShortsOnly] = useState(false)
@@ -547,6 +639,13 @@ export default function SymbolTracker() {
           </select>
         </label>
         <label>
+          Trend style
+          <select value={trendRender} onChange={(e) => setTrendRender(e.target.value)}>
+            <option value="soft">Soft polynomial</option>
+            <option value="raw">Raw points</option>
+          </select>
+        </label>
+        <label>
           Sort
           <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
             {SORT_OPTIONS.map((opt) => (
@@ -592,6 +691,7 @@ export default function SymbolTracker() {
             chartStyle={chartStyle}
             density={density}
             projectionMode={projectionMode}
+            trendRender={trendRender}
           />
         ))}
       </div>

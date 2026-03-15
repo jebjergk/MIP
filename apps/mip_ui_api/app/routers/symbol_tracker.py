@@ -142,6 +142,94 @@ def _build_projection_path(
     }
 
 
+def _derive_band_from_row(row: dict[str, Any]) -> tuple[float, float, str]:
+    sample_size = int(row.get("sample_size") or 0)
+    avg_return = _to_float(row.get("avg_return")) or 0.0
+    stddev_return = _to_float(row.get("stddev_return"))
+    p10_return = _to_float(row.get("p10_return"))
+    p90_return = _to_float(row.get("p90_return"))
+    if sample_size >= 30 and p10_return is not None and p90_return is not None:
+        return p10_return, p90_return, "PERCENTILE_BAND"
+    if stddev_return is not None and stddev_return > 0:
+        return avg_return - stddev_return, avg_return + stddev_return, "STDDEV_BAND"
+    tolerance = max(abs(avg_return) * 0.35, 0.01)
+    return avg_return - tolerance, avg_return + tolerance, "SYMMETRIC_TOLERANCE"
+
+
+def _interpolate_horizon_metric(horizon_stats: dict[int, dict[str, Any]], target_h: int, metric: str) -> float | None:
+    points = []
+    for h, row in horizon_stats.items():
+        value = _to_float(row.get(metric))
+        if value is not None:
+            points.append((int(h), float(value)))
+    if not points:
+        return None
+    points.sort(key=lambda x: x[0])
+    for h, v in points:
+        if h == target_h:
+            return v
+    lower = [p for p in points if p[0] < target_h]
+    upper = [p for p in points if p[0] > target_h]
+    if lower and upper:
+        h0, v0 = lower[-1]
+        h1, v1 = upper[0]
+        if h1 == h0:
+            return v0
+        ratio = (target_h - h0) / (h1 - h0)
+        return v0 + (v1 - v0) * ratio
+    if lower:
+        return lower[-1][1]
+    return upper[0][1]
+
+
+def _pick_horizon_row(horizon_stats: dict[int, dict[str, Any]], target_h: int) -> dict[str, Any] | None:
+    if not horizon_stats:
+        return None
+    if target_h in horizon_stats:
+        return horizon_stats[target_h]
+    return min(horizon_stats.values(), key=lambda r: abs(int(r.get("horizon_bars") or target_h) - target_h))
+
+
+def _build_stitched_projection_path(
+    baseline_price: float,
+    side: str,
+    horizon_bars: int,
+    horizon_stats: dict[int, dict[str, Any]],
+) -> dict[str, Any]:
+    if baseline_price <= 0 or horizon_bars <= 0 or not horizon_stats:
+        return {"center_path": [], "upper_path": [], "lower_path": []}
+    side_sign = 1.0 if side == "LONG" else -1.0
+
+    lower_map: dict[int, float] = {}
+    upper_map: dict[int, float] = {}
+    for h, row in horizon_stats.items():
+        lr, ur, _ = _derive_band_from_row(row)
+        lower_map[h] = lr
+        upper_map[h] = ur
+    lower_row_stats = {h: {"metric": v} for h, v in lower_map.items()}
+    upper_row_stats = {h: {"metric": v} for h, v in upper_map.items()}
+
+    center_path = []
+    upper_path = []
+    lower_path = []
+    for t in range(1, horizon_bars + 1):
+        avg_r = _interpolate_horizon_metric(horizon_stats, t, "avg_return")
+        low_r = _interpolate_horizon_metric(lower_row_stats, t, "metric")
+        up_r = _interpolate_horizon_metric(upper_row_stats, t, "metric")
+        avg_r = avg_r if avg_r is not None else 0.0
+        low_r = low_r if low_r is not None else avg_r
+        up_r = up_r if up_r is not None else avg_r
+
+        center_price = baseline_price * max(1 + side_sign * avg_r, 0.0001)
+        upper_price = baseline_price * max(1 + side_sign * up_r, 0.0001)
+        lower_price = baseline_price * max(1 + side_sign * low_r, 0.0001)
+        center_path.append({"step": t, "price": center_price})
+        upper_path.append({"step": t, "price": upper_price})
+        lower_path.append({"step": t, "price": lower_price})
+
+    return {"center_path": center_path, "upper_path": upper_path, "lower_path": lower_path}
+
+
 def _compute_live_volatility(closes: list[float]) -> float | None:
     if len(closes) < 3:
         return None
@@ -229,7 +317,7 @@ def get_symbol_tracker_tiles(
     daily_window_bars: int = Query(120, ge=30, le=300),
     intraday_window_bars: int = Query(120, ge=30, le=400),
     intraday_interval_minutes: int = Query(60, ge=1, le=240),
-    projection_mode: str = Query("geometric", pattern="^(geometric|linear)$"),
+    projection_mode: str = Query("stitched", pattern="^(stitched|geometric|linear)$"),
 ):
     interval_minutes = 1440 if mode == "daily" else intraday_interval_minutes
     if mode == "intraday" and interval_minutes not in _INTRADAY_INTERVALS:
@@ -378,6 +466,7 @@ def get_symbol_tracker_tiles(
             select
               r.SYMBOL,
               r.MARKET_TYPE,
+              o.HORIZON_BARS,
               count(*) as SAMPLE_SIZE,
               avg(o.REALIZED_RETURN) as AVG_RETURN,
               stddev_samp(o.REALIZED_RETURN) as STDDEV_RETURN,
@@ -387,9 +476,9 @@ def get_symbol_tracker_tiles(
             join MIP.APP.RECOMMENDATION_LOG r
               on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
             where r.INTERVAL_MINUTES = 1440
-              and o.HORIZON_BARS = %s
+              and o.HORIZON_BARS <= %s
               and r.SYMBOL in ({placeholders})
-            group by r.SYMBOL, r.MARKET_TYPE
+            group by r.SYMBOL, r.MARKET_TYPE, o.HORIZON_BARS
             """,
             [horizon_bars, *symbol_params],
         )
@@ -430,12 +519,14 @@ def get_symbol_tracker_tiles(
                 }
             )
 
-        expectation_by_symbol: dict[str, dict[str, Any]] = {}
+        expectation_by_symbol: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
         for row in expectation_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
             if not symbol:
                 continue
-            expectation_by_symbol[symbol] = {
+            h = int(row.get("HORIZON_BARS") or 0)
+            expectation_by_symbol[symbol][h] = {
+                "horizon_bars": h,
                 "sample_size": int(row.get("SAMPLE_SIZE") or 0),
                 "avg_return": _to_float(row.get("AVG_RETURN")) or 0.0,
                 "stddev_return": _to_float(row.get("STDDEV_RETURN")),
@@ -581,7 +672,7 @@ def get_symbol_tracker_tiles(
             tile_events.sort(key=lambda e: e.get("ts") or "", reverse=True)
             tile_events = tile_events[:10]
 
-            exp = expectation_by_symbol.get(symbol)
+            exp = expectation_by_symbol.get(symbol) or {}
             expectation_payload = {
                 "is_available": False,
                 "method": "NONE",
@@ -598,35 +689,27 @@ def get_symbol_tracker_tiles(
             expectation_upper_end = None
             expectation_lower_end = None
             if exp and entry_price:
-                sample_size = int(exp.get("sample_size") or 0)
-                avg_return = _to_float(exp.get("avg_return")) or 0.0
-                stddev_return = _to_float(exp.get("stddev_return"))
-                p10_return = _to_float(exp.get("p10_return"))
-                p90_return = _to_float(exp.get("p90_return"))
-
-                if sample_size >= 30 and p10_return is not None and p90_return is not None:
-                    lower_return = p10_return
-                    upper_return = p90_return
-                    method = "PERCENTILE_BAND"
-                elif stddev_return is not None and stddev_return > 0:
-                    lower_return = avg_return - stddev_return
-                    upper_return = avg_return + stddev_return
-                    method = "STDDEV_BAND"
+                selected_row = _pick_horizon_row(exp, horizon_bars)
+                if projection_mode == "stitched":
+                    projection = _build_stitched_projection_path(
+                        baseline_price=entry_price,
+                        side=side,
+                        horizon_bars=horizon_bars,
+                        horizon_stats=exp,
+                    )
+                    method = "STITCHED_HORIZON"
                 else:
-                    tolerance = max(abs(avg_return) * 0.35, 0.01)
-                    lower_return = avg_return - tolerance
-                    upper_return = avg_return + tolerance
-                    method = "SYMMETRIC_TOLERANCE"
-
-                projection = _build_projection_path(
-                    baseline_price=entry_price,
-                    avg_return=avg_return,
-                    upper_return=upper_return,
-                    lower_return=lower_return,
-                    horizon_bars=horizon_bars,
-                    side=side,
-                    projection_mode=projection_mode,
-                )
+                    avg_return = _to_float((selected_row or {}).get("avg_return")) or 0.0
+                    lower_return, upper_return, method = _derive_band_from_row(selected_row or {})
+                    projection = _build_projection_path(
+                        baseline_price=entry_price,
+                        avg_return=avg_return,
+                        upper_return=upper_return,
+                        lower_return=lower_return,
+                        horizon_bars=horizon_bars,
+                        side=side,
+                        projection_mode=projection_mode,
+                    )
                 center_path = projection["center_path"]
                 upper_path = projection["upper_path"]
                 lower_path = projection["lower_path"]
@@ -636,9 +719,9 @@ def get_symbol_tracker_tiles(
                 expectation_payload = {
                     "is_available": True,
                     "method": method,
-                    "sample_size": sample_size,
-                    "avg_return": avg_return,
-                    "stddev_return": stddev_return,
+                    "sample_size": int((selected_row or {}).get("sample_size") or 0),
+                    "avg_return": _to_float((selected_row or {}).get("avg_return")),
+                    "stddev_return": _to_float((selected_row or {}).get("stddev_return")),
                     "horizon_bars": horizon_bars,
                     "center_path": center_path,
                     "upper_path": upper_path,

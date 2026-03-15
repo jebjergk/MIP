@@ -117,12 +117,17 @@ function ProjectionDetail({ tile, projectionMode }) {
   const midpoint = indexed[midpointIdx]
   const midpointLinear = first + ((last - first) * midpointIdx) / Math.max(indexed.length - 1, 1)
   const midpointDeltaBps = (midpoint.value - midpointLinear) * 100
+  const modeLabel = projectionMode === 'stitched'
+    ? 'Horizon-stitched'
+    : projectionMode === 'geometric'
+      ? 'Geometric'
+      : 'Linear'
 
   return (
     <div className="symbol-tracker-projection-detail">
       <div className="symbol-tracker-projection-head">
         <span>Projection detail (index, entry=100)</span>
-        <span>{projectionMode === 'geometric' ? 'Geometric' : 'Linear'} · mid delta {midpointDeltaBps.toFixed(2)} bps</span>
+        <span>{modeLabel} · mid delta {midpointDeltaBps.toFixed(2)} bps</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} className="symbol-tracker-projection-svg" preserveAspectRatio="none" aria-hidden>
         <path d={linePath} fill="none" stroke="#f59e0b" strokeWidth="2" />
@@ -399,7 +404,7 @@ export default function SymbolTracker() {
   const [mode, setMode] = useState('intraday')
   const [chartStyle, setChartStyle] = useState('line')
   const [horizonBars, setHorizonBars] = useState('5')
-  const [projectionMode, setProjectionMode] = useState('geometric')
+  const [projectionMode, setProjectionMode] = useState('stitched')
   const [sortBy, setSortBy] = useState('worst_pnl')
   const [longsOnly, setLongsOnly] = useState(false)
   const [shortsOnly, setShortsOnly] = useState(false)
@@ -494,6 +499,7 @@ export default function SymbolTracker() {
         <label>
           Curve
           <select value={projectionMode} onChange={(e) => setProjectionMode(e.target.value)}>
+            <option value="stitched">Horizon-stitched</option>
             <option value="geometric">Geometric</option>
             <option value="linear">Linear</option>
           </select>

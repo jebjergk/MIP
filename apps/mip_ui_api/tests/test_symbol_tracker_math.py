@@ -1,6 +1,11 @@
 import unittest
 
-from app.routers.symbol_tracker import _build_projection_path, _thesis_status, _volatility_label
+from app.routers.symbol_tracker import (
+    _build_projection_path,
+    _build_stitched_projection_path,
+    _thesis_status,
+    _volatility_label,
+)
 
 
 class SymbolTrackerMathTests(unittest.TestCase):
@@ -58,6 +63,24 @@ class SymbolTrackerMathTests(unittest.TestCase):
         )
         self.assertAlmostEqual(out["center_path"][0]["price"], 110.5, places=6)
         self.assertAlmostEqual(out["center_path"][-1]["price"], 121.0, places=6)
+
+    def test_stitched_projection_uses_horizon_profile(self):
+        horizon_stats = {
+            1: {"avg_return": 0.01, "sample_size": 40, "stddev_return": 0.02, "p10_return": -0.01, "p90_return": 0.03},
+            5: {"avg_return": 0.05, "sample_size": 40, "stddev_return": 0.03, "p10_return": -0.02, "p90_return": 0.08},
+            10: {"avg_return": 0.02, "sample_size": 40, "stddev_return": 0.04, "p10_return": -0.05, "p90_return": 0.06},
+        }
+        out = _build_stitched_projection_path(
+            baseline_price=100.0,
+            side="LONG",
+            horizon_bars=10,
+            horizon_stats=horizon_stats,
+        )
+        self.assertEqual(len(out["center_path"]), 10)
+        # With a stitched profile, intermediate steps should not equal simple linear 0->10 target.
+        linear_step_3 = 100.0 + ((102.0 - 100.0) * 3 / 10.0)
+        self.assertNotAlmostEqual(out["center_path"][2]["price"], linear_step_3, places=6)
+        self.assertAlmostEqual(out["center_path"][-1]["price"], 102.0, places=6)
 
     def test_thesis_invalidates_when_stop_loss_crossed(self):
         long_state = _thesis_status(

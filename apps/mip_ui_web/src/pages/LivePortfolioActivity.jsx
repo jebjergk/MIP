@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { API_BASE } from '../App'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LivePortfolioActivity.css'
 
 function fmtTs(ts) {
@@ -147,6 +148,7 @@ function pickBetterProtection(current, candidate) {
 }
 
 export default function LivePortfolioActivity() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -642,7 +644,7 @@ export default function LivePortfolioActivity() {
                       return (
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
                       <td>
-                        <div><b>{d.symbol}</b> ({d.side})</div>
+                        <div><b>{formatSymbolLabel(d.symbol, d.market_type)}</b> ({d.side})</div>
                         <div>Action: {d.action_id}</div>
                         <div>Created: {fmtTs(d.timestamps?.created_at)} ({fmtAge(d.timestamps?.created_at)} ago)</div>
                         {isNewDecision(d.timestamps?.created_at) ? <div className="lpa-subtle">NEW</div> : null}
@@ -808,7 +810,7 @@ export default function LivePortfolioActivity() {
                   {orders.map((o) => (
                     <tr key={o.ORDER_ID}>
                       <td>
-                        <div><b>{o.SYMBOL}</b> ({o.SIDE})</div>
+                        <div><b>{formatSymbolLabel(o.SYMBOL, o.MARKET_TYPE || o.ASSET_CLASS)}</b> ({o.SIDE})</div>
                         <div>Order: {o.ORDER_ID}</div>
                         <div>Broker ID: {o.BROKER_ORDER_ID || '—'}</div>
                         <div>Action: {o.ACTION_ID || '—'}</div>
@@ -871,7 +873,7 @@ export default function LivePortfolioActivity() {
                         return (
                           <tr key={`${p.SYMBOL || 'SYM'}_${idx}`}>
                             <td>
-                              <div><b>{p.SYMBOL || '—'}</b></div>
+                              <div><b>{formatSymbolLabel(p.SYMBOL || '—', p.MARKET_TYPE || p.SECURITY_TYPE)}</b></div>
                               <div className="lpa-subtle">{p.SECURITY_TYPE || '—'}</div>
                             </td>
                             <td>{fmtNum(p.POSITION_QTY, 0)}</td>
@@ -930,7 +932,7 @@ export default function LivePortfolioActivity() {
                         return (
                           <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
                             <td>
-                              <div><b>{e.symbol}</b></div>
+                              <div><b>{formatSymbolLabel(e.symbol, e.market_type)}</b></div>
                               <div className="lpa-subtle">{fmtTs(e.execution_ts)}</div>
                             </td>
                             <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}`}>{side || '—'}</span></td>

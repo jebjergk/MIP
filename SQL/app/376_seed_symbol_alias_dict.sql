@@ -57,13 +57,21 @@ using (
     union all select 'DIA', 'ETF', 'DOW JONES ETF', 'ETF_NAME', true
     union all select 'XLK', 'ETF', 'TECHNOLOGY SELECT SECTOR', 'ETF_NAME', true
     union all select 'XLF', 'ETF', 'FINANCIAL SELECT SECTOR', 'ETF_NAME', true
+    union all select 'SOXX', 'ETF', 'ISHARES SEMICONDUCTOR ETF', 'ETF_NAME', true
+    union all select 'XLE', 'ETF', 'ENERGY SELECT SECTOR', 'ETF_NAME', true
 
     union all select 'EURUSD', 'FX', 'EUR/USD', 'FX_PAIR', true
     union all select 'GBPUSD', 'FX', 'GBP/USD', 'FX_PAIR', true
+    union all select 'GBP/JPY', 'FX', 'GBP/JPY', 'FX_PAIR', true
     union all select 'USDJPY', 'FX', 'USD/JPY', 'FX_PAIR', true
     union all select 'USDCHF', 'FX', 'USD/CHF', 'FX_PAIR', true
     union all select 'AUDUSD', 'FX', 'AUD/USD', 'FX_PAIR', true
     union all select 'USDCAD', 'FX', 'USD/CAD', 'FX_PAIR', true
+    union all select 'AMD', 'STOCK', 'ADVANCED MICRO DEVICES', 'COMPANY_NAME', true
+    union all select 'BA', 'STOCK', 'BOEING', 'COMPANY_NAME', true
+    union all select 'CAT', 'STOCK', 'CATERPILLAR', 'COMPANY_NAME', true
+    union all select 'MU', 'STOCK', 'MICRON TECHNOLOGY', 'COMPANY_NAME', true
+    union all select 'SHOP', 'STOCK', 'SHOPIFY', 'COMPANY_NAME', true
 ) s
 on t.SYMBOL = s.SYMBOL
 and t.MARKET_TYPE = s.MARKET_TYPE

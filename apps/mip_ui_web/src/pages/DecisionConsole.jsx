@@ -4,6 +4,7 @@ import useDecisionStream from '../hooks/useDecisionStream'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './DecisionConsole.css'
 
 /* ── helpers ──────────────────────────────────────────────────────── */
@@ -163,7 +164,7 @@ function KpiStrip({ heartbeat, positions }) {
 
 /* ── Event Card (story card for the live feed) ────────────────────── */
 
-function EventCard({ event, onSelect }) {
+function EventCard({ event, onSelect, formatSymbolLabel }) {
   const sev = event.severity || 'green'
   const icon = SEVERITY_ICON[sev] || '●'
   const typeLabel = DECISION_TYPE_LABEL[event.decision_type] || event.decision_type
@@ -171,7 +172,7 @@ function EventCard({ event, onSelect }) {
     <div className={`dc-event-card dc-event-card--${sev}`} onClick={() => onSelect?.(event)}>
       <div className="dc-event-card-header">
         <span className={`dc-event-icon dc-event-icon--${sev}`}>{icon}</span>
-        <span className="dc-event-symbol">{event.symbol}</span>
+        <span className="dc-event-symbol">{formatSymbolLabel(event.symbol, event.market_type)}</span>
         <StageBadge stage={event.stage} />
         <span className="dc-event-type">{typeLabel}</span>
         <span className="dc-event-ts">{fmtTs(event.decision_ts)}</span>
@@ -212,7 +213,7 @@ function buildChangeBadge(change) {
         : null
 }
 
-function PositionRow({ pos, onSelect, change, showSymbol = true }) {
+function PositionRow({ pos, onSelect, change, showSymbol = true, formatSymbolLabel }) {
   const currentReturn = pos.CURRENT_RETURN
   const targetReturn = pos.TARGET_RETURN
   const distance = (currentReturn != null && targetReturn != null)
@@ -234,7 +235,7 @@ function PositionRow({ pos, onSelect, change, showSymbol = true }) {
     <div className={rowClasses}
          onClick={() => onSelect?.(pos)}>
       <div className="dc-pos-main">
-        {showSymbol ? <span className="dc-pos-symbol">{pos.SYMBOL}</span> : null}
+        {showSymbol ? <span className="dc-pos-symbol">{formatSymbolLabel(pos.SYMBOL, pos.MARKET_TYPE)}</span> : null}
         <StageBadge stage={stage} />
         <span className={`dc-pos-portfolio ${showSymbol ? '' : 'dc-pos-portfolio--primary'}`}>{pos.PORTFOLIO_NAME}</span>
       </div>
@@ -286,7 +287,7 @@ function PositionRow({ pos, onSelect, change, showSymbol = true }) {
 
 /* ── Position Inspector (gate trace timeline) ─────────────────────── */
 
-function PositionInspector({ position, onClose }) {
+function PositionInspector({ position, onClose, formatSymbolLabel }) {
   const [trace, setTrace] = useState(null)
   const [diff, setDiff] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -328,7 +329,7 @@ function PositionInspector({ position, onClose }) {
   return (
     <div className="dc-inspector">
       <div className="dc-inspector-header">
-        <h3>{symbol} — Gate Trace</h3>
+        <h3>{formatSymbolLabel(symbol, position?.market_type ?? position?.MARKET_TYPE)} — Gate Trace</h3>
         <button className="dc-inspector-close" onClick={onClose}>×</button>
       </div>
 
@@ -454,7 +455,7 @@ function FilterBar({ filters, onChange, symbols, portfolios }) {
       </select>
       <select value={filters.symbol || ''} onChange={e => onChange({ ...filters, symbol: e.target.value || null })}>
         <option value="">All Symbols</option>
-        {symbols.map(s => <option key={s} value={s}>{s}</option>)}
+        {symbols.map(s => <option key={s} value={s}>{formatSymbolLabel(s)}</option>)}
       </select>
       {filters.date && (
         <span className="dc-filter-active">
@@ -469,6 +470,7 @@ function FilterBar({ filters, onChange, symbols, portfolios }) {
 /* ── Main Page ────────────────────────────────────────────────────── */
 
 export default function DecisionConsole() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [mode, setMode] = useState('positions')
   const [positions, setPositions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -773,7 +775,7 @@ export default function DecisionConsole() {
                       onClick={e => { e.stopPropagation(); togglePin(group.symbol) }}
                       title={pinnedSymbols.has(group.symbol) ? 'Unpin' : 'Pin'}
                     >&#9733;</button>
-                    <h3>{group.symbol}</h3>
+                    <h3>{formatSymbolLabel(group.symbol)}</h3>
                     <span className="dc-symbol-group-count">{group.items.length} portfolio{group.items.length === 1 ? '' : 's'}</span>
                     {(() => {
                       const representative = [...group.items].sort((a, b) => new Date(b.ENTRY_TS) - new Date(a.ENTRY_TS))[0]
@@ -815,12 +817,14 @@ export default function DecisionConsole() {
                           onSelect={handleSelectPosition}
                           showSymbol={false}
                           change={positionChanges[rowKey]}
+                          formatSymbolLabel={formatSymbolLabel}
                         />
                         {isExpanded && selectedPosition && (
                           <div className="dc-pos-inline-inspector">
                             <PositionInspector
                               key={`${selectedPosition.portfolio_id}-${selectedPosition.symbol}-${selectedPosition.entry_ts}`}
                               position={selectedPosition}
+                              formatSymbolLabel={formatSymbolLabel}
                               onClose={() => {
                                 setExpandedPositionKey(null)
                                 setSelectedPosition(null)
@@ -843,7 +847,7 @@ export default function DecisionConsole() {
                 <EmptyState message={mode === 'live' ? 'Waiting for decision events...' : 'No events found for this filter'} />
               )}
               {filteredEvents.map((evt, i) => (
-                <EventCard key={evt.event_id || i} event={evt} onSelect={handleSelectEvent} />
+                <EventCard key={evt.event_id || i} event={evt} onSelect={handleSelectEvent} formatSymbolLabel={formatSymbolLabel} />
               ))}
             </div>
           )}
@@ -855,6 +859,7 @@ export default function DecisionConsole() {
             <PositionInspector
               key={`${selectedPosition.portfolio_id}-${selectedPosition.symbol}-${selectedPosition.entry_ts}`}
               position={selectedPosition}
+              formatSymbolLabel={formatSymbolLabel}
               onClose={() => setSelectedPosition(null)}
             />
           </div>

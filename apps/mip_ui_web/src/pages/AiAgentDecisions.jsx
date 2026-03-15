@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { API_BASE } from '../App'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './AiAgentDecisions.css'
 
 function fmtTs(ts) {
@@ -29,6 +30,7 @@ function hasTierCConflict(row) {
 }
 
 export default function AiAgentDecisions() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -180,7 +182,7 @@ export default function AiAgentDecisions() {
                 >
                   <td>{fmtTs(r.proposed_at)}</td>
                   <td>
-                    <div><b>{r.symbol}</b> ({r.side})</div>
+                    <div><b>{formatSymbolLabel(r.symbol, r.market_type)}</b> ({r.side})</div>
                     <div>Action #{r.action_id}</div>
                     <div>Live Portfolio {r.portfolio_id}</div>
                   </td>

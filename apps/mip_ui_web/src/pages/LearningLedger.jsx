@@ -3,6 +3,7 @@ import { API_BASE } from '../App'
 import LoadingState from '../components/LoadingState'
 import ErrorState from '../components/ErrorState'
 import EmptyState from '../components/EmptyState'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LearningLedger.css'
 
 function fmtTs(ts) {
@@ -132,6 +133,7 @@ function proposalWhyText(proposal) {
 }
 
 export default function LearningLedger() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [events, setEvents] = useState([])
   const [chains, setChains] = useState([])
   const [selected, setSelected] = useState(null)
@@ -587,7 +589,7 @@ export default function LearningLedger() {
                         {explainedProposals.map((p) => (
                           <tr key={p.id}>
                             <td>{p.id}</td>
-                            <td>{p.symbol || '—'}</td>
+                            <td>{formatSymbolLabel(p.symbol || '—')}</td>
                             <td>{p.status || '—'}</td>
                             <td>{fmtPct(p.targetWeight)}</td>
                             <td>{p.why}</td>

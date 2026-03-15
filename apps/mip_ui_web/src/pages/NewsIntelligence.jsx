@@ -3,6 +3,7 @@ import { API_BASE } from '../App'
 import LoadingState from '../components/LoadingState'
 import ErrorState from '../components/ErrorState'
 import EmptyState from '../components/EmptyState'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './NewsIntelligence.css'
 
 function fmtMins(v) {
@@ -40,6 +41,7 @@ function fmtSigned(v, digits = 3) {
 }
 
 export default function NewsIntelligence() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -135,7 +137,7 @@ export default function NewsIntelligence() {
               <ul className="news-intel-headlines">
                 {topHeadlines.map((h, i) => (
                   <li key={`${h.symbol}-${i}`}>
-                    <span className="news-intel-headline-symbol">{h.symbol}</span>
+                    <span className="news-intel-headline-symbol">{formatSymbolLabel(h.symbol, h.market_type)}</span>
                     {h.url ? (
                       <a href={h.url} target="_blank" rel="noreferrer">{h.title}</a>
                     ) : (
@@ -167,7 +169,7 @@ export default function NewsIntelligence() {
                 <tbody>
                   {cards.map((c) => (
                     <tr key={`${c.symbol}-${c.market_type}`}>
-                      <td>{c.symbol}</td>
+                      <td>{formatSymbolLabel(c.symbol, c.market_type)}</td>
                       <td>{c.market_type}</td>
                       <td>{c.news_badge || '—'}</td>
                       <td>{c.news_count ?? 0}</td>
@@ -215,7 +217,7 @@ export default function NewsIntelligence() {
                   <tbody>
                     {impacts.map((r) => (
                       <tr key={r.proposal_id}>
-                        <td>{r.symbol}</td>
+                        <td>{formatSymbolLabel(r.symbol, r.market_type)}</td>
                         <td>{r.status}</td>
                         <td className={(r.news_score_adj || 0) < 0 ? 'news-intel-neg' : (r.news_score_adj || 0) > 0 ? 'news-intel-pos' : ''}>
                           {fmtSigned(r.news_score_adj, 3)}

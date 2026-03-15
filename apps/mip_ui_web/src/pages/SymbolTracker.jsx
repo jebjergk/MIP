@@ -15,6 +15,7 @@ import {
 
 import { API_BASE } from '../App'
 import useVisibleInterval from '../hooks/useVisibleInterval'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './SymbolTracker.css'
 
 const SORT_OPTIONS = [
@@ -450,7 +451,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   )
 }
 
-function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender }) {
+function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, formatSymbolLabel }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
   const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
@@ -458,7 +459,7 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender }) 
     <article className={`symbol-tracker-tile ${density === 'compact' ? 'symbol-tracker-tile--compact' : ''}`}>
       <header className="symbol-tracker-tile-head">
         <div>
-          <h3>{tile.symbol}</h3>
+          <h3>{formatSymbolLabel(tile.symbol, tile.market_type)}</h3>
           <div className="symbol-tracker-subline">
             {tile.side} · Qty {fmtNum(tile.quantity, 0)} · {tile.market_type}
           </div>
@@ -529,6 +530,7 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender }) 
 }
 
 export default function SymbolTracker() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [mode, setMode] = useState('intraday')
   const [chartStyle, setChartStyle] = useState('line')
   const [horizonBars, setHorizonBars] = useState('5')
@@ -683,6 +685,7 @@ export default function SymbolTracker() {
             density={density}
             projectionMode={projectionMode}
             trendRender={trendRender}
+            formatSymbolLabel={formatSymbolLabel}
           />
         ))}
       </div>

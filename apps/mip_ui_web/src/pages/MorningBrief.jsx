@@ -5,6 +5,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { usePortfolios } from '../context/PortfolioContext'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './MorningBrief.css'
 
 // Status badge component
@@ -49,6 +50,7 @@ function DeltaIndicator({ value, format = 'number', invert = false }) {
 
 // Executed Trades Modal
 function ExecutedTradesModal({ trades, source, verificationStatus, briefRecordCount, executedLabel, onClose }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   useEffect(() => {
     const handleEsc = (e) => {
       if (e.key === 'Escape') onClose()
@@ -115,7 +117,7 @@ function ExecutedTradesModal({ trades, source, verificationStatus, briefRecordCo
                 {trades.map((trade, idx) => (
                   <tr key={trade.trade_id || idx}>
                     <td>{trade.trade_ts ? new Date(trade.trade_ts).toLocaleString() : '—'}</td>
-                    <td className="trade-symbol">{trade.symbol}</td>
+                    <td className="trade-symbol">{formatSymbolLabel(trade.symbol, trade.market_type)}</td>
                     <td className={`trade-side ${(trade.side || '').toLowerCase()}`}>{trade.side}</td>
                     <td>{trade.quantity != null ? trade.quantity.toLocaleString() : '—'}</td>
                     <td>{trade.price != null ? `$${Number(trade.price).toLocaleString()}` : '—'}</td>
@@ -305,10 +307,13 @@ function buildTrainingUrl(opportunity) {
 
 // Opportunity Card component
 function OpportunityCard({ opportunity }) {
+  const { formatSymbolLabel } = useSymbolMeta()
   const { symbol, side, market_type, horizon_bars, interval_minutes, confidence, why, pattern_id, status, target_weight, is_proposal } = opportunity
   const trainingUrl = buildTrainingUrl(opportunity)
   const decisionConsoleUrl = buildDecisionConsoleUrl()
-  const displaySymbol = symbol && symbol !== '—' ? symbol : (pattern_id ? `Pattern ${pattern_id}` : '—')
+  const displaySymbol = symbol && symbol !== '—'
+    ? formatSymbolLabel(symbol, market_type)
+    : (pattern_id ? `Pattern ${pattern_id}` : '—')
   
   // For proposals, link to market timeline; for patterns, link to training.
   const linkUrl = is_proposal && symbol && symbol !== '—' 

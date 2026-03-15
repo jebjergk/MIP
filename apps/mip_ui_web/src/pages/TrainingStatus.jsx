@@ -5,6 +5,7 @@ import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
@@ -39,6 +40,7 @@ function getRowKey(row, get) {
 }
 
 export default function TrainingStatus() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [searchParams] = useSearchParams()
   const appliedUrlRef = useRef(false)
   const [data, setData] = useState(null)
@@ -241,7 +243,7 @@ export default function TrainingStatus() {
                     tabIndex={0}
                     role="button"
                     aria-expanded={isExpanded}
-                    aria-label={`${get(row, 'symbol')} training details. Press Enter to ${isExpanded ? 'collapse' : 'expand'}.`}
+                    aria-label={`${formatSymbolLabel(get(row, 'symbol'), get(row, 'market_type'))} training details. Press Enter to ${isExpanded ? 'collapse' : 'expand'}.`}
                   >
                     <td className="training-expand-cell">
                       <span className={`training-expand-icon ${isExpanded ? 'training-expand-icon--open' : ''}`}>
@@ -249,7 +251,7 @@ export default function TrainingStatus() {
                       </span>
                     </td>
                     <td>{get(row, 'market_type') ?? '—'}</td>
-                    <td className="training-symbol-cell">{get(row, 'symbol') ?? '—'}</td>
+                    <td className="training-symbol-cell">{formatSymbolLabel(get(row, 'symbol') ?? '—', get(row, 'market_type'))}</td>
                     <td>{get(row, 'pattern_id') ?? '—'}</td>
                     <td>{get(row, 'interval_minutes') ?? '—'}</td>
                     <td>{get(row, 'as_of_ts') ?? '—'}</td>

@@ -15,6 +15,7 @@ import {
 import { API_BASE } from '../App'
 import LoadingState from '../components/LoadingState'
 import ErrorState from '../components/ErrorState'
+import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './PerformanceDashboard.css'
 
 function fmtPct(v, d = 1) {
@@ -47,6 +48,7 @@ function KpiCard({ label, value, hint }) {
 }
 
 export default function PerformanceDashboard() {
+  const { formatSymbolLabel } = useSymbolMeta()
   const [lookbackDays, setLookbackDays] = useState(90)
   const [tab, setTab] = useState('executive')
   const [data, setData] = useState(null)
@@ -98,6 +100,13 @@ export default function PerformanceDashboard() {
       { stage: 'Successful', value: Number(f.successful_outcomes || 0) },
     ]
   }, [diag.decision_funnel])
+
+  const targetRealismData = useMemo(() => {
+    return (diag?.target_realism_analysis || []).slice(0, 12).map((r) => ({
+      ...r,
+      symbol_label: formatSymbolLabel(r.SYMBOL, r.MARKET_TYPE),
+    }))
+  }, [diag?.target_realism_analysis, formatSymbolLabel])
 
   if (loading) {
     return (
@@ -304,9 +313,9 @@ export default function PerformanceDashboard() {
           <article className="perf-panel perf-panel-wide">
             <h3>Target Realism Analysis</h3>
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={(diag?.target_realism_analysis || []).slice(0, 12)}>
+              <BarChart data={targetRealismData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="SYMBOL" />
+                <XAxis dataKey="symbol_label" />
                 <YAxis />
                 <Tooltip />
                 <Legend />

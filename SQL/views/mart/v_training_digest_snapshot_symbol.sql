@@ -66,16 +66,79 @@ symbol_outcomes as (
     group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
 ),
 
--- ── Trust labels from policy view (one per pattern_id + market_type) ──
+-- ── Symbol-local gate config (proposal gate inputs) ──
+symbol_gate_cfg as (
+    select
+        coalesce(max(iff(CONFIG_KEY = 'SYMBOL_LOCAL_GATE_ENABLED', lower(CONFIG_VALUE), null)), 'true') as SYMBOL_LOCAL_GATE_ENABLED,
+        coalesce(max(try_to_double(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECENT_HIT_RATE', CONFIG_VALUE, null))), 0.50) as SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
+        coalesce(max(try_to_double(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN', CONFIG_VALUE, null))), 0.00) as SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN,
+        coalesce(max(try_to_number(iff(CONFIG_KEY = 'SYMBOL_LOCAL_MIN_RECS', CONFIG_VALUE, null))), 8) as SYMBOL_LOCAL_MIN_RECS
+    from MIP.APP.APP_CONFIG
+),
+
+-- ── Symbol-local recent outcomes (for responsive trust downgrades) ──
+symbol_recent as (
+    select
+        r.MARKET_TYPE,
+        r.SYMBOL,
+        r.PATTERN_ID,
+        count_if(o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null) as RECENT_SUCCESS_COUNT,
+        avg(case
+            when o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null and o.HIT_FLAG is not null
+            then iff(o.HIT_FLAG, 1, 0)
+        end) as RECENT_HIT_RATE,
+        avg(case
+            when o.EVAL_STATUS = 'SUCCESS' and o.REALIZED_RETURN is not null
+            then o.REALIZED_RETURN
+        end) as RECENT_AVG_RETURN
+    from MIP.APP.RECOMMENDATION_OUTCOMES o
+    join MIP.APP.RECOMMENDATION_LOG r
+      on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+    where o.ENTRY_TS >= dateadd(day, -90, current_date())
+    group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
+),
+
+-- ── Symbol-local trust labels (one per symbol + pattern) ──
 trust_labels as (
     select
-        v.MARKET_TYPE,
-        v.PATTERN_ID,
-        v.TRUST_LABEL,
-        v.RECOMMENDED_ACTION,
-        v.REASON
-    from MIP.MART.V_TRUSTED_SIGNAL_POLICY v
-    qualify row_number() over (partition by v.PATTERN_ID, v.MARKET_TYPE order by v.AS_OF_TS desc) = 1
+        sr.MARKET_TYPE,
+        sr.SYMBOL,
+        sr.PATTERN_ID,
+        case
+            when cfg.SYMBOL_LOCAL_GATE_ENABLED <> 'true' then 'DISABLED'
+            when coalesce(rs.RECENT_SUCCESS_COUNT, 0) < cfg.SYMBOL_LOCAL_MIN_RECS then 'LOW_EVIDENCE'
+            when coalesce(rs.RECENT_HIT_RATE, 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE
+             and coalesce(rs.RECENT_AVG_RETURN, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN then 'TRUSTED'
+            when coalesce(rs.RECENT_HIT_RATE, 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE * 0.9
+              or coalesce(rs.RECENT_AVG_RETURN, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN * 0.9 then 'WATCH'
+            else 'UNTRUSTED'
+        end as TRUST_LABEL,
+        case
+            when cfg.SYMBOL_LOCAL_GATE_ENABLED <> 'true' then 'MONITOR'
+            when coalesce(rs.RECENT_SUCCESS_COUNT, 0) < cfg.SYMBOL_LOCAL_MIN_RECS then 'MONITOR'
+            when coalesce(rs.RECENT_HIT_RATE, 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE
+             and coalesce(rs.RECENT_AVG_RETURN, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN then 'ENABLE'
+            when coalesce(rs.RECENT_HIT_RATE, 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE * 0.9
+              or coalesce(rs.RECENT_AVG_RETURN, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN * 0.9 then 'MONITOR'
+            else 'DISABLE'
+        end as RECOMMENDED_ACTION,
+        object_construct(
+            'policy_source', 'MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL',
+            'window_days', 90,
+            'recent_success_count', coalesce(rs.RECENT_SUCCESS_COUNT, 0),
+            'recent_hit_rate', rs.RECENT_HIT_RATE,
+            'recent_avg_return', rs.RECENT_AVG_RETURN,
+            'min_recent_hit_rate', cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
+            'min_recent_avg_return', cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN,
+            'min_recent_recs', cfg.SYMBOL_LOCAL_MIN_RECS,
+            'symbol_local_gate_enabled', cfg.SYMBOL_LOCAL_GATE_ENABLED
+        ) as REASON
+    from symbol_recs sr
+    cross join symbol_gate_cfg cfg
+    left join symbol_recent rs
+      on rs.MARKET_TYPE = sr.MARKET_TYPE
+     and rs.SYMBOL = sr.SYMBOL
+     and rs.PATTERN_ID = sr.PATTERN_ID
 ),
 
 -- ── Compute maturity per (symbol, market_type, pattern_id) ──
@@ -224,4 +287,5 @@ select
 from symbol_scored ss
 left join trust_labels tl
     on tl.MARKET_TYPE = ss.MARKET_TYPE
+    and tl.SYMBOL = ss.SYMBOL
     and tl.PATTERN_ID = ss.PATTERN_ID;

@@ -396,7 +396,7 @@ export default function TrainingTimelineInline({
 
       {/* UX coherence note */}
       <p className="training-timeline-note-inline">
-        The chart is symbol-local and only updates when outcomes are fully evaluated at this horizon; proposal eligibility may still use broader pattern-level trust.
+        The chart is symbol-local and updates only when outcomes are fully evaluated at this horizon; proposal eligibility uses the same symbol-local trust snapshot and can lag until pending outcomes are evaluated.
       </p>
     </div>
   )

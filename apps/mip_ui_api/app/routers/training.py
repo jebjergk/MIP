@@ -125,16 +125,7 @@ select
   recs.PATTERN_ID as pattern_id,
   recs.INTERVAL_MINUTES as interval_minutes,
   recs.as_of_ts as as_of_ts,
-  case
-    when cfg.SYMBOL_LOCAL_GATE_ENABLED <> 'true' then 'DISABLED'
-    when coalesce(recs.recs_total, 0) < cfg.SYMBOL_LOCAL_MIN_RECS then 'LOW_EVIDENCE'
-    when coalesce(o.success_count, 0) = 0 then 'LOW_EVIDENCE'
-    when coalesce(o.hit_count::float / nullif(o.success_count, 0), 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE
-      and coalesce(o.avg_return_success, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN then 'TRUSTED'
-    when coalesce(o.hit_count::float / nullif(o.success_count, 0), 0) >= cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE * 0.9
-      or coalesce(o.avg_return_success, -999) >= cfg.SYMBOL_LOCAL_MIN_RECENT_AVG_RETURN * 0.9 then 'WATCH'
-    else 'UNTRUSTED'
-  end as trust_gate,
+  upper(coalesce(snap.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN')) as trust_gate,
   recs.recs_total as recs_total,
   coalesce(o.outcomes_total, 0) as outcomes_total,
   coalesce(o.horizons_covered, 0) as horizons_covered,
@@ -146,6 +137,10 @@ from recs
 left join outcomes_agg o
   on o.MARKET_TYPE = recs.MARKET_TYPE and o.SYMBOL = recs.SYMBOL
   and o.PATTERN_ID = recs.PATTERN_ID and o.INTERVAL_MINUTES = recs.INTERVAL_MINUTES
+left join MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL snap
+  on snap.MARKET_TYPE = recs.MARKET_TYPE
+ and snap.SYMBOL = recs.SYMBOL
+ and snap.PATTERN_ID = recs.PATTERN_ID
 cross join gate_cfg cfg
 order by recs.MARKET_TYPE, recs.SYMBOL, recs.PATTERN_ID
 """

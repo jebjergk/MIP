@@ -242,6 +242,13 @@ begin
             -- CRIT-001: Entry gate check - reject BUY proposals when entries_blocked=true
             iff(:v_entries_blocked and p.SIDE = 'BUY', 'ENTRY_GATE_BLOCKED', null),
             iff(:v_entries_blocked and p.SIDE = 'BUY', :v_stop_reason, null),
+            -- Defense-in-depth: never execute BUY proposals if symbol-local trust is downgraded.
+            iff(
+                p.SIDE = 'BUY'
+                and upper(coalesce(p.SOURCE_SIGNALS:symbol_local_trust_label::string, 'UNTRUSTED')) <> 'TRUSTED',
+                'SYMBOL_LOCAL_GATE_BLOCKED',
+                null
+            ),
             iff(p.RECOMMENDATION_ID is null, 'MISSING_RECOMMENDATION_ID', null),
             iff(p.RECOMMENDATION_ID is not null and v.RECOMMENDATION_ID is null, 'NO_SIGNAL_MATCH', null),
             iff(v.RECOMMENDATION_ID is not null and not v.IS_ELIGIBLE, 'INELIGIBLE_SIGNAL', null),

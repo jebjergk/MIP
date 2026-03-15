@@ -99,6 +99,7 @@ def _build_projection_path(
     lower_return: float,
     horizon_bars: int,
     side: str,
+    projection_mode: str = "geometric",
 ) -> dict[str, Any]:
     if baseline_price <= 0 or horizon_bars <= 0:
         return {
@@ -108,21 +109,31 @@ def _build_projection_path(
         }
 
     side_sign = 1.0 if side == "LONG" else -1.0
-    center_gross = max(1 + side_sign * avg_return, 0.0001)
-    upper_gross = max(1 + side_sign * upper_return, 0.0001)
-    lower_gross = max(1 + side_sign * lower_return, 0.0001)
-
-    center_step_factor = center_gross ** (1 / horizon_bars)
-    upper_step_factor = upper_gross ** (1 / horizon_bars)
-    lower_step_factor = lower_gross ** (1 / horizon_bars)
+    center_target = baseline_price * (1 + side_sign * avg_return)
+    upper_target = baseline_price * (1 + side_sign * upper_return)
+    lower_target = baseline_price * (1 + side_sign * lower_return)
 
     center_path = []
     upper_path = []
     lower_path = []
-    for t in range(1, horizon_bars + 1):
-        center_path.append({"step": t, "price": baseline_price * (center_step_factor ** t)})
-        upper_path.append({"step": t, "price": baseline_price * (upper_step_factor ** t)})
-        lower_path.append({"step": t, "price": baseline_price * (lower_step_factor ** t)})
+    if projection_mode == "linear":
+        for t in range(1, horizon_bars + 1):
+            ratio = t / horizon_bars
+            center_path.append({"step": t, "price": baseline_price + (center_target - baseline_price) * ratio})
+            upper_path.append({"step": t, "price": baseline_price + (upper_target - baseline_price) * ratio})
+            lower_path.append({"step": t, "price": baseline_price + (lower_target - baseline_price) * ratio})
+    else:
+        center_gross = max(1 + side_sign * avg_return, 0.0001)
+        upper_gross = max(1 + side_sign * upper_return, 0.0001)
+        lower_gross = max(1 + side_sign * lower_return, 0.0001)
+
+        center_step_factor = center_gross ** (1 / horizon_bars)
+        upper_step_factor = upper_gross ** (1 / horizon_bars)
+        lower_step_factor = lower_gross ** (1 / horizon_bars)
+        for t in range(1, horizon_bars + 1):
+            center_path.append({"step": t, "price": baseline_price * (center_step_factor ** t)})
+            upper_path.append({"step": t, "price": baseline_price * (upper_step_factor ** t)})
+            lower_path.append({"step": t, "price": baseline_price * (lower_step_factor ** t)})
 
     return {
         "center_path": center_path,
@@ -218,6 +229,7 @@ def get_symbol_tracker_tiles(
     daily_window_bars: int = Query(120, ge=30, le=300),
     intraday_window_bars: int = Query(120, ge=30, le=400),
     intraday_interval_minutes: int = Query(60, ge=1, le=240),
+    projection_mode: str = Query("geometric", pattern="^(geometric|linear)$"),
 ):
     interval_minutes = 1440 if mode == "daily" else intraday_interval_minutes
     if mode == "intraday" and interval_minutes not in _INTRADAY_INTERVALS:
@@ -613,6 +625,7 @@ def get_symbol_tracker_tiles(
                     lower_return=lower_return,
                     horizon_bars=horizon_bars,
                     side=side,
+                    projection_mode=projection_mode,
                 )
                 center_path = projection["center_path"]
                 upper_path = projection["upper_path"]
@@ -752,6 +765,7 @@ def get_symbol_tracker_tiles(
             "mode": mode,
             "chart_style": chart_style,
             "horizon_bars": horizon_bars,
+            "projection_mode": projection_mode,
             "window_bars": window_bars,
             "interval_minutes": interval_minutes,
             "tiles": tiles,

@@ -340,6 +340,8 @@ function Tile({ tile, mode, chartStyle, density }) {
 export default function SymbolTracker() {
   const [mode, setMode] = useState('intraday')
   const [chartStyle, setChartStyle] = useState('line')
+  const [horizonBars, setHorizonBars] = useState('5')
+  const [projectionMode, setProjectionMode] = useState('geometric')
   const [sortBy, setSortBy] = useState('worst_pnl')
   const [longsOnly, setLongsOnly] = useState(false)
   const [shortsOnly, setShortsOnly] = useState(false)
@@ -355,7 +357,8 @@ export default function SymbolTracker() {
       const params = new URLSearchParams({
         mode,
         chart_style: chartStyle,
-        horizon_bars: '5',
+        horizon_bars: String(horizonBars),
+        projection_mode: projectionMode,
         intraday_interval_minutes: '60',
       })
       const resp = await fetch(`${API_BASE}/symbol-tracker/tiles?${params.toString()}`)
@@ -367,7 +370,7 @@ export default function SymbolTracker() {
     } finally {
       setLoading(false)
     }
-  }, [mode, chartStyle])
+  }, [mode, chartStyle, horizonBars, projectionMode])
 
   useVisibleInterval(load, 30000)
 
@@ -418,6 +421,23 @@ export default function SymbolTracker() {
           <select value={chartStyle} onChange={(e) => setChartStyle(e.target.value)}>
             <option value="line">Line</option>
             <option value="candles">Candles</option>
+          </select>
+        </label>
+        <label>
+          Horizon
+          <select value={horizonBars} onChange={(e) => setHorizonBars(e.target.value)}>
+            <option value="1">H1</option>
+            <option value="3">H3</option>
+            <option value="5">H5</option>
+            <option value="10">H10</option>
+            <option value="20">H20</option>
+          </select>
+        </label>
+        <label>
+          Curve
+          <select value={projectionMode} onChange={(e) => setProjectionMode(e.target.value)}>
+            <option value="geometric">Geometric</option>
+            <option value="linear">Linear</option>
           </select>
         </label>
         <label>

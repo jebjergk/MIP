@@ -582,18 +582,9 @@ begin
             left join news_agg_latest na
               on na.RECOMMENDATION_ID = s.RECOMMENDATION_ID
         ),
-        deduped_candidates as (
-            select
-                e.*
-            from eligible_candidates e
-            qualify row_number() over (
-                partition by e.SYMBOL
-                order by e.SCORE desc, e.RECOMMENDATION_ID
-            ) = 1
-        ),
         symbol_local_health as (
             select
-                d.*,
+                e.*,
                 snap.SNAPSHOT_JSON:trust:trust_label::string as SYMBOL_LOCAL_TRUST_LABEL,
                 coalesce(
                     try_to_double(snap.SNAPSHOT_JSON:trust:reason:recent_hit_rate::string),
@@ -619,17 +610,26 @@ begin
                     snap.SNAPSHOT_JSON:threshold_gaps:signals_met::boolean,
                     false
                 ) as SYMBOL_LOCAL_SIGNALS_MET
-            from deduped_candidates d
+            from eligible_candidates e
             left join MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL snap
-              on snap.SYMBOL = d.SYMBOL
-             and snap.MARKET_TYPE = d.MARKET_TYPE
-             and snap.PATTERN_ID = d.PATTERN_ID
+              on snap.SYMBOL = e.SYMBOL
+             and snap.MARKET_TYPE = e.MARKET_TYPE
+             and snap.PATTERN_ID = e.PATTERN_ID
         ),
         symbol_local_gated as (
             select
                 d.*
             from symbol_local_health d
             where upper(coalesce(d.SYMBOL_LOCAL_TRUST_LABEL, 'UNTRUSTED')) = 'TRUSTED'
+        ),
+        deduped_candidates as (
+            select
+                d.*
+            from symbol_local_gated d
+            qualify row_number() over (
+                partition by d.SYMBOL
+                order by d.SCORE desc, d.RECOMMENDATION_ID
+            ) = 1
         ),
         enriched_news as (
             select
@@ -689,7 +689,7 @@ begin
                     ),
                     1.0
                 ) as NEWS_EVENT_RISK_PROXY
-            from symbol_local_gated d
+            from deduped_candidates d
         ),
         scored_candidates as (
             select

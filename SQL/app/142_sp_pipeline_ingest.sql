@@ -23,6 +23,7 @@ declare
     v_ingest_status string;
     v_rate_limit_hit boolean := false;
     v_audit_status string;
+    v_ingest_failed exception (-20001, 'Pipeline ingestion failed; downstream steps aborted.');
 begin
     select count(*)
       into :v_rows_before
@@ -41,14 +42,16 @@ begin
         v_step_end := current_timestamp();
 
         v_audit_status := case
-            when :v_ingest_status like 'FAIL%' then 'FAIL'
-            -- Preserve explicit skip statuses (e.g., SKIPPED_IBKR_AGENT_REQUIRED)
-            -- so the pipeline UI does not incorrectly show a hard failure.
-            when :v_ingest_status like 'SKIPPED%' then :v_ingest_status
+            when :v_ingest_status like 'FAIL%' then :v_ingest_status
+            when :v_ingest_status like 'SKIPPED%' then 'FAIL'
             when :v_rate_limit_hit then 'SKIP_RATE_LIMIT'
             when :v_ingest_status = 'SUCCESS_WITH_SKIPS' then 'SUCCESS_WITH_SKIPS'
             else 'SUCCESS'
         end;
+
+        if (:v_audit_status like 'FAIL%') then
+            raise v_ingest_failed;
+        end if;
 
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :P_PARENT_RUN_ID,
@@ -91,7 +94,12 @@ begin
                     'scope', 'AGG',
                     'scope_key', null,
                     'started_at', :v_step_start,
-                    'completed_at', :v_step_end
+                    'completed_at', :v_step_end,
+                    'rows_before', :v_rows_before,
+                    'rows_after', :v_rows_after,
+                    'rows_delta', :v_rows_delta,
+                    'ingest_status', :v_ingest_status,
+                    'ingest_result', :v_ingest_result
                 ),
                 :sqlerrm
             );

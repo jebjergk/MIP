@@ -35,14 +35,15 @@ begin
         select object_insert(:v_result, 'provider', :v_provider, true) into :v_result;
         return :v_result;
     elseif (v_provider = 'IBKR') then
-        -- IBKR ingestion is currently executed by agent runtime scripts that can
-        -- reach local IB Gateway/TWS, then write into MIP.MART.MARKET_BARS.
+        -- Daily pipeline requires fresh IBKR ingest. If runtime ingestion is not
+        -- available in this execution context, return a hard failure so callers
+        -- can stop downstream processing.
         return object_construct(
-            'status', 'SKIPPED_IBKR_AGENT_REQUIRED',
+            'status', 'FAIL_IBKR_AGENT_REQUIRED',
             'provider', :v_provider,
             'rows_inserted', 0,
             'symbols_processed', 0,
-            'message', 'IBKR ingestion requires agent runtime execution (cursorfiles/ingest_ibkr_bars.py).'
+            'error', 'IBKR ingestion requires agent runtime execution (cursorfiles/ingest_ibkr_bars.py).'
         );
     else
         return object_construct(

@@ -16,6 +16,13 @@ import {
 import { API_BASE } from '../App'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import {
+  buildLiveState,
+  confidenceRank,
+  evaluateCommittee,
+  isMaterialUpdate,
+  severityRank,
+} from './symbolTrackerCommittee'
 import './SymbolTracker.css'
 
 const SORT_OPTIONS = [
@@ -496,12 +503,23 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   )
 }
 
-function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, formatSymbolLabel }) {
+function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, formatSymbolLabel, selected, onSelect }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
   const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
   return (
-    <article className={`symbol-tracker-tile ${density === 'compact' ? 'symbol-tracker-tile--compact' : ''}`}>
+    <article
+      className={`symbol-tracker-tile ${density === 'compact' ? 'symbol-tracker-tile--compact' : ''} ${selected ? 'symbol-tracker-tile--selected' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect?.(tile.symbol)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect?.(tile.symbol)
+        }
+      }}
+    >
       <header className="symbol-tracker-tile-head">
         <div>
           <h3>{formatSymbolLabel(tile.symbol, tile.market_type)}</h3>
@@ -574,6 +592,165 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
   )
 }
 
+function fmtTime(ts) {
+  if (!ts) return '—'
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function CommitteePanel({
+  selectedSymbol,
+  setSelectedSymbol,
+  committeeBySymbol,
+  feed,
+  watchlist,
+  filters,
+  setFilters,
+  formatSymbolLabel,
+  contextUpdatedAt,
+}) {
+  const activeCommittee = selectedSymbol ? committeeBySymbol[selectedSymbol] : null
+  const filteredWatchlist = watchlist.filter((row) => {
+    if (filters.symbol !== 'ALL' && row.symbol !== filters.symbol) return false
+    if (filters.onlyChanged && !row.changed_recently) return false
+    if (filters.highRiskOnly && !['ESCALATE', 'WATCH_CLOSELY'].includes(row.committee_stance)) return false
+    if (filters.unprotectedOnly && !row.top_reason_tags.includes('UNPROTECTED')) return false
+    if (filters.minConfidence !== 'ANY' && confidenceRank(row.committee_confidence) < confidenceRank(filters.minConfidence)) return false
+    if (filters.stance !== 'ALL' && row.committee_stance !== filters.stance) return false
+    return true
+  })
+
+  const filteredFeed = feed.filter((item) => (
+    filters.symbol === 'ALL' || item.symbol === filters.symbol
+  ))
+
+  return (
+    <aside className="symbol-tracker-committee">
+      <div className="symbol-tracker-committee-head">
+        <h3>Live Committee / Observer</h3>
+        <div className="symbol-tracker-committee-context-ts">
+          Context: {fmtTime(contextUpdatedAt)}
+        </div>
+      </div>
+
+      <section className="symbol-tracker-committee-filters">
+        <label>
+          Symbol
+          <select value={filters.symbol} onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}>
+            <option value="ALL">All</option>
+            {watchlist.map((row) => <option key={row.symbol} value={row.symbol}>{row.symbol}</option>)}
+          </select>
+        </label>
+        <label>
+          Stance
+          <select value={filters.stance} onChange={(e) => setFilters((prev) => ({ ...prev, stance: e.target.value }))}>
+            <option value="ALL">All</option>
+            <option value="ESCALATE">ESCALATE</option>
+            <option value="WATCH_CLOSELY">WATCH_CLOSELY</option>
+            <option value="THESIS_INTACT">THESIS_INTACT</option>
+          </select>
+        </label>
+        <label>
+          Min confidence
+          <select value={filters.minConfidence} onChange={(e) => setFilters((prev) => ({ ...prev, minConfidence: e.target.value }))}>
+            <option value="ANY">Any</option>
+            <option value="MEDIUM">MEDIUM</option>
+            <option value="HIGH">HIGH</option>
+          </select>
+        </label>
+        <label className="symbol-tracker-check">
+          <input type="checkbox" checked={filters.onlyChanged} onChange={(e) => setFilters((prev) => ({ ...prev, onlyChanged: e.target.checked }))} />
+          Only changed recently
+        </label>
+        <label className="symbol-tracker-check">
+          <input type="checkbox" checked={filters.highRiskOnly} onChange={(e) => setFilters((prev) => ({ ...prev, highRiskOnly: e.target.checked }))} />
+          High-risk only
+        </label>
+        <label className="symbol-tracker-check">
+          <input type="checkbox" checked={filters.unprotectedOnly} onChange={(e) => setFilters((prev) => ({ ...prev, unprotectedOnly: e.target.checked }))} />
+          Unprotected only
+        </label>
+      </section>
+
+      <section className="symbol-tracker-committee-section">
+        <div className="symbol-tracker-committee-title">Live Committee Feed</div>
+        <div className="symbol-tracker-committee-feed">
+          {filteredFeed.length === 0 ? <div className="symbol-tracker-committee-empty">No material changes yet.</div> : null}
+          {filteredFeed.map((item) => (
+            <div key={item.id} className="symbol-tracker-feed-row">
+              <div className="symbol-tracker-feed-meta">
+                <span>{fmtTime(item.ts)}</span>
+                <span>{item.symbol}</span>
+                <span>{item.agent}</span>
+              </div>
+              <div className="symbol-tracker-feed-text">{item.text}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="symbol-tracker-committee-section">
+        <div className="symbol-tracker-committee-title">Active Watchlist</div>
+        <div className="symbol-tracker-watchlist">
+          {filteredWatchlist.length === 0 ? <div className="symbol-tracker-committee-empty">No symbols match filters.</div> : null}
+          {filteredWatchlist.map((row) => (
+            <button
+              type="button"
+              key={row.symbol}
+              className={`symbol-tracker-watch-row ${selectedSymbol === row.symbol ? 'symbol-tracker-watch-row--active' : ''}`}
+              onClick={() => setSelectedSymbol(row.symbol)}
+            >
+              <div className="symbol-tracker-watch-top">
+                <span>{formatSymbolLabel(row.symbol, row.market_type)}</span>
+                <span className="symbol-tracker-pill">{row.committee_stance}</span>
+              </div>
+              <div className="symbol-tracker-watch-mid">
+                <span>{row.committee_confidence}</span>
+                <span>{(row.top_reason_tags || []).slice(0, 3).join(', ').toLowerCase()}</span>
+              </div>
+              <div className="symbol-tracker-watch-ts">Changed {fmtTime(row.updated_at)}</div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="symbol-tracker-committee-section">
+        <div className="symbol-tracker-committee-title">Expanded Symbol Discussion</div>
+        {!activeCommittee ? <div className="symbol-tracker-committee-empty">Select a symbol tile or watchlist row.</div> : null}
+        {activeCommittee ? (
+          <div className="symbol-tracker-thread">
+            <div className="symbol-tracker-thread-summary">
+              <div className="symbol-tracker-pill">{activeCommittee.committee_stance}</div>
+              <div>{activeCommittee.committee_confidence}</div>
+              <div>{activeCommittee.headline_text}</div>
+            </div>
+            {(activeCommittee.agent_messages || []).map((msg) => (
+              <article key={`${activeCommittee.symbol}_${msg.agent_name}`} className="symbol-tracker-thread-msg">
+                <header>
+                  <b>{msg.agent_name.replaceAll('_', ' ')}</b>
+                  <span>{msg.confidence}</span>
+                  <span>{msg.stance}</span>
+                </header>
+                <p>{msg.short_text}</p>
+              </article>
+            ))}
+            {(activeCommittee.disagreement_points || []).length > 0 ? (
+              <div className="symbol-tracker-thread-disagreement">
+                <b>Disagreement points</b>
+                <div>{activeCommittee.disagreement_points.join(' ')}</div>
+              </div>
+            ) : null}
+            <div className="symbol-tracker-thread-actions">
+              <b>Actions to consider:</b> {(activeCommittee.actions_to_consider || []).join(', ')}
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </aside>
+  )
+}
+
 export default function SymbolTracker() {
   const { formatSymbolLabel } = useSymbolMeta()
   const [mode, setMode] = useState('intraday')
@@ -589,6 +766,18 @@ export default function SymbolTracker() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [data, setData] = useState({ tiles: [], updated_at: null })
+  const [contextReloadAt, setContextReloadAt] = useState(null)
+  const [selectedSymbol, setSelectedSymbol] = useState(null)
+  const [committeeBySymbol, setCommitteeBySymbol] = useState({})
+  const [committeeFeed, setCommitteeFeed] = useState([])
+  const [committeeFilters, setCommitteeFilters] = useState({
+    symbol: 'ALL',
+    stance: 'ALL',
+    minConfidence: 'ANY',
+    onlyChanged: false,
+    highRiskOnly: false,
+    unprotectedOnly: false,
+  })
 
   const fetchIbLive = useCallback(async (tiles, selectedMode) => {
     const symbols = (Array.isArray(tiles) ? tiles : [])
@@ -613,50 +802,100 @@ export default function SymbolTracker() {
     return resp.json()
   }, [])
 
-  const load = useCallback(async () => {
+  const runCommitteeCycle = useCallback((nextData) => {
+    const nextTiles = Array.isArray(nextData?.tiles) ? nextData.tiles : []
+    if (nextTiles.length === 0) {
+      setCommitteeBySymbol({})
+      setCommitteeFeed([])
+      return
+    }
+
+    setCommitteeBySymbol((prevCommitteeMap) => {
+      const nextCommitteeMap = {}
+      const feedRows = []
+      for (const tile of nextTiles) {
+        const symbol = String(tile?.symbol || '').toUpperCase()
+        const prevCommittee = prevCommitteeMap[symbol]
+        const firstPrevAgent = prevCommittee?.agent_messages?.[0] || null
+        const liveState = buildLiveState(tile, firstPrevAgent?.live_state || null)
+        const committee = evaluateCommittee(tile, liveState, prevCommittee)
+        nextCommitteeMap[symbol] = committee
+
+        if (isMaterialUpdate(prevCommittee, committee)) {
+          for (const agentMessage of committee.agent_messages || []) {
+            if (!agentMessage.change_detected || (agentMessage.materiality_score ?? 0) < 0.55) continue
+            feedRows.push({
+              id: `${symbol}_${agentMessage.agent_name}_${Date.now()}_${Math.random()}`,
+              ts: committee.updated_at,
+              symbol,
+              agent: agentMessage.agent_name.replaceAll('_', ' '),
+              text: agentMessage.short_text,
+            })
+          }
+        }
+      }
+      if (feedRows.length > 0) {
+        setCommitteeFeed((prevFeed) => [...feedRows, ...prevFeed].slice(0, 120))
+      }
+      return nextCommitteeMap
+    })
+  }, [])
+
+  const loadContext = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
       const params = new URLSearchParams({
-        mode,
-        chart_style: chartStyle,
-        horizon_bars: String(horizonBars),
-        projection_mode: projectionMode,
+        mode: 'intraday',
+        chart_style: 'line',
+        horizon_bars: '20',
+        projection_mode: 'stitched',
         intraday_interval_minutes: '60',
       })
       const resp = await fetch(`${API_BASE}/symbol-tracker/tiles?${params.toString()}`)
       if (!resp.ok) throw new Error(`Failed to load symbol tracker (${resp.status})`)
       const payload = await resp.json()
+      setData(payload)
+      setContextReloadAt(new Date().toISOString())
+      if (!selectedSymbol && payload?.tiles?.[0]?.symbol) {
+        setSelectedSymbol(String(payload.tiles[0].symbol).toUpperCase())
+      }
       try {
-        const ibPayload = await fetchIbLive(payload?.tiles || [], mode)
-        setData(ibPayload ? mergeIbLiveRows(payload, ibPayload) : payload)
+        const ibPayload = await fetchIbLive(payload?.tiles || [], 'intraday')
+        const merged = ibPayload ? mergeIbLiveRows(payload, ibPayload) : payload
+        setData(merged)
+        runCommitteeCycle(merged)
       } catch {
-        setData(payload)
+        runCommitteeCycle(payload)
       }
     } catch (e) {
       setError(e.message || 'Failed to load symbol tracker data.')
     } finally {
       setLoading(false)
     }
-  }, [mode, chartStyle, horizonBars, projectionMode, fetchIbLive])
+  }, [fetchIbLive, runCommitteeCycle, selectedSymbol])
 
   useEffect(() => {
-    load()
-  }, [load])
+    loadContext()
+  }, [loadContext])
 
   const refreshIbOnly = useCallback(async () => {
     try {
       setError('')
       const ibPayload = await fetchIbLive(data?.tiles || [], mode)
       if (ibPayload) {
-        setData((prev) => mergeIbLiveRows(prev, ibPayload))
+        setData((prev) => {
+          const merged = mergeIbLiveRows(prev, ibPayload)
+          runCommitteeCycle(merged)
+          return merged
+        })
       }
     } catch (e) {
       setError(e.message || 'IB live refresh failed.')
     }
-  }, [data?.tiles, fetchIbLive, mode])
+  }, [data?.tiles, fetchIbLive, mode, runCommitteeCycle])
 
-  useVisibleInterval(refreshIbOnly, 45000)
+  useVisibleInterval(refreshIbOnly, 30000)
 
   const tiles = useMemo(() => {
     let rows = Array.isArray(data?.tiles) ? [...data.tiles] : []
@@ -679,17 +918,53 @@ export default function SymbolTracker() {
       }
       return 0
     })
+
+    rows = rows.map((row) => {
+      const symbol = String(row?.symbol || '').toUpperCase()
+      const committee = committeeBySymbol[symbol]
+      const horizon = Number(horizonBars)
+      const baseExpectation = row?.expectation || {}
+      const trimmedExpectation = Number.isFinite(horizon) && horizon > 0
+        ? {
+          ...baseExpectation,
+          horizon_bars: horizon,
+          center_path: (baseExpectation.center_path || []).slice(0, horizon),
+          upper_path: (baseExpectation.upper_path || []).slice(0, horizon),
+          lower_path: (baseExpectation.lower_path || []).slice(0, horizon),
+        }
+        : baseExpectation
+      if (!committee) return { ...row, expectation: trimmedExpectation }
+      return {
+        ...row,
+        expectation: trimmedExpectation,
+        committee,
+      }
+    })
     return rows
-  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy])
+  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy, committeeBySymbol, horizonBars])
+
+  const watchlist = useMemo(() => {
+    return Object.values(committeeBySymbol)
+      .sort((a, b) => {
+        const stanceCmp = severityRank(b.committee_stance) - severityRank(a.committee_stance)
+        if (stanceCmp !== 0) return stanceCmp
+        const confidenceCmp = confidenceRank(b.committee_confidence) - confidenceRank(a.committee_confidence)
+        if (confidenceCmp !== 0) return confidenceCmp
+        return String(a.symbol).localeCompare(String(b.symbol))
+      })
+  }, [committeeBySymbol])
 
   return (
     <div className="symbol-tracker-page">
       <div className="symbol-tracker-head">
         <div>
           <h2>Symbol Tracker</h2>
-          <p>One tile per open position with live/daily development, TP/SL overlays, and training-implied context.</p>
+          <p>One tile per open position with 30s IB live updates and a structured live committee observer panel.</p>
         </div>
-        <button type="button" className="symbol-tracker-btn" onClick={load}>Refresh</button>
+        <div className="symbol-tracker-head-actions">
+          <button type="button" className="symbol-tracker-btn" onClick={refreshIbOnly}>Refresh Live Only</button>
+          <button type="button" className="symbol-tracker-btn" onClick={loadContext}>Reload Snowflake Context</button>
+        </div>
       </div>
 
       <div className="symbol-tracker-controls">
@@ -725,6 +1000,7 @@ export default function SymbolTracker() {
             <option value="linear">Linear</option>
           </select>
         </label>
+        <label className="symbol-tracker-control-note">Snowflake context refresh is manual only.</label>
         <label>
           Trend style
           <select value={trendRender} onChange={(e) => setTrendRender(e.target.value)}>
@@ -765,19 +1041,34 @@ export default function SymbolTracker() {
       {loading ? <div className="symbol-tracker-loading">Loading symbol tracker...</div> : null}
       {!loading && tiles.length === 0 ? <div className="symbol-tracker-empty">No open positions found.</div> : null}
 
-      <div className={`symbol-tracker-grid ${density === 'compact' ? 'symbol-tracker-grid--compact' : ''}`}>
-        {tiles.map((tile) => (
-          <Tile
-            key={tile.symbol}
-            tile={tile}
-            mode={mode}
-            chartStyle={chartStyle}
-            density={density}
-            projectionMode={projectionMode}
-            trendRender={trendRender}
-            formatSymbolLabel={formatSymbolLabel}
-          />
-        ))}
+      <div className="symbol-tracker-layout">
+        <div className={`symbol-tracker-grid ${density === 'compact' ? 'symbol-tracker-grid--compact' : ''}`}>
+          {tiles.map((tile) => (
+            <Tile
+              key={tile.symbol}
+              tile={tile}
+              mode={mode}
+              chartStyle={chartStyle}
+              density={density}
+              projectionMode={projectionMode}
+              trendRender={trendRender}
+              formatSymbolLabel={formatSymbolLabel}
+              selected={selectedSymbol === tile.symbol}
+              onSelect={setSelectedSymbol}
+            />
+          ))}
+        </div>
+        <CommitteePanel
+          selectedSymbol={selectedSymbol}
+          setSelectedSymbol={setSelectedSymbol}
+          committeeBySymbol={committeeBySymbol}
+          feed={committeeFeed}
+          watchlist={watchlist}
+          filters={committeeFilters}
+          setFilters={setCommitteeFilters}
+          formatSymbolLabel={formatSymbolLabel}
+          contextUpdatedAt={contextReloadAt}
+        />
       </div>
     </div>
   )

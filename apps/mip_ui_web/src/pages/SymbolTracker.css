@@ -3,6 +3,13 @@
   gap: 1rem;
 }
 
+.symbol-tracker-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 1rem;
+  align-items: start;
+}
+
 .symbol-tracker-head {
   display: flex;
   justify-content: space-between;
@@ -28,6 +35,11 @@
   cursor: pointer;
 }
 
+.symbol-tracker-head-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 .symbol-tracker-controls {
   display: flex;
   flex-wrap: wrap;
@@ -41,6 +53,11 @@
   gap: 0.2rem;
   color: #cbd5e1;
   font-size: 0.9rem;
+}
+
+.symbol-tracker-control-note {
+  color: #94a3b8 !important;
+  justify-content: flex-end;
 }
 
 .symbol-tracker-controls select {
@@ -75,6 +92,11 @@
   padding: 0.9rem;
   display: grid;
   gap: 0.75rem;
+}
+
+.symbol-tracker-tile--selected {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 1px #0e7490 inset;
 }
 
 .symbol-tracker-tile--compact {
@@ -368,4 +390,210 @@
   color: #fecaca;
   border-radius: 8px;
   padding: 0.55rem 0.7rem;
+}
+
+.symbol-tracker-committee {
+  border: 1px solid #223047;
+  border-radius: 14px;
+  background: #060d1a;
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.75rem;
+  position: sticky;
+  top: 0.75rem;
+  max-height: calc(100vh - 1.5rem);
+  overflow: auto;
+}
+
+.symbol-tracker-committee-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.symbol-tracker-committee-head h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.symbol-tracker-committee-context-ts {
+  color: #93c5fd;
+  font-size: 0.74rem;
+}
+
+.symbol-tracker-committee-filters {
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.symbol-tracker-committee-filters label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.symbol-tracker-committee-filters select {
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 8px;
+  padding: 0.3rem 0.4rem;
+}
+
+.symbol-tracker-committee-section {
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.symbol-tracker-committee-title {
+  color: #93c5fd;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.symbol-tracker-committee-feed {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.symbol-tracker-feed-row {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 0.4rem;
+  background: #0a1221;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.symbol-tracker-feed-meta {
+  display: flex;
+  gap: 0.35rem;
+  color: #94a3b8;
+  font-size: 0.68rem;
+}
+
+.symbol-tracker-feed-text {
+  font-size: 0.76rem;
+  color: #e2e8f0;
+}
+
+.symbol-tracker-watchlist {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 190px;
+  overflow: auto;
+}
+
+.symbol-tracker-watch-row {
+  border: 1px solid #2b364a;
+  border-radius: 8px;
+  background: #0b1220;
+  color: #e2e8f0;
+  text-align: left;
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.symbol-tracker-watch-row--active {
+  border-color: #22d3ee;
+}
+
+.symbol-tracker-watch-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+}
+
+.symbol-tracker-pill {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.64rem;
+  color: #cbd5e1;
+}
+
+.symbol-tracker-watch-mid {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.symbol-tracker-watch-ts {
+  font-size: 0.67rem;
+  color: #64748b;
+}
+
+.symbol-tracker-thread {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.symbol-tracker-thread-summary {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 0.4rem;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.76rem;
+}
+
+.symbol-tracker-thread-msg {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 0.45rem;
+  background: #0a1221;
+}
+
+.symbol-tracker-thread-msg header {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.68rem;
+  color: #93c5fd;
+}
+
+.symbol-tracker-thread-msg p {
+  margin: 0.25rem 0 0;
+  font-size: 0.76rem;
+  color: #e2e8f0;
+}
+
+.symbol-tracker-thread-disagreement,
+.symbol-tracker-thread-actions {
+  border: 1px dashed #334155;
+  border-radius: 8px;
+  padding: 0.4rem;
+  font-size: 0.74rem;
+  color: #cbd5e1;
+}
+
+.symbol-tracker-committee-empty {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 1400px) {
+  .symbol-tracker-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .symbol-tracker-committee {
+    position: static;
+    max-height: none;
+  }
 }

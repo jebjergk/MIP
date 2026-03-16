@@ -152,6 +152,7 @@ export default function LivePortfolioActivity() {
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
   const [ordersLookbackDays, setOrdersLookbackDays] = useState(30)
   const [ordersLimit, setOrdersLimit] = useState(120)
@@ -170,6 +171,7 @@ export default function LivePortfolioActivity() {
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
+    setNotice('')
     try {
       const params = new URLSearchParams({
         order_lookback_days: String(ordersLookbackDays),
@@ -226,6 +228,7 @@ export default function LivePortfolioActivity() {
   const refreshBroker = useCallback(async () => {
     setBusy('refresh')
     setError('')
+    setNotice('')
     try {
       const resp = await fetch(`${API_BASE}/live/snapshot/refresh`, { method: 'POST' })
       if (!resp.ok) throw new Error(`Broker refresh failed (${resp.status})`)
@@ -240,6 +243,7 @@ export default function LivePortfolioActivity() {
   const finalizeCommitteeRevalidation = useCallback(async (actionId, verdict) => {
     setBusy(`committee:${actionId}`)
     setError('')
+    setNotice('')
     try {
       const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee/apply`, {
         method: 'POST',
@@ -415,6 +419,7 @@ export default function LivePortfolioActivity() {
   const submitOnly = useCallback(async (actionId) => {
     setBusy(`submit:${actionId}`)
     setError('')
+    setNotice('')
     try {
       const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/submit-only`, {
         method: 'POST',
@@ -448,6 +453,7 @@ export default function LivePortfolioActivity() {
   const rejectStale = useCallback(async (actionId) => {
     setBusy(`reject:${actionId}`)
     setError('')
+    setNotice('')
     try {
       const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/reject-stale`, {
         method: 'POST',
@@ -473,6 +479,55 @@ export default function LivePortfolioActivity() {
       setBusy('')
     }
   }, [load])
+
+  const createExitAction = useCallback(async (positionRow) => {
+    const symbol = String(positionRow?.SYMBOL || '').toUpperCase().trim()
+    const portfolioId = overview?.portfolio?.portfolio_id
+    if (!symbol || !portfolioId) {
+      setError('Cannot create exit action: missing symbol or live portfolio id.')
+      return
+    }
+    const confirmed = window.confirm(`Create SELL exit decision for ${symbol}?`)
+    if (!confirmed) return
+    const busyKey = `exit:${symbol}`
+    setBusy(busyKey)
+    setError('')
+    setNotice('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/positions/exit-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portfolio_id: Number(portfolioId),
+          symbol,
+          reason: 'Manual sell from Live Portfolio Activity open-positions table',
+          auto_submit: false,
+        }),
+      })
+      if (!resp.ok) {
+        let msg = `Create exit action failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Create exit blocked'}: ${j.detail.reason_codes.join(', ')}`
+          } else if (j?.detail) {
+            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+          }
+        } catch {
+          // keep fallback message
+        }
+        throw new Error(msg)
+      }
+      const data = await resp.json()
+      const actionId = data?.action_id || 'new'
+      setNotice(`Exit decision created for ${symbol} (action ${actionId}). Use Committee revalidation then Submit.`)
+      await load()
+    } catch (e) {
+      setError(e.message || 'Create exit action failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load, overview?.portfolio?.portfolio_id])
 
   const kpis = overview?.account_kpis || {}
   const pending = overview?.pending_decisions || []
@@ -537,6 +592,7 @@ export default function LivePortfolioActivity() {
       </div>
 
       {error ? <div className="lpa-error">{error}</div> : null}
+      {notice ? <div className="lpa-subtle">{notice}</div> : null}
       {loading ? <div>Loading live portfolio activity...</div> : null}
 
       {!loading && (
@@ -645,6 +701,7 @@ export default function LivePortfolioActivity() {
                     <tr className={isStaleRevalidationState(d) ? 'lpa-row-stale' : ''}>
                       <td>
                         <div><b>{formatSymbolLabel(d.symbol, d.market_type)}</b> ({d.side})</div>
+                        <div>Intent: {d.action_intent || 'ENTRY'}{d.exit_type ? ` (${d.exit_type})` : ''}</div>
                         <div>Action: {d.action_id}</div>
                         <div>Created: {fmtTs(d.timestamps?.created_at)} ({fmtAge(d.timestamps?.created_at)} ago)</div>
                         {isNewDecision(d.timestamps?.created_at) ? <div className="lpa-subtle">NEW</div> : null}
@@ -895,6 +952,15 @@ export default function LivePortfolioActivity() {
                                   <div>SL: {exit.slStatus || '—'} {exit.slPrice != null ? `@ ${fmtNum(exit.slPrice, 4)}` : ''}</div>
                                 </div>
                               )}
+                              <div className="lpa-actions" style={{ marginTop: 8 }}>
+                                <button
+                                  className="lpa-btn lpa-btn-secondary"
+                                  disabled={busy === `exit:${symbol}`}
+                                  onClick={() => createExitAction(p)}
+                                >
+                                  {busy === `exit:${symbol}` ? 'Creating...' : 'Sell (create exit)'}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         )

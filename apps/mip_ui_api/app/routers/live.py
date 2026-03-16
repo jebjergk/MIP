@@ -178,6 +178,16 @@ class SmokeGateRequest(BaseModel):
     include_write_checks: bool = False
 
 
+class CreateExitActionRequest(BaseModel):
+    portfolio_id: int
+    symbol: str
+    qty: float | None = None
+    actor: str = "portfolio_manager"
+    reason: str | None = None
+    auto_submit: bool = False
+    force_refresh_1m: bool = True
+
+
 _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PENDING_OPEN_VALIDATION"},
     "PROPOSED": {"PENDING_OPEN_VALIDATION"},
@@ -3709,7 +3719,7 @@ def get_live_activity_overview(
         cur.execute(
             """
             select
-              la.ACTION_ID, la.PROPOSAL_ID, la.SYMBOL, la.SIDE, la.STATUS, la.COMPLIANCE_STATUS,
+              la.ACTION_ID, la.PROPOSAL_ID, la.SYMBOL, la.SIDE, la.ACTION_INTENT, la.EXIT_TYPE, la.STATUS, la.COMPLIANCE_STATUS,
               la.COMMITTEE_VERDICT, la.COMMITTEE_STATUS, la.COMMITTEE_REQUIRED, la.REASON_CODES,
               la.COMMITTEE_RUN_ID, la.COMMITTEE_COMPLETED_TS,
               cv.SIZE_FACTOR as COMMITTEE_SIZE_FACTOR,
@@ -3765,10 +3775,12 @@ def get_live_activity_overview(
             if not symbol:
                 continue
             status = (row.get("STATUS") or "").upper()
+            action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
+            is_exit = action_intent == "EXIT"
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
             has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
-            if has_active_order or (symbol in held_symbols):
+            if has_active_order or ((symbol in held_symbols) and not is_exit):
                 suppress_pending_symbols.add(symbol)
 
         for row in action_rows:
@@ -3806,6 +3818,8 @@ def get_live_activity_overview(
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
             submit_allowed = submit_allowed and page_actionable and (not blocked)
             in_position = symbol in held_symbols
+            action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
+            is_exit = action_intent == "EXIT"
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
             has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
@@ -3815,13 +3829,20 @@ def get_live_activity_overview(
                 or joint_decision.get("acceptable_early_exit_target_return") is not None
             )
 
-            if status != "EXECUTION_REQUESTED" and (not has_active_order) and not in_position and symbol not in suppress_pending_symbols:
+            if (
+                status != "EXECUTION_REQUESTED"
+                and (not has_active_order)
+                and (is_exit or not in_position)
+                and (is_exit or symbol not in suppress_pending_symbols)
+            ):
                 pending_decisions.append(
                     {
                         "action_id": row.get("ACTION_ID"),
                         "proposal_id": row.get("PROPOSAL_ID"),
                         "symbol": row.get("SYMBOL"),
                         "side": row.get("SIDE"),
+                        "action_intent": action_intent,
+                        "exit_type": row.get("EXIT_TYPE"),
                         "status": row.get("STATUS"),
                         "compliance_status": row.get("COMPLIANCE_STATUS"),
                         "committee_verdict": row.get("COMMITTEE_VERDICT"),
@@ -4013,6 +4034,201 @@ def get_live_activity_overview(
             },
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+    finally:
+        conn.close()
+
+
+@router.post("/positions/exit-action")
+def create_exit_action_from_position(req: CreateExitActionRequest):
+    symbol = str(req.symbol or "").upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="symbol is required.")
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select PORTFOLIO_ID, IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+              and coalesce(IS_ACTIVE, true) = true
+            limit 1
+            """,
+            (int(req.portfolio_id),),
+        )
+        cfg_rows = fetch_all(cur)
+        if not cfg_rows:
+            raise HTTPException(status_code=404, detail="Active live portfolio config not found.")
+        cfg = cfg_rows[0]
+        account_id = str(cfg.get("IBKR_ACCOUNT_ID") or "").strip()
+        validity_window_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
+        if not account_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "IBKR account missing for portfolio.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+            )
+
+        cur.execute(
+            """
+            select ACTION_ID, STATUS
+            from MIP.LIVE.LIVE_ACTIONS
+            where PORTFOLIO_ID = %s
+              and upper(coalesce(SYMBOL, '')) = %s
+              and upper(coalesce(ACTION_INTENT, iff(upper(coalesce(SIDE,''))='SELL','EXIT','ENTRY'))) = 'EXIT'
+              and STATUS in (
+                'PENDING_OPEN_VALIDATION','OPEN_CAUTION','OPEN_ELIGIBLE','PENDING_OPEN_STABILITY_REVIEW',
+                'READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED',
+                'INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED','EXECUTION_PARTIAL'
+              )
+            order by CREATED_AT desc
+            limit 1
+            """,
+            (int(req.portfolio_id), symbol),
+        )
+        existing_rows = fetch_all(cur)
+        if existing_rows:
+            existing = existing_rows[0]
+            return {
+                "ok": True,
+                "idempotent_replay": True,
+                "action_id": existing.get("ACTION_ID"),
+                "status": existing.get("STATUS"),
+                "symbol": symbol,
+                "message": "Existing active exit action reused.",
+            }
+
+        cur.execute(
+            """
+            select POSITION_QTY, AVG_COST, SNAPSHOT_TS
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'POSITION'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS = (
+                select max(SNAPSHOT_TS)
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'POSITION'
+                  and IBKR_ACCOUNT_ID = %s
+              )
+              and upper(SYMBOL) = upper(%s)
+            limit 1
+            """,
+            (account_id, account_id, symbol),
+        )
+        pos_rows = fetch_all(cur)
+        if not pos_rows:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "No broker position found for symbol.", "reason_codes": ["EXIT_POSITION_MISSING"]},
+            )
+        pos = pos_rows[0]
+        position_qty = float(pos.get("POSITION_QTY") or 0.0)
+        if abs(position_qty) <= 0:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "Position quantity is zero.", "reason_codes": ["EXIT_POSITION_MISSING"]},
+            )
+        side = "SELL" if position_qty > 0 else "BUY"
+        max_qty = abs(position_qty)
+        qty = float(req.qty) if req.qty is not None else max_qty
+        qty = max(min(abs(qty), max_qty), 0.0)
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail="qty must be > 0.")
+
+        proposed_price = None
+        cur.execute(
+            """
+            select CLOSE
+            from MIP.MART.MARKET_BARS
+            where SYMBOL = %s
+              and SOURCE = 'IBKR'
+              and INTERVAL_MINUTES = 1
+            order by TS desc
+            limit 1
+            """,
+            (symbol,),
+        )
+        bar_rows = fetch_all(cur)
+        if bar_rows and bar_rows[0].get("CLOSE") is not None:
+            proposed_price = float(bar_rows[0].get("CLOSE"))
+        else:
+            cur.execute(
+                """
+                select CLOSE
+                from MIP.MART.MARKET_BARS
+                where SYMBOL = %s
+                  and SOURCE = 'IBKR'
+                  and INTERVAL_MINUTES in (15, 60, 1440)
+                order by TS desc
+                limit 1
+                """,
+                (symbol,),
+            )
+            fallback_rows = fetch_all(cur)
+            if fallback_rows and fallback_rows[0].get("CLOSE") is not None:
+                proposed_price = float(fallback_rows[0].get("CLOSE"))
+        if proposed_price is None:
+            proposed_price = float(pos.get("AVG_COST") or 0.0) or None
+
+        action_id = str(uuid.uuid4())
+        reason_codes = ["MANUAL_EXIT_REQUESTED"]
+        reason_text = (req.reason or "Manual exit requested from open position").strip()
+        param_snapshot = {
+            "source": "BROKER_POSITION_EXIT",
+            "actor": req.actor,
+            "snapshot_ts": str(pos.get("SNAPSHOT_TS")) if pos.get("SNAPSHOT_TS") is not None else None,
+            "position_qty": position_qty,
+            "max_exit_qty": max_qty,
+            "requested_qty": qty,
+            "reason": reason_text,
+        }
+        cur.execute(
+            """
+            insert into MIP.LIVE.LIVE_ACTIONS (
+              ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON,
+              PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS, STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS,
+              PARAM_SNAPSHOT, REASON_CODES, COMMITTEE_REQUIRED, COMMITTEE_STATUS, CREATED_AT, UPDATED_AT
+            )
+            select
+              %s, null, %s, %s, %s, 'EXIT', 'MANUAL', %s,
+              %s, %s, null, 'READY_FOR_APPROVAL_FLOW', dateadd(second, %s, current_timestamp()), 'PENDING',
+              parse_json(%s), parse_json(%s), true, 'PENDING', current_timestamp(), current_timestamp()
+            """,
+            (
+                action_id,
+                int(req.portfolio_id),
+                symbol,
+                side,
+                reason_text,
+                qty,
+                proposed_price,
+                validity_window_sec,
+                json.dumps(param_snapshot),
+                json.dumps(reason_codes),
+            ),
+        )
+
+        result = {
+            "ok": True,
+            "action_id": action_id,
+            "status": "READY_FOR_APPROVAL_FLOW",
+            "symbol": symbol,
+            "side": side,
+            "action_intent": "EXIT",
+            "exit_type": "MANUAL",
+            "qty": qty,
+            "proposed_price": proposed_price,
+            "message": "Manual exit action created.",
+        }
+
+        if req.auto_submit:
+            submit_result = approve_and_submit_live_decision(
+                action_id,
+                ApproveAndSubmitLiveDecisionRequest(force_refresh_1m=req.force_refresh_1m),
+            )
+            result["auto_submit"] = submit_result
+
+        return result
     finally:
         conn.close()
 

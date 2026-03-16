@@ -1,6 +1,9 @@
 import json
 import math
+import os
+import subprocess
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -22,6 +25,88 @@ DAILY_PIPELINE_SP = "MIP.APP.SP_RUN_DAILY_PIPELINE"
 def run_sql(query: str):
     """Convenience wrapper to run a SQL statement and return a Snowpark DataFrame."""
     return session.sql(query)
+
+
+def _project_root() -> Path:
+    """Resolve repo root from MIP/streamlit_app.py."""
+    return Path(__file__).resolve().parents[1]
+
+
+def _parse_json_blob(text):
+    """Best-effort parse of JSON blob embedded in stdout/stderr."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    for marker in ("[", "{"):
+        idx = raw.find(marker)
+        if idx < 0:
+            continue
+        try:
+            return json.loads(raw[idx:])
+        except Exception:
+            continue
+    return None
+
+
+def _get_default_market_provider() -> str:
+    """Return configured default provider (IBKR/ALPHAVANTAGE/etc)."""
+    try:
+        rows = run_sql(
+            """
+            select upper(coalesce(CONFIG_VALUE, '')) as PROVIDER
+            from MIP.APP.APP_CONFIG
+            where CONFIG_KEY = 'MARKET_DATA_PROVIDER_DEFAULT'
+            limit 1
+            """
+        ).collect()
+        if rows:
+            return str(rows[0].get("PROVIDER") or "").upper()
+    except Exception:
+        return ""
+    return ""
+
+
+def _run_ib_manual_daily_job() -> tuple[bool, str]:
+    """
+    Run local IB manual daily job (ingest + catch-up) before daily pipeline.
+    Returns (ok, message).
+    """
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    runner = root / "cursorfiles" / "run_ib_manual_daily_job.py"
+    if not py.exists() or not runner.exists():
+        return (
+            False,
+            "IB daily job runtime not found (cursorfiles venv or runner script missing).",
+        )
+
+    cmd = [str(py), str(runner), "--target-date", "current_date()"]
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except Exception as exc:
+        return False, f"Failed to launch IB daily job: {exc}"
+
+    payload = _parse_json_blob(proc.stdout) or _parse_json_blob(proc.stderr)
+    if proc.returncode != 0:
+        detail = ""
+        if isinstance(payload, dict):
+            detail = str(payload.get("step") or payload.get("message") or "").strip()
+        if not detail:
+            detail = (proc.stderr or proc.stdout or "Unknown error").strip()[-500:]
+        return False, f"IB daily job failed. {detail}"
+    return True, "IB daily job completed."
 
 
 def to_pandas(df):
@@ -1724,10 +1809,15 @@ def render_admin_ops():
             st.write(task_schedule or "Unknown")
 
         if st.button("Run pipeline now"):
-            with st.spinner("Running SP_RUN_DAILY_PIPELINE..."):
+            with st.spinner("Running IB ingest and daily pipeline..."):
                 try:
+                    provider = _get_default_market_provider()
+                    if provider == "IBKR":
+                        ok, message = _run_ib_manual_daily_job()
+                        if not ok:
+                            raise RuntimeError(message)
                     run_sql(f"call {DAILY_PIPELINE_SP}()").collect()
-                    st.success("Pipeline triggered successfully.")
+                    st.success("Pipeline triggered successfully (IB ingest pre-step completed).")
                 except Exception as exc:
                     st.error(f"Failed to run pipeline: {exc}")
 

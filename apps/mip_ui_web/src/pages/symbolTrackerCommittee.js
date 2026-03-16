@@ -81,6 +81,18 @@ function marketTone(feats) {
   return 'tape still mixed'
 }
 
+function isHotNews(item) {
+  const badge = String(item?.meta?.badge || '').toUpperCase()
+  const severity = String(item?.severity || '').toUpperCase()
+  return badge === 'HOT' || badge === 'RISK' || severity === 'WARN'
+}
+
+function shortHeadline(item) {
+  const text = String(item?.label || item?.title || '').trim()
+  if (!text) return 'No headline text'
+  return text.length > 96 ? `${text.slice(0, 93)}...` : text
+}
+
 export function buildLiveState(tile, previousLive = null) {
   const bars = latestBars(tile)
   const last = bars[bars.length - 1] || {}
@@ -281,16 +293,32 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
     }, previousByAgent.get('MARKET_REGIME_AGENT')),
   )
 
-  const hasLiveNews = (liveState?.live_news || []).length > 0
+  const liveNews = Array.isArray(liveState?.live_news) ? liveState.live_news : []
+  const hasLiveNews = liveNews.length > 0
+  const latestNews = hasLiveNews ? liveNews[0] : null
+  const hotNews = hasLiveNews && liveNews.some((item) => isHotNews(item))
+  const latestTs = new Date(latestNews?.ts || 0).getTime()
+  const isFresh = Number.isFinite(latestTs) && (Date.now() - latestTs) <= (4 * 60 * 60 * 1000)
+  const newsBrief = hasLiveNews ? shortHeadline(latestNews) : null
   outputs.push(
     makeAgentOutput('NEWS_CATALYST_AGENT', symbol, {
-      stance: hasLiveNews ? 'CATALYST_PRESENT' : 'NO_RELIABLE_NEWS_INPUT',
-      reason_tags: hasLiveNews ? ['LIVE_NEWS_CONTEXT_AVAILABLE'] : ['NO_RELIABLE_NEWS_INPUT'],
-      action_bias: hasLiveNews ? 'WATCH' : 'NO_ACTION',
-      materiality_score: hasLiveNews ? 0.55 : 0.2,
-      short_text: hasLiveNews
-        ? 'Fresh catalyst context exists; keep it as a modifier, not the primary trade driver.'
-        : 'No reliable new catalyst this cycle; defer to tape and risk structure.',
+      stance: !hasLiveNews
+        ? 'NO_RELIABLE_NEWS_INPUT'
+        : hotNews
+          ? 'HOT_NEWS_CONTEXT'
+          : 'LOW_SIGNAL_NEWS',
+      reason_tags: !hasLiveNews
+        ? ['NO_RELIABLE_NEWS_INPUT']
+        : hotNews
+          ? ['HOT_NEWS_CONTEXT', isFresh ? 'FRESH_NEWS' : 'STALE_NEWS']
+          : ['LOW_SIGNAL_NEWS', isFresh ? 'FRESH_NEWS' : 'STALE_NEWS'],
+      action_bias: !hasLiveNews ? 'NO_ACTION' : hotNews ? 'WATCH' : 'HOLD_WITH_MONITORING',
+      materiality_score: !hasLiveNews ? 0.2 : hotNews ? 0.78 : 0.45,
+      short_text: !hasLiveNews
+        ? 'No reliable new catalyst this cycle; defer to tape and risk structure.'
+        : hotNews
+          ? `Hot news in flow (${isFresh ? 'fresh' : 'older'}): ${newsBrief}`
+          : `News flow looks low-signal (${isFresh ? 'fresh' : 'older'}): ${newsBrief}`,
     }, previousByAgent.get('NEWS_CATALYST_AGENT')),
   )
 

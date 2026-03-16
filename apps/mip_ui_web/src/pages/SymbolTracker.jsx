@@ -610,10 +610,16 @@ function feedDisplayLabel(item, formatSymbolLabel) {
   return formatSymbolLabel?.(item?.symbol, item?.market_type) || String(item?.symbol || '—')
 }
 
+function fmtReasonTag(value) {
+  const raw = String(value || 'NO_CHANGE').toUpperCase()
+  return raw.replaceAll('_', ' ')
+}
+
 function CommitteePanel({
   selectedSymbol,
   setSelectedSymbol,
   committeeBySymbol,
+  threadBySymbol,
   feed,
   watchlist,
   filters,
@@ -625,6 +631,7 @@ function CommitteePanel({
   const [showFilters, setShowFilters] = useState(false)
   const feedRef = useRef(null)
   const activeCommittee = selectedSymbol ? committeeBySymbol[selectedSymbol] : null
+  const activeThread = selectedSymbol ? (threadBySymbol[selectedSymbol] || []) : []
   const filteredWatchlist = watchlist.filter((row) => {
     if (filters.symbol !== 'ALL' && row.symbol !== filters.symbol) return false
     if (filters.onlyChanged && !row.changed_recently) return false
@@ -781,6 +788,21 @@ function CommitteePanel({
                 <p>{msg.short_text}</p>
               </article>
               ))}
+            {activeThread.length > 0 ? (
+              <div className="symbol-tracker-thread-history">
+                <b>Recent discussion updates</b>
+                {activeThread.map((entry) => (
+                  <div key={entry.id} className="symbol-tracker-thread-history-row">
+                    <span>{fmtTime(entry.ts)}</span>
+                    <span>
+                      <span className="symbol-tracker-thread-reason">{fmtReasonTag(entry.reason)}</span>
+                      {' '}
+                      {entry.text}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {(activeCommittee.disagreement_points || []).length > 0 ? (
               <div className="symbol-tracker-thread-disagreement">
                 <b>Disagreement points</b>
@@ -816,6 +838,7 @@ export default function SymbolTracker() {
   const [liveUpdatedAt, setLiveUpdatedAt] = useState(null)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [committeeBySymbol, setCommitteeBySymbol] = useState({})
+  const [committeeThreadBySymbol, setCommitteeThreadBySymbol] = useState({})
   const [committeeFeed, setCommitteeFeed] = useState([])
   const [committeeFilters, setCommitteeFilters] = useState({
     symbol: 'ALL',
@@ -853,6 +876,7 @@ export default function SymbolTracker() {
     const nextTiles = Array.isArray(nextData?.tiles) ? nextData.tiles : []
     if (nextTiles.length === 0) {
       setCommitteeBySymbol({})
+      setCommitteeThreadBySymbol({})
       setCommitteeFeed([])
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return
@@ -861,14 +885,27 @@ export default function SymbolTracker() {
     setCommitteeBySymbol((prevCommitteeMap) => {
       const nextCommitteeMap = {}
       const feedRows = []
+      const threadRowsBySymbol = {}
       for (const tile of nextTiles) {
         const symbol = String(tile?.symbol || '').toUpperCase()
         const prevCommittee = prevCommitteeMap[symbol]
         const liveState = buildLiveState(tile, prevCommittee?.live_state || null)
         const committee = evaluateCommittee(tile, liveState, prevCommittee)
         nextCommitteeMap[symbol] = committee
+        const hasMaterial = isMaterialUpdate(prevCommittee, committee)
+        threadRowsBySymbol[symbol] = {
+          id: `${symbol}_${Date.now()}_${Math.random()}`,
+          ts: committee.updated_at,
+          reason: hasMaterial
+            ? (committee?.latest_material_changes?.[0]?.reason || 'STATE_SHIFT')
+            : 'NO_CHANGE',
+          text: hasMaterial
+            ? `${committee.committee_stance} (${committee.committee_confidence}) - ${committee.headline_text}`
+            : `No material change. ${committee.headline_text}`,
+          material: hasMaterial,
+        }
 
-        if (isMaterialUpdate(prevCommittee, committee)) {
+        if (hasMaterial) {
           const alert = committee.committee_stance === 'ESCALATE'
             ? 'RED'
             : committee.committee_stance === 'THESIS_INTACT' && committee.top_reason_tags?.includes('IN_PROFIT')
@@ -909,6 +946,18 @@ export default function SymbolTracker() {
           return next.slice(0, 120)
         })
       }
+      setCommitteeThreadBySymbol((prev) => {
+        const next = { ...prev }
+        Object.entries(threadRowsBySymbol).forEach(([symbol, row]) => {
+          const prior = Array.isArray(next[symbol]) ? next[symbol] : []
+          const last = prior[0]
+          if (last?.text === row.text && (new Date(row.ts).getTime() - new Date(last.ts || 0).getTime()) < 120000) {
+            return
+          }
+          next[symbol] = [row, ...prior].slice(0, 16)
+        })
+        return next
+      })
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return nextCommitteeMap
     })
@@ -1140,6 +1189,7 @@ export default function SymbolTracker() {
           selectedSymbol={selectedSymbol}
           setSelectedSymbol={setSelectedSymbol}
           committeeBySymbol={committeeBySymbol}
+          threadBySymbol={committeeThreadBySymbol}
           feed={committeeFeed}
           watchlist={watchlist}
           filters={committeeFilters}

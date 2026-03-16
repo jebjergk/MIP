@@ -665,6 +665,39 @@
   color: #cbd5e1;
 }
 
+.symbol-tracker-thread-history {
+  border: 1px solid #243041;
+  border-radius: 8px;
+  padding: 0.4rem;
+  display: grid;
+  gap: 0.25rem;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+}
+
+.symbol-tracker-thread-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem;
+  border-top: 1px solid #1f2937;
+  padding-top: 0.2rem;
+}
+
+.symbol-tracker-thread-history-row span:first-child {
+  color: #94a3b8;
+}
+
+.symbol-tracker-thread-reason {
+  display: inline-block;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 0.02rem 0.35rem;
+  margin-right: 0.25rem;
+  color: #93c5fd;
+  font-size: 0.62rem;
+  line-height: 1.1;
+}
+
 .symbol-tracker-committee-empty {
   color: #94a3b8;
   font-size: 0.75rem;

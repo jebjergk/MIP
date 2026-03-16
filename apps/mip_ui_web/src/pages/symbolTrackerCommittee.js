@@ -13,6 +13,16 @@ const STANCE_SEVERITY = {
   UNKNOWN: 0,
 }
 
+const ACTION_PRIORITY = {
+  ADD_PROTECTION: 7,
+  TIGHTEN_PROTECTION: 6,
+  PARTIAL_DE_RISK: 5,
+  HOLD_WITH_MONITORING: 4,
+  WATCH: 3,
+  HOLD: 2,
+  NO_ACTION: 1,
+}
+
 function toNum(value) {
   const n = Number(value)
   return Number.isFinite(n) ? n : null
@@ -46,6 +56,29 @@ function classifyPattern(features) {
   if ((features.ret_5m ?? 0) > 0.004 && (features.ret_15m ?? 0) <= 0) return 'FAILED_BOUNCE'
   if (Math.abs(features.ret_15m ?? 0) < 0.002 && (features.range_expansion ?? 0) < 0.2) return 'CHOP_NOISE'
   return 'WEAK_DRIFT'
+}
+
+function fmtPct(value) {
+  const n = toNum(value)
+  if (n == null) return 'n/a'
+  return `${(n * 100).toFixed(2)}%`
+}
+
+function fmtBps(value) {
+  const n = toNum(value)
+  if (n == null) return 'n/a'
+  return `${(n * 10000).toFixed(0)} bps`
+}
+
+function pickActionRanked(actions) {
+  return [...new Set(actions)]
+    .sort((a, b) => (ACTION_PRIORITY[b] || 0) - (ACTION_PRIORITY[a] || 0))
+}
+
+function marketTone(feats) {
+  if ((feats.ret_15m ?? 0) > 0.007) return 'bid tone improving'
+  if ((feats.ret_15m ?? 0) < -0.007) return 'sellers in control'
+  return 'tape still mixed'
 }
 
 export function buildLiveState(tile, previousLive = null) {
@@ -182,8 +215,8 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       action_bias: underwater ? 'WATCH' : 'HOLD',
       materiality_score: underwater ? 0.68 : 0.4,
       short_text: underwater
-        ? 'Thesis still open, but position is underwater and not progressing toward objective.'
-        : 'Position behavior remains acceptable relative to entry objective.',
+        ? `Position still open, but P/L is underwater (${fmtPct(feats.distance_to_entry_pct)} from entry) with limited objective progress.`
+        : `Progress is acceptable so far (${fmtPct(feats.distance_to_entry_pct)} from entry), thesis remains workable.`,
     }, previousByAgent.get('POSITION_MANAGER_AGENT')),
   )
 
@@ -206,10 +239,10 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       action_bias: riskScore >= 0.8 ? 'ADD_PROTECTION' : riskScore >= 0.5 ? 'HOLD_WITH_MONITORING' : 'NO_ACTION',
       materiality_score: riskScore,
       short_text: riskScore >= 0.8
-        ? 'Risk pressure is elevated: asymmetric downside with insufficient protection.'
+        ? `Risk pressure elevated: ${isProtected ? 'protection is light' : 'position is unprotected'} while volatility is ${fmtPct(feats.vol_15m)}.`
         : riskScore >= 0.5
-          ? 'Risk pressure is rising; maintain tighter monitoring and protection readiness.'
-          : 'Risk is currently contained versus visible intraday volatility.',
+          ? `Risk building incrementally (${fmtBps(feats.deviation_from_h5_lower_band)} vs lower cone), keep protection readiness high.`
+          : 'Risk remains contained versus current intraday volatility profile.',
     }, previousByAgent.get('RISK_AGENT')),
   )
 
@@ -230,8 +263,8 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       action_bias: pathInside === false ? 'WATCH' : 'HOLD',
       materiality_score: trainingMateriality,
       short_text: pathInside === false
-        ? 'Live path moved outside the expected cone boundary; this is now abnormal versus trained behavior.'
-        : 'Live path remains inside trained range, but follow-through quality should keep being monitored.',
+        ? `Path is below expected cone; deviation now ${fmtBps(feats.deviation_from_h5_median)} vs median and behaving abnormally.`
+        : `Path remains inside trained range (${fmtBps(feats.deviation_from_h5_median)} vs median), but follow-through quality is uneven.`,
     }, previousByAgent.get('TRAINING_EXPECTATION_AGENT')),
   )
 
@@ -243,8 +276,8 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       action_bias: marketStance === 'REGIME_AGAINST' ? 'WATCH' : 'HOLD',
       materiality_score: marketStance === 'REGIME_AGAINST' ? 0.7 : 0.4,
       short_text: marketStance === 'REGIME_AGAINST'
-        ? 'Current intraday regime is unsupportive for this position direction.'
-        : 'Market regime is not actively opposing the current thesis.',
+        ? `Regime is leaning against this direction; ${marketTone(feats)} and support is weak.`
+        : `Regime is not blocking the thesis; ${marketTone(feats)} for now.`,
     }, previousByAgent.get('MARKET_REGIME_AGENT')),
   )
 
@@ -256,8 +289,8 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       action_bias: hasLiveNews ? 'WATCH' : 'NO_ACTION',
       materiality_score: hasLiveNews ? 0.55 : 0.2,
       short_text: hasLiveNews
-        ? 'Recent symbol news is present and should be weighed against current tape quality.'
-        : 'No reliable fresh catalyst input in this cycle; continue price-action-led monitoring.',
+        ? 'Fresh catalyst context exists; keep it as a modifier, not the primary trade driver.'
+        : 'No reliable new catalyst this cycle; defer to tape and risk structure.',
     }, previousByAgent.get('NEWS_CATALYST_AGENT')),
   )
 
@@ -268,7 +301,7 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       reason_tags: [pattern, (feats.ret_15m ?? 0) < 0 ? 'WEAK_FOLLOW_THROUGH' : 'FOLLOW_THROUGH_OK'],
       action_bias: ['RISK_OFF_BREAKDOWN', 'FAILED_BOUNCE', 'VOLATILITY_SPIKE'].includes(pattern) ? 'PARTIAL_DE_RISK' : 'HOLD_WITH_MONITORING',
       materiality_score: ['RISK_OFF_BREAKDOWN', 'VOLATILITY_SPIKE'].includes(pattern) ? 0.82 : 0.52,
-      short_text: `Intraday state is ${pattern.replaceAll('_', ' ').toLowerCase()}, with signal derived from returns, volatility, and momentum decay.`,
+      short_text: `Intraday pattern prints ${pattern.replaceAll('_', ' ').toLowerCase()} (ret15=${fmtPct(feats.ret_15m)}, vol=${fmtPct(feats.vol_15m)}).`,
     }, previousByAgent.get('INTRADAY_PATTERN_AGENT')),
   )
 
@@ -287,13 +320,16 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
     .map(([tag]) => tag)
-  const actions_to_consider = [...new Set(outputs.map((o) => o.action_bias))]
+  const actions_to_consider = pickActionRanked(outputs.map((o) => o.action_bias))
 
   const disagreement_points = []
   const training = outputs.find((o) => o.agent_name === 'TRAINING_EXPECTATION_AGENT')
   const risk = outputs.find((o) => o.agent_name === 'RISK_AGENT')
   if (training?.stance !== 'BELOW_LOWER_BAND' && ['RISK_HIGH', 'RISK_ELEVATED'].includes(risk?.stance)) {
     disagreement_points.push('Training range remains partially valid, but risk pressure is rising faster than path quality.')
+  }
+  if (pattern === 'TREND_CONTINUATION' && ['RISK_HIGH', 'RISK_ELEVATED'].includes(risk?.stance)) {
+    disagreement_points.push('Tape is attempting continuation, but downside asymmetry still dominates the risk vote.')
   }
 
   const key_points_for_human = [
@@ -322,10 +358,10 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
     disagreement_points,
     key_points_for_human,
     headline_text: dominantRisk
-      ? 'Risk pressure is now dominant relative to trained drift.'
+      ? 'Committee tilt: risk pressure is dominating the setup.'
       : elevated
-        ? 'Training context holds, but live quality requires close observation.'
-        : 'Current behavior remains broadly aligned with thesis.',
+        ? 'Committee tilt: setup remains viable, but quality has softened.'
+        : 'Committee tilt: behavior is mostly aligned with thesis.',
     latest_material_changes: changeDetected ? [{
       ts: new Date().toISOString(),
       type: 'COMMITTEE_CHANGE',

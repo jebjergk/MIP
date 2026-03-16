@@ -529,11 +529,11 @@
 }
 
 .symbol-tracker-feed-row--alert-red {
-  animation: committeeAlertRed 1s ease-in-out 3;
+  animation: committeeAlertRed 2.4s ease-in-out infinite;
 }
 
 .symbol-tracker-feed-row--alert-green {
-  animation: committeeAlertGreen 1s ease-in-out 3;
+  animation: committeeAlertGreen 2.4s ease-in-out infinite;
 }
 
 .symbol-tracker-feed-meta {

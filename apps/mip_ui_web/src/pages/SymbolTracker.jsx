@@ -599,17 +599,8 @@ function fmtTime(ts) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function ageMs(ts) {
-  if (!ts) return Number.POSITIVE_INFINITY
-  const t = new Date(ts).getTime()
-  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY
-  return Date.now() - t
-}
-
 function feedAlertClass(item) {
   const alertTone = String(item?.alert || 'NONE').toUpperCase()
-  const isRecent = ageMs(item?.ts) <= 90000
-  if (!isRecent) return ''
   if (alertTone === 'RED') return 'symbol-tracker-feed-row--alert-red'
   if (alertTone === 'GREEN') return 'symbol-tracker-feed-row--alert-green'
   return ''

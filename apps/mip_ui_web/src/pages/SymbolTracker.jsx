@@ -635,9 +635,15 @@ function CommitteePanel({
     return true
   })
 
-  const filteredFeed = feed.filter((item) => (
-    filters.symbol === 'ALL' || item.symbol === filters.symbol
-  ))
+  const filteredFeed = [...feed]
+    .filter((item) => (
+      filters.symbol === 'ALL' || item.symbol === filters.symbol
+    ))
+    .sort((a, b) => {
+      const at = new Date(a?.ts || 0).getTime()
+      const bt = new Date(b?.ts || 0).getTime()
+      return bt - at
+    })
 
   useEffect(() => {
     const el = feedRef.current
@@ -886,10 +892,10 @@ export default function SymbolTracker() {
         setCommitteeFeed((prevFeed) => [...feedRows, ...prevFeed].slice(0, 120))
       } else {
         setCommitteeFeed((prevFeed) => {
-          const last = prevFeed[prevFeed.length - 1]
-          const lastTs = new Date(last?.ts || 0).getTime()
+          const first = prevFeed[0]
+          const firstTs = new Date(first?.ts || 0).getTime()
           const nowTs = new Date(nextData?.updated_at || new Date().toISOString()).getTime()
-          const recentHeartbeat = last?.agent === 'COMMITTEE' && Number.isFinite(lastTs) && (nowTs - lastTs) < 120000
+          const recentHeartbeat = first?.agent === 'COMMITTEE' && Number.isFinite(firstTs) && (nowTs - firstTs) < 120000
           if (recentHeartbeat) return prevFeed
           const next = [{
             id: `HEARTBEAT_${Date.now()}`,

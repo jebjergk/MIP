@@ -398,11 +398,12 @@
   background: #060d1a;
   padding: 0.8rem;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
   gap: 0.75rem;
   position: sticky;
   top: 0.75rem;
-  max-height: calc(100vh - 1.5rem);
-  overflow: auto;
+  height: calc(100vh - 1.5rem);
+  overflow: hidden;
 }
 
 .symbol-tracker-committee-head {
@@ -420,6 +421,8 @@
 .symbol-tracker-committee-context-ts {
   color: #93c5fd;
   font-size: 0.74rem;
+  display: grid;
+  gap: 0.1rem;
 }
 
 .symbol-tracker-committee-filters {
@@ -451,6 +454,7 @@
   padding: 0.5rem;
   display: grid;
   gap: 0.4rem;
+  min-height: 0;
 }
 
 .symbol-tracker-committee-title {
@@ -462,8 +466,9 @@
 .symbol-tracker-committee-feed {
   display: grid;
   gap: 0.35rem;
-  max-height: 180px;
   overflow: auto;
+  min-height: 0;
+  align-content: start;
 }
 
 .symbol-tracker-feed-row {
@@ -473,6 +478,36 @@
   background: #0a1221;
   display: grid;
   gap: 0.25rem;
+}
+
+@keyframes committeeAlertRed {
+  0%, 100% {
+    border-color: #7f1d1d;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+  50% {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.65);
+  }
+}
+
+@keyframes committeeAlertGreen {
+  0%, 100% {
+    border-color: #14532d;
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+  50% {
+    border-color: #22c55e;
+    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.55);
+  }
+}
+
+.symbol-tracker-feed-row--alert-red {
+  animation: committeeAlertRed 1s ease-in-out 3;
+}
+
+.symbol-tracker-feed-row--alert-green {
+  animation: committeeAlertGreen 1s ease-in-out 3;
 }
 
 .symbol-tracker-feed-meta {
@@ -490,8 +525,9 @@
 .symbol-tracker-watchlist {
   display: grid;
   gap: 0.35rem;
-  max-height: 190px;
   overflow: auto;
+  min-height: 0;
+  align-content: start;
 }
 
 .symbol-tracker-watch-row {
@@ -541,6 +577,9 @@
 .symbol-tracker-thread {
   display: grid;
   gap: 0.4rem;
+  overflow: auto;
+  min-height: 0;
+  align-content: start;
 }
 
 .symbol-tracker-thread-summary {
@@ -594,6 +633,8 @@
 
   .symbol-tracker-committee {
     position: static;
-    max-height: none;
+    height: auto;
+    overflow: visible;
+    grid-template-rows: auto;
   }
 }

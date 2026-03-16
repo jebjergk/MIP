@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ComposedChart,
   Line,
@@ -596,7 +596,23 @@ function fmtTime(ts) {
   if (!ts) return '—'
   const d = new Date(ts)
   if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function ageMs(ts) {
+  if (!ts) return Number.POSITIVE_INFINITY
+  const t = new Date(ts).getTime()
+  if (Number.isNaN(t)) return Number.POSITIVE_INFINITY
+  return Date.now() - t
+}
+
+function feedAlertClass(item) {
+  const alertTone = String(item?.alert || 'NONE').toUpperCase()
+  const isRecent = ageMs(item?.ts) <= 90000
+  if (!isRecent) return ''
+  if (alertTone === 'RED') return 'symbol-tracker-feed-row--alert-red'
+  if (alertTone === 'GREEN') return 'symbol-tracker-feed-row--alert-green'
+  return ''
 }
 
 function CommitteePanel({
@@ -609,7 +625,9 @@ function CommitteePanel({
   setFilters,
   formatSymbolLabel,
   contextUpdatedAt,
+  liveUpdatedAt,
 }) {
+  const feedRef = useRef(null)
   const activeCommittee = selectedSymbol ? committeeBySymbol[selectedSymbol] : null
   const filteredWatchlist = watchlist.filter((row) => {
     if (filters.symbol !== 'ALL' && row.symbol !== filters.symbol) return false
@@ -625,12 +643,19 @@ function CommitteePanel({
     filters.symbol === 'ALL' || item.symbol === filters.symbol
   ))
 
+  useEffect(() => {
+    const el = feedRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [filteredFeed.length])
+
   return (
     <aside className="symbol-tracker-committee">
       <div className="symbol-tracker-committee-head">
         <h3>Live Committee / Observer</h3>
         <div className="symbol-tracker-committee-context-ts">
-          Context: {fmtTime(contextUpdatedAt)}
+          <div>Context reload: {fmtTime(contextUpdatedAt)}</div>
+          <div>Live updated: {fmtTime(liveUpdatedAt)}</div>
         </div>
       </div>
 
@@ -675,10 +700,10 @@ function CommitteePanel({
 
       <section className="symbol-tracker-committee-section">
         <div className="symbol-tracker-committee-title">Live Committee Feed</div>
-        <div className="symbol-tracker-committee-feed">
+        <div ref={feedRef} className="symbol-tracker-committee-feed">
           {filteredFeed.length === 0 ? <div className="symbol-tracker-committee-empty">No material changes yet.</div> : null}
           {filteredFeed.map((item) => (
-            <div key={item.id} className="symbol-tracker-feed-row">
+            <div key={item.id} className={`symbol-tracker-feed-row ${feedAlertClass(item)}`}>
               <div className="symbol-tracker-feed-meta">
                 <span>{fmtTime(item.ts)}</span>
                 <span>{item.symbol}</span>
@@ -767,6 +792,7 @@ export default function SymbolTracker() {
   const [error, setError] = useState('')
   const [data, setData] = useState({ tiles: [], updated_at: null })
   const [contextReloadAt, setContextReloadAt] = useState(null)
+  const [liveUpdatedAt, setLiveUpdatedAt] = useState(null)
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [committeeBySymbol, setCommitteeBySymbol] = useState({})
   const [committeeFeed, setCommitteeFeed] = useState([])
@@ -807,6 +833,7 @@ export default function SymbolTracker() {
     if (nextTiles.length === 0) {
       setCommitteeBySymbol({})
       setCommitteeFeed([])
+      setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return
     }
 
@@ -816,12 +843,16 @@ export default function SymbolTracker() {
       for (const tile of nextTiles) {
         const symbol = String(tile?.symbol || '').toUpperCase()
         const prevCommittee = prevCommitteeMap[symbol]
-        const firstPrevAgent = prevCommittee?.agent_messages?.[0] || null
-        const liveState = buildLiveState(tile, firstPrevAgent?.live_state || null)
+        const liveState = buildLiveState(tile, prevCommittee?.live_state || null)
         const committee = evaluateCommittee(tile, liveState, prevCommittee)
         nextCommitteeMap[symbol] = committee
 
         if (isMaterialUpdate(prevCommittee, committee)) {
+          const alert = committee.committee_stance === 'ESCALATE'
+            ? 'RED'
+            : committee.committee_stance === 'THESIS_INTACT' && committee.top_reason_tags?.includes('IN_PROFIT')
+              ? 'GREEN'
+              : 'NONE'
           for (const agentMessage of committee.agent_messages || []) {
             if (!agentMessage.change_detected || (agentMessage.materiality_score ?? 0) < 0.55) continue
             feedRows.push({
@@ -830,13 +861,15 @@ export default function SymbolTracker() {
               symbol,
               agent: agentMessage.agent_name.replaceAll('_', ' '),
               text: agentMessage.short_text,
+              alert,
             })
           }
         }
       }
       if (feedRows.length > 0) {
-        setCommitteeFeed((prevFeed) => [...feedRows, ...prevFeed].slice(0, 120))
+        setCommitteeFeed((prevFeed) => [...prevFeed, ...feedRows].slice(-120))
       }
+      setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return nextCommitteeMap
     })
   }, [])
@@ -857,6 +890,7 @@ export default function SymbolTracker() {
       const payload = await resp.json()
       setData(payload)
       setContextReloadAt(new Date().toISOString())
+      setLiveUpdatedAt(payload?.updated_at || new Date().toISOString())
       if (!selectedSymbol && payload?.tiles?.[0]?.symbol) {
         setSelectedSymbol(String(payload.tiles[0].symbol).toUpperCase())
       }
@@ -1068,6 +1102,7 @@ export default function SymbolTracker() {
           setFilters={setCommitteeFilters}
           formatSymbolLabel={formatSymbolLabel}
           contextUpdatedAt={contextReloadAt}
+          liveUpdatedAt={liveUpdatedAt}
         />
       </div>
     </div>

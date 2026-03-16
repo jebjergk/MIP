@@ -329,6 +329,10 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
       type: 'COMMITTEE_CHANGE',
       reason: newMajorReasonTag || 'STATE_SHIFT',
     }] : [],
+    pattern_label: pattern,
+    inside_cone: feats.inside_cone,
+    risk_pressure_level: risk?.stance || 'RISK_CONTAINED',
+    live_state: liveState,
     agent_messages: outputs,
     updated_at: new Date().toISOString(),
     watchlist_priority: STANCE_SEVERITY[committee_stance] || 0,
@@ -340,12 +344,21 @@ export function isMaterialUpdate(previousCommittee, nextCommittee) {
   if (!previousCommittee) return true
   if (previousCommittee.committee_stance !== nextCommittee.committee_stance) return true
   if (previousCommittee.committee_confidence !== nextCommittee.committee_confidence) return true
+  if (previousCommittee.pattern_label !== nextCommittee.pattern_label) return true
+  if (previousCommittee.inside_cone !== nextCommittee.inside_cone) return true
+  if (previousCommittee.risk_pressure_level !== nextCommittee.risk_pressure_level) return true
   const prevTag = previousCommittee.top_reason_tags?.[0]
   const nextTag = nextCommittee.top_reason_tags?.[0]
   if (prevTag !== nextTag) return true
   const prevAction = previousCommittee.actions_to_consider?.[0]
   const nextAction = nextCommittee.actions_to_consider?.[0]
   if (prevAction !== nextAction) return true
+  const prevPrice = toNum(previousCommittee?.live_state?.last_price)
+  const nextPrice = toNum(nextCommittee?.live_state?.last_price)
+  if (prevPrice != null && nextPrice != null && prevPrice !== 0) {
+    const drift = Math.abs((nextPrice / prevPrice) - 1)
+    if (drift >= 0.0035) return true
+  }
   return false
 }
 

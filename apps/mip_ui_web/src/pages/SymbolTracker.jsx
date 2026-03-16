@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ComposedChart,
   Line,
@@ -79,6 +79,51 @@ function eventStyle(eventType) {
   if (t === 'FILL') return { color: '#34d399', glyph: 'F', anchor: 'bottom' }
   if (t === 'ENTRY') return { color: '#a78bfa', glyph: 'E', anchor: 'bottom' }
   return { color: '#94a3b8', glyph: '•', anchor: 'top' }
+}
+
+function mergeIbLiveRows(prevData, livePayload) {
+  if (!prevData || !Array.isArray(prevData.tiles)) return prevData
+  const rows = Array.isArray(livePayload?.rows) ? livePayload.rows : []
+  if (rows.length === 0) return prevData
+  const bySymbol = new Map(rows.map((r) => [String(r.symbol || '').toUpperCase(), r]))
+  const intervalMinutes = Number(livePayload?.interval_minutes)
+  const tiles = prevData.tiles.map((tile) => {
+    const symbol = String(tile?.symbol || '').toUpperCase()
+    const live = bySymbol.get(symbol)
+    if (!live || !Array.isArray(live.bars) || live.bars.length === 0) return tile
+    const bars = live.bars
+    const currentPrice = Number(live.current_price)
+    const resolvedCurrent = Number.isFinite(currentPrice)
+      ? currentPrice
+      : Number(bars[bars.length - 1]?.close)
+    const entry = Number(tile?.entry_price)
+    const qty = Number(tile?.quantity)
+    let unrealized = tile?.unrealized_pnl
+    if (Number.isFinite(resolvedCurrent) && Number.isFinite(entry) && Number.isFinite(qty)) {
+      unrealized = tile?.side === 'SHORT'
+        ? (entry - resolvedCurrent) * qty
+        : (resolvedCurrent - entry) * qty
+    }
+    return {
+      ...tile,
+      current_price: Number.isFinite(resolvedCurrent) ? resolvedCurrent : tile?.current_price,
+      unrealized_pnl: unrealized,
+      chart: {
+        ...(tile?.chart || {}),
+        interval_minutes: Number.isFinite(intervalMinutes) ? intervalMinutes : tile?.chart?.interval_minutes,
+        bars,
+      },
+      overlays: {
+        ...(tile?.overlays || {}),
+        current: Number.isFinite(resolvedCurrent) ? resolvedCurrent : tile?.overlays?.current,
+      },
+    }
+  })
+  return {
+    ...prevData,
+    tiles,
+    updated_at: livePayload?.updated_at || new Date().toISOString(),
+  }
 }
 
 function solveLinearSystem(matrix, vector) {
@@ -545,7 +590,31 @@ export default function SymbolTracker() {
   const [error, setError] = useState('')
   const [data, setData] = useState({ tiles: [], updated_at: null })
 
+  const fetchIbLive = useCallback(async (tiles, selectedMode) => {
+    const symbols = (Array.isArray(tiles) ? tiles : [])
+      .map((t) => ({
+        symbol: t?.symbol,
+        market_type: t?.market_type,
+      }))
+      .filter((t) => t.symbol)
+    if (symbols.length === 0) return null
+    const body = {
+      mode: selectedMode,
+      intraday_interval_minutes: 60,
+      window_bars: 120,
+      symbols,
+    }
+    const resp = await fetch(`${API_BASE}/symbol-tracker/ib-live`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!resp.ok) throw new Error(`IB live refresh failed (${resp.status})`)
+    return resp.json()
+  }, [])
+
   const load = useCallback(async () => {
+    setLoading(true)
     setError('')
     try {
       const params = new URLSearchParams({
@@ -558,15 +627,36 @@ export default function SymbolTracker() {
       const resp = await fetch(`${API_BASE}/symbol-tracker/tiles?${params.toString()}`)
       if (!resp.ok) throw new Error(`Failed to load symbol tracker (${resp.status})`)
       const payload = await resp.json()
-      setData(payload)
+      try {
+        const ibPayload = await fetchIbLive(payload?.tiles || [], mode)
+        setData(ibPayload ? mergeIbLiveRows(payload, ibPayload) : payload)
+      } catch {
+        setData(payload)
+      }
     } catch (e) {
       setError(e.message || 'Failed to load symbol tracker data.')
     } finally {
       setLoading(false)
     }
-  }, [mode, chartStyle, horizonBars, projectionMode])
+  }, [mode, chartStyle, horizonBars, projectionMode, fetchIbLive])
 
-  useVisibleInterval(load, 30000)
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const refreshIbOnly = useCallback(async () => {
+    try {
+      setError('')
+      const ibPayload = await fetchIbLive(data?.tiles || [], mode)
+      if (ibPayload) {
+        setData((prev) => mergeIbLiveRows(prev, ibPayload))
+      }
+    } catch (e) {
+      setError(e.message || 'IB live refresh failed.')
+    }
+  }, [data?.tiles, fetchIbLive, mode])
+
+  useVisibleInterval(refreshIbOnly, 45000)
 
   const tiles = useMemo(() => {
     let rows = Array.isArray(data?.tiles) ? [...data.tiles] : []

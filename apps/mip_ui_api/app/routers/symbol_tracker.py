@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 import json
+import subprocess
+from pathlib import Path
 from statistics import pstdev
 from typing import Any, Iterable
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from app.db import fetch_all, get_connection
 
@@ -18,6 +20,113 @@ _VOL_ABOVE_RATIO = 1.35
 _THESIS_STOP_BUFFER_PCT = 0.015
 _THESIS_EDGE_BUFFER_RATIO = 0.10
 _THESIS_OUTSIDE_WARN_MULT = 0.75
+
+
+def _project_root() -> Path:
+    path = Path(__file__).resolve()
+    for parent in (path, *path.parents):
+        if (parent / "cursorfiles").exists():
+            return parent
+    return path.parents[5]
+
+
+def _parse_json_payload(stdout: str, stderr: str) -> dict[str, Any]:
+    for stream in (stdout or "", stderr or ""):
+        idx = stream.find("{")
+        if idx < 0:
+            continue
+        try:
+            value = json.loads(stream[idx:])
+            if isinstance(value, dict):
+                return value
+        except Exception:
+            continue
+    return {}
+
+
+def _normalize_ib_symbol(symbol: str) -> str:
+    raw = str(symbol or "").strip().upper()
+    if len(raw) == 6 and "/" not in raw and raw.isalpha():
+        return f"{raw[:3]}/{raw[3:]}"
+    return raw
+
+
+def _infer_ib_market_type(symbol: str, market_type: str | None) -> str:
+    mt = str(market_type or "").upper().strip()
+    if mt in {"FX", "CASH", "FOREX"}:
+        return "FX"
+    if "/" in str(symbol or ""):
+        return "FX"
+    return "STOCK"
+
+
+def _run_agent_ibkr_live_bars(
+    symbol_specs: list[dict[str, str]],
+    *,
+    interval_minutes: int,
+    window_bars: int,
+    timeout_sec: int = 60,
+) -> dict[str, Any]:
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "fetch_ibkr_live_bars.py"
+    if not py.exists() or not script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="IBKR live fetch runtime not found (cursorfiles venv/script missing).",
+        )
+
+    symbols: list[str] = []
+    market_types: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for spec in symbol_specs:
+        symbol = _normalize_ib_symbol(spec.get("symbol") or "")
+        if not symbol:
+            continue
+        market_type = _infer_ib_market_type(symbol, spec.get("market_type"))
+        key = (symbol, market_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        symbols.append(symbol)
+        market_types.append(market_type)
+
+    if not symbols:
+        return {"status": "SUCCESS", "symbols": []}
+
+    cmd = [
+        str(py),
+        str(script),
+        "--symbols",
+        ",".join(symbols),
+        "--market-types",
+        ",".join(market_types),
+        "--interval-minutes",
+        str(interval_minutes),
+        "--window-bars",
+        str(window_bars),
+    ]
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec,
+    )
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    payload = _parse_json_payload(stdout, stderr)
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "IBKR live bar fetch failed.",
+                "stdout": stdout[-2000:],
+                "stderr": stderr[-2000:],
+                "payload": payload or None,
+            },
+        )
+    return payload or {"status": "SUCCESS", "symbols": []}
 
 
 def _to_float(value: Any) -> float | None:
@@ -307,6 +416,84 @@ def _thesis_status(
         if move_from_entry is not None and expected_move is not None and expected_move > 0 and move_from_entry >= (2.0 * expected_move):
             return {"status": "INVALIDATED", "reason": "Live move materially exceeded trained move profile."}
     return {"status": "INVALIDATED", "reason": "Live price materially diverged from trained expectation range."}
+
+
+@router.post("/ib-live")
+def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=dict)):
+    mode = str(payload.get("mode") or "intraday").lower()
+    if mode not in {"intraday", "daily"}:
+        mode = "intraday"
+    interval_minutes = 1440 if mode == "daily" else int(payload.get("intraday_interval_minutes") or 60)
+    if mode == "intraday" and interval_minutes not in _INTRADAY_INTERVALS:
+        interval_minutes = 60
+    window_cap = 300 if mode == "daily" else 400
+    window_bars = int(payload.get("window_bars") or 120)
+    window_bars = max(30, min(window_bars, window_cap))
+
+    raw_symbols = payload.get("symbols") or []
+    symbol_specs: list[dict[str, str]] = []
+    if isinstance(raw_symbols, list):
+        for item in raw_symbols:
+            if isinstance(item, dict):
+                symbol_specs.append(
+                    {
+                        "symbol": str(item.get("symbol") or ""),
+                        "market_type": str(item.get("market_type") or ""),
+                    }
+                )
+            elif item is not None:
+                symbol_specs.append({"symbol": str(item), "market_type": ""})
+
+    ib_payload = _run_agent_ibkr_live_bars(
+        symbol_specs,
+        interval_minutes=interval_minutes,
+        window_bars=window_bars,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for item in ib_payload.get("symbols") or []:
+        symbol = _normalize_ib_symbol(item.get("symbol") or "")
+        if not symbol:
+            continue
+        bars_raw = item.get("bars") if isinstance(item.get("bars"), list) else []
+        bars = []
+        for b in bars_raw[-window_bars:]:
+            if not isinstance(b, dict):
+                continue
+            bars.append(
+                {
+                    "ts": _iso(b.get("ts")),
+                    "open": _to_float(b.get("open")),
+                    "high": _to_float(b.get("high")),
+                    "low": _to_float(b.get("low")),
+                    "close": _to_float(b.get("close")),
+                    "volume": _to_float(b.get("volume")),
+                }
+            )
+        current_price = _to_float(item.get("current_price"))
+        if current_price is None and bars:
+            current_price = bars[-1].get("close")
+        rows.append(
+            {
+                "symbol": symbol,
+                "market_type": _infer_ib_market_type(symbol, item.get("market_type")),
+                "status": str(item.get("status") or "SUCCESS"),
+                "error": item.get("error"),
+                "bars": bars,
+                "current_price": current_price,
+                "last_bar_ts": bars[-1]["ts"] if bars else None,
+            }
+        )
+
+    return {
+        "ok": True,
+        "source": "IBKR_DIRECT",
+        "mode": mode,
+        "interval_minutes": interval_minutes,
+        "window_bars": window_bars,
+        "rows": rows,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.get("/tiles")

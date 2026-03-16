@@ -6007,11 +6007,23 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         pos_rows = fetch_all(cur)
         open_positions = int((pos_rows[0] or {}).get("OPEN_POSITIONS") or 0)
 
+        side = str(action.get("SIDE") or "").upper()
+        action_intent = _normalize_action_intent(side, action.get("ACTION_INTENT"))
+        exit_type = str(action.get("EXIT_TYPE") or "").upper() or None
+        is_exit = action_intent == "EXIT"
+
         max_positions = cfg.get("MAX_POSITIONS")
-        if max_positions is not None and open_positions >= int(max_positions):
+        if not is_exit and max_positions is not None and open_positions >= int(max_positions):
             reason_codes.append("MAX_POSITIONS_EXCEEDED")
 
         proposed_qty = action.get("PROPOSED_QTY")
+        if is_exit and (proposed_qty is None or float(proposed_qty) <= 0):
+            broker_truth_for_exit = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL")))
+            symbol_position_qty = float(broker_truth_for_exit.get("symbol_position_qty") or 0.0)
+            if abs(symbol_position_qty) <= 0:
+                reason_codes.append("EXIT_POSITION_MISSING")
+            else:
+                proposed_qty = abs(symbol_position_qty)
         px = action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE")
         if proposed_qty is None or px is None:
             reason_codes.append("MISSING_NOTIONAL_INPUT")
@@ -6020,7 +6032,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             est_notional = abs(float(proposed_qty) * float(px))
 
         max_position_pct = cfg.get("MAX_POSITION_PCT")
-        if est_notional is not None and nav_eur and max_position_pct is not None and nav_eur > 0:
+        if not is_exit and est_notional is not None and nav_eur and max_position_pct is not None and nav_eur > 0:
             if (est_notional / nav_eur) > float(max_position_pct):
                 reason_codes.append("MAX_POSITION_PCT_EXCEEDED")
 
@@ -6105,7 +6117,6 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         order_id = str(uuid.uuid4())
         entry_price = float(action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"))
         qty_ordered = float(proposed_qty)
-        side = str(action.get("SIDE") or "").upper()
         exit_side = "SELL" if side == "BUY" else "BUY"
         adapter_mode = str(cfg.get("ADAPTER_MODE") or "PAPER").upper()
         execution_mode = str(os.getenv("LIVE_EXECUTION_MODE", "AUTO")).upper()
@@ -6155,7 +6166,11 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 sl_price = max(entry_price * (1 - stop_loss_pct), 0.0001)
             elif side == "SELL":
                 sl_price = entry_price * (1 + stop_loss_pct)
-        if use_ibkr_submit:
+        if is_exit:
+            # Exit intent should submit a close order without opening a new bracket.
+            tp_price = None
+            sl_price = None
+        if use_ibkr_submit and not is_exit:
             risk_reason_codes = []
             if target_return is None or target_return <= 0:
                 risk_reason_codes.append("LIVE_TP_REQUIRED_MISSING")
@@ -6212,6 +6227,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "account": str(account_id),
                 "symbol": str(action.get("SYMBOL")),
                 "side": side,
+                "action_intent": action_intent,
+                "exit_type": exit_type,
                 "qty": qty_ordered,
                 "entry_price": float(entry_price) if entry_price is not None else None,
                 "tp_price": float(tp_price) if tp_price is not None else None,
@@ -6430,12 +6447,12 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 """
                 insert into MIP.LIVE.LIVE_ORDERS (
                   ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
-                  SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+                  SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
                   SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                 )
                 values (
                   %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s,
                   current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
                 )
                 """,
@@ -6449,6 +6466,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     leg.get("status") or "ACKNOWLEDGED",
                     action.get("SYMBOL"),
                     leg["side"],
+                    action_intent,
+                    exit_type,
                     leg["order_type"],
                     qty_ordered,
                     leg["limit_price"],
@@ -6494,6 +6513,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "actor": req.actor,
                         "mode": "IBKR_GATEWAY" if use_ibkr_submit else "PAPER_PLACEHOLDER",
                         "adapter_mode": adapter_mode,
+                        "action_intent": action_intent,
+                        "exit_type": exit_type,
                         "broker_truth_check": broker_truth_check,
                         "protection_state": (
                             "FULL"
@@ -6551,6 +6572,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             "order_id": order_id,
             "order_ids": [leg["order_id"] for leg in order_legs],
             "order_legs": order_legs,
+            "action_intent": action_intent,
+            "exit_type": exit_type,
             "protection_state": (
                 "FULL"
                 if (tp_price is not None and sl_price is not None)
@@ -6586,7 +6609,7 @@ def list_live_orders(
             f"""
             select
               ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID,
-              STATUS, SYMBOL, SIDE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+              STATUS, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
               QTY_FILLED, AVG_FILL_PRICE,
               SUBMITTED_AT, ACKNOWLEDGED_AT, FILLED_AT, LAST_UPDATED_AT, CREATED_AT
             from MIP.LIVE.LIVE_ORDERS
@@ -7561,10 +7584,12 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 "PENDING_OPENING_VALIDATION",
                 "NON_EXECUTABLE_UNTIL_OPENING_SANITY_STABILITY_COMMITTEE_PM_COMPLIANCE_INTENT_REVALIDATION",
             ]
+            action_intent = _normalize_action_intent((p.get("SIDE") or "").upper(), None)
+            exit_type = "MANUAL" if action_intent == "EXIT" else None
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_ACTIONS (
-                  ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, ASSET_CLASS,
+                  ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON, PROPOSED_QTY, ASSET_CLASS,
                   STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
                   TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
                   TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
@@ -7573,7 +7598,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   CREATED_AT, UPDATED_AT
                 )
                 select
-                  %s, %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   'PENDING_OPEN_VALIDATION', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   parse_json(%s), %s, %s, %s,
                   parse_json(%s), %s, %s,
@@ -7587,6 +7612,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     req.live_portfolio_id,
                     (p.get("SYMBOL") or "").upper(),
                     (p.get("SIDE") or "").upper(),
+                    action_intent,
+                    exit_type,
+                    None,
                     None,
                     p.get("MARKET_TYPE"),
                     int(validity_window_sec) if validity_window_sec is not None else 14400,

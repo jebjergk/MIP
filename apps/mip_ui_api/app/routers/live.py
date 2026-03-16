@@ -6840,27 +6840,27 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                   SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                 )
                 values (
-                  %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s, %s, %s, %s,
+                  %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
+                  %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
                   current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
                 )
                 """,
-                (
-                    leg["order_id"],
-                    action_id,
-                    action.get("PORTFOLIO_ID"),
-                    account_id,
-                    leg["idempotency_key"],
-                    leg.get("broker_order_id"),
-                    leg.get("status") or "ACKNOWLEDGED",
-                    action.get("SYMBOL"),
-                    leg["side"],
-                    action_intent,
-                    exit_type,
-                    leg["order_type"],
-                    qty_ordered,
-                    leg["limit_price"],
-                ),
+                {
+                    "order_id": leg["order_id"],
+                    "action_id": action_id,
+                    "portfolio_id": action.get("PORTFOLIO_ID"),
+                    "account_id": account_id,
+                    "idempotency_key": leg["idempotency_key"],
+                    "broker_order_id": leg.get("broker_order_id"),
+                    "status": leg.get("status") or "ACKNOWLEDGED",
+                    "symbol": action.get("SYMBOL"),
+                    "side": leg["side"],
+                    "action_intent": action_intent,
+                    "exit_type": exit_type,
+                    "order_type": leg["order_type"],
+                    "qty_ordered": qty_ordered,
+                    "limit_price": leg["limit_price"],
+                },
             )
 
         # Mark execution requested before non-critical telemetry writes so retries

@@ -1166,6 +1166,7 @@ export default function Cockpit() {
       const qs = new URLSearchParams()
       qs.set('dry_run', 'false')
       qs.set('skip_ingest', 'false')
+      qs.set('run_pipeline', 'true')
       const resp = await fetch(`${API_BASE}/manage/ib/daily-job/run?${qs.toString()}`, {
         method: 'POST',
       })
@@ -1173,7 +1174,7 @@ export default function Cockpit() {
       if (!resp.ok) {
         throw new Error(payload?.detail?.message || payload?.detail || `IB daily job failed (${resp.status})`)
       }
-      setIbJobNotice({ type: 'ok', text: 'IB Daily Job completed.' })
+      setIbJobNotice({ type: 'ok', text: 'IB Daily Job completed and daily pipeline triggered.' })
       await loadIbDailyHealth()
     } catch (e) {
       setIbJobNotice({ type: 'error', text: e?.message || 'IB Daily Job failed.' })

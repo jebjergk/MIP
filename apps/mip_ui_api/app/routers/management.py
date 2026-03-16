@@ -54,6 +54,7 @@ def run_ib_manual_daily_job(
     target_date: str = Query("current_date()", description="Snowflake date literal, e.g. current_date() or '2026-03-13'"),
     dry_run: bool = Query(False),
     skip_ingest: bool = Query(False),
+    run_pipeline: bool = Query(True, description="After successful IB job, run SP_RUN_DAILY_PIPELINE."),
 ):
     project_root = Path(__file__).resolve().parents[5]
     py = project_root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
@@ -112,10 +113,54 @@ def run_ib_manual_daily_job(
             },
         )
 
-    return {
+    response = {
         "status": "SUCCESS",
         "payload": payload,
+        "pipeline_triggered": False,
     }
+
+    if not dry_run and run_pipeline:
+        snow_script = project_root / "cursorfiles" / "query_snowflake.py"
+        pipeline_cmd = [str(py), str(snow_script), "-q", "call MIP.APP.SP_RUN_DAILY_PIPELINE()", "--json"]
+        pipeline_proc = subprocess.run(
+            pipeline_cmd,
+            cwd=str(project_root),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        pipeline_stdout = (pipeline_proc.stdout or "").strip()
+        pipeline_stderr = (pipeline_proc.stderr or "").strip()
+        pipeline_payload: Any = None
+        for stream in (pipeline_stdout, pipeline_stderr):
+            if not stream:
+                continue
+            idx_arr = stream.find("[")
+            idx_obj = stream.find("{")
+            idx = idx_arr if idx_arr >= 0 and (idx_obj < 0 or idx_arr < idx_obj) else idx_obj
+            if idx < 0:
+                continue
+            try:
+                pipeline_payload = json.loads(stream[idx:])
+                break
+            except Exception:
+                continue
+        if pipeline_proc.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "IB daily job succeeded, but SP_RUN_DAILY_PIPELINE failed.",
+                    "payload": payload,
+                    "pipeline_payload": pipeline_payload,
+                    "pipeline_stdout": pipeline_stdout[-4000:],
+                    "pipeline_stderr": pipeline_stderr[-4000:],
+                },
+            )
+        response["pipeline_triggered"] = True
+        response["pipeline_result"] = pipeline_payload
+
+    return response
 
 
 @router.get("/ib/daily-job/health")

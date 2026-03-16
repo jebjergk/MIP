@@ -615,6 +615,10 @@ function feedAlertClass(item) {
   return ''
 }
 
+function feedDisplayLabel(item, formatSymbolLabel) {
+  return formatSymbolLabel?.(item?.symbol, item?.market_type) || String(item?.symbol || '—')
+}
+
 function CommitteePanel({
   selectedSymbol,
   setSelectedSymbol,
@@ -718,7 +722,7 @@ function CommitteePanel({
             <div key={item.id} className={`symbol-tracker-feed-row ${feedAlertClass(item)}`}>
               <div className="symbol-tracker-feed-meta">
                 <span>{fmtTime(item.ts)}</span>
-                <span>{item.symbol}</span>
+                <span>{feedDisplayLabel(item, formatSymbolLabel)}</span>
                 <span>{item.agent}</span>
               </div>
               <div className="symbol-tracker-feed-text">{item.text}</div>
@@ -758,8 +762,11 @@ function CommitteePanel({
         {activeCommittee ? (
           <div className="symbol-tracker-thread">
             <div className="symbol-tracker-thread-summary">
+              <div><b>{formatSymbolLabel(activeCommittee.symbol, activeCommittee.market_type)}</b></div>
               <div className="symbol-tracker-pill">{activeCommittee.committee_stance}</div>
               <div>{activeCommittee.committee_confidence}</div>
+              <div>Last evaluated: {fmtTime(activeCommittee.updated_at)}</div>
+              <div>Last price: {fmtNum(activeCommittee?.live_state?.last_price, 4)}</div>
               <div>{activeCommittee.headline_text}</div>
             </div>
             {(activeCommittee.agent_messages || []).map((msg) => (
@@ -871,6 +878,7 @@ export default function SymbolTracker() {
               id: `${symbol}_${agentMessage.agent_name}_${Date.now()}_${Math.random()}`,
               ts: committee.updated_at,
               symbol,
+              market_type: committee.market_type,
               agent: agentMessage.agent_name.replaceAll('_', ' '),
               text: agentMessage.short_text,
               alert,
@@ -880,6 +888,24 @@ export default function SymbolTracker() {
       }
       if (feedRows.length > 0) {
         setCommitteeFeed((prevFeed) => [...prevFeed, ...feedRows].slice(-120))
+      } else {
+        setCommitteeFeed((prevFeed) => {
+          const last = prevFeed[prevFeed.length - 1]
+          const lastTs = new Date(last?.ts || 0).getTime()
+          const nowTs = new Date(nextData?.updated_at || new Date().toISOString()).getTime()
+          const recentHeartbeat = last?.agent === 'COMMITTEE' && Number.isFinite(lastTs) && (nowTs - lastTs) < 120000
+          if (recentHeartbeat) return prevFeed
+          const next = [...prevFeed, {
+            id: `HEARTBEAT_${Date.now()}`,
+            ts: nextData?.updated_at || new Date().toISOString(),
+            symbol: 'ALL',
+            market_type: '',
+            agent: 'COMMITTEE',
+            text: 'Cycle checked: no material committee changes.',
+            alert: 'NONE',
+          }]
+          return next.slice(-120)
+        })
       }
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return nextCommitteeMap
@@ -936,12 +962,15 @@ export default function SymbolTracker() {
           runCommitteeCycle(merged)
           return merged
         })
+      } else {
+        runCommitteeCycle(data)
       }
     } catch (e) {
       setLiveUpdatedAt(new Date().toISOString())
+      runCommitteeCycle(data)
       setError(e.message || 'IB live refresh failed.')
     }
-  }, [data?.tiles, fetchIbLive, mode, runCommitteeCycle])
+  }, [data, data?.tiles, fetchIbLive, mode, runCommitteeCycle])
 
   useVisibleInterval(refreshIbOnly, 30000)
 

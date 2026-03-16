@@ -162,6 +162,7 @@ function makeAgentOutput(agent_name, symbol, payload, previousAgent = null) {
 
 export function evaluateCommittee(tile, liveState, previousCommittee = null) {
   const symbol = tile?.symbol
+  const marketType = tile?.market_type
   const side = String(tile?.side || 'LONG').toUpperCase()
   const isProtected = tile?.overlays?.stop_loss != null || tile?.overlays?.take_profit != null
   const underwater = Number(tile?.unrealized_pnl || 0) < 0
@@ -313,6 +314,7 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
 
   return {
     symbol,
+    market_type: marketType,
     committee_stance,
     committee_confidence,
     top_reason_tags,

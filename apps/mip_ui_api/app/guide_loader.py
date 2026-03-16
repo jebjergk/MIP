@@ -11,6 +11,7 @@ regardless of the working directory used to launch the API.
 """
 
 import logging
+import json
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,13 @@ _GUIDE_DIR = (
     .parent                            # mip_ui_api/
     .parent                            # apps/
     / "mip_ui_web" / "src" / "guide"
+)
+
+_UX_GLOSSARY_PATH = (
+    Path(__file__).resolve().parent
+    .parent
+    .parent
+    / "mip_ui_web" / "src" / "data" / "UX_METRIC_GLOSSARY.json"
 )
 
 _cached_content: str | None = None
@@ -53,7 +61,78 @@ _ACTIVE_GUIDE_FILES = [
     "28-ai-agent-decisions.md",
     "29-live-portfolio-activity.md",
     "30-learning-ledger.md",
+    "31-ui-terms-and-labels.md",
 ]
+
+_ACTIVE_UX_GLOSSARY_CATEGORIES = {
+    "audit",
+    "portfolio",
+    "risk_gate",
+    "signals",
+    "proposals",
+    "positions",
+    "trades",
+    "ui",
+    "training_status",
+    "performance",
+    "brief",
+    "home",
+}
+
+
+def _load_ux_glossary_markdown() -> str:
+    """
+    Convert selected UX metric glossary JSON categories into compact markdown.
+    This gives Ask MIP broad term coverage across active app surfaces.
+    """
+    if not _UX_GLOSSARY_PATH.is_file():
+        logger.warning("UX glossary file not found at %s", _UX_GLOSSARY_PATH)
+        return ""
+
+    try:
+        raw = json.loads(_UX_GLOSSARY_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.error("Failed to parse UX glossary JSON: %s", exc)
+        return ""
+
+    lines: list[str] = [
+        "# App-wide UI Terms (Active)",
+        "",
+        "Use these as supplementary definitions for page labels and metrics.",
+        "",
+    ]
+
+    for category in sorted(_ACTIVE_UX_GLOSSARY_CATEGORIES):
+        group = raw.get(category)
+        if not isinstance(group, dict):
+            continue
+        lines.append(f"## {category.replace('_', ' ').title()}")
+        lines.append("")
+        for term_key, term_def in group.items():
+            if not isinstance(term_def, dict):
+                continue
+            short = str(term_def.get("short") or "").strip()
+            long = str(term_def.get("long") or "").strip()
+            what = str(term_def.get("what") or "").strip()
+            why = str(term_def.get("why") or "").strip()
+            how = str(term_def.get("how") or "").strip()
+            next_step = str(term_def.get("next") or "").strip()
+            lines.append(f"### {term_key}")
+            if short:
+                lines.append(f"- Short: {short}")
+            if long:
+                lines.append(f"- Long: {long}")
+            if what:
+                lines.append(f"- What: {what}")
+            if why:
+                lines.append(f"- Why: {why}")
+            if how:
+                lines.append(f"- How: {how}")
+            if next_step:
+                lines.append(f"- Next: {next_step}")
+            lines.append("")
+
+    return "\n".join(lines).strip()
 
 
 def get_guide_content() -> str:
@@ -85,6 +164,10 @@ def get_guide_content() -> str:
             sections.append(f.read_text(encoding="utf-8"))
         except Exception as exc:
             logger.error("Failed to read %s: %s", f.name, exc)
+
+    extra_glossary = _load_ux_glossary_markdown()
+    if extra_glossary:
+        sections.append(extra_glossary)
 
     _cached_content = "\n\n---\n\n".join(sections)
     logger.info(

@@ -79,6 +79,17 @@ function fmtEventTs(ts) {
   }
 }
 
+function fmtBarTs(ts) {
+  if (!ts) return '—'
+  try {
+    const d = new Date(ts)
+    if (Number.isNaN(d.getTime())) return String(ts).slice(0, 19).replace('T', ' ')
+    return `${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 19)}`
+  } catch {
+    return String(ts).slice(0, 19).replace('T', ' ')
+  }
+}
+
 function eventStyle(eventType) {
   const t = String(eventType || '').toUpperCase()
   if (t === 'NEWS') return { color: '#f59e0b', glyph: 'N', anchor: 'top' }
@@ -258,7 +269,7 @@ function TrackerTooltip({ active, payload }) {
   if (!row) return null
   return (
     <div className="symbol-tracker-tooltip">
-      <div className="symbol-tracker-tooltip-title">{row.label}</div>
+      <div className="symbol-tracker-tooltip-title">{fmtBarTs(row.ts)}</div>
       {row.close != null ? <div>Close: {fmtNum(row.close, 4)}</div> : null}
       {row.open != null ? <div>Open: {fmtNum(row.open, 4)}</div> : null}
       {row.high != null ? <div>High: {fmtNum(row.high, 4)}</div> : null}
@@ -413,11 +424,23 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
       markerY: y,
     }
   })
+  const dayBoundaryLines = []
+  if (mode === 'intraday') {
+    let prevDay = null
+    bars.forEach((bar, idx) => {
+      const day = String(bar?.ts || '').slice(0, 10)
+      if (!day) return
+      if (prevDay && day !== prevDay) {
+        dayBoundaryLines.push({ idx, day })
+      }
+      prevDay = day
+    })
+  }
 
   return (
     <ResponsiveContainer width="100%" height={density === 'compact' ? 190 : 260}>
       <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" />
+        <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" vertical={false} />
         <XAxis
           dataKey="idx"
           tickFormatter={(idx) => labelByIdx.get(String(idx)) || ''}
@@ -496,6 +519,16 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
               fill: event.markerColor,
               fontSize: 10,
             }}
+          />
+        ))}
+
+        {dayBoundaryLines.map((boundary) => (
+          <ReferenceLine
+            key={`day_boundary_${boundary.day}_${boundary.idx}`}
+            x={boundary.idx}
+            stroke="#3b4b63"
+            strokeDasharray="3 5"
+            ifOverflow="extendDomain"
           />
         ))}
       </ComposedChart>

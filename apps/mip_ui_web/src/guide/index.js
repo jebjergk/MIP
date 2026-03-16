@@ -35,6 +35,7 @@ import livePortfolioConfig from './27-live-portfolio-config.md?raw'
 import aiAgentDecisions from './28-ai-agent-decisions.md?raw'
 import livePortfolioActivity from './29-live-portfolio-activity.md?raw'
 import learningLedger from './30-learning-ledger.md?raw'
+import uiTermsAndLabels from './31-ui-terms-and-labels.md?raw'
 
 const sections = [
   { id: 'big-picture',      number: 1,  title: 'The Big Picture',              part: 1, markdown: bigPicture,          route: null },
@@ -62,6 +63,7 @@ const sections = [
   { id: 'page-ai-decisions',number: 28, title: 'AI Agent Decisions',           part: 2, markdown: aiAgentDecisions,    route: '/decision-console' },
   { id: 'page-live-activity',number:29, title: 'Live Portfolio Activity',      part: 2, markdown: livePortfolioActivity,route: '/live-portfolio-activity' },
   { id: 'page-ledger',      number: 30, title: 'Learning Ledger',              part: 2, markdown: learningLedger,      route: '/learning-ledger' },
+  { id: 'ui-terms',         number: 31, title: 'UI Terms and Labels',          part: 3, markdown: uiTermsAndLabels,    route: null },
 ]
 
 export default sections

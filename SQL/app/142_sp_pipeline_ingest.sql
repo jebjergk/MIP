@@ -42,7 +42,9 @@ begin
 
         v_audit_status := case
             when :v_ingest_status like 'FAIL%' then 'FAIL'
-            when :v_ingest_status like 'SKIPPED%' then 'FAIL'
+            -- Preserve explicit skip statuses (e.g., SKIPPED_IBKR_AGENT_REQUIRED)
+            -- so the pipeline UI does not incorrectly show a hard failure.
+            when :v_ingest_status like 'SKIPPED%' then :v_ingest_status
             when :v_rate_limit_hit then 'SKIP_RATE_LIMIT'
             when :v_ingest_status = 'SUCCESS_WITH_SKIPS' then 'SUCCESS_WITH_SKIPS'
             else 'SUCCESS'

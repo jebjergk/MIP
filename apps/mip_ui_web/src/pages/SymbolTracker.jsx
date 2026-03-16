@@ -642,7 +642,7 @@ function CommitteePanel({
   useEffect(() => {
     const el = feedRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
+    el.scrollTop = 0
   }, [filteredFeed.length])
 
   return (
@@ -705,24 +705,7 @@ function CommitteePanel({
         ) : null}
       </section>
 
-      <section className="symbol-tracker-committee-section">
-        <div className="symbol-tracker-committee-title">Live Committee Feed</div>
-        <div ref={feedRef} className="symbol-tracker-committee-feed">
-          {filteredFeed.length === 0 ? <div className="symbol-tracker-committee-empty">No material changes yet.</div> : null}
-          {filteredFeed.map((item) => (
-            <div key={item.id} className={`symbol-tracker-feed-row ${feedAlertClass(item)}`}>
-              <div className="symbol-tracker-feed-meta">
-                <span>{fmtTime(item.ts)}</span>
-                <span>{feedDisplayLabel(item, formatSymbolLabel)}</span>
-                <span>{item.agent}</span>
-              </div>
-              <div className="symbol-tracker-feed-text">{item.text}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="symbol-tracker-committee-section">
+      <section className="symbol-tracker-committee-section symbol-tracker-committee-section--watchlist">
         <div className="symbol-tracker-committee-title">Active Watchlist</div>
         <div className="symbol-tracker-watchlist">
           {filteredWatchlist.length === 0 ? <div className="symbol-tracker-committee-empty">No symbols match filters.</div> : null}
@@ -747,7 +730,24 @@ function CommitteePanel({
         </div>
       </section>
 
-      <section className="symbol-tracker-committee-section">
+      <section className="symbol-tracker-committee-section symbol-tracker-committee-section--feed">
+        <div className="symbol-tracker-committee-title">Live Committee Feed</div>
+        <div ref={feedRef} className="symbol-tracker-committee-feed">
+          {filteredFeed.length === 0 ? <div className="symbol-tracker-committee-empty">No material changes yet.</div> : null}
+          {filteredFeed.map((item) => (
+            <div key={item.id} className={`symbol-tracker-feed-row ${feedAlertClass(item)}`}>
+              <div className="symbol-tracker-feed-meta">
+                <span>{fmtTime(item.ts)}</span>
+                <span>{feedDisplayLabel(item, formatSymbolLabel)}</span>
+                <span>{item.agent}</span>
+              </div>
+              <div className="symbol-tracker-feed-text">{item.text}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="symbol-tracker-committee-section symbol-tracker-committee-section--discussion">
         <div className="symbol-tracker-committee-title">Expanded Symbol Discussion</div>
         {!activeCommittee ? <div className="symbol-tracker-committee-empty">Select a symbol tile or watchlist row.</div> : null}
         {activeCommittee ? (
@@ -760,7 +760,12 @@ function CommitteePanel({
               <div>Last price: {fmtNum(activeCommittee?.live_state?.last_price, 4)}</div>
               <div>{activeCommittee.headline_text}</div>
             </div>
-            {(activeCommittee.agent_messages || []).map((msg) => (
+            {[...(activeCommittee.agent_messages || [])]
+              .sort((a, b) => (
+                Number(Boolean(b.change_detected)) - Number(Boolean(a.change_detected))
+                || Number(b.materiality_score || 0) - Number(a.materiality_score || 0)
+              ))
+              .map((msg) => (
               <article key={`${activeCommittee.symbol}_${msg.agent_name}`} className="symbol-tracker-thread-msg">
                 <header>
                   <b>{msg.agent_name.replaceAll('_', ' ')}</b>
@@ -769,7 +774,7 @@ function CommitteePanel({
                 </header>
                 <p>{msg.short_text}</p>
               </article>
-            ))}
+              ))}
             {(activeCommittee.disagreement_points || []).length > 0 ? (
               <div className="symbol-tracker-thread-disagreement">
                 <b>Disagreement points</b>
@@ -878,7 +883,7 @@ export default function SymbolTracker() {
         }
       }
       if (feedRows.length > 0) {
-        setCommitteeFeed((prevFeed) => [...prevFeed, ...feedRows].slice(-120))
+        setCommitteeFeed((prevFeed) => [...feedRows, ...prevFeed].slice(0, 120))
       } else {
         setCommitteeFeed((prevFeed) => {
           const last = prevFeed[prevFeed.length - 1]
@@ -886,7 +891,7 @@ export default function SymbolTracker() {
           const nowTs = new Date(nextData?.updated_at || new Date().toISOString()).getTime()
           const recentHeartbeat = last?.agent === 'COMMITTEE' && Number.isFinite(lastTs) && (nowTs - lastTs) < 120000
           if (recentHeartbeat) return prevFeed
-          const next = [...prevFeed, {
+          const next = [{
             id: `HEARTBEAT_${Date.now()}`,
             ts: nextData?.updated_at || new Date().toISOString(),
             symbol: 'ALL',
@@ -894,8 +899,8 @@ export default function SymbolTracker() {
             agent: 'COMMITTEE',
             text: 'Cycle checked: no material committee changes.',
             alert: 'NONE',
-          }]
-          return next.slice(-120)
+          }, ...prevFeed]
+          return next.slice(0, 120)
         })
       }
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())

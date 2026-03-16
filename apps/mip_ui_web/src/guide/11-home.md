@@ -14,8 +14,8 @@ Use these cards as your default morning sequence:
 
 | Card | Where it goes | What it shows |
 |------|---------------|---------------|
-| **View Portfolios** | /portfolios | All portfolios — positions, trades, episodes |
-| **Default Portfolio** | /portfolios/1 | Quick link to your primary portfolio |
+| **Performance Dashboard** | /performance-dashboard | Cross-portfolio return and drawdown trends |
+| **Live Portfolio Activity** | /live-portfolio-activity | Recent live-paper workflow state changes |
 | **Open Cockpit** | /cockpit | What changed overnight and what matters now |
 | **Open Training Status** | /training | How much evidence supports each pattern |
 | **Open AI Agent Decisions** | /decision-console | Committee verdicts and execution-stage decisions |
@@ -32,6 +32,6 @@ Use these cards as your default morning sequence:
 
 1. Check **Last pipeline run** on Home.
 2. Open **Cockpit** for "what changed / what matters / waiting for."
-3. Open **Portfolio** if gate is CAUTION or STOPPED.
+3. Open **Performance Dashboard** to compare portfolio health and trend direction.
 4. Open **Training Status** to confirm evidence depth behind current candidates.
 5. Open **AI Agent Decisions** if proposals were rejected or unexpected.

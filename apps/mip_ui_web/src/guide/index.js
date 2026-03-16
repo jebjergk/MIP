@@ -22,20 +22,19 @@ import trading from './09-trading.md?raw'
 import patterns from './10-patterns.md?raw'
 import home from './11-home.md?raw'
 import cockpit from './12-cockpit.md?raw'
-import portfolio from './13-portfolio.md?raw'
-import portfolioManagement from './14-portfolio-management.md?raw'
 import trainingStatus from './15-training-status.md?raw'
+import performanceDashboard from './16-performance-dashboard.md?raw'
+import symbolTracker from './17-symbol-tracker.md?raw'
 import marketTimeline from './18-market-timeline.md?raw'
 import runs from './19-runs.md?raw'
 import debug from './20-debug.md?raw'
 import parallelWorlds from './21-parallel-worlds.md?raw'
 import glossary from './22-glossary.md?raw'
-import intraday from './23-intraday.md?raw'
-import earlyExit from './24-early-exit.md?raw'
-import decisionConsole from './25-decision-console.md?raw'
 import newsIntelligence from './26-news-intelligence.md?raw'
 import livePortfolioConfig from './27-live-portfolio-config.md?raw'
 import aiAgentDecisions from './28-ai-agent-decisions.md?raw'
+import livePortfolioActivity from './29-live-portfolio-activity.md?raw'
+import learningLedger from './30-learning-ledger.md?raw'
 
 const sections = [
   { id: 'big-picture',      number: 1,  title: 'The Big Picture',              part: 1, markdown: bigPicture,          route: null },
@@ -50,20 +49,19 @@ const sections = [
   { id: 'patterns',         number: 10, title: 'What Are Patterns?',           part: 1, markdown: patterns,            route: null },
   { id: 'page-home',        number: 11, title: 'Home',                         part: 2, markdown: home,                route: '/home' },
   { id: 'page-cockpit',     number: 12, title: 'Cockpit (Daily Dashboard)',    part: 2, markdown: cockpit,             route: '/cockpit' },
-  { id: 'page-portfolio',   number: 13, title: 'Portfolio',                    part: 2, markdown: portfolio,            route: '/portfolios' },
-  { id: 'page-manage',      number: 14, title: 'Portfolio Management',         part: 2, markdown: portfolioManagement, route: '/manage' },
   { id: 'page-training',    number: 15, title: 'Training Status',              part: 2, markdown: trainingStatus,      route: '/training' },
-  { id: 'page-ai-decisions',number: 16, title: 'AI Agent Decisions',           part: 2, markdown: aiAgentDecisions,    route: '/decision-console' },
+  { id: 'page-performance', number: 16, title: 'Performance Dashboard',        part: 2, markdown: performanceDashboard,route: '/performance-dashboard' },
+  { id: 'page-symbol',      number: 17, title: 'Live Symbol Tracker',          part: 2, markdown: symbolTracker,       route: '/symbol-tracker' },
   { id: 'page-timeline',    number: 18, title: 'Market Timeline',              part: 2, markdown: marketTimeline,      route: '/market-timeline' },
   { id: 'page-runs',        number: 19, title: 'Runs (Audit Viewer)',          part: 2, markdown: runs,                route: '/runs' },
   { id: 'page-debug',       number: 20, title: 'Debug',                        part: 2, markdown: debug,               route: '/debug' },
   { id: 'page-parallel',    number: 21, title: 'Parallel Worlds',              part: 2, markdown: parallelWorlds,      route: '/parallel-worlds' },
   { id: 'glossary',         number: 22, title: 'Key Terms Glossary',           part: 3, markdown: glossary,            route: null },
-  { id: 'intraday',         number: 23, title: 'The Intraday Subsystem',       part: 1, markdown: intraday,            route: null },
-  { id: 'early-exit',       number: 24, title: 'Intraday Early Exit',          part: 1, markdown: earlyExit,           route: null },
-  { id: 'page-decisions',   number: 25, title: 'Decision Console (Early Exit)',part: 2, markdown: decisionConsole,     route: '/intraday/early-exit' },
   { id: 'page-news',        number: 26, title: 'News Intelligence',            part: 2, markdown: newsIntelligence,    route: '/news-intelligence' },
   { id: 'page-live-config', number: 27, title: 'Live Portfolio Link',          part: 2, markdown: livePortfolioConfig, route: '/live-portfolio-config' },
+  { id: 'page-ai-decisions',number: 28, title: 'AI Agent Decisions',           part: 2, markdown: aiAgentDecisions,    route: '/decision-console' },
+  { id: 'page-live-activity',number:29, title: 'Live Portfolio Activity',      part: 2, markdown: livePortfolioActivity,route: '/live-portfolio-activity' },
+  { id: 'page-ledger',      number: 30, title: 'Learning Ledger',              part: 2, markdown: learningLedger,      route: '/learning-ledger' },
 ]
 
 export default sections
@@ -97,7 +95,7 @@ export function sectionForRoute(pathname) {
   // Exact match first
   const exact = sections.find(s => s.route === normalizedPath)
   if (exact) return exact
-  // Prefix match (e.g., /portfolios/3 → /portfolios)
+  // Prefix match (e.g., /runs/123 -> /runs)
   const prefix = sections
     .filter(s => s.route && normalizedPath.startsWith(`${s.route}/`))
     .sort((a, b) => b.route.length - a.route.length)

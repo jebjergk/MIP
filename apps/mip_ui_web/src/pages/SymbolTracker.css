@@ -108,6 +108,7 @@
 
 .symbol-tracker-tile-head h3 {
   margin: 0;
+  color: #e2e8f0;
 }
 
 .symbol-tracker-tile--compact .symbol-tracker-tile-head h3 {
@@ -393,7 +394,7 @@
   background: #060d1a;
   padding: 0.8rem;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   gap: 0.75rem;
   position: sticky;
   top: 0.75rem;
@@ -480,6 +481,18 @@
   padding: 0.5rem;
   display: grid;
   gap: 0.4rem;
+  min-height: 0;
+}
+
+.symbol-tracker-committee-section--watchlist {
+  max-height: 190px;
+}
+
+.symbol-tracker-committee-section--feed {
+  max-height: 220px;
+}
+
+.symbol-tracker-committee-section--discussion {
   min-height: 0;
 }
 
@@ -615,6 +628,7 @@
   display: grid;
   gap: 0.25rem;
   font-size: 0.76rem;
+  color: #e2e8f0;
 }
 
 .symbol-tracker-thread-msg {
@@ -630,6 +644,10 @@
   align-items: center;
   font-size: 0.68rem;
   color: #93c5fd;
+}
+
+.symbol-tracker-thread-msg header span {
+  color: #cbd5e1;
 }
 
 .symbol-tracker-thread-msg p {

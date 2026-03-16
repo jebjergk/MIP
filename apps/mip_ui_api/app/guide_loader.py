@@ -26,6 +26,35 @@ _GUIDE_DIR = (
 
 _cached_content: str | None = None
 
+# Keep Ask MIP grounded only in active, non-deprecated guide sections.
+_ACTIVE_GUIDE_FILES = [
+    "01-big-picture.md",
+    "02-daily-pipeline.md",
+    "03-signals.md",
+    "04-outcomes.md",
+    "05-training-stages.md",
+    "06-trust.md",
+    "07-hit-rate.md",
+    "08-avg-return.md",
+    "09-trading.md",
+    "10-patterns.md",
+    "11-home.md",
+    "12-cockpit.md",
+    "15-training-status.md",
+    "16-performance-dashboard.md",
+    "17-symbol-tracker.md",
+    "18-market-timeline.md",
+    "19-runs.md",
+    "20-debug.md",
+    "21-parallel-worlds.md",
+    "22-glossary.md",
+    "26-news-intelligence.md",
+    "27-live-portfolio-config.md",
+    "28-ai-agent-decisions.md",
+    "29-live-portfolio-activity.md",
+    "30-learning-ledger.md",
+]
+
 
 def get_guide_content() -> str:
     """
@@ -44,9 +73,9 @@ def get_guide_content() -> str:
         )
         return _cached_content
 
-    md_files = sorted(_GUIDE_DIR.glob("*.md"))
+    md_files = [_GUIDE_DIR / name for name in _ACTIVE_GUIDE_FILES if (_GUIDE_DIR / name).is_file()]
     if not md_files:
-        logger.warning("No .md files found in %s", _GUIDE_DIR)
+        logger.warning("No active guide .md files found in %s", _GUIDE_DIR)
         _cached_content = "No guide sections found."
         return _cached_content
 

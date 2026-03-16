@@ -10,7 +10,7 @@ Automatically fires requests to 5 key API endpoints and reports the results:
 |----------|----------------|
 | `/api/status` | Is the API server running? |
 | `/api/runs` | Can we fetch pipeline runs? |
-| `/api/portfolios` | Can we fetch the portfolio list? |
+| `/api/live/metrics` | Can we fetch live metrics data? |
 | `/api/digest/latest` | Is the latest digest available? |
 | `/api/training/status` | Is training data accessible? |
 

@@ -55,8 +55,8 @@ This is the backbone of the whole app:
 | Signals generated | Market Timeline |
 | Learning metrics | Training Status |
 | Proposal decisions | AI Agent Decisions |
-| Position monitoring and exits | Decision Console |
-| Portfolio impact | Portfolio |
+| Live workflow state | Live Portfolio Activity |
+| Portfolio-level impact | Performance Dashboard |
 | Day summary | Cockpit |
 
 ---
@@ -122,29 +122,27 @@ Your daily command center:
 - what to watch next
 - portfolio and system narratives
 
-### 5.3 Portfolio (`/portfolios`)
-
-Use to inspect:
-- current equity and return
-- risk gate and drawdown state
-- open positions and trades
-- episode-scoped performance
-
-### 5.4 Portfolio Management (`/manage`)
-
-Use for controlled changes:
-- create/edit portfolio
-- deposit/withdraw
-- change profile (starts new episode)
-- review lifecycle timeline
-
-### 5.5 Training Status (`/training`)
+### 5.3 Training Status (`/training`)
 
 Evidence table for symbol + pattern learning:
 - maturity
 - sample size
 - coverage
 - horizon averages
+
+### 5.4 Performance Dashboard (`/performance-dashboard`)
+
+Cross-portfolio comparison view:
+- return trend comparison
+- drawdown profile by portfolio
+- stability vs performance tradeoff
+
+### 5.5 Live Symbol Tracker (`/symbol-tracker`)
+
+Symbol-first operational monitoring:
+- symbol activity state
+- context shifts worth follow-up
+- handoff into decision review
 
 ### 5.6 Market Timeline (`/market-timeline`)
 
@@ -169,21 +167,35 @@ Committee-style decision log:
 - verdicts, reason codes, statuses
 - detailed rationale per action
 
-### 5.9 Decision Console (`/intraday/early-exit`)
+### 5.9 Live Portfolio Link (`/live-portfolio-config`)
 
-Position monitor with decision trace:
-- open positions grouped by symbol
-- live/history events
-- inspector with gate trace and decision diff
+Control surface for live-linked paper workflow:
+- link state and configuration
+- readiness and gating context
+- portfolio-level link controls
 
-### 5.10 News Intelligence (`/news-intelligence`)
+### 5.10 Live Portfolio Activity (`/live-portfolio-activity`)
+
+Operational activity feed for live-linked flow:
+- recent lifecycle events
+- validation/execution transitions
+- current status by step
+
+### 5.11 Learning Ledger (`/learning-ledger`)
+
+Decision causality and learning trace:
+- why a decision changed
+- what evidence contributed
+- whether change helped/hurt
+
+### 5.12 News Intelligence (`/news-intelligence`)
 
 News context + proposal impact:
 - market context KPIs
 - symbol cards
 - evidence-backed impact rows
 
-### 5.11 User Guide (`/guide`)
+### 5.13 User Guide (`/guide`)
 
 In-app reference manual sourced from versioned guide sections.
 
@@ -193,7 +205,7 @@ In-app reference manual sourced from versioned guide sections.
 
 1. **Home**: confirm pipeline freshness.
 2. **Cockpit**: read what changed / what matters.
-3. **Portfolio**: check gate states and risk changes.
+3. **Performance Dashboard**: review return and drawdown changes.
 4. **Training Status**: validate evidence behind active patterns.
 5. **AI Agent Decisions**: inspect accepts/rejects and rationale.
 6. **Runs**: if anything looks off, verify run-level details.
@@ -247,7 +259,7 @@ Check in order:
 | Digest feels old | New run not reflected yet | Cockpit + Runs |
 | No proposals | Weak trust/evidence or no fresh signals | Training + Timeline |
 | Proposals but no execution | Gate/limits or decision rejection | Portfolio + AI Agent Decisions |
-| Editing disabled | Pipeline lock active | Portfolio Management banner |
+| A page looks stale | Data not refreshed yet | Runs + Home freshness cards |
 
 ---
 
@@ -262,4 +274,4 @@ Use it like this:
 
 ---
 
-*Last updated: March 12, 2026*
+*Last updated: March 16, 2026*

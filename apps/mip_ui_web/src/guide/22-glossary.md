@@ -2,64 +2,27 @@
 
 | Term | Definition |
 |------|------------|
-| **Signal** | A detection by a pattern that interesting price action occurred. Not a trade — just a record. |
-| **Pattern** | A named strategy with specific parameters (min_return, min_zscore, etc.) that scans market data for signals. |
-| **Horizon** | A time window (1, 3, 5, 10, or 20 bars) at which the system evaluates what happened after a signal. |
-| **Hit Rate** | Percentage of evaluated outcomes that were favorable. Threshold: ≥ 55%. |
-| **Avg Return** | Average realized return across all outcomes. Threshold: ≥ 0.05% (0.0005). |
-| **Maturity Score** | A 0–100 score measuring data quality: 30% sample size + 40% coverage + 30% horizons. |
-| **Trust Label** | TRUSTED / WATCH / UNTRUSTED. Determined by passing 3 gates: sample ≥ 40, hit rate ≥ 55%, avg return ≥ 0.05%. |
-| **Proposal** | A suggested trade order generated when a TRUSTED signal passes risk/capacity checks. |
-| **Risk Gate** | Safety mechanism that blocks new entries when portfolio drawdown exceeds a threshold. |
-| **Episode** | A "generation" of the portfolio. Starts at creation or after crystallization/profile change. All KPIs and performance numbers are scoped to the active episode. |
-| **Crystallization** | The process of locking in gains when a profit target is hit. Ends the current episode and starts a new one. Two modes: Withdraw Profits (pay out gains) or Rebase (compound gains into new cost basis). |
-| **Lifecycle Event** | An immutable record of a portfolio state change — CREATE, DEPOSIT, WITHDRAW, CRYSTALLIZE, PROFILE_CHANGE, EPISODE_START, EPISODE_END, or BUST. Stored permanently for audit and timeline views. |
-| **Risk Profile** | A reusable template defining portfolio behavior: position limits, drawdown stops, bust threshold, and crystallization rules. Attached to portfolios and can be changed at any time (which starts a new episode). |
-| **Pipeline Lock** | A safety mechanism that disables all portfolio editing while the daily pipeline is running. Prevents data conflicts. Buttons re-enable automatically once the pipeline completes. |
-| **Deposit / Withdraw** | Cash events that add or remove money from a portfolio without affecting P&L tracking. The system adjusts the cost basis so deposits aren't counted as profit and withdrawals aren't counted as losses. |
-| **Drawdown** | The percentage decline from a portfolio's peak equity. -5% drawdown = 5% below the high water mark. |
-| **Cortex AI** | Snowflake's built-in LLM service used to generate narrative digests and portfolio stories from snapshot data. |
-| **Pipeline** | The daily automated process: fetch data → detect signals → evaluate outcomes → update trust → trade → check crystallization → generate digest. |
-| **Z-Score** | How many standard deviations a value is from the mean. Z-score of 2 means the move is unusually large (2σ above average). |
-| **Coverage Ratio** | What fraction of signals have been fully evaluated across all horizons. 100% = complete evaluation. |
-| **Notional** | The total monetary value of a trade: Price × Quantity. A buy of 100 shares at $150 = $15,000 notional. |
-| **Cost Basis** | The average price at which a position was entered, adjusted for deposits and withdrawals. Used to calculate unrealized profit/loss. |
-| **Portfolio Story** | An AI-generated narrative biography of a portfolio — covering its creation, cash events, episodes, crystallizations, and current outlook. Found in Portfolio Management → Portfolio Story tab. |
-| **Parallel Worlds** | A read-only "what-if" analysis system. Replays each day's market data through alternative rule sets (scenarios) and compares their outcomes to your actual results. Never affects your real portfolio. |
-| **Scenario** | An alternative set of trading rules used in Parallel Worlds. Examples: "Looser Signal Filter," "Bigger Positions (125%)," "Wait 1 Day Before Entering," "Stay in Cash." Each scenario produces a counterfactual PnL. |
-| **Counterfactual** | The hypothetical outcome that would have occurred under different rules. "Counterfactual PnL of $142" means the scenario would have made $142 that day, compared to your actual result. |
-| **Regret** | The dollar amount by which a scenario outperformed your actual result, summed over time. Only positive differences count — days you beat the scenario don't reduce regret. |
-| **Confidence Class** | A reliability tier assigned to each scenario: Strong (reliable outperformance), Emerging (pattern forming), Weak (inconsistent), or Noise (no meaningful signal). Based on win-rate, cumulative impact, and rolling consistency. |
-| **Decision Trace** | A human-readable record of what happened at each decision gate (Trust, Risk, Threshold, Sizing, Timing) during a scenario's simulation. Shows which gates passed, blocked, or modified trades, and explains why in plain English. |
-| **Policy Health** | An at-a-glance assessment of whether your current trading rules are optimal. Combines confidence signals, regret attribution, and stability into a single health rating: Healthy, Watch, Monitor, Review Suggested, or Needs Attention. |
-| **Stability Score** | A 0–100 score measuring how "settled" your trading rules are. 100 = every alternative is noise (very stable). Lower scores mean more scenarios are showing signal. |
-| **Parameter Sweep** | A systematic test that replays trading history with dozens of slightly different settings (e.g., z-score thresholds from -0.50 to +0.50 in small steps). Used in the Signal Tuning and Portfolio Tuning tabs to build tuning surfaces. |
-| **Tuning Surface** | A chart showing cumulative PnL impact across a range of parameter values. The "surface" lets you see which setting would have produced the best results — like a topographic map of profitability. |
-| **Optimal Point** | The single parameter setting that would have produced the highest cumulative PnL improvement across all observed days. Shown as a green marker on tuning surface charts. |
-| **Minimal Safe Tweak** | The smallest parameter change from your current setting that still improves performance. A conservative recommendation — the least disruptive improvement. |
-| **Regime Sensitivity** | An analysis of how a parameter setting performs across different market volatility environments: Quiet (low-vol), Normal, and Volatile (high-vol). Settings that only work in one regime are flagged as "fragile." |
-| **Regime Fragile** | A scenario or parameter setting that only outperforms in one market volatility regime (e.g., only in calm markets). Flagged as a safety concern because it may fail when conditions change. |
-| **Safety Check** | An automated verification that a recommendation passes minimum reliability thresholds: enough observation days, stable trade counts, and multi-regime robustness. All three must pass for a recommendation to be marked "Ready for Review." |
-| **Recommendation** | A tuning suggestion generated from sweep results. Comes in two flavors: Conservative (smallest helpful change) and Aggressive (optimal setting). Always requires human approval — never auto-applied. |
-| **Intraday Pipeline** | A separate, independent pipeline that ingests 15-minute bars, detects intraday patterns (ORB, Pullback, Mean-Reversion), evaluates outcomes on bar-based horizons, and builds trust. Runs alongside the daily pipeline without affecting it. |
-| **Intraday Horizon** | A time window for evaluating intraday signals: +1 bar (15m), +4 bars (~1hr), +8 bars (~2hr), or end-of-day close (EOD). Stored in HORIZON_DEFINITION alongside daily horizons. |
-| **Opening Range Breakout (ORB)** | An intraday pattern that detects when price breaks above or below the early-session trading range with sufficient momentum. |
-| **Pullback Continuation** | An intraday pattern that identifies an impulse move, followed by consolidation, and then a breakout in the original direction. |
-| **Mean-Reversion Overshoot** | An intraday pattern that detects extreme deviation from a short-term rolling average, signaling a likely reversion. |
-| **System Stage** | An intraday readiness classification: INSUFFICIENT (too little data), EMERGING (signals appearing), LEARNING (outcomes accumulating), or CONFIDENT (patterns earning trust). |
-| **HORIZON_DEFINITION** | A metadata table that defines all evaluation horizons for both daily and intraday intervals. Stores horizon type (BAR, DAY, SESSION), length, resolution, and display labels. |
-| **Pattern Readiness Tile** | A summary card on the intraday cockpit showing a pattern family's event count, trust state, confidence, best edge, and trend arrow at a glance. |
-| **Early Exit** | An execution optimization that can close daily positions before their planned horizon when intraday price action indicates the payoff has been achieved and giveback risk is high. Uses a two-stage policy: payoff detection (Stage A) followed by reversal confirmation (Stage B). |
-| **Giveback Risk** | The risk that a position which has already reached its target return will reverse and lose those gains before the planned exit. The early-exit system monitors for this by tracking peak return and subsequent price decay. |
-| **Payoff Multiplier** | A configurable buffer on the target return for Stage A of early exit. 1.0 = exact target, 1.2 = target must be exceeded by 20%. Controls how confident the system needs to be that the payoff has truly arrived. |
-| **Giveback Percentage** | The fraction of peak return that has been lost since the high point. A 40% giveback means the position has retraced 40% of its best unrealized gain. The Stage B threshold defaults to 40% (or 25% for quick payoffs). |
-| **Quick Payoff** | When a position hits its target within 60 minutes of entry. Quick payoffs trigger a stricter giveback threshold (25% instead of 40%) because very fast moves are statistically more likely to reverse. |
-| **Max Favorable Excursion (MFE)** | The highest unrealized return a position achieves before it is closed. MFE measures how much profit was "on the table" at the best point — useful for evaluating whether exits are well-timed. |
-| **Shadow Mode** | An early-exit execution mode where the system evaluates positions and logs hypothetical exit decisions, but does not actually close any positions. Used for proof-of-concept during the first 2–4 weeks. |
-| **Decision Console** | A live UI page that groups open positions by symbol, shows per-portfolio rows, and provides inline or side-panel gate-trace inspection with live decision events. |
-| **Decision Event** | A structured record emitted whenever the early-exit system evaluates or transitions a position through a gate. Contains timestamps, metrics, gate results, reason codes, and links to advanced JSON detail. |
-| **Gate Trace** | A timeline of every decision gate evaluated for a position over time. Each node shows the gate name, pass/fail result, key metrics, and timestamps. Accessible in the Decision Console's Position Inspector. |
-| **Decision Diff** | A comparison view showing what happens if a position is exited now versus held to its planned horizon. Displays current return, expected return, P&L delta, and bars remaining — helping you assess whether an early exit adds or destroys value. |
-| **Server-Sent Events (SSE)** | A web protocol where the server pushes updates to the browser over a persistent connection. The Decision Console uses SSE to deliver new decision events without manual page refresh. |
-| **News Intelligence** | A deterministic news context page that shows freshness, symbol-level context, and evidence-only decision impact rows from proposal payloads. |
-| **News Score Adjustment (`news_score_adj`)** | A bounded proposal-score adjustment from news features, applied only when news influence is enabled and display-only mode is off. |
+| **Signal** | A detection by a pattern that interesting price action occurred. Not a trade, just evidence. |
+| **Pattern** | A named strategy with parameters (for example min return and z-score) that scans market data for signals. |
+| **Horizon** | A forward time window (1, 3, 5, 10, 20 bars) used to evaluate what happened after a signal. |
+| **Hit Rate** | Percentage of evaluated outcomes that were favorable. |
+| **Avg Return** | Average realized return across evaluated outcomes. |
+| **Maturity Score** | A quality score showing how complete and reliable the evidence is for a pattern/symbol. |
+| **Trust Label** | TRUSTED, WATCH, or UNTRUSTED; used to determine whether signals can influence decisions. |
+| **Proposal** | A suggested action generated after trusted-signal and policy checks. |
+| **Risk Gate** | Safety status controlling whether new entries are allowed. |
+| **Drawdown** | Percentage decline from a portfolio's peak equity. |
+| **Episode** | A lifecycle segment for performance accounting and reporting. |
+| **Coverage Ratio** | Fraction of signals with complete evaluable outcomes. |
+| **Pipeline** | The recurring process: ingest data, detect signals, evaluate outcomes, update trust, produce decisions and summaries. |
+| **Run ID** | Unique identifier for a pipeline run, used for audit and debugging. |
+| **Counterfactual** | "What-if" result from an alternative rule setup in Parallel Worlds. |
+| **Regret** | Amount a counterfactual outperformed actual results, used for policy review. |
+| **Stability Score** | How consistent policy behavior is across time and market regimes. |
+| **Learning Ledger** | Evidence-linked history connecting decision logic to realized outcomes. |
+| **News Intelligence** | Structured news context that can influence ranking or caution but does not bypass policy gates. |
+| **Decision Impact** | Explanation of how context (including news) affected ranking, confidence, or action eligibility. |
+| **Live Portfolio Activity** | Operational activity log for the live-linked paper workflow. |
+| **Symbol Tracker** | Symbol-first monitoring view used to identify and investigate active symbols. |
+| **Performance Dashboard** | Cross-portfolio comparison view for returns, drawdown, and trend behavior. |
+| **Server-Sent Events (SSE)** | Streaming protocol used for pushing UI updates without repeated polling. |

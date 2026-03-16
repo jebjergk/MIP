@@ -627,6 +627,7 @@ function CommitteePanel({
   contextUpdatedAt,
   liveUpdatedAt,
 }) {
+  const [showFilters, setShowFilters] = useState(false)
   const feedRef = useRef(null)
   const activeCommittee = selectedSymbol ? committeeBySymbol[selectedSymbol] : null
   const filteredWatchlist = watchlist.filter((row) => {
@@ -659,43 +660,54 @@ function CommitteePanel({
         </div>
       </div>
 
-      <section className="symbol-tracker-committee-filters">
-        <label>
-          Symbol
-          <select value={filters.symbol} onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}>
-            <option value="ALL">All</option>
-            {watchlist.map((row) => <option key={row.symbol} value={row.symbol}>{row.symbol}</option>)}
-          </select>
-        </label>
-        <label>
-          Stance
-          <select value={filters.stance} onChange={(e) => setFilters((prev) => ({ ...prev, stance: e.target.value }))}>
-            <option value="ALL">All</option>
-            <option value="ESCALATE">ESCALATE</option>
-            <option value="WATCH_CLOSELY">WATCH_CLOSELY</option>
-            <option value="THESIS_INTACT">THESIS_INTACT</option>
-          </select>
-        </label>
-        <label>
-          Min confidence
-          <select value={filters.minConfidence} onChange={(e) => setFilters((prev) => ({ ...prev, minConfidence: e.target.value }))}>
-            <option value="ANY">Any</option>
-            <option value="MEDIUM">MEDIUM</option>
-            <option value="HIGH">HIGH</option>
-          </select>
-        </label>
-        <label className="symbol-tracker-check">
-          <input type="checkbox" checked={filters.onlyChanged} onChange={(e) => setFilters((prev) => ({ ...prev, onlyChanged: e.target.checked }))} />
-          Only changed recently
-        </label>
-        <label className="symbol-tracker-check">
-          <input type="checkbox" checked={filters.highRiskOnly} onChange={(e) => setFilters((prev) => ({ ...prev, highRiskOnly: e.target.checked }))} />
-          High-risk only
-        </label>
-        <label className="symbol-tracker-check">
-          <input type="checkbox" checked={filters.unprotectedOnly} onChange={(e) => setFilters((prev) => ({ ...prev, unprotectedOnly: e.target.checked }))} />
-          Unprotected only
-        </label>
+      <section className="symbol-tracker-committee-filter-wrap">
+        <button
+          type="button"
+          className="symbol-tracker-filter-toggle"
+          onClick={() => setShowFilters((v) => !v)}
+        >
+          {showFilters ? 'Hide filters' : 'Show filters'}
+        </button>
+        {showFilters ? (
+          <div className="symbol-tracker-committee-filters">
+            <label>
+              Symbol
+              <select value={filters.symbol} onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}>
+                <option value="ALL">All</option>
+                {watchlist.map((row) => <option key={row.symbol} value={row.symbol}>{row.symbol}</option>)}
+              </select>
+            </label>
+            <label>
+              Stance
+              <select value={filters.stance} onChange={(e) => setFilters((prev) => ({ ...prev, stance: e.target.value }))}>
+                <option value="ALL">All</option>
+                <option value="ESCALATE">ESCALATE</option>
+                <option value="WATCH_CLOSELY">WATCH_CLOSELY</option>
+                <option value="THESIS_INTACT">THESIS_INTACT</option>
+              </select>
+            </label>
+            <label>
+              Min confidence
+              <select value={filters.minConfidence} onChange={(e) => setFilters((prev) => ({ ...prev, minConfidence: e.target.value }))}>
+                <option value="ANY">Any</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="HIGH">HIGH</option>
+              </select>
+            </label>
+            <label className="symbol-tracker-committee-check">
+              <input type="checkbox" checked={filters.onlyChanged} onChange={(e) => setFilters((prev) => ({ ...prev, onlyChanged: e.target.checked }))} />
+              <span>Only changed recently</span>
+            </label>
+            <label className="symbol-tracker-committee-check">
+              <input type="checkbox" checked={filters.highRiskOnly} onChange={(e) => setFilters((prev) => ({ ...prev, highRiskOnly: e.target.checked }))} />
+              <span>High-risk only</span>
+            </label>
+            <label className="symbol-tracker-committee-check">
+              <input type="checkbox" checked={filters.unprotectedOnly} onChange={(e) => setFilters((prev) => ({ ...prev, unprotectedOnly: e.target.checked }))} />
+              <span>Unprotected only</span>
+            </label>
+          </div>
+        ) : null}
       </section>
 
       <section className="symbol-tracker-committee-section">
@@ -917,6 +929,7 @@ export default function SymbolTracker() {
     try {
       setError('')
       const ibPayload = await fetchIbLive(data?.tiles || [], mode)
+      setLiveUpdatedAt(ibPayload?.updated_at || new Date().toISOString())
       if (ibPayload) {
         setData((prev) => {
           const merged = mergeIbLiveRows(prev, ibPayload)
@@ -925,6 +938,7 @@ export default function SymbolTracker() {
         })
       }
     } catch (e) {
+      setLiveUpdatedAt(new Date().toISOString())
       setError(e.message || 'IB live refresh failed.')
     }
   }, [data?.tiles, fetchIbLive, mode, runCommitteeCycle])
@@ -993,7 +1007,7 @@ export default function SymbolTracker() {
       <div className="symbol-tracker-head">
         <div>
           <h2>Symbol Tracker</h2>
-          <p>One tile per open position with 30s IB live updates and a structured live committee observer panel.</p>
+          <p>Live positions with 30s updates.</p>
         </div>
         <div className="symbol-tracker-head-actions">
           <button type="button" className="symbol-tracker-btn" onClick={refreshIbOnly}>Refresh Live Only</button>
@@ -1034,7 +1048,6 @@ export default function SymbolTracker() {
             <option value="linear">Linear</option>
           </select>
         </label>
-        <label className="symbol-tracker-control-note">Snowflake context refresh is manual only.</label>
         <label>
           Trend style
           <select value={trendRender} onChange={(e) => setTrendRender(e.target.value)}>

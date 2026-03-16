@@ -55,11 +55,6 @@
   font-size: 0.9rem;
 }
 
-.symbol-tracker-control-note {
-  color: #94a3b8 !important;
-  justify-content: flex-end;
-}
-
 .symbol-tracker-controls select {
   border: 1px solid #334155;
   background: #0f172a;
@@ -420,9 +415,26 @@
 
 .symbol-tracker-committee-context-ts {
   color: #93c5fd;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   display: grid;
   gap: 0.1rem;
+  text-align: right;
+}
+
+.symbol-tracker-committee-filter-wrap {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.symbol-tracker-filter-toggle {
+  border: 1px solid #334155;
+  background: #0b1322;
+  color: #cbd5e1;
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.74rem;
+  cursor: pointer;
+  width: fit-content;
 }
 
 .symbol-tracker-committee-filters {
@@ -446,6 +458,20 @@
   color: #f8fafc;
   border-radius: 8px;
   padding: 0.3rem 0.4rem;
+}
+
+.symbol-tracker-committee-check {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.4rem !important;
+  white-space: nowrap;
+  color: #cbd5e1;
+  font-size: 0.76rem;
+}
+
+.symbol-tracker-committee-check input {
+  margin: 0;
 }
 
 .symbol-tracker-committee-section {

@@ -224,7 +224,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
     cur.execute(
         """
         select
-          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
+          ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
           STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
           PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
           PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
@@ -270,7 +270,7 @@ def _fetch_live_action_state(action_id: str) -> dict | None:
         cur = conn.cursor()
         cur.execute(
             """
-            select ACTION_ID, STATUS, COMPLIANCE_STATUS, REASON_CODES, PORTFOLIO_ID, SYMBOL, SIDE
+            select ACTION_ID, STATUS, COMPLIANCE_STATUS, REASON_CODES, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE
             from MIP.LIVE.LIVE_ACTIONS
             where ACTION_ID = %s
             """,
@@ -286,6 +286,14 @@ def _normalize_broker_order_id(value) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _normalize_action_intent(side: str | None, action_intent: str | None = None) -> str:
+    intent = str(action_intent or "").upper().strip()
+    if intent in ("ENTRY", "EXIT"):
+        return intent
+    side_upper = str(side or "").upper().strip()
+    return "EXIT" if side_upper == "SELL" else "ENTRY"
 
 
 def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) -> dict:
@@ -3454,7 +3462,7 @@ def list_live_trade_actions(
           qualify row_number() over (partition by RUN_ID order by CREATED_AT desc) = 1
         )
         select
-          la.ACTION_ID, la.PROPOSAL_ID, la.PORTFOLIO_ID, la.SYMBOL, la.SIDE, la.PROPOSED_QTY, la.PROPOSED_PRICE, la.ASSET_CLASS,
+          la.ACTION_ID, la.PROPOSAL_ID, la.PORTFOLIO_ID, la.SYMBOL, la.SIDE, la.ACTION_INTENT, la.EXIT_TYPE, la.EXIT_REASON, la.PROPOSED_QTY, la.PROPOSED_PRICE, la.ASSET_CLASS,
           la.STATUS, la.VALIDITY_WINDOW_END,
           la.COMMITTEE_REQUIRED, la.COMMITTEE_STATUS, la.COMMITTEE_RUN_ID, la.COMMITTEE_COMPLETED_TS, la.COMMITTEE_VERDICT,
           cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,

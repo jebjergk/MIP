@@ -23,6 +23,12 @@ const ACTION_PRIORITY = {
   NO_ACTION: 1,
 }
 
+const SENSITIVITY_MULTIPLIER = {
+  CONSERVATIVE: 1.3,
+  BALANCED: 1.0,
+  AGGRESSIVE: 0.75,
+}
+
 function toNum(value) {
   const n = Number(value)
   return Number.isFinite(n) ? n : null
@@ -64,6 +70,15 @@ function fmtPct(value) {
   return `${(n * 100).toFixed(2)}%`
 }
 
+function fmtNum(value, digits = 2) {
+  const n = toNum(value)
+  if (n == null) return 'n/a'
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })
+}
+
 function fmtBps(value) {
   const n = toNum(value)
   if (n == null) return 'n/a'
@@ -93,7 +108,23 @@ function shortHeadline(item) {
   return text.length > 96 ? `${text.slice(0, 93)}...` : text
 }
 
-export function buildLiveState(tile, previousLive = null) {
+function computeAdaptiveThresholds({ vol15m, currentPrice, quantity, sensitivity }) {
+  const vol = Math.max(Math.abs(toNum(vol15m) ?? 0), 0.004)
+  const price = Math.max(Math.abs(toNum(currentPrice) ?? 0), 1)
+  const qty = Math.max(Math.abs(toNum(quantity) ?? 0), 1)
+  const notional = price * qty
+  const key = String(sensitivity || 'BALANCED').toUpperCase()
+  const mult = SENSITIVITY_MULTIPLIER[key] || 1.0
+  return {
+    ret15_surge_threshold: clamp(vol * 2.4 * mult, 0.0045, 0.04),
+    entry_recovery_threshold: clamp(vol * 1.8 * mult, 0.0045, 0.03),
+    pnl_delta_threshold: clamp(notional * vol * 0.9 * mult, 60, 2600),
+    price_drift_threshold: clamp(vol * 0.9 * mult, 0.0025, 0.03),
+    sensitivity_mode: key,
+  }
+}
+
+export function buildLiveState(tile, previousLive = null, sensitivity = 'BALANCED') {
   const bars = latestBars(tile)
   const last = bars[bars.length - 1] || {}
   const prev5 = bars[Math.max(0, bars.length - 6)] || {}
@@ -162,6 +193,13 @@ export function buildLiveState(tile, previousLive = null) {
     vs_benchmark: null,
   }
   features.pattern_label = classifyPattern(features)
+  const quantity = toNum(tile?.quantity)
+  const adaptiveThresholds = computeAdaptiveThresholds({
+    vol15m: features.vol_15m,
+    currentPrice: current,
+    quantity,
+    sensitivity,
+  })
 
   return {
     symbol: tile?.symbol,
@@ -172,7 +210,11 @@ export function buildLiveState(tile, previousLive = null) {
     day_change_pct: pctChange(close, bars[0]?.open),
     intraday_bars: bars.slice(-30),
     derived_features: features,
+    quantity,
+    position_notional: current != null && quantity != null ? Math.abs(current * quantity) : null,
+    adaptive_thresholds: adaptiveThresholds,
     live_news: (tile?.events || []).filter((e) => e?.type === 'NEWS').slice(0, 2),
+    unrealized_pnl: toNum(tile?.unrealized_pnl),
     comparison: {
       vs_sector: null,
       vs_benchmark: null,
@@ -213,22 +255,45 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
   const underwater = Number(tile?.unrealized_pnl || 0) < 0
   const feats = liveState?.derived_features || {}
   const pathInside = feats.inside_cone
+  const prevLive = previousCommittee?.live_state || {}
+  const prevFeats = prevLive?.derived_features || {}
+  const prevPnl = toNum(prevLive?.unrealized_pnl)
+  const currPnl = toNum(liveState?.unrealized_pnl)
+  const prevDistToEntry = toNum(prevFeats?.distance_to_entry_pct)
+  const currDistToEntry = toNum(feats?.distance_to_entry_pct)
+  const thresholds = liveState?.adaptive_thresholds || {}
+  const ret15SurgeThreshold = toNum(thresholds?.ret15_surge_threshold) ?? 0.01
+  const entryRecoveryThreshold = toNum(thresholds?.entry_recovery_threshold) ?? 0.01
+  const pnlFlipPositive = prevPnl != null && currPnl != null && prevPnl < 0 && currPnl > 0
+  const pnlMomentumDelta = prevPnl != null && currPnl != null ? currPnl - prevPnl : null
+  const entryRecoveryBurst = (
+    prevDistToEntry != null
+    && currDistToEntry != null
+    && (currDistToEntry - prevDistToEntry) >= entryRecoveryThreshold
+  )
+  const shortTermSurge = (feats.ret_15m ?? 0) >= ret15SurgeThreshold
+  const recoverySurge = Boolean(pnlFlipPositive || entryRecoveryBurst || shortTermSurge)
 
   const previousByAgent = new Map((previousCommittee?.agent_messages || []).map((m) => [m.agent_name, m]))
   const outputs = []
 
   outputs.push(
     makeAgentOutput('POSITION_MANAGER_AGENT', symbol, {
-      stance: underwater ? 'LAGGING' : 'ON_TRACK',
+      stance: pnlFlipPositive ? 'RECOVERED_TO_PROFIT' : underwater ? 'LAGGING' : 'ON_TRACK',
       reason_tags: [
-        underwater ? 'UNDERWATER' : 'IN_PROFIT',
+        pnlFlipPositive ? 'PNL_REGIME_FLIP' : underwater ? 'UNDERWATER' : 'IN_PROFIT',
         isProtected ? 'PROTECTED' : 'UNPROTECTED',
+        recoverySurge ? 'RECOVERY_SURGE' : 'NO_SURGE_SIGNAL',
       ],
-      action_bias: underwater ? 'WATCH' : 'HOLD',
-      materiality_score: underwater ? 0.68 : 0.4,
-      short_text: underwater
+      action_bias: underwater ? 'WATCH' : 'HOLD_WITH_MONITORING',
+      materiality_score: pnlFlipPositive ? 0.86 : underwater ? 0.68 : recoverySurge ? 0.65 : 0.4,
+      short_text: pnlFlipPositive
+        ? `Position flipped from underwater to in-profit (delta ${fmtNum(pnlMomentumDelta, 2)} P&L); momentum regime improved rapidly.`
+        : underwater
         ? `Position still open, but P/L is underwater (${fmtPct(feats.distance_to_entry_pct)} from entry) with limited objective progress.`
-        : `Progress is acceptable so far (${fmtPct(feats.distance_to_entry_pct)} from entry), thesis remains workable.`,
+        : recoverySurge
+          ? `Price recovery accelerated (${fmtPct(feats.ret_15m)} over 15m vs ${fmtPct(ret15SurgeThreshold)} trigger); thesis quality improved and needs active reassessment.`
+          : `Progress is acceptable so far (${fmtPct(feats.distance_to_entry_pct)} from entry), thesis remains workable.`,
     }, previousByAgent.get('POSITION_MANAGER_AGENT')),
   )
 
@@ -247,6 +312,7 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
         underwater ? 'UNDERWATER' : 'P_L_STABLE',
         isProtected ? 'HAS_PROTECTION' : 'UNPROTECTED',
         (feats.vol_15m ?? 0) > 0.015 ? 'VOL_EXPANSION' : 'VOL_NORMAL',
+        pnlFlipPositive ? 'PNL_REGIME_FLIP' : 'NO_PNL_REGIME_FLIP',
       ],
       action_bias: riskScore >= 0.8 ? 'ADD_PROTECTION' : riskScore >= 0.5 ? 'HOLD_WITH_MONITORING' : 'NO_ACTION',
       materiality_score: riskScore,
@@ -335,7 +401,13 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
 
   const dominantRisk = outputs.some((o) => ['RISK_HIGH', 'BELOW_LOWER_BAND', 'RISK_OFF_BREAKDOWN'].includes(o.stance))
   const elevated = outputs.some((o) => ['RISK_ELEVATED', 'REGIME_AGAINST', 'FAILED_BOUNCE', 'VOLATILITY_SPIKE'].includes(o.stance))
-  const committee_stance = dominantRisk ? 'ESCALATE' : elevated ? 'WATCH_CLOSELY' : 'THESIS_INTACT'
+  const committee_stance = dominantRisk
+    ? 'ESCALATE'
+    : (recoverySurge && !underwater)
+      ? 'THESIS_INTACT'
+      : elevated
+        ? 'WATCH_CLOSELY'
+        : 'THESIS_INTACT'
   const confidenceRank = Math.max(...outputs.map((o) => CONFIDENCE_RANK[o.confidence] || 1))
   const committee_confidence = confidenceRank >= 3 ? 'HIGH' : confidenceRank >= 2 ? 'MEDIUM' : 'LOW'
   const reasonTagFreq = new Map()
@@ -387,6 +459,8 @@ export function evaluateCommittee(tile, liveState, previousCommittee = null) {
     key_points_for_human,
     headline_text: dominantRisk
       ? 'Committee tilt: risk pressure is dominating the setup.'
+      : (recoverySurge && !underwater)
+        ? 'Committee tilt: strong recovery surge improved setup quality.'
       : elevated
         ? 'Committee tilt: setup remains viable, but quality has softened.'
         : 'Committee tilt: behavior is mostly aligned with thesis.',
@@ -413,6 +487,21 @@ export function isMaterialUpdate(previousCommittee, nextCommittee) {
   if (previousCommittee.pattern_label !== nextCommittee.pattern_label) return true
   if (previousCommittee.inside_cone !== nextCommittee.inside_cone) return true
   if (previousCommittee.risk_pressure_level !== nextCommittee.risk_pressure_level) return true
+  const prevPnl = toNum(previousCommittee?.live_state?.unrealized_pnl)
+  const nextPnl = toNum(nextCommittee?.live_state?.unrealized_pnl)
+  const dynamicPnlDelta = toNum(nextCommittee?.live_state?.adaptive_thresholds?.pnl_delta_threshold) ?? 120
+  if (prevPnl != null && nextPnl != null) {
+    if ((prevPnl < 0 && nextPnl > 0) || (prevPnl > 0 && nextPnl < 0)) return true
+    if (Math.abs(nextPnl - prevPnl) >= dynamicPnlDelta) return true
+  }
+  const prevDist = toNum(previousCommittee?.live_state?.derived_features?.distance_to_entry_pct)
+  const nextDist = toNum(nextCommittee?.live_state?.derived_features?.distance_to_entry_pct)
+  const dynamicEntryDelta = toNum(nextCommittee?.live_state?.adaptive_thresholds?.entry_recovery_threshold) ?? 0.008
+  if (prevDist != null && nextDist != null && Math.abs(nextDist - prevDist) >= dynamicEntryDelta) return true
+  const prevRet15 = toNum(previousCommittee?.live_state?.derived_features?.ret_15m) || 0
+  const nextRet15 = toNum(nextCommittee?.live_state?.derived_features?.ret_15m) || 0
+  const dynamicRet15 = toNum(nextCommittee?.live_state?.adaptive_thresholds?.ret15_surge_threshold) ?? 0.01
+  if ((prevRet15 <= 0 && nextRet15 >= dynamicRet15) || (prevRet15 >= 0 && nextRet15 <= -dynamicRet15)) return true
   const prevTag = previousCommittee.top_reason_tags?.[0]
   const nextTag = nextCommittee.top_reason_tags?.[0]
   if (prevTag !== nextTag) return true
@@ -423,7 +512,8 @@ export function isMaterialUpdate(previousCommittee, nextCommittee) {
   const nextPrice = toNum(nextCommittee?.live_state?.last_price)
   if (prevPrice != null && nextPrice != null && prevPrice !== 0) {
     const drift = Math.abs((nextPrice / prevPrice) - 1)
-    if (drift >= 0.0035) return true
+    const dynamicDrift = toNum(nextCommittee?.live_state?.adaptive_thresholds?.price_drift_threshold) ?? 0.0035
+    if (drift >= dynamicDrift) return true
   }
   return false
 }

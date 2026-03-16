@@ -854,6 +854,7 @@ function CommitteePanel({
 
 export default function SymbolTracker() {
   const { formatSymbolLabel } = useSymbolMeta()
+  const [sensitivityMode, setSensitivityMode] = useState('BALANCED')
   const [mode, setMode] = useState('intraday')
   const [chartStyle, setChartStyle] = useState('line')
   const [horizonBars, setHorizonBars] = useState('5')
@@ -922,7 +923,7 @@ export default function SymbolTracker() {
       for (const tile of nextTiles) {
         const symbol = String(tile?.symbol || '').toUpperCase()
         const prevCommittee = prevCommitteeMap[symbol]
-        const liveState = buildLiveState(tile, prevCommittee?.live_state || null)
+        const liveState = buildLiveState(tile, prevCommittee?.live_state || null, sensitivityMode)
         const committee = evaluateCommittee(tile, liveState, prevCommittee)
         nextCommitteeMap[symbol] = committee
         const hasMaterial = isMaterialUpdate(prevCommittee, committee)
@@ -994,7 +995,7 @@ export default function SymbolTracker() {
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return nextCommitteeMap
     })
-  }, [])
+  }, [sensitivityMode])
 
   const loadContext = useCallback(async () => {
     setLoading(true)
@@ -1034,6 +1035,12 @@ export default function SymbolTracker() {
   useEffect(() => {
     loadContext()
   }, [loadContext])
+
+  useEffect(() => {
+    if (Array.isArray(data?.tiles) && data.tiles.length > 0) {
+      runCommitteeCycle(data)
+    }
+  }, [sensitivityMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshIbOnly = useCallback(async () => {
     try {
@@ -1129,6 +1136,14 @@ export default function SymbolTracker() {
       </div>
 
       <div className="symbol-tracker-controls">
+        <label>
+          Sensitivity
+          <select value={sensitivityMode} onChange={(e) => setSensitivityMode(e.target.value)}>
+            <option value="CONSERVATIVE">Conservative</option>
+            <option value="BALANCED">Balanced</option>
+            <option value="AGGRESSIVE">Aggressive</option>
+          </select>
+        </label>
         <label>
           Mode
           <select value={mode} onChange={(e) => setMode(e.target.value)}>

@@ -306,6 +306,27 @@ def _normalize_action_intent(side: str | None, action_intent: str | None = None)
     return "EXIT" if side_upper == "SELL" else "ENTRY"
 
 
+def _fetch_live_symbol_position_qty(cur, portfolio_id: int | None, symbol: str | None) -> float:
+    if portfolio_id is None or not symbol:
+        return 0.0
+    cur.execute(
+        """
+        select IBKR_ACCOUNT_ID
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where PORTFOLIO_ID = %s
+          and coalesce(IS_ACTIVE, true) = true
+        limit 1
+        """,
+        (portfolio_id,),
+    )
+    cfg_rows = fetch_all(cur)
+    account_id = str((cfg_rows[0] or {}).get("IBKR_ACCOUNT_ID") or "").strip() if cfg_rows else ""
+    if not account_id:
+        return 0.0
+    broker_truth = _fetch_latest_broker_truth(cur, account_id, str(symbol).upper())
+    return float(broker_truth.get("symbol_position_qty") or 0.0)
+
+
 def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) -> dict:
     cur.execute(
         """
@@ -2422,6 +2443,8 @@ def _committee_fallback(role: str, error_hint: str | None = None) -> dict:
 
 def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages: list[dict] | None = None) -> str:
     prior_messages = prior_messages or []
+    action_intent = str(context.get("action_intent") or "ENTRY").upper()
+    is_exit = action_intent == "EXIT"
     role_focus = {
         "PROPOSER": "Build the strongest symbol-specific case with concrete target/hold assumptions.",
         "TRADER_EXECUTION_REVIEWER": "Focus on execution realism, opening behavior, slippage, and timing constraints.",
@@ -2430,9 +2453,21 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "PORTFOLIO_MANAGER": "Focus on cross-candidate capital allocation priority and portfolio fit.",
         "POST_TRADE_REVIEWER": "Focus on ex-ante evaluability and what would validate/invalidate this call later.",
     }.get(role, "Provide role-specific analysis.")
-    return (
-        "You are one role in an institutional multi-agent trade committee.\n"
-        "Return ONLY a JSON object with keys:\n"
+    objective_line = (
+        "- This is an EXIT decision (position close/reduce), not a new entry. Interpret should_enter as should_execute_exit.\n"
+        "- For EXIT, reserve BLOCK only for hard safety/compliance blockers (e.g., missing position, halted symbol, or severe execution integrity risk).\n"
+        if is_exit
+        else "- This is an ENTRY decision. should_enter means open/increase position.\n"
+    )
+    schema_line = (
+        "{\"stance\":\"SUPPORT|CONDITIONAL|BLOCK\",\"confidence\":0.0-1.0,"
+        "\"summary\":\"...\",\"exit_size_factor\":0.0-1.0,"
+        "\"should_execute_exit\":true|false,"
+        "\"exit_horizon_bars\":integer,"
+        "\"max_giveback_pct\":number,"
+        "\"reasons\":[\"...\"],\"assumptions\":[\"...\"]}\n"
+        if is_exit
+        else
         "{\"stance\":\"SUPPORT|CONDITIONAL|BLOCK\",\"confidence\":0.0-1.0,"
         "\"summary\":\"...\",\"size_factor\":0.0-1.0,"
         "\"should_enter\":true|false,"
@@ -2441,11 +2476,17 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "\"hold_bars\":integer,"
         "\"early_exit_target_return\":number,"
         "\"reasons\":[\"...\"],\"assumptions\":[\"...\"]}\n"
+    )
+    return (
+        "You are one role in an institutional multi-agent trade committee.\n"
+        "Return ONLY a JSON object with keys:\n"
+        f"{schema_line}"
         "Rules:\n"
         "- Be strict and risk-aware.\n"
         "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
         "- When discussing news freshness, explicitly cite source as ACTION_NEWS (news_context_snapshot) or LATEST_NEWS (latest_symbol_news_context).\n"
         "- If ACTION_NEWS and LATEST_NEWS conflict, state the conflict explicitly and prioritize LATEST_NEWS recency for risk gating.\n"
+        f"{objective_line}"
         "- Contribute to joint decision dimensions: enter/size/target/stop/hold/early-exit.\n"
         "- stop_loss_pct must be positive and risk-aware versus expected edge after fees.\n"
         "- Return ONE valid JSON object only, no preface/suffix.\n"
@@ -2461,7 +2502,9 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
     )
 
 
-def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> dict:
+def _normalize_role_output(role: str, out: dict, symbol: str | None = None, action_intent: str = "ENTRY") -> dict:
+    intent = str(action_intent or "ENTRY").upper()
+    is_exit = intent == "EXIT"
     stance = str(out.get("stance", "CONDITIONAL")).upper()
     if stance not in ("SUPPORT", "CONDITIONAL", "BLOCK"):
         stance = "CONDITIONAL"
@@ -2470,24 +2513,39 @@ def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> d
     except Exception:
         confidence = 0.5
     confidence = max(0.0, min(1.0, confidence))
+    size_key_val = out.get("exit_size_factor") if is_exit else out.get("size_factor")
+    if size_key_val is None:
+        size_key_val = out.get("size_factor")
     try:
-        size_factor = float(out.get("size_factor", 1.0))
+        size_factor = float(size_key_val if size_key_val is not None else 1.0)
     except Exception:
         size_factor = 1.0
     size_factor = max(0.0, min(1.0, size_factor))
-    should_enter = bool(out.get("should_enter", stance != "BLOCK"))
+    should_execute_exit = out.get("should_execute_exit")
+    should_enter_raw = out.get("should_enter")
+    decision_flag = should_execute_exit if is_exit and should_execute_exit is not None else should_enter_raw
+    should_enter = bool(decision_flag if decision_flag is not None else (stance != "BLOCK"))
+    target_key_val = out.get("target_return")
+    if target_key_val is None and is_exit:
+        target_key_val = out.get("exit_target_return")
     try:
-        target_return = float(out.get("target_return")) if out.get("target_return") is not None else None
+        target_return = float(target_key_val) if target_key_val is not None else None
     except Exception:
         target_return = None
+    stop_key_val = out.get("stop_loss_pct")
+    if stop_key_val is None and is_exit:
+        stop_key_val = out.get("max_giveback_pct")
     try:
-        stop_loss_pct = float(out.get("stop_loss_pct")) if out.get("stop_loss_pct") is not None else None
+        stop_loss_pct = float(stop_key_val) if stop_key_val is not None else None
     except Exception:
         stop_loss_pct = None
     if stop_loss_pct is not None:
         stop_loss_pct = max(0.0005, min(stop_loss_pct, 0.95))
+    hold_key_val = out.get("exit_horizon_bars") if is_exit else out.get("hold_bars")
+    if hold_key_val is None:
+        hold_key_val = out.get("hold_bars")
     try:
-        hold_bars = int(out.get("hold_bars")) if out.get("hold_bars") is not None else None
+        hold_bars = int(hold_key_val) if hold_key_val is not None else None
     except Exception:
         hold_bars = None
     try:
@@ -2510,6 +2568,9 @@ def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> d
         "summary": summary,
         "size_factor": size_factor,
         "should_enter": should_enter,
+        "should_execute_exit": should_enter if is_exit else None,
+        "exit_size_factor": size_factor if is_exit else None,
+        "exit_horizon_bars": hold_bars if is_exit else None,
         "target_return": target_return,
         "stop_loss_pct": stop_loss_pct,
         "hold_bars": hold_bars,
@@ -2519,19 +2580,33 @@ def _normalize_role_output(role: str, out: dict, symbol: str | None = None) -> d
     }
 
 
-def _aggregate_committee(outputs: list[dict]) -> dict:
+def _aggregate_committee(outputs: list[dict], action_intent: str = "ENTRY") -> dict:
+    intent = str(action_intent or "ENTRY").upper()
     stances = [o.get("stance", "CONDITIONAL") for o in outputs]
     size_factors = [float(o.get("size_factor", 1.0)) for o in outputs if o.get("size_factor") is not None]
-    if any(s == "BLOCK" for s in stances):
-        recommendation = "BLOCK"
-    elif any(s == "CONDITIONAL" for s in stances):
-        recommendation = "PROCEED_REDUCED"
+    if intent == "EXIT":
+        # Exit committee is advisory-first: block only on broad consensus.
+        block_count = sum(1 for s in stances if s == "BLOCK")
+        recommendation = "BLOCK" if (outputs and block_count == len(outputs)) else "PROCEED_REDUCED"
     else:
-        recommendation = "PROCEED"
-    size_factor = min(size_factors) if size_factors else 1.0
+        if any(s == "BLOCK" for s in stances):
+            recommendation = "BLOCK"
+        elif any(s == "CONDITIONAL" for s in stances):
+            recommendation = "PROCEED_REDUCED"
+        else:
+            recommendation = "PROCEED"
+    size_factor = (
+        (sum(size_factors) / len(size_factors))
+        if (intent == "EXIT" and size_factors)
+        else (min(size_factors) if size_factors else 1.0)
+    )
     size_factor = max(0.0, min(1.0, size_factor))
     should_enter_votes = [bool(o.get("should_enter")) for o in outputs]
-    should_enter = bool(sum(1 for v in should_enter_votes if v) >= max(1, (len(should_enter_votes) + 1) // 2))
+    if intent == "EXIT":
+        # For exits, default to executable unless unanimous hard block.
+        should_enter = not (outputs and all(str(o.get("stance", "")).upper() == "BLOCK" for o in outputs))
+    else:
+        should_enter = bool(sum(1 for v in should_enter_votes if v) >= max(1, (len(should_enter_votes) + 1) // 2))
     target_returns = [float(o["target_return"]) for o in outputs if o.get("target_return") is not None]
     stop_losses = [float(o["stop_loss_pct"]) for o in outputs if o.get("stop_loss_pct") is not None]
     hold_bars_vals = [int(o["hold_bars"]) for o in outputs if o.get("hold_bars") is not None]
@@ -2544,19 +2619,28 @@ def _aggregate_committee(outputs: list[dict]) -> dict:
     hold_bars = int(round(sum(hold_bars_vals) / len(hold_bars_vals))) if hold_bars_vals else None
     early_exit_target_return = (sum(early_exit_targets) / len(early_exit_targets)) if early_exit_targets else None
     early_exit_target_return = _normalize_early_exit_target(target_return, early_exit_target_return)
+    joint_decision = {
+        "should_enter": should_enter and recommendation != "BLOCK",
+        "position_size_factor": round(size_factor, 4),
+        "realistic_target_return": target_return,
+        "stop_loss_pct": stop_loss_pct,
+        "hold_bars": hold_bars,
+        "acceptable_early_exit_target_return": early_exit_target_return,
+    }
+    if intent == "EXIT":
+        joint_decision.update(
+            {
+                "should_execute_exit": should_enter and recommendation != "BLOCK",
+                "exit_size_factor": round(size_factor, 4),
+                "exit_horizon_bars": hold_bars,
+            }
+        )
     return {
         "recommendation": recommendation,
         "size_factor": size_factor,
         "confidence": round(confidence, 4),
         "blocked": recommendation == "BLOCK",
-        "joint_decision": {
-            "should_enter": should_enter and recommendation != "BLOCK",
-            "position_size_factor": round(size_factor, 4),
-            "realistic_target_return": target_return,
-            "stop_loss_pct": stop_loss_pct,
-            "hold_bars": hold_bars,
-            "acceptable_early_exit_target_return": early_exit_target_return,
-        },
+        "joint_decision": joint_decision,
     }
 
 
@@ -2583,6 +2667,17 @@ def _normalize_early_exit_target(target_return, early_exit_target_return):
     if e < floor:
         return floor
     return e
+
+
+def _decision_allows_execution(jd: dict, action_intent: str) -> bool:
+    intent = str(action_intent or "ENTRY").upper()
+    if intent == "EXIT":
+        if jd.get("should_execute_exit") is not None:
+            return bool(jd.get("should_execute_exit"))
+        return bool(jd.get("should_enter", True))
+    if jd.get("should_enter") is not None:
+        return bool(jd.get("should_enter"))
+    return bool(jd.get("should_execute_exit", True))
 
 
 def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
@@ -2628,6 +2723,10 @@ def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
         jd.get("realistic_target_return"),
         jd.get("acceptable_early_exit_target_return"),
     )
+    if str(context.get("action_intent") or "ENTRY").upper() == "EXIT":
+        jd["should_execute_exit"] = bool(jd.get("should_enter", True))
+        jd["exit_size_factor"] = jd.get("position_size_factor")
+        jd["exit_horizon_bars"] = jd.get("hold_bars")
     out["joint_decision"] = jd
     out["quality_backfilled"] = True
     return out
@@ -2653,7 +2752,7 @@ def _run_multiagent_dialogue(
             role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=1, prior_messages=[]))
         except Exception as exc:
             role_out_raw = _committee_fallback(role, str(exc))
-        role_out = _normalize_role_output(role, role_out_raw, context.get("symbol"))
+        role_out = _normalize_role_output(role, role_out_raw, context.get("symbol"), action_intent=context.get("action_intent"))
         round1.append(role_out)
         prior_messages.append({"role": role, "summary": role_out.get("summary"), "stance": role_out.get("stance")})
         if emit:
@@ -2682,7 +2781,7 @@ def _run_multiagent_dialogue(
             role_out_raw = _call_cortex_json(cur, model, _committee_prompt(role, context, round_n=2, prior_messages=prior_messages))
         except Exception as exc:
             role_out_raw = _committee_fallback(role, str(exc))
-        role_out = _normalize_role_output(role, role_out_raw, context.get("symbol"))
+        role_out = _normalize_role_output(role, role_out_raw, context.get("symbol"), action_intent=context.get("action_intent"))
         round2.append(role_out)
         if emit:
             emit("agent_turn", {"round": 2, "role": role, "output": role_out})
@@ -2705,7 +2804,7 @@ def _run_multiagent_dialogue(
             )
 
     final_outputs = round2 if round2 else round1
-    verdict = _aggregate_committee(final_outputs)
+    verdict = _aggregate_committee(final_outputs, action_intent=context.get("action_intent"))
     if emit:
         emit("joint_decision", {"verdict": verdict})
     return final_outputs, verdict
@@ -2763,6 +2862,9 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "portfolio_id": action.get("PORTFOLIO_ID"),
         "symbol": symbol,
         "side": action.get("SIDE"),
+        "action_intent": _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT")),
+        "exit_type": action.get("EXIT_TYPE"),
+        "exit_reason": action.get("EXIT_REASON"),
         "proposed_qty": action.get("PROPOSED_QTY"),
         "proposed_price": action.get("PROPOSED_PRICE"),
         "status": action.get("STATUS"),
@@ -4958,7 +5060,32 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             or jd.get("acceptable_early_exit_target_return") is None
         ):
             verdict = _backfill_joint_decision_from_policy(verdict, context)
+        action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        is_exit = action_intent == "EXIT"
+        exit_position_qty = None
+        exit_override_applied = False
+        if is_exit:
+            exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
+            jd_exit = _parse_variant(verdict.get("joint_decision"))
+            if abs(float(exit_position_qty)) <= 0:
+                verdict["recommendation"] = "BLOCK"
+                verdict["blocked"] = True
+                jd_exit["should_enter"] = False
+                jd_exit["should_execute_exit"] = False
+                verdict["joint_decision"] = jd_exit
+            elif verdict.get("blocked"):
+                verdict["blocked"] = False
+                if str(verdict.get("recommendation") or "").upper() == "BLOCK":
+                    verdict["recommendation"] = "PROCEED_REDUCED"
+                jd_exit["should_enter"] = True
+                jd_exit["should_execute_exit"] = True
+                verdict["joint_decision"] = jd_exit
+                exit_override_applied = True
         reason_codes = []
+        if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
+            reason_codes.append("EXIT_POSITION_MISSING")
+        if exit_override_applied:
+            reason_codes.append("EXIT_INTENT_OVERRIDE_APPLIED")
         if news_fallback_active:
             reason_codes.append("NEWS_FALLBACK_RSS_ONLY")
         for rc in (news_readiness.get("reason_codes") or []):
@@ -5208,10 +5335,12 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
 
         verdict_in = dict(req.verdict or {})
         jd = _parse_variant(verdict_in.get("joint_decision"))
-        recommendation = str(verdict_in.get("recommendation") or ("BLOCK" if not bool(jd.get("should_enter", True)) else "PROCEED_REDUCED")).upper()
+        action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        allows_execution = _decision_allows_execution(jd, action_intent)
+        recommendation = str(verdict_in.get("recommendation") or ("BLOCK" if not allows_execution else "PROCEED_REDUCED")).upper()
         size_factor = float(verdict_in.get("size_factor") or jd.get("position_size_factor") or 1.0)
         confidence = float(verdict_in.get("confidence") or 0.5)
-        blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (jd.get("should_enter") is False)
+        blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (not allows_execution)
         context = _build_action_decision_context(cur, action)
         pw_evidence = context.get("parallel_worlds_evidence") or {}
         action_news_snapshot = context.get("news_context_snapshot") or {}
@@ -5225,8 +5354,32 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         }
         verdict = _backfill_joint_decision_from_policy(verdict, context)
         jd = _parse_variant(verdict.get("joint_decision"))
+        action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        is_exit = action_intent == "EXIT"
+        exit_position_qty = None
+        exit_override_applied = False
+        if is_exit:
+            exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
+            if abs(float(exit_position_qty)) <= 0:
+                verdict["recommendation"] = "BLOCK"
+                verdict["blocked"] = True
+                jd["should_enter"] = False
+                jd["should_execute_exit"] = False
+                verdict["joint_decision"] = jd
+            elif verdict.get("blocked"):
+                verdict["blocked"] = False
+                if str(verdict.get("recommendation") or "").upper() == "BLOCK":
+                    verdict["recommendation"] = "PROCEED_REDUCED"
+                jd["should_enter"] = True
+                jd["should_execute_exit"] = True
+                verdict["joint_decision"] = jd
+                exit_override_applied = True
 
         reason_codes = []
+        if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
+            reason_codes.append("EXIT_POSITION_MISSING")
+        if exit_override_applied:
+            reason_codes.append("EXIT_INTENT_OVERRIDE_APPLIED")
         if verdict["blocked"]:
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
@@ -5850,6 +6003,8 @@ def revalidate_live_action(
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
         portfolio_id = action.get("PORTFOLIO_ID")
+        action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        is_exit = action_intent == "EXIT"
         freshness_threshold_sec = 900
         try:
             cur.execute(
@@ -5901,15 +6056,26 @@ def revalidate_live_action(
             )
             fallback = cur.fetchone()
             if not fallback:
-                raise HTTPException(status_code=400, detail="No market bar found for symbol, revalidation blocked.")
-            ref_ts, ref_price = fallback
-            source = "BAR_FALLBACK"
+                if is_exit and proposed_price is not None:
+                    ref_ts = datetime.now(timezone.utc)
+                    ref_price = float(proposed_price)
+                    source = "EXIT_PRICE_FALLBACK"
+                else:
+                    raise HTTPException(status_code=400, detail="No market bar found for symbol, revalidation blocked.")
+            else:
+                ref_ts, ref_price = fallback
+                source = "BAR_FALLBACK"
 
         ref_ts_utc = _market_bar_ts_to_utc(ref_ts)
         if ref_ts_utc is None:
-            raise HTTPException(status_code=400, detail="Unable to parse market bar timestamp, revalidation blocked.")
+            if is_exit and proposed_price is not None:
+                ref_ts_utc = datetime.now(timezone.utc)
+                ref_price = float(proposed_price)
+                source = "EXIT_PRICE_FALLBACK"
+            else:
+                raise HTTPException(status_code=400, detail="Unable to parse market bar timestamp, revalidation blocked.")
         bar_age_sec = (datetime.now(timezone.utc) - ref_ts_utc).total_seconds()
-        if bar_age_sec > freshness_threshold_sec:
+        if bar_age_sec > freshness_threshold_sec and not is_exit:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -5929,6 +6095,8 @@ def revalidate_live_action(
         reason_codes: list[str] = []
         reduced_size_factor = None
         target_open_condition_factor = 1.0
+        if is_exit and bar_age_sec > freshness_threshold_sec:
+            reason_codes.append("EXIT_REVALIDATION_STALE_BAR_BYPASS")
 
         if deviation is None or deviation <= 0.02:
             revalidation_outcome = "PASS"
@@ -6164,9 +6332,14 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             reason_codes.append("PRICE_GUARD_FAIL")
         realism_reason_codes, realism_details = _first_session_realism_checks(cur, action, cfg)
         reason_codes.extend(realism_reason_codes)
+        param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
+        if not isinstance(param_snapshot, dict):
+            param_snapshot = {}
         news_snapshot = _parse_variant(action.get("NEWS_CONTEXT_SNAPSHOT"))
-        if not news_snapshot:
-            news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
+        if not isinstance(news_snapshot, dict):
+            news_snapshot = _parse_variant(param_snapshot.get("news_context"))
+        if not isinstance(news_snapshot, dict):
+            news_snapshot = {}
         news_context_state = str(news_snapshot.get("context_state") or "").upper()
         news_event_shock_flag = bool(news_snapshot.get("event_shock_flag"))
         news_freshness_bucket = str(news_snapshot.get("freshness_bucket") or "").upper()

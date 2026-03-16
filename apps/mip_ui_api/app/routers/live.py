@@ -6912,7 +6912,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         ),
                         "legs": order_legs,
                         "broker_submit_payload": broker_submit_payload,
-                    }
+                    },
+                    default=str,
                 ),
             ),
         )

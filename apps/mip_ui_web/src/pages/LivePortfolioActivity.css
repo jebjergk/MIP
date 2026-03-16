@@ -224,6 +224,36 @@
   color: #3069f0;
 }
 
+.lpa-btn-compact {
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  border-radius: 6px;
+  width: auto !important;
+}
+
+.lpa-toggle {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lpa-toggle-btn {
+  border: 1px solid #cfd6e1;
+  background: #fff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lpa-toggle-btn.is-active {
+  border-color: #3069f0;
+  color: #3069f0;
+  background: #eef3ff;
+}
+
 .lpa-controls {
   display: flex;
   gap: 10px;

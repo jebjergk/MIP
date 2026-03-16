@@ -156,6 +156,7 @@ export default function LivePortfolioActivity() {
   const [busy, setBusy] = useState('')
   const [ordersLookbackDays, setOrdersLookbackDays] = useState(30)
   const [ordersLimit, setOrdersLimit] = useState(120)
+  const [ordersView, setOrdersView] = useState('active')
   const [executionsLimit, setExecutionsLimit] = useState(60)
   const [snapshotLookbackDays, setSnapshotLookbackDays] = useState(14)
   const [streamActionId, setStreamActionId] = useState('')
@@ -534,6 +535,26 @@ export default function LivePortfolioActivity() {
   const openPositions = overview?.open_positions || []
   const orders = overview?.orders || []
   const executions = overview?.executions || []
+  const archivedOrderStatuses = new Set(['CANCELED', 'CANCELLED', 'REJECTED', 'FILLED', 'NOT_ACTIVE_AT_BROKER'])
+  const displayedOrders = orders.filter((o) => {
+    const status = String(o?.STATUS || '').toUpperCase()
+    const isArchived = archivedOrderStatuses.has(status)
+    if (ordersView === 'archived') return isArchived
+    if (ordersView === 'active') return !isArchived
+    return true
+  })
+  const archivedOrdersCount = orders.filter((o) => archivedOrderStatuses.has(String(o?.STATUS || '').toUpperCase())).length
+  const activeOrdersCount = Math.max(orders.length - archivedOrdersCount, 0)
+
+  const pendingExitBySymbol = pending.reduce((acc, d) => {
+    const intent = String(d?.action_intent || '').toUpperCase()
+    if (intent !== 'EXIT') return acc
+    const symbol = String(d?.symbol || '').toUpperCase()
+    if (!symbol) return acc
+    acc.set(symbol, d)
+    return acc
+  }, new Map())
+
   const readiness = overview?.readiness || {}
   const navTrend = overview?.activity_trends?.nav || []
   const positionTrend = overview?.activity_trends?.positions || []
@@ -849,6 +870,32 @@ export default function LivePortfolioActivity() {
                   <option value={250}>250</option>
                 </select>
               </label>
+              <div className="lpa-control">
+                <span>Orders View</span>
+                <div className="lpa-toggle">
+                  <button
+                    className={`lpa-toggle-btn ${ordersView === 'active' ? 'is-active' : ''}`}
+                    onClick={() => setOrdersView('active')}
+                    type="button"
+                  >
+                    Active ({activeOrdersCount})
+                  </button>
+                  <button
+                    className={`lpa-toggle-btn ${ordersView === 'archived' ? 'is-active' : ''}`}
+                    onClick={() => setOrdersView('archived')}
+                    type="button"
+                  >
+                    Archived ({archivedOrdersCount})
+                  </button>
+                  <button
+                    className={`lpa-toggle-btn ${ordersView === 'all' ? 'is-active' : ''}`}
+                    onClick={() => setOrdersView('all')}
+                    type="button"
+                  >
+                    All ({orders.length})
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="lpa-table-wrap">
               <table className="lpa-table">
@@ -863,8 +910,8 @@ export default function LivePortfolioActivity() {
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.length === 0 && <tr><td colSpan={6}>No broker orders.</td></tr>}
-                  {orders.map((o) => (
+                  {displayedOrders.length === 0 && <tr><td colSpan={6}>No orders in this view.</td></tr>}
+                  {displayedOrders.map((o) => (
                     <tr key={o.ORDER_ID}>
                       <td>
                         <div><b>{formatSymbolLabel(o.SYMBOL, o.MARKET_TYPE || o.ASSET_CLASS)}</b> ({o.SIDE})</div>
@@ -927,6 +974,8 @@ export default function LivePortfolioActivity() {
                         const symbol = String(p.SYMBOL || '').toUpperCase()
                         const exit = protectionBySymbol.get(symbol)
                         const hasExit = exit && exit.state !== 'NONE'
+                        const pendingExit = pendingExitBySymbol.get(symbol)
+                        const hasPendingExit = Boolean(pendingExit)
                         return (
                           <tr key={`${p.SYMBOL || 'SYM'}_${idx}`}>
                             <td>
@@ -954,12 +1003,13 @@ export default function LivePortfolioActivity() {
                               )}
                               <div className="lpa-actions" style={{ marginTop: 8 }}>
                                 <button
-                                  className="lpa-btn lpa-btn-secondary"
-                                  disabled={busy === `exit:${symbol}`}
+                                  className="lpa-btn lpa-btn-secondary lpa-btn-compact"
+                                  disabled={busy === `exit:${symbol}` || hasPendingExit}
                                   onClick={() => createExitAction(p)}
                                 >
-                                  {busy === `exit:${symbol}` ? 'Creating...' : 'Sell (create exit)'}
+                                  {busy === `exit:${symbol}` ? 'Creating...' : (hasPendingExit ? 'Exit queued' : 'Sell')}
                                 </button>
+                                {hasPendingExit ? <div className="lpa-subtle">Pending action: {pendingExit?.action_id}</div> : null}
                               </div>
                             </td>
                           </tr>

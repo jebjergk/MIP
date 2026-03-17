@@ -302,6 +302,19 @@ def _normalize_broker_order_id(value) -> str:
     return norm
 
 
+def _normalize_broker_price(value):
+    if value is None:
+        return None
+    try:
+        px = float(value)
+    except Exception:
+        return None
+    # IBKR sometimes emits max-double sentinel when a field is not set.
+    if abs(px) >= 1e100:
+        return None
+    return px
+
+
 def _normalize_action_intent(side: str | None, action_intent: str | None = None) -> str:
     intent = str(action_intent or "").upper().strip()
     if intent in ("ENTRY", "EXIT"):
@@ -6982,6 +6995,38 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     role,
                     _normalize_broker_order_id(ib_leg.get("perm_id") or ib_leg.get("order_id")),
                 )
+                ib_lmt_price = _normalize_broker_price(ib_leg.get("lmt_price"))
+                ib_aux_price = _normalize_broker_price(ib_leg.get("aux_price"))
+                if role == "STOP_LOSS":
+                    normalized_limit_price = (
+                        ib_aux_price
+                        if ib_aux_price is not None
+                        else (
+                            float(sl_price)
+                            if sl_price is not None
+                            else (ib_lmt_price if ib_lmt_price is not None else float(entry_price))
+                        )
+                    )
+                elif role == "TAKE_PROFIT":
+                    normalized_limit_price = (
+                        ib_lmt_price
+                        if ib_lmt_price is not None
+                        else (
+                            float(tp_price)
+                            if tp_price is not None
+                            else (ib_aux_price if ib_aux_price is not None else float(entry_price))
+                        )
+                    )
+                else:
+                    normalized_limit_price = (
+                        ib_lmt_price
+                        if ib_lmt_price is not None
+                        else (
+                            float(entry_price)
+                            if entry_price is not None
+                            else (ib_aux_price if ib_aux_price is not None else None)
+                        )
+                    )
                 order_legs.append(
                     {
                         "order_id": str(uuid.uuid4()),
@@ -6989,11 +7034,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "idempotency_key": idem,
                         "side": side if role == "PARENT" else exit_side,
                         "order_type": str(ib_leg.get("order_type") or ("MKT" if role == "PARENT" else "LMT")),
-                        "limit_price": (
-                            float(ib_leg.get("lmt_price"))
-                            if ib_leg.get("lmt_price") is not None
-                            else (float(tp_price) if role == "TAKE_PROFIT" and tp_price is not None else (float(sl_price) if role == "STOP_LOSS" and sl_price is not None else float(entry_price)))
-                        ),
+                        "limit_price": normalized_limit_price,
                         "role": role or "PARENT",
                         "status": str(ib_leg.get("status") or "SUBMITTED").upper(),
                     }

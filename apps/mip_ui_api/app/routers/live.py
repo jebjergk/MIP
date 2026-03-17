@@ -757,7 +757,7 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
         except Exception:
             gap_pct = None
 
-    open_utc, _ = _market_session_bounds_utc(now_utc)
+    open_utc, _ = _extended_trading_bounds_utc(now_utc)
     wait_minutes = 0
     mode_effective = policy["mode_effective"]
     if mode_effective == "SHORT_STABILIZATION_REQUIRED":
@@ -769,7 +769,7 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
 
     hard_reasons: list[str] = []
     caution_reasons: list[str] = []
-    if not _is_market_open_ny(now_utc):
+    if not _is_extended_trading_open_ny(now_utc):
         hard_reasons.append("OPEN_MARKET_CLOSED")
     if not symbol:
         hard_reasons.append("OPEN_MISSING_SYMBOL")
@@ -889,8 +889,8 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     latest_ts = latest_bar[0] if latest_bar else None
     latest_close = latest_bar[1] if latest_bar else None
     now_utc = datetime.now(timezone.utc)
-    market_open = _is_market_open_ny(now_utc)
-    open_utc, close_utc = _market_session_bounds_utc(now_utc)
+    market_open = _is_extended_trading_open_ny(now_utc)
+    open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
     if not latest_ts:
         reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
     else:
@@ -898,7 +898,7 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
         bar_age_sec = (now_utc - bar_ts_utc).total_seconds() if bar_ts_utc is not None else None
         # 60s proved too strict for committee runtime; enforce practical lower bound.
         max_age_sec = max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300)
-        # Out-of-hours: allow submit with latest regular-session bar.
+        # Outside extended-hours: allow submit with latest regular-session bar.
         if market_open and bar_age_sec is not None and bar_age_sec > max_age_sec:
             reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
         if one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:

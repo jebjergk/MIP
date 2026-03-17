@@ -705,7 +705,7 @@ export default function LivePortfolioActivity() {
                     <Fragment key={d.action_id}>
                     {(() => {
                       const statusUpper = String(d.status || '').toUpperCase()
-                      const canSubmit = statusUpper === 'REVALIDATED_PASS'
+                      const canSubmit = statusUpper === 'REVALIDATED_PASS' && Boolean(d.submission_allowed)
                       const canRunCommittee = [
                         'RESEARCH_IMPORTED',
                         'PROPOSED',
@@ -804,7 +804,11 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-ready-chip">Ready to submit</div>
                         ) : null}
                         {!canSubmit ? (
-                          <div className="lpa-subtle">Run Committee revalidation. If committee says go, Submit will be enabled.</div>
+                          <div className="lpa-subtle">
+                            {d.execution_hard_blocked
+                              ? 'Submit blocked by risk limits shown in reason codes. Adjust sizing/config or rerun committee.'
+                              : 'Run Committee revalidation. If committee says go, Submit will be enabled.'}
+                          </div>
                         ) : null}
                         {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
                           <div className="lpa-subtle">Blocked by opening guard. Re-run Committee revalidation when data is fresher, or Reject stale to clear.</div>

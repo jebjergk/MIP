@@ -4009,8 +4009,22 @@ def get_live_activity_overview(
             status = (row.get("STATUS") or "").upper()
             action_reason_codes = _parse_list_variant(row.get("REASON_CODES"))
             blocked = status == "OPEN_BLOCKED" or bool(action_reason_codes and any("BLOCK" in str(x).upper() for x in action_reason_codes))
+            execution_hard_blocked = bool(
+                action_reason_codes
+                and any(
+                    str(x).upper()
+                    in (
+                        "MAX_POSITIONS_EXCEEDED",
+                        "MAX_POSITION_PCT_EXCEEDED",
+                        "CASH_BUFFER_BREACH",
+                        "MISSING_NOTIONAL_INPUT",
+                        "EXIT_POSITION_MISSING",
+                    )
+                    for x in action_reason_codes
+                )
+            )
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
-            submit_allowed = submit_allowed and page_actionable and (not blocked)
+            submit_allowed = submit_allowed and page_actionable and (not blocked) and (not execution_hard_blocked)
             in_position = symbol in held_symbols
             action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
             is_exit = action_intent == "EXIT"
@@ -4048,6 +4062,7 @@ def get_live_activity_overview(
                         "required_next_step": _required_next_step_for_status(status),
                         "submission_allowed": bool(submit_allowed),
                         "is_blocked": bool(blocked),
+                        "execution_hard_blocked": bool(execution_hard_blocked),
                         "held_in_broker_position": bool(in_position),
                         "sizing": {
                             "proposed_qty": proposed_qty,
@@ -6254,6 +6269,7 @@ def revalidate_live_action(
                 deviation = None
         revalidation_outcome = "FAIL"
         status = "REVALIDATED_FAIL"
+        existing_reason_codes = _parse_list_variant(action.get("REASON_CODES"))
         reason_codes: list[str] = []
         reduced_size_factor = None
         target_open_condition_factor = 1.0
@@ -6294,6 +6310,11 @@ def revalidate_live_action(
                 reason_codes.append("NEWS_EVENT_SHOCK_BLOCK")
         elif news_causes_caution and revalidation_outcome == "PASS":
             reason_codes.append("NEWS_REVALIDATION_CAUTION")
+        merged_reason_codes: list[str] = []
+        for rc in existing_reason_codes + reason_codes:
+            rc_text = str(rc)
+            if rc_text and rc_text not in merged_reason_codes:
+                merged_reason_codes.append(rc_text)
 
         target_snapshot_before = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
         target_snapshot_after = _build_target_expectation_snapshot(
@@ -6357,7 +6378,7 @@ def revalidate_live_action(
                 status,
                 reduced_size_factor,
                 reduced_size_factor,
-                json.dumps(reason_codes),
+                json.dumps(merged_reason_codes),
                 action_id,
             ),
         )
@@ -6399,6 +6420,7 @@ def revalidate_live_action(
             "reduced_size_factor": reduced_size_factor,
             "target_open_condition_factor": float(target_open_condition_factor),
             "target_expectation_snapshot": target_snapshot_after,
+            "reason_codes": merged_reason_codes,
             "force_refresh_1m": bool(req.force_refresh_1m),
             "refresh": refresh_info,
         }

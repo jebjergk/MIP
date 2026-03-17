@@ -7771,7 +7771,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
 
         cur.execute(
             """
-            select coalesce(VALIDITY_WINDOW_SEC, 14400) as VALIDITY_WINDOW_SEC
+            select
+              coalesce(VALIDITY_WINDOW_SEC, 14400) as VALIDITY_WINDOW_SEC,
+              IBKR_ACCOUNT_ID
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
               and coalesce(IS_ACTIVE, true) = true
@@ -7784,7 +7786,8 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 status_code=400,
                 detail="Live portfolio config not found or inactive.",
             )
-        (validity_window_sec,) = cfg
+        validity_window_sec, ibkr_account_id = cfg
+        ibkr_account_id = str(ibkr_account_id or "").strip()
         source_portfolio_id = int(req.source_portfolio_id) if req.source_portfolio_id is not None else None
         source_origin = "request" if source_portfolio_id is not None else "all_portfolios"
 
@@ -7866,11 +7869,11 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
         imported = 0
         skipped_existing = 0
         skipped_invalid = 0
-        skipped_symbol_already_queued = 0
-        skipped_symbol_existing_any = 0
+        skipped_symbol_live_position_count = 0
         imported_action_ids: list[str] = []
         source_portfolios: set[int] = set()
         distinct_symbols: set[str] = set()
+        live_position_cache: dict[str, bool] = {}
 
         for p in proposals:
             proposal_id = p.get("PROPOSAL_ID")
@@ -7895,39 +7898,16 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             if cur.fetchone():
                 skipped_existing += 1
                 continue
-            cur.execute(
-                """
-                select ACTION_ID
-                from MIP.LIVE.LIVE_ACTIONS
-                where PORTFOLIO_ID = %s
-                  and upper(coalesce(SYMBOL, '')) = %s
-                  and STATUS in (
-                    'PENDING_OPEN_VALIDATION','OPEN_CAUTION','OPEN_ELIGIBLE','PENDING_OPEN_STABILITY_REVIEW',
-                    'READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED',
-                    'INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED','EXECUTION_PARTIAL'
-                  )
-                limit 1
-                """,
-                (req.live_portfolio_id, (p.get("SYMBOL") or "").upper()),
-            )
-            if cur.fetchone():
-                skipped_symbol_already_queued += 1
-                continue
-
-            cur.execute(
-                """
-                select ACTION_ID
-                from MIP.LIVE.LIVE_ACTIONS
-                where PORTFOLIO_ID = %s
-                  and upper(coalesce(SYMBOL, '')) = %s
-                  and CREATED_AT >= dateadd(day, -%s, current_timestamp())
-                limit 1
-                """,
-                (req.live_portfolio_id, (p.get("SYMBOL") or "").upper(), int(req.max_proposal_age_days or 7)),
-            )
-            if cur.fetchone():
-                skipped_symbol_existing_any += 1
-                continue
+            symbol_upper = (p.get("SYMBOL") or "").upper()
+            if ibkr_account_id and symbol_upper:
+                has_live_position = live_position_cache.get(symbol_upper)
+                if has_live_position is None:
+                    broker_truth = _fetch_latest_broker_truth(cur, ibkr_account_id, symbol_upper)
+                    has_live_position = bool(broker_truth.get("has_symbol_position"))
+                    live_position_cache[symbol_upper] = has_live_position
+                if has_live_position:
+                    skipped_symbol_live_position_count += 1
+                    continue
 
             action_id = str(uuid.uuid4())
             training_snapshot = _build_training_qualification_snapshot(
@@ -8090,8 +8070,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "skipped_existing_count": skipped_existing,
             "skipped_invalid_count": skipped_invalid,
             "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
-            "skipped_symbol_already_queued_count": skipped_symbol_already_queued,
-            "skipped_symbol_existing_any_count": skipped_symbol_existing_any,
+            "skipped_symbol_live_position_count": skipped_symbol_live_position_count,
             "imported_action_ids": imported_action_ids[:50],
         }
     finally:

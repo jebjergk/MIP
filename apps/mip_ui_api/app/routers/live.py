@@ -5415,6 +5415,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
 
         status_upper = (action.get("STATUS") or "").upper()
         if status_upper not in (
+            "OPEN_BLOCKED",
             "OPEN_ELIGIBLE",
             "OPEN_CAUTION",
             "PENDING_OPEN_STABILITY_REVIEW",
@@ -5678,6 +5679,7 @@ def stream_live_trade_committee_prompt(
                         result["error"] = f"Committee stream blocked by opening validation ({reason_text})."
                         return
                 allowed_for_stream = {
+                    "OPEN_BLOCKED",
                     "OPEN_ELIGIBLE",
                     "OPEN_CAUTION",
                     "PENDING_OPEN_STABILITY_REVIEW",

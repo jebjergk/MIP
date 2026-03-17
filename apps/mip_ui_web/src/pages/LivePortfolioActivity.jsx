@@ -710,6 +710,7 @@ export default function LivePortfolioActivity() {
                         'RESEARCH_IMPORTED',
                         'PROPOSED',
                         'PENDING_OPEN_VALIDATION',
+                        'OPEN_BLOCKED',
                         'OPEN_ELIGIBLE',
                         'OPEN_CAUTION',
                         'PENDING_OPEN_STABILITY_REVIEW',
@@ -806,7 +807,7 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-subtle">Run Committee revalidation. If committee says go, Submit will be enabled.</div>
                         ) : null}
                         {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
-                          <div className="lpa-subtle">Blocked by opening guard. Use Reject stale to clear, or wait for fresher opening data.</div>
+                          <div className="lpa-subtle">Blocked by opening guard. Re-run Committee revalidation when data is fresher, or Reject stale to clear.</div>
                         ) : null}
                         </div>
                       </td>

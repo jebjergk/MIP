@@ -192,6 +192,7 @@ _ALLOWED_TRANSITIONS = {
     "RESEARCH_IMPORTED": {"PENDING_OPEN_VALIDATION"},
     "PROPOSED": {"PENDING_OPEN_VALIDATION"},
     "PENDING_OPEN_VALIDATION": {"OPEN_BLOCKED", "OPEN_CAUTION", "OPEN_ELIGIBLE"},
+    "OPEN_BLOCKED": {"PENDING_OPEN_STABILITY_REVIEW", "OPEN_CAUTION", "OPEN_ELIGIBLE", "READY_FOR_APPROVAL_FLOW"},
     "OPEN_ELIGIBLE": {"PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW", "OPEN_BLOCKED"},
     "OPEN_CAUTION": {"PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW", "OPEN_BLOCKED"},
     "PENDING_OPEN_STABILITY_REVIEW": {"READY_FOR_APPROVAL_FLOW", "OPEN_BLOCKED"},
@@ -2682,6 +2683,56 @@ def _aggregate_committee(outputs: list[dict], action_intent: str = "ENTRY") -> d
     }
 
 
+def _extract_committee_quality_reason_codes(outputs: list[dict]) -> list[str]:
+    codes: list[str] = []
+    fallback_count = 0
+    model_error_count = 0
+    missing_reasons_count = 0
+    for out in outputs or []:
+        reasons = out.get("reasons") if isinstance(out.get("reasons"), list) else []
+        reason_set = {str(r).upper() for r in reasons if r is not None}
+        if "MODEL_FALLBACK" in reason_set:
+            fallback_count += 1
+        if any(str(r).upper().startswith("MODEL_ERROR:") for r in reasons):
+            model_error_count += 1
+        if "MISSING_EXPLICIT_REASONS" in reason_set:
+            missing_reasons_count += 1
+    if fallback_count > 0:
+        codes.append("COMMITTEE_MODEL_FALLBACK")
+        if fallback_count == len(outputs or []):
+            codes.append("COMMITTEE_MODEL_FALLBACK_ALL_ROLES")
+    if model_error_count > 0:
+        codes.append("COMMITTEE_MODEL_ERROR_PRESENT")
+    if missing_reasons_count > 0:
+        codes.append("COMMITTEE_OUTPUT_REASONS_MISSING")
+    return codes
+
+
+def _suppress_block_on_degraded_entry_quality(verdict: dict, action_intent: str) -> dict:
+    out = dict(verdict or {})
+    intent = str(action_intent or "ENTRY").upper()
+    if intent == "EXIT":
+        return out
+    recommendation = str(out.get("recommendation") or "").upper()
+    degraded_quality = bool(out.get("degraded_quality")) or bool(out.get("quality_backfilled"))
+    if recommendation != "BLOCK" or not degraded_quality:
+        return out
+    jd = _parse_variant(out.get("joint_decision"))
+    try:
+        size_factor = float(out.get("size_factor", 1.0))
+    except Exception:
+        size_factor = 1.0
+    size_factor = max(0.0, min(0.35, size_factor))
+    out["recommendation"] = "PROCEED_REDUCED"
+    out["blocked"] = False
+    out["size_factor"] = size_factor
+    jd["should_enter"] = True
+    jd["position_size_factor"] = size_factor
+    out["joint_decision"] = jd
+    out["quality_block_override_applied"] = True
+    return out
+
+
 def _normalize_early_exit_target(target_return, early_exit_target_return):
     """
     Enforce policy: acceptable early-exit target must be above the base target.
@@ -2843,6 +2894,9 @@ def _run_multiagent_dialogue(
 
     final_outputs = round2 if round2 else round1
     verdict = _aggregate_committee(final_outputs, action_intent=context.get("action_intent"))
+    quality_reason_codes = _extract_committee_quality_reason_codes(final_outputs)
+    verdict["quality_reason_codes"] = quality_reason_codes
+    verdict["degraded_quality"] = len(quality_reason_codes) > 0
     if emit:
         emit("joint_decision", {"verdict": verdict})
     return final_outputs, verdict
@@ -4993,7 +5047,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                     },
                 }
 
-        if status_upper not in ("OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
+        if status_upper not in ("OPEN_BLOCKED", "OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
             raise HTTPException(
                 status_code=409,
                 detail=f"Committee run blocked until opening validation passes (current: {status_upper}).",
@@ -5119,6 +5173,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 jd_exit["should_execute_exit"] = True
                 verdict["joint_decision"] = jd_exit
                 exit_override_applied = True
+        verdict = _suppress_block_on_degraded_entry_quality(verdict, action_intent)
         reason_codes = []
         if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
             reason_codes.append("EXIT_POSITION_MISSING")
@@ -5129,10 +5184,15 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         for rc in (news_readiness.get("reason_codes") or []):
             if rc and rc not in reason_codes:
                 reason_codes.append(str(rc))
+        for rc in (verdict.get("quality_reason_codes") or []):
+            if rc and rc not in reason_codes:
+                reason_codes.append(str(rc))
         if verdict["blocked"]:
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        if verdict.get("quality_block_override_applied"):
+            reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
         tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
         if tier_c_conflict:
             reason_codes.append("TIER_C_CONFLICT_ALERT")
@@ -5413,6 +5473,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                 verdict["joint_decision"] = jd
                 exit_override_applied = True
 
+        verdict = _suppress_block_on_degraded_entry_quality(verdict, action_intent)
         reason_codes = []
         if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
             reason_codes.append("EXIT_POSITION_MISSING")
@@ -5422,6 +5483,8 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
+        if verdict.get("quality_block_override_applied"):
+            reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
         tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
         if tier_c_conflict:
             reason_codes.append("TIER_C_CONFLICT_ALERT")
@@ -6041,6 +6104,35 @@ def revalidate_live_action(
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
         current_status = action.get("STATUS")
+        if current_status == "OPEN_BLOCKED":
+            # Allow iterative reassessment for committee/opening blocks without forcing stale reject.
+            committee_resp = run_live_trade_committee(
+                action_id,
+                CommitteeRunRequest(
+                    actor="revalidate_recheck",
+                    force_rerun=True,
+                ),
+            )
+            action_after = _fetch_live_action(cur, action_id) or {}
+            status_after = (action_after.get("STATUS") or "").upper()
+            if status_after == "OPEN_BLOCKED":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Action remains blocked after committee recheck.",
+                        "reason_codes": _parse_list_variant(action_after.get("REASON_CODES")),
+                        "blocked_stage": (committee_resp or {}).get("blocked_stage") if isinstance(committee_resp, dict) else None,
+                    },
+                )
+            return {
+                "ok": True,
+                "action_id": action_id,
+                "status": status_after,
+                "revalidation_outcome": "RECHECKED",
+                "price_deviation_pct": None,
+                "reason_codes": _parse_list_variant(action_after.get("REASON_CODES")),
+                "source": "OPEN_BLOCKED_COMMITTEE_RERUN",
+            }
         if current_status == "INTENT_APPROVED":
             _assert_transition_allowed(current_status, "REVALIDATED_PASS")
         elif current_status == "REVALIDATED_FAIL":
@@ -6050,7 +6142,11 @@ def revalidate_live_action(
         else:
             raise HTTPException(
                 status_code=409,
-                detail=f"Revalidation allowed only from INTENT_APPROVED/REVALIDATED_FAIL/REVALIDATED_PASS (current: {current_status})",
+                detail=(
+                    "Revalidation allowed only from OPEN_BLOCKED "
+                    "or INTENT_APPROVED/REVALIDATED_FAIL/REVALIDATED_PASS "
+                    f"(current: {current_status})"
+                ),
             )
         now_utc = datetime.now(timezone.utc)
         if not _is_extended_trading_open_ny(now_utc):

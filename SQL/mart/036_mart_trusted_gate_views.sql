@@ -50,12 +50,14 @@ where (l.N_SIGNALS >= p.MIN_SIGNALS or l.N_SIGNALS >= p.MIN_SIGNALS_BOOTSTRAP)
 
 -- ------------------------------------------------------------------------------
 -- V_SIGNALS_LATEST_TS (helper for audit)
--- All signals at latest bar TS, no trust filter. Used for candidate_count_raw.
+-- All signals at latest recommendation TS, no trust filter. Used for candidate_count_raw.
+-- NOTE: Anchor on RECOMMENDATION_LOG (not MARKET_BARS) to avoid mixed-market
+-- day-boundary drift (e.g., FX rolling into next date before STOCK/ETF).
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_SIGNALS_LATEST_TS as
 with latest_ts as (
     select max(TS) as TS
-    from MIP.MART.MARKET_BARS
+    from MIP.APP.RECOMMENDATION_LOG
     where INTERVAL_MINUTES = 1440
 )
 select
@@ -76,7 +78,7 @@ where r.INTERVAL_MINUTES = 1440
 
 -- ------------------------------------------------------------------------------
 -- D2: V_TRUSTED_SIGNALS_LATEST_TS
--- Today's trusted candidates: RECOMMENDATION_LOG at latest bar TS, restricted to
+-- Today's trusted candidates: RECOMMENDATION_LOG at latest recommendation TS, restricted to
 -- (pattern_id, market_type, interval_minutes, horizon_bars) in V_TRUSTED_PATTERN_HORIZONS.
 -- One row per (recommendation_id, horizon_bars); explainability fields from trusted horizon.
 --
@@ -86,9 +88,9 @@ where r.INTERVAL_MINUTES = 1440
 -- ------------------------------------------------------------------------------
 create or replace view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS as
 with latest_ts as (
-    -- Latest bar TS from MARKET_BARS (same as V_SIGNALS_LATEST_TS)
+    -- Latest recommendation TS from RECOMMENDATION_LOG (same as V_SIGNALS_LATEST_TS)
     select max(TS) as TS
-    from MIP.MART.MARKET_BARS
+    from MIP.APP.RECOMMENDATION_LOG
     where INTERVAL_MINUTES = 1440
 ),
 trusted_ph as (

@@ -178,7 +178,7 @@ proposals_agg as (
         count_if(STATUS = 'APPROVED') as TOTAL_APPROVED,
         count(distinct PORTFOLIO_ID) as PORTFOLIOS_WITH_PROPOSALS
     from MIP.AGENT_OUT.ORDER_PROPOSALS
-    where PROPOSED_AT::date = current_date()
+    where PROPOSED_AT::date = to_date(convert_timezone('America/New_York', current_timestamp()))
 ),
 
 -- ── Trades across all portfolios ────────────────────────────
@@ -190,7 +190,7 @@ trades_agg as (
         sum(coalesce(REALIZED_PNL, 0)) as TOTAL_REALIZED_PNL,
         count(distinct PORTFOLIO_ID) as PORTFOLIOS_WITH_TRADES
     from MIP.APP.PORTFOLIO_TRADES
-    where TRADE_TS::date = current_date()
+    where TRADE_TS::date = to_date(convert_timezone('America/New_York', current_timestamp()))
 ),
 
 -- ── Prior global snapshot for delta detection ───────────────

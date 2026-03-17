@@ -129,7 +129,11 @@ begin
 
     call MIP.APP.SP_ENFORCE_RUN_SCOPING(:v_run_id, null);
 
-    select max(ts)
+    select coalesce(
+               max(iff(INTERVAL_MINUTES = 1440 and upper(MARKET_TYPE) in ('STOCK', 'ETF'), TS, null)),
+               max(iff(INTERVAL_MINUTES = 1440, TS, null)),
+               max(TS)
+           )
       into :v_latest_market_bars_ts_before
       from MIP.MART.MARKET_BARS;
 
@@ -194,7 +198,11 @@ begin
     v_rows_after := :v_ingest_result:"rows_after"::number;
     v_rows_delta := coalesce(:v_ingest_result:"rows_delta"::number, :v_rows_after - :v_rows_before);
 
-    select max(ts)
+    select coalesce(
+               max(iff(INTERVAL_MINUTES = 1440 and upper(MARKET_TYPE) in ('STOCK', 'ETF'), TS, null)),
+               max(iff(INTERVAL_MINUTES = 1440, TS, null)),
+               max(TS)
+           )
       into :v_latest_market_bars_ts_after
       from MIP.MART.MARKET_BARS;
     v_latest_market_bars_ts := :v_latest_market_bars_ts_after;

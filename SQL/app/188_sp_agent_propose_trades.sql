@@ -144,7 +144,14 @@ begin
     end if;
 
     -- Get diagnostic timestamps for logging
-    v_latest_bar_ts := (select max(TS) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440);
+    v_latest_bar_ts := (
+        select coalesce(
+                   max(iff(upper(MARKET_TYPE) in ('STOCK', 'ETF'), TS, null)),
+                   max(TS)
+               )
+        from MIP.MART.MARKET_BARS
+        where INTERVAL_MINUTES = 1440
+    );
     v_latest_daily_bar_ts := :v_latest_bar_ts;
     v_latest_rec_ts := (select max(TS) from MIP.APP.RECOMMENDATION_LOG where INTERVAL_MINUTES = 1440);
     v_trusted_pattern_count := (select count(*) from MIP.MART.V_TRUSTED_PATTERN_HORIZONS);

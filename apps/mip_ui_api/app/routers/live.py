@@ -1348,7 +1348,7 @@ def _submit_ibkr_order_bundle(
     connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
     exchange = os.getenv("IBKR_EXEC_EXCHANGE", "SMART")
     currency = os.getenv("IBKR_EXEC_CURRENCY", "USD")
-    outside_rth = os.getenv("IBKR_EXEC_OUTSIDE_RTH", "0").strip().lower() in ("1", "true", "yes", "on")
+    outside_rth = os.getenv("IBKR_EXEC_OUTSIDE_RTH", "1").strip().lower() in ("1", "true", "yes", "on")
 
     cmd = [
         str(py),

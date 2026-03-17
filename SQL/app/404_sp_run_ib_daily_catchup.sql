@@ -24,7 +24,7 @@ execute as caller
 as
 $$
 declare
-    v_target_date date := coalesce(:P_TARGET_DATE, current_date());
+    v_target_date date := coalesce(:P_TARGET_DATE, to_date(convert_timezone('America/New_York', current_timestamp())));
     v_last_success_date date;
     v_from_date date;
     v_target_symbol_count number := 0;

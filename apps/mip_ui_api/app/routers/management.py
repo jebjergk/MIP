@@ -51,7 +51,10 @@ def _try_parse_json_blob(value: Any) -> Any:
 
 @router.post("/ib/daily-job/run")
 def run_ib_manual_daily_job(
-    target_date: str = Query("current_date()", description="Snowflake date literal, e.g. current_date() or '2026-03-13'"),
+    target_date: str = Query(
+        "to_date(convert_timezone('America/New_York', current_timestamp()))",
+        description="Snowflake date literal, e.g. New York market date expression or '2026-03-13'",
+    ),
     dry_run: bool = Query(False),
     skip_ingest: bool = Query(False),
     run_pipeline: bool = Query(True, description="After successful IB job, run SP_RUN_DAILY_PIPELINE."),

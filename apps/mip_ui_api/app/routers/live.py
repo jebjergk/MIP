@@ -296,7 +296,10 @@ def _fetch_live_action_state(action_id: str) -> dict | None:
 def _normalize_broker_order_id(value) -> str:
     if value is None:
         return ""
-    return str(value).strip()
+    norm = str(value).strip()
+    if norm in ("", "0", "0.0", "None", "none", "NULL", "null"):
+        return ""
+    return norm
 
 
 def _normalize_action_intent(side: str | None, action_intent: str | None = None) -> str:
@@ -2708,16 +2711,47 @@ def _extract_committee_quality_reason_codes(outputs: list[dict]) -> list[str]:
     return codes
 
 
-def _suppress_block_on_degraded_entry_quality(verdict: dict, action_intent: str) -> dict:
+def _suppress_block_on_degraded_entry_quality(verdict: dict, action_intent: str, risk_cfg: dict | None = None) -> dict:
     out = dict(verdict or {})
     intent = str(action_intent or "ENTRY").upper()
     if intent == "EXIT":
         return out
     recommendation = str(out.get("recommendation") or "").upper()
     degraded_quality = bool(out.get("degraded_quality")) or bool(out.get("quality_backfilled"))
-    if recommendation != "BLOCK" or not degraded_quality:
-        return out
     jd = _parse_variant(out.get("joint_decision"))
+    target_return = jd.get("realistic_target_return")
+    stop_loss_pct = jd.get("stop_loss_pct")
+    min_rr = float(os.getenv("LIVE_MIN_R_MULTIPLE", "1.10"))
+    bust_pct = None
+    if isinstance(risk_cfg, dict) and risk_cfg.get("bust_pct") is not None:
+        try:
+            bust_pct = float(risk_cfg.get("bust_pct"))
+        except Exception:
+            bust_pct = None
+    quality_risk_normalized = False
+    try:
+        target_return_num = float(target_return) if target_return is not None else None
+    except Exception:
+        target_return_num = None
+    try:
+        stop_loss_num = float(stop_loss_pct) if stop_loss_pct is not None else None
+    except Exception:
+        stop_loss_num = None
+    if degraded_quality and target_return_num is not None and target_return_num > 0 and min_rr > 0:
+        # Degraded-quality outputs often carry unrealistic stop values; normalize to
+        # an execution-viable stop cap so submit doesn't fail later with RR gate.
+        stop_cap_from_rr = target_return_num / min_rr
+        if bust_pct is not None and bust_pct > 0:
+            stop_cap_from_rr = min(stop_cap_from_rr, bust_pct)
+        stop_cap_from_rr = max(stop_cap_from_rr, 0.005)
+        if stop_loss_num is None or stop_loss_num <= 0 or stop_loss_num > stop_cap_from_rr:
+            jd["stop_loss_pct"] = float(stop_cap_from_rr)
+            out["joint_decision"] = jd
+            quality_risk_normalized = True
+    if recommendation != "BLOCK" or not degraded_quality:
+        if quality_risk_normalized:
+            out["quality_risk_normalized"] = True
+        return out
     try:
         size_factor = float(out.get("size_factor", 1.0))
     except Exception:
@@ -2730,6 +2764,8 @@ def _suppress_block_on_degraded_entry_quality(verdict: dict, action_intent: str)
     jd["position_size_factor"] = size_factor
     out["joint_decision"] = jd
     out["quality_block_override_applied"] = True
+    if quality_risk_normalized:
+        out["quality_risk_normalized"] = True
     return out
 
 
@@ -4019,6 +4055,11 @@ def get_live_activity_overview(
                         "CASH_BUFFER_BREACH",
                         "MISSING_NOTIONAL_INPUT",
                         "EXIT_POSITION_MISSING",
+                        "LIVE_TP_REQUIRED_MISSING",
+                        "LIVE_SL_REQUIRED_MISSING",
+                        "LIVE_BRACKET_REQUIRED",
+                        "LIVE_TP_NET_EDGE_TOO_LOW",
+                        "LIVE_RISK_REWARD_TOO_LOW",
                     )
                     for x in action_reason_codes
                 )
@@ -5188,7 +5229,11 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 jd_exit["should_execute_exit"] = True
                 verdict["joint_decision"] = jd_exit
                 exit_override_applied = True
-        verdict = _suppress_block_on_degraded_entry_quality(verdict, action_intent)
+        verdict = _suppress_block_on_degraded_entry_quality(
+            verdict,
+            action_intent,
+            context.get("execution_risk_config"),
+        )
         reason_codes = []
         if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
             reason_codes.append("EXIT_POSITION_MISSING")
@@ -5208,6 +5253,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
         if verdict.get("quality_block_override_applied"):
             reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
+        if verdict.get("quality_risk_normalized"):
+            reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
         tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
         if tier_c_conflict:
             reason_codes.append("TIER_C_CONFLICT_ALERT")
@@ -5489,7 +5536,11 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                 verdict["joint_decision"] = jd
                 exit_override_applied = True
 
-        verdict = _suppress_block_on_degraded_entry_quality(verdict, action_intent)
+        verdict = _suppress_block_on_degraded_entry_quality(
+            verdict,
+            action_intent,
+            context.get("execution_risk_config"),
+        )
         reason_codes = []
         if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
             reason_codes.append("EXIT_POSITION_MISSING")
@@ -5501,6 +5552,8 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
         if verdict.get("quality_block_override_applied"):
             reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
+        if verdict.get("quality_risk_normalized"):
+            reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
         tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
         if tier_c_conflict:
             reason_codes.append("TIER_C_CONFLICT_ALERT")
@@ -6908,6 +6961,15 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 ),
             )
             ib_orders = broker_submit_payload.get("orders") or []
+            ib_orders_after_wait = broker_submit_payload.get("orders_after_wait") or []
+            # Prefer broker IDs observed after wait/poll, because initial order bundle
+            # can report perm_id=0 before IB acknowledges final identifiers.
+            role_to_confirmed_broker_id = {}
+            for ow in ib_orders_after_wait:
+                ow_role = str(ow.get("role") or "").upper()
+                ow_id = _normalize_broker_order_id(ow.get("perm_id") or ow.get("order_id"))
+                if ow_role and ow_id:
+                    role_to_confirmed_broker_id[ow_role] = ow_id
             for ib_leg in ib_orders:
                 role = str(ib_leg.get("role") or "").upper()
                 if role == "TAKE_PROFIT":
@@ -6916,10 +6978,14 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     idem = f"{idempotency_key}:SL"
                 else:
                     idem = idempotency_key
+                broker_order_id = role_to_confirmed_broker_id.get(
+                    role,
+                    _normalize_broker_order_id(ib_leg.get("perm_id") or ib_leg.get("order_id")),
+                )
                 order_legs.append(
                     {
                         "order_id": str(uuid.uuid4()),
-                        "broker_order_id": str(ib_leg.get("perm_id") or ib_leg.get("order_id") or ""),
+                        "broker_order_id": broker_order_id,
                         "idempotency_key": idem,
                         "side": side if role == "PARENT" else exit_side,
                         "order_type": str(ib_leg.get("order_type") or ("MKT" if role == "PARENT" else "LMT")),

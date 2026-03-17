@@ -1,11 +1,13 @@
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from app.db import get_connection, fetch_all
 
@@ -47,6 +49,35 @@ def _try_parse_json_blob(value: Any) -> Any:
         except Exception:
             return raw
     return value
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _compute_ib_duration_str(start_date_iso: str, end_date_iso: str) -> str:
+    try:
+        start_dt = date.fromisoformat(start_date_iso)
+        end_dt = date.fromisoformat(end_date_iso)
+    except ValueError:
+        return "2 Y"
+    days = max((end_dt - start_dt).days + 10, 30)
+    years = (days + 364) // 365
+    if years <= 1:
+        return "1 Y"
+    return f"{years} Y"
+
+
+class IBOnboardingRunRequest(BaseModel):
+    symbols: list[str] = Field(..., min_length=1)
+    market_type: str = Field(default="STOCK")
+    start_date: str = Field(default="2025-08-01")
+    end_date: str = Field(default_factory=lambda: date.today().isoformat())
+    auto_activate_if_trusted: bool = True
+    priority: int = 50
+    symbol_cohort: str | None = None
+    duration_str: str | None = None
+    use_rth: bool = True
 
 
 @router.post("/ib/daily-job/run")
@@ -164,6 +195,172 @@ def run_ib_manual_daily_job(
         response["pipeline_result"] = pipeline_payload
 
     return response
+
+
+@router.post("/ib/onboarding/run")
+def run_ib_symbol_onboarding(payload: IBOnboardingRunRequest):
+    project_root = Path(__file__).resolve().parents[5]
+    py = project_root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    ingest_script = project_root / "cursorfiles" / "ingest_ibkr_bars.py"
+    snow_script = project_root / "cursorfiles" / "query_snowflake.py"
+    if not py.exists() or not ingest_script.exists() or not snow_script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="IB onboarding runtime not found (cursorfiles venv/scripts missing).",
+        )
+
+    symbols = []
+    seen = set()
+    for raw in payload.symbols:
+        normalized = (raw or "").strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        symbols.append(normalized)
+    if not symbols:
+        raise HTTPException(status_code=400, detail="symbols must include at least one non-empty value.")
+
+    market_type = (payload.market_type or "STOCK").strip().upper()
+    run_id = str(uuid4())
+    cohort = payload.symbol_cohort or f"IB_ONBOARD_{run_id.replace('-', '')[:8].upper()}"
+    duration_str = payload.duration_str or _compute_ib_duration_str(payload.start_date, payload.end_date)
+    symbols_csv = ",".join(symbols)
+
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    values_sql = ",".join([f"({_sql_literal(symbol)})" for symbol in symbols])
+    upsert_sql = f"""
+merge into MIP.APP.INGEST_UNIVERSE t
+using (
+    select
+        v.column1::string as SYMBOL,
+        {_sql_literal(market_type)} as MARKET_TYPE,
+        1440 as INTERVAL_MINUTES,
+        {int(payload.priority)} as PRIORITY,
+        {_sql_literal(cohort)} as SYMBOL_COHORT,
+        {_sql_literal(f'IB onboarding pre-ingest {run_id}')} as NOTES
+    from values {values_sql} v
+) s
+on upper(t.SYMBOL) = upper(s.SYMBOL)
+and upper(t.MARKET_TYPE) = upper(s.MARKET_TYPE)
+and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
+when matched then update set
+    t.IS_ENABLED = true,
+    t.PRIORITY = greatest(coalesce(t.PRIORITY, 0), s.PRIORITY),
+    t.SYMBOL_COHORT = s.SYMBOL_COHORT,
+    t.NOTES = coalesce(t.NOTES, s.NOTES)
+when not matched then insert (
+    SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, IS_ENABLED, PRIORITY, SYMBOL_COHORT, NOTES
+) values (
+    s.SYMBOL, s.MARKET_TYPE, s.INTERVAL_MINUTES, true, s.PRIORITY, s.SYMBOL_COHORT, s.NOTES
+)
+"""
+
+    pre_cmd = [str(py), str(snow_script), "-q", upsert_sql]
+    pre_proc = subprocess.run(
+        pre_cmd,
+        cwd=str(project_root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if pre_proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Failed to upsert ingest universe rows for onboarding.",
+                "stdout": (pre_proc.stdout or "")[-4000:],
+                "stderr": (pre_proc.stderr or "")[-4000:],
+            },
+        )
+
+    ingest_cmd = [
+        str(py),
+        str(ingest_script),
+        "--interval-minutes",
+        "1440",
+        "--duration-str",
+        duration_str,
+        "--symbols",
+        symbols_csv,
+    ]
+    if payload.use_rth:
+        ingest_cmd.append("--use-rth")
+
+    ingest_proc = subprocess.run(
+        ingest_cmd,
+        cwd=str(project_root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=1800,
+    )
+    ingest_stdout = (ingest_proc.stdout or "").strip()
+    ingest_stderr = (ingest_proc.stderr or "").strip()
+    ingest_payload = _try_parse_json_blob(ingest_stdout) or _try_parse_json_blob(ingest_stderr)
+    if ingest_proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "IB daily ingest failed for onboarding symbols.",
+                "ingest_payload": ingest_payload,
+                "stdout": ingest_stdout[-4000:],
+                "stderr": ingest_stderr[-4000:],
+            },
+        )
+
+    symbols_json = json.dumps(symbols).replace("'", "''")
+    onboarding_sql = (
+        "call MIP.APP.SP_RUN_IB_SYMBOL_ONBOARDING("
+        f"parse_json('{symbols_json}'), "
+        f"{_sql_literal(market_type)}, "
+        f"{_sql_literal(payload.start_date)}::date, "
+        f"{_sql_literal(payload.end_date)}::date, "
+        f"{'true' if payload.auto_activate_if_trusted else 'false'}, "
+        f"{_sql_literal(run_id)}, "
+        f"{_sql_literal(cohort)}, "
+        f"{int(payload.priority)}"
+        ")"
+    )
+    onboarding_cmd = [str(py), str(snow_script), "-q", onboarding_sql, "--json"]
+    onboard_proc = subprocess.run(
+        onboarding_cmd,
+        cwd=str(project_root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=7200,
+    )
+    onboard_stdout = (onboard_proc.stdout or "").strip()
+    onboard_stderr = (onboard_proc.stderr or "").strip()
+    onboard_payload = _try_parse_json_blob(onboard_stdout) or _try_parse_json_blob(onboard_stderr)
+    if onboard_proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "IB onboarding procedure failed.",
+                "sql": onboarding_sql,
+                "ingest_payload": ingest_payload,
+                "onboarding_payload": onboard_payload,
+                "stdout": onboard_stdout[-4000:],
+                "stderr": onboard_stderr[-4000:],
+            },
+        )
+
+    return {
+        "status": "SUCCESS",
+        "run_id": run_id,
+        "symbol_cohort": cohort,
+        "market_type": market_type,
+        "symbols_requested": symbols,
+        "duration_str": duration_str,
+        "ingest_result": ingest_payload,
+        "onboarding_result": onboard_payload,
+    }
 
 
 @router.get("/ib/daily-job/health")

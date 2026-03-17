@@ -106,6 +106,21 @@ class RevalidateLiveActionRequest(BaseModel):
     force_refresh_1m: bool = False
 
 
+class CancelPendingOrdersRequest(BaseModel):
+    portfolio_id: int | None = None
+    ibkr_account_id: str | None = None
+    symbol: str | None = None
+    actor: str = "portfolio_manager"
+    dry_run: bool = False
+    include_local_sync: bool = True
+
+
+class CancelSingleOrderRequest(BaseModel):
+    actor: str = "portfolio_manager"
+    dry_run: bool = False
+    include_local_sync: bool = True
+
+
 class CommitteeRunRequest(BaseModel):
     actor: str = "committee_orchestrator"
     model: str = "claude-3-5-sonnet"
@@ -1493,6 +1508,108 @@ def _submit_ibkr_order_bundle(
             detail={
                 "message": "IBKR order submission returned unexpected payload.",
                 "reason_codes": ["IBKR_SUBMIT_BAD_PAYLOAD"],
+                "stdout": stdout[-4000:],
+                "stderr": stderr[-4000:],
+            },
+        )
+    return json_blob
+
+
+def _cancel_ibkr_open_orders(
+    *,
+    account: str,
+    symbol: str | None = None,
+    broker_order_id: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Cancel open/pending IBKR orders for an account (optionally symbol-scoped).
+    """
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "cancel_ibkr_open_orders.py"
+    if not py.exists() or not script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="IBKR cancel runtime not found (cursorfiles venv or cancel script missing).",
+        )
+
+    host = os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
+    port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
+    client_id = int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
+    connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
+
+    cmd = [
+        str(py),
+        str(script),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--client-id",
+        str(client_id),
+        "--connect-timeout-sec",
+        str(connect_timeout_sec),
+        "--account",
+        str(account),
+    ]
+    if symbol:
+        cmd.extend(["--symbol", str(symbol).upper()])
+    if broker_order_id:
+        cmd.extend(["--broker-order-id", str(broker_order_id)])
+    if dry_run:
+        cmd.append("--dry-run")
+
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    proc = subprocess.run(
+        cmd,
+        cwd=str(root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "IBKR cancel open orders failed.",
+                "reason_codes": ["IBKR_CANCEL_FAILED"],
+                "stderr": stderr[-4000:],
+                "stdout": stdout[-4000:],
+            },
+        )
+
+    json_blob = None
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        chunks = [s.strip() for s in stream.splitlines() if s.strip()]
+        if stream.strip():
+            chunks.append(stream.strip())
+        for maybe in reversed(chunks):
+            try:
+                parsed = json.loads(maybe)
+                if isinstance(parsed, dict):
+                    json_blob = parsed
+                    break
+            except Exception:
+                continue
+        if isinstance(json_blob, dict):
+            break
+    if not isinstance(json_blob, dict) or not json_blob.get("ok"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "IBKR cancel open orders returned unexpected payload.",
+                "reason_codes": ["IBKR_CANCEL_BAD_PAYLOAD"],
                 "stdout": stdout[-4000:],
                 "stderr": stderr[-4000:],
             },
@@ -3102,6 +3219,195 @@ def refresh_live_snapshot(
         "mode": "on_demand",
         "result": result,
         "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/orders/cancel-pending")
+def cancel_pending_live_orders(req: CancelPendingOrdersRequest):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        account_id = str(req.ibkr_account_id or "").strip()
+        portfolio_id = req.portfolio_id
+        if not account_id:
+            if portfolio_id is not None:
+                cur.execute(
+                    """
+                    select IBKR_ACCOUNT_ID
+                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                    where PORTFOLIO_ID = %s
+                    limit 1
+                    """,
+                    (portfolio_id,),
+                )
+            else:
+                cur.execute(
+                    """
+                    select PORTFOLIO_ID, IBKR_ACCOUNT_ID
+                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                    where coalesce(IS_ACTIVE, true)
+                    order by UPDATED_AT desc, PORTFOLIO_ID
+                    limit 1
+                    """
+                )
+            cfg_rows = fetch_all(cur)
+            cfg_row = cfg_rows[0] if cfg_rows else {}
+            if portfolio_id is None and cfg_row.get("PORTFOLIO_ID") is not None:
+                portfolio_id = int(cfg_row.get("PORTFOLIO_ID"))
+            account_id = str(cfg_row.get("IBKR_ACCOUNT_ID") or "").strip()
+        if not account_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Cannot cancel pending orders: IBKR account is missing.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+            )
+    finally:
+        conn.close()
+
+    cancel_result = _cancel_ibkr_open_orders(
+        account=account_id,
+        symbol=req.symbol,
+        dry_run=bool(req.dry_run),
+    )
+
+    local_rows_updated = 0
+    snapshot_refresh = {"attempted": False}
+    if not req.dry_run:
+        try:
+            snapshot_refresh = _run_on_demand_snapshot_sync(
+                **_default_snapshot_sync_params(),
+                account=account_id,
+                portfolio_id=portfolio_id,
+            )
+            snapshot_refresh["attempted"] = True
+        except Exception as exc:
+            snapshot_refresh = {"attempted": True, "status": "FAIL", "error": str(exc)}
+
+        if req.include_local_sync:
+            canceled_ids = [
+                _normalize_broker_order_id(x)
+                for x in (cancel_result.get("canceled_order_ids") or [])
+                if _normalize_broker_order_id(x)
+            ]
+            if canceled_ids:
+                conn2 = get_connection()
+                try:
+                    cur2 = conn2.cursor()
+                    placeholders = ",".join(["%s"] * len(canceled_ids))
+                    cur2.execute(
+                        f"""
+                        update MIP.LIVE.LIVE_ORDERS
+                           set STATUS = 'CANCELED',
+                               LAST_UPDATED_AT = current_timestamp()
+                         where IBKR_ACCOUNT_ID = %s
+                           and STATUS in ('SUBMITTED','ACKNOWLEDGED','PENDINGSUBMIT','PRESUBMITTED','PARTIAL_FILL','PARTIALLYFILLED')
+                           and BROKER_ORDER_ID in ({placeholders})
+                        """,
+                        tuple([account_id] + canceled_ids),
+                    )
+                    local_rows_updated = int(cur2.rowcount or 0)
+                finally:
+                    conn2.close()
+
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "portfolio_id": portfolio_id,
+        "symbol": (req.symbol or "").upper() or None,
+        "dry_run": bool(req.dry_run),
+        "actor": req.actor,
+        "cancel_result": cancel_result,
+        "snapshot_refresh": snapshot_refresh,
+        "local_rows_updated": local_rows_updated,
+    }
+
+
+@router.post("/orders/{order_id}/cancel")
+def cancel_single_live_order(order_id: str, req: CancelSingleOrderRequest = Body(default_factory=CancelSingleOrderRequest)):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_ORDER_ID, STATUS, SYMBOL
+            from MIP.LIVE.LIVE_ORDERS
+            where ORDER_ID = %s
+            """,
+            (order_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Order not found.")
+        order = rows[0]
+    finally:
+        conn.close()
+
+    current_status = str(order.get("STATUS") or "").upper()
+    active_statuses = {"SUBMITTED", "ACKNOWLEDGED", "PENDINGSUBMIT", "PRESUBMITTED", "PARTIAL_FILL", "PARTIALLYFILLED"}
+    if current_status not in active_statuses:
+        return {
+            "ok": True,
+            "order_id": order_id,
+            "status": current_status,
+            "idempotent_replay": True,
+            "message": "Order is not in an active pending state.",
+        }
+
+    account_id = str(order.get("IBKR_ACCOUNT_ID") or "").strip()
+    if not account_id:
+        conn2 = get_connection()
+        try:
+            cur2 = conn2.cursor()
+            cur2.execute(
+                """
+                select IBKR_ACCOUNT_ID
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                limit 1
+                """,
+                (order.get("PORTFOLIO_ID"),),
+            )
+            cfg_rows = fetch_all(cur2)
+            account_id = str((cfg_rows[0] or {}).get("IBKR_ACCOUNT_ID") or "").strip() if cfg_rows else ""
+        finally:
+            conn2.close()
+    if not account_id:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Cannot cancel order: IBKR account is missing.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+        )
+
+    cancel_result = _cancel_ibkr_open_orders(
+        account=account_id,
+        symbol=str(order.get("SYMBOL") or "").upper() or None,
+        broker_order_id=_normalize_broker_order_id(order.get("BROKER_ORDER_ID")) or None,
+        dry_run=bool(req.dry_run),
+    )
+
+    local_sync = None
+    if not req.dry_run and req.include_local_sync:
+        try:
+            local_sync = update_live_order_status(
+                order_id,
+                UpdateLiveOrderStatusRequest(
+                    actor=req.actor,
+                    status="CANCELED",
+                    broker_order_id=_normalize_broker_order_id(order.get("BROKER_ORDER_ID")) or None,
+                    notes="single-order cancel via live orders panel",
+                ),
+            )
+        except Exception as exc:
+            local_sync = {"ok": False, "error": str(exc)}
+
+    return {
+        "ok": True,
+        "order_id": order_id,
+        "actor": req.actor,
+        "dry_run": bool(req.dry_run),
+        "account_id": account_id,
+        "symbol": str(order.get("SYMBOL") or "").upper() or None,
+        "broker_order_id": _normalize_broker_order_id(order.get("BROKER_ORDER_ID")) or None,
+        "cancel_result": cancel_result,
+        "local_sync": local_sync,
     }
 
 

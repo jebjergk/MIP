@@ -241,6 +241,84 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
+  const cancelPendingOrders = useCallback(async () => {
+    if (!window.confirm('Cancel all pending/open IB orders for this live account?')) return
+    setBusy('cancelPending')
+    setError('')
+    setNotice('')
+    try {
+      const portfolioId = overview?.portfolio?.portfolio_id
+      const resp = await fetch(`${API_BASE}/live/orders/cancel-pending`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          portfolio_id: portfolioId ?? null,
+          dry_run: false,
+          include_local_sync: true,
+        }),
+      })
+      if (!resp.ok) {
+        let msg = `Cancel pending failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Cancel pending blocked'}: ${j.detail.reason_codes.join(', ')}`
+          }
+        } catch {
+          // Keep fallback error message
+        }
+        throw new Error(msg)
+      }
+      const data = await resp.json()
+      const canceled = Number(data?.cancel_result?.canceled_order_ids?.length || 0)
+      const candidates = Number(data?.cancel_result?.candidate_count || 0)
+      setNotice(`Cancel pending submitted. Candidates: ${candidates}, canceled now: ${canceled}.`)
+      await load()
+    } catch (e) {
+      setError(e.message || 'Cancel pending failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load, overview])
+
+  const cancelSingleOrder = useCallback(async (order) => {
+    const orderId = order?.ORDER_ID
+    if (!orderId) return
+    if (!window.confirm(`Cancel order ${orderId} (${order?.SYMBOL || '—'} ${order?.SIDE || '—'})?`)) return
+    setBusy(`cancelOrder:${orderId}`)
+    setError('')
+    setNotice('')
+    try {
+      const resp = await fetch(`${API_BASE}/live/orders/${orderId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actor: 'portfolio_manager',
+          dry_run: false,
+          include_local_sync: true,
+        }),
+      })
+      if (!resp.ok) {
+        let msg = `Cancel order failed (${resp.status})`
+        try {
+          const j = await resp.json()
+          if (j?.detail?.reason_codes?.length) {
+            msg = `${j.detail.message || 'Cancel order blocked'}: ${j.detail.reason_codes.join(', ')}`
+          }
+        } catch {
+          // Keep fallback message
+        }
+        throw new Error(msg)
+      }
+      setNotice(`Cancel submitted for order ${orderId}.`)
+      await load()
+    } catch (e) {
+      setError(e.message || 'Cancel order failed.')
+    } finally {
+      setBusy('')
+    }
+  }, [load])
+
   const finalizeCommitteeRevalidation = useCallback(async (actionId, verdict) => {
     setBusy(`committee:${actionId}`)
     setError('')
@@ -607,9 +685,14 @@ export default function LivePortfolioActivity() {
           <h2>Live Portfolio Activity</h2>
           <p>Broker-truth operations console for the linked IBKR portfolio.</p>
         </div>
-        <button className="lpa-btn" disabled={busy === 'refresh'} onClick={refreshBroker}>
-          {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
-        </button>
+        <div className="lpa-actions">
+          <button className="lpa-btn" disabled={busy === 'refresh' || busy === 'cancelPending'} onClick={refreshBroker}>
+            {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
+          </button>
+          <button className="lpa-btn lpa-btn-secondary" disabled={busy === 'cancelPending' || busy === 'refresh'} onClick={cancelPendingOrders}>
+            {busy === 'cancelPending' ? 'Canceling...' : 'Cancel Pending Orders'}
+          </button>
+        </div>
       </div>
 
       {error ? <div className="lpa-error">{error}</div> : null}
@@ -915,10 +998,11 @@ export default function LivePortfolioActivity() {
                     <th>Price</th>
                     <th>Protection</th>
                     <th>Timestamps</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedOrders.length === 0 && <tr><td colSpan={6}>No orders in this view.</td></tr>}
+                  {displayedOrders.length === 0 && <tr><td colSpan={7}>No orders in this view.</td></tr>}
                   {displayedOrders.map((o) => (
                     <tr key={o.ORDER_ID}>
                       <td>
@@ -945,6 +1029,21 @@ export default function LivePortfolioActivity() {
                       <td>
                         <div>Submitted: {fmtTs(o.SUBMITTED_AT)}</div>
                         <div>Updated: {fmtTs(o.LAST_UPDATED_AT || o.CREATED_AT)}</div>
+                      </td>
+                      <td>
+                        {(() => {
+                          const statusUpper = String(o.STATUS || '').toUpperCase()
+                          const canCancel = ['SUBMITTED', 'ACKNOWLEDGED', 'PENDINGSUBMIT', 'PRESUBMITTED', 'PARTIAL_FILL', 'PARTIALLYFILLED'].includes(statusUpper)
+                          return (
+                            <button
+                              className="lpa-btn lpa-btn-secondary lpa-btn-compact"
+                              disabled={!canCancel || busy === `cancelOrder:${o.ORDER_ID}`}
+                              onClick={() => cancelSingleOrder(o)}
+                            >
+                              {busy === `cancelOrder:${o.ORDER_ID}` ? 'Canceling...' : 'Cancel'}
+                            </button>
+                          )
+                        })()}
                       </td>
                     </tr>
                   ))}

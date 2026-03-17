@@ -241,46 +241,6 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
-  const cancelPendingOrders = useCallback(async () => {
-    if (!window.confirm('Cancel all pending/open IB orders for this live account?')) return
-    setBusy('cancelPending')
-    setError('')
-    setNotice('')
-    try {
-      const portfolioId = overview?.portfolio?.portfolio_id
-      const resp = await fetch(`${API_BASE}/live/orders/cancel-pending`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          portfolio_id: portfolioId ?? null,
-          dry_run: false,
-          include_local_sync: true,
-        }),
-      })
-      if (!resp.ok) {
-        let msg = `Cancel pending failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Cancel pending blocked'}: ${j.detail.reason_codes.join(', ')}`
-          }
-        } catch {
-          // Keep fallback error message
-        }
-        throw new Error(msg)
-      }
-      const data = await resp.json()
-      const canceled = Number(data?.cancel_result?.canceled_order_ids?.length || 0)
-      const candidates = Number(data?.cancel_result?.candidate_count || 0)
-      setNotice(`Cancel pending submitted. Candidates: ${candidates}, canceled now: ${canceled}.`)
-      await load()
-    } catch (e) {
-      setError(e.message || 'Cancel pending failed.')
-    } finally {
-      setBusy('')
-    }
-  }, [load, overview])
-
   const cancelSingleOrder = useCallback(async (order) => {
     const orderId = order?.ORDER_ID
     if (!orderId) return
@@ -685,14 +645,9 @@ export default function LivePortfolioActivity() {
           <h2>Live Portfolio Activity</h2>
           <p>Broker-truth operations console for the linked IBKR portfolio.</p>
         </div>
-        <div className="lpa-actions">
-          <button className="lpa-btn" disabled={busy === 'refresh' || busy === 'cancelPending'} onClick={refreshBroker}>
-            {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
-          </button>
-          <button className="lpa-btn lpa-btn-secondary" disabled={busy === 'cancelPending' || busy === 'refresh'} onClick={cancelPendingOrders}>
-            {busy === 'cancelPending' ? 'Canceling...' : 'Cancel Pending Orders'}
-          </button>
-        </div>
+        <button className="lpa-btn" disabled={busy === 'refresh'} onClick={refreshBroker}>
+          {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
+        </button>
       </div>
 
       {error ? <div className="lpa-error">{error}</div> : null}
@@ -989,7 +944,7 @@ export default function LivePortfolioActivity() {
               </div>
             </div>
             <div className="lpa-table-wrap">
-              <table className="lpa-table">
+              <table className="lpa-table lpa-table--orders">
                 <thead>
                   <tr>
                     <th>Order</th>
@@ -1064,7 +1019,7 @@ export default function LivePortfolioActivity() {
                   <div><span>Winners / Losers</span><b>{winners} / {losers}</b></div>
                 </div>
                 <div className="lpa-table-wrap">
-                  <table className="lpa-table">
+                  <table className="lpa-table lpa-table--positions-trades">
                     <thead>
                       <tr>
                         <th>Symbol</th>
@@ -1094,30 +1049,34 @@ export default function LivePortfolioActivity() {
                             <td>{fmtNum(p.MARKET_VALUE, 2)}</td>
                             <td className={Number(p.UNREALIZED_PNL || 0) >= 0 ? 'lpa-pos' : 'lpa-neg'}>{fmtSigned(p.UNREALIZED_PNL, 2)}</td>
                             <td>
-                              {!hasExit ? (
-                                <div className="lpa-subtle">No TP/SL linked in latest order bundle.</div>
-                              ) : (
-                                <div className="lpa-exit-setup">
-                                  <div>
+                              <div className="lpa-exit-setup">
+                                <div className="lpa-position-exit-top">
+                                  {hasExit ? (
                                     <span className={`lpa-protect-chip lpa-protect-chip--${exit.activeAtBroker ? 'armed' : 'idle'}`}>
                                       {exit.activeAtBroker ? 'Armed at IB' : 'Not armed'}
                                     </span>
-                                  </div>
-                                  <div>State: <b>{exit.state}</b></div>
-                                  <div>TP: {exit.tpStatus || '—'} {exit.tpPrice != null ? `@ ${fmtNum(exit.tpPrice, 4)}` : ''}</div>
-                                  <div>SL: {exit.slStatus || '—'} {exit.slPrice != null ? `@ ${fmtNum(exit.slPrice, 4)}` : ''}</div>
+                                  ) : (
+                                    <span className="lpa-subtle">No active TP/SL</span>
+                                  )}
+                                  <button
+                                    className="lpa-btn lpa-btn-secondary lpa-btn-compact lpa-position-sell-btn"
+                                    disabled={busy === `exit:${symbol}` || hasPendingExit}
+                                    onClick={() => createExitAction(p)}
+                                  >
+                                    {busy === `exit:${symbol}` ? 'Creating...' : (hasPendingExit ? 'Exit queued' : 'Sell')}
+                                  </button>
                                 </div>
-                              )}
-                              <div className="lpa-actions" style={{ marginTop: 8 }}>
-                                <button
-                                  className="lpa-btn lpa-btn-secondary lpa-btn-compact"
-                                  disabled={busy === `exit:${symbol}` || hasPendingExit}
-                                  onClick={() => createExitAction(p)}
-                                >
-                                  {busy === `exit:${symbol}` ? 'Creating...' : (hasPendingExit ? 'Exit queued' : 'Sell')}
-                                </button>
-                                {hasPendingExit ? <div className="lpa-subtle">Pending action: {pendingExit?.action_id}</div> : null}
+                                {hasExit ? (
+                                  <>
+                                    <div>State: <b>{exit.state}</b></div>
+                                    <div>TP: {exit.tpStatus || '—'} {exit.tpPrice != null ? `@ ${fmtNum(exit.tpPrice, 4)}` : ''}</div>
+                                    <div>SL: {exit.slStatus || '—'} {exit.slPrice != null ? `@ ${fmtNum(exit.slPrice, 4)}` : ''}</div>
+                                  </>
+                                ) : (
+                                  <div className="lpa-subtle">No TP/SL linked in latest order bundle.</div>
+                                )}
                               </div>
+                              {hasPendingExit ? <div className="lpa-subtle">Pending action: {pendingExit?.action_id}</div> : null}
                             </td>
                           </tr>
                         )
@@ -1135,7 +1094,7 @@ export default function LivePortfolioActivity() {
                   <div><span>Notional</span><b>{fmtNum(tradeNotional, 2)}</b></div>
                 </div>
                 <div className="lpa-table-wrap">
-                  <table className="lpa-table">
+                  <table className="lpa-table lpa-table--positions-trades">
                     <thead>
                       <tr>
                         <th>Symbol</th>

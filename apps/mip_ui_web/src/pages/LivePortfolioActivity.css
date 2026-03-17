@@ -175,6 +175,24 @@
   word-break: break-word;
 }
 
+.lpa-table--orders th {
+  font-size: 11px;
+}
+
+.lpa-table--orders td {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.lpa-table--positions-trades th {
+  font-size: 11px;
+}
+
+.lpa-table--positions-trades td {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .lpa-reason-list {
   margin: 0 0 6px;
   padding-left: 16px;
@@ -495,6 +513,17 @@
 .lpa-exit-setup {
   display: grid;
   gap: 2px;
+}
+
+.lpa-position-exit-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lpa-position-sell-btn {
+  min-width: 64px;
 }
 
 .lpa-protect-chip {

@@ -586,6 +586,23 @@ def _is_market_open_ny(now_utc: datetime) -> bool:
     return open_utc <= now_utc <= close_utc
 
 
+def _extended_trading_bounds_utc(now_utc: datetime) -> tuple[datetime, datetime]:
+    now_ny = now_utc.astimezone(NY_TZ)
+    # ET window for actionable revalidation/submit controls:
+    # pre-market (04:00 ET) through after-hours close (20:00 ET).
+    open_ny = now_ny.replace(hour=4, minute=0, second=0, microsecond=0)
+    close_ny = now_ny.replace(hour=20, minute=0, second=0, microsecond=0)
+    return open_ny.astimezone(timezone.utc), close_ny.astimezone(timezone.utc)
+
+
+def _is_extended_trading_open_ny(now_utc: datetime) -> bool:
+    now_ny = now_utc.astimezone(NY_TZ)
+    if now_ny.weekday() >= 5:
+        return False
+    open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
+    return open_utc <= now_utc <= close_utc
+
+
 def _read_app_config(cur, keys: list[str]) -> dict[str, str]:
     if not keys:
         return {}
@@ -3862,8 +3879,8 @@ def get_live_activity_overview(
             unresolved_drift_count = 0
 
         now_utc = datetime.now(timezone.utc)
-        market_open = _is_market_open_ny(now_utc)
-        open_utc, close_utc = _market_session_bounds_utc(now_utc)
+        market_open = _is_extended_trading_open_ny(now_utc)
+        open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
         snapshot_state = _compute_snapshot_freshness_state(snapshot_age_sec, cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"))
         drift_state = _compute_drift_state(cfg.get("DRIFT_STATUS"), unresolved_drift_count)
         page_actionable = snapshot_state in ("FRESH", "AGING") and drift_state != "BLOCKED" and market_open
@@ -6000,6 +6017,18 @@ def revalidate_live_action(
                 status_code=409,
                 detail=f"Revalidation allowed only from INTENT_APPROVED/REVALIDATED_FAIL/REVALIDATED_PASS (current: {current_status})",
             )
+        now_utc = datetime.now(timezone.utc)
+        if not _is_extended_trading_open_ny(now_utc):
+            ext_open_utc, ext_close_utc = _extended_trading_bounds_utc(now_utc)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Revalidation is only enabled during ET 04:00-20:00.",
+                    "reason_codes": ["OUTSIDE_EXTENDED_TRADING_WINDOW"],
+                    "window_open_utc": ext_open_utc.isoformat(),
+                    "window_close_utc": ext_close_utc.isoformat(),
+                },
+            )
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
         portfolio_id = action.get("PORTFOLIO_ID")
@@ -6630,7 +6659,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "connect_timeout_sec": int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12")),
                     "exchange": os.getenv("IBKR_EXEC_EXCHANGE", "SMART"),
                     "currency": os.getenv("IBKR_EXEC_CURRENCY", "USD"),
-                    "outside_rth": os.getenv("IBKR_EXEC_OUTSIDE_RTH", "0").strip().lower() in ("1", "true", "yes", "on"),
+                    "outside_rth": os.getenv("IBKR_EXEC_OUTSIDE_RTH", "1").strip().lower() in ("1", "true", "yes", "on"),
                     "child_tif": os.getenv("IBKR_EXEC_CHILD_TIF", "GTC").upper(),
                 },
             }

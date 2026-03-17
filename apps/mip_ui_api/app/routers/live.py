@@ -651,6 +651,17 @@ def _read_app_config(cur, keys: list[str]) -> dict[str, str]:
     return {str(r.get("CONFIG_KEY")): str(r.get("CONFIG_VALUE")) for r in rows if r.get("CONFIG_KEY") is not None}
 
 
+def _parse_bool_config(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    raw = str(value).strip().lower()
+    if raw in ("1", "true", "yes", "on", "y"):
+        return True
+    if raw in ("0", "false", "no", "off", "n"):
+        return False
+    return default
+
+
 def _opening_policy(cur, cfg: dict, action: dict) -> dict:
     cfg_map = _read_app_config(
         cur,
@@ -6957,6 +6968,61 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         exit_type = str(action.get("EXIT_TYPE") or "").upper() or None
         is_exit = action_intent == "EXIT"
 
+        long_only_cfg = _read_app_config(cur, ["LIVE_ENFORCE_LONG_ONLY", "LIVE_BLOCK_ON_BROKER_SHORT"])
+        enforce_long_only = _parse_bool_config(long_only_cfg.get("LIVE_ENFORCE_LONG_ONLY"), True)
+        block_on_broker_short = _parse_bool_config(long_only_cfg.get("LIVE_BLOCK_ON_BROKER_SHORT"), True)
+        long_only_guard = {
+            "enabled": bool(enforce_long_only and block_on_broker_short),
+            "entry_side": side,
+            "short_symbols": [],
+            "symbol_position_qty": None,
+            "snapshot_ts": None,
+        }
+        if not is_exit and enforce_long_only and block_on_broker_short and account_id:
+            cur.execute(
+                """
+                with latest_pos as (
+                    select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                    from MIP.LIVE.BROKER_SNAPSHOTS
+                    where SNAPSHOT_TYPE = 'POSITION'
+                      and IBKR_ACCOUNT_ID = %s
+                )
+                select upper(SYMBOL) as SYMBOL, coalesce(sum(POSITION_QTY), 0) as POSITION_QTY, max(s.SNAPSHOT_TS) as SNAPSHOT_TS
+                from MIP.LIVE.BROKER_SNAPSHOTS s
+                join latest_pos lp on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
+                where s.SNAPSHOT_TYPE = 'POSITION'
+                  and s.IBKR_ACCOUNT_ID = %s
+                  and coalesce(s.POSITION_QTY, 0) <> 0
+                group by upper(SYMBOL)
+                """,
+                (account_id, account_id),
+            )
+            broker_pos_rows = fetch_all(cur)
+            action_symbol = str(action.get("SYMBOL") or "").upper()
+            short_symbols: list[str] = []
+            symbol_position_qty: float | None = None
+            snapshot_ts = None
+            for row in broker_pos_rows:
+                sym = str(row.get("SYMBOL") or "").upper()
+                qty = float(row.get("POSITION_QTY") or 0.0)
+                if snapshot_ts is None:
+                    snapshot_ts = row.get("SNAPSHOT_TS")
+                if sym == action_symbol:
+                    symbol_position_qty = qty
+                if qty < 0:
+                    short_symbols.append(sym)
+            long_only_guard["short_symbols"] = short_symbols
+            long_only_guard["symbol_position_qty"] = symbol_position_qty
+            long_only_guard["snapshot_ts"] = (
+                snapshot_ts.isoformat() if hasattr(snapshot_ts, "isoformat") else (str(snapshot_ts) if snapshot_ts is not None else None)
+            )
+            if side != "BUY":
+                reason_codes.append("ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY")
+            if short_symbols:
+                reason_codes.append("BROKER_SHORT_POSITION_OUT_OF_POLICY")
+            if symbol_position_qty is not None and symbol_position_qty < 0:
+                reason_codes.append("SYMBOL_SHORT_POSITION_OUT_OF_POLICY")
+
         max_positions = cfg.get("MAX_POSITIONS")
         if not is_exit and max_positions is not None and open_positions >= int(max_positions):
             reason_codes.append("MAX_POSITIONS_EXCEEDED")
@@ -7032,6 +7098,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         if reason_codes:
             final_reason_codes = sorted(set(reason_codes))
             _write_reason_codes(cur, action_id, final_reason_codes)
+            realism_details["long_only_guard"] = long_only_guard
             _append_learning_ledger_event(
                 cur,
                 event_name="LIVE_EXECUTION_BLOCKED",

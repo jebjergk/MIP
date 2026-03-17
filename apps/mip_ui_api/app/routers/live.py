@@ -725,8 +725,20 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
     cfg = cfg_rows[0]
     policy = _opening_policy(cur, cfg, action)
     refresh_result = {"attempted": False}
+    snapshot_refresh = {"attempted": False}
     if force_refresh_1m:
         refresh_result = _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
+        account_id = cfg.get("IBKR_ACCOUNT_ID")
+        if account_id:
+            try:
+                snapshot_payload = _run_on_demand_snapshot_sync(
+                    **_default_snapshot_sync_params(),
+                    account=str(account_id),
+                    portfolio_id=int(portfolio_id) if portfolio_id is not None else None,
+                )
+                snapshot_refresh = {"attempted": True, "status": "SUCCESS", "payload": snapshot_payload}
+            except Exception as exc:
+                snapshot_refresh = {"attempted": True, "status": "FAIL", "error": str(exc)}
 
     symbol = action.get("SYMBOL")
     cur.execute(
@@ -775,7 +787,11 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
         hard_reasons.append("OPEN_MISSING_SYMBOL")
     if bar_ts is None:
         hard_reasons.append("OPEN_SNAPSHOT_MISSING")
-    elif bar_age_sec is not None and bar_age_sec > float(policy["snapshot_max_age_sec"]):
+    effective_snapshot_max_age_sec = float(policy["snapshot_max_age_sec"])
+    if _is_extended_trading_open_ny(now_utc) and not _is_market_open_ny(now_utc):
+        # Extended-hours prints can be sparse; keep a wider tolerance than regular session.
+        effective_snapshot_max_age_sec = max(effective_snapshot_max_age_sec, 1800.0)
+    if bar_ts is not None and bar_age_sec is not None and bar_age_sec > effective_snapshot_max_age_sec:
         hard_reasons.append("OPEN_SNAPSHOT_STALE")
     if gap_pct is not None:
         if gap_pct > float(policy["gap_block_pct"]):
@@ -821,6 +837,7 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
             "wait_minutes": wait_minutes,
         },
         "policy": policy,
+        "effective_snapshot_max_age_sec": effective_snapshot_max_age_sec,
         "reasons": reason_codes,
         "live_guard": {
             "eligible": bool(guard.get("eligible", False)),
@@ -832,7 +849,10 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
             "event_shock_flag": news_shock,
             "freshness_bucket": news_snapshot.get("freshness_bucket"),
         },
-        "refresh": refresh_result,
+        "refresh": {
+            "bars": refresh_result,
+            "broker_snapshot": snapshot_refresh,
+        },
     }
     _persist_opening_snapshot(cur, action, result, reason_codes, opening_payload)
     action_after = _fetch_live_action(cur, action.get("ACTION_ID"))
@@ -991,6 +1011,8 @@ def _compute_live_activation_guard(cur, portfolio_id: int) -> dict:
         snap_ts = latest_nav.get("SNAPSHOT_TS")
         snap_age_sec = int((datetime.now(timezone.utc) - snap_ts.replace(tzinfo=timezone.utc)).total_seconds())
         max_snap_age = int(cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC") or 300)
+        if _is_extended_trading_open_ny(datetime.now(timezone.utc)) and not _is_market_open_ny(datetime.now(timezone.utc)):
+            max_snap_age = max(max_snap_age, 900)
         checks["snapshot_age_sec"] = snap_age_sec
         checks["snapshot_max_age_sec"] = max_snap_age
         if snap_age_sec > max_snap_age:
@@ -1538,7 +1560,6 @@ def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> d
         str(symbol).upper(),
         "--max-symbols",
         "1",
-        "--use-rth",
     ]
     child_env = dict(os.environ)
     for key in list(child_env.keys()):
@@ -4952,7 +4973,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         news_fallback_active = not bool(news_readiness.get("ready"))
         status_upper = (action.get("STATUS") or "").upper()
         if status_upper in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
-            opening_gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=False, now_utc=datetime.now(timezone.utc))
+            opening_gate = _run_opening_sanity_gate(cur, action, force_refresh_1m=True, now_utc=datetime.now(timezone.utc))
             action = _fetch_live_action(cur, action_id)
             status_upper = (action.get("STATUS") or "").upper()
             if status_upper == "OPEN_BLOCKED":
@@ -5579,6 +5600,20 @@ def stream_live_trade_committee_prompt(
                     result["error"] = "Action not found."
                     return
                 status_upper = str(action.get("STATUS") or "").upper()
+                if status_upper in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
+                    opening_gate = _run_opening_sanity_gate(
+                        cur,
+                        action,
+                        force_refresh_1m=True,
+                        now_utc=datetime.now(timezone.utc),
+                    )
+                    action = _fetch_live_action(cur, action_id)
+                    status_upper = str((action or {}).get("STATUS") or "").upper()
+                    if status_upper == "OPEN_BLOCKED":
+                        reason_codes = opening_gate.get("reason_codes") or []
+                        reason_text = ", ".join(reason_codes) if reason_codes else "OPEN_BLOCKED"
+                        result["error"] = f"Committee stream blocked by opening validation ({reason_text})."
+                        return
                 allowed_for_stream = {
                     "OPEN_ELIGIBLE",
                     "OPEN_CAUTION",

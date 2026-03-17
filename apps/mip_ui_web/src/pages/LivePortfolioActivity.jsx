@@ -707,6 +707,9 @@ export default function LivePortfolioActivity() {
                       const statusUpper = String(d.status || '').toUpperCase()
                       const canSubmit = statusUpper === 'REVALIDATED_PASS'
                       const canRunCommittee = [
+                        'RESEARCH_IMPORTED',
+                        'PROPOSED',
+                        'PENDING_OPEN_VALIDATION',
                         'OPEN_ELIGIBLE',
                         'OPEN_CAUTION',
                         'PENDING_OPEN_STABILITY_REVIEW',

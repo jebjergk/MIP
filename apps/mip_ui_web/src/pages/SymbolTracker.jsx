@@ -566,7 +566,7 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
       </header>
 
       <div className="symbol-tracker-kpi-row">
-        <div><span>Entry</span><b>{fmtNum(tile.entry_price, 4)}</b></div>
+        <div><span>Avg Cost (IBKR)</span><b>{fmtNum(tile.entry_price, 4)}</b></div>
         <div><span>Current</span><b>{fmtNum(tile.current_price, 4)}</b></div>
         <div><span>Unrealized P&L</span><b className={pnlClass}>{fmtSigned(tile.unrealized_pnl, 2)}</b></div>
       </div>

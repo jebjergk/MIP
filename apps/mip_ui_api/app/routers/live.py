@@ -6706,8 +6706,10 @@ def revalidate_live_action(
                 source = "EXIT_PRICE_FALLBACK"
             else:
                 raise HTTPException(status_code=400, detail="Unable to parse market bar timestamp, revalidation blocked.")
-        bar_age_sec = (datetime.now(timezone.utc) - ref_ts_utc).total_seconds()
-        if bar_age_sec > freshness_threshold_sec and not is_exit:
+        now_utc = datetime.now(timezone.utc)
+        bar_age_sec = (now_utc - ref_ts_utc).total_seconds()
+        market_open_now = _is_extended_trading_open_ny(now_utc)
+        if bar_age_sec > freshness_threshold_sec and not is_exit and market_open_now:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -6730,6 +6732,8 @@ def revalidate_live_action(
         target_open_condition_factor = 1.0
         if is_exit and bar_age_sec > freshness_threshold_sec:
             reason_codes.append("EXIT_REVALIDATION_STALE_BAR_BYPASS")
+        if (not is_exit) and (not market_open_now) and bar_age_sec > freshness_threshold_sec:
+            reason_codes.append("REVALIDATION_STALE_BAR_OUTSIDE_SESSION_ALLOWED")
 
         if deviation is None or deviation <= 0.02:
             revalidation_outcome = "PASS"

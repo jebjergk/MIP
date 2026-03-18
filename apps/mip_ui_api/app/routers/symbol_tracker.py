@@ -732,7 +732,12 @@ def get_symbol_tracker_tiles(
                 continue
             leg_type = _parse_leg_type(row.get("ORDER_TYPE"))
             limit_price = _to_float(row.get("LIMIT_PRICE"))
-            fill_price = _to_float(row.get("AVG_FILL_PRICE")) or _to_float(row.get("LIMIT_PRICE"))
+            avg_fill_price = _to_float(row.get("AVG_FILL_PRICE"))
+            qty_filled = _to_float(row.get("QTY_FILLED"))
+            status = str(row.get("STATUS") or "").upper()
+            is_filled = status in {"PARTIAL_FILL", "FILLED"} or (qty_filled is not None and qty_filled > 0)
+            # Entry basis must come from executed prices only; never from resting limit prices.
+            fill_price = avg_fill_price if is_filled else None
             fill_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
             side = str(row.get("SIDE") or "").upper()
 
@@ -747,14 +752,7 @@ def get_symbol_tracker_tiles(
                     protection_by_symbol[symbol]["entry_price"] = fill_price
                 if fill_ts is not None and protection_by_symbol[symbol]["opened_at"] is None:
                     protection_by_symbol[symbol]["opened_at"] = fill_ts
-
-            if side in {"BUY", "SELL"} and fill_price is not None and protection_by_symbol[symbol]["entry_price"] is None:
-                protection_by_symbol[symbol]["entry_price"] = fill_price
-                protection_by_symbol[symbol]["opened_at"] = fill_ts
-
-            status = str(row.get("STATUS") or "").upper()
-            fill_qty = _to_float(row.get("QTY_FILLED")) or 0.0
-            if status in {"PARTIAL_FILL", "FILLED"} or fill_qty > 0:
+            if is_filled:
                 event_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
                 if event_ts:
                     events_by_symbol[symbol].append(
@@ -765,7 +763,7 @@ def get_symbol_tracker_tiles(
                             "severity": "info",
                             "meta": {
                                 "status": status,
-                                "qty_filled": fill_qty,
+                                "qty_filled": qty_filled or 0.0,
                                 "price": fill_price,
                             },
                         }
@@ -841,7 +839,8 @@ def get_symbol_tracker_tiles(
             live_volatility = _compute_live_volatility(closes[-20:])
 
             protection = protection_by_symbol[symbol]
-            entry_price = protection.get("entry_price") or avg_cost
+            # Keep Symbol Tracker aligned with IBKR truth shown in Live Portfolio Activity.
+            entry_price = avg_cost if avg_cost is not None else protection.get("entry_price")
             opened_at = protection.get("opened_at")
             tp_price = protection.get("tp_price")
             sl_price = protection.get("sl_price")

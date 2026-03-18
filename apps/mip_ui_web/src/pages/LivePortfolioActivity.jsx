@@ -80,6 +80,21 @@ function stateClass(value) {
   return 'neutral'
 }
 
+function formatExecutionSideLabel(exec) {
+  const side = String(exec?.side || '').toUpperCase()
+  const context = String(exec?.execution_context || '').toUpperCase()
+  if (context === 'CLOSE_SHORT') return 'BUY (COVER)'
+  if (context === 'CLOSE_LONG') return 'SELL (CLOSE)'
+  if (context === 'OPEN_OR_ADD_LONG') return 'BUY (OPEN)'
+  if (context === 'OPEN_OR_ADD_SHORT') return 'SELL (SHORT)'
+  const intent = String(exec?.action_intent || '').toUpperCase()
+  if (intent === 'EXIT' && side === 'BUY') return 'BUY (COVER)'
+  if (intent === 'EXIT' && side === 'SELL') return 'SELL (CLOSE)'
+  if (intent === 'ENTRY' && side === 'BUY') return 'BUY (OPEN)'
+  if (intent === 'ENTRY' && side === 'SELL') return 'SELL (SHORT)'
+  return side || '—'
+}
+
 function isStaleRevalidationState(decision) {
   const status = String(decision?.status || '').toUpperCase()
   const staleRelevantStatuses = new Set([
@@ -1108,19 +1123,23 @@ export default function LivePortfolioActivity() {
                       {executions.length === 0 && <tr><td colSpan={5}>No executions yet.</td></tr>}
                       {executions.map((e) => {
                         const side = String(e.side || '').toUpperCase()
+                        const sideLabel = formatExecutionSideLabel(e)
                         const qty = Number(e.qty_filled || 0)
                         const px = Number(e.avg_fill_price || 0)
                         const notional = Number.isFinite(qty) && Number.isFinite(px) ? Math.abs(qty * px) : null
+                        const realizedPnl = (e.realized_pnl == null) ? null : Number(e.realized_pnl)
                         return (
                           <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
                             <td>
                               <div><b>{formatSymbolLabel(e.symbol, e.market_type)}</b></div>
                               <div className="lpa-subtle">{fmtTs(e.execution_ts)}</div>
                             </td>
-                            <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}`}>{side || '—'}</span></td>
+                            <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}`}>{sideLabel}</span></td>
                             <td>{fmtNum(e.qty_filled, 0)}</td>
                             <td>{fmtNum(notional, 2)}</td>
-                            <td>—</td>
+                            <td className={realizedPnl == null ? '' : (realizedPnl >= 0 ? 'lpa-pos' : 'lpa-neg')}>
+                              {realizedPnl == null ? '—' : `${e.realized_pnl_is_estimate ? '~' : ''}${fmtSigned(realizedPnl, 2)}`}
+                            </td>
                           </tr>
                         )
                       })}

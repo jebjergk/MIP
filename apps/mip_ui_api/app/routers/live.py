@@ -1016,13 +1016,18 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     latest_close = latest_bar[1] if latest_bar else None
     latest_ts_utc = _market_bar_ts_to_utc(latest_ts)
     using_revalidation_bar_as_latest = False
-    if latest_ts is None and source == "IBKR_DIRECT_1M" and one_min_bar_ts_utc is not None:
-        # IB-direct revalidation may not persist into MART.MARKET_BARS; use the
-        # validated action reference bar for realism freshness checks.
-        latest_ts = one_min_bar_ts
-        latest_ts_utc = one_min_bar_ts_utc
-        latest_close = action.get("ONE_MIN_BAR_CLOSE")
-        using_revalidation_bar_as_latest = True
+    if source == "IBKR_DIRECT_1M" and one_min_bar_ts_utc is not None:
+        # IB-direct revalidation can be fresher than MART.MARKET_BARS (or MART
+        # may lag writes). Prefer the direct bar whenever it is newer.
+        use_direct_bar = (
+            latest_ts_utc is None
+            or (one_min_bar_ts_utc - latest_ts_utc).total_seconds() > 30
+        )
+        if use_direct_bar:
+            latest_ts = one_min_bar_ts
+            latest_ts_utc = one_min_bar_ts_utc
+            latest_close = action.get("ONE_MIN_BAR_CLOSE")
+            using_revalidation_bar_as_latest = True
     now_utc = datetime.now(timezone.utc)
     market_open = _is_extended_trading_open_ny(now_utc)
     open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
@@ -4403,6 +4408,15 @@ def get_live_activity_overview(
             (portfolio_id, limit),
         )
         action_rows = fetch_all(cur)
+        action_meta_by_id: dict[str, dict] = {}
+        for a in action_rows:
+            action_id_key = str(a.get("ACTION_ID") or "")
+            if not action_id_key:
+                continue
+            action_meta_by_id[action_id_key] = {
+                "action_intent": _normalize_action_intent(a.get("SIDE"), a.get("ACTION_INTENT")),
+                "side": str(a.get("SIDE") or "").upper(),
+            }
 
         unresolved_drift_count = 0
         try:
@@ -4617,7 +4631,7 @@ def get_live_activity_overview(
                 """
                 select
                   SNAPSHOT_TS, SYMBOL, SECURITY_TYPE, OPEN_ORDER_ID, OPEN_ORDER_FILLED,
-                  OPEN_ORDER_LIMIT_PRICE, AVG_COST, PAYLOAD
+                  OPEN_ORDER_LIMIT_PRICE, AVG_COST, REALIZED_PNL, PAYLOAD
                 from MIP.LIVE.BROKER_SNAPSHOTS
                 where SNAPSHOT_TYPE = 'EXECUTION'
                   and IBKR_ACCOUNT_ID = %s
@@ -4636,6 +4650,39 @@ def get_live_activity_overview(
             broker_id = _normalize_broker_order_id(order.get("BROKER_ORDER_ID"))
             if broker_id:
                 broker_order_to_action.setdefault(broker_id, str(order.get("ACTION_ID") or ""))
+        position_basis_by_symbol: dict[str, dict] = {}
+        try:
+            cur.execute(
+                """
+                with ranked as (
+                    select
+                      upper(SYMBOL) as SYMBOL,
+                      POSITION_QTY,
+                      AVG_COST,
+                      SNAPSHOT_TS,
+                      row_number() over (
+                        partition by upper(SYMBOL)
+                        order by SNAPSHOT_TS desc
+                      ) as RN
+                    from MIP.LIVE.BROKER_SNAPSHOTS
+                    where SNAPSHOT_TYPE = 'POSITION'
+                      and IBKR_ACCOUNT_ID = %s
+                      and coalesce(POSITION_QTY, 0) <> 0
+                      and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+                )
+                select SYMBOL, POSITION_QTY, AVG_COST, SNAPSHOT_TS
+                from ranked
+                where RN = 1
+                """,
+                (account_id, order_lookback_days),
+            )
+            for b in fetch_all(cur):
+                symbol_key = str(b.get("SYMBOL") or "").upper()
+                if not symbol_key:
+                    continue
+                position_basis_by_symbol[symbol_key] = b
+        except Exception:
+            position_basis_by_symbol = {}
 
         executions_ib = []
         seen_ib_exec_keys: set[str] = set()
@@ -4661,10 +4708,51 @@ def get_live_activity_overview(
                 avg_fill_price = row.get("OPEN_ORDER_LIMIT_PRICE")
             if avg_fill_price is None:
                 avg_fill_price = row.get("AVG_COST")
-            side = str(payload.get("side") or "").upper().strip()
-            if side not in ("BUY", "SELL"):
+            side_raw = str(payload.get("side") or "").upper().strip()
+            if side_raw in ("BUY", "BOT", "B"):
+                side = "BUY"
+            elif side_raw in ("SELL", "SLD", "S"):
+                side = "SELL"
+            else:
                 side = "BUY" if (qty_filled_raw is not None and float(qty_filled_raw) >= 0) else "SELL"
             execution_ts = payload.get("time") or row.get("SNAPSHOT_TS")
+            realized_pnl = payload.get("realized_pnl")
+            if realized_pnl is None:
+                realized_pnl = row.get("REALIZED_PNL")
+            realized_pnl_is_estimate = False
+            action_id = broker_order_to_action.get(broker_order_id) if broker_order_id else None
+            action_meta = action_meta_by_id.get(str(action_id or "")) or {}
+            basis = position_basis_by_symbol.get(symbol) or {}
+            basis_qty = float(basis.get("POSITION_QTY") or 0.0) if basis.get("POSITION_QTY") is not None else 0.0
+            execution_context = None
+            if side == "BUY" and basis_qty < 0:
+                execution_context = "CLOSE_SHORT"
+            elif side == "SELL" and basis_qty > 0:
+                execution_context = "CLOSE_LONG"
+            elif side == "BUY":
+                execution_context = "OPEN_OR_ADD_LONG"
+            elif side == "SELL":
+                execution_context = "OPEN_OR_ADD_SHORT"
+            if (
+                (realized_pnl is None or abs(float(realized_pnl)) < 1e-12)
+                and qty_filled is not None
+                and avg_fill_price is not None
+            ):
+                try:
+                    basis_cost = float(basis.get("AVG_COST")) if basis.get("AVG_COST") is not None else None
+                    est_pnl = None
+                    if basis_cost is not None:
+                        if side == "BUY" and basis_qty < 0:
+                            # Buy-to-cover short.
+                            est_pnl = (basis_cost - float(avg_fill_price)) * float(qty_filled)
+                        elif side == "SELL" and basis_qty > 0:
+                            # Sell-to-close long.
+                            est_pnl = (float(avg_fill_price) - basis_cost) * float(qty_filled)
+                    if est_pnl is not None:
+                        realized_pnl = float(est_pnl)
+                        realized_pnl_is_estimate = True
+                except Exception:
+                    pass
             dedupe_key = exec_id or f"{broker_order_id}:{symbol}:{execution_ts}:{qty_filled}:{avg_fill_price}"
             if dedupe_key in seen_ib_exec_keys:
                 continue
@@ -4673,13 +4761,17 @@ def get_live_activity_overview(
             executions_ib.append(
                 {
                     "order_id": exec_id or broker_order_id or f"IB_EXEC_{len(executions_ib)+1}",
-                    "action_id": broker_order_to_action.get(broker_order_id) if broker_order_id else None,
+                    "action_id": action_id,
                     "broker_order_id": broker_order_id,
                     "symbol": symbol,
                     "market_type": market_type or None,
                     "side": side,
+                    "action_intent": action_meta.get("action_intent"),
+                    "execution_context": execution_context,
                     "qty_filled": qty_filled,
                     "avg_fill_price": float(avg_fill_price) if avg_fill_price is not None else None,
+                    "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
+                    "realized_pnl_is_estimate": bool(realized_pnl_is_estimate),
                     "status": "FILLED",
                     "execution_ts": execution_ts,
                     "source": "IBKR_SNAPSHOT_EXECUTION",
@@ -4700,8 +4792,12 @@ def get_live_activity_overview(
                     "broker_order_id": order.get("BROKER_ORDER_ID"),
                     "symbol": order.get("SYMBOL"),
                     "side": order.get("SIDE"),
+                    "action_intent": _normalize_action_intent(order.get("SIDE"), order.get("ACTION_INTENT")),
+                    "execution_context": None,
                     "qty_filled": float(qty_filled) if qty_filled is not None else None,
                     "avg_fill_price": float(order.get("AVG_FILL_PRICE")) if order.get("AVG_FILL_PRICE") is not None else None,
+                    "realized_pnl": None,
+                    "realized_pnl_is_estimate": False,
                     "status": order.get("STATUS"),
                     "execution_ts": order.get("FILLED_AT") or order.get("LAST_UPDATED_AT"),
                     "source": "MIP_BROKER_LEDGER",

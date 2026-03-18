@@ -1730,31 +1730,32 @@ def _run_agent_snowflake_query(query: str, timeout_sec: int = 120) -> list | dic
 
 def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> dict:
     """
-    Execute IBKR bar ingest via agent runtime (local Gateway + .env.agent Snowflake).
+    Fetch latest 1-minute bar directly from IB Gateway via agent runtime.
+    No Snowflake writes in this path.
     """
     if not symbol:
         return {"attempted": False, "status": "SKIPPED", "reason": "MISSING_SYMBOL"}
 
     root = _project_root()
     py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
-    script = root / "cursorfiles" / "ingest_ibkr_bars.py"
+    script = root / "cursorfiles" / "fetch_ibkr_live_bars.py"
     if not py.exists() or not script.exists():
         return {
             "attempted": False,
             "status": "SKIPPED",
-            "reason": "IBKR_INGEST_RUNTIME_NOT_FOUND",
+            "reason": "IBKR_LIVE_FETCH_RUNTIME_NOT_FOUND",
         }
 
     cmd = [
         str(py),
         str(script),
-        "--interval-minutes",
-        "1",
-        "--duration-str",
-        "2 D",
         "--symbols",
         str(symbol).upper(),
-        "--max-symbols",
+        "--market-types",
+        "FX" if "/" in str(symbol) else "STOCK",
+        "--interval-minutes",
+        "1",
+        "--window-bars",
         "1",
     ]
     child_env = dict(os.environ)
@@ -1804,6 +1805,38 @@ def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> d
         "executor": "agent_runtime_ibkr",
         "payload": payload,
     }
+
+
+def _extract_latest_one_min_bar_from_refresh(refresh_info: dict | None, symbol: str | None) -> tuple[datetime | str, float] | None:
+    if not isinstance(refresh_info, dict):
+        return None
+    if str(refresh_info.get("status") or "").upper() != "SUCCESS":
+        return None
+    payload = refresh_info.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    target_symbol = str(symbol or "").strip().upper().replace(" ", "")
+    for sym_payload in payload.get("symbols") or []:
+        if not isinstance(sym_payload, dict):
+            continue
+        sym_value = str(sym_payload.get("symbol") or "").strip().upper().replace(" ", "")
+        if target_symbol and sym_value and sym_value != target_symbol:
+            continue
+        bars = sym_payload.get("bars")
+        if not isinstance(bars, list) or not bars:
+            continue
+        latest = bars[-1]
+        if not isinstance(latest, dict):
+            continue
+        ts_val = latest.get("ts")
+        close_val = latest.get("close")
+        if ts_val is None or close_val is None:
+            continue
+        try:
+            return ts_val, float(close_val)
+        except Exception:
+            continue
+    return None
 
 
 def _run_agent_ibkr_news_refresh(
@@ -1983,44 +2016,9 @@ def _evaluate_ibkr_news_readiness(
 
 def _force_refresh_latest_one_minute_bars(cur, symbol: str | None = None) -> dict:
     """
-    Best-effort 1-minute bar refresh before revalidation.
-    Non-fatal; caller still proceeds with currently available data.
+    Direct IBKR-only 1-minute refresh before revalidation.
     """
-    ibkr_result = _run_agent_ibkr_bar_refresh(symbol)
-    if ibkr_result.get("status") == "SUCCESS":
-        return ibkr_result
-
-    try:
-        # Fallback path when IBKR refresh is unavailable.
-        agent_rows = _run_agent_snowflake_query("call MIP.APP.SP_INGEST_MARKET_BARS(1)")
-        payload = (agent_rows[0] if isinstance(agent_rows, list) and agent_rows else agent_rows)
-        return {
-            "attempted": True,
-            "status": "SUCCESS",
-            "payload": payload,
-            "executor": "agent_runtime_sql_fallback",
-            "ibkr_attempt": ibkr_result,
-        }
-    except Exception as agent_exc:
-        try:
-            cur.execute("call MIP.APP.SP_INGEST_MARKET_BARS(1)")
-            row = cur.fetchone()
-            payload = row[0] if row else None
-            return {
-                "attempted": True,
-                "status": "SUCCESS",
-                "payload": payload,
-                "executor": "api_runtime_sql_fallback",
-                "ibkr_attempt": ibkr_result,
-            }
-        except Exception as exc:
-            return {
-                "attempted": True,
-                "status": "FAIL",
-                "error": str(exc),
-                "agent_error": str(agent_exc),
-                "ibkr_attempt": ibkr_result,
-            }
+    return _run_agent_ibkr_bar_refresh(symbol)
 
 
 def _fetch_training_min_signals(cur) -> int:
@@ -6656,47 +6654,60 @@ def revalidate_live_action(
         refresh_info = {"attempted": False}
         if req.force_refresh_1m:
             refresh_info = _force_refresh_latest_one_minute_bars(cur, symbol)
+            if str(refresh_info.get("status") or "").upper() != "SUCCESS":
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "IBKR direct 1m refresh failed, revalidation blocked.",
+                        "reason_codes": ["IBKR_DIRECT_REFRESH_FAILED"],
+                        "refresh": refresh_info,
+                    },
+                )
 
-        cur.execute(
-            """
-            select TS, CLOSE
-            from MIP.MART.MARKET_BARS
-            where SYMBOL = %s
-              and INTERVAL_MINUTES = 1
-              and upper(coalesce(SOURCE, '')) = 'IBKR'
-            order by case when upper(coalesce(SOURCE, '')) = 'IBKR' then 0 else 1 end, TS desc
-            limit 1
-            """,
-            (symbol,),
-        )
-        bar = cur.fetchone()
-        source = "ONE_MINUTE_BAR"
-        if bar:
-            ref_ts, ref_price = bar
+        direct_ibkr_one_min = _extract_latest_one_min_bar_from_refresh(refresh_info, symbol) if req.force_refresh_1m else None
+        source = "IBKR_DIRECT_1M" if direct_ibkr_one_min else "ONE_MINUTE_BAR"
+        if direct_ibkr_one_min:
+            ref_ts, ref_price = direct_ibkr_one_min
         else:
             cur.execute(
                 """
                 select TS, CLOSE
                 from MIP.MART.MARKET_BARS
                 where SYMBOL = %s
-                  and INTERVAL_MINUTES in (15, 60, 1440)
+                  and INTERVAL_MINUTES = 1
                   and upper(coalesce(SOURCE, '')) = 'IBKR'
-                order by TS desc
+                order by case when upper(coalesce(SOURCE, '')) = 'IBKR' then 0 else 1 end, TS desc
                 limit 1
                 """,
                 (symbol,),
             )
-            fallback = cur.fetchone()
-            if not fallback:
-                if is_exit and proposed_price is not None:
-                    ref_ts = datetime.now(timezone.utc)
-                    ref_price = float(proposed_price)
-                    source = "EXIT_PRICE_FALLBACK"
-                else:
-                    raise HTTPException(status_code=400, detail="No market bar found for symbol, revalidation blocked.")
+            bar = cur.fetchone()
+            if bar:
+                ref_ts, ref_price = bar
             else:
-                ref_ts, ref_price = fallback
-                source = "BAR_FALLBACK"
+                cur.execute(
+                    """
+                    select TS, CLOSE
+                    from MIP.MART.MARKET_BARS
+                    where SYMBOL = %s
+                      and INTERVAL_MINUTES in (15, 60, 1440)
+                      and upper(coalesce(SOURCE, '')) = 'IBKR'
+                    order by TS desc
+                    limit 1
+                    """,
+                    (symbol,),
+                )
+                fallback = cur.fetchone()
+                if not fallback:
+                    if is_exit and proposed_price is not None:
+                        ref_ts = datetime.now(timezone.utc)
+                        ref_price = float(proposed_price)
+                        source = "EXIT_PRICE_FALLBACK"
+                    else:
+                        raise HTTPException(status_code=400, detail="No market bar found for symbol, revalidation blocked.")
+                else:
+                    ref_ts, ref_price = fallback
+                    source = "BAR_FALLBACK"
 
         ref_ts_utc = _market_bar_ts_to_utc(ref_ts)
         if ref_ts_utc is None:
@@ -6734,6 +6745,8 @@ def revalidate_live_action(
             reason_codes.append("EXIT_REVALIDATION_STALE_BAR_BYPASS")
         if (not is_exit) and (not market_open_now) and bar_age_sec > freshness_threshold_sec:
             reason_codes.append("REVALIDATION_STALE_BAR_OUTSIDE_SESSION_ALLOWED")
+        if source == "IBKR_DIRECT_1M":
+            reason_codes.append("REVALIDATION_PRICE_FROM_IBKR_DIRECT")
 
         if deviation is None or deviation <= 0.02:
             revalidation_outcome = "PASS"
@@ -6820,8 +6833,8 @@ def revalidate_live_action(
                 ref_price,
                 deviation,
                 guard_result,
-                ref_ts if source == "ONE_MINUTE_BAR" else None,
-                ref_price if source == "ONE_MINUTE_BAR" else None,
+                ref_ts if source in ("ONE_MINUTE_BAR", "IBKR_DIRECT_1M") else None,
+                ref_price if source in ("ONE_MINUTE_BAR", "IBKR_DIRECT_1M") else None,
                 source,
                 revalidation_outcome,
                 LIVE_POLICY_VERSION,

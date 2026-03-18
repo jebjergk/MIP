@@ -47,15 +47,6 @@ const NAV_GROUPS = [
       { to: '/debug', icon: '\uD83D\uDD27', label: 'Debug' },
     ],
   },
-  {
-    label: 'Deprecated',
-    items: [
-      { to: '/manage',     icon: '\uD83D\uDCCB', label: 'Management' },
-      { to: '/portfolios', icon: '\uD83D\uDCC8', label: 'Activity' },
-      { to: '/intraday/dashboard', icon: '\u23F1\uFE0F', label: 'Intraday Training' },
-      { to: '/intraday/early-exit', icon: '\u23F1\uFE0F', label: 'Intraday Early Exit' },
-    ],
-  },
 ]
 
 export default function AppLayout() {

@@ -2,13 +2,11 @@ import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation, matchPath } from 'react-router-dom'
 import Cockpit from './pages/Cockpit'
 import Home from './pages/Home'
-import Portfolio from './pages/Portfolio'
 import AuditViewer from './pages/AuditViewer'
 import TrainingStatus from './pages/TrainingStatus'
 import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
 import SymbolTracker from './pages/SymbolTracker'
-import PortfolioManagement from './pages/PortfolioManagement'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
 import AiAgentDecisions from './pages/AiAgentDecisions'
@@ -88,14 +86,14 @@ export default function App() {
         <Route path="/" element={<Navigate to="/cockpit" replace />} />
         <Route path="/cockpit" element={<Cockpit />} />
         <Route path="/home" element={<Home />} />
-        <Route path="/portfolios" element={<Portfolio />} />
-        <Route path="/portfolios/:portfolioId" element={<Portfolio />} />
+        <Route path="/portfolios" element={<Navigate to="/cockpit" replace />} />
+        <Route path="/portfolios/:portfolioId" element={<Navigate to="/cockpit" replace />} />
         <Route path="/runs" element={<AuditViewer />} />
         <Route path="/runs/:runId" element={<AuditViewer />} />
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/symbol-tracker" element={<SymbolTracker />} />
-        <Route path="/manage" element={<PortfolioManagement />} />
+        <Route path="/manage" element={<Navigate to="/cockpit" replace />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/learning-ledger" element={<LearningLedger />} />
         <Route path="/performance-dashboard" element={<PerformanceDashboard />} />

@@ -490,34 +490,26 @@ begin
             ),
             null
         );
-        -- Daily digest: ALWAYS generated (tells the story even on "nothing happened" days).
+        -- [DAILY DIGEST] Disabled (legacy sim-portfolio digest retired from active UI).
         v_digest_start := current_timestamp();
-        v_digest_status := 'SKIPPED';
-        begin
-            v_digest_result := (call MIP.APP.SP_AGENT_GENERATE_DAILY_DIGEST(
-                :v_run_id,
-                :v_effective_to_ts,
-                null
-            ));
-            v_digest_status := coalesce(:v_digest_result:status::string, 'SUCCESS');
-        exception
-            when other then
-                v_digest_status := 'FAIL';
-                v_digest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
-        end;
+        v_digest_status := 'SKIPPED_DISABLED';
+        v_digest_result := object_construct(
+            'status', 'SKIPPED_DISABLED',
+            'reason', 'DAILY_DIGEST_DISABLED_LEGACY_SIM_RETIRED'
+        );
         v_digest_end := current_timestamp();
         call MIP.APP.SP_AUDIT_LOG_STEP(
             :v_run_id,
             'DAILY_DIGEST',
             :v_digest_status,
-            :v_digest_result:snapshot_count::number,
+            0,
             object_construct(
                 'step_name', 'daily_digest',
                 'scope', 'AGG',
                 'scope_key', null,
                 'started_at', :v_digest_start,
                 'completed_at', :v_digest_end,
-                'reason', 'DIGEST_ALWAYS_GENERATED',
+                'reason', 'DAILY_DIGEST_DISABLED_LEGACY_SIM_RETIRED',
                 'results', :v_digest_result
             ),
             null
@@ -568,7 +560,7 @@ begin
             'portfolio_live_sync', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'pw_symbol_shadow', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'morning_brief', object_construct('status', 'SUCCESS_NO_NEW_BARS', 'portfolio_count', :v_brief_count, 'reason', 'BRIEFS_ALWAYS_WRITTEN'),
-            'daily_digest', object_construct('status', :v_digest_status, 'narrative_mode', :v_digest_result:narrative_mode, 'portfolio_count', :v_digest_result:portfolio_count, 'cortex_success_count', :v_digest_result:cortex_success_count, 'cortex_fallback_count', :v_digest_result:cortex_fallback_count, 'reason', 'DIGEST_ALWAYS_GENERATED'),
+            'daily_digest', object_construct('status', :v_digest_status, 'reason', 'DAILY_DIGEST_DISABLED_LEGACY_SIM_RETIRED'),
             'training_digest', object_construct('status', :v_training_digest_status, 'reason', 'TRAINING_DIGEST_DISABLED'),
             'parallel_worlds', object_construct('enabled', false, 'status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS'),
             'agent_generate_morning_brief', object_construct('status', 'SKIPPED_NO_NEW_BARS', 'reason', 'NO_NEW_BARS')
@@ -1178,62 +1170,30 @@ begin
         v_pw_shadow_result := object_construct('status', 'SKIPPED_NO_RUN_ID');
     end if;
 
-    -- [DAILY DIGEST] Generate daily intelligence digest (non-fatal: digest failure must not break pipeline)
+    -- [DAILY DIGEST] Disabled (legacy sim-portfolio digest retired from active UI)
     v_digest_start := current_timestamp();
-    v_digest_status := 'SKIPPED';
-    begin
-        v_digest_result := (call MIP.APP.SP_AGENT_GENERATE_DAILY_DIGEST(
-            :v_run_id,
-            :v_effective_to_ts,
-            null   -- null = all active portfolios
-        ));
-        v_digest_status := coalesce(:v_digest_result:status::string, 'SUCCESS');
-    exception
-        when other then
-            v_digest_status := 'FAIL';
-            v_digest_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
-            -- Non-fatal: log and continue
-            call MIP.APP.SP_AUDIT_LOG_STEP(
-                :v_run_id,
-                'DAILY_DIGEST',
-                'FAIL',
-                null,
-                object_construct(
-                    'step_name', 'daily_digest',
-                    'scope', 'AGG',
-                    'scope_key', null,
-                    'started_at', :v_digest_start,
-                    'completed_at', current_timestamp(),
-                    'error', :sqlerrm
-                ),
-                :sqlerrm
-            );
-    end;
+    v_digest_status := 'SKIPPED_DISABLED';
+    v_digest_result := object_construct(
+        'status', 'SKIPPED_DISABLED',
+        'reason', 'DAILY_DIGEST_DISABLED_LEGACY_SIM_RETIRED'
+    );
     v_digest_end := current_timestamp();
-
-    if (:v_digest_status != 'FAIL') then
-        call MIP.APP.SP_AUDIT_LOG_STEP(
-            :v_run_id,
-            'DAILY_DIGEST',
-            :v_digest_status,
-            :v_digest_result:snapshot_count::number,
-            object_construct(
-                'step_name', 'daily_digest',
-                'scope', 'AGG',
-                'scope_key', null,
-                'started_at', :v_digest_start,
-                'completed_at', :v_digest_end,
-                'portfolio_count', :v_digest_result:portfolio_count::number,
-                'snapshot_count', :v_digest_result:snapshot_count::number,
-                'narrative_count', :v_digest_result:narrative_count::number,
-                'narrative_mode', :v_digest_result:narrative_mode::string,
-                'cortex_success_count', :v_digest_result:cortex_success_count::number,
-                'cortex_fallback_count', :v_digest_result:cortex_fallback_count::number,
-                'results', :v_digest_result:results
-            ),
-            null
-        );
-    end if;
+    call MIP.APP.SP_AUDIT_LOG_STEP(
+        :v_run_id,
+        'DAILY_DIGEST',
+        :v_digest_status,
+        0,
+        object_construct(
+            'step_name', 'daily_digest',
+            'scope', 'AGG',
+            'scope_key', null,
+            'started_at', :v_digest_start,
+            'completed_at', :v_digest_end,
+            'reason', 'DAILY_DIGEST_DISABLED_LEGACY_SIM_RETIRED',
+            'results', :v_digest_result
+        ),
+        null
+    );
 
     -- [TRAINING DIGEST] Disabled (cost/UX alignment; no Cortex generation from daily pipeline)
     v_training_digest_start := current_timestamp();
@@ -1401,12 +1361,7 @@ begin
         'morning_brief', :v_brief_result,
         'daily_digest', object_construct(
             'status', :v_digest_status,
-            'narrative_mode', :v_digest_result:narrative_mode,
-            'portfolio_count', :v_digest_result:portfolio_count,
-            'snapshot_count', :v_digest_result:snapshot_count,
-            'narrative_count', :v_digest_result:narrative_count,
-            'cortex_success_count', :v_digest_result:cortex_success_count,
-            'cortex_fallback_count', :v_digest_result:cortex_fallback_count
+            'reason', 'DAILY_DIGEST_DISABLED_LEGACY_SIM_RETIRED'
         ),
         'training_digest', object_construct(
             'status', :v_training_digest_status,

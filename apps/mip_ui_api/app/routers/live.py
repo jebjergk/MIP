@@ -4611,14 +4611,89 @@ def get_live_activity_overview(
 
         pending_decisions = list(pending_by_symbol.values())
 
-        executions = []
+        execution_rows_ib = []
+        try:
+            cur.execute(
+                """
+                select
+                  SNAPSHOT_TS, SYMBOL, SECURITY_TYPE, OPEN_ORDER_ID, OPEN_ORDER_FILLED,
+                  OPEN_ORDER_LIMIT_PRICE, AVG_COST, PAYLOAD
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'EXECUTION'
+                  and IBKR_ACCOUNT_ID = %s
+                  and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+                order by SNAPSHOT_TS desc
+                limit %s
+                """,
+                (account_id, order_lookback_days, max(int(execution_limit) * 20, 200)),
+            )
+            execution_rows_ib = fetch_all(cur)
+        except Exception:
+            execution_rows_ib = []
+
+        broker_order_to_action: dict[str, str] = {}
+        for order in orders:
+            broker_id = _normalize_broker_order_id(order.get("BROKER_ORDER_ID"))
+            if broker_id:
+                broker_order_to_action.setdefault(broker_id, str(order.get("ACTION_ID") or ""))
+
+        executions_ib = []
+        seen_ib_exec_keys: set[str] = set()
+        for row in execution_rows_ib:
+            payload = _parse_variant(row.get("PAYLOAD"))
+            exec_id = str(payload.get("exec_id") or "").strip()
+            symbol = str(row.get("SYMBOL") or payload.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            broker_order_id = (
+                _normalize_broker_order_id(row.get("OPEN_ORDER_ID"))
+                or _normalize_broker_order_id(payload.get("perm_id"))
+                or _normalize_broker_order_id(payload.get("order_id"))
+            )
+            qty_filled_raw = payload.get("shares")
+            if qty_filled_raw is None:
+                qty_filled_raw = row.get("OPEN_ORDER_FILLED")
+            if qty_filled_raw is None:
+                qty_filled_raw = row.get("POSITION_QTY")
+            qty_filled = abs(float(qty_filled_raw)) if qty_filled_raw is not None else None
+            avg_fill_price = payload.get("price")
+            if avg_fill_price is None:
+                avg_fill_price = row.get("OPEN_ORDER_LIMIT_PRICE")
+            if avg_fill_price is None:
+                avg_fill_price = row.get("AVG_COST")
+            side = str(payload.get("side") or "").upper().strip()
+            if side not in ("BUY", "SELL"):
+                side = "BUY" if (qty_filled_raw is not None and float(qty_filled_raw) >= 0) else "SELL"
+            execution_ts = payload.get("time") or row.get("SNAPSHOT_TS")
+            dedupe_key = exec_id or f"{broker_order_id}:{symbol}:{execution_ts}:{qty_filled}:{avg_fill_price}"
+            if dedupe_key in seen_ib_exec_keys:
+                continue
+            seen_ib_exec_keys.add(dedupe_key)
+            market_type = "FX" if "/" in symbol else str(row.get("SECURITY_TYPE") or "").upper()
+            executions_ib.append(
+                {
+                    "order_id": exec_id or broker_order_id or f"IB_EXEC_{len(executions_ib)+1}",
+                    "action_id": broker_order_to_action.get(broker_order_id) if broker_order_id else None,
+                    "broker_order_id": broker_order_id,
+                    "symbol": symbol,
+                    "market_type": market_type or None,
+                    "side": side,
+                    "qty_filled": qty_filled,
+                    "avg_fill_price": float(avg_fill_price) if avg_fill_price is not None else None,
+                    "status": "FILLED",
+                    "execution_ts": execution_ts,
+                    "source": "IBKR_SNAPSHOT_EXECUTION",
+                }
+            )
+
+        executions_local = []
         for order in orders:
             status = (order.get("STATUS") or "").upper()
             qty_filled = order.get("QTY_FILLED")
             is_exec = status in ("PARTIAL_FILL", "FILLED") or (qty_filled is not None and float(qty_filled) > 0)
             if not is_exec:
                 continue
-            executions.append(
+            executions_local.append(
                 {
                     "order_id": order.get("ORDER_ID"),
                     "action_id": order.get("ACTION_ID"),
@@ -4632,6 +4707,20 @@ def get_live_activity_overview(
                     "source": "MIP_BROKER_LEDGER",
                 }
             )
+
+        executions = list(executions_ib)
+        seen_combined = {
+            f"{str(e.get('broker_order_id') or '')}:{str(e.get('symbol') or '').upper()}:{str(e.get('execution_ts') or '')}:{str(e.get('qty_filled') or '')}"
+            for e in executions
+        }
+        for local_exec in executions_local:
+            local_key = (
+                f"{str(local_exec.get('broker_order_id') or '')}:{str(local_exec.get('symbol') or '').upper()}:"
+                f"{str(local_exec.get('execution_ts') or '')}:{str(local_exec.get('qty_filled') or '')}"
+            )
+            if local_key in seen_combined:
+                continue
+            executions.append(local_exec)
         executions = executions[:execution_limit]
 
         orders_enriched = []

@@ -1088,7 +1088,7 @@ export default function LivePortfolioActivity() {
 
               <div className="lpa-panel lpa-panel--trades">
                 <h3>Trades</h3>
-                <div className="lpa-subtle">Executed fills from broker lifecycle.</div>
+                <div className="lpa-subtle">Executed fills from IB broker truth (snapshot-backed).</div>
                 <div className="lpa-mini-kpis">
                   <div><span>Lookback</span><b>{executions.length} total</b></div>
                   <div><span>Notional</span><b>{fmtNum(tradeNotional, 2)}</b></div>

@@ -642,10 +642,15 @@ def _parse_iso_utc(s: str | None) -> datetime | None:
         return None
 
 
-def _market_bar_ts_to_utc(ts: datetime | None) -> datetime | None:
+def _market_bar_ts_to_utc(ts: datetime | str | None) -> datetime | None:
     if ts is None:
         return None
     try:
+        if isinstance(ts, str):
+            parsed = _parse_iso_utc(ts)
+            if parsed is not None:
+                return parsed
+            return None
         if ts.tzinfo is None:
             # MARKET_BARS.TS is stored as NY session clock time (NTZ).
             return ts.replace(tzinfo=NY_TZ).astimezone(timezone.utc)
@@ -981,12 +986,14 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
         return reason_codes, {"has_symbol": False}
 
     source = (action.get("EXECUTION_PRICE_SOURCE") or "").upper()
-    if source != "ONE_MINUTE_BAR":
+    allowed_sources = {"ONE_MINUTE_BAR", "IBKR_DIRECT_1M"}
+    if source not in allowed_sources:
         reason_codes.append("FIRST_SESSION_REALISM_SOURCE_REQUIRED")
 
     one_min_bar_ts = action.get("ONE_MIN_BAR_TS")
     if not one_min_bar_ts:
         reason_codes.append("FIRST_SESSION_REALISM_MISSING_1M_REFERENCE")
+    one_min_bar_ts_utc = _market_bar_ts_to_utc(one_min_bar_ts)
 
     cur.execute(
         """
@@ -994,6 +1001,7 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
         from MIP.MART.MARKET_BARS
         where SYMBOL = %s
           and INTERVAL_MINUTES = 1
+          and upper(coalesce(SOURCE, '')) = 'IBKR'
         order by TS desc
         limit 1
         """,
@@ -1002,20 +1010,32 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     latest_bar = cur.fetchone()
     latest_ts = latest_bar[0] if latest_bar else None
     latest_close = latest_bar[1] if latest_bar else None
+    latest_ts_utc = _market_bar_ts_to_utc(latest_ts)
+    using_revalidation_bar_as_latest = False
+    if latest_ts is None and source == "IBKR_DIRECT_1M" and one_min_bar_ts_utc is not None:
+        # IB-direct revalidation may not persist into MART.MARKET_BARS; use the
+        # validated action reference bar for realism freshness checks.
+        latest_ts = one_min_bar_ts
+        latest_ts_utc = one_min_bar_ts_utc
+        latest_close = action.get("ONE_MIN_BAR_CLOSE")
+        using_revalidation_bar_as_latest = True
     now_utc = datetime.now(timezone.utc)
     market_open = _is_extended_trading_open_ny(now_utc)
     open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
-    if not latest_ts:
+    if latest_ts_utc is None:
         reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
     else:
-        bar_ts_utc = _market_bar_ts_to_utc(latest_ts)
-        bar_age_sec = (now_utc - bar_ts_utc).total_seconds() if bar_ts_utc is not None else None
+        bar_age_sec = (now_utc - latest_ts_utc).total_seconds()
         # 60s proved too strict for committee runtime; enforce practical lower bound.
         max_age_sec = max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300)
         # Outside extended-hours: allow submit with latest regular-session bar.
         if market_open and bar_age_sec is not None and bar_age_sec > max_age_sec:
             reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
-        if one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
+        if one_min_bar_ts_utc is not None and latest_ts_utc is not None:
+            ts_diff_sec = abs((one_min_bar_ts_utc - latest_ts_utc).total_seconds())
+            if ts_diff_sec > 90:
+                reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
+        elif one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
             reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
 
     details = {
@@ -1027,6 +1047,7 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
         "one_min_bar_ts": one_min_bar_ts,
         "latest_one_min_bar_ts": latest_ts,
         "latest_one_min_close": latest_close,
+        "latest_one_min_from_revalidation": using_revalidation_bar_as_latest,
         "quote_freshness_threshold_sec": max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300),
     }
     return reason_codes, details
@@ -1807,7 +1828,7 @@ def _run_agent_ibkr_bar_refresh(symbol: str | None, timeout_sec: int = 120) -> d
     }
 
 
-def _extract_latest_one_min_bar_from_refresh(refresh_info: dict | None, symbol: str | None) -> tuple[datetime | str, float] | None:
+def _extract_latest_one_min_bar_from_refresh(refresh_info: dict | None, symbol: str | None) -> tuple[datetime, float] | None:
     if not isinstance(refresh_info, dict):
         return None
     if str(refresh_info.get("status") or "").upper() != "SUCCESS":
@@ -1832,8 +1853,11 @@ def _extract_latest_one_min_bar_from_refresh(refresh_info: dict | None, symbol: 
         close_val = latest.get("close")
         if ts_val is None or close_val is None:
             continue
+        ts_utc = _market_bar_ts_to_utc(ts_val)
+        if ts_utc is None:
+            continue
         try:
-            return ts_val, float(close_val)
+            return ts_utc, float(close_val)
         except Exception:
             continue
     return None
@@ -4444,6 +4468,8 @@ def get_live_activity_overview(
             status = (row.get("STATUS") or "").upper()
             action_reason_codes = _parse_list_variant(row.get("REASON_CODES"))
             blocked = status == "OPEN_BLOCKED" or bool(action_reason_codes and any("BLOCK" in str(x).upper() for x in action_reason_codes))
+            committee_should_enter = joint_decision.get("should_enter")
+            committee_blocks_entry = (action_intent != "EXIT") and (committee_should_enter is False)
             execution_hard_blocked = bool(
                 action_reason_codes
                 and any(
@@ -4459,12 +4485,22 @@ def get_live_activity_overview(
                         "LIVE_BRACKET_REQUIRED",
                         "LIVE_TP_NET_EDGE_TOO_LOW",
                         "LIVE_RISK_REWARD_TOO_LOW",
+                        "BROKER_SHORT_POSITION_OUT_OF_POLICY",
+                        "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
+                        "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
+                        "FIRST_SESSION_REALISM_SOURCE_REQUIRED",
+                        "FIRST_SESSION_REALISM_NO_1M_BAR",
+                        "FIRST_SESSION_REALISM_MISSING_1M_REFERENCE",
+                        "FIRST_SESSION_REALISM_1M_STALE",
+                        "FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST",
+                        "NEWS_EXECUTION_BLOCKED_EVENT_SHOCK",
+                        "NEWS_EXECUTION_CAUTION",
                     )
                     for x in action_reason_codes
                 )
             )
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
-            submit_allowed = submit_allowed and page_actionable and (not blocked) and (not execution_hard_blocked)
+            submit_allowed = submit_allowed and page_actionable and (not blocked) and (not execution_hard_blocked) and (not committee_blocks_entry)
             in_position = symbol in held_symbols
             action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
             is_exit = action_intent == "EXIT"
@@ -4503,6 +4539,7 @@ def get_live_activity_overview(
                         "submission_allowed": bool(submit_allowed),
                         "is_blocked": bool(blocked),
                         "execution_hard_blocked": bool(execution_hard_blocked),
+                        "committee_should_enter": committee_should_enter,
                         "held_in_broker_position": bool(in_position),
                         "sizing": {
                             "proposed_qty": proposed_qty,

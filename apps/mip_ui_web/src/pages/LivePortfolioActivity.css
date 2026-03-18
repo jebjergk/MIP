@@ -175,6 +175,15 @@
   word-break: break-word;
 }
 
+.lpa-table--pending th {
+  font-size: 11px;
+}
+
+.lpa-table--pending td {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .lpa-table--orders th {
   font-size: 11px;
 }

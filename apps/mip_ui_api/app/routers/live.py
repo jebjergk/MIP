@@ -480,6 +480,57 @@ def _required_next_step_for_status(status: str) -> str:
     return mapping.get(status_upper, "Review action details")
 
 
+def _auto_import_latest_proposals_for_live_portfolio(
+    live_portfolio_id: int,
+    *,
+    source_portfolio_id: int | None = None,
+    limit: int = 200,
+) -> dict:
+    """
+    Best-effort bridge from research proposals -> live actions so
+    /live/activity/overview reflects latest proposal output.
+    """
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    try:
+        result = import_live_actions_from_proposals(
+            ImportLiveActionsFromProposalsRequest(
+                live_portfolio_id=int(live_portfolio_id),
+                source_portfolio_id=int(source_portfolio_id)
+                if source_portfolio_id is not None
+                else None,
+                limit=safe_limit,
+                latest_batch_only=True,
+                allow_stale_import=False,
+                dedupe_by_symbol=True,
+                max_proposal_age_days=7,
+            )
+        )
+        return {
+            "attempted": True,
+            "ok": bool(result.get("ok")),
+            "candidate_count": int(result.get("candidate_count") or 0),
+            "imported_count": int(result.get("imported_count") or 0),
+            "skipped_existing_count": int(result.get("skipped_existing_count") or 0),
+            "skipped_symbol_live_position_count": int(
+                result.get("skipped_symbol_live_position_count") or 0
+            ),
+            "source_scope": result.get("source_scope"),
+            "latest_batch_date": result.get("latest_batch_date"),
+        }
+    except Exception as exc:
+        return {
+            "attempted": True,
+            "ok": False,
+            "error": str(exc),
+            "candidate_count": 0,
+            "imported_count": 0,
+            "skipped_existing_count": 0,
+            "skipped_symbol_live_position_count": 0,
+            "source_scope": None,
+            "latest_batch_date": None,
+        }
+
+
 def _append_learning_ledger_event(
     cur,
     *,
@@ -4106,6 +4157,26 @@ def get_live_activity_overview(
         cfg = cfg_rows[0]
         portfolio_id = cfg.get("PORTFOLIO_ID")
         account_id = cfg.get("IBKR_ACCOUNT_ID")
+        app_cfg = _read_app_config(
+            cur,
+            ["LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW", "LIVE_AUTO_IMPORT_PROPOSAL_LIMIT"],
+        )
+        auto_import_enabled = str(
+            app_cfg.get("LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW", "true")
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        auto_import_limit_raw = app_cfg.get("LIVE_AUTO_IMPORT_PROPOSAL_LIMIT", "200")
+        try:
+            auto_import_limit = int(auto_import_limit_raw)
+        except Exception:
+            auto_import_limit = 200
+        auto_import_summary = {"attempted": False, "ok": None}
+        if auto_import_enabled and portfolio_id is not None:
+            auto_import_summary = _auto_import_latest_proposals_for_live_portfolio(
+                int(portfolio_id),
+                source_portfolio_id=int(portfolio_id),
+                limit=auto_import_limit,
+            )
+        auto_import_summary["enabled"] = auto_import_enabled
 
         cur.execute(
             """
@@ -4599,6 +4670,7 @@ def get_live_activity_overview(
                 "order_limit": order_limit,
                 "execution_limit": execution_limit,
                 "snapshot_lookback_days": snapshot_lookback_days,
+                "auto_import_latest_proposals": auto_import_summary,
             },
             "open_positions": serialize_rows(open_positions),
             "open_orders": serialize_rows(open_orders),

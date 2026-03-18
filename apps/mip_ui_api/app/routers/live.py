@@ -978,12 +978,16 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     """
     Fail-closed realism checks:
     require 1m-bar-sourced revalidation and fresh 1m market data.
+    For EXIT actions, bypass freshness/recency hard blocks to avoid trapping
+    risk-reduction orders when quote timestamps lag.
     """
     reason_codes: list[str] = []
     symbol = action.get("SYMBOL")
     if not symbol:
         reason_codes.append("FIRST_SESSION_REALISM_MISSING_SYMBOL")
         return reason_codes, {"has_symbol": False}
+    action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+    is_exit = action_intent == "EXIT"
 
     source = (action.get("EXECUTION_PRICE_SOURCE") or "").upper()
     allowed_sources = {"ONE_MINUTE_BAR", "IBKR_DIRECT_1M"}
@@ -1022,24 +1026,27 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
     now_utc = datetime.now(timezone.utc)
     market_open = _is_extended_trading_open_ny(now_utc)
     open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
-    if latest_ts_utc is None:
-        reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
-    else:
-        bar_age_sec = (now_utc - latest_ts_utc).total_seconds()
-        # 60s proved too strict for committee runtime; enforce practical lower bound.
-        max_age_sec = max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300)
-        # Outside extended-hours: allow submit with latest regular-session bar.
-        if market_open and bar_age_sec is not None and bar_age_sec > max_age_sec:
-            reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
-        if one_min_bar_ts_utc is not None and latest_ts_utc is not None:
-            ts_diff_sec = abs((one_min_bar_ts_utc - latest_ts_utc).total_seconds())
-            if ts_diff_sec > 90:
+    if not is_exit:
+        if latest_ts_utc is None:
+            reason_codes.append("FIRST_SESSION_REALISM_NO_1M_BAR")
+        else:
+            bar_age_sec = (now_utc - latest_ts_utc).total_seconds()
+            # 60s proved too strict for committee runtime; enforce practical lower bound.
+            max_age_sec = max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300)
+            # Outside extended-hours: allow submit with latest regular-session bar.
+            if market_open and bar_age_sec is not None and bar_age_sec > max_age_sec:
+                reason_codes.append("FIRST_SESSION_REALISM_1M_STALE")
+            if one_min_bar_ts_utc is not None and latest_ts_utc is not None:
+                ts_diff_sec = abs((one_min_bar_ts_utc - latest_ts_utc).total_seconds())
+                if ts_diff_sec > 90:
+                    reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
+            elif one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
                 reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
-        elif one_min_bar_ts and latest_ts and one_min_bar_ts != latest_ts:
-            reason_codes.append("FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST")
 
     details = {
         "symbol": symbol,
+        "action_intent": action_intent,
+        "is_exit": is_exit,
         "market_open_ny": market_open,
         "market_open_ts_utc": open_utc.isoformat(),
         "market_close_ts_utc": close_utc.isoformat(),
@@ -1050,6 +1057,8 @@ def _first_session_realism_checks(cur, action: dict, cfg: dict) -> tuple[list[st
         "latest_one_min_from_revalidation": using_revalidation_bar_as_latest,
         "quote_freshness_threshold_sec": max(int(cfg.get("QUOTE_FRESHNESS_THRESHOLD_SEC") or 60), 300),
     }
+    if is_exit:
+        details["exit_reality_bypass"] = True
     return reason_codes, details
 
 
@@ -4470,32 +4479,40 @@ def get_live_activity_overview(
             blocked = status == "OPEN_BLOCKED" or bool(action_reason_codes and any("BLOCK" in str(x).upper() for x in action_reason_codes))
             committee_should_enter = joint_decision.get("should_enter")
             committee_blocks_entry = (action_intent != "EXIT") and (committee_should_enter is False)
+            hard_block_codes = {
+                "MAX_POSITIONS_EXCEEDED",
+                "MAX_POSITION_PCT_EXCEEDED",
+                "CASH_BUFFER_BREACH",
+                "MISSING_NOTIONAL_INPUT",
+                "EXIT_POSITION_MISSING",
+                "LIVE_TP_REQUIRED_MISSING",
+                "LIVE_SL_REQUIRED_MISSING",
+                "LIVE_BRACKET_REQUIRED",
+                "LIVE_TP_NET_EDGE_TOO_LOW",
+                "LIVE_RISK_REWARD_TOO_LOW",
+                "BROKER_SHORT_POSITION_OUT_OF_POLICY",
+                "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
+                "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
+                "FIRST_SESSION_REALISM_SOURCE_REQUIRED",
+                "FIRST_SESSION_REALISM_NO_1M_BAR",
+                "FIRST_SESSION_REALISM_MISSING_1M_REFERENCE",
+                "FIRST_SESSION_REALISM_1M_STALE",
+                "FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST",
+                "NEWS_EXECUTION_BLOCKED_EVENT_SHOCK",
+                "NEWS_EXECUTION_CAUTION",
+            }
+            if action_intent == "EXIT":
+                hard_block_codes -= {
+                    "FIRST_SESSION_REALISM_SOURCE_REQUIRED",
+                    "FIRST_SESSION_REALISM_NO_1M_BAR",
+                    "FIRST_SESSION_REALISM_MISSING_1M_REFERENCE",
+                    "FIRST_SESSION_REALISM_1M_STALE",
+                    "FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST",
+                }
             execution_hard_blocked = bool(
                 action_reason_codes
                 and any(
-                    str(x).upper()
-                    in (
-                        "MAX_POSITIONS_EXCEEDED",
-                        "MAX_POSITION_PCT_EXCEEDED",
-                        "CASH_BUFFER_BREACH",
-                        "MISSING_NOTIONAL_INPUT",
-                        "EXIT_POSITION_MISSING",
-                        "LIVE_TP_REQUIRED_MISSING",
-                        "LIVE_SL_REQUIRED_MISSING",
-                        "LIVE_BRACKET_REQUIRED",
-                        "LIVE_TP_NET_EDGE_TOO_LOW",
-                        "LIVE_RISK_REWARD_TOO_LOW",
-                        "BROKER_SHORT_POSITION_OUT_OF_POLICY",
-                        "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
-                        "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
-                        "FIRST_SESSION_REALISM_SOURCE_REQUIRED",
-                        "FIRST_SESSION_REALISM_NO_1M_BAR",
-                        "FIRST_SESSION_REALISM_MISSING_1M_REFERENCE",
-                        "FIRST_SESSION_REALISM_1M_STALE",
-                        "FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST",
-                        "NEWS_EXECUTION_BLOCKED_EVENT_SHOCK",
-                        "NEWS_EXECUTION_CAUTION",
-                    )
+                    str(x).upper() in hard_block_codes
                     for x in action_reason_codes
                 )
             )

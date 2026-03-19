@@ -39,7 +39,11 @@ select
     l.LAST_INGESTED_AT,
     l.SNAPSHOT_TS,
     datediff('minute', l.SNAPSHOT_TS, current_timestamp()) as NEWS_SNAPSHOT_AGE_MINUTES,
-    iff(datediff('minute', l.SNAPSHOT_TS, current_timestamp()) > c.STALENESS_MINUTES, true, false) as NEWS_IS_STALE,
+    iff(
+        coalesce(l.NEWS_COUNT, 0) = 0,
+        false,
+        iff(datediff('minute', l.SNAPSHOT_TS, current_timestamp()) > c.STALENESS_MINUTES, true, false)
+    ) as NEWS_IS_STALE,
     c.STALENESS_MINUTES as NEWS_STALENESS_THRESHOLD_MINUTES,
     l.CREATED_AT,
     l.RUN_ID

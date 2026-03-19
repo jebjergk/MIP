@@ -113,10 +113,30 @@ begin
     where RN <= 3
     group by AS_OF_DATE, SYMBOL, MARKET_TYPE;
 
+    create or replace temporary table TMP_NEWS_UNIVERSE as
+    select distinct
+        upper(SYMBOL) as SYMBOL,
+        upper(MARKET_TYPE) as MARKET_TYPE
+    from MIP.APP.INGEST_UNIVERSE
+    where coalesce(IS_ENABLED, true)
+      and INTERVAL_MINUTES = 1440;
+
     create or replace temporary table TMP_NEWS_TARGET as
-    select *
-    from TMP_NEWS_DAILY_COUNTS
-    where AS_OF_DATE = :v_as_of_date;
+    select
+        :v_as_of_date as AS_OF_DATE,
+        u.SYMBOL,
+        u.MARKET_TYPE,
+        coalesce(dc.NEWS_COUNT, 0) as NEWS_COUNT,
+        coalesce(dc.UNIQUE_SOURCES, 0) as UNIQUE_SOURCES,
+        coalesce(dc.DEDUP_COUNT, 0) as DEDUP_COUNT,
+        coalesce(dc.UNCERTAINTY_FLAG, false) as UNCERTAINTY_FLAG,
+        dc.LAST_NEWS_PUBLISHED_AT,
+        dc.LAST_INGESTED_AT
+    from TMP_NEWS_UNIVERSE u
+    left join TMP_NEWS_DAILY_COUNTS dc
+      on dc.AS_OF_DATE = :v_as_of_date
+     and dc.SYMBOL = u.SYMBOL
+     and dc.MARKET_TYPE = u.MARKET_TYPE;
 
     create or replace temporary table TMP_NEWS_TRAILING as
     select
@@ -221,6 +241,7 @@ begin
     drop table if exists TMP_NEWS_BASE;
     drop table if exists TMP_NEWS_DAILY_COUNTS;
     drop table if exists TMP_NEWS_TOP_HEADLINES;
+    drop table if exists TMP_NEWS_UNIVERSE;
     drop table if exists TMP_NEWS_TARGET;
     drop table if exists TMP_NEWS_TRAILING;
 

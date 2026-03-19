@@ -202,9 +202,13 @@ def get_news_intelligence(
                 n.SNAPSHOT_TS,
                 datediff('minute', coalesce(n.LAST_INGESTED_AT, n.SNAPSHOT_TS), current_timestamp()) as NEWS_SNAPSHOT_AGE_MINUTES,
                 iff(
-                    datediff('minute', coalesce(n.LAST_INGESTED_AT, n.SNAPSHOT_TS), current_timestamp()) > cfg.STALENESS_MINUTES,
-                    true,
-                    false
+                    coalesce(n.ITEMS_TOTAL, 0) = 0,
+                    false,
+                    iff(
+                        datediff('minute', coalesce(n.LAST_INGESTED_AT, n.SNAPSHOT_TS), current_timestamp()) > cfg.STALENESS_MINUTES,
+                        true,
+                        false
+                    )
                 ) as NEWS_IS_STALE,
                 cfg.STALENESS_MINUTES as NEWS_STALENESS_THRESHOLD_MINUTES
             from MIP.MART.V_NEWS_AGG_LATEST n
@@ -307,9 +311,10 @@ def get_news_intelligence(
             # "Exposure at risk" applies only when symbol has actual news context.
             # Symbols with NO_NEWS / zero count are tracked in coverage, not risk%.
             has_news_context = (_to_float(news.get("NEWS_COUNT")) or 0) > 0
-            is_risk = has_news_context and (
-                _to_bool(news.get("NEWS_IS_STALE"))
-                or _to_bool(news.get("UNCERTAINTY_FLAG"))
+            # Stale/no-news must not drive go/no-go behavior. They are excluded from
+            # decision influence and treated as neutral context.
+            is_risk = has_news_context and (not _to_bool(news.get("NEWS_IS_STALE"))) and (
+                _to_bool(news.get("UNCERTAINTY_FLAG"))
                 or ((news.get("NEWS_CONTEXT_BADGE") or "").upper() == "HOT")
             )
             if is_risk:
@@ -332,11 +337,20 @@ def get_news_intelligence(
             key=lambda x: (-(x.get("market_value") or 0.0), x.get("symbol") or "")
         )
 
-        stale_count = sum(1 for r in news_rows if _to_bool(r.get("NEWS_IS_STALE")))
+        stale_count = sum(
+            1
+            for r in news_rows
+            if (_to_float(r.get("NEWS_COUNT")) or 0) > 0 and _to_bool(r.get("NEWS_IS_STALE"))
+        )
         hot_count = sum(1 for r in news_rows if (r.get("NEWS_CONTEXT_BADGE") or "").upper() == "HOT")
         with_news = sum(1 for r in news_rows if (_to_float(r.get("NEWS_COUNT")) or 0) > 0)
+        actionable_news = max(with_news - stale_count, 0)
         avg_age = None
-        ages = [_to_float(r.get("NEWS_SNAPSHOT_AGE_MINUTES")) for r in news_rows]
+        ages = [
+            _to_float(r.get("NEWS_SNAPSHOT_AGE_MINUTES"))
+            for r in news_rows
+            if (_to_float(r.get("NEWS_COUNT")) or 0) > 0
+        ]
         ages = [a for a in ages if a is not None]
         if ages:
             avg_age = sum(ages) / len(ages)
@@ -385,9 +399,10 @@ def get_news_intelligence(
         risk_pct = (risk_market_value / total_market_value * 100.0) if total_market_value > 0 else 0.0
         summary_bullets = [
             f"Coverage: {with_news}/{len(news_rows)} symbols have non-zero news context.",
-            f"Freshness: {stale_count} stale snapshots, average age {round(avg_age, 1) if avg_age is not None else 'n/a'} minutes.",
+            f"Actionable now: {actionable_news} symbols have non-stale news context for decision support.",
+            f"Freshness (news symbols only): {stale_count} stale snapshots, average age {round(avg_age, 1) if avg_age is not None else 'n/a'} minutes.",
             f"Heat: {hot_count} symbols currently flagged HOT.",
-            f"Exposure-at-risk: {round(risk_pct, 1)}% of scoped open market value is in stale/uncertain/HOT context.",
+            f"Exposure-at-risk: {round(risk_pct, 1)}% of scoped open market value is in fresh uncertain/HOT context.",
         ]
 
         decision_rows: list[dict[str, Any]] = []
@@ -469,6 +484,7 @@ def get_news_intelligence(
             "market_context": {
                 "symbols_total": len(news_rows),
                 "symbols_with_news": with_news,
+                "symbols_with_actionable_news": actionable_news,
                 "stale_symbols": stale_count,
                 "hot_symbols": hot_count,
                 "avg_snapshot_age_minutes": avg_age,
@@ -532,9 +548,9 @@ def get_news_intelligence_overview(
     risk_market_value_pct = float(overlay.get("risk_market_value_pct") or 0.0)
     avg_news_score_adj = _to_float(decision_impact.get("avg_news_score_adj"))
 
-    stale_ratio = (stale_symbols / symbols_total) if symbols_total > 0 else 0.0
+    stale_ratio = (stale_symbols / max(symbols_with_news, 1)) if symbols_with_news > 0 else 0.0
 
-    if blocked_new_entry_count > 0 or risk_market_value_pct >= 35.0 or stale_ratio >= 0.4:
+    if blocked_new_entry_count > 0 or risk_market_value_pct >= 35.0:
         tone = "HIGH_RISK"
     elif hot_symbols > 0 or risk_market_value_pct >= 20.0 or proposals_with_news_context >= 3:
         tone = "CAUTION"
@@ -559,7 +575,7 @@ def get_news_intelligence_overview(
 
     summary_bullets = [
         f"{symbols_with_news}/{symbols_total} symbols currently have non-zero news context; {hot_symbols} flagged HOT.",
-        f"{stale_symbols} symbols are stale; scoped exposure-at-risk is {round(risk_market_value_pct, 1)}%.",
+        f"{stale_symbols} symbols are stale (excluded from decision influence); scoped exposure-at-risk is {round(risk_market_value_pct, 1)}%.",
         f"{proposals_with_news_context} proposals carried news context, with {blocked_new_entry_count} blocked new entries.",
     ]
     if avg_news_score_adj is not None:

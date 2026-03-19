@@ -560,6 +560,13 @@ begin
                 na.BADGE as NEWS_AGG_BADGE,
                 na.TOP_CLUSTERS as NEWS_AGG_TOP_CLUSTERS,
                 na.AS_OF_TS_BUCKET as NEWS_AGG_BUCKET_TS,
+                iff(
+                    coalesce(nl.NEWS_COUNT, 0) > 0
+                    or nfl.FEATURE_SNAPSHOT_TS is not null
+                    or na.AS_OF_TS_BUCKET is not null,
+                    true,
+                    false
+                ) as HAS_NEWS_CONTEXT,
                 cfg.SYMBOL_LOCAL_GATE_ENABLED,
                 cfg.SYMBOL_LOCAL_GATE_ENFORCE,
                 cfg.SYMBOL_LOCAL_MIN_RECENT_HIT_RATE,
@@ -571,9 +578,20 @@ begin
                     datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS)
                 ) as NEWS_SNAPSHOT_AGE_MINUTES,
                 iff(
-                    coalesce(nfl.FEATURE_IS_STALE, iff(coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS) is null, null, datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES)) is null,
-                    null,
-                    coalesce(nfl.FEATURE_IS_STALE, datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES)
+                    (
+                        coalesce(nl.NEWS_COUNT, 0) > 0
+                        or nfl.FEATURE_SNAPSHOT_TS is not null
+                        or na.AS_OF_TS_BUCKET is not null
+                    ) = false,
+                    false,
+                    coalesce(
+                        nfl.FEATURE_IS_STALE,
+                        iff(
+                            coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS) is null,
+                            false,
+                            datediff('minute', coalesce(nfl.FEATURE_SNAPSHOT_TS, nl.SNAPSHOT_TS), s.SIGNAL_TS) > cfg.NEWS_STALE_MINUTES
+                        )
+                    )
                 ) as NEWS_IS_STALE,
                 case
                     when s.MARKET_TYPE = 'FX' then 'FX'
@@ -680,21 +698,33 @@ begin
                     end
                 ) as NEWS_PRESSURE_SCORE,
                 coalesce(
-                    d.NEWS_FEATURE_UNCERTAINTY_SCORE,
-                    iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)
-                ) as NEWS_UNCERTAINTY_PROXY,
-                least(
-                    greatest(
-                        greatest(
-                            coalesce(d.NEWS_FEATURE_EVENT_RISK_SCORE, d.NEWS_BURST_SCORE, 0.0),
-                            coalesce(d.NEWS_AGG_CONFLICT, 0.0),
-                            coalesce(d.NEWS_FEATURE_UNCERTAINTY_SCORE, iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)),
-                            iff(coalesce(d.NEWS_IS_STALE, false), 1.0, 0.0),
-                            coalesce(d.NEWS_FEATURE_MACRO_HEAT, 0.0)
+                    iff(
+                        coalesce(d.HAS_NEWS_CONTEXT, false)
+                        and not coalesce(d.NEWS_IS_STALE, false),
+                        coalesce(
+                            d.NEWS_FEATURE_UNCERTAINTY_SCORE,
+                            iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)
                         ),
                         0.0
                     ),
-                    1.0
+                    0.0
+                ) as NEWS_UNCERTAINTY_PROXY,
+                iff(
+                    coalesce(d.HAS_NEWS_CONTEXT, false)
+                    and not coalesce(d.NEWS_IS_STALE, false),
+                    least(
+                        greatest(
+                            greatest(
+                                coalesce(d.NEWS_FEATURE_EVENT_RISK_SCORE, d.NEWS_BURST_SCORE, 0.0),
+                                coalesce(d.NEWS_AGG_CONFLICT, 0.0),
+                                coalesce(d.NEWS_FEATURE_UNCERTAINTY_SCORE, iff(coalesce(d.NEWS_UNCERTAINTY_FLAG, false), 0.7, 0.0)),
+                                coalesce(d.NEWS_FEATURE_MACRO_HEAT, 0.0)
+                            ),
+                            0.0
+                        ),
+                        1.0
+                    ),
+                    0.0
                 ) as NEWS_EVENT_RISK_PROXY
             from deduped_candidates d
         ),
@@ -705,7 +735,7 @@ begin
                     iff(upper(coalesce(e.NEWS_CONTEXT_BADGE, '')) = 'HOT', 'HOT_CONTEXT', null),
                     iff(upper(coalesce(e.NEWS_CONTEXT_BADGE, '')) = 'WARM', 'WARM_CONTEXT', null),
                     iff(coalesce(e.NEWS_UNCERTAINTY_PROXY, 0) >= 0.60, 'UNCERTAINTY_HIGH', null),
-                    iff(coalesce(e.NEWS_IS_STALE, false), 'SNAPSHOT_STALE', null),
+                    iff(coalesce(e.HAS_NEWS_CONTEXT, false) and coalesce(e.NEWS_IS_STALE, false), 'SNAPSHOT_STALE', null),
                     iff(e.NEWS_EVENT_RISK_PROXY >= 0.90, 'EVENT_RISK_HIGH', null),
                     iff(coalesce(e.NEWS_FEATURE_MACRO_HEAT, 0) >= 0.60, 'MACRO_HEAT_HIGH', null),
                     iff(coalesce(e.NEWS_AGG_CONFLICT, 0) >= coalesce(e.NEWS_CONFLICT_HIGH, 0.60), 'CONFLICT_HIGH', null)
@@ -714,11 +744,15 @@ begin
                     greatest(
                         iff(
                             e.NEWS_ENABLED = 'true',
-                            e.NEWS_RECENCY_WEIGHT
-                            * (
-                                e.NEWS_PRESSURE_SCORE * abs(e.NEWS_PRESSURE_HOT)
-                                - (coalesce(e.NEWS_UNCERTAINTY_PROXY, 0.0) * abs(e.NEWS_UNCERTAINTY_HIGH))
-                                - (e.NEWS_EVENT_RISK_PROXY * abs(e.NEWS_EVENT_RISK_HIGH))
+                            iff(
+                                coalesce(e.HAS_NEWS_CONTEXT, false) and not coalesce(e.NEWS_IS_STALE, false),
+                                e.NEWS_RECENCY_WEIGHT
+                                * (
+                                    e.NEWS_PRESSURE_SCORE * abs(e.NEWS_PRESSURE_HOT)
+                                    - (coalesce(e.NEWS_UNCERTAINTY_PROXY, 0.0) * abs(e.NEWS_UNCERTAINTY_HIGH))
+                                    - (e.NEWS_EVENT_RISK_PROXY * abs(e.NEWS_EVENT_RISK_HIGH))
+                                ),
+                                0.0
                             ),
                             0.0
                         ),
@@ -904,10 +938,22 @@ begin
                 'news_score_adj_shadow', s.NEWS_SCORE_ADJ_SHADOW,
                 'news_score_adj_applied', s.NEWS_SCORE_ADJ_APPLIED,
                 'news_score_adj', s.NEWS_SCORE_ADJ_APPLIED,
+                'has_news_context', s.HAS_NEWS_CONTEXT,
                 'news_influence_applied', iff(
                     s.NEWS_ENABLED = 'true'
                     and s.NEWS_INFLUENCE_ENABLED = 'true'
                     and s.NEWS_DISPLAY_ONLY <> 'true',
+                    iff(
+                        coalesce(s.HAS_NEWS_CONTEXT, false)
+                        and not coalesce(s.NEWS_IS_STALE, false),
+                        true,
+                        false
+                    ),
+                    false
+                ),
+                'news_considered_for_decision', iff(
+                    coalesce(s.HAS_NEWS_CONTEXT, false)
+                    and not coalesce(s.NEWS_IS_STALE, false),
                     true,
                     false
                 ),
@@ -985,6 +1031,17 @@ begin
                     s.NEWS_ENABLED = 'true'
                     and s.NEWS_INFLUENCE_ENABLED = 'true'
                     and s.NEWS_DISPLAY_ONLY <> 'true',
+                    iff(
+                        coalesce(s.HAS_NEWS_CONTEXT, false)
+                        and not coalesce(s.NEWS_IS_STALE, false),
+                        true,
+                        false
+                    ),
+                    false
+                ),
+                'news_considered_for_decision', iff(
+                    coalesce(s.HAS_NEWS_CONTEXT, false)
+                    and not coalesce(s.NEWS_IS_STALE, false),
                     true,
                     false
                 ),

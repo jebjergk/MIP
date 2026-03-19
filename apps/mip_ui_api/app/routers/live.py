@@ -2365,7 +2365,8 @@ def _news_freshness_bucket(snapshot_age_minutes: float | None) -> str:
         return "OVERNIGHT"
     if snapshot_age_minutes <= 48 * 60:
         return "WARM"
-    return "STALE"
+    # Older context should be treated as "no fresh news" for decisions.
+    return "NO_FRESH_NEWS"
 
 
 def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal_ts=None) -> dict:
@@ -2387,9 +2388,13 @@ def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal
     uncertainty = bool(source_signals.get("news_uncertainty_high")) or bool(news_context.get("uncertainty_flag"))
     event_risk = bool(source_signals.get("news_event_risk_high")) or bool(source_signals.get("news_block_new_entry"))
     info_pressure = float(news_agg.get("info_pressure") or news_features.get("news_pressure") or 0.0)
-    is_stale = bool(source_signals.get("news_is_stale")) or freshness_bucket == "STALE"
+    no_fresh_news = freshness_bucket in ("STALE", "NO_FRESH_NEWS")
+    is_stale = bool(source_signals.get("news_is_stale")) or no_fresh_news
 
-    if event_risk and freshness_bucket in ("FRESH", "OVERNIGHT"):
+    if no_fresh_news:
+        # Past-context headlines are considered non-actionable for this decision.
+        context_state = "NEUTRAL"
+    elif event_risk and freshness_bucket in ("FRESH", "OVERNIGHT"):
         context_state = "DESTABILIZING"
     elif conflict or uncertainty or badge in ("HOT", "ALERT"):
         context_state = "CAUTIONARY"
@@ -2398,7 +2403,9 @@ def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal
     else:
         context_state = "NEUTRAL"
 
-    if info_pressure >= 0.75:
+    if no_fresh_news:
+        intensity_level = "LOW"
+    elif info_pressure >= 0.75:
         intensity_level = "HIGH"
     elif info_pressure >= 0.35:
         intensity_level = "MEDIUM"
@@ -2428,7 +2435,7 @@ def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal
     theme_labels = list(dict.fromkeys(theme_labels))[:8]
 
     interpretation_confidence = 0.85
-    if is_stale:
+    if no_fresh_news:
         interpretation_confidence = 0.45
     elif context_state in ("CAUTIONARY", "DESTABILIZING"):
         interpretation_confidence = 0.75
@@ -2436,8 +2443,14 @@ def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal
     reason_codes = list(source_signals.get("news_reasons") or rationale.get("news_reasons") or [])
     if not isinstance(reason_codes, list):
         reason_codes = []
-    if is_stale:
-        reason_codes.append("NEWS_CONTEXT_STALE")
+    if no_fresh_news:
+        # Remove stale-style flags from decision reasons; treat as no-news consideration.
+        reason_codes = [
+            str(r)
+            for r in reason_codes
+            if str(r).upper() not in ("SNAPSHOT_STALE", "NEWS_CONTEXT_STALE", "STALE")
+        ]
+        reason_codes.append("NO_FRESH_NEWS_CONTEXT")
     if context_state == "DESTABILIZING":
         reason_codes.append("NEWS_CONTEXT_DESTABILIZING")
     reason_codes = list(dict.fromkeys([str(r) for r in reason_codes]))[:20]
@@ -2450,12 +2463,12 @@ def _normalize_news_context_snapshot(source_signals_raw, rationale_raw, proposal
         "intensity_level": intensity_level,
         "context_state": context_state,
         "event_shock_flag": bool(event_risk and freshness_bucket in ("FRESH", "OVERNIGHT")),
-        "relevance": "SYMBOL_LINKED" if (news_context or news_agg or news_features) else "LOW",
+        "relevance": "LOW" if no_fresh_news else ("SYMBOL_LINKED" if (news_context or news_agg or news_features) else "LOW"),
         "theme_labels": theme_labels,
         "interpretation_confidence": interpretation_confidence,
         "snapshot_age_minutes": snapshot_age_minutes,
         "is_stale": is_stale,
-        "badge": badge,
+        "badge": "NO_FRESH_NEWS" if no_fresh_news else badge,
         "news_count": news_context.get("news_count"),
         "news_reasons": reason_codes,
         "raw": {
@@ -2493,26 +2506,58 @@ def _fetch_latest_symbol_news_context(cur, symbol: str | None, market_type: str 
         age_minutes = None
         if snap_dt:
             age_minutes = max(0.0, (now_utc - snap_dt).total_seconds() / 60.0)
+        freshness_bucket = _news_freshness_bucket(age_minutes)
+        no_fresh_news = freshness_bucket in ("STALE", "NO_FRESH_NEWS")
+        raw_badge = str(row.get("BADGE") or "NEUTRAL").upper()
+        raw_conflict = bool(row.get("CONFLICT"))
+        if no_fresh_news:
+            context_state = "NEUTRAL"
+            event_shock_flag = False
+            relevance = "LOW"
+            interpretation_confidence = 0.45
+            badge = "NO_FRESH_NEWS"
+        else:
+            context_state = "DESTABILIZING" if raw_badge in ("HOT", "ALERT") and raw_conflict else ("CAUTIONARY" if raw_conflict else "NEUTRAL")
+            event_shock_flag = raw_badge in ("HOT", "ALERT") and (freshness_bucket in ("FRESH", "OVERNIGHT"))
+            relevance = "SYMBOL_LINKED"
+            interpretation_confidence = 0.8 if age_minutes is not None and age_minutes <= 16 * 60 else 0.55
+            badge = raw_badge
         normalized = {
             "policy_version": NEWS_CONTEXT_POLICY_VERSION,
             "as_of_ts": now_utc.isoformat(),
-            "freshness_bucket": _news_freshness_bucket(age_minutes),
+            "freshness_bucket": freshness_bucket,
             "timing_model": "SAME_SESSION_FRESH" if (age_minutes is not None and age_minutes <= 90) else ("OVERNIGHT" if (age_minutes is not None and age_minutes <= 16 * 60) else "OLDER_BACKGROUND"),
             "intensity_level": "HIGH" if float(row.get("INFO_PRESSURE") or 0.0) >= 0.75 else ("MEDIUM" if float(row.get("INFO_PRESSURE") or 0.0) >= 0.35 else "LOW"),
-            "context_state": "DESTABILIZING" if str(row.get("BADGE") or "").upper() in ("HOT", "ALERT") and bool(row.get("CONFLICT")) else ("CAUTIONARY" if bool(row.get("CONFLICT")) else "NEUTRAL"),
-            "event_shock_flag": str(row.get("BADGE") or "").upper() in ("HOT", "ALERT") and (_news_freshness_bucket(age_minutes) in ("FRESH", "OVERNIGHT")),
-            "relevance": "SYMBOL_LINKED",
+            "context_state": context_state,
+            "event_shock_flag": event_shock_flag,
+            "relevance": relevance,
             "theme_labels": row.get("TOP_CLUSTERS") if isinstance(row.get("TOP_CLUSTERS"), list) else [],
-            "interpretation_confidence": 0.8 if age_minutes is not None and age_minutes <= 16 * 60 else 0.55,
+            "interpretation_confidence": interpretation_confidence,
             "snapshot_age_minutes": age_minutes,
-            "is_stale": _news_freshness_bucket(age_minutes) == "STALE",
-            "badge": str(row.get("BADGE") or "NEUTRAL").upper(),
-            "news_reasons": [],
+            "is_stale": no_fresh_news,
+            "badge": badge,
+            "news_reasons": (["NO_FRESH_NEWS_CONTEXT"] if no_fresh_news else []),
             "raw": serialize_row(row),
         }
         return {"available": True, **normalized}
     except Exception as exc:
         return {"available": False, "reason": f"NEWS_QUERY_FAILED: {exc}"}
+
+
+def _resolve_news_for_decision(action_news_snapshot: dict | None, latest_news_snapshot: dict | None) -> dict:
+    """
+    Committee should use one authoritative news context:
+    - Prefer latest symbol context when available.
+    - Fall back to action snapshot only if latest is unavailable.
+    """
+    action_news = _parse_variant(action_news_snapshot)
+    latest_news = _parse_variant(latest_news_snapshot)
+
+    if latest_news.get("available"):
+        return {"source": "LATEST_NEWS", "snapshot": latest_news}
+    if action_news:
+        return {"source": "ACTION_NEWS_FALLBACK", "snapshot": action_news}
+    return {"source": "NONE", "snapshot": {"available": False, "context_state": "NEUTRAL", "freshness_bucket": "UNKNOWN"}}
 
 
 def _collect_news_monitoring_escalations(cur) -> dict:
@@ -2749,8 +2794,9 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         "Rules:\n"
         "- Be strict and risk-aware.\n"
         "- If data freshness is weak, prefer CONDITIONAL or BLOCK.\n"
-        "- When discussing news freshness, explicitly cite source as ACTION_NEWS (news_context_snapshot) or LATEST_NEWS (latest_symbol_news_context).\n"
-        "- If ACTION_NEWS and LATEST_NEWS conflict, state the conflict explicitly and prioritize LATEST_NEWS recency for risk gating.\n"
+        "- Treat news_for_decision as the authoritative source for committee decisions.\n"
+        "- action_news_context_snapshot is audit history only; do not let it override news_for_decision.\n"
+        "- If news_for_decision.freshness_bucket is NO_FRESH_NEWS, treat as no active news consideration (do not frame it as stale risk).\n"
         f"{objective_line}"
         "- Contribute to joint decision dimensions: enter/size/target/stop/hold/early-exit.\n"
         "- stop_loss_pct must be positive and risk-aware versus expected edge after fees.\n"
@@ -3187,6 +3233,7 @@ def _build_action_decision_context(cur, action: dict) -> dict:
     if not action_news_snapshot:
         action_news_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT")).get("news_context")
     latest_news_snapshot = _fetch_latest_symbol_news_context(cur, symbol, action.get("ASSET_CLASS"))
+    resolved_news = _resolve_news_for_decision(action_news_snapshot, latest_news_snapshot)
     risk_cfg = {}
     if action.get("PORTFOLIO_ID") is not None:
         try:
@@ -3225,7 +3272,9 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         },
         "training_qualification_snapshot": action_training_snapshot,
         "target_expectation_snapshot": action_target_snapshot,
-        "news_context_snapshot": action_news_snapshot,
+        "news_context_snapshot": resolved_news.get("snapshot"),
+        "news_for_decision_source": resolved_news.get("source"),
+        "action_news_context_snapshot": action_news_snapshot,
         "latest_symbol_news_context": latest_news_snapshot,
         "parallel_worlds_evidence": pw_evidence,
         "execution_risk_config": risk_cfg,
@@ -5914,7 +5963,8 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         context = _build_action_decision_context(cur, action)
         action_training_snapshot = context.get("training_qualification_snapshot") or {}
         action_target_snapshot = context.get("target_expectation_snapshot") or {}
-        action_news_snapshot = context.get("news_context_snapshot") or {}
+        decision_news_snapshot = context.get("news_context_snapshot") or {}
+        action_news_snapshot = context.get("action_news_context_snapshot") or {}
         latest_news_snapshot = context.get("latest_symbol_news_context") or {}
         pw_evidence = context.get("parallel_worlds_evidence")
 
@@ -5980,7 +6030,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
         if verdict.get("quality_risk_normalized"):
             reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
-        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
+        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, decision_news_snapshot)
         if tier_c_conflict:
             reason_codes.append("TIER_C_CONFLICT_ALERT")
         if verdict.get("quality_backfilled"):
@@ -6145,8 +6195,9 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "recommendation": verdict["recommendation"],
                 "size_factor": verdict["size_factor"],
                 "blocked": verdict["blocked"],
-                "news_context_state": action_news_snapshot.get("context_state"),
-                "news_event_shock_flag": bool(action_news_snapshot.get("event_shock_flag")),
+                "news_context_state": decision_news_snapshot.get("context_state"),
+                "news_event_shock_flag": bool(decision_news_snapshot.get("event_shock_flag")),
+                "news_for_decision_source": context.get("news_for_decision_source"),
                 "news_fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
                 "ibkr_news_reason_codes": news_readiness.get("reason_codes") or [],
             },
@@ -6154,8 +6205,10 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "roles": COMMITTEE_ROLES,
                 "training_qualification_snapshot": action_training_snapshot,
                 "target_expectation_snapshot": action_target_snapshot,
-                "news_context_snapshot": action_news_snapshot,
+                "news_context_snapshot": decision_news_snapshot,
+                "action_news_context_snapshot": action_news_snapshot,
                 "latest_symbol_news_context": latest_news_snapshot,
+                "news_for_decision_source": context.get("news_for_decision_source"),
                 "news_runtime": {
                     "refresh_ibkr_news": bool(req.refresh_ibkr_news),
                     "ibkr_ingest": news_ingest,
@@ -6229,7 +6282,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (not allows_execution)
         context = _build_action_decision_context(cur, action)
         pw_evidence = context.get("parallel_worlds_evidence") or {}
-        action_news_snapshot = context.get("news_context_snapshot") or {}
+        decision_news_snapshot = context.get("news_context_snapshot") or {}
 
         verdict = {
             "recommendation": recommendation,
@@ -6279,7 +6332,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
             reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
         if verdict.get("quality_risk_normalized"):
             reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
-        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, action_news_snapshot)
+        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, decision_news_snapshot)
         if tier_c_conflict:
             reason_codes.append("TIER_C_CONFLICT_ALERT")
         if verdict.get("quality_backfilled"):

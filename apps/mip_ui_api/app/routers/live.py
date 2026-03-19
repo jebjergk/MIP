@@ -4633,12 +4633,28 @@ def get_live_activity_overview(
         except Exception:
             unresolved_drift_count = 0
 
+        unmapped_exec_summary = _recent_unmapped_execution_summary(
+            cur,
+            int(portfolio_id),
+            str(account_id or ""),
+            lookback_days=max(int(order_lookback_days), int(snapshot_lookback_days), 14),
+            sample_limit=20,
+        )
+        unmapped_exec_count = int(unmapped_exec_summary.get("count") or 0)
+        reconciliation_state = "REQUIRED" if unmapped_exec_count > 0 else "CLEAR"
+
         now_utc = datetime.now(timezone.utc)
         market_open = _is_extended_trading_open_ny(now_utc)
         open_utc, close_utc = _extended_trading_bounds_utc(now_utc)
         snapshot_state = _compute_snapshot_freshness_state(snapshot_age_sec, cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"))
         drift_state = _compute_drift_state(cfg.get("DRIFT_STATUS"), unresolved_drift_count)
-        page_actionable = snapshot_state in ("FRESH", "AGING") and drift_state != "BLOCKED" and market_open
+        drift_state_effective = "BLOCKED" if reconciliation_state == "REQUIRED" else drift_state
+        page_actionable = (
+            snapshot_state in ("FRESH", "AGING")
+            and drift_state_effective != "BLOCKED"
+            and reconciliation_state != "REQUIRED"
+            and market_open
+        )
         held_symbols = {str((r.get("SYMBOL") or "")).upper() for r in open_positions}
         nav_eur = float(nav.get("NET_LIQUIDATION_EUR") or 0.0) if nav else 0.0
 
@@ -5153,16 +5169,23 @@ def get_live_activity_overview(
             "readiness": {
                 "snapshot_state": snapshot_state,
                 "drift_state": drift_state,
+                "drift_state_effective": drift_state_effective,
                 "actionable": page_actionable,
                 "blocking_reasons": [
                     reason
                     for reason, active in [
                         ("SNAPSHOT_STALE_OR_MISSING", snapshot_state in ("STALE", "BLOCKED")),
                         ("DRIFT_UNRESOLVED", drift_state == "BLOCKED"),
+                        ("BROKER_RECONCILIATION_REQUIRED", reconciliation_state == "REQUIRED"),
                         ("OUTSIDE_OPERATING_HOURS", not market_open),
                     ]
                     if active
                 ],
+                "reconciliation_state": reconciliation_state,
+                "unmapped_execution_count": unmapped_exec_count,
+                "unmapped_execution_latest_ts": unmapped_exec_summary.get("latest_snapshot_ts"),
+                "unmapped_execution_symbols": unmapped_exec_summary.get("symbols") or [],
+                "unmapped_execution_sample_broker_order_ids": unmapped_exec_summary.get("sample_broker_order_ids") or [],
                 "market_open": market_open,
                 "market_window_open_utc": open_utc,
                 "market_window_close_utc": close_utc,
@@ -5178,6 +5201,7 @@ def get_live_activity_overview(
                 "snapshot_freshness_threshold_sec": cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"),
                 "drift_status": cfg.get("DRIFT_STATUS"),
                 "unresolved_drift_count": unresolved_drift_count,
+                "unmapped_execution_count": unmapped_exec_count,
                 "max_positions": cfg.get("MAX_POSITIONS"),
                 "max_position_pct": cfg.get("MAX_POSITION_PCT"),
                 "bust_pct": cfg.get("BUST_PCT"),

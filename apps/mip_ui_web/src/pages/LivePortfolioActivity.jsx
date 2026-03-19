@@ -68,8 +68,33 @@ function explainReasonCode(code) {
     OPEN_GAP_UNAVAILABLE: 'Opening gap data is unavailable',
     SNAPSHOT_STALE: 'Latest market snapshot is stale',
     ACTION_EXPIRED: 'This action has expired and needs refresh',
+    DRIFT_UNRESOLVED: 'Broker and local state need reconciliation before trading',
+    UNRESOLVED_DRIFT_LOG_PRESENT: 'Broker and local state need reconciliation before trading',
+    BROKER_EXECUTION_UNMAPPED: 'Recent broker fills are not linked locally yet. Reconcile first.',
+    BROKER_RECONCILIATION_REQUIRED: 'Recent broker fills are not linked locally yet. Reconcile first.',
+    EXECUTION_CLICK_REVALIDATION_STALE: 'Decision is stale. Re-run revalidation before submitting.',
+    PRICE_GUARD_FAIL: 'Latest price check failed. Re-run revalidation before submitting.',
+    COMPLIANCE_NOT_APPROVED: 'Decision is not approved for execution yet.',
   }
   return map[c] || c.replaceAll('_', ' ')
+}
+
+function summarizeReasonCodes(reasonCodes) {
+  const items = Array.isArray(reasonCodes) ? reasonCodes.map((c) => explainReasonCode(c)) : []
+  const unique = [...new Set(items.filter(Boolean))]
+  return unique.length ? unique.join(' ') : ''
+}
+
+function messageFromApiFailure(payload, fallback) {
+  const detail = payload?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  const reasonCodes = detail?.reason_codes
+  if (Array.isArray(reasonCodes) && reasonCodes.length > 0) {
+    const reasonMsg = summarizeReasonCodes(reasonCodes)
+    if (reasonMsg) return reasonMsg
+  }
+  if (detail?.message && typeof detail.message === 'string') return detail.message
+  return fallback
 }
 
 function stateClass(value) {
@@ -196,7 +221,7 @@ export default function LivePortfolioActivity() {
         snapshot_lookback_days: String(snapshotLookbackDays),
       })
       const resp = await fetch(`${API_BASE}/live/activity/overview?${params.toString()}`)
-      if (!resp.ok) throw new Error(`Failed to load activity overview (${resp.status})`)
+      if (!resp.ok) throw new Error('Could not load live activity. Please refresh.')
       const data = await resp.json()
       setOverview(data)
     } catch (e) {
@@ -274,16 +299,8 @@ export default function LivePortfolioActivity() {
         }),
       })
       if (!resp.ok) {
-        let msg = `Cancel order failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Cancel order blocked'}: ${j.detail.reason_codes.join(', ')}`
-          }
-        } catch {
-          // Keep fallback message
-        }
-        throw new Error(msg)
+        const body = await resp.json().catch(() => null)
+        throw new Error(messageFromApiFailure(body, 'Cancel could not be completed right now.'))
       }
       setNotice(`Cancel submitted for order ${orderId}.`)
       await load()
@@ -309,18 +326,8 @@ export default function LivePortfolioActivity() {
         }),
       })
       if (!resp.ok) {
-        let msg = `Committee revalidation failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Committee revalidation blocked'}: ${j.detail.reason_codes.join(', ')}`
-          } else if (j?.detail) {
-            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
-          }
-        } catch {
-          // fallback message
-        }
-        throw new Error(msg)
+        const body = await resp.json().catch(() => null)
+        throw new Error(messageFromApiFailure(body, 'Committee revalidation is currently unavailable.'))
       }
       const applyData = await resp.json()
       const nextStatus = String(applyData?.action_status || '').toUpperCase()
@@ -334,18 +341,8 @@ export default function LivePortfolioActivity() {
           body: JSON.stringify({}),
         })
         if (!approveResp.ok) {
-          let msg = `Approve flow failed (${approveResp.status})`
-          try {
-            const j = await approveResp.json()
-            if (j?.detail?.reason_codes?.length) {
-              msg = `${j.detail.message || 'Approve flow blocked'}: ${j.detail.reason_codes.join(', ')}`
-            } else if (j?.detail) {
-              msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
-            }
-          } catch {
-            // fallback
-          }
-          throw new Error(msg)
+          const body = await approveResp.json().catch(() => null)
+          throw new Error(messageFromApiFailure(body, 'Approval flow is currently blocked.'))
         }
       }
       const canRunRevalidate = ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(nextStatus) || canRunApproveFlow
@@ -358,18 +355,8 @@ export default function LivePortfolioActivity() {
           body: JSON.stringify({ force_refresh_1m: true }),
         })
         if (!revalResp.ok) {
-          let msg = `Revalidation failed (${revalResp.status})`
-          try {
-            const j = await revalResp.json()
-            if (j?.detail?.reason_codes?.length) {
-              msg = `${j.detail.message || 'Revalidation blocked'}: ${j.detail.reason_codes.join(', ')}`
-            } else if (j?.detail) {
-              msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
-            }
-          } catch {
-            // keep fallback
-          }
-          throw new Error(msg)
+          const body = await revalResp.json().catch(() => null)
+          throw new Error(messageFromApiFailure(body, 'Revalidation is currently blocked.'))
         }
         setLiveLineTarget('Revalidation complete. If gates are clear, decision is ready to submit.')
       } else {
@@ -481,16 +468,8 @@ export default function LivePortfolioActivity() {
         body: JSON.stringify({}),
       }, 180000)
       if (!resp.ok) {
-        let msg = `Submit failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Submit blocked'}: ${j.detail.reason_codes.join(', ')}`
-          }
-        } catch {
-          // Keep fallback error message
-        }
-        throw new Error(msg)
+        const body = await resp.json().catch(() => null)
+        throw new Error(messageFromApiFailure(body, 'Submit is currently blocked.'))
       }
       await load()
     } catch (e) {
@@ -515,16 +494,8 @@ export default function LivePortfolioActivity() {
         body: JSON.stringify({ actor: 'portfolio_manager' }),
       })
       if (!resp.ok) {
-        let msg = `Reject stale failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Reject stale blocked'}: ${j.detail.reason_codes.join(', ')}`
-          }
-        } catch {
-          // fallback
-        }
-        throw new Error(msg)
+        const body = await resp.json().catch(() => null)
+        throw new Error(messageFromApiFailure(body, 'Could not clear stale decision right now.'))
       }
       await load()
     } catch (e) {
@@ -559,18 +530,8 @@ export default function LivePortfolioActivity() {
         }),
       })
       if (!resp.ok) {
-        let msg = `Create exit action failed (${resp.status})`
-        try {
-          const j = await resp.json()
-          if (j?.detail?.reason_codes?.length) {
-            msg = `${j.detail.message || 'Create exit blocked'}: ${j.detail.reason_codes.join(', ')}`
-          } else if (j?.detail) {
-            msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
-          }
-        } catch {
-          // keep fallback message
-        }
-        throw new Error(msg)
+        const body = await resp.json().catch(() => null)
+        throw new Error(messageFromApiFailure(body, 'Could not create exit decision right now.'))
       }
       const data = await resp.json()
       const actionId = data?.action_id || 'new'
@@ -609,8 +570,12 @@ export default function LivePortfolioActivity() {
   }, new Map())
 
   const readiness = overview?.readiness || {}
+  const driftStateDisplay = readiness?.drift_state_effective || readiness?.drift_state
   const navTrend = overview?.activity_trends?.nav || []
   const positionTrend = overview?.activity_trends?.positions || []
+  const reconciliationRequired = String(readiness?.reconciliation_state || '').toUpperCase() === 'REQUIRED'
+  const unmappedExecutionCount = Number(readiness?.unmapped_execution_count || 0)
+  const unmappedSymbols = Array.isArray(readiness?.unmapped_execution_symbols) ? readiness.unmapped_execution_symbols : []
   const outsideHours = readiness.market_open === false
   const posCount = openPositions.length
   const totalMarketValue = openPositions.reduce((sum, p) => sum + Number(p?.MARKET_VALUE || 0), 0)
@@ -671,6 +636,13 @@ export default function LivePortfolioActivity() {
 
       {!loading && (
         <>
+          {reconciliationRequired ? (
+            <div className="lpa-warning-inline">
+              Broker reconciliation required before new submissions. Recent broker fills are present but not fully linked locally
+              ({unmappedExecutionCount}{unmappedSymbols.length ? ` across ${unmappedSymbols.join(', ')}` : ''}).
+              Please use Refresh From IB and reconcile before trading.
+            </div>
+          ) : null}
           <div className="lpa-kpis">
             <div className="lpa-kpi"><span>Account</span><b>{overview?.portfolio?.ibkr_account_id || '—'}</b></div>
             <div className="lpa-kpi"><span>Equity / NAV</span><b>{fmtNum(kpis.equity_nav_eur, 2)}</b></div>
@@ -682,8 +654,8 @@ export default function LivePortfolioActivity() {
             <div className={`lpa-kpi lpa-kpi--${stateClass(readiness.snapshot_state)}`}>
               <span>Freshness</span><b>{readiness.snapshot_state || '—'}</b>
             </div>
-            <div className={`lpa-kpi lpa-kpi--${stateClass(readiness.drift_state)}`}>
-              <span>Drift</span><b>{readiness.drift_state || '—'}</b>
+            <div className={`lpa-kpi lpa-kpi--${stateClass(driftStateDisplay)}`}>
+              <span>Drift</span><b>{driftStateDisplay || '—'}</b>
             </div>
           </div>
 
@@ -814,7 +786,6 @@ export default function LivePortfolioActivity() {
                             {d.reason_codes.map((code, idx) => (
                               <li key={`${d.action_id}:reason:${idx}`}>
                                 <span className="lpa-reason-human">{explainReasonCode(code)}</span>
-                                <span className="lpa-reason-code-inline">{String(code || '—')}</span>
                               </li>
                             ))}
                           </ul>

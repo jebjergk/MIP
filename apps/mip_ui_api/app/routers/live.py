@@ -339,6 +339,143 @@ def _normalize_action_intent(side: str | None, action_intent: str | None = None)
     return "EXIT" if side_upper == "SELL" else "ENTRY"
 
 
+def _recent_unmapped_execution_summary(
+    cur,
+    portfolio_id: int,
+    account_id: str,
+    lookback_days: int = 14,
+    sample_limit: int = 10,
+) -> dict:
+    """
+    Detect broker executions that cannot be linked to LIVE_ORDERS.
+    This is a strong drift signal: broker truth changed without local lineage.
+    """
+    try:
+        cur.execute(
+            """
+            with recent_execs as (
+              select
+                SNAPSHOT_TS,
+                upper(coalesce(SYMBOL, '')) as SYMBOL,
+                coalesce(
+                  OPEN_ORDER_ID::string,
+                  PAYLOAD:perm_id::string,
+                  PAYLOAD:order_id::string
+                ) as BROKER_ORDER_ID,
+                coalesce(
+                  PAYLOAD:exec_id::string,
+                  concat_ws(
+                    ':',
+                    coalesce(OPEN_ORDER_ID::string, PAYLOAD:perm_id::string, PAYLOAD:order_id::string, ''),
+                    upper(coalesce(SYMBOL, '')),
+                    coalesce(PAYLOAD:time::string, SNAPSHOT_TS::string),
+                    coalesce(PAYLOAD:shares::string, ''),
+                    coalesce(PAYLOAD:price::string, '')
+                  )
+                ) as EXEC_KEY
+              from MIP.LIVE.BROKER_SNAPSHOTS
+              where SNAPSHOT_TYPE = 'EXECUTION'
+                and IBKR_ACCOUNT_ID = %s
+                and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+            ),
+            dedup as (
+              select SNAPSHOT_TS, SYMBOL, BROKER_ORDER_ID, EXEC_KEY
+              from recent_execs
+              qualify row_number() over (partition by EXEC_KEY order by SNAPSHOT_TS desc) = 1
+            ),
+            unmapped as (
+              select d.SNAPSHOT_TS, d.SYMBOL, d.BROKER_ORDER_ID
+              from dedup d
+              left join MIP.LIVE.LIVE_ORDERS o
+                on o.PORTFOLIO_ID = %s
+               and o.BROKER_ORDER_ID = d.BROKER_ORDER_ID
+              where d.BROKER_ORDER_ID is not null
+                and o.ORDER_ID is null
+            )
+            select
+              count(*) as UNMAPPED_COUNT,
+              max(SNAPSHOT_TS) as LATEST_UNMAPPED_TS
+            from unmapped
+            """,
+            (account_id, int(lookback_days), int(portfolio_id)),
+        )
+        summary_rows = fetch_all(cur)
+        unmapped_count = int((summary_rows[0] or {}).get("UNMAPPED_COUNT") or 0)
+        latest_unmapped_ts = (summary_rows[0] or {}).get("LATEST_UNMAPPED_TS") if summary_rows else None
+        if unmapped_count <= 0:
+            return {
+                "count": 0,
+                "latest_snapshot_ts": None,
+                "symbols": [],
+                "sample_broker_order_ids": [],
+            }
+
+        cur.execute(
+            """
+            with recent_execs as (
+              select
+                SNAPSHOT_TS,
+                upper(coalesce(SYMBOL, '')) as SYMBOL,
+                coalesce(
+                  OPEN_ORDER_ID::string,
+                  PAYLOAD:perm_id::string,
+                  PAYLOAD:order_id::string
+                ) as BROKER_ORDER_ID,
+                coalesce(
+                  PAYLOAD:exec_id::string,
+                  concat_ws(
+                    ':',
+                    coalesce(OPEN_ORDER_ID::string, PAYLOAD:perm_id::string, PAYLOAD:order_id::string, ''),
+                    upper(coalesce(SYMBOL, '')),
+                    coalesce(PAYLOAD:time::string, SNAPSHOT_TS::string),
+                    coalesce(PAYLOAD:shares::string, ''),
+                    coalesce(PAYLOAD:price::string, '')
+                  )
+                ) as EXEC_KEY
+              from MIP.LIVE.BROKER_SNAPSHOTS
+              where SNAPSHOT_TYPE = 'EXECUTION'
+                and IBKR_ACCOUNT_ID = %s
+                and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+            ),
+            dedup as (
+              select SNAPSHOT_TS, SYMBOL, BROKER_ORDER_ID, EXEC_KEY
+              from recent_execs
+              qualify row_number() over (partition by EXEC_KEY order by SNAPSHOT_TS desc) = 1
+            ),
+            unmapped as (
+              select d.SNAPSHOT_TS, d.SYMBOL, d.BROKER_ORDER_ID
+              from dedup d
+              left join MIP.LIVE.LIVE_ORDERS o
+                on o.PORTFOLIO_ID = %s
+               and o.BROKER_ORDER_ID = d.BROKER_ORDER_ID
+              where d.BROKER_ORDER_ID is not null
+                and o.ORDER_ID is null
+            )
+            select SYMBOL, BROKER_ORDER_ID
+            from unmapped
+            order by SNAPSHOT_TS desc
+            limit %s
+            """,
+            (account_id, int(lookback_days), int(portfolio_id), int(max(1, sample_limit))),
+        )
+        sample_rows = fetch_all(cur)
+        symbols = sorted({str(r.get("SYMBOL") or "").upper() for r in sample_rows if str(r.get("SYMBOL") or "").strip()})
+        sample_ids = [str(r.get("BROKER_ORDER_ID")) for r in sample_rows if r.get("BROKER_ORDER_ID") is not None]
+        return {
+            "count": unmapped_count,
+            "latest_snapshot_ts": latest_unmapped_ts,
+            "symbols": symbols,
+            "sample_broker_order_ids": sample_ids,
+        }
+    except Exception:
+        return {
+            "count": 0,
+            "latest_snapshot_ts": None,
+            "symbols": [],
+            "sample_broker_order_ids": [],
+        }
+
+
 def _fetch_live_symbol_position_qty(cur, portfolio_id: int | None, symbol: str | None) -> float:
     if portfolio_id is None or not symbol:
         return 0.0
@@ -4300,19 +4437,36 @@ def get_live_activity_overview(
 
         cur.execute(
             """
+            with nav_points as (
+              select SNAPSHOT_TS
+              from MIP.LIVE.BROKER_SNAPSHOTS
+              where SNAPSHOT_TYPE = 'NAV'
+                and IBKR_ACCOUNT_ID = %s
+                and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+            ),
+            position_totals as (
+              select
+                SNAPSHOT_TS,
+                sum(coalesce(UNREALIZED_PNL, 0)) as TOTAL_UNREALIZED_PNL,
+                sum(abs(coalesce(MARKET_VALUE, 0))) as TOTAL_MARKET_VALUE,
+                count_if(coalesce(POSITION_QTY, 0) <> 0) as OPEN_POSITION_COUNT
+              from MIP.LIVE.BROKER_SNAPSHOTS
+              where SNAPSHOT_TYPE = 'POSITION'
+                and IBKR_ACCOUNT_ID = %s
+                and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+              group by SNAPSHOT_TS
+            )
             select
-              SNAPSHOT_TS,
-              sum(coalesce(UNREALIZED_PNL, 0)) as TOTAL_UNREALIZED_PNL,
-              sum(abs(coalesce(MARKET_VALUE, 0))) as TOTAL_MARKET_VALUE,
-              count_if(coalesce(POSITION_QTY, 0) <> 0) as OPEN_POSITION_COUNT
-            from MIP.LIVE.BROKER_SNAPSHOTS
-            where SNAPSHOT_TYPE = 'POSITION'
-              and IBKR_ACCOUNT_ID = %s
-              and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
-            group by SNAPSHOT_TS
-            order by SNAPSHOT_TS asc
+              n.SNAPSHOT_TS,
+              coalesce(p.TOTAL_UNREALIZED_PNL, 0) as TOTAL_UNREALIZED_PNL,
+              coalesce(p.TOTAL_MARKET_VALUE, 0) as TOTAL_MARKET_VALUE,
+              coalesce(p.OPEN_POSITION_COUNT, 0) as OPEN_POSITION_COUNT
+            from nav_points n
+            left join position_totals p
+              on p.SNAPSHOT_TS = n.SNAPSHOT_TS
+            order by n.SNAPSHOT_TS asc
             """,
-            (account_id, snapshot_lookback_days),
+            (account_id, snapshot_lookback_days, account_id, snapshot_lookback_days),
         )
         position_trend_rows = fetch_all(cur)
         position_trend = [
@@ -4885,7 +5039,7 @@ def get_live_activity_overview(
             seen_ib_exec_keys.add(dedupe_key)
             market_type = "FX" if "/" in symbol else str(row.get("SECURITY_TYPE") or "").upper()
             action_side = str(action_meta.get("side") or "").upper()
-            close_like = _is_close_like_execution(action_intent, action_side, side)
+            close_like = _is_close_like_execution(action_intent, action_side, side) or execution_context in {"CLOSE_SHORT", "CLOSE_LONG"}
             executions_ib.append(
                 {
                     "order_id": exec_id or broker_order_id or f"IB_EXEC_{len(executions_ib)+1}",
@@ -7320,6 +7474,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         cfg = cfg_rows[0]
         if cfg.get("IS_ACTIVE") is False:
             raise HTTPException(status_code=400, detail="Live portfolio config is inactive.")
+        account_id = str(cfg.get("IBKR_ACCOUNT_ID") or "").strip()
         drift_status = (cfg.get("DRIFT_STATUS") or "").upper()
         if drift_status and drift_status not in ("OK", "CLEAR", "HEALTHY"):
             reason_codes.append("BROKER_TRUTH_DRIFT_UNRESOLVED")
@@ -7345,6 +7500,15 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 reason_codes.append("UNRESOLVED_DRIFT_LOG_PRESENT")
         except Exception:
             unresolved_drift_row = None
+
+        unmapped_exec_summary = _recent_unmapped_execution_summary(
+            cur,
+            int(action.get("PORTFOLIO_ID")),
+            str(account_id),
+            lookback_days=14,
+        )
+        if int(unmapped_exec_summary.get("count") or 0) > 0:
+            reason_codes.append("BROKER_EXECUTION_UNMAPPED")
 
         validity_window_end = action.get("VALIDITY_WINDOW_END")
         if validity_window_end and hasattr(validity_window_end, "replace"):
@@ -7382,7 +7546,6 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         elif news_context_state in ("CAUTIONARY", "DESTABILIZING"):
             reason_codes.append("NEWS_EXECUTION_CAUTION")
 
-        account_id = cfg.get("IBKR_ACCOUNT_ID")
         cur.execute(
             """
             select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR
@@ -7585,12 +7748,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "required_compliance": "APPROVE",
                     "drift_status": drift_status,
                     "latest_unresolved_drift": serialize_row(unresolved_drift_row) if unresolved_drift_row else None,
+                    "unmapped_execution_summary": unmapped_exec_summary,
                     "news_context_snapshot": news_snapshot,
                 },
             )
             raise HTTPException(
                 status_code=409,
-                detail={"message": "Execution blocked by safety gates.", "reason_codes": final_reason_codes},
+                detail={
+                    "message": "Execution blocked by safety gates.",
+                    "reason_codes": final_reason_codes,
+                    "unmapped_execution_summary": unmapped_exec_summary if "BROKER_EXECUTION_UNMAPPED" in final_reason_codes else None,
+                },
             )
 
         order_id = str(uuid.uuid4())

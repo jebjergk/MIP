@@ -347,62 +347,18 @@ def _recent_unmapped_execution_summary(
     sample_limit: int = 10,
 ) -> dict:
     """
-    Detect broker executions that cannot be linked to LIVE_ORDERS.
+    Detect broker executions that cannot be linked to known local lineage.
+    Known lineage includes:
+      1) LIVE_ORDERS.BROKER_ORDER_ID
+      2) broker IDs captured in BROKER_EVENT_LEDGER EXECUTION_SUBMIT_RESULT payloads
     This is a strong drift signal: broker truth changed without local lineage.
     """
     try:
-        cur.execute(
-            """
-            with recent_execs as (
-              select
-                SNAPSHOT_TS,
-                upper(coalesce(SYMBOL, '')) as SYMBOL,
-                coalesce(
-                  OPEN_ORDER_ID::string,
-                  PAYLOAD:perm_id::string,
-                  PAYLOAD:order_id::string
-                ) as BROKER_ORDER_ID,
-                coalesce(
-                  PAYLOAD:exec_id::string,
-                  concat_ws(
-                    ':',
-                    coalesce(OPEN_ORDER_ID::string, PAYLOAD:perm_id::string, PAYLOAD:order_id::string, ''),
-                    upper(coalesce(SYMBOL, '')),
-                    coalesce(PAYLOAD:time::string, SNAPSHOT_TS::string),
-                    coalesce(PAYLOAD:shares::string, ''),
-                    coalesce(PAYLOAD:price::string, '')
-                  )
-                ) as EXEC_KEY
-              from MIP.LIVE.BROKER_SNAPSHOTS
-              where SNAPSHOT_TYPE = 'EXECUTION'
-                and IBKR_ACCOUNT_ID = %s
-                and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
-            ),
-            dedup as (
-              select SNAPSHOT_TS, SYMBOL, BROKER_ORDER_ID, EXEC_KEY
-              from recent_execs
-              qualify row_number() over (partition by EXEC_KEY order by SNAPSHOT_TS desc) = 1
-            ),
-            unmapped as (
-              select d.SNAPSHOT_TS, d.SYMBOL, d.BROKER_ORDER_ID
-              from dedup d
-              left join MIP.LIVE.LIVE_ORDERS o
-                on o.PORTFOLIO_ID = %s
-               and o.BROKER_ORDER_ID = d.BROKER_ORDER_ID
-              where d.BROKER_ORDER_ID is not null
-                and o.ORDER_ID is null
-            )
-            select
-              count(*) as UNMAPPED_COUNT,
-              max(SNAPSHOT_TS) as LATEST_UNMAPPED_TS
-            from unmapped
-            """,
-            (account_id, int(lookback_days), int(portfolio_id)),
-        )
-        summary_rows = fetch_all(cur)
-        unmapped_count = int((summary_rows[0] or {}).get("UNMAPPED_COUNT") or 0)
-        latest_unmapped_ts = (summary_rows[0] or {}).get("LATEST_UNMAPPED_TS") if summary_rows else None
-        if unmapped_count <= 0:
+        lookback_days = int(lookback_days)
+        sample_limit = int(max(1, sample_limit))
+        portfolio_id = int(portfolio_id)
+        account_id = str(account_id or "").strip()
+        if not account_id:
             return {
                 "count": 0,
                 "latest_snapshot_ts": None,
@@ -410,60 +366,136 @@ def _recent_unmapped_execution_summary(
                 "sample_broker_order_ids": [],
             }
 
+        # 1) Recent broker executions (deduped by execution key).
         cur.execute(
             """
-            with recent_execs as (
-              select
-                SNAPSHOT_TS,
-                upper(coalesce(SYMBOL, '')) as SYMBOL,
-                coalesce(
-                  OPEN_ORDER_ID::string,
-                  PAYLOAD:perm_id::string,
-                  PAYLOAD:order_id::string
-                ) as BROKER_ORDER_ID,
-                coalesce(
-                  PAYLOAD:exec_id::string,
-                  concat_ws(
-                    ':',
-                    coalesce(OPEN_ORDER_ID::string, PAYLOAD:perm_id::string, PAYLOAD:order_id::string, ''),
-                    upper(coalesce(SYMBOL, '')),
-                    coalesce(PAYLOAD:time::string, SNAPSHOT_TS::string),
-                    coalesce(PAYLOAD:shares::string, ''),
-                    coalesce(PAYLOAD:price::string, '')
-                  )
-                ) as EXEC_KEY
-              from MIP.LIVE.BROKER_SNAPSHOTS
-              where SNAPSHOT_TYPE = 'EXECUTION'
-                and IBKR_ACCOUNT_ID = %s
-                and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
-            ),
-            dedup as (
-              select SNAPSHOT_TS, SYMBOL, BROKER_ORDER_ID, EXEC_KEY
-              from recent_execs
-              qualify row_number() over (partition by EXEC_KEY order by SNAPSHOT_TS desc) = 1
-            ),
-            unmapped as (
-              select d.SNAPSHOT_TS, d.SYMBOL, d.BROKER_ORDER_ID
-              from dedup d
-              left join MIP.LIVE.LIVE_ORDERS o
-                on o.PORTFOLIO_ID = %s
-               and o.BROKER_ORDER_ID = d.BROKER_ORDER_ID
-              where d.BROKER_ORDER_ID is not null
-                and o.ORDER_ID is null
-            )
-            select SYMBOL, BROKER_ORDER_ID
-            from unmapped
-            order by SNAPSHOT_TS desc
-            limit %s
+            select
+              SNAPSHOT_TS,
+              upper(coalesce(SYMBOL, '')) as SYMBOL,
+              coalesce(
+                OPEN_ORDER_ID::string,
+                PAYLOAD:perm_id::string,
+                PAYLOAD:order_id::string
+              ) as BROKER_ORDER_ID,
+              coalesce(
+                PAYLOAD:exec_id::string,
+                concat_ws(
+                  ':',
+                  coalesce(OPEN_ORDER_ID::string, PAYLOAD:perm_id::string, PAYLOAD:order_id::string, ''),
+                  upper(coalesce(SYMBOL, '')),
+                  coalesce(PAYLOAD:time::string, SNAPSHOT_TS::string),
+                  coalesce(PAYLOAD:shares::string, ''),
+                  coalesce(PAYLOAD:price::string, '')
+                )
+              ) as EXEC_KEY
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'EXECUTION'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+            qualify row_number() over (
+              partition by coalesce(
+                PAYLOAD:exec_id::string,
+                concat_ws(
+                  ':',
+                  coalesce(OPEN_ORDER_ID::string, PAYLOAD:perm_id::string, PAYLOAD:order_id::string, ''),
+                  upper(coalesce(SYMBOL, '')),
+                  coalesce(PAYLOAD:time::string, SNAPSHOT_TS::string),
+                  coalesce(PAYLOAD:shares::string, ''),
+                  coalesce(PAYLOAD:price::string, '')
+                )
+              )
+              order by SNAPSHOT_TS desc
+            ) = 1
             """,
-            (account_id, int(lookback_days), int(portfolio_id), int(max(1, sample_limit))),
+            (account_id, lookback_days),
         )
-        sample_rows = fetch_all(cur)
+        exec_rows = fetch_all(cur)
+        dedup_execs = [
+            {
+                "SNAPSHOT_TS": r.get("SNAPSHOT_TS"),
+                "SYMBOL": str(r.get("SYMBOL") or "").upper(),
+                "BROKER_ORDER_ID": str(r.get("BROKER_ORDER_ID")) if r.get("BROKER_ORDER_ID") is not None else None,
+                "EXEC_KEY": str(r.get("EXEC_KEY") or ""),
+            }
+            for r in exec_rows
+            if r.get("BROKER_ORDER_ID") is not None
+        ]
+        if not dedup_execs:
+            return {
+                "count": 0,
+                "latest_snapshot_ts": None,
+                "symbols": [],
+                "sample_broker_order_ids": [],
+            }
+
+        # 2) Known broker IDs from LIVE_ORDERS.
+        cur.execute(
+            """
+            select distinct BROKER_ORDER_ID
+            from MIP.LIVE.LIVE_ORDERS
+            where PORTFOLIO_ID = %s
+              and BROKER_ORDER_ID is not null
+              and coalesce(LAST_UPDATED_AT, CREATED_AT) >= dateadd(day, -%s, current_timestamp())
+            """,
+            (portfolio_id, lookback_days),
+        )
+        known_ids = {
+            str(r.get("BROKER_ORDER_ID")).strip()
+            for r in fetch_all(cur)
+            if r.get("BROKER_ORDER_ID") is not None and str(r.get("BROKER_ORDER_ID")).strip()
+        }
+
+        # 3) Known broker IDs from broker submit-result payloads (orders + orders_after_wait).
+        cur.execute(
+            """
+            with ledger as (
+              select BROKER_ORDER_ID::string as BROKER_ORDER_ID, PAYLOAD
+              from MIP.LIVE.BROKER_EVENT_LEDGER
+              where PORTFOLIO_ID = %s
+                and EVENT_TYPE = 'EXECUTION_SUBMIT_RESULT'
+                and EVENT_TS >= dateadd(day, -%s, current_timestamp())
+            )
+            select distinct coalesce(
+              nullif(trim(BROKER_ORDER_ID), ''),
+              nullif(trim(v1.value:perm_id::string), ''),
+              nullif(trim(v1.value:order_id::string), ''),
+              nullif(trim(v2.value:perm_id::string), ''),
+              nullif(trim(v2.value:order_id::string), '')
+            ) as BROKER_ORDER_ID
+            from ledger l,
+                 lateral flatten(input => l.PAYLOAD:orders_after_wait, outer => true) v1,
+                 lateral flatten(input => l.PAYLOAD:orders, outer => true) v2
+            """,
+            (portfolio_id, lookback_days),
+        )
+        known_ids.update(
+            {
+                str(r.get("BROKER_ORDER_ID")).strip()
+                for r in fetch_all(cur)
+                if r.get("BROKER_ORDER_ID") is not None and str(r.get("BROKER_ORDER_ID")).strip()
+            }
+        )
+
+        # 4) Compute unmapped fills against known local lineage.
+        unmapped_rows = [
+            r for r in dedup_execs
+            if str(r.get("BROKER_ORDER_ID") or "").strip() not in known_ids
+        ]
+        if not unmapped_rows:
+            return {
+                "count": 0,
+                "latest_snapshot_ts": None,
+                "symbols": [],
+                "sample_broker_order_ids": [],
+            }
+
+        unmapped_rows.sort(key=lambda x: str(x.get("SNAPSHOT_TS") or ""), reverse=True)
+        sample_rows = unmapped_rows[:sample_limit]
         symbols = sorted({str(r.get("SYMBOL") or "").upper() for r in sample_rows if str(r.get("SYMBOL") or "").strip()})
         sample_ids = [str(r.get("BROKER_ORDER_ID")) for r in sample_rows if r.get("BROKER_ORDER_ID") is not None]
         return {
-            "count": unmapped_count,
-            "latest_snapshot_ts": latest_unmapped_ts,
+            "count": len(unmapped_rows),
+            "latest_snapshot_ts": unmapped_rows[0].get("SNAPSHOT_TS"),
             "symbols": symbols,
             "sample_broker_order_ids": sample_ids,
         }

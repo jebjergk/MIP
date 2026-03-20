@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 
 from app.db import get_connection
 from app.services.ask.models import AskResolution, AskContext
 
+logger = logging.getLogger(__name__)
 
-def log_resolution_event(ctx: AskContext, resolution: AskResolution) -> None:
+
+def _write_telemetry(ctx: AskContext, resolution: AskResolution) -> None:
     conn = get_connection()
     cur = None
     try:
@@ -70,8 +74,7 @@ def log_resolution_event(ctx: AskContext, resolution: AskResolution) -> None:
                     (term,),
                 )
     except Exception:
-        # Keep Ask MIP resilient even if telemetry write fails.
-        return
+        logger.debug("Ask MIP telemetry write failed (non-critical)", exc_info=True)
     finally:
         if cur is not None:
             try:
@@ -79,3 +82,8 @@ def log_resolution_event(ctx: AskContext, resolution: AskResolution) -> None:
             except Exception:
                 pass
         conn.close()
+
+
+def log_resolution_event(ctx: AskContext, resolution: AskResolution) -> None:
+    t = threading.Thread(target=_write_telemetry, args=(ctx, resolution), daemon=True)
+    t.start()

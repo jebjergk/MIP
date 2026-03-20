@@ -204,9 +204,12 @@ def resolve_question(
     )
 
     prompt_parts = [system_prompt]
-    for msg in history[-10:]:
+    for msg in history[-6:]:
         label = "User" if msg.get("role") == "user" else "MIP Assistant"
-        prompt_parts.append(f"\n{label}: {msg.get('content', '')}")
+        content = msg.get("content", "")
+        if msg.get("role") == "assistant" and len(content) > 600:
+            content = content[:600].rstrip() + "..."
+        prompt_parts.append(f"\n{label}: {content}")
     if not history or history[-1].get("content") != question:
         prompt_parts.append(f"\nUser: {question}")
     prompt_parts.append("\nMIP Assistant:")

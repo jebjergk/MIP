@@ -5,181 +5,715 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MIP Education Handbook</title>
   <style>
-    body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #f4f7fc; color: #1f2937; line-height: 1.6; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #1F2937; line-height: 1.65; background: #F5F8FC; }
+
+    /* ── Cover ────────────────────────────────────────── */
     .cover {
       min-height: 100vh;
-      background: #0f172a;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
+      background: linear-gradient(180deg, #0d1540 0%, #162058 40%, #1a2870 100%);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center; color: #fff;
+      page-break-after: always;
     }
-    .cover h1 {
-      margin: 0;
-      color: #ffffff;
-      font-size: 92px;
-      letter-spacing: 16px;
-      font-weight: 700;
-    }
-    .page {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 28px 16px 46px;
-    }
+    .cover-dot { width: 14px; height: 14px; border-radius: 50%; background: #4fc3f7; margin-bottom: 32px; }
+    .cover h1 { font-size: 96px; letter-spacing: 18px; font-weight: 800; margin-bottom: 18px; }
+    .cover .sub { font-size: 15px; letter-spacing: 4px; text-transform: uppercase; color: rgba(255,255,255,.45); }
+    .cover .edition { margin-top: 60px; font-size: 13px; color: rgba(255,255,255,.3); }
+
+    /* ── Page shell ───────────────────────────────────── */
+    .page { max-width: 1080px; margin: 0 auto; padding: 36px 20px 56px; }
+
+    /* ── Hero banner ──────────────────────────────────── */
     .hero {
-      background: linear-gradient(135deg, #1e3a8a, #4338ca);
-      color: #fff;
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 12px;
+      background: linear-gradient(135deg, #1a237e, #3949ab);
+      color: #fff; border-radius: 12px;
+      padding: 22px 24px; margin-bottom: 16px;
     }
+    .hero h2 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+    .hero p  { font-size: 14px; opacity: .92; max-width: 880px; }
+
+    /* ── Cards ────────────────────────────────────────── */
     .card {
-      background: #fff;
-      border: 1px solid #dbe4f0;
-      border-radius: 10px;
-      padding: 14px 16px;
-      margin-bottom: 12px;
+      background: #fff; border: 1px solid #e5e7eb;
+      border-radius: 12px; padding: 18px 20px;
+      margin-bottom: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
     }
-    h2 { margin: 0 0 10px; color: #1e40af; font-size: 24px; }
-    h3 { margin: 14px 0 8px; color: #1f3a8a; font-size: 19px; }
-    h4 { margin: 10px 0 6px; color: #27437f; font-size: 16px; }
-    ul, ol { margin: 8px 0 12px 20px; }
-    table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
-    th, td { border: 1px solid #dbe4f0; padding: 8px; text-align: left; vertical-align: top; }
-    th { background: #edf2ff; color: #1f3b8f; }
-    code { background: #eef2ff; border: 1px solid #dbe4f0; border-radius: 4px; padding: 1px 4px; }
-    .analogy { background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
-    .concept { background: #eefcf6; border-left: 4px solid #0f766e; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
-    .important { background: #fff7ed; border-left: 4px solid #d97706; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
-    .scenario { background: #f5f3ff; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
-    .muted { color: #4b5563; font-size: 13px; text-align: right; }
-    .page-break { page-break-after: always; }
+    .card-blue   { border-left: 4px solid #3069F0; }
+    .card-green  { border-left: 4px solid #2E7D32; }
+    .card-purple { border-left: 4px solid #6A1B9A; }
+    .card-amber  { border-left: 4px solid #d97706; }
+
+    /* ── Typography ───────────────────────────────────── */
+    h2 { font-size: 24px; color: #334155; font-weight: 700; margin-bottom: 12px; }
+    h3 { font-size: 19px; color: #1e40af; font-weight: 600; margin: 18px 0 8px; }
+    h4 { font-size: 16px; color: #334155; font-weight: 600; margin: 12px 0 6px; }
+    p  { margin-bottom: 10px; }
+    ul, ol { margin: 8px 0 14px 22px; }
+    li { margin-bottom: 5px; }
+    code { background: #eef2ff; border: 1px solid #dbe4f0; border-radius: 4px; padding: 1px 5px; font-family: Consolas, monospace; font-size: .92em; }
+
+    /* ── Chips / pills ────────────────────────────────── */
+    .chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-right: 4px; }
+    .chip-blue   { background: #3069F0; color: #fff; }
+    .chip-green  { background: #e8f5e9; color: #2E7D32; }
+    .chip-amber  { background: #fff8e1; color: #925F00; }
+    .chip-red    { background: #ffebee; color: #C62828; }
+    .chip-purple { background: #f3e5f5; color: #6A1B9A; }
+    .chip-gray   { background: #f1f5f9; color: #64748b; }
+
+    /* ── Callout boxes (analogy / concept / important / scenario) ── */
+    .analogy  { background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+    .concept  { background: #eefcf6; border-left: 4px solid #0f766e; border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+    .important{ background: #fff7ed; border-left: 4px solid #d97706; border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+    .scenario { background: #f5f3ff; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+
+    /* ── Flow diagrams (CSS) ──────────────────────────── */
+    .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin: 14px 0; }
+    .flow-step {
+      background: #fff; border: 1px solid #d7dce4;
+      border-radius: 10px; padding: 10px 14px;
+      font-size: 13px; font-weight: 600; color: #334155;
+      text-align: center; min-width: 110px;
+    }
+    .flow-arrow { font-size: 20px; color: #3069F0; margin: 0 4px; font-weight: 700; }
+
+    .flow-vertical { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 14px 0; }
+    .flow-vertical .flow-step { min-width: 280px; }
+    .flow-vertical .flow-arrow { transform: rotate(90deg); margin: 2px 0; }
+
+    /* ── Pipeline grid ────────────────────────────────── */
+    .pipeline-grid {
+      display: grid;
+      grid-template-columns: 40px 1fr 1fr;
+      gap: 0; margin: 14px 0;
+    }
+    .pg-num {
+      background: #3069F0; color: #fff;
+      border-radius: 50%; width: 30px; height: 30px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; margin: 4px auto;
+    }
+    .pg-what { font-weight: 600; color: #334155; padding: 6px 10px; border-bottom: 1px solid #eef2ff; }
+    .pg-where { color: #5F6B7A; padding: 6px 10px; border-bottom: 1px solid #eef2ff; font-size: 13px; }
+
+    /* ── Funnel ────────────────────────────────────────── */
+    .funnel { text-align: center; margin: 16px 0; }
+    .funnel-bar {
+      margin: 0 auto 6px; border-radius: 8px; padding: 8px;
+      font-size: 13px; font-weight: 600; color: #fff;
+    }
+
+    /* ── Sidebar nav mockup ───────────────────────────── */
+    .nav-mock {
+      background: linear-gradient(180deg, #0d1540 0%, #162058 40%, #1a2870 100%);
+      border-radius: 12px; padding: 16px 18px; color: #fff;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px;
+      font-size: 13px; margin: 12px 0;
+    }
+    .nav-mock .group { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: rgba(255,255,255,.35); margin-top: 10px; grid-column: span 2; }
+    .nav-mock .link { padding: 3px 0; color: rgba(255,255,255,.75); }
+    .nav-mock .link.active { color: #4fc3f7; font-weight: 600; }
+    .nav-mock .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #4fc3f7; margin-right: 6px; }
+
+    /* ── Tables ────────────────────────────────────────── */
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #edf2ff; color: #1f3b8f; font-weight: 600; }
+
+    /* ── Misc ─────────────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .muted { color: #5F6B7A; font-size: 13px; text-align: right; margin-top: 10px; }
+    .page-break { page-break-before: always; }
+    hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
+
+    @media (max-width: 700px) {
+      .two-col { grid-template-columns: 1fr; }
+      .pipeline-grid { grid-template-columns: 36px 1fr; }
+      .pg-where { display: none; }
+      .nav-mock { grid-template-columns: 1fr; }
+      .flow { flex-direction: column; align-items: stretch; }
+      .flow-arrow { transform: rotate(90deg); text-align: center; }
+    }
   </style>
 </head>
 <body>
-  <section class="cover page-break">
-    <h1>MIP</h1>
+
+<!-- ═══════════════════════════════════════════════════
+     COVER PAGE
+     ═══════════════════════════════════════════════════ -->
+<section class="cover">
+  <div class="cover-dot"></div>
+  <h1>MIP</h1>
+  <div class="sub">Market Intelligence Platform</div>
+  <div class="edition">Education Handbook &mdash; March 2026</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════════════ -->
+<main class="page">
+
+  <section class="hero">
+    <h2>MIP Education Handbook</h2>
+    <p>A beginner-friendly guide to how MIP works, written for people with no prior knowledge of the platform's internals. Uses plain language, analogies, and visual diagrams throughout.</p>
   </section>
 
-  <main class="page">
-    <section class="hero">
-      <h1 style="margin:0 0 6px;font-size:30px;">MIP Education Handbook</h1>
-      <p style="margin:0;">Rich learning format with analogies and examples, updated to current implemented MIP behavior.</p>
-    </section>
-
-    <section class="card">
-      <h2>Table of Contents</h2>
+  <!-- ── TABLE OF CONTENTS ──────────────────────────── -->
+  <section class="card">
+    <h2>Contents</h2>
+    <div class="two-col">
       <ol>
-        <li>What MIP Is</li>
-        <li>How MIP Learns From Evidence</li>
-        <li>Illustrated Pipeline</li>
-        <li>What Is Newly Implemented</li>
-        <li>Daily Operating Playbook</li>
-        <li>Worked Scenarios</li>
-        <li>Appendix A: Glossary</li>
-        <li>Appendix B: FAQ</li>
+        <li><a href="#ch1">What Is MIP?</a></li>
+        <li><a href="#ch2">How MIP Learns (The Learning Loop)</a></li>
+        <li><a href="#ch3">The Daily Pipeline, Step by Step</a></li>
+        <li><a href="#ch4">Core Concepts Explained</a></li>
+        <li><a href="#ch5">The Trust Journey</a></li>
       </ol>
-    </section>
+      <ol start="6">
+        <li><a href="#ch6">Your Screens: Page-by-Page Tour</a></li>
+        <li><a href="#ch7">Live Execution: From Idea to Action</a></li>
+        <li><a href="#ch8">What's New: Recent Platform Additions</a></li>
+        <li><a href="#ch9">Worked Scenarios</a></li>
+        <li><a href="#ch10">Quick Reference &amp; Troubleshooting</a></li>
+      </ol>
+    </div>
+  </section>
 
-    <section class="card">
-      <h2>1) What MIP Is</h2>
-      <p>MIP is an evidence-first decision system for research and controlled paper-trading workflows.</p>
-      <div class="analogy">
-        <strong>Analogy:</strong> MIP behaves like an air-traffic control tower. Signals are incoming flights, trust/risk are runway checks, and actions move only after full clearance.
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 1: WHAT IS MIP?
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch1" class="card card-blue page-break">
+    <h2>Chapter 1 &mdash; What Is MIP?</h2>
+
+    <p>MIP stands for <strong>Market Intelligence Platform</strong>. It is a system that watches financial markets every day, detects repeating patterns, measures whether those patterns led to good outcomes in the past, and uses that evidence to suggest possible trades.</p>
+
+    <div class="analogy">
+      <strong>Analogy &mdash; The Weather Station:</strong><br>
+      Imagine a weather station that does not just tell you today's weather. Instead, it keeps a log of every weather pattern it has ever seen and records what happened next. After thousands of observations it can say: <em>"When we saw pattern X, it rained within 3 days 72% of the time."</em> MIP does exactly this, but with market prices instead of rain.
+    </div>
+
+    <h3>What MIP is NOT</h3>
+    <ul>
+      <li>It is <strong>not</strong> a crystal ball. It does not predict exact prices.</li>
+      <li>It is <strong>not</strong> a "black box." Every decision can be traced back to evidence.</li>
+      <li>It is <strong>not</strong> fully automatic. Safety checks and human approval gates exist at multiple stages.</li>
+    </ul>
+
+    <div class="concept">
+      <strong>Key principle:</strong> MIP trusts evidence over intuition. A pattern must prove itself statistically before it can influence any decision.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 2: THE LEARNING LOOP
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch2" class="card card-green page-break">
+    <h2>Chapter 2 &mdash; How MIP Learns (The Learning Loop)</h2>
+
+    <p>Everything in MIP follows one continuous cycle. Think of it as a loop that gets smarter every day:</p>
+
+    <div class="flow">
+      <div class="flow-step" style="background:#eef2ff;">Observe</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#eefcf6;">Measure</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#fff7ed;">Judge</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#f5f3ff;">Decide</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#fff1f2;">Act</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#f0fdf4;">Review</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#eef2ff;">Observe&hellip;</div>
+    </div>
+
+    <div class="analogy">
+      <strong>Analogy &mdash; The Football Scout:</strong><br>
+      A scout watches matches (observes), logs player behavior (measures), decides who is reliable (judges), recommends plays (decides), the team executes (acts), and after the game the scout reviews what worked (review). Then the cycle starts again with the next match.
+    </div>
+
+    <h3>The Loop in MIP Terms</h3>
+    <div class="flow">
+      <div class="flow-step">Market Data</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Signals</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Outcomes</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Training</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Trust</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Proposals</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Decisions</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Execution</div>
+    </div>
+
+    <div class="important">
+      <strong>Key insight:</strong> Signals are observations, not orders. A signal only says <em>"I noticed something."</em> Many safety layers sit between a signal and an actual trade.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 3: THE DAILY PIPELINE
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch3" class="card card-purple page-break">
+    <h2>Chapter 3 &mdash; The Daily Pipeline, Step by Step</h2>
+
+    <p>Every day, an automated pipeline runs through 9 stages. Here is what happens at each stage and where you can verify it in the app:</p>
+
+    <div class="pipeline-grid">
+      <div><div class="pg-num">1</div></div>
+      <div class="pg-what">Ingest market data</div>
+      <div class="pg-where">Verify in: <strong>Runs</strong></div>
+
+      <div><div class="pg-num">2</div></div>
+      <div class="pg-what">Detect signals (pattern scanners fire)</div>
+      <div class="pg-where">Verify in: <strong>Market Timeline</strong></div>
+
+      <div><div class="pg-num">3</div></div>
+      <div class="pg-what">Evaluate past signals (did they work?)</div>
+      <div class="pg-where">Verify in: <strong>Training Status</strong></div>
+
+      <div><div class="pg-num">4</div></div>
+      <div class="pg-what">Update learning metrics (maturity, hit rate)</div>
+      <div class="pg-where">Verify in: <strong>Training Status</strong></div>
+
+      <div><div class="pg-num">5</div></div>
+      <div class="pg-what">Recompute trust eligibility</div>
+      <div class="pg-where">Verify in: <strong>Training Status</strong></div>
+
+      <div><div class="pg-num">6</div></div>
+      <div class="pg-what">Generate proposals (trusted signals only)</div>
+      <div class="pg-where">Verify in: <strong>AI Agent Decisions</strong></div>
+
+      <div><div class="pg-num">7</div></div>
+      <div class="pg-what">Committee review (verdict + reasons)</div>
+      <div class="pg-where">Verify in: <strong>AI Agent Decisions</strong></div>
+
+      <div><div class="pg-num">8</div></div>
+      <div class="pg-what">Risk gates + execution</div>
+      <div class="pg-where">Verify in: <strong>Live Portfolio Activity</strong></div>
+
+      <div><div class="pg-num">9</div></div>
+      <div class="pg-what">Publish digest and narratives</div>
+      <div class="pg-where">Verify in: <strong>Cockpit</strong></div>
+    </div>
+
+    <div class="analogy">
+      <strong>Analogy &mdash; The Airport:</strong><br>
+      Think of each stage like an airport departure sequence. Data arrives at the terminal (1-2). Security checks credentials (3-5). The gate agent reviews the boarding list (6-7). Final safety checks happen at the jet bridge (8). Once cleared, the flight departs and the status board updates (9).
+    </div>
+
+    <div class="important">
+      <strong>Weekends &amp; Holidays:</strong> If no new market data arrives, the pipeline still runs but skips signal generation. Training evaluation and the AI digest still happen, so you will always see a fresh narrative in Cockpit.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 4: CORE CONCEPTS
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch4" class="card card-blue page-break">
+    <h2>Chapter 4 &mdash; Core Concepts Explained</h2>
+
+    <p>Here are the building blocks of MIP, explained with everyday language:</p>
+
+    <h3>Signals</h3>
+    <div class="analogy">
+      <strong>Analogy:</strong> A signal is like a smoke detector going off. It says <em>"something is happening"</em> &mdash; not <em>"the house is burning down."</em> It is an observation that needs investigation, not an automatic action.
+    </div>
+    <p>MIP has multiple <strong>patterns</strong> (named strategies with specific rules). Each pattern scans market data and fires a signal when its conditions are met.</p>
+
+    <h3>Outcomes &amp; Horizons</h3>
+    <p>After a signal fires, MIP waits and measures what actually happened. It checks at multiple time windows called <strong>horizons</strong>:</p>
+    <div class="flow">
+      <div class="flow-step">H1<br><small>1 day</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">H3<br><small>3 days</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">H5<br><small>5 days</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">H10<br><small>10 days</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">H20<br><small>20 days</small></div>
+    </div>
+    <div class="analogy">
+      <strong>Analogy:</strong> If you plant a seed (signal), you check it after 1 day, 3 days, 5 days, etc. to see if it sprouted. MIP does this with every signal it detects.
+    </div>
+
+    <h3>Maturity &amp; Coverage</h3>
+    <p><strong>Maturity</strong> (0-100) measures how complete and reliable the evidence is. <strong>Coverage</strong> measures what fraction of signals have been fully evaluated.</p>
+    <div class="concept">
+      <strong>Think of it this way:</strong> Maturity is your confidence in a restaurant review. 3 reviews = low confidence. 300 reviews = high confidence. Coverage is whether all the reviews have been read, or some are still pending.
+    </div>
+
+    <h3>Hit Rate &amp; Average Return</h3>
+    <p><strong>Hit Rate</strong> = what percentage of outcomes were favorable.<br>
+    <strong>Avg Return</strong> = the average gain/loss across all evaluated outcomes.</p>
+    <div class="analogy">
+      <strong>Analogy:</strong> A basketball player's shooting percentage (hit rate) and average points per shot (avg return). You want both to be good &mdash; a high shooting percentage with low points is less useful.
+    </div>
+
+    <h3>Proposals &amp; Decisions</h3>
+    <p>A <strong>proposal</strong> is a suggested trade that passed initial quality filters. A <strong>decision</strong> is the committee's verdict on that proposal &mdash; with structured reason codes explaining why it was approved, rejected, or flagged.</p>
+
+    <h3>Risk Gates</h3>
+    <div class="flow">
+      <div class="flow-step" style="background:#e8f5e9;color:#2E7D32;"><strong>SAFE</strong><br><small>entries allowed</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#fff8e1;color:#925F00;"><strong>CAUTION</strong><br><small>warning zone</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="background:#ffebee;color:#C62828;"><strong>STOPPED</strong><br><small>exits only</small></div>
+    </div>
+    <div class="analogy">
+      <strong>Analogy:</strong> Traffic lights. Green = go ahead. Yellow = proceed carefully. Red = no new entries allowed, only exits.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 5: THE TRUST JOURNEY
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch5" class="card card-green page-break">
+    <h2>Chapter 5 &mdash; The Trust Journey</h2>
+
+    <p>Before a pattern can influence any real decision, it must earn trust through evidence. This is a journey with clear stages:</p>
+
+    <h3>Trust Funnel</h3>
+    <div class="funnel">
+      <div class="funnel-bar" style="width:100%;background:#94a3b8;">All Detected Signals</div>
+      <div class="funnel-bar" style="width:85%;background:#64748b;">Signals with Measured Outcomes</div>
+      <div class="funnel-bar" style="width:65%;background:#3069F0;">Patterns with Sufficient Maturity</div>
+      <div class="funnel-bar" style="width:40%;background:#6A1B9A;">Patterns Passing Trust Gates</div>
+      <div class="funnel-bar" style="width:25%;background:#2E7D32;">Proposals Generated</div>
+      <div class="funnel-bar" style="width:15%;background:#0f766e;">Decisions Approved &amp; Executed</div>
+    </div>
+
+    <h3>Maturity Stages</h3>
+    <table>
+      <thead><tr><th>Stage</th><th>Score</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td><span class="chip chip-red">INSUFFICIENT</span></td><td>0 &ndash; 24</td><td>Too little data to draw conclusions</td></tr>
+        <tr><td><span class="chip chip-amber">WARMING UP</span></td><td>25 &ndash; 49</td><td>Building sample, early signals</td></tr>
+        <tr><td><span class="chip chip-blue">LEARNING</span></td><td>50 &ndash; 74</td><td>Meaningful evidence, still improving</td></tr>
+        <tr><td><span class="chip chip-green">CONFIDENT</span></td><td>75 &ndash; 100</td><td>Strong historical support</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Trust Gates (all three must pass)</h3>
+    <div class="flow">
+      <div class="flow-step" style="border-color:#3069F0;">Sample Size<br><small>&ge; 40 signals</small></div>
+      <span class="flow-arrow">+</span>
+      <div class="flow-step" style="border-color:#3069F0;">Hit Rate<br><small>&ge; 55%</small></div>
+      <span class="flow-arrow">+</span>
+      <div class="flow-step" style="border-color:#3069F0;">Avg Return<br><small>&ge; 0.05%</small></div>
+      <span class="flow-arrow">=</span>
+      <div class="flow-step" style="background:#e8f5e9;border-color:#2E7D32;color:#2E7D32;"><strong>TRUSTED</strong></div>
+    </div>
+
+    <div class="analogy">
+      <strong>Analogy &mdash; Pilot Certification:</strong><br>
+      A pilot cannot fly passengers until they have enough flight hours (sample size), a high enough pass rate on checks (hit rate), and consistent safe landings (avg return). Only after passing all three gates do they earn their certification (TRUSTED).
+    </div>
+
+    <div class="important">
+      <strong>Important:</strong> High maturity does not guarantee future success. It means the historical evidence is statistically solid. Markets change, and MIP continuously re-evaluates.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 6: PAGE-BY-PAGE TOUR
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch6" class="card card-purple page-break">
+    <h2>Chapter 6 &mdash; Your Screens: Page-by-Page Tour</h2>
+
+    <p>MIP organizes its screens into groups. Here is a visual map of the sidebar you see in the app:</p>
+
+    <div class="nav-mock">
+      <div class="group">Dashboard</div>
+      <div class="link"><span class="dot"></span>Cockpit</div>
+      <div class="link">Home</div>
+      <div class="link">Performance</div>
+      <div class="link">&nbsp;</div>
+
+      <div class="group">Portfolio</div>
+      <div class="link">Live Portfolio Link</div>
+      <div class="link">Live Portfolio Activity</div>
+      <div class="link">Live Symbol Tracker</div>
+      <div class="link">&nbsp;</div>
+
+      <div class="group">Research</div>
+      <div class="link">Market Timeline</div>
+      <div class="link">News Intelligence</div>
+      <div class="link">Training Status</div>
+      <div class="link">Parallel Worlds</div>
+
+      <div class="group">Decision Executions</div>
+      <div class="link">AI Agent Decisions</div>
+      <div class="link">Learning Ledger</div>
+
+      <div class="group">Operations</div>
+      <div class="link">Runs (Audit)</div>
+      <div class="link">Debug</div>
+    </div>
+
+    <hr>
+
+    <h3>Home <code>/home</code></h3>
+    <p>Your launchpad. Shows when the last pipeline ran, how many new evaluations were produced, and links to the most important pages. Use it like a pre-flight checklist before each session.</p>
+
+    <h3>Cockpit <code>/cockpit</code></h3>
+    <p>The daily command center. Left side shows your portfolios with AI-written digests explaining what changed, what matters, and what to watch. Right side shows market pulse, system health, signal candidates, and training progress.</p>
+    <div class="analogy"><strong>Analogy:</strong> The cockpit of an airplane. All your key instruments in one view.</div>
+
+    <h3>Performance Dashboard <code>/performance-dashboard</code></h3>
+    <p>Compare how your portfolios are doing over time. See return trends, drawdown depth, and whether stability is improving or degrading.</p>
+
+    <h3>Training Status <code>/training</code></h3>
+    <p>The evidence table. For every symbol and pattern, see maturity score, sample size, coverage ratio, hit rate, and average return across all horizons. This is where you validate whether MIP has enough evidence to trust a pattern.</p>
+    <div class="concept"><strong>When to use:</strong> Before trusting any signal, check here. If maturity is low, the signal has not yet earned its credentials.</div>
+
+    <h3>Market Timeline <code>/market-timeline</code></h3>
+    <p>Follow one symbol from raw signal to proposal to trade. Color-coded tiles show activity density. Click a tile to see the signal chain tree and chart overlay.</p>
+    <div class="analogy"><strong>Analogy:</strong> A detective's evidence board. Pin a symbol and trace everything that happened to it.</div>
+
+    <h3>AI Agent Decisions <code>/decision-console</code></h3>
+    <p>The decision courtroom. See what the committee decided for each proposal: verdict, reason codes, and revalidation outcome. Covers both simulation and live workflows.</p>
+    <div class="important"><strong>Key lesson:</strong> <code>APPROVED</code> does not mean <code>EXECUTED</code>. Downstream checks can still block an approved action.</div>
+
+    <h3>News Intelligence <code>/news-intelligence</code></h3>
+    <p>Evidence-backed news context. Shows which symbols have fresh news, HOT indicators for decision-relevant context, and a Decision Impact panel showing how news influenced specific proposals.</p>
+    <div class="analogy"><strong>Analogy:</strong> A newspaper clipping service that flags only the articles relevant to your portfolio &mdash; and tells you exactly how each article affected the decision process.</div>
+
+    <h3>Parallel Worlds <code>/parallel-worlds</code></h3>
+    <p>A "what-if" laboratory. Replays each day's real market data through alternative rule sets to show what <em>would</em> have happened. Completely read-only &mdash; it never changes your real portfolio.</p>
+    <div class="analogy"><strong>Analogy:</strong> A chess replay where you try different moves after the game and see which would have won faster. Except with trading rules instead of chess moves.</div>
+
+    <h3>Live Portfolio Link <code>/live-portfolio-config</code></h3>
+    <p>The control panel for connecting MIP to a broker. Configure risk limits, freshness requirements, and execution guardrails. The Activation Guard shows whether all prerequisites are met.</p>
+
+    <h3>Live Portfolio Activity <code>/live-portfolio-activity</code></h3>
+    <p>The operational timeline. Every lifecycle transition is logged here: validation, compliance checks, approval steps, execution outcomes, and block reasons.</p>
+
+    <h3>Live Symbol Tracker <code>/symbol-tracker</code></h3>
+    <p>Symbol-first monitoring. See thesis status, reward-to-risk ratios, distance to targets, and position health badges at a glance.</p>
+
+    <h3>Learning Ledger <code>/learning-ledger</code></h3>
+    <p>The accountability surface. Traces decisions back to the evidence that drove them and forward to the outcomes that resulted. Use it for weekly retrospectives and policy tuning.</p>
+    <div class="concept"><strong>Think of it as:</strong> A flight recorder (black box) for every trading decision. After the fact, you can replay exactly what evidence was used and whether the decision helped or hurt.</div>
+
+    <h3>Runs (Audit) <code>/runs</code></h3>
+    <p>Pipeline health dashboard. See every run's status, duration, step timeline, and error details. Toggle between daily and intraday pipelines.</p>
+    <div class="important"><strong>Tip:</strong> <code>SUCCESS_WITH_SKIPS</code> is often normal during weekends or holidays. Check the step-level detail before treating it as a problem.</div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 7: LIVE EXECUTION WORKFLOW
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch7" class="card card-amber page-break">
+    <h2>Chapter 7 &mdash; Live Execution: From Idea to Action</h2>
+
+    <p>When MIP moves from research to execution, a proposal goes through multiple checkpoints. Here is the full journey:</p>
+
+    <div class="flow-vertical">
+      <div class="flow-step" style="border-color:#3069F0;">Signal detected by pattern</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#3069F0;">Evidence evaluated (trust + maturity)</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#6A1B9A;">Proposal generated</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#6A1B9A;">Committee review (verdict + reason codes)</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#d97706;">Revalidation (last-moment checks)</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#d97706;">Compliance &amp; approval gates</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#2E7D32;">Execution (paper or live-linked)</div>
+      <span class="flow-arrow">&darr;</span>
+      <div class="flow-step" style="border-color:#0f766e;">Learning trace recorded</div>
+    </div>
+
+    <div class="analogy">
+      <strong>Analogy &mdash; Hospital Medication Order:</strong><br>
+      A doctor identifies a condition (signal). Lab results confirm diagnosis (evidence). The doctor writes a prescription (proposal). The pharmacy reviews for interactions (committee). A nurse verifies patient ID and allergies at bedside (revalidation). Then the medication is administered (execution). The outcome is recorded in the patient chart (learning trace).
+    </div>
+
+    <h3>Connection Chain</h3>
+    <div class="flow">
+      <div class="flow-step">Source Portfolio</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">MIP Live Portfolio</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">IBKR Account</div>
+    </div>
+    <div class="flow" style="margin-top:6px;">
+      <div class="flow-step">MIP Live Portfolio</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="border-color:#d97706;">Activation Guard</div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step" style="border-color:#2E7D32;">Execution Readiness</div>
+    </div>
+
+    <div class="important">
+      <strong>Critical understanding:</strong> Saving a configuration does NOT mean execution is ready. Multiple independent gates must all pass before any action can proceed.
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 8: WHAT'S NEW
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch8" class="card card-blue page-break">
+    <h2>Chapter 8 &mdash; What's New: Recent Platform Additions</h2>
+
+    <div class="two-col">
+      <div class="card card-blue" style="margin:0;">
+        <h4>News Intelligence</h4>
+        <p>News now acts as policy-aware context. It can boost or reduce confidence scores and block entries under specific conditions &mdash; but it can <strong>never</strong> bypass core trust/risk gates.</p>
+        <div class="analogy"><strong>Analogy:</strong> A weather advisory can delay a flight (block entry), but it cannot overrule a fundamental aircraft safety check.</div>
       </div>
-    </section>
 
-    <section class="card">
-      <h2>2) How MIP Learns From Evidence</h2>
-      <p><code>Data -&gt; Signals -&gt; Outcome Evaluation -&gt; Training Metrics -&gt; Trust -&gt; Proposals -&gt; Decisions -&gt; Execution Flow -&gt; Review</code></p>
-      <div class="concept">
-        Signals are observations. Decisions are governed by policy and operational checks. Learning Ledger connects decisions to realized outcomes for tuning.
+      <div class="card card-green" style="margin:0;">
+        <h4>Learning Ledger</h4>
+        <p>Decisions are now traced to outcomes over time. You can identify recurring patterns: which evidence features led to good outcomes, and which ones consistently failed.</p>
+        <div class="analogy"><strong>Analogy:</strong> A coach's game-film review that connects pre-game strategy decisions to in-game results.</div>
       </div>
-    </section>
 
-    <section class="card">
-      <h2>3) Illustrated Pipeline</h2>
-      <table>
-        <thead><tr><th>Stage</th><th>Primary verification page</th></tr></thead>
-        <tbody>
-          <tr><td>Run health and freshness</td><td>Runs (<code>/runs</code>)</td></tr>
-          <tr><td>Signal/event context</td><td>Market Timeline (<code>/market-timeline</code>)</td></tr>
-          <tr><td>Evidence quality</td><td>Training Status (<code>/training</code>)</td></tr>
-          <tr><td>Committee decisions</td><td>AI Agent Decisions (<code>/decision-console</code>)</td></tr>
-          <tr><td>Lifecycle transitions</td><td>Live Portfolio Activity (<code>/live-portfolio-activity</code>)</td></tr>
-          <tr><td>News context impact</td><td>News Intelligence (<code>/news-intelligence</code>)</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card">
-      <h2>4) What Is Newly Implemented</h2>
-      <ul>
-        <li>News Intelligence can influence ranking/confidence and block entries under configured policy conditions.</li>
-        <li>Live-linked workflow has explicit lifecycle states; approved actions can still be blocked later by validation/freshness/approvals.</li>
-        <li>Reason codes and revalidation outcomes are now first-class diagnostics.</li>
-        <li>Learning Ledger supports recurring motif analysis for policy tuning.</li>
-      </ul>
-      <div class="important">
-        <strong>Important:</strong> <code>SUCCESS_WITH_SKIPS</code> may be expected in no-data windows. Confirm step detail in Runs before treating as an incident.
+      <div class="card card-purple" style="margin:0;">
+        <h4>Structured Reason Codes</h4>
+        <p>Every decision now carries machine-readable reason codes and a revalidation outcome. Clusters of the same reason code usually point to a systemic policy threshold, not random failure.</p>
       </div>
-    </section>
 
-    <section class="card">
-      <h2>5) Daily Operating Playbook</h2>
+      <div class="card card-amber" style="margin:0;">
+        <h4>Lifecycle Status Interpretation</h4>
+        <p><code>APPROVED</code> no longer means <code>EXECUTED</code>. The live-linked workflow has explicit stages: validation, compliance, intent, and execution &mdash; each of which can independently block progression.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 9: WORKED SCENARIOS
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch9" class="card card-green page-break">
+    <h2>Chapter 9 &mdash; Worked Scenarios</h2>
+
+    <div class="scenario">
+      <h4>Scenario A: "No trades happened today"</h4>
       <ol>
-        <li>Home: verify freshness.</li>
-        <li>Cockpit: check what changed.</li>
-        <li>Training Status: validate evidence quality.</li>
-        <li>AI Agent Decisions: inspect verdicts/reason codes.</li>
-        <li>Live Portfolio Activity: inspect lifecycle transitions.</li>
-        <li>Runs: verify step-level diagnostics.</li>
+        <li>Go to <strong>Runs</strong> &mdash; did the pipeline complete successfully?</li>
+        <li>Go to <strong>Training Status</strong> &mdash; do active patterns have enough maturity and trust?</li>
+        <li>Go to <strong>AI Agent Decisions</strong> &mdash; were proposals generated but rejected? What reason codes appear?</li>
+        <li>Go to <strong>Live Portfolio Activity</strong> &mdash; was progression blocked at a downstream gate?</li>
       </ol>
-    </section>
+    </div>
 
-    <section class="card">
-      <h2>6) Worked Scenarios</h2>
-      <div class="scenario">
-        <h4>Scenario A: Approved but not executed</h4>
-        <ol>
-          <li>Check decision row and reason codes.</li>
-          <li>Check lifecycle block in Live Portfolio Activity.</li>
-          <li>Correlate with same run window in Runs.</li>
-        </ol>
-      </div>
-      <div class="scenario">
-        <h4>Scenario B: HOT news but no action</h4>
-        <ol>
-          <li>Check News Intelligence impact evidence.</li>
-          <li>Confirm reason-code pattern in AI Agent Decisions.</li>
-          <li>Validate policy/freshness state in activity feed.</li>
-        </ol>
-      </div>
-    </section>
+    <div class="scenario">
+      <h4>Scenario B: "Action was approved but never executed"</h4>
+      <ol>
+        <li>In <strong>AI Agent Decisions</strong>, find the row and check its latest status and reason codes.</li>
+        <li>In <strong>Live Portfolio Activity</strong>, find the matching lifecycle entry. Is it stuck at validation or compliance?</li>
+        <li>In <strong>Runs</strong>, confirm the run completed without errors in the execution window.</li>
+        <li>In <strong>Live Portfolio Link</strong>, check if the Activation Guard shows red on any prerequisite.</li>
+      </ol>
+    </div>
 
-    <section class="card">
-      <h2>Appendix A: Glossary</h2>
-      <table>
-        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
-        <tbody>
-          <tr><td>Decision</td><td>Committee verdict plus structured reason codes.</td></tr>
-          <tr><td>Revalidation</td><td>Final checks before execution intent.</td></tr>
-          <tr><td>Learning Ledger</td><td>Decision-to-outcome trace for accountability and tuning.</td></tr>
-          <tr><td>Risk Gate</td><td>Safety state controlling whether new entries are allowed.</td></tr>
-          <tr><td>News Impact</td><td>Policy-bounded context effects on ranking/confidence/eligibility.</td></tr>
-        </tbody>
-      </table>
-    </section>
+    <div class="scenario">
+      <h4>Scenario C: "News looks important but nothing happened"</h4>
+      <ol>
+        <li>In <strong>News Intelligence</strong>, check the Decision Impact panel. Are there rows with actual evidence fields?</li>
+        <li>In <strong>AI Agent Decisions</strong>, check reason codes. Was the proposal blocked by a trust or risk gate?</li>
+        <li>Remember: news context can influence ranking but <strong>cannot bypass</strong> core safety gates.</li>
+      </ol>
+    </div>
 
-    <section class="card">
-      <h2>Appendix B: FAQ</h2>
-      <h4>Why was an action approved but not executed?</h4>
-      <p>Approval is not the final stage. Revalidation, freshness, and operational gates can still block progression.</p>
-      <h4>Does HOT mean immediate trade execution?</h4>
-      <p>No. HOT indicates decision-relevant context, not automatic gate bypass.</p>
-    </section>
+    <div class="scenario">
+      <h4>Scenario D: "A metric looks wrong"</h4>
+      <ol>
+        <li>Confirm the episode scope in Portfolio (metrics reset when episodes change).</li>
+        <li>Compare run timestamps with the date shown in the metric.</li>
+        <li>Check whether a recent profile change or cash event shifted the baseline.</li>
+      </ol>
+    </div>
+  </section>
 
-    <p class="muted">Last updated: March 20, 2026</p>
-  </main>
+  <!-- ═══════════════════════════════════════════════════
+       CHAPTER 10: QUICK REFERENCE
+       ═══════════════════════════════════════════════════ -->
+  <section id="ch10" class="card card-blue page-break">
+    <h2>Chapter 10 &mdash; Quick Reference &amp; Troubleshooting</h2>
+
+    <h3>5-Minute Morning Routine</h3>
+    <div class="flow">
+      <div class="flow-step">Home<br><small>freshness</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Cockpit<br><small>what changed</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Performance<br><small>impact</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Training<br><small>evidence</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Decisions<br><small>verdicts</small></div>
+      <span class="flow-arrow">&rarr;</span>
+      <div class="flow-step">Runs<br><small>if needed</small></div>
+    </div>
+
+    <h3>Troubleshooting Matrix</h3>
+    <table>
+      <thead><tr><th>Symptom</th><th>What is likely happening</th><th>First pages to check</th></tr></thead>
+      <tbody>
+        <tr><td>Data seems stale</td><td>Pipeline has not run or is delayed</td><td>Home + Runs</td></tr>
+        <tr><td>No proposals generated</td><td>Weak evidence or low trust</td><td>Training Status + Market Timeline</td></tr>
+        <tr><td>Proposals exist but no trades</td><td>Gate, limits, or committee rejection</td><td>AI Agent Decisions + Live Portfolio Activity</td></tr>
+        <tr><td>Approved but not executed</td><td>Downstream validation/revalidation block</td><td>AI Agent Decisions + Live Portfolio Activity + Runs</td></tr>
+        <tr><td>News seems relevant but no effect</td><td>News context did not overcome trust/risk gates</td><td>News Intelligence + AI Agent Decisions</td></tr>
+        <tr><td>Page looks outdated</td><td>Latest run not reflected yet</td><td>Runs + Home</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Glossary</h3>
+    <table>
+      <thead><tr><th>Term</th><th>Plain-English meaning</th></tr></thead>
+      <tbody>
+        <tr><td>Signal</td><td>An observation that a pattern detected something interesting.</td></tr>
+        <tr><td>Pattern</td><td>A named strategy with specific rules for scanning market data.</td></tr>
+        <tr><td>Horizon</td><td>A forward time window (1/3/5/10/20 days) for measuring outcomes.</td></tr>
+        <tr><td>Maturity</td><td>Confidence score (0-100) based on how much evidence exists.</td></tr>
+        <tr><td>Coverage</td><td>What fraction of signals have been fully evaluated.</td></tr>
+        <tr><td>Trust</td><td>Whether a pattern has earned enough evidence to influence decisions.</td></tr>
+        <tr><td>Proposal</td><td>A suggested trade that passed initial quality filters.</td></tr>
+        <tr><td>Decision</td><td>Committee verdict plus structured reason codes.</td></tr>
+        <tr><td>Revalidation</td><td>Final safety checks right before execution intent.</td></tr>
+        <tr><td>Risk Gate</td><td>Safety state: SAFE / CAUTION / STOPPED.</td></tr>
+        <tr><td>Episode</td><td>A portfolio lifecycle segment used for performance accounting.</td></tr>
+        <tr><td>Learning Ledger</td><td>Decision-to-outcome trace for accountability and tuning.</td></tr>
+        <tr><td>Parallel Worlds</td><td>Read-only what-if analysis with alternative rules.</td></tr>
+        <tr><td>News Intelligence</td><td>Structured news context that can influence but not override policy.</td></tr>
+        <tr><td>Activation Guard</td><td>Readiness checks that must pass before live execution can proceed.</td></tr>
+        <tr><td>Early Exit</td><td>Intraday logic to evaluate exiting daily positions before horizon end.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Ask MIP &mdash; Getting Good Answers</h3>
+    <p>MIP has a built-in AI assistant called <strong>Ask MIP</strong>. For the best answers:</p>
+    <ul>
+      <li>Tell it which page you are looking at.</li>
+      <li>Include the symbol, portfolio, and time window.</li>
+      <li>When troubleshooting, paste the status or reason code text.</li>
+      <li>Ask one question at a time.</li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <div class="concept" style="text-align:center;">
+    <strong>Final thought:</strong> MIP is a learning system, not a certainty machine. Trust the evidence, verify with the right page, and follow the pipeline sequence when something looks off.
+  </div>
+
+  <p class="muted">Last updated: March 20, 2026</p>
+</main>
 </body>
 </html>

@@ -3064,22 +3064,40 @@ def _aggregate_committee(outputs: list[dict], action_intent: str = "ENTRY") -> d
     intent = str(action_intent or "ENTRY").upper()
     stances = [o.get("stance", "CONDITIONAL") for o in outputs]
     size_factors = [float(o.get("size_factor", 1.0)) for o in outputs if o.get("size_factor") is not None]
+    block_count = sum(1 for s in stances if s == "BLOCK")
+    n_roles = max(len(outputs), 1)
+    supermajority_threshold = max(1, int(n_roles * 2 / 3))
     if intent == "EXIT":
-        # Exit committee is advisory-first: block only on broad consensus.
-        block_count = sum(1 for s in stances if s == "BLOCK")
-        recommendation = "BLOCK" if (outputs and block_count == len(outputs)) else "PROCEED_REDUCED"
+        recommendation = "BLOCK" if (outputs and block_count == n_roles) else "PROCEED_REDUCED"
     else:
-        if any(s == "BLOCK" for s in stances):
+        if block_count >= supermajority_threshold:
             recommendation = "BLOCK"
-        elif any(s == "CONDITIONAL" for s in stances):
+        elif block_count > 0 or any(s == "CONDITIONAL" for s in stances):
             recommendation = "PROCEED_REDUCED"
         else:
             recommendation = "PROCEED"
-    size_factor = (
-        (sum(size_factors) / len(size_factors))
-        if (intent == "EXIT" and size_factors)
-        else (min(size_factors) if size_factors else 1.0)
-    )
+    _SIZE_WEIGHTS = {
+        "RISK_MANAGER": 2.0,
+        "PORTFOLIO_MANAGER": 2.0,
+        "PROPOSER": 1.0,
+        "TRADER_EXECUTION_REVIEWER": 1.0,
+        "CHALLENGER": 1.0,
+        "POST_TRADE_REVIEWER": 1.0,
+    }
+    if intent == "EXIT" and size_factors:
+        size_factor = sum(size_factors) / len(size_factors)
+    elif size_factors:
+        weighted_sum = 0.0
+        weight_total = 0.0
+        for o in outputs:
+            sf = o.get("size_factor")
+            if sf is not None:
+                w = _SIZE_WEIGHTS.get(str(o.get("role", "")).upper(), 1.0)
+                weighted_sum += float(sf) * w
+                weight_total += w
+        size_factor = weighted_sum / weight_total if weight_total > 0 else 1.0
+    else:
+        size_factor = 1.0
     size_factor = max(0.0, min(1.0, size_factor))
     should_enter_votes = [bool(o.get("should_enter")) for o in outputs]
     if intent == "EXIT":

@@ -1141,74 +1141,730 @@ def _slide_runs(prs: Presentation) -> None:
     _add_footer(slide)
 
 
-def _slide_platform_architecture(prs: Presentation) -> None:
-    """Slide 14: Platform architecture overview."""
+def _slide_technologies(prs: Presentation) -> None:
+    """Slide: Technology Stack."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     _set_bg(slide, MIP_BG)
     _draw_header(
         slide,
-        "Platform Architecture",
-        "Snowflake-native: data, logic, and pipelines live together — the UI and API are thin presentation layers",
-        "ARCHITECTURE",
+        "Technology Stack",
+        "Purpose-built on modern, production-grade technologies — Snowflake-native with thin presentation layers",
+        "IMPLEMENTATION",
     )
 
-    _add_icon_circle(slide, 1.5, 2.3, 1.2, "SF", MIP_BLUE, font_size=24)
-    t = slide.shapes.add_textbox(Inches(1.2), Inches(3.6), Inches(1.8), Inches(0.4))
-    tf = t.text_frame
-    tf.text = "Snowflake"
-    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-    tf.paragraphs[0].font.size = Pt(13)
-    tf.paragraphs[0].font.bold = True
-    tf.paragraphs[0].font.color.rgb = MIP_BLUE
+    categories = [
+        (
+            "Database & AI", MIP_BLUE,
+            [
+                "Snowflake  —  Data warehouse, compute, and orchestration",
+                "Snowflake Cortex  —  Native LLM inference (Claude, Mistral)",
+                "Stored Procedures  —  60+ business logic procedures",
+                "Scheduled Tasks  —  Daily, hourly, and intraday pipelines",
+                "External Access  —  Network rules for market data APIs",
+            ],
+        ),
+        (
+            "Backend API", MIP_PURPLE,
+            [
+                "Python 3.12  —  Runtime for API and scripts",
+                "FastAPI  —  High-performance async REST framework",
+                "Uvicorn  —  ASGI server for production",
+                "snowflake-connector-python  —  Native DB driver",
+                "ib-insync  —  Interactive Brokers integration",
+            ],
+        ),
+        (
+            "Frontend", MIP_GREEN,
+            [
+                "React 18  —  Component-based UI framework",
+                "Vite 5  —  Lightning-fast build and dev server",
+                "Plotly.js + Recharts  —  Interactive financial charts",
+                "React Router 6  —  Client-side navigation",
+                "react-markdown  —  AI narrative rendering",
+            ],
+        ),
+        (
+            "Integrations", MIP_AMBER,
+            [
+                "Interactive Brokers  —  Live + paper trading",
+                "AlphaVantage  —  Historical OHLCV market data",
+                "RSS Feeds  —  SEC, Fed, ECB, MarketWatch, IBKR",
+                "GitHub Actions  —  CI/CD pipeline",
+                "Cursor (Claude)  —  AI-assisted development",
+            ],
+        ),
+    ]
 
-    _add_icon_circle(slide, 4.5, 2.3, 1.2, "API", MIP_PURPLE, font_size=20)
-    t = slide.shapes.add_textbox(Inches(4.2), Inches(3.6), Inches(1.8), Inches(0.4))
-    tf = t.text_frame
-    tf.text = "Python API"
-    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-    tf.paragraphs[0].font.size = Pt(13)
-    tf.paragraphs[0].font.bold = True
-    tf.paragraphs[0].font.color.rgb = MIP_PURPLE
+    col_w = 2.95
+    gap = 0.1
+    for i, (title, color, items) in enumerate(categories):
+        x = 0.7 + i * (col_w + gap)
+        _add_card(slide, x, 2.1, col_w, 4.4, title, items, edge=color, item_size=10)
 
-    _add_icon_circle(slide, 7.5, 2.3, 1.2, "UI", MIP_GREEN, font_size=24)
-    t = slide.shapes.add_textbox(Inches(7.2), Inches(3.6), Inches(1.8), Inches(0.4))
-    tf = t.text_frame
-    tf.text = "React UI"
-    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
-    tf.paragraphs[0].font.size = Pt(13)
-    tf.paragraphs[0].font.bold = True
-    tf.paragraphs[0].font.color.rgb = MIP_GREEN
+    _add_analogy_bar(
+        slide, "\U0001F9F1",
+        "Like a well-designed building: Snowflake is the foundation, Python is the plumbing, React is the facade, and IBKR is the power grid.",
+    )
+    _add_footer(slide)
 
-    _add_icon_circle(slide, 10.5, 2.3, 1.2, "IB", MIP_AMBER, font_size=24)
-    t = slide.shapes.add_textbox(Inches(10.2), Inches(3.6), Inches(1.8), Inches(0.4))
-    tf = t.text_frame
-    tf.text = "IBKR"
+
+def _slide_platform_architecture(prs: Presentation) -> None:
+    """Slide: Platform Architecture — enhanced layered diagram."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, RGBColor(11, 18, 32))
+    _draw_header(
+        slide,
+        "Platform Architecture",
+        "Four-layer Snowflake-native architecture — data, logic, and pipelines live together",
+        "IMPLEMENTATION",
+    )
+
+    dark_bg = RGBColor(15, 23, 42)
+    layer_border = RGBColor(36, 48, 65)
+    label_color = RGBColor(226, 232, 240)
+    desc_color = RGBColor(180, 195, 215)
+
+    layers = [
+        ("PRESENTATION LAYER", "React 18 + Vite", [
+            "15 feature pages  |  Plotly.js charts  |  Real-time updates",
+            "Responsive layout  |  Dark/light theming  |  AI narrative rendering",
+        ], MIP_GREEN, 2.05),
+        ("API LAYER", "FastAPI + Python 3.12", [
+            "25+ REST routers  |  Snowflake connector  |  CORS middleware",
+            "IBKR bridge scripts  |  Keypair auth  |  JSON responses",
+        ], MIP_PURPLE, 3.25),
+        ("LOGIC LAYER", "Snowflake Stored Procedures", [
+            "60+ procedures: ingest, signals, training, simulation, proposals, execution",
+            "Cortex AI: committee verdicts, digests, narratives  |  Parallel worlds engine",
+        ], MIP_BLUE, 4.45),
+        ("DATA LAYER", "Snowflake Tables + Views + Tasks", [
+            "APP schema: 40+ tables  |  MART schema: analytical views  |  AGENT_OUT: AI output",
+            "Scheduled tasks: daily 5PM, intraday 15-min, hourly monitors  |  Audit log",
+        ], MIP_TEAL, 5.65),
+    ]
+
+    for title, tech, descs, color, y in layers:
+        box = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.7), Inches(y), Inches(11.9), Inches(1.05)
+        )
+        box.fill.solid()
+        box.fill.fore_color.rgb = dark_bg
+        box.line.color.rgb = layer_border
+
+        edge = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.7), Inches(y), Inches(0.1), Inches(1.05)
+        )
+        edge.fill.solid()
+        edge.fill.fore_color.rgb = color
+        edge.line.fill.background()
+
+        tf = box.text_frame
+        tf.word_wrap = True
+        tf.clear()
+        p0 = tf.paragraphs[0]
+        p0.text = f"{title}    {tech}"
+        p0.font.size = Pt(13)
+        p0.font.bold = True
+        p0.font.color.rgb = label_color
+        for d in descs:
+            p = tf.add_paragraph()
+            p.text = f"    {d}"
+            p.font.size = Pt(10)
+            p.font.color.rgb = desc_color
+            p.space_before = Pt(2)
+
+    arrows_y = [3.12, 4.32, 5.52]
+    for ay in arrows_y:
+        arrow = slide.shapes.add_shape(
+            MSO_SHAPE.DOWN_ARROW, Inches(6.4), Inches(ay), Inches(0.5), Inches(0.12)
+        )
+        arrow.fill.solid()
+        arrow.fill.fore_color.rgb = RGBColor(80, 100, 140)
+        arrow.line.fill.background()
+
+    ext_box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(8.5), Inches(2.05), Inches(4.1), Inches(3.0)
+    )
+    ext_box.fill.solid()
+    ext_box.fill.fore_color.rgb = RGBColor(20, 28, 48)
+    ext_box.line.color.rgb = MIP_AMBER
+    tf = ext_box.text_frame
+    tf.word_wrap = True
+    tf.text = "EXTERNAL SYSTEMS"
+    tf.paragraphs[0].font.size = Pt(12)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = MIP_AMBER
+    externals = [
+        "Interactive Brokers (IBKR)",
+        "  Paper + Live trading accounts",
+        "  Order placement + snapshots",
+        "",
+        "AlphaVantage",
+        "  Historical OHLCV bars",
+        "",
+        "RSS News Feeds",
+        "  SEC, Fed, ECB, MarketWatch",
+    ]
+    for e in externals:
+        p = tf.add_paragraph()
+        p.text = f"  {e}"
+        p.font.size = Pt(10)
+        p.font.color.rgb = desc_color
+        p.space_before = Pt(1)
+
+    _add_footer(slide, text="MIP  |  Snowflake-native architecture  |  All logic lives in the warehouse")
+
+
+def _slide_ai_architecture(prs: Presentation) -> None:
+    """Slide: AI Architecture — visual map of every Cortex call in the system."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, RGBColor(11, 18, 32))
+    _draw_header(
+        slide,
+        "AI Architecture \u2014 Snowflake Cortex Integration",
+        "8 AI touchpoints across the platform \u2014 every call has a deterministic fallback, every output is auditable",
+        "IMPLEMENTATION",
+    )
+
+    dark_bg = RGBColor(15, 23, 42)
+    card_border = RGBColor(36, 48, 65)
+    label_color = RGBColor(226, 232, 240)
+    desc_color = RGBColor(180, 195, 215)
+    dim_color = RGBColor(130, 145, 170)
+
+    # ── Central Cortex hub ───────────────────────────────────────────────
+    hub = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(5.0), Inches(3.1), Inches(3.3), Inches(1.2)
+    )
+    hub.fill.solid()
+    hub.fill.fore_color.rgb = MIP_BLUE
+    hub.line.fill.background()
+    tf = hub.text_frame
+    tf.word_wrap = True
+    tf.text = "\u2744\uFE0F  SNOWFLAKE CORTEX"
     tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+    tf.paragraphs[0].font.size = Pt(16)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = WHITE
+    p = tf.add_paragraph()
+    p.text = "LLM inference layer"
+    p.alignment = PP_ALIGN.CENTER
+    p.font.size = Pt(11)
+    p.font.color.rgb = RGBColor(200, 220, 255)
+    p.space_before = Pt(2)
+    p = tf.add_paragraph()
+    p.text = "Claude 3.5 Sonnet  |  Mistral Large 2  |  Llama 3.1 70B"
+    p.alignment = PP_ALIGN.CENTER
+    p.font.size = Pt(9)
+    p.font.color.rgb = RGBColor(170, 195, 240)
+    p.space_before = Pt(2)
+
+    # ── AI touchpoint cards — LEFT column (SQL Procedures) ───────────────
+    left_calls = [
+        ("Daily Digest", "mistral-large2", "Portfolio + global narrative", "SP_AGENT_GENERATE_DAILY_DIGEST", MIP_BLUE),
+        ("Training Digest", "mistral-large2", "Maturity journey per symbol", "SP_AGENT_GENERATE_TRAINING_DIGEST", MIP_TEAL),
+        ("Committee Verdict", "claude-3.5-sonnet", "Per-proposal trade decision", "SP_VALIDATE_AND_EXECUTE_PROPOSALS", MIP_GREEN),
+        ("Parallel Worlds", "mistral-large2", "Counterfactual analysis", "SP_GENERATE_PW_NARRATIVE", MIP_PURPLE),
+    ]
+
+    left_x = 0.5
+    card_w = 4.3
+    card_h = 0.72
+    start_y = 2.0
+    for i, (name, model, purpose, proc, color) in enumerate(left_calls):
+        y = start_y + i * (card_h + 0.12)
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left_x), Inches(y), Inches(card_w), Inches(card_h)
+        )
+        card.fill.solid()
+        card.fill.fore_color.rgb = dark_bg
+        card.line.color.rgb = card_border
+
+        edge = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(left_x), Inches(y), Inches(0.08), Inches(card_h)
+        )
+        edge.fill.solid()
+        edge.fill.fore_color.rgb = color
+        edge.line.fill.background()
+
+        tf = card.text_frame
+        tf.word_wrap = True
+        tf.text = f"  {name}"
+        tf.paragraphs[0].font.size = Pt(12)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = color
+        p = tf.add_paragraph()
+        p.text = f"    {model}  \u2022  {purpose}"
+        p.font.size = Pt(9)
+        p.font.color.rgb = desc_color
+        p.space_before = Pt(1)
+
+        # connector arrow to hub
+        arrow = slide.shapes.add_shape(
+            MSO_SHAPE.RIGHT_ARROW,
+            Inches(left_x + card_w + 0.06), Inches(y + card_h / 2 - 0.1),
+            Inches(0.55), Inches(0.2),
+        )
+        arrow.fill.solid()
+        arrow.fill.fore_color.rgb = RGBColor(60, 80, 120)
+        arrow.line.fill.background()
+
+    # ── AI touchpoint cards — RIGHT column ───────────────────────────────
+    right_calls = [
+        ("News Extraction", "llama-3.1-70b", "Structured event parsing", "SP_EXTRACT_NEWS_EVENTS", MIP_RED),
+        ("Portfolio Lifecycle", "mistral-large2", "Creation-to-today story", "SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE", MIP_AMBER),
+        ("Ask MIP (v2)", "claude-3.5-sonnet", "Route-aware user assistant", "Python API / Orchestrator", MIP_INDIGO),
+        ("Ask MIP (v1)", "claude-3.5-sonnet", "Guide-grounded Q&A", "Python API / Legacy Router", RGBColor(113, 128, 150)),
+    ]
+
+    right_x = 8.5
+    for i, (name, model, purpose, proc, color) in enumerate(right_calls):
+        y = start_y + i * (card_h + 0.12)
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(right_x), Inches(y), Inches(card_w), Inches(card_h)
+        )
+        card.fill.solid()
+        card.fill.fore_color.rgb = dark_bg
+        card.line.color.rgb = card_border
+
+        edge = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(right_x + card_w - 0.08), Inches(y), Inches(0.08), Inches(card_h)
+        )
+        edge.fill.solid()
+        edge.fill.fore_color.rgb = color
+        edge.line.fill.background()
+
+        tf = card.text_frame
+        tf.word_wrap = True
+        tf.text = f"  {name}"
+        tf.paragraphs[0].font.size = Pt(12)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = color
+        p = tf.add_paragraph()
+        p.text = f"    {model}  \u2022  {purpose}"
+        p.font.size = Pt(9)
+        p.font.color.rgb = desc_color
+        p.space_before = Pt(1)
+
+        arrow = slide.shapes.add_shape(
+            MSO_SHAPE.RIGHT_ARROW,
+            Inches(right_x - 0.61), Inches(y + card_h / 2 - 0.1),
+            Inches(0.55), Inches(0.2),
+        )
+        arrow.fill.solid()
+        arrow.fill.fore_color.rgb = RGBColor(60, 80, 120)
+        arrow.line.fill.background()
+        arrow.rotation = 180.0
+
+    # ── Section label — left ─────────────────────────────────────────────
+    lbl_l = slide.shapes.add_textbox(Inches(0.5), Inches(5.5), Inches(4.3), Inches(0.3))
+    tf = lbl_l.text_frame
+    tf.text = "SQL STORED PROCEDURES"
+    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+    tf.paragraphs[0].font.size = Pt(9)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = dim_color
+
+    lbl_r = slide.shapes.add_textbox(Inches(8.5), Inches(5.5), Inches(4.3), Inches(0.3))
+    tf = lbl_r.text_frame
+    tf.text = "PYTHON API  +  SQL PROCEDURES"
+    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+    tf.paragraphs[0].font.size = Pt(9)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = dim_color
+
+    # ── Fallback banner ──────────────────────────────────────────────────
+    fb = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.5), Inches(5.9), Inches(12.3), Inches(0.7)
+    )
+    fb.fill.solid()
+    fb.fill.fore_color.rgb = RGBColor(20, 32, 55)
+    fb.line.color.rgb = RGBColor(40, 58, 90)
+    tf = fb.text_frame
+    tf.word_wrap = True
+    tf.text = "SAFETY NET  \u2014  Every AI call has a deterministic fallback"
     tf.paragraphs[0].font.size = Pt(13)
     tf.paragraphs[0].font.bold = True
     tf.paragraphs[0].font.color.rgb = MIP_AMBER
+    p = tf.add_paragraph()
+    p.text = (
+        "    If Cortex fails or times out: digests generate bullet-point summaries from snapshots, "
+        "committee falls back to deterministic approval, news uses heuristic extraction, "
+        "and Ask MIP returns a service error.  No AI failure can halt the trading pipeline."
+    )
+    p.font.size = Pt(10)
+    p.font.color.rgb = desc_color
+    p.space_before = Pt(2)
 
-    for x_start in [2.85, 5.85, 8.85]:
-        arrow = slide.shapes.add_shape(
-            MSO_SHAPE.RIGHT_ARROW, Inches(x_start), Inches(2.7), Inches(1.4), Inches(0.4)
-        )
-        arrow.fill.solid()
-        arrow.fill.fore_color.rgb = RGBColor(183, 194, 214)
-        arrow.line.fill.background()
+    # ── Output targets ───────────────────────────────────────────────────
+    out_label = slide.shapes.add_textbox(Inches(5.0), Inches(4.5), Inches(3.3), Inches(0.3))
+    tf = out_label.text_frame
+    tf.text = "Output \u2192 AGENT_OUT schema"
+    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+    tf.paragraphs[0].font.size = Pt(10)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = MIP_GREEN
 
-    layers = [
-        ("Data Layer", "Tables, views, stored procedures, tasks, external stages", MIP_BLUE),
-        ("Logic Layer", "Signal detection, training, proposals, committee, simulation, parallel worlds", MIP_PURPLE),
-        ("Presentation", "React pages, REST API routers, WebSocket feeds, chart overlays", MIP_GREEN),
-        ("Integration", "IBKR adapter, RSS ingest, broker snapshots, execution bridge", MIP_AMBER),
-    ]
-    for i, (title, desc, color) in enumerate(layers):
-        _add_card(
-            slide, 0.7 + i * 3.15, 4.2, 3.0, 2.3,
-            title, [desc], edge=color, item_size=11,
-        )
+    out_down = slide.shapes.add_shape(
+        MSO_SHAPE.DOWN_ARROW, Inches(6.4), Inches(4.35), Inches(0.5), Inches(0.18)
+    )
+    out_down.fill.solid()
+    out_down.fill.fore_color.rgb = MIP_GREEN
+    out_down.line.fill.background()
 
+    tables = slide.shapes.add_textbox(Inches(4.2), Inches(4.8), Inches(4.8), Inches(0.6))
+    tf = tables.text_frame
+    tf.word_wrap = True
+    tf.text = (
+        "DAILY_DIGEST_NARRATIVE  \u2022  TRAINING_DIGEST_NARRATIVE  \u2022  "
+        "PORTFOLIO_LIFECYCLE_NARRATIVE  \u2022  PARALLEL_WORLD_NARRATIVE  \u2022  "
+        "ORDER_PROPOSALS  \u2022  NEWS_EVENT_EXTRACTED  \u2022  ASK_QUERY_EVENT"
+    )
+    tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+    tf.paragraphs[0].font.size = Pt(8)
+    tf.paragraphs[0].font.color.rgb = dim_color
+
+    _add_footer(slide, text="MIP  |  8 AI touchpoints  |  3 models  |  Full deterministic fallback")
+
+
+def _slide_ask_mip(prs: Presentation) -> None:
+    """Slide: Ask MIP — the intelligent route-aware assistant."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, MIP_BG)
+    _draw_header(
+        slide,
+        "Ask MIP \u2014 Your Intelligent Platform Assistant",
+        "Route-aware, docs-grounded AI assistant — always one click away on every page",
+        "FEATURE",
+    )
+
+    # ── Flow diagram ─────────────────────────────────────────────────────
+    _add_process(
+        slide,
+        ["User Question", "Route Context", "Doc Retrieval", "Glossary Match", "Cortex LLM", "Answer"],
+        y=2.1, start_x=0.4, box_w=1.78, gap=0.3,
+    )
+
+    # ── Three feature columns ────────────────────────────────────────────
+    _add_card(
+        slide, 0.7, 3.25, 3.9, 3.2,
+        "How It Works",
+        [
+            "Floating button on every page (\u2753 FAB)",
+            "Panel slides open from the right",
+            "User types a question in natural language",
+            "System detects current route + page context",
+            "Retrieves relevant docs + glossary matches",
+            "Calls Snowflake Cortex (Claude 3.5 Sonnet)",
+            "Returns structured answer with provenance",
+        ],
+        edge=MIP_BLUE,
+    )
+
+    _add_card(
+        slide, 4.75, 3.25, 4.0, 3.2,
+        "Route-Aware Intelligence",
+        [
+            "Knows which page you're viewing",
+            "Injects page-specific guide content as context",
+            "Frames answers relative to visible UI elements",
+            "24 route-to-guide mappings for precise context",
+            "Score boosting for current-page documentation",
+            "Page hint block in system prompt (first 1200 chars)",
+            "General finance knowledge when MIP docs don't cover",
+        ],
+        edge=MIP_PURPLE,
+    )
+
+    _add_card(
+        slide, 8.9, 3.25, 3.75, 3.2,
+        "Quality & Trust",
+        [
+            "Provenance badges: DOC, GLOSSARY, INFERENCE",
+            "Confidence scoring (docs 50%, glossary 35%)",
+            "\"Did you mean\" suggestions when unsure",
+            "Unknown terms logged for glossary review",
+            "Telemetry: every query tracked for coverage",
+            "Never invents live values or thresholds",
+            "90-second timeout, last 10 messages as context",
+        ],
+        edge=MIP_GREEN,
+    )
+
+    # ── Architecture strip ───────────────────────────────────────────────
+    _add_chip(slide, 0.7, 6.55, 2.3, "CLAUDE 3.5 SONNET", MIP_INDIGO)
+    _add_chip(slide, 3.1, 6.55, 2.5, "24 GUIDE FILES", MIP_BLUE)
+    _add_chip(slide, 5.7, 6.55, 2.3, "GLOSSARY TABLE", MIP_TEAL)
+    _add_chip(slide, 8.1, 6.55, 2.2, "TELEMETRY LOG", MIP_PURPLE)
+    _add_chip(slide, 10.4, 6.55, 2.2, "FALLBACK SAFE", MIP_GREEN)
+
+    _add_analogy_bar(
+        slide, "\U0001F9ED",
+        "Like a knowledgeable colleague sitting next to you: they know the platform, see your screen, and answer questions grounded in facts \u2014 not guesses.",
+    )
     _add_footer(slide)
+
+
+def _slide_how_mip_was_built(prs: Presentation) -> None:
+    """Slide: How MIP Was Built — The AI-Orchestrated Story."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _set_bg(slide, MIP_DARK)
+
+    banner = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), SLIDE_W, SLIDE_H
+    )
+    banner.fill.solid()
+    banner.fill.fore_color.rgb = MIP_DARK
+    banner.line.fill.background()
+
+    # ── Title ────────────────────────────────────────────────────────────
+    title = slide.shapes.add_textbox(Inches(0.7), Inches(0.3), Inches(12.0), Inches(0.7))
+    tf = title.text_frame
+    tf.text = "How MIP Was Built \u2014 The AI-Orchestrated Story"
+    tf.paragraphs[0].font.size = Pt(30)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = WHITE
+
+    accent_line = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.7), Inches(1.0), Inches(11.9), Inches(0.04)
+    )
+    accent_line.fill.solid()
+    accent_line.fill.fore_color.rgb = MIP_BLUE
+    accent_line.line.fill.background()
+
+    # ── Subtitle ─────────────────────────────────────────────────────────
+    sub = slide.shapes.add_textbox(Inches(0.7), Inches(1.15), Inches(10.0), Inches(0.35))
+    tf = sub.text_frame
+    tf.text = "Development Timeline \u2014 6 months, zero lines of code typed by a human"
+    tf.paragraphs[0].font.size = Pt(14)
+    tf.paragraphs[0].font.color.rgb = RGBColor(148, 163, 184)
+
+    # ── Timeline bar ─────────────────────────────────────────────────────
+    timeline_y = 1.65
+    timeline_bar = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.7), Inches(timeline_y + 0.22), Inches(11.9), Inches(0.06)
+    )
+    timeline_bar.fill.solid()
+    timeline_bar.fill.fore_color.rgb = RGBColor(40, 58, 90)
+    timeline_bar.line.fill.background()
+
+    milestones = [
+        (0.7, "Oct \u2013 Dec 2025"),
+        (4.7, "Jan 2026"),
+        (8.2, "Feb 2026"),
+        (10.8, "Mar 2026"),
+    ]
+    for mx, mlabel in milestones:
+        dot = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL, Inches(mx + 0.3), Inches(timeline_y + 0.12), Inches(0.26), Inches(0.26)
+        )
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = MIP_BLUE
+        dot.line.fill.background()
+        t = slide.shapes.add_textbox(Inches(mx), Inches(timeline_y - 0.15), Inches(1.8), Inches(0.25))
+        tf = t.text_frame
+        tf.text = mlabel
+        tf.paragraphs[0].font.size = Pt(10)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = MIP_BLUE
+
+    # ── Phase cards ──────────────────────────────────────────────────────
+    phase_y = 2.15
+    phase_h = 1.55
+    phases = [
+        (0.7, 2.85, "ChatGPT + Codex", MIP_BLUE, [
+            "ChatGPT as investment SME",
+            "& solution architect.",
+            "OpenAI Codex as developer.",
+            "Core pipeline built.",
+        ]),
+        (3.65, 2.85, "Transition to Cursor", MIP_PURPLE, [
+            "Switched to Cursor (Claude)",
+            "for development & implementation.",
+            "ChatGPT for requirements",
+            "& idea validation.",
+        ]),
+        (6.6, 2.85, "Full Cursor Autonomy", MIP_GREEN, [
+            "Cursor deploys direct to",
+            "Snowflake. Testing, debugging,",
+            "data repairs \u2014 all autonomous.",
+            "Human reviews, never types.",
+        ]),
+        (9.55, 2.85, "Platform Maturity", MIP_AMBER, [
+            "IBKR live broker integration.",
+            "Cortex AI committee + narratives.",
+            "Parallel worlds + news intelligence.",
+            "146K lines. Production-ready.",
+        ]),
+    ]
+    for px, pw, ptitle, pcolor, plines in phases:
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(px), Inches(phase_y), Inches(pw), Inches(phase_h)
+        )
+        card.fill.solid()
+        card.fill.fore_color.rgb = RGBColor(20, 32, 55)
+        card.line.color.rgb = pcolor
+
+        edge = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(px), Inches(phase_y), Inches(pw), Inches(0.06)
+        )
+        edge.fill.solid()
+        edge.fill.fore_color.rgb = pcolor
+        edge.line.fill.background()
+
+        tf = card.text_frame
+        tf.word_wrap = True
+        tf.text = ptitle
+        tf.paragraphs[0].font.size = Pt(14)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = pcolor
+        for ln in plines:
+            p = tf.add_paragraph()
+            p.text = ln
+            p.font.size = Pt(10)
+            p.font.color.rgb = RGBColor(180, 195, 215)
+            p.space_before = Pt(2)
+
+    # ── Kenneth's Role section ───────────────────────────────────────────
+    role_y = 4.0
+    role_title = slide.shapes.add_textbox(Inches(0.7), Inches(role_y), Inches(5.0), Inches(0.35))
+    tf = role_title.text_frame
+    tf.text = "Kenneth's Role"
+    tf.paragraphs[0].font.size = Pt(16)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = RGBColor(226, 232, 240)
+
+    roles = [
+        ("\u2B50", "Visionary", "Conceived the mission.\nDefined what MIP should\nbecome.", MIP_AMBER),
+        ("\u2699\uFE0F", "Orchestrator", "Directed the AI agents.\nReviewed output, steered\ndirection.", MIP_BLUE),
+        ("\u2611\uFE0F", "Product Owner", "Prioritised features.\nDefined acceptance criteria.\nQuality gatekeeper.", MIP_GREEN),
+    ]
+    for i, (icon, rname, rdesc, rcolor) in enumerate(roles):
+        rx = 0.7 + i * 2.15
+        rcard = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(rx), Inches(role_y + 0.4), Inches(2.0), Inches(1.4)
+        )
+        rcard.fill.solid()
+        rcard.fill.fore_color.rgb = RGBColor(20, 32, 55)
+        rcard.line.color.rgb = RGBColor(40, 58, 90)
+        tf = rcard.text_frame
+        tf.word_wrap = True
+        tf.text = f"{icon}  {rname}"
+        tf.paragraphs[0].font.size = Pt(12)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = rcolor
+        for dline in rdesc.split("\n"):
+            p = tf.add_paragraph()
+            p.text = dline
+            p.font.size = Pt(9)
+            p.font.color.rgb = RGBColor(160, 175, 195)
+            p.space_before = Pt(1)
+
+    # ── The Numbers table ────────────────────────────────────────────────
+    tbl_title = slide.shapes.add_textbox(Inches(7.0), Inches(role_y), Inches(5.0), Inches(0.35))
+    tf = tbl_title.text_frame
+    tf.text = "The Numbers"
+    tf.paragraphs[0].font.size = Pt(16)
+    tf.paragraphs[0].font.bold = True
+    tf.paragraphs[0].font.color.rgb = RGBColor(226, 232, 240)
+
+    table_data = [
+        ("SQL (Snowflake)", "340 files", "47,500 lines", "40%", MIP_AMBER),
+        ("React (JSX/JS/CSS)", "100 files", "31,500 lines", "27%", MIP_BLUE),
+        ("Python (FastAPI)", "51 files", "23,100 lines", "20%", MIP_GREEN),
+        ("Python (Scripts)", "23 files", "10,300 lines", "9%", MIP_PURPLE),
+        ("Documentation", "80 files", "5,300 lines", "4%", RGBColor(113, 128, 150)),
+    ]
+
+    tbl_x = 7.0
+    tbl_y = role_y + 0.42
+    row_h = 0.26
+    col_widths = [2.5, 1.0, 1.3, 0.7]
+
+    header_bg = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(tbl_x), Inches(tbl_y), Inches(5.6), Inches(row_h)
+    )
+    header_bg.fill.solid()
+    header_bg.fill.fore_color.rgb = RGBColor(30, 42, 65)
+    header_bg.line.fill.background()
+    headers = ["Layer", "Files", "Lines", "%"]
+    for ci, (htext, cw) in enumerate(zip(headers, col_widths)):
+        hx = tbl_x + sum(col_widths[:ci]) + 0.1
+        ht = slide.shapes.add_textbox(Inches(hx), Inches(tbl_y), Inches(cw), Inches(row_h))
+        tf = ht.text_frame
+        tf.text = htext
+        tf.paragraphs[0].font.size = Pt(9)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = RGBColor(180, 195, 215)
+
+    for ri, (layer, files, lines, pct, dot_color) in enumerate(table_data):
+        ry = tbl_y + (ri + 1) * row_h
+        if ri % 2 == 0:
+            row_bg = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(tbl_x), Inches(ry), Inches(5.6), Inches(row_h)
+            )
+            row_bg.fill.solid()
+            row_bg.fill.fore_color.rgb = RGBColor(20, 30, 50)
+            row_bg.line.fill.background()
+
+        dot = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL, Inches(tbl_x + 0.05), Inches(ry + 0.07), Inches(0.12), Inches(0.12)
+        )
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = dot_color
+        dot.line.fill.background()
+
+        vals = [layer, files, lines, pct]
+        for ci, (val, cw) in enumerate(zip(vals, col_widths)):
+            vx = tbl_x + sum(col_widths[:ci]) + 0.1
+            vt = slide.shapes.add_textbox(Inches(vx + (0.12 if ci == 0 else 0)), Inches(ry), Inches(cw), Inches(row_h))
+            tf = vt.text_frame
+            tf.text = val
+            tf.paragraphs[0].font.size = Pt(9)
+            tf.paragraphs[0].font.color.rgb = RGBColor(210, 220, 235)
+
+    total_y = tbl_y + 6 * row_h
+    total_bg = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(tbl_x), Inches(total_y), Inches(5.6), Inches(row_h + 0.02)
+    )
+    total_bg.fill.solid()
+    total_bg.fill.fore_color.rgb = MIP_BLUE
+    total_bg.line.fill.background()
+    totals = ["TOTAL", "594", "117,700", "100%"]
+    for ci, (val, cw) in enumerate(zip(totals, col_widths)):
+        vx = tbl_x + sum(col_widths[:ci]) + 0.1
+        vt = slide.shapes.add_textbox(Inches(vx), Inches(total_y), Inches(cw), Inches(row_h + 0.02))
+        tf = vt.text_frame
+        tf.text = val
+        tf.paragraphs[0].font.size = Pt(10)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = WHITE
+
+    # ── Quote banner ─────────────────────────────────────────────────────
+    quote_y = 6.3
+    quote_bg = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.7), Inches(quote_y), Inches(11.9), Inches(0.95)
+    )
+    quote_bg.fill.solid()
+    quote_bg.fill.fore_color.rgb = RGBColor(20, 35, 65)
+    quote_bg.line.color.rgb = MIP_BLUE
+
+    qt = slide.shapes.add_textbox(Inches(1.0), Inches(quote_y + 0.08), Inches(11.4), Inches(0.8))
+    tf = qt.text_frame
+    tf.word_wrap = True
+    tf.text = (
+        "\u201CKenneth never wrote a line of code, AI did.  "
+        "AI never made a product decision, Kenneth did.\n"
+        "Each played to their strengths.  117,700 lines.  594 files.  "
+        "6 months.  One human involved.\u201D"
+    )
+    tf.paragraphs[0].font.size = Pt(14)
+    tf.paragraphs[0].font.italic = True
+    tf.paragraphs[0].font.color.rgb = RGBColor(220, 230, 245)
+    if len(tf.paragraphs) > 1:
+        tf.paragraphs[1].font.size = Pt(14)
+        tf.paragraphs[1].font.italic = True
+        tf.paragraphs[1].font.color.rgb = RGBColor(220, 230, 245)
 
 
 def _slide_closing(prs: Presentation) -> None:
@@ -1284,21 +1940,25 @@ def build_deck(output_path: Path) -> None:
     prs.slide_width = SLIDE_W
     prs.slide_height = SLIDE_H
 
-    _slide_title(prs)               # 1 - Title / Hero
-    _slide_what_is_mip(prs)         # 2 - What is MIP
-    _slide_training_status(prs)     # 3 - Training Status
-    _slide_market_timeline(prs)     # 4 - Market Timeline
-    _slide_news_intelligence(prs)   # 5 - News Intelligence
-    _slide_parallel_worlds(prs)     # 6 - Parallel Worlds
-    _slide_live_link(prs)           # 7 - Live Portfolio Link
-    _slide_live_activity(prs)       # 8 - Live Portfolio Activity
-    _slide_ai_decisions(prs)        # 9 - AI Agent Decisions
+    _slide_title(prs)               # 1  - Title / Hero
+    _slide_what_is_mip(prs)         # 2  - What is MIP
+    _slide_training_status(prs)     # 3  - Training Status
+    _slide_market_timeline(prs)     # 4  - Market Timeline
+    _slide_news_intelligence(prs)   # 5  - News Intelligence
+    _slide_parallel_worlds(prs)     # 6  - Parallel Worlds
+    _slide_live_link(prs)           # 7  - Live Portfolio Link
+    _slide_live_activity(prs)       # 8  - Live Portfolio Activity
+    _slide_ai_decisions(prs)        # 9  - AI Agent Decisions
     _slide_learning_ledger(prs)     # 10 - Learning Ledger
     _slide_symbol_tracker(prs)      # 11 - Live Symbol Tracker
     _slide_performance(prs)         # 12 - Performance
     _slide_runs(prs)                # 13 - Runs / Audit
-    _slide_platform_architecture(prs)  # 14 - Architecture
-    _slide_closing(prs)             # 15 - Closing / CTA
+    _slide_ask_mip(prs)             # 14 - Ask MIP
+    _slide_technologies(prs)        # 15 - Technology Stack
+    _slide_platform_architecture(prs)  # 16 - Architecture Diagram
+    _slide_ai_architecture(prs)     # 17 - AI Architecture (Cortex calls)
+    _slide_how_mip_was_built(prs)   # 18 - How MIP Was Built
+    _slide_closing(prs)             # 19 - Closing / CTA
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(output_path)

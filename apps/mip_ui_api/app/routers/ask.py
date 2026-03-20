@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field
 from app.config import get_askmip_model
 from app.db import get_connection
 from app.guide_loader import get_guide_content
+from app.services.ask.glossary_repository import list_glossary, search_glossary, upsert_glossary_entry
+from app.services.ask.orchestrator import resolve_question
+from app.services.ask.telemetry import log_resolution_event
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,61 @@ class AskResponse(BaseModel):
     answer: str
     model: str
     section_id: str | None = None
+
+
+class AskSource(BaseModel):
+    source_type: str
+    source_ref: str
+    label: str
+    confidence: float
+
+
+class AskAnswerSection(BaseModel):
+    section_type: str
+    title: str
+    text: str
+    sources: list[AskSource] = Field(default_factory=list)
+
+
+class AskConfidence(BaseModel):
+    docs_confidence: float = 0.0
+    glossary_confidence: float = 0.0
+    web_confidence: float = 0.0
+    overall: float = 0.0
+
+
+class AskV2Response(BaseModel):
+    answer: str
+    model: str
+    section_id: str | None = None
+    sections: list[AskAnswerSection] = Field(default_factory=list)
+    sources: list[AskSource] = Field(default_factory=list)
+    confidence: AskConfidence = Field(default_factory=AskConfidence)
+    did_you_mean: list[str] = Field(default_factory=list)
+    unknown_terms: list[str] = Field(default_factory=list)
+    fallback_used: bool = False
+
+
+class GlossaryUpsertRequest(BaseModel):
+    term_key: str = Field(..., min_length=1, max_length=150)
+    display_term: str = Field(..., min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list)
+    category: str = "ui"
+    definition_short: str = ""
+    definition_long: str = ""
+    mip_specific_meaning: str = ""
+    general_market_meaning: str = ""
+    example_in_mip: str = ""
+    related_terms: list[str] = Field(default_factory=list)
+    source_type: str = "MANUAL"
+    source_ref: str = "ask_admin"
+    is_approved: bool = False
+    review_status: str = "pending"
+
+
+class GlossaryReviewRequest(BaseModel):
+    decision: str = Field(..., pattern="^(approved|rejected)$")
+    notes: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -184,3 +242,229 @@ def _extract_answer(raw: str | dict) -> str:
         return raw
 
     return str(raw)
+
+
+@router.post("/v2", response_model=AskV2Response)
+def ask_mip_v2(req: AskRequest):
+    """
+    Ask MIP v2:
+    docs -> glossary -> confidence check -> optional web clarification (policy-gated),
+    then assemble a provenance-aware response.
+    """
+    model_name = get_askmip_model()
+    try:
+        history = [{"role": m.role, "content": m.content} for m in req.history[-10:]]
+        ctx, resolution = resolve_question(req.question, req.route, history)
+        log_resolution_event(ctx, resolution)
+        return AskV2Response(
+            answer=resolution.answer,
+            model=model_name,
+            section_id=None,
+            sections=[
+                AskAnswerSection(
+                    section_type=section.section_type,
+                    title=section.title,
+                    text=section.text,
+                    sources=[
+                        AskSource(
+                            source_type=source.source_type,
+                            source_ref=source.source_ref,
+                            label=source.label,
+                            confidence=source.confidence,
+                        )
+                        for source in section.sources
+                    ],
+                )
+                for section in resolution.sections
+            ],
+            sources=[
+                AskSource(
+                    source_type=source.source_type,
+                    source_ref=source.source_ref,
+                    label=source.label,
+                    confidence=source.confidence,
+                )
+                for source in resolution.sources
+            ],
+            confidence=AskConfidence(
+                docs_confidence=resolution.confidence.docs_confidence,
+                glossary_confidence=resolution.confidence.glossary_confidence,
+                web_confidence=resolution.confidence.web_confidence,
+                overall=resolution.confidence.overall,
+            ),
+            did_you_mean=resolution.did_you_mean,
+            unknown_terms=resolution.unknown_terms,
+            fallback_used=resolution.fallback_used,
+        )
+    except Exception as exc:
+        logger.error("Ask MIP v2 failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Ask MIP v2 failed.") from exc
+
+
+@router.get("/glossary/search")
+def ask_glossary_search(term: str):
+    return {"items": search_glossary(term)}
+
+
+@router.get("/glossary")
+def ask_glossary_list(limit: int = 200):
+    return {"items": list_glossary(limit)}
+
+
+@router.post("/glossary")
+def ask_glossary_upsert(req: GlossaryUpsertRequest):
+    upsert_glossary_entry(
+        {
+            "term_key": req.term_key.lower().strip(),
+            "display_term": req.display_term.strip(),
+            "aliases": json.dumps(req.aliases),
+            "category": req.category,
+            "definition_short": req.definition_short,
+            "definition_long": req.definition_long,
+            "mip_specific_meaning": req.mip_specific_meaning,
+            "general_market_meaning": req.general_market_meaning,
+            "example_in_mip": req.example_in_mip,
+            "related_terms": json.dumps(req.related_terms),
+            "source_type": req.source_type,
+            "source_ref": req.source_ref,
+            "is_approved": req.is_approved,
+            "review_status": req.review_status,
+        }
+    )
+    return {"ok": True}
+
+
+@router.patch("/glossary/{term_key}")
+def ask_glossary_patch(term_key: str, req: GlossaryUpsertRequest):
+    upsert_glossary_entry(
+        {
+            "term_key": term_key.lower().strip(),
+            "display_term": req.display_term.strip(),
+            "aliases": json.dumps(req.aliases),
+            "category": req.category,
+            "definition_short": req.definition_short,
+            "definition_long": req.definition_long,
+            "mip_specific_meaning": req.mip_specific_meaning,
+            "general_market_meaning": req.general_market_meaning,
+            "example_in_mip": req.example_in_mip,
+            "related_terms": json.dumps(req.related_terms),
+            "source_type": req.source_type,
+            "source_ref": req.source_ref,
+            "is_approved": req.is_approved,
+            "review_status": req.review_status,
+        }
+    )
+    return {"ok": True}
+
+
+@router.get("/glossary/review-queue")
+def ask_glossary_review_queue(limit: int = 200):
+    conn = get_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT CANDIDATE_ID, TERM_TEXT, CATEGORY, SOURCE_TYPE, SOURCE_REF, RECOMMENDED_DEFINITION, REVIEW_STATUS, CREATED_AT
+            FROM MIP.AGENT_OUT.GLOSSARY_CANDIDATE_TERM
+            WHERE REVIEW_STATUS IN ('pending', 'needs_info')
+            ORDER BY CREATED_AT DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return {"items": rows}
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        conn.close()
+
+
+@router.post("/glossary/review/{candidate_id}")
+def ask_glossary_review(candidate_id: int, req: GlossaryReviewRequest):
+    conn = get_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE MIP.AGENT_OUT.GLOSSARY_CANDIDATE_TERM
+            SET REVIEW_STATUS = %s, REVIEWED_AT = CURRENT_TIMESTAMP()
+            WHERE CANDIDATE_ID = %s
+            """,
+            (req.decision, candidate_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO MIP.AGENT_OUT.GLOSSARY_REVIEW_EVENT (EVENT_TS, CANDIDATE_ID, DECISION, REVIEWER_NOTES)
+            SELECT CURRENT_TIMESTAMP(), %s, %s, %s
+            """,
+            (candidate_id, req.decision, req.notes),
+        )
+        return {"ok": True}
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        conn.close()
+
+
+@router.get("/telemetry/coverage")
+def ask_telemetry_coverage(limit: int = 30):
+    conn = get_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT *
+            FROM MIP.MART.V_ASK_COVERAGE_METRICS
+            ORDER BY DAY DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return {"items": rows}
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        conn.close()
+
+
+@router.get("/telemetry/unknown-terms")
+def ask_telemetry_unknown_terms(limit: int = 50):
+    conn = get_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT *
+            FROM MIP.MART.V_ASK_UNKNOWN_TERMS
+            ORDER BY ASK_COUNT DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return {"items": rows}
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        conn.close()

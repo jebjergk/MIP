@@ -23,6 +23,7 @@ import {
   isMaterialUpdate,
   severityRank,
 } from './symbolTrackerCommittee'
+import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import './SymbolTracker.css'
 
 const SORT_OPTIONS = [
@@ -1128,6 +1129,9 @@ export default function SymbolTracker() {
         <div>
           <h2>Symbol Tracker</h2>
           <p>Live positions with 30s updates.</p>
+          <p style={{ marginTop: 6, fontSize: '0.8rem', color: '#64748b' }}>
+            Terms: drawdown <GlossaryHoverCard scope="risk" entryKey="portfolio_drawdown_pct" />, retrigger <GlossaryHoverCard scope="signals" entryKey="retrigger" />, exposure <GlossaryHoverCard scope="positions" entryKey="position_size_pct" />.
+          </p>
         </div>
         <div className="symbol-tracker-head-actions">
           <button type="button" className="symbol-tracker-btn" onClick={refreshIbOnly}>Refresh Live Only</button>

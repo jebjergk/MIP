@@ -281,6 +281,71 @@
   color: #1a237e;
 }
 
+.ask-mip-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.ask-mip-badge {
+  font-size: 0.72rem;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid #d0d7e2;
+  color: #314158;
+  background: #f3f7ff;
+}
+
+.ask-mip-confidence {
+  font-size: 0.72rem;
+  color: #475467;
+  margin-top: 0.45rem;
+}
+
+.ask-mip-section {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #d0d7e2;
+}
+
+.ask-mip-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #1a237e;
+}
+
+.ask-mip-section-body {
+  margin-top: 0.2rem;
+}
+
+.ask-mip-suggestions {
+  margin-top: 0.55rem;
+}
+
+.ask-mip-suggestions-title {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #475467;
+  margin-bottom: 0.35rem;
+}
+
+.ask-mip-suggestions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.ask-mip-suggestion-chip {
+  border: 1px solid #c7d7ff;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+  background: #edf3ff;
+  color: #1a237e;
+  cursor: pointer;
+}
+
 .ask-mip-msg--error .ask-mip-msg-body {
   background: #fff3f3;
   border-color: #e57373;

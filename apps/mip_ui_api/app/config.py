@@ -34,3 +34,37 @@ def training_debug_enabled() -> bool:
 def get_askmip_model() -> str:
     """LLM model name for the Ask MIP feature. Default: claude-3-5-sonnet. Set ASKMIP_MODEL to override."""
     return (os.getenv("ASKMIP_MODEL") or "claude-3-5-sonnet").strip()
+
+
+def askmip_enable_glossary() -> bool:
+    return (os.getenv("ASKMIP_ENABLE_GLOSSARY") or "1").strip().lower() in ("1", "true", "yes")
+
+
+def askmip_enable_web_fallback() -> bool:
+    return (os.getenv("ASKMIP_ENABLE_WEB_FALLBACK") or "0").strip().lower() in ("1", "true", "yes")
+
+
+def askmip_doc_min_confidence() -> float:
+    try:
+        return float((os.getenv("ASKMIP_DOC_MIN_CONFIDENCE") or "0.65").strip())
+    except ValueError:
+        return 0.65
+
+
+def askmip_glossary_min_confidence() -> float:
+    try:
+        return float((os.getenv("ASKMIP_GLOSSARY_MIN_CONFIDENCE") or "0.60").strip())
+    except ValueError:
+        return 0.60
+
+
+def askmip_max_didyoumean() -> int:
+    try:
+        return max(1, int((os.getenv("ASKMIP_MAX_DIDYOUMEAN") or "5").strip()))
+    except ValueError:
+        return 5
+
+
+def askmip_web_allowed_intents() -> set[str]:
+    raw = (os.getenv("ASKMIP_WEB_FALLBACK_ALLOWED_INTENTS") or "trading_concept,market_research_concept,term_definition,mixed").strip()
+    return {part.strip() for part in raw.split(",") if part.strip()}

@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { sectionForRoute } from '../guide/index'
 import { API_BASE } from '../App'
+import AskAnswerSections from './AskAnswerSections'
+import AskDidYouMean from './AskDidYouMean'
 import './AskMipPanel.css'
 
 /**
@@ -48,7 +50,7 @@ export default function AskMipPanel({ open, onClose, pathname }) {
       // Build history (last 10 messages for context window management)
       const history = [...messages, userMsg].slice(-10).map(({ role, content }) => ({ role, content }))
 
-      const res = await fetch(`${API_BASE}/ask`, {
+      const res = await fetch(`${API_BASE}/ask/v2`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -67,7 +69,15 @@ export default function AskMipPanel({ open, onClose, pathname }) {
       const data = await res.json()
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: data.answer || 'No response received.' },
+        {
+          role: 'assistant',
+          content: data.answer || 'No response received.',
+          sections: data.sections || [],
+          sources: data.sources || [],
+          confidence: data.confidence || null,
+          didYouMean: data.did_you_mean || [],
+          unknownTerms: data.unknown_terms || [],
+        },
       ])
     } catch (err) {
       const msg = err.name === 'AbortError'
@@ -88,6 +98,11 @@ export default function AskMipPanel({ open, onClose, pathname }) {
       e.preventDefault()
       sendMessage()
     }
+  }
+
+  const handleSuggestionPick = (term) => {
+    setInput(term)
+    inputRef.current?.focus()
   }
 
   const clearChat = () => {
@@ -160,7 +175,15 @@ export default function AskMipPanel({ open, onClose, pathname }) {
             <div className="ask-mip-msg-label">{msg.role === 'user' ? 'You' : 'MIP'}</div>
             <div className="ask-mip-msg-body">
               {msg.role === 'assistant' ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                <>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  <AskAnswerSections
+                    sections={msg.sections}
+                    sources={msg.sources}
+                    confidence={msg.confidence}
+                  />
+                  <AskDidYouMean terms={msg.didYouMean} onPick={handleSuggestionPick} />
+                </>
               ) : (
                 <p>{msg.content}</p>
               )}

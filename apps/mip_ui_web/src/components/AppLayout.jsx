@@ -45,6 +45,7 @@ const NAV_GROUPS = [
     items: [
       { to: '/runs',  icon: '\u25B6\uFE0F', label: 'Runs (Audit)' },
       { to: '/debug', icon: '\uD83D\uDD27', label: 'Debug' },
+      { to: '/ask-glossary', icon: '\uD83D\uDCD6', label: 'Ask Glossary Admin' },
     ],
   },
 ]

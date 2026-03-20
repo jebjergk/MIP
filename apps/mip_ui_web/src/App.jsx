@@ -16,6 +16,7 @@ import LivePortfolioActivity from './pages/LivePortfolioActivity'
 import LivePortfolioConfig from './pages/LivePortfolioConfig'
 import LearningLedger from './pages/LearningLedger'
 import PerformanceDashboard from './pages/PerformanceDashboard'
+import GlossaryAdminPage from './pages/GlossaryAdminPage'
 import AppLayout from './components/AppLayout'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
 import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPage'
@@ -52,6 +53,7 @@ function pageTitleForPath(pathname) {
     { pattern: '/intraday/health', title: 'Intraday Pipeline Health' },
     { pattern: '/debug', title: 'Debug' },
     { pattern: '/guide', title: 'User Guide' },
+    { pattern: '/ask-glossary', title: 'Ask Glossary Admin' },
   ]
 
   for (const entry of titleByPattern) {
@@ -108,6 +110,7 @@ export default function App() {
         <Route path="/intraday/health" element={<IntradayPipelineHealthPage />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/guide" element={<UserGuide />} />
+        <Route path="/ask-glossary" element={<GlossaryAdminPage />} />
         {/* Redirects for old routes */}
         <Route path="/suggestions" element={<Navigate to="/cockpit" replace />} />
         <Route path="/signals" element={<Navigate to="/decision-console" replace />} />

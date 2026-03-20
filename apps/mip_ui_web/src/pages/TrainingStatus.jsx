@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../App'
 import InfoTooltip from '../components/InfoTooltip'
+import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
@@ -167,6 +168,9 @@ export default function TrainingStatus() {
 
       <p className="training-status-intro">
         Per-asset training maturity (daily bars): sample size, coverage, horizons, and avg outcomes. Use filters to narrow by market or symbol.
+      </p>
+      <p className="training-status-intro">
+        Quick terms: trusted <GlossaryHoverCard scope="signals" entryKey="trusted" />, confidence <GlossaryHoverCard scope="signals" entryKey="confidence" />, max hold <GlossaryHoverCard scope="positions" entryKey="max_hold_days" />.
       </p>
 
       <section className="training-status-filters" aria-label="Filters">

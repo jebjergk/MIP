@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { API_BASE } from '../App'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import './AiAgentDecisions.css'
 
 function fmtTs(ts) {
@@ -117,6 +118,9 @@ export default function AiAgentDecisions() {
         <div>
           <h2>AI Agent Decisions</h2>
           <p>Committee outcomes and transcripts for live workflow.</p>
+          <p style={{ marginTop: 6, fontSize: '0.8rem', color: '#64748b' }}>
+            Terms: committee view <GlossaryHoverCard scope="ui" entryKey="committee_status" />, conviction <GlossaryHoverCard scope="signals" entryKey="conviction" />, catalyst <GlossaryHoverCard scope="brief" entryKey="drivers_text" />.
+          </p>
         </div>
       </div>
 

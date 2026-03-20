@@ -77,8 +77,11 @@ begin
     v_is_weekday := dayofweekiso(v_now_et) between 1 and 5;
     v_is_valid_slot := (
         v_is_weekday and (
-            (v_hour_et in (7, 8) and v_minute_et in (0, 30))
-            or (v_hour_et = 9 and v_minute_et = 0)
+            (v_hour_et = 7 and v_minute_et between 0 and 5)
+            or (v_hour_et = 7 and v_minute_et between 25 and 35)
+            or (v_hour_et = 8 and v_minute_et between 0 and 5)
+            or (v_hour_et = 8 and v_minute_et between 25 and 35)
+            or (v_hour_et = 9 and v_minute_et between 0 and 5)
         )
     );
 

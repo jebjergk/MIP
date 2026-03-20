@@ -65,7 +65,7 @@ using (
     select
         'GLOBENEWSWIRE_RSS',
         'GlobeNewswire RSS',
-        'https://www.globenewswire.com/rss/list',
+        'https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20Releases',
         'https://www.globenewswire.com/Home/About/Media-Relations',
         'Use only approved feed categories, title/snippet/link display in v1.',
         true,
@@ -82,7 +82,7 @@ using (
     select
         'MARKETWATCH_RSS',
         'MarketWatch RSS',
-        'https://www.marketwatch.com/site/rss',
+        'https://feeds.content.dowjones.io/public/rss/mw_topstories',
         'https://www.marketwatch.com/site/rss',
         'Feed use must follow publisher terms, no full-text storage in v1.',
         true,

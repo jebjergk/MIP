@@ -255,7 +255,18 @@ def _fetch_rss_entries(feed_url, max_attempts=2, connect_timeout_sec=5, read_tim
         try:
             r = requests.get(feed_url, timeout=(connect_timeout_sec, read_timeout_sec), headers=headers)
             r.raise_for_status()
+            ct = (r.headers.get("content-type") or "").lower()
+            if "html" in ct and "xml" not in ct and "rss" not in ct:
+                raise RuntimeError(
+                    f"CONTENT_TYPE_HTML: server returned '{ct}' "
+                    f"instead of RSS/XML for {feed_url}"
+                )
             parsed = feedparser.parse(r.content)
+            if parsed.bozo and not (parsed.entries or []):
+                raise RuntimeError(
+                    f"FEED_PARSE_ERROR: feedparser flagged bozo with "
+                    f"0 entries for {feed_url}: {parsed.bozo_exception}"
+                )
             entries = parsed.entries or []
             return entries
         except Exception as exc:
@@ -494,7 +505,7 @@ def run(session, p_test_mode=False, p_source_limit=None):
                 "symbol_hint": symbol_hint,
                 "entries_seen": entry_count,
                 "rows_staged": staged_count,
-                "status": "SUCCESS",
+                "status": "SUCCESS" if entry_count > 0 else "WARN_EMPTY",
             })
         except Exception as exc:
             errors.append({

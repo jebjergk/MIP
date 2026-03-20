@@ -11,6 +11,7 @@ create or replace network rule MIP_ALPHA_NETWORK_RULE
     'www.federalreserve.gov:443',
     'www.globenewswire.com:443',
     'www.marketwatch.com:443',
+    'feeds.content.dowjones.io:443',
     'www.sec.gov:443',
     'www.nasdaq.com:443',
     'seekingalpha.com:443',

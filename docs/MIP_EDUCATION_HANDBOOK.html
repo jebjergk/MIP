@@ -33,6 +33,7 @@
         <li><a href="#what">What MIP is</a></li>
         <li><a href="#learning">How MIP learns from evidence</a></li>
         <li><a href="#daily">Daily operating flow</a></li>
+        <li><a href="#whatsnew">What's newer in MIP</a></li>
         <li><a href="#concepts">Core concepts</a></li>
         <li><a href="#pages">Active UI pages</a></li>
         <li><a href="#ask">Ask MIP guidance</a></li>
@@ -65,12 +66,24 @@
         <li>Performance Dashboard: compare return and drawdown trends.</li>
         <li>Training Status: validate evidence behind active opportunities.</li>
         <li>AI Agent Decisions: inspect accepts/rejects and rationale.</li>
+        <li>Live Portfolio Activity: validate expected lifecycle transitions (if live-linked workflow is active).</li>
         <li>Runs (Audit): verify pipeline details when something looks off.</li>
       </ol>
     </section>
 
+    <section id="whatsnew" class="card">
+      <h2>4) What's Newer in MIP</h2>
+      <ul>
+        <li><strong>News Intelligence now acts as policy-aware context:</strong> it can influence ranking/confidence and block new entries in specific conditions, but never bypasses core risk/trust gates.</li>
+        <li><strong>Live-linked operations have explicit lifecycle stages:</strong> a proposal can be approved and still be blocked later by validation, freshness, approvals, or execution controls.</li>
+        <li><strong>Reason-code interpretation is central to troubleshooting:</strong> AI Agent Decisions and Live Portfolio Activity are meant to be read together when diagnosing blocked actions.</li>
+        <li><strong>Learning Ledger is now a practical retrospective tool:</strong> it links decision evidence to realized outcomes and helps identify recurring policy tuning opportunities.</li>
+        <li><strong>Runs statuses require nuanced interpretation:</strong> <code>SUCCESS_WITH_SKIPS</code> can be expected in no-data windows and should be validated step-by-step.</li>
+      </ul>
+    </section>
+
     <section id="concepts" class="card">
-      <h2>4) Core Concepts</h2>
+      <h2>5) Core Concepts</h2>
       <table>
         <thead><tr><th>Term</th><th>Plain-English meaning</th></tr></thead>
         <tbody>
@@ -80,14 +93,16 @@
           <tr><td>Coverage</td><td>"How complete is evaluated evidence?"</td></tr>
           <tr><td>Trust</td><td>"Is this reliable enough to use?"</td></tr>
           <tr><td>Proposal</td><td>"Suggested action pending controls."</td></tr>
+          <tr><td>Decision</td><td>"Committee verdict plus structured reasons for a proposal."</td></tr>
           <tr><td>Risk Gate</td><td>"Are entries currently allowed?"</td></tr>
+          <tr><td>Revalidation</td><td>"Final checks right before execution intent."</td></tr>
           <tr><td>Learning Ledger</td><td>"Why decisions changed and what happened next."</td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="pages" class="card">
-      <h2>5) Active UI Pages</h2>
+      <h2>6) Active UI Pages</h2>
       <h3>Dashboard</h3>
       <ul>
         <li>Cockpit (<code>/cockpit</code>)</li>
@@ -97,7 +112,7 @@
       <h3>Portfolio</h3>
       <ul>
         <li>Live Portfolio Link (<code>/live-portfolio-config</code>)</li>
-        <li>Live Portfolio Activity (<code>/live-portfolio-activity</code>)</li>
+        <li>Live Portfolio Activity (<code>/live-portfolio-activity</code>) - lifecycle status transitions and block reasons</li>
         <li>Live Symbol Tracker (<code>/symbol-tracker</code>)</li>
       </ul>
       <h3>Research</h3>
@@ -109,30 +124,31 @@
       </ul>
       <h3>Decision Executions</h3>
       <ul>
-        <li>AI Agent Decisions (<code>/decision-console</code>)</li>
-        <li>Learning Ledger (<code>/learning-ledger</code>)</li>
+        <li>AI Agent Decisions (<code>/decision-console</code>) - reason codes and revalidation outcomes</li>
+        <li>Learning Ledger (<code>/learning-ledger</code>) - decision-to-outcome causality and motif review</li>
       </ul>
       <h3>Operations + Reference</h3>
       <ul>
-        <li>Runs (Audit) (<code>/runs</code>)</li>
+        <li>Runs (Audit) (<code>/runs</code>) - status interpretation and step diagnostics</li>
         <li>Debug (<code>/debug</code>)</li>
         <li>User Guide (<code>/guide</code>)</li>
       </ul>
     </section>
 
     <section id="ask" class="card">
-      <h2>6) Ask MIP Guidance</h2>
+      <h2>7) Ask MIP Guidance</h2>
       <p>Ask MIP should use the User Guide as primary truth for app behavior.</p>
       <p>If a term is not explicitly defined in the guide, Ask MIP may still provide plain-language explanation and should label it as best-effort context.</p>
       <ul>
         <li>Include page, symbol, portfolio, and time window for precise answers.</li>
         <li>Ask one concrete question at a time.</li>
         <li>For live values, ask where to verify in UI.</li>
+        <li>Include status/reason-code text when asking why an action was blocked.</li>
       </ul>
     </section>
 
     <section id="troubleshooting" class="card">
-      <h2>7) Quick Troubleshooting</h2>
+      <h2>8) Quick Troubleshooting</h2>
       <table>
         <thead><tr><th>Symptom</th><th>First check</th></tr></thead>
         <tbody>
@@ -141,11 +157,12 @@
           <tr><td>Decisions rejected unexpectedly</td><td>AI Agent Decisions + Learning Ledger</td></tr>
           <tr><td>Live-linked activity unclear</td><td>Live Portfolio Activity + Live Portfolio Link</td></tr>
           <tr><td>News impact confusion</td><td>News Intelligence</td></tr>
+          <tr><td>Approved but not executed</td><td>AI Agent Decisions + Live Portfolio Activity + Runs</td></tr>
         </tbody>
       </table>
     </section>
 
-    <p class="muted">Last updated: March 16, 2026</p>
+    <p class="muted">Last updated: March 20, 2026</p>
   </main>
 </body>
 </html>

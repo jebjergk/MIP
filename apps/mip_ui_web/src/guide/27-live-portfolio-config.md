@@ -1,6 +1,7 @@
 # 27. Live Portfolio Link
 
-This page binds live execution controls to broker truth.
+This page binds live execution controls to broker truth and defines portfolio-level execution guardrails.
+
 Research proposal source is selected at import time in Live Portfolio Activity.
 
 ## What This Page Is For
@@ -18,12 +19,14 @@ Research proposal source is selected at import time in Live Portfolio Activity.
 3. Set risk/freshness controls and click **Save Config**.
 4. Confirm schematic and guard status.
 5. In Live Portfolio Activity, choose source research portfolio at import time.
+6. Re-check readiness before expected execution windows.
 
 Important behavior:
 
 - Config IDs are assigned by the backend on create.
 - No SIM fallback is stored in this page.
 - Research proposal source is selected explicitly in Live Portfolio Activity import.
+- Save success does not imply execution readiness at run-time.
 
 ## Connection Schematic (Color Meaning)
 
@@ -53,6 +56,14 @@ This is a governance/control record. It does not place orders by itself.
 - **Quote Freshness Sec / Snapshot Freshness Sec**: stale-data blockers
 - **Validity Window Sec / Cooldown Bars**: action lifecycle controls
 - **Drawdown Stop % / Bust %**: portfolio safety brakes
+
+## Readiness checklist before execution windows
+
+- Live config saved successfully
+- IBKR account linkage valid
+- Freshness controls passing
+- Drawdown/bust protections not tripped
+- Required approvals and revalidation available in activity/decision flow
 
 ## Common Questions
 

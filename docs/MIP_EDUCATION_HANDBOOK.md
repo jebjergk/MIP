@@ -9,10 +9,11 @@ Practical handbook for understanding how MIP works and how to operate it using t
 1. What MIP is
 2. How MIP learns from evidence
 3. Daily operating flow
-4. Core concepts
-5. Active UI pages and what each is for
-6. Ask MIP usage guidance
-7. Quick troubleshooting
+4. What's newer in MIP
+5. Core concepts
+6. Active UI pages and what each is for
+7. Ask MIP usage guidance
+8. Quick troubleshooting
 
 ---
 
@@ -50,11 +51,29 @@ Recommended daily sequence:
 3. **Performance Dashboard**: compare return and drawdown trends.
 4. **Training Status**: validate evidence behind active opportunities.
 5. **AI Agent Decisions**: inspect accepts/rejects and rationale.
-6. **Runs (Audit)**: verify pipeline details when something looks off.
+6. **Live Portfolio Activity**: validate expected lifecycle transitions (if live-linked workflow is active).
+7. **Runs (Audit)**: verify pipeline details when something looks off.
 
 ---
 
-## 4) Core Concepts
+## 4) What's Newer in MIP
+
+Recent implemented behavior that operators should account for:
+
+- **News Intelligence now acts as policy-aware context.**  
+  It can influence ranking/confidence and block new entries in specific conditions, but never bypasses core risk/trust gates.
+- **Live-linked operations have explicit lifecycle stages.**  
+  A proposal can be approved and still be blocked later by validation, freshness, approvals, or execution controls.
+- **Reason-code interpretation is central to troubleshooting.**  
+  AI Agent Decisions and Live Portfolio Activity are meant to be read together when diagnosing "why not executed."
+- **Learning Ledger is now a practical retrospective tool.**  
+  It links decision evidence to realized outcomes and helps identify recurring policy tuning opportunities.
+- **Runs statuses require nuanced interpretation.**  
+  `SUCCESS_WITH_SKIPS` can be expected in no-data windows and should be validated step-by-step, not treated as a failure.
+
+---
+
+## 5) Core Concepts
 
 | Term | Plain-English meaning |
 |---|---|
@@ -64,12 +83,14 @@ Recommended daily sequence:
 | Coverage | "How complete is evaluated evidence?" |
 | Trust | "Is this reliable enough to use?" |
 | Proposal | "Suggested action pending controls." |
+| Decision | "Committee verdict plus structured reasons for a proposal." |
 | Risk Gate | "Are entries currently allowed?" |
+| Revalidation | "Final checks right before execution intent." |
 | Learning Ledger | "Why decisions changed and what happened next." |
 
 ---
 
-## 5) Active UI Pages (Current Sidebar)
+## 6) Active UI Pages (Current Sidebar)
 
 ### Dashboard
 - **Cockpit (`/cockpit`)**: daily command center.
@@ -78,7 +99,7 @@ Recommended daily sequence:
 
 ### Portfolio
 - **Live Portfolio Link (`/live-portfolio-config`)**: live-linked paper workflow controls.
-- **Live Portfolio Activity (`/live-portfolio-activity`)**: operational activity and status transitions.
+- **Live Portfolio Activity (`/live-portfolio-activity`)**: operational activity, lifecycle status transitions, and block reasons.
 - **Live Symbol Tracker (`/symbol-tracker`)**: symbol-first monitoring.
 
 ### Research
@@ -88,11 +109,11 @@ Recommended daily sequence:
 - **Parallel Worlds (`/parallel-worlds`)**: counterfactual policy analysis.
 
 ### Decision Executions
-- **AI Agent Decisions (`/decision-console`)**: decision logs and rationale.
-- **Learning Ledger (`/learning-ledger`)**: decision-to-outcome causality.
+- **AI Agent Decisions (`/decision-console`)**: decision logs, rationale, reason codes, and revalidation outcomes.
+- **Learning Ledger (`/learning-ledger`)**: decision-to-outcome causality and recurring motif review.
 
 ### Operations
-- **Runs (Audit) (`/runs`)**: run history and diagnostics.
+- **Runs (Audit) (`/runs`)**: run history, status interpretation, and step diagnostics.
 - **Debug (`/debug`)**: troubleshooting surfaces.
 
 ### Reference
@@ -100,7 +121,7 @@ Recommended daily sequence:
 
 ---
 
-## 6) Ask MIP Usage Guidance
+## 7) Ask MIP Usage Guidance
 
 Ask MIP should use the User Guide as primary truth for app behavior.
 
@@ -111,10 +132,11 @@ Best question format:
 - Include page, symbol, portfolio, and time window when possible.
 - Ask one concrete question at a time.
 - For live values, ask where to verify in UI.
+- Include status/reason-code text when asking why an action was blocked.
 
 ---
 
-## 7) Quick Troubleshooting
+## 8) Quick Troubleshooting
 
 | Symptom | First place to check |
 |---|---|
@@ -123,7 +145,8 @@ Best question format:
 | Decisions rejected unexpectedly | AI Agent Decisions + Learning Ledger |
 | Live-linked activity unclear | Live Portfolio Activity + Live Portfolio Link |
 | News impact confusion | News Intelligence |
+| Approved but not executed | AI Agent Decisions + Live Portfolio Activity + Runs |
 
 ---
 
-*Last updated: March 16, 2026*
+*Last updated: March 20, 2026*

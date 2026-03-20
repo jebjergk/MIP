@@ -1,33 +1,56 @@
 # 19. Runs (Audit Viewer)
 
-Monitor every pipeline run — when it happened, whether it succeeded, how long each step took, and what errors occurred. This is your pipeline health dashboard.
+Runs is MIP's operational truth source for both daily and intraday pipelines.
 
-## Daily / Intraday Toggle
+If a page looks stale, a trade did not execute, or a metric changed unexpectedly, verify here first.
 
-The page has a **Daily Pipeline / Intraday Pipeline** toggle at the top. Switch to "Intraday Pipeline" to see intraday-specific pipeline runs with their own metrics (bars ingested, signals generated, outcomes evaluated, compute time). The run list, filters, and detail panel all adapt to the selected pipeline type.
+## Daily / Intraday toggle
 
-## Left Panel: Run List
+Use the top toggle to switch between:
 
-A list of recent pipeline runs, showing status, time, and run ID. Click a run to see its details.
+- **Daily Pipeline**: end-of-day style learning and decision flow.
+- **Intraday Pipeline**: shorter-cycle updates with intraday bar/signal/evaluation stats.
 
-- **Status Badge** — Green (SUCCESS) = pipeline completed normally. Yellow (SUCCESS WITH SKIPS) = completed but some steps were skipped (e.g., no new data). Red (FAILED) = one or more steps had errors. Blue (RUNNING) = pipeline is currently in progress.
-- **Started Time** — When the run started, formatted as "Feb 07, 14:30".
-- **Run ID** — Unique identifier (first 8 characters shown). Useful for debugging.
+The run list, filters, summary cards, and step detail all follow the selected mode.
+
+## Left panel: run list
+
+Each row summarizes one run.
+
+- **Status badge**:
+  - `SUCCESS`: completed without blocking errors.
+  - `SUCCESS_WITH_SKIPS`: completed, but one or more steps were intentionally skipped (for example `NO_NEW_BARS`).
+  - `FAILED`: one or more steps failed.
+  - `RUNNING`: currently in progress.
+- **Started time**: run start timestamp in local UI format.
+- **Run ID**: unique run identifier (shortened in list, full ID in detail).
+
+Tip: `SUCCESS_WITH_SKIPS` is often normal during no-data windows and should be interpreted with step-level detail, not as an automatic incident.
 
 ## Filters
 
-Filter runs by **Status** (All, Failed, Success, Success with Skips, Running), **From date**, and **To date**.
+Filter by:
 
-## Right Panel: Run Detail
+- **Status** (All / Failed / Success / Success with skips / Running),
+- **From** date,
+- **To** date.
 
-When you click a run, the detail panel shows:
+Use date filtering when comparing behavior before/after a config or policy change.
 
-- **Summary Cards** — Status, Duration (total time in seconds), As-of (market data date), Portfolios (how many portfolios were processed), Errors (error count if any).
+## Right panel: run detail
 
-- **Run Summary Narrative** — An AI-generated or deterministic summary: headline, what happened, why, impact, and next check time.
+Selecting a run opens full diagnostics:
 
-- **Error Panel (if errors exist)** — Lists each error with event name, timestamp, error message, SQLSTATE code, and query ID. Useful for Snowflake debugging.
+- **Summary cards**: status, total duration, market as-of date, portfolio count, and error count.
+- **Run summary narrative**: deterministic/AI summary describing what changed, impact, and next checks.
+- **Error panel** (if present): event name, timestamp, SQLSTATE, query ID, and message.
+- **Step timeline**: every executed step in order, including status and duration.
+- **Step detail panel**: row counts, portfolio ID, timestamps, and full error context.
 
-- **Step Timeline** — A chronological list of every step the pipeline executed. Each shows: step name, status (pass/fail/skip), duration in seconds, and portfolio ID. Example: "SP_GENERATE_SIGNALS — 2.3s — Portfolio 1" means signal generation took 2.3 seconds and succeeded.
+## Fast triage workflow
 
-- **Step Detail Panel** — Click a step to see: duration (seconds + ms), rows affected, portfolio ID, timestamps, and error details if it failed.
+1. Confirm latest run status for the selected pipeline mode.
+2. Open the newest run and check summary cards + narrative.
+3. Inspect skipped or failed steps in timeline.
+4. Copy run ID and correlate with AI Agent Decisions / Live Portfolio Activity when needed.
+5. Escalate only after confirming whether behavior was expected (`NO_NEW_BARS`, policy block, freshness guard, etc.).

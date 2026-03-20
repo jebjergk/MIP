@@ -4,7 +4,7 @@ Every day, MIP runs an automated event sequence.
 
 If you remember only one thing, remember this chain:
 
-`Data -> Signals -> Outcomes -> Trust -> Proposals -> Execution -> Digest`
+`Data -> Signals -> Outcomes -> Trust -> Proposals -> Decisions -> Execution Flow -> Digest`
 
 ## Step-by-Step Event Flow
 
@@ -26,10 +26,13 @@ If you remember only one thing, remember this chain:
 6. **Generate proposals**  
    Eligible signals become trade proposals.
 
-7. **Apply risk + execute (paper/live flow dependent)**  
+7. **Committee decisions + revalidation**  
+   Committee verdicts and reason codes are applied before action intent.
+
+8. **Apply risk + execute (paper/live flow dependent)**  
    Gates and limits are checked before execution.
 
-8. **Publish narrative outputs**  
+9. **Publish narrative outputs**  
    Cockpit and related pages show what changed, what matters, and what to watch.
 
 ## Where You Can Verify Each Step In The UI
@@ -39,8 +42,9 @@ If you remember only one thing, remember this chain:
 | Ingest/run health | Runs (Audit Viewer) |
 | Signal generation | Market Timeline / AI Agent Decisions |
 | Outcome evaluation and learning metrics | Training Status |
-| Proposal and decision flow | AI Agent Decisions |
-| Gate and position behavior | Portfolio / Decision Console |
+| Proposal and committee decision flow | AI Agent Decisions |
+| Gate and execution lifecycle behavior | Live Portfolio Activity / Live Portfolio Link |
+| News context influence | News Intelligence / AI Agent Decisions |
 | Narrative summary | Cockpit |
 
 > **Weekends & Holidays:** If no new market data arrives (weekends, holidays), the pipeline still runs but skips signal generation. Training evaluation and digest generation still happen, so you'll always see a fresh AI narrative.

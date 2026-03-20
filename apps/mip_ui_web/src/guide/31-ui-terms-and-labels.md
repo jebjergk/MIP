@@ -18,16 +18,19 @@ This section defines common labels shown in MIP pages so Ask MIP can explain the
 - **Committee confidence**: confidence tier (`LOW`, `MEDIUM`, `HIGH`).
 - **Reason tags**: standardized reason codes explaining why a stance was produced.
 - **Actions to consider**: ordered, non-binding action suggestions based on current evidence.
+- **Revalidation outcome**: pass/fail status from last-moment checks before execution intent.
 
 ## Live workflow terms
 
 - **Live Portfolio Link**: configuration/control state for live-linked paper workflow.
 - **Live Portfolio Activity**: event stream of validation/execution lifecycle changes.
 - **Learning Ledger**: decision-to-outcome trace used for post-trade learning and accountability.
+- **Activation Guard**: readiness status layer that can block activity even with saved config.
 
 ## Runs and freshness terms
 
 - **Run status**: execution status for pipeline runs (`SUCCESS`, `FAILED`, `RUNNING`).
+- **Success with skips**: run completed but one or more steps were intentionally skipped (`SUCCESS_WITH_SKIPS`).
 - **Freshness**: recency indicator of data/snapshot relative to current time.
 
 ## Interpretation guidance

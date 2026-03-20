@@ -131,6 +131,7 @@
       <ol>
         <li><a href="#what">What MIP actually does</a></li>
         <li><a href="#sequence">Core event sequence (bottom-up)</a></li>
+        <li><a href="#whatsnew">What's newer in MIP</a></li>
         <li><a href="#concepts">Key concepts (no jargon)</a></li>
         <li><a href="#metrics">How to read MIP metrics</a></li>
         <li><a href="#pages">Page-by-page guide</a></li>
@@ -150,7 +151,7 @@
 
     <section id="sequence">
       <h2>2) The Core Event Sequence</h2>
-      <p><code>Market bars -&gt; Signals -&gt; Outcome evaluation -&gt; Training metrics -&gt; Trust -&gt; Proposals -&gt; Execution -&gt; Narrative</code></p>
+      <p><code>Market bars -&gt; Signals -&gt; Outcome evaluation -&gt; Training metrics -&gt; Trust -&gt; Proposals -&gt; Decisions -&gt; Execution flow -&gt; Narrative</code></p>
       <div class="flow">
         <div>1. Ingest bars</div>
         <div>2. Detect signals</div>
@@ -158,8 +159,8 @@
         <div>4. Update metrics</div>
         <div>5. Recompute trust</div>
         <div>6. Generate proposals</div>
-        <div>7. Risk + execution</div>
-        <div>8. Publish narrative</div>
+        <div>7. Committee decisions</div>
+        <div>8. Risk + execution</div>
       </div>
       <table>
         <thead>
@@ -170,6 +171,7 @@
           <tr><td>Signals generated</td><td>Market Timeline</td></tr>
           <tr><td>Learning metrics</td><td>Training Status</td></tr>
           <tr><td>Proposal decisions</td><td>AI Agent Decisions</td></tr>
+          <tr><td>News-driven context effects</td><td>News Intelligence + AI Agent Decisions</td></tr>
           <tr><td>Live workflow state</td><td>Live Portfolio Activity</td></tr>
           <tr><td>Portfolio-level impact</td><td>Performance Dashboard</td></tr>
           <tr><td>Day summary</td><td>Cockpit</td></tr>
@@ -177,8 +179,19 @@
       </table>
     </section>
 
+    <section id="whatsnew">
+      <h2>3) What's Newer In MIP</h2>
+      <ul>
+        <li><strong>News Intelligence is policy-aware context:</strong> it can adjust confidence/ranking and block entries in specific conditions, but does not bypass core trust/risk gates.</li>
+        <li><strong>Live-linked workflow has explicit lifecycle states:</strong> a proposal can pass committee review and still be blocked later by validation/freshness/approval constraints.</li>
+        <li><strong>Decision reasoning is more structured:</strong> reason codes and revalidation outcomes are first-class diagnostics.</li>
+        <li><strong>Learning Ledger closes the loop:</strong> decision-to-outcome chains are traceable for pattern review and policy tuning.</li>
+        <li><strong>Runs include expected skip behavior:</strong> <code>SUCCESS_WITH_SKIPS</code> can be normal during no-data windows.</li>
+      </ul>
+    </section>
+
     <section id="concepts">
-      <h2>3) Key Concepts (No Jargon Version)</h2>
+      <h2>4) Key Concepts (No Jargon Version)</h2>
       <table>
         <thead>
           <tr><th>Term</th><th>Meaning</th></tr>
@@ -190,14 +203,16 @@
           <tr><td>Coverage</td><td>"How much evidence is measurable already?"</td></tr>
           <tr><td>Trust</td><td>"Is this reliable enough to influence trading?"</td></tr>
           <tr><td>Proposal</td><td>Suggested trade before final checks.</td></tr>
+          <tr><td>Decision</td><td>Committee verdict + reason codes for that proposal.</td></tr>
           <tr><td>Risk Gate</td><td>SAFE / CAUTION / STOPPED safety state.</td></tr>
           <tr><td>Episode</td><td>A portfolio lifecycle segment.</td></tr>
+          <tr><td>Revalidation</td><td>Last-moment checks before execution intent.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="metrics">
-      <h2>4) How To Read MIP Metrics</h2>
+      <h2>5) How To Read MIP Metrics</h2>
       <ul>
         <li><strong>H1/H3/H5...</strong> represent average outcome after those forward windows.</li>
         <li><strong>Maturity</strong> is evidence confidence, not certainty.</li>
@@ -206,10 +221,14 @@
       <div class="note">
         Example: <code>Avg H5 = +0.008</code> means roughly +0.8% average after 5 periods.
       </div>
+      <ul>
+        <li><strong>APPROVED</strong> is not always <strong>EXECUTED</strong>; downstream checks can still block actions.</li>
+        <li>Recurring reason-code clusters usually indicate policy/freshness thresholds, not random events.</li>
+      </ul>
     </section>
 
     <section id="pages">
-      <h2>5) Page-by-Page Guide</h2>
+      <h2>6) Page-by-Page Guide</h2>
       <ul>
         <li><strong>Home:</strong> pre-flight checks and shortcuts.</li>
         <li><strong>Cockpit:</strong> what changed, what matters, what to watch.</li>
@@ -218,29 +237,30 @@
         <li><strong>Live Symbol Tracker:</strong> symbol-first monitoring and attention routing.</li>
         <li><strong>Market Timeline:</strong> signal-to-proposal-to-trade trail.</li>
         <li><strong>Runs:</strong> operational truth source and diagnostics.</li>
-        <li><strong>AI Agent Decisions:</strong> committee verdicts and reason codes.</li>
-        <li><strong>Live Portfolio Link:</strong> live-linked paper workflow controls.</li>
-        <li><strong>Live Portfolio Activity:</strong> workflow state transitions and status feed.</li>
-        <li><strong>Learning Ledger:</strong> decision-to-outcome causality and lessons.</li>
-        <li><strong>News Intelligence:</strong> evidence-backed news impact context.</li>
+        <li><strong>AI Agent Decisions:</strong> committee verdicts, reason codes, and revalidation outcomes.</li>
+        <li><strong>Live Portfolio Link:</strong> live-linked controls and activation guard readiness.</li>
+        <li><strong>Live Portfolio Activity:</strong> lifecycle status feed with block/delay reason fields.</li>
+        <li><strong>Learning Ledger:</strong> decision-to-outcome causality and recurring motifs.</li>
+        <li><strong>News Intelligence:</strong> evidence-backed news impact context and HOT indicators.</li>
       </ul>
     </section>
 
     <section id="routine">
-      <h2>6) Daily Operating Routine</h2>
+      <h2>7) Daily Operating Routine</h2>
       <ol>
         <li>Home: confirm latest successful run.</li>
         <li>Cockpit: read overnight changes.</li>
         <li>Performance Dashboard: review return and drawdown changes.</li>
         <li>Training Status: validate evidence quality.</li>
         <li>AI Agent Decisions: inspect accept/reject rationale.</li>
+        <li>Live Portfolio Activity: verify expected lifecycle transitions.</li>
         <li>Runs: verify details if anything seems wrong.</li>
       </ol>
     </section>
 
     <section id="ask">
-      <h2>7) Ask MIP Assistant</h2>
-      <p>Ask MIP is route-aware help. For better answers, include portfolio/symbol/time scope.</p>
+      <h2>8) Ask MIP Assistant</h2>
+      <p>Ask MIP is route-aware help. For better answers, include portfolio/symbol/time scope and status/reason fields when diagnosing specific rows.</p>
       <ul>
         <li>"Explain this page in plain English."</li>
         <li>"What does this metric mean and what is a healthy value?"</li>
@@ -249,7 +269,7 @@
     </section>
 
     <section id="examples">
-      <h2>8) Practical Examples</h2>
+      <h2>9) Practical Examples</h2>
       <h3>No trades today</h3>
       <ol>
         <li>Runs: confirm success/freshness.</li>
@@ -263,10 +283,17 @@
         <li>Compare run timestamps/as-of dates.</li>
         <li>Check for recent profile/cash lifecycle events.</li>
       </ol>
+      <h3>Approved but not executed</h3>
+      <ol>
+        <li>In AI Agent Decisions, confirm latest status + reason codes.</li>
+        <li>In Live Portfolio Activity, check downstream validation/compliance status.</li>
+        <li>In Runs, verify whether freshness or pipeline skips explain the block.</li>
+        <li>In Live Portfolio Link, confirm activation guard prerequisites.</li>
+      </ol>
     </section>
 
     <section id="troubleshooting">
-      <h2>9) Troubleshooting Shortlist</h2>
+      <h2>10) Troubleshooting Shortlist</h2>
       <table>
         <thead>
           <tr><th>Symptom</th><th>Likely cause</th><th>First check</th></tr>
@@ -275,13 +302,14 @@
           <tr><td>Digest looks old</td><td>Narrative behind current run</td><td>Cockpit + Runs</td></tr>
           <tr><td>No proposals</td><td>Weak evidence/trust or no fresh signals</td><td>Training + Timeline</td></tr>
           <tr><td>Proposals but no execution</td><td>Gate/limits/rejections</td><td>Portfolio + AI Agent Decisions</td></tr>
+          <tr><td>Approved but not executed</td><td>Downstream validation/revalidation block</td><td>AI Agent Decisions + Live Portfolio Activity + Runs</td></tr>
           <tr><td>Page looks stale</td><td>Data not refreshed yet</td><td>Runs + Home freshness cards</td></tr>
         </tbody>
       </table>
       <div class="note"><strong>Reminder:</strong> MIP is a learning system, not a certainty machine. Follow the event sequence when diagnosing issues.</div>
     </section>
 
-    <p class="footer">Last updated: March 16, 2026</p>
+    <p class="footer">Last updated: March 20, 2026</p>
   </main>
 </body>
 </html>

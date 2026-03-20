@@ -1,6 +1,6 @@
 # MIP Education Handbook
 
-Practical handbook for understanding how MIP works and how to operate it using the current, non-deprecated UI.
+Practical handbook for understanding MIP in plain English while keeping the full MIP learning style: analogies, examples, and decision flow illustrations.
 
 ---
 
@@ -8,12 +8,14 @@ Practical handbook for understanding how MIP works and how to operate it using t
 
 1. What MIP is
 2. How MIP learns from evidence
-3. Daily operating flow
-4. What's newer in MIP
-5. Core concepts
-6. Active UI pages and what each is for
-7. Ask MIP usage guidance
-8. Quick troubleshooting
+3. Illustrated pipeline map
+4. What's newly implemented (and how it changes operation)
+5. Daily operating playbook
+6. Core concepts and interpretation
+7. Page-by-page learning guide (current UI)
+8. Worked examples
+9. Ask MIP usage guidance
+10. Quick troubleshooting matrix
 
 ---
 
@@ -21,9 +23,17 @@ Practical handbook for understanding how MIP works and how to operate it using t
 
 MIP (Market Intelligence Platform) is an evidence-first decision system.
 
-It ingests market data, detects pattern-based signals, evaluates outcomes over future horizons, and uses measured evidence to inform proposals and decisions.
+It does not ask, "Can we predict exactly what price does next?"  
+It asks, "When this setup happened before, what usually happened next, and how reliable is that evidence?"
 
-MIP is primarily operated as a controlled paper-trading and decision-support environment.
+### Analogy: medical triage, not fortune telling
+
+- **Signals** are symptoms noticed by scanners.
+- **Training metrics** are the medical history and confidence scores.
+- **Committee decisions** are the treatment plan.
+- **Risk gates** are safety checks before action.
+
+MIP is primarily operated as a controlled paper-trading and decision-support environment, including live-linked workflow controls with explicit lifecycle governance.
 
 ---
 
@@ -31,121 +41,216 @@ MIP is primarily operated as a controlled paper-trading and decision-support env
 
 MIP learning loop:
 
-`Data -> Signals -> Outcome Evaluation -> Training Metrics -> Trust -> Proposals -> Decisions -> Review`
+`Data -> Signals -> Outcome Evaluation -> Training Metrics -> Trust -> Proposals -> Decisions -> Execution Flow -> Review`
 
-Key principles:
+### Key learning principles
 
 - Signals are observations, not automatic actions.
-- Outcomes are measured at fixed future horizons.
+- Outcomes are measured at fixed forward horizons.
 - Trust is earned by evidence quality and consistency.
-- Policy and risk gates can block actions even when signals exist.
+- Policy/risk gates remain authoritative even when signals are strong.
+- Realized outcomes are fed back via Learning Ledger for tuning.
 
 ---
 
-## 3) Daily Operating Flow
+## 3) Illustrated Pipeline Map
 
-Recommended daily sequence:
+Think of this as MIP's "airport flow" from check-in to takeoff:
 
-1. **Home**: confirm freshness and run status.
-2. **Cockpit**: review what changed and what needs attention.
-3. **Performance Dashboard**: compare return and drawdown trends.
-4. **Training Status**: validate evidence behind active opportunities.
-5. **AI Agent Decisions**: inspect accepts/rejects and rationale.
-6. **Live Portfolio Activity**: validate expected lifecycle transitions (if live-linked workflow is active).
-7. **Runs (Audit)**: verify pipeline details when something looks off.
+1. **Data arrives** (market bars ingested)
+2. **Candidates found** (signals generated)
+3. **Past evidence updated** (outcomes + maturity + coverage)
+4. **Eligibility determined** (trust/quality gates)
+5. **Actions drafted** (proposals)
+6. **Committee review** (verdict + reason codes)
+7. **Operational validation** (revalidation, approvals, freshness)
+8. **Execution path** (paper/live-linked workflow)
+9. **Learning trace** (ledger and retrospective causality)
 
----
+### Where to verify each stage in UI
 
-## 4) What's Newer in MIP
-
-Recent implemented behavior that operators should account for:
-
-- **News Intelligence now acts as policy-aware context.**  
-  It can influence ranking/confidence and block new entries in specific conditions, but never bypasses core risk/trust gates.
-- **Live-linked operations have explicit lifecycle stages.**  
-  A proposal can be approved and still be blocked later by validation, freshness, approvals, or execution controls.
-- **Reason-code interpretation is central to troubleshooting.**  
-  AI Agent Decisions and Live Portfolio Activity are meant to be read together when diagnosing "why not executed."
-- **Learning Ledger is now a practical retrospective tool.**  
-  It links decision evidence to realized outcomes and helps identify recurring policy tuning opportunities.
-- **Runs statuses require nuanced interpretation.**  
-  `SUCCESS_WITH_SKIPS` can be expected in no-data windows and should be validated step-by-step, not treated as a failure.
+| Pipeline stage | Primary page |
+|---|---|
+| Run freshness and step health | Runs (`/runs`) |
+| Signal and event context | Market Timeline (`/market-timeline`) |
+| Evidence quality/trust | Training Status (`/training`) |
+| Proposal to decision verdict | AI Agent Decisions (`/decision-console`) |
+| Lifecycle status transitions | Live Portfolio Activity (`/live-portfolio-activity`) |
+| Policy context from news | News Intelligence (`/news-intelligence`) |
+| Decision-to-outcome trace | Learning Ledger (`/learning-ledger`) |
 
 ---
 
-## 5) Core Concepts
+## 4) What's Newly Implemented (and Why It Matters)
 
-| Term | Plain-English meaning |
+This section keeps the handbook current to application functionality.
+
+### A) News Intelligence is now policy-aware context
+
+- News can influence ranking/confidence.
+- News can block new entries under configured conditions.
+- News **cannot** bypass trust/risk/policy gates.
+
+Operational impact: "HOT" is a context signal, not an auto-trade signal.
+
+### B) Live-linked flow has explicit lifecycle stages
+
+A proposal can be:
+
+`APPROVED -> delayed/blocked -> revalidated -> executed (or not)`
+
+Operational impact: "approved" no longer means "already executed."
+
+### C) Reason codes + revalidation are first-class diagnostics
+
+AI Agent Decisions and Live Portfolio Activity now provide structured reasons for each status outcome.
+
+Operational impact: investigate clusters of reason codes, not isolated rows.
+
+### D) Learning Ledger is now an active operating tool
+
+You can tie decision logic and evidence to realized outcomes and recurring motifs.
+
+Operational impact: weekly policy tuning can be evidence-backed instead of anecdotal.
+
+### E) Runs status interpretation is richer
+
+`SUCCESS_WITH_SKIPS` may be expected behavior in no-data windows.
+
+Operational impact: step-level context determines whether you have an incident.
+
+---
+
+## 5) Daily Operating Playbook
+
+### 5-minute morning loop
+
+1. **Home (`/home`)**: confirm recency/freshness.
+2. **Cockpit (`/cockpit`)**: identify what changed and where attention is needed.
+3. **Performance Dashboard (`/performance-dashboard`)**: check portfolio-level impact.
+4. **Training Status (`/training`)**: validate evidence quality behind active opportunities.
+5. **AI Agent Decisions (`/decision-console`)**: inspect verdicts, reasons, and revalidation.
+6. **Live Portfolio Activity (`/live-portfolio-activity`)**: confirm expected lifecycle transitions.
+7. **Runs (`/runs`)**: verify step health when anything looks inconsistent.
+
+### Weekly learning loop
+
+- Use **Learning Ledger** to identify recurring motifs.
+- Use **Parallel Worlds** to review counterfactual policy behavior.
+- Use **News Intelligence** to validate whether context adjustments are helping or over-blocking.
+
+---
+
+## 6) Core Concepts and Interpretation
+
+| Term | Practical meaning |
 |---|---|
 | Signal | "I detected a setup." |
 | Outcome | "What happened after that setup?" |
 | Maturity | "How much evidence do we have?" |
-| Coverage | "How complete is evaluated evidence?" |
-| Trust | "Is this reliable enough to use?" |
-| Proposal | "Suggested action pending controls." |
-| Decision | "Committee verdict plus structured reasons for a proposal." |
-| Risk Gate | "Are entries currently allowed?" |
-| Revalidation | "Final checks right before execution intent." |
-| Learning Ledger | "Why decisions changed and what happened next." |
+| Coverage | "How complete is measurable evidence?" |
+| Trust | "Is this reliable enough to influence decisions?" |
+| Proposal | Suggested action pending committee and policy checks. |
+| Decision | Committee verdict plus structured reason codes. |
+| Revalidation | Final checks before action intent can progress. |
+| Risk Gate | Safety state controlling new-entry allowance. |
+| Learning Ledger | Decision-to-outcome causality over time. |
+
+### Interpretation guardrails
+
+- Strong metrics do not override policy gates.
+- `APPROVED` is not equivalent to `EXECUTED`.
+- Always correlate decision rows with run context and activity lifecycle.
 
 ---
 
-## 6) Active UI Pages (Current Sidebar)
+## 7) Page-by-Page Learning Guide (Current UI)
 
 ### Dashboard
-- **Cockpit (`/cockpit`)**: daily command center.
-- **Home (`/home`)**: status and freshness checks.
-- **Performance (`/performance-dashboard`)**: cross-portfolio performance view.
+
+- **Home (`/home`)**: freshness, quick health check, launchpad.
+- **Cockpit (`/cockpit`)**: daily narrative and action routing.
+- **Performance (`/performance-dashboard`)**: return/drawdown trend interpretation.
 
 ### Portfolio
-- **Live Portfolio Link (`/live-portfolio-config`)**: live-linked paper workflow controls.
-- **Live Portfolio Activity (`/live-portfolio-activity`)**: operational activity, lifecycle status transitions, and block reasons.
-- **Live Symbol Tracker (`/symbol-tracker`)**: symbol-first monitoring.
+
+- **Live Portfolio Link (`/live-portfolio-config`)**: control layer for live-linked safety and readiness.
+- **Live Portfolio Activity (`/live-portfolio-activity`)**: lifecycle feed with delay/block reasons.
+- **Live Symbol Tracker (`/symbol-tracker`)**: symbol-first operational monitoring.
 
 ### Research
-- **Market Timeline (`/market-timeline`)**: symbol event history.
-- **News Intelligence (`/news-intelligence`)**: structured news context.
-- **Training Status (`/training`)**: evidence/maturity/trust context.
-- **Parallel Worlds (`/parallel-worlds`)**: counterfactual policy analysis.
+
+- **Market Timeline (`/market-timeline`)**: event chain by symbol.
+- **News Intelligence (`/news-intelligence`)**: context intelligence with guarded policy influence.
+- **Training Status (`/training`)**: evidence depth and trust posture.
+- **Parallel Worlds (`/parallel-worlds`)**: research-only counterfactual analysis.
 
 ### Decision Executions
-- **AI Agent Decisions (`/decision-console`)**: decision logs, rationale, reason codes, and revalidation outcomes.
-- **Learning Ledger (`/learning-ledger`)**: decision-to-outcome causality and recurring motif review.
 
-### Operations
-- **Runs (Audit) (`/runs`)**: run history, status interpretation, and step diagnostics.
-- **Debug (`/debug`)**: troubleshooting surfaces.
+- **AI Agent Decisions (`/decision-console`)**: verdicts, reason codes, revalidation outcomes.
+- **Learning Ledger (`/learning-ledger`)**: decision-to-outcome accountability and motif tracking.
 
-### Reference
-- **User Guide (`/guide`)**: in-app documentation.
+### Operations + Reference
 
----
-
-## 7) Ask MIP Usage Guidance
-
-Ask MIP should use the User Guide as primary truth for app behavior.
-
-If a term is not explicitly defined in the guide, Ask MIP may still provide a plain-language explanation and label it clearly as best-effort context.
-
-Best question format:
-
-- Include page, symbol, portfolio, and time window when possible.
-- Ask one concrete question at a time.
-- For live values, ask where to verify in UI.
-- Include status/reason-code text when asking why an action was blocked.
+- **Runs (`/runs`)**: run-status interpretation and step diagnostics.
+- **Debug (`/debug`)**: targeted troubleshooting tools.
+- **User Guide (`/guide`)**: route-aware in-app guide source.
 
 ---
 
-## 8) Quick Troubleshooting
+## 8) Worked Examples
 
-| Symptom | First place to check |
+### Example A: "No trades today"
+
+1. In **Runs**, verify latest run status and skipped-step context.
+2. In **Training Status**, inspect maturity/coverage/trust for active symbols.
+3. In **AI Agent Decisions**, inspect verdict and reason-code patterns.
+4. In **Live Portfolio Activity**, confirm whether downstream checks blocked progression.
+
+### Example B: "Approved but not executed"
+
+1. Read decision row in **AI Agent Decisions**.
+2. Find matching lifecycle row in **Live Portfolio Activity**.
+3. Correlate to same window in **Runs**.
+4. Confirm readiness fields in **Live Portfolio Link**.
+
+### Example C: "News looked important, but action was blocked"
+
+1. Review **News Intelligence** impact rows for actual evidence fields.
+2. Confirm reason codes in **AI Agent Decisions**.
+3. Verify gate/freshness state in **Live Portfolio Activity**.
+
+---
+
+## 9) Ask MIP Usage Guidance
+
+Ask MIP should treat the User Guide and these handbook definitions as primary behavior references.
+
+### Best question structure
+
+- include page route
+- include symbol and portfolio
+- include time window
+- include status/reason-code text when troubleshooting
+
+### Good prompt examples
+
+- "In `/decision-console`, portfolio 3, why was this action approved but not executed between 09:00-10:00?"
+- "In `/news-intelligence`, explain why ticker X is HOT but no action progressed."
+- "In `/runs`, explain whether `SUCCESS_WITH_SKIPS` at 16:05 is expected."
+
+---
+
+## 10) Quick Troubleshooting Matrix
+
+| Symptom | First checks |
 |---|---|
 | Data seems stale | Home + Runs |
 | Evidence looks weak | Training Status + Market Timeline |
 | Decisions rejected unexpectedly | AI Agent Decisions + Learning Ledger |
-| Live-linked activity unclear | Live Portfolio Activity + Live Portfolio Link |
-| News impact confusion | News Intelligence |
 | Approved but not executed | AI Agent Decisions + Live Portfolio Activity + Runs |
+| Live-linked activity unclear | Live Portfolio Activity + Live Portfolio Link |
+| News impact confusion | News Intelligence + AI Agent Decisions |
 
 ---
 

@@ -31,6 +31,8 @@ class AnswerSection:
 class AskContext:
     question: str
     route: str | None
+    page_title: str | None
+    page_hint: str | None
     history: list[dict[str, str]]
     normalized_tokens: list[str]
     intent: str

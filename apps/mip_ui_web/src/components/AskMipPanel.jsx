@@ -56,6 +56,8 @@ export default function AskMipPanel({ open, onClose, pathname }) {
         body: JSON.stringify({
           question,
           route: pathname || null,
+          page_title: guideSection?.title || null,
+          page_hint: guideSection?.markdown?.slice(0, 900) || null,
           history,
         }),
         signal: controller.signal,
@@ -178,7 +180,6 @@ export default function AskMipPanel({ open, onClose, pathname }) {
                 <>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                   <AskAnswerSections
-                    sections={msg.sections}
                     sources={msg.sources}
                     confidence={msg.confidence}
                   />

@@ -33,6 +33,7 @@ _UX_GLOSSARY_PATH = (
 )
 
 _cached_content: str | None = None
+_cached_sections: list[dict[str, str]] | None = None
 
 # Keep Ask MIP grounded only in active, non-deprecated guide sections.
 _ACTIVE_GUIDE_FILES = [
@@ -159,9 +160,24 @@ def get_guide_content() -> str:
         return _cached_content
 
     sections = []
+    section_rows: list[dict[str, str]] = []
     for f in md_files:
         try:
-            sections.append(f.read_text(encoding="utf-8"))
+            text = f.read_text(encoding="utf-8")
+            sections.append(text)
+            title = f.stem
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("# "):
+                    title = stripped.replace("# ", "", 1).strip()
+                    break
+            section_rows.append(
+                {
+                    "file": f.name,
+                    "title": title,
+                    "content": text,
+                }
+            )
         except Exception as exc:
             logger.error("Failed to read %s: %s", f.name, exc)
 
@@ -170,6 +186,8 @@ def get_guide_content() -> str:
         sections.append(extra_glossary)
 
     _cached_content = "\n\n---\n\n".join(sections)
+    global _cached_sections
+    _cached_sections = section_rows
     logger.info(
         "Loaded %d guide sections (%d chars) from %s",
         len(sections),
@@ -182,5 +200,15 @@ def get_guide_content() -> str:
 def reload_guide_content() -> str:
     """Force re-read from disk (useful after guide edits during development)."""
     global _cached_content
+    global _cached_sections
     _cached_content = None
+    _cached_sections = None
     return get_guide_content()
+
+
+def get_guide_sections() -> list[dict[str, str]]:
+    """Return active guide sections with filename/title/content metadata."""
+    global _cached_sections
+    if _cached_sections is None:
+        get_guide_content()
+    return _cached_sections or []

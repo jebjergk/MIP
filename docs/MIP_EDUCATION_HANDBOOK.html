@@ -5,161 +5,178 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MIP Education Handbook</title>
   <style>
-    body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f6f8fc; color: #1f2937; line-height: 1.55; }
-    main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
-    .hero { background: linear-gradient(135deg, #1d4ed8, #4338ca); color: #fff; border-radius: 12px; padding: 20px; margin-bottom: 14px; }
-    .card { background: #fff; border: 1px solid #dbe2f0; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
-    h1 { margin: 0 0 6px; font-size: 28px; }
-    h2 { color: #1e40af; margin: 0 0 10px; font-size: 22px; }
-    h3 { color: #1f3a8a; margin: 14px 0 8px; font-size: 18px; }
-    ul, ol { margin: 8px 0 10px 20px; }
+    body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #f4f7fc; color: #1f2937; line-height: 1.6; }
+    .cover {
+      min-height: 100vh;
+      background: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .cover h1 {
+      margin: 0;
+      color: #ffffff;
+      font-size: 92px;
+      letter-spacing: 16px;
+      font-weight: 700;
+    }
+    .page {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 28px 16px 46px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #1e3a8a, #4338ca);
+      color: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 12px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #dbe4f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    h2 { margin: 0 0 10px; color: #1e40af; font-size: 24px; }
+    h3 { margin: 14px 0 8px; color: #1f3a8a; font-size: 19px; }
+    h4 { margin: 10px 0 6px; color: #27437f; font-size: 16px; }
+    ul, ol { margin: 8px 0 12px 20px; }
     table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
-    th, td { border: 1px solid #dbe2f0; padding: 8px; text-align: left; vertical-align: top; }
-    th { background: #eef2ff; color: #1f3b8f; }
-    code { background: #eef2ff; border: 1px solid #dbe2f0; border-radius: 4px; padding: 1px 4px; }
+    th, td { border: 1px solid #dbe4f0; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #edf2ff; color: #1f3b8f; }
+    code { background: #eef2ff; border: 1px solid #dbe4f0; border-radius: 4px; padding: 1px 4px; }
+    .analogy { background: #eff6ff; border-left: 4px solid #2563eb; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+    .concept { background: #eefcf6; border-left: 4px solid #0f766e; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+    .important { background: #fff7ed; border-left: 4px solid #d97706; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+    .scenario { background: #f5f3ff; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
     .muted { color: #4b5563; font-size: 13px; text-align: right; }
+    .page-break { page-break-after: always; }
   </style>
 </head>
 <body>
-  <main>
+  <section class="cover page-break">
+    <h1>MIP</h1>
+  </section>
+
+  <main class="page">
     <section class="hero">
-      <h1>MIP Education Handbook</h1>
-      <p>Practical handbook for understanding MIP and operating the current, non-deprecated UI.</p>
+      <h1 style="margin:0 0 6px;font-size:30px;">MIP Education Handbook</h1>
+      <p style="margin:0;">Rich learning format with analogies and examples, updated to current implemented MIP behavior.</p>
     </section>
 
     <section class="card">
       <h2>Table of Contents</h2>
       <ol>
-        <li><a href="#what">What MIP is</a></li>
-        <li><a href="#learning">How MIP learns from evidence</a></li>
-        <li><a href="#daily">Daily operating flow</a></li>
-        <li><a href="#whatsnew">What's newer in MIP</a></li>
-        <li><a href="#concepts">Core concepts</a></li>
-        <li><a href="#pages">Active UI pages</a></li>
-        <li><a href="#ask">Ask MIP guidance</a></li>
-        <li><a href="#troubleshooting">Quick troubleshooting</a></li>
+        <li>What MIP Is</li>
+        <li>How MIP Learns From Evidence</li>
+        <li>Illustrated Pipeline</li>
+        <li>What Is Newly Implemented</li>
+        <li>Daily Operating Playbook</li>
+        <li>Worked Scenarios</li>
+        <li>Appendix A: Glossary</li>
+        <li>Appendix B: FAQ</li>
       </ol>
     </section>
 
-    <section id="what" class="card">
+    <section class="card">
       <h2>1) What MIP Is</h2>
-      <p>MIP is an evidence-first decision system that ingests market data, detects pattern-based signals, evaluates outcomes, and uses measured evidence to guide proposals and decisions.</p>
-      <p>MIP is primarily operated as a controlled paper-trading and decision-support environment.</p>
+      <p>MIP is an evidence-first decision system for research and controlled paper-trading workflows.</p>
+      <div class="analogy">
+        <strong>Analogy:</strong> MIP behaves like an air-traffic control tower. Signals are incoming flights, trust/risk are runway checks, and actions move only after full clearance.
+      </div>
     </section>
 
-    <section id="learning" class="card">
+    <section class="card">
       <h2>2) How MIP Learns From Evidence</h2>
-      <p><code>Data -&gt; Signals -&gt; Outcome Evaluation -&gt; Training Metrics -&gt; Trust -&gt; Proposals -&gt; Decisions -&gt; Review</code></p>
-      <ul>
-        <li>Signals are observations, not automatic actions.</li>
-        <li>Outcomes are measured at fixed future horizons.</li>
-        <li>Trust is earned by evidence quality and consistency.</li>
-        <li>Policy and risk gates can block actions even when signals exist.</li>
-      </ul>
+      <p><code>Data -&gt; Signals -&gt; Outcome Evaluation -&gt; Training Metrics -&gt; Trust -&gt; Proposals -&gt; Decisions -&gt; Execution Flow -&gt; Review</code></p>
+      <div class="concept">
+        Signals are observations. Decisions are governed by policy and operational checks. Learning Ledger connects decisions to realized outcomes for tuning.
+      </div>
     </section>
 
-    <section id="daily" class="card">
-      <h2>3) Daily Operating Flow</h2>
+    <section class="card">
+      <h2>3) Illustrated Pipeline</h2>
+      <table>
+        <thead><tr><th>Stage</th><th>Primary verification page</th></tr></thead>
+        <tbody>
+          <tr><td>Run health and freshness</td><td>Runs (<code>/runs</code>)</td></tr>
+          <tr><td>Signal/event context</td><td>Market Timeline (<code>/market-timeline</code>)</td></tr>
+          <tr><td>Evidence quality</td><td>Training Status (<code>/training</code>)</td></tr>
+          <tr><td>Committee decisions</td><td>AI Agent Decisions (<code>/decision-console</code>)</td></tr>
+          <tr><td>Lifecycle transitions</td><td>Live Portfolio Activity (<code>/live-portfolio-activity</code>)</td></tr>
+          <tr><td>News context impact</td><td>News Intelligence (<code>/news-intelligence</code>)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>4) What Is Newly Implemented</h2>
+      <ul>
+        <li>News Intelligence can influence ranking/confidence and block entries under configured policy conditions.</li>
+        <li>Live-linked workflow has explicit lifecycle states; approved actions can still be blocked later by validation/freshness/approvals.</li>
+        <li>Reason codes and revalidation outcomes are now first-class diagnostics.</li>
+        <li>Learning Ledger supports recurring motif analysis for policy tuning.</li>
+      </ul>
+      <div class="important">
+        <strong>Important:</strong> <code>SUCCESS_WITH_SKIPS</code> may be expected in no-data windows. Confirm step detail in Runs before treating as an incident.
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>5) Daily Operating Playbook</h2>
       <ol>
-        <li>Home: confirm freshness and run status.</li>
-        <li>Cockpit: review what changed and what needs attention.</li>
-        <li>Performance Dashboard: compare return and drawdown trends.</li>
-        <li>Training Status: validate evidence behind active opportunities.</li>
-        <li>AI Agent Decisions: inspect accepts/rejects and rationale.</li>
-        <li>Live Portfolio Activity: validate expected lifecycle transitions (if live-linked workflow is active).</li>
-        <li>Runs (Audit): verify pipeline details when something looks off.</li>
+        <li>Home: verify freshness.</li>
+        <li>Cockpit: check what changed.</li>
+        <li>Training Status: validate evidence quality.</li>
+        <li>AI Agent Decisions: inspect verdicts/reason codes.</li>
+        <li>Live Portfolio Activity: inspect lifecycle transitions.</li>
+        <li>Runs: verify step-level diagnostics.</li>
       </ol>
     </section>
 
-    <section id="whatsnew" class="card">
-      <h2>4) What's Newer in MIP</h2>
-      <ul>
-        <li><strong>News Intelligence now acts as policy-aware context:</strong> it can influence ranking/confidence and block new entries in specific conditions, but never bypasses core risk/trust gates.</li>
-        <li><strong>Live-linked operations have explicit lifecycle stages:</strong> a proposal can be approved and still be blocked later by validation, freshness, approvals, or execution controls.</li>
-        <li><strong>Reason-code interpretation is central to troubleshooting:</strong> AI Agent Decisions and Live Portfolio Activity are meant to be read together when diagnosing blocked actions.</li>
-        <li><strong>Learning Ledger is now a practical retrospective tool:</strong> it links decision evidence to realized outcomes and helps identify recurring policy tuning opportunities.</li>
-        <li><strong>Runs statuses require nuanced interpretation:</strong> <code>SUCCESS_WITH_SKIPS</code> can be expected in no-data windows and should be validated step-by-step.</li>
-      </ul>
+    <section class="card">
+      <h2>6) Worked Scenarios</h2>
+      <div class="scenario">
+        <h4>Scenario A: Approved but not executed</h4>
+        <ol>
+          <li>Check decision row and reason codes.</li>
+          <li>Check lifecycle block in Live Portfolio Activity.</li>
+          <li>Correlate with same run window in Runs.</li>
+        </ol>
+      </div>
+      <div class="scenario">
+        <h4>Scenario B: HOT news but no action</h4>
+        <ol>
+          <li>Check News Intelligence impact evidence.</li>
+          <li>Confirm reason-code pattern in AI Agent Decisions.</li>
+          <li>Validate policy/freshness state in activity feed.</li>
+        </ol>
+      </div>
     </section>
 
-    <section id="concepts" class="card">
-      <h2>5) Core Concepts</h2>
+    <section class="card">
+      <h2>Appendix A: Glossary</h2>
       <table>
-        <thead><tr><th>Term</th><th>Plain-English meaning</th></tr></thead>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td>Signal</td><td>"I detected a setup."</td></tr>
-          <tr><td>Outcome</td><td>"What happened after that setup?"</td></tr>
-          <tr><td>Maturity</td><td>"How much evidence do we have?"</td></tr>
-          <tr><td>Coverage</td><td>"How complete is evaluated evidence?"</td></tr>
-          <tr><td>Trust</td><td>"Is this reliable enough to use?"</td></tr>
-          <tr><td>Proposal</td><td>"Suggested action pending controls."</td></tr>
-          <tr><td>Decision</td><td>"Committee verdict plus structured reasons for a proposal."</td></tr>
-          <tr><td>Risk Gate</td><td>"Are entries currently allowed?"</td></tr>
-          <tr><td>Revalidation</td><td>"Final checks right before execution intent."</td></tr>
-          <tr><td>Learning Ledger</td><td>"Why decisions changed and what happened next."</td></tr>
+          <tr><td>Decision</td><td>Committee verdict plus structured reason codes.</td></tr>
+          <tr><td>Revalidation</td><td>Final checks before execution intent.</td></tr>
+          <tr><td>Learning Ledger</td><td>Decision-to-outcome trace for accountability and tuning.</td></tr>
+          <tr><td>Risk Gate</td><td>Safety state controlling whether new entries are allowed.</td></tr>
+          <tr><td>News Impact</td><td>Policy-bounded context effects on ranking/confidence/eligibility.</td></tr>
         </tbody>
       </table>
     </section>
 
-    <section id="pages" class="card">
-      <h2>6) Active UI Pages</h2>
-      <h3>Dashboard</h3>
-      <ul>
-        <li>Cockpit (<code>/cockpit</code>)</li>
-        <li>Home (<code>/home</code>)</li>
-        <li>Performance (<code>/performance-dashboard</code>)</li>
-      </ul>
-      <h3>Portfolio</h3>
-      <ul>
-        <li>Live Portfolio Link (<code>/live-portfolio-config</code>)</li>
-        <li>Live Portfolio Activity (<code>/live-portfolio-activity</code>) - lifecycle status transitions and block reasons</li>
-        <li>Live Symbol Tracker (<code>/symbol-tracker</code>)</li>
-      </ul>
-      <h3>Research</h3>
-      <ul>
-        <li>Market Timeline (<code>/market-timeline</code>)</li>
-        <li>News Intelligence (<code>/news-intelligence</code>)</li>
-        <li>Training Status (<code>/training</code>)</li>
-        <li>Parallel Worlds (<code>/parallel-worlds</code>)</li>
-      </ul>
-      <h3>Decision Executions</h3>
-      <ul>
-        <li>AI Agent Decisions (<code>/decision-console</code>) - reason codes and revalidation outcomes</li>
-        <li>Learning Ledger (<code>/learning-ledger</code>) - decision-to-outcome causality and motif review</li>
-      </ul>
-      <h3>Operations + Reference</h3>
-      <ul>
-        <li>Runs (Audit) (<code>/runs</code>) - status interpretation and step diagnostics</li>
-        <li>Debug (<code>/debug</code>)</li>
-        <li>User Guide (<code>/guide</code>)</li>
-      </ul>
-    </section>
-
-    <section id="ask" class="card">
-      <h2>7) Ask MIP Guidance</h2>
-      <p>Ask MIP should use the User Guide as primary truth for app behavior.</p>
-      <p>If a term is not explicitly defined in the guide, Ask MIP may still provide plain-language explanation and should label it as best-effort context.</p>
-      <ul>
-        <li>Include page, symbol, portfolio, and time window for precise answers.</li>
-        <li>Ask one concrete question at a time.</li>
-        <li>For live values, ask where to verify in UI.</li>
-        <li>Include status/reason-code text when asking why an action was blocked.</li>
-      </ul>
-    </section>
-
-    <section id="troubleshooting" class="card">
-      <h2>8) Quick Troubleshooting</h2>
-      <table>
-        <thead><tr><th>Symptom</th><th>First check</th></tr></thead>
-        <tbody>
-          <tr><td>Data seems stale</td><td>Home + Runs</td></tr>
-          <tr><td>Evidence looks weak</td><td>Training Status + Market Timeline</td></tr>
-          <tr><td>Decisions rejected unexpectedly</td><td>AI Agent Decisions + Learning Ledger</td></tr>
-          <tr><td>Live-linked activity unclear</td><td>Live Portfolio Activity + Live Portfolio Link</td></tr>
-          <tr><td>News impact confusion</td><td>News Intelligence</td></tr>
-          <tr><td>Approved but not executed</td><td>AI Agent Decisions + Live Portfolio Activity + Runs</td></tr>
-        </tbody>
-      </table>
+    <section class="card">
+      <h2>Appendix B: FAQ</h2>
+      <h4>Why was an action approved but not executed?</h4>
+      <p>Approval is not the final stage. Revalidation, freshness, and operational gates can still block progression.</p>
+      <h4>Does HOT mean immediate trade execution?</h4>
+      <p>No. HOT indicates decision-relevant context, not automatic gate bypass.</p>
     </section>
 
     <p class="muted">Last updated: March 20, 2026</p>

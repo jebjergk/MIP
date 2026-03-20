@@ -1,0 +1,11 @@
+use role MIP_ADMIN_ROLE;
+use database MIP;
+
+select
+  TERM_KEY,
+  DISPLAY_TERM,
+  CATEGORY,
+  DEFINITION_SHORT,
+  MIP_SPECIFIC_MEANING
+from MIP.APP.GLOSSARY_TERM
+where TERM_KEY = 'nav';

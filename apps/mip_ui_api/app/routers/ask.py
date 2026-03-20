@@ -36,6 +36,8 @@ class HistoryMessage(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
     route: str | None = None
+    page_title: str | None = None
+    page_hint: str | None = None
     history: list[HistoryMessage] = Field(default_factory=list)
 
 
@@ -254,7 +256,13 @@ def ask_mip_v2(req: AskRequest):
     model_name = get_askmip_model()
     try:
         history = [{"role": m.role, "content": m.content} for m in req.history[-10:]]
-        ctx, resolution = resolve_question(req.question, req.route, history)
+        ctx, resolution = resolve_question(
+            req.question,
+            req.route,
+            history,
+            page_title=req.page_title,
+            page_hint=req.page_hint,
+        )
         log_resolution_event(ctx, resolution)
         return AskV2Response(
             answer=resolution.answer,

@@ -177,7 +177,7 @@ def get_overview(
             join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = r.PATTERN_ID
             where r.TS >= %s
               and r.INTERVAL_MINUTES = %s
-              and pd.PATTERN_TYPE != 'BEARISH_MOMENTUM'
+              and pd.PATTERN_TYPE = 'MOMENTUM'
             group by r.SYMBOL, r.MARKET_TYPE
         ),
         proposal_counts as (
@@ -586,7 +586,7 @@ def get_detail(
                   and r.TS >= %s
                   and r.TS <= %s
                   and r.INTERVAL_MINUTES = %s
-                  and pd.PATTERN_TYPE != 'BEARISH_MOMENTUM'
+                  and pd.PATTERN_TYPE = 'MOMENTUM'
                 order by r.TS
                 """,
                 (symbol, market_type, window_start, window_end, interval_minutes),

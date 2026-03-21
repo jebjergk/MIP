@@ -20,6 +20,7 @@ declare
     v_rows_before number := 0;
     v_rows_after number := 0;
     v_inserted number := 0;
+    v_nr_rs resultset;
 begin
     select count(*)
       into :v_rows_before
@@ -28,6 +29,7 @@ begin
        and r.INTERVAL_MINUTES = :P_INTERVAL_MINUTES
        and r.TS::date = :P_EFFECTIVE_TO_TS::date;
 
+    -- (1) Momentum patterns via inline SQL
     insert into MIP.APP.RECOMMENDATION_LOG (
         PATTERN_ID,
         SYMBOL,
@@ -48,6 +50,7 @@ begin
         from MIP.APP.PATTERN_DEFINITION p
         where coalesce(p.IS_ACTIVE, 'N') = 'Y'
           and coalesce(p.ENABLED, true)
+          and p.PATTERN_TYPE = 'MOMENTUM'
           and upper(coalesce(p.PARAMS_JSON:market_type::string, 'STOCK')) = upper(:P_MARKET_TYPE)
           and coalesce(p.PARAMS_JSON:interval_minutes::number, 1440) = :P_INTERVAL_MINUTES
     ),
@@ -121,6 +124,39 @@ begin
           and r.INTERVAL_MINUTES = s.INTERVAL_MINUTES
           and r.TS = s.TS
     );
+
+    -- (2) Non-momentum patterns via SP dispatch
+    v_nr_rs := (
+        select PATTERN_ID, PATTERN_TYPE
+        from MIP.APP.PATTERN_DEFINITION
+        where coalesce(IS_ACTIVE, 'N') = 'Y'
+          and coalesce(ENABLED, true)
+          and PATTERN_TYPE in ('MEAN_REVERSION', 'BEARISH_MOMENTUM', 'ORB', 'PULLBACK_CONTINUATION')
+          and upper(coalesce(PARAMS_JSON:market_type::string, 'STOCK')) = upper(:P_MARKET_TYPE)
+          and coalesce(PARAMS_JSON:interval_minutes::number, 1440) = :P_INTERVAL_MINUTES
+    );
+    let v_nr_cursor cursor for v_nr_rs;
+    for nr_row in v_nr_cursor do
+        let v_det_pid number := nr_row.PATTERN_ID;
+        let v_det_type string := nr_row.PATTERN_TYPE;
+        if (v_det_type = 'MEAN_REVERSION') then
+            call MIP.APP.SP_DETECT_MEAN_REVERSION(
+                :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+            );
+        elseif (v_det_type = 'BEARISH_MOMENTUM') then
+            call MIP.APP.SP_DETECT_BEARISH_MOMENTUM(
+                :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+            );
+        elseif (v_det_type = 'ORB') then
+            call MIP.APP.SP_DETECT_ORB(
+                :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+            );
+        elseif (v_det_type = 'PULLBACK_CONTINUATION') then
+            call MIP.APP.SP_DETECT_PULLBACK_CONTINUATION(
+                :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+            );
+        end if;
+    end for;
 
     select count(*)
       into :v_rows_after

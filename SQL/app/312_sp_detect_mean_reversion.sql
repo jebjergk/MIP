@@ -1,6 +1,7 @@
 -- 312_sp_detect_mean_reversion.sql
--- Purpose: Mean-Reversion Overshoot detector for intraday pipeline.
+-- Purpose: Mean-Reversion Overshoot detector for intraday and daily pipelines.
 -- Detects extreme deviations from a short-term rolling average (VWAP proxy).
+-- For daily (1440) intervals, uses cross-day rolling window instead of intraday session partitioning.
 -- Writes to RECOMMENDATION_LOG with rich DETAILS for the learning loop.
 
 use role MIP_ADMIN_ROLE;
@@ -24,10 +25,16 @@ declare
     v_min_bars_for_anchor     number;
     v_direction               string;
     v_as_of_ts                timestamp_ntz;
+    v_effective_cap           timestamp_ntz;
     v_before                  number;
     v_after                   number;
     v_inserted                number := 0;
 begin
+    select EFFECTIVE_TO_TS into :v_effective_cap
+      from MIP.APP.RUN_SCOPE_OVERRIDE
+     where RUN_ID = :v_run_id
+     limit 1;
+
     select
         coalesce(PARAMS_JSON:anchor_window::number, 6),
         coalesce(PARAMS_JSON:deviation_threshold_pct::float, 0.008),
@@ -41,7 +48,8 @@ begin
     select max(TS) into :v_as_of_ts
       from MIP.MART.MARKET_BARS
      where MARKET_TYPE = :P_MARKET_TYPE
-       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES;
+       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES
+       and (:v_effective_cap is null or TS <= :v_effective_cap);
 
     if (v_as_of_ts is null) then
         return object_construct('status', 'SKIP', 'reason', 'NO_BARS', 'pattern_id', :P_PATTERN_ID);
@@ -52,7 +60,6 @@ begin
      where PATTERN_ID = :P_PATTERN_ID
        and INTERVAL_MINUTES = :P_INTERVAL_MINUTES;
 
-    -- Stage bars with session numbering so we can self-join for the rolling anchor.
     create or replace temporary table MIP.APP.TMP_MEANREV_BARS as
     select
         SYMBOL,
@@ -60,14 +67,18 @@ begin
         TS,
         OPEN, HIGH, LOW, CLOSE, VOLUME,
         TS::date as SESSION_DATE,
-        row_number() over (
-            partition by SYMBOL, MARKET_TYPE, TS::date
-            order by TS
-        ) as SESSION_BAR_NUM
+        case
+            when :P_INTERVAL_MINUTES >= 1440
+            then row_number() over (partition by SYMBOL, MARKET_TYPE order by TS)
+            else row_number() over (partition by SYMBOL, MARKET_TYPE, TS::date order by TS)
+        end as SESSION_BAR_NUM
     from MIP.MART.MARKET_BARS
     where MARKET_TYPE = :P_MARKET_TYPE
       and INTERVAL_MINUTES = :P_INTERVAL_MINUTES
-      and TS >= dateadd(day, -3, :v_as_of_ts);
+      and TS >= dateadd(day,
+          case when :P_INTERVAL_MINUTES >= 1440 then -90 else -3 end,
+          :v_as_of_ts)
+      and (:v_effective_cap is null or TS <= :v_effective_cap);
 
     insert into MIP.APP.RECOMMENDATION_LOG (
         PATTERN_ID, SYMBOL, MARKET_TYPE, INTERVAL_MINUTES, TS, SCORE, DETAILS
@@ -93,7 +104,6 @@ begin
             from MIP.APP.TMP_MEANREV_BARS w
             where w.SYMBOL = b.SYMBOL
               and w.MARKET_TYPE = b.MARKET_TYPE
-              and w.SESSION_DATE = b.SESSION_DATE
               and w.SESSION_BAR_NUM between (b.SESSION_BAR_NUM - :v_anchor_window + 1)
                                         and b.SESSION_BAR_NUM
               and w.SESSION_BAR_NUM >= 1
@@ -153,7 +163,9 @@ begin
             )
         )
     from deviations
-    where TS >= dateadd(day, -3, :v_as_of_ts)
+    where TS >= dateadd(day,
+        case when :P_INTERVAL_MINUTES >= 1440 then -1 else -3 end,
+        :v_as_of_ts)
       and (:v_direction = 'BOTH' or REVERSION_DIRECTION = :v_direction)
       and not exists (
           select 1 from MIP.APP.RECOMMENDATION_LOG r

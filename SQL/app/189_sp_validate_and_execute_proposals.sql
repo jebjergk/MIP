@@ -320,6 +320,20 @@ begin
               and p.STATUS = 'PROPOSED'
               and array_size(v.validation_errors) = 0
         ),
+        pattern_info as (
+            select
+                c.PROPOSAL_ID,
+                pd.NAME as PATTERN_NAME,
+                pd.PATTERN_TYPE,
+                pd.LAST_HIT_RATE,
+                pd.LAST_AVG_RETURN,
+                pd.LAST_TRADE_COUNT
+            from candidate c
+            join MIP.AGENT_OUT.ORDER_PROPOSALS op
+              on op.PROPOSAL_ID = c.PROPOSAL_ID
+            left join MIP.APP.PATTERN_DEFINITION pd
+              on pd.PATTERN_ID = op.SIGNAL_PATTERN_ID
+        ),
         llm_raw as (
             select
                 c.PROPOSAL_ID,
@@ -334,6 +348,18 @@ begin
                     || '"summary":"...",'
                     || '"reason_codes":["..."],'
                     || '"agent_dialogue":[{"role":"...","message":"..."}]}'
+                    || ' Rules: Evaluate this signal based on its pattern type. '
+                    || case
+                        when pi.PATTERN_TYPE = 'MEAN_REVERSION' then
+                            'This is a MEAN-REVERSION setup: price deviated significantly from its average and is expected to snap back. A declining price is the SETUP, not a reason to block. '
+                        when pi.PATTERN_TYPE = 'PULLBACK_CONTINUATION' then
+                            'This is a PULLBACK CONTINUATION setup: after a strong move, price pulled back and is resuming the trend. '
+                        when pi.PATTERN_TYPE = 'ORB' then
+                            'This is an OPENING RANGE BREAKOUT: price broke out of its opening range. '
+                        else
+                            'This is a MOMENTUM/TREND-FOLLOWING setup: price shows strong directional momentum with new highs and consecutive positive returns. '
+                       end
+                    || 'Be strict and risk-aware. '
                     || ' Context: '
                     || to_json(
                         object_construct(
@@ -343,6 +369,13 @@ begin
                             'target_weight', c.TARGET_WEIGHT,
                             'source_signals', c.SOURCE_SIGNALS,
                             'rationale', c.RATIONALE,
+                            'pattern_strategy', object_construct(
+                                'pattern_name', pi.PATTERN_NAME,
+                                'pattern_type', pi.PATTERN_TYPE,
+                                'historical_hit_rate', pi.LAST_HIT_RATE,
+                                'historical_avg_return', pi.LAST_AVG_RETURN,
+                                'historical_trade_count', pi.LAST_TRADE_COUNT
+                            ),
                             'parallel_worlds_evidence', object_construct(
                                 'as_of_ts', (
                                     select max(d.AS_OF_TS)
@@ -412,6 +445,7 @@ begin
                     )
                 ) as RESPONSE
             from candidate c
+            left join pattern_info pi on pi.PROPOSAL_ID = c.PROPOSAL_ID
         ),
         parsed as (
             with normalized as (

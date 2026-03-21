@@ -80,6 +80,39 @@ begin
             null
         );
 
+        -- Dispatch to non-MOMENTUM pattern detectors (MEAN_REVERSION, BEARISH_MOMENTUM, etc.)
+        let v_mr_rs resultset := (
+            select PATTERN_ID, PATTERN_TYPE
+            from MIP.APP.PATTERN_DEFINITION
+            where coalesce(IS_ACTIVE, 'N') = 'Y'
+              and coalesce(ENABLED, true)
+              and PATTERN_TYPE in ('MEAN_REVERSION', 'ORB', 'PULLBACK_CONTINUATION', 'BEARISH_MOMENTUM')
+              and upper(coalesce(PARAMS_JSON:market_type::string, 'STOCK')) = upper(:P_MARKET_TYPE)
+              and coalesce(PARAMS_JSON:interval_minutes::number, 1440) = :P_INTERVAL_MINUTES
+        );
+        let v_mr_cursor cursor for v_mr_rs;
+        for mr_row in v_mr_cursor do
+            let v_det_pid number := mr_row.PATTERN_ID;
+            let v_det_type string := mr_row.PATTERN_TYPE;
+            if (v_det_type = 'MEAN_REVERSION') then
+                call MIP.APP.SP_DETECT_MEAN_REVERSION(
+                    :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+                );
+            elseif (v_det_type = 'ORB') then
+                call MIP.APP.SP_DETECT_ORB(
+                    :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+                );
+            elseif (v_det_type = 'PULLBACK_CONTINUATION') then
+                call MIP.APP.SP_DETECT_PULLBACK_CONTINUATION(
+                    :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+                );
+            elseif (v_det_type = 'BEARISH_MOMENTUM') then
+                call MIP.APP.SP_DETECT_BEARISH_MOMENTUM(
+                    :v_det_pid, :P_MARKET_TYPE, :P_INTERVAL_MINUTES, :P_PARENT_RUN_ID
+                );
+            end if;
+        end for;
+
         select count(*)
           into :v_rows_after
           from MIP.APP.RECOMMENDATION_LOG

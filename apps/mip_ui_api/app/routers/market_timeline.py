@@ -174,8 +174,10 @@ def get_overview(
                 count(*) as signal_count,
                 count(case when r.TS::date = %s then 1 end) as latest_bar_signal_count
             from MIP.APP.RECOMMENDATION_LOG r
+            join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = r.PATTERN_ID
             where r.TS >= %s
               and r.INTERVAL_MINUTES = %s
+              and pd.PATTERN_TYPE != 'BEARISH_MOMENTUM'
             group by r.SYMBOL, r.MARKET_TYPE
         ),
         proposal_counts as (
@@ -578,11 +580,13 @@ def get_detail(
                     r.SCORE,
                     r.GENERATED_AT
                 from MIP.APP.RECOMMENDATION_LOG r
+                join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = r.PATTERN_ID
                 where r.SYMBOL = %s
                   and r.MARKET_TYPE = %s
                   and r.TS >= %s
                   and r.TS <= %s
                   and r.INTERVAL_MINUTES = %s
+                  and pd.PATTERN_TYPE != 'BEARISH_MOMENTUM'
                 order by r.TS
                 """,
                 (symbol, market_type, window_start, window_end, interval_minutes),

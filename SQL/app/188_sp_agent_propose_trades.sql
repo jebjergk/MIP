@@ -168,6 +168,11 @@ begin
     end;
     if (:v_latest_daily_bar_ts is not null) then
         v_daily_bar_age_hours := datediff('hour', :v_latest_daily_bar_ts, current_timestamp());
+        -- Extend threshold over weekends: if latest bar is Friday (dayofweek=5),
+        -- add 48h so Saturday/Sunday/Monday-morning runs aren't falsely stale.
+        if (dayofweek(:v_latest_daily_bar_ts) = 5) then
+            v_daily_bar_max_age_hours := :v_daily_bar_max_age_hours + 48;
+        end if;
     end if;
     v_daily_data_stale := (
         :v_latest_daily_bar_ts is null

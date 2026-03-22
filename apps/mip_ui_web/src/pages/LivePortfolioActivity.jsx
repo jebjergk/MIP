@@ -526,7 +526,7 @@ export default function LivePortfolioActivity() {
           portfolio_id: Number(portfolioId),
           symbol,
           reason: 'Manual sell from Live Portfolio Activity open-positions table',
-          auto_submit: false,
+          auto_submit: true,
         }),
       })
       if (!resp.ok) {
@@ -535,7 +535,8 @@ export default function LivePortfolioActivity() {
       }
       const data = await resp.json()
       const actionId = data?.action_id || 'new'
-      setNotice(`Exit decision created for ${symbol} (action ${actionId}). Use Committee revalidation then Submit.`)
+      const autoStatus = data?.auto_submit?.status || data?.status || ''
+      setNotice(`Exit order submitted for ${symbol} (action ${actionId}). Status: ${autoStatus}`)
       await load()
     } catch (e) {
       setError(e.message || 'Create exit action failed.')

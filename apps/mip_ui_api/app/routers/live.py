@@ -8177,6 +8177,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         broker_submit_payload = None
         broker_truth_check = None
         if use_ibkr_submit:
+            ibkr_entry_price = None if is_exit else (float(entry_price) if entry_price is not None else None)
             submit_attempt_payload = {
                 "account": str(account_id),
                 "symbol": str(action.get("SYMBOL")),
@@ -8185,6 +8186,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "exit_type": exit_type,
                 "qty": qty_ordered,
                 "entry_price": float(entry_price) if entry_price is not None else None,
+                "ibkr_entry_price": ibkr_entry_price,
+                "ibkr_order_type": "MKT" if is_exit else "LMT",
                 "tp_price": float(tp_price) if tp_price is not None else None,
                 "sl_price": float(sl_price) if sl_price is not None else None,
                 "tif": "DAY",
@@ -8199,6 +8202,18 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "child_tif": os.getenv("IBKR_EXEC_CHILD_TIF", "GTC").upper(),
                 },
             }
+
+            if is_exit:
+                pre_exit_cancel_result = None
+                try:
+                    pre_exit_cancel_result = _cancel_ibkr_open_orders(
+                        account=str(account_id),
+                        symbol=str(action.get("SYMBOL")),
+                    )
+                except Exception as cancel_exc:
+                    pre_exit_cancel_result = {"warning": f"Pre-exit bracket cancel failed (non-fatal): {cancel_exc}"}
+                submit_attempt_payload["pre_exit_cancel_result"] = pre_exit_cancel_result
+
             cur.execute(
                 """
                 insert into MIP.LIVE.BROKER_EVENT_LEDGER (
@@ -8228,7 +8243,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     symbol=str(action.get("SYMBOL")),
                     side=side,
                     qty=qty_ordered,
-                    entry_price=float(entry_price) if entry_price is not None else None,
+                    entry_price=ibkr_entry_price,
                     tp_price=float(tp_price) if tp_price is not None else None,
                     sl_price=float(sl_price) if sl_price is not None else None,
                     tif="DAY",

@@ -131,6 +131,10 @@ create table if not exists MIP.APP.PORTFOLIO_POSITIONS (
 -- Add EPISODE_ID column if missing (migration for existing deployments)
 alter table MIP.APP.PORTFOLIO_POSITIONS add column if not exists EPISODE_ID number;
 
+-- Add SL/TP columns from committee output (migration for existing deployments)
+alter table MIP.APP.PORTFOLIO_POSITIONS add column if not exists STOP_LOSS_PCT float;
+alter table MIP.APP.PORTFOLIO_POSITIONS add column if not exists TAKE_PROFIT_PCT float;
+
 -----------------------------
 -- 3. PORTFOLIO_TRADES
 -----------------------------

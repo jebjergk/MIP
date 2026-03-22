@@ -603,7 +603,8 @@ begin
                     else 'STOCK'
                 end as MARKET_TYPE_GROUP
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
-            -- No RUN_ID filter - view is already date-scoped to latest TS
+            join MIP.APP.PATTERN_DEFINITION pd
+              on pd.PATTERN_ID = s.PATTERN_ID
             cross join news_cfg cfg
             left join news_latest nl
               on nl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
@@ -611,6 +612,11 @@ begin
               on nfl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
             left join news_agg_latest na
               on na.RECOMMENDATION_ID = s.RECOMMENDATION_ID
+            where (
+                pd.PATTERN_TYPE = 'MOMENTUM'
+                or (pd.PATTERN_TYPE = 'MEAN_REVERSION'
+                    and coalesce(s.DETAILS:direction::string, '') = 'BULLISH')
+            )
         ),
         symbol_local_health as (
             select

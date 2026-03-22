@@ -334,6 +334,33 @@ begin
             left join MIP.APP.PATTERN_DEFINITION pd
               on pd.PATTERN_ID = op.SIGNAL_PATTERN_ID
         ),
+        conflict_signals as (
+            select
+                c.PROPOSAL_ID,
+                array_agg(
+                    object_construct(
+                        'pattern_type', cpd.PATTERN_TYPE,
+                        'pattern_name', cpd.NAME,
+                        'direction', coalesce(rl.DETAILS:direction::string, 'N/A'),
+                        'score', rl.SCORE,
+                        'deviation_pct', rl.DETAILS:deviation_pct::float
+                    )
+                ) within group (order by rl.SCORE desc) as CONFLICTS
+            from candidate c
+            join MIP.AGENT_OUT.ORDER_PROPOSALS op
+              on op.PROPOSAL_ID = c.PROPOSAL_ID
+            join MIP.APP.RECOMMENDATION_LOG rl
+              on rl.SYMBOL = c.SYMBOL
+             and rl.MARKET_TYPE = c.MARKET_TYPE
+             and rl.TS = op.SIGNAL_TS
+             and rl.INTERVAL_MINUTES = 1440
+            join MIP.APP.PATTERN_DEFINITION cpd
+              on cpd.PATTERN_ID = rl.PATTERN_ID
+            where cpd.PATTERN_TYPE = 'BEARISH_MOMENTUM'
+               or (cpd.PATTERN_TYPE = 'MEAN_REVERSION'
+                   and coalesce(rl.DETAILS:direction::string, '') = 'BEARISH')
+            group by c.PROPOSAL_ID
+        ),
         llm_raw as (
             select
                 c.PROPOSAL_ID,
@@ -343,23 +370,40 @@ begin
                     || '{"should_enter":true|false,'
                     || '"size_factor":0.0-1.0,'
                     || '"target_return":number,'
+                    || '"stop_loss_pct":number,'
                     || '"hold_bars":integer,'
                     || '"early_exit_target_return":number,'
                     || '"summary":"...",'
                     || '"reason_codes":["..."],'
                     || '"agent_dialogue":[{"role":"...","message":"..."}]}'
                     || ' Rules: Evaluate this signal based on its pattern type. '
+                    || 'stop_loss_pct must be a positive number representing the maximum acceptable loss as a fraction (e.g., 0.03 = 3%). '
                     || case
                         when pi.PATTERN_TYPE = 'MEAN_REVERSION' then
-                            'This is a MEAN-REVERSION setup: price deviated significantly from its average and is expected to snap back. A declining price is the SETUP, not a reason to block. '
+                            'This is a MEAN-REVERSION BULLISH setup: price deviated significantly below its rolling average and is expected to snap back upward. '
+                            || 'SL/TP guidance: Set tight stop_loss_pct (0.01-0.02, i.e., 1-2%) below the deviation trough — if price drops further the thesis is failing. '
+                            || 'target_return should be the distance back to the VWAP proxy (the deviation closing to ~0%). '
+                            || 'hold_bars should be short (1-3 bars) — if the snap does not happen quickly, the thesis weakens. '
+                            || 'Reduce size_factor (0.3-0.7) to reflect the contrarian risk of buying into weakness. '
                         when pi.PATTERN_TYPE = 'PULLBACK_CONTINUATION' then
                             'This is a PULLBACK CONTINUATION setup: after a strong move, price pulled back and is resuming the trend. '
+                            || 'SL/TP guidance: Set stop_loss_pct at 0.02-0.04 (2-4%) below the pullback low. hold_bars 3-7 bars. '
                         when pi.PATTERN_TYPE = 'ORB' then
                             'This is an OPENING RANGE BREAKOUT: price broke out of its opening range. '
+                            || 'SL/TP guidance: Set stop_loss_pct at 0.02-0.03 (2-3%). hold_bars 1-5 bars. '
                         else
                             'This is a MOMENTUM/TREND-FOLLOWING setup: price shows strong directional momentum with new highs and consecutive positive returns. '
+                            || 'SL/TP guidance: Set stop_loss_pct at 0.03-0.05 (3-5%) to give the trend room to breathe. '
+                            || 'target_return based on trend continuation projection. hold_bars 5-10 bars. '
                        end
                     || 'Be strict and risk-aware. '
+                    || iff(
+                        cs.CONFLICTS is not null and array_size(cs.CONFLICTS) > 0,
+                        'WARNING: Conflicting bearish signals detected for this symbol at the same timestamp. '
+                        || 'BEARISH_MOMENTUM or MEAN_REVERSION BEARISH patterns are firing, indicating downward pressure. '
+                        || 'Factor this conflict into your decision — it may warrant blocking entry, reducing size, or tightening stop loss. ',
+                        ''
+                       )
                     || ' Context: '
                     || to_json(
                         object_construct(
@@ -369,6 +413,7 @@ begin
                             'target_weight', c.TARGET_WEIGHT,
                             'source_signals', c.SOURCE_SIGNALS,
                             'rationale', c.RATIONALE,
+                            'conflict_signals', coalesce(cs.CONFLICTS, array_construct()),
                             'pattern_strategy', object_construct(
                                 'pattern_name', pi.PATTERN_NAME,
                                 'pattern_type', pi.PATTERN_TYPE,
@@ -446,6 +491,7 @@ begin
                 ) as RESPONSE
             from candidate c
             left join pattern_info pi on pi.PROPOSAL_ID = c.PROPOSAL_ID
+            left join conflict_signals cs on cs.PROPOSAL_ID = c.PROPOSAL_ID
         ),
         parsed as (
             with normalized as (
@@ -481,6 +527,7 @@ begin
             coalesce(p.OUT_JSON:should_enter::boolean, true) as SHOULD_ENTER,
             least(greatest(coalesce(p.OUT_JSON:size_factor::float, 1.0), 0.0), 1.0) as SIZE_FACTOR,
             p.OUT_JSON:target_return::float as TARGET_RETURN,
+            greatest(coalesce(p.OUT_JSON:stop_loss_pct::float, 0.03), 0.005) as STOP_LOSS_PCT,
             p.OUT_JSON:hold_bars::number as HOLD_BARS,
             p.OUT_JSON:early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN,
             coalesce(p.OUT_JSON:summary::string, 'Committee fallback: deterministic path (Cortex unavailable/unparseable).') as SUMMARY,
@@ -508,6 +555,7 @@ begin
                 true as SHOULD_ENTER,
                 1.0 as SIZE_FACTOR,
                 null::float as TARGET_RETURN,
+                0.03::float as STOP_LOSS_PCT,
                 null::number as HOLD_BARS,
                 null::float as EARLY_EXIT_TARGET_RETURN,
                 'Committee fallback: deterministic path (Cortex unavailable).' as SUMMARY,
@@ -531,6 +579,7 @@ begin
             c.SHOULD_ENTER,
             c.SIZE_FACTOR,
             iff(c.TARGET_RETURN is not null and c.TARGET_RETURN > 0, c.TARGET_RETURN, null) as TARGET_RETURN,
+            greatest(coalesce(c.STOP_LOSS_PCT, 0.03), 0.005) as STOP_LOSS_PCT,
             c.HOLD_BARS,
             c.EARLY_EXIT_TARGET_RETURN,
             c.SUMMARY,
@@ -545,6 +594,7 @@ begin
             b.SHOULD_ENTER,
             b.SIZE_FACTOR,
             b.TARGET_RETURN,
+            b.STOP_LOSS_PCT,
             b.HOLD_BARS,
             iff(
                 b.EARLY_EXIT_TARGET_RETURN is null,
@@ -601,6 +651,7 @@ begin
                    'should_enter', c.SHOULD_ENTER,
                    'size_factor', c.SIZE_FACTOR,
                    'target_return', c.TARGET_RETURN,
+                   'stop_loss_pct', c.STOP_LOSS_PCT,
                    'hold_bars', c.HOLD_BARS,
                    'early_exit_target_return', c.EARLY_EXIT_TARGET_RETURN,
                    'summary', c.SUMMARY,
@@ -1114,7 +1165,9 @@ begin
         COST_BASIS,
         ENTRY_SCORE,
         ENTRY_INDEX,
-        HOLD_UNTIL_INDEX
+        HOLD_UNTIL_INDEX,
+        STOP_LOSS_PCT,
+        TAKE_PROFIT_PCT
     )
     select
         t.PORTFOLIO_ID,
@@ -1137,7 +1190,9 @@ begin
                 ts.HORIZON_BARS
             ),
             5
-        ) as HOLD_UNTIL_INDEX
+        ) as HOLD_UNTIL_INDEX,
+        try_to_double(op.RATIONALE:sim_committee:stop_loss_pct::string) as STOP_LOSS_PCT,
+        try_to_double(op.RATIONALE:sim_committee:target_return::string) as TAKE_PROFIT_PCT
     from MIP.APP.PORTFOLIO_TRADES t
     cross join (
         select max(BAR_INDEX) as BAR_INDEX

@@ -525,3 +525,340 @@ export function severityRank(stance) {
 export function confidenceRank(value) {
   return CONFIDENCE_RANK[value] || 0
 }
+
+/* ─── Chart technical overlay calculations ─── */
+
+export function computeVWAP(bars) {
+  if (!Array.isArray(bars) || bars.length === 0) return []
+  let cumPV = 0
+  let cumV = 0
+  return bars.map((bar) => {
+    const typical = ((toNum(bar.high) ?? toNum(bar.close) ?? 0) + (toNum(bar.low) ?? toNum(bar.close) ?? 0) + (toNum(bar.close) ?? 0)) / 3
+    const vol = Math.max(toNum(bar.volume) ?? 1, 1)
+    cumPV += typical * vol
+    cumV += vol
+    return cumV > 0 ? cumPV / cumV : null
+  })
+}
+
+export function computeBollingerBands(bars, period = 20, stdDevMult = 2) {
+  if (!Array.isArray(bars)) return { upper: [], middle: [], lower: [] }
+  const closes = bars.map((b) => toNum(b.close))
+  const upper = []
+  const middle = []
+  const lower = []
+  for (let i = 0; i < closes.length; i += 1) {
+    if (i < period - 1 || closes[i] == null) {
+      upper.push(null)
+      middle.push(null)
+      lower.push(null)
+      continue
+    }
+    const window = closes.slice(i - period + 1, i + 1).filter((v) => v != null)
+    if (window.length < period * 0.6) {
+      upper.push(null)
+      middle.push(null)
+      lower.push(null)
+      continue
+    }
+    const avg = window.reduce((a, b) => a + b, 0) / window.length
+    const variance = window.reduce((a, b) => a + ((b - avg) ** 2), 0) / window.length
+    const std = Math.sqrt(variance)
+    middle.push(avg)
+    upper.push(avg + stdDevMult * std)
+    lower.push(avg - stdDevMult * std)
+  }
+  return { upper, middle, lower }
+}
+
+export function detectSupportResistance(bars, lookback = 30) {
+  if (!Array.isArray(bars) || bars.length < 5) return { support: null, resistance: null }
+  const recent = bars.slice(-lookback)
+  const lows = recent.map((b) => toNum(b.low)).filter((v) => v != null)
+  const highs = recent.map((b) => toNum(b.high)).filter((v) => v != null)
+  if (lows.length < 3 || highs.length < 3) return { support: null, resistance: null }
+  lows.sort((a, b) => a - b)
+  highs.sort((a, b) => b - a)
+  const support = lows.slice(0, Math.max(3, Math.floor(lows.length * 0.15)))
+    .reduce((a, b) => a + b, 0) / Math.max(3, Math.floor(lows.length * 0.15))
+  const resistance = highs.slice(0, Math.max(3, Math.floor(highs.length * 0.15)))
+    .reduce((a, b) => a + b, 0) / Math.max(3, Math.floor(highs.length * 0.15))
+  return { support, resistance }
+}
+
+export function computeRSI(bars, period = 14) {
+  if (!Array.isArray(bars) || bars.length < period + 1) return []
+  const closes = bars.map((b) => toNum(b.close))
+  const rsi = new Array(closes.length).fill(null)
+  let gainSum = 0
+  let lossSum = 0
+  for (let i = 1; i <= period; i += 1) {
+    if (closes[i] == null || closes[i - 1] == null) continue
+    const diff = closes[i] - closes[i - 1]
+    if (diff > 0) gainSum += diff
+    else lossSum += Math.abs(diff)
+  }
+  let avgGain = gainSum / period
+  let avgLoss = lossSum / period
+  rsi[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss))
+  for (let i = period + 1; i < closes.length; i += 1) {
+    if (closes[i] == null || closes[i - 1] == null) { rsi[i] = rsi[i - 1]; continue }
+    const diff = closes[i] - closes[i - 1]
+    avgGain = (avgGain * (period - 1) + (diff > 0 ? diff : 0)) / period
+    avgLoss = (avgLoss * (period - 1) + (diff < 0 ? Math.abs(diff) : 0)) / period
+    rsi[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss))
+  }
+  return rsi
+}
+
+export function computeChartOverlays(bars) {
+  const vwap = computeVWAP(bars)
+  const bollinger = computeBollingerBands(bars, 20, 2)
+  const sr = detectSupportResistance(bars)
+  const rsi = computeRSI(bars, 14)
+  return { vwap, bollinger, sr, rsi }
+}
+
+/* ─── Exit recommendation engine ─── */
+
+const EXIT_URGENCY = { HOLD: 0, MONITOR: 1, PREPARE: 2, EXIT_NOW: 3 }
+
+export function generateExitRecommendation(tile, liveState, committee) {
+  const feats = liveState?.derived_features || {}
+  const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
+  const current = toNum(liveState?.last_price) ?? toNum(tile?.current_price)
+  const entry = toNum(tile?.entry_price)
+  const tp = toNum(tile?.overlays?.take_profit)
+  const sl = toNum(tile?.overlays?.stop_loss)
+  const pnl = toNum(tile?.unrealized_pnl) ?? 0
+  const side = String(tile?.side || 'LONG').toUpperCase()
+  const stance = committee?.committee_stance
+
+  const signals = []
+  let urgency = 'HOLD'
+
+  if (sl != null && current != null) {
+    const distSl = side === 'LONG' ? (current - sl) / current : (sl - current) / current
+    if (distSl < 0) {
+      urgency = 'EXIT_NOW'
+      signals.push('Price has breached your stop loss.')
+    } else if (distSl < 0.005) {
+      urgency = maxUrgency(urgency, 'EXIT_NOW')
+      signals.push(`Only ${(distSl * 100).toFixed(2)}% from stop loss — critical zone.`)
+    } else if (distSl < 0.015) {
+      urgency = maxUrgency(urgency, 'PREPARE')
+      signals.push(`${(distSl * 100).toFixed(1)}% from stop loss, approaching danger.`)
+    }
+  }
+
+  if (tp != null && current != null) {
+    const distTp = side === 'LONG' ? (tp - current) / current : (current - tp) / current
+    if (distTp <= 0) {
+      urgency = maxUrgency(urgency, 'PREPARE')
+      signals.push('Take profit target reached — consider locking in gains.')
+    } else if (distTp < 0.005) {
+      urgency = maxUrgency(urgency, 'PREPARE')
+      signals.push(`Within ${(distTp * 100).toFixed(2)}% of take profit target.`)
+    }
+  }
+
+  if (stance === 'ESCALATE') {
+    urgency = maxUrgency(urgency, 'PREPARE')
+    signals.push('Committee has escalated — multiple risk agents flagging concerns.')
+  }
+
+  const rsi = computeRSI(bars, 14)
+  const lastRsi = rsi.length > 0 ? rsi[rsi.length - 1] : null
+  if (lastRsi != null) {
+    if (side === 'LONG' && lastRsi > 75) {
+      urgency = maxUrgency(urgency, 'MONITOR')
+      signals.push(`RSI is overbought at ${lastRsi.toFixed(0)} — momentum may exhaust soon.`)
+    }
+    if (side === 'SHORT' && lastRsi < 25) {
+      urgency = maxUrgency(urgency, 'MONITOR')
+      signals.push(`RSI is oversold at ${lastRsi.toFixed(0)} — short squeeze risk rising.`)
+    }
+  }
+
+  if (feats.pattern_label === 'RISK_OFF_BREAKDOWN') {
+    urgency = maxUrgency(urgency, 'PREPARE')
+    signals.push('Risk-off breakdown pattern detected — sellers in control.')
+  }
+  if (feats.pattern_label === 'FAILED_BOUNCE') {
+    urgency = maxUrgency(urgency, 'MONITOR')
+    signals.push('Failed bounce pattern — recovery attempt rejected.')
+  }
+  if (feats.pattern_label === 'VOLATILITY_SPIKE') {
+    urgency = maxUrgency(urgency, 'MONITOR')
+    signals.push('Volatility spike detected — heightened risk of sharp moves.')
+  }
+
+  if (feats.deviation_from_h5_lower_band != null && feats.deviation_from_h5_lower_band < -0.01) {
+    urgency = maxUrgency(urgency, 'MONITOR')
+    signals.push(`Price is ${(Math.abs(feats.deviation_from_h5_lower_band) * 100).toFixed(1)}% below expected lower band — mean reversion signal.`)
+  }
+
+  const overlays = computeChartOverlays(bars)
+  if (overlays.bollinger.lower.length > 0 && current != null) {
+    const lastBBLower = overlays.bollinger.lower[overlays.bollinger.lower.length - 1]
+    const lastBBUpper = overlays.bollinger.upper[overlays.bollinger.upper.length - 1]
+    if (lastBBLower != null && side === 'LONG' && current < lastBBLower) {
+      urgency = maxUrgency(urgency, 'MONITOR')
+      signals.push('Price is below Bollinger lower band — mean reversion or breakdown in progress.')
+    }
+    if (lastBBUpper != null && side === 'LONG' && current > lastBBUpper) {
+      signals.push('Price above Bollinger upper band — extended, consider partial profit taking.')
+    }
+  }
+
+  if (pnl > 0 && entry != null && current != null) {
+    const returnPct = side === 'LONG' ? (current - entry) / entry : (entry - current) / entry
+    if (returnPct > 0.03) {
+      signals.push(`Open gain of ${(returnPct * 100).toFixed(1)}% — consider trailing stop or partial exit.`)
+    }
+  }
+
+  if (signals.length === 0) {
+    signals.push('No immediate action signals. Position is within normal parameters.')
+  }
+
+  return {
+    urgency,
+    urgency_rank: EXIT_URGENCY[urgency] ?? 0,
+    signals,
+    headline: signals[0],
+  }
+}
+
+function maxUrgency(current, candidate) {
+  return (EXIT_URGENCY[candidate] ?? 0) > (EXIT_URGENCY[current] ?? 0) ? candidate : current
+}
+
+/* ─── Situational report generator ─── */
+
+export function generateSituationalReport(tile, liveState, committee, exitRec) {
+  const symbol = tile?.symbol || '???'
+  const side = String(tile?.side || 'LONG').toUpperCase()
+  const entry = toNum(tile?.entry_price)
+  const current = toNum(liveState?.last_price) ?? toNum(tile?.current_price)
+  const pnl = toNum(tile?.unrealized_pnl) ?? 0
+  const feats = liveState?.derived_features || {}
+  const isProtected = tile?.overlays?.stop_loss != null || tile?.overlays?.take_profit != null
+
+  const returnPct = entry && current
+    ? (side === 'LONG' ? (current - entry) / entry : (entry - current) / entry)
+    : null
+
+  const sections = []
+
+  /* 1 - Position status */
+  const pnlWord = pnl >= 0 ? 'in profit' : 'underwater'
+  const returnStr = returnPct != null ? `${(returnPct * 100).toFixed(2)}%` : 'n/a'
+  sections.push({
+    title: 'Where We Are',
+    text: `${symbol} ${side} position is currently ${pnlWord} at $${fmtNum(pnl, 2)} (${returnStr} from entry). ` +
+      `Current price: ${fmtNum(current, 4)}. Entry was at ${fmtNum(entry, 4)}. ` +
+      (isProtected ? 'Stop loss and/or take profit are set.' : 'No stop loss or take profit protection is active — you are flying without a net.'),
+  })
+
+  /* 2 - Market conditions */
+  const regime = feats.regime_label || 'MIXED'
+  const pattern = (feats.pattern_label || 'UNKNOWN').replace(/_/g, ' ').toLowerCase()
+  const vol = feats.vol_15m != null ? `${(feats.vol_15m * 100).toFixed(2)}%` : 'unknown'
+  sections.push({
+    title: 'Market Conditions',
+    text: `The current intraday regime is ${regime.replace(/_/g, ' ').toLowerCase()}. ` +
+      `The dominant price pattern is "${pattern}" with 15-minute volatility at ${vol}. ` +
+      (feats.ret_15m != null ? `Over the last 15 bars the price moved ${(feats.ret_15m * 100).toFixed(2)}%.` : ''),
+  })
+
+  /* 3 - Mean reversion / technical signals */
+  const meanRevSignals = []
+  if (feats.deviation_from_h5_median != null) {
+    const devPct = (feats.deviation_from_h5_median * 100).toFixed(2)
+    const devDir = feats.deviation_from_h5_median > 0 ? 'above' : 'below'
+    meanRevSignals.push(`Price is ${Math.abs(Number(devPct)).toFixed(2)}% ${devDir} the expected median path.`)
+  }
+  if (feats.inside_cone === false) {
+    meanRevSignals.push('Price has moved outside the expected trading cone — this is unusual and worth attention.')
+  }
+  if (feats.deviation_from_h5_lower_band != null && feats.deviation_from_h5_lower_band < -0.005) {
+    meanRevSignals.push('Price is below the lower band of the expected range — a mean reversion snap-back or further breakdown is possible.')
+  }
+  if (meanRevSignals.length > 0) {
+    sections.push({
+      title: 'Mean Reversion Signals',
+      text: meanRevSignals.join(' '),
+    })
+  }
+
+  /* 4 - Do I need to watch closely? */
+  const urgency = exitRec?.urgency || 'HOLD'
+  let watchText
+  if (urgency === 'EXIT_NOW') {
+    watchText = 'YES — IMMEDIATE ATTENTION REQUIRED. Exit conditions have been triggered. Review the exit signals below and act now.'
+  } else if (urgency === 'PREPARE') {
+    watchText = 'YES — stay at your screen. Multiple warning signals are active and the position may need action within minutes. Key reasons: ' +
+      (exitRec?.signals || []).slice(0, 2).join(' ')
+  } else if (urgency === 'MONITOR') {
+    watchText = 'Keep an eye on it. Some signals are developing but nothing requires immediate action yet. ' +
+      (exitRec?.signals || []).slice(0, 1).join(' ')
+  } else {
+    watchText = 'No. The position is behaving within expected parameters. You can check back at the next refresh cycle.'
+  }
+  sections.push({
+    title: 'Do I Need to Watch Closely?',
+    text: watchText,
+  })
+
+  /* 5 - Committee consensus */
+  const stance = committee?.committee_stance || 'UNKNOWN'
+  const actions = (committee?.actions_to_consider || []).join(', ').toLowerCase().replace(/_/g, ' ')
+  sections.push({
+    title: 'Committee Consensus',
+    text: `The committee stance is "${stance.replace(/_/g, ' ')}". ` +
+      (committee?.headline_text || '') + ' ' +
+      (actions ? `Suggested actions: ${actions}.` : ''),
+  })
+
+  /* 6 - Exit outlook */
+  sections.push({
+    title: 'Exit Outlook',
+    text: exitRec?.signals?.join(' ') || 'No exit signals at this time.',
+  })
+
+  const overallUrgency = urgency
+  const summaryLine = urgency === 'EXIT_NOW'
+    ? `CRITICAL: ${symbol} needs immediate exit consideration.`
+    : urgency === 'PREPARE'
+      ? `WARNING: ${symbol} is approaching exit conditions — stay alert.`
+      : urgency === 'MONITOR'
+        ? `${symbol} has developing signals — worth monitoring but no rush.`
+        : `${symbol} is tracking normally. No action needed right now.`
+
+  return {
+    symbol,
+    timestamp: new Date().toISOString(),
+    overall_urgency: overallUrgency,
+    summary_line: summaryLine,
+    sections,
+  }
+}
+
+/* ─── Momentum gauge calculation ─── */
+
+export function computeMomentumGauge(liveState) {
+  const feats = liveState?.derived_features || {}
+  const ret5 = toNum(feats.ret_5m) ?? 0
+  const ret15 = toNum(feats.ret_15m) ?? 0
+  const vol = toNum(feats.vol_15m) ?? 0.01
+  const rawScore = (ret5 * 0.4 + ret15 * 0.6) / Math.max(vol, 0.001)
+  const score = clamp(rawScore * 50, -100, 100)
+  let label
+  if (score > 60) label = 'STRONG_BULLISH'
+  else if (score > 25) label = 'BULLISH'
+  else if (score > -25) label = 'NEUTRAL'
+  else if (score > -60) label = 'BEARISH'
+  else label = 'STRONG_BEARISH'
+  return { score: Math.round(score), label }
+}

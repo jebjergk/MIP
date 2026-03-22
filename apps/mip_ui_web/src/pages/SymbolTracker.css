@@ -703,6 +703,299 @@
   font-size: 0.75rem;
 }
 
+/* ─── Exit Recommendation Bar ─── */
+
+.st-exit-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid;
+}
+
+.st-exit-bar--exit_now {
+  animation: committeeAlertRed 1.6s ease-in-out infinite;
+}
+
+.st-exit-bar--prepare {
+  animation: stPrepareGlow 2.8s ease-in-out infinite;
+}
+
+@keyframes stPrepareGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(194, 65, 12, 0); }
+  50% { box-shadow: 0 0 6px 1px rgba(194, 65, 12, 0.4); }
+}
+
+.st-exit-bar-label {
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.st-exit-bar-text {
+  font-size: 0.76rem;
+  color: #e2e8f0;
+}
+
+/* ─── Tile urgency borders ─── */
+
+.symbol-tracker-tile--exit-now {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 1px #991b1b inset, 0 0 12px rgba(239, 68, 68, 0.15);
+}
+
+.symbol-tracker-tile--prepare {
+  border-color: #c2410c !important;
+  box-shadow: 0 0 0 1px #7c2d12 inset;
+}
+
+/* ─── Momentum Gauge ─── */
+
+.st-momentum-gauge {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+}
+
+.st-momentum-gauge-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.st-momentum-gauge-header span:last-child {
+  font-weight: 600;
+}
+
+.st-momentum-gauge-track {
+  position: relative;
+  height: 6px;
+  background: #1e293b;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.st-momentum-gauge-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease, background 0.6s ease;
+}
+
+.st-momentum-gauge-center {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: 2px;
+  height: 8px;
+  background: #475569;
+  transform: translateX(-50%);
+}
+
+.st-momentum-gauge-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  color: #64748b;
+}
+
+/* ─── Exit Signals Detail ─── */
+
+.st-exit-signals-detail {
+  border: 1px dashed #334155;
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.st-exit-signals-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #f59e0b;
+}
+
+.st-exit-signal-row {
+  font-size: 0.74rem;
+  color: #cbd5e1;
+  padding-left: 0.5rem;
+  border-left: 2px solid #334155;
+}
+
+/* ─── Urgency Banner ─── */
+
+.st-urgency-banner {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.st-urgency-banner--critical {
+  background: #2a0505;
+  border: 2px solid #dc2626;
+  color: #fca5a5;
+  animation: committeeAlertRed 1.8s ease-in-out infinite;
+}
+
+.st-urgency-banner--warning {
+  background: #2a1005;
+  border: 2px solid #c2410c;
+  color: #fdba74;
+}
+
+.st-urgency-banner-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.st-urgency-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.st-urgency-banner--warning .st-urgency-banner-icon {
+  background: #c2410c;
+}
+
+/* ─── Chart Legend Bar ─── */
+
+.st-chart-legend-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  background: #0b1322;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+}
+
+.st-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.st-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+/* ─── Panel Tabs ─── */
+
+.st-panel-tabs {
+  display: flex;
+  gap: 0.25rem;
+  background: #0b1322;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 0.2rem;
+}
+
+.st-panel-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.74rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.st-panel-tab:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.st-panel-tab--active {
+  background: #1e293b;
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+/* ─── Urgency Pill ─── */
+
+.st-urgency-pill {
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+/* ─── Situational Briefing ─── */
+
+.st-briefing-scroll {
+  display: grid;
+  gap: 0.5rem;
+  overflow: auto;
+  min-height: 0;
+  align-content: start;
+}
+
+.st-briefing-summary {
+  border-left: 3px solid;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  background: #0a1221;
+  border-radius: 0 8px 8px 0;
+}
+
+.st-briefing-section {
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: #0a1221;
+}
+
+.st-briefing-section-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #93c5fd;
+  margin-bottom: 0.25rem;
+}
+
+.st-briefing-section-text {
+  font-size: 0.78rem;
+  color: #e2e8f0;
+  line-height: 1.45;
+}
+
+.st-briefing-ts {
+  font-size: 0.64rem;
+  color: #64748b;
+  text-align: right;
+}
+
 @media (max-width: 1400px) {
   .symbol-tracker-layout {
     grid-template-columns: minmax(0, 1fr);

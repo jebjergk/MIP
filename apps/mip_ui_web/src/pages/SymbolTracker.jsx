@@ -22,6 +22,10 @@ import {
   evaluateCommittee,
   isMaterialUpdate,
   severityRank,
+  computeChartOverlays,
+  generateExitRecommendation,
+  generateSituationalReport,
+  computeMomentumGauge,
 } from './symbolTrackerCommittee'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import './SymbolTracker.css'
@@ -282,11 +286,13 @@ function TrackerTooltip({ active, payload }) {
   )
 }
 
-function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRender }) {
+function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRender, showOverlays = true }) {
   const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
   if (bars.length === 0) {
     return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
   }
+
+  const overlays = showOverlays && mode === 'intraday' ? computeChartOverlays(bars) : null
 
   const chartData = bars.map((bar, idx) => {
     const isUp = Number(bar.close) >= Number(bar.open)
@@ -300,6 +306,10 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
       projected_center: null,
       projected_upper: null,
       projected_lower: null,
+      vwap: overlays?.vwap?.[idx] ?? null,
+      bb_upper: overlays?.bollinger?.upper?.[idx] ?? null,
+      bb_middle: overlays?.bollinger?.middle?.[idx] ?? null,
+      bb_lower: overlays?.bollinger?.lower?.[idx] ?? null,
     }
   })
 
@@ -468,6 +478,27 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           </>
         ) : null}
 
+        {overlays ? (
+          <>
+            <Line type="monotone" dataKey="vwap" stroke="#e879f9" strokeWidth={1.5} dot={false} connectNulls strokeDasharray="6 3" name="VWAP" />
+            <Line type="monotone" dataKey="bb_upper" stroke="#38bdf8" strokeWidth={1} dot={false} connectNulls strokeDasharray="3 3" name="BB Upper" />
+            <Line type="monotone" dataKey="bb_middle" stroke="#38bdf8" strokeWidth={1} dot={false} connectNulls strokeDasharray="2 4" name="BB Mid" />
+            <Line type="monotone" dataKey="bb_lower" stroke="#38bdf8" strokeWidth={1} dot={false} connectNulls strokeDasharray="3 3" name="BB Lower" />
+          </>
+        ) : null}
+
+        {overlays?.sr?.support != null ? <ReferenceLine y={overlays.sr.support} stroke="#22c55e" strokeWidth={1} strokeDasharray="8 4" label={{ value: 'S', position: 'left', fill: '#22c55e', fontSize: 9 }} /> : null}
+        {overlays?.sr?.resistance != null ? <ReferenceLine y={overlays.sr.resistance} stroke="#f87171" strokeWidth={1} strokeDasharray="8 4" label={{ value: 'R', position: 'left', fill: '#f87171', fontSize: 9 }} /> : null}
+
+        {overlays?.sr?.support != null && overlays?.sr?.resistance != null ? (
+          <ReferenceArea
+            y1={overlays.sr.support}
+            y2={overlays.sr.resistance}
+            fill="#334155"
+            fillOpacity={0.06}
+          />
+        ) : null}
+
         {entry != null ? <ReferenceLine y={entry} stroke="#a78bfa" strokeDasharray="4 3" label="Entry" /> : null}
         {tp != null ? <ReferenceLine y={tp} stroke="#10b981" strokeDasharray="4 3" label="TP" /> : null}
         {sl != null ? <ReferenceLine y={sl} stroke="#ef4444" strokeDasharray="4 3" label="SL" /> : null}
@@ -537,13 +568,76 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   )
 }
 
+function ExitRecommendationBar({ exitRec }) {
+  if (!exitRec) return null
+  const urgency = exitRec.urgency || 'HOLD'
+  const colorMap = {
+    HOLD: { bg: '#0c1e0c', border: '#166534', text: '#86efac', label: 'HOLD' },
+    MONITOR: { bg: '#1a1a05', border: '#a16207', text: '#fcd34d', label: 'MONITOR' },
+    PREPARE: { bg: '#2a1005', border: '#c2410c', text: '#fdba74', label: 'PREPARE TO EXIT' },
+    EXIT_NOW: { bg: '#2a0505', border: '#dc2626', text: '#fca5a5', label: 'EXIT NOW' },
+  }
+  const style = colorMap[urgency] || colorMap.HOLD
+  return (
+    <div
+      className={`st-exit-bar st-exit-bar--${urgency.toLowerCase()}`}
+      style={{ background: style.bg, borderColor: style.border }}
+    >
+      <span className="st-exit-bar-label" style={{ color: style.text }}>{style.label}</span>
+      <span className="st-exit-bar-text">{exitRec.headline}</span>
+    </div>
+  )
+}
+
+function MomentumGauge({ momentum }) {
+  if (!momentum) return null
+  const { score, label } = momentum
+  const pct = ((score + 100) / 200) * 100
+  const colorStops = score > 25 ? '#22c55e' : score > -25 ? '#f59e0b' : '#ef4444'
+  const labelMap = {
+    STRONG_BULLISH: 'Strong Bullish',
+    BULLISH: 'Bullish',
+    NEUTRAL: 'Neutral',
+    BEARISH: 'Bearish',
+    STRONG_BEARISH: 'Strong Bearish',
+  }
+  return (
+    <div className="st-momentum-gauge">
+      <div className="st-momentum-gauge-header">
+        <span>Momentum</span>
+        <span style={{ color: colorStops }}>{labelMap[label] || label}</span>
+      </div>
+      <div className="st-momentum-gauge-track">
+        <div
+          className="st-momentum-gauge-fill"
+          style={{ width: `${pct}%`, background: colorStops }}
+        />
+        <div className="st-momentum-gauge-center" />
+      </div>
+      <div className="st-momentum-gauge-labels">
+        <span>Bearish</span>
+        <span>{score > 0 ? '+' : ''}{score}</span>
+        <span>Bullish</span>
+      </div>
+    </div>
+  )
+}
+
 function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, formatSymbolLabel, selected, onSelect }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
   const thesisClass = String(tile?.thesis?.status || '').toLowerCase().replaceAll('_', '-')
+  const exitRec = tile?.exitRecommendation
+  const momentum = tile?.momentum
+  const exitUrgency = exitRec?.urgency || 'HOLD'
+  const tileExtraClass = exitUrgency === 'EXIT_NOW'
+    ? 'symbol-tracker-tile--exit-now'
+    : exitUrgency === 'PREPARE'
+      ? 'symbol-tracker-tile--prepare'
+      : ''
   return (
     <article
-      className={`symbol-tracker-tile ${density === 'compact' ? 'symbol-tracker-tile--compact' : ''} ${selected ? 'symbol-tracker-tile--selected' : ''}`}
+      className={`symbol-tracker-tile ${density === 'compact' ? 'symbol-tracker-tile--compact' : ''} ${selected ? 'symbol-tracker-tile--selected' : ''} ${tileExtraClass}`}
       role="button"
       tabIndex={0}
       onClick={() => onSelect?.(tile.symbol)}
@@ -554,6 +648,8 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         }
       }}
     >
+      <ExitRecommendationBar exitRec={exitRec} />
+
       <header className="symbol-tracker-tile-head">
         <div>
           <h3>{formatSymbolLabel(tile.symbol, tile.market_type)}</h3>
@@ -572,6 +668,8 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         <div><span>Unrealized P&L</span><b className={pnlClass}>{fmtSigned(tile.unrealized_pnl, 2)}</b></div>
       </div>
 
+      <MomentumGauge momentum={momentum} />
+
       <div className="symbol-tracker-badges">
         {(tile.position_status_badges || []).map((badge) => (
           <span key={badge} className="symbol-tracker-badge">{badge}</span>
@@ -585,6 +683,7 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         density={density}
         projectionMode={projectionMode}
         trendRender={trendRender}
+        showOverlays={mode === 'intraday'}
       />
       {mode === 'daily' && tile?.expectation?.is_available ? (
         <ProjectionDetail tile={tile} projectionMode={projectionMode} />
@@ -622,6 +721,14 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         <div><span>Vol regime</span><b>{tile?.volatility_context?.status || 'UNKNOWN'}</b></div>
       </div>
 
+      {(exitRec?.signals || []).length > 1 ? (
+        <div className="st-exit-signals-detail">
+          <div className="st-exit-signals-title">Active Signals</div>
+          {exitRec.signals.map((sig, idx) => (
+            <div key={idx} className="st-exit-signal-row">{sig}</div>
+          ))}
+        </div>
+      ) : null}
     </article>
   )
 }
@@ -649,42 +756,47 @@ function fmtReasonTag(value) {
   return raw.replaceAll('_', ' ')
 }
 
-function CommitteePanel({
+function UrgencyBanner({ tiles }) {
+  const critical = tiles.filter((t) => t?.exitRecommendation?.urgency === 'EXIT_NOW')
+  const warnings = tiles.filter((t) => t?.exitRecommendation?.urgency === 'PREPARE')
+  if (critical.length === 0 && warnings.length === 0) return null
+  return (
+    <div className={`st-urgency-banner ${critical.length > 0 ? 'st-urgency-banner--critical' : 'st-urgency-banner--warning'}`}>
+      {critical.length > 0 ? (
+        <div className="st-urgency-banner-line">
+          <span className="st-urgency-banner-icon">!!</span>
+          <span>EXIT SIGNAL on {critical.map((t) => t.symbol).join(', ')} — immediate review needed</span>
+        </div>
+      ) : null}
+      {warnings.length > 0 ? (
+        <div className="st-urgency-banner-line">
+          <span className="st-urgency-banner-icon">!</span>
+          <span>APPROACHING EXIT on {warnings.map((t) => t.symbol).join(', ')} — stay alert</span>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SituationalBriefingPanel({
   selectedSymbol,
   setSelectedSymbol,
+  reportsBySymbol,
   committeeBySymbol,
-  threadBySymbol,
-  feed,
   watchlist,
-  filters,
-  setFilters,
+  feed,
   formatSymbolLabel,
   contextUpdatedAt,
   liveUpdatedAt,
 }) {
-  const [showFilters, setShowFilters] = useState(false)
   const feedRef = useRef(null)
+  const activeReport = selectedSymbol ? reportsBySymbol[selectedSymbol] : null
   const activeCommittee = selectedSymbol ? committeeBySymbol[selectedSymbol] : null
-  const activeThread = selectedSymbol ? (threadBySymbol[selectedSymbol] || []) : []
-  const filteredWatchlist = watchlist.filter((row) => {
-    if (filters.symbol !== 'ALL' && row.symbol !== filters.symbol) return false
-    if (filters.onlyChanged && !row.changed_recently) return false
-    if (filters.highRiskOnly && !['ESCALATE', 'WATCH_CLOSELY'].includes(row.committee_stance)) return false
-    if (filters.unprotectedOnly && !row.top_reason_tags.includes('UNPROTECTED')) return false
-    if (filters.minConfidence !== 'ANY' && confidenceRank(row.committee_confidence) < confidenceRank(filters.minConfidence)) return false
-    if (filters.stance !== 'ALL' && row.committee_stance !== filters.stance) return false
-    return true
-  })
+  const [panelView, setPanelView] = useState('briefing')
 
   const filteredFeed = [...feed]
-    .filter((item) => (
-      filters.symbol === 'ALL' || item.symbol === filters.symbol
-    ))
-    .sort((a, b) => {
-      const at = new Date(a?.ts || 0).getTime()
-      const bt = new Date(b?.ts || 0).getTime()
-      return bt - at
-    })
+    .sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
+    .slice(0, 30)
 
   useEffect(() => {
     const el = feedRef.current
@@ -692,163 +804,136 @@ function CommitteePanel({
     el.scrollTop = 0
   }, [filteredFeed.length])
 
+  const urgencyColor = {
+    EXIT_NOW: '#fca5a5',
+    PREPARE: '#fdba74',
+    MONITOR: '#fcd34d',
+    HOLD: '#86efac',
+  }
+
   return (
     <aside className="symbol-tracker-committee">
       <div className="symbol-tracker-committee-head">
-        <h3>Live Committee / Observer</h3>
+        <h3>Situation Room</h3>
         <div className="symbol-tracker-committee-context-ts">
-          <div>Context reload: {fmtTime(contextUpdatedAt)}</div>
-          <div>Live updated: {fmtTime(liveUpdatedAt)}</div>
+          <div>Context: {fmtTime(contextUpdatedAt)}</div>
+          <div>Live: {fmtTime(liveUpdatedAt)}</div>
         </div>
       </div>
 
-      <section className="symbol-tracker-committee-filter-wrap">
-        <button
-          type="button"
-          className="symbol-tracker-filter-toggle"
-          onClick={() => setShowFilters((v) => !v)}
-        >
-          {showFilters ? 'Hide filters' : 'Show filters'}
-        </button>
-        {showFilters ? (
-          <div className="symbol-tracker-committee-filters">
-            <label>
-              Symbol
-              <select value={filters.symbol} onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}>
-                <option value="ALL">All</option>
-                {watchlist.map((row) => <option key={row.symbol} value={row.symbol}>{row.symbol}</option>)}
-              </select>
-            </label>
-            <label>
-              Stance
-              <select value={filters.stance} onChange={(e) => setFilters((prev) => ({ ...prev, stance: e.target.value }))}>
-                <option value="ALL">All</option>
-                <option value="ESCALATE">ESCALATE</option>
-                <option value="WATCH_CLOSELY">WATCH_CLOSELY</option>
-                <option value="THESIS_INTACT">THESIS_INTACT</option>
-              </select>
-            </label>
-            <label>
-              Min confidence
-              <select value={filters.minConfidence} onChange={(e) => setFilters((prev) => ({ ...prev, minConfidence: e.target.value }))}>
-                <option value="ANY">Any</option>
-                <option value="MEDIUM">MEDIUM</option>
-                <option value="HIGH">HIGH</option>
-              </select>
-            </label>
-            <label className="symbol-tracker-committee-check">
-              <input type="checkbox" checked={filters.onlyChanged} onChange={(e) => setFilters((prev) => ({ ...prev, onlyChanged: e.target.checked }))} />
-              <span>Only changed recently</span>
-            </label>
-            <label className="symbol-tracker-committee-check">
-              <input type="checkbox" checked={filters.highRiskOnly} onChange={(e) => setFilters((prev) => ({ ...prev, highRiskOnly: e.target.checked }))} />
-              <span>High-risk only</span>
-            </label>
-            <label className="symbol-tracker-committee-check">
-              <input type="checkbox" checked={filters.unprotectedOnly} onChange={(e) => setFilters((prev) => ({ ...prev, unprotectedOnly: e.target.checked }))} />
-              <span>Unprotected only</span>
-            </label>
-          </div>
-        ) : null}
-      </section>
+      <div className="st-panel-tabs">
+        <button type="button" className={`st-panel-tab ${panelView === 'briefing' ? 'st-panel-tab--active' : ''}`} onClick={() => setPanelView('briefing')}>Briefing</button>
+        <button type="button" className={`st-panel-tab ${panelView === 'feed' ? 'st-panel-tab--active' : ''}`} onClick={() => setPanelView('feed')}>Live Feed</button>
+        <button type="button" className={`st-panel-tab ${panelView === 'agents' ? 'st-panel-tab--active' : ''}`} onClick={() => setPanelView('agents')}>Agent Detail</button>
+      </div>
 
       <section className="symbol-tracker-committee-section symbol-tracker-committee-section--watchlist">
-        <div className="symbol-tracker-committee-title">Active Watchlist</div>
+        <div className="symbol-tracker-committee-title">Positions</div>
         <div className="symbol-tracker-watchlist">
-          {filteredWatchlist.length === 0 ? <div className="symbol-tracker-committee-empty">No symbols match filters.</div> : null}
-          {filteredWatchlist.map((row) => (
-            <button
-              type="button"
-              key={row.symbol}
-              className={`symbol-tracker-watch-row ${selectedSymbol === row.symbol ? 'symbol-tracker-watch-row--active' : ''}`}
-              onClick={() => setSelectedSymbol(row.symbol)}
-            >
-              <div className="symbol-tracker-watch-top">
-                <span>{formatSymbolLabel(row.symbol, row.market_type)}</span>
-                <span className="symbol-tracker-pill">{row.committee_stance}</span>
-              </div>
-              <div className="symbol-tracker-watch-mid">
-                <span>{row.committee_confidence}</span>
-                <span>{(row.top_reason_tags || []).slice(0, 3).join(', ').toLowerCase()}</span>
-              </div>
-              <div className="symbol-tracker-watch-ts">Changed {fmtTime(row.updated_at)}</div>
-            </button>
-          ))}
+          {watchlist.length === 0 ? <div className="symbol-tracker-committee-empty">No positions.</div> : null}
+          {watchlist.map((row) => {
+            const report = reportsBySymbol[row.symbol]
+            const urg = report?.overall_urgency || 'HOLD'
+            return (
+              <button
+                type="button"
+                key={row.symbol}
+                className={`symbol-tracker-watch-row ${selectedSymbol === row.symbol ? 'symbol-tracker-watch-row--active' : ''}`}
+                onClick={() => setSelectedSymbol(row.symbol)}
+              >
+                <div className="symbol-tracker-watch-top">
+                  <span>{formatSymbolLabel(row.symbol, row.market_type)}</span>
+                  <span className="st-urgency-pill" style={{ borderColor: urgencyColor[urg], color: urgencyColor[urg] }}>{urg.replace('_', ' ')}</span>
+                </div>
+                <div className="symbol-tracker-watch-mid">
+                  <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{report?.summary_line || row.headline_text || ''}</span>
+                </div>
+              </button>
+            )
+          })}
         </div>
       </section>
 
-      <section className="symbol-tracker-committee-section symbol-tracker-committee-section--feed">
-        <div className="symbol-tracker-committee-title">Live Committee Feed</div>
-        <div ref={feedRef} className="symbol-tracker-committee-feed">
-          {filteredFeed.length === 0 ? <div className="symbol-tracker-committee-empty">No material changes yet.</div> : null}
-          {filteredFeed.map((item) => (
-            <div key={item.id} className={`symbol-tracker-feed-row ${feedAlertClass(item)}`}>
-              <div className="symbol-tracker-feed-meta">
-                <span>{fmtTime(item.ts)}</span>
-                <span>{feedDisplayLabel(item, formatSymbolLabel)}</span>
-                <span>{item.agent}</span>
+      {panelView === 'briefing' && (
+        <section className="symbol-tracker-committee-section symbol-tracker-committee-section--discussion">
+          <div className="symbol-tracker-committee-title">Situational Briefing</div>
+          {!activeReport ? <div className="symbol-tracker-committee-empty">Select a position to see its briefing.</div> : null}
+          {activeReport ? (
+            <div className="st-briefing-scroll">
+              <div className="st-briefing-summary" style={{ borderColor: urgencyColor[activeReport.overall_urgency] || '#334155' }}>
+                {activeReport.summary_line}
               </div>
-              <div className="symbol-tracker-feed-text">{item.text}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="symbol-tracker-committee-section symbol-tracker-committee-section--discussion">
-        <div className="symbol-tracker-committee-title">Expanded Symbol Discussion</div>
-        {!activeCommittee ? <div className="symbol-tracker-committee-empty">Select a symbol tile or watchlist row.</div> : null}
-        {activeCommittee ? (
-          <div className="symbol-tracker-thread">
-            <div className="symbol-tracker-thread-summary">
-              <div><b>{formatSymbolLabel(activeCommittee.symbol, activeCommittee.market_type)}</b></div>
-              <div className="symbol-tracker-pill">{activeCommittee.committee_stance}</div>
-              <div>{activeCommittee.committee_confidence}</div>
-              <div>Last evaluated: {fmtTime(activeCommittee.updated_at)}</div>
-              <div>Last price: {fmtNum(activeCommittee?.live_state?.last_price, 4)}</div>
-              <div>{activeCommittee.headline_text}</div>
-            </div>
-            {[...(activeCommittee.agent_messages || [])]
-              .sort((a, b) => (
-                Number(Boolean(b.change_detected)) - Number(Boolean(a.change_detected))
-                || Number(b.materiality_score || 0) - Number(a.materiality_score || 0)
-              ))
-              .map((msg) => (
-              <article key={`${activeCommittee.symbol}_${msg.agent_name}`} className="symbol-tracker-thread-msg">
-                <header>
-                  <b>{msg.agent_name.replaceAll('_', ' ')}</b>
-                  <span>{msg.confidence}</span>
-                  <span>{msg.stance}</span>
-                </header>
-                <p>{msg.short_text}</p>
-              </article>
+              {activeReport.sections.map((section, idx) => (
+                <div key={idx} className="st-briefing-section">
+                  <div className="st-briefing-section-title">{section.title}</div>
+                  <div className="st-briefing-section-text">{section.text}</div>
+                </div>
               ))}
-            {activeThread.length > 0 ? (
-              <div className="symbol-tracker-thread-history">
-                <b>Recent discussion updates</b>
-                {activeThread.map((entry) => (
-                  <div key={entry.id} className="symbol-tracker-thread-history-row">
-                    <span>{fmtTime(entry.ts)}</span>
-                    <span>
-                      <span className="symbol-tracker-thread-reason">{fmtReasonTag(entry.reason)}</span>
-                      {' '}
-                      {entry.text}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {(activeCommittee.disagreement_points || []).length > 0 ? (
-              <div className="symbol-tracker-thread-disagreement">
-                <b>Disagreement points</b>
-                <div>{activeCommittee.disagreement_points.join(' ')}</div>
-              </div>
-            ) : null}
-            <div className="symbol-tracker-thread-actions">
-              <b>Actions to consider:</b> {(activeCommittee.actions_to_consider || []).join(', ')}
+              <div className="st-briefing-ts">Updated {fmtTime(activeReport.timestamp)}</div>
             </div>
+          ) : null}
+        </section>
+      )}
+
+      {panelView === 'feed' && (
+        <section className="symbol-tracker-committee-section symbol-tracker-committee-section--feed">
+          <div className="symbol-tracker-committee-title">Live Committee Feed</div>
+          <div ref={feedRef} className="symbol-tracker-committee-feed">
+            {filteredFeed.length === 0 ? <div className="symbol-tracker-committee-empty">No material changes yet.</div> : null}
+            {filteredFeed.map((item) => (
+              <div key={item.id} className={`symbol-tracker-feed-row ${feedAlertClass(item)}`}>
+                <div className="symbol-tracker-feed-meta">
+                  <span>{fmtTime(item.ts)}</span>
+                  <span>{feedDisplayLabel(item, formatSymbolLabel)}</span>
+                  <span>{item.agent}</span>
+                </div>
+                <div className="symbol-tracker-feed-text">{item.text}</div>
+              </div>
+            ))}
           </div>
-        ) : null}
-      </section>
+        </section>
+      )}
+
+      {panelView === 'agents' && (
+        <section className="symbol-tracker-committee-section symbol-tracker-committee-section--discussion">
+          <div className="symbol-tracker-committee-title">Agent Detail</div>
+          {!activeCommittee ? <div className="symbol-tracker-committee-empty">Select a position.</div> : null}
+          {activeCommittee ? (
+            <div className="symbol-tracker-thread">
+              <div className="symbol-tracker-thread-summary">
+                <div><b>{formatSymbolLabel(activeCommittee.symbol, activeCommittee.market_type)}</b></div>
+                <div className="symbol-tracker-pill">{activeCommittee.committee_stance}</div>
+                <div>{activeCommittee.committee_confidence}</div>
+                <div>{activeCommittee.headline_text}</div>
+              </div>
+              {[...(activeCommittee.agent_messages || [])]
+                .sort((a, b) => (
+                  Number(Boolean(b.change_detected)) - Number(Boolean(a.change_detected))
+                  || Number(b.materiality_score || 0) - Number(a.materiality_score || 0)
+                ))
+                .map((msg) => (
+                <article key={`${activeCommittee.symbol}_${msg.agent_name}`} className="symbol-tracker-thread-msg">
+                  <header>
+                    <b>{msg.agent_name.replaceAll('_', ' ')}</b>
+                    <span>{msg.confidence}</span>
+                    <span>{msg.stance}</span>
+                  </header>
+                  <p>{msg.short_text}</p>
+                </article>
+                ))}
+              {(activeCommittee.disagreement_points || []).length > 0 ? (
+                <div className="symbol-tracker-thread-disagreement">
+                  <b>Disagreement points</b>
+                  <div>{activeCommittee.disagreement_points.join(' ')}</div>
+                </div>
+              ) : null}
+              <div className="symbol-tracker-thread-actions">
+                <b>Actions to consider:</b> {(activeCommittee.actions_to_consider || []).join(', ')}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      )}
     </aside>
   )
 }
@@ -875,14 +960,8 @@ export default function SymbolTracker() {
   const [committeeBySymbol, setCommitteeBySymbol] = useState({})
   const [committeeThreadBySymbol, setCommitteeThreadBySymbol] = useState({})
   const [committeeFeed, setCommitteeFeed] = useState([])
-  const [committeeFilters, setCommitteeFilters] = useState({
-    symbol: 'ALL',
-    stance: 'ALL',
-    minConfidence: 'ANY',
-    onlyChanged: false,
-    highRiskOnly: false,
-    unprotectedOnly: false,
-  })
+  const [exitRecBySymbol, setExitRecBySymbol] = useState({})
+  const [reportsBySymbol, setReportsBySymbol] = useState({})
 
   const fetchIbLive = useCallback(async (tiles, selectedMode) => {
     const symbols = (Array.isArray(tiles) ? tiles : [])
@@ -913,12 +992,16 @@ export default function SymbolTracker() {
       setCommitteeBySymbol({})
       setCommitteeThreadBySymbol({})
       setCommitteeFeed([])
+      setExitRecBySymbol({})
+      setReportsBySymbol({})
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return
     }
 
     setCommitteeBySymbol((prevCommitteeMap) => {
       const nextCommitteeMap = {}
+      const nextExitRecs = {}
+      const nextReports = {}
       const feedRows = []
       const threadRowsBySymbol = {}
       for (const tile of nextTiles) {
@@ -927,6 +1010,13 @@ export default function SymbolTracker() {
         const liveState = buildLiveState(tile, prevCommittee?.live_state || null, sensitivityMode)
         const committee = evaluateCommittee(tile, liveState, prevCommittee)
         nextCommitteeMap[symbol] = committee
+
+        const exitRec = generateExitRecommendation(tile, liveState, committee)
+        nextExitRecs[symbol] = exitRec
+
+        const report = generateSituationalReport(tile, liveState, committee, exitRec)
+        nextReports[symbol] = report
+
         const hasMaterial = isMaterialUpdate(prevCommittee, committee)
         threadRowsBySymbol[symbol] = {
           id: `${symbol}_${Date.now()}_${Math.random()}`,
@@ -960,6 +1050,8 @@ export default function SymbolTracker() {
           }
         }
       }
+      setExitRecBySymbol(nextExitRecs)
+      setReportsBySymbol(nextReports)
       if (feedRows.length > 0) {
         setCommitteeFeed((prevFeed) => [...feedRows, ...prevFeed].slice(0, 120))
       } else {
@@ -1091,6 +1183,9 @@ export default function SymbolTracker() {
     rows = rows.map((row) => {
       const symbol = String(row?.symbol || '').toUpperCase()
       const committee = committeeBySymbol[symbol]
+      const exitRec = exitRecBySymbol[symbol]
+      const liveState = committee?.live_state
+      const momentum = liveState ? computeMomentumGauge(liveState) : null
       const horizon = Number(horizonBars)
       const baseExpectation = row?.expectation || {}
       const trimmedExpectation = Number.isFinite(horizon) && horizon > 0
@@ -1102,15 +1197,16 @@ export default function SymbolTracker() {
           lower_path: (baseExpectation.lower_path || []).slice(0, horizon),
         }
         : baseExpectation
-      if (!committee) return { ...row, expectation: trimmedExpectation }
       return {
         ...row,
         expectation: trimmedExpectation,
         committee,
+        exitRecommendation: exitRec,
+        momentum,
       }
     })
     return rows
-  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy, committeeBySymbol, horizonBars])
+  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy, committeeBySymbol, exitRecBySymbol, horizonBars])
 
   const watchlist = useMemo(() => {
     return Object.values(committeeBySymbol)
@@ -1127,8 +1223,8 @@ export default function SymbolTracker() {
     <div className="symbol-tracker-page">
       <div className="symbol-tracker-head">
         <div>
-          <h2>Symbol Tracker</h2>
-          <p>Live positions with 30s updates.</p>
+          <h2>Trading Command Center</h2>
+          <p>Live positions with 30s updates · VWAP · Bollinger · Mean-Rev · Exit signals</p>
           <p style={{ marginTop: 6, fontSize: '0.8rem', color: '#64748b' }}>
             Terms: drawdown <GlossaryHoverCard scope="risk" entryKey="portfolio_drawdown_pct" />, retrigger <GlossaryHoverCard scope="signals" entryKey="retrigger" />, exposure <GlossaryHoverCard scope="positions" entryKey="position_size_pct" />.
           </p>
@@ -1220,6 +1316,20 @@ export default function SymbolTracker() {
       {loading ? <div className="symbol-tracker-loading">Loading symbol tracker...</div> : null}
       {!loading && tiles.length === 0 ? <div className="symbol-tracker-empty">No open positions found.</div> : null}
 
+      <UrgencyBanner tiles={tiles} />
+
+      {!loading && tiles.length > 0 ? (
+        <div className="st-chart-legend-bar">
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#e879f9' }} />VWAP</span>
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#38bdf8' }} />Bollinger Bands</span>
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#22c55e' }} />Support</span>
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#f87171' }} />Resistance</span>
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#a78bfa' }} />Entry</span>
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#10b981' }} />TP</span>
+          <span className="st-legend-item"><span className="st-legend-swatch" style={{ background: '#ef4444' }} />SL</span>
+        </div>
+      ) : null}
+
       <div className="symbol-tracker-layout">
         <div className={`symbol-tracker-grid ${density === 'compact' ? 'symbol-tracker-grid--compact' : ''}`}>
           {tiles.map((tile) => (
@@ -1237,15 +1347,13 @@ export default function SymbolTracker() {
             />
           ))}
         </div>
-        <CommitteePanel
+        <SituationalBriefingPanel
           selectedSymbol={selectedSymbol}
           setSelectedSymbol={setSelectedSymbol}
+          reportsBySymbol={reportsBySymbol}
           committeeBySymbol={committeeBySymbol}
-          threadBySymbol={committeeThreadBySymbol}
-          feed={committeeFeed}
           watchlist={watchlist}
-          filters={committeeFilters}
-          setFilters={setCommitteeFilters}
+          feed={committeeFeed}
           formatSymbolLabel={formatSymbolLabel}
           contextUpdatedAt={contextReloadAt}
           liveUpdatedAt={liveUpdatedAt}

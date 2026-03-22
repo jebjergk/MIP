@@ -594,6 +594,38 @@ function ExitRecommendationBar({ exitRec }) {
   )
 }
 
+function FeeContextRow({ fee }) {
+  if (!fee) return null
+  const gross = fee.gross_unrealized_pnl
+  const net = fee.net_unrealized_pnl
+  const estClose = fee.est_net_close_pnl
+  const pnlColor = (v) => v == null ? '' : v >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
+  const sourceLabel = fee.fee_source === 'ACTUAL_BROKER' ? 'actual' : 'est.'
+  return (
+    <div className="st-fee-context-row">
+      <div className="st-fee-pnl-trio">
+        <div>
+          <span>Gross P&L</span>
+          <b className={pnlColor(gross)}>{fmtSigned(gross, 2)}</b>
+        </div>
+        <div>
+          <span>Net P&L</span>
+          <b className={pnlColor(net)}>{fmtSigned(net, 2)}</b>
+        </div>
+        <div>
+          <span>Est. Close</span>
+          <b className={pnlColor(estClose)}>{fmtSigned(estClose, 2)}</b>
+        </div>
+      </div>
+      <div className="st-fee-detail-row">
+        <span>Entry fee ({sourceLabel}): {fmtNum(fee.entry_commission, 2) || '0.00'}</span>
+        <span>Exit fee (est.): {fmtNum(fee.estimated_exit_fee, 2)}</span>
+        <span>Round-trip: {fmtNum(fee.est_round_trip_cost, 2)}</span>
+      </div>
+    </div>
+  )
+}
+
 function MomentumGauge({ momentum }) {
   if (!momentum) return null
   const { score, label } = momentum
@@ -702,6 +734,8 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         <div><span>Current</span><b>{fmtNum(tile.current_price, 4)}</b></div>
         <div><span>Unrealized P&L</span><b className={pnlClass}>{fmtSigned(tile.unrealized_pnl, 2)}</b></div>
       </div>
+
+      <FeeContextRow fee={tile?.fee_context} />
 
       <MomentumGauge momentum={momentum} />
 

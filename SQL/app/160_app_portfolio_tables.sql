@@ -139,23 +139,28 @@ alter table MIP.APP.PORTFOLIO_POSITIONS add column if not exists TAKE_PROFIT_PCT
 -- 3. PORTFOLIO_TRADES
 -----------------------------
 create table if not exists MIP.APP.PORTFOLIO_TRADES (
-    TRADE_ID         number        autoincrement,
-    PROPOSAL_ID      number,
-    PORTFOLIO_ID     number        not null,
-    RUN_ID           string        not null,
-    EPISODE_ID       number,                     -- Links trade to episode lifecycle
-    SYMBOL           string        not null,
-    MARKET_TYPE      string        not null,
-    INTERVAL_MINUTES number        not null,
-    TRADE_TS         timestamp_ntz not null,
-    SIDE             string        not null,
-    PRICE            number(18,8)  not null,
-    QUANTITY         number(18,8)  not null,
-    NOTIONAL         number(18,8)  not null,
-    REALIZED_PNL     number(18,8),
-    CASH_AFTER       number(18,2)  not null,
-    SCORE            number(18,10),
-    CREATED_AT       timestamp_ntz default CURRENT_TIMESTAMP(),
+    TRADE_ID           number        autoincrement,
+    PROPOSAL_ID        number,
+    PORTFOLIO_ID       number        not null,
+    RUN_ID             string        not null,
+    EPISODE_ID         number,                     -- Links trade to episode lifecycle
+    SYMBOL             string        not null,
+    MARKET_TYPE        string        not null,
+    INTERVAL_MINUTES   number        not null,
+    TRADE_TS           timestamp_ntz not null,
+    SIDE               string        not null,
+    PRICE              number(18,8)  not null,
+    QUANTITY           number(18,8)  not null,
+    NOTIONAL           number(18,8)  not null,
+    REALIZED_PNL       number(18,8),
+    CASH_AFTER         number(18,2)  not null,
+    SCORE              number(18,10),
+    COMMISSION         number(18,8)  default 0,    -- Broker commission (actual or estimated)
+    REGULATORY_FEE     number(18,8)  default 0,    -- SEC/TAF fees (future-ready)
+    FX_CONVERSION_COST number(18,8)  default 0,    -- EUR/USD conversion cost (future-ready)
+    TOTAL_FEE          number(18,8)  default 0,    -- Sum of all fee components
+    FEE_SOURCE         varchar(20)   default 'ESTIMATED', -- ESTIMATED | ACTUAL_BROKER | DERIVED_BACKFILL
+    CREATED_AT         timestamp_ntz default CURRENT_TIMESTAMP(),
     constraint PK_PORTFOLIO_TRADES primary key (TRADE_ID)
 );
 

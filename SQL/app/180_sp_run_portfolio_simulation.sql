@@ -603,6 +603,9 @@ begin
                             :v_sell_pnl as REALIZED_PNL,
                             :v_sell_cash_after as CASH_AFTER,
                             :v_position_entry_score as SCORE,
+                            :v_sell_fee as COMMISSION,
+                            :v_sell_fee as TOTAL_FEE,
+                            'ESTIMATED' as FEE_SOURCE,
                             :v_trade_day as TRADE_DAY
                     ) as source
                     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
@@ -627,7 +630,10 @@ begin
                             NOTIONAL,
                             REALIZED_PNL,
                             CASH_AFTER,
-                            SCORE
+                            SCORE,
+                            COMMISSION,
+                            TOTAL_FEE,
+                            FEE_SOURCE
                         )
                         values (
                             source.PORTFOLIO_ID,
@@ -643,7 +649,10 @@ begin
                             source.NOTIONAL,
                             source.REALIZED_PNL,
                             source.CASH_AFTER,
-                            source.SCORE
+                            source.SCORE,
+                            source.COMMISSION,
+                            source.TOTAL_FEE,
+                            source.FEE_SOURCE
                         );
 
                     v_trade_rows_affected := SQLROWCOUNT;
@@ -808,6 +817,9 @@ begin
                                         null as REALIZED_PNL,
                                         :v_buy_cash_after as CASH_AFTER,
                                         :v_signal_score as SCORE,
+                                        :v_buy_fee as COMMISSION,
+                                        :v_buy_fee as TOTAL_FEE,
+                                        'ESTIMATED' as FEE_SOURCE,
                                         :v_trade_day as TRADE_DAY
                                 ) as source
                                 on target.PORTFOLIO_ID = source.PORTFOLIO_ID
@@ -831,7 +843,10 @@ begin
                                         NOTIONAL,
                                         REALIZED_PNL,
                                         CASH_AFTER,
-                                        SCORE
+                                        SCORE,
+                                        COMMISSION,
+                                        TOTAL_FEE,
+                                        FEE_SOURCE
                                     )
                                     values (
                                         source.PORTFOLIO_ID,
@@ -847,7 +862,10 @@ begin
                                         source.NOTIONAL,
                                         source.REALIZED_PNL,
                                         source.CASH_AFTER,
-                                        source.SCORE
+                                        source.SCORE,
+                                        source.COMMISSION,
+                                        source.TOTAL_FEE,
+                                        source.FEE_SOURCE
                                     );
 
                                 v_trade_rows_affected := SQLROWCOUNT;

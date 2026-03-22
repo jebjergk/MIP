@@ -159,6 +159,7 @@ class UpdateLiveOrderStatusRequest(BaseModel):
     qty_filled: float | None = None
     avg_fill_price: float | None = None
     broker_order_id: str | None = None
+    total_commission: float | None = None
     notes: str | None = None
 
 
@@ -5297,6 +5298,8 @@ def get_live_activity_overview(
             market_type = "FX" if "/" in symbol else str(row.get("SECURITY_TYPE") or "").upper()
             action_side = str(action_meta.get("side") or "").upper()
             close_like = _is_close_like_execution(action_intent, action_side, side) or execution_context in {"CLOSE_SHORT", "CLOSE_LONG"}
+            raw_commission = payload.get("commission")
+            exec_commission = float(raw_commission) if raw_commission is not None else None
             executions_ib.append(
                 {
                     "order_id": exec_id or broker_order_id or f"IB_EXEC_{len(executions_ib)+1}",
@@ -5312,6 +5315,8 @@ def get_live_activity_overview(
                     "avg_fill_price": float(avg_fill_price) if avg_fill_price is not None else None,
                     "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
                     "realized_pnl_is_estimate": bool(realized_pnl_is_estimate),
+                    "commission": exec_commission,
+                    "fee_source": "ACTUAL_BROKER" if exec_commission and exec_commission > 0 else None,
                     "status": "FILLED",
                     "execution_ts": execution_ts,
                     "source": "IBKR_SNAPSHOT_EXECUTION",
@@ -8676,6 +8681,7 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                    BROKER_ORDER_ID = coalesce(%s, BROKER_ORDER_ID),
                    QTY_FILLED = %s,
                    AVG_FILL_PRICE = coalesce(%s, AVG_FILL_PRICE),
+                   TOTAL_COMMISSION = coalesce(%s, TOTAL_COMMISSION),
                    FILLED_AT = case when %s = 'FILLED' then current_timestamp() else FILLED_AT end,
                    LAST_UPDATED_AT = current_timestamp()
              where ORDER_ID = %s
@@ -8685,6 +8691,7 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                 req.broker_order_id,
                 new_qty_filled,
                 req.avg_fill_price,
+                req.total_commission,
                 target_status,
                 order_id,
             ),
@@ -8723,11 +8730,13 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
             """
             insert into MIP.LIVE.BROKER_EVENT_LEDGER (
               EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, ACTION_ID,
-              IDEMPOTENCY_KEY, BROKER_ORDER_ID, SYMBOL, SIDE, QTY, PRICE, PAYLOAD
+              IDEMPOTENCY_KEY, BROKER_ORDER_ID, SYMBOL, SIDE, QTY, PRICE,
+              COMMISSION, PAYLOAD
             )
             select
               %s, current_timestamp(), %s, %s, %s,
-              %s, %s, %s, %s, %s, %s, try_parse_json(%s)
+              %s, %s, %s, %s, %s, %s,
+              %s, try_parse_json(%s)
             """,
             (
                 str(uuid.uuid4()),
@@ -8740,7 +8749,8 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                 order.get("SIDE"),
                 new_qty_filled if target_status in ("PARTIAL_FILL", "FILLED") else (order.get("QTY_ORDERED") or 0.0),
                 req.avg_fill_price if req.avg_fill_price is not None else order.get("AVG_FILL_PRICE"),
-                json.dumps({"actor": req.actor, "notes": req.notes}),
+                req.total_commission,
+                json.dumps({"actor": req.actor, "notes": req.notes, "total_commission": req.total_commission}),
             ),
         )
 
@@ -8775,6 +8785,7 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
             "status": target_status,
             "qty_filled": new_qty_filled,
             "avg_fill_price": req.avg_fill_price if req.avg_fill_price is not None else order.get("AVG_FILL_PRICE"),
+            "total_commission": req.total_commission,
         }
     finally:
         conn.close()

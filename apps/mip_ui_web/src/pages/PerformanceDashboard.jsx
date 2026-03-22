@@ -16,6 +16,7 @@ import { API_BASE } from '../App'
 import LoadingState from '../components/LoadingState'
 import ErrorState from '../components/ErrorState'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import { usePortfolios } from '../context/PortfolioContext'
 import './PerformanceDashboard.css'
 
 function fmtPct(v, d = 1) {
@@ -47,13 +48,137 @@ function KpiCard({ label, value, hint }) {
   )
 }
 
+function FeeAnalyticsTab({ data, loading, error, formatSymbolLabel }) {
+  if (loading) return <LoadingState message="Loading fee analytics..." />
+  if (error) return <ErrorState message={error} />
+  if (!data || !data.ok) return <ErrorState message="No fee data available." />
+
+  const t = data.totals || {}
+  const bySymbol = data.by_symbol || []
+  const byPeriod = data.by_period || []
+  const marginal = data.marginal_trades || []
+
+  const pnlColor = (v) => v == null ? '' : Number(v) >= 0 ? 'perf-fee-pos' : 'perf-fee-neg'
+
+  return (
+    <>
+      <section className="perf-kpi-grid">
+        <KpiCard label="Total Fees" value={fmtMoney(t.total_all_fees)} hint={`Commission: ${fmtMoney(t.total_commission)}`} />
+        <KpiCard label="Fees / Notional" value={`${fmtNum(t.fees_bps_of_notional, 1)} bps`} />
+        <KpiCard label="Fees / Gross P&L" value={t.fees_as_pct_of_pnl != null ? fmtPct(t.fees_as_pct_of_pnl / 100, 1) : '—'} />
+        <KpiCard label="Total Trades" value={t.total_trades} />
+        <KpiCard label="Marginal Trades" value={data.marginal_trade_count || 0} hint="Fees exceeded gross P&L" />
+        <KpiCard label="Gross P&L" value={fmtMoney(t.total_realized_pnl)} />
+      </section>
+
+      <section className="perf-charts-grid">
+        {byPeriod.length > 0 && (
+          <article className="perf-panel perf-panel-wide">
+            <h3>Daily Fee Trend</h3>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={[...byPeriod].reverse()}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="daily_fees" fill="#f59e0b" name="Fees" />
+                <Bar dataKey="daily_realized_pnl" name="Realized P&L">
+                  {[...byPeriod].reverse().map((r, i) => (
+                    <Cell key={i} fill={Number(r.daily_realized_pnl || 0) >= 0 ? '#22c55e' : '#ef4444'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </article>
+        )}
+      </section>
+
+      {bySymbol.length > 0 && (
+        <section className="perf-panel perf-panel-wide perf-fee-table-section">
+          <h3>Fees by Symbol</h3>
+          <div className="perf-fee-table-wrap">
+            <table className="perf-fee-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Trades</th>
+                  <th>Total Fees</th>
+                  <th>Realized P&L</th>
+                  <th>Fees % P&L</th>
+                  <th>Fees bps</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bySymbol.map((r) => (
+                  <tr key={r.symbol}>
+                    <td className="perf-fee-symbol">{formatSymbolLabel(r.symbol, r.market_type)}</td>
+                    <td>{r.trade_count}</td>
+                    <td>{fmtMoney(r.total_fees)}</td>
+                    <td className={pnlColor(r.total_realized_pnl)}>{fmtMoney(r.total_realized_pnl)}</td>
+                    <td>{r.fees_as_pct_of_pnl != null ? `${fmtNum(r.fees_as_pct_of_pnl, 1)}%` : '—'}</td>
+                    <td>{fmtNum(r.fees_bps_of_notional, 1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {marginal.length > 0 && (
+        <section className="perf-panel perf-panel-wide perf-fee-table-section">
+          <h3>Marginal Trades (Fees Exceeded Gross P&L)</h3>
+          <div className="perf-fee-table-wrap">
+            <table className="perf-fee-table">
+              <thead>
+                <tr>
+                  <th>Trade ID</th>
+                  <th>Symbol</th>
+                  <th>Date</th>
+                  <th>Gross P&L</th>
+                  <th>Round-Trip Fee</th>
+                  <th>Net P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {marginal.map((r) => (
+                  <tr key={r.trade_id}>
+                    <td>{r.trade_id}</td>
+                    <td>{r.symbol}</td>
+                    <td>{r.trade_ts ? String(r.trade_ts).slice(0, 10) : '—'}</td>
+                    <td className={pnlColor(r.gross_pnl)}>{fmtMoney(r.gross_pnl)}</td>
+                    <td>{fmtMoney(r.round_trip_fee)}</td>
+                    <td className={pnlColor(r.net_pnl_after_fees)}>{fmtMoney(r.net_pnl_after_fees)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {marginal.length === 0 && (
+        <section className="perf-panel">
+          <h3>Marginal Trades</h3>
+          <p className="perf-fee-empty">No trades where fees exceeded gross P&L. Good discipline.</p>
+        </section>
+      )}
+    </>
+  )
+}
+
 export default function PerformanceDashboard() {
   const { formatSymbolLabel } = useSymbolMeta()
+  const { defaultPortfolioId } = usePortfolios()
   const [lookbackDays, setLookbackDays] = useState(90)
   const [tab, setTab] = useState('executive')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [feeData, setFeeData] = useState(null)
+  const [feeLoading, setFeeLoading] = useState(false)
+  const [feeError, setFeeError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +197,19 @@ export default function PerformanceDashboard() {
       })
     return () => { cancelled = true }
   }, [lookbackDays])
+
+  useEffect(() => {
+    if (tab !== 'fees' || !defaultPortfolioId) return
+    let cancelled = false
+    setFeeLoading(true)
+    setFeeError(null)
+    fetch(`${API_BASE}/performance/fee-analytics?portfolio_id=${defaultPortfolioId}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then((payload) => { if (!cancelled) setFeeData(payload) })
+      .catch((e) => { if (!cancelled) setFeeError(e.message) })
+      .finally(() => { if (!cancelled) setFeeLoading(false) })
+    return () => { cancelled = true }
+  }, [tab, defaultPortfolioId])
 
   const kpis = data?.executive?.kpis || {}
   const trends = data?.executive?.trends || {}
@@ -155,6 +293,9 @@ export default function PerformanceDashboard() {
         </button>
         <button type="button" className={tab === 'diagnostics' ? 'active' : ''} onClick={() => setTab('diagnostics')}>
           Diagnostics & Attribution
+        </button>
+        <button type="button" className={tab === 'fees' ? 'active' : ''} onClick={() => setTab('fees')}>
+          Fee Analytics
         </button>
       </div>
 
@@ -251,6 +392,10 @@ export default function PerformanceDashboard() {
             <p>{data?.executive?.verdict || 'No verdict available yet.'}</p>
           </section>
         </>
+      )}
+
+      {tab === 'fees' && (
+        <FeeAnalyticsTab data={feeData} loading={feeLoading} error={feeError} formatSymbolLabel={formatSymbolLabel} />
       )}
 
       {tab === 'diagnostics' && (

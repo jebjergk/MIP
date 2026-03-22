@@ -1099,7 +1099,8 @@ begin
             NOTIONAL,
             REALIZED_PNL,
             CASH_AFTER,
-            SCORE
+            SCORE,
+            FEE
         from cumulative
     ) as source
     on target.PORTFOLIO_ID = source.PORTFOLIO_ID
@@ -1120,7 +1121,10 @@ begin
             NOTIONAL,
             REALIZED_PNL,
             CASH_AFTER,
-            SCORE
+            SCORE,
+            COMMISSION,
+            TOTAL_FEE,
+            FEE_SOURCE
         )
         values (
             source.PROPOSAL_ID,
@@ -1137,7 +1141,10 @@ begin
             source.NOTIONAL,
             source.REALIZED_PNL,
             source.CASH_AFTER,
-            source.SCORE
+            source.SCORE,
+            source.FEE,
+            source.FEE,
+            'ESTIMATED'
         );
 
     update MIP.AGENT_OUT.ORDER_PROPOSALS
@@ -1179,7 +1186,7 @@ begin
         t.TRADE_TS as ENTRY_TS,
         t.PRICE as ENTRY_PRICE,
         t.QUANTITY,
-        t.NOTIONAL as COST_BASIS,
+        t.NOTIONAL + coalesce(t.COMMISSION, 0) as COST_BASIS,
         t.SCORE as ENTRY_SCORE,
         bi.BAR_INDEX as ENTRY_INDEX,
         bi.BAR_INDEX + coalesce(

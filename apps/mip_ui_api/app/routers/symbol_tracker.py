@@ -364,6 +364,34 @@ def _volatility_label(live_volatility: float | None, trained_volatility: float |
     return "LIVE_VOL_ALIGNED"
 
 
+def _build_fee_context(
+    entry_commission: float | None,
+    current_price: float | None,
+    quantity: float | None,
+    unrealized_pnl: float | None,
+    fee_bps: float,
+    min_fee: float,
+) -> dict[str, Any]:
+    """Compute fee context for a Symbol Tracker tile.
+    Returns entry_commission, estimated_exit_fee, gross/net/est-close P&L."""
+    exit_notional = abs((current_price or 0) * (quantity or 0))
+    est_exit_fee = max(min_fee, exit_notional * fee_bps / 10000) if exit_notional > 0 else 0
+    gross_pnl = unrealized_pnl
+    entry_comm = entry_commission or 0
+    net_pnl = (gross_pnl - entry_comm) if gross_pnl is not None else None
+    est_close_pnl = (net_pnl - est_exit_fee) if net_pnl is not None else None
+    fee_source = "ACTUAL_BROKER" if entry_commission and entry_commission > 0 else "ESTIMATED"
+    return {
+        "entry_commission": entry_commission,
+        "estimated_exit_fee": round(est_exit_fee, 4),
+        "est_round_trip_cost": round(entry_comm + est_exit_fee, 4),
+        "fee_source": fee_source,
+        "gross_unrealized_pnl": gross_pnl,
+        "net_unrealized_pnl": round(net_pnl, 4) if net_pnl is not None else None,
+        "est_net_close_pnl": round(est_close_pnl, 4) if est_close_pnl is not None else None,
+    }
+
+
 def _thesis_status(
     side: str,
     entry_price: float | None,
@@ -595,6 +623,7 @@ def get_symbol_tracker_tiles(
               lo.AVG_FILL_PRICE,
               lo.QTY_FILLED,
               lo.QTY_ORDERED,
+              lo.TOTAL_COMMISSION,
               lo.FILLED_AT,
               lo.LAST_UPDATED_AT,
               lo.CREATED_AT
@@ -723,7 +752,7 @@ def get_symbol_tracker_tiles(
             }
 
         protection_by_symbol: dict[str, dict[str, Any]] = defaultdict(
-            lambda: {"tp_price": None, "sl_price": None, "entry_price": None, "opened_at": None, "action_id": None}
+            lambda: {"tp_price": None, "sl_price": None, "entry_price": None, "opened_at": None, "action_id": None, "entry_commission": None}
         )
         events_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in order_rows:
@@ -752,6 +781,9 @@ def get_symbol_tracker_tiles(
                     protection_by_symbol[symbol]["entry_price"] = fill_price
                 if fill_ts is not None and protection_by_symbol[symbol]["opened_at"] is None:
                     protection_by_symbol[symbol]["opened_at"] = fill_ts
+                comm = _to_float(row.get("TOTAL_COMMISSION"))
+                if comm is not None and protection_by_symbol[symbol]["entry_commission"] is None:
+                    protection_by_symbol[symbol]["entry_commission"] = comm
             if is_filled:
                 event_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
                 if event_ts:
@@ -814,6 +846,18 @@ def get_symbol_tracker_tiles(
                         },
                     }
                 )
+
+        cur.execute(
+            """
+            select CONFIG_KEY, CONFIG_VALUE
+            from MIP.APP.APP_CONFIG
+            where CONFIG_KEY in ('FEE_BPS', 'MIN_FEE', 'SLIPPAGE_BPS', 'SPREAD_BPS')
+            """
+        )
+        fee_cfg_rows = fetch_all(cur)
+        fee_cfg = {r["CONFIG_KEY"]: _to_float(r.get("CONFIG_VALUE")) for r in fee_cfg_rows}
+        cfg_fee_bps = fee_cfg.get("FEE_BPS") or 1.0
+        cfg_min_fee = fee_cfg.get("MIN_FEE") or 1.0
 
         tiles = []
         for position in positions:
@@ -1024,6 +1068,14 @@ def get_symbol_tracker_tiles(
                         "trained_volatility": trained_volatility,
                         "status": vol_label,
                     },
+                    "fee_context": _build_fee_context(
+                        entry_commission=protection.get("entry_commission"),
+                        current_price=current_price,
+                        quantity=abs_qty,
+                        unrealized_pnl=unrealized_pnl,
+                        fee_bps=cfg_fee_bps,
+                        min_fee=cfg_min_fee,
+                    ),
                 }
             )
 

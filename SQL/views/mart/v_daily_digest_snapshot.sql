@@ -218,7 +218,9 @@ trades_summary as (
         count(*) as TRADE_COUNT,
         sum(case when SIDE = 'BUY' then 1 else 0 end) as BUY_COUNT,
         sum(case when SIDE = 'SELL' then 1 else 0 end) as SELL_COUNT,
-        sum(coalesce(REALIZED_PNL, 0)) as TOTAL_REALIZED_PNL
+        sum(coalesce(REALIZED_PNL, 0)) as TOTAL_REALIZED_PNL,
+        sum(coalesce(pt.COMMISSION, 0)) as TOTAL_COMMISSION,
+        sum(coalesce(pt.TOTAL_FEE, 0)) as TOTAL_FEES
     from MIP.APP.PORTFOLIO_TRADES pt
     join latest_proposal_run lpr
         on lpr.PORTFOLIO_ID = pt.PORTFOLIO_ID

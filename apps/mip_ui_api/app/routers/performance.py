@@ -454,3 +454,130 @@ def get_performance_suggestions(
         })
     suggestions.sort(key=lambda x: (-x["rank_score"], -x["n_outcomes"]))
     return {"min_sample": min_sample, "suggestions": suggestions}
+
+
+@router.get("/fee-analytics")
+def get_fee_analytics(
+    portfolio_id: int = Query(..., ge=1),
+    run_id: str | None = Query(None),
+):
+    """Portfolio-level fee analytics: totals, by-symbol breakdown, and marginal trades."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        if run_id is None:
+            cur.execute(
+                "select LAST_SIMULATION_RUN_ID from MIP.APP.PORTFOLIO where PORTFOLIO_ID = %s",
+                (portfolio_id,),
+            )
+            run_rows = fetch_all(cur)
+            run_id = (run_rows[0] or {}).get("LAST_SIMULATION_RUN_ID") if run_rows else None
+
+        if not run_id:
+            raise HTTPException(status_code=404, detail="No run_id found for portfolio.")
+
+        cur.execute(
+            """
+            select * from MIP.MART.V_PORTFOLIO_FEE_TOTALS
+            where PORTFOLIO_ID = %s and RUN_ID = %s
+            """,
+            (portfolio_id, run_id),
+        )
+        totals = fetch_all(cur)
+
+        cur.execute(
+            """
+            select SYMBOL, MARKET_TYPE, TRADE_COUNT, BUY_COUNT, SELL_COUNT,
+                   TOTAL_COMMISSION, TOTAL_FEES, TOTAL_NOTIONAL,
+                   TOTAL_REALIZED_PNL, FEES_BPS_OF_NOTIONAL, FEES_AS_PCT_OF_PNL
+            from MIP.MART.V_PORTFOLIO_FEE_BY_SYMBOL
+            where PORTFOLIO_ID = %s and RUN_ID = %s
+            order by TOTAL_FEES desc
+            """,
+            (portfolio_id, run_id),
+        )
+        by_symbol = fetch_all(cur)
+
+        cur.execute(
+            """
+            select TRADE_DATE, TRADE_COUNT, DAILY_COMMISSION, DAILY_FEES,
+                   DAILY_NOTIONAL, DAILY_REALIZED_PNL
+            from MIP.MART.V_PORTFOLIO_FEE_BY_PERIOD
+            where PORTFOLIO_ID = %s and RUN_ID = %s
+            order by TRADE_DATE desc
+            limit 30
+            """,
+            (portfolio_id, run_id),
+        )
+        by_period = fetch_all(cur)
+
+        cur.execute(
+            """
+            select TRADE_ID, SYMBOL, TRADE_TS, GROSS_PNL, ROUND_TRIP_FEE,
+                   NET_PNL_AFTER_FEES, FEE_EXCEEDED_PNL
+            from MIP.MART.V_PORTFOLIO_MARGINAL_TRADES
+            where PORTFOLIO_ID = %s and RUN_ID = %s and FEE_EXCEEDED_PNL = true
+            order by TRADE_TS desc
+            limit 20
+            """,
+            (portfolio_id, run_id),
+        )
+        marginal = fetch_all(cur)
+
+        def _safe(row, key):
+            v = row.get(key)
+            return float(v) if v is not None else None
+
+        return {
+            "ok": True,
+            "portfolio_id": portfolio_id,
+            "run_id": run_id,
+            "totals": {
+                "total_trades": int((totals[0] or {}).get("TOTAL_TRADES") or 0) if totals else 0,
+                "total_commission": _safe(totals[0], "TOTAL_COMMISSION") if totals else 0,
+                "total_regulatory_fee": _safe(totals[0], "TOTAL_REGULATORY_FEE") if totals else 0,
+                "total_fx_cost": _safe(totals[0], "TOTAL_FX_COST") if totals else 0,
+                "total_all_fees": _safe(totals[0], "TOTAL_ALL_FEES") if totals else 0,
+                "total_notional": _safe(totals[0], "TOTAL_NOTIONAL") if totals else 0,
+                "total_realized_pnl": _safe(totals[0], "TOTAL_REALIZED_PNL") if totals else 0,
+                "fees_as_pct_of_pnl": _safe(totals[0], "FEES_AS_PCT_OF_PNL") if totals else None,
+                "fees_bps_of_notional": _safe(totals[0], "FEES_BPS_OF_NOTIONAL") if totals else 0,
+            },
+            "by_symbol": [
+                {
+                    "symbol": r.get("SYMBOL"),
+                    "market_type": r.get("MARKET_TYPE"),
+                    "trade_count": int(r.get("TRADE_COUNT") or 0),
+                    "total_fees": _safe(r, "TOTAL_FEES"),
+                    "total_realized_pnl": _safe(r, "TOTAL_REALIZED_PNL"),
+                    "fees_as_pct_of_pnl": _safe(r, "FEES_AS_PCT_OF_PNL"),
+                    "fees_bps_of_notional": _safe(r, "FEES_BPS_OF_NOTIONAL"),
+                }
+                for r in by_symbol
+            ],
+            "by_period": [
+                {
+                    "date": str(r.get("TRADE_DATE"))[:10] if r.get("TRADE_DATE") else None,
+                    "trade_count": int(r.get("TRADE_COUNT") or 0),
+                    "daily_fees": _safe(r, "DAILY_FEES"),
+                    "daily_notional": _safe(r, "DAILY_NOTIONAL"),
+                    "daily_realized_pnl": _safe(r, "DAILY_REALIZED_PNL"),
+                }
+                for r in by_period
+            ],
+            "marginal_trades": [
+                {
+                    "trade_id": int(r.get("TRADE_ID") or 0),
+                    "symbol": r.get("SYMBOL"),
+                    "trade_ts": str(r.get("TRADE_TS")) if r.get("TRADE_TS") else None,
+                    "gross_pnl": _safe(r, "GROSS_PNL"),
+                    "round_trip_fee": _safe(r, "ROUND_TRIP_FEE"),
+                    "net_pnl_after_fees": _safe(r, "NET_PNL_AFTER_FEES"),
+                }
+                for r in marginal
+            ],
+            "marginal_trade_count": len(marginal),
+        }
+    finally:
+        conn.close()

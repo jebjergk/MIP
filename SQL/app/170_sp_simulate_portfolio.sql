@@ -237,7 +237,10 @@ begin
                         NOTIONAL,
                         REALIZED_PNL,
                         CASH_AFTER,
-                        SCORE
+                        SCORE,
+                        COMMISSION,
+                        TOTAL_FEE,
+                        FEE_SOURCE
                     )
                     values (
                         :P_PORTFOLIO_ID,
@@ -252,7 +255,10 @@ begin
                         v_sell_notional,
                         v_sell_pnl,
                         v_cash,
-                        position_row.ENTRY_SCORE
+                        position_row.ENTRY_SCORE,
+                        v_sell_fee,
+                        v_sell_fee,
+                        'ESTIMATED'
                     );
 
                     delete from TEMP_POSITIONS
@@ -304,7 +310,10 @@ begin
                             NOTIONAL,
                             REALIZED_PNL,
                             CASH_AFTER,
-                            SCORE
+                            SCORE,
+                            COMMISSION,
+                            TOTAL_FEE,
+                            FEE_SOURCE
                         )
                         values (
                             :P_PORTFOLIO_ID,
@@ -319,7 +328,10 @@ begin
                             v_bust_sell_notional,
                             v_bust_sell_pnl,
                             v_cash,
-                            bust_pos.ENTRY_SCORE
+                            bust_pos.ENTRY_SCORE,
+                            v_bust_sell_fee,
+                            v_bust_sell_fee,
+                            'ESTIMATED'
                         );
 
                         delete from TEMP_POSITIONS
@@ -431,7 +443,10 @@ begin
                                 NOTIONAL,
                                 REALIZED_PNL,
                                 CASH_AFTER,
-                                SCORE
+                                SCORE,
+                                COMMISSION,
+                                TOTAL_FEE,
+                                FEE_SOURCE
                             )
                             values (
                                 :P_PORTFOLIO_ID,
@@ -446,7 +461,10 @@ begin
                                 v_bust_sell_notional,
                                 v_bust_sell_pnl,
                                 v_cash,
-                                bust_pos.ENTRY_SCORE
+                                bust_pos.ENTRY_SCORE,
+                                v_bust_sell_fee,
+                                v_bust_sell_fee,
+                                'ESTIMATED'
                             );
 
                             delete from TEMP_POSITIONS
@@ -629,7 +647,10 @@ begin
                                         NOTIONAL,
                                         REALIZED_PNL,
                                         CASH_AFTER,
-                                        SCORE
+                                        SCORE,
+                                        COMMISSION,
+                                        TOTAL_FEE,
+                                        FEE_SOURCE
                                     )
                                     values (
                                         :P_PORTFOLIO_ID,
@@ -644,7 +665,10 @@ begin
                                         v_buy_notional,
                                         null,
                                         v_cash,
-                                        rec.SCORE
+                                        rec.SCORE,
+                                        v_buy_fee,
+                                        v_buy_fee,
+                                        'ESTIMATED'
                                     );
 
                                     v_trade_count := v_trade_count + 1;

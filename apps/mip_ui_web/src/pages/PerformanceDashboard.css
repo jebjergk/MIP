@@ -101,3 +101,53 @@
   border-bottom: 1px dashed #e5e7eb;
   padding-bottom: 0.25rem;
 }
+
+/* Fee Analytics Tab */
+.perf-fee-table-section {
+  margin-top: 0.5rem;
+}
+
+.perf-fee-table-wrap {
+  overflow-x: auto;
+}
+
+.perf-fee-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.perf-fee-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 2px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+.perf-fee-table td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #f1f5f9;
+  white-space: nowrap;
+}
+
+.perf-fee-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.perf-fee-symbol {
+  font-weight: 600;
+}
+
+.perf-fee-pos {
+  color: #16a34a;
+}
+
+.perf-fee-neg {
+  color: #dc2626;
+}
+
+.perf-fee-empty {
+  color: #6b7280;
+  font-style: italic;
+}

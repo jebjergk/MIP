@@ -1088,11 +1088,12 @@ export default function LivePortfolioActivity() {
                         <th>Side</th>
                         <th>Qty</th>
                         <th>Notional</th>
+                        <th>Commission</th>
                         <th>P&L</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {executions.length === 0 && <tr><td colSpan={5}>No executions yet.</td></tr>}
+                      {executions.length === 0 && <tr><td colSpan={6}>No executions yet.</td></tr>}
                       {executions.map((e) => {
                         const side = String(e.side || '').toUpperCase()
                         const sideLabel = formatExecutionSideLabel(e)
@@ -1100,6 +1101,7 @@ export default function LivePortfolioActivity() {
                         const px = Number(e.avg_fill_price || 0)
                         const notional = Number.isFinite(qty) && Number.isFinite(px) ? Math.abs(qty * px) : null
                         const realizedPnl = (e.realized_pnl == null) ? null : Number(e.realized_pnl)
+                        const commission = e.commission != null ? Number(e.commission) : null
                         return (
                           <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
                             <td>
@@ -1109,6 +1111,7 @@ export default function LivePortfolioActivity() {
                             <td><span className={`lpa-side-chip lpa-side-chip--${side === 'BUY' ? 'buy' : 'sell'}`}>{sideLabel}</span></td>
                             <td>{fmtNum(e.qty_filled, 0)}</td>
                             <td>{fmtNum(notional, 2)}</td>
+                            <td className="lpa-subtle">{commission != null ? fmtNum(commission, 2) : '—'}</td>
                             <td className={realizedPnl == null ? '' : (realizedPnl >= 0 ? 'lpa-pos' : 'lpa-neg')}>
                               {realizedPnl == null ? '—' : `${e.realized_pnl_is_estimate ? '~' : ''}${fmtSigned(realizedPnl, 2)}`}
                             </td>

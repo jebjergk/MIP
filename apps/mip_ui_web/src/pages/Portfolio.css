@@ -786,6 +786,10 @@
   border-left: 4px solid #7b1fa2;
 }
 
+.cumulative-kpi-tile--fees {
+  border-left: 4px solid #f59e0b;
+}
+
 .cumulative-kpi-icon {
   font-size: 1.5rem;
   margin-bottom: 0.25rem;

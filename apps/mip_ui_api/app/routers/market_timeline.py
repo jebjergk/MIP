@@ -758,7 +758,8 @@ def get_detail(
                     o.QTY_ORDERED,
                     o.AVG_FILL_PRICE,
                     o.LIMIT_PRICE,
-                    o.STATUS
+                    o.STATUS,
+                    o.TOTAL_COMMISSION
                 from MIP.LIVE.LIVE_ORDERS o
                 join MIP.LIVE.LIVE_ACTIONS a
                   on a.ACTION_ID = o.ACTION_ID
@@ -777,6 +778,7 @@ def get_detail(
                 ts = row.get("LAST_UPDATED_AT")
                 qty = row.get("QTY_FILLED") if row.get("QTY_FILLED") is not None else row.get("QTY_ORDERED")
                 price = row.get("AVG_FILL_PRICE") if row.get("AVG_FILL_PRICE") is not None else row.get("LIMIT_PRICE")
+                commission = row.get("TOTAL_COMMISSION")
                 live_trades.append({
                     "type": "TRADE",
                     "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
@@ -789,6 +791,8 @@ def get_detail(
                     "price": float(price) if price is not None else None,
                     "notional": None,
                     "realized_pnl": None,
+                    "commission": float(commission) if commission is not None else None,
+                    "fee_source": "ACTUAL_BROKER" if commission and float(commission) > 0 else "ESTIMATED",
                     "status": row.get("STATUS"),
                 })
         

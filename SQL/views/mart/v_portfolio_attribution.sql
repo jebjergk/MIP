@@ -14,10 +14,25 @@ with sell_trades as (
         MARKET_TYPE,
         INTERVAL_MINUTES,
         TRADE_TS,
-        REALIZED_PNL
+        REALIZED_PNL,
+        coalesce(COMMISSION, 0) as COMMISSION,
+        coalesce(TOTAL_FEE, 0) as TOTAL_FEE,
+        FEE_SOURCE
     from MIP.APP.PORTFOLIO_TRADES
     where SIDE = 'SELL'
       and REALIZED_PNL is not null
+),
+buy_fees as (
+    select
+        PORTFOLIO_ID,
+        RUN_ID,
+        SYMBOL,
+        MARKET_TYPE,
+        sum(coalesce(COMMISSION, 0)) as BUY_COMMISSION,
+        sum(coalesce(TOTAL_FEE, 0)) as BUY_TOTAL_FEE
+    from MIP.APP.PORTFOLIO_TRADES
+    where SIDE = 'BUY'
+    group by PORTFOLIO_ID, RUN_ID, SYMBOL, MARKET_TYPE
 ),
 run_totals as (
     select
@@ -31,19 +46,26 @@ run_totals as (
 ),
 by_symbol as (
     select
-        PORTFOLIO_ID,
-        RUN_ID,
-        MARKET_TYPE,
-        SYMBOL,
-        sum(REALIZED_PNL) as TOTAL_REALIZED_PNL,
+        s.PORTFOLIO_ID,
+        s.RUN_ID,
+        s.MARKET_TYPE,
+        s.SYMBOL,
+        sum(s.REALIZED_PNL) as TOTAL_REALIZED_PNL,
         count(*) as ROUNDTRIPS,
-        sum(case when REALIZED_PNL > 0 then 1 else 0 end) / nullif(count(*), 0) as WIN_RATE
-    from sell_trades
+        sum(case when s.REALIZED_PNL > 0 then 1 else 0 end) / nullif(count(*), 0) as WIN_RATE,
+        sum(s.COMMISSION) + coalesce(max(bf.BUY_COMMISSION), 0) as TOTAL_COMMISSION,
+        sum(s.TOTAL_FEE) + coalesce(max(bf.BUY_TOTAL_FEE), 0) as TOTAL_FEES
+    from sell_trades s
+    left join buy_fees bf
+      on bf.PORTFOLIO_ID = s.PORTFOLIO_ID
+     and bf.RUN_ID = s.RUN_ID
+     and bf.SYMBOL = s.SYMBOL
+     and bf.MARKET_TYPE = s.MARKET_TYPE
     group by
-        PORTFOLIO_ID,
-        RUN_ID,
-        MARKET_TYPE,
-        SYMBOL
+        s.PORTFOLIO_ID,
+        s.RUN_ID,
+        s.MARKET_TYPE,
+        s.SYMBOL
 )
 select
     s.PORTFOLIO_ID,
@@ -54,7 +76,10 @@ select
     s.ROUNDTRIPS,
     s.TOTAL_REALIZED_PNL / nullif(s.ROUNDTRIPS, 0) as AVG_PNL_PER_TRADE,
     s.WIN_RATE,
-    s.TOTAL_REALIZED_PNL / nullif(t.TOTAL_REALIZED_PNL, 0) as CONTRIBUTION_PCT
+    s.TOTAL_REALIZED_PNL / nullif(t.TOTAL_REALIZED_PNL, 0) as CONTRIBUTION_PCT,
+    s.TOTAL_COMMISSION,
+    s.TOTAL_FEES,
+    s.TOTAL_FEES / nullif(abs(s.TOTAL_REALIZED_PNL), 0) as FEES_AS_PCT_OF_PNL
 from by_symbol s
 left join run_totals t
   on t.PORTFOLIO_ID = s.PORTFOLIO_ID

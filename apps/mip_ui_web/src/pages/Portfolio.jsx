@@ -701,6 +701,18 @@ export default function Portfolio() {
                       <span className="cumulative-kpi-value">{timeline.episode_count ?? timeline.per_episode?.length ?? 0}</span>
                       <span className="cumulative-kpi-hint">Profile generations</span>
                     </div>
+                    <div className="cumulative-kpi-tile cumulative-kpi-tile--fees">
+                      <span className="cumulative-kpi-icon">🏦</span>
+                      <span className="cumulative-kpi-label">Total Fees</span>
+                      <span className="cumulative-kpi-value">
+                        {Number(timeline.total_fees ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                      <span className="cumulative-kpi-hint">
+                        {timeline.total_realized_pnl && Number(timeline.total_realized_pnl) !== 0
+                          ? `${(Number(timeline.total_fees ?? 0) / Math.abs(Number(timeline.total_realized_pnl)) * 100).toFixed(1)}% of gross P&L`
+                          : 'Commission + regulatory + FX'}
+                      </span>
+                    </div>
                   </div>
 
                   {timeline.cumulative_series?.length > 0 && (

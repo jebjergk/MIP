@@ -208,7 +208,12 @@ def get_overview(
                     end
                 ) as actionable_proposal_count
             from MIP.AGENT_OUT.ORDER_PROPOSALS p
+            join MIP.APP.RECOMMENDATION_LOG rl on rl.RECOMMENDATION_ID = p.RECOMMENDATION_ID
+            join MIP.APP.PATTERN_DEFINITION pdr on pdr.PATTERN_ID = rl.PATTERN_ID
             where p.PROPOSED_AT >= %s
+              and (pdr.PATTERN_TYPE = 'MOMENTUM'
+                   or (pdr.PATTERN_TYPE = 'MEAN_REVERSION'
+                       and coalesce(rl.DETAILS:direction::string, '') = 'BULLISH'))
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}
             group by p.SYMBOL, p.MARKET_TYPE
         ),
@@ -616,9 +621,14 @@ def get_detail(
                     p.SIGNAL_TS,
                     p.RECOMMENDATION_ID
                 from MIP.AGENT_OUT.ORDER_PROPOSALS p
+                join MIP.APP.RECOMMENDATION_LOG rl on rl.RECOMMENDATION_ID = p.RECOMMENDATION_ID
+                join MIP.APP.PATTERN_DEFINITION pdr on pdr.PATTERN_ID = rl.PATTERN_ID
                 where p.SYMBOL = %s
                   and p.MARKET_TYPE = %s
                   and p.PROPOSED_AT >= %s
+                  and (pdr.PATTERN_TYPE = 'MOMENTUM'
+                       or (pdr.PATTERN_TYPE = 'MEAN_REVERSION'
+                           and coalesce(rl.DETAILS:direction::string, '') = 'BULLISH'))
             """
             params = [symbol, market_type, window_start]
             if portfolio_id:
@@ -674,11 +684,16 @@ def get_detail(
                     op.SIGNAL_TS as SOURCE_SIGNAL_TS,
                     op.PROPOSED_AT as SOURCE_PROPOSED_AT
                 from MIP.LIVE.LIVE_ACTIONS la
-                left join MIP.AGENT_OUT.ORDER_PROPOSALS op
+                join MIP.AGENT_OUT.ORDER_PROPOSALS op
                   on op.PROPOSAL_ID = la.PROPOSAL_ID
+                join MIP.APP.RECOMMENDATION_LOG rl on rl.RECOMMENDATION_ID = op.RECOMMENDATION_ID
+                join MIP.APP.PATTERN_DEFINITION pdr on pdr.PATTERN_ID = rl.PATTERN_ID
                 where upper(la.SYMBOL) = upper(%s)
                   and coalesce(la.ASSET_CLASS, 'STOCK') = %s
                   and la.CREATED_AT >= %s
+                  and (pdr.PATTERN_TYPE = 'MOMENTUM'
+                       or (pdr.PATTERN_TYPE = 'MEAN_REVERSION'
+                           and coalesce(rl.DETAILS:direction::string, '') = 'BULLISH'))
                   and (
                     la.STATUS not in (
                       'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',

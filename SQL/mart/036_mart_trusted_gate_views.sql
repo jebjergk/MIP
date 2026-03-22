@@ -94,18 +94,27 @@ with latest_ts as (
     where INTERVAL_MINUTES = 1440
 ),
 trusted_ph as (
+    -- Aggregate trust by PATTERN_TYPE: if ANY pattern of a given type is trusted,
+    -- all signals of that type become eligible (symbol-local gate still validates).
+    -- When multiple patterns of the same type are trusted, keep the best stats.
     select
-        TRAINING_VERSION,
-        PATTERN_ID,
-        MARKET_TYPE,
-        INTERVAL_MINUTES,
-        HORIZON_BARS,
-        N_SIGNALS,
-        HIT_RATE_SUCCESS,
-        AVG_RETURN_SUCCESS,
-        SHARPE_LIKE_SUCCESS,
-        CONFIDENCE
-    from MIP.MART.V_TRUSTED_PATTERN_HORIZONS
+        tp.TRAINING_VERSION,
+        pd.PATTERN_TYPE,
+        tp.MARKET_TYPE,
+        tp.INTERVAL_MINUTES,
+        tp.HORIZON_BARS,
+        tp.N_SIGNALS,
+        tp.HIT_RATE_SUCCESS,
+        tp.AVG_RETURN_SUCCESS,
+        tp.SHARPE_LIKE_SUCCESS,
+        tp.CONFIDENCE
+    from MIP.MART.V_TRUSTED_PATTERN_HORIZONS tp
+    join MIP.APP.PATTERN_DEFINITION pd
+      on pd.PATTERN_ID = tp.PATTERN_ID
+    qualify row_number() over (
+        partition by pd.PATTERN_TYPE, tp.MARKET_TYPE, tp.INTERVAL_MINUTES, tp.HORIZON_BARS
+        order by tp.SHARPE_LIKE_SUCCESS desc nulls last
+    ) = 1
 ),
 policy_active as (
     select
@@ -127,8 +136,10 @@ policy_active as (
     from MIP.MART.V_DAILY_POLICY_EFFECTIVE_ACTIVE
 ),
 candidates as (
-    -- Join today's signals to trusted pattern/horizon combos
-    -- A signal is trusted if its pattern is trusted for at least one horizon
+    -- Join today's signals to trusted pattern-TYPE/horizon combos.
+    -- A signal is trusted if ANY pattern of the same PATTERN_TYPE is trusted,
+    -- so e.g. a MOMENTUM signal from Pattern 3 (SLOW) is eligible when
+    -- Pattern 2 (FAST, same MOMENTUM type) passes the trust gate.
     select
         r.RECOMMENDATION_ID,
         r.PATTERN_ID,
@@ -161,8 +172,10 @@ candidates as (
         'GATE_PASS' as TRUST_REASON
     from MIP.APP.RECOMMENDATION_LOG r
     cross join latest_ts lt
+    join MIP.APP.PATTERN_DEFINITION pd_sig
+      on pd_sig.PATTERN_ID = r.PATTERN_ID
     join trusted_ph t
-      on t.PATTERN_ID = r.PATTERN_ID
+      on t.PATTERN_TYPE = pd_sig.PATTERN_TYPE
      and t.MARKET_TYPE = r.MARKET_TYPE
      and t.INTERVAL_MINUTES = r.INTERVAL_MINUTES
     left join policy_active pa

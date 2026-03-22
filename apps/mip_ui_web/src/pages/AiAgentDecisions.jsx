@@ -16,6 +16,13 @@ function fmtNum(v, d = 4) {
   return n.toFixed(d)
 }
 
+function fmtPct(v) {
+  if (v == null) return '—'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return `${(n * 100).toFixed(2)}%`
+}
+
 function parseMaybeJson(v) {
   if (!v) return null
   if (typeof v === 'object') return v
@@ -28,6 +35,23 @@ function parseMaybeJson(v) {
 function hasTierCConflict(row) {
   const codes = Array.isArray(row?.reason_codes) ? row.reason_codes.map((x) => String(x).toUpperCase()) : []
   return codes.includes('TIER_C_CONFLICT_ALERT')
+}
+
+function StanceBadge({ stance }) {
+  if (!stance) return null
+  const s = String(stance).toUpperCase()
+  const cls = s === 'SUPPORT' ? 'aad-stance-support'
+    : s === 'BLOCK' ? 'aad-stance-block'
+    : s === 'CONDITIONAL' ? 'aad-stance-conditional'
+    : 'aad-stance-default'
+  return <span className={`aad-stance ${cls}`}>{s}</span>
+}
+
+function VerdictBadge({ shouldEnter }) {
+  if (shouldEnter == null) return null
+  return shouldEnter
+    ? <span className="aad-verdict-badge aad-verdict-enter">ENTER</span>
+    : <span className="aad-verdict-badge aad-verdict-block">BLOCK</span>
 }
 
 export default function AiAgentDecisions() {
@@ -103,10 +127,7 @@ export default function AiAgentDecisions() {
       const base = rows.find((r) => r.action_id === id)
       const committeeResp = await fetch(`${API_BASE}/live/trades/actions/${id}/committee`)
       const committee = committeeResp.ok ? await committeeResp.json() : { role_outputs: [], verdict: null }
-      setDetail({
-        ...base,
-        committee,
-      })
+      setDetail({ ...base, committee })
     } catch (e) {
       setDetailError(e.message || 'Failed to load detail.')
     }
@@ -125,10 +146,7 @@ export default function AiAgentDecisions() {
       </div>
 
       <div className="aad-filters">
-        <select
-          value={liveStatus}
-          onChange={(e) => setLiveStatus(e.target.value)}
-        >
+        <select value={liveStatus} onChange={(e) => setLiveStatus(e.target.value)}>
           <option value="">All statuses</option>
           <option value="PENDING_OPEN_VALIDATION">PENDING_OPEN_VALIDATION</option>
           <option value="OPEN_BLOCKED">OPEN_BLOCKED</option>
@@ -149,11 +167,7 @@ export default function AiAgentDecisions() {
           <option value="EXECUTED">EXECUTED</option>
         </select>
         <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={liveLatestPerSymbol}
-            onChange={(e) => setLiveLatestPerSymbol(e.target.checked)}
-          />
+          <input type="checkbox" checked={liveLatestPerSymbol} onChange={(e) => setLiveLatestPerSymbol(e.target.checked)} />
           Latest action per symbol
         </label>
         <button className="aad-btn" onClick={load}>Refresh</button>
@@ -176,14 +190,9 @@ export default function AiAgentDecisions() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
-                <tr><td colSpan={6}>No live AI decisions found.</td></tr>
-              )}
+              {rows.length === 0 && <tr><td colSpan={6}>No live AI decisions found.</td></tr>}
               {rows.map((r) => (
-                <tr
-                  key={r.action_id}
-                  className={selected === r.action_id ? 'is-selected' : ''}
-                >
+                <tr key={r.action_id} className={selected === r.action_id ? 'is-selected' : ''}>
                   <td>{fmtTs(r.proposed_at)}</td>
                   <td>
                     <div><b>{formatSymbolLabel(r.symbol, r.market_type)}</b> ({r.side})</div>
@@ -194,9 +203,7 @@ export default function AiAgentDecisions() {
                   <td>
                     <div>Committee: {r.committee_status || '—'}</div>
                     <div>Verdict: {r.committee_verdict || '—'}</div>
-                    {hasTierCConflict(r) ? (
-                      <div className="aad-conflict-pill">Tier C conflict detected</div>
-                    ) : null}
+                    {hasTierCConflict(r) && <div className="aad-conflict-pill">Tier C conflict detected</div>}
                     <div>Size: {fmtNum(r.committee_joint_decision?.position_size_factor, 2)}</div>
                     <div>Target: {fmtNum(r.committee_joint_decision?.realistic_target_return, 3)}</div>
                     <div>Hold bars: {r.committee_joint_decision?.hold_bars ?? '—'}</div>
@@ -204,14 +211,7 @@ export default function AiAgentDecisions() {
                     <div>Revalidation: {r.revalidation_outcome || '—'}</div>
                   </td>
                   <td>{r.committee_summary || r.reason_codes?.join(', ') || '—'}</td>
-                  <td>
-                    <button
-                      className="aad-btn"
-                      onClick={() => loadDetail(r.action_id)}
-                    >
-                      View
-                    </button>
-                  </td>
+                  <td><button className="aad-btn" onClick={() => loadDetail(r.action_id)}>View</button></td>
                 </tr>
               ))}
             </tbody>
@@ -222,48 +222,102 @@ export default function AiAgentDecisions() {
           <h3>Live Committee Transcript</h3>
           {!selected ? <p>Select a row to view transcript.</p> : null}
           {detailError ? <div className="aad-error">{detailError}</div> : null}
-          {detail ? (
-            <>
-              {(() => {
-                const verdictJson = parseMaybeJson(detail?.committee?.verdict?.VERDICT_JSON)
-                const tierC = hasTierCConflict(detail) || Boolean(verdictJson?.verdict?.tier_c_conflict)
-                return tierC ? (
-                  <div className="aad-conflict-banner">
-                    Tier C conflict: committee direction conflicts with Parallel Worlds under elevated risk.
-                    Review this trade manually before proceed/reject.
-                  </div>
-                ) : null
-              })()}
-              <div className="aad-meta">
-                <div><b>Action:</b> #{detail.action_id}</div>
-                <div><b>Run:</b> {detail.run_id || detail.committee?.run?.RUN_ID || '—'}</div>
-                <div><b>Status:</b> {detail.status || '—'}</div>
-              </div>
-              <div className="aad-meta">
-                <div><b>Joint decision:</b></div>
-                <div>Recommendation: {detail.committee?.verdict?.RECOMMENDATION || '—'}</div>
-                <div>Size factor: {fmtNum(detail.committee?.verdict?.SIZE_FACTOR, 2)}</div>
-                <div>Confidence: {fmtNum(detail.committee?.verdict?.CONFIDENCE, 2)}</div>
-                <div>Blocked: {detail.committee?.verdict?.IS_BLOCKED == null ? '—' : (detail.committee?.verdict?.IS_BLOCKED ? 'Yes' : 'No')}</div>
-                <div>Target: {fmtNum(parseMaybeJson(detail.committee?.verdict?.VERDICT_JSON)?.verdict?.joint_decision?.realistic_target_return, 3)}</div>
-                <div>Hold bars: {parseMaybeJson(detail.committee?.verdict?.VERDICT_JSON)?.verdict?.joint_decision?.hold_bars ?? '—'}</div>
-                <div>Early-exit target: {fmtNum(parseMaybeJson(detail.committee?.verdict?.VERDICT_JSON)?.verdict?.joint_decision?.acceptable_early_exit_target_return, 3)}</div>
-              </div>
-              <div className="aad-transcript">
-                {(detail.committee?.role_outputs || []).length === 0 ? (
-                  <div className="aad-line">No transcript payload recorded.</div>
-                ) : (
-                  detail.committee.role_outputs.map((m, idx) => (
-                    <div key={`${detail.action_id}_${idx}`} className="aad-line">
-                      <b>{m?.ROLE_NAME || `Agent ${idx + 1}`}:</b> {m?.SUMMARY || '—'}
-                    </div>
-                  ))
-                )}
-              </div>
-            </>
-          ) : null}
+          {detail && <LiveTranscript detail={detail} />}
         </div>
       </div>
     </div>
+  )
+}
+
+function LiveTranscript({ detail }) {
+  const verdictJson = parseMaybeJson(detail?.committee?.verdict?.VERDICT_JSON)
+  const verdictObj = verdictJson?.verdict || {}
+  const jd = verdictObj?.joint_decision || {}
+  const tierC = hasTierCConflict(detail) || Boolean(verdictObj?.tier_c_conflict)
+  const roleOutputs = detail.committee?.role_outputs || []
+  const verdictRow = detail.committee?.verdict
+
+  return (
+    <>
+      {tierC && (
+        <div className="aad-conflict-banner">
+          Tier C conflict: committee direction conflicts with Parallel Worlds under elevated risk.
+          Review this trade manually before proceed/reject.
+        </div>
+      )}
+      <div className="aad-meta">
+        <div><b>Action:</b> #{detail.action_id}</div>
+        <div><b>Run:</b> {detail.run_id || detail.committee?.run?.RUN_ID || '—'}</div>
+        <div><b>Status:</b> {detail.status || '—'}</div>
+      </div>
+
+      <div className="aad-section-label">Agent Deliberations</div>
+      <div className="aad-transcript">
+        {roleOutputs.length === 0 ? (
+          <div className="aad-line">No transcript payload recorded.</div>
+        ) : (
+          roleOutputs.map((m, idx) => {
+            const output = parseMaybeJson(m?.OUTPUT_JSON) || {}
+            return (
+              <div key={`${detail.action_id}_${idx}`} className="aad-agent-card">
+                <div className="aad-agent-header">
+                  <b>{m?.ROLE_NAME || `Agent ${idx + 1}`}</b>
+                  <StanceBadge stance={output.stance || m?.STANCE} />
+                  {output.confidence != null && <span className="aad-confidence">Confidence: {fmtNum(output.confidence, 2)}</span>}
+                </div>
+                <div className="aad-agent-summary">{output.summary || m?.SUMMARY || '—'}</div>
+                {Array.isArray(output.reasons) && output.reasons.length > 0 && (
+                  <ul className="aad-reasons">
+                    {output.reasons.map((r, ri) => <li key={ri}>{r}</li>)}
+                  </ul>
+                )}
+                {Array.isArray(output.assumptions) && output.assumptions.length > 0 && (
+                  <details className="aad-assumptions">
+                    <summary>Assumptions ({output.assumptions.length})</summary>
+                    <ul>{output.assumptions.map((a, ai) => <li key={ai}>{a}</li>)}</ul>
+                  </details>
+                )}
+                <div className="aad-agent-params">
+                  <span>Size: {fmtNum(output.size_factor, 2)}</span>
+                  <span>Target: {fmtPct(output.target_return)}</span>
+                  <span>Hold: {output.hold_bars ?? '—'} bars</span>
+                  <span>Early exit: {fmtPct(output.early_exit_target_return)}</span>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+
+      <div className="aad-roundtable">
+        <div className="aad-section-label">Final Roundtable Decision</div>
+        <div className="aad-roundtable-body">
+          <div className="aad-roundtable-row">
+            <span>Recommendation</span>
+            <span className={verdictObj.blocked ? 'aad-rt-block' : 'aad-rt-proceed'}>
+              {verdictRow?.RECOMMENDATION || verdictObj.recommendation || '—'}
+            </span>
+          </div>
+          <div className="aad-roundtable-row">
+            <span>Should enter</span>
+            <VerdictBadge shouldEnter={jd.should_enter} />
+          </div>
+          <div className="aad-roundtable-row"><span>Size factor</span><span>{fmtNum(verdictRow?.SIZE_FACTOR ?? jd.position_size_factor, 2)}</span></div>
+          <div className="aad-roundtable-row"><span>Confidence</span><span>{fmtNum(verdictRow?.CONFIDENCE ?? verdictObj.confidence, 2)}</span></div>
+          <div className="aad-roundtable-row"><span>Target return</span><span>{fmtPct(jd.realistic_target_return)}</span></div>
+          <div className="aad-roundtable-row"><span>Stop loss</span><span>{fmtPct(jd.stop_loss_pct)}</span></div>
+          <div className="aad-roundtable-row"><span>Hold bars</span><span>{jd.hold_bars ?? '—'}</span></div>
+          <div className="aad-roundtable-row"><span>Early exit target</span><span>{fmtPct(jd.acceptable_early_exit_target_return)}</span></div>
+          {verdictRow?.IS_BLOCKED != null && (
+            <div className="aad-roundtable-row"><span>Blocked</span><span>{verdictRow.IS_BLOCKED ? 'Yes' : 'No'}</span></div>
+          )}
+          {verdictRow?.REASON_CODES && (
+            <div className="aad-roundtable-codes">
+              <span>Reason codes:</span> {(parseMaybeJson(verdictRow.REASON_CODES) || []).join(', ') || '—'}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   )
 }

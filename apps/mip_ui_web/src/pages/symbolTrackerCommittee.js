@@ -862,3 +862,63 @@ export function computeMomentumGauge(liveState) {
   else label = 'STRONG_BEARISH'
   return { score: Math.round(score), label }
 }
+
+/* ─── Position health radar data ─── */
+
+export function computeRadarData(tile, liveState, committee, exitRec, momentum) {
+  const feats = liveState?.derived_features || {}
+  const side = String(tile?.side || 'LONG').toUpperCase()
+
+  /* 1 — Momentum (directional: bullish=good for longs, bearish=good for shorts) */
+  const rawMom = momentum?.score ?? 0
+  const directedMom = side === 'SHORT' ? -rawMom : rawMom
+  const momentumScore = clamp((directedMom + 100) / 2, 0, 100)
+
+  /* 2 — Trend Alignment (deviation from expected median path) */
+  const devMedian = toNum(feats.deviation_from_h5_median)
+  const insideCone = feats.inside_cone
+  let trendScore = 50
+  if (devMedian != null) {
+    const absDev = Math.abs(devMedian)
+    trendScore = clamp(100 - absDev * 2000, 0, 100)
+  }
+  if (insideCone === false) trendScore = Math.min(trendScore, 25)
+
+  /* 3 — Volatility Safety (inverse of vol pressure) */
+  const vol = toNum(feats.vol_15m) ?? 0.01
+  const volScore = clamp(100 - (vol / 0.04) * 100, 0, 100)
+
+  /* 4 — Risk Buffer (distance from SL as proportion of SL-to-TP range) */
+  const distSl = Math.abs(toNum(tile?.progress_metrics?.distance_to_sl_pct) ?? 0.5)
+  const distTp = Math.abs(toNum(tile?.progress_metrics?.distance_to_tp_pct) ?? 0.5)
+  const totalRange = distSl + distTp
+  const riskBufferScore = totalRange > 0
+    ? clamp((distSl / totalRange) * 100, 0, 100)
+    : 50
+
+  /* 5 — Profit Progress (how far toward TP) */
+  const progressRaw = toNum(tile?.progress_metrics?.progress_to_tp_pct)
+  const profitScore = progressRaw != null
+    ? clamp(progressRaw * 100, 0, 100)
+    : 50
+
+  /* 6 — Exit Pressure (inverted: HOLD=100, EXIT_NOW=5) */
+  const urgencyMap = { HOLD: 100, MONITOR: 65, PREPARE: 30, EXIT_NOW: 5 }
+  const exitScore = urgencyMap[exitRec?.urgency] ?? 100
+
+  const axes = [
+    { axis: 'Momentum', value: Math.round(momentumScore) },
+    { axis: 'Trend', value: Math.round(trendScore) },
+    { axis: 'Vol Safety', value: Math.round(volScore) },
+    { axis: 'Risk Buffer', value: Math.round(riskBufferScore) },
+    { axis: 'Profit', value: Math.round(profitScore) },
+    { axis: 'Exit Calm', value: Math.round(exitScore) },
+  ]
+  const avg = axes.reduce((sum, a) => sum + a.value, 0) / axes.length
+
+  let fillColor = '#22c55e'
+  if (avg < 40) fillColor = '#ef4444'
+  else if (avg < 60) fillColor = '#f59e0b'
+
+  return { axes, avg: Math.round(avg), fillColor }
+}

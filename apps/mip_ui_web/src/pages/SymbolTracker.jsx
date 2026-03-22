@@ -11,6 +11,10 @@ import {
   ReferenceLine,
   ReferenceArea,
   ReferenceDot,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  Radar,
 } from 'recharts'
 
 import { API_BASE } from '../App'
@@ -26,6 +30,7 @@ import {
   generateExitRecommendation,
   generateSituationalReport,
   computeMomentumGauge,
+  computeRadarData,
 } from './symbolTrackerCommittee'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import './SymbolTracker.css'
@@ -623,6 +628,36 @@ function MomentumGauge({ momentum }) {
   )
 }
 
+function PositionRadar({ radarData, density }) {
+  if (!radarData || !Array.isArray(radarData.axes) || radarData.axes.length === 0) return null
+  const size = density === 'compact' ? 130 : 170
+  const healthLabel = radarData.avg >= 70 ? 'Healthy' : radarData.avg >= 45 ? 'Caution' : 'Danger'
+  return (
+    <div className="st-radar-wrap">
+      <div className="st-radar-header">
+        <span>Health</span>
+        <span style={{ color: radarData.fillColor, fontWeight: 600 }}>{radarData.avg} — {healthLabel}</span>
+      </div>
+      <ResponsiveContainer width="100%" height={size}>
+        <RadarChart data={radarData.axes} outerRadius="72%">
+          <PolarGrid stroke="#1e293b" gridType="polygon" />
+          <PolarAngleAxis
+            dataKey="axis"
+            tick={{ fill: '#94a3b8', fontSize: 9 }}
+          />
+          <Radar
+            dataKey="value"
+            stroke={radarData.fillColor}
+            fill={radarData.fillColor}
+            fillOpacity={0.25}
+            strokeWidth={1.5}
+          />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, formatSymbolLabel, selected, onSelect }) {
   const pnl = Number(tile?.unrealized_pnl || 0)
   const pnlClass = pnl >= 0 ? 'symbol-tracker-pos' : 'symbol-tracker-neg'
@@ -676,15 +711,20 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         ))}
       </div>
 
-      <TileChart
-        tile={tile}
-        mode={mode}
-        chartStyle={chartStyle}
-        density={density}
-        projectionMode={projectionMode}
-        trendRender={trendRender}
-        showOverlays={mode === 'intraday'}
-      />
+      <div className="st-chart-radar-row">
+        <div className="st-chart-radar-chart">
+          <TileChart
+            tile={tile}
+            mode={mode}
+            chartStyle={chartStyle}
+            density={density}
+            projectionMode={projectionMode}
+            trendRender={trendRender}
+            showOverlays={mode === 'intraday'}
+          />
+        </div>
+        <PositionRadar radarData={tile?.radarData} density={density} />
+      </div>
       {mode === 'daily' && tile?.expectation?.is_available ? (
         <ProjectionDetail tile={tile} projectionMode={projectionMode} />
       ) : null}
@@ -962,6 +1002,7 @@ export default function SymbolTracker() {
   const [committeeFeed, setCommitteeFeed] = useState([])
   const [exitRecBySymbol, setExitRecBySymbol] = useState({})
   const [reportsBySymbol, setReportsBySymbol] = useState({})
+  const [radarBySymbol, setRadarBySymbol] = useState({})
 
   const fetchIbLive = useCallback(async (tiles, selectedMode) => {
     const symbols = (Array.isArray(tiles) ? tiles : [])
@@ -994,6 +1035,7 @@ export default function SymbolTracker() {
       setCommitteeFeed([])
       setExitRecBySymbol({})
       setReportsBySymbol({})
+      setRadarBySymbol({})
       setLiveUpdatedAt(nextData?.updated_at || new Date().toISOString())
       return
     }
@@ -1002,6 +1044,7 @@ export default function SymbolTracker() {
       const nextCommitteeMap = {}
       const nextExitRecs = {}
       const nextReports = {}
+      const nextRadar = {}
       const feedRows = []
       const threadRowsBySymbol = {}
       for (const tile of nextTiles) {
@@ -1016,6 +1059,9 @@ export default function SymbolTracker() {
 
         const report = generateSituationalReport(tile, liveState, committee, exitRec)
         nextReports[symbol] = report
+
+        const momentumData = computeMomentumGauge(liveState)
+        nextRadar[symbol] = computeRadarData(tile, liveState, committee, exitRec, momentumData)
 
         const hasMaterial = isMaterialUpdate(prevCommittee, committee)
         threadRowsBySymbol[symbol] = {
@@ -1052,6 +1098,7 @@ export default function SymbolTracker() {
       }
       setExitRecBySymbol(nextExitRecs)
       setReportsBySymbol(nextReports)
+      setRadarBySymbol(nextRadar)
       if (feedRows.length > 0) {
         setCommitteeFeed((prevFeed) => [...feedRows, ...prevFeed].slice(0, 120))
       } else {
@@ -1203,10 +1250,11 @@ export default function SymbolTracker() {
         committee,
         exitRecommendation: exitRec,
         momentum,
+        radarData: radarBySymbol[symbol] || null,
       }
     })
     return rows
-  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy, committeeBySymbol, exitRecBySymbol, horizonBars])
+  }, [data?.tiles, longsOnly, shortsOnly, activeTpSlOnly, sortBy, committeeBySymbol, exitRecBySymbol, radarBySymbol, horizonBars])
 
   const watchlist = useMemo(() => {
     return Object.values(committeeBySymbol)

@@ -996,6 +996,45 @@
   text-align: right;
 }
 
+/* ─── Chart + Radar side-by-side row ─── */
+
+.st-chart-radar-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.st-chart-radar-chart {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.st-radar-wrap {
+  flex: 0 0 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 0.3rem 0.2rem;
+  background: #060d1a;
+  min-width: 0;
+}
+
+.symbol-tracker-tile--compact .st-radar-wrap {
+  flex: 0 0 135px;
+}
+
+.st-radar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.68rem;
+  color: #94a3b8;
+  padding: 0 0.25rem;
+}
+
 @media (max-width: 1400px) {
   .symbol-tracker-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -1006,5 +1045,15 @@
     height: auto;
     overflow: visible;
     grid-template-rows: auto;
+  }
+}
+
+@media (max-width: 580px) {
+  .st-chart-radar-row {
+    flex-direction: column;
+  }
+
+  .st-radar-wrap {
+    flex: none;
   }
 }

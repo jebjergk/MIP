@@ -17,7 +17,7 @@
   gap: 1rem;
 }
 
-/* One row per open position: wide chart + that symbol's briefing */
+/* One row per open position; chart uses full main column (briefing lives in Situation Room tabs) */
 .symbol-tracker-rows {
   display: flex;
   flex-direction: column;
@@ -29,64 +29,7 @@
 }
 
 .symbol-tracker-symbol-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 20rem);
-  gap: 1rem;
-  align-items: stretch;
-}
-
-.symbol-tracker-symbol-row-chart {
   min-width: 0;
-}
-
-.symbol-tracker-symbol-row-chart .symbol-tracker-tile {
-  height: 100%;
-}
-
-.symbol-tracker-tile-briefing {
-  border: 1px solid #223047;
-  border-radius: 14px;
-  background: #060d1a;
-  padding: 0.65rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 280px;
-  max-height: min(720px, 85vh);
-}
-
-.symbol-tracker-rows--compact .symbol-tracker-tile-briefing {
-  min-height: 220px;
-  max-height: min(560px, 80vh);
-}
-
-.symbol-tracker-tile-briefing-head {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin-bottom: 0.5rem;
-  flex-shrink: 0;
-}
-
-.symbol-tracker-tile-briefing-kicker {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: #93c5fd;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.symbol-tracker-tile-briefing-symbol {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: #f1f5f9;
-}
-
-.symbol-tracker-tile-briefing-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  max-height: 100%;
 }
 
 .symbol-tracker-tile-briefing-empty {
@@ -98,6 +41,13 @@
 
 .symbol-tracker-tile-briefing-empty b {
   color: #cbd5e1;
+}
+
+/* Briefing tab body: scroll inside sticky Situation Room */
+.symbol-tracker-committee-briefing-scroll {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  min-height: 0;
 }
 
 @media (max-width: 1200px) {
@@ -112,12 +62,8 @@
     max-height: min(480px, 70vh);
   }
 
-  .symbol-tracker-symbol-row {
-    grid-template-columns: 1fr;
-  }
-
-  .symbol-tracker-tile-briefing {
-    max-height: min(360px, 55vh);
+  .symbol-tracker-committee-briefing-scroll {
+    max-height: min(40vh, 360px);
   }
 }
 
@@ -1025,6 +971,11 @@
   border: 1px solid #1e293b;
   border-radius: 8px;
   padding: 0.2rem;
+}
+
+.st-panel-tabs--three .st-panel-tab {
+  font-size: 0.68rem;
+  padding: 0.32rem 0.35rem;
 }
 
 .st-panel-tab {

@@ -1076,7 +1076,7 @@ export default function SymbolTracker() {
     const body = {
       mode: selectedMode,
       intraday_interval_minutes: 60,
-      window_bars: 120,
+      window_bars: 24,
       symbols,
     }
     const resp = await fetch(`${API_BASE}/symbol-tracker/ib-live`, {
@@ -1208,6 +1208,7 @@ export default function SymbolTracker() {
         horizon_bars: '20',
         projection_mode: 'stitched',
         intraday_interval_minutes: '60',
+        intraday_window_bars: '24',
       })
       const resp = await fetch(`${API_BASE}/symbol-tracker/tiles?${params.toString()}`)
       if (!resp.ok) throw new Error(`Failed to load symbol tracker (${resp.status})`)

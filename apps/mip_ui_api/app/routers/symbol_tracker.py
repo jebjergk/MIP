@@ -455,8 +455,12 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
     if mode == "intraday" and interval_minutes not in _INTRADAY_INTERVALS:
         interval_minutes = 60
     window_cap = 300 if mode == "daily" else 400
-    window_bars = int(payload.get("window_bars") or 120)
-    window_bars = max(30, min(window_bars, window_cap))
+    default_window = 120 if mode == "daily" else 24
+    window_bars = int(payload.get("window_bars") or default_window)
+    if mode == "daily":
+        window_bars = max(30, min(window_bars, window_cap))
+    else:
+        window_bars = max(15, min(window_bars, window_cap))
 
     raw_symbols = payload.get("symbols") or []
     symbol_specs: list[dict[str, str]] = []
@@ -530,7 +534,7 @@ def get_symbol_tracker_tiles(
     chart_style: str = Query("line", pattern="^(line|candles)$"),
     horizon_bars: int = Query(5, ge=1, le=60),
     daily_window_bars: int = Query(120, ge=30, le=300),
-    intraday_window_bars: int = Query(120, ge=30, le=400),
+    intraday_window_bars: int = Query(24, ge=15, le=400),
     intraday_interval_minutes: int = Query(60, ge=1, le=240),
     projection_mode: str = Query("stitched", pattern="^(stitched|geometric|linear)$"),
 ):

@@ -5,6 +5,7 @@ Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outco
 import json
 import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -317,6 +318,26 @@ def _normalize_broker_order_id(value) -> str:
     if norm in ("", "0", "0.0", "None", "none", "NULL", "null"):
         return ""
     return norm
+
+
+def _broker_order_ids_from_ibkr_submit_payload(payload: dict | None) -> set[str]:
+    """IDs from place_ibkr_order.py output; parent legs sometimes omit perm_id while open_trade_ids_account is populated."""
+    if not isinstance(payload, dict):
+        return set()
+    out: set[str] = set()
+    for x in payload.get("open_trade_ids_account") or []:
+        nid = _normalize_broker_order_id(x)
+        if nid:
+            out.add(nid)
+    for key in ("orders_after_wait", "orders"):
+        for ow in payload.get(key) or []:
+            if not isinstance(ow, dict):
+                continue
+            for fld in ("perm_id", "order_id"):
+                nid = _normalize_broker_order_id(ow.get(fld))
+                if nid:
+                    out.add(nid)
+    return out
 
 
 def _normalize_broker_price(value):
@@ -8382,33 +8403,54 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     detail={"message": "IBKR submission returned no orders.", "reason_codes": ["IBKR_EMPTY_ORDER_BUNDLE"]},
                 )
             # Fail closed: do not accept local execution state unless broker-truth snapshot confirms it.
-            _run_on_demand_snapshot_sync(
-                **_default_snapshot_sync_params(),
-                account=str(account_id),
-                portfolio_id=action.get("PORTFOLIO_ID"),
-            )
-            broker_truth_raw = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
             broker_order_ids = {
                 _normalize_broker_order_id(leg.get("broker_order_id"))
                 for leg in order_legs
                 if _normalize_broker_order_id(leg.get("broker_order_id"))
             }
-            broker_open_ids = broker_truth_raw.get("open_order_ids") or set()
-            has_open_order = bool(broker_order_ids and broker_order_ids.intersection(broker_open_ids))
-            has_position = bool(broker_truth_raw.get("has_symbol_position"))
+            broker_order_ids |= _broker_order_ids_from_ibkr_submit_payload(broker_submit_payload)
+            truth_attempts = max(1, int(os.getenv("LIVE_BROKER_TRUTH_RETRIES", "2")))
+            truth_sleep_sec = max(0.0, float(os.getenv("LIVE_BROKER_TRUTH_RETRY_SLEEP_SEC", "1.5")))
+            exec_port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
+            snapshot_port = int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002")))
+            broker_truth_raw: dict = {}
+            broker_open_ids: set[str] = set()
+            has_open_order = False
+            has_position = False
+            for attempt_idx in range(truth_attempts):
+                if attempt_idx > 0 and truth_sleep_sec > 0:
+                    time.sleep(truth_sleep_sec)
+                _run_on_demand_snapshot_sync(
+                    **_default_snapshot_sync_params(),
+                    account=str(account_id),
+                    portfolio_id=action.get("PORTFOLIO_ID"),
+                )
+                broker_truth_raw = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+                broker_open_ids = broker_truth_raw.get("open_order_ids") or set()
+                has_open_order = bool(broker_order_ids and broker_order_ids.intersection(broker_open_ids))
+                has_position = bool(broker_truth_raw.get("has_symbol_position"))
+                if has_open_order or has_position:
+                    break
             broker_truth_check = {
                 **broker_truth_raw,
                 "open_order_ids": sorted(broker_open_ids),
+                "truth_attempts": truth_attempts,
             }
             if not has_open_order and not has_position:
                 final_reason_codes = ["IBKR_TRUTH_MISSING_ORDER_ACK"]
                 _write_reason_codes(cur, action_id, final_reason_codes)
+                submit_trade_cnt = broker_submit_payload.get("open_trade_count_account")
                 raise HTTPException(
                     status_code=409,
                     detail={
                         "message": "IBKR did not confirm open-order or position after submit; execution blocked to prevent drift.",
                         "reason_codes": final_reason_codes,
                         "broker_order_ids": sorted(broker_order_ids),
+                        "submit_open_trade_count": submit_trade_cnt,
+                        "submit_open_trade_ids": broker_submit_payload.get("open_trade_ids_account"),
+                        "ibkr_exec_port": exec_port,
+                        "ibkr_snapshot_port": snapshot_port,
+                        "gateway_port_mismatch": exec_port != snapshot_port,
                         "snapshot_ts": (
                             broker_truth_raw.get("snapshot_ts").isoformat()
                             if hasattr(broker_truth_raw.get("snapshot_ts"), "isoformat")

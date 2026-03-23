@@ -5,9 +5,120 @@
 
 .symbol-tracker-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   gap: 1rem;
   align-items: start;
+}
+
+.symbol-tracker-layout-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* One row per open position: wide chart + that symbol's briefing */
+.symbol-tracker-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.symbol-tracker-rows--compact {
+  gap: 0.75rem;
+}
+
+.symbol-tracker-symbol-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 20rem);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.symbol-tracker-symbol-row-chart {
+  min-width: 0;
+}
+
+.symbol-tracker-symbol-row-chart .symbol-tracker-tile {
+  height: 100%;
+}
+
+.symbol-tracker-tile-briefing {
+  border: 1px solid #223047;
+  border-radius: 14px;
+  background: #060d1a;
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 280px;
+  max-height: min(720px, 85vh);
+}
+
+.symbol-tracker-rows--compact .symbol-tracker-tile-briefing {
+  min-height: 220px;
+  max-height: min(560px, 80vh);
+}
+
+.symbol-tracker-tile-briefing-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  flex-shrink: 0;
+}
+
+.symbol-tracker-tile-briefing-kicker {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #93c5fd;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.symbol-tracker-tile-briefing-symbol {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.symbol-tracker-tile-briefing-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  max-height: 100%;
+}
+
+.symbol-tracker-tile-briefing-empty {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.45;
+  padding: 0.25rem 0;
+}
+
+.symbol-tracker-tile-briefing-empty b {
+  color: #cbd5e1;
+}
+
+@media (max-width: 1200px) {
+  .symbol-tracker-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .symbol-tracker-committee.symbol-tracker-committee--aside {
+    position: relative;
+    top: auto;
+    height: auto;
+    max-height: min(480px, 70vh);
+  }
+
+  .symbol-tracker-symbol-row {
+    grid-template-columns: 1fr;
+  }
+
+  .symbol-tracker-tile-briefing {
+    max-height: min(360px, 55vh);
+  }
 }
 
 .symbol-tracker-head {

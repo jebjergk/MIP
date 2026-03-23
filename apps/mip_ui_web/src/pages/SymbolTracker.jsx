@@ -830,6 +830,42 @@ function fmtReasonTag(value) {
   return raw.replaceAll('_', ' ')
 }
 
+const BRIEFING_URGENCY_COLORS = {
+  EXIT_NOW: '#fca5a5',
+  PREPARE: '#fdba74',
+  MONITOR: '#fcd34d',
+  HOLD: '#86efac',
+}
+
+function PerSymbolBriefingColumn({ symbol, marketType, report, formatSymbolLabel }) {
+  const label = formatSymbolLabel?.(symbol, marketType) || String(symbol || '—')
+  if (!report) {
+    return (
+      <div className="symbol-tracker-tile-briefing-empty">
+        No situational briefing for <b>{label}</b> yet.
+      </div>
+    )
+  }
+  const sections = Array.isArray(report.sections) ? report.sections : []
+  return (
+    <div className="st-briefing-scroll symbol-tracker-tile-briefing-scroll">
+      <div
+        className="st-briefing-summary"
+        style={{ borderColor: BRIEFING_URGENCY_COLORS[report.overall_urgency] || '#334155' }}
+      >
+        {report.summary_line}
+      </div>
+      {sections.map((section, idx) => (
+        <div key={idx} className="st-briefing-section">
+          <div className="st-briefing-section-title">{section.title}</div>
+          <div className="st-briefing-section-text">{section.text}</div>
+        </div>
+      ))}
+      <div className="st-briefing-ts">Updated {fmtTime(report.timestamp)}</div>
+    </div>
+  )
+}
+
 function UrgencyBanner({ tiles }) {
   const critical = tiles.filter((t) => t?.exitRecommendation?.urgency === 'EXIT_NOW')
   const warnings = tiles.filter((t) => t?.exitRecommendation?.urgency === 'PREPARE')
@@ -852,7 +888,7 @@ function UrgencyBanner({ tiles }) {
   )
 }
 
-function SituationalBriefingPanel({
+function SituationRoomAside({
   selectedSymbol,
   setSelectedSymbol,
   reportsBySymbol,
@@ -864,9 +900,8 @@ function SituationalBriefingPanel({
   liveUpdatedAt,
 }) {
   const feedRef = useRef(null)
-  const activeReport = selectedSymbol ? reportsBySymbol[selectedSymbol] : null
   const activeCommittee = selectedSymbol ? committeeBySymbol[selectedSymbol] : null
-  const [panelView, setPanelView] = useState('briefing')
+  const [panelView, setPanelView] = useState('feed')
 
   const filteredFeed = [...feed]
     .sort((a, b) => new Date(b?.ts || 0).getTime() - new Date(a?.ts || 0).getTime())
@@ -878,15 +913,8 @@ function SituationalBriefingPanel({
     el.scrollTop = 0
   }, [filteredFeed.length])
 
-  const urgencyColor = {
-    EXIT_NOW: '#fca5a5',
-    PREPARE: '#fdba74',
-    MONITOR: '#fcd34d',
-    HOLD: '#86efac',
-  }
-
   return (
-    <aside className="symbol-tracker-committee">
+    <aside className="symbol-tracker-committee symbol-tracker-committee--aside">
       <div className="symbol-tracker-committee-head">
         <h3>Situation Room</h3>
         <div className="symbol-tracker-committee-context-ts">
@@ -895,8 +923,7 @@ function SituationalBriefingPanel({
         </div>
       </div>
 
-      <div className="st-panel-tabs">
-        <button type="button" className={`st-panel-tab ${panelView === 'briefing' ? 'st-panel-tab--active' : ''}`} onClick={() => setPanelView('briefing')}>Briefing</button>
+      <div className="st-panel-tabs st-panel-tabs--two">
         <button type="button" className={`st-panel-tab ${panelView === 'feed' ? 'st-panel-tab--active' : ''}`} onClick={() => setPanelView('feed')}>Live Feed</button>
         <button type="button" className={`st-panel-tab ${panelView === 'agents' ? 'st-panel-tab--active' : ''}`} onClick={() => setPanelView('agents')}>Agent Detail</button>
       </div>
@@ -917,7 +944,7 @@ function SituationalBriefingPanel({
               >
                 <div className="symbol-tracker-watch-top">
                   <span>{formatSymbolLabel(row.symbol, row.market_type)}</span>
-                  <span className="st-urgency-pill" style={{ borderColor: urgencyColor[urg], color: urgencyColor[urg] }}>{urg.replace('_', ' ')}</span>
+                  <span className="st-urgency-pill" style={{ borderColor: BRIEFING_URGENCY_COLORS[urg], color: BRIEFING_URGENCY_COLORS[urg] }}>{urg.replace('_', ' ')}</span>
                 </div>
                 <div className="symbol-tracker-watch-mid">
                   <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{report?.summary_line || row.headline_text || ''}</span>
@@ -927,27 +954,6 @@ function SituationalBriefingPanel({
           })}
         </div>
       </section>
-
-      {panelView === 'briefing' && (
-        <section className="symbol-tracker-committee-section symbol-tracker-committee-section--discussion">
-          <div className="symbol-tracker-committee-title">Situational Briefing</div>
-          {!activeReport ? <div className="symbol-tracker-committee-empty">Select a position to see its briefing.</div> : null}
-          {activeReport ? (
-            <div className="st-briefing-scroll">
-              <div className="st-briefing-summary" style={{ borderColor: urgencyColor[activeReport.overall_urgency] || '#334155' }}>
-                {activeReport.summary_line}
-              </div>
-              {activeReport.sections.map((section, idx) => (
-                <div key={idx} className="st-briefing-section">
-                  <div className="st-briefing-section-title">{section.title}</div>
-                  <div className="st-briefing-section-text">{section.text}</div>
-                </div>
-              ))}
-              <div className="st-briefing-ts">Updated {fmtTime(activeReport.timestamp)}</div>
-            </div>
-          ) : null}
-        </section>
-      )}
 
       {panelView === 'feed' && (
         <section className="symbol-tracker-committee-section symbol-tracker-committee-section--feed">
@@ -971,7 +977,7 @@ function SituationalBriefingPanel({
       {panelView === 'agents' && (
         <section className="symbol-tracker-committee-section symbol-tracker-committee-section--discussion">
           <div className="symbol-tracker-committee-title">Agent Detail</div>
-          {!activeCommittee ? <div className="symbol-tracker-committee-empty">Select a position.</div> : null}
+          {!activeCommittee ? <div className="symbol-tracker-committee-empty">Select a position (tile or list).</div> : null}
           {activeCommittee ? (
             <div className="symbol-tracker-thread">
               <div className="symbol-tracker-thread-summary">
@@ -1413,23 +1419,45 @@ export default function SymbolTracker() {
       ) : null}
 
       <div className="symbol-tracker-layout">
-        <div className={`symbol-tracker-grid ${density === 'compact' ? 'symbol-tracker-grid--compact' : ''}`}>
-          {tiles.map((tile) => (
-            <Tile
-              key={tile.symbol}
-              tile={tile}
-              mode={mode}
-              chartStyle={chartStyle}
-              density={density}
-              projectionMode={projectionMode}
-              trendRender={trendRender}
-              formatSymbolLabel={formatSymbolLabel}
-              selected={selectedSymbol === tile.symbol}
-              onSelect={setSelectedSymbol}
-            />
-          ))}
+        <div className="symbol-tracker-layout-main">
+          <div className={`symbol-tracker-rows ${density === 'compact' ? 'symbol-tracker-rows--compact' : ''}`}>
+            {tiles.map((tile) => (
+              <div key={tile.symbol} className="symbol-tracker-symbol-row">
+                <div className="symbol-tracker-symbol-row-chart">
+                  <Tile
+                    tile={tile}
+                    mode={mode}
+                    chartStyle={chartStyle}
+                    density={density}
+                    projectionMode={projectionMode}
+                    trendRender={trendRender}
+                    formatSymbolLabel={formatSymbolLabel}
+                    selected={selectedSymbol === tile.symbol}
+                    onSelect={setSelectedSymbol}
+                  />
+                </div>
+                <aside
+                  className="symbol-tracker-tile-briefing"
+                  aria-label={`Situational briefing for ${tile.symbol}`}
+                >
+                  <div className="symbol-tracker-tile-briefing-head">
+                    <span className="symbol-tracker-tile-briefing-kicker">Situational briefing</span>
+                    <span className="symbol-tracker-tile-briefing-symbol">
+                      {formatSymbolLabel(tile.symbol, tile.market_type)}
+                    </span>
+                  </div>
+                  <PerSymbolBriefingColumn
+                    symbol={tile.symbol}
+                    marketType={tile.market_type}
+                    report={reportsBySymbol[tile.symbol]}
+                    formatSymbolLabel={formatSymbolLabel}
+                  />
+                </aside>
+              </div>
+            ))}
+          </div>
         </div>
-        <SituationalBriefingPanel
+        <SituationRoomAside
           selectedSymbol={selectedSymbol}
           setSelectedSymbol={setSelectedSymbol}
           reportsBySymbol={reportsBySymbol}

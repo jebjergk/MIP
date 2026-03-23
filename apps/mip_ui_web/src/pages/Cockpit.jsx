@@ -1184,6 +1184,42 @@ export default function Cockpit() {
     }
   }, [loadIbDailyHealth])
 
+  const runIbPartialDailyPipeline = useCallback(async () => {
+    const confirmed = window.confirm(
+      'Run daily pipeline using today’s session-so-far as 1440m (daily) bars?\n\n' +
+        'STOCK/ETF: RTH 1-minute TRADES aggregated to one OHLCV row per symbol (NY calendar date).\n' +
+        'FX: 1-minute MIDPOINT bars (all hours) on that same NY calendar date.\n' +
+        'After the real close, use “Run IB Daily Job” to align with IB’s official daily bars where they differ.',
+    )
+    if (!confirmed) return
+    setIbJobRunning(true)
+    setIbJobNotice({ type: '', text: '' })
+    try {
+      const qs = new URLSearchParams()
+      qs.set('dry_run', 'false')
+      qs.set('skip_ingest', 'false')
+      qs.set('run_pipeline', 'true')
+      qs.set('synth_intraday_daily', 'true')
+      const resp = await fetch(`${API_BASE}/manage/ib/daily-job/run?${qs.toString()}`, {
+        method: 'POST',
+      })
+      const payload = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        throw new Error(payload?.detail?.message || payload?.detail || `Partial daily run failed (${resp.status})`)
+      }
+      setIbJobNotice({
+        type: 'ok',
+        text: 'Partial daily bars ingested (1m → 1440m, STOCK/ETF RTH + FX MIDPOINT) and daily pipeline triggered.',
+      })
+      await loadIbDailyHealth()
+    } catch (e) {
+      setIbJobNotice({ type: 'error', text: e?.message || 'Partial daily run failed.' })
+      await loadIbDailyHealth()
+    } finally {
+      setIbJobRunning(false)
+    }
+  }, [loadIbDailyHealth])
+
   if (loading) {
     return (
       <>
@@ -1199,7 +1235,16 @@ export default function Cockpit() {
         <h1>Cockpit</h1>
         <div className="ck-header-actions">
           <button className="ck-op-btn" type="button" onClick={runIbDailyJob} disabled={ibJobRunning}>
-            {ibJobRunning ? 'Running IB Daily Job...' : 'Run IB Daily Job'}
+            {ibJobRunning ? 'Running IB job...' : 'Run IB Daily Job'}
+          </button>
+          <button
+            className="ck-op-btn"
+            type="button"
+            onClick={runIbPartialDailyPipeline}
+            disabled={ibJobRunning}
+            title="Aggregate 1m→1440m for today’s NY calendar date (equities RTH TRADES, FX MIDPOINT all hours), then run the daily pipeline. Full job after close for official IB dailies."
+          >
+            {ibJobRunning ? 'Running…' : 'Pipeline (today RTH → daily)'}
           </button>
         </div>
       </div>

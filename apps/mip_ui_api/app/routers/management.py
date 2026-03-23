@@ -89,6 +89,10 @@ def run_ib_manual_daily_job(
     dry_run: bool = Query(False),
     skip_ingest: bool = Query(False),
     run_pipeline: bool = Query(True, description="After successful IB job, run SP_RUN_DAILY_PIPELINE."),
+    synth_intraday_daily: bool = Query(
+        False,
+        description="If true, ingest builds 1440m rows from 1m bars (STOCK/ETF RTH TRADES, FX MIDPOINT) on today's NY calendar date, then catch-up and optional pipeline.",
+    ),
 ):
     project_root = Path(__file__).resolve().parents[5]
     py = project_root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
@@ -104,6 +108,8 @@ def run_ib_manual_daily_job(
         cmd.append("--dry-run")
     if skip_ingest:
         cmd.append("--skip-ingest")
+    if synth_intraday_daily:
+        cmd.append("--synth-daily-from-intraday")
 
     child_env = dict(os.environ)
     for key in list(child_env.keys()):
@@ -151,6 +157,7 @@ def run_ib_manual_daily_job(
         "status": "SUCCESS",
         "payload": payload,
         "pipeline_triggered": False,
+        "synth_intraday_daily": bool(synth_intraday_daily),
     }
 
     if not dry_run and run_pipeline:

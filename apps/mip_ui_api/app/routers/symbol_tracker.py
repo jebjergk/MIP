@@ -14,7 +14,8 @@ from app.db import fetch_all, get_connection
 
 router = APIRouter(prefix="/symbol-tracker", tags=["symbol-tracker"])
 
-_INTRADAY_INTERVALS = {15, 60}
+_INTRADAY_INTERVALS = {1, 15, 60}
+_INTRADAY_BAR_SECONDS = {30}
 _VOL_BELOW_RATIO = 0.72
 _VOL_ABOVE_RATIO = 1.35
 _THESIS_STOP_BUFFER_PCT = 0.015
@@ -65,6 +66,7 @@ def _run_agent_ibkr_live_bars(
     *,
     interval_minutes: int,
     window_bars: int,
+    bar_seconds: int | None = None,
     timeout_sec: int = 60,
 ) -> dict[str, Any]:
     root = _project_root()
@@ -101,11 +103,13 @@ def _run_agent_ibkr_live_bars(
         ",".join(symbols),
         "--market-types",
         ",".join(market_types),
-        "--interval-minutes",
-        str(interval_minutes),
         "--window-bars",
         str(window_bars),
     ]
+    if bar_seconds:
+        cmd.extend(["--bar-seconds", str(int(bar_seconds)), "--use-rth"])
+    else:
+        cmd.extend(["--interval-minutes", str(interval_minutes)])
     proc = subprocess.run(
         cmd,
         cwd=str(root),
@@ -451,11 +455,37 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
     mode = str(payload.get("mode") or "intraday").lower()
     if mode not in {"intraday", "daily"}:
         mode = "intraday"
-    interval_minutes = 1440 if mode == "daily" else int(payload.get("intraday_interval_minutes") or 60)
-    if mode == "intraday" and interval_minutes not in _INTRADAY_INTERVALS:
-        interval_minutes = 60
-    window_cap = 300 if mode == "daily" else 400
-    default_window = 120 if mode == "daily" else 24
+
+    bar_seconds: int | None = None
+    if mode == "intraday":
+        raw_bs = payload.get("intraday_bar_seconds")
+        if raw_bs is not None:
+            try:
+                bs = int(raw_bs)
+                if bs in _INTRADAY_BAR_SECONDS:
+                    bar_seconds = bs
+            except (TypeError, ValueError):
+                bar_seconds = None
+
+    if mode == "daily":
+        interval_minutes = 1440
+    elif bar_seconds is not None:
+        interval_minutes = 0
+    else:
+        interval_minutes = int(payload.get("intraday_interval_minutes") or 60)
+        if interval_minutes not in _INTRADAY_INTERVALS:
+            interval_minutes = 60
+
+    if mode == "daily":
+        window_cap = 300
+        default_window = 120
+    elif bar_seconds is not None:
+        window_cap = 800
+        default_window = 780
+    else:
+        window_cap = 400
+        default_window = 24
+
     window_bars = int(payload.get("window_bars") or default_window)
     if mode == "daily":
         window_bars = max(30, min(window_bars, window_cap))
@@ -478,8 +508,10 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
 
     ib_payload = _run_agent_ibkr_live_bars(
         symbol_specs,
-        interval_minutes=interval_minutes,
+        interval_minutes=interval_minutes if interval_minutes > 0 else 1,
         window_bars=window_bars,
+        bar_seconds=bar_seconds,
+        timeout_sec=90 if bar_seconds else 60,
     )
 
     rows: list[dict[str, Any]] = []
@@ -521,7 +553,8 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
         "ok": True,
         "source": "IBKR_DIRECT",
         "mode": mode,
-        "interval_minutes": interval_minutes,
+        "interval_minutes": interval_minutes if bar_seconds is None else 0,
+        "intraday_bar_seconds": bar_seconds,
         "window_bars": window_bars,
         "rows": rows,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -534,14 +567,36 @@ def get_symbol_tracker_tiles(
     chart_style: str = Query("line", pattern="^(line|candles)$"),
     horizon_bars: int = Query(5, ge=1, le=60),
     daily_window_bars: int = Query(120, ge=30, le=300),
-    intraday_window_bars: int = Query(24, ge=15, le=400),
+    intraday_window_bars: int = Query(24, ge=15, le=800),
     intraday_interval_minutes: int = Query(60, ge=1, le=240),
+    intraday_bar_seconds: int | None = Query(None),
     projection_mode: str = Query("stitched", pattern="^(stitched|geometric|linear)$"),
 ):
-    interval_minutes = 1440 if mode == "daily" else intraday_interval_minutes
-    if mode == "intraday" and interval_minutes not in _INTRADAY_INTERVALS:
-        interval_minutes = 60
-    window_bars = daily_window_bars if mode == "daily" else intraday_window_bars
+    query_bar_seconds: int | None = None
+    if mode == "intraday" and intraday_bar_seconds is not None:
+        try:
+            qs = int(intraday_bar_seconds)
+            if qs in _INTRADAY_BAR_SECONDS:
+                query_bar_seconds = qs
+        except (TypeError, ValueError):
+            query_bar_seconds = None
+
+    if mode == "daily":
+        interval_minutes = 1440
+    elif query_bar_seconds is not None:
+        # Snowflake mart rarely has sub-minute bars; use 15m as a light placeholder until IB merges.
+        interval_minutes = 15
+    else:
+        interval_minutes = intraday_interval_minutes
+        if interval_minutes not in _INTRADAY_INTERVALS:
+            interval_minutes = 60
+
+    if mode == "daily":
+        window_bars = daily_window_bars
+    elif query_bar_seconds is not None:
+        window_bars = min(max(intraday_window_bars // 25, 24), 96)
+    else:
+        window_bars = intraday_window_bars
 
     conn = get_connection()
     try:
@@ -1093,6 +1148,7 @@ def get_symbol_tracker_tiles(
             "projection_mode": projection_mode,
             "window_bars": window_bars,
             "interval_minutes": interval_minutes,
+            "intraday_bar_seconds": query_bar_seconds,
             "tiles": tiles,
             "counts": {"tiles": len(tiles)},
             "updated_at": datetime.now(timezone.utc).isoformat(),

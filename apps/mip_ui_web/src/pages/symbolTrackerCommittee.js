@@ -55,6 +55,21 @@ function latestBars(tile) {
   return Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
 }
 
+/** Seconds per bar: 30s ticks, 1m bars, or hourly etc. */
+function barStepSeconds(tile) {
+  const bs = toNum(tile?.chart?.bar_seconds)
+  if (bs != null && bs > 0) return bs
+  const mins = toNum(tile?.chart?.interval_minutes)
+  if (mins != null && mins > 0) return mins * 60
+  return 3600
+}
+
+function barIndexMinutesAgo(bars, minutesAgo, stepSec) {
+  if (!bars.length) return {}
+  const n = Math.max(1, Math.round((minutesAgo * 60) / stepSec))
+  return bars[Math.max(0, bars.length - 1 - n)] || {}
+}
+
 function classifyPattern(features) {
   if ((features.vol_15m ?? 0) > 0.022) return 'VOLATILITY_SPIKE'
   if ((features.ret_15m ?? 0) < -0.012 && (features.momentum_decay ?? 0) > 0.5) return 'RISK_OFF_BREAKDOWN'
@@ -126,9 +141,10 @@ function computeAdaptiveThresholds({ vol15m, currentPrice, quantity, sensitivity
 
 export function buildLiveState(tile, previousLive = null, sensitivity = 'BALANCED') {
   const bars = latestBars(tile)
+  const stepSec = barStepSeconds(tile)
   const last = bars[bars.length - 1] || {}
-  const prev5 = bars[Math.max(0, bars.length - 6)] || {}
-  const prev15 = bars[Math.max(0, bars.length - 16)] || {}
+  const prev5 = barIndexMinutesAgo(bars, 5, stepSec)
+  const prev15 = barIndexMinutesAgo(bars, 15, stepSec)
   const close = toNum(last.close) ?? toNum(tile?.current_price)
   const current = toNum(tile?.current_price) ?? close
   const entry = toNum(tile?.entry_price)
@@ -141,7 +157,11 @@ export function buildLiveState(tile, previousLive = null, sensitivity = 'BALANCE
 
   const ret5m = pctChange(close, prev5.close)
   const ret15m = pctChange(close, prev15.close)
-  const volWindow = bars.slice(-16).map((b) => toNum(b.close)).filter((v) => Number.isFinite(v))
+  const volBars = Math.min(
+    bars.length,
+    Math.max(16, Math.round((16 * 3600) / stepSec)),
+  )
+  const volWindow = bars.slice(-volBars).map((b) => toNum(b.close)).filter((v) => Number.isFinite(v))
   const rets = []
   for (let i = 1; i < volWindow.length; i += 1) {
     if (volWindow[i - 1] > 0) rets.push((volWindow[i] / volWindow[i - 1]) - 1)
@@ -149,8 +169,8 @@ export function buildLiveState(tile, previousLive = null, sensitivity = 'BALANCE
   const mean = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0
   const variance = rets.length ? rets.reduce((a, b) => a + ((b - mean) ** 2), 0) / rets.length : 0
   const vol15m = Math.sqrt(variance)
-  const high = Math.max(...bars.slice(-16).map((b) => toNum(b.high) ?? -Infinity))
-  const low = Math.min(...bars.slice(-16).map((b) => toNum(b.low) ?? Infinity))
+  const high = Math.max(...bars.slice(-volBars).map((b) => toNum(b.high) ?? -Infinity))
+  const low = Math.min(...bars.slice(-volBars).map((b) => toNum(b.low) ?? Infinity))
   const rangeExpansion = Number.isFinite(high) && Number.isFinite(low) && close
     ? (high - low) / close
     : null
@@ -611,9 +631,16 @@ export function computeRSI(bars, period = 14) {
   return rsi
 }
 
+function bollingerPeriodForBarCount(n) {
+  if (n < 6) return Math.max(2, n - 1)
+  return Math.min(20, Math.max(5, Math.floor(n / 3)))
+}
+
 export function computeChartOverlays(bars) {
   const vwap = computeVWAP(bars)
-  const bollinger = computeBollingerBands(bars, 20, 2)
+  const n = Array.isArray(bars) ? bars.length : 0
+  const bbPeriod = bollingerPeriodForBarCount(n)
+  const bollinger = computeBollingerBands(bars, bbPeriod, 2)
   const sr = detectSupportResistance(bars)
   const rsi = computeRSI(bars, 14)
   return { vwap, bollinger, sr, rsi }

@@ -78,6 +78,36 @@ function toDateLabel(ts) {
   }
 }
 
+/** US equities → US/Eastern; FX → UTC (24h tape). */
+function exchangeTimeZoneForTile(tile) {
+  const mt = String(tile?.market_type || '').toUpperCase()
+  if (mt === 'FX') return 'UTC'
+  return 'America/New_York'
+}
+
+function formatInExchangeZone(ts, timeZone, intlOptions) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return String(ts).slice(0, 19)
+  try {
+    return new Intl.DateTimeFormat(undefined, { timeZone, ...intlOptions }).format(d)
+  } catch {
+    return d.toISOString().slice(11, 19)
+  }
+}
+
+/** YYYY-MM-DD in exchange zone for session boundaries / markers */
+function calendarDayKeyExchange(ts, timeZone) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+  } catch {
+    return toDateLabel(ts)
+  }
+}
+
 function fmtEventTs(ts) {
   if (!ts) return '—'
   try {
@@ -115,6 +145,8 @@ function mergeIbLiveRows(prevData, livePayload) {
   if (rows.length === 0) return prevData
   const bySymbol = new Map(rows.map((r) => [String(r.symbol || '').toUpperCase(), r]))
   const intervalMinutes = Number(livePayload?.interval_minutes)
+  const barSecondsRaw = Number(livePayload?.intraday_bar_seconds)
+  const hasBarSeconds = Number.isFinite(barSecondsRaw) && barSecondsRaw > 0
   const tiles = prevData.tiles.map((tile) => {
     const symbol = String(tile?.symbol || '').toUpperCase()
     const live = bySymbol.get(symbol)
@@ -138,7 +170,12 @@ function mergeIbLiveRows(prevData, livePayload) {
       unrealized_pnl: unrealized,
       chart: {
         ...(tile?.chart || {}),
-        interval_minutes: Number.isFinite(intervalMinutes) ? intervalMinutes : tile?.chart?.interval_minutes,
+        interval_minutes: hasBarSeconds
+          ? 0
+          : (Number.isFinite(intervalMinutes) && intervalMinutes > 0
+            ? intervalMinutes
+            : tile?.chart?.interval_minutes),
+        bar_seconds: hasBarSeconds ? barSecondsRaw : (tile?.chart?.bar_seconds ?? null),
         bars,
       },
       overlays: {
@@ -273,13 +310,21 @@ function ProjectionDetail({ tile, projectionMode }) {
   )
 }
 
-function TrackerTooltip({ active, payload }) {
+function TrackerTooltip({ active, payload, exchangeTimeZone, granularIntraday }) {
   if (!active || !payload || payload.length === 0) return null
   const row = payload[0]?.payload
   if (!row) return null
+  const title = granularIntraday && exchangeTimeZone
+    ? formatInExchangeZone(row.ts, exchangeTimeZone, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+    : fmtBarTs(row.ts)
   return (
     <div className="symbol-tracker-tooltip">
-      <div className="symbol-tracker-tooltip-title">{fmtBarTs(row.ts)}</div>
+      <div className="symbol-tracker-tooltip-title">{title}</div>
       {row.close != null ? <div>Close: {fmtNum(row.close, 4)}</div> : null}
       {row.open != null ? <div>Open: {fmtNum(row.open, 4)}</div> : null}
       {row.high != null ? <div>High: {fmtNum(row.high, 4)}</div> : null}
@@ -297,14 +342,20 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
     return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
   }
 
+  const exchangeTz = exchangeTimeZoneForTile(tile)
+  const granularIntraday = mode === 'intraday' && Number(tile?.chart?.bar_seconds) > 0
+
   const overlays = showOverlays && mode === 'intraday' ? computeChartOverlays(bars) : null
 
   const chartData = bars.map((bar, idx) => {
     const isUp = Number(bar.close) >= Number(bar.open)
+    const xLabel = granularIntraday
+      ? formatInExchangeZone(bar.ts, exchangeTz, { hour: '2-digit', minute: '2-digit', hour12: false })
+      : toDateLabel(bar.ts)
     return {
       ...bar,
       idx,
-      label: toDateLabel(bar.ts),
+      label: xLabel,
       wick: bar.high != null && bar.low != null ? [bar.low, bar.high] : null,
       bodyUp: isUp ? [bar.open, bar.close] : null,
       bodyDown: !isUp ? [bar.close, bar.open] : null,
@@ -414,7 +465,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
       .filter((row) => row.label)
       .map((row) => [String(row.idx), row.label]),
   )
-  const barDates = bars.map((b) => String(b.ts || '').slice(0, 10))
+  const barDates = bars.map((b) => calendarDayKeyExchange(b.ts, exchangeTz))
   const dateToIdx = new Map()
   barDates.forEach((d, idx) => dateToIdx.set(d, idx))
   const highs = bars.map((b) => Number(b.high)).filter((v) => Number.isFinite(v))
@@ -425,7 +476,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   const markerEvents = (Array.isArray(tile?.events) ? tile.events : []).slice(0, 6).reverse()
   const markerPoints = markerEvents.map((event, idx) => {
     const style = eventStyle(event.type)
-    const eventDate = String(event.ts || '').slice(0, 10)
+    const eventDate = calendarDayKeyExchange(event.ts, exchangeTz)
     const eventIdx = dateToIdx.has(eventDate) ? dateToIdx.get(eventDate) : currentIdx
     const laneOffset = (idx % 3) * (yRange * 0.02)
     const y = style.anchor === 'top'
@@ -444,7 +495,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   if (mode === 'intraday') {
     let prevDay = null
     bars.forEach((bar, idx) => {
-      const day = String(bar?.ts || '').slice(0, 10)
+      const day = calendarDayKeyExchange(bar?.ts, exchangeTz)
       if (!day) return
       if (prevDay && day !== prevDay) {
         dayBoundaryLines.push({ idx, day })
@@ -461,9 +512,19 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           dataKey="idx"
           tickFormatter={(idx) => labelByIdx.get(String(idx)) || ''}
           tick={{ fontSize: 10 }}
+          minTickGap={granularIntraday ? 36 : 12}
         />
         <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
-        <Tooltip content={<TrackerTooltip />} />
+        <Tooltip
+          content={(tipProps) => (
+            <TrackerTooltip
+              active={tipProps.active}
+              payload={tipProps.payload}
+              exchangeTimeZone={exchangeTz}
+              granularIntraday={granularIntraday}
+            />
+          )}
+        />
 
         {chartStyle === 'line' ? (
           <Line type="monotone" dataKey="close" stroke="#60a5fa" strokeWidth={2} dot={false} connectNulls />
@@ -1075,8 +1136,8 @@ export default function SymbolTracker() {
     if (symbols.length === 0) return null
     const body = {
       mode: selectedMode,
-      intraday_interval_minutes: 60,
-      window_bars: 24,
+      intraday_bar_seconds: 30,
+      window_bars: 780,
       symbols,
     }
     const resp = await fetch(`${API_BASE}/symbol-tracker/ib-live`, {
@@ -1207,8 +1268,8 @@ export default function SymbolTracker() {
         chart_style: 'line',
         horizon_bars: '20',
         projection_mode: 'stitched',
-        intraday_interval_minutes: '60',
-        intraday_window_bars: '24',
+        intraday_bar_seconds: '30',
+        intraday_window_bars: '780',
       })
       const resp = await fetch(`${API_BASE}/symbol-tracker/tiles?${params.toString()}`)
       if (!resp.ok) throw new Error(`Failed to load symbol tracker (${resp.status})`)

@@ -531,19 +531,21 @@ def _fetch_live_symbol_position_qty(cur, portfolio_id: int | None, symbol: str |
 
 
 def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) -> dict:
+    # Anchor on the newest snapshot bundle for this account — not NAV-only. The IBKR
+    # sync may skip inserting a NAV row when account summary tags are missing, while
+    # still writing OPEN_ORDER / POSITION rows for the same run; NAV-only lookup then
+    # points at an older SNAPSHOT_TS and fails post-submit truth checks (false
+    # IBKR_TRUTH_MISSING_ORDER_ACK).
     cur.execute(
         """
-        select SNAPSHOT_TS
+        select max(SNAPSHOT_TS) as SNAPSHOT_TS
         from MIP.LIVE.BROKER_SNAPSHOTS
-        where SNAPSHOT_TYPE = 'NAV'
-          and IBKR_ACCOUNT_ID = %s
-        order by SNAPSHOT_TS desc
-        limit 1
+        where IBKR_ACCOUNT_ID = %s
         """,
         (account_id,),
     )
-    nav_rows = fetch_all(cur)
-    latest_snapshot_ts = (nav_rows[0] or {}).get("SNAPSHOT_TS") if nav_rows else None
+    ts_rows = fetch_all(cur)
+    latest_snapshot_ts = (ts_rows[0] or {}).get("SNAPSHOT_TS") if ts_rows else None
     if not latest_snapshot_ts:
         return {
             "snapshot_ts": None,

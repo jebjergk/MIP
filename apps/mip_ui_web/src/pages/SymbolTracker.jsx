@@ -310,6 +310,89 @@ function ProjectionDetail({ tile, projectionMode }) {
   )
 }
 
+/**
+ * Tight Y-axis for intraday: trim outliers (e.g. bad tick at open) and omit far stop
+ * so Bollinger/VWAP stay readable. SL is excluded on purpose — use "Full range" to see it.
+ */
+function computeIntradayYFocusDomain(bars, tile, overlays) {
+  const pool = []
+  for (const b of bars) {
+    for (const k of ['open', 'high', 'low', 'close']) {
+      const v = Number(b[k])
+      if (Number.isFinite(v) && v > 0 && v < 1e7) pool.push(v)
+    }
+  }
+  if (overlays?.bollinger) {
+    for (const key of ['upper', 'middle', 'lower']) {
+      const arr = overlays.bollinger[key] || []
+      for (const v of arr) {
+        const x = Number(v)
+        if (Number.isFinite(x) && x > 0 && x < 1e7) pool.push(x)
+      }
+    }
+  }
+  if (Array.isArray(overlays?.vwap)) {
+    for (const v of overlays.vwap) {
+      const x = Number(v)
+      if (Number.isFinite(x) && x > 0 && x < 1e7) pool.push(x)
+    }
+  }
+  if (pool.length < 8) return null
+
+  pool.sort((a, b) => a - b)
+  const mid = pool[Math.floor(pool.length / 2)]
+  const sane = mid > 0
+    ? pool.filter((v) => Math.abs(v - mid) / mid < 0.35)
+    : pool
+  const use = sane.length >= 8 ? sane : pool
+
+  use.sort((a, b) => a - b)
+  const q = (p) => {
+    const i = Math.round((use.length - 1) * p)
+    return use[Math.max(0, Math.min(use.length - 1, i))]
+  }
+  let lo = q(0.035)
+  let hi = q(0.965)
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo >= hi) return null
+
+  const pullIn = (v) => {
+    const x = Number(v)
+    if (!Number.isFinite(x) || x <= 0 || x >= 1e7) return
+    if (mid > 0 && Math.abs(x - mid) / mid > 0.4) return
+    lo = Math.min(lo, x)
+    hi = Math.max(hi, x)
+  }
+  pullIn(tile?.overlays?.current)
+  pullIn(tile?.overlays?.entry)
+  pullIn(tile?.overlays?.take_profit)
+  pullIn(overlays?.sr?.support)
+  pullIn(overlays?.sr?.resistance)
+
+  const spanRaw = hi - lo
+  const minSpan = Math.max(mid * 0.0015, 0.01)
+  const span = Math.max(spanRaw, minSpan)
+  if (spanRaw < minSpan) {
+    const c = (lo + hi) / 2
+    lo = c - minSpan / 2
+    hi = c + minSpan / 2
+  }
+  const pad = Math.max((hi - lo) * 0.07, Math.abs(hi) * 0.0006)
+  const outLo = lo - pad
+  const outHi = hi + pad
+  if (!Number.isFinite(outLo) || !Number.isFinite(outHi) || outLo >= outHi) return null
+  return [outLo, outHi]
+}
+
+function yTickLabel(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return ''
+  const a = Math.abs(n)
+  if (a >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+  if (a >= 100) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (a >= 10) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}
+
 function TrackerTooltip({ active, payload, exchangeTimeZone, granularIntraday }) {
   if (!active || !payload || payload.length === 0) return null
   const row = payload[0]?.payload
@@ -338,14 +421,49 @@ function TrackerTooltip({ active, payload, exchangeTimeZone, granularIntraday })
 
 function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRender, showOverlays = true }) {
   const bars = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
-  if (bars.length === 0) {
-    return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
-  }
+  const [yAxisMode, setYAxisMode] = useState('focus')
 
   const exchangeTz = exchangeTimeZoneForTile(tile)
   const granularIntraday = mode === 'intraday' && Number(tile?.chart?.bar_seconds) > 0
 
-  const overlays = showOverlays && mode === 'intraday' ? computeChartOverlays(bars) : null
+  const overlays = bars.length > 0 && showOverlays && mode === 'intraday' ? computeChartOverlays(bars) : null
+
+  const highs = bars.map((b) => Number(b.high)).filter((v) => Number.isFinite(v))
+  const lows = bars.map((b) => Number(b.low)).filter((v) => Number.isFinite(v))
+  const fullYMax = highs.length > 0 ? Math.max(...highs) : Number(tile?.overlays?.current || tile?.overlays?.entry || 1)
+  const fullYMin = lows.length > 0 ? Math.min(...lows) : Number(tile?.overlays?.current || tile?.overlays?.entry || 0)
+
+  const yAxisLayout = useMemo(() => {
+    if (bars.length === 0) {
+      return { domain: ['auto', 'auto'], yMax: 1, yMin: 0, focusClamp: false }
+    }
+    if (mode !== 'intraday' || yAxisMode === 'full') {
+      return { domain: ['auto', 'auto'], yMax: fullYMax, yMin: fullYMin, focusClamp: false }
+    }
+    const focused = computeIntradayYFocusDomain(bars, tile, overlays)
+    if (!focused) {
+      return { domain: ['auto', 'auto'], yMax: fullYMax, yMin: fullYMin, focusClamp: false }
+    }
+    return { domain: focused, yMax: focused[1], yMin: focused[0], focusClamp: true }
+  }, [bars, mode, yAxisMode, tile, overlays, fullYMax, fullYMin])
+
+  const focusYLo = yAxisLayout.focusClamp ? Number(yAxisLayout.domain[0]) : null
+  const focusYHi = yAxisLayout.focusClamp ? Number(yAxisLayout.domain[1]) : null
+  const priceLevelInFocus = (y) => {
+    if (focusYLo == null || focusYHi == null) return true
+    const v = Number(y)
+    if (!Number.isFinite(v)) return false
+    const pad = Math.max((focusYHi - focusYLo) * 0.02, 0.005)
+    return v >= focusYLo - pad && v <= focusYHi + pad
+  }
+  const bandFullyInFocus = (a, b) => {
+    if (focusYLo == null) return true
+    return priceLevelInFocus(a) && priceLevelInFocus(b)
+  }
+
+  if (bars.length === 0) {
+    return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
+  }
 
   const chartData = bars.map((bar, idx) => {
     const isUp = Number(bar.close) >= Number(bar.open)
@@ -468,10 +586,8 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   const barDates = bars.map((b) => calendarDayKeyExchange(b.ts, exchangeTz))
   const dateToIdx = new Map()
   barDates.forEach((d, idx) => dateToIdx.set(d, idx))
-  const highs = bars.map((b) => Number(b.high)).filter((v) => Number.isFinite(v))
-  const lows = bars.map((b) => Number(b.low)).filter((v) => Number.isFinite(v))
-  const yMax = highs.length > 0 ? Math.max(...highs) : Number(current || entry || 1)
-  const yMin = lows.length > 0 ? Math.min(...lows) : Number(current || entry || 0)
+  const yMax = yAxisLayout.yMax
+  const yMin = yAxisLayout.yMin
   const yRange = Math.max(yMax - yMin, 1)
   const markerEvents = (Array.isArray(tile?.events) ? tile.events : []).slice(0, 6).reverse()
   const markerPoints = markerEvents.map((event, idx) => {
@@ -505,16 +621,50 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
   }
 
   return (
-    <ResponsiveContainer width="100%" height={density === 'compact' ? 190 : 260}>
-      <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" vertical={false} />
-        <XAxis
-          dataKey="idx"
-          tickFormatter={(idx) => labelByIdx.get(String(idx)) || ''}
-          tick={{ fontSize: 10 }}
-          minTickGap={granularIntraday ? 36 : 12}
-        />
-        <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
+    <>
+      {mode === 'intraday' ? (
+        <div
+          className="symbol-tracker-yaxis-ctrl"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          role="group"
+          aria-label="Y-axis scale"
+        >
+          <span className="symbol-tracker-yaxis-ctrl-label">Y scale</span>
+          <button
+            type="button"
+            className={`symbol-tracker-yaxis-btn${yAxisMode === 'focus' ? ' symbol-tracker-yaxis-btn--active' : ''}`}
+            onClick={() => setYAxisMode('focus')}
+            title="Trim outliers (e.g. bad open print); far stop may sit off-screen"
+          >
+            Fit tape
+          </button>
+          <button
+            type="button"
+            className={`symbol-tracker-yaxis-btn${yAxisMode === 'full' ? ' symbol-tracker-yaxis-btn--active' : ''}`}
+            onClick={() => setYAxisMode('full')}
+            title="Include full bar range and all level lines (entry, TP, SL)"
+          >
+            Full range
+          </button>
+        </div>
+      ) : null}
+      <ResponsiveContainer width="100%" height={density === 'compact' ? 190 : 260}>
+        <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" vertical={false} />
+          <XAxis
+            dataKey="idx"
+            tickFormatter={(idx) => labelByIdx.get(String(idx)) || ''}
+            tick={{ fontSize: 10 }}
+            minTickGap={granularIntraday ? 36 : 12}
+          />
+          <YAxis
+            type="number"
+            tick={{ fontSize: 10 }}
+            domain={yAxisLayout.domain}
+            allowDataOverflow={Boolean(yAxisLayout.focusClamp)}
+            tickFormatter={yTickLabel}
+          />
         <Tooltip
           content={(tipProps) => (
             <TrackerTooltip
@@ -553,10 +703,14 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           </>
         ) : null}
 
-        {overlays?.sr?.support != null ? <ReferenceLine y={overlays.sr.support} stroke="#22c55e" strokeWidth={1} strokeDasharray="8 4" label={{ value: 'S', position: 'left', fill: '#22c55e', fontSize: 9 }} /> : null}
-        {overlays?.sr?.resistance != null ? <ReferenceLine y={overlays.sr.resistance} stroke="#f87171" strokeWidth={1} strokeDasharray="8 4" label={{ value: 'R', position: 'left', fill: '#f87171', fontSize: 9 }} /> : null}
+        {overlays?.sr?.support != null && priceLevelInFocus(overlays.sr.support) ? (
+          <ReferenceLine y={overlays.sr.support} stroke="#22c55e" strokeWidth={1} strokeDasharray="8 4" label={{ value: 'S', position: 'left', fill: '#22c55e', fontSize: 9 }} />
+        ) : null}
+        {overlays?.sr?.resistance != null && priceLevelInFocus(overlays.sr.resistance) ? (
+          <ReferenceLine y={overlays.sr.resistance} stroke="#f87171" strokeWidth={1} strokeDasharray="8 4" label={{ value: 'R', position: 'left', fill: '#f87171', fontSize: 9 }} />
+        ) : null}
 
-        {overlays?.sr?.support != null && overlays?.sr?.resistance != null ? (
+        {overlays?.sr?.support != null && overlays?.sr?.resistance != null && bandFullyInFocus(overlays.sr.support, overlays.sr.resistance) ? (
           <ReferenceArea
             y1={overlays.sr.support}
             y2={overlays.sr.resistance}
@@ -565,11 +719,11 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           />
         ) : null}
 
-        {entry != null ? <ReferenceLine y={entry} stroke="#a78bfa" strokeDasharray="4 3" label="Entry" /> : null}
-        {tp != null ? <ReferenceLine y={tp} stroke="#10b981" strokeDasharray="4 3" label="TP" /> : null}
-        {sl != null ? <ReferenceLine y={sl} stroke="#ef4444" strokeDasharray="4 3" label="SL" /> : null}
+        {entry != null && priceLevelInFocus(entry) ? <ReferenceLine y={entry} stroke="#a78bfa" strokeDasharray="4 3" label="Entry" /> : null}
+        {tp != null && priceLevelInFocus(tp) ? <ReferenceLine y={tp} stroke="#10b981" strokeDasharray="4 3" label="TP" /> : null}
+        {sl != null && priceLevelInFocus(sl) ? <ReferenceLine y={sl} stroke="#ef4444" strokeDasharray="4 3" label="SL" /> : null}
 
-        {entry != null && tp != null ? (
+        {entry != null && tp != null && bandFullyInFocus(entry, tp) ? (
           <ReferenceArea
             y1={Math.min(entry, tp)}
             y2={Math.max(entry, tp)}
@@ -579,7 +733,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
             fillOpacity={0.15}
           />
         ) : null}
-        {entry != null && sl != null ? (
+        {entry != null && sl != null && bandFullyInFocus(entry, sl) ? (
           <ReferenceArea
             y1={Math.min(entry, sl)}
             y2={Math.max(entry, sl)}
@@ -629,8 +783,9 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
             ifOverflow="extendDomain"
           />
         ))}
-      </ComposedChart>
-    </ResponsiveContainer>
+        </ComposedChart>
+      </ResponsiveContainer>
+    </>
   )
 }
 

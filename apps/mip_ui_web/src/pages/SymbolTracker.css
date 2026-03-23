@@ -24,6 +24,45 @@
   gap: 1rem;
 }
 
+/* Intraday chart: Y-axis zoom (fit tape vs full range) */
+.symbol-tracker-yaxis-ctrl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.symbol-tracker-yaxis-ctrl-label {
+  font-size: 0.72rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 0.15rem;
+}
+
+.symbol-tracker-yaxis-btn {
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #cbd5e1;
+  border-radius: 6px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.symbol-tracker-yaxis-btn:hover {
+  border-color: #475569;
+  color: #f1f5f9;
+}
+
+.symbol-tracker-yaxis-btn--active {
+  border-color: #3b82f6;
+  background: #172554;
+  color: #93c5fd;
+}
+
 .symbol-tracker-rows--compact {
   gap: 0.75rem;
 }

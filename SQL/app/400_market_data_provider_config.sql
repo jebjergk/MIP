@@ -9,7 +9,7 @@ using (
     select
       'MARKET_DATA_PROVIDER_DEFAULT' as CONFIG_KEY,
       'IBKR' as CONFIG_VALUE,
-      'Default market bar provider for SQL pipeline ingestion (ALPHAVANTAGE or IBKR).' as DESCRIPTION
+      'Default market bar provider for SQL pipeline ingestion. IBKR primary, ALPHAVANTAGE legacy optional.' as DESCRIPTION
     union all
     select
       'MARKET_DATA_PROVIDER_REVALIDATION',
@@ -18,8 +18,8 @@ using (
     union all
     select
       'MARKET_DATA_PROVIDER_BACKFILL',
-      'ALPHAVANTAGE',
-      'Preferred provider for deep historical backfill runs.'
+      'IBKR',
+      'Preferred provider for deep historical backfill runs (IBKR-only deployments).'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

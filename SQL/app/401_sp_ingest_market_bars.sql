@@ -30,7 +30,7 @@ begin
                 where CONFIG_KEY = 'MARKET_DATA_PROVIDER_DEFAULT'
                 limit 1
             ),
-            'ALPHAVANTAGE'
+            'IBKR'
         )
     );
 
@@ -90,7 +90,7 @@ begin
             'provider', :v_provider,
             'rows_inserted', 0,
             'symbols_processed', 0,
-            'error', 'Unsupported provider. Expected ALPHAVANTAGE or IBKR.'
+            'error', 'Unsupported provider. Expected IBKR or ALPHAVANTAGE (legacy).'
         );
     end if;
 end;

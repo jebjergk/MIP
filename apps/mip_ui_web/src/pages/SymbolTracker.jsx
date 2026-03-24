@@ -310,73 +310,96 @@ function ProjectionDetail({ tile, projectionMode }) {
   )
 }
 
+function qPercentile(sortedAsc, p) {
+  if (!sortedAsc.length) return NaN
+  const i = Math.round((sortedAsc.length - 1) * p)
+  return sortedAsc[Math.max(0, Math.min(sortedAsc.length - 1, i))]
+}
+
+function sortedCopy(nums) {
+  return [...nums].filter((v) => Number.isFinite(v)).sort((a, b) => a - b)
+}
+
+function pushPriceSample(vals, x) {
+  const v = Number(x)
+  if (Number.isFinite(v) && v > 0 && v < 1e7) vals.push(v)
+}
+
+/** Bars to drop at start for fit-tape (opening spike); ~32–35% of series, floor 100. */
+function intradayFitTapeSkipBars(n) {
+  if (n < 40) return 0
+  const byPct = Math.floor(n * 0.34)
+  const want = Math.max(100, byPct)
+  return Math.min(Math.max(0, n - 24), want)
+}
+
 /**
- * Tight Y-axis for intraday: trim outliers (e.g. bad tick at open) and omit far stop
- * so Bollinger/VWAP stay readable. SL is excluded on purpose — use "Full range" to see it.
+ * Fit tape: Y domain from the same window we draw (post-skip): OHLC, VWAP, BB, S/R, last.
+ * Far entry/TP/SL are not pulled in (Full range for that).
  */
 function computeIntradayYFocusDomain(bars, tile, overlays) {
-  const pool = []
-  for (const b of bars) {
-    for (const k of ['open', 'high', 'low', 'close']) {
-      const v = Number(b[k])
-      if (Number.isFinite(v) && v > 0 && v < 1e7) pool.push(v)
-    }
-  }
-  if (overlays?.bollinger) {
-    for (const key of ['upper', 'middle', 'lower']) {
-      const arr = overlays.bollinger[key] || []
-      for (const v of arr) {
-        const x = Number(v)
-        if (Number.isFinite(x) && x > 0 && x < 1e7) pool.push(x)
-      }
-    }
-  }
-  if (Array.isArray(overlays?.vwap)) {
-    for (const v of overlays.vwap) {
-      const x = Number(v)
-      if (Number.isFinite(x) && x > 0 && x < 1e7) pool.push(x)
-    }
-  }
-  if (pool.length < 8) return null
+  const n = bars.length
+  if (n < 12) return null
 
-  pool.sort((a, b) => a - b)
-  const mid = pool[Math.floor(pool.length / 2)]
-  const sane = mid > 0
-    ? pool.filter((v) => Math.abs(v - mid) / mid < 0.35)
-    : pool
-  const use = sane.length >= 8 ? sane : pool
+  const from = intradayFitTapeSkipBars(n)
+  if (from >= n - 4) return null
 
-  use.sort((a, b) => a - b)
-  const q = (p) => {
-    const i = Math.round((use.length - 1) * p)
-    return use[Math.max(0, Math.min(use.length - 1, i))]
+  const vals = []
+  for (let i = from; i < n; i += 1) {
+    const b = bars[i]
+    if (!b) continue
+    pushPriceSample(vals, b.open)
+    pushPriceSample(vals, b.high)
+    pushPriceSample(vals, b.low)
+    pushPriceSample(vals, b.close)
+    if (overlays?.bollinger) {
+      pushPriceSample(vals, overlays.bollinger.upper?.[i])
+      pushPriceSample(vals, overlays.bollinger.middle?.[i])
+      pushPriceSample(vals, overlays.bollinger.lower?.[i])
+    }
+    pushPriceSample(vals, overlays?.vwap?.[i])
   }
-  let lo = q(0.035)
-  let hi = q(0.965)
+
+  pushPriceSample(vals, overlays?.sr?.support)
+  pushPriceSample(vals, overlays?.sr?.resistance)
+  pushPriceSample(vals, tile?.overlays?.current)
+
+  if (vals.length < 6) return null
+
+  const sorted = sortedCopy(vals)
+  const tapeMid = qPercentile(sorted, 0.5)
+  if (!Number.isFinite(tapeMid) || tapeMid <= 0) return null
+
+  const pullNearbyLevel = (y) => {
+    const v = Number(y)
+    if (!Number.isFinite(v) || v <= 0 || v >= 1e7) return
+    if (Math.abs(v - tapeMid) / tapeMid > 0.035) return
+    vals.push(v)
+  }
+  pullNearbyLevel(tile?.overlays?.entry)
+  pullNearbyLevel(tile?.overlays?.take_profit)
+
+  const sorted2 = sortedCopy(vals)
+  let lo
+  let hi
+  if (sorted2.length >= 48) {
+    lo = qPercentile(sorted2, 0.008)
+    hi = qPercentile(sorted2, 0.992)
+  } else {
+    lo = sorted2[0]
+    hi = sorted2[sorted2.length - 1]
+  }
   if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo >= hi) return null
 
-  const pullIn = (v) => {
-    const x = Number(v)
-    if (!Number.isFinite(x) || x <= 0 || x >= 1e7) return
-    if (mid > 0 && Math.abs(x - mid) / mid > 0.4) return
-    lo = Math.min(lo, x)
-    hi = Math.max(hi, x)
-  }
-  pullIn(tile?.overlays?.current)
-  pullIn(tile?.overlays?.entry)
-  pullIn(tile?.overlays?.take_profit)
-  pullIn(overlays?.sr?.support)
-  pullIn(overlays?.sr?.resistance)
-
   const spanRaw = hi - lo
-  const minSpan = Math.max(mid * 0.0015, 0.01)
-  const span = Math.max(spanRaw, minSpan)
+  const minSpan = Math.max(tapeMid * 0.00035, 0.012)
   if (spanRaw < minSpan) {
     const c = (lo + hi) / 2
     lo = c - minSpan / 2
     hi = c + minSpan / 2
   }
-  const pad = Math.max((hi - lo) * 0.07, Math.abs(hi) * 0.0006)
+
+  const pad = Math.max((hi - lo) * 0.06, tapeMid * 0.0001)
   const outLo = lo - pad
   const outHi = hi + pad
   if (!Number.isFinite(outLo) || !Number.isFinite(outHi) || outLo >= outHi) return null
@@ -465,7 +488,15 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
     return <div className="symbol-tracker-chart-empty">No market bars available for this symbol yet.</div>
   }
 
+  const stripLeadingTape = mode === 'intraday' && yAxisMode === 'focus'
+  const tapeSkip = stripLeadingTape ? intradayFitTapeSkipBars(bars.length) : 0
+
   const chartData = bars.map((bar, idx) => {
+    const hideTape = stripLeadingTape && idx < tapeSkip
+    const c = hideTape ? null : bar.close
+    const o = hideTape ? null : bar.open
+    const h = hideTape ? null : bar.high
+    const l = hideTape ? null : bar.low
     const isUp = Number(bar.close) >= Number(bar.open)
     const xLabel = granularIntraday
       ? formatInExchangeZone(bar.ts, exchangeTz, { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -474,16 +505,20 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
       ...bar,
       idx,
       label: xLabel,
-      wick: bar.high != null && bar.low != null ? [bar.low, bar.high] : null,
-      bodyUp: isUp ? [bar.open, bar.close] : null,
-      bodyDown: !isUp ? [bar.close, bar.open] : null,
+      open: o,
+      high: h,
+      low: l,
+      close: c,
+      wick: hideTape || bar.high == null || bar.low == null ? null : [bar.low, bar.high],
+      bodyUp: hideTape || !isUp ? null : [bar.open, bar.close],
+      bodyDown: hideTape || isUp ? null : [bar.close, bar.open],
       projected_center: null,
       projected_upper: null,
       projected_lower: null,
-      vwap: overlays?.vwap?.[idx] ?? null,
-      bb_upper: overlays?.bollinger?.upper?.[idx] ?? null,
-      bb_middle: overlays?.bollinger?.middle?.[idx] ?? null,
-      bb_lower: overlays?.bollinger?.lower?.[idx] ?? null,
+      vwap: hideTape ? null : (overlays?.vwap?.[idx] ?? null),
+      bb_upper: hideTape ? null : (overlays?.bollinger?.upper?.[idx] ?? null),
+      bb_middle: hideTape ? null : (overlays?.bollinger?.middle?.[idx] ?? null),
+      bb_lower: hideTape ? null : (overlays?.bollinger?.lower?.[idx] ?? null),
     }
   })
 
@@ -635,7 +670,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
             type="button"
             className={`symbol-tracker-yaxis-btn${yAxisMode === 'focus' ? ' symbol-tracker-yaxis-btn--active' : ''}`}
             onClick={() => setYAxisMode('focus')}
-            title="Trim outliers (e.g. bad open print); far stop may sit off-screen"
+            title="Hides ~first third of session from lines + tight Y (price, VWAP, BB, S/R). No marker dots. Far SL: Full range."
           >
             Fit tape
           </button>
@@ -649,7 +684,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           </button>
         </div>
       ) : null}
-      <ResponsiveContainer width="100%" height={density === 'compact' ? 190 : 260}>
+      <ResponsiveContainer width="100%" height={density === 'compact' ? 236 : 318}>
         <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#2f3745" vertical={false} />
           <XAxis
@@ -744,7 +779,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           />
         ) : null}
 
-        {current != null ? (
+        {current != null && !yAxisLayout.focusClamp ? (
           <ReferenceDot
             x={currentIdx}
             y={current}
@@ -756,23 +791,25 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
           />
         ) : null}
 
-        {markerPoints.map((event, idx) => (
-          <ReferenceDot
-            key={`${event.type || 'EVENT'}_${event.ts || idx}_${idx}`}
-            x={event.markerIdx}
-            y={event.markerY}
-            r={5}
-            fill={event.markerColor}
-            stroke="#0f172a"
-            strokeWidth={1.25}
-            label={{
-              position: event.markerAnchor === 'top' ? 'top' : 'bottom',
-              value: event.markerGlyph,
-              fill: event.markerColor,
-              fontSize: 10,
-            }}
-          />
-        ))}
+        {!yAxisLayout.focusClamp
+          ? markerPoints.map((event, idx) => (
+            <ReferenceDot
+              key={`${event.type || 'EVENT'}_${event.ts || idx}_${idx}`}
+              x={event.markerIdx}
+              y={event.markerY}
+              r={5}
+              fill={event.markerColor}
+              stroke="#0f172a"
+              strokeWidth={1.25}
+              label={{
+                position: event.markerAnchor === 'top' ? 'top' : 'bottom',
+                value: event.markerGlyph,
+                fill: event.markerColor,
+                fontSize: 10,
+              }}
+            />
+          ))
+          : null}
 
         {dayBoundaryLines.map((boundary) => (
           <ReferenceLine
@@ -780,7 +817,7 @@ function TileChart({ tile, mode, chartStyle, density, projectionMode, trendRende
             x={boundary.idx}
             stroke="#3b4b63"
             strokeDasharray="3 5"
-            ifOverflow="extendDomain"
+            ifOverflow={yAxisLayout.focusClamp ? 'discard' : 'extendDomain'}
           />
         ))}
         </ComposedChart>
@@ -979,36 +1016,44 @@ function Tile({ tile, mode, chartStyle, density, projectionMode, trendRender, fo
         <ProjectionDetail tile={tile} projectionMode={projectionMode} />
       ) : null}
 
-      {(tile?.events || []).length > 0 ? (
-        <div className="symbol-tracker-events">
-          <div className="symbol-tracker-events-title">Recent events</div>
-          {(tile.events || []).slice(0, 4).map((event, idx) => (
-            <div key={`${event.type || 'event'}_${event.ts || idx}_${idx}`} className="symbol-tracker-event-row">
-              <span className={`symbol-tracker-event-pill symbol-tracker-event-pill--${String(event.type || 'event').toLowerCase()}`}>
-                {event.type || 'EVENT'}
-              </span>
-              <span className="symbol-tracker-event-time">{fmtEventTs(event.ts)}</span>
-              {event.url ? (
-                <a className="symbol-tracker-event-link" href={event.url} target="_blank" rel="noreferrer">
-                  {event.label || 'Open'}
-                </a>
-              ) : (
-                <span className="symbol-tracker-event-label">{event.label || '—'}</span>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <div
+        className={
+          (tile?.events || []).length > 0
+            ? 'symbol-tracker-tile-footer'
+            : 'symbol-tracker-tile-footer symbol-tracker-tile-footer--metrics-only'
+        }
+      >
+        {(tile?.events || []).length > 0 ? (
+          <div className="symbol-tracker-events">
+            <div className="symbol-tracker-events-title">Recent events</div>
+            {(tile.events || []).slice(0, 4).map((event, idx) => (
+              <div key={`${event.type || 'event'}_${event.ts || idx}_${idx}`} className="symbol-tracker-event-row">
+                <span className={`symbol-tracker-event-pill symbol-tracker-event-pill--${String(event.type || 'event').toLowerCase()}`}>
+                  {event.type || 'EVENT'}
+                </span>
+                <span className="symbol-tracker-event-time">{fmtEventTs(event.ts)}</span>
+                {event.url ? (
+                  <a className="symbol-tracker-event-link" href={event.url} target="_blank" rel="noreferrer">
+                    {event.label || 'Open'}
+                  </a>
+                ) : (
+                  <span className="symbol-tracker-event-label">{event.label || '—'}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
 
-      <div className="symbol-tracker-metrics">
-        <div><span>Distance to TP</span><b>{fmtPct(tile?.progress_metrics?.distance_to_tp_pct)}</b></div>
-        <div><span>Distance to SL</span><b>{fmtPct(tile?.progress_metrics?.distance_to_sl_pct)}</b></div>
-        <div><span>Progress to TP</span><b>{fmtPct(tile?.progress_metrics?.progress_to_tp_pct)}</b></div>
-        <div><span>Expected move reached</span><b>{fmtPct(tile?.progress_metrics?.expected_progress_pct)}</b></div>
-        <div><span>Open R</span><b>{fmtNum(tile?.progress_metrics?.r_multiple_open, 2)}R</b></div>
-        <div><span>Days since entry</span><b>{tile?.holding_context?.days_since_entry ?? '—'}</b></div>
-        <div><span>Bars since entry</span><b>{tile?.holding_context?.bars_since_entry ?? '—'}</b></div>
-        <div><span>Vol regime</span><b>{tile?.volatility_context?.status || 'UNKNOWN'}</b></div>
+        <div className="symbol-tracker-metrics">
+          <div><span>Distance to TP</span><b>{fmtPct(tile?.progress_metrics?.distance_to_tp_pct)}</b></div>
+          <div><span>Distance to SL</span><b>{fmtPct(tile?.progress_metrics?.distance_to_sl_pct)}</b></div>
+          <div><span>Progress to TP</span><b>{fmtPct(tile?.progress_metrics?.progress_to_tp_pct)}</b></div>
+          <div><span>Expected move reached</span><b>{fmtPct(tile?.progress_metrics?.expected_progress_pct)}</b></div>
+          <div><span>Open R</span><b>{fmtNum(tile?.progress_metrics?.r_multiple_open, 2)}R</b></div>
+          <div><span>Days since entry</span><b>{tile?.holding_context?.days_since_entry ?? '—'}</b></div>
+          <div><span>Bars since entry</span><b>{tile?.holding_context?.bars_since_entry ?? '—'}</b></div>
+          <div><span>Vol regime</span><b>{tile?.volatility_context?.status || 'UNKNOWN'}</b></div>
+        </div>
       </div>
 
       {(exitRec?.signals || []).length > 1 ? (

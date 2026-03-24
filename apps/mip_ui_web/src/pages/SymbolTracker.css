@@ -303,12 +303,36 @@
   color: #94a3b8;
 }
 
+/* Recent events + metrics grid on one row (saves vertical space under chart) */
+.symbol-tracker-tile-footer {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.36fr) minmax(0, 1fr);
+  gap: 0.65rem 0.8rem;
+  align-items: start;
+}
+
+.symbol-tracker-tile-footer--metrics-only {
+  grid-template-columns: 1fr;
+}
+
+.symbol-tracker-tile--compact .symbol-tracker-tile-footer:not(.symbol-tracker-tile-footer--metrics-only) {
+  grid-template-columns: minmax(150px, 0.4fr) minmax(0, 1fr);
+  gap: 0.45rem 0.55rem;
+}
+
+@media (max-width: 680px) {
+  .symbol-tracker-tile-footer:not(.symbol-tracker-tile-footer--metrics-only) {
+    grid-template-columns: 1fr;
+  }
+}
+
 .symbol-tracker-events {
   border: 1px dashed #334155;
   border-radius: 10px;
   padding: 0.45rem 0.55rem;
   display: grid;
   gap: 0.35rem;
+  min-width: 0;
 }
 
 .symbol-tracker-tile--compact .symbol-tracker-events {
@@ -436,6 +460,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.45rem;
+  min-width: 0;
 }
 
 .symbol-tracker-tile--compact .symbol-tracker-metrics {

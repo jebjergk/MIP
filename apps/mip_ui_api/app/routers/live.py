@@ -5456,6 +5456,15 @@ def get_live_activity_overview(
                 except (TypeError, ValueError):
                     realized_pnl = None
             realized_pnl_is_estimate = False
+            raw_commission = payload.get("commission")
+            if raw_commission is None:
+                raw_commission = payload.get("commissionReport")
+            exec_commission = None
+            if raw_commission is not None:
+                try:
+                    exec_commission = float(raw_commission)
+                except (TypeError, ValueError):
+                    exec_commission = None
             action_id = broker_order_to_action.get(broker_order_id) if broker_order_id else None
             action_meta = action_meta_by_id.get(str(action_id or "")) or {}
             execution_ts_dt = _to_dt_utc(execution_ts)
@@ -5493,8 +5502,15 @@ def get_live_activity_overview(
                 execution_context = "OPEN_OR_ADD_LONG"
             elif side == "SELL":
                 execution_context = "OPEN_OR_ADD_SHORT"
+            # reqExecutions often yields commissionReport with realizedPNL=0 and commission=0 as placeholders
+            # before IB finalizes the fill. Treat that as "unknown" for closes so we fall back to MIP estimate.
+            _pnl_eps = 1e-9
+            if execution_context in ("CLOSE_LONG", "CLOSE_SHORT") and realized_pnl is not None:
+                comm_abs = abs(float(exec_commission)) if exec_commission is not None else 0.0
+                if abs(float(realized_pnl)) < _pnl_eps and comm_abs < _pnl_eps:
+                    realized_pnl = None
             # IB often omits realizedPNL until commissionReport is populated on the fill.
-            # Only fill in with MIP math when IB sent nothing (None)—not when IB explicitly sends 0.
+            # Estimate when still unknown after the placeholder strip above.
             if (
                 realized_pnl is None
                 and qty_filled is not None
@@ -5542,8 +5558,6 @@ def get_live_activity_overview(
             market_type = "FX" if "/" in symbol else str(row.get("SECURITY_TYPE") or "").upper()
             # Match UI labels: only true closes (position was opposite sign before fill), not EXIT intent alone.
             close_like = execution_context in {"CLOSE_SHORT", "CLOSE_LONG"}
-            raw_commission = payload.get("commission")
-            exec_commission = float(raw_commission) if raw_commission is not None else None
             pnl_fee_source = None
             if exec_commission and exec_commission > 0:
                 pnl_fee_source = "ACTUAL_BROKER"
@@ -5616,7 +5630,15 @@ def get_live_activity_overview(
             if local_key in seen_combined:
                 continue
             executions.append(local_exec)
-        executions = [e for e in executions if bool(e.get("close_like"))]
+
+        def _execution_sort_ts(e: dict) -> datetime:
+            v = e.get("execution_ts")
+            d = _to_dt_utc(v) if v else None
+            if d is None:
+                return datetime.min.replace(tzinfo=timezone.utc)
+            return d
+
+        executions.sort(key=_execution_sort_ts, reverse=True)
         executions = executions[:execution_limit]
 
         orders_enriched = []

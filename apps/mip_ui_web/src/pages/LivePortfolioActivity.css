@@ -525,6 +525,10 @@
   font-weight: 600;
 }
 
+.lpa-pnl-main--ib.lpa-pnl-ib-zero {
+  color: #546e7a;
+}
+
 .lpa-pnl-main--est {
   font-weight: 500;
   color: #546e7a;
@@ -557,6 +561,10 @@
   color: #546e7a;
 }
 
+.lpa-pnl-stack--na .lpa-pnl-fill-hint {
+  max-width: 18rem;
+}
+
 .lpa-trades-footnote {
   margin-top: 10px;
   padding: 10px 12px;
@@ -566,6 +574,11 @@
   background: #eceff1;
   border-radius: 8px;
   border: 1px solid #cfd8dc;
+}
+
+.lpa-trades-footnote__list {
+  display: block;
+  margin-top: 4px;
 }
 
 .lpa-side-chip {

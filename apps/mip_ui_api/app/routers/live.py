@@ -5937,6 +5937,8 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
             "max_exit_qty": max_qty,
             "requested_qty": qty,
             "reason": reason_text,
+            "live_committee_waived": True,
+            "committee_waive_rationale": "Manual exit/cover from Live Portfolio Activity; PM/compliance/revalidate/execute only.",
         }
         cur.execute(
             """
@@ -5948,7 +5950,7 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
             select
               %s, null, %s, %s, %s, 'EXIT', 'MANUAL', %s,
               %s, %s, null, 'READY_FOR_APPROVAL_FLOW', dateadd(second, %s, current_timestamp()), 'PENDING',
-              parse_json(%s), parse_json(%s), true, 'PENDING', current_timestamp(), current_timestamp()
+              parse_json(%s), parse_json(%s), false, 'SKIPPED', current_timestamp(), current_timestamp()
             """,
             (
                 action_id,
@@ -6031,8 +6033,14 @@ def approve_and_submit_live_decision(action_id: str, req: ApproveAndSubmitLiveDe
                 },
             )
 
+    committee_required_flag = bool(action.get("COMMITTEE_REQUIRED")) if action.get("COMMITTEE_REQUIRED") is not None else True
     committee_result = None
-    if status in ("OPEN_ELIGIBLE", "OPEN_CAUTION", "PENDING_OPEN_STABILITY_REVIEW", "READY_FOR_APPROVAL_FLOW"):
+    if committee_required_flag and status in (
+        "OPEN_ELIGIBLE",
+        "OPEN_CAUTION",
+        "PENDING_OPEN_STABILITY_REVIEW",
+        "READY_FOR_APPROVAL_FLOW",
+    ):
         committee_result = run_live_trade_committee(
             action_id,
             CommitteeRunRequest(

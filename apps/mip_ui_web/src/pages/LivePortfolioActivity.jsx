@@ -74,6 +74,9 @@ function explainReasonCode(code) {
     BROKER_RECONCILIATION_REQUIRED: 'Recent broker fills are not linked locally yet. Reconcile first.',
     EXECUTION_CLICK_REVALIDATION_STALE: 'Decision is stale. Re-run revalidation before submitting.',
     PRICE_GUARD_FAIL: 'Latest price check failed. Re-run revalidation before submitting.',
+    EXIT_REVALIDATION_MARKET_BYPASS: 'Exit uses a market order; price guard vs reference quote was skipped.',
+    REVALIDATION_PRICE_FROM_IBKR_DIRECT: 'Reference price taken from live IBKR 1m refresh (informational).',
+    EXIT_REVALIDATION_STALE_BAR_BYPASS: 'Exit revalidation allowed with an older bar (market exit).',
     COMPLIANCE_NOT_APPROVED: 'Decision is not approved for execution yet.',
   }
   return map[c] || c.replaceAll('_', ' ')
@@ -801,6 +804,16 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-warning-inline">
                             Revalidation expired - run Committee revalidation before submit.
                           </div>
+                        ) : null}
+                        {!canSubmit && statusUpper === 'REVALIDATED_PASS' && Array.isArray(d.submission_gate_hints) && d.submission_gate_hints.length > 0 ? (
+                          <ul className="lpa-reason-list lpa-subtle">
+                            {d.submission_gate_hints.map((hint, hi) => (
+                              <li key={`${d.action_id}:hint:${hi}`}>{hint}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {!canSubmit && statusUpper !== 'REVALIDATED_PASS' ? (
+                          <div className="lpa-subtle">Submit to IBKR is enabled only when status is REVALIDATED_PASS (run Committee revalidation if needed).</div>
                         ) : null}
                         <button
                           className="lpa-btn"

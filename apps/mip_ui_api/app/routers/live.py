@@ -5117,12 +5117,13 @@ def get_live_activity_overview(
         snapshot_state = _compute_snapshot_freshness_state(snapshot_age_sec, cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"))
         drift_state = _compute_drift_state(cfg.get("DRIFT_STATUS"), unresolved_drift_count)
         drift_state_effective = "BLOCKED" if reconciliation_state == "REQUIRED" else drift_state
-        page_actionable = (
+        # Entries require extended-hours window; exits may submit off-hours (DAY close queues for next session).
+        page_actionable_base = (
             snapshot_state in ("FRESH", "AGING")
             and drift_state_effective != "BLOCKED"
             and reconciliation_state != "REQUIRED"
-            and market_open
         )
+        page_actionable = page_actionable_base and market_open
         held_symbols = {str((r.get("SYMBOL") or "")).upper() for r in open_positions}
         nav_eur = float(nav.get("NET_LIQUIDATION_EUR") or 0.0) if nav else 0.0
 
@@ -5143,6 +5144,8 @@ def get_live_activity_overview(
 
         for row in action_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
+            action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
+            is_exit = action_intent == "EXIT"
             joint_decision = _parse_variant(row.get("COMMITTEE_JOINT_DECISION"))
             proposed_qty = float(row.get("PROPOSED_QTY")) if row.get("PROPOSED_QTY") is not None else None
             proposed_price = float(row.get("PROPOSED_PRICE")) if row.get("PROPOSED_PRICE") is not None else None
@@ -5204,6 +5207,11 @@ def get_live_activity_overview(
                     "FIRST_SESSION_REALISM_MISSING_1M_REFERENCE",
                     "FIRST_SESSION_REALISM_1M_STALE",
                     "FIRST_SESSION_REALISM_REVALIDATION_NOT_LATEST",
+                    "LIVE_TP_REQUIRED_MISSING",
+                    "LIVE_SL_REQUIRED_MISSING",
+                    "LIVE_BRACKET_REQUIRED",
+                    "LIVE_TP_NET_EDGE_TOO_LOW",
+                    "LIVE_RISK_REWARD_TOO_LOW",
                 }
             execution_hard_blocked = bool(
                 action_reason_codes
@@ -5212,11 +5220,10 @@ def get_live_activity_overview(
                     for x in action_reason_codes
                 )
             )
+            trade_surface_ok = page_actionable_base and (market_open or is_exit)
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
-            submit_allowed = submit_allowed and page_actionable and (not blocked) and (not execution_hard_blocked) and (not committee_blocks_entry)
+            submit_allowed = submit_allowed and trade_surface_ok and (not blocked) and (not execution_hard_blocked) and (not committee_blocks_entry)
             in_position = symbol in held_symbols
-            action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
-            is_exit = action_intent == "EXIT"
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
             has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
@@ -5225,6 +5232,25 @@ def get_live_activity_overview(
                 joint_decision.get("realistic_target_return") is not None
                 or joint_decision.get("acceptable_early_exit_target_return") is not None
             )
+
+            submission_gate_hints: list[str] = []
+            if status == "REVALIDATED_PASS" and not submit_allowed:
+                if snapshot_state not in ("FRESH", "AGING"):
+                    submission_gate_hints.append("Snapshot not fresh enough — click Refresh From IB.")
+                if drift_state_effective == "BLOCKED":
+                    submission_gate_hints.append("Drift / controls blocked this trading surface.")
+                if reconciliation_state == "REQUIRED":
+                    submission_gate_hints.append("Broker reconciliation required (unmapped executions).")
+                if not market_open and not is_exit:
+                    submission_gate_hints.append("Outside operating hours (new entries only; exits use other gates).")
+                if blocked:
+                    submission_gate_hints.append("Decision blocked — see reason codes.")
+                if execution_hard_blocked:
+                    submission_gate_hints.append("Execution policy blocked — see reason codes.")
+                if committee_blocks_entry:
+                    submission_gate_hints.append("Committee did not approve entry.")
+                if not submission_gate_hints:
+                    submission_gate_hints.append("Submission unavailable — refresh the page or verify action status.")
 
             if (
                 status != "EXECUTION_REQUESTED"
@@ -5250,6 +5276,7 @@ def get_live_activity_overview(
                         "reason_codes": action_reason_codes,
                         "required_next_step": _required_next_step_for_status(status),
                         "submission_allowed": bool(submit_allowed),
+                        "submission_gate_hints": submission_gate_hints,
                         "is_blocked": bool(blocked),
                         "execution_hard_blocked": bool(execution_hard_blocked),
                         "committee_should_enter": committee_should_enter,
@@ -7821,6 +7848,10 @@ def revalidate_live_action(
         revalidation_outcome = "FAIL"
         status = "REVALIDATED_FAIL"
         existing_reason_codes = _parse_list_variant(action.get("REASON_CODES"))
+        # Drop prior price-guard noise when revalidating an exit — it will be replaced by PASS + bypass tag.
+        if is_exit:
+            _exit_reval_strip = {"PRICE_GUARD_FAIL", "REDUCED_SIZE_DUE_TO_PRICE_DEVIATION"}
+            existing_reason_codes = [rc for rc in existing_reason_codes if str(rc).upper() not in _exit_reval_strip]
         reason_codes: list[str] = []
         reduced_size_factor = None
         target_open_condition_factor = 1.0
@@ -7831,7 +7862,15 @@ def revalidate_live_action(
         if source == "IBKR_DIRECT_1M":
             reason_codes.append("REVALIDATION_PRICE_FROM_IBKR_DIRECT")
 
-        if deviation is None or deviation <= 0.02:
+        if is_exit:
+            # Live IB exits submit MKT; PROPOSED_PRICE is reference-only. A tight % band vs a 1m bar
+            # would strand closes after normal price movement — do not fail exits on price guard.
+            revalidation_outcome = "PASS"
+            status = "REVALIDATED_PASS"
+            target_open_condition_factor = 1.0
+            reduced_size_factor = None
+            reason_codes.append("EXIT_REVALIDATION_MARKET_BYPASS")
+        elif deviation is None or deviation <= 0.02:
             revalidation_outcome = "PASS"
             status = "REVALIDATED_PASS"
             target_open_condition_factor = 1.0
@@ -7857,10 +7896,14 @@ def revalidate_live_action(
         news_causes_caution = news_context_state in ("CAUTIONARY", "DESTABILIZING")
         if news_event_shock and news_freshness in ("FRESH", "OVERNIGHT"):
             if revalidation_outcome == "PASS":
-                revalidation_outcome = "PASS_WITH_REDUCED_SIZE"
-                status = "REVALIDATED_PASS"
-                reduced_size_factor = min(reduced_size_factor or 1.0, 0.5)
-                reason_codes.append("NEWS_REVALIDATION_CAUTION")
+                if is_exit:
+                    # Full-size market exit; do not shrink exit qty on news shock.
+                    reason_codes.append("NEWS_REVALIDATION_CAUTION")
+                else:
+                    revalidation_outcome = "PASS_WITH_REDUCED_SIZE"
+                    status = "REVALIDATED_PASS"
+                    reduced_size_factor = min(reduced_size_factor or 1.0, 0.5)
+                    reason_codes.append("NEWS_REVALIDATION_CAUTION")
             elif revalidation_outcome == "FAIL":
                 reason_codes.append("NEWS_EVENT_SHOCK_BLOCK")
         elif news_causes_caution and revalidation_outcome == "PASS":

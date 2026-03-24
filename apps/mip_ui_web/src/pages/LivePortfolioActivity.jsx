@@ -203,6 +203,7 @@ export default function LivePortfolioActivity() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const feedbackRef = useRef(null)
   const [busy, setBusy] = useState('')
   const [ordersLookbackDays, setOrdersLookbackDays] = useState(30)
   const [ordersLimit, setOrdersLimit] = useState(120)
@@ -515,6 +516,12 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
+  const scrollFeedbackIntoView = useCallback(() => {
+    requestAnimationFrame(() => {
+      feedbackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [])
+
   const createExitAction = useCallback(async (positionRow) => {
     const symbol = String(positionRow?.SYMBOL || '').toUpperCase().trim()
     const portfolioId = overview?.portfolio?.portfolio_id
@@ -522,7 +529,9 @@ export default function LivePortfolioActivity() {
     const isShort = positionQty < 0
     const exitSideLabel = isShort ? 'BUY (cover short)' : 'SELL (close long)'
     if (!symbol || !portfolioId) {
+      setNotice('')
       setError('Cannot create exit action: missing symbol or live portfolio id.')
+      scrollFeedbackIntoView()
       return
     }
     const confirmed = window.confirm(
@@ -530,7 +539,12 @@ export default function LivePortfolioActivity() {
         ? `Create exit to cover short ${symbol}? (IB will receive a BUY to close ~${Math.abs(positionQty)} shares.)`
         : `Create SELL exit to close long ${symbol}? (~${Math.abs(positionQty)} shares.)`,
     )
-    if (!confirmed) return
+    if (!confirmed) {
+      setError('')
+      setNotice('You cancelled the confirmation dialog — no request was sent to the server.')
+      scrollFeedbackIntoView()
+      return
+    }
     const busyKey = `exit:${symbol}`
     setBusy(busyKey)
     setError('')
@@ -546,28 +560,37 @@ export default function LivePortfolioActivity() {
           auto_submit: true,
         }),
       })
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => null)
-        throw new Error(messageFromApiFailure(body, 'Could not create exit decision right now.'))
+      const rawText = await resp.text()
+      let body = null
+      try {
+        body = rawText ? JSON.parse(rawText) : null
+      } catch {
+        body = null
       }
-      const data = await resp.json()
+      if (!resp.ok) {
+        throw new Error(messageFromApiFailure(body, rawText?.slice(0, 200) || 'Could not create exit decision right now.'))
+      }
+      const data = body && typeof body === 'object' ? body : {}
       const actionId = data?.action_id || 'new'
       const autoStatus = data?.auto_submit?.status || data?.status || ''
       if (data?.idempotent_replay) {
         setNotice(
           `Exit workflow already in progress for ${symbol} (action ${actionId}, status ${data?.status || '—'}). ` +
-            'Open Pending Decisions below and use Submit or Committee / Reject stale—Refresh From IB does not place orders.',
+            'Scroll to Pending Decisions and use Submit, or Reject stale if stuck. Refresh From IB only updates data—it does not trade.',
         )
       } else {
-        setNotice(`${exitSideLabel} submitted for ${symbol} (action ${actionId}). Status: ${autoStatus}`)
+        setNotice(`${exitSideLabel} started for ${symbol} (action ${actionId}). Latest status: ${autoStatus || '—'}. Check Pending Decisions if Submit did not run.`)
       }
+      scrollFeedbackIntoView()
       await load()
     } catch (e) {
+      setNotice('')
       setError(e.message || 'Create exit action failed.')
+      scrollFeedbackIntoView()
     } finally {
       setBusy('')
     }
-  }, [load, overview?.portfolio?.portfolio_id])
+  }, [load, overview?.portfolio?.portfolio_id, scrollFeedbackIntoView])
 
   const kpis = overview?.account_kpis || {}
   const pending = overview?.pending_decisions || []
@@ -655,8 +678,10 @@ export default function LivePortfolioActivity() {
         </button>
       </div>
 
-      {error ? <div className="lpa-error">{error}</div> : null}
-      {notice ? <div className="lpa-subtle">{notice}</div> : null}
+      <div ref={feedbackRef} className="lpa-feedback-region">
+        {error ? <div className="lpa-error" role="alert">{error}</div> : null}
+        {notice ? <div className="lpa-notice-banner" role="status">{notice}</div> : null}
+      </div>
       {loading ? <div>Loading live portfolio activity...</div> : null}
 
       {!loading && (
@@ -1082,13 +1107,28 @@ export default function LivePortfolioActivity() {
                                     <span className="lpa-subtle">No active TP/SL</span>
                                   )}
                                   <button
+                                    type="button"
                                     className="lpa-btn lpa-btn-secondary lpa-btn-compact lpa-position-sell-btn"
-                                    disabled={busy === `exit:${symbol}` || hasPendingExit}
-                                    onClick={() => createExitAction(p)}
+                                    disabled={busy === `exit:${symbol}`}
+                                    onClick={() => {
+                                      if (hasPendingExit) {
+                                        setError('')
+                                        setNotice(
+                                          `Exit already queued for ${symbol} (action ${pendingExit?.action_id || '—'}). ` +
+                                            'Scroll up to the blue banner or open Pending Decisions — use Submit / Committee, or Reject stale. ' +
+                                            'This button is intentionally not sending a duplicate exit.',
+                                        )
+                                        scrollFeedbackIntoView()
+                                        return
+                                      }
+                                      createExitAction(p)
+                                    }}
                                     title={
-                                      isShort
-                                        ? 'Places a BUY at IB to cover the short (same as close short).'
-                                        : 'Places a SELL at IB to close the long.'
+                                      hasPendingExit
+                                        ? 'An exit is already in the workflow — use Pending Decisions.'
+                                        : isShort
+                                          ? 'Places a BUY at IB to cover the short (same as close short).'
+                                          : 'Places a SELL at IB to close the long.'
                                     }
                                   >
                                     {busy === `exit:${symbol}`

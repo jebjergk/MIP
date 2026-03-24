@@ -1163,7 +1163,9 @@ export default function LivePortfolioActivity() {
 
               <div className="lpa-panel lpa-panel--trades">
                 <h3>Trades</h3>
-                <div className="lpa-subtle">Executed fills from IB broker truth (snapshot-backed).</div>
+                <div className="lpa-subtle">
+                  Executed fills from IB broker truth (snapshot-backed). P&amp;L is <b>per fill</b>, not a running account total.
+                </div>
                 <div className="lpa-mini-kpis">
                   <div><span>Lookback</span><b>{executions.length} total</b></div>
                   <div><span>Notional</span><b>{fmtNum(tradeNotional, 2)}</b></div>
@@ -1177,7 +1179,7 @@ export default function LivePortfolioActivity() {
                         <th>Qty</th>
                         <th>Notional</th>
                         <th>Commission</th>
-                        <th>P&L</th>
+                        <th title="Per execution fill. Do not add down the column for total account P&amp;L.">P&amp;L (per fill)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1190,6 +1192,11 @@ export default function LivePortfolioActivity() {
                         const notional = Number.isFinite(qty) && Number.isFinite(px) ? Math.abs(qty * px) : null
                         const realizedPnl = (e.realized_pnl == null) ? null : Number(e.realized_pnl)
                         const commission = e.commission != null ? Number(e.commission) : null
+                        const isEst = Boolean(e.realized_pnl_is_estimate)
+                        const pnlTitle = isEst
+                          ? 'MIP estimate from snapshot position basis. Can mis-classify legs (e.g. short vs long). Do not sum rows for total profit—use IBKR realized P&L.'
+                          : 'Realized P&L from IB execution payload for this fill (if provided). Still per-fill only; verify totals in IBKR.'
+                        const favorable = realizedPnl != null && realizedPnl >= 0
                         return (
                           <tr key={`${e.order_id}_${e.execution_ts || 'ts'}`}>
                             <td>
@@ -1200,14 +1207,40 @@ export default function LivePortfolioActivity() {
                             <td>{fmtNum(e.qty_filled, 0)}</td>
                             <td>{fmtNum(notional, 2)}</td>
                             <td className="lpa-subtle">{commission != null ? fmtNum(commission, 2) : '—'}</td>
-                            <td className={realizedPnl == null ? '' : (realizedPnl >= 0 ? 'lpa-pos' : 'lpa-neg')}>
-                              {realizedPnl == null ? '—' : `${e.realized_pnl_is_estimate ? '~' : ''}${fmtSigned(realizedPnl, 2)}`}
+                            <td title={pnlTitle}>
+                              {realizedPnl == null ? (
+                                <span className="lpa-subtle">—</span>
+                              ) : (
+                                <div className="lpa-pnl-stack">
+                                  <div
+                                    className={
+                                      isEst
+                                        ? `lpa-pnl-main--est ${favorable ? 'lpa-pnl-est-pos' : 'lpa-pnl-est-neg'}`
+                                        : `lpa-pnl-main--ib ${favorable ? 'lpa-pos' : 'lpa-neg'}`
+                                    }
+                                  >
+                                    {isEst ? '~' : ''}{fmtSigned(realizedPnl, 2)}
+                                  </div>
+                                  <span className={`lpa-pnl-source-tag ${isEst ? '' : 'lpa-pnl-source-tag--ib'}`}>
+                                    {isEst ? 'Estimated' : 'IBKR'}
+                                  </span>
+                                  <span className="lpa-pnl-fill-hint">
+                                    {favorable ? 'Favorable on this fill' : 'Unfavorable on this fill'}
+                                    {isEst ? ' (approx.)' : ''}
+                                  </span>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         )
                       })}
                     </tbody>
                   </table>
+                </div>
+                <div className="lpa-trades-footnote">
+                  <strong>How to read P&amp;L:</strong> Each row is one fill. <strong>Do not sum</strong> the column for “total profit”—partial fills and
+                  mixed long/short legs make that misleading. Use <strong>IBKR realized P&amp;L</strong> for the real total.
+                  Rows tagged <strong>Estimated</strong> are MIP calculations from snapshots and can be wrong when execution context is ambiguous.
                 </div>
               </div>
             </div>

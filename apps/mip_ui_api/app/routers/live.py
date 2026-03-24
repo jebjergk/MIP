@@ -8291,15 +8291,46 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         existing_order_rows = fetch_all(cur)
         if existing_order_rows:
             existing_order = existing_order_rows[0]
-            return {
-                "ok": True,
-                "action_id": action_id,
-                "status": "EXECUTION_REQUESTED",
-                "order_id": existing_order.get("ORDER_ID"),
-                "idempotency_key": idempotency_key,
-                "mode": "PAPER_PLACEHOLDER",
-                "idempotent_replay": True,
-            }
+            st = (existing_order.get("STATUS") or "").upper()
+            if st == "FILLED":
+                return {
+                    "ok": True,
+                    "action_id": action_id,
+                    "status": "EXECUTION_REQUESTED",
+                    "order_id": existing_order.get("ORDER_ID"),
+                    "idempotency_key": idempotency_key,
+                    "mode": "PAPER_PLACEHOLDER",
+                    "idempotent_replay": True,
+                }
+            if st == "UNCONFIRMED_AT_BROKER":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "A prior submit for this execution attempt may have reached IBKR but was not "
+                            "confirmed in our broker snapshot. Do not press Submit again for the same attempt—"
+                            "refresh IB, verify orders/fills in TWS, then reconcile. Use a higher attempt "
+                            "number only if IB confirms nothing was placed."
+                        ),
+                        "reason_codes": ["PRIOR_SUBMIT_BROKER_UNCONFIRMED"],
+                        "order_id": existing_order.get("ORDER_ID"),
+                        "broker_order_id": existing_order.get("BROKER_ORDER_ID"),
+                        "idempotency_key": idempotency_key,
+                    },
+                )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        "This execution attempt already has live order rows. Duplicate IB submission is blocked. "
+                        "Check LIVE orders and IBKR; use attempt_n+1 only after confirming the prior order state."
+                    ),
+                    "reason_codes": ["LIVE_IDEMPOTENT_SUBMIT_ALREADY_RECORDED"],
+                    "order_id": existing_order.get("ORDER_ID"),
+                    "order_status": st,
+                    "idempotency_key": idempotency_key,
+                },
+            )
 
         cur.execute(
             """
@@ -8463,7 +8494,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         order_legs = []
         broker_submit_payload = None
         broker_truth_check = None
+        ib_live_orders_inserted = False
         if use_ibkr_submit:
+            exit_symbol_qty_before = 0.0
             ibkr_entry_price = None if is_exit else (float(entry_price) if entry_price is not None else None)
             submit_attempt_payload = {
                 "account": str(account_id),
@@ -8500,6 +8533,33 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 except Exception as cancel_exc:
                     pre_exit_cancel_result = {"warning": f"Pre-exit bracket cancel failed (non-fatal): {cancel_exc}"}
                 submit_attempt_payload["pre_exit_cancel_result"] = pre_exit_cancel_result
+                truth_before_submit = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+                exit_symbol_qty_before = float(truth_before_submit.get("symbol_position_qty") or 0.0)
+                pos_gate_eps = 1e-5
+                if is_exit and side == "SELL" and exit_symbol_qty_before <= pos_gate_eps:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                "Sell-to-close blocked: broker snapshot shows no long position for this symbol. "
+                                "Refresh From IB—your prior exit may already have filled; do not resubmit the same exit."
+                            ),
+                            "reason_codes": ["EXIT_NO_LONG_POSITION_AT_BROKER"],
+                            "symbol_position_qty": exit_symbol_qty_before,
+                        },
+                    )
+                if is_exit and side == "BUY" and exit_symbol_qty_before >= -pos_gate_eps:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                "Buy-to-cover blocked: broker snapshot shows no short position for this symbol. "
+                                "Refresh From IB before retrying."
+                            ),
+                            "reason_codes": ["EXIT_NO_SHORT_POSITION_AT_BROKER"],
+                            "symbol_position_qty": exit_symbol_qty_before,
+                        },
+                    )
 
             cur.execute(
                 """
@@ -8661,6 +8721,38 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     status_code=409,
                     detail={"message": "IBKR submission returned no orders.", "reason_codes": ["IBKR_EMPTY_ORDER_BUNDLE"]},
                 )
+            for leg in order_legs:
+                cur.execute(
+                    """
+                    insert into MIP.LIVE.LIVE_ORDERS (
+                      ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
+                      SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+                      SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
+                    )
+                    values (
+                      %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
+                      %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
+                      current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
+                    )
+                    """,
+                    {
+                        "order_id": leg["order_id"],
+                        "action_id": action_id,
+                        "portfolio_id": action.get("PORTFOLIO_ID"),
+                        "account_id": account_id,
+                        "idempotency_key": leg["idempotency_key"],
+                        "broker_order_id": leg.get("broker_order_id"),
+                        "status": leg.get("status") or "SUBMITTED",
+                        "symbol": action.get("SYMBOL"),
+                        "side": leg["side"],
+                        "action_intent": action_intent,
+                        "exit_type": exit_type,
+                        "order_type": leg["order_type"],
+                        "qty_ordered": qty_ordered,
+                        "limit_price": leg["limit_price"],
+                    },
+                )
+            ib_live_orders_inserted = True
             # Fail closed: do not accept local execution state unless broker-truth snapshot confirms it.
             broker_order_ids = {
                 _normalize_broker_order_id(leg.get("broker_order_id"))
@@ -8690,19 +8782,50 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 has_position = bool(broker_truth_raw.get("has_symbol_position"))
                 if has_open_order or has_position:
                     break
+            qty_after = float(broker_truth_raw.get("symbol_position_qty") or 0.0)
+            pos_flat_eps = 1e-5
+            exit_ack_via_flat = False
+            if is_exit and abs(exit_symbol_qty_before) > pos_flat_eps:
+                # MKT exit can fill before the next snapshot: no working order + flat book reads as
+                # "missing ack" unless we compare to pre-submit position size.
+                if abs(qty_after) <= pos_flat_eps:
+                    exit_ack_via_flat = True
+                elif exit_symbol_qty_before > 0 and qty_after < exit_symbol_qty_before - pos_flat_eps:
+                    exit_ack_via_flat = True
+                elif exit_symbol_qty_before < 0 and qty_after > exit_symbol_qty_before + pos_flat_eps:
+                    exit_ack_via_flat = True
             broker_truth_check = {
                 **broker_truth_raw,
                 "open_order_ids": sorted(broker_open_ids),
                 "truth_attempts": truth_attempts,
+                "exit_symbol_qty_before": exit_symbol_qty_before,
+                "symbol_position_qty_after": qty_after,
+                "exit_ack_via_flat": exit_ack_via_flat,
             }
-            if not has_open_order and not has_position:
+            if not has_open_order and not has_position and not exit_ack_via_flat:
+                idem_keys = [str(leg["idempotency_key"]) for leg in order_legs if leg.get("idempotency_key")]
+                if idem_keys:
+                    placeholders = ",".join(["%s"] * len(idem_keys))
+                    cur.execute(
+                        f"""
+                        update MIP.LIVE.LIVE_ORDERS
+                           set STATUS = 'UNCONFIRMED_AT_BROKER',
+                               LAST_UPDATED_AT = current_timestamp()
+                         where ACTION_ID = %s
+                           and IDEMPOTENCY_KEY in ({placeholders})
+                        """,
+                        tuple([action_id] + idem_keys),
+                    )
                 final_reason_codes = ["IBKR_TRUTH_MISSING_ORDER_ACK"]
                 _write_reason_codes(cur, action_id, final_reason_codes)
                 submit_trade_cnt = broker_submit_payload.get("open_trade_count_account")
                 raise HTTPException(
                     status_code=409,
                     detail={
-                        "message": "IBKR did not confirm open-order or position after submit; execution blocked to prevent drift.",
+                        "message": (
+                            "IBKR did not confirm open-order or position after submit; execution blocked to prevent drift. "
+                            "Order rows were recorded—do not resubmit the same attempt; refresh IB and reconcile."
+                        ),
                         "reason_codes": final_reason_codes,
                         "broker_order_ids": sorted(broker_order_ids),
                         "submit_open_trade_count": submit_trade_cnt,
@@ -8760,37 +8883,38 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         # Keep API response anchored to the parent leg order id.
         order_id = str((order_legs[0] or {}).get("order_id") or order_id)
 
-        for leg in order_legs:
-            cur.execute(
-                """
-                insert into MIP.LIVE.LIVE_ORDERS (
-                  ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
-                  SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
-                  SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
+        if not ib_live_orders_inserted:
+            for leg in order_legs:
+                cur.execute(
+                    """
+                    insert into MIP.LIVE.LIVE_ORDERS (
+                      ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
+                      SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+                      SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
+                    )
+                    values (
+                      %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
+                      %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
+                      current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
+                    )
+                    """,
+                    {
+                        "order_id": leg["order_id"],
+                        "action_id": action_id,
+                        "portfolio_id": action.get("PORTFOLIO_ID"),
+                        "account_id": account_id,
+                        "idempotency_key": leg["idempotency_key"],
+                        "broker_order_id": leg.get("broker_order_id"),
+                        "status": leg.get("status") or "ACKNOWLEDGED",
+                        "symbol": action.get("SYMBOL"),
+                        "side": leg["side"],
+                        "action_intent": action_intent,
+                        "exit_type": exit_type,
+                        "order_type": leg["order_type"],
+                        "qty_ordered": qty_ordered,
+                        "limit_price": leg["limit_price"],
+                    },
                 )
-                values (
-                  %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
-                  %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
-                  current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
-                )
-                """,
-                {
-                    "order_id": leg["order_id"],
-                    "action_id": action_id,
-                    "portfolio_id": action.get("PORTFOLIO_ID"),
-                    "account_id": account_id,
-                    "idempotency_key": leg["idempotency_key"],
-                    "broker_order_id": leg.get("broker_order_id"),
-                    "status": leg.get("status") or "ACKNOWLEDGED",
-                    "symbol": action.get("SYMBOL"),
-                    "side": leg["side"],
-                    "action_intent": action_intent,
-                    "exit_type": exit_type,
-                    "order_type": leg["order_type"],
-                    "qty_ordered": qty_ordered,
-                    "limit_price": leg["limit_price"],
-                },
-            )
 
         # Mark execution requested before non-critical telemetry writes so retries
         # cannot duplicate intent when downstream insert fails.

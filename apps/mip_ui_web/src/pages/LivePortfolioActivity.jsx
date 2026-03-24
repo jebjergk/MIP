@@ -77,6 +77,13 @@ function explainReasonCode(code) {
     EXIT_REVALIDATION_MARKET_BYPASS: 'Exit uses a market order; price guard vs reference quote was skipped.',
     REVALIDATION_PRICE_FROM_IBKR_DIRECT: 'Reference price taken from live IBKR 1m refresh (informational).',
     EXIT_REVALIDATION_STALE_BAR_BYPASS: 'Exit revalidation allowed with an older bar (market exit).',
+    IBKR_TRUTH_MISSING_ORDER_ACK:
+      'After submit, snapshot showed neither your open order nor the expected position. Refresh IB, retry, or check exec vs snapshot ports.',
+    PRIOR_SUBMIT_BROKER_UNCONFIRMED:
+      'A prior submit may have reached IB but was not confirmed here—do not repeat the same attempt; refresh IB then use a new attempt if needed.',
+    LIVE_IDEMPOTENT_SUBMIT_ALREADY_RECORDED: 'This execution attempt already has order rows; duplicate IB submit is blocked.',
+    EXIT_NO_LONG_POSITION_AT_BROKER: 'Broker shows no long shares to sell-to-close—refresh IB; your exit may have already filled.',
+    EXIT_NO_SHORT_POSITION_AT_BROKER: 'Broker shows no short to cover—refresh IB before retrying.',
     COMPLIANCE_NOT_APPROVED: 'Decision is not approved for execution yet.',
   }
   return map[c] || c.replaceAll('_', ' ')

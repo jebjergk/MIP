@@ -880,6 +880,208 @@ function PortfolioStory({ portfolio }) {
   )
 }
 
+/* ── IBKR positions / orders (live overview) ─────────── */
+
+function mipLegRole(leg, protection) {
+  const bid = String(leg.broker_order_id || '').trim()
+  if (!bid || !protection) return null
+  if (protection.parent?.broker_order_id != null && String(protection.parent.broker_order_id) === bid) return 'Entry'
+  if (protection.take_profit?.broker_order_id != null && String(protection.take_profit.broker_order_id) === bid) return 'Take profit'
+  if (protection.stop_loss?.broker_order_id != null && String(protection.stop_loss.broker_order_id) === bid) return 'Stop loss'
+  return null
+}
+
+function IbkrPositionsExpander({ liveOverview, formatSymbolLabel }) {
+  const ib = liveOverview?.cockpit_ibkr || {}
+  const positions = liveOverview?.open_positions || []
+  const k = liveOverview?.account_kpis || {}
+  const readiness = liveOverview?.readiness || {}
+  const pendingN = ib.pending_decisions_count ?? liveOverview?.counts?.pending_decisions ?? 0
+  const families = ib.mip_order_families || []
+  const clusters = ib.broker_order_clusters || []
+  const posCount = positions.length
+  const workingN = Number(k.open_orders_count ?? 0)
+  const snapLabel = k.snapshot_ts != null ? formatAgeShort(k.snapshot_ts) : '—'
+
+  const summary = useMemo(() => {
+    if (!liveOverview?.portfolio) {
+      return 'No active live portfolio config — link an IBKR account in Live Portfolio Config.'
+    }
+    const parts = [
+      `${posCount} open position${posCount === 1 ? '' : 's'}`,
+      `${workingN} working order${workingN === 1 ? '' : 's'} at broker`,
+      `${pendingN} pending decision${pendingN === 1 ? '' : 's'}`,
+    ]
+    return `${parts.join(' · ')}. Snapshot ${snapLabel}.`
+  }, [liveOverview, posCount, workingN, pendingN, snapLabel])
+
+  const recon = String(readiness.reconciliation_state || '').toUpperCase() === 'REQUIRED'
+  const attention = recon ? 'warning' : (workingN > 0 || posCount > 0 ? 'info' : 'neutral')
+
+  return (
+    <StoryCard
+      attention={attention}
+      headline="IBKR positions & working orders"
+      summary={summary}
+      accent="portfolio"
+      defaultOpen={false}
+    >
+      {!liveOverview?.portfolio ? (
+        <p className="ck-empty">Configure an active live portfolio with an IBKR account to see broker mirror data here.</p>
+      ) : (
+        <div className="ck-ibkr">
+          {recon ? (
+            <p className="ck-ibkr-warn">
+              Broker reconciliation required — some fills may not map to MIP orders. Check Live Portfolio Activity.
+            </p>
+          ) : null}
+
+          <section className="ck-ibkr-section">
+            <h4 className="ck-ibkr-h">Open positions</h4>
+            {positions.length === 0 ? (
+              <p className="ck-ibkr-muted">No non-zero positions in the latest broker snapshot.</p>
+            ) : (
+              <div className="ck-ibkr-table-wrap">
+                <table className="ck-ibkr-table">
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Qty</th>
+                      <th>Value</th>
+                      <th>{'U. P&L'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positions.map((row, idx) => {
+                      const sym = _get(row, 'SYMBOL', 'symbol')
+                      const mt = _get(row, 'SECURITY_TYPE', 'security_type')
+                      const qty = _get(row, 'POSITION_QTY', 'position_qty')
+                      const mv = _get(row, 'MARKET_VALUE', 'market_value')
+                      const upnl = _get(row, 'UNREALIZED_PNL', 'unrealized_pnl')
+                      return (
+                        <tr key={`${sym}-${idx}`}>
+                          <td>{formatSymbolLabel(sym, mt)}</td>
+                          <td>{formatQty(qty)}</td>
+                          <td>{formatMoney(mv)}</td>
+                          <td className={Number(upnl) < 0 ? 'ck-kpi--negative' : Number(upnl) > 0 ? 'ck-kpi--positive' : ''}>
+                            {formatSignedMoney(upnl)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="ck-ibkr-section">
+            <h4 className="ck-ibkr-h">MIP-linked order families</h4>
+            <p className="ck-ibkr-muted ck-ibkr-note">
+              Orders placed through MIP are grouped by <code>ACTION_ID</code>. Entry vs take-profit / stop is inferred from order types.
+            </p>
+            {families.length === 0 ? (
+              <p className="ck-ibkr-muted">No multi-leg or active MIP families in the current window.</p>
+            ) : (
+              <div className="ck-ibkr-families">
+                {families.map((fam) => (
+                  <div key={fam.action_id} className="ck-ibkr-family">
+                    <div className="ck-ibkr-family-head">
+                      <span className="ck-ibkr-family-symbol">{formatSymbolLabel(fam.symbol, null)}</span>
+                      <span className="ck-ibkr-badge ck-ibkr-badge--prot">
+                        Protection: {fam.protection?.state || 'NONE'}
+                      </span>
+                      <span className="ck-ibkr-muted ck-ibkr-mono" title={fam.action_id}>
+                        {String(fam.action_id || '').slice(0, 10)}…
+                      </span>
+                    </div>
+                    <ul className="ck-ibkr-legs">
+                      {(fam.legs || []).map((leg) => {
+                        const role = mipLegRole(leg, fam.protection)
+                        return (
+                          <li key={leg.order_id || leg.broker_order_id}>
+                            <span className={`ck-ibkr-leg-active ${leg.broker_truth_active ? 'ck-ibkr-leg-active--yes' : ''}`}>
+                              {leg.broker_truth_active ? '●' : '○'}
+                            </span>
+                            {role ? <span className="ck-ibkr-leg-role">{role}</span> : null}
+                            <strong>{leg.side}</strong>
+                            {' '}
+                            {leg.order_type || '—'} · {leg.status || '—'}
+                            {' · '}
+                            broker {leg.broker_order_id || '—'}
+                            {leg.qty_ordered != null ? ` · qty ${formatQty(leg.qty_ordered)}` : ''}
+                            {leg.limit_price != null ? ` @ ${leg.limit_price}` : ''}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ck-ibkr-section">
+            <h4 className="ck-ibkr-h">Broker-native links (IBKR snapshot)</h4>
+            <p className="ck-ibkr-muted ck-ibkr-note">
+              Working orders are clustered by OCA group or parent/child order ids from IB. After the next snapshot sync, new fields improve grouping; older rows may show as standalone.
+            </p>
+            {clusters.length === 0 ? (
+              <p className="ck-ibkr-muted">No open orders in the latest snapshot.</p>
+            ) : (
+              <div className="ck-ibkr-clusters">
+                {clusters.map((c, i) => (
+                  <div key={`${c.link_type}-${c.symbol}-${i}`} className="ck-ibkr-cluster">
+                    <div className="ck-ibkr-cluster-label">
+                      <span className="ck-ibkr-badge ck-ibkr-badge--link">{c.link_type?.replace(/_/g, ' ')}</span>
+                      {c.label}
+                    </div>
+                    <ul className="ck-ibkr-legs">
+                      {(c.orders || []).map((o) => (
+                        <li key={o.open_order_id}>
+                          <strong>{o.action || '—'}</strong>
+                          {' '}
+                          {o.order_type || 'ORDER'}
+                          {' · '}
+                          {formatSymbolLabel(o.symbol, null)}
+                          {' · '}
+                          rem {formatQty(o.remaining)} / {formatQty(o.qty)}
+                          {o.limit_price != null ? ` @ ${o.limit_price}` : ''}
+                          {' · '}
+                          <span className="ck-ibkr-mono">perm {o.open_order_id}</span>
+                          {o.parent_order_id != null ? (
+                            <span className="ck-ibkr-muted"> · parent id {o.parent_order_id}</span>
+                          ) : null}
+                          {o.oca_group ? (
+                            <span className="ck-ibkr-muted"> · OCA {o.oca_group}</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ck-ibkr-section">
+            <h4 className="ck-ibkr-h">Pending decisions (workflow)</h4>
+            <p className="ck-ibkr-muted">
+              {pendingN === 0
+                ? 'No proposals awaiting action in the live queue.'
+                : `${pendingN} action(s) awaiting approval or next step (not the same as broker working orders).`}
+            </p>
+          </section>
+
+          <div className="ck-drill-links" style={{ marginTop: '0.5rem' }}>
+            <Link to="/live-portfolio-activity" className="ck-drill-link">Open Live Portfolio Activity &rarr;</Link>
+          </div>
+        </div>
+      )}
+    </StoryCard>
+  )
+}
+
 /* ── Main Cockpit Page ───────────────────────────────── */
 
 export default function Cockpit() {
@@ -1288,6 +1490,8 @@ export default function Cockpit() {
         {/* ── LEFT COLUMN: All Portfolios ── */}
         <div className="ck-news-column">
           <div className="ck-column-label">Portfolios</div>
+
+          <IbkrPositionsExpander liveOverview={liveOverview} formatSymbolLabel={formatSymbolLabel} />
 
           {activePortfolios.length === 0 && otherPortfolios.length === 0 && (
             <div className="ck-story ck-story--portfolio">

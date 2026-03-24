@@ -1073,3 +1073,162 @@
   font-size: 0.7rem;
   font-weight: 600;
 }
+
+/* ── IBKR cockpit expander ───────────────────────────── */
+
+.ck-ibkr {
+  font-size: 0.82rem;
+}
+
+.ck-ibkr-warn {
+  margin: 0 0 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.ck-ibkr-section {
+  margin-bottom: 1rem;
+}
+
+.ck-ibkr-h {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.ck-ibkr-muted {
+  margin: 0 0 0.5rem;
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.ck-ibkr-note {
+  margin-top: -0.2rem;
+}
+
+.ck-ibkr-note code {
+  font-size: 0.72rem;
+  background: #f1f5f9;
+  padding: 0.05rem 0.25rem;
+  border-radius: 4px;
+}
+
+.ck-ibkr-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.ck-ibkr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.ck-ibkr-table th,
+.ck-ibkr-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.ck-ibkr-table th {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #475569;
+}
+
+.ck-ibkr-families,
+.ck-ibkr-clusters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.ck-ibkr-family,
+.ck-ibkr-cluster {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  background: #fafafa;
+}
+
+.ck-ibkr-family-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.65rem;
+  margin-bottom: 0.35rem;
+}
+
+.ck-ibkr-family-symbol {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.ck-ibkr-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+}
+
+.ck-ibkr-badge--prot {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.ck-ibkr-badge--link {
+  background: #dbeafe;
+  color: #1d4ed8;
+  margin-right: 0.35rem;
+}
+
+.ck-ibkr-cluster-label {
+  font-size: 0.76rem;
+  margin-bottom: 0.35rem;
+  color: #334155;
+}
+
+.ck-ibkr-legs {
+  margin: 0;
+  padding-left: 1rem;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.ck-ibkr-legs li {
+  margin-bottom: 0.25rem;
+}
+
+.ck-ibkr-leg-active {
+  display: inline-block;
+  width: 1em;
+  margin-right: 0.25rem;
+  color: #94a3b8;
+}
+
+.ck-ibkr-leg-active--yes {
+  color: #16a34a;
+}
+
+.ck-ibkr-leg-role {
+  display: inline-block;
+  margin-right: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #6366f1;
+}
+
+.ck-ibkr-mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+}

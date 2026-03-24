@@ -4596,6 +4596,202 @@ def list_live_trade_actions(
         conn.close()
 
 
+def _cockpit_int_id(v) -> int | None:
+    """Best-effort int for IB order ids (0 -> None)."""
+    if v is None or v == "":
+        return None
+    try:
+        if isinstance(v, bool):
+            return None
+        n = int(float(v))
+        return None if n == 0 else n
+    except (TypeError, ValueError):
+        return None
+
+
+def _broker_order_cockpit_member(p: dict) -> dict:
+    row = p["row"]
+    q = row.get("OPEN_ORDER_QTY")
+    rem = row.get("OPEN_ORDER_REMAINING")
+    lim = row.get("OPEN_ORDER_LIMIT_PRICE")
+    return {
+        "open_order_id": row.get("OPEN_ORDER_ID"),
+        "status": row.get("OPEN_ORDER_STATUS"),
+        "symbol": row.get("SYMBOL"),
+        "qty": float(q) if q is not None else None,
+        "remaining": float(rem) if rem is not None else None,
+        "limit_price": float(lim) if lim is not None else None,
+        "action": p.get("action"),
+        "order_type": p.get("order_type"),
+        "parent_order_id": p.get("parent_order_id"),
+        "oca_group": p.get("oca_group"),
+        "payload_order_id": p.get("order_id"),
+        "payload_perm_id": p.get("perm_id"),
+    }
+
+
+def _parse_broker_open_order_row(row: dict) -> dict:
+    payload = _parse_variant(row.get("PAYLOAD")) if row else {}
+    if not isinstance(payload, dict):
+        payload = {}
+    oid = _cockpit_int_id(payload.get("orderId"))
+    perm = _cockpit_int_id(payload.get("permId"))
+    parent = _cockpit_int_id(payload.get("parentId"))
+    oca = str(payload.get("ocaGroup") or "").strip() or None
+    action = str(payload.get("action") or "").strip().upper() or None
+    otype = str(payload.get("orderType") or "").strip().upper() or None
+    open_id_norm = _normalize_broker_order_id(row.get("OPEN_ORDER_ID"))
+    return {
+        "row": row,
+        "symbol": str(row.get("SYMBOL") or "").upper().strip(),
+        "open_order_id": open_id_norm,
+        "order_id": oid,
+        "perm_id": perm,
+        "parent_order_id": parent,
+        "oca_group": oca,
+        "action": action,
+        "order_type": otype,
+    }
+
+
+def _cluster_broker_open_orders_for_cockpit(open_order_rows: list[dict]) -> list[dict]:
+    """Group IBKR working orders by OCA group or parent/child (bracket) using snapshot PAYLOAD."""
+    if not open_order_rows:
+        return []
+    parsed = [_parse_broker_open_order_row(r) for r in open_order_rows]
+    by_order_id: dict[int, int] = {}
+    for i, p in enumerate(parsed):
+        if p["order_id"] is not None:
+            by_order_id[p["order_id"]] = i
+
+    def root_idx(i: int) -> int:
+        seen: set[int] = set()
+        cur_i = i
+        while 0 <= cur_i < len(parsed):
+            if cur_i in seen:
+                return cur_i
+            seen.add(cur_i)
+            parent = parsed[cur_i]["parent_order_id"]
+            if parent is None:
+                return cur_i
+            nxt = by_order_id.get(parent)
+            if nxt is None:
+                return cur_i
+            cur_i = nxt
+        return i
+
+    used: set[int] = set()
+    clusters: list[dict] = []
+
+    oca_buckets: dict[tuple[str, str], list[int]] = {}
+    for i, p in enumerate(parsed):
+        if p["oca_group"] and p["symbol"]:
+            oca_buckets.setdefault((p["symbol"], p["oca_group"]), []).append(i)
+
+    for (sym, oca), idxs in sorted(oca_buckets.items()):
+        used.update(idxs)
+        clusters.append(
+            {
+                "link_type": "OCA_GROUP",
+                "label": f"One-cancels-all · {sym} · group {oca}",
+                "symbol": sym,
+                "oca_group": oca,
+                "orders": [_broker_order_cockpit_member(parsed[j]) for j in sorted(set(idxs), key=lambda x: parsed[x]["open_order_id"] or "")],
+            }
+        )
+
+    root_to_idxs: dict[int, list[int]] = {}
+    for i in range(len(parsed)):
+        if i in used:
+            continue
+        r = root_idx(i)
+        root_to_idxs.setdefault(r, []).append(i)
+
+    for r, idxs in sorted(root_to_idxs.items(), key=lambda kv: (parsed[kv[0]]["symbol"], kv[0])):
+        members = sorted(set(idxs), key=lambda j: parsed[j]["open_order_id"] or "")
+        sym = parsed[r]["symbol"] or (parsed[members[0]]["symbol"] if members else "")
+        only = members[0] if len(members) == 1 else None
+        if only is not None and parsed[only]["parent_order_id"] is None:
+            link_type = "STANDALONE"
+            label = f"Working order · {sym or '—'}"
+        else:
+            link_type = "BRACKET_OR_CHILD"
+            label = f"Linked orders (parent/bracket) · {sym or '—'}"
+        clusters.append(
+            {
+                "link_type": link_type,
+                "label": label,
+                "symbol": sym,
+                "oca_group": None,
+                "orders": [_broker_order_cockpit_member(parsed[j]) for j in members],
+            }
+        )
+
+    return clusters
+
+
+def _cockpit_mip_family_visible(enriched: list[dict], protection: dict) -> bool:
+    if len(enriched) >= 2:
+        return True
+    prot_state = str((protection or {}).get("state") or "NONE").upper()
+    if prot_state in ("FULL", "PARTIAL"):
+        return True
+    if any(e.get("BROKER_TRUTH_ACTIVE") for e in enriched):
+        return True
+    return False
+
+
+def _build_mip_order_families_for_cockpit(
+    orders_enriched: list[dict],
+    protection_by_action: dict[str, dict],
+    order_groups: dict[str, list[dict]],
+) -> list[dict]:
+    """MIP LIVE_ORDERS rows grouped by ACTION_ID with bracket role hints (PROTECTION)."""
+    families: list[dict] = []
+    for action_id, raw_legs in order_groups.items():
+        if not action_id or not raw_legs:
+            continue
+        enriched = [o for o in orders_enriched if str(o.get("ACTION_ID") or "") == str(action_id)]
+        if not enriched:
+            continue
+        protection = protection_by_action.get(action_id) or {
+            "state": "NONE",
+            "parent": None,
+            "take_profit": None,
+            "stop_loss": None,
+        }
+        if not _cockpit_mip_family_visible(enriched, protection):
+            continue
+        symbol = str((enriched[0].get("SYMBOL") or "")).upper()
+
+        def leg_summary(o: dict) -> dict:
+            qo = o.get("QTY_ORDERED")
+            qf = o.get("QTY_FILLED")
+            lim = o.get("LIMIT_PRICE")
+            return {
+                "order_id": o.get("ORDER_ID"),
+                "broker_order_id": o.get("BROKER_ORDER_ID"),
+                "side": o.get("SIDE"),
+                "order_type": o.get("ORDER_TYPE"),
+                "status": o.get("STATUS"),
+                "qty_ordered": float(qo) if qo is not None else None,
+                "qty_filled": float(qf) if qf is not None else None,
+                "limit_price": float(lim) if lim is not None else None,
+                "broker_truth_active": bool(o.get("BROKER_TRUTH_ACTIVE")),
+            }
+
+        families.append(
+            {
+                "action_id": action_id,
+                "symbol": symbol,
+                "protection": protection,
+                "legs": [leg_summary(o) for o in enriched],
+            }
+        )
+    families.sort(key=lambda f: (f["symbol"], f["action_id"]))
+    return families
+
+
 @router.get("/activity/overview")
 def get_live_activity_overview(
     limit: int = Query(200, ge=50, le=1000),
@@ -4634,6 +4830,11 @@ def get_live_activity_overview(
                 "activity_trends": {"nav": [], "positions": []},
                 "ui_hints": {},
                 "counts": {},
+                "cockpit_ibkr": {
+                    "broker_order_clusters": [],
+                    "mip_order_families": [],
+                    "pending_decisions_count": 0,
+                },
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         cfg = cfg_rows[0]
@@ -4746,6 +4947,7 @@ def get_live_activity_overview(
 
         open_positions = []
         open_orders = []
+        cockpit_broker_clusters: list[dict] = []
         if latest_snapshot_ts:
             cur.execute(
                 """
@@ -4768,7 +4970,7 @@ def get_live_activity_overview(
                 """
                 select
                   OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED,
-                  OPEN_ORDER_REMAINING, OPEN_ORDER_LIMIT_PRICE
+                  OPEN_ORDER_REMAINING, OPEN_ORDER_LIMIT_PRICE, PAYLOAD
                 from MIP.LIVE.BROKER_SNAPSHOTS
                 where SNAPSHOT_TYPE = 'OPEN_ORDER'
                   and IBKR_ACCOUNT_ID = %s
@@ -4779,6 +4981,7 @@ def get_live_activity_overview(
                 (account_id, latest_snapshot_ts, limit),
             )
             open_orders = fetch_all(cur)
+            cockpit_broker_clusters = _cluster_broker_open_orders_for_cockpit(open_orders)
 
         cur.execute(
             """
@@ -5415,6 +5618,12 @@ def get_live_activity_overview(
                 }
             )
 
+        cockpit_mip_families = _build_mip_order_families_for_cockpit(
+            orders_enriched,
+            protection_by_action,
+            order_groups,
+        )
+
         nav_change_abs = None
         nav_change_pct = None
         if nav_trend and nav_trend[0].get("nav_eur") is not None and nav_trend[-1].get("nav_eur") is not None:
@@ -5532,7 +5741,9 @@ def get_live_activity_overview(
                 "auto_import_latest_proposals": auto_import_summary,
             },
             "open_positions": serialize_rows(open_positions),
-            "open_orders": serialize_rows(open_orders),
+            "open_orders": serialize_rows(
+                [{k: v for k, v in row.items() if str(k).upper() != "PAYLOAD"} for row in open_orders]
+            ),
             "orders": serialize_rows(orders_enriched),
             "executions": serialize_rows(executions),
             "pending_decisions": serialize_rows(pending_decisions),
@@ -5544,6 +5755,11 @@ def get_live_activity_overview(
                 "open_positions": len(open_positions),
                 "open_orders": len(open_orders),
                 "exit_warning_signals": len(exit_warning_signals),
+            },
+            "cockpit_ibkr": {
+                "broker_order_clusters": cockpit_broker_clusters,
+                "mip_order_families": cockpit_mip_families,
+                "pending_decisions_count": len(pending_decisions),
             },
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }

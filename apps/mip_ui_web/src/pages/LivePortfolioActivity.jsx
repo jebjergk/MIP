@@ -518,11 +518,18 @@ export default function LivePortfolioActivity() {
   const createExitAction = useCallback(async (positionRow) => {
     const symbol = String(positionRow?.SYMBOL || '').toUpperCase().trim()
     const portfolioId = overview?.portfolio?.portfolio_id
+    const positionQty = Number(positionRow?.POSITION_QTY || 0)
+    const isShort = positionQty < 0
+    const exitSideLabel = isShort ? 'BUY (cover short)' : 'SELL (close long)'
     if (!symbol || !portfolioId) {
       setError('Cannot create exit action: missing symbol or live portfolio id.')
       return
     }
-    const confirmed = window.confirm(`Create SELL exit decision for ${symbol}?`)
+    const confirmed = window.confirm(
+      isShort
+        ? `Create exit to cover short ${symbol}? (IB will receive a BUY to close ~${Math.abs(positionQty)} shares.)`
+        : `Create SELL exit to close long ${symbol}? (~${Math.abs(positionQty)} shares.)`,
+    )
     if (!confirmed) return
     const busyKey = `exit:${symbol}`
     setBusy(busyKey)
@@ -546,7 +553,14 @@ export default function LivePortfolioActivity() {
       const data = await resp.json()
       const actionId = data?.action_id || 'new'
       const autoStatus = data?.auto_submit?.status || data?.status || ''
-      setNotice(`Exit order submitted for ${symbol} (action ${actionId}). Status: ${autoStatus}`)
+      if (data?.idempotent_replay) {
+        setNotice(
+          `Exit workflow already in progress for ${symbol} (action ${actionId}, status ${data?.status || '—'}). ` +
+            'Open Pending Decisions below and use Submit or Committee / Reject stale—Refresh From IB does not place orders.',
+        )
+      } else {
+        setNotice(`${exitSideLabel} submitted for ${symbol} (action ${actionId}). Status: ${autoStatus}`)
+      }
       await load()
     } catch (e) {
       setError(e.message || 'Create exit action failed.')
@@ -1041,6 +1055,8 @@ export default function LivePortfolioActivity() {
                       {openPositions.length === 0 && <tr><td colSpan={6}>No open broker positions.</td></tr>}
                       {openPositions.map((p, idx) => {
                         const symbol = String(p.SYMBOL || '').toUpperCase()
+                        const positionQty = Number(p.POSITION_QTY || 0)
+                        const isShort = positionQty < 0
                         const exit = protectionBySymbol.get(symbol)
                         const hasExit = exit && exit.state !== 'NONE'
                         const pendingExit = pendingExitBySymbol.get(symbol)
@@ -1069,10 +1085,22 @@ export default function LivePortfolioActivity() {
                                     className="lpa-btn lpa-btn-secondary lpa-btn-compact lpa-position-sell-btn"
                                     disabled={busy === `exit:${symbol}` || hasPendingExit}
                                     onClick={() => createExitAction(p)}
+                                    title={
+                                      isShort
+                                        ? 'Places a BUY at IB to cover the short (same as close short).'
+                                        : 'Places a SELL at IB to close the long.'
+                                    }
                                   >
-                                    {busy === `exit:${symbol}` ? 'Creating...' : (hasPendingExit ? 'Exit queued' : 'Sell')}
+                                    {busy === `exit:${symbol}`
+                                      ? 'Creating...'
+                                      : (hasPendingExit ? 'Exit queued' : (isShort ? 'Cover short' : 'Sell'))}
                                   </button>
                                 </div>
+                                {isShort ? (
+                                  <div className="lpa-subtle">
+                                    Negative qty = short. Cover sends <b>BUY</b> to IB. &quot;Not armed&quot; is TP/SL state, not this button.
+                                  </div>
+                                ) : null}
                                 {hasExit ? (
                                   <>
                                     <div>State: <b>{exit.state}</b></div>

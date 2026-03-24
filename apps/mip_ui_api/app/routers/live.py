@@ -5394,7 +5394,6 @@ def get_live_activity_overview(
                 from MIP.LIVE.BROKER_SNAPSHOTS
                 where SNAPSHOT_TYPE = 'POSITION'
                   and IBKR_ACCOUNT_ID = %s
-                  and coalesce(POSITION_QTY, 0) <> 0
                   and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
                 order by upper(SYMBOL), SNAPSHOT_TS asc
                 """,
@@ -5445,9 +5444,17 @@ def get_live_activity_overview(
             else:
                 side = "BUY" if (qty_filled_raw is not None and float(qty_filled_raw) >= 0) else "SELL"
             execution_ts = payload.get("time") or row.get("SNAPSHOT_TS")
-            realized_pnl = payload.get("realized_pnl")
-            if realized_pnl is None:
-                realized_pnl = row.get("REALIZED_PNL")
+            realized_raw = payload.get("realized_pnl")
+            if realized_raw is None:
+                realized_raw = payload.get("realizedPNL")
+            if realized_raw is None:
+                realized_raw = row.get("REALIZED_PNL")
+            realized_pnl = None
+            if realized_raw is not None:
+                try:
+                    realized_pnl = float(realized_raw)
+                except (TypeError, ValueError):
+                    realized_pnl = None
             realized_pnl_is_estimate = False
             action_id = broker_order_to_action.get(broker_order_id) if broker_order_id else None
             action_meta = action_meta_by_id.get(str(action_id or "")) or {}
@@ -5456,22 +5463,29 @@ def get_live_activity_overview(
             basis_cost = None
             symbol_hist = position_history_by_symbol.get(symbol) or []
             if symbol_hist:
-                basis_tuple = symbol_hist[-1]
+                basis_tuple = None
                 if execution_ts_dt is not None:
+                    cutoff = execution_ts_dt - timedelta(microseconds=1)
                     for cand in symbol_hist:
-                        if cand[0] <= execution_ts_dt:
+                        if cand[0] <= cutoff:
                             basis_tuple = cand
                         else:
                             break
+                    if basis_tuple is None:
+                        for cand in symbol_hist:
+                            if cand[0] <= execution_ts_dt:
+                                basis_tuple = cand
+                            else:
+                                break
+                if basis_tuple is None:
+                    basis_tuple = symbol_hist[-1]
                 basis_qty = float(basis_tuple[1] or 0.0)
                 basis_cost = basis_tuple[2]
+            # Label fills from broker position *before* this execution (not from MIP ACTION_INTENT),
+            # so wrong LIVE_ORDERS→ACTION linkage cannot turn an opening buy into "cover".
             execution_context = None
             action_intent = str(action_meta.get("action_intent") or "").upper()
-            if action_intent == "EXIT" and side == "BUY":
-                execution_context = "CLOSE_SHORT"
-            elif action_intent == "EXIT" and side == "SELL":
-                execution_context = "CLOSE_LONG"
-            elif side == "BUY" and basis_qty < 0:
+            if side == "BUY" and basis_qty < 0:
                 execution_context = "CLOSE_SHORT"
             elif side == "SELL" and basis_qty > 0:
                 execution_context = "CLOSE_LONG"
@@ -5479,46 +5493,25 @@ def get_live_activity_overview(
                 execution_context = "OPEN_OR_ADD_LONG"
             elif side == "SELL":
                 execution_context = "OPEN_OR_ADD_SHORT"
+            # IB often omits realizedPNL until commissionReport is populated on the fill.
+            # Only fill in with MIP math when IB sent nothing (None)—not when IB explicitly sends 0.
             if (
-                (realized_pnl is None or abs(float(realized_pnl)) < 1e-12)
+                realized_pnl is None
                 and qty_filled is not None
                 and avg_fill_price is not None
+                and execution_context in ("CLOSE_LONG", "CLOSE_SHORT")
             ):
                 try:
-                    if execution_ts_dt is not None and action_intent == "EXIT":
-                        signed_predicate = None
-                        if side == "BUY" and basis_qty >= 0:
-                            signed_predicate = "coalesce(POSITION_QTY, 0) < 0"
-                        elif side == "SELL" and basis_qty <= 0:
-                            signed_predicate = "coalesce(POSITION_QTY, 0) > 0"
-                        if signed_predicate:
-                            cur.execute(
-                                f"""
-                                select POSITION_QTY, AVG_COST
-                                from MIP.LIVE.BROKER_SNAPSHOTS
-                                where SNAPSHOT_TYPE = 'POSITION'
-                                  and IBKR_ACCOUNT_ID = %s
-                                  and upper(SYMBOL) = %s
-                                  and SNAPSHOT_TS <= %s
-                                  and {signed_predicate}
-                                order by SNAPSHOT_TS desc
-                                limit 1
-                                """,
-                                (account_id, symbol, execution_ts_dt.replace(tzinfo=None)),
-                            )
-                            signed_rows = fetch_all(cur)
-                            if signed_rows:
-                                basis_qty = float((signed_rows[0] or {}).get("POSITION_QTY") or basis_qty)
-                                if (signed_rows[0] or {}).get("AVG_COST") is not None:
-                                    basis_cost = float((signed_rows[0] or {}).get("AVG_COST"))
-                    if basis_cost is None and execution_ts_dt is not None:
+                    est_basis_qty = basis_qty
+                    est_basis_cost = basis_cost
+                    if est_basis_cost is None and execution_ts_dt is not None:
                         cur.execute(
                             """
                             select POSITION_QTY, AVG_COST
                             from MIP.LIVE.BROKER_SNAPSHOTS
                             where SNAPSHOT_TYPE = 'POSITION'
                               and IBKR_ACCOUNT_ID = %s
-                              and upper(SYMBOL) = %s
+                              and upper(SYMBOL) = upper(%s)
                               and SNAPSHOT_TS <= %s
                               and coalesce(POSITION_QTY, 0) <> 0
                             order by SNAPSHOT_TS desc
@@ -5528,17 +5521,15 @@ def get_live_activity_overview(
                         )
                         basis_rows = fetch_all(cur)
                         if basis_rows:
-                            basis_qty = float((basis_rows[0] or {}).get("POSITION_QTY") or basis_qty)
+                            est_basis_qty = float((basis_rows[0] or {}).get("POSITION_QTY") or est_basis_qty)
                             if (basis_rows[0] or {}).get("AVG_COST") is not None:
-                                basis_cost = float((basis_rows[0] or {}).get("AVG_COST"))
+                                est_basis_cost = float((basis_rows[0] or {}).get("AVG_COST"))
                     est_pnl = None
-                    if basis_cost is not None:
-                        if side == "BUY" and basis_qty < 0:
-                            # Buy-to-cover short.
-                            est_pnl = (basis_cost - float(avg_fill_price)) * float(qty_filled)
-                        elif side == "SELL" and basis_qty > 0:
-                            # Sell-to-close long.
-                            est_pnl = (float(avg_fill_price) - basis_cost) * float(qty_filled)
+                    if est_basis_cost is not None:
+                        if side == "BUY" and est_basis_qty < 0:
+                            est_pnl = (est_basis_cost - float(avg_fill_price)) * float(qty_filled)
+                        elif side == "SELL" and est_basis_qty > 0:
+                            est_pnl = (float(avg_fill_price) - est_basis_cost) * float(qty_filled)
                     if est_pnl is not None:
                         realized_pnl = float(est_pnl)
                         realized_pnl_is_estimate = True
@@ -5549,10 +5540,15 @@ def get_live_activity_overview(
                 continue
             seen_ib_exec_keys.add(dedupe_key)
             market_type = "FX" if "/" in symbol else str(row.get("SECURITY_TYPE") or "").upper()
-            action_side = str(action_meta.get("side") or "").upper()
-            close_like = _is_close_like_execution(action_intent, action_side, side) or execution_context in {"CLOSE_SHORT", "CLOSE_LONG"}
+            # Match UI labels: only true closes (position was opposite sign before fill), not EXIT intent alone.
+            close_like = execution_context in {"CLOSE_SHORT", "CLOSE_LONG"}
             raw_commission = payload.get("commission")
             exec_commission = float(raw_commission) if raw_commission is not None else None
+            pnl_fee_source = None
+            if exec_commission and exec_commission > 0:
+                pnl_fee_source = "ACTUAL_BROKER"
+            elif realized_pnl is not None and not realized_pnl_is_estimate:
+                pnl_fee_source = "IBKR_REALIZED_ON_EXECUTION"
             executions_ib.append(
                 {
                     "order_id": exec_id or broker_order_id or f"IB_EXEC_{len(executions_ib)+1}",
@@ -5569,7 +5565,7 @@ def get_live_activity_overview(
                     "realized_pnl": float(realized_pnl) if realized_pnl is not None else None,
                     "realized_pnl_is_estimate": bool(realized_pnl_is_estimate),
                     "commission": exec_commission,
-                    "fee_source": "ACTUAL_BROKER" if exec_commission and exec_commission > 0 else None,
+                    "fee_source": pnl_fee_source,
                     "status": "FILLED",
                     "execution_ts": execution_ts,
                     "source": "IBKR_SNAPSHOT_EXECUTION",

@@ -38,9 +38,15 @@ def _summarize_ib_daily_job_failure(payload: Any, stderr: str, stdout: str) -> s
     if isinstance(payload, dict):
         step = payload.get("step")
         if step == "ingest_ibkr_daily":
-            lines.append("Step: IBKR ingest.")
+            ih = payload.get("ingest_human")
+            if ih:
+                lines.append(str(ih)[:900])
+            else:
+                lines.append("Step: IBKR ingest.")
             inner = payload.get("payload")
-            if isinstance(inner, dict) and inner.get("error"):
+            if inner is None and isinstance(payload.get("stdout"), str):
+                inner = _try_parse_json_blob(payload.get("stdout"))
+            if isinstance(inner, dict) and inner.get("error") and not ih:
                 lines.append(str(inner["error"])[:500])
             ingest_symbols_blob(inner)
         elif step == "sp_run_ib_daily_catchup":
@@ -60,7 +66,15 @@ def _summarize_ib_daily_job_failure(payload: Any, stderr: str, stdout: str) -> s
         if tail:
             lines.append(tail[-700:])
 
-    return " ".join(lines) if lines else ""
+    out = " ".join(lines) if lines else ""
+    blob = (out + " " + (stderr or "") + " " + (stdout or "")).lower()
+    if "numpy" in blob and ("__config__" in blob or "source directory" in blob):
+        out += (
+            " — Tip: reinstall numpy in cursorfiles/.venv: "
+            "pip install --force-reinstall \"numpy>=2.0,<3\" "
+            "or set MIP_SUBPROCESS_PYTHON to a working Anaconda python.exe."
+        )
+    return out.strip()
 
 router = APIRouter(prefix="/manage", tags=["management"])
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 from datetime import date, datetime
@@ -6,10 +7,60 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
-from app.cursorfiles_paths import cursorfiles_venv_python, mip_workspace_root
+from app.cursorfiles_paths import mip_workspace_root, resolve_subprocess_python
 from app.db import get_connection, fetch_all
+
+log = logging.getLogger(__name__)
+
+
+def _summarize_ib_daily_job_failure(payload: Any, stderr: str, stdout: str) -> str:
+    """Turn subprocess JSON / logs into a short line for the Cockpit error banner."""
+    lines: list[str] = []
+
+    def ingest_symbols_blob(blob: Any) -> None:
+        if not isinstance(blob, dict):
+            return
+        syms = blob.get("symbols")
+        if not isinstance(syms, list):
+            return
+        failed = [s for s in syms if isinstance(s, dict) and s.get("status") == "FAILED"]
+        for s in failed[:6]:
+            sym = s.get("symbol") or "?"
+            mt = s.get("market_type") or "?"
+            err = (s.get("error") or "?").replace("\n", " ")[:240]
+            lines.append(f"{sym} ({mt}): {err}")
+        if len(failed) > 6:
+            lines.append(f"... and {len(failed) - 6} more symbol failures")
+
+    if isinstance(payload, dict):
+        step = payload.get("step")
+        if step == "ingest_ibkr_daily":
+            lines.append("Step: IBKR ingest.")
+            inner = payload.get("payload")
+            if isinstance(inner, dict) and inner.get("error"):
+                lines.append(str(inner["error"])[:500])
+            ingest_symbols_blob(inner)
+        elif step == "sp_run_ib_daily_catchup":
+            lines.append("Step: Snowflake SP_RUN_IB_DAILY_CATCHUP.")
+            if payload.get("sql"):
+                lines.append(str(payload["sql"])[:300])
+            inner = payload.get("payload")
+            if isinstance(inner, (dict, list)):
+                lines.append(str(inner)[:500])
+        else:
+            ingest_symbols_blob(payload)
+            if payload.get("error"):
+                lines.append(str(payload["error"])[:500])
+
+    if not lines:
+        tail = (stderr or stdout or "").strip().replace("\n", " ")
+        if tail:
+            lines.append(tail[-700:])
+
+    return " ".join(lines) if lines else ""
 
 router = APIRouter(prefix="/manage", tags=["management"])
 
@@ -95,16 +146,22 @@ def run_ib_manual_daily_job(
     ),
 ):
     project_root = mip_workspace_root()
-    py = cursorfiles_venv_python(project_root)
+    py = resolve_subprocess_python(project_root)
     runner = project_root / "cursorfiles" / "run_ib_manual_daily_job.py"
-    if not py.exists() or not runner.exists():
+    if not runner.is_file():
         raise HTTPException(
             status_code=500,
             detail=(
-                "Manual IB daily runner runtime not found. "
-                "Expected cursorfiles venv python at "
-                f"{py} and script at {runner}. "
-                "On Linux/Mac create the venv under cursorfiles/.venv (see project docs)."
+                f"Manual IB daily runner script missing: {runner}. "
+                f"Workspace root resolved to {project_root}."
+            ),
+        )
+    if not py.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Python interpreter not found at {py}. "
+                "Set MIP_SUBPROCESS_PYTHON to your conda/python path, or create cursorfiles/.venv."
             ),
         )
 
@@ -121,14 +178,35 @@ def run_ib_manual_daily_job(
         if key.startswith("SNOWFLAKE_"):
             child_env.pop(key, None)
 
-    proc = subprocess.run(
-        cmd,
-        cwd=str(project_root),
-        env=child_env,
-        capture_output=True,
-        text=True,
-        timeout=900,
+    log.info(
+        "IB daily job: workspace=%s python=%s synth_intraday_daily=%s",
+        project_root,
+        py,
+        synth_intraday_daily,
     )
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(project_root),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except subprocess.TimeoutExpired:
+        log.error("IB daily job subprocess timed out after 900s")
+        raise HTTPException(
+            status_code=504,
+            detail=jsonable_encoder(
+                {
+                    "message": "Manual IB daily job timed out (ingest + catch-up exceeded 15 minutes).",
+                    "python": str(py),
+                    "workspace": str(project_root),
+                }
+            ),
+        )
+
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
 
@@ -148,14 +226,27 @@ def run_ib_manual_daily_job(
             continue
 
     if proc.returncode != 0:
+        log.warning(
+            "IB daily job failed rc=%s stderr_tail=%s",
+            proc.returncode,
+            (stderr or stdout)[-500:],
+        )
+        summary = _summarize_ib_daily_job_failure(payload, stderr, stdout)
+        base_msg = "Manual IB daily job failed (ingest or SP_RUN_IB_DAILY_CATCHUP)."
+        message = f"{base_msg} {summary}".strip() if summary else base_msg
         raise HTTPException(
             status_code=500,
-            detail={
-                "message": "Manual IB daily job failed.",
-                "payload": payload,
-                "stdout": stdout[-4000:],
-                "stderr": stderr[-4000:],
-            },
+            detail=jsonable_encoder(
+                {
+                    "message": message,
+                    "failure_summary": summary or None,
+                    "python": str(py),
+                    "workspace": str(project_root),
+                    "payload": payload,
+                    "stdout": stdout[-4000:],
+                    "stderr": stderr[-4000:],
+                }
+            ),
         )
 
     response = {
@@ -163,19 +254,36 @@ def run_ib_manual_daily_job(
         "payload": payload,
         "pipeline_triggered": False,
         "synth_intraday_daily": bool(synth_intraday_daily),
+        "python_used": str(py),
+        "ingest_partial_failure": bool(
+            isinstance(payload, dict) and payload.get("status") == "PARTIAL_FAILURE"
+        ),
     }
 
     if not dry_run and run_pipeline:
         snow_script = project_root / "cursorfiles" / "query_snowflake.py"
         pipeline_cmd = [str(py), str(snow_script), "-q", "call MIP.APP.SP_RUN_DAILY_PIPELINE()", "--json"]
-        pipeline_proc = subprocess.run(
-            pipeline_cmd,
-            cwd=str(project_root),
-            env=child_env,
-            capture_output=True,
-            text=True,
-            timeout=1800,
-        )
+        try:
+            pipeline_proc = subprocess.run(
+                pipeline_cmd,
+                cwd=str(project_root),
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+        except subprocess.TimeoutExpired:
+            log.error("SP_RUN_DAILY_PIPELINE subprocess timed out after 1800s")
+            raise HTTPException(
+                status_code=504,
+                detail=jsonable_encoder(
+                    {
+                        "message": "IB ingest/catch-up succeeded, but daily pipeline timed out (30 min).",
+                        "python": str(py),
+                        "ingest_payload": payload,
+                    }
+                ),
+            )
         pipeline_stdout = (pipeline_proc.stdout or "").strip()
         pipeline_stderr = (pipeline_proc.stderr or "").strip()
         pipeline_payload: Any = None
@@ -193,34 +301,42 @@ def run_ib_manual_daily_job(
             except Exception:
                 continue
         if pipeline_proc.returncode != 0:
+            log.warning(
+                "SP_RUN_DAILY_PIPELINE failed rc=%s stderr_tail=%s",
+                pipeline_proc.returncode,
+                (pipeline_stderr or pipeline_stdout)[-500:],
+            )
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "message": "IB daily job succeeded, but SP_RUN_DAILY_PIPELINE failed.",
-                    "payload": payload,
-                    "pipeline_payload": pipeline_payload,
-                    "pipeline_stdout": pipeline_stdout[-4000:],
-                    "pipeline_stderr": pipeline_stderr[-4000:],
-                },
+                detail=jsonable_encoder(
+                    {
+                        "message": "IB daily job succeeded, but SP_RUN_DAILY_PIPELINE failed.",
+                        "python": str(py),
+                        "payload": payload,
+                        "pipeline_payload": pipeline_payload,
+                        "pipeline_stdout": pipeline_stdout[-4000:],
+                        "pipeline_stderr": pipeline_stderr[-4000:],
+                    }
+                ),
             )
         response["pipeline_triggered"] = True
         response["pipeline_result"] = pipeline_payload
 
-    return response
+    return jsonable_encoder(response)
 
 
 @router.post("/ib/onboarding/run")
 def run_ib_symbol_onboarding(payload: IBOnboardingRunRequest):
     project_root = mip_workspace_root()
-    py = cursorfiles_venv_python(project_root)
+    py = resolve_subprocess_python(project_root)
     ingest_script = project_root / "cursorfiles" / "ingest_ibkr_bars.py"
     snow_script = project_root / "cursorfiles" / "query_snowflake.py"
-    if not py.exists() or not ingest_script.exists() or not snow_script.exists():
+    if not py.is_file() or not ingest_script.is_file() or not snow_script.is_file():
         raise HTTPException(
             status_code=500,
             detail=(
                 "IB onboarding runtime not found. "
-                f"Expected python at {py}, ingest and query_snowflake under cursorfiles/."
+                f"Python={py}, ingest={ingest_script}, query_snowflake={snow_script}."
             ),
         )
 
@@ -500,6 +616,4 @@ def get_ib_manual_daily_health():
 
 @router.api_route("/{subpath:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 def retired_management_subpaths(subpath: str, request: Request):
-    if subpath.startswith("ib/daily-job/"):
-        raise HTTPException(status_code=404, detail="Not found")
     _retired(f"/manage/{subpath} [{request.method}]")

@@ -1374,9 +1374,21 @@ export default function Cockpit() {
       })
       const payload = await resp.json().catch(() => ({}))
       if (!resp.ok) {
-        throw new Error(payload?.detail?.message || payload?.detail || `IB daily job failed (${resp.status})`)
+        const d = payload?.detail
+        let errText =
+          typeof d === 'string'
+            ? d
+            : d?.message || (typeof d === 'object' && d !== null ? JSON.stringify(d) : null)
+        if (!errText && d?.stderr) errText = String(d.stderr).slice(0, 800)
+        throw new Error(errText || `IB daily job failed (${resp.status})`)
       }
-      setIbJobNotice({ type: 'ok', text: 'IB Daily Job completed and daily pipeline triggered.' })
+      const partial = Boolean(payload?.ingest_partial_failure)
+      setIbJobNotice({
+        type: 'ok',
+        text: partial
+          ? 'IB Daily Job finished: pipeline ran, but one or more symbols failed ingest (see API/network response payload.symbols).'
+          : 'IB Daily Job completed and daily pipeline triggered.',
+      })
       await loadIbDailyHealth()
     } catch (e) {
       setIbJobNotice({ type: 'error', text: e?.message || 'IB Daily Job failed.' })
@@ -1407,7 +1419,13 @@ export default function Cockpit() {
       })
       const payload = await resp.json().catch(() => ({}))
       if (!resp.ok) {
-        throw new Error(payload?.detail?.message || payload?.detail || `Partial daily run failed (${resp.status})`)
+        const d = payload?.detail
+        let errText =
+          typeof d === 'string'
+            ? d
+            : d?.message || (typeof d === 'object' && d !== null ? JSON.stringify(d) : null)
+        if (!errText && d?.stderr) errText = String(d.stderr).slice(0, 800)
+        throw new Error(errText || `Partial daily run failed (${resp.status})`)
       }
       setIbJobNotice({
         type: 'ok',

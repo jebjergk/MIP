@@ -54,11 +54,13 @@ def resolve_subprocess_python(workspace_root: Path | None = None) -> Path:
     Resolution order:
 
     1. ``MIP_SUBPROCESS_PYTHON`` or ``CURSORFILES_PYTHON`` (absolute path to python)
-    2. ``sys.executable`` — same environment as uvicorn (often Anaconda). This avoids
-       picking a stale or Cursor-only ``cursorfiles/.venv`` when the API already runs
-       a full conda env with ``ib_insync`` / Snowflake installed.
-    3. ``cursorfiles/.venv`` if present (fallback for installs where subprocess deps
-       live only in that venv)
+    2. ``cursorfiles/.venv`` when that interpreter exists — **preferred over**
+       ``sys.executable``. Those scripts call ``cursorfiles_agent_bootstrap``, which
+       prepends this venv's ``site-packages`` when the active interpreter is *not*
+       that venv. If uvicorn runs under Conda (different Python version/ABI) while
+       the venv supplies ``numpy`` / ``eventkit`` wheels, imports break inside
+       ``numpy.__config__`` with a misleading "source directory" error.
+    3. ``sys.executable`` if no venv binary is present.
     """
     root = workspace_root or find_mip_workspace_root()
     for key in ("MIP_SUBPROCESS_PYTHON", "CURSORFILES_PYTHON"):
@@ -68,10 +70,10 @@ def resolve_subprocess_python(workspace_root: Path | None = None) -> Path:
         p = Path(raw).expanduser()
         if p.is_file():
             return p
-    exe = Path(sys.executable)
-    if exe.is_file():
-        return exe
     v = cursorfiles_venv_python(root)
     if v.is_file():
         return v
+    exe = Path(sys.executable)
+    if exe.is_file():
+        return exe
     return exe

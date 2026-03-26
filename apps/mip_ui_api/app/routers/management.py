@@ -70,9 +70,10 @@ def _summarize_ib_daily_job_failure(payload: Any, stderr: str, stdout: str) -> s
     blob = (out + " " + (stderr or "") + " " + (stdout or "")).lower()
     if "numpy" in blob and ("__config__" in blob or "source directory" in blob):
         out += (
-            " — Tip: reinstall numpy in cursorfiles/.venv: "
-            "pip install --force-reinstall \"numpy>=2.0,<3\" "
-            "or set MIP_SUBPROCESS_PYTHON to a working Anaconda python.exe."
+            " — Tip: this often means the IB subprocess used a different Python than "
+            "cursorfiles/.venv (Conda + venv wheels mixed); use that venv's python.exe "
+            "(default) or match minor versions in MIP_SUBPROCESS_PYTHON. "
+            "If the venv install is corrupt: pip install --force-reinstall \"numpy>=2.0,<3\" there."
         )
     return out.strip()
 
@@ -175,7 +176,9 @@ def run_ib_manual_daily_job(
             status_code=500,
             detail=(
                 f"Python interpreter not found at {py}. "
-                "Set MIP_SUBPROCESS_PYTHON to your conda/python path, or create cursorfiles/.venv."
+                "Create cursorfiles/.venv (see cursorfiles/requirements.txt) or set "
+                "MIP_SUBPROCESS_PYTHON to a full path to python.exe (same minor version as "
+                "that venv if you use its packages)."
             ),
         )
 

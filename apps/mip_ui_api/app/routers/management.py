@@ -202,7 +202,7 @@ def run_ib_manual_daily_job(
     try:
         proc = subprocess.run(
             cmd,
-            cwd=str(project_root),
+            cwd=str(project_root / "cursorfiles"),
             env=child_env,
             capture_output=True,
             text=True,

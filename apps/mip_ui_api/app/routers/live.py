@@ -361,6 +361,58 @@ def _normalize_action_intent(side: str | None, action_intent: str | None = None)
     return "EXIT" if side_upper == "SELL" else "ENTRY"
 
 
+def _live_parse_fx_pair_for_broker(symbol: str | None) -> tuple[str, str] | None:
+    """
+    Map proposal symbols (AUD/USD, AUDUSD) to IB portfolio keys: SYMBOL=base, CURRENCY=quote.
+    """
+    if not symbol:
+        return None
+    s = str(symbol).strip().upper().replace(" ", "").replace("-", "/")
+    if "/" in s:
+        a, b = s.split("/", 1)
+        a, b = a.strip(), b.strip()
+        if len(a) == 3 and len(b) == 3 and a.isalpha() and b.isalpha():
+            return a, b
+    if len(s) == 6 and s.isalpha():
+        return s[:3], s[3:]
+    return None
+
+
+def _broker_cash_is_currency_balance_only(row_sym: str, row_ccy: str | None, row_sec: str | None) -> bool:
+    """IB 'USD' with currency USD is a cash balance line; negative qty is common and not an FX pair short."""
+    sec = (row_sec or "").upper().strip()
+    s = (row_sym or "").upper().strip()
+    c = (row_ccy or "").upper().strip()
+    if sec != "CASH":
+        return False
+    if len(s) != 3 or not s.isalpha():
+        return False
+    return s == c
+
+
+def _broker_position_matches_live_action(
+    row_sym: str,
+    row_ccy: str | None,
+    row_sec: str | None,
+    action_symbol: str,
+    asset_class: str | None,
+) -> bool:
+    a_sym = (action_symbol or "").upper().strip()
+    r_sym = (row_sym or "").upper().strip()
+    r_ccy = (row_ccy or "").upper().strip()
+    r_sec = (row_sec or "").upper().strip()
+    ac = (asset_class or "").upper().strip()
+    pq = _live_parse_fx_pair_for_broker(action_symbol)
+    treat_as_fx = ac == "FX" or pq is not None
+    if treat_as_fx and pq:
+        base, quote = pq
+        if r_sec == "CASH" and r_sym == base and r_ccy == quote:
+            return True
+    if treat_as_fx and not pq:
+        return r_sym == a_sym
+    return r_sym == a_sym
+
+
 def _recent_unmapped_execution_summary(
     cur,
     portfolio_id: int,
@@ -8237,38 +8289,54 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     where SNAPSHOT_TYPE = 'POSITION'
                       and IBKR_ACCOUNT_ID = %s
                 )
-                select upper(SYMBOL) as SYMBOL, coalesce(sum(POSITION_QTY), 0) as POSITION_QTY, max(s.SNAPSHOT_TS) as SNAPSHOT_TS
+                select
+                    upper(s.SYMBOL) as SYMBOL,
+                    upper(coalesce(s.CURRENCY, '')) as CURRENCY,
+                    upper(coalesce(s.SECURITY_TYPE, '')) as SECURITY_TYPE,
+                    s.POSITION_QTY as POSITION_QTY,
+                    s.SNAPSHOT_TS as SNAPSHOT_TS
                 from MIP.LIVE.BROKER_SNAPSHOTS s
                 join latest_pos lp on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
                 where s.SNAPSHOT_TYPE = 'POSITION'
                   and s.IBKR_ACCOUNT_ID = %s
                   and coalesce(s.POSITION_QTY, 0) <> 0
-                group by upper(SYMBOL)
+                order by s.SYMBOL, s.CURRENCY
                 """,
                 (account_id, account_id),
             )
             broker_pos_rows = fetch_all(cur)
-            action_symbol = str(action.get("SYMBOL") or "").upper()
+            action_symbol = str(action.get("SYMBOL") or "").strip()
+            asset_class = action.get("ASSET_CLASS")
             short_symbols: list[str] = []
             symbol_position_qty: float | None = None
             snapshot_ts = None
+            matched_qty_sum = 0.0
+            match_rows = 0
             for row in broker_pos_rows:
                 sym = str(row.get("SYMBOL") or "").upper()
+                ccy = str(row.get("CURRENCY") or "").upper()
+                sec = str(row.get("SECURITY_TYPE") or "").upper()
                 qty = float(row.get("POSITION_QTY") or 0.0)
                 if snapshot_ts is None:
                     snapshot_ts = row.get("SNAPSHOT_TS")
-                if sym == action_symbol:
-                    symbol_position_qty = qty
+                if _broker_position_matches_live_action(sym, ccy, sec, action_symbol, asset_class):
+                    matched_qty_sum += qty
+                    match_rows += 1
                 if qty < 0:
-                    short_symbols.append(sym)
-            long_only_guard["short_symbols"] = short_symbols
+                    if _broker_cash_is_currency_balance_only(sym, ccy, sec):
+                        continue
+                    label = f"{sym}/{ccy}" if sec == "CASH" and ccy and sym != ccy else sym
+                    short_symbols.append(label)
+            if match_rows:
+                symbol_position_qty = matched_qty_sum
+            long_only_guard["short_symbols"] = sorted(set(short_symbols))
             long_only_guard["symbol_position_qty"] = symbol_position_qty
             long_only_guard["snapshot_ts"] = (
                 snapshot_ts.isoformat() if hasattr(snapshot_ts, "isoformat") else (str(snapshot_ts) if snapshot_ts is not None else None)
             )
             if side != "BUY":
                 reason_codes.append("ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY")
-            if short_symbols:
+            if long_only_guard["short_symbols"]:
                 reason_codes.append("BROKER_SHORT_POSITION_OUT_OF_POLICY")
             if symbol_position_qty is not None and symbol_position_qty < 0:
                 reason_codes.append("SYMBOL_SHORT_POSITION_OUT_OF_POLICY")
@@ -8403,11 +8471,26 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "news_context_snapshot": news_snapshot,
                 },
             )
+            block_msg = "Execution blocked by safety gates."
+            if "BROKER_SHORT_POSITION_OUT_OF_POLICY" in final_reason_codes:
+                shorts = long_only_guard.get("short_symbols") or []
+                block_msg = (
+                    "Long-only policy: the broker snapshot shows short quantity on one or more position lines "
+                    f"({', '.join(shorts) if shorts else 'see long_only_guard'}). "
+                    "This is usually a short stock/FX pair or a position line to close—not your new BUY itself. "
+                    "Refresh IB, cover those lines, or set LIVE_BLOCK_ON_BROKER_SHORT=false only if you accept shorts."
+                )
+            elif "SYMBOL_SHORT_POSITION_OUT_OF_POLICY" in final_reason_codes:
+                block_msg = (
+                    "Long-only policy: you already have a short position in this symbol on the broker snapshot. "
+                    "Close or cover it before adding to the same side, or refresh from IB if the snapshot is stale."
+                )
             raise HTTPException(
                 status_code=409,
                 detail={
-                    "message": "Execution blocked by safety gates.",
+                    "message": block_msg,
                     "reason_codes": final_reason_codes,
+                    "long_only_guard": long_only_guard,
                     "unmapped_execution_summary": unmapped_exec_summary if "BROKER_EXECUTION_UNMAPPED" in final_reason_codes else None,
                 },
             )

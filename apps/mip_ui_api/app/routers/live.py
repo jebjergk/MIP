@@ -413,6 +413,45 @@ def _broker_position_matches_live_action(
     return r_sym == a_sym
 
 
+def _negative_broker_line_blocks_long_only_entry(
+    row_sym: str,
+    row_ccy: str | None,
+    row_sec: str | None,
+    qty: float,
+    action_symbol: str,
+    asset_class: str | None,
+) -> bool:
+    """
+    Decide whether a negative POSITION_QTY row should add BROKER_SHORT for this submit.
+
+    IB reports FX / multi-currency exposure as CASH rows (often base EUR, currency USD).
+    Those are not equity shorts; blocking a PFE BUY because EUR.USD is negative was a false positive.
+
+    - Stock / ETF / default entries: only negative **non-CASH** lines (STK, OPT, …) block.
+    - FX entries: still block negative CASH **pair** lines (symbol != currency) and any security short.
+    """
+    if qty >= 0:
+        return False
+    sec = (row_sec or "").upper().strip()
+    s = (row_sym or "").upper().strip()
+    c = (row_ccy or "").upper().strip()
+
+    if _broker_cash_is_currency_balance_only(s, row_ccy, sec):
+        return False
+    if sec == "CASH" and len(s) == 3 and s.isalpha() and not c:
+        return False
+
+    ac = (asset_class or "").upper().strip()
+    is_fx_entry = ac == "FX" or _live_parse_fx_pair_for_broker(action_symbol) is not None
+
+    if not is_fx_entry:
+        return sec != "CASH"
+
+    if sec != "CASH":
+        return True
+    return bool(c) and s != c
+
+
 def _recent_unmapped_execution_summary(
     cur,
     portfolio_id: int,
@@ -3372,6 +3411,47 @@ def _decision_allows_execution(jd: dict, action_intent: str) -> bool:
     return bool(jd.get("should_execute_exit", True))
 
 
+def _committee_joint_decision_explicitly_allows_trade(jd: dict, action_intent: str) -> bool:
+    """
+    True only when the stored committee joint_decision contains an explicit proceed flag.
+    Used to let human committee approval override NEWS_EXECUTION_CAUTION (not event-shock tier).
+    """
+    intent = str(action_intent or "ENTRY").upper()
+    if not jd:
+        return False
+    if intent == "EXIT":
+        if jd.get("should_execute_exit") is not None:
+            return bool(jd.get("should_execute_exit"))
+        if jd.get("should_enter") is not None:
+            return bool(jd.get("should_enter"))
+        return False
+    if jd.get("should_enter") is not None:
+        return bool(jd.get("should_enter"))
+    return False
+
+
+def _fetch_committee_joint_decision_for_action(cur, committee_run_id) -> dict:
+    if not committee_run_id:
+        return {}
+    try:
+        cur.execute(
+            """
+            select coalesce(
+              VERDICT_JSON:joint_decision,
+              VERDICT_JSON:verdict:joint_decision
+            ) as JD
+            from MIP.LIVE.COMMITTEE_VERDICT
+            where RUN_ID = %s
+            limit 1
+            """,
+            (committee_run_id,),
+        )
+        rows = fetch_all(cur)
+        return _parse_variant((rows[0] or {}).get("JD")) if rows else {}
+    except Exception:
+        return {}
+
+
 def _backfill_joint_decision_from_policy(verdict: dict, context: dict) -> dict:
     out = dict(verdict or {})
     jd = dict((out.get("joint_decision") or {}))
@@ -5926,17 +6006,17 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
 
         cur.execute(
             """
-            select POSITION_QTY, AVG_COST, SNAPSHOT_TS
-            from MIP.LIVE.BROKER_SNAPSHOTS
-            where SNAPSHOT_TYPE = 'POSITION'
-              and IBKR_ACCOUNT_ID = %s
-              and SNAPSHOT_TS = (
-                select max(SNAPSHOT_TS)
+            with latest_sync_ts as (
+                select max(SNAPSHOT_TS) as SNAPSHOT_TS
                 from MIP.LIVE.BROKER_SNAPSHOTS
-                where SNAPSHOT_TYPE = 'POSITION'
-                  and IBKR_ACCOUNT_ID = %s
-              )
-              and upper(SYMBOL) = upper(%s)
+                where IBKR_ACCOUNT_ID = %s
+            )
+            select s.POSITION_QTY, s.AVG_COST, s.SNAPSHOT_TS
+            from MIP.LIVE.BROKER_SNAPSHOTS s
+            join latest_sync_ts ls on s.SNAPSHOT_TS = ls.SNAPSHOT_TS
+            where s.SNAPSHOT_TYPE = 'POSITION'
+              and s.IBKR_ACCOUNT_ID = %s
+              and upper(s.SYMBOL) = upper(%s)
             limit 1
             """,
             (account_id, account_id, symbol),
@@ -8213,10 +8293,14 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         news_context_state = str(news_snapshot.get("context_state") or "").upper()
         news_event_shock_flag = bool(news_snapshot.get("event_shock_flag"))
         news_freshness_bucket = str(news_snapshot.get("freshness_bucket") or "").upper()
+        exec_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        jd_exec = _fetch_committee_joint_decision_for_action(cur, action.get("COMMITTEE_RUN_ID"))
+        committee_overrides_news_caution = _committee_joint_decision_explicitly_allows_trade(jd_exec, exec_intent)
         if news_event_shock_flag and news_freshness_bucket in ("FRESH", "OVERNIGHT"):
             reason_codes.append("NEWS_EXECUTION_BLOCKED_EVENT_SHOCK")
         elif news_context_state in ("CAUTIONARY", "DESTABILIZING"):
-            reason_codes.append("NEWS_EXECUTION_CAUTION")
+            if not committee_overrides_news_caution:
+                reason_codes.append("NEWS_EXECUTION_CAUTION")
 
         cur.execute(
             """
@@ -8248,17 +8332,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
 
         cur.execute(
             """
-            select count(distinct SYMBOL) as OPEN_POSITIONS
-            from MIP.LIVE.BROKER_SNAPSHOTS
-            where SNAPSHOT_TYPE = 'POSITION'
-              and IBKR_ACCOUNT_ID = %s
-              and SNAPSHOT_TS = (
-                select max(SNAPSHOT_TS)
+            with latest_sync_ts as (
+                select max(SNAPSHOT_TS) as SNAPSHOT_TS
                 from MIP.LIVE.BROKER_SNAPSHOTS
-                where SNAPSHOT_TYPE = 'POSITION'
-                  and IBKR_ACCOUNT_ID = %s
-              )
-              and coalesce(POSITION_QTY, 0) <> 0
+                where IBKR_ACCOUNT_ID = %s
+            )
+            select count(distinct SYMBOL) as OPEN_POSITIONS
+            from MIP.LIVE.BROKER_SNAPSHOTS s
+            join latest_sync_ts ls on s.SNAPSHOT_TS = ls.SNAPSHOT_TS
+            where s.SNAPSHOT_TYPE = 'POSITION'
+              and s.IBKR_ACCOUNT_ID = %s
+              and coalesce(s.POSITION_QTY, 0) <> 0
             """,
             (account_id, account_id),
         )
@@ -8283,11 +8367,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         if not is_exit and enforce_long_only and block_on_broker_short and account_id:
             cur.execute(
                 """
-                with latest_pos as (
+                with latest_sync_ts as (
                     select max(SNAPSHOT_TS) as SNAPSHOT_TS
                     from MIP.LIVE.BROKER_SNAPSHOTS
-                    where SNAPSHOT_TYPE = 'POSITION'
-                      and IBKR_ACCOUNT_ID = %s
+                    where IBKR_ACCOUNT_ID = %s
                 )
                 select
                     upper(s.SYMBOL) as SYMBOL,
@@ -8296,7 +8379,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     s.POSITION_QTY as POSITION_QTY,
                     s.SNAPSHOT_TS as SNAPSHOT_TS
                 from MIP.LIVE.BROKER_SNAPSHOTS s
-                join latest_pos lp on s.SNAPSHOT_TS = lp.SNAPSHOT_TS
+                join latest_sync_ts ls on s.SNAPSHOT_TS = ls.SNAPSHOT_TS
                 where s.SNAPSHOT_TYPE = 'POSITION'
                   and s.IBKR_ACCOUNT_ID = %s
                   and coalesce(s.POSITION_QTY, 0) <> 0
@@ -8322,11 +8405,22 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 if _broker_position_matches_live_action(sym, ccy, sec, action_symbol, asset_class):
                     matched_qty_sum += qty
                     match_rows += 1
-                if qty < 0:
-                    if _broker_cash_is_currency_balance_only(sym, ccy, sec):
-                        continue
+                if _negative_broker_line_blocks_long_only_entry(
+                    sym, ccy, sec, qty, action_symbol, asset_class
+                ):
                     label = f"{sym}/{ccy}" if sec == "CASH" and ccy and sym != ccy else sym
                     short_symbols.append(label)
+            if snapshot_ts is None:
+                cur.execute(
+                    """
+                    select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                    from MIP.LIVE.BROKER_SNAPSHOTS
+                    where IBKR_ACCOUNT_ID = %s
+                    """,
+                    (account_id,),
+                )
+                ts_only = fetch_all(cur)
+                snapshot_ts = (ts_only[0] or {}).get("SNAPSHOT_TS") if ts_only else None
             if match_rows:
                 symbol_position_qty = matched_qty_sum
             long_only_guard["short_symbols"] = sorted(set(short_symbols))

@@ -45,17 +45,27 @@ using (
     union all
     select 'KO', 'STOCK', 1440, true, 100, 'Seed stock universe'
     union all
-    select 'SPY', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    select 'CSCO', 'STOCK', 1440, true, 95, 'Large-cap tech, lower nominal than mega-cap leaders'
     union all
-    select 'QQQ', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    select 'INTC', 'STOCK', 1440, true, 95, 'Large-cap semis, more affordable nominal than NVDA'
     union all
-    select 'IWM', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    select 'PFE', 'STOCK', 1440, true, 95, 'Large-cap pharma, liquid US listing'
     union all
-    select 'DIA', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    select 'WMT', 'STOCK', 1440, true, 95, 'Defensive large-cap consumer'
     union all
-    select 'XLK', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    select 'VZ', 'STOCK', 1440, true, 95, 'Large-cap telecom, typically moderate share price'
     union all
-    select 'XLF', 'ETF', 1440, true, 90, 'Seed ETF universe'
+    select 'SPY', 'ETF', 1440, false, 90, 'Disabled: EU retail — US ETF lacks PRIIPs KID, historical data retained'
+    union all
+    select 'QQQ', 'ETF', 1440, false, 90, 'Disabled: EU retail — US ETF lacks PRIIPs KID, historical data retained'
+    union all
+    select 'IWM', 'ETF', 1440, false, 90, 'Disabled: EU retail — US ETF lacks PRIIPs KID, historical data retained'
+    union all
+    select 'DIA', 'ETF', 1440, false, 90, 'Disabled: EU retail — US ETF lacks PRIIPs KID, historical data retained'
+    union all
+    select 'XLK', 'ETF', 1440, false, 90, 'Disabled: EU retail — US ETF lacks PRIIPs KID, historical data retained'
+    union all
+    select 'XLF', 'ETF', 1440, false, 90, 'Disabled: EU retail — US ETF lacks PRIIPs KID, historical data retained'
     union all
     select 'EURUSD', 'FX', 1440, true, 80, 'Seed FX universe'
     union all
@@ -68,14 +78,27 @@ using (
     select 'AUDUSD', 'FX', 1440, true, 80, 'Seed FX universe'
     union all
     select 'USDCAD', 'FX', 1440, true, 80, 'Seed FX universe'
+    union all
+    select 'NZDUSD', 'FX', 1440, true, 80, 'Major FX, complements G10 suite'
+    union all
+    select 'EURGBP', 'FX', 1440, true, 80, 'Major cross, liquid on IDEALPRO'
+    union all
+    select 'EURJPY', 'FX', 1440, true, 80, 'Major cross, liquid on IDEALPRO'
 ) s
    on t.SYMBOL = s.SYMBOL
   and t.MARKET_TYPE = s.MARKET_TYPE
   and t.INTERVAL_MINUTES = s.INTERVAL_MINUTES
 when matched then update set
-    t.IS_ENABLED = coalesce(t.IS_ENABLED, s.IS_ENABLED),
+    -- ETF baseline is disabled for EU PRIIPs/KID; re-seed keeps platform default without manual drift.
+    t.IS_ENABLED = case
+        when s.MARKET_TYPE = 'ETF' then s.IS_ENABLED
+        else coalesce(t.IS_ENABLED, s.IS_ENABLED)
+    end,
     t.PRIORITY = coalesce(t.PRIORITY, s.PRIORITY),
-    t.NOTES = coalesce(t.NOTES, s.NOTES)
+    t.NOTES = case
+        when s.MARKET_TYPE = 'ETF' then s.NOTES
+        else coalesce(t.NOTES, s.NOTES)
+    end
 when not matched then insert (
     SYMBOL,
     MARKET_TYPE,

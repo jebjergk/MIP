@@ -72,6 +72,14 @@ using (
     union all select 'CAT', 'STOCK', 'CATERPILLAR', 'COMPANY_NAME', true
     union all select 'MU', 'STOCK', 'MICRON TECHNOLOGY', 'COMPANY_NAME', true
     union all select 'SHOP', 'STOCK', 'SHOPIFY', 'COMPANY_NAME', true
+    union all select 'CSCO', 'STOCK', 'CISCO', 'COMPANY_NAME', true
+    union all select 'INTC', 'STOCK', 'INTEL', 'COMPANY_NAME', true
+    union all select 'PFE', 'STOCK', 'PFIZER', 'COMPANY_NAME', true
+    union all select 'WMT', 'STOCK', 'WALMART', 'COMPANY_NAME', true
+    union all select 'VZ', 'STOCK', 'VERIZON', 'COMPANY_NAME', true
+    union all select 'NZDUSD', 'FX', 'NZD/USD', 'FX_PAIR', true
+    union all select 'EURGBP', 'FX', 'EUR/GBP', 'FX_PAIR', true
+    union all select 'EURJPY', 'FX', 'EUR/JPY', 'FX_PAIR', true
 ) s
 on t.SYMBOL = s.SYMBOL
 and t.MARKET_TYPE = s.MARKET_TYPE

@@ -283,6 +283,14 @@ begin
                       and r.RETURN_SIMPLE is not null
                       and r.VOLUME >= ?
                       and r.TS::date >= dateadd(day, -?, ?::date)
+                      and exists (
+                        select 1
+                        from MIP.APP.INGEST_UNIVERSE iu
+                        where upper(replace(iu.SYMBOL, chr(47), '''')) = upper(replace(r.SYMBOL, chr(47), ''''))
+                          and upper(iu.MARKET_TYPE) = upper(r.MARKET_TYPE)
+                          and iu.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                          and coalesce(iu.IS_ENABLED, true)
+                      )
                 ),
                 scored as (
                     select
@@ -427,6 +435,14 @@ begin
                   where mb.MARKET_TYPE = ?
                     and mb.INTERVAL_MINUTES = ?
                       and mb.TS::date >= dateadd(day, -?, ?::date)
+                      and exists (
+                        select 1
+                        from MIP.APP.INGEST_UNIVERSE iu
+                        where upper(replace(iu.SYMBOL, chr(47), '''')) = upper(replace(mb.SYMBOL, chr(47), ''''))
+                          and upper(iu.MARKET_TYPE) = upper(mb.MARKET_TYPE)
+                          and iu.INTERVAL_MINUTES = mb.INTERVAL_MINUTES
+                          and coalesce(iu.IS_ENABLED, true)
+                      )
                 ),
                 returns as (
                     select

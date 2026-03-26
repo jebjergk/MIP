@@ -91,6 +91,11 @@ with recs as (
     count(*) as recs_total,
     max(r.TS) as as_of_ts
   from MIP.APP.RECOMMENDATION_LOG r
+  inner join MIP.APP.INGEST_UNIVERSE iu
+    on upper(replace(iu.SYMBOL, '/', '')) = upper(replace(r.SYMBOL, '/', ''))
+   and upper(iu.MARKET_TYPE) = upper(r.MARKET_TYPE)
+   and iu.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+   and coalesce(iu.IS_ENABLED, true)
   where r.INTERVAL_MINUTES = {interval_minutes}
   group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
 ),
@@ -290,8 +295,27 @@ def get_training_timeline(
     Returns confidence over time (evidence accumulation), derived from evaluated outcomes.
     Includes narrative bullets explaining key turning points.
     """
+    iv = interval_minutes if interval_minutes and interval_minutes > 0 else 1440
     conn = get_connection()
     try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select count(*) as cnt
+            from MIP.APP.INGEST_UNIVERSE iu
+            where upper(replace(iu.SYMBOL, '/', '')) = upper(replace(%s, '/', ''))
+              and upper(iu.MARKET_TYPE) = upper(%s)
+              and iu.INTERVAL_MINUTES = %s
+              and coalesce(iu.IS_ENABLED, true)
+            """,
+            (symbol, market_type, iv),
+        )
+        row = cur.fetchone()
+        if not row or (row[0] or 0) < 1:
+            raise HTTPException(
+                status_code=404,
+                detail="Symbol is not in the active ingest universe (disabled or unknown).",
+            )
         result = build_training_timeline(
             conn,
             symbol=symbol,
@@ -300,9 +324,11 @@ def get_training_timeline(
             horizon_bars=horizon_bars or 5,
             rolling_window=rolling_window or 20,
             max_points=max_points or 250,
-            interval_minutes=interval_minutes or 1440,
+            interval_minutes=iv,
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

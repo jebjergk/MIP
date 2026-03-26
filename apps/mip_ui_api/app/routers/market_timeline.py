@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.db import get_connection, fetch_all, serialize_rows
 
@@ -158,11 +158,22 @@ def get_overview(
             params.append(market_type)
         batch_date = latest_ts.date() if hasattr(latest_ts, "date") else latest_ts
         
-        # Get all symbols with bar data in window
+        # Symbols with bars in window, restricted to enabled INGEST_UNIVERSE (hidden when disabled)
         sql = f"""
-        with symbols_in_window as (
-            select distinct SYMBOL, MARKET_TYPE
+        with enabled_univ as (
+            select
+                upper(replace(iu.SYMBOL, '/', '')) as sym_key,
+                upper(iu.MARKET_TYPE) as market_type_key
+            from MIP.APP.INGEST_UNIVERSE iu
+            where coalesce(iu.IS_ENABLED, true)
+              and iu.INTERVAL_MINUTES = %s
+        ),
+        symbols_in_window as (
+            select distinct b.SYMBOL, b.MARKET_TYPE
             from MIP.MART.MARKET_BARS b
+            inner join enabled_univ u
+              on upper(replace(b.SYMBOL, '/', '')) = u.sym_key
+             and upper(b.MARKET_TYPE) = u.market_type_key
             where b.INTERVAL_MINUTES = %s
               and b.TS >= %s
               {market_filter}
@@ -298,7 +309,8 @@ def get_overview(
         
         # Build params list
         query_params = [
-            interval_minutes,  # symbols_in_window
+            interval_minutes,  # enabled_univ.INTERVAL_MINUTES
+            interval_minutes,  # symbols_in_window b.INTERVAL_MINUTES
             window_start,      # symbols_in_window
         ]
         if market_type:
@@ -392,6 +404,24 @@ def get_detail(
     conn = get_connection()
     try:
         cur = conn.cursor()
+
+        cur.execute(
+            """
+            select count(*) as cnt
+            from MIP.APP.INGEST_UNIVERSE iu
+            where upper(replace(iu.SYMBOL, '/', '')) = upper(replace(%s, '/', ''))
+              and upper(iu.MARKET_TYPE) = upper(%s)
+              and iu.INTERVAL_MINUTES = %s
+              and coalesce(iu.IS_ENABLED, true)
+            """,
+            (symbol, market_type, interval_minutes),
+        )
+        enabled_row = cur.fetchone()
+        if not enabled_row or (enabled_row[0] or 0) < 1:
+            raise HTTPException(
+                status_code=404,
+                detail="Symbol is not in the active ingest universe (disabled or unknown).",
+            )
         
         # Get OHLC data for the symbol
         cur.execute(

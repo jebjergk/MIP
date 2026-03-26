@@ -88,17 +88,20 @@ when not matched then insert (NAME, PATTERN_TYPE, DESCRIPTION, PARAMS_JSON, IS_A
 merge into MIP.APP.INGEST_UNIVERSE t
 using (
     select column1 as SYMBOL, column2 as MARKET_TYPE, 15 as INTERVAL_MINUTES,
-           true as IS_ENABLED, column3 as PRIORITY,
+           iff(column2 = 'ETF', false, true) as IS_ENABLED, column3 as PRIORITY,
            'Intraday 15m — early exit analysis + intraday learning' as NOTES
     from values
         ('AAPL',   'STOCK', 50), ('AMZN',   'STOCK', 50), ('GOOGL',  'STOCK', 50),
         ('JNJ',    'STOCK', 50), ('JPM',    'STOCK', 50), ('KO',     'STOCK', 50),
         ('META',   'STOCK', 50), ('MSFT',   'STOCK', 50), ('NVDA',   'STOCK', 50),
         ('PG',     'STOCK', 50), ('TSLA',   'STOCK', 50), ('XOM',    'STOCK', 50),
+        ('CSCO',   'STOCK', 50), ('INTC',   'STOCK', 50), ('PFE',    'STOCK', 50),
+        ('WMT',    'STOCK', 50), ('VZ',     'STOCK', 50),
         ('DIA',    'ETF',   55), ('IWM',    'ETF',   55), ('QQQ',    'ETF',   60),
         ('SPY',    'ETF',   60), ('XLF',    'ETF',   55), ('XLK',    'ETF',   55),
         ('AUDUSD', 'FX',    40), ('EURUSD', 'FX',    40), ('GBPUSD', 'FX',    40),
-        ('USDCAD', 'FX',    40), ('USDCHF', 'FX',    40), ('USDJPY', 'FX',    40)
+        ('USDCAD', 'FX',    40), ('USDCHF', 'FX',    40), ('USDJPY', 'FX',    40),
+        ('NZDUSD', 'FX',    40), ('EURGBP', 'FX',    40), ('EURJPY', 'FX',    40)
 ) s
 on  t.SYMBOL = s.SYMBOL
 and t.MARKET_TYPE = s.MARKET_TYPE
@@ -116,7 +119,7 @@ when matched then update set
 merge into MIP.APP.INGEST_UNIVERSE t
 using (
     select column1 as SYMBOL, column2 as MARKET_TYPE, 60 as INTERVAL_MINUTES,
-           true as IS_ENABLED, column3 as PRIORITY,
+           iff(column2 = 'ETF', false, true) as IS_ENABLED, column3 as PRIORITY,
            'Hourly 60m — early exit monitor' as NOTES
     from values
         ('AMD',    'STOCK', 120), ('BA',     'STOCK', 120), ('CAT',    'STOCK', 120),
@@ -127,10 +130,13 @@ using (
         ('JNJ',    'STOCK', 50), ('JPM',    'STOCK', 50), ('KO',     'STOCK', 50),
         ('META',   'STOCK', 50), ('MSFT',   'STOCK', 50), ('NVDA',   'STOCK', 50),
         ('PG',     'STOCK', 50), ('TSLA',   'STOCK', 50), ('XOM',    'STOCK', 50),
+        ('CSCO',   'STOCK', 50), ('INTC',   'STOCK', 50), ('PFE',    'STOCK', 50),
+        ('WMT',    'STOCK', 50), ('VZ',     'STOCK', 50),
         ('DIA',    'ETF',   55), ('IWM',    'ETF',   55), ('QQQ',    'ETF',   60),
         ('SPY',    'ETF',   60), ('XLF',    'ETF',   55), ('XLK',    'ETF',   55),
         ('AUDUSD', 'FX',    40), ('EURUSD', 'FX',    40), ('GBPUSD', 'FX',    40),
-        ('USDCAD', 'FX',    40), ('USDCHF', 'FX',    40), ('USDJPY', 'FX',    40)
+        ('USDCAD', 'FX',    40), ('USDCHF', 'FX',    40), ('USDJPY', 'FX',    40),
+        ('NZDUSD', 'FX',    40), ('EURGBP', 'FX',    40), ('EURJPY', 'FX',    40)
 ) s
 on  t.SYMBOL = s.SYMBOL
 and t.MARKET_TYPE = s.MARKET_TYPE

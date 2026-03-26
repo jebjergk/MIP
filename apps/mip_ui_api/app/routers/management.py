@@ -2,13 +2,13 @@ import json
 import os
 import subprocess
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.cursorfiles_paths import cursorfiles_venv_python, mip_workspace_root
 from app.db import get_connection, fetch_all
 
 router = APIRouter(prefix="/manage", tags=["management"])
@@ -94,13 +94,18 @@ def run_ib_manual_daily_job(
         description="If true, ingest builds 1440m rows from 1m bars (STOCK/ETF RTH TRADES, FX MIDPOINT) on today's NY calendar date, then catch-up and optional pipeline.",
     ),
 ):
-    project_root = Path(__file__).resolve().parents[5]
-    py = project_root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    project_root = mip_workspace_root()
+    py = cursorfiles_venv_python(project_root)
     runner = project_root / "cursorfiles" / "run_ib_manual_daily_job.py"
     if not py.exists() or not runner.exists():
         raise HTTPException(
             status_code=500,
-            detail="Manual IB daily runner runtime not found (cursorfiles venv or script missing).",
+            detail=(
+                "Manual IB daily runner runtime not found. "
+                "Expected cursorfiles venv python at "
+                f"{py} and script at {runner}. "
+                "On Linux/Mac create the venv under cursorfiles/.venv (see project docs)."
+            ),
         )
 
     cmd = [str(py), str(runner), "--target-date", target_date]
@@ -206,14 +211,17 @@ def run_ib_manual_daily_job(
 
 @router.post("/ib/onboarding/run")
 def run_ib_symbol_onboarding(payload: IBOnboardingRunRequest):
-    project_root = Path(__file__).resolve().parents[5]
-    py = project_root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    project_root = mip_workspace_root()
+    py = cursorfiles_venv_python(project_root)
     ingest_script = project_root / "cursorfiles" / "ingest_ibkr_bars.py"
     snow_script = project_root / "cursorfiles" / "query_snowflake.py"
     if not py.exists() or not ingest_script.exists() or not snow_script.exists():
         raise HTTPException(
             status_code=500,
-            detail="IB onboarding runtime not found (cursorfiles venv/scripts missing).",
+            detail=(
+                "IB onboarding runtime not found. "
+                f"Expected python at {py}, ingest and query_snowflake under cursorfiles/."
+            ),
         )
 
     symbols = []

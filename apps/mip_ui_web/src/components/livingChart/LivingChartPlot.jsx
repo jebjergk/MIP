@@ -7,14 +7,14 @@ import {
   LIVING_CHART_COLORS,
 } from '../../lib/livingChartOverlays'
 
-const UI_REVISION = 'living-chart-v1'
+const UI_REVISION_BASE = 'living-chart-v2'
 
 const BASE_LAYOUT = {
   paper_bgcolor: '#0f172a',
   plot_bgcolor: '#0f172a',
   font: { color: '#94a3b8', size: 11 },
-  margin: { t: 28, r: 48, b: 48, l: 56 },
-  showlegend: true,
+  margin: { t: 22, r: 52, b: 44, l: 52 },
+  showlegend: false,
   legend: {
     orientation: 'h',
     yanchor: 'bottom',
@@ -106,7 +106,7 @@ export default function LivingChartPlot({
         name: 'Price',
         x: tMs,
         y: close.map((c, i) => (c != null ? c : low[i] ?? high[i])),
-        line: { color: LIVING_CHART_COLORS.price, width: 2 },
+        line: { color: LIVING_CHART_COLORS.price, width: 2.35 },
         connectgaps: false,
       })
     }
@@ -121,9 +121,9 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 11,
+          size: 15,
           color: '#f8fafc',
-          line: { color: '#0f172a', width: 2 },
+          line: { color: '#38bdf8', width: 2.5 },
         },
         hovertemplate: 'Now: %{y:.4f}<extra></extra>',
       })
@@ -152,8 +152,8 @@ export default function LivingChartPlot({
           x: tx,
           y: upper,
           fill: 'tonexty',
-          fillcolor: LIVING_CHART_COLORS.expectedBand,
-          line: { color: 'rgba(251,191,36,0.35)', width: 1, dash: '4px,3px' },
+          fillcolor: 'rgba(251, 191, 36, 0.12)',
+          line: { color: 'rgba(251,191,36,0.28)', width: 0.75, dash: '4px,3px' },
           hoverinfo: 'skip',
         })
       }
@@ -164,7 +164,7 @@ export default function LivingChartPlot({
           name: 'Expected path',
           x: tx,
           y: center,
-          line: { color: LIVING_CHART_COLORS.expectedCenter, width: 2, dash: '6px,3px' },
+          line: { color: 'rgba(245, 158, 11, 0.92)', width: 1.65, dash: '6px,3px' },
           connectgaps: false,
           hovertemplate: 'Expected: %{y:.4f}<extra></extra>',
         })
@@ -196,7 +196,7 @@ export default function LivingChartPlot({
       ...BASE_LAYOUT,
       shapes: shapePack.shapes || [],
       annotations: shapePack.annotations || [],
-      uirevision: UI_REVISION,
+      uirevision: `${UI_REVISION_BASE}-${layoutRevision}`,
     }
 
     if (followLatest && !viewportLocked && xExtents) {
@@ -213,7 +213,7 @@ export default function LivingChartPlot({
     }
 
     return ly
-  }, [shapePack, followLatest, viewportLocked, xExtents])
+  }, [shapePack, followLatest, viewportLocked, xExtents, layoutRevision])
 
   const onRelayout = useCallback(
     (e) => {

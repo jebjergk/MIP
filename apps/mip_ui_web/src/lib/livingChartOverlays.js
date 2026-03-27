@@ -136,30 +136,34 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
 
   if (sl != null && current != null && distSl != null && Number.isFinite(distSl)) {
     const absDist = Math.abs(distSl)
-    if (absDist < 0.025) {
+    if (absDist < 0.028) {
+      const tight = absDist < 0.01
       candidates.push({
         key: 'stop_danger',
-        priority: absDist < 0.01 ? 100 : 70,
+        priority: tight ? 100 : 72,
         y0: Math.min(current, sl),
         y1: Math.max(current, sl),
-        fillcolor: COLORS.stopDanger,
-        line: { color: COLORS.sl, width: 1, dash: 'dot' },
+        fillcolor: tight ? 'rgba(239, 68, 68, 0.32)' : 'rgba(239, 68, 68, 0.16)',
+        line: { color: '#f87171', width: tight ? 2 : 1, dash: 'dot' },
         label: 'Near stop',
+        layer: 'above',
       })
     }
   }
 
   if (tp != null && current != null && distTp != null && Number.isFinite(distTp)) {
     const absDist = Math.abs(distTp)
-    if (absDist < 0.02) {
+    if (absDist < 0.022) {
+      const tight = absDist < 0.006
       candidates.push({
         key: 'target_near',
-        priority: absDist < 0.006 ? 90 : 60,
+        priority: tight ? 90 : 62,
         y0: Math.min(current, tp),
         y1: Math.max(current, tp),
-        fillcolor: COLORS.targetNear,
-        line: { color: COLORS.tp, width: 1, dash: 'dot' },
+        fillcolor: tight ? 'rgba(16, 185, 129, 0.28)' : 'rgba(16, 185, 129, 0.14)',
+        line: { color: '#34d399', width: tight ? 2 : 1, dash: 'dot' },
         label: 'Near target',
+        layer: 'above',
       })
     }
   }
@@ -179,23 +183,38 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
         ? toNum(taOverlays.bollinger.lower[taOverlays.bollinger.lower.length - 1])
         : current * 0.998,
       fillcolor: COLORS.meanRev,
-      line: { color: '#38bdf8', width: 2, dash: 'dash' },
+      line: { color: '#22d3ee', width: 2.5, dash: 'dash' },
       label: 'Mean reversion',
+      layer: 'above',
     })
   }
 
   const thesis = String(tile?.thesis?.status || '').toUpperCase()
   const stance = String(committee?.committee_stance || '').toUpperCase()
-  const weakThesis = thesis.includes('WEAK') || thesis.includes('BROKEN') || stance === 'ESCALATE' || stance === 'RISK_OFF'
+  const devMed = feats.deviation_from_h5_median
+  const pathDrift =
+    feats.inside_cone === false
+    && devMed != null
+    && Number.isFinite(devMed)
+    && Math.abs(devMed) > 0.01
+
+  const weakThesis =
+    thesis.includes('WEAK')
+    || thesis.includes('BROKEN')
+    || stance === 'ESCALATE'
+    || stance === 'RISK_OFF'
+    || pathDrift
+
   if (weakThesis && current != null) {
     candidates.push({
       key: 'thesis_weakening',
-      priority: 65,
+      priority: pathDrift ? 68 : 65,
       y0: current * (side === 'SHORT' ? 1.002 : 0.998),
       y1: current * (side === 'SHORT' ? 0.998 : 1.002),
-      fillcolor: COLORS.thesisWeak,
-      line: { color: '#f59e0b', width: 0 },
+      fillcolor: 'rgba(245, 158, 11, 0.22)',
+      line: { color: 'rgba(245, 158, 11, 0.65)', width: 1 },
       label: 'Thesis pressure',
+      layer: 'above',
     })
   }
 
@@ -203,7 +222,7 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
   return candidates.slice(0, MAX_CONDITIONAL_ZONES)
 }
 
-function shapeForHorizontalBand(y0, y1, x0, x1, fillcolor, line) {
+function shapeForHorizontalBand(y0, y1, x0, x1, fillcolor, line, layer = 'below') {
   if (!Number.isFinite(y0) || !Number.isFinite(y1)) return null
   return {
     type: 'rect',
@@ -215,12 +234,13 @@ function shapeForHorizontalBand(y0, y1, x0, x1, fillcolor, line) {
     y1: Math.max(y0, y1),
     fillcolor,
     line: line || { width: 0 },
-    layer: 'below',
+    layer: layer || 'below',
   }
 }
 
-function hLineShape(y, x0, x1, color, dash) {
+function hLineShape(y, x0, x1, color, dash, opts = {}) {
   if (!Number.isFinite(y)) return null
+  const { width = 1.5, layer = 'below' } = opts
   return {
     type: 'line',
     xref: 'x',
@@ -229,9 +249,35 @@ function hLineShape(y, x0, x1, color, dash) {
     x1,
     y0: y,
     y1: y,
-    line: { color, width: 1.5, dash: dash || 'dash' },
-    layer: 'below',
+    line: { color, width, dash: dash || 'dash' },
+    layer: layer || 'below',
   }
+}
+
+/** Short labels at the right edge of the tape for entry / stop / target. */
+export function buildPersistentLevelAnnotations(xRightMs, entry, sl, tp) {
+  if (xRightMs == null || !Number.isFinite(Number(xRightMs))) return []
+  const xr = Number(xRightMs)
+  const base = {
+    xref: 'x',
+    yref: 'y',
+    x: xr,
+    showarrow: false,
+    xanchor: 'left',
+    xshift: 6,
+    font: { size: 11 },
+  }
+  const out = []
+  if (entry != null && Number.isFinite(entry)) {
+    out.push({ ...base, y: entry, text: 'Entry', font: { ...base.font, color: '#c4b5fd' } })
+  }
+  if (sl != null && Number.isFinite(sl)) {
+    out.push({ ...base, y: sl, text: 'Stop', font: { ...base.font, color: '#f87171', size: 12 } })
+  }
+  if (tp != null && Number.isFinite(tp)) {
+    out.push({ ...base, y: tp, text: 'Target', font: { ...base.font, color: '#4ade80' } })
+  }
+  return out
 }
 
 /**
@@ -261,14 +307,14 @@ export function buildLivingChartShapesAndTA({
   const tp = toNum(tile?.overlays?.take_profit)
   const sl = toNum(tile?.overlays?.stop_loss)
 
-  const addHLine = (y, color, dash) => {
-    const s = hLineShape(y, x0 - span * 0.02, x1 + span * 0.35, color, dash)
+  const addHLine = (y, color, dash, lineOpts = {}) => {
+    const s = hLineShape(y, x0 - span * 0.02, x1 + span * 0.35, color, dash, { layer: 'below', ...lineOpts })
     if (s) shapes.push(s)
   }
 
-  if (entry != null) addHLine(entry, COLORS.entry, '4px,3px')
-  if (tp != null) addHLine(tp, COLORS.tp, '4px,3px')
-  if (sl != null) addHLine(sl, COLORS.sl, '4px,3px')
+  if (entry != null) addHLine(entry, '#a78bfa', '6px,4px', { width: 1.35 })
+  if (tp != null) addHLine(tp, '#22c55e', '4px,3px', { width: 2.25 })
+  if (sl != null) addHLine(sl, '#ef4444', '4px,3px', { width: 2.5 })
 
   let taOverlays = null
   if (showAdvancedTA && bars.length >= 8) {
@@ -312,8 +358,8 @@ export function buildLivingChartShapesAndTA({
     }
     const sup = taOverlays.sr?.support
     const res = taOverlays.sr?.resistance
-    if (sup != null) addHLine(sup, COLORS.srSupport, '8px,4px')
-    if (res != null) addHLine(res, COLORS.srResist, '8px,4px')
+    if (sup != null) addHLine(sup, COLORS.srSupport, '8px,4px', { width: 1.2 })
+    if (res != null) addHLine(res, COLORS.srResist, '8px,4px', { width: 1.2 })
   } else if (!showAdvancedTA) {
     taOverlays = null
   }
@@ -321,14 +367,25 @@ export function buildLivingChartShapesAndTA({
   const zones = pickConditionalZones(tile, liveState, committee, exitRec, taOverlays)
   const conditionalKeys = zones.map((z) => z.key)
   const xPad = span * 0.02
+  const xAnnot = x1 + span * 0.02
+  const levelAnn = buildPersistentLevelAnnotations(xAnnot, entry, sl, tp)
+  for (const a of levelAnn) {
+    annotations.push(a)
+  }
+
   for (const z of zones) {
+    const zLayer = z.layer || 'above'
     if (z.kind === 'hline' && z.y != null) {
-      const s = hLineShape(z.y, x0 - xPad, x1 + span * 0.35, z.line.color, z.line.dash)
+      const lw = z.line?.width ?? 2
+      const s = hLineShape(z.y, x0 - xPad, x1 + span * 0.35, z.line.color, z.line.dash, {
+        width: lw,
+        layer: zLayer,
+      })
       if (s) shapes.push(s)
       continue
     }
     if (z.y0 != null && z.y1 != null) {
-      const sh = shapeForHorizontalBand(z.y0, z.y1, x0 - xPad, x1 + span * 0.4, z.fillcolor, z.line)
+      const sh = shapeForHorizontalBand(z.y0, z.y1, x0 - xPad, x1 + span * 0.4, z.fillcolor, z.line, zLayer)
       if (sh) shapes.push(sh)
     }
   }

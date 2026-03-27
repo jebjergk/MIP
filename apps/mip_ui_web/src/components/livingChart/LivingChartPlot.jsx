@@ -222,12 +222,15 @@ export default function LivingChartPlot({
     return { data: traces, shapePack, xExtents: { xMin, xMax } }
   }, [tile, bars, chartStyle, horizonBars, showAdvancedTA, liveState, committee, exitRec])
 
+  const symbolKey = String(tile?.symbol || '').toUpperCase() || 'none'
+
   const layout = useMemo(() => {
     const ly = {
       ...BASE_LAYOUT,
       shapes: shapePack.shapes || [],
       annotations: shapePack.annotations || [],
-      uirevision: `${UI_REVISION_BASE}-${layoutRevision}`,
+      // Include symbol so pan/zoom from one ticker is not reused after switching symbols.
+      uirevision: `${UI_REVISION_BASE}-${layoutRevision}-${symbolKey}`,
     }
 
     if (followLatest && !viewportLocked && xExtents) {
@@ -241,10 +244,11 @@ export default function LivingChartPlot({
       }
     } else {
       ly.xaxis = { ...BASE_LAYOUT.xaxis, autorange: true }
+      ly.yaxis = { ...BASE_LAYOUT.yaxis, autorange: true }
     }
 
     return ly
-  }, [shapePack, followLatest, viewportLocked, xExtents, layoutRevision])
+  }, [shapePack, followLatest, viewportLocked, xExtents, layoutRevision, symbolKey])
 
   const onRelayout = useCallback(
     (e) => {

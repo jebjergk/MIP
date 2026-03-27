@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { API_BASE } from '../config/apiBase'
@@ -158,6 +158,8 @@ export default function SymbolTracker() {
 
   const [committeeBySymbol, setCommitteeBySymbol] = useState({})
   const [exitRecBySymbol, setExitRecBySymbol] = useState({})
+
+  const prevSelectedSymbolRef = useRef(null)
 
   const fetchIbLive = useCallback(async (tiles) => {
     const symbols = (Array.isArray(tiles) ? tiles : [])

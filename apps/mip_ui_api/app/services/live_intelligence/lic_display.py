@@ -8,7 +8,7 @@ from typing import Any
 def plain_thesis_fracture(code: str) -> str:
     m = {
         "THESIS_INTACT": "Thesis is intact versus the expected path.",
-        "THESIS_STRETCHED": "Thesis is still possible but price has drifted from the core scenario.",
+        "THESIS_STRETCHED": "Thesis is stretched: setup still alive, but risk is rising.",
         "THESIS_DAMAGED": "Thesis is damaged: multiple signals disagree with the original idea.",
         "THESIS_BROKEN": "Thesis looks broken or invalidated for practical risk management.",
     }
@@ -37,26 +37,27 @@ def plain_novelty(code: str) -> str:
 
 
 def recommendation_headline(band: str) -> str:
+    """Public tile/feed vocabulary (exact strings for UX contract)."""
     b = str(band or "").upper()
     m = {
-        "EXIT_NOW": "Exit or cut now",
-        "PREPARE_EXIT": "Prepare to exit",
-        "WATCH_CLOSELY": "Watch closely",
-        "STAY_COURSE": "Stay the course",
+        "EXIT_NOW": "EXIT OR CUT NOW",
+        "PREPARE_EXIT": "PREPARE EXIT",
+        "WATCH_CLOSELY": "WATCH CLOSELY",
+        "STAY_COURSE": "HOLD",
     }
-    return m.get(b, "Review position")
+    return m.get(b, "HOLD")
 
 
 def primary_action_plain(action_key: str) -> str:
     k = str(action_key or "hold").lower()
     m = {
-        "hold": "Hold the full position",
-        "tighten_stop": "Tighten the stop",
-        "trim_25": "Trim about a quarter",
-        "trim_50": "Trim about half",
-        "exit_now": "Exit the position",
+        "hold": "Hold",
+        "tighten_stop": "Tighten stop",
+        "trim_25": "Trim 25%",
+        "trim_50": "Trim 50%",
+        "exit_now": "Exit now",
     }
-    return m.get(k, "Review with your plan")
+    return m.get(k, "Hold")
 
 
 def build_analog_ui(analog_summary: dict[str, Any]) -> dict[str, Any]:
@@ -75,7 +76,7 @@ def build_analog_ui(analog_summary: dict[str, Any]) -> dict[str, Any]:
         tier, tier_plain = "weak", "Weak historical match"
 
     if n == 0:
-        bias, bias_plain = "inconclusive", "Inconclusive - no close analogs in bootstrap"
+        bias, bias_plain = "inconclusive", "Inconclusive — no close analogs in bootstrap"
     elif w >= l + 3:
         bias, bias_plain = "winner_leaning", "History leans toward favorable outcomes in similar setups"
     elif l >= w + 3:
@@ -83,10 +84,26 @@ def build_analog_ui(analog_summary: dict[str, Any]) -> dict[str, Any]:
     else:
         bias, bias_plain = "mixed", "Mixed historical outcomes - no clear winner/loser tilt"
 
+    if n == 0:
+        chip_verdict = "Historical analogs thin"
+    elif tier == "strong":
+        chip_verdict = "Strong historical match"
+    elif tier == "moderate":
+        chip_verdict = "Moderate historical match"
+    elif bias == "mixed":
+        chip_verdict = "Mixed historical match"
+    else:
+        chip_verdict = "Weak historical match"
+
     if avg is not None:
         fo = f"Across {n} similar past episodes, average follow-on return was about {float(avg) * 100:.1f}%."
+    elif n > 0:
+        fo = (
+            f"Across {n} similar episodes, outcomes were mixed (winners {w} vs losers {l}); "
+            f"treat the average as directional only, not a forecast."
+        )
     else:
-        fo = f"Across {n} similar past episodes, forward returns were mixed."
+        fo = "No analog sample to summarize."
 
     if hint and n > 0:
         exit_txt = f"In similar episodes, a typical review horizon was about {hint} bars."
@@ -102,12 +119,13 @@ def build_analog_ui(analog_summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "confidence_tier": tier,
         "confidence_plain": tier_plain,
+        "chip_verdict": chip_verdict,
         "bias": bias,
         "bias_plain": bias_plain,
         "analog_count": n,
         "winners": w,
         "losers": l,
-        "forward_outcome_summary": fo if n else "No analog sample to summarize.",
+        "forward_outcome_summary": fo,
         "exit_timing_hint_plain": exit_txt,
         "low_similarity_note": low_sim,
     }
@@ -132,11 +150,20 @@ def portfolio_factor_for_symbol(regime: dict[str, Any], symbol: str) -> dict[str
         localized = "symbol_specific"
         localized_plain = "Stress looks mostly idiosyncratic to individual names right now."
 
-    chip = (
-        "Shared book stress"
-        if active and localized == "portfolio_wide"
-        else ("Possible spillover risk" if active else "Mostly idiosyncratic")
-    )
+    hyp_u = str(regime.get("hypothesis") or "").upper()
+    hyp_chip = {
+        "RISK_OFF_BOOK_SHOCK": "Risk-off factor",
+        "USD_SHOCK": "USD factor",
+        "RATES_SHOCK": "Rates factor",
+        "SECTOR_SHOCK": "Sector factor",
+    }.get(hyp_u, "Shared book stress")
+
+    if not active:
+        chip = "Mostly symbol-specific"
+    elif localized == "portfolio_wide":
+        chip = "Shared book stress" if hyp_u == "RISK_OFF_BOOK_SHOCK" else hyp_chip
+    else:
+        chip = "Possible spillover risk"
 
     return {
         "localized": localized,
@@ -162,6 +189,14 @@ def build_feed_reason_plain(crossed: list[str]) -> str:
             parts.append("Short-term tape pattern changed.")
         elif c.startswith("portfolio_regime:"):
             parts.append("Portfolio-wide risk hypothesis changed.")
+        elif c.startswith("regret_bucket:"):
+            parts.append("Least-regret balance between hold and exit shifted.")
+        elif c.startswith("analog_tier:"):
+            parts.append("Historical match strength changed.")
+        elif c.startswith("dominant_world:"):
+            parts.append("Dominant scenario outlook changed.")
+        elif c.startswith("stop_danger:"):
+            parts.append("Stop proximity crossed a material threshold.")
         else:
             parts.append(c)
     return " ".join(parts)
@@ -227,35 +262,120 @@ def build_evidence_sections(
     def clean(xs: list[str]) -> list[str]:
         return [x for x in xs if x]
 
+    def strength(sup: list[str], opp: list[str]) -> str:
+        ns, no = len(sup), len(opp)
+        if ns >= 3 and no <= 1:
+            return "Strong"
+        if ns <= 1 and no >= 3:
+            return "Weak"
+        return "Medium"
+
+    tape_c, tape_o = clean(tape_sup), clean(tape_opp)
+    ths_c, tho_c = clean(thesis_sup), clean(thesis_opp)
+    rs_c, ro_c = clean(risk_sup), clean(risk_opp)
+    an_c, ao_c = clean(analog_sup), clean(analog_opp)
+    pf_c, pfo_c = clean(pf_sup), clean(pf_opp)
+    nv_c = clean(nov_sup)
+
     return {
-        "tape": {"summary": pat_plain, "supports": clean(tape_sup), "opposes": clean(tape_opp)},
+        "tape": {
+            "summary": pat_plain,
+            "supports": tape_c,
+            "opposes": tape_o,
+            "status": strength(tape_c, tape_o),
+        },
         "thesis": {
             "summary": plain_thesis_fracture(thesis_fracture),
-            "supports": clean(thesis_sup),
-            "opposes": clean(thesis_opp),
+            "supports": ths_c,
+            "opposes": tho_c,
+            "status": strength(ths_c, tho_c),
         },
         "risk": {
             "summary": "Stop distance, volatility, and giveback shape the risk picture.",
-            "supports": clean(risk_sup),
-            "opposes": clean(risk_opp),
+            "supports": rs_c,
+            "opposes": ro_c,
+            "status": strength(rs_c, ro_c),
         },
         "analog": {
-            "summary": f"{analog_ui.get('confidence_plain', '')} - {analog_ui.get('bias_plain', '')}",
-            "supports": clean(analog_sup),
-            "opposes": clean(analog_opp),
+            "summary": f"{analog_ui.get('confidence_plain', '')} — {analog_ui.get('bias_plain', '')}",
+            "supports": an_c,
+            "opposes": ao_c,
+            "status": strength(an_c, ao_c),
         },
-        "portfolio_factor": {"summary": portfolio_plain, "supports": clean(pf_sup), "opposes": clean(pf_opp)},
-        "novelty": {"summary": plain_novelty(novelty), "supports": clean(nov_sup), "opposes": []},
+        "portfolio_factor": {
+            "summary": portfolio_plain,
+            "supports": pf_c,
+            "opposes": pfo_c,
+            "status": strength(pf_c, pfo_c),
+        },
+        "novelty": {
+            "summary": plain_novelty(novelty),
+            "supports": nv_c,
+            "opposes": [],
+            "status": "Strong" if novelty != "NORMAL" else "Medium",
+        },
         "recommendation_bridge": {"supporting_reasons": supporting, "counterarguments": opposing},
     }
 
 
+def feed_event_severity(final_band: str, thesis_fracture: str, sl_near: bool) -> str:
+    """Case-file severity vocabulary (INFO / WATCH / ALERT / CRITICAL)."""
+    b = str(final_band or "").upper()
+    th = str(thesis_fracture or "").upper()
+    if b == "EXIT_NOW" or (sl_near and th == "THESIS_BROKEN"):
+        return "CRITICAL"
+    if b == "PREPARE_EXIT" or sl_near:
+        return "ALERT"
+    if b == "WATCH_CLOSELY" or th in {"THESIS_DAMAGED", "THESIS_STRETCHED"}:
+        return "WATCH"
+    return "INFO"
+
+
+def confidence_caption_from_block(conf: dict[str, Any]) -> str:
+    """One sentence: decision confidence (not probability of being right)."""
+    tc = float(conf.get("tape_confidence") or 0)
+    ac = float(conf.get("analog_confidence") or 0)
+    th = float(conf.get("thesis_confidence") or 0)
+    parts = []
+    if th >= 0.82:
+        parts.append("thesis is clear")
+    elif th <= 0.5:
+        parts.append("thesis is shaky")
+    else:
+        parts.append("thesis is middling")
+    if tc >= 0.75:
+        parts.append("tape is steady")
+    elif tc <= 0.52:
+        parts.append("tape is noisy or stressed")
+    else:
+        parts.append("tape is mixed")
+    if ac >= 0.65:
+        parts.append("history matches reasonably well")
+    elif ac <= 0.42:
+        parts.append("history matches weakly")
+    else:
+        parts.append("history is only a moderate guide")
+    inner = ", ".join(parts)
+    return (
+        f"This score blends how clear the thesis is, how calm the tape looks, and how much similar past setups help — "
+        f"right now: {inner}. It is decision confidence, not odds of being correct."
+    )
+
+
 def decision_drivers_from_bullets(bullets: list[str], limit: int = 4) -> list[str]:
     out: list[str] = []
+    seen_lower: set[str] = set()
     for b in bullets:
-        if "Resolved stance" in b:
+        if not b or not str(b).strip():
             continue
-        out.append(b)
+        s = str(b).strip()
+        if "Resolved stance" in s or "Bottom line:" in s:
+            continue
+        key = s.lower()[:120]
+        if key in seen_lower:
+            continue
+        seen_lower.add(key)
+        out.append(s)
         if len(out) >= limit:
             break
     return out

@@ -12,6 +12,17 @@ _BAND_PREF_ACTION: dict[str, str] = {
 }
 
 
+def _action_label(key: str) -> str:
+    labels = {
+        "hold": "Hold",
+        "tighten_stop": "Tighten stop",
+        "trim_25": "Trim 25%",
+        "trim_50": "Trim 50%",
+        "exit_now": "Exit now",
+    }
+    return labels.get(str(key or "").lower(), "Hold")
+
+
 def _regret_word(regret_p: float) -> str:
     if regret_p >= 0.38:
         return "Higher regret risk if the move is wrong"
@@ -65,7 +76,7 @@ def simulate_actions(
     rows = [
         row(
             "hold",
-            "Hold full size",
+            "Hold",
             0.06 if not thesis_bad else 0.02,
             base_down,
             0.36,
@@ -124,16 +135,20 @@ def simulate_actions(
     by_net = sorted(rows, key=lambda r: r["net_score"], reverse=True)
     band = final_band or "STAY_COURSE"
     anchor = _BAND_PREF_ACTION.get(band)
-    best = None
-    if anchor:
-        best = next((r for r in rows if r["action"] == anchor), None)
-    if best is None:
-        best = by_net[0]
+    net_best = by_net[0]
+    aligns = (not anchor) or (net_best["action"] == anchor)
+    misalignment_note = ""
+    if anchor and net_best["action"] != anchor:
+        misalignment_note = (
+            f"The tile stance favors {_action_label(anchor)}, but the least-regret scoring ranks "
+            f"{net_best['label']} higher on net."
+        )
 
     why = (
-        f"Aligned with the resolved stance ({band.replace('_', ' ').title()}) and highest net score "
-        f"after risk adjustment among the five actions."
+        f"Highest net score after risk adjustment among the five actions "
+        f"(resolved tile stance is {band.replace('_', ' ').title()})."
     )
+    best = net_best
 
     return {
         "alternatives": rows,
@@ -146,6 +161,8 @@ def simulate_actions(
         },
         "preferred_ranking": [best["action"]] + [r["action"] for r in by_net if r["action"] != best["action"]],
         "preferred_action_aligned_with_final_band": anchor,
+        "aligns_with_tile_recommendation": aligns,
+        "misalignment_note": misalignment_note,
         "context": {
             "side": side,
             "current_price": current,

@@ -8,11 +8,14 @@ from typing import Any
 from app.services.live_intelligence.analog import match_analogs
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime, merge_pairwise_from_bootstrap
 from app.services.live_intelligence.resolver import (
+    analog_tier_key,
     build_delta_fields,
     build_feed_fingerprint,
     build_why_now_bullets,
     confidence_block,
+    dominant_world_key,
     novelty_explanation_one_liner,
+    regret_bucket_from_sim,
     regret_tilt_label,
     resolve_final_recommendation,
     should_emit_feed_event,
@@ -322,6 +325,9 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         sl_near = dist_sl is not None and dist_sl < 0.02
         tp_near = dist_tp is not None and abs(dist_tp) < 0.02
         hot = _hot_news(tile)
+        tier_k = analog_tier_key(mq)
+        dominant_w = dominant_world_key(worlds)
+        regret_b = regret_bucket_from_sim(sim)
 
         why_bullets = build_why_now_bullets(
             feats=feats,
@@ -343,6 +349,10 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             why_bullets=why_bullets,
             prior_regime_hypothesis=prior_regime_hyp or None,
             regime_hypothesis=regime_hyp,
+            sl_near=sl_near,
+            analog_tier_key=tier_k,
+            dominant_world=dominant_w,
+            regret_bucket=regret_b,
         )
 
         fingerprint = build_feed_fingerprint(
@@ -354,6 +364,9 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             sl_near=sl_near,
             tp_near=tp_near,
             hot_news=hot,
+            analog_tier=tier_k,
+            dominant_world=dominant_w,
+            regret_bucket=regret_b,
         )
 
         crossed = delta_fields.get("trigger_crossed") or []
@@ -386,14 +399,14 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         decision_drivers = lic_display.decision_drivers_from_bullets(why_bullets)
         ba = sim.get("best_action") or {}
         analog_short = (
-            f"{analog_ui['confidence_plain']} · {analog_ui['bias_plain']}"
+            f"{analog_ui.get('chip_verdict') or analog_ui['confidence_plain']} · {analog_ui['bias_plain']}"
             if analog_ui.get("analog_count", 0)
             else (analog_ui.get("low_similarity_note") or "No historical cluster for this snapshot.")
         )
         recommendation_display = {
             "headline": lic_display.recommendation_headline(final_band),
             "confidence": conf_block["headline"],
-            "confidence_caption": "Blend of thesis clarity, tape steadiness, and historical match quality.",
+            "confidence_caption": lic_display.confidence_caption_from_block(conf_block),
             "primary_action": ba.get("label") or lic_display.primary_action_plain(ba.get("action")),
             "primary_action_key": ba.get("action"),
             "why_this_action": ba.get("why", ""),
@@ -421,7 +434,7 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             "supporting_signals": supporting,
             "opposing_signals": opposing,
             "attention_score": round(attn, 2),
-            "attention_band": "High" if attn >= 70 else ("Med" if attn >= 40 else "Low"),
+            "attention_band": "High" if attn >= 70 else ("Medium" if attn >= 40 else "Low"),
             "attention_components": {k: round(v, 2) for k, v in attn_components.items()},
             "novelty_state": novelty,
             "novelty_plain": lic_display.plain_novelty(novelty),
@@ -453,6 +466,10 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             "materiality_state": "MATERIAL" if is_material else "STABLE",
             "derived_features": feats,
             "feed_fingerprint": fingerprint,
+            "sl_near": sl_near,
+            "analog_tier_key": tier_k,
+            "dominant_world_id": dominant_w,
+            "regret_bucket": regret_b,
             "last_ai_refresh_at": prior.get("last_ai_refresh_at") if prior else None,
             "last_material_change_at": now if is_material else prior.get("last_material_change_at"),
         }
@@ -465,17 +482,20 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             )
             reason_plain = lic_display.build_feed_reason_plain(crossed)
             act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
+            sev = lic_display.feed_event_severity(final_band, thesis_fracture, sl_near)
             feed_events.append(
                 {
                     "timestamp": now,
                     "ts": now,
                     "symbol": sym,
+                    "scope": "symbol",
+                    "transition": transition_plain,
                     "state_transition": transition_plain,
                     "reason": reason_plain,
                     "what_changed": reason_plain,
                     "action_implication": act_label,
                     "final_recommendation": final_band,
-                    "severity": "HIGH" if final_band == "EXIT_NOW" else ("ELEVATED" if final_band == "PREPARE_EXIT" else "INFO"),
+                    "severity": sev,
                 }
             )
 

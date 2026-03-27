@@ -49,6 +49,8 @@ function sessionFeedRow() {
     timestamp: ts,
     ts,
     symbol: 'SESSION',
+    scope: 'session',
+    transition: 'SESSION_START',
     state_transition: 'SESSION_START',
     what_changed: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
     reason: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
@@ -66,15 +68,21 @@ function attentionTooltip(intel) {
 
 function bandLabel(band) {
   const m = {
-    EXIT_NOW: 'Exit now',
-    PREPARE_EXIT: 'Prepare exit',
-    WATCH_CLOSELY: 'Watch closely',
-    STAY_COURSE: 'Stay the course',
+    EXIT_NOW: 'EXIT OR CUT NOW',
+    PREPARE_EXIT: 'PREPARE EXIT',
+    WATCH_CLOSELY: 'WATCH CLOSELY',
+    STAY_COURSE: 'HOLD',
   }
   const key = typeof band === 'string' ? band : band == null ? '' : String(band)
   if (m[key]) return m[key]
   if (!key) return '\u2014'
   return key.replace(/_/g, ' ')
+}
+
+function formatSimPct(v) {
+  const x = Number(v)
+  if (!Number.isFinite(x)) return '\u2014'
+  return `${(x * 100).toFixed(1)}%`
 }
 
 /** Coerce API values so React never receives objects as text children. */
@@ -90,6 +98,13 @@ function safeText(v, fallback = '\u2014') {
     }
   }
   return String(v)
+}
+
+function tileRecommendationHeadline(intel) {
+  const rd = intel?.recommendation_display || {}
+  const h = rd.headline
+  if (h != null && String(h).trim() !== '') return safeText(h)
+  return bandLabel(intel?.final_recommendation)
 }
 
 function attentionScoreNumber(intel) {
@@ -199,6 +214,10 @@ const PRIOR_INTEL_SLIM_KEYS = new Set([
   'attention_score',
   'last_ai_refresh_at',
   'last_material_change_at',
+  'sl_near',
+  'analog_tier_key',
+  'dominant_world_id',
+  'regret_bucket',
 ])
 
 function slimPriorIntelligence(intelBySymbol) {
@@ -479,11 +498,41 @@ function LiveIntelligenceCockpitInner() {
 
   const chartData = useMemo(() => {
     const bars = activeTile?.chart?.bars || []
-    return bars.map((b, i) => ({
-      i,
-      c: Number(b.close),
-      ts: String(b.ts || '').slice(11, 19) || i,
-    })).filter((r) => Number.isFinite(r.c))
+    const med = Number(activeTile?.expectation?.center_path?.[0]?.price)
+    const m = Number.isFinite(med) ? med : null
+    return bars
+      .map((b, i) => ({
+        i,
+        c: Number(b.close),
+        m,
+        ts: String(b.ts || '').slice(11, 19) || i,
+      }))
+      .filter((r) => Number.isFinite(r.c))
+  }, [activeTile])
+
+  const chartCallouts = useMemo(() => {
+    if (!activeTile) return []
+    const lines = []
+    const exp = activeTile.expectation || {}
+    const med = Number(exp?.center_path?.[0]?.price)
+    const cur = Number(activeTile.current_price)
+    const pm = activeTile.progress_metrics || {}
+    const dsl = Number(pm.distance_to_sl_pct)
+    const dtp = Number(pm.distance_to_tp_pct)
+    if (Number.isFinite(med) && Number.isFinite(cur)) {
+      if (cur < med) {
+        lines.push('Price sits below the expectation median — more path pressure versus the planned center.')
+      } else if (cur > med) {
+        lines.push('Price is above the expectation median — working better than the median path for now.')
+      }
+    }
+    if (Number.isFinite(dsl) && dsl < 0.03) {
+      lines.push('Stop is close — small adverse moves can matter quickly.')
+    }
+    if (Number.isFinite(dtp) && Math.abs(dtp) < 0.04) {
+      lines.push('Near the take-profit zone — much of the modeled reward may already be in the price.')
+    }
+    return lines
   }, [activeTile])
 
   const chartOverlay = useMemo(() => {
@@ -586,9 +635,7 @@ function LiveIntelligenceCockpitInner() {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
               const rd = intel?.recommendation_display || {}
-              const headline = rd.headline != null && rd.headline !== ''
-                ? safeText(rd.headline)
-                : bandLabel(intel?.final_recommendation)
+              const headline = tileRecommendationHeadline(intel)
               const au = intel?.analog_ui || {}
               return (
                 <button
@@ -610,29 +657,44 @@ function LiveIntelligenceCockpitInner() {
                       <span className="lic-tile-age">{formatHoldingAge(t.opened_at)}</span>
                     </div>
                   </div>
-                  <LicTileMiniChart tile={t} />
-                  <div className="lic-tile-dominant">{headline}</div>
+                  <div className="lic-tile-rec">{headline}</div>
                   {rd.confidence != null ? (
                     <div className="lic-tile-conf">
-                      Confidence {(() => {
-                        const p = Math.round(Number(rd.confidence) * 100)
-                        return Number.isFinite(p) ? p : 0
-                      })()}%
+                      <span className="lic-tile-conf-pct">
+                        Confidence{' '}
+                        {(() => {
+                          const p = Math.round(Number(rd.confidence) * 100)
+                          return Number.isFinite(p) ? p : 0
+                        })()}
+                        %
+                      </span>
                       <span className="lic-tile-conf-cap">{safeText(rd.confidence_caption, '')}</span>
                     </div>
                   ) : null}
+                  <LicTileMiniChart tile={t} recommendationBand={intel?.final_recommendation} />
                   <div className="lic-tile-thesis">{safeText(intel?.thesis_plain)}</div>
                   <ul className="lic-tile-drivers">
                     {asArray(intel?.decision_drivers).map((d, di) => (
-                      <li key={`${s}-d-${di}-${di}`}>{safeText(d)}</li>
+                      <li key={`${s}-d-${di}`}>{safeText(d)}</li>
                     ))}
                   </ul>
                   <div className="lic-tile-chips">
-                    <span className="lic-chip">Attention: {safeText(intel?.attention_band)}</span>
-                    <span className="lic-chip">{safeText(intel?.novelty_plain)}</span>
-                    <span className="lic-chip">{safeText(au.confidence_plain, 'History match')}</span>
-                    <span className="lic-chip">{safeText(intel?.portfolio_factor_chip)}</span>
-                    <span className="lic-chip">{safeText(intel?.regret_tilt_label)}</span>
+                    <span className="lic-chip" title="Attention">
+                      <span className="lic-chip-k">Attention</span>
+                      <span className="lic-chip-v">{safeText(intel?.attention_band)}</span>
+                    </span>
+                    <span className="lic-chip" title="Historical analog">
+                      <span className="lic-chip-k">Analog</span>
+                      <span className="lic-chip-v">{safeText(au.chip_verdict || au.confidence_plain, '—')}</span>
+                    </span>
+                    <span className="lic-chip" title="Portfolio factor">
+                      <span className="lic-chip-k">Book</span>
+                      <span className="lic-chip-v">{safeText(intel?.portfolio_factor_chip)}</span>
+                    </span>
+                    <span className="lic-chip" title="Regret tilt">
+                      <span className="lic-chip-k">Regret</span>
+                      <span className="lic-chip-v">{safeText(intel?.regret_tilt_label)}</span>
+                    </span>
                   </div>
                 </button>
               )
@@ -651,11 +713,14 @@ function LiveIntelligenceCockpitInner() {
               const body = safeText(rawBody, '')
               const trans = safeText(row.state_transition || row.transition || '', '')
               const sev = safeText(row.severity || '', '')
+              const sevSlug = String(sev).toLowerCase().replace(/\s+/g, '')
+              const scope = safeText(row.scope || '', '')
               return (
-                <div key={k} className={`lic-feed-row lic-feed-row--${String(sev).toLowerCase()}`}>
+                <div key={k} className={`lic-feed-row lic-feed-row--${sevSlug || 'info'}`}>
                   <div className="lic-feed-time">{formatFeedTime(row)}</div>
                   <div className="lic-feed-row-head">
                     <b>{safeText(row.symbol)}</b>
+                    {scope ? <span className="lic-feed-scope"> · {scope}</span> : null}
                     {row.final_recommendation && row.symbol !== 'SESSION' ? (
                       <span className="lic-feed-band"> · {bandLabel(row.final_recommendation)}</span>
                     ) : null}
@@ -664,7 +729,7 @@ function LiveIntelligenceCockpitInner() {
                   {trans ? <div className="lic-feed-trans">{trans}</div> : null}
                   {body ? <div className="lic-feed-body">{body}</div> : null}
                   {row.action_implication ? (
-                    <div className="lic-feed-action">Next move: {safeText(row.action_implication)}</div>
+                    <div className="lic-feed-action">Implication: {safeText(row.action_implication)}</div>
                   ) : null}
                 </div>
               )
@@ -716,20 +781,39 @@ function LiveIntelligenceCockpitInner() {
                         {chartOverlay.tp != null ? (
                           <ReferenceLine y={chartOverlay.tp} stroke="#4ade80" />
                         ) : null}
-                        <Line type="monotone" dataKey="c" stroke="#38bdf8" dot={false} strokeWidth={1.5} />
+                        <Line type="monotone" dataKey="c" name="Close" stroke="#38bdf8" dot={false} strokeWidth={2} />
+                        {chartData.some((r) => r.m != null) ? (
+                          <Line
+                            type="stepAfter"
+                            dataKey="m"
+                            name="Median"
+                            stroke="#a78bfa"
+                            dot={false}
+                            strokeWidth={1.2}
+                            strokeDasharray="4 3"
+                            connectNulls
+                          />
+                        ) : null}
                       </LineChart>
                     </ResponsiveContainer>
                   ) : (
                     <div className="lic-chart-empty">No bars</div>
                   )}
                   <div className="lic-chart-legend-keys">
-                    <span><i className="lic-lg sw" />Price</span>
+                    <span><i className="lic-lg sw" />Close</span>
                     <span><i className="lic-lg med" />Expectation median</span>
                     <span><i className="lic-lg band" />Expectation band</span>
                     <span><i className="lic-lg ent" />Entry</span>
                     <span><i className="lic-lg sl" />Stop</span>
                     <span><i className="lic-lg tp" />Target</span>
                   </div>
+                  {chartCallouts.length ? (
+                    <ul className="lic-chart-callouts">
+                      {chartCallouts.map((line, ci) => (
+                        <li key={`co-${ci}`}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               )}
 
@@ -742,12 +826,13 @@ function LiveIntelligenceCockpitInner() {
                         <span className="lic-world-pct">{w?.probability_pct ?? Math.round((w?.probability || 0) * 100)}%</span>
                       </div>
                       <p className="lic-world-expl">{safeText(w?.explanation)}</p>
-                      <div className="lic-world-sub">If this scenario dominates</div>
+                      <div className="lic-world-sub">Triggers to watch</div>
                       <ul className="lic-world-triggers">
                         {asArray(w?.trigger_conditions).map((x, xi) => (
                           <li key={`${wi}-tr-${xi}`}>{safeText(x)}</li>
                         ))}
                       </ul>
+                      <div className="lic-world-sub lic-world-sub--action">If this view dominates</div>
                       <div className="lic-world-action">{safeText(w?.action_if_dominant)}</div>
                     </div>
                   ))}
@@ -757,18 +842,22 @@ function LiveIntelligenceCockpitInner() {
                 <div className="lic-analog-panel">
                   {(() => {
                     const u = activeIntel.analog_ui || {}
+                    const weak = u.low_similarity_note || (u.confidence_tier === 'weak' && (u.analog_count ?? 0) > 0)
                     return (
                       <>
                         <div className="lic-analog-grid">
-                          <div><span className="lic-k">Match quality</span><span>{safeText(u.confidence_plain)}</span></div>
+                          <div><span className="lic-k">Match</span><span>{safeText(u.chip_verdict || u.confidence_plain)}</span></div>
                           <div><span className="lic-k">Bias</span><span>{safeText(u.bias_plain)}</span></div>
                           <div><span className="lic-k">Episodes</span><span>{safeText(u.analog_count ?? 0)}</span></div>
-                          <div><span className="lic-k">Win / loss mix</span><span>{safeText(u.winners ?? 0)} / {safeText(u.losers ?? 0)}</span></div>
+                          <div><span className="lic-k">Win / loss</span><span>{safeText(u.winners ?? 0)} / {safeText(u.losers ?? 0)}</span></div>
                         </div>
                         <p className="lic-analog-line">{safeText(u.forward_outcome_summary)}</p>
                         <p className="lic-analog-line">{safeText(u.exit_timing_hint_plain)}</p>
-                        {u.low_similarity_note ? (
-                          <p className="lic-analog-warn">{safeText(u.low_similarity_note)}</p>
+                        {weak ? (
+                          <div className="lic-analog-weakbox">
+                            <div className="lic-analog-weaktitle">Weak historical guidance</div>
+                            <p className="lic-analog-warn">{safeText(u.low_similarity_note || 'Match is weak — weight tape, thesis, and risk limits more than averages.')}</p>
+                          </div>
                         ) : null}
                       </>
                     )
@@ -781,13 +870,20 @@ function LiveIntelligenceCockpitInner() {
                     const sim = activeIntel.action_simulation || {}
                     const best = sim.best_action || {}
                     const rows = asArray(sim.alternatives)
+                    const mis = sim.misalignment_note
                     return (
                       <>
                         <div className="lic-sim-best">
-                          <div className="lic-sim-best-label">Favored action</div>
+                          <div className="lic-sim-best-label">Least-regret move now</div>
                           <div className="lic-sim-best-action">{safeText(best.label)}</div>
                           <p className="lic-sim-best-why">{safeText(best.why)}</p>
                         </div>
+                        {sim.aligns_with_tile_recommendation === false && mis ? (
+                          <div className="lic-sim-misalign" role="status">
+                            <div className="lic-sim-misalign-title">Simulator vs tile</div>
+                            <p className="lic-sim-misalign-copy">{safeText(mis)}</p>
+                          </div>
+                        ) : null}
                         <table className="lic-sim-table">
                           <thead>
                             <tr>
@@ -802,9 +898,9 @@ function LiveIntelligenceCockpitInner() {
                             {rows.map((r, ri) => (
                               <tr key={r?.action ?? r?.label ?? `sim-${ri}`}>
                                 <td>{safeText(r?.label)}</td>
-                                <td>{safeText(r?.expected_upside)}</td>
-                                <td>{safeText(r?.expected_downside)}</td>
-                                <td>{safeText(r?.giveback_risk)}</td>
+                                <td>{formatSimPct(r?.expected_upside)}</td>
+                                <td>{formatSimPct(r?.expected_downside)}</td>
+                                <td>{formatSimPct(r?.giveback_risk)}</td>
                                 <td>{safeText(r?.regret_tilt)}</td>
                               </tr>
                             ))}
@@ -820,18 +916,22 @@ function LiveIntelligenceCockpitInner() {
               )}
               {detailTab === 'timeline' && (
                 <div className="lic-timeline">
-                  {timeline.filter((x) => x.symbol === selectedSymbol).length === 0 ? (
+                  {timeline.filter((x) => x.kind === 'MATERIAL' && x.symbol === selectedSymbol).length === 0 ? (
                     <p className="lic-muted">No material events for this symbol yet.</p>
                   ) : (
-                    timeline.filter((x) => x.symbol === selectedSymbol).slice(0, 24).map((ev, idx) => (
-                      <div key={`${ev.ts || ev.timestamp || idx}-${ev.state_transition || idx}`} className="lic-tl-row">
-                        <div className="lic-tl-time">{formatFeedTime(ev)}</div>
-                        <div className="lic-tl-sev">{safeText(ev.severity)}</div>
-                        <div className="lic-tl-trans">{safeText(ev.state_transition)}</div>
-                        <div className="lic-tl-body">{safeText(ev.reason || ev.what_changed)}</div>
-                        <div className="lic-tl-act">Next: {safeText(ev.action_implication)}</div>
-                      </div>
-                    ))
+                    timeline
+                      .filter((x) => x.kind === 'MATERIAL' && x.symbol === selectedSymbol)
+                      .slice(0, 24)
+                      .map((ev, idx) => (
+                        <div key={`${ev.ts || ev.timestamp || idx}-${ev.state_transition || idx}`} className="lic-tl-row">
+                          <div className="lic-tl-time">{formatFeedTime(ev)}</div>
+                          <div className="lic-tl-sev">{safeText(ev.severity)}</div>
+                          <div className="lic-tl-scope">{safeText(ev.scope)}</div>
+                          <div className="lic-tl-trans">{safeText(ev.state_transition || ev.transition)}</div>
+                          <div className="lic-tl-body">{safeText(ev.reason || ev.what_changed)}</div>
+                          <div className="lic-tl-act">Implication: {safeText(ev.action_implication)}</div>
+                        </div>
+                      ))
                   )}
                 </div>
               )}
@@ -850,9 +950,11 @@ function LiveIntelligenceCockpitInner() {
                     }
                     return keys.map((k) => {
                       const sec = ev[k] || {}
+                      const st = sec.status ? `Status: ${sec.status}` : ''
                       return (
                         <section key={k} className="lic-ev-block">
                           <h5 className="lic-ev-title">{titles[k]}</h5>
+                          {st ? <p className="lic-ev-status">{st}</p> : null}
                           <p className="lic-ev-sum">{sec.summary}</p>
                           <div className="lic-ev-col">
                             <div className="lic-ev-supports">

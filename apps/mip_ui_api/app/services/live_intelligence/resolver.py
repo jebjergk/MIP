@@ -91,6 +91,37 @@ def resolve_final_recommendation(
     return band, reason, supporting[:6], opposing[:4]
 
 
+def analog_tier_key(mq: float) -> str:
+    x = float(mq or 0)
+    if x >= 0.45:
+        return "strong"
+    if x >= 0.22:
+        return "moderate"
+    return "weak"
+
+
+def dominant_world_key(worlds: list[dict[str, Any]]) -> str:
+    if not worlds:
+        return "unknown"
+    best = max(worlds, key=lambda w: float(w.get("probability") or 0))
+    return str(best.get("id") or "unknown")
+
+
+def regret_bucket_from_sim(sim: dict[str, Any]) -> str:
+    alts = sim.get("alternatives") or []
+    exit_alt = next((a for a in alts if a.get("action") == "exit_now"), None)
+    hold_alt = next((a for a in alts if a.get("action") == "hold"), None)
+    if not exit_alt or not hold_alt:
+        return "balanced"
+    ne = float(exit_alt.get("net_score") or 0)
+    nh = float(hold_alt.get("net_score") or 0)
+    if ne > nh + 0.02:
+        return "exit_favored"
+    if nh > ne + 0.02:
+        return "hold_favored"
+    return "balanced"
+
+
 def build_feed_fingerprint(
     *,
     final_band: str,
@@ -101,6 +132,9 @@ def build_feed_fingerprint(
     sl_near: bool,
     tp_near: bool,
     hot_news: bool,
+    analog_tier: str,
+    dominant_world: str,
+    regret_bucket: str,
 ) -> str:
     mq = round(float(analog_match_quality or 0), 2)
     parts = [
@@ -112,6 +146,9 @@ def build_feed_fingerprint(
         "1" if sl_near else "0",
         "1" if tp_near else "0",
         "1" if hot_news else "0",
+        str(analog_tier or ""),
+        str(dominant_world or ""),
+        str(regret_bucket or ""),
     ]
     return "|".join(parts)
 
@@ -126,13 +163,19 @@ def analog_tile_line(analog_summary: dict[str, Any]) -> str:
     w = int(analog_summary.get("winners") or 0)
     l = int(analog_summary.get("losers") or 0)
     n = w + l
-    mq = analog_summary.get("match_quality")
+    mq_f = analog_summary.get("match_quality")
+    mq = float(mq_f) if mq_f is not None else 0.0
+    tier_word = "strong" if mq >= 0.45 else ("moderate" if mq >= 0.22 else "weak")
     avg = analog_summary.get("avg_forward_return")
     if n == 0:
         return "No close analog episodes in bootstrap set for this feature snapshot."
-    ret_txt = f"avg forward return ~{float(avg):.3f}" if avg is not None else "forward return mixed"
+    ret_txt = (
+        f"typical follow-on near {float(avg) * 100:.1f}%"
+        if avg is not None
+        else "follow-on outcomes were mixed across winners and losers"
+    )
     return (
-        f"Nearest {n} analogs: {w} winners / {l} losers; match quality {mq}; {ret_txt}."
+        f"Nearest {n} similar episodes: {w} winners / {l} losers; historical match is {tier_word}; {ret_txt}."
     )
 
 
@@ -162,19 +205,12 @@ def portfolio_factor_chip(regime: dict[str, Any]) -> str:
 
 
 def regret_tilt_label(sim: dict[str, Any]) -> str:
-    alts = sim.get("alternatives") or []
-    exit_alt = next((a for a in alts if a.get("action") == "exit_now"), None)
-    hold_alt = next((a for a in alts if a.get("action") == "hold"), None)
-    if not exit_alt or not hold_alt:
-        ba = sim.get("best_action") or {}
-        return str(ba.get("why") or "Compare hold vs trim vs exit in the simulator.")
-    ne = float(exit_alt.get("net_score") or 0)
-    nh = float(hold_alt.get("net_score") or 0)
-    if ne > nh + 0.02:
-        return "If you are wrong, exiting now likely hurts less than dragging risk through a break."
-    if nh > ne + 0.02:
-        return "If you are wrong, holding may sting less than selling into a washout."
-    return "Exit and hold are close on net score — use your plan levels to decide."
+    b = regret_bucket_from_sim(sim)
+    if b == "exit_favored":
+        return "Exiting now hurts less if wrong"
+    if b == "hold_favored":
+        return "Holding still favored"
+    return "Balanced regret"
 
 
 def confidence_block(
@@ -220,15 +256,15 @@ def build_why_now_bullets(
     giveback: bool,
     tile: dict[str, Any],
 ) -> list[str]:
+    """Concrete drivers, ranked: stop proximity, tape, thesis, shared factor, analogs, giveback, news."""
+    _ = final_band  # headline not restated as a driver bullet
     bullets: list[str] = []
-    if feats.get("pattern_label"):
-        bullets.append(lic_display.plain_pattern(feats.get("pattern_label")))
     if dist_sl_pct is not None and dist_sl_pct < 0.03:
         bullets.append("Stop is close — small adverse moves can hit risk quickly.")
+    if feats.get("pattern_label"):
+        bullets.append(lic_display.plain_pattern(feats.get("pattern_label")))
     if thesis_fracture not in {"THESIS_INTACT", ""}:
         bullets.append(lic_display.plain_thesis_fracture(thesis_fracture))
-    if novelty != "NORMAL":
-        bullets.append(lic_display.plain_novelty(novelty))
     if regime_active:
         bullets.append("Other positions are stressed together — shared-factor risk matters.")
     mq = float(analog_summary.get("match_quality") or 0)
@@ -236,10 +272,11 @@ def build_why_now_bullets(
         bullets.append("Historical parallels are thin — lean less on backward-looking stats.")
     if giveback:
         bullets.append("Session profit has given back meaningfully from its peak.")
+    if novelty != "NORMAL":
+        bullets.append(lic_display.plain_novelty(novelty))
     events = tile.get("events") or []
     if any(str(e.get("type") or "").upper() == "NEWS" for e in events):
         bullets.append("There is news flow on this name — read headlines before sizing changes.")
-    bullets.append(f"Bottom line: {lic_display.recommendation_headline(final_band)}.")
     return bullets[:8]
 
 
@@ -253,6 +290,10 @@ def build_delta_fields(
     why_bullets: list[str],
     prior_regime_hypothesis: str | None = None,
     regime_hypothesis: str | None = None,
+    sl_near: bool = False,
+    analog_tier_key: str = "",
+    dominant_world: str = "",
+    regret_bucket: str = "",
 ) -> dict[str, Any]:
     crossed: list[str] = []
     if not prior:
@@ -277,6 +318,17 @@ def build_delta_fields(
     crh = str(regime_hypothesis or "").strip()
     if prh and crh and prh != crh:
         crossed.append(f"portfolio_regime:{prh}->{crh}")
+    if "sl_near" in prior and bool(prior.get("sl_near")) != bool(sl_near):
+        crossed.append(f"stop_danger:{int(bool(prior.get('sl_near')))}->{int(sl_near)}")
+    pt = prior.get("analog_tier_key")
+    if pt is not None and str(pt) != str(analog_tier_key):
+        crossed.append(f"analog_tier:{pt}->{analog_tier_key}")
+    pw = prior.get("dominant_world_id")
+    if pw is not None and str(pw) != str(dominant_world):
+        crossed.append(f"dominant_world:{pw}->{dominant_world}")
+    prb = prior.get("regret_bucket")
+    if prb is not None and str(prb) != str(regret_bucket):
+        crossed.append(f"regret_bucket:{prb}->{regret_bucket}")
     persistent = len(crossed) == 0
     label = "Stable refresh" if persistent else "Material shift"
     human = (

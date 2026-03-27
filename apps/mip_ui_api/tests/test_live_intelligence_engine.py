@@ -3,6 +3,7 @@ import unittest
 from app.services.live_intelligence.ai_committee import run_ai_enrichment
 from app.services.live_intelligence.engine import run_deterministic_step
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime
+from app.services.live_intelligence import lic_display
 
 
 def _tile(**kwargs):
@@ -82,6 +83,41 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
             last_ai_by_symbol={"TEST": 999.0},
         )
         self.assertTrue(out.get("skipped"))
+
+    def test_recommendation_headline_vocabulary(self):
+        self.assertEqual(lic_display.recommendation_headline("STAY_COURSE"), "HOLD")
+        self.assertEqual(lic_display.recommendation_headline("EXIT_NOW"), "EXIT OR CUT NOW")
+
+    def test_decision_drivers_no_bottom_line(self):
+        body = {"positions": [_tile()], "prior_intelligence": {}}
+        out = run_deterministic_step(body)
+        intel = out["intelligence_by_symbol"]["TEST"]
+        drivers = intel.get("decision_drivers") or []
+        joined = " ".join(drivers)
+        self.assertNotIn("Bottom line", joined)
+        self.assertLessEqual(len(drivers), 4)
+
+    def test_feed_event_has_severity_and_scope_when_emitted(self):
+        o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
+        prior = o1["intelligence_by_symbol"]
+        t2 = _tile(thesis={"status": "INVALIDATED", "reason": "x"})
+        o2 = run_deterministic_step({"positions": [t2], "prior_intelligence": prior})
+        self.assertTrue(len(o2["feed_events"]) >= 1)
+        row = o2["feed_events"][0]
+        self.assertIn(row.get("severity"), {"INFO", "WATCH", "ALERT", "CRITICAL"})
+        self.assertEqual(row.get("scope"), "symbol")
+
+    def test_simulator_misalignment_flag_when_net_best_differs_from_band(self):
+        """STAY_COURSE prefers hold; net winner is often trim/exit — expect possible misalignment."""
+        body = {"positions": [_tile()], "prior_intelligence": {}}
+        out = run_deterministic_step(body)
+        intel = out["intelligence_by_symbol"]["TEST"]
+        sim = intel.get("action_simulation") or {}
+        self.assertIn("aligns_with_tile_recommendation", sim)
+        self.assertIn("misalignment_note", sim)
+        ba = sim.get("best_action") or {}
+        ranked = sim.get("ranked_by_net_score") or []
+        self.assertEqual(ba.get("action"), ranked[0] if ranked else None)
 
 
 if __name__ == "__main__":

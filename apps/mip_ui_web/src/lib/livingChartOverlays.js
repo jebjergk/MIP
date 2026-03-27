@@ -4,6 +4,7 @@
  */
 
 import { computeChartOverlays } from '../pages/symbolTrackerCommittee'
+import { pathDriftActive } from './livingChartVisualState'
 
 const COLORS = {
   price: '#60a5fa',
@@ -143,8 +144,8 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
         priority: tight ? 100 : 72,
         y0: Math.min(current, sl),
         y1: Math.max(current, sl),
-        fillcolor: tight ? 'rgba(239, 68, 68, 0.32)' : 'rgba(239, 68, 68, 0.16)',
-        line: { color: '#f87171', width: tight ? 2 : 1, dash: 'dot' },
+        fillcolor: tight ? 'rgba(239, 68, 68, 0.42)' : 'rgba(239, 68, 68, 0.22)',
+        line: { color: '#fecaca', width: tight ? 2.5 : 1.5, dash: 'dot' },
         label: 'Near stop',
         layer: 'above',
       })
@@ -160,8 +161,8 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
         priority: tight ? 90 : 62,
         y0: Math.min(current, tp),
         y1: Math.max(current, tp),
-        fillcolor: tight ? 'rgba(16, 185, 129, 0.28)' : 'rgba(16, 185, 129, 0.14)',
-        line: { color: '#34d399', width: tight ? 2 : 1, dash: 'dot' },
+        fillcolor: tight ? 'rgba(16, 185, 129, 0.38)' : 'rgba(16, 185, 129, 0.2)',
+        line: { color: '#bbf7d0', width: tight ? 2.5 : 1.5, dash: 'dot' },
         label: 'Near target',
         layer: 'above',
       })
@@ -183,7 +184,7 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
         ? toNum(taOverlays.bollinger.lower[taOverlays.bollinger.lower.length - 1])
         : current * 0.998,
       fillcolor: COLORS.meanRev,
-      line: { color: '#22d3ee', width: 2.5, dash: 'dash' },
+      line: { color: '#67e8f9', width: 3.2, dash: '8px,4px' },
       label: 'Mean reversion',
       layer: 'above',
     })
@@ -211,10 +212,11 @@ export function pickConditionalZones(tile, liveState, committee, exitRec, taOver
       priority: pathDrift ? 68 : 65,
       y0: current * (side === 'SHORT' ? 1.002 : 0.998),
       y1: current * (side === 'SHORT' ? 0.998 : 1.002),
-      fillcolor: 'rgba(245, 158, 11, 0.22)',
-      line: { color: 'rgba(245, 158, 11, 0.65)', width: 1 },
+      fillcolor: pathDrift ? 'rgba(245, 158, 11, 0.32)' : 'rgba(245, 158, 11, 0.2)',
+      line: { color: 'rgba(251, 191, 36, 0.85)', width: pathDrift ? 2 : 1.25, dash: '4px,2px' },
       label: 'Thesis pressure',
       layer: 'above',
+      pathDrift,
     })
   }
 
@@ -264,20 +266,96 @@ export function buildPersistentLevelAnnotations(xRightMs, entry, sl, tp) {
     x: xr,
     showarrow: false,
     xanchor: 'left',
-    xshift: 6,
     font: { size: 11 },
   }
   const out = []
   if (entry != null && Number.isFinite(entry)) {
-    out.push({ ...base, y: entry, text: 'Entry', font: { ...base.font, color: '#c4b5fd' } })
+    out.push({
+      ...base,
+      y: entry,
+      xshift: 6,
+      yshift: -10,
+      text: 'Entry',
+      font: { ...base.font, color: '#c4b5fd' },
+    })
   }
   if (sl != null && Number.isFinite(sl)) {
-    out.push({ ...base, y: sl, text: 'Stop', font: { ...base.font, color: '#f87171', size: 12 } })
+    out.push({
+      ...base,
+      y: sl,
+      xshift: 6,
+      yshift: 10,
+      text: 'Stop',
+      font: { ...base.font, color: '#f87171', size: 12 },
+    })
   }
   if (tp != null && Number.isFinite(tp)) {
-    out.push({ ...base, y: tp, text: 'Target', font: { ...base.font, color: '#4ade80' } })
+    out.push({
+      ...base,
+      y: tp,
+      xshift: 6,
+      yshift: -4,
+      text: 'Target',
+      font: { ...base.font, color: '#4ade80' },
+    })
   }
   return out
+}
+
+/** Minimal labels at forward horizon for expected path / band (non-expert). */
+export function buildExpectationHintAnnotations(tile, bars, horizonBars) {
+  const fwd = buildExpectationForwardSeries(tile, bars, horizonBars)
+  if (!fwd?.tMs?.length) return []
+  const n = fwd.tMs.length - 1
+  const te = fwd.tMs[n]
+  const yc = fwd.center[n]
+  const yu = fwd.upper[n]
+  if (!Number.isFinite(yc) || !Number.isFinite(te)) return []
+  return [
+    {
+      xref: 'x',
+      yref: 'y',
+      x: te,
+      y: yc,
+      text: 'Expected',
+      showarrow: false,
+      xanchor: 'left',
+      xshift: 8,
+      yshift: 0,
+      font: { size: 10, color: 'rgba(251, 191, 36, 0.95)' },
+    },
+    {
+      xref: 'x',
+      yref: 'y',
+      x: te,
+      y: yu,
+      text: 'Range',
+      showarrow: false,
+      xanchor: 'left',
+      xshift: 8,
+      yshift: -6,
+      font: { size: 9, color: 'rgba(148, 163, 184, 0.9)' },
+    },
+  ]
+}
+
+/** Subtle "Now" label at last bar (structural read). */
+export function buildNowLabelAnnotation(xLastMs, yPrice) {
+  if (xLastMs == null || !Number.isFinite(Number(xLastMs)) || yPrice == null || !Number.isFinite(yPrice)) {
+    return []
+  }
+  return [{
+    xref: 'x',
+    yref: 'y',
+    x: Number(xLastMs),
+    y: yPrice,
+    text: 'Now',
+    showarrow: false,
+    xanchor: 'left',
+    xshift: 12,
+    yshift: -16,
+    font: { size: 10, color: '#e2e8f0' },
+  }]
 }
 
 /**
@@ -371,6 +449,32 @@ export function buildLivingChartShapesAndTA({
   const levelAnn = buildPersistentLevelAnnotations(xAnnot, entry, sl, tp)
   for (const a of levelAnn) {
     annotations.push(a)
+  }
+
+  for (const a of buildExpectationHintAnnotations(tile, bars, horizonBars)) {
+    annotations.push(a)
+  }
+
+  const lastBar = bars[bars.length - 1]
+  const lastClose = toNum(lastBar?.close) ?? toNum(lastBar?.low) ?? toNum(lastBar?.high)
+  const spot = toNum(liveState?.last_price) ?? toNum(tile?.current_price) ?? lastClose
+  for (const a of buildNowLabelAnnotation(x1, spot)) {
+    annotations.push(a)
+  }
+
+  if (conditionalKeys.includes('thesis_weakening') && pathDriftActive(liveState) && spot != null) {
+    annotations.push({
+      xref: 'x',
+      yref: 'y',
+      x: x1,
+      y: spot,
+      text: 'Drift',
+      showarrow: false,
+      xanchor: 'right',
+      xshift: -8,
+      yshift: 12,
+      font: { size: 10, color: 'rgba(251, 191, 36, 0.95)' },
+    })
   }
 
   for (const z of zones) {

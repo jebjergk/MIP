@@ -11,16 +11,16 @@ import {
 } from './symbolTrackerCommittee'
 import {
   mergeBarsByTimestamp,
-  buildStatusChips,
   buildLivingChartShapesAndTA,
 } from '../lib/livingChartOverlays'
 import {
-  healthTier,
-  healthLabel,
-  postureLabel,
-  postureShort,
-  thesisBadge,
-  chartOverlayCueBadges,
+  riskPressureTier,
+  primaryPostureLabel,
+  primaryPostureShort,
+  thesisStateLabel,
+  riskPressureLabel,
+  liveConditionChips,
+  stripOptionalCue,
 } from '../lib/livingChartVisualState'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
 
@@ -325,17 +325,24 @@ export default function SymbolTracker() {
     return pack.conditionalKeys || []
   }, [activeTile, liveState, committee, exitRec, showAdvancedTA, horizonBars])
 
-  const stripChips = useMemo(() => {
-    const chips = buildStatusChips(activeTile, exitRec, liveState, conditionalKeys)
-    return chips.filter((c) => c.key === 'urgency' || c.key === 'outside_cone')
-  }, [activeTile, exitRec, liveState, conditionalKeys])
+  const chartChips = useMemo(
+    () => (activeTile && liveState
+      ? liveConditionChips(conditionalKeys, liveState, activeTile)
+      : []),
+    [activeTile, liveState, conditionalKeys],
+  )
 
-  const activeHealthTier = useMemo(() => {
+  const optionalStripCue = useMemo(
+    () => (activeTile
+      ? stripOptionalCue(activeTile, exitRec, liveState, committee, chartChips.map((c) => c.key))
+      : null),
+    [activeTile, exitRec, liveState, committee, chartChips],
+  )
+
+  const activeRiskTier = useMemo(() => {
     if (!activeTile) return 'calm'
-    return healthTier(committee, exitRec, liveState, activeTile)
+    return riskPressureTier(committee, exitRec, liveState, activeTile)
   }, [activeTile, committee, exitRec, liveState])
-
-  const chartCueBadges = useMemo(() => chartOverlayCueBadges(conditionalKeys), [conditionalKeys])
 
   const bumpChartLayout = useCallback(() => {
     setLayoutRevision((r) => r + 1)
@@ -417,9 +424,12 @@ export default function SymbolTracker() {
         </div>
         <div className="lc-toolbar-divider" aria-hidden />
         <div className="lc-toolbar-group">
-          <span className="lc-toolbar-group-label">Display</span>
+          <span className="lc-toolbar-group-label">Time window</span>
           <div className="lc-toolbar-group-fields lc-toolbar-group-fields--row">
-            <label className="lc-check">
+            <label
+              className="lc-check"
+              title="While checked, the chart stays scrolled to the newest bar until you pan or zoom away."
+            >
               <input
                 type="checkbox"
                 checked={followLatest}
@@ -432,11 +442,16 @@ export default function SymbolTracker() {
                   }
                 }}
               />
-              Follow latest
+              Track latest bars
             </label>
             {viewportLocked ? (
-              <button type="button" className="lc-btn lc-btn--small" onClick={unlockFollowLatest}>
-                Snap to latest
+              <button
+                type="button"
+                className="lc-btn lc-btn--small"
+                onClick={unlockFollowLatest}
+                title="Re-centers the time axis on the latest bar and turns tracking back on. Your manual zoom may reset."
+              >
+                Jump to latest
               </button>
             ) : null}
             <label className="lc-check">
@@ -471,21 +486,21 @@ export default function SymbolTracker() {
               const rowComm = committeeBySymbol[sym]
               const rowExit = exitRecBySymbol[sym]
               const rowLive = rowComm?.live_state || null
-              const rowTier = healthTier(rowComm, rowExit, rowLive, t)
-              const posture = postureShort(rowComm)
+              const rowRisk = riskPressureTier(rowComm, rowExit, rowLive, t)
+              const postureS = primaryPostureShort(rowComm, rowExit)
               const label = formatSymbolLabel(t.symbol, t.market_type)
               return (
                 <button
                   key={sym}
                   type="button"
-                  title={label}
-                  className={`lc-rail-btn lc-rail-btn--tier-${rowTier}${active ? ' lc-rail-btn--active' : ''}`}
+                  title={`${label} · ${primaryPostureLabel(rowComm, rowExit)} · ${riskPressureLabel(rowComm, rowExit, rowLive, t)}`}
+                  className={`lc-rail-btn lc-rail-btn--risk-${rowRisk}${active ? ' lc-rail-btn--active' : ''}`}
                   onClick={() => selectSymbol(sym)}
                 >
                   <span className="lc-rail-top">
                     <span className="lc-rail-accent" aria-hidden />
                     <span className="lc-rail-sym">{label}</span>
-                    <span className="lc-rail-posture">{posture}</span>
+                    <span className="lc-rail-posture">{postureS}</span>
                   </span>
                   <span className={`lc-rail-pnl ${Number(t.unrealized_pnl) >= 0 ? 'lc-rail-pnl--pos' : 'lc-rail-pnl--neg'}`}>
                     {fmtSigned(t.unrealized_pnl, 0)}
@@ -498,43 +513,48 @@ export default function SymbolTracker() {
           <div className="lc-main">
             {activeTile ? (
               <>
-                <div className={`lc-strip lc-strip--health-${activeHealthTier}`}>
-                  <div className="lc-strip-row lc-strip-row--primary">
+                <div className={`lc-strip lc-strip--risk-${activeRiskTier}`}>
+                  <div className="lc-strip-monitor">
                     <div className="lc-strip-identity">
                       <span className="lc-strip-title">{formatSymbolLabel(activeTile.symbol, activeTile.market_type)}</span>
                       <span className="lc-strip-meta">{activeTile.side} · Qty {fmtNum(activeTile.quantity, 0)}</span>
                     </div>
-                    <span className="lc-posture-pill" title={postureLabel(committee)}>
-                      {postureLabel(committee)}
-                    </span>
-                    <span className="lc-thesis-badge">{thesisBadge(activeTile)}</span>
-                    <span className="lc-health-pill" title="Position health">{healthLabel(activeHealthTier)}</span>
+                    <div className="lc-strip-state" aria-label="Position state">
+                      <span className="lc-state-primary">{primaryPostureLabel(committee, exitRec)}</span>
+                      <span className="lc-state-thesis">{thesisStateLabel(activeTile)}</span>
+                      <span className="lc-state-risk">{riskPressureLabel(committee, exitRec, liveState, activeTile)}</span>
+                    </div>
+                    <div className="lc-strip-kpis-wrap">
+                      <div className="lc-strip-cluster" aria-label="Price and P and L">
+                        <div><span>Last</span><b>{fmtNum(activeTile.current_price ?? activeTile.overlays?.current, 4)}</b></div>
+                        <div><span>Entry</span><b>{fmtNum(activeTile.entry_price, 4)}</b></div>
+                        <div><span>P&amp;L</span><b className={Number(activeTile.unrealized_pnl) >= 0 ? 'lc-kpi-pos' : 'lc-kpi-neg'}>{fmtSigned(activeTile.unrealized_pnl, 2)}</b></div>
+                      </div>
+                      <div className="lc-strip-cluster" aria-label="Distance to levels">
+                        <div><span>Dist SL</span><b>{fmtPct(liveState?.derived_features?.distance_to_sl_pct ?? activeTile?.progress_metrics?.distance_to_sl_pct)}</b></div>
+                        <div>
+                          <span>Dist TP</span>
+                          <b className={Number.isFinite(Number(activeTile?.overlays?.take_profit)) ? '' : 'lc-kpi-muted'}>
+                            {Number.isFinite(Number(activeTile?.overlays?.take_profit))
+                              ? fmtPct(liveState?.derived_features?.distance_to_tp_pct ?? activeTile?.progress_metrics?.distance_to_tp_pct)
+                              : '—'}
+                          </b>
+                        </div>
+                      </div>
+                    </div>
                     <span className="lc-strip-ts">Live {fmtTime(liveUpdatedAt)}</span>
                   </div>
-                  <div className="lc-strip-row lc-strip-row--kpis">
-                    <div className="lc-strip-cluster" aria-label="Price and P and L">
-                      <div><span>Last</span><b>{fmtNum(activeTile.current_price ?? activeTile.overlays?.current, 4)}</b></div>
-                      <div><span>Entry</span><b>{fmtNum(activeTile.entry_price, 4)}</b></div>
-                      <div><span>P&amp;L</span><b className={Number(activeTile.unrealized_pnl) >= 0 ? 'lc-kpi-pos' : 'lc-kpi-neg'}>{fmtSigned(activeTile.unrealized_pnl, 2)}</b></div>
-                    </div>
-                    <div className="lc-strip-cluster" aria-label="Distance to levels">
-                      <div><span>Dist SL</span><b>{fmtPct(liveState?.derived_features?.distance_to_sl_pct ?? activeTile?.progress_metrics?.distance_to_sl_pct)}</b></div>
-                      <div><span>Dist TP</span><b>{fmtPct(liveState?.derived_features?.distance_to_tp_pct ?? activeTile?.progress_metrics?.distance_to_tp_pct)}</b></div>
-                    </div>
-                  </div>
-                  {stripChips.length > 0 ? (
-                    <div className="lc-chips">
-                      {stripChips.map((c, idx) => (
-                        <span key={`${c.key}-${idx}`} className={`lc-chip lc-chip--${c.tone}`}>{c.label}</span>
-                      ))}
+                  {optionalStripCue ? (
+                    <div className="lc-strip-cue">
+                      <span className={`lc-chip lc-chip--${optionalStripCue.tone}`}>{optionalStripCue.label}</span>
                     </div>
                   ) : null}
                 </div>
 
                 <div className="lc-chart-shell">
-                  {chartCueBadges.length > 0 ? (
+                  {chartChips.length > 0 ? (
                     <div className="lc-chart-cues" aria-label="Active chart overlays">
-                      {chartCueBadges.map((b) => (
+                      {chartChips.map((b) => (
                         <span key={b.key} className={`lc-cue lc-cue--${b.tone}`}>{b.label}</span>
                       ))}
                     </div>

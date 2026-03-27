@@ -63,6 +63,7 @@ export default function LivingChartPlot({
   followLatest,
   viewportLocked,
   onViewportLockedChange,
+  layoutRevision = 0,
   className,
 }) {
   const { data, shapePack, xExtents } = useMemo(() => {
@@ -86,6 +87,10 @@ export default function LivingChartPlot({
       return { data: [], shapePack: { shapes: [], taTraces: [] }, xExtents: null }
     }
 
+    const lastClose = [...close].reverse().find((c) => c != null)
+    const lastT = tMs[tMs.length - 1]
+    const fwd = buildExpectationForwardSeries(tile, list, horizonBars)
+
     const traces = []
     if (chartStyle === 'candles' && high.some((h) => h != null)) {
       traces.push({
@@ -106,30 +111,11 @@ export default function LivingChartPlot({
         name: 'Price',
         x: tMs,
         y: close.map((c, i) => (c != null ? c : low[i] ?? high[i])),
-        line: { color: LIVING_CHART_COLORS.price, width: 2.35 },
+        line: { color: '#4a7ec9', width: 2.45 },
         connectgaps: false,
       })
     }
 
-    const lastClose = [...close].reverse().find((c) => c != null)
-    const lastT = tMs[tMs.length - 1]
-    if (lastClose != null && lastT != null) {
-      traces.push({
-        type: 'scatter',
-        mode: 'markers',
-        name: 'Now',
-        x: [lastT],
-        y: [lastClose],
-        marker: {
-          size: 15,
-          color: '#f8fafc',
-          line: { color: '#38bdf8', width: 2.5 },
-        },
-        hovertemplate: 'Now: %{y:.4f}<extra></extra>',
-      })
-    }
-
-    const fwd = buildExpectationForwardSeries(tile, list, horizonBars)
     if (fwd && fwd.tMs.length > 0) {
       const { tMs: tx, center, upper, lower } = fwd
       const validLower = lower.every((v) => v != null && Number.isFinite(v))
@@ -152,8 +138,8 @@ export default function LivingChartPlot({
           x: tx,
           y: upper,
           fill: 'tonexty',
-          fillcolor: 'rgba(251, 191, 36, 0.12)',
-          line: { color: 'rgba(251,191,36,0.28)', width: 0.75, dash: '4px,3px' },
+          fillcolor: 'rgba(251, 191, 36, 0.07)',
+          line: { color: 'rgba(251,191,36,0.2)', width: 0.6, dash: '5px,4px' },
           hoverinfo: 'skip',
         })
       }
@@ -164,11 +150,56 @@ export default function LivingChartPlot({
           name: 'Expected path',
           x: tx,
           y: center,
-          line: { color: 'rgba(245, 158, 11, 0.92)', width: 1.65, dash: '6px,3px' },
+          line: { color: 'rgba(234, 179, 8, 0.88)', width: 1.25, dash: '8px,4px' },
           connectgaps: false,
           hovertemplate: 'Expected: %{y:.4f}<extra></extra>',
         })
       }
+    }
+
+    if (lastClose != null && lastT != null) {
+      let fill = '#f8fafc'
+      let line = { color: '#38bdf8', width: 2.75 }
+      if (liveState?.derived_features?.inside_cone === false) {
+        fill = '#fef9c3'
+        line = { color: '#eab308', width: 2.75 }
+      } else if (
+        fwd?.lower?.[0] != null
+        && fwd?.upper?.[0] != null
+        && Number.isFinite(fwd.lower[0])
+        && Number.isFinite(fwd.upper[0])
+      ) {
+        if (lastClose < fwd.lower[0] || lastClose > fwd.upper[0]) {
+          fill = '#ffedd5'
+          line = { color: '#fb923c', width: 2.75 }
+        }
+      }
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        x: [lastT],
+        y: [lastClose],
+        marker: {
+          size: 28,
+          color: 'rgba(56, 189, 248, 0.2)',
+          line: { width: 0 },
+        },
+        hoverinfo: 'skip',
+        showlegend: false,
+      })
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        name: 'Now',
+        x: [lastT],
+        y: [lastClose],
+        marker: {
+          size: 16,
+          color: fill,
+          line,
+        },
+        hovertemplate: 'Now: %{y:.4f}<extra></extra>',
+      })
     }
 
     const shapePack = buildLivingChartShapesAndTA({

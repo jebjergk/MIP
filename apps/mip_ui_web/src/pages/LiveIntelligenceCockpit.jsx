@@ -116,6 +116,64 @@ function mergeTrackerIb(trackerPayload, livePayload) {
   }
 }
 
+/** Keep deterministic-step POST small: full prior intel includes evidence/worlds/sim blobs. */
+const PRIOR_INTEL_SLIM_KEYS = new Set([
+  'feed_fingerprint',
+  'final_recommendation',
+  'exit_urgency',
+  'thesis_fracture',
+  'novelty_state',
+  'pattern_label',
+  'attention_score',
+  'last_ai_refresh_at',
+  'last_material_change_at',
+])
+
+function slimPriorIntelligence(intelBySymbol) {
+  if (!intelBySymbol || typeof intelBySymbol !== 'object') return {}
+  const out = {}
+  for (const [sym, row] of Object.entries(intelBySymbol)) {
+    if (!row || typeof row !== 'object') continue
+    const slim = {}
+    for (const k of PRIOR_INTEL_SLIM_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(row, k)) slim[k] = row[k]
+    }
+    out[sym] = slim
+  }
+  return out
+}
+
+const MAX_BARS_FOR_STEP = 256
+
+function trimTilesForStep(tiles, maxBars = MAX_BARS_FOR_STEP) {
+  if (!Array.isArray(tiles)) return []
+  return tiles.map((tile) => {
+    const bars = tile?.chart?.bars
+    if (!Array.isArray(bars) || bars.length <= maxBars) return tile
+    return {
+      ...tile,
+      chart: {
+        ...(tile.chart || {}),
+        bars: bars.slice(-maxBars),
+      },
+    }
+  })
+}
+
+function analogEpisodesForTiles(analogBySymbol, tiles) {
+  if (!analogBySymbol || typeof analogBySymbol !== 'object') return {}
+  const syms = new Set(
+    (Array.isArray(tiles) ? tiles : [])
+      .map((t) => String(t?.symbol || '').toUpperCase())
+      .filter(Boolean),
+  )
+  const out = {}
+  for (const s of syms) {
+    if (Object.prototype.hasOwnProperty.call(analogBySymbol, s)) out[s] = analogBySymbol[s]
+  }
+  return out
+}
+
 export default function LiveIntelligenceCockpit() {
   const { formatSymbolLabel } = useSymbolMeta()
   const [loading, setLoading] = useState(true)
@@ -132,6 +190,7 @@ export default function LiveIntelligenceCockpit() {
   const [detailTab, setDetailTab] = useState('chart')
   const [aiResult, setAiResult] = useState(null)
   const [peakPnl, setPeakPnl] = useState({})
+  const [bootReady, setBootReady] = useState(false)
 
   const fetchIbLive = useCallback(async (tiles) => {
     const symbols = (Array.isArray(tiles) ? tiles : [])
@@ -176,6 +235,7 @@ export default function LiveIntelligenceCockpit() {
   const loadBootstrap = useCallback(async () => {
     setLoading(true)
     setError('')
+    setBootReady(false)
     setFeed([])
     setTimeline([])
     try {
@@ -212,6 +272,7 @@ export default function LiveIntelligenceCockpit() {
           if (s) peaks[s] = Number.isFinite(p) ? p : 0
         })
         setPeakPnl(peaks)
+        setBootReady(true)
       } catch {
         const step = await runStep(tr.tiles || [], {})
         setIntelligence(step.intelligence_by_symbol || {})
@@ -219,6 +280,7 @@ export default function LiveIntelligenceCockpit() {
         const session = sessionFeedRow()
         setFeed([session])
         setTimeline([{ ...session, kind: 'SESSION' }])
+        setBootReady(true)
       }
     } catch (e) {
       setError(e.message || 'Bootstrap error')
@@ -259,7 +321,7 @@ export default function LiveIntelligenceCockpit() {
     } catch (e) {
       setError(e.message || 'Live refresh failed')
     }
-  }, [fetchIbLive, intelligence, runStep, trackerData])
+  }, [bootReady, fetchIbLive, intelligence, portfolioRegime, runStep, trackerData])
 
   useVisibleInterval(refreshLive, 30000)
 

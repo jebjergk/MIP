@@ -45,6 +45,7 @@ class DeterministicStepRequest(BaseModel):
         description="Tile-like dicts: symbol, side, chart.bars, overlays, expectation, progress_metrics, volatility_context, events, unrealized_pnl, ...",
     )
     prior_intelligence: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    prior_portfolio_regime: dict[str, Any] = Field(default_factory=dict)
     session_peak_pnl_by_symbol: dict[str, float] = Field(default_factory=dict)
     analog_episodes_by_symbol: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     portfolio_context: dict[str, Any] = Field(default_factory=dict)

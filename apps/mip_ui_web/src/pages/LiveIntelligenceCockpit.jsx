@@ -107,6 +107,40 @@ function tileRecommendationHeadline(intel) {
   return bandLabel(intel?.final_recommendation)
 }
 
+/** Short tile copy + full string for title/tooltip drill-down. */
+function truncateTileText(s, maxLen) {
+  const t = String(s || '').trim()
+  if (!t) return { short: '', full: '' }
+  if (t.length <= maxLen) return { short: t, full: t }
+  return { short: `${t.slice(0, Math.max(0, maxLen - 1))}…`, full: t }
+}
+
+function dominantWorldSummary(intel) {
+  const worlds = asArray(intel?.scenario_worlds)
+  if (!worlds.length) return ''
+  let best = worlds[0]
+  let bestP = Number(best?.probability) || 0
+  for (let i = 1; i < worlds.length; i += 1) {
+    const p = Number(worlds[i]?.probability) || 0
+    if (p > bestP) {
+      bestP = p
+      best = worlds[i]
+    }
+  }
+  const pct = best?.probability_pct ?? Math.round(bestP * 100)
+  const title = safeText(best?.title, '')
+  return title ? `${title} leads scenarios (${pct}%)` : ''
+}
+
+/** One standout line: dominant world + least-regret move (detail in drill-down). */
+function tileIntelStandout(intel) {
+  const w = dominantWorldSummary(intel)
+  const sim = intel?.action_simulation?.best_action
+  const lr = sim?.label ? `Least-regret: ${safeText(sim.label)}` : ''
+  if (w && lr) return `${w} · ${lr}`
+  return w || lr || ''
+}
+
 function attentionScoreNumber(intel) {
   const x = intel?.attention_score
   if (typeof x === 'number' && Number.isFinite(x)) return x
@@ -637,6 +671,11 @@ function LiveIntelligenceCockpitInner() {
               const rd = intel?.recommendation_display || {}
               const headline = tileRecommendationHeadline(intel)
               const au = intel?.analog_ui || {}
+              const capFull = safeText(rd.confidence_caption, '')
+              const capTile = truncateTileText(capFull, 78)
+              const thesisFull = safeText(intel?.thesis_plain, '')
+              const thesisTile = truncateTileText(thesisFull, 110)
+              const standout = tileIntelStandout(intel)
               return (
                 <button
                   key={s}
@@ -668,15 +707,30 @@ function LiveIntelligenceCockpitInner() {
                         })()}
                         %
                       </span>
-                      <span className="lic-tile-conf-cap">{safeText(rd.confidence_caption, '')}</span>
+                      <span className="lic-tile-conf-cap" title={capTile.full || undefined}>
+                        {capTile.short || capFull}
+                      </span>
                     </div>
                   ) : null}
-                  <LicTileMiniChart tile={t} recommendationBand={intel?.final_recommendation} />
-                  <div className="lic-tile-thesis">{safeText(intel?.thesis_plain)}</div>
+                  <LicTileMiniChart tile={t} intel={intel} recommendationBand={intel?.final_recommendation} />
+                  {standout ? (
+                    <div className="lic-tile-standout" title="Dominant scenario vs least-regret simulator pick — open Worlds / Simulator for detail.">
+                      {standout}
+                    </div>
+                  ) : null}
+                  <div className="lic-tile-thesis" title={thesisTile.full || undefined}>
+                    {thesisTile.short || thesisFull}
+                  </div>
                   <ul className="lic-tile-drivers">
-                    {asArray(intel?.decision_drivers).map((d, di) => (
-                      <li key={`${s}-d-${di}`}>{safeText(d)}</li>
-                    ))}
+                    {asArray(intel?.decision_drivers).map((d, di) => {
+                      const txt = safeText(d)
+                      const t = truncateTileText(txt, 96)
+                      return (
+                        <li key={`${s}-d-${di}`} className="lic-tile-driver-li" title={t.full !== t.short ? t.full : undefined}>
+                          {t.short || txt}
+                        </li>
+                      )
+                    })}
                   </ul>
                   <div className="lic-tile-chips">
                     <span className="lic-chip" title="Attention">
@@ -739,11 +793,13 @@ function LiveIntelligenceCockpitInner() {
           {selectedSymbol && activeIntel ? (
             <>
               <h4 className="lic-aside-title lic-aside-title--spaced">Drill-down · {selectedSymbol}</h4>
-              <div className="lic-tabs">
+              <div className="lic-tabs" role="tablist" aria-label="Drill-down panels">
                 {['chart', 'worlds', 'analog', 'simulator', 'timeline', 'evidence', 'ai'].map((tab) => (
                   <button
                     key={tab}
                     type="button"
+                    role="tab"
+                    aria-selected={detailTab === tab}
                     className={detailTab === tab ? 'lic-tab--on' : ''}
                     onClick={() => setDetailTab(tab)}
                   >
@@ -753,7 +809,7 @@ function LiveIntelligenceCockpitInner() {
               </div>
 
               {detailTab === 'chart' && (
-                <div className="lic-chart-wrap lic-chart-wrap--drill">
+                <div className="lic-drill-panel lic-chart-wrap lic-chart-wrap--drill">
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={chartData}>
@@ -818,9 +874,12 @@ function LiveIntelligenceCockpitInner() {
               )}
 
               {detailTab === 'worlds' && (
-                <div className="lic-worlds">
+                <div className="lic-drill-panel lic-worlds">
                   {asArray(activeIntel.scenario_worlds).map((w, wi) => (
-                    <div key={w?.id ?? w?.title ?? `w-${wi}`} className="lic-world-card">
+                    <div
+                      key={w?.id ?? w?.title ?? `w-${wi}`}
+                      className={`lic-world-card${String(w?.id) === String(activeIntel?.dominant_world_id) ? ' lic-world-card--dominant' : ''}`}
+                    >
                       <div className="lic-world-head">
                         <span className="lic-world-title">{safeText(w?.title)}</span>
                         <span className="lic-world-pct">{w?.probability_pct ?? Math.round((w?.probability || 0) * 100)}%</span>
@@ -839,24 +898,48 @@ function LiveIntelligenceCockpitInner() {
                 </div>
               )}
               {detailTab === 'analog' && (
-                <div className="lic-analog-panel">
+                <div className="lic-drill-panel lic-analog-panel">
                   {(() => {
                     const u = activeIntel.analog_ui || {}
                     const weak = u.low_similarity_note || (u.confidence_tier === 'weak' && (u.analog_count ?? 0) > 0)
+                    const tier = safeText(u.confidence_tier, '')
+                    const n = Number(u.analog_count ?? 0)
+                    const whyConf =
+                      n <= 0
+                        ? 'No close analog cluster in the bootstrap slice — tier reflects missing history, not a bad tape read.'
+                        : tier === 'strong'
+                          ? 'High match quality and a usable sample size — backward-looking stats carry more weight.'
+                          : tier === 'moderate'
+                            ? 'Partial match to history — use analogs as context alongside tape and thesis.'
+                            : 'Low match quality or thin sample — treat averages as exploratory only.'
                     return (
                       <>
-                        <div className="lic-analog-grid">
-                          <div><span className="lic-k">Match</span><span>{safeText(u.chip_verdict || u.confidence_plain)}</span></div>
-                          <div><span className="lic-k">Bias</span><span>{safeText(u.bias_plain)}</span></div>
-                          <div><span className="lic-k">Episodes</span><span>{safeText(u.analog_count ?? 0)}</span></div>
-                          <div><span className="lic-k">Win / loss</span><span>{safeText(u.winners ?? 0)} / {safeText(u.losers ?? 0)}</span></div>
-                        </div>
-                        <p className="lic-analog-line">{safeText(u.forward_outcome_summary)}</p>
-                        <p className="lic-analog-line">{safeText(u.exit_timing_hint_plain)}</p>
+                        <section className="lic-drill-section">
+                          <h5 className="lic-drill-h">Analog confidence</h5>
+                          <p className="lic-drill-lead">{safeText(u.chip_verdict || u.confidence_plain)}</p>
+                          <p className="lic-drill-muted">{whyConf}</p>
+                        </section>
+                        <section className="lic-drill-section">
+                          <h5 className="lic-drill-h">Bias & sample</h5>
+                          <div className="lic-analog-grid lic-analog-grid--drill">
+                            <div><span className="lic-k">Bias</span><span>{safeText(u.bias_plain)}</span></div>
+                            <div><span className="lic-k">Episodes</span><span>{safeText(u.analog_count ?? 0)}</span></div>
+                            <div><span className="lic-k">Winners</span><span>{safeText(u.winners ?? 0)}</span></div>
+                            <div><span className="lic-k">Losers</span><span>{safeText(u.losers ?? 0)}</span></div>
+                          </div>
+                        </section>
+                        <section className="lic-drill-section">
+                          <h5 className="lic-drill-h">Forward outcome (historical)</h5>
+                          <p className="lic-analog-line">{safeText(u.forward_outcome_summary)}</p>
+                        </section>
+                        <section className="lic-drill-section">
+                          <h5 className="lic-drill-h">Exit timing hint</h5>
+                          <p className="lic-analog-line">{safeText(u.exit_timing_hint_plain)}</p>
+                        </section>
                         {weak ? (
                           <div className="lic-analog-weakbox">
-                            <div className="lic-analog-weaktitle">Weak historical guidance</div>
-                            <p className="lic-analog-warn">{safeText(u.low_similarity_note || 'Match is weak — weight tape, thesis, and risk limits more than averages.')}</p>
+                            <div className="lic-analog-weaktitle">Analog guidance weak</div>
+                            <p className="lic-analog-warn">{safeText(u.low_similarity_note || 'Current path has low similarity to trained historical episodes — lean on tape, thesis, and risk limits.')}</p>
                           </div>
                         ) : null}
                       </>
@@ -865,14 +948,22 @@ function LiveIntelligenceCockpitInner() {
                 </div>
               )}
               {detailTab === 'simulator' && (
-                <div className="lic-sim-panel">
+                <div className="lic-drill-panel lic-sim-panel">
                   {(() => {
                     const sim = activeIntel.action_simulation || {}
                     const best = sim.best_action || {}
                     const rows = asArray(sim.alternatives)
                     const mis = sim.misalignment_note
+                    const bestKey = best?.action
+                    const tileRec = bandLabel(activeIntel?.final_recommendation)
                     return (
                       <>
+                        <p className="lic-sim-tile-ref">
+                          Tile recommendation: <strong>{tileRec}</strong>
+                          <span className="lic-sim-tile-ref-hint" title="Resolved stance on the tile; table ranks actions by net score.">
+                            {' '}· net score = upside − downside (heuristic)
+                          </span>
+                        </p>
                         <div className="lic-sim-best">
                           <div className="lic-sim-best-label">Least-regret move now</div>
                           <div className="lic-sim-best-action">{safeText(best.label)}</div>
@@ -884,31 +975,45 @@ function LiveIntelligenceCockpitInner() {
                             <p className="lic-sim-misalign-copy">{safeText(mis)}</p>
                           </div>
                         ) : null}
-                        <table className="lic-sim-table">
-                          <thead>
-                            <tr>
-                              <th>Action</th>
-                              <th>Upside</th>
-                              <th>Downside</th>
-                              <th>Giveback</th>
-                              <th>Regret</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {rows.map((r, ri) => (
-                              <tr key={r?.action ?? r?.label ?? `sim-${ri}`}>
-                                <td>{safeText(r?.label)}</td>
-                                <td>{formatSimPct(r?.expected_upside)}</td>
-                                <td>{formatSimPct(r?.expected_downside)}</td>
-                                <td>{formatSimPct(r?.giveback_risk)}</td>
-                                <td>{safeText(r?.regret_tilt)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {rows.map((r, ri) => (
-                          <p key={`${r?.action ?? ri}-rat`} className="lic-sim-rat"><b>{r?.label}:</b> {r?.rationale}</p>
-                        ))}
+                        <section className="lic-drill-section">
+                          <h5 className="lic-drill-h">All actions</h5>
+                          <p className="lic-drill-muted">Highlighted row matches the highest net-score action. Rationale below the table.</p>
+                          <div className="lic-sim-table-wrap">
+                            <table className="lic-sim-table">
+                              <thead>
+                                <tr>
+                                  <th>Action</th>
+                                  <th>Upside</th>
+                                  <th>Downside</th>
+                                  <th>Giveback</th>
+                                  <th>Regret</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.map((r, ri) => (
+                                  <tr
+                                    key={r?.action ?? r?.label ?? `sim-${ri}`}
+                                    className={r?.action === bestKey ? 'lic-sim-row--best' : undefined}
+                                  >
+                                    <td>{safeText(r?.label)}</td>
+                                    <td>{formatSimPct(r?.expected_upside)}</td>
+                                    <td>{formatSimPct(r?.expected_downside)}</td>
+                                    <td>{formatSimPct(r?.giveback_risk)}</td>
+                                    <td>{safeText(r?.regret_tilt)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </section>
+                        <section className="lic-drill-section">
+                          <h5 className="lic-drill-h">Rationale by action</h5>
+                          {rows.map((r, ri) => (
+                            <p key={`${r?.action ?? ri}-rat`} className="lic-sim-rat">
+                              <b>{r?.label}:</b> {r?.rationale}
+                            </p>
+                          ))}
+                        </section>
                       </>
                     )
                   })()}
@@ -936,7 +1041,7 @@ function LiveIntelligenceCockpitInner() {
                 </div>
               )}
               {detailTab === 'evidence' && (
-                <div className="lic-evidence">
+                <div className="lic-drill-panel lic-evidence">
                   {(() => {
                     const ev = activeIntel.evidence_sections || {}
                     const keys = ['tape', 'thesis', 'risk', 'analog', 'portfolio_factor', 'novelty']
@@ -989,7 +1094,7 @@ function LiveIntelligenceCockpitInner() {
                 </div>
               )}
               {detailTab === 'ai' && (
-                <div>
+                <div className="lic-drill-panel lic-drill-panel--ai">
                   <button type="button" onClick={runAi}>Run AI committee (event)</button>
                   <pre className="lic-detail-pre" style={{ marginTop: 8 }}>
                     {JSON.stringify(aiResult, null, 2)}

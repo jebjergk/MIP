@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from app.services.live_intelligence import lic_display
+
+# Minimum wall time between case-file rows for the same symbol when only non-material signature fields drift.
+CASE_FILE_MIN_EMIT_INTERVAL_SEC = 180
 
 # Aligned with exit urgency ladder (higher = more defensive)
 BAND_ORDER = {"STAY_COURSE": 0, "WATCH_CLOSELY": 1, "PREPARE_EXIT": 2, "EXIT_NOW": 3}
@@ -188,6 +192,43 @@ def build_case_file_signature(
         str(regret_bucket or ""),
     ]
     return "|".join(parts)
+
+
+def case_file_event_material_override(prior_signature: str, new_signature: str) -> bool:
+    """True => allow a case-file row even inside the rate-limit window.
+
+    Material = primary band, simulator fallback (best action), confidence bucket,
+    or thesis fracture changed. (Primary band flip covers escalation/de-escalation on the ladder.)
+    """
+    ps = str(prior_signature or "").strip()
+    if not ps:
+        return True
+    a = ps.split("|")
+    b = str(new_signature or "").strip().split("|")
+    need = 8
+    if len(a) < need or len(b) < need:
+        return True
+    if a[0] != b[0]:
+        return True
+    if a[1] != b[1]:
+        return True
+    if a[3] != b[3]:
+        return True
+    if a[4] != b[4]:
+        return True
+    return False
+
+
+def seconds_between_iso(earlier_iso: str | None, later_iso: str) -> float | None:
+    """Return later - earlier in seconds, or None if unparsable / missing."""
+    if not earlier_iso or not later_iso:
+        return None
+    try:
+        e = datetime.fromisoformat(str(earlier_iso).replace("Z", "+00:00"))
+        l = datetime.fromisoformat(str(later_iso).replace("Z", "+00:00"))
+        return (l - e).total_seconds()
+    except (TypeError, ValueError):
+        return None
 
 
 def analog_tile_line(analog_summary: dict[str, Any]) -> str:

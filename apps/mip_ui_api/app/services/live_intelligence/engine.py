@@ -8,17 +8,20 @@ from typing import Any
 from app.services.live_intelligence.analog import match_analogs
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime, merge_pairwise_from_bootstrap
 from app.services.live_intelligence.resolver import (
+    CASE_FILE_MIN_EMIT_INTERVAL_SEC,
     analog_tier_key,
     build_case_file_signature,
     build_delta_fields,
     build_feed_fingerprint,
     build_why_now_bullets,
+    case_file_event_material_override,
     confidence_block,
     dominant_world_key,
     novelty_explanation_one_liner,
     regret_bucket_from_sim,
     regret_tilt_label,
     resolve_final_recommendation,
+    seconds_between_iso,
     should_emit_feed_event,
     urgency_to_final_band,
 )
@@ -490,28 +493,38 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         if emit_feed and prior:
             prior_case_sig = str(prior.get("case_file_signature") or "")
             if prior_case_sig != case_file_signature:
-                prior_band = prior.get("final_recommendation") or urgency_to_final_band(prior.get("exit_urgency"))
-                transition_plain = (
-                    f"{lic_display.recommendation_headline(prior_band)} → {lic_display.recommendation_headline(final_band)}"
+                material = case_file_event_material_override(prior_case_sig, case_file_signature)
+                elapsed = seconds_between_iso(prior.get("last_case_file_emit_at"), now)
+                too_soon = (
+                    elapsed is not None
+                    and elapsed >= 0
+                    and elapsed < float(CASE_FILE_MIN_EMIT_INTERVAL_SEC)
                 )
-                reason_plain = lic_display.build_feed_reason_plain(crossed)
-                act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
-                sev = lic_display.feed_event_severity(final_band, thesis_fracture, sl_near)
-                feed_events.append(
-                    {
-                        "timestamp": now,
-                        "ts": now,
-                        "symbol": sym,
-                        "scope": "symbol",
-                        "transition": transition_plain,
-                        "state_transition": transition_plain,
-                        "reason": reason_plain,
-                        "what_changed": reason_plain,
-                        "action_implication": act_label,
-                        "final_recommendation": final_band,
-                        "severity": sev,
-                    }
-                )
+                allow_row = material or not too_soon
+                if allow_row:
+                    prior_band = prior.get("final_recommendation") or urgency_to_final_band(prior.get("exit_urgency"))
+                    transition_plain = (
+                        f"{lic_display.recommendation_headline(prior_band)} → {lic_display.recommendation_headline(final_band)}"
+                    )
+                    reason_plain = lic_display.build_feed_reason_plain(crossed)
+                    act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
+                    sev = lic_display.feed_event_severity(final_band, thesis_fracture, sl_near)
+                    feed_events.append(
+                        {
+                            "timestamp": now,
+                            "ts": now,
+                            "symbol": sym,
+                            "scope": "symbol",
+                            "transition": transition_plain,
+                            "state_transition": transition_plain,
+                            "reason": reason_plain,
+                            "what_changed": reason_plain,
+                            "action_implication": act_label,
+                            "final_recommendation": final_band,
+                            "severity": sev,
+                        }
+                    )
+                    intelligence[sym]["last_case_file_emit_at"] = now
 
     return {
         "intelligence_by_symbol": intelligence,

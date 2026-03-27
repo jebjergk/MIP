@@ -196,6 +196,7 @@ function mergeTrackerIb(trackerPayload, livePayload) {
 const PRIOR_INTEL_SLIM_KEYS = new Set([
   'feed_fingerprint',
   'case_file_signature',
+  'last_case_file_emit_at',
   'final_recommendation',
   'exit_urgency',
   'thesis_fracture',

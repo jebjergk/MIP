@@ -1,8 +1,15 @@
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 from app.services.live_intelligence.ai_committee import run_ai_enrichment
+from app.services.live_intelligence import engine as lic_engine
 from app.services.live_intelligence.engine import run_deterministic_step
-from app.services.live_intelligence.resolver import build_case_file_signature
+from app.services.live_intelligence.resolver import (
+    build_case_file_signature,
+    case_file_event_material_override,
+    seconds_between_iso,
+)
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime
 from app.services.live_intelligence import lic_display
 
@@ -153,6 +160,63 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
             regret_bucket="exit_favored",
         )
         self.assertEqual(a, b)
+
+    def test_case_file_event_material_override(self):
+        base = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        regret_only = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|exit_favored"
+        self.assertFalse(case_file_event_material_override(base, regret_only))
+        band_flip = "WATCH_CLOSELY|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        self.assertTrue(case_file_event_material_override(base, band_flip))
+        fb_change = "STAY_COURSE|exit_now|M|M|THESIS_INTACT|weak|0|balanced"
+        self.assertTrue(case_file_event_material_override(base, fb_change))
+        thesis = "STAY_COURSE|hold|M|M|THESIS_DAMAGED|weak|0|balanced"
+        self.assertTrue(case_file_event_material_override(base, thesis))
+        self.assertTrue(case_file_event_material_override("", base))
+
+    def test_seconds_between_iso(self):
+        a = "2025-06-01T12:00:00+00:00"
+        b = "2025-06-01T12:02:30+00:00"
+        self.assertEqual(seconds_between_iso(a, b), 150.0)
+
+    def test_rate_limit_blocks_non_material_signature_drift(self):
+        sig_a = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        sig_b = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|exit_favored"
+        self.assertFalse(case_file_event_material_override(sig_a, sig_b))
+        with patch.object(lic_engine, "build_case_file_signature", return_value=sig_a):
+            o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
+        prior = dict(o1["intelligence_by_symbol"]["TEST"])
+        prior["feed_fingerprint"] = "stale|trigger|emit"
+        prior["dominant_world_id"] = "__bogus__"
+        prior["last_case_file_emit_at"] = datetime.now(timezone.utc).isoformat()
+        with (
+            patch.object(lic_engine, "build_case_file_signature", return_value=sig_b),
+            patch.object(lic_engine, "seconds_between_iso", return_value=30.0),
+            patch.object(lic_engine, "CASE_FILE_MIN_EMIT_INTERVAL_SEC", 3600),
+        ):
+            o2 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {"TEST": prior}})
+        self.assertEqual(
+            o2["feed_events"],
+            [],
+            "non-material signature change inside min interval should not emit",
+        )
+
+    def test_rate_limit_override_when_material(self):
+        sig_a = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        sig_b = "WATCH_CLOSELY|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        self.assertTrue(case_file_event_material_override(sig_a, sig_b))
+        with patch.object(lic_engine, "build_case_file_signature", return_value=sig_a):
+            o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
+        prior = dict(o1["intelligence_by_symbol"]["TEST"])
+        prior["feed_fingerprint"] = "stale|trigger|emit"
+        prior["dominant_world_id"] = "__bogus__"
+        prior["last_case_file_emit_at"] = datetime.now(timezone.utc).isoformat()
+        with (
+            patch.object(lic_engine, "build_case_file_signature", return_value=sig_b),
+            patch.object(lic_engine, "seconds_between_iso", return_value=30.0),
+            patch.object(lic_engine, "CASE_FILE_MIN_EMIT_INTERVAL_SEC", 3600),
+        ):
+            o2 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {"TEST": prior}})
+        self.assertEqual(len(o2["feed_events"]), 1)
 
     def test_simulator_misalignment_flag_when_net_best_differs_from_band(self):
         """STAY_COURSE prefers hold; net winner is often trim/exit — expect possible misalignment."""

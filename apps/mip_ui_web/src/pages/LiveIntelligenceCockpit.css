@@ -313,3 +313,309 @@
   color: #94a3b8;
   font-size: 0.75rem;
 }
+
+.lic-feed-time {
+  font-size: 0.65rem;
+  color: #94a3b8;
+  margin-bottom: 0.2rem;
+}
+
+.lic-tile-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.lic-tile-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.lic-tile-sym {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #f8fafc;
+}
+
+.lic-tile-side {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.lic-tile-head-metrics {
+  text-align: right;
+  font-size: 0.72rem;
+  color: #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.lic-tile-age {
+  color: #64748b;
+  font-size: 0.68rem;
+}
+
+.lic-pnl-pos { color: #86efac; }
+.lic-pnl-neg { color: #fca5a5; }
+
+.lic-mini-chart {
+  margin: 0.25rem 0 0.4rem;
+  border-radius: 6px;
+  background: #020617;
+  border: 1px solid #1e293b;
+  overflow: hidden;
+}
+
+.lic-mini-chart--empty {
+  font-size: 0.65rem;
+  color: #64748b;
+  padding: 0.35rem;
+}
+
+.lic-mini-svg {
+  display: block;
+  width: 100%;
+  height: 44px;
+}
+
+.lic-mini-ref {
+  stroke: #475569;
+  stroke-width: 0.35;
+  vector-effect: non-scaling-stroke;
+}
+
+.lic-mini-line {
+  stroke: #38bdf8;
+  stroke-width: 0.5;
+}
+
+.lic-mini-dot {
+  fill: #fbbf24;
+}
+
+.lic-mini-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.58rem;
+  color: #64748b;
+  padding: 0.15rem 0.35rem 0.35rem;
+}
+
+.lic-mini-lg { color: #64748b; }
+
+.lic-tile-dominant {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  line-height: 1.25;
+  margin-bottom: 0.25rem;
+}
+
+.lic-tile-conf {
+  font-size: 0.7rem;
+  color: #cbd5e1;
+  margin-bottom: 0.35rem;
+}
+
+.lic-tile-conf-cap {
+  display: block;
+  font-size: 0.65rem;
+  color: #64748b;
+  margin-top: 0.15rem;
+}
+
+.lic-tile-thesis {
+  font-size: 0.78rem;
+  color: #e2e8f0;
+  line-height: 1.35;
+  margin-bottom: 0.35rem;
+}
+
+.lic-tile-drivers {
+  margin: 0 0 0.4rem;
+  padding-left: 1rem;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.lic-tile-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.lic-chip {
+  font-size: 0.62rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  max-width: 100%;
+}
+
+.lic-chart-wrap--drill {
+  height: 220px;
+}
+
+.lic-chart-legend-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.62rem;
+  color: #94a3b8;
+  margin-top: 0.35rem;
+}
+
+.lic-lg {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  margin-right: 0.2rem;
+  vertical-align: middle;
+}
+.lic-lg.sw { background: #38bdf8; }
+.lic-lg.med { background: #a78bfa; }
+.lic-lg.band { background: #475569; }
+.lic-lg.ent { background: #94a3b8; }
+.lic-lg.sl { background: #f87171; }
+.lic-lg.tp { background: #4ade80; }
+
+.lic-worlds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.lic-world-card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+}
+
+.lic-world-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.25rem;
+}
+
+.lic-world-title { font-weight: 700; color: #f1f5f9; font-size: 0.82rem; }
+.lic-world-pct { font-size: 0.75rem; color: #7dd3fc; }
+
+.lic-world-expl {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+
+.lic-world-sub {
+  font-size: 0.65rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+
+.lic-world-triggers {
+  margin: 0 0 0.35rem;
+  padding-left: 1rem;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.lic-world-action {
+  font-size: 0.72rem;
+  color: #fde68a;
+  line-height: 1.35;
+}
+
+.lic-analog-panel { font-size: 0.72rem; color: #e2e8f0; }
+.lic-analog-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.lic-analog-grid .lic-k { color: #64748b; display: block; font-size: 0.62rem; }
+.lic-analog-warn {
+  color: #fcd34d;
+  font-size: 0.72rem;
+  margin-top: 0.35rem;
+}
+
+.lic-sim-panel { font-size: 0.72rem; }
+.lic-sim-best {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.lic-sim-best-label { font-size: 0.62rem; color: #64748b; text-transform: uppercase; }
+.lic-sim-best-action { font-size: 0.95rem; font-weight: 700; color: #f1f5f9; margin: 0.2rem 0; }
+.lic-sim-best-why { margin: 0; color: #cbd5e1; line-height: 1.35; }
+
+.lic-sim-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.65rem;
+  margin-bottom: 0.5rem;
+}
+.lic-sim-table th, .lic-sim-table td {
+  border: 1px solid #334155;
+  padding: 0.25rem 0.35rem;
+  text-align: left;
+}
+.lic-sim-table th { color: #94a3b8; font-weight: 600; }
+.lic-sim-rat { margin: 0.25rem 0; color: #94a3b8; line-height: 1.35; }
+
+.lic-timeline { display: flex; flex-direction: column; gap: 0.45rem; }
+.lic-tl-row {
+  background: #0f172a;
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  border-left: 3px solid #475569;
+  font-size: 0.68rem;
+}
+.lic-tl-time { color: #64748b; font-size: 0.62rem; }
+.lic-tl-sev { color: #fcd34d; font-size: 0.62rem; }
+.lic-tl-trans { color: #94a3b8; margin: 0.15rem 0; }
+.lic-tl-body { color: #e2e8f0; line-height: 1.35; }
+.lic-tl-act { color: #7dd3fc; margin-top: 0.2rem; }
+
+.lic-evidence { display: flex; flex-direction: column; gap: 0.5rem; }
+.lic-ev-block {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+}
+.lic-ev-title { margin: 0 0 0.25rem; font-size: 0.78rem; color: #f1f5f9; }
+.lic-ev-sum { margin: 0 0 0.35rem; font-size: 0.72rem; color: #cbd5e1; line-height: 1.35; }
+.lic-ev-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+@media (max-width: 400px) { .lic-ev-col { grid-template-columns: 1fr; } }
+.lic-ev-tag { font-size: 0.6rem; color: #86efac; text-transform: uppercase; letter-spacing: 0.03em; }
+.lic-ev-tag--opp { color: #fca5a5; }
+.lic-ev-supports ul, .lic-ev-opp ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.68rem;
+  color: #e2e8f0;
+  line-height: 1.35;
+}
+.lic-ev-foot {
+  font-size: 0.72rem;
+  color: #fde68a;
+  line-height: 1.35;
+  margin: 0.25rem 0 0;
+}

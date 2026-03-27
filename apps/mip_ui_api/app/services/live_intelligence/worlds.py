@@ -1,4 +1,4 @@
-"""Deterministic parallel worlds (formulaic probabilities)."""
+"""Deterministic parallel worlds (formulaic probabilities, plain-English UI fields)."""
 
 from __future__ import annotations
 
@@ -22,20 +22,82 @@ def build_scenario_worlds(tile: dict[str, Any], thesis_fracture: str, exit_urgen
     s = bull_p + base_p + risk_p + shock_p + decay_p
     bull_p, base_p, risk_p, shock_p, decay_p = (bull_p / s, base_p / s, risk_p / s, shock_p / s, decay_p / s)
 
-    def world(name: str, p: float, bias: str) -> dict[str, Any]:
+    def world(
+        wid: str,
+        title: str,
+        p: float,
+        explanation: str,
+        triggers: list[str],
+        action_if_dominant: str,
+    ) -> dict[str, Any]:
         return {
-            "world": name,
+            "id": wid,
+            "title": title,
             "probability": round(p, 4),
-            "short_horizon_bias": bias,
-            "rest_of_day_bias": bias,
-            "triggers": [],
-            "preferred_action_if_dominant": "HOLD" if name == "BASE" else ("PREPARE" if name in {"RISK", "SHOCK"} else "MONITOR"),
+            "probability_pct": round(p * 100, 1),
+            "explanation": explanation,
+            "trigger_conditions": triggers,
+            "action_if_dominant": action_if_dominant,
         }
 
+    long_up = "Price works higher with benign vol and no thesis break."
+
     return [
-        world("BULL", bull_p, "up" if side == "LONG" else "down"),
-        world("BASE", base_p, "chop"),
-        world("RISK", risk_p, "down" if side == "LONG" else "up"),
-        world("SHOCK", shock_p, "gap_against"),
-        world("TIME_DECAY", decay_p, "theta_bleed"),
+        world(
+            "bull",
+            "Bull",
+            bull_p,
+            long_up if side == "LONG" else "Price continues against a short in a squeeze-style path.",
+            [
+                "Tape holds constructive higher lows" if side == "LONG" else "Tape holds constructive lower highs",
+                "Volatility does not spike into a shock regime",
+                "Thesis remains at least stretched-not-broken",
+            ],
+            "Add or hold only per plan; avoid chasing if size is already full.",
+        ),
+        world(
+            "base",
+            "Base",
+            base_p,
+            "Choppy, mean-reverting session: neither clean trend nor clean failure.",
+            [
+                "Intraday range holds around recent value",
+                "No synchronized book shock across holdings",
+            ],
+            "Default to your plan levels; prefer patience over reactive trading.",
+        ),
+        world(
+            "risk",
+            "Risk",
+            risk_p,
+            "Gradual risk-off: thesis softens, correlations pick up, or progress stalls.",
+            [
+                "Thesis moves toward damaged or broken",
+                "Multiple positions deteriorate together",
+                "Distance to stop compresses without reward",
+            ],
+            "Reduce size or tighten risk; prepare an explicit exit ladder.",
+        ),
+        world(
+            "shock",
+            "Shock",
+            shock_p,
+            "A gap or vol event moves price faster than normal adjustment.",
+            [
+                "Live vol materially above trained regime",
+                "Liquidity thins or headline risk spikes",
+            ],
+            "Protect first: assume execution slippage; favor decisive trims or flat.",
+        ),
+        world(
+            "time_decay",
+            "Time decay",
+            decay_p,
+            "Theta and opportunity cost bite: edge fades even if price is flat.",
+            [
+                "Time passes without thesis progress",
+                "Stop proximity rises as range compresses",
+            ],
+            "Re-underwrite the hold: either refresh thesis or free capital.",
+        ),
     ]

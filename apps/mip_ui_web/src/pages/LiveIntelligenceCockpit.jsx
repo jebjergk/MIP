@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE } from '../App'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import LicTileMiniChart from '../components/lic/LicTileMiniChart'
 import './LiveIntelligenceCockpit.css'
 
 
@@ -14,6 +15,7 @@ function sessionFeedRow() {
     symbol: 'SESSION',
     state_transition: 'SESSION_START',
     what_changed: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
+    reason: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
     action_implication: 'Review tiles for resolved stance and simulator alignment.',
     final_recommendation: '\u2014',
     severity: 'INFO',
@@ -34,6 +36,31 @@ function bandLabel(band) {
     STAY_COURSE: 'Stay the course',
   }
   return m[band] || (band || '\u2014').replace(/_/g, ' ')
+}
+
+
+function formatHoldingAge(iso) {
+  if (!iso) return '—'
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return '—'
+  const h = Math.floor((Date.now() - t) / 3600000)
+  if (h < 72) return `${h}h`
+  return `${Math.floor(h / 24)}d`
+}
+
+function formatMoney(n) {
+  const x = Number(n)
+  if (!Number.isFinite(x)) return '—'
+  const s = Math.abs(x).toFixed(0)
+  return x >= 0 ? `+$${s}` : `-$${s}`
+}
+
+function formatFeedTime(row) {
+  const s = row.ts || row.timestamp
+  if (!s) return ''
+  const d = new Date(s)
+  if (!Number.isFinite(d.getTime())) return String(s)
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 
@@ -126,12 +153,13 @@ export default function LiveIntelligenceCockpit() {
     return resp.json()
   }, [])
 
-  const runStep = useCallback(async (tiles, priorIntel) => {
+  const runStep = useCallback(async (tiles, priorIntel, priorPortfolioRegime) => {
     const positions = Array.isArray(tiles) ? tiles : []
     const body = {
       bootstrap_version: bootstrapVersion || '1.0.0',
       positions,
       prior_intelligence: priorIntel,
+      prior_portfolio_regime: priorPortfolioRegime || {},
       session_peak_pnl_by_symbol: peakPnl,
       analog_episodes_by_symbol: analogBySymbol,
       portfolio_context: portfolioContext,
@@ -220,7 +248,7 @@ export default function LiveIntelligenceCockpit() {
         })
         return next
       })
-      const step = await runStep(merged.tiles || [], intelligence)
+      const step = await runStep(merged.tiles || [], intelligence, portfolioRegime)
       setIntelligence(step.intelligence_by_symbol || {})
       setPortfolioRegime(step.portfolio_regime || {})
       const ev = step.feed_events || []
@@ -258,6 +286,24 @@ export default function LiveIntelligenceCockpit() {
       c: Number(b.close),
       ts: String(b.ts || '').slice(11, 19) || i,
     })).filter((r) => Number.isFinite(r.c))
+  }, [activeTile])
+
+  const chartOverlay = useMemo(() => {
+    if (!activeTile) return {}
+    const o = activeTile.overlays || {}
+    const exp = activeTile.expectation || {}
+    const nf = (x) => {
+      const v = Number(x)
+      return Number.isFinite(v) ? v : null
+    }
+    return {
+      entry: nf(o.entry ?? activeTile.entry_price),
+      sl: nf(o.stop_loss),
+      tp: nf(o.take_profit),
+      med: nf(exp?.center_path?.[0]?.price),
+      lo: nf(exp?.lower_path?.[0]?.price),
+      hi: nf(exp?.upper_path?.[0]?.price),
+    }
   }, [activeTile])
 
   const runAi = useCallback(async () => {
@@ -332,9 +378,9 @@ export default function LiveIntelligenceCockpit() {
             {ranked.map((t) => {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
-              const urg = intel?.exit_urgency || 'HOLD'
-              const band = intel?.final_recommendation
-              const pref = (intel?.action_simulation?.preferred_ranking || [])[0]
+              const rd = intel?.recommendation_display || {}
+              const headline = rd.headline || bandLabel(intel?.final_recommendation)
+              const au = intel?.analog_ui || {}
               return (
                 <button
                   key={s}
@@ -342,22 +388,39 @@ export default function LiveIntelligenceCockpit() {
                   className={`lic-tile ${selectedSymbol === s ? 'lic-tile--selected' : ''}`}
                   onClick={() => setSelectedSymbol(s)}
                 >
-                  <h3>{formatSymbolLabel(t.symbol, t.market_type)} · {t.side}</h3>
-                  <div className="lic-tile-band">{bandLabel(band)}</div>
-                  <div className="lic-tile-meta">
-                    <span>Thesis: {intel?.thesis_fracture || '—'}</span>
-                    <span>Novelty: {intel?.novelty_state || '—'}</span>
-                    <span>Action (aligned): {pref || '—'}</span>
-                    <span className={`lic-urgency lic-urgency--${urg}`}>Urgency: {urg.replace(/_/g, ' ')}</span>
+                  <div className="lic-tile-head">
+                    <div className="lic-tile-head-main">
+                      <span className="lic-tile-sym">{formatSymbolLabel(t.symbol, t.market_type)}</span>
+                      <span className="lic-tile-side">{t.side}</span>
+                    </div>
+                    <div className="lic-tile-head-metrics">
+                      <span>{Number.isFinite(Number(t.current_price)) ? Number(t.current_price).toFixed(2) : '—'}</span>
+                      <span className={Number(t.unrealized_pnl) < 0 ? 'lic-pnl-neg' : 'lic-pnl-pos'}>
+                        {formatMoney(t.unrealized_pnl)}
+                      </span>
+                      <span className="lic-tile-age">{formatHoldingAge(t.opened_at)}</span>
+                    </div>
                   </div>
-                  <div className="lic-tile-sub">
-                    {intel?.portfolio_factor_chip ? <div>{intel.portfolio_factor_chip}</div> : null}
-                    {intel?.analog_tile_line ? <div>{intel.analog_tile_line}</div> : null}
-                  </div>
-                  <div className="lic-tile-why">
-                    {(intel?.why_now_bullets || []).slice(0, 3).map((b) => (
-                      <div key={b}>• {b}</div>
+                  <LicTileMiniChart tile={t} />
+                  <div className="lic-tile-dominant">{headline}</div>
+                  {rd.confidence != null ? (
+                    <div className="lic-tile-conf">
+                      Confidence {Math.round(Number(rd.confidence) * 100)}%
+                      <span className="lic-tile-conf-cap">{rd.confidence_caption}</span>
+                    </div>
+                  ) : null}
+                  <div className="lic-tile-thesis">{intel?.thesis_plain || '—'}</div>
+                  <ul className="lic-tile-drivers">
+                    {(intel?.decision_drivers || []).map((d) => (
+                      <li key={d}>{d}</li>
                     ))}
+                  </ul>
+                  <div className="lic-tile-chips">
+                    <span className="lic-chip">Attention: {intel?.attention_band || '—'}</span>
+                    <span className="lic-chip">{intel?.novelty_plain || '—'}</span>
+                    <span className="lic-chip">{au.confidence_plain || 'History match'}</span>
+                    <span className="lic-chip">{intel?.portfolio_factor_chip || '—'}</span>
+                    <span className="lic-chip">{intel?.regret_tilt_label || '—'}</span>
                   </div>
                 </button>
               )
@@ -371,11 +434,12 @@ export default function LiveIntelligenceCockpit() {
             {feed.length === 0 ? <div className="lic-feed-empty">No material events yet.</div> : null}
             {feed.map((row) => {
               const k = `${row.ts || row.timestamp || ''}_${row.symbol}_${row.state_transition || row.transition || ''}`
-              const body = row.what_changed || row.why_now_human || ''
+              const body = row.reason || row.what_changed || row.why_now_human || ''
               const trans = row.state_transition || row.transition || ''
               const sev = row.severity || ''
               return (
                 <div key={k} className={`lic-feed-row lic-feed-row--${String(sev).toLowerCase()}`}>
+                  <div className="lic-feed-time">{formatFeedTime(row)}</div>
                   <div className="lic-feed-row-head">
                     <b>{row.symbol}</b>
                     {row.final_recommendation && row.symbol !== 'SESSION' ? (
@@ -386,7 +450,7 @@ export default function LiveIntelligenceCockpit() {
                   {trans ? <div className="lic-feed-trans">{trans}</div> : null}
                   <div className="lic-feed-body">{body}</div>
                   {row.action_implication ? (
-                    <div className="lic-feed-action">Implication: {row.action_implication}</div>
+                    <div className="lic-feed-action">Next move: {row.action_implication}</div>
                   ) : null}
                 </div>
               )
@@ -410,7 +474,7 @@ export default function LiveIntelligenceCockpit() {
               </div>
 
               {detailTab === 'chart' && (
-                <div className="lic-chart-wrap">
+                <div className="lic-chart-wrap lic-chart-wrap--drill">
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={chartData}>
@@ -420,39 +484,193 @@ export default function LiveIntelligenceCockpit() {
                           contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }}
                           labelStyle={{ color: '#cbd5e1' }}
                         />
+                        {chartOverlay.lo != null ? (
+                          <ReferenceLine y={chartOverlay.lo} stroke="#475569" strokeDasharray="4 3" />
+                        ) : null}
+                        {chartOverlay.hi != null ? (
+                          <ReferenceLine y={chartOverlay.hi} stroke="#475569" strokeDasharray="4 3" />
+                        ) : null}
+                        {chartOverlay.med != null ? (
+                          <ReferenceLine y={chartOverlay.med} stroke="#a78bfa" strokeDasharray="2 2" />
+                        ) : null}
+                        {chartOverlay.entry != null ? (
+                          <ReferenceLine y={chartOverlay.entry} stroke="#94a3b8" />
+                        ) : null}
+                        {chartOverlay.sl != null ? (
+                          <ReferenceLine y={chartOverlay.sl} stroke="#f87171" />
+                        ) : null}
+                        {chartOverlay.tp != null ? (
+                          <ReferenceLine y={chartOverlay.tp} stroke="#4ade80" />
+                        ) : null}
                         <Line type="monotone" dataKey="c" stroke="#38bdf8" dot={false} strokeWidth={1.5} />
                       </LineChart>
                     </ResponsiveContainer>
                   ) : (
                     <div className="lic-chart-empty">No bars</div>
                   )}
+                  <div className="lic-chart-legend-keys">
+                    <span><i className="lic-lg sw" />Price</span>
+                    <span><i className="lic-lg med" />Expectation median</span>
+                    <span><i className="lic-lg band" />Expectation band</span>
+                    <span><i className="lic-lg ent" />Entry</span>
+                    <span><i className="lic-lg sl" />Stop</span>
+                    <span><i className="lic-lg tp" />Target</span>
+                  </div>
                 </div>
               )}
 
               {detailTab === 'worlds' && (
-                <pre className="lic-detail-pre">{JSON.stringify(activeIntel.scenario_worlds, null, 2)}</pre>
+                <div className="lic-worlds">
+                  {(activeIntel.scenario_worlds || []).map((w) => (
+                    <div key={w.id} className="lic-world-card">
+                      <div className="lic-world-head">
+                        <span className="lic-world-title">{w.title}</span>
+                        <span className="lic-world-pct">{w.probability_pct ?? Math.round((w.probability || 0) * 100)}%</span>
+                      </div>
+                      <p className="lic-world-expl">{w.explanation}</p>
+                      <div className="lic-world-sub">If this scenario dominates</div>
+                      <ul className="lic-world-triggers">
+                        {(w.trigger_conditions || []).map((x) => (
+                          <li key={x}>{x}</li>
+                        ))}
+                      </ul>
+                      <div className="lic-world-action">{w.action_if_dominant}</div>
+                    </div>
+                  ))}
+                </div>
               )}
               {detailTab === 'analog' && (
-                <div>
-                  {activeIntel.analog_tile_line ? (
-                    <p className="lic-analog-line">{activeIntel.analog_tile_line}</p>
-                  ) : null}
-                  <pre className="lic-detail-pre">{JSON.stringify(activeIntel.analog_summary, null, 2)}</pre>
+                <div className="lic-analog-panel">
+                  {(() => {
+                    const u = activeIntel.analog_ui || {}
+                    return (
+                      <>
+                        <div className="lic-analog-grid">
+                          <div><span className="lic-k">Match quality</span><span>{u.confidence_plain}</span></div>
+                          <div><span className="lic-k">Bias</span><span>{u.bias_plain}</span></div>
+                          <div><span className="lic-k">Episodes</span><span>{u.analog_count ?? 0}</span></div>
+                          <div><span className="lic-k">Win / loss mix</span><span>{u.winners ?? 0} / {u.losers ?? 0}</span></div>
+                        </div>
+                        <p className="lic-analog-line">{u.forward_outcome_summary}</p>
+                        <p className="lic-analog-line">{u.exit_timing_hint_plain}</p>
+                        {u.low_similarity_note ? (
+                          <p className="lic-analog-warn">{u.low_similarity_note}</p>
+                        ) : null}
+                      </>
+                    )
+                  })()}
                 </div>
               )}
               {detailTab === 'simulator' && (
-                <div>
-                  {activeIntel.regret_tilt_label ? (
-                    <p className="lic-analog-line">{activeIntel.regret_tilt_label}</p>
-                  ) : null}
-                  <pre className="lic-detail-pre">{JSON.stringify(activeIntel.action_simulation, null, 2)}</pre>
+                <div className="lic-sim-panel">
+                  {(() => {
+                    const sim = activeIntel.action_simulation || {}
+                    const best = sim.best_action || {}
+                    const rows = sim.alternatives || []
+                    return (
+                      <>
+                        <div className="lic-sim-best">
+                          <div className="lic-sim-best-label">Favored action</div>
+                          <div className="lic-sim-best-action">{best.label}</div>
+                          <p className="lic-sim-best-why">{best.why}</p>
+                        </div>
+                        <table className="lic-sim-table">
+                          <thead>
+                            <tr>
+                              <th>Action</th>
+                              <th>Upside</th>
+                              <th>Downside</th>
+                              <th>Giveback</th>
+                              <th>Regret</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((r) => (
+                              <tr key={r.action}>
+                                <td>{r.label}</td>
+                                <td>{r.expected_upside}</td>
+                                <td>{r.expected_downside}</td>
+                                <td>{r.giveback_risk}</td>
+                                <td>{r.regret_tilt}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {rows.map((r) => (
+                          <p key={`${r.action}-rat`} className="lic-sim-rat"><b>{r.label}:</b> {r.rationale}</p>
+                        ))}
+                      </>
+                    )
+                  })()}
                 </div>
               )}
               {detailTab === 'timeline' && (
-                <pre className="lic-detail-pre">{JSON.stringify(timeline.filter((x) => x.symbol === selectedSymbol).slice(0, 20), null, 2)}</pre>
+                <div className="lic-timeline">
+                  {timeline.filter((x) => x.symbol === selectedSymbol).length === 0 ? (
+                    <p className="lic-muted">No material events for this symbol yet.</p>
+                  ) : (
+                    timeline.filter((x) => x.symbol === selectedSymbol).slice(0, 24).map((ev, idx) => (
+                      <div key={`${ev.ts || ev.timestamp || idx}-${ev.state_transition || idx}`} className="lic-tl-row">
+                        <div className="lic-tl-time">{formatFeedTime(ev)}</div>
+                        <div className="lic-tl-sev">{ev.severity}</div>
+                        <div className="lic-tl-trans">{ev.state_transition}</div>
+                        <div className="lic-tl-body">{ev.reason || ev.what_changed}</div>
+                        <div className="lic-tl-act">Next: {ev.action_implication}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
               )}
               {detailTab === 'evidence' && (
-                <pre className="lic-detail-pre">{JSON.stringify({ tile: activeTile, derived: activeIntel.derived_features }, null, 2)}</pre>
+                <div className="lic-evidence">
+                  {(() => {
+                    const ev = activeIntel.evidence_sections || {}
+                    const keys = ['tape', 'thesis', 'risk', 'analog', 'portfolio_factor', 'novelty']
+                    const titles = {
+                      tape: 'Tape',
+                      thesis: 'Thesis',
+                      risk: 'Risk geometry',
+                      analog: 'Historical analog',
+                      portfolio_factor: 'Portfolio factor',
+                      novelty: 'Novelty',
+                    }
+                    return keys.map((k) => {
+                      const sec = ev[k] || {}
+                      return (
+                        <section key={k} className="lic-ev-block">
+                          <h5 className="lic-ev-title">{titles[k]}</h5>
+                          <p className="lic-ev-sum">{sec.summary}</p>
+                          <div className="lic-ev-col">
+                            <div className="lic-ev-supports">
+                              <span className="lic-ev-tag">Supports recommendation</span>
+                              <ul>{(sec.supports || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                            </div>
+                            <div className="lic-ev-opp">
+                              <span className="lic-ev-tag lic-ev-tag--opp">Pushes the other way</span>
+                              <ul>{(sec.opposes || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                            </div>
+                          </div>
+                        </section>
+                      )
+                    })
+                  })()}
+                  <section className="lic-ev-block">
+                    <h5 className="lic-ev-title">Synthesis</h5>
+                    <div className="lic-ev-col">
+                      <div className="lic-ev-supports">
+                        <span className="lic-ev-tag">Why this call</span>
+                        <ul>{(activeIntel.supporting_signals || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                      </div>
+                      <div className="lic-ev-opp">
+                        <span className="lic-ev-tag lic-ev-tag--opp">Counterpoints</span>
+                        <ul>{(activeIntel.opposing_signals || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                      </div>
+                    </div>
+                  </section>
+                  {activeIntel.portfolio_factor_local ? (
+                    <p className="lic-ev-foot">{activeIntel.portfolio_factor_local.localized_plain}</p>
+                  ) : null}
+                </div>
               )}
               {detailTab === 'ai' && (
                 <div>

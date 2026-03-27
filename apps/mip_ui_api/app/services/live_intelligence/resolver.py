@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.live_intelligence import lic_display
+
 # Aligned with exit urgency ladder (higher = more defensive)
 BAND_ORDER = {"STAY_COURSE": 0, "WATCH_CLOSELY": 1, "PREPARE_EXIT": 2, "EXIT_NOW": 3}
 
@@ -42,48 +44,50 @@ def resolve_final_recommendation(
     opposing: list[str] = []
 
     if exit_urgency == "EXIT_NOW":
-        supporting.append("Price/stop geometry implies immediate risk of stop touch.")
+        supporting.append("Price is very close to the stop — immediate protection priority.")
     elif exit_urgency == "PREPARE":
-        supporting.append("Multiple paths converge on needing an exit plan soon.")
+        supporting.append("Several signals line up for having an exit plan ready soon.")
     elif exit_urgency == "MONITOR":
-        supporting.append("No immediate forced exit, but conditions warrant closer monitoring.")
+        supporting.append("No forced exit yet, but this deserves closer monitoring.")
 
     if thesis_fracture == "THESIS_BROKEN":
         band = _escalate(band, 2)
-        supporting.append("Thesis fracture reads as broken or invalidated.")
+        supporting.append("The original thesis no longer holds up well enough to justify full risk.")
     elif thesis_fracture == "THESIS_DAMAGED":
         band = _escalate(band, 1)
-        supporting.append("Thesis is damaged relative to expectation path.")
+        supporting.append("The thesis is damaged versus the path you modeled.")
     elif thesis_fracture == "THESIS_STRETCHED":
-        supporting.append("Thesis still plausible but stretched vs median path.")
-        opposing.append("Could normalize if price re-enters the expectation cone.")
+        supporting.append("The thesis is still possible but price has drifted from the core story.")
+        opposing.append("Could calm down if price snaps back inside the expected band.")
 
     if feats.get("pattern_label") == "RISK_OFF_BREAKDOWN":
         band = _escalate(band, 1)
-        supporting.append("Short-horizon tape pattern skews risk-off.")
+        supporting.append("Short-term tape is leaning risk-off.")
     if feats.get("pattern_label") == "VOLATILITY_SPIKE":
-        supporting.append("Realized vol elevated vs recent baseline.")
+        supporting.append("Recent swings are larger than usual — room for surprise moves.")
         if band == "STAY_COURSE":
             band = "WATCH_CLOSELY"
 
     if regime_active:
         band = _escalate(band, 1)
-        supporting.append("Portfolio-level stress hypothesis is active (co-movement / book shock).")
+        supporting.append("Other positions are moving against you together — possible shared shock.")
 
     if analog_match_quality > 0 and analog_match_quality < 0.18:
-        supporting.append("Historical analog match is weak - path less validated.")
+        supporting.append("Historical parallels are weak — backward-looking confidence is limited.")
         if band == "STAY_COURSE":
             band = "WATCH_CLOSELY"
 
     if exit_urgency == "HOLD" and thesis_fracture == "THESIS_INTACT" and not regime_active:
-        opposing.append("No strong exit trigger; default bias is patience within risk limits.")
+        opposing.append("No strong exit trigger — patience inside your risk limits is reasonable.")
 
     # Monotonic: never softer than urgency-derived floor
     floor = BAND_ORDER[urgency_to_final_band(exit_urgency)]
     if BAND_ORDER.get(band, 0) < floor:
         band = urgency_to_final_band(exit_urgency)
 
-    reason = f"Resolved to {band.replace('_', ' ').lower()} given urgency {exit_urgency}, thesis {thesis_fracture}."
+    reason = (
+        f"{lic_display.recommendation_headline(band)} — synthesized from tape, thesis, portfolio context, and history match."
+    )
     return band, reason, supporting[:6], opposing[:4]
 
 
@@ -98,7 +102,7 @@ def build_feed_fingerprint(
     tp_near: bool,
     hot_news: bool,
 ) -> str:
-    mq = round(float(analog_match_quality or 0), 3)
+    mq = round(float(analog_match_quality or 0), 2)
     parts = [
         final_band,
         thesis_fracture,
@@ -162,14 +166,15 @@ def regret_tilt_label(sim: dict[str, Any]) -> str:
     exit_alt = next((a for a in alts if a.get("action") == "exit_now"), None)
     hold_alt = next((a for a in alts if a.get("action") == "hold"), None)
     if not exit_alt or not hold_alt:
-        return "Regret tilt: balanced - compare trim vs hold in simulator table."
-    er_exit = float(exit_alt.get("expected_reward") or 0) - float(exit_alt.get("expected_risk") or 0)
-    er_hold = float(hold_alt.get("expected_reward") or 0) - float(hold_alt.get("expected_risk") or 0)
-    if er_exit > er_hold + 0.02:
-        return "Regret tilt: leaning exit - scenario mass favors cutting tail risk."
-    if er_hold > er_exit + 0.02:
-        return "Regret tilt: leaning hold - mean-reversion path still competes."
-    return "Regret tilt: neutral - exit and hold scenarios are close on net score."
+        ba = sim.get("best_action") or {}
+        return str(ba.get("why") or "Compare hold vs trim vs exit in the simulator.")
+    ne = float(exit_alt.get("net_score") or 0)
+    nh = float(hold_alt.get("net_score") or 0)
+    if ne > nh + 0.02:
+        return "If you are wrong, exiting now likely hurts less than dragging risk through a break."
+    if nh > ne + 0.02:
+        return "If you are wrong, holding may sting less than selling into a washout."
+    return "Exit and hold are close on net score — use your plan levels to decide."
 
 
 def confidence_block(
@@ -216,26 +221,25 @@ def build_why_now_bullets(
     tile: dict[str, Any],
 ) -> list[str]:
     bullets: list[str] = []
-    pat = feats.get("pattern_label")
-    if pat:
-        bullets.append(f"Tape pattern: {pat}.")
+    if feats.get("pattern_label"):
+        bullets.append(lic_display.plain_pattern(feats.get("pattern_label")))
     if dist_sl_pct is not None and dist_sl_pct < 0.03:
-        bullets.append("Stop distance is tight - path errors convert quickly into loss.")
+        bullets.append("Stop is close — small adverse moves can hit risk quickly.")
     if thesis_fracture not in {"THESIS_INTACT", ""}:
-        bullets.append(f"Thesis state: {thesis_fracture.replace('_', ' ').lower()}.")
+        bullets.append(lic_display.plain_thesis_fracture(thesis_fracture))
     if novelty != "NORMAL":
-        bullets.append(f"Novelty: {novelty.replace('_', ' ').lower()}.")
+        bullets.append(lic_display.plain_novelty(novelty))
     if regime_active:
-        bullets.append("Portfolio regime flag is on - shared factor risk.")
+        bullets.append("Other positions are stressed together — shared-factor risk matters.")
     mq = float(analog_summary.get("match_quality") or 0)
     if mq < 0.2:
-        bullets.append("Analog match is weak - historical playbook less informative.")
+        bullets.append("Historical parallels are thin — lean less on backward-looking stats.")
     if giveback:
-        bullets.append("Session PnL has given back materially from peak.")
+        bullets.append("Session profit has given back meaningfully from its peak.")
     events = tile.get("events") or []
     if any(str(e.get("type") or "").upper() == "NEWS" for e in events):
-        bullets.append("News or event items are attached to this symbol.")
-    bullets.append(f"Resolved stance: {final_band.replace('_', ' ').lower()}.")
+        bullets.append("There is news flow on this name — read headlines before sizing changes.")
+    bullets.append(f"Bottom line: {lic_display.recommendation_headline(final_band)}.")
     return bullets[:8]
 
 
@@ -247,6 +251,8 @@ def build_delta_fields(
     novelty: str,
     feats: dict[str, Any],
     why_bullets: list[str],
+    prior_regime_hypothesis: str | None = None,
+    regime_hypothesis: str | None = None,
 ) -> dict[str, Any]:
     crossed: list[str] = []
     if not prior:
@@ -267,6 +273,10 @@ def build_delta_fields(
         crossed.append(
             f"pattern:{prior.get('pattern_label')}->{feats.get('pattern_label')}",
         )
+    prh = str(prior_regime_hypothesis or "").strip()
+    crh = str(regime_hypothesis or "").strip()
+    if prh and crh and prh != crh:
+        crossed.append(f"portfolio_regime:{prh}->{crh}")
     persistent = len(crossed) == 0
     label = "Stable refresh" if persistent else "Material shift"
     human = (

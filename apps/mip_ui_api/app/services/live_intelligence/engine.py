@@ -8,18 +8,17 @@ from typing import Any
 from app.services.live_intelligence.analog import match_analogs
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime, merge_pairwise_from_bootstrap
 from app.services.live_intelligence.resolver import (
-    analog_tile_line,
     build_delta_fields,
     build_feed_fingerprint,
     build_why_now_bullets,
     confidence_block,
     novelty_explanation_one_liner,
-    portfolio_factor_chip,
     regret_tilt_label,
     resolve_final_recommendation,
     should_emit_feed_event,
     urgency_to_final_band,
 )
+from app.services.live_intelligence import lic_display
 from app.services.live_intelligence.simulator import simulate_actions
 from app.services.live_intelligence.worlds import build_scenario_worlds
 
@@ -263,6 +262,8 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         k.upper(): list(v) for k, v in (body.get("analog_episodes_by_symbol") or {}).items()
     }
     portfolio_ctx_in = body.get("portfolio_context") or {}
+    prior_pf = body.get("prior_portfolio_regime") or {}
+    prior_regime_hyp = str(prior_pf.get("hypothesis") or "")
 
     pw = merge_pairwise_from_bootstrap(portfolio_ctx_in if isinstance(portfolio_ctx_in, dict) else None)
     regime = detect_portfolio_regime(positions, pairwise_correlation=pw)
@@ -315,6 +316,8 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
 
         worlds = build_scenario_worlds(tile, thesis_fracture, exit_urg)
         sim = simulate_actions(tile, exit_urg, thesis_fracture, final_band=final_band)
+        analog_ui = lic_display.build_analog_ui(analog_summary)
+        pf_sym = lic_display.portfolio_factor_for_symbol(regime, sym)
 
         sl_near = dist_sl is not None and dist_sl < 0.02
         tp_near = dist_tp is not None and abs(dist_tp) < 0.02
@@ -338,6 +341,8 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             novelty=novelty,
             feats=feats,
             why_bullets=why_bullets,
+            prior_regime_hypothesis=prior_regime_hyp or None,
+            regime_hypothesis=regime_hyp,
         )
 
         fingerprint = build_feed_fingerprint(
@@ -351,7 +356,10 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             hot_news=hot,
         )
 
-        emit_feed = should_emit_feed_event(prior, fingerprint)
+        crossed = delta_fields.get("trigger_crossed") or []
+        emit_feed = bool(
+            should_emit_feed_event(prior, fingerprint) and len(crossed) > 0,
+        )
 
         next_intel_compare = {
             "exit_urgency": exit_urg,
@@ -364,6 +372,34 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         is_material = _material_state(prior, next_intel_compare)
 
         conf_block = confidence_block(feats, tile, mq, thesis_fracture)
+        evidence_sections = lic_display.build_evidence_sections(
+            feats=feats,
+            thesis_fracture=thesis_fracture,
+            novelty=novelty,
+            analog_ui=analog_ui,
+            portfolio_plain=pf_sym["localized_plain"],
+            supporting=supporting,
+            opposing=opposing,
+            regime_active=regime_active,
+            dist_sl_pct=dist_sl,
+        )
+        decision_drivers = lic_display.decision_drivers_from_bullets(why_bullets)
+        ba = sim.get("best_action") or {}
+        analog_short = (
+            f"{analog_ui['confidence_plain']} · {analog_ui['bias_plain']}"
+            if analog_ui.get("analog_count", 0)
+            else (analog_ui.get("low_similarity_note") or "No historical cluster for this snapshot.")
+        )
+        recommendation_display = {
+            "headline": lic_display.recommendation_headline(final_band),
+            "confidence": conf_block["headline"],
+            "confidence_caption": "Blend of thesis clarity, tape steadiness, and historical match quality.",
+            "primary_action": ba.get("label") or lic_display.primary_action_plain(ba.get("action")),
+            "primary_action_key": ba.get("action"),
+            "why_this_action": ba.get("why", ""),
+            "supporting_reasons": supporting,
+            "counterarguments": opposing,
+        }
         intel = {
             "symbol": sym,
             "position_state": {
@@ -375,22 +411,26 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
                 "opened_at": tile.get("opened_at"),
             },
             "thesis_fracture": thesis_fracture,
+            "thesis_plain": lic_display.plain_thesis_fracture(thesis_fracture),
             "legacy_thesis_status": legacy_thesis,
             "exit_urgency": exit_urg,
             "pattern_label": feats.get("pattern_label"),
             "final_recommendation": final_band,
             "final_recommendation_reason_summary": reason_summary,
+            "recommendation_display": recommendation_display,
             "supporting_signals": supporting,
             "opposing_signals": opposing,
             "attention_score": round(attn, 2),
             "attention_band": "High" if attn >= 70 else ("Med" if attn >= 40 else "Low"),
             "attention_components": {k: round(v, 2) for k, v in attn_components.items()},
             "novelty_state": novelty,
+            "novelty_plain": lic_display.plain_novelty(novelty),
             "novelty_explanation_one_liner": novelty_explanation_one_liner(novelty, tile, feats, mq),
+            "decision_drivers": decision_drivers,
             "why_now_bullets": why_bullets,
             "delta_label": delta_fields.get("delta_label"),
             "delta_reason": delta_fields.get("delta_reason"),
-            "trigger_crossed": delta_fields.get("trigger_crossed") or [],
+            "trigger_crossed": crossed,
             "new_vs_persistent": delta_fields.get("new_vs_persistent") or {},
             "why_now_delta": {
                 "human": delta_fields.get("delta_reason", ""),
@@ -399,12 +439,15 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             },
             "scenario_worlds": worlds,
             "analog_summary": analog_summary,
-            "analog_tile_line": analog_tile_line(analog_summary),
+            "analog_ui": analog_ui,
+            "analog_tile_line": analog_short,
             "action_simulation": sim,
             "regret_tilt_label": regret_tilt_label(sim),
             "confidence": conf_block,
             "confidence_decomposition": conf_block,
-            "portfolio_factor_chip": portfolio_factor_chip(regime),
+            "portfolio_factor_chip": pf_sym["chip_short"],
+            "portfolio_factor_local": pf_sym,
+            "evidence_sections": evidence_sections,
             "committee_state": {},
             "position_story": f"{sym} {tile.get('side')}: {final_band}. {reason_summary}",
             "materiality_state": "MATERIAL" if is_material else "STABLE",
@@ -416,18 +459,21 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         intelligence[sym] = intel
 
         if emit_feed and prior:
-            action_impl = final_band.replace("_", " ")
             prior_band = prior.get("final_recommendation") or urgency_to_final_band(prior.get("exit_urgency"))
-            transition = f"{prior_band}->{final_band}"
-            what_changed = delta_fields.get("delta_reason") or "; ".join(delta_fields.get("trigger_crossed") or [])
+            transition_plain = (
+                f"{lic_display.recommendation_headline(prior_band)} → {lic_display.recommendation_headline(final_band)}"
+            )
+            reason_plain = lic_display.build_feed_reason_plain(crossed)
+            act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
             feed_events.append(
                 {
                     "timestamp": now,
                     "ts": now,
                     "symbol": sym,
-                    "state_transition": transition,
-                    "what_changed": what_changed[:400],
-                    "action_implication": action_impl,
+                    "state_transition": transition_plain,
+                    "reason": reason_plain,
+                    "what_changed": reason_plain,
+                    "action_implication": act_label,
                     "final_recommendation": final_band,
                     "severity": "HIGH" if final_band == "EXIT_NOW" else ("ELEVATED" if final_band == "PREPARE_EXIT" else "INFO"),
                 }

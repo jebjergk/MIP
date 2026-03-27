@@ -36,6 +36,7 @@ def match_analogs(
     episodes: list[dict[str, Any]],
     *,
     k: int = 8,
+    max_episodes_scored: int = 160,
 ) -> dict[str, Any]:
     if not episodes:
         return {
@@ -46,6 +47,9 @@ def match_analogs(
             "match_quality": 0.0,
             "best_exit_hint_bars": None,
         }
+
+    if len(episodes) > max_episodes_scored:
+        episodes = list(episodes)[:max_episodes_scored]
 
     q = _feat_from_position(tile)
     scored = [( _dist(q, _feat_from_episode(ep)), ep) for ep in episodes]

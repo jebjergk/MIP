@@ -88,12 +88,13 @@ def live_intelligence_ib_live(payload: dict[str, Any] = Body(default_factory=dic
             elif item is not None:
                 symbol_specs.append({"symbol": str(item), "market_type": ""})
 
+    # Slightly generous timeout: multi-symbol 30s bars can exceed 60s on cold IB / RTH edges.
     ib_payload = run_agent_ibkr_live_bars(
         symbol_specs,
         interval_minutes=interval_minutes if interval_minutes > 0 else 1,
         window_bars=window_bars,
         bar_seconds=bar_seconds,
-        timeout_sec=90 if bar_seconds else 60,
+        timeout_sec=120 if bar_seconds else 75,
     )
 
     rows: list[dict[str, Any]] = []

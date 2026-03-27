@@ -143,7 +143,9 @@ function slimPriorIntelligence(intelBySymbol) {
   return out
 }
 
-const MAX_BARS_FOR_STEP = 256
+const MAX_BARS_FOR_STEP = 192
+
+const MAX_ANALOG_PER_SYMBOL = 96
 
 function trimTilesForStep(tiles, maxBars = MAX_BARS_FOR_STEP) {
   if (!Array.isArray(tiles)) return []
@@ -169,9 +171,23 @@ function analogEpisodesForTiles(analogBySymbol, tiles) {
   )
   const out = {}
   for (const s of syms) {
-    if (Object.prototype.hasOwnProperty.call(analogBySymbol, s)) out[s] = analogBySymbol[s]
+    if (!Object.prototype.hasOwnProperty.call(analogBySymbol, s)) continue
+    const eps = analogBySymbol[s]
+    if (!Array.isArray(eps)) {
+      out[s] = eps
+      continue
+    }
+    out[s] = eps.length > MAX_ANALOG_PER_SYMBOL ? eps.slice(0, MAX_ANALOG_PER_SYMBOL) : eps
   }
   return out
+}
+
+/** Engine only uses pairwise correlation from bootstrap portfolio context. */
+function slimPortfolioContextForStep(portfolioContext) {
+  if (!portfolioContext || typeof portfolioContext !== 'object') return {}
+  const pw = portfolioContext.pairwise_return_correlation
+  if (pw && typeof pw === 'object') return { pairwise_return_correlation: pw }
+  return {}
 }
 
 export default function LiveIntelligenceCockpit() {
@@ -192,7 +208,9 @@ export default function LiveIntelligenceCockpit() {
   const [peakPnl, setPeakPnl] = useState({})
   const [bootReady, setBootReady] = useState(false)
 
-  const fetchIbLive = useCallback(async (tiles) => {
+  const fetchIbLive = useCallback(async (tiles, options = {}) => {
+    const windowBars = Number.isFinite(Number(options.windowBars)) ? Number(options.windowBars) : 780
+    const softFail = options.softFail === true
     const symbols = (Array.isArray(tiles) ? tiles : [])
       .map((t) => ({ symbol: t?.symbol, market_type: t?.market_type }))
       .filter((t) => t.symbol)
@@ -200,7 +218,7 @@ export default function LiveIntelligenceCockpit() {
     const body = {
       mode: 'intraday',
       intraday_bar_seconds: 30,
-      window_bars: 780,
+      window_bars: Math.max(15, Math.min(800, Math.floor(windowBars))),
       symbols,
     }
     const resp = await fetch(`${API_BASE}/live-intelligence/ib-live`, {
@@ -208,7 +226,10 @@ export default function LiveIntelligenceCockpit() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!resp.ok) throw new Error(`IB live failed (${resp.status})`)
+    if (!resp.ok) {
+      if (softFail) return null
+      throw new Error(`IB live failed (${resp.status})`)
+    }
     return resp.json()
   }, [])
 
@@ -216,12 +237,12 @@ export default function LiveIntelligenceCockpit() {
     const positions = Array.isArray(tiles) ? tiles : []
     const body = {
       bootstrap_version: bootstrapVersion || '1.0.0',
-      positions,
-      prior_intelligence: priorIntel,
+      positions: trimTilesForStep(positions),
+      prior_intelligence: slimPriorIntelligence(priorIntel),
       prior_portfolio_regime: priorPortfolioRegime || {},
       session_peak_pnl_by_symbol: peakPnl,
-      analog_episodes_by_symbol: analogBySymbol,
-      portfolio_context: portfolioContext,
+      analog_episodes_by_symbol: analogEpisodesForTiles(analogBySymbol, positions),
+      portfolio_context: slimPortfolioContextForStep(portfolioContext),
     }
     const resp = await fetch(`${API_BASE}/live-intelligence/deterministic-step`, {
       method: 'POST',
@@ -294,22 +315,27 @@ export default function LiveIntelligenceCockpit() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshLive = useCallback(async () => {
+    if (!bootReady) return
     try {
       setError('')
-      const ib = await fetchIbLive(trackerData.tiles || [])
-      if (!ib) return
-      const merged = mergeTrackerIb(trackerData, ib)
-      setTrackerData(merged)
-      setPeakPnl((prev) => {
-        const next = { ...prev }
-        ;(merged.tiles || []).forEach((tile) => {
-          const s = String(tile.symbol || '').toUpperCase()
-          const p = Number(tile.unrealized_pnl)
-          if (!s || !Number.isFinite(p)) return
-          next[s] = Math.max(next[s] ?? p, p)
-        })
-        return next
+      const ib = await fetchIbLive(trackerData.tiles || [], {
+        windowBars: 256,
+        softFail: true,
       })
+      const merged = ib ? mergeTrackerIb(trackerData, ib) : trackerData
+      if (ib) {
+        setTrackerData(merged)
+        setPeakPnl((prev) => {
+          const next = { ...prev }
+          ;(merged.tiles || []).forEach((tile) => {
+            const s = String(tile.symbol || '').toUpperCase()
+            const p = Number(tile.unrealized_pnl)
+            if (!s || !Number.isFinite(p)) return
+            next[s] = Math.max(next[s] ?? p, p)
+          })
+          return next
+        })
+      }
       const step = await runStep(merged.tiles || [], intelligence, portfolioRegime)
       setIntelligence(step.intelligence_by_symbol || {})
       setPortfolioRegime(step.portfolio_regime || {})

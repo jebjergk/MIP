@@ -22,6 +22,7 @@ const NAV_GROUPS = [
       { to: '/live-portfolio-config', icon: '\u2699\uFE0F', label: 'Live Portfolio Link' },
       { to: '/live-portfolio-activity', icon: '\uD83D\uDCCA', label: 'Live Portfolio Activity' },
       { to: '/symbol-tracker', icon: '\uD83D\uDCC8', label: 'Live Symbol Tracker' },
+      { to: '/live-intelligence', icon: '\uD83D\uDE80', label: 'Live Intelligence Cockpit' },
     ],
   },
   {

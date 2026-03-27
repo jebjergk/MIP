@@ -3,14 +3,17 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 import json
-import subprocess
-from pathlib import Path
 from statistics import pstdev
 from typing import Any, Iterable
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
 from app.db import fetch_all, get_connection
+from app.services.ibkr_live_bars import (
+    infer_ib_market_type as _infer_ib_market_type,
+    normalize_ib_symbol as _normalize_ib_symbol,
+    run_agent_ibkr_live_bars as _run_agent_ibkr_live_bars,
+)
 
 router = APIRouter(prefix="/symbol-tracker", tags=["symbol-tracker"])
 
@@ -21,116 +24,6 @@ _VOL_ABOVE_RATIO = 1.35
 _THESIS_STOP_BUFFER_PCT = 0.015
 _THESIS_EDGE_BUFFER_RATIO = 0.10
 _THESIS_OUTSIDE_WARN_MULT = 0.75
-
-
-def _project_root() -> Path:
-    path = Path(__file__).resolve()
-    for parent in (path, *path.parents):
-        if (parent / "cursorfiles").exists():
-            return parent
-    return path.parents[5]
-
-
-def _parse_json_payload(stdout: str, stderr: str) -> dict[str, Any]:
-    for stream in (stdout or "", stderr or ""):
-        idx = stream.find("{")
-        if idx < 0:
-            continue
-        try:
-            value = json.loads(stream[idx:])
-            if isinstance(value, dict):
-                return value
-        except Exception:
-            continue
-    return {}
-
-
-def _normalize_ib_symbol(symbol: str) -> str:
-    raw = str(symbol or "").strip().upper()
-    if len(raw) == 6 and "/" not in raw and raw.isalpha():
-        return f"{raw[:3]}/{raw[3:]}"
-    return raw
-
-
-def _infer_ib_market_type(symbol: str, market_type: str | None) -> str:
-    mt = str(market_type or "").upper().strip()
-    if mt in {"FX", "CASH", "FOREX"}:
-        return "FX"
-    if "/" in str(symbol or ""):
-        return "FX"
-    return "STOCK"
-
-
-def _run_agent_ibkr_live_bars(
-    symbol_specs: list[dict[str, str]],
-    *,
-    interval_minutes: int,
-    window_bars: int,
-    bar_seconds: int | None = None,
-    timeout_sec: int = 60,
-) -> dict[str, Any]:
-    root = _project_root()
-    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
-    script = root / "cursorfiles" / "fetch_ibkr_live_bars.py"
-    if not py.exists() or not script.exists():
-        raise HTTPException(
-            status_code=500,
-            detail="IBKR live fetch runtime not found (cursorfiles venv/script missing).",
-        )
-
-    symbols: list[str] = []
-    market_types: list[str] = []
-    seen: set[tuple[str, str]] = set()
-    for spec in symbol_specs:
-        symbol = _normalize_ib_symbol(spec.get("symbol") or "")
-        if not symbol:
-            continue
-        market_type = _infer_ib_market_type(symbol, spec.get("market_type"))
-        key = (symbol, market_type)
-        if key in seen:
-            continue
-        seen.add(key)
-        symbols.append(symbol)
-        market_types.append(market_type)
-
-    if not symbols:
-        return {"status": "SUCCESS", "symbols": []}
-
-    cmd = [
-        str(py),
-        str(script),
-        "--symbols",
-        ",".join(symbols),
-        "--market-types",
-        ",".join(market_types),
-        "--window-bars",
-        str(window_bars),
-    ]
-    if bar_seconds:
-        cmd.extend(["--bar-seconds", str(int(bar_seconds)), "--use-rth"])
-    else:
-        cmd.extend(["--interval-minutes", str(interval_minutes)])
-    proc = subprocess.run(
-        cmd,
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec,
-    )
-    stdout = (proc.stdout or "").strip()
-    stderr = (proc.stderr or "").strip()
-    payload = _parse_json_payload(stdout, stderr)
-    if proc.returncode != 0:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": "IBKR live bar fetch failed.",
-                "stdout": stdout[-2000:],
-                "stderr": stderr[-2000:],
-                "payload": payload or None,
-            },
-        )
-    return payload or {"status": "SUCCESS", "symbols": []}
 
 
 def _to_float(value: Any) -> float | None:
@@ -561,6 +454,571 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
     }
 
 
+def assemble_symbol_tracker_tiles(
+    cur,
+    *,
+    mode: str,
+    chart_style: str,
+    horizon_bars: int,
+    interval_minutes: int,
+    window_bars: int,
+    query_bar_seconds: int | None,
+    projection_mode: str,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        select PORTFOLIO_ID, IBKR_ACCOUNT_ID
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where coalesce(IS_ACTIVE, true) = true
+        order by PORTFOLIO_ID
+        limit 1
+        """
+    )
+    cfg_rows = fetch_all(cur)
+    if not cfg_rows:
+        return {
+            "ok": True,
+            "mode": mode,
+            "chart_style": chart_style,
+            "horizon_bars": horizon_bars,
+            "tiles": [],
+            "counts": {"tiles": 0},
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "disclaimer": "Training-implied range only. Historical context, not a forecast.",
+        }
+
+    cfg = cfg_rows[0]
+    portfolio_id = cfg.get("PORTFOLIO_ID")
+    account_id = cfg.get("IBKR_ACCOUNT_ID")
+
+    cur.execute(
+        """
+        with latest_nav as (
+          select max(SNAPSHOT_TS) as SNAPSHOT_TS
+          from MIP.LIVE.BROKER_SNAPSHOTS
+          where SNAPSHOT_TYPE = 'NAV'
+            and IBKR_ACCOUNT_ID = %s
+        )
+        select
+          s.SNAPSHOT_TS,
+          s.SYMBOL,
+          s.SECURITY_TYPE,
+          s.POSITION_QTY,
+          s.AVG_COST,
+          s.MARKET_VALUE,
+          s.UNREALIZED_PNL
+        from MIP.LIVE.BROKER_SNAPSHOTS s
+        join latest_nav ln on s.SNAPSHOT_TS = ln.SNAPSHOT_TS
+        where s.SNAPSHOT_TYPE = 'POSITION'
+          and s.IBKR_ACCOUNT_ID = %s
+          and coalesce(s.POSITION_QTY, 0) <> 0
+        order by abs(s.POSITION_QTY) desc, s.SYMBOL
+        """,
+        (account_id, account_id),
+    )
+    positions = fetch_all(cur)
+    if not positions:
+        return {
+            "ok": True,
+            "mode": mode,
+            "chart_style": chart_style,
+            "horizon_bars": horizon_bars,
+            "tiles": [],
+            "counts": {"tiles": 0},
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "disclaimer": "Training-implied range only. Historical context, not a forecast.",
+        }
+
+    symbols = [str((p.get("SYMBOL") or "")).upper() for p in positions if p.get("SYMBOL")]
+    symbol_params = list(dict.fromkeys(symbols))
+    placeholders = _in_placeholders(symbol_params)
+
+    cur.execute(
+        f"""
+        select
+          lo.ACTION_ID,
+          upper(lo.SYMBOL) as SYMBOL,
+          lo.STATUS,
+          lo.SIDE,
+          lo.ORDER_TYPE,
+          lo.LIMIT_PRICE,
+          lo.AVG_FILL_PRICE,
+          lo.QTY_FILLED,
+          lo.QTY_ORDERED,
+          lo.TOTAL_COMMISSION,
+          lo.FILLED_AT,
+          lo.LAST_UPDATED_AT,
+          lo.CREATED_AT
+        from MIP.LIVE.LIVE_ORDERS lo
+        join MIP.LIVE.LIVE_ACTIONS la
+          on la.ACTION_ID = lo.ACTION_ID
+        where la.PORTFOLIO_ID = %s
+          and upper(lo.SYMBOL) in ({placeholders})
+          and coalesce(lo.LAST_UPDATED_AT, lo.CREATED_AT) >= dateadd(day, -120, current_timestamp())
+        order by coalesce(lo.LAST_UPDATED_AT, lo.CREATED_AT) desc
+        """,
+        [portfolio_id, *symbol_params],
+    )
+    order_rows = fetch_all(cur)
+
+    cur.execute(
+        f"""
+        select
+          upper(la.SYMBOL) as SYMBOL,
+          la.ACTION_ID,
+          la.STATUS,
+          la.COMMITTEE_VERDICT,
+          la.CREATED_AT,
+          la.UPDATED_AT
+        from MIP.LIVE.LIVE_ACTIONS la
+        where la.PORTFOLIO_ID = %s
+          and upper(la.SYMBOL) in ({placeholders})
+          and coalesce(la.UPDATED_AT, la.CREATED_AT) >= dateadd(day, -30, current_timestamp())
+        order by coalesce(la.UPDATED_AT, la.CREATED_AT) desc
+        """,
+        [portfolio_id, *symbol_params],
+    )
+    action_rows = fetch_all(cur)
+
+    cur.execute(
+        f"""
+        with bars as (
+          select
+            SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME,
+            row_number() over(partition by SYMBOL, MARKET_TYPE order by TS desc) as RN
+          from MIP.MART.MARKET_BARS
+          where INTERVAL_MINUTES = %s
+            and SYMBOL in ({placeholders})
+        )
+        select SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME
+        from bars
+        where RN <= %s
+        order by SYMBOL, MARKET_TYPE, TS
+        """,
+        [interval_minutes, *symbol_params, window_bars],
+    )
+    bars_rows = fetch_all(cur)
+
+    cur.execute(
+        f"""
+        select
+          r.SYMBOL,
+          r.MARKET_TYPE,
+          o.HORIZON_BARS,
+          count(*) as SAMPLE_SIZE,
+          avg(o.REALIZED_RETURN) as AVG_RETURN,
+          stddev_samp(o.REALIZED_RETURN) as STDDEV_RETURN,
+          percentile_cont(0.10) within group (order by o.REALIZED_RETURN) as P10_RETURN,
+          percentile_cont(0.90) within group (order by o.REALIZED_RETURN) as P90_RETURN
+        from MIP.APP.RECOMMENDATION_OUTCOMES o
+        join MIP.APP.RECOMMENDATION_LOG r
+          on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+        where r.INTERVAL_MINUTES = 1440
+          and o.HORIZON_BARS <= %s
+          and r.SYMBOL in ({placeholders})
+        group by r.SYMBOL, r.MARKET_TYPE, o.HORIZON_BARS
+        """,
+        [horizon_bars, *symbol_params],
+    )
+    expectation_rows = fetch_all(cur)
+
+    cur.execute(
+        f"""
+        select
+          n.SYMBOL,
+          n.MARKET_TYPE,
+          coalesce(n.BADGE, 'NORMAL') as NEWS_CONTEXT_BADGE,
+          n.SNAPSHOT_TS,
+          n.TOP_CLUSTERS as TOP_HEADLINES
+        from MIP.MART.V_NEWS_AGG_LATEST n
+        where n.SYMBOL in ({placeholders})
+        """,
+        [*symbol_params],
+    )
+    news_rows = fetch_all(cur)
+
+    bars_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    market_type_by_symbol: dict[str, str] = {}
+    for row in bars_rows:
+        symbol = str(row.get("SYMBOL") or "").upper()
+        if not symbol:
+            continue
+        mkt = row.get("MARKET_TYPE")
+        if symbol not in market_type_by_symbol and mkt:
+            market_type_by_symbol[symbol] = str(mkt)
+        bars_by_symbol[symbol].append(
+            {
+                "ts": _iso(row.get("TS")),
+                "open": _to_float(row.get("OPEN")),
+                "high": _to_float(row.get("HIGH")),
+                "low": _to_float(row.get("LOW")),
+                "close": _to_float(row.get("CLOSE")),
+                "volume": _to_float(row.get("VOLUME")),
+            }
+        )
+
+    expectation_by_symbol: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for row in expectation_rows:
+        symbol = str(row.get("SYMBOL") or "").upper()
+        if not symbol:
+            continue
+        h = int(row.get("HORIZON_BARS") or 0)
+        expectation_by_symbol[symbol][h] = {
+            "horizon_bars": h,
+            "sample_size": int(row.get("SAMPLE_SIZE") or 0),
+            "avg_return": _to_float(row.get("AVG_RETURN")) or 0.0,
+            "stddev_return": _to_float(row.get("STDDEV_RETURN")),
+            "p10_return": _to_float(row.get("P10_RETURN")),
+            "p90_return": _to_float(row.get("P90_RETURN")),
+            "market_type": row.get("MARKET_TYPE"),
+        }
+
+    protection_by_symbol: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"tp_price": None, "sl_price": None, "entry_price": None, "opened_at": None, "action_id": None, "entry_commission": None}
+    )
+    events_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in order_rows:
+        symbol = str(row.get("SYMBOL") or "").upper()
+        if not symbol:
+            continue
+        leg_type = _parse_leg_type(row.get("ORDER_TYPE"))
+        limit_price = _to_float(row.get("LIMIT_PRICE"))
+        avg_fill_price = _to_float(row.get("AVG_FILL_PRICE"))
+        qty_filled = _to_float(row.get("QTY_FILLED"))
+        status = str(row.get("STATUS") or "").upper()
+        is_filled = status in {"PARTIAL_FILL", "FILLED"} or (qty_filled is not None and qty_filled > 0)
+        # Entry basis must come from executed prices only; never from resting limit prices.
+        fill_price = avg_fill_price if is_filled else None
+        fill_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
+        side = str(row.get("SIDE") or "").upper()
+
+        if leg_type == "TP" and protection_by_symbol[symbol]["tp_price"] is None and limit_price is not None:
+            protection_by_symbol[symbol]["tp_price"] = limit_price
+            protection_by_symbol[symbol]["action_id"] = row.get("ACTION_ID")
+        elif leg_type == "SL" and protection_by_symbol[symbol]["sl_price"] is None and limit_price is not None:
+            protection_by_symbol[symbol]["sl_price"] = limit_price
+            protection_by_symbol[symbol]["action_id"] = row.get("ACTION_ID")
+        elif leg_type == "PARENT":
+            if fill_price is not None and protection_by_symbol[symbol]["entry_price"] is None:
+                protection_by_symbol[symbol]["entry_price"] = fill_price
+            if fill_ts is not None and protection_by_symbol[symbol]["opened_at"] is None:
+                protection_by_symbol[symbol]["opened_at"] = fill_ts
+            comm = _to_float(row.get("TOTAL_COMMISSION"))
+            if comm is not None and protection_by_symbol[symbol]["entry_commission"] is None:
+                protection_by_symbol[symbol]["entry_commission"] = comm
+        if is_filled:
+            event_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
+            if event_ts:
+                events_by_symbol[symbol].append(
+                    {
+                        "type": "FILL",
+                        "ts": _iso(event_ts),
+                        "label": f"{side or 'ORDER'} fill",
+                        "severity": "info",
+                        "meta": {
+                            "status": status,
+                            "qty_filled": qty_filled or 0.0,
+                            "price": fill_price,
+                        },
+                    }
+                )
+
+    for row in action_rows:
+        symbol = str(row.get("SYMBOL") or "").upper()
+        if not symbol:
+            continue
+        event_ts = row.get("UPDATED_AT") or row.get("CREATED_AT")
+        if not event_ts:
+            continue
+        status = str(row.get("STATUS") or "").upper()
+        verdict = str(row.get("COMMITTEE_VERDICT") or "").upper()
+        severity = "warn" if verdict == "BLOCK" or status == "OPEN_BLOCKED" else "info"
+        events_by_symbol[symbol].append(
+            {
+                "type": "ACTION",
+                "ts": _iso(event_ts),
+                "label": f"{status or 'ACTION'}{f'/{verdict}' if verdict else ''}",
+                "severity": severity,
+                "meta": {
+                    "action_id": row.get("ACTION_ID"),
+                    "status": status,
+                    "committee_verdict": verdict or None,
+                },
+            }
+        )
+
+    for row in news_rows:
+        symbol = str(row.get("SYMBOL") or "").upper()
+        if not symbol:
+            continue
+        snapshot_ts = row.get("SNAPSHOT_TS")
+        headlines = _normalize_headlines(row.get("TOP_HEADLINES"))
+        badge = str(row.get("NEWS_CONTEXT_BADGE") or "NORMAL").upper()
+        severity = "warn" if badge in {"HOT", "RISK"} else "info"
+        for headline in headlines[:2]:
+            events_by_symbol[symbol].append(
+                {
+                    "type": "NEWS",
+                    "ts": _iso(snapshot_ts),
+                    "label": headline.get("title"),
+                    "severity": severity,
+                    "url": headline.get("url"),
+                    "meta": {
+                        "badge": badge,
+                    },
+                }
+            )
+
+    cur.execute(
+        """
+        select CONFIG_KEY, CONFIG_VALUE
+        from MIP.APP.APP_CONFIG
+        where CONFIG_KEY in ('FEE_BPS', 'MIN_FEE', 'SLIPPAGE_BPS', 'SPREAD_BPS')
+        """
+    )
+    fee_cfg_rows = fetch_all(cur)
+    fee_cfg = {r["CONFIG_KEY"]: _to_float(r.get("CONFIG_VALUE")) for r in fee_cfg_rows}
+    cfg_fee_bps = fee_cfg.get("FEE_BPS") or 1.0
+    cfg_min_fee = fee_cfg.get("MIN_FEE") or 1.0
+
+    tiles = []
+    for position in positions:
+        symbol = str(position.get("SYMBOL") or "").upper()
+        if not symbol:
+            continue
+        qty = _to_float(position.get("POSITION_QTY")) or 0.0
+        side = "LONG" if qty > 0 else "SHORT"
+        abs_qty = abs(qty)
+        avg_cost = _to_float(position.get("AVG_COST"))
+        market_value = _to_float(position.get("MARKET_VALUE"))
+        current_price = None
+        if market_value is not None and abs_qty > 0:
+            current_price = abs(market_value) / abs_qty
+        unrealized_pnl = _to_float(position.get("UNREALIZED_PNL"))
+        sec_type = position.get("SECURITY_TYPE")
+        market_type = market_type_by_symbol.get(symbol) or _market_type_from_security_type(sec_type)
+
+        symbol_bars = bars_by_symbol.get(symbol, [])
+        if symbol_bars and current_price is None:
+            current_price = symbol_bars[-1].get("close")
+        closes = [b.get("close") for b in symbol_bars if b.get("close") is not None]
+        live_volatility = _compute_live_volatility(closes[-20:])
+
+        protection = protection_by_symbol[symbol]
+        # Keep Symbol Tracker aligned with IBKR truth shown in Live Portfolio Activity.
+        entry_price = avg_cost if avg_cost is not None else protection.get("entry_price")
+        opened_at = protection.get("opened_at")
+        tp_price = protection.get("tp_price")
+        sl_price = protection.get("sl_price")
+        tile_events = list(events_by_symbol.get(symbol, []))
+        if opened_at is not None:
+            tile_events.append(
+                {
+                    "type": "ENTRY",
+                    "ts": _iso(opened_at),
+                    "label": f"{side} entry opened",
+                    "severity": "info",
+                    "meta": {"entry_price": entry_price},
+                }
+            )
+        tile_events.sort(key=lambda e: e.get("ts") or "", reverse=True)
+        tile_events = tile_events[:10]
+
+        exp = expectation_by_symbol.get(symbol) or {}
+        expectation_payload = {
+            "is_available": False,
+            "method": "NONE",
+            "sample_size": 0,
+            "avg_return": None,
+            "stddev_return": None,
+            "horizon_bars": horizon_bars,
+            "center_path": [],
+            "upper_path": [],
+            "lower_path": [],
+            "label": f"H{horizon_bars}",
+        }
+        expectation_center_end = None
+        expectation_upper_end = None
+        expectation_lower_end = None
+        if exp and entry_price:
+            selected_row = _pick_horizon_row(exp, horizon_bars)
+            if projection_mode == "stitched":
+                projection = _build_stitched_projection_path(
+                    baseline_price=entry_price,
+                    side=side,
+                    horizon_bars=horizon_bars,
+                    horizon_stats=exp,
+                )
+                method = "STITCHED_HORIZON"
+            else:
+                avg_return = _to_float((selected_row or {}).get("avg_return")) or 0.0
+                lower_return, upper_return, method = _derive_band_from_row(selected_row or {})
+                projection = _build_projection_path(
+                    baseline_price=entry_price,
+                    avg_return=avg_return,
+                    upper_return=upper_return,
+                    lower_return=lower_return,
+                    horizon_bars=horizon_bars,
+                    side=side,
+                    projection_mode=projection_mode,
+                )
+            center_path = projection["center_path"]
+            upper_path = projection["upper_path"]
+            lower_path = projection["lower_path"]
+            expectation_center_end = center_path[-1]["price"] if center_path else None
+            expectation_upper_end = upper_path[-1]["price"] if upper_path else None
+            expectation_lower_end = lower_path[-1]["price"] if lower_path else None
+            expectation_payload = {
+                "is_available": True,
+                "method": method,
+                "sample_size": int((selected_row or {}).get("sample_size") or 0),
+                "avg_return": _to_float((selected_row or {}).get("avg_return")),
+                "stddev_return": _to_float((selected_row or {}).get("stddev_return")),
+                "horizon_bars": horizon_bars,
+                "center_path": center_path,
+                "upper_path": upper_path,
+                "lower_path": lower_path,
+                "label": f"H{horizon_bars}",
+            }
+
+        distance_to_tp_pct = None
+        distance_to_sl_pct = None
+        progress_to_tp_pct = None
+        if current_price and tp_price:
+            if side == "LONG":
+                distance_to_tp_pct = (tp_price - current_price) / current_price
+            else:
+                distance_to_tp_pct = (current_price - tp_price) / current_price
+            progress_to_tp_pct = _safe_progress(
+                (current_price - entry_price) if side == "LONG" else (entry_price - current_price),
+                (tp_price - entry_price) if side == "LONG" else (entry_price - tp_price),
+            ) if entry_price is not None else None
+        if current_price and sl_price:
+            if side == "LONG":
+                distance_to_sl_pct = (current_price - sl_price) / current_price
+            else:
+                distance_to_sl_pct = (sl_price - current_price) / current_price
+
+        current_move_pct = None
+        expected_move_pct = None
+        expected_progress_pct = None
+        if entry_price and current_price and entry_price > 0:
+            current_move_pct = ((current_price - entry_price) / entry_price) if side == "LONG" else ((entry_price - current_price) / entry_price)
+        if entry_price and expectation_center_end and entry_price > 0:
+            expected_move_pct = ((expectation_center_end - entry_price) / entry_price) if side == "LONG" else ((entry_price - expectation_center_end) / entry_price)
+        if current_move_pct is not None and expected_move_pct not in (None, 0):
+            expected_progress_pct = current_move_pct / expected_move_pct
+
+        r_multiple_open = None
+        if entry_price is not None and current_price is not None and sl_price is not None:
+            risk = (entry_price - sl_price) if side == "LONG" else (sl_price - entry_price)
+            reward = (current_price - entry_price) if side == "LONG" else (entry_price - current_price)
+            if risk and risk > 0:
+                r_multiple_open = reward / risk
+
+        days_since_entry = None
+        if opened_at and hasattr(opened_at, "date"):
+            days_since_entry = (datetime.now(timezone.utc).date() - opened_at.date()).days
+
+        bars_since_entry = None
+        if opened_at and symbol_bars:
+            opened_iso = _iso(opened_at) or ""
+            bars_since_entry = sum(1 for b in symbol_bars if (b.get("ts") or "") >= opened_iso)
+
+        trained_volatility = expectation_payload.get("stddev_return")
+        vol_label = _volatility_label(live_volatility, trained_volatility)
+        thesis = _thesis_status(
+            side=side,
+            entry_price=entry_price,
+            current_price=current_price,
+            sl_price=sl_price,
+            expectation_center_end=expectation_center_end,
+            expectation_upper_end=expectation_upper_end,
+            expectation_lower_end=expectation_lower_end,
+        )
+
+        status_badges = []
+        if tp_price is not None and sl_price is not None:
+            status_badges.append("PROTECTED_FULL")
+        elif tp_price is not None or sl_price is not None:
+            status_badges.append("PROTECTED_PARTIAL")
+        else:
+            status_badges.append("UNPROTECTED")
+        status_badges.append("IN_PROFIT" if (unrealized_pnl or 0) >= 0 else "UNDERWATER")
+
+        tiles.append(
+            {
+                "symbol": symbol,
+                "market_type": market_type,
+                "security_type": sec_type,
+                "side": side,
+                "quantity": abs_qty,
+                "entry_price": entry_price,
+                "current_price": current_price,
+                "unrealized_pnl": unrealized_pnl,
+                "opened_at": _iso(opened_at),
+                "position_status_badges": status_badges,
+                "chart": {
+                    "interval_minutes": interval_minutes,
+                    "bars": symbol_bars,
+                },
+                "events": tile_events,
+                "overlays": {
+                    "entry": entry_price,
+                    "take_profit": tp_price,
+                    "stop_loss": sl_price,
+                    "current": current_price,
+                },
+                "expectation": expectation_payload,
+                "thesis": thesis,
+                "progress_metrics": {
+                    "distance_to_tp_pct": distance_to_tp_pct,
+                    "distance_to_sl_pct": distance_to_sl_pct,
+                    "progress_to_tp_pct": progress_to_tp_pct,
+                    "current_move_pct": current_move_pct,
+                    "expected_move_pct": expected_move_pct,
+                    "expected_progress_pct": expected_progress_pct,
+                    "r_multiple_open": r_multiple_open,
+                },
+                "holding_context": {
+                    "days_since_entry": days_since_entry,
+                    "bars_since_entry": bars_since_entry,
+                    "best_horizon_reference": f"H{horizon_bars}",
+                },
+                "volatility_context": {
+                    "live_volatility": live_volatility,
+                    "trained_volatility": trained_volatility,
+                    "status": vol_label,
+                },
+                "fee_context": _build_fee_context(
+                    entry_commission=protection.get("entry_commission"),
+                    current_price=current_price,
+                    quantity=abs_qty,
+                    unrealized_pnl=unrealized_pnl,
+                    fee_bps=cfg_fee_bps,
+                    min_fee=cfg_min_fee,
+                ),
+            }
+        )
+
+    tiles.sort(key=lambda t: (t.get("symbol") or ""))
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "chart_style": chart_style,
+        "horizon_bars": horizon_bars,
+        "projection_mode": projection_mode,
+        "window_bars": window_bars,
+        "interval_minutes": interval_minutes,
+        "intraday_bar_seconds": query_bar_seconds,
+        "tiles": tiles,
+        "counts": {"tiles": len(tiles)},
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "disclaimer": "Training-implied range only. Historical context, not a forecast.",
+    }
+
+
 @router.get("/tiles")
 def get_symbol_tracker_tiles(
     mode: str = Query("intraday", pattern="^(intraday|daily)$"),
@@ -601,558 +1059,16 @@ def get_symbol_tracker_tiles(
     conn = get_connection()
     try:
         cur = conn.cursor()
-
-        cur.execute(
-            """
-            select PORTFOLIO_ID, IBKR_ACCOUNT_ID
-            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-            where coalesce(IS_ACTIVE, true) = true
-            order by PORTFOLIO_ID
-            limit 1
-            """
+        return assemble_symbol_tracker_tiles(
+            cur,
+            mode=mode,
+            chart_style=chart_style,
+            horizon_bars=horizon_bars,
+            interval_minutes=interval_minutes,
+            window_bars=window_bars,
+            query_bar_seconds=query_bar_seconds,
+            projection_mode=projection_mode,
         )
-        cfg_rows = fetch_all(cur)
-        if not cfg_rows:
-            return {
-                "ok": True,
-                "mode": mode,
-                "chart_style": chart_style,
-                "horizon_bars": horizon_bars,
-                "tiles": [],
-                "counts": {"tiles": 0},
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "disclaimer": "Training-implied range only. Historical context, not a forecast.",
-            }
-
-        cfg = cfg_rows[0]
-        portfolio_id = cfg.get("PORTFOLIO_ID")
-        account_id = cfg.get("IBKR_ACCOUNT_ID")
-
-        cur.execute(
-            """
-            with latest_nav as (
-              select max(SNAPSHOT_TS) as SNAPSHOT_TS
-              from MIP.LIVE.BROKER_SNAPSHOTS
-              where SNAPSHOT_TYPE = 'NAV'
-                and IBKR_ACCOUNT_ID = %s
-            )
-            select
-              s.SNAPSHOT_TS,
-              s.SYMBOL,
-              s.SECURITY_TYPE,
-              s.POSITION_QTY,
-              s.AVG_COST,
-              s.MARKET_VALUE,
-              s.UNREALIZED_PNL
-            from MIP.LIVE.BROKER_SNAPSHOTS s
-            join latest_nav ln on s.SNAPSHOT_TS = ln.SNAPSHOT_TS
-            where s.SNAPSHOT_TYPE = 'POSITION'
-              and s.IBKR_ACCOUNT_ID = %s
-              and coalesce(s.POSITION_QTY, 0) <> 0
-            order by abs(s.POSITION_QTY) desc, s.SYMBOL
-            """,
-            (account_id, account_id),
-        )
-        positions = fetch_all(cur)
-        if not positions:
-            return {
-                "ok": True,
-                "mode": mode,
-                "chart_style": chart_style,
-                "horizon_bars": horizon_bars,
-                "tiles": [],
-                "counts": {"tiles": 0},
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "disclaimer": "Training-implied range only. Historical context, not a forecast.",
-            }
-
-        symbols = [str((p.get("SYMBOL") or "")).upper() for p in positions if p.get("SYMBOL")]
-        symbol_params = list(dict.fromkeys(symbols))
-        placeholders = _in_placeholders(symbol_params)
-
-        cur.execute(
-            f"""
-            select
-              lo.ACTION_ID,
-              upper(lo.SYMBOL) as SYMBOL,
-              lo.STATUS,
-              lo.SIDE,
-              lo.ORDER_TYPE,
-              lo.LIMIT_PRICE,
-              lo.AVG_FILL_PRICE,
-              lo.QTY_FILLED,
-              lo.QTY_ORDERED,
-              lo.TOTAL_COMMISSION,
-              lo.FILLED_AT,
-              lo.LAST_UPDATED_AT,
-              lo.CREATED_AT
-            from MIP.LIVE.LIVE_ORDERS lo
-            join MIP.LIVE.LIVE_ACTIONS la
-              on la.ACTION_ID = lo.ACTION_ID
-            where la.PORTFOLIO_ID = %s
-              and upper(lo.SYMBOL) in ({placeholders})
-              and coalesce(lo.LAST_UPDATED_AT, lo.CREATED_AT) >= dateadd(day, -120, current_timestamp())
-            order by coalesce(lo.LAST_UPDATED_AT, lo.CREATED_AT) desc
-            """,
-            [portfolio_id, *symbol_params],
-        )
-        order_rows = fetch_all(cur)
-
-        cur.execute(
-            f"""
-            select
-              upper(la.SYMBOL) as SYMBOL,
-              la.ACTION_ID,
-              la.STATUS,
-              la.COMMITTEE_VERDICT,
-              la.CREATED_AT,
-              la.UPDATED_AT
-            from MIP.LIVE.LIVE_ACTIONS la
-            where la.PORTFOLIO_ID = %s
-              and upper(la.SYMBOL) in ({placeholders})
-              and coalesce(la.UPDATED_AT, la.CREATED_AT) >= dateadd(day, -30, current_timestamp())
-            order by coalesce(la.UPDATED_AT, la.CREATED_AT) desc
-            """,
-            [portfolio_id, *symbol_params],
-        )
-        action_rows = fetch_all(cur)
-
-        cur.execute(
-            f"""
-            with bars as (
-              select
-                SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME,
-                row_number() over(partition by SYMBOL, MARKET_TYPE order by TS desc) as RN
-              from MIP.MART.MARKET_BARS
-              where INTERVAL_MINUTES = %s
-                and SYMBOL in ({placeholders})
-            )
-            select SYMBOL, MARKET_TYPE, TS, OPEN, HIGH, LOW, CLOSE, VOLUME
-            from bars
-            where RN <= %s
-            order by SYMBOL, MARKET_TYPE, TS
-            """,
-            [interval_minutes, *symbol_params, window_bars],
-        )
-        bars_rows = fetch_all(cur)
-
-        cur.execute(
-            f"""
-            select
-              r.SYMBOL,
-              r.MARKET_TYPE,
-              o.HORIZON_BARS,
-              count(*) as SAMPLE_SIZE,
-              avg(o.REALIZED_RETURN) as AVG_RETURN,
-              stddev_samp(o.REALIZED_RETURN) as STDDEV_RETURN,
-              percentile_cont(0.10) within group (order by o.REALIZED_RETURN) as P10_RETURN,
-              percentile_cont(0.90) within group (order by o.REALIZED_RETURN) as P90_RETURN
-            from MIP.APP.RECOMMENDATION_OUTCOMES o
-            join MIP.APP.RECOMMENDATION_LOG r
-              on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
-            where r.INTERVAL_MINUTES = 1440
-              and o.HORIZON_BARS <= %s
-              and r.SYMBOL in ({placeholders})
-            group by r.SYMBOL, r.MARKET_TYPE, o.HORIZON_BARS
-            """,
-            [horizon_bars, *symbol_params],
-        )
-        expectation_rows = fetch_all(cur)
-
-        cur.execute(
-            f"""
-            select
-              n.SYMBOL,
-              n.MARKET_TYPE,
-              coalesce(n.BADGE, 'NORMAL') as NEWS_CONTEXT_BADGE,
-              n.SNAPSHOT_TS,
-              n.TOP_CLUSTERS as TOP_HEADLINES
-            from MIP.MART.V_NEWS_AGG_LATEST n
-            where n.SYMBOL in ({placeholders})
-            """,
-            [*symbol_params],
-        )
-        news_rows = fetch_all(cur)
-
-        bars_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        market_type_by_symbol: dict[str, str] = {}
-        for row in bars_rows:
-            symbol = str(row.get("SYMBOL") or "").upper()
-            if not symbol:
-                continue
-            mkt = row.get("MARKET_TYPE")
-            if symbol not in market_type_by_symbol and mkt:
-                market_type_by_symbol[symbol] = str(mkt)
-            bars_by_symbol[symbol].append(
-                {
-                    "ts": _iso(row.get("TS")),
-                    "open": _to_float(row.get("OPEN")),
-                    "high": _to_float(row.get("HIGH")),
-                    "low": _to_float(row.get("LOW")),
-                    "close": _to_float(row.get("CLOSE")),
-                    "volume": _to_float(row.get("VOLUME")),
-                }
-            )
-
-        expectation_by_symbol: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
-        for row in expectation_rows:
-            symbol = str(row.get("SYMBOL") or "").upper()
-            if not symbol:
-                continue
-            h = int(row.get("HORIZON_BARS") or 0)
-            expectation_by_symbol[symbol][h] = {
-                "horizon_bars": h,
-                "sample_size": int(row.get("SAMPLE_SIZE") or 0),
-                "avg_return": _to_float(row.get("AVG_RETURN")) or 0.0,
-                "stddev_return": _to_float(row.get("STDDEV_RETURN")),
-                "p10_return": _to_float(row.get("P10_RETURN")),
-                "p90_return": _to_float(row.get("P90_RETURN")),
-                "market_type": row.get("MARKET_TYPE"),
-            }
-
-        protection_by_symbol: dict[str, dict[str, Any]] = defaultdict(
-            lambda: {"tp_price": None, "sl_price": None, "entry_price": None, "opened_at": None, "action_id": None, "entry_commission": None}
-        )
-        events_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in order_rows:
-            symbol = str(row.get("SYMBOL") or "").upper()
-            if not symbol:
-                continue
-            leg_type = _parse_leg_type(row.get("ORDER_TYPE"))
-            limit_price = _to_float(row.get("LIMIT_PRICE"))
-            avg_fill_price = _to_float(row.get("AVG_FILL_PRICE"))
-            qty_filled = _to_float(row.get("QTY_FILLED"))
-            status = str(row.get("STATUS") or "").upper()
-            is_filled = status in {"PARTIAL_FILL", "FILLED"} or (qty_filled is not None and qty_filled > 0)
-            # Entry basis must come from executed prices only; never from resting limit prices.
-            fill_price = avg_fill_price if is_filled else None
-            fill_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
-            side = str(row.get("SIDE") or "").upper()
-
-            if leg_type == "TP" and protection_by_symbol[symbol]["tp_price"] is None and limit_price is not None:
-                protection_by_symbol[symbol]["tp_price"] = limit_price
-                protection_by_symbol[symbol]["action_id"] = row.get("ACTION_ID")
-            elif leg_type == "SL" and protection_by_symbol[symbol]["sl_price"] is None and limit_price is not None:
-                protection_by_symbol[symbol]["sl_price"] = limit_price
-                protection_by_symbol[symbol]["action_id"] = row.get("ACTION_ID")
-            elif leg_type == "PARENT":
-                if fill_price is not None and protection_by_symbol[symbol]["entry_price"] is None:
-                    protection_by_symbol[symbol]["entry_price"] = fill_price
-                if fill_ts is not None and protection_by_symbol[symbol]["opened_at"] is None:
-                    protection_by_symbol[symbol]["opened_at"] = fill_ts
-                comm = _to_float(row.get("TOTAL_COMMISSION"))
-                if comm is not None and protection_by_symbol[symbol]["entry_commission"] is None:
-                    protection_by_symbol[symbol]["entry_commission"] = comm
-            if is_filled:
-                event_ts = row.get("FILLED_AT") or row.get("LAST_UPDATED_AT") or row.get("CREATED_AT")
-                if event_ts:
-                    events_by_symbol[symbol].append(
-                        {
-                            "type": "FILL",
-                            "ts": _iso(event_ts),
-                            "label": f"{side or 'ORDER'} fill",
-                            "severity": "info",
-                            "meta": {
-                                "status": status,
-                                "qty_filled": qty_filled or 0.0,
-                                "price": fill_price,
-                            },
-                        }
-                    )
-
-        for row in action_rows:
-            symbol = str(row.get("SYMBOL") or "").upper()
-            if not symbol:
-                continue
-            event_ts = row.get("UPDATED_AT") or row.get("CREATED_AT")
-            if not event_ts:
-                continue
-            status = str(row.get("STATUS") or "").upper()
-            verdict = str(row.get("COMMITTEE_VERDICT") or "").upper()
-            severity = "warn" if verdict == "BLOCK" or status == "OPEN_BLOCKED" else "info"
-            events_by_symbol[symbol].append(
-                {
-                    "type": "ACTION",
-                    "ts": _iso(event_ts),
-                    "label": f"{status or 'ACTION'}{f'/{verdict}' if verdict else ''}",
-                    "severity": severity,
-                    "meta": {
-                        "action_id": row.get("ACTION_ID"),
-                        "status": status,
-                        "committee_verdict": verdict or None,
-                    },
-                }
-            )
-
-        for row in news_rows:
-            symbol = str(row.get("SYMBOL") or "").upper()
-            if not symbol:
-                continue
-            snapshot_ts = row.get("SNAPSHOT_TS")
-            headlines = _normalize_headlines(row.get("TOP_HEADLINES"))
-            badge = str(row.get("NEWS_CONTEXT_BADGE") or "NORMAL").upper()
-            severity = "warn" if badge in {"HOT", "RISK"} else "info"
-            for headline in headlines[:2]:
-                events_by_symbol[symbol].append(
-                    {
-                        "type": "NEWS",
-                        "ts": _iso(snapshot_ts),
-                        "label": headline.get("title"),
-                        "severity": severity,
-                        "url": headline.get("url"),
-                        "meta": {
-                            "badge": badge,
-                        },
-                    }
-                )
-
-        cur.execute(
-            """
-            select CONFIG_KEY, CONFIG_VALUE
-            from MIP.APP.APP_CONFIG
-            where CONFIG_KEY in ('FEE_BPS', 'MIN_FEE', 'SLIPPAGE_BPS', 'SPREAD_BPS')
-            """
-        )
-        fee_cfg_rows = fetch_all(cur)
-        fee_cfg = {r["CONFIG_KEY"]: _to_float(r.get("CONFIG_VALUE")) for r in fee_cfg_rows}
-        cfg_fee_bps = fee_cfg.get("FEE_BPS") or 1.0
-        cfg_min_fee = fee_cfg.get("MIN_FEE") or 1.0
-
-        tiles = []
-        for position in positions:
-            symbol = str(position.get("SYMBOL") or "").upper()
-            if not symbol:
-                continue
-            qty = _to_float(position.get("POSITION_QTY")) or 0.0
-            side = "LONG" if qty > 0 else "SHORT"
-            abs_qty = abs(qty)
-            avg_cost = _to_float(position.get("AVG_COST"))
-            market_value = _to_float(position.get("MARKET_VALUE"))
-            current_price = None
-            if market_value is not None and abs_qty > 0:
-                current_price = abs(market_value) / abs_qty
-            unrealized_pnl = _to_float(position.get("UNREALIZED_PNL"))
-            sec_type = position.get("SECURITY_TYPE")
-            market_type = market_type_by_symbol.get(symbol) or _market_type_from_security_type(sec_type)
-
-            symbol_bars = bars_by_symbol.get(symbol, [])
-            if symbol_bars and current_price is None:
-                current_price = symbol_bars[-1].get("close")
-            closes = [b.get("close") for b in symbol_bars if b.get("close") is not None]
-            live_volatility = _compute_live_volatility(closes[-20:])
-
-            protection = protection_by_symbol[symbol]
-            # Keep Symbol Tracker aligned with IBKR truth shown in Live Portfolio Activity.
-            entry_price = avg_cost if avg_cost is not None else protection.get("entry_price")
-            opened_at = protection.get("opened_at")
-            tp_price = protection.get("tp_price")
-            sl_price = protection.get("sl_price")
-            tile_events = list(events_by_symbol.get(symbol, []))
-            if opened_at is not None:
-                tile_events.append(
-                    {
-                        "type": "ENTRY",
-                        "ts": _iso(opened_at),
-                        "label": f"{side} entry opened",
-                        "severity": "info",
-                        "meta": {"entry_price": entry_price},
-                    }
-                )
-            tile_events.sort(key=lambda e: e.get("ts") or "", reverse=True)
-            tile_events = tile_events[:10]
-
-            exp = expectation_by_symbol.get(symbol) or {}
-            expectation_payload = {
-                "is_available": False,
-                "method": "NONE",
-                "sample_size": 0,
-                "avg_return": None,
-                "stddev_return": None,
-                "horizon_bars": horizon_bars,
-                "center_path": [],
-                "upper_path": [],
-                "lower_path": [],
-                "label": f"H{horizon_bars}",
-            }
-            expectation_center_end = None
-            expectation_upper_end = None
-            expectation_lower_end = None
-            if exp and entry_price:
-                selected_row = _pick_horizon_row(exp, horizon_bars)
-                if projection_mode == "stitched":
-                    projection = _build_stitched_projection_path(
-                        baseline_price=entry_price,
-                        side=side,
-                        horizon_bars=horizon_bars,
-                        horizon_stats=exp,
-                    )
-                    method = "STITCHED_HORIZON"
-                else:
-                    avg_return = _to_float((selected_row or {}).get("avg_return")) or 0.0
-                    lower_return, upper_return, method = _derive_band_from_row(selected_row or {})
-                    projection = _build_projection_path(
-                        baseline_price=entry_price,
-                        avg_return=avg_return,
-                        upper_return=upper_return,
-                        lower_return=lower_return,
-                        horizon_bars=horizon_bars,
-                        side=side,
-                        projection_mode=projection_mode,
-                    )
-                center_path = projection["center_path"]
-                upper_path = projection["upper_path"]
-                lower_path = projection["lower_path"]
-                expectation_center_end = center_path[-1]["price"] if center_path else None
-                expectation_upper_end = upper_path[-1]["price"] if upper_path else None
-                expectation_lower_end = lower_path[-1]["price"] if lower_path else None
-                expectation_payload = {
-                    "is_available": True,
-                    "method": method,
-                    "sample_size": int((selected_row or {}).get("sample_size") or 0),
-                    "avg_return": _to_float((selected_row or {}).get("avg_return")),
-                    "stddev_return": _to_float((selected_row or {}).get("stddev_return")),
-                    "horizon_bars": horizon_bars,
-                    "center_path": center_path,
-                    "upper_path": upper_path,
-                    "lower_path": lower_path,
-                    "label": f"H{horizon_bars}",
-                }
-
-            distance_to_tp_pct = None
-            distance_to_sl_pct = None
-            progress_to_tp_pct = None
-            if current_price and tp_price:
-                if side == "LONG":
-                    distance_to_tp_pct = (tp_price - current_price) / current_price
-                else:
-                    distance_to_tp_pct = (current_price - tp_price) / current_price
-                progress_to_tp_pct = _safe_progress(
-                    (current_price - entry_price) if side == "LONG" else (entry_price - current_price),
-                    (tp_price - entry_price) if side == "LONG" else (entry_price - tp_price),
-                ) if entry_price is not None else None
-            if current_price and sl_price:
-                if side == "LONG":
-                    distance_to_sl_pct = (current_price - sl_price) / current_price
-                else:
-                    distance_to_sl_pct = (sl_price - current_price) / current_price
-
-            current_move_pct = None
-            expected_move_pct = None
-            expected_progress_pct = None
-            if entry_price and current_price and entry_price > 0:
-                current_move_pct = ((current_price - entry_price) / entry_price) if side == "LONG" else ((entry_price - current_price) / entry_price)
-            if entry_price and expectation_center_end and entry_price > 0:
-                expected_move_pct = ((expectation_center_end - entry_price) / entry_price) if side == "LONG" else ((entry_price - expectation_center_end) / entry_price)
-            if current_move_pct is not None and expected_move_pct not in (None, 0):
-                expected_progress_pct = current_move_pct / expected_move_pct
-
-            r_multiple_open = None
-            if entry_price is not None and current_price is not None and sl_price is not None:
-                risk = (entry_price - sl_price) if side == "LONG" else (sl_price - entry_price)
-                reward = (current_price - entry_price) if side == "LONG" else (entry_price - current_price)
-                if risk and risk > 0:
-                    r_multiple_open = reward / risk
-
-            days_since_entry = None
-            if opened_at and hasattr(opened_at, "date"):
-                days_since_entry = (datetime.now(timezone.utc).date() - opened_at.date()).days
-
-            bars_since_entry = None
-            if opened_at and symbol_bars:
-                opened_iso = _iso(opened_at) or ""
-                bars_since_entry = sum(1 for b in symbol_bars if (b.get("ts") or "") >= opened_iso)
-
-            trained_volatility = expectation_payload.get("stddev_return")
-            vol_label = _volatility_label(live_volatility, trained_volatility)
-            thesis = _thesis_status(
-                side=side,
-                entry_price=entry_price,
-                current_price=current_price,
-                sl_price=sl_price,
-                expectation_center_end=expectation_center_end,
-                expectation_upper_end=expectation_upper_end,
-                expectation_lower_end=expectation_lower_end,
-            )
-
-            status_badges = []
-            if tp_price is not None and sl_price is not None:
-                status_badges.append("PROTECTED_FULL")
-            elif tp_price is not None or sl_price is not None:
-                status_badges.append("PROTECTED_PARTIAL")
-            else:
-                status_badges.append("UNPROTECTED")
-            status_badges.append("IN_PROFIT" if (unrealized_pnl or 0) >= 0 else "UNDERWATER")
-
-            tiles.append(
-                {
-                    "symbol": symbol,
-                    "market_type": market_type,
-                    "security_type": sec_type,
-                    "side": side,
-                    "quantity": abs_qty,
-                    "entry_price": entry_price,
-                    "current_price": current_price,
-                    "unrealized_pnl": unrealized_pnl,
-                    "opened_at": _iso(opened_at),
-                    "position_status_badges": status_badges,
-                    "chart": {
-                        "interval_minutes": interval_minutes,
-                        "bars": symbol_bars,
-                    },
-                    "events": tile_events,
-                    "overlays": {
-                        "entry": entry_price,
-                        "take_profit": tp_price,
-                        "stop_loss": sl_price,
-                        "current": current_price,
-                    },
-                    "expectation": expectation_payload,
-                    "thesis": thesis,
-                    "progress_metrics": {
-                        "distance_to_tp_pct": distance_to_tp_pct,
-                        "distance_to_sl_pct": distance_to_sl_pct,
-                        "progress_to_tp_pct": progress_to_tp_pct,
-                        "current_move_pct": current_move_pct,
-                        "expected_move_pct": expected_move_pct,
-                        "expected_progress_pct": expected_progress_pct,
-                        "r_multiple_open": r_multiple_open,
-                    },
-                    "holding_context": {
-                        "days_since_entry": days_since_entry,
-                        "bars_since_entry": bars_since_entry,
-                        "best_horizon_reference": f"H{horizon_bars}",
-                    },
-                    "volatility_context": {
-                        "live_volatility": live_volatility,
-                        "trained_volatility": trained_volatility,
-                        "status": vol_label,
-                    },
-                    "fee_context": _build_fee_context(
-                        entry_commission=protection.get("entry_commission"),
-                        current_price=current_price,
-                        quantity=abs_qty,
-                        unrealized_pnl=unrealized_pnl,
-                        fee_bps=cfg_fee_bps,
-                        min_fee=cfg_min_fee,
-                    ),
-                }
-            )
-
-        tiles.sort(key=lambda t: (t.get("symbol") or ""))
-
-        return {
-            "ok": True,
-            "mode": mode,
-            "chart_style": chart_style,
-            "horizon_bars": horizon_bars,
-            "projection_mode": projection_mode,
-            "window_bars": window_bars,
-            "interval_minutes": interval_minutes,
-            "intraday_bar_seconds": query_bar_seconds,
-            "tiles": tiles,
-            "counts": {"tiles": len(tiles)},
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "disclaimer": "Training-implied range only. Historical context, not a forecast.",
-        }
     finally:
         conn.close()
+

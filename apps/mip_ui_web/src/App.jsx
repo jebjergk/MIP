@@ -7,6 +7,7 @@ import TrainingStatus from './pages/TrainingStatus'
 import Debug from './pages/Debug'
 import MarketTimeline from './pages/MarketTimeline'
 import SymbolTracker from './pages/SymbolTracker'
+import LiveIntelligenceCockpit from './pages/LiveIntelligenceCockpit'
 import UserGuide from './pages/UserGuide'
 import ParallelWorlds from './pages/ParallelWorlds'
 import AiAgentDecisions from './pages/AiAgentDecisions'
@@ -38,6 +39,7 @@ function pageTitleForPath(pathname) {
     { pattern: '/training', title: 'Training Status' },
     { pattern: '/market-timeline', title: 'Market Timeline' },
     { pattern: '/symbol-tracker', title: 'Symbol Tracker' },
+    { pattern: '/live-intelligence', title: 'Live Intelligence Cockpit' },
     { pattern: '/manage', title: 'Portfolio Management' },
     { pattern: '/parallel-worlds', title: 'Parallel Worlds' },
     { pattern: '/learning-ledger', title: 'Learning Ledger' },
@@ -95,6 +97,7 @@ export default function App() {
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/symbol-tracker" element={<SymbolTracker />} />
+        <Route path="/live-intelligence" element={<LiveIntelligenceCockpit />} />
         <Route path="/manage" element={<Navigate to="/cockpit" replace />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />
         <Route path="/learning-ledger" element={<LearningLedger />} />

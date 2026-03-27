@@ -195,6 +195,7 @@ function mergeTrackerIb(trackerPayload, livePayload) {
 /** Keep deterministic-step POST small: full prior intel includes evidence/worlds/sim blobs. */
 const PRIOR_INTEL_SLIM_KEYS = new Set([
   'feed_fingerprint',
+  'case_file_signature',
   'final_recommendation',
   'exit_urgency',
   'thesis_fracture',

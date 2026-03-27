@@ -2,6 +2,7 @@ import unittest
 
 from app.services.live_intelligence.ai_committee import run_ai_enrichment
 from app.services.live_intelligence.engine import run_deterministic_step
+from app.services.live_intelligence.resolver import build_case_file_signature
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime
 from app.services.live_intelligence import lic_display
 
@@ -106,6 +107,52 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
         row = o2["feed_events"][0]
         self.assertIn(row.get("severity"), {"INFO", "WATCH", "ALERT", "CRITICAL"})
         self.assertEqual(row.get("scope"), "symbol")
+
+    def test_case_file_signature_suppresses_feed_when_posture_unchanged(self):
+        """Fingerprint/noise can change while coarse posture stays the same — no duplicate case rows."""
+        o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
+        prior_full = o1["intelligence_by_symbol"]["TEST"]
+        sig = prior_full.get("case_file_signature")
+        self.assertTrue(sig)
+        # Same snapshot, prior carries case_file_signature — no feed on refresh
+        o2 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {"TEST": prior_full}})
+        self.assertEqual(o2["feed_events"], [])
+        # Fingerprint + delta triggers want a row, but coarse posture unchanged — suppress duplicate case line
+        hacked_prior = {
+            **prior_full,
+            "feed_fingerprint": "stale|fingerprint|value",
+            "dominant_world_id": "__bogus__",
+        }
+        o3 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {"TEST": hacked_prior}})
+        self.assertEqual(
+            o3["feed_events"],
+            [],
+            "feed row should be suppressed when case_file_signature matches prior",
+        )
+
+    def test_build_case_file_signature_stable_keys(self):
+        sim = {"best_action": {"action": "exit_now", "label": "Exit now"}}
+        a = build_case_file_signature(
+            final_band="STAY_COURSE",
+            sim=sim,
+            attention_score=42,
+            confidence_headline=0.62,
+            thesis_fracture="THESIS_INTACT",
+            analog_tier="weak",
+            sl_near=False,
+            regret_bucket="exit_favored",
+        )
+        b = build_case_file_signature(
+            final_band="STAY_COURSE",
+            sim=sim,
+            attention_score=43,
+            confidence_headline=0.63,
+            thesis_fracture="THESIS_INTACT",
+            analog_tier="weak",
+            sl_near=False,
+            regret_bucket="exit_favored",
+        )
+        self.assertEqual(a, b)
 
     def test_simulator_misalignment_flag_when_net_best_differs_from_band(self):
         """STAY_COURSE prefers hold; net winner is often trim/exit — expect possible misalignment."""

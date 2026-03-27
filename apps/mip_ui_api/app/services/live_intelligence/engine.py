@@ -9,6 +9,7 @@ from app.services.live_intelligence.analog import match_analogs
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime, merge_pairwise_from_bootstrap
 from app.services.live_intelligence.resolver import (
     analog_tier_key,
+    build_case_file_signature,
     build_delta_fields,
     build_feed_fingerprint,
     build_why_now_bullets,
@@ -385,6 +386,16 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         is_material = _material_state(prior, next_intel_compare)
 
         conf_block = confidence_block(feats, tile, mq, thesis_fracture)
+        case_file_signature = build_case_file_signature(
+            final_band=final_band,
+            sim=sim,
+            attention_score=attn,
+            confidence_headline=float(conf_block.get("headline") or 0),
+            thesis_fracture=thesis_fracture,
+            analog_tier=tier_k,
+            sl_near=sl_near,
+            regret_bucket=regret_b,
+        )
         evidence_sections = lic_display.build_evidence_sections(
             feats=feats,
             thesis_fracture=thesis_fracture,
@@ -466,6 +477,7 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             "materiality_state": "MATERIAL" if is_material else "STABLE",
             "derived_features": feats,
             "feed_fingerprint": fingerprint,
+            "case_file_signature": case_file_signature,
             "sl_near": sl_near,
             "analog_tier_key": tier_k,
             "dominant_world_id": dominant_w,
@@ -476,28 +488,30 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         intelligence[sym] = intel
 
         if emit_feed and prior:
-            prior_band = prior.get("final_recommendation") or urgency_to_final_band(prior.get("exit_urgency"))
-            transition_plain = (
-                f"{lic_display.recommendation_headline(prior_band)} → {lic_display.recommendation_headline(final_band)}"
-            )
-            reason_plain = lic_display.build_feed_reason_plain(crossed)
-            act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
-            sev = lic_display.feed_event_severity(final_band, thesis_fracture, sl_near)
-            feed_events.append(
-                {
-                    "timestamp": now,
-                    "ts": now,
-                    "symbol": sym,
-                    "scope": "symbol",
-                    "transition": transition_plain,
-                    "state_transition": transition_plain,
-                    "reason": reason_plain,
-                    "what_changed": reason_plain,
-                    "action_implication": act_label,
-                    "final_recommendation": final_band,
-                    "severity": sev,
-                }
-            )
+            prior_case_sig = str(prior.get("case_file_signature") or "")
+            if prior_case_sig != case_file_signature:
+                prior_band = prior.get("final_recommendation") or urgency_to_final_band(prior.get("exit_urgency"))
+                transition_plain = (
+                    f"{lic_display.recommendation_headline(prior_band)} → {lic_display.recommendation_headline(final_band)}"
+                )
+                reason_plain = lic_display.build_feed_reason_plain(crossed)
+                act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
+                sev = lic_display.feed_event_severity(final_band, thesis_fracture, sl_near)
+                feed_events.append(
+                    {
+                        "timestamp": now,
+                        "ts": now,
+                        "symbol": sym,
+                        "scope": "symbol",
+                        "transition": transition_plain,
+                        "state_transition": transition_plain,
+                        "reason": reason_plain,
+                        "what_changed": reason_plain,
+                        "action_implication": act_label,
+                        "final_recommendation": final_band,
+                        "severity": sev,
+                    }
+                )
 
     return {
         "intelligence_by_symbol": intelligence,

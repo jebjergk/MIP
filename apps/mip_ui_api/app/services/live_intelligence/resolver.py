@@ -159,6 +159,37 @@ def should_emit_feed_event(prior: dict[str, Any] | None, fingerprint: str) -> bo
     return str(prior.get("feed_fingerprint") or "") != fingerprint
 
 
+def build_case_file_signature(
+    *,
+    final_band: str,
+    sim: dict[str, Any],
+    attention_score: float,
+    confidence_headline: float,
+    thesis_fracture: str,
+    analog_tier: str,
+    sl_near: bool,
+    regret_bucket: str,
+) -> str:
+    """Coarse posture key for case-file dedupe — ignores noisy fingerprint fields (e.g. raw mq)."""
+    best = sim.get("best_action") or {}
+    fallback_action = str(best.get("action") or "")
+    attn = float(attention_score or 0)
+    attn_b = "H" if attn >= 70.0 else ("M" if attn >= 40.0 else "L")
+    ch = float(confidence_headline or 0)
+    conf_b = "H" if ch >= 0.72 else ("M" if ch >= 0.55 else "L")
+    parts = [
+        str(final_band or ""),
+        fallback_action,
+        attn_b,
+        conf_b,
+        str(thesis_fracture or ""),
+        str(analog_tier or ""),
+        "1" if sl_near else "0",
+        str(regret_bucket or ""),
+    ]
+    return "|".join(parts)
+
+
 def analog_tile_line(analog_summary: dict[str, Any]) -> str:
     w = int(analog_summary.get("winners") or 0)
     l = int(analog_summary.get("losers") or 0)

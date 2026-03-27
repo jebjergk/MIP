@@ -1,4 +1,5 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE } from '../App'
 import { fetchWithRetry } from '../utils/fetchRetry'
@@ -613,7 +614,7 @@ function LiveIntelligenceCockpitInner() {
 
       {!loading && bootReady && ranked.length === 0 ? (
         <p className="lic-empty-book">
-          No open positions in the bootstrap tracker. If you expect holdings here, reload bootstrap or confirm the active portfolio in Symbol Tracker.
+          No open positions in the bootstrap tracker. If you expect holdings here, reload bootstrap or confirm the active portfolio in Living Chart.
         </p>
       ) : null}
 
@@ -675,6 +676,14 @@ function LiveIntelligenceCockpitInner() {
                     <div className="lic-tile-head-main">
                       <span className="lic-tile-sym">{formatSymbolLabel(t.symbol, t.market_type)}</span>
                       <span className="lic-tile-side">{t.side}</span>
+                      <Link
+                        className="lic-tile-chart-link"
+                        to={`/symbol-tracker?symbol=${encodeURIComponent(s)}`}
+                        title="Open Living Chart for this symbol"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        Chart
+                      </Link>
                     </div>
                     <div className="lic-tile-head-metrics">
                       <span>{Number.isFinite(Number(t.current_price)) ? Number(t.current_price).toFixed(2) : '—'}</span>

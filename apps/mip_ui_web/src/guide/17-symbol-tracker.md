@@ -1,72 +1,31 @@
-# 17. Live Symbol Tracker
+# 17. Living Chart
 
-Route: `/symbol-tracker`
+Routes: `/symbol-tracker` (primary) · `/living-chart` (alias)
 
-Live Symbol Tracker gives a symbol-first view of live-linked monitoring context.
+Living Chart is a **chart-first companion** to the [Live Intelligence Cockpit](/live-intelligence). It shows **one open position at a time** with price, entry / stop / target, expected path (and optional band), and a small set of **visual state cues** (for example near stop, near target, thesis pressure). Use the cockpit for multi-symbol reasoning and recommendations; use Living Chart to **observe** the tape for the symbol in focus.
 
-## What you can verify here
+From the cockpit, open **Chart** on a tile to jump here with `?symbol=` in the URL.
 
-- Which symbols are currently active and relevant.
-- Per-symbol state changes that may affect attention.
-- Monitoring signals that require follow-up in decision pages.
+## Data refresh
 
-## Typical workflow
+- **Reload context** loads Snowflake-backed tracker tiles once (bootstrap).
+- **Refresh live** and the automatic interval merge **IB live bars** only — no ongoing warehouse polling for chart updates.
 
-1. Identify symbols with elevated activity or warnings.
-2. Drill into affected symbols to inspect context.
-3. Cross-check decisions in AI Agent Decisions.
-4. Validate supporting evidence in News Intelligence and Runs.
+## Controls
 
-## When to use this page
+- **Follow latest**: keeps the time window anchored on the latest bar until you pan or zoom; then use **Snap to latest** to re-anchor.
+- **More context (VWAP, BB, S/R)**: optional technical overlays (off by default to avoid clutter).
 
-- During intraday monitoring.
-- When a symbol suddenly becomes high priority.
-- Before reviewing a symbol-specific decision thread.
-
-## Common labels on this page
+## Labels you may see
 
 ### Thesis
 
-`Thesis` is the current validity status of the trade idea based on live price vs risk and expectation context.
-
-- `THESIS_INTACT`: live price is still inside expected behavior range.
-- `WEAKENING`: setup quality is degrading (for example, price near stop or near expectation-band edge).
-- `INVALIDATED`: setup has materially broken (for example, stop crossed or strong divergence from trained path).
-
-### Open R
-
-`Open R` is current open reward-to-risk multiple from entry, measured against stop distance.
-
-Formula:
-
-- `risk = entry - stop` (for LONG) or `stop - entry` (for SHORT)
-- `reward = current - entry` (for LONG) or `entry - current` (for SHORT)
-- `Open R = reward / risk`
-
-Interpretation:
-
-- `+1.0R`: current gain equals initial risk.
-- `0.0R`: at entry (flat vs entry).
-- negative `R`: currently losing relative to entry.
-
-### Expected move reached
-
-How much of the trained expected move has already been realized.
-
-- Around `100%`: current move is near trained expectation.
-- Above `100%`: current move exceeded trained expectation.
-- Below `100%`: move has not yet reached trained expectation.
+Same meaning as elsewhere: validity of the trade idea vs live price and expectation context (`THESIS_INTACT`, weakening states, `INVALIDATED`, etc.).
 
 ### Distance to TP / Distance to SL
 
-Relative distance from current price to take-profit or stop-loss.
+Side-aware relative distance from last price to take-profit or stop-loss (also surfaced as compact zones on the chart when close).
 
-- `Distance to TP`: remaining upside/downside distance to target (side-aware).
-- `Distance to SL`: remaining safety buffer to stop (side-aware).
+### Expected path / band
 
-### Position status badges
-
-- `PROTECTED_FULL`: both TP and SL exist.
-- `PROTECTED_PARTIAL`: only TP or only SL exists.
-- `UNPROTECTED`: no TP/SL protection.
-- `IN_PROFIT` / `UNDERWATER`: unrealized P&L sign.
+Trained forward median and band stitched forward from the last bar for comparison to actual price — not a guarantee of future price.

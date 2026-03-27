@@ -24,9 +24,7 @@ import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPag
 import IntradayTerrainExplorerPage from './pages/intraday/IntradayTerrainExplorerPage'
 import IntradayPipelineHealthPage from './pages/intraday/IntradayPipelineHealthPage'
 
-const API_BASE = '/api'
-
-export { API_BASE }
+export { API_BASE } from './config/apiBase'
 
 function pageTitleForPath(pathname) {
   const titleByPattern = [
@@ -38,7 +36,8 @@ function pageTitleForPath(pathname) {
     { pattern: '/runs/:runId', title: 'Run Details' },
     { pattern: '/training', title: 'Training Status' },
     { pattern: '/market-timeline', title: 'Market Timeline' },
-    { pattern: '/symbol-tracker', title: 'Symbol Tracker' },
+    { pattern: '/symbol-tracker', title: 'Living Chart' },
+    { pattern: '/living-chart', title: 'Living Chart' },
     { pattern: '/live-intelligence', title: 'Live Intelligence Cockpit' },
     { pattern: '/manage', title: 'Portfolio Management' },
     { pattern: '/parallel-worlds', title: 'Parallel Worlds' },
@@ -97,6 +96,7 @@ export default function App() {
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/symbol-tracker" element={<SymbolTracker />} />
+        <Route path="/living-chart" element={<SymbolTracker />} />
         <Route path="/live-intelligence" element={<LiveIntelligenceCockpit />} />
         <Route path="/manage" element={<Navigate to="/cockpit" replace />} />
         <Route path="/parallel-worlds" element={<ParallelWorlds />} />

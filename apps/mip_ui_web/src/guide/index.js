@@ -52,7 +52,7 @@ const sections = [
   { id: 'page-cockpit',     number: 12, title: 'Cockpit (Daily Dashboard)',    part: 2, markdown: cockpit,             route: '/cockpit' },
   { id: 'page-training',    number: 15, title: 'Training Status',              part: 2, markdown: trainingStatus,      route: '/training' },
   { id: 'page-performance', number: 16, title: 'Performance Dashboard',        part: 2, markdown: performanceDashboard,route: '/performance-dashboard' },
-  { id: 'page-symbol',      number: 17, title: 'Live Symbol Tracker',          part: 2, markdown: symbolTracker,       route: '/symbol-tracker' },
+  { id: 'page-symbol',      number: 17, title: 'Living Chart',                 part: 2, markdown: symbolTracker,       route: '/symbol-tracker' },
   { id: 'page-timeline',    number: 18, title: 'Market Timeline',              part: 2, markdown: marketTimeline,      route: '/market-timeline' },
   { id: 'page-runs',        number: 19, title: 'Runs (Audit Viewer)',          part: 2, markdown: runs,                route: '/runs' },
   { id: 'page-debug',       number: 20, title: 'Debug',                        part: 2, markdown: debug,               route: '/debug' },

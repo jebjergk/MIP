@@ -616,6 +616,20 @@
   color: #94a3b8;
 }
 
+.lic-tile-chart-link {
+  align-self: flex-start;
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #7dd3fc;
+  text-decoration: none;
+}
+
+.lic-tile-chart-link:hover {
+  color: #bae6fd;
+  text-decoration: underline;
+}
+
 .lic-tile-head-metrics {
   text-align: right;
   font-size: 0.72rem;

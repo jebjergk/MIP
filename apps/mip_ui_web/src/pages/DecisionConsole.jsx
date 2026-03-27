@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import useDecisionStream from '../hooks/useDecisionStream'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'

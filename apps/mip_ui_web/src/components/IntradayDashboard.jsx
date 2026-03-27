@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import IntradaySignalChart from './IntradaySignalChart'
 import './IntradayDashboard.css'
 

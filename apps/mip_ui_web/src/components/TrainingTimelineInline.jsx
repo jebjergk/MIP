@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import EmptyState from './EmptyState'
 import ErrorState from './ErrorState'
 import './TrainingTimelineInline.css'

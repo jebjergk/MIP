@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import './LivePortfolioConfig.css'
 
 function pctToRatio(v) {

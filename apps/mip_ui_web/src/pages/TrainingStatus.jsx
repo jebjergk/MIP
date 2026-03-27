@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import InfoTooltip from '../components/InfoTooltip'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import EmptyState from '../components/EmptyState'

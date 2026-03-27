@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import { fetchWithRetry } from '../utils/fetchRetry'
 
 const SymbolMetaContext = createContext({

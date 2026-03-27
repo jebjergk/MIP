@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import AskCoverageDashboardPanel from '../components/AskCoverageDashboardPanel'
 
 export default function GlossaryAdminPage() {

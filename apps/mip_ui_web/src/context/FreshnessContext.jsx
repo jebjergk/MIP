@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 
 /**
  * FreshnessContext provides system-wide freshness info for staleness checks.

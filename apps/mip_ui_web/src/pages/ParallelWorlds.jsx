@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import LoadingState from '../components/LoadingState'
 import EmptyState from '../components/EmptyState'
 import Plot from 'react-plotly.js'

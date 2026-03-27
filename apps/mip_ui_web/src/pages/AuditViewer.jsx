@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'

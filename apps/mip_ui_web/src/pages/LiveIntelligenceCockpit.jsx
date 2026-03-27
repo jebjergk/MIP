@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import { fetchWithRetry } from '../utils/fetchRetry'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'

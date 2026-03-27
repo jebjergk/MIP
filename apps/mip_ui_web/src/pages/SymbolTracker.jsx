@@ -14,8 +14,9 @@ import {
   buildStatusChips,
   buildLivingChartShapesAndTA,
 } from '../lib/livingChartOverlays'
-import LivingChartPlot from '../components/livingChart/LivingChartPlot'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
+
+const LivingChartPlot = lazy(() => import('../components/livingChart/LivingChartPlot'))
 import './SymbolTracker.css'
 
 function fmtNum(value, digits = 2) {
@@ -198,6 +199,10 @@ export default function SymbolTracker() {
     })
   }, [sensitivityMode])
 
+  const tiles = useMemo(() => {
+    return Array.isArray(data?.tiles) ? data.tiles : []
+  }, [data?.tiles])
+
   const loadContext = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -282,10 +287,6 @@ export default function SymbolTracker() {
   }, [data, fetchIbLive, runCommitteeCycle])
 
   useVisibleInterval(refreshIbOnly, 30000)
-
-  const tiles = useMemo(() => {
-    return Array.isArray(data?.tiles) ? data.tiles : []
-  }, [data?.tiles])
 
   const activeTile = useMemo(() => {
     const sym = String(selectedSymbol || '').toUpperCase()

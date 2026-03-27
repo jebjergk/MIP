@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine, Cell } from 'recharts'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import InfoTooltip from '../components/InfoTooltip'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'

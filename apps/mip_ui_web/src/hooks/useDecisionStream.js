@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 
 /**
  * SSE hook for the Decision Console live feed.

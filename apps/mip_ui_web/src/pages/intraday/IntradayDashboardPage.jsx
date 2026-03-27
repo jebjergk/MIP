@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { API_BASE } from '../../App'
+import { API_BASE } from '../../config/apiBase'
 import LoadingState from '../../components/LoadingState'
 import ErrorState from '../../components/ErrorState'
 import { EvidenceBadge, fmtNum, IntradayHeader, HelpTip } from './IntradayTrainingCommon'

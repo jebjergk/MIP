@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import './TrainingDigestPanel.css'
 
 /* ── Helpers ─────────────────────────────────────────── */

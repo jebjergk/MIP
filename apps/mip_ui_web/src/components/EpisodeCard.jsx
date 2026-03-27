@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import LoadingState from './LoadingState'
 import PortfolioMiniGridCharts, { GATE_LABELS } from './PortfolioMiniGridCharts'
 import './EpisodeCard.css'

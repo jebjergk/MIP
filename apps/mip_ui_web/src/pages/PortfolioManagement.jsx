@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Cell, Legend,
 } from 'recharts'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import './PortfolioManagement.css'
 

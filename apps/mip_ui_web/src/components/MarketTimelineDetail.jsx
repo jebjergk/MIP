@@ -13,7 +13,7 @@ import {
   ReferenceArea,
   Scatter,
 } from 'recharts'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './MarketTimelineDetail.css'
 

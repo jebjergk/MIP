@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { API_BASE } from '../../App'
+import { API_BASE } from '../../config/apiBase'
 import LoadingState from '../../components/LoadingState'
 import ErrorState from '../../components/ErrorState'
 import {

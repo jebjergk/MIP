@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import InfoTooltip from '../components/InfoTooltip'

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 import InfoTooltip from './InfoTooltip'
 import './StatusBanner.css'
 

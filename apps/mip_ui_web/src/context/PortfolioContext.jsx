@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useMemo } from 'react'
-import { API_BASE } from '../App'
+import { API_BASE } from '../config/apiBase'
 
 const PortfolioContext = createContext({
   portfolios: [],

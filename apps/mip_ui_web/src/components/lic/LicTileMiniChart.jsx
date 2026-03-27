@@ -1,4 +1,4 @@
-import { useId, useMemo } from 'react'
+import { useMemo } from 'react'
 
 function num(v) {
   const x = Number(v)
@@ -7,18 +7,25 @@ function num(v) {
 
 function barClose(b) {
   if (!b || typeof b !== 'object') return null
-  return num(b.close ?? b.c ?? b.last ?? b.Close ?? b.adj_close)
+  return num(b.close ?? b.CLOSE ?? b.c ?? b.last ?? b.Close ?? b.adj_close)
 }
 
 /**
- * Decision micro-chart: live path (dominant) vs flat expected median, stop/target zones, current marker.
- * Tolerates sparse IB bars (single bar, alternate field names) so the chart rarely stays empty.
+ * Tile microchart: live path (dominant) vs expected median, stop/target, current marker.
+ * Lines only — no bands, gradients, or in-chart legends.
  */
-export default function LicTileMiniChart({ tile, recommendationBand, intel }) {
-  const gradId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
+export default function LicTileMiniChart({ tile, recommendationBand }) {
   const model = useMemo(() => {
     const rawBars = (tile?.chart?.bars || []).slice(-56)
     let closes = rawBars.map(barClose).filter((x) => x != null)
+    const barLoHi = []
+    for (const b of rawBars) {
+      if (!b || typeof b !== 'object') continue
+      const lo = num(b.low ?? b.LOW)
+      const hi = num(b.high ?? b.HIGH)
+      if (lo != null) barLoHi.push(lo)
+      if (hi != null) barLoHi.push(hi)
+    }
     const curLive = num(tile?.current_price) ?? num(tile?.overlays?.current)
     const lastBar = closes.length ? closes[closes.length - 1] : null
     const cur = curLive ?? lastBar
@@ -33,25 +40,19 @@ export default function LicTileMiniChart({ tile, recommendationBand, intel }) {
 
     if (closes.length < 2 || cur == null) return null
 
-    const side = String(tile?.side || 'LONG').toUpperCase()
-    const isLong = side !== 'SHORT'
-
     const entry = num(tile?.entry_price)
     const sl = num(tile?.overlays?.stop_loss)
     const tp = num(tile?.overlays?.take_profit)
     const exp = tile?.expectation || {}
     const med = num(exp?.center_path?.[0]?.price)
-    const lo = num(exp?.lower_path?.[0]?.price)
-    const hi = num(exp?.upper_path?.[0]?.price)
 
-    const pm = tile?.progress_metrics || {}
-    const distSlPct = num(pm.distance_to_sl_pct)
-    const distTpPct = num(pm.distance_to_tp_pct)
-    const slNear = Boolean(intel?.sl_near) || (distSlPct != null && distSlPct < 0.04)
+    // Scale Y from price action (closes, mark, median, entry). Stop/target are often far away
+    // and previously crushed the path into a flat line at one edge of the chart.
+    const forPathScale = [cur, ...closes, med, entry, ...barLoHi].filter((x) => x != null)
+    if (forPathScale.length === 0) return null
 
-    const forScale = [cur, ...closes, entry, sl, tp, med].filter((x) => x != null)
-    let ymin = Math.min(...forScale)
-    let ymax = Math.max(...forScale)
+    let ymin = Math.min(...forPathScale)
+    let ymax = Math.max(...forPathScale)
     const mid = (ymax + ymin) / 2
     const rawSpan = ymax - ymin || 1
     const lastN = closes.slice(-10)
@@ -72,8 +73,10 @@ export default function LicTileMiniChart({ tile, recommendationBand, intel }) {
     ymax += pad
 
     const W = 120
-    const H = 72
-    const normY = (y) => H - ((y - ymin) / (ymax - ymin)) * H
+    const H = 76
+    const normYRaw = (y) => H - ((y - ymin) / (ymax - ymin)) * H
+    const clampY = (y) => Math.min(H - 0.5, Math.max(0.5, y))
+    const normY = (y) => clampY(normYRaw(y))
     const normX = (i) => (i / Math.max(closes.length - 1, 1)) * W
 
     const pairs = closes.map((y, i) => `${normX(i).toFixed(2)},${normY(y).toFixed(2)}`)
@@ -87,113 +90,41 @@ export default function LicTileMiniChart({ tile, recommendationBand, intel }) {
       }
     }
 
-    const bandTop = hi != null && lo != null ? normY(Math.max(hi, lo)) : null
-    const bandBot = hi != null && lo != null ? normY(Math.min(hi, lo)) : null
-    const bandH =
-      bandTop != null && bandBot != null && Math.abs(bandBot - bandTop) > 1.2
-        ? Math.abs(bandBot - bandTop)
-        : null
-    const bandY = bandH != null ? Math.min(bandTop, bandBot) : null
-
-    const yCur = normY(cur)
     const ySl = sl != null ? normY(sl) : null
     const yTp = tp != null ? normY(tp) : null
-
-    let stopZone = null
-    if (ySl != null && Number.isFinite(yCur)) {
-      const y1 = Math.min(yCur, ySl)
-      const y2 = Math.max(yCur, ySl)
-      if (y2 - y1 > 0.5) {
-        stopZone = { y: y1, h: y2 - y1 }
-      }
-    }
-
-    let targetZone = null
-    if (yTp != null && Number.isFinite(yCur)) {
-      if (isLong && tp > cur) {
-        const y1 = Math.min(yCur, yTp)
-        const y2 = Math.max(yCur, yTp)
-        if (y2 - y1 > 0.5) targetZone = { y: y1, h: y2 - y1 }
-      } else if (!isLong && tp < cur) {
-        const y1 = Math.min(yCur, yTp)
-        const y2 = Math.max(yCur, yTp)
-        if (y2 - y1 > 0.5) targetZone = { y: y1, h: y2 - y1 }
-      }
-    }
-
-    const bandU = String(recommendationBand || '').toUpperCase()
-    const stress = bandU === 'EXIT_NOW'
-    const defensive = bandU === 'PREPARE_EXIT' || bandU === 'WATCH_CLOSELY'
-    const stopAlpha = stress ? 0.38 : slNear ? 0.28 : defensive ? 0.18 : 0.12
-    const targetAlpha = bandU === 'STAY_COURSE' || bandU === '' ? 0.14 : 0.08
-
-    const refEntry = (y) => {
-      if (y == null || !Number.isFinite(y)) return null
-      return (
-        <line
-          key={`ent-${y}`}
-          x1={0}
-          x2={W}
-          y1={y}
-          y2={y}
-          strokeDasharray="4 3"
-          className="lic-mini-ref lic-mini-ref--entry"
-        />
-      )
-    }
-
-    const refStopTp = (y, kind) => {
-      if (y == null || !Number.isFinite(y)) return null
-      return (
-        <line
-          key={`${kind}-${y}`}
-          x1={0}
-          x2={W}
-          y1={y}
-          y2={y}
-          className={kind === 'sl' ? 'lic-mini-ref lic-mini-ref--sl' : 'lic-mini-ref lic-mini-ref--tp'}
-        />
-      )
-    }
+    const yEntry = entry != null ? normY(entry) : null
+    const showEntry =
+      yEntry != null &&
+      med != null &&
+      Number.isFinite(yEntry) &&
+      Math.abs(entry - med) / (Math.abs(med) || 1) > 0.002
 
     const curIdx = closes.length - 1
     const cx = normX(curIdx)
     const cy = normY(cur)
 
-    const belowMed = med != null && (isLong ? cur < med : cur > med)
-    const legendHint = belowMed ? 'Below expected path' : 'Near/on expected path'
+    const bandU = String(recommendationBand || '').toUpperCase()
+    const stress = bandU === 'EXIT_NOW'
 
     return {
       W,
       H,
       linePath,
       medianPath,
-      bandY,
-      bandH,
-      bandW: W,
-      stopZone,
-      targetZone,
-      stopAlpha,
-      targetAlpha,
-      refEntry: entry != null ? refEntry(normY(entry)) : null,
-      refSl: refStopTp(ySl, 'sl'),
-      refTp: refStopTp(yTp, 'tp'),
-      showLoHi: !bandH,
-      lo: lo != null ? normY(lo) : null,
-      hi: hi != null ? normY(hi) : null,
+      ySl,
+      yTp,
+      yEntry,
+      showEntry,
       cx,
       cy,
       lineClass: stress ? 'lic-mini-line lic-mini-line--stress' : 'lic-mini-line',
-      legendHint,
-      hasMed: medianPath.length > 0,
-      hasSl: ySl != null,
-      hasTp: yTp != null,
-      gradId,
+      dotR: stress ? 3.6 : 3,
+      dotClass: stress ? 'lic-mini-dot lic-mini-dot--stress' : 'lic-mini-dot',
     }
-  }, [tile, recommendationBand, intel, gradId])
+  }, [tile, recommendationBand])
 
   if (!model) {
-    return <div className="lic-mini-chart lic-mini-chart--empty">No price path yet — refresh IB or open drill-down chart.</div>
+    return <div className="lic-mini-chart lic-mini-chart--empty">No price path yet — refresh IB or open workspace chart.</div>
   }
 
   const {
@@ -201,89 +132,41 @@ export default function LicTileMiniChart({ tile, recommendationBand, intel }) {
     H,
     linePath,
     medianPath,
-    bandY,
-    bandH,
-    bandW,
-    stopZone,
-    targetZone,
-    stopAlpha,
-    targetAlpha,
-    refEntry,
-    refSl,
-    refTp,
-    showLoHi,
-    lo,
-    hi,
+    ySl,
+    yTp,
+    yEntry,
+    showEntry,
     cx,
     cy,
     lineClass,
-    legendHint,
-    hasMed,
-    hasSl,
-    hasTp,
-    gradId: gid,
+    dotR,
+    dotClass,
   } = model
 
   return (
     <div className="lic-mini-chart">
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="lic-mini-svg" aria-hidden>
-        <defs>
-          <linearGradient id={`licMiniTpGrad-${gid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#4ade80" stopOpacity="0.2" />
-            <stop offset="100%" stopColor="#4ade80" stopOpacity="0.04" />
-          </linearGradient>
-          <linearGradient id={`licMiniStopGrad-${gid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#f87171" stopOpacity="0.45" />
-            <stop offset="100%" stopColor="#f87171" stopOpacity="0.06" />
-          </linearGradient>
-        </defs>
-        {targetZone ? (
-          <rect
-            x={0}
-            y={targetZone.y}
-            width={W}
-            height={targetZone.h}
-            fill={`url(#licMiniTpGrad-${gid})`}
-            style={{ opacity: targetAlpha * 4 }}
-            className="lic-mini-zone lic-mini-zone--tp"
-          />
-        ) : null}
-        {stopZone ? (
-          <rect
-            x={0}
-            y={stopZone.y}
-            width={W}
-            height={stopZone.h}
-            fill={`url(#licMiniStopGrad-${gid})`}
-            style={{ opacity: stopAlpha * 2.2 }}
-            className="lic-mini-zone lic-mini-zone--sl"
-          />
-        ) : null}
-        {bandY != null && bandH != null ? (
-          <rect x={0} y={bandY} width={bandW} height={bandH} className="lic-mini-band" />
-        ) : null}
-        {showLoHi && lo != null && hi != null ? (
-          <>
-            <line x1={0} x2={W} y1={lo} y2={lo} className="lic-mini-ref" strokeDasharray="3 3" />
-            <line x1={0} x2={W} y1={hi} y2={hi} className="lic-mini-ref" strokeDasharray="3 3" />
-          </>
-        ) : null}
-        {refEntry}
         {medianPath ? <path d={medianPath} fill="none" className="lic-mini-median" vectorEffect="non-scaling-stroke" /> : null}
-        {refSl}
-        {refTp}
+        {ySl != null && Number.isFinite(ySl) ? (
+          <line x1={0} x2={W} y1={ySl} y2={ySl} className="lic-mini-ref lic-mini-ref--sl" vectorEffect="non-scaling-stroke" />
+        ) : null}
+        {yTp != null && Number.isFinite(yTp) ? (
+          <line x1={0} x2={W} y1={yTp} y2={yTp} className="lic-mini-ref lic-mini-ref--tp" vectorEffect="non-scaling-stroke" />
+        ) : null}
+        {showEntry && yEntry != null ? (
+          <line
+            x1={0}
+            x2={W}
+            y1={yEntry}
+            y2={yEntry}
+            className="lic-mini-ref lic-mini-ref--entry"
+            strokeDasharray="5 4"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
         <path d={linePath} fill="none" className={lineClass} vectorEffect="non-scaling-stroke" />
-        <circle cx={cx} cy={cy} r={3} className="lic-mini-dot" />
+        <circle cx={cx} cy={cy} r={dotR} className={dotClass} vectorEffect="non-scaling-stroke" />
       </svg>
-      <div className="lic-mini-microcopy" title={`${legendHint}. Cyan = live path. Purple dashed = expected median. Red zone = toward stop. Green tint = room toward target.`}>
-        <span className="lic-mini-legend-hint">{legendHint}</span>
-        <span className="lic-mini-legend-keys">
-          <span className="lic-mini-key lic-mini-key--price">Live</span>
-          {hasMed ? <span className="lic-mini-key lic-mini-key--med">Expected</span> : null}
-          {hasSl ? <span className="lic-mini-key lic-mini-key--sl">Stop</span> : null}
-          {hasTp ? <span className="lic-mini-key lic-mini-key--tp">Target</span> : null}
-        </span>
-      </div>
     </div>
   )
 }

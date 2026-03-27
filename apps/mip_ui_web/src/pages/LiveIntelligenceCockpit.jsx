@@ -5,6 +5,7 @@ import { fetchWithRetry } from '../utils/fetchRetry'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTileMiniChart from '../components/lic/LicTileMiniChart'
+import { caseFileImplicationDisplay, resolveDecisionPresentation } from '../components/lic/licDecisionPresentation'
 import './LiveIntelligenceCockpit.css'
 
 /** Prevents a single throw from blanking the whole app when API field shapes drift. */
@@ -54,7 +55,7 @@ function sessionFeedRow() {
     state_transition: 'SESSION_START',
     what_changed: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
     reason: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
-    action_implication: 'Review tiles for resolved stance and simulator alignment.',
+    action_implication: 'Review each tile for primary stance vs defensive fallback (reconciliation block in workspace).',
     final_recommendation: '\u2014',
     severity: 'INFO',
   }
@@ -64,19 +65,6 @@ function attentionTooltip(intel) {
   const c = intel?.attention_components || {}
   const parts = Object.entries(c).map(([k, v]) => `${k}: ${v}`)
   return parts.length ? parts.join(' \u00b7 ') : 'Attention breakdown'
-}
-
-function bandLabel(band) {
-  const m = {
-    EXIT_NOW: 'EXIT OR CUT NOW',
-    PREPARE_EXIT: 'PREPARE EXIT',
-    WATCH_CLOSELY: 'WATCH CLOSELY',
-    STAY_COURSE: 'HOLD',
-  }
-  const key = typeof band === 'string' ? band : band == null ? '' : String(band)
-  if (m[key]) return m[key]
-  if (!key) return '\u2014'
-  return key.replace(/_/g, ' ')
 }
 
 function formatSimPct(v) {
@@ -100,45 +88,12 @@ function safeText(v, fallback = '\u2014') {
   return String(v)
 }
 
-function tileRecommendationHeadline(intel) {
-  const rd = intel?.recommendation_display || {}
-  const h = rd.headline
-  if (h != null && String(h).trim() !== '') return safeText(h)
-  return bandLabel(intel?.final_recommendation)
-}
-
 /** Short tile copy + full string for title/tooltip drill-down. */
 function truncateTileText(s, maxLen) {
   const t = String(s || '').trim()
   if (!t) return { short: '', full: '' }
   if (t.length <= maxLen) return { short: t, full: t }
   return { short: `${t.slice(0, Math.max(0, maxLen - 1))}…`, full: t }
-}
-
-function dominantWorldSummary(intel) {
-  const worlds = asArray(intel?.scenario_worlds)
-  if (!worlds.length) return ''
-  let best = worlds[0]
-  let bestP = Number(best?.probability) || 0
-  for (let i = 1; i < worlds.length; i += 1) {
-    const p = Number(worlds[i]?.probability) || 0
-    if (p > bestP) {
-      bestP = p
-      best = worlds[i]
-    }
-  }
-  const pct = best?.probability_pct ?? Math.round(bestP * 100)
-  const title = safeText(best?.title, '')
-  return title ? `${title} leads scenarios (${pct}%)` : ''
-}
-
-/** One standout line: dominant world + least-regret move (detail in drill-down). */
-function tileIntelStandout(intel) {
-  const w = dominantWorldSummary(intel)
-  const sim = intel?.action_simulation?.best_action
-  const lr = sim?.label ? `Least-regret: ${safeText(sim.label)}` : ''
-  if (w && lr) return `${w} · ${lr}`
-  return w || lr || ''
 }
 
 function attentionScoreNumber(intel) {
@@ -330,6 +285,7 @@ function LiveIntelligenceCockpitInner() {
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [detailTab, setDetailTab] = useState('chart')
   const [aiResult, setAiResult] = useState(null)
+  const [aiBusy, setAiBusy] = useState(false)
   const [peakPnl, setPeakPnl] = useState({})
   const [bootReady, setBootReady] = useState(false)
   const bootstrapGenRef = useRef(0)
@@ -526,6 +482,10 @@ function LiveIntelligenceCockpitInner() {
   }, [trackerData.tiles, intelligence])
 
   const activeIntel = selectedSymbol ? intelligence[selectedSymbol] : null
+  const workspacePres = useMemo(
+    () => (activeIntel ? resolveDecisionPresentation(activeIntel) : null),
+    [activeIntel],
+  )
   const activeTile = useMemo(() => {
     return (trackerData.tiles || []).find((t) => String(t.symbol || '').toUpperCase() === selectedSymbol) || null
   }, [trackerData.tiles, selectedSymbol])
@@ -589,6 +549,7 @@ function LiveIntelligenceCockpitInner() {
 
   const runAi = useCallback(async () => {
     if (!selectedSymbol || !activeIntel) return
+    setAiBusy(true)
     setAiResult(null)
     try {
       const resp = await fetch(`${API_BASE}/live-intelligence/ai/enrich`, {
@@ -605,6 +566,8 @@ function LiveIntelligenceCockpitInner() {
       setAiResult(await resp.json())
     } catch (e) {
       setAiResult({ error: e.message })
+    } finally {
+      setAiBusy(false)
     }
   }, [activeIntel, activeTile, selectedSymbol])
 
@@ -640,6 +603,7 @@ function LiveIntelligenceCockpitInner() {
         </p>
       ) : null}
 
+      <div className="lic-layout">
       <div className="lic-grid">
         <div className="lic-main">
           <div className="lic-leaderboard">
@@ -669,13 +633,13 @@ function LiveIntelligenceCockpitInner() {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
               const rd = intel?.recommendation_display || {}
-              const headline = tileRecommendationHeadline(intel)
+              const pres = intel ? resolveDecisionPresentation(intel) : null
+              const primaryAction = pres?.primary_action || '—'
               const au = intel?.analog_ui || {}
               const capFull = safeText(rd.confidence_caption, '')
-              const capTile = truncateTileText(capFull, 78)
               const thesisFull = safeText(intel?.thesis_plain, '')
-              const thesisTile = truncateTileText(thesisFull, 110)
-              const standout = tileIntelStandout(intel)
+              const fallbackStrip = pres?.fallback_strip_text?.trim() || ''
+              const confTitle = capFull ? `Decision confidence: ${capFull}` : 'Confidence blends thesis, tape, and analog match.'
               return (
                 <button
                   key={s}
@@ -696,9 +660,9 @@ function LiveIntelligenceCockpitInner() {
                       <span className="lic-tile-age">{formatHoldingAge(t.opened_at)}</span>
                     </div>
                   </div>
-                  <div className="lic-tile-rec">{headline}</div>
+                  <div className="lic-tile-rec">{primaryAction}</div>
                   {rd.confidence != null ? (
-                    <div className="lic-tile-conf">
+                    <div className="lic-tile-conf" title={confTitle}>
                       <span className="lic-tile-conf-pct">
                         Confidence{' '}
                         {(() => {
@@ -707,24 +671,24 @@ function LiveIntelligenceCockpitInner() {
                         })()}
                         %
                       </span>
-                      <span className="lic-tile-conf-cap" title={capTile.full || undefined}>
-                        {capTile.short || capFull}
-                      </span>
                     </div>
                   ) : null}
-                  <LicTileMiniChart tile={t} intel={intel} recommendationBand={intel?.final_recommendation} />
-                  {standout ? (
-                    <div className="lic-tile-standout" title="Dominant scenario vs least-regret simulator pick — open Worlds / Simulator for detail.">
-                      {standout}
+                  <LicTileMiniChart tile={t} recommendationBand={intel?.final_recommendation} />
+                  {fallbackStrip ? (
+                    <div
+                      className="lic-tile-fallback-strip"
+                      title="Context and defensive scoring — official stance is the primary action above."
+                    >
+                      {fallbackStrip}
                     </div>
                   ) : null}
-                  <div className="lic-tile-thesis" title={thesisTile.full || undefined}>
-                    {thesisTile.short || thesisFull}
+                  <div className="lic-tile-thesis" title={thesisFull || undefined}>
+                    {thesisFull}
                   </div>
                   <ul className="lic-tile-drivers">
-                    {asArray(intel?.decision_drivers).map((d, di) => {
+                    {asArray(intel?.decision_drivers).slice(0, 3).map((d, di) => {
                       const txt = safeText(d)
-                      const t = truncateTileText(txt, 96)
+                      const t = truncateTileText(txt, 88)
                       return (
                         <li key={`${s}-d-${di}`} className="lic-tile-driver-li" title={t.full !== t.short ? t.full : undefined}>
                           {t.short || txt}
@@ -742,7 +706,7 @@ function LiveIntelligenceCockpitInner() {
                       <span className="lic-chip-v">{safeText(au.chip_verdict || au.confidence_plain, '—')}</span>
                     </span>
                     <span className="lic-chip" title="Portfolio factor">
-                      <span className="lic-chip-k">Book</span>
+                      <span className="lic-chip-k">Factor</span>
                       <span className="lic-chip-v">{safeText(intel?.portfolio_factor_chip)}</span>
                     </span>
                     <span className="lic-chip" title="Regret tilt">
@@ -756,43 +720,84 @@ function LiveIntelligenceCockpitInner() {
           </div>
         </div>
 
-        <aside className="lic-aside">
+        <aside className="lic-aside" aria-label="Case file">
           <h4 className="lic-aside-title">Case file</h4>
-          <div className="lic-feed">
-            {feed.length === 0 ? <div className="lic-feed-empty">No material events yet.</div> : null}
-            {feed.map((row, fri) => {
-              if (!row || typeof row !== 'object') return null
-              const k = `${row.ts || row.timestamp || ''}_${row.symbol}_${row.state_transition || row.transition || ''}_${fri}`
-              const rawBody = row.reason || row.what_changed || row.why_now_human || ''
-              const body = safeText(rawBody, '')
-              const trans = safeText(row.state_transition || row.transition || '', '')
-              const sev = safeText(row.severity || '', '')
-              const sevSlug = String(sev).toLowerCase().replace(/\s+/g, '')
-              const scope = safeText(row.scope || '', '')
-              return (
-                <div key={k} className={`lic-feed-row lic-feed-row--${sevSlug || 'info'}`}>
-                  <div className="lic-feed-time">{formatFeedTime(row)}</div>
-                  <div className="lic-feed-row-head">
-                    <b>{safeText(row.symbol)}</b>
-                    {scope ? <span className="lic-feed-scope"> · {scope}</span> : null}
-                    {row.final_recommendation && row.symbol !== 'SESSION' ? (
-                      <span className="lic-feed-band"> · {bandLabel(row.final_recommendation)}</span>
+          <div className="lic-feed-scroll">
+            <div className="lic-feed">
+              {feed.length === 0 ? <div className="lic-feed-empty">No material events yet.</div> : null}
+              {feed.map((row, fri) => {
+                if (!row || typeof row !== 'object') return null
+                const k = `${row.ts || row.timestamp || ''}_${row.symbol}_${row.state_transition || row.transition || ''}_${fri}`
+                const rawBody = row.reason || row.what_changed || row.why_now_human || ''
+                const body = safeText(rawBody, '')
+                const trans = safeText(row.state_transition || row.transition || '', '')
+                const sev = safeText(row.severity || '', '')
+                const sevSlug = String(sev).toLowerCase().replace(/\s+/g, '')
+                const scope = safeText(row.scope || '', '')
+                const impl = caseFileImplicationDisplay(row, intelligence)
+                const rowTitle = body && body !== impl ? body : undefined
+                return (
+                  <div
+                    key={k}
+                    className={`lic-feed-row lic-feed-row--compact lic-feed-row--${sevSlug || 'info'}`}
+                    title={rowTitle}
+                  >
+                    <div className="lic-feed-row-line1">
+                      <span className="lic-feed-time">{formatFeedTime(row)}</span>
+                      <span className="lic-feed-symscope">
+                        <b>{safeText(row.symbol)}</b>
+                        {scope ? <span className="lic-feed-scope"> · {scope}</span> : null}
+                      </span>
+                    </div>
+                    {trans ? <div className="lic-feed-trans">{trans}</div> : null}
+                    {impl ? (
+                      <div className="lic-feed-action">{impl}</div>
                     ) : null}
-                    {sev ? <span className="lic-feed-sev">{sev}</span> : null}
                   </div>
-                  {trans ? <div className="lic-feed-trans">{trans}</div> : null}
-                  {body ? <div className="lic-feed-body">{body}</div> : null}
-                  {row.action_implication ? (
-                    <div className="lic-feed-action">Implication: {safeText(row.action_implication)}</div>
-                  ) : null}
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
+        </aside>
+        </div>
 
-          {selectedSymbol && activeIntel ? (
+        <section className="lic-workspace" aria-label="Selected symbol workspace">
+          {!selectedSymbol ? (
+            <p className="lic-workspace-empty">Select a symbol from the tiles or attention strip to open the workspace.</p>
+          ) : !activeIntel ? (
+            <p className="lic-workspace-empty">No intelligence loaded for {selectedSymbol} yet.</p>
+          ) : (
             <>
-              <h4 className="lic-aside-title lic-aside-title--spaced">Drill-down · {selectedSymbol}</h4>
+              <div className="lic-workspace-head">
+                <h3 className="lic-workspace-title">Workspace · {selectedSymbol}</h3>
+                {workspacePres ? (
+                  <div className="lic-workspace-primary-pill" title="Official stance for this symbol">
+                    {workspacePres.primary_action}
+                  </div>
+                ) : null}
+              </div>
+              {workspacePres ? (
+                <div className="lic-reconcile" aria-label="Decision reconciliation">
+                  <div className="lic-reconcile-row">
+                    <span className="lic-reconcile-k">Primary action</span>
+                    <span className="lic-reconcile-v lic-reconcile-v--primary">{workspacePres.primary_action}</span>
+                  </div>
+                  <div className="lic-reconcile-row">
+                    <span className="lic-reconcile-k">Fallback action</span>
+                    <span className="lic-reconcile-v lic-reconcile-v--fallback">
+                      {workspacePres.fallback_action || '—'}
+                    </span>
+                  </div>
+                  <div className="lic-reconcile-row">
+                    <span className="lic-reconcile-k">Why primary still wins</span>
+                    <span className="lic-reconcile-v">{safeText(workspacePres.primary_reason)}</span>
+                  </div>
+                  <div className="lic-reconcile-row">
+                    <span className="lic-reconcile-k">Flip trigger</span>
+                    <span className="lic-reconcile-v">{safeText(workspacePres.flip_trigger)}</span>
+                  </div>
+                </div>
+              ) : null}
               <div className="lic-tabs" role="tablist" aria-label="Drill-down panels">
                 {['chart', 'worlds', 'analog', 'simulator', 'timeline', 'evidence', 'ai'].map((tab) => (
                   <button
@@ -809,7 +814,7 @@ function LiveIntelligenceCockpitInner() {
               </div>
 
               {detailTab === 'chart' && (
-                <div className="lic-drill-panel lic-chart-wrap lic-chart-wrap--drill">
+                <div className="lic-drill-panel lic-drill-panel--chart lic-chart-wrap lic-chart-wrap--drill">
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={chartData}>
@@ -953,31 +958,46 @@ function LiveIntelligenceCockpitInner() {
                     const sim = activeIntel.action_simulation || {}
                     const best = sim.best_action || {}
                     const rows = asArray(sim.alternatives)
-                    const mis = sim.misalignment_note
                     const bestKey = best?.action
-                    const tileRec = bandLabel(activeIntel?.final_recommendation)
+                    const pres = workspacePres || resolveDecisionPresentation(activeIntel)
+                    const misaligned = sim.aligns_with_tile_recommendation === false
                     return (
                       <>
                         <p className="lic-sim-tile-ref">
-                          Tile recommendation: <strong>{tileRec}</strong>
-                          <span className="lic-sim-tile-ref-hint" title="Resolved stance on the tile; table ranks actions by net score.">
-                            {' '}· net score = upside − downside (heuristic)
+                          Primary stance remains <strong>{pres.primary_action}</strong>
+                          <span className="lic-sim-tile-ref-hint" title="Official posture from the risk ladder; table is a heuristic net-score lens.">
+                            {' '}· simulator net score = upside − downside (exploratory)
                           </span>
                         </p>
-                        <div className="lic-sim-best">
-                          <div className="lic-sim-best-label">Least-regret move now</div>
+                        {misaligned && pres.fallback_action ? (
+                          <p className="lic-sim-frame lic-sim-frame--sub">
+                            Defensive scoring prefers <strong>{pres.fallback_action}</strong> if capital preservation is prioritized.
+                            {' '}
+                            <strong>{pres.primary_action}</strong> remains the official posture; rationale:{' '}
+                            {(() => {
+                              const pr = safeText(pres.primary_reason)
+                              return pr.length > 160 ? `${pr.slice(0, 160)}…` : pr
+                            })()}
+                          </p>
+                        ) : (
+                          <p className="lic-sim-frame lic-sim-frame--sub">
+                            Heuristic net-score leader matches the primary stance — use the table to compare trims and tightening
+                            versus full exit under different regret assumptions.
+                          </p>
+                        )}
+                        <div className={`lic-sim-best ${misaligned ? 'lic-sim-best--subordinate' : ''}`}>
+                          <div className="lic-sim-best-label">
+                            {misaligned ? 'Highest net-score action (defensive lens)' : 'Net-score leader (aligned with primary)'}
+                          </div>
                           <div className="lic-sim-best-action">{safeText(best.label)}</div>
                           <p className="lic-sim-best-why">{safeText(best.why)}</p>
                         </div>
-                        {sim.aligns_with_tile_recommendation === false && mis ? (
-                          <div className="lic-sim-misalign" role="status">
-                            <div className="lic-sim-misalign-title">Simulator vs tile</div>
-                            <p className="lic-sim-misalign-copy">{safeText(mis)}</p>
-                          </div>
-                        ) : null}
                         <section className="lic-drill-section">
                           <h5 className="lic-drill-h">All actions</h5>
-                          <p className="lic-drill-muted">Highlighted row matches the highest net-score action. Rationale below the table.</p>
+                          <p className="lic-drill-muted">
+                            Highlighted row is the heuristic net-score winner. Official stance stays the primary action in the
+                            reconciliation block above when the two differ.
+                          </p>
                           <div className="lic-sim-table-wrap">
                             <table className="lic-sim-table">
                               <thead>
@@ -1020,7 +1040,7 @@ function LiveIntelligenceCockpitInner() {
                 </div>
               )}
               {detailTab === 'timeline' && (
-                <div className="lic-timeline">
+                <div className="lic-drill-panel lic-timeline">
                   {timeline.filter((x) => x.kind === 'MATERIAL' && x.symbol === selectedSymbol).length === 0 ? (
                     <p className="lic-muted">No material events for this symbol yet.</p>
                   ) : (
@@ -1034,7 +1054,9 @@ function LiveIntelligenceCockpitInner() {
                           <div className="lic-tl-scope">{safeText(ev.scope)}</div>
                           <div className="lic-tl-trans">{safeText(ev.state_transition || ev.transition)}</div>
                           <div className="lic-tl-body">{safeText(ev.reason || ev.what_changed)}</div>
-                          <div className="lic-tl-act">Implication: {safeText(ev.action_implication)}</div>
+                          <div className="lic-tl-act">
+                            Implication: {caseFileImplicationDisplay(ev, intelligence)}
+                          </div>
                         </div>
                       ))
                   )}
@@ -1095,15 +1117,25 @@ function LiveIntelligenceCockpitInner() {
               )}
               {detailTab === 'ai' && (
                 <div className="lic-drill-panel lic-drill-panel--ai">
-                  <button type="button" onClick={runAi}>Run AI committee (event)</button>
-                  <pre className="lic-detail-pre" style={{ marginTop: 8 }}>
-                    {JSON.stringify(aiResult, null, 2)}
-                  </pre>
+                  <button type="button" onClick={runAi} disabled={aiBusy}>
+                    {aiBusy ? 'Running…' : 'Run AI committee (event)'}
+                  </button>
+                  {aiBusy ? (
+                    <p className="lic-muted" style={{ marginTop: 8 }}>Calling enrich endpoint…</p>
+                  ) : aiResult != null ? (
+                    <pre className="lic-detail-pre" style={{ marginTop: 8 }}>
+                      {JSON.stringify(aiResult, null, 2)}
+                    </pre>
+                  ) : (
+                    <p className="lic-muted" style={{ marginTop: 8 }}>
+                      No run yet — use the button above to fetch event-level AI output.
+                    </p>
+                  )}
                 </div>
               )}
             </>
-          ) : null}
-        </aside>
+          )}
+        </section>
       </div>
     </div>
   )

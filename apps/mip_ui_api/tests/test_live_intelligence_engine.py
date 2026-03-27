@@ -32,11 +32,28 @@ def _tile(**kwargs):
 
 
 class LiveIntelligenceEngineTests(unittest.TestCase):
-    def test_first_cycle_material_feed(self):
+    def test_first_cycle_intel_without_feed_rows(self):
         body = {"positions": [_tile()], "prior_intelligence": {}}
         out = run_deterministic_step(body)
         self.assertIn("TEST", out["intelligence_by_symbol"])
-        self.assertTrue(out["feed_events"])
+        self.assertEqual(out["feed_events"], [])
+        intel = out["intelligence_by_symbol"]["TEST"]
+        self.assertIn("final_recommendation", intel)
+        self.assertIn("feed_fingerprint", intel)
+
+    def test_identical_refresh_does_not_emit_feed(self):
+        o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
+        prior = o1["intelligence_by_symbol"]
+        o2 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": prior})
+        self.assertEqual(o2["feed_events"], [])
+
+    def test_thesis_break_emits_feed_when_prior_present(self):
+        o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
+        prior = o1["intelligence_by_symbol"]
+        t2 = _tile(thesis={"status": "INVALIDATED", "reason": "x"})
+        o2 = run_deterministic_step({"positions": [t2], "prior_intelligence": prior})
+        self.assertTrue(len(o2["feed_events"]) >= 1)
+        self.assertEqual(o2["feed_events"][0]["symbol"], "TEST")
 
     def test_exit_now_near_stop(self):
         t = _tile(
@@ -47,6 +64,7 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
         out = run_deterministic_step({"positions": [t], "prior_intelligence": {}})
         intel = out["intelligence_by_symbol"]["TEST"]
         self.assertIn(intel["exit_urgency"], {"EXIT_NOW", "PREPARE"})
+        self.assertIn(intel["final_recommendation"], {"EXIT_NOW", "PREPARE_EXIT"})
 
     def test_portfolio_regime_active_when_most_underwater(self):
         positions = [

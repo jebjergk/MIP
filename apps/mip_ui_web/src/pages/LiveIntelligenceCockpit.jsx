@@ -5,6 +5,38 @@ import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LiveIntelligenceCockpit.css'
 
+
+function sessionFeedRow() {
+  const ts = new Date().toISOString()
+  return {
+    timestamp: ts,
+    ts,
+    symbol: 'SESSION',
+    state_transition: 'SESSION_START',
+    what_changed: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
+    action_implication: 'Review tiles for resolved stance and simulator alignment.',
+    final_recommendation: '\u2014',
+    severity: 'INFO',
+  }
+}
+
+function attentionTooltip(intel) {
+  const c = intel?.attention_components || {}
+  const parts = Object.entries(c).map(([k, v]) => `${k}: ${v}`)
+  return parts.length ? parts.join(' \u00b7 ') : 'Attention breakdown'
+}
+
+function bandLabel(band) {
+  const m = {
+    EXIT_NOW: 'Exit now',
+    PREPARE_EXIT: 'Prepare exit',
+    WATCH_CLOSELY: 'Watch closely',
+    STAY_COURSE: 'Stay the course',
+  }
+  return m[band] || (band || '\u2014').replace(/_/g, ' ')
+}
+
+
 function mergeTrackerIb(trackerPayload, livePayload) {
   if (!trackerPayload || !Array.isArray(trackerPayload.tiles)) return trackerPayload
   const rows = Array.isArray(livePayload?.rows) ? livePayload.rows : []
@@ -95,9 +127,10 @@ export default function LiveIntelligenceCockpit() {
   }, [])
 
   const runStep = useCallback(async (tiles, priorIntel) => {
+    const positions = Array.isArray(tiles) ? tiles : []
     const body = {
       bootstrap_version: bootstrapVersion || '1.0.0',
-      positions: tiles,
+      positions,
       prior_intelligence: priorIntel,
       session_peak_pnl_by_symbol: peakPnl,
       analog_episodes_by_symbol: analogBySymbol,
@@ -115,6 +148,8 @@ export default function LiveIntelligenceCockpit() {
   const loadBootstrap = useCallback(async () => {
     setLoading(true)
     setError('')
+    setFeed([])
+    setTimeline([])
     try {
       const resp = await fetch(`${API_BASE}/live-intelligence/bootstrap`)
       if (!resp.ok) throw new Error(`Bootstrap failed (${resp.status})`)
@@ -131,14 +166,17 @@ export default function LiveIntelligenceCockpit() {
         const ib = await fetchIbLive(tr.tiles || [])
         const merged = ib ? mergeTrackerIb(tr, ib) : tr
         setTrackerData(merged)
-        const step = await runStep(merged.tiles || {}, {})
+        const step = await runStep(merged.tiles || [], {})
         setIntelligence(step.intelligence_by_symbol || {})
         setPortfolioRegime(step.portfolio_regime || {})
         const ev = step.feed_events || []
-        if (ev.length) {
-          setFeed((f) => [...ev, ...f].slice(0, 120))
-          setTimeline((t) => [...ev.map((e) => ({ ...e, kind: 'MATERIAL' })), ...t].slice(0, 200))
-        }
+        const session = sessionFeedRow()
+        setFeed((f) => [...ev, session, ...f].slice(0, 120))
+        setTimeline((t) => [
+          ...ev.map((e) => ({ ...e, kind: 'MATERIAL' })),
+          { ...session, kind: 'SESSION' },
+          ...t,
+        ].slice(0, 200))
         const peaks = {}
         ;(merged.tiles || []).forEach((tile) => {
           const s = String(tile.symbol || '').toUpperCase()
@@ -147,9 +185,12 @@ export default function LiveIntelligenceCockpit() {
         })
         setPeakPnl(peaks)
       } catch {
-        const step = await runStep(tr.tiles || {}, {})
+        const step = await runStep(tr.tiles || [], {})
         setIntelligence(step.intelligence_by_symbol || {})
         setPortfolioRegime(step.portfolio_regime || {})
+        const session = sessionFeedRow()
+        setFeed([session])
+        setTimeline([{ ...session, kind: 'SESSION' }])
       }
     } catch (e) {
       setError(e.message || 'Bootstrap error')
@@ -179,7 +220,7 @@ export default function LiveIntelligenceCockpit() {
         })
         return next
       })
-      const step = await runStep(merged.tiles || {}, intelligence)
+      const step = await runStep(merged.tiles || [], intelligence)
       setIntelligence(step.intelligence_by_symbol || {})
       setPortfolioRegime(step.portfolio_regime || {})
       const ev = step.feed_events || []
@@ -261,7 +302,7 @@ export default function LiveIntelligenceCockpit() {
         {portfolioRegime.banner_text || 'Portfolio regime: no latent book shock detected.'}
       </div>
 
-      {loading ? <p style={{ color: '#94a3b8' }}>Loading bootstrap…</p> : null}
+      {loading ? <p className="lic-muted">Loading bootstrap…</p> : null}
 
       <div className="lic-grid">
         <div className="lic-main">
@@ -274,9 +315,14 @@ export default function LiveIntelligenceCockpit() {
                   key={s}
                   type="button"
                   className={`lic-lb-chip ${selectedSymbol === s ? 'lic-lb-chip--on' : ''}`}
+                  title={attentionTooltip(intel)}
                   onClick={() => setSelectedSymbol(s)}
                 >
-                  {formatSymbolLabel(t.symbol, t.market_type)} · {intel?.attention_score?.toFixed?.(0) ?? '—'}
+                  {formatSymbolLabel(t.symbol, t.market_type)}
+                  {' · '}
+                  <span className="lic-attn-band">{intel?.attention_band || '—'}</span>
+                  {' · '}
+                  {intel?.attention_score?.toFixed?.(0) ?? '—'}
                 </button>
               )
             })}
@@ -287,6 +333,8 @@ export default function LiveIntelligenceCockpit() {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
               const urg = intel?.exit_urgency || 'HOLD'
+              const band = intel?.final_recommendation
+              const pref = (intel?.action_simulation?.preferred_ranking || [])[0]
               return (
                 <button
                   key={s}
@@ -295,14 +343,21 @@ export default function LiveIntelligenceCockpit() {
                   onClick={() => setSelectedSymbol(s)}
                 >
                   <h3>{formatSymbolLabel(t.symbol, t.market_type)} · {t.side}</h3>
+                  <div className="lic-tile-band">{bandLabel(band)}</div>
                   <div className="lic-tile-meta">
                     <span>Thesis: {intel?.thesis_fracture || '—'}</span>
                     <span>Novelty: {intel?.novelty_state || '—'}</span>
-                    <span>Preferred: {(intel?.action_simulation?.preferred_ranking || [])[0] || '—'}</span>
-                    <span className={`lic-urgency lic-urgency--${urg}`}>{urg.replace('_', ' ')}</span>
+                    <span>Action (aligned): {pref || '—'}</span>
+                    <span className={`lic-urgency lic-urgency--${urg}`}>Urgency: {urg.replace(/_/g, ' ')}</span>
                   </div>
-                  <div style={{ marginTop: 6, fontSize: '0.72rem', color: '#cbd5e1' }}>
-                    {intel?.why_now_delta?.human || ''}
+                  <div className="lic-tile-sub">
+                    {intel?.portfolio_factor_chip ? <div>{intel.portfolio_factor_chip}</div> : null}
+                    {intel?.analog_tile_line ? <div>{intel.analog_tile_line}</div> : null}
+                  </div>
+                  <div className="lic-tile-why">
+                    {(intel?.why_now_bullets || []).slice(0, 3).map((b) => (
+                      <div key={b}>• {b}</div>
+                    ))}
                   </div>
                 </button>
               )
@@ -311,20 +366,36 @@ export default function LiveIntelligenceCockpit() {
         </div>
 
         <aside className="lic-aside">
-          <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem' }}>Case file</h4>
+          <h4 className="lic-aside-title">Case file</h4>
           <div className="lic-feed">
-            {feed.length === 0 ? <div style={{ color: '#64748b', fontSize: '0.8rem' }}>No material events yet.</div> : null}
-            {feed.map((row) => (
-              <div key={`${row.ts}_${row.symbol}_${row.transition}`} className="lic-feed-row">
-                <div><b>{row.symbol}</b> · {row.urgency}</div>
-                <div>{row.why_now_human}</div>
-              </div>
-            ))}
+            {feed.length === 0 ? <div className="lic-feed-empty">No material events yet.</div> : null}
+            {feed.map((row) => {
+              const k = `${row.ts || row.timestamp || ''}_${row.symbol}_${row.state_transition || row.transition || ''}`
+              const body = row.what_changed || row.why_now_human || ''
+              const trans = row.state_transition || row.transition || ''
+              const sev = row.severity || ''
+              return (
+                <div key={k} className={`lic-feed-row lic-feed-row--${String(sev).toLowerCase()}`}>
+                  <div className="lic-feed-row-head">
+                    <b>{row.symbol}</b>
+                    {row.final_recommendation && row.symbol !== 'SESSION' ? (
+                      <span className="lic-feed-band"> · {bandLabel(row.final_recommendation)}</span>
+                    ) : null}
+                    {sev ? <span className="lic-feed-sev">{sev}</span> : null}
+                  </div>
+                  {trans ? <div className="lic-feed-trans">{trans}</div> : null}
+                  <div className="lic-feed-body">{body}</div>
+                  {row.action_implication ? (
+                    <div className="lic-feed-action">Implication: {row.action_implication}</div>
+                  ) : null}
+                </div>
+              )
+            })}
           </div>
 
           {selectedSymbol && activeIntel ? (
             <>
-              <h4 style={{ margin: '1rem 0 0.5rem', fontSize: '0.85rem' }}>Drill-down · {selectedSymbol}</h4>
+              <h4 className="lic-aside-title lic-aside-title--spaced">Drill-down · {selectedSymbol}</h4>
               <div className="lic-tabs">
                 {['chart', 'worlds', 'analog', 'simulator', 'timeline', 'evidence', 'ai'].map((tab) => (
                   <button
@@ -343,14 +414,17 @@ export default function LiveIntelligenceCockpit() {
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={chartData}>
-                        <XAxis dataKey="ts" tick={{ fontSize: 9 }} />
-                        <YAxis domain={['auto', 'auto']} tick={{ fontSize: 9 }} width={42} />
-                        <Tooltip />
+                        <XAxis dataKey="ts" tick={{ fill: '#e2e8f0', fontSize: 9 }} stroke="#64748b" />
+                        <YAxis domain={['auto', 'auto']} tick={{ fill: '#e2e8f0', fontSize: 9 }} width={42} stroke="#64748b" />
+                        <Tooltip
+                          contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }}
+                          labelStyle={{ color: '#cbd5e1' }}
+                        />
                         <Line type="monotone" dataKey="c" stroke="#38bdf8" dot={false} strokeWidth={1.5} />
                       </LineChart>
                     </ResponsiveContainer>
                   ) : (
-                    <div style={{ color: '#64748b', fontSize: '0.75rem' }}>No bars</div>
+                    <div className="lic-chart-empty">No bars</div>
                   )}
                 </div>
               )}
@@ -359,10 +433,20 @@ export default function LiveIntelligenceCockpit() {
                 <pre className="lic-detail-pre">{JSON.stringify(activeIntel.scenario_worlds, null, 2)}</pre>
               )}
               {detailTab === 'analog' && (
-                <pre className="lic-detail-pre">{JSON.stringify(activeIntel.analog_summary, null, 2)}</pre>
+                <div>
+                  {activeIntel.analog_tile_line ? (
+                    <p className="lic-analog-line">{activeIntel.analog_tile_line}</p>
+                  ) : null}
+                  <pre className="lic-detail-pre">{JSON.stringify(activeIntel.analog_summary, null, 2)}</pre>
+                </div>
               )}
               {detailTab === 'simulator' && (
-                <pre className="lic-detail-pre">{JSON.stringify(activeIntel.action_simulation, null, 2)}</pre>
+                <div>
+                  {activeIntel.regret_tilt_label ? (
+                    <p className="lic-analog-line">{activeIntel.regret_tilt_label}</p>
+                  ) : null}
+                  <pre className="lic-detail-pre">{JSON.stringify(activeIntel.action_simulation, null, 2)}</pre>
+                </div>
               )}
               {detailTab === 'timeline' && (
                 <pre className="lic-detail-pre">{JSON.stringify(timeline.filter((x) => x.symbol === selectedSymbol).slice(0, 20), null, 2)}</pre>

@@ -1,4 +1,4 @@
-"""Deterministic intelligence step — no Snowflake, no AI."""
+"""Deterministic intelligence step - no Snowflake, no AI."""
 
 from __future__ import annotations
 
@@ -7,6 +7,19 @@ from typing import Any
 
 from app.services.live_intelligence.analog import match_analogs
 from app.services.live_intelligence.portfolio_regime import detect_portfolio_regime, merge_pairwise_from_bootstrap
+from app.services.live_intelligence.resolver import (
+    analog_tile_line,
+    build_delta_fields,
+    build_feed_fingerprint,
+    build_why_now_bullets,
+    confidence_block,
+    novelty_explanation_one_liner,
+    portfolio_factor_chip,
+    regret_tilt_label,
+    resolve_final_recommendation,
+    should_emit_feed_event,
+    urgency_to_final_band,
+)
 from app.services.live_intelligence.simulator import simulate_actions
 from app.services.live_intelligence.worlds import build_scenario_worlds
 
@@ -114,7 +127,6 @@ def _map_legacy_thesis_to_fracture(legacy_status: str, feats: dict[str, Any], di
         if feats.get("inside_cone") is False or (feats.get("deviation_lower") or 0) < -0.02:
             return "THESIS_STRETCHED"
         return "THESIS_INTACT"
-    # WEAKENING
     d_sl = dist_sl_pct if dist_sl_pct is not None else 0.1
     if d_sl < 0.02:
         return "THESIS_DAMAGED"
@@ -177,34 +189,54 @@ def _compute_novelty(tile: dict[str, Any], feats: dict[str, Any], analog_quality
     return "NORMAL"
 
 
-def _attention_score(
+def _attention_with_components(
     exit_urgency: str,
     novelty: str,
     thesis_fracture: str,
     prior: dict[str, Any] | None,
     dist_sl_pct: float | None,
-) -> float:
-    base = 20.0
-    base += EXIT_RANK.get(exit_urgency, 0) * 18
-    base += NOVELTY_RANK.get(novelty, 0) * 12
-    base += THESIS_RANK.get(thesis_fracture, 0) * 10
+    *,
+    regime_active: bool,
+    analog_quality: float,
+    giveback: bool,
+) -> tuple[float, dict[str, float]]:
+    components: dict[str, float] = {}
+    components["exit_band"] = float(EXIT_RANK.get(exit_urgency, 0) * 18)
+    components["novelty"] = float(NOVELTY_RANK.get(novelty, 0) * 12)
+    components["thesis_damage"] = float(THESIS_RANK.get(thesis_fracture, 0) * 10)
     if dist_sl_pct is not None and dist_sl_pct < 0.03:
-        base += 15
-    if prior:
-        pu = prior.get("exit_urgency")
-        if pu != exit_urgency:
-            base += 8
-    return float(_clamp(base, 0, 100))
+        components["stop_proximity"] = 15.0
+    else:
+        components["stop_proximity"] = 0.0
+    if regime_active:
+        components["portfolio_stress"] = 18.0
+    else:
+        components["portfolio_stress"] = 0.0
+    if prior and prior.get("exit_urgency") != exit_urgency:
+        components["urgency_flip"] = 8.0
+    else:
+        components["urgency_flip"] = 0.0
+    if analog_quality < 0.25 and analog_quality > 0:
+        components["analog_deterioration"] = min(15.0, (0.25 - analog_quality) * 40)
+    else:
+        components["analog_deterioration"] = 0.0
+    if giveback:
+        components["giveback_from_peak"] = 12.0
+    else:
+        components["giveback_from_peak"] = 0.0
+
+    base = 15.0
+    total = base + sum(components.values())
+    return float(_clamp(total, 0, 100)), components
 
 
-def _material(
-    symbol: str,
+def _material_state(
     prior: dict[str, Any] | None,
     next_intel: dict[str, Any],
 ) -> bool:
     if not prior:
         return True
-    keys = ["exit_urgency", "thesis_fracture", "novelty_state", "pattern_label"]
+    keys = ["exit_urgency", "thesis_fracture", "novelty_state", "pattern_label", "final_recommendation"]
     for k in keys:
         if prior.get(k) != next_intel.get(k):
             return True
@@ -213,24 +245,14 @@ def _material(
     return False
 
 
-def _why_now(prior: dict[str, Any] | None, nxt: dict[str, Any]) -> dict[str, Any]:
-    crossed = []
-    if not prior:
-        return {
-            "human": "Initial intelligence baseline for this session.",
-            "machine": {"initial": True},
-            "crossed_thresholds": crossed,
-        }
-    if prior.get("exit_urgency") != nxt.get("exit_urgency"):
-        crossed.append(f"exit_urgency:{prior.get('exit_urgency')}->{nxt.get('exit_urgency')}")
-    if prior.get("thesis_fracture") != nxt.get("thesis_fracture"):
-        crossed.append(f"thesis_fracture:{prior.get('thesis_fracture')}->{nxt.get('thesis_fracture')}")
-    if prior.get("novelty_state") != nxt.get("novelty_state"):
-        crossed.append(f"novelty:{prior.get('novelty_state')}->{nxt.get('novelty_state')}")
-    human = (
-        f"State change vs prior cycle: {', '.join(crossed) if crossed else 'No threshold crossings; values refreshed.'}"
-    )
-    return {"human": human, "machine": {"deltas": crossed}, "crossed_thresholds": crossed}
+def _hot_news(tile: dict[str, Any]) -> bool:
+    for e in tile.get("events") or []:
+        if str(e.get("type") or "").upper() != "NEWS":
+            continue
+        badge = str((e.get("meta") or {}).get("badge") or "").upper()
+        if badge in {"HOT", "RISK"}:
+            return True
+    return False
 
 
 def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
@@ -241,6 +263,11 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         k.upper(): list(v) for k, v in (body.get("analog_episodes_by_symbol") or {}).items()
     }
     portfolio_ctx_in = body.get("portfolio_context") or {}
+
+    pw = merge_pairwise_from_bootstrap(portfolio_ctx_in if isinstance(portfolio_ctx_in, dict) else None)
+    regime = detect_portfolio_regime(positions, pairwise_correlation=pw)
+    regime_active = bool(regime.get("active"))
+    regime_hyp = str(regime.get("hypothesis") or "NONE")
 
     intelligence: dict[str, dict[str, Any]] = {}
     feed_events: list[dict[str, Any]] = []
@@ -254,33 +281,89 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         feats = _live_features(tile)
         legacy_thesis = (tile.get("thesis") or {}).get("status") or "WEAKENING"
         dist_sl = _to_f((tile.get("progress_metrics") or {}).get("distance_to_sl_pct"))
+        dist_tp = _to_f((tile.get("progress_metrics") or {}).get("distance_to_tp_pct"))
         thesis_fracture = _map_legacy_thesis_to_fracture(str(legacy_thesis), feats, dist_sl)
 
         analog_summary = match_analogs(tile, analog_by_sym.get(sym) or [])
-        novelty = _compute_novelty(tile, feats, float(analog_summary.get("match_quality") or 0))
+        mq = float(analog_summary.get("match_quality") or 0)
+        novelty = _compute_novelty(tile, feats, mq)
 
         exit_urg = _compute_exit_urgency(tile, feats, thesis_fracture)
-        attn = _attention_score(exit_urg, novelty, thesis_fracture, prior, dist_sl)
-
-        worlds = build_scenario_worlds(tile, thesis_fracture, exit_urg)
-        sim = simulate_actions(tile, exit_urg, thesis_fracture)
+        final_band, reason_summary, supporting, opposing = resolve_final_recommendation(
+            exit_urg,
+            thesis_fracture,
+            feats,
+            tile,
+            regime_active=regime_active,
+            analog_match_quality=mq,
+        )
 
         peak = peaks.get(sym)
         pnl = _to_f(tile.get("unrealized_pnl"))
-        giveback_note = ""
-        if peak is not None and pnl is not None and peak > 0 and pnl < peak * 0.5:
-            giveback_note = "Giveback from session PnL peak detected."
+        giveback = peak is not None and pnl is not None and peak > 0 and pnl < peak * 0.5
 
-        next_intel = {
+        attn, attn_components = _attention_with_components(
+            exit_urg,
+            novelty,
+            thesis_fracture,
+            prior,
+            dist_sl,
+            regime_active=regime_active,
+            analog_quality=mq,
+            giveback=giveback,
+        )
+
+        worlds = build_scenario_worlds(tile, thesis_fracture, exit_urg)
+        sim = simulate_actions(tile, exit_urg, thesis_fracture, final_band=final_band)
+
+        sl_near = dist_sl is not None and dist_sl < 0.02
+        tp_near = dist_tp is not None and abs(dist_tp) < 0.02
+        hot = _hot_news(tile)
+
+        why_bullets = build_why_now_bullets(
+            feats=feats,
+            thesis_fracture=thesis_fracture,
+            novelty=novelty,
+            final_band=final_band,
+            dist_sl_pct=dist_sl,
+            regime_active=regime_active,
+            analog_summary=analog_summary,
+            giveback=giveback,
+            tile=tile,
+        )
+        delta_fields = build_delta_fields(
+            prior,
+            final_band=final_band,
+            thesis_fracture=thesis_fracture,
+            novelty=novelty,
+            feats=feats,
+            why_bullets=why_bullets,
+        )
+
+        fingerprint = build_feed_fingerprint(
+            final_band=final_band,
+            thesis_fracture=thesis_fracture,
+            novelty_state=novelty,
+            analog_match_quality=mq,
+            regime_hypothesis=regime_hyp,
+            sl_near=sl_near,
+            tp_near=tp_near,
+            hot_news=hot,
+        )
+
+        emit_feed = should_emit_feed_event(prior, fingerprint)
+
+        next_intel_compare = {
             "exit_urgency": exit_urg,
             "thesis_fracture": thesis_fracture,
             "novelty_state": novelty,
             "pattern_label": feats.get("pattern_label"),
             "attention_score": attn,
+            "final_recommendation": final_band,
         }
-        is_material = _material(sym, prior, next_intel)
-        why = _why_now(prior, next_intel)
+        is_material = _material_state(prior, next_intel_compare)
 
+        conf_block = confidence_block(feats, tile, mq, thesis_fracture)
         intel = {
             "symbol": sym,
             "position_state": {
@@ -289,40 +372,66 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
                 "unrealized_pnl": pnl,
                 "entry_price": tile.get("entry_price"),
                 "current_price": tile.get("current_price"),
+                "opened_at": tile.get("opened_at"),
             },
             "thesis_fracture": thesis_fracture,
             "legacy_thesis_status": legacy_thesis,
             "exit_urgency": exit_urg,
+            "pattern_label": feats.get("pattern_label"),
+            "final_recommendation": final_band,
+            "final_recommendation_reason_summary": reason_summary,
+            "supporting_signals": supporting,
+            "opposing_signals": opposing,
             "attention_score": round(attn, 2),
+            "attention_band": "High" if attn >= 70 else ("Med" if attn >= 40 else "Low"),
+            "attention_components": {k: round(v, 2) for k, v in attn_components.items()},
             "novelty_state": novelty,
-            "why_now_delta": why,
+            "novelty_explanation_one_liner": novelty_explanation_one_liner(novelty, tile, feats, mq),
+            "why_now_bullets": why_bullets,
+            "delta_label": delta_fields.get("delta_label"),
+            "delta_reason": delta_fields.get("delta_reason"),
+            "trigger_crossed": delta_fields.get("trigger_crossed") or [],
+            "new_vs_persistent": delta_fields.get("new_vs_persistent") or {},
+            "why_now_delta": {
+                "human": delta_fields.get("delta_reason", ""),
+                "bullets": why_bullets,
+                "machine": {"fingerprint": fingerprint},
+            },
             "scenario_worlds": worlds,
             "analog_summary": analog_summary,
+            "analog_tile_line": analog_tile_line(analog_summary),
             "action_simulation": sim,
+            "regret_tilt_label": regret_tilt_label(sim),
+            "confidence": conf_block,
+            "confidence_decomposition": conf_block,
+            "portfolio_factor_chip": portfolio_factor_chip(regime),
             "committee_state": {},
-            "position_story": f"{sym} {tile.get('side')}: urgency {exit_urg}, thesis {thesis_fracture}, novelty {novelty}. {giveback_note}".strip(),
+            "position_story": f"{sym} {tile.get('side')}: {final_band}. {reason_summary}",
             "materiality_state": "MATERIAL" if is_material else "STABLE",
             "derived_features": feats,
+            "feed_fingerprint": fingerprint,
             "last_ai_refresh_at": prior.get("last_ai_refresh_at") if prior else None,
             "last_material_change_at": now if is_material else prior.get("last_material_change_at"),
         }
         intelligence[sym] = intel
 
-        if is_material:
+        if emit_feed and prior:
+            action_impl = final_band.replace("_", " ")
+            prior_band = prior.get("final_recommendation") or urgency_to_final_band(prior.get("exit_urgency"))
+            transition = f"{prior_band}->{final_band}"
+            what_changed = delta_fields.get("delta_reason") or "; ".join(delta_fields.get("trigger_crossed") or [])
             feed_events.append(
                 {
+                    "timestamp": now,
                     "ts": now,
                     "symbol": sym,
-                    "transition": f"{prior.get('exit_urgency') if prior else 'INIT'}->{exit_urg}",
-                    "why_now_human": why["human"],
-                    "why_now_machine": why["machine"],
-                    "action_implication": sim.get("preferred_ranking", ["hold"])[0],
-                    "urgency": exit_urg,
+                    "state_transition": transition,
+                    "what_changed": what_changed[:400],
+                    "action_implication": action_impl,
+                    "final_recommendation": final_band,
+                    "severity": "HIGH" if final_band == "EXIT_NOW" else ("ELEVATED" if final_band == "PREPARE_EXIT" else "INFO"),
                 }
             )
-
-    pw = merge_pairwise_from_bootstrap(portfolio_ctx_in if isinstance(portfolio_ctx_in, dict) else None)
-    regime = detect_portfolio_regime(positions, pairwise_correlation=pw)
 
     return {
         "intelligence_by_symbol": intelligence,

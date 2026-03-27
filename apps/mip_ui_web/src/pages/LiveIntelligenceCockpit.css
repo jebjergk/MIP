@@ -207,3 +207,109 @@
   font-size: 0.85rem;
   margin-bottom: 0.5rem;
 }
+
+.lic-muted {
+  color: #94a3b8;
+}
+
+.lic-attn-band {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.lic-tile-band {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 0.35rem;
+}
+
+.lic-tile-sub {
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+
+.lic-tile-why {
+  margin-top: 0.45rem;
+  font-size: 0.7rem;
+  color: #e2e8f0;
+  line-height: 1.4;
+}
+
+.lic-aside-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: #f1f5f9;
+}
+
+.lic-aside-title--spaced {
+  margin: 1rem 0 0.5rem;
+}
+
+.lic-feed-empty {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+.lic-feed-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem;
+  color: #f1f5f9;
+}
+
+.lic-feed-band {
+  color: #7dd3fc;
+}
+
+.lic-feed-sev {
+  margin-left: auto;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: #fcd34d;
+}
+
+.lic-feed-trans {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  margin-top: 0.15rem;
+}
+
+.lic-feed-body {
+  margin-top: 0.25rem;
+  color: #e2e8f0;
+  line-height: 1.35;
+}
+
+.lic-feed-action {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+}
+
+.lic-feed-row--high {
+  border-left-color: #f87171;
+}
+
+.lic-feed-row--elevated {
+  border-left-color: #fbbf24;
+}
+
+.lic-feed-row--info {
+  border-left-color: #64748b;
+}
+
+.lic-analog-line {
+  font-size: 0.72rem;
+  color: #e2e8f0;
+  margin: 0 0 0.5rem;
+  line-height: 1.35;
+}
+
+.lic-chart-empty {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}

@@ -270,6 +270,18 @@ export default function SymbolTracker() {
     }
   }, [searchParams, tiles])
 
+  /** Re-center chart on the new symbol: do not keep another symbol's pan/zoom. */
+  useEffect(() => {
+    const cur = selectedSymbol ? String(selectedSymbol).toUpperCase() : null
+    const prev = prevSelectedSymbolRef.current
+    if (cur && prev != null && cur !== prev) {
+      setViewportLocked(false)
+      setFollowLatest(true)
+      setLayoutRevision((r) => r + 1)
+    }
+    if (cur) prevSelectedSymbolRef.current = cur
+  }, [selectedSymbol])
+
   useEffect(() => {
     if (Array.isArray(data?.tiles) && data.tiles.length > 0) {
       runCommitteeCycle(data)

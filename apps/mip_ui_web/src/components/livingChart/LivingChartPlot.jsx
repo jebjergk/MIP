@@ -244,7 +244,6 @@ export default function LivingChartPlot({
       }
     } else {
       ly.xaxis = { ...BASE_LAYOUT.xaxis, autorange: true }
-      ly.yaxis = { ...BASE_LAYOUT.yaxis, autorange: true }
     }
 
     return ly

@@ -786,11 +786,12 @@
 }
 
 .lic-tile-driver-li {
-  margin-bottom: 0.15rem;
+  margin-bottom: 0.12rem;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  font-size: 0.66rem;
 }
 
 .lic-tile-chips {

@@ -6,6 +6,7 @@ import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTileMiniChart from '../components/lic/LicTileMiniChart'
 import { caseFileImplicationDisplay, resolveDecisionPresentation } from '../components/lic/licDecisionPresentation'
+import { buildVisibleTilePresentation } from '../components/lic/licTilePresentation'
 import './LiveIntelligenceCockpit.css'
 
 /** Prevents a single throw from blanking the whole app when API field shapes drift. */
@@ -483,6 +484,14 @@ function LiveIntelligenceCockpitInner() {
     })
   }, [trackerData.tiles, intelligence])
 
+  const tilePresentation = useMemo(
+    () =>
+      buildVisibleTilePresentation(ranked, intelligence, (intel) =>
+        intel ? resolveDecisionPresentation(intel).primary_action : '—',
+      ),
+    [ranked, intelligence],
+  )
+
   const activeIntel = selectedSymbol ? intelligence[selectedSymbol] : null
   const workspacePres = useMemo(
     () => (activeIntel ? resolveDecisionPresentation(activeIntel) : null),
@@ -639,7 +648,17 @@ function LiveIntelligenceCockpitInner() {
               const primaryAction = pres?.primary_action || '—'
               const au = intel?.analog_ui || {}
               const capFull = safeText(rd.confidence_caption, '')
-              const thesisFull = safeText(intel?.thesis_plain, '')
+              const thesisPlain = safeText(intel?.thesis_plain, '')
+              const copy = tilePresentation.get(s)
+              const thesisLine = copy?.thesis ?? thesisPlain
+              const thesisTooltip = (() => {
+                const parts = []
+                if (copy?.thesis) parts.push(copy.thesis)
+                if (thesisPlain && thesisPlain !== copy?.thesis) parts.push(`Model: ${thesisPlain}`)
+                return parts.length ? parts.join('\n\n') : undefined
+              })()
+              const driverLines = copy?.drivers?.length ? copy.drivers : asArray(intel?.decision_drivers).slice(0, 3)
+              const chipSuppress = copy?.chipSuppress || {}
               const fallbackStrip = pres?.fallback_strip_text?.trim() || ''
               const confTitle = capFull ? `Decision confidence: ${capFull}` : 'Confidence blends thesis, tape, and analog match.'
               return (
@@ -684,13 +703,13 @@ function LiveIntelligenceCockpitInner() {
                       {fallbackStrip}
                     </div>
                   ) : null}
-                  <div className="lic-tile-thesis" title={thesisFull || undefined}>
-                    {thesisFull}
+                  <div className="lic-tile-thesis" title={thesisTooltip}>
+                    {thesisLine}
                   </div>
                   <ul className="lic-tile-drivers">
-                    {asArray(intel?.decision_drivers).slice(0, 3).map((d, di) => {
+                    {driverLines.map((d, di) => {
                       const txt = safeText(d)
-                      const t = truncateTileText(txt, 88)
+                      const t = truncateTileText(txt, 72)
                       return (
                         <li key={`${s}-d-${di}`} className="lic-tile-driver-li" title={t.full !== t.short ? t.full : undefined}>
                           {t.short || txt}
@@ -699,22 +718,30 @@ function LiveIntelligenceCockpitInner() {
                     })}
                   </ul>
                   <div className="lic-tile-chips">
-                    <span className="lic-chip" title="Attention">
-                      <span className="lic-chip-k">Attention</span>
-                      <span className="lic-chip-v">{safeText(intel?.attention_band)}</span>
-                    </span>
-                    <span className="lic-chip" title="Historical analog">
-                      <span className="lic-chip-k">Analog</span>
-                      <span className="lic-chip-v">{safeText(au.chip_verdict || au.confidence_plain, '—')}</span>
-                    </span>
-                    <span className="lic-chip" title="Portfolio factor">
-                      <span className="lic-chip-k">Factor</span>
-                      <span className="lic-chip-v">{safeText(intel?.portfolio_factor_chip)}</span>
-                    </span>
-                    <span className="lic-chip" title="Regret tilt">
-                      <span className="lic-chip-k">Regret</span>
-                      <span className="lic-chip-v">{safeText(intel?.regret_tilt_label)}</span>
-                    </span>
+                    {!chipSuppress.attention ? (
+                      <span className="lic-chip" title="Attention">
+                        <span className="lic-chip-k">Attention</span>
+                        <span className="lic-chip-v">{safeText(intel?.attention_band)}</span>
+                      </span>
+                    ) : null}
+                    {!chipSuppress.analog ? (
+                      <span className="lic-chip" title="Historical analog">
+                        <span className="lic-chip-k">Analog</span>
+                        <span className="lic-chip-v">{safeText(au.chip_verdict || au.confidence_plain, '—')}</span>
+                      </span>
+                    ) : null}
+                    {!chipSuppress.factor ? (
+                      <span className="lic-chip" title="Portfolio factor">
+                        <span className="lic-chip-k">Factor</span>
+                        <span className="lic-chip-v">{safeText(intel?.portfolio_factor_chip)}</span>
+                      </span>
+                    ) : null}
+                    {!chipSuppress.regret ? (
+                      <span className="lic-chip" title="Regret tilt">
+                        <span className="lic-chip-k">Regret</span>
+                        <span className="lic-chip-v">{safeText(intel?.regret_tilt_label)}</span>
+                      </span>
+                    ) : null}
                   </div>
                 </button>
               )

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { API_BASE } from '../App'
+import { fetchWithRetry } from '../utils/fetchRetry'
 
 const SymbolMetaContext = createContext({
   symbols: [],
@@ -24,7 +25,7 @@ export function SymbolMetaProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false
-    fetch(`${API_BASE}/reference/symbols`)
+    fetchWithRetry(`${API_BASE}/reference/symbols`, {}, { retries: 4, backoffMs: 400 })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText || 'Failed to load symbol reference'))))
       .then((payload) => {
         if (!cancelled) setSymbols(Array.isArray(payload?.symbols) ? payload.symbols : [])

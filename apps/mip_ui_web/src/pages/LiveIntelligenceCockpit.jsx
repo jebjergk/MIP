@@ -1,11 +1,47 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE } from '../App'
+import { fetchWithRetry } from '../utils/fetchRetry'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTileMiniChart from '../components/lic/LicTileMiniChart'
 import './LiveIntelligenceCockpit.css'
 
+/** Prevents a single throw from blanking the whole app when API field shapes drift. */
+class LicErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('LiveIntelligenceCockpit render error:', error, info?.componentStack)
+  }
+
+  render() {
+    if (this.state.error) {
+      const msg = this.state.error?.message || String(this.state.error)
+      return (
+        <div className="lic-page lic-page--crash">
+          <h2 className="lic-crash-title">Live Intelligence could not render</h2>
+          <p className="lic-crash-copy">
+            This usually means a field from the API is not a string or number where the UI expects one. Open the
+            browser console for the full stack. Error:
+          </p>
+          <pre className="lic-crash-pre">{msg}</pre>
+          <button type="button" className="lic-crash-btn" onClick={() => window.location.reload()}>
+            Reload page
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 function sessionFeedRow() {
   const ts = new Date().toISOString()
@@ -35,7 +71,32 @@ function bandLabel(band) {
     WATCH_CLOSELY: 'Watch closely',
     STAY_COURSE: 'Stay the course',
   }
-  return m[band] || (band || '\u2014').replace(/_/g, ' ')
+  const key = typeof band === 'string' ? band : band == null ? '' : String(band)
+  if (m[key]) return m[key]
+  if (!key) return '\u2014'
+  return key.replace(/_/g, ' ')
+}
+
+/** Coerce API values so React never receives objects as text children. */
+function safeText(v, fallback = '\u2014') {
+  if (v == null || v === '') return fallback
+  if (typeof v === 'string' || typeof v === 'number') return String(v)
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No'
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v).slice(0, 400)
+    } catch {
+      return fallback
+    }
+  }
+  return String(v)
+}
+
+function attentionScoreNumber(intel) {
+  const x = intel?.attention_score
+  if (typeof x === 'number' && Number.isFinite(x)) return x
+  const n = Number(x)
+  return Number.isFinite(n) ? n : 0
 }
 
 
@@ -61,6 +122,17 @@ function formatFeedTime(row) {
   const d = new Date(s)
   if (!Number.isFinite(d.getTime())) return String(s)
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function asArray(x) {
+  return Array.isArray(x) ? x : []
+}
+
+/** Avoid wiping tile intelligence when the API returns an empty map but we still have positions. */
+function shouldApplyIntelligence(nextBySymbol, tileCount) {
+  if (!nextBySymbol || typeof nextBySymbol !== 'object') return false
+  if (tileCount <= 0) return true
+  return Object.keys(nextBySymbol).length > 0
 }
 
 
@@ -190,7 +262,7 @@ function slimPortfolioContextForStep(portfolioContext) {
   return {}
 }
 
-export default function LiveIntelligenceCockpit() {
+function LiveIntelligenceCockpitInner() {
   const { formatSymbolLabel } = useSymbolMeta()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -207,6 +279,8 @@ export default function LiveIntelligenceCockpit() {
   const [aiResult, setAiResult] = useState(null)
   const [peakPnl, setPeakPnl] = useState({})
   const [bootReady, setBootReady] = useState(false)
+  const bootstrapGenRef = useRef(0)
+  const refreshGenRef = useRef(0)
 
   const fetchIbLive = useCallback(async (tiles, options = {}) => {
     const windowBars = Number.isFinite(Number(options.windowBars)) ? Number(options.windowBars) : 780
@@ -221,16 +295,25 @@ export default function LiveIntelligenceCockpit() {
       window_bars: Math.max(15, Math.min(800, Math.floor(windowBars))),
       symbols,
     }
-    const resp = await fetch(`${API_BASE}/live-intelligence/ib-live`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!resp.ok) {
+    try {
+      const resp = await fetchWithRetry(
+        `${API_BASE}/live-intelligence/ib-live`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        { retries: softFail ? 3 : 4, backoffMs: 500 },
+      )
+      if (!resp.ok) {
+        if (softFail) return null
+        throw new Error(`IB live failed (${resp.status})`)
+      }
+      return resp.json()
+    } catch {
       if (softFail) return null
-      throw new Error(`IB live failed (${resp.status})`)
+      throw new Error('IB live failed (network)')
     }
-    return resp.json()
   }, [])
 
   const runStep = useCallback(async (tiles, priorIntel, priorPortfolioRegime) => {
@@ -254,15 +337,18 @@ export default function LiveIntelligenceCockpit() {
   }, [analogBySymbol, bootstrapVersion, peakPnl, portfolioContext])
 
   const loadBootstrap = useCallback(async () => {
+    const gen = ++bootstrapGenRef.current
     setLoading(true)
     setError('')
     setBootReady(false)
     setFeed([])
     setTimeline([])
     try {
-      const resp = await fetch(`${API_BASE}/live-intelligence/bootstrap`)
+      const resp = await fetchWithRetry(`${API_BASE}/live-intelligence/bootstrap`, {}, { retries: 5, backoffMs: 600 })
+      if (gen !== bootstrapGenRef.current) return
       if (!resp.ok) throw new Error(`Bootstrap failed (${resp.status})`)
       const data = await resp.json()
+      if (gen !== bootstrapGenRef.current) return
       setBootstrapVersion(data.bootstrap_version || '')
       setAnalogBySymbol(data.analog_episodes_by_symbol || {})
       setPortfolioContext(data.portfolio_context || {})
@@ -271,12 +357,18 @@ export default function LiveIntelligenceCockpit() {
       if (!selectedSymbol && tr.tiles?.[0]?.symbol) {
         setSelectedSymbol(String(tr.tiles[0].symbol).toUpperCase())
       }
+      const tileCount = (tr.tiles || []).length
       try {
         const ib = await fetchIbLive(tr.tiles || [])
+        if (gen !== bootstrapGenRef.current) return
         const merged = ib ? mergeTrackerIb(tr, ib) : tr
         setTrackerData(merged)
         const step = await runStep(merged.tiles || [], {})
-        setIntelligence(step.intelligence_by_symbol || {})
+        if (gen !== bootstrapGenRef.current) return
+        const nextIntel = step.intelligence_by_symbol || {}
+        if (shouldApplyIntelligence(nextIntel, (merged.tiles || []).length)) {
+          setIntelligence(nextIntel)
+        }
         setPortfolioRegime(step.portfolio_regime || {})
         const ev = step.feed_events || []
         const session = sessionFeedRow()
@@ -295,8 +387,13 @@ export default function LiveIntelligenceCockpit() {
         setPeakPnl(peaks)
         setBootReady(true)
       } catch {
+        if (gen !== bootstrapGenRef.current) return
         const step = await runStep(tr.tiles || [], {})
-        setIntelligence(step.intelligence_by_symbol || {})
+        if (gen !== bootstrapGenRef.current) return
+        const nextIntel = step.intelligence_by_symbol || {}
+        if (shouldApplyIntelligence(nextIntel, tileCount)) {
+          setIntelligence(nextIntel)
+        }
         setPortfolioRegime(step.portfolio_regime || {})
         const session = sessionFeedRow()
         setFeed([session])
@@ -304,9 +401,13 @@ export default function LiveIntelligenceCockpit() {
         setBootReady(true)
       }
     } catch (e) {
-      setError(e.message || 'Bootstrap error')
+      if (gen === bootstrapGenRef.current) {
+        setError(e.message || 'Bootstrap error')
+      }
     } finally {
-      setLoading(false)
+      if (gen === bootstrapGenRef.current) {
+        setLoading(false)
+      }
     }
   }, [fetchIbLive, runStep, selectedSymbol])
 
@@ -316,12 +417,14 @@ export default function LiveIntelligenceCockpit() {
 
   const refreshLive = useCallback(async () => {
     if (!bootReady) return
+    const gen = ++refreshGenRef.current
     try {
       setError('')
       const ib = await fetchIbLive(trackerData.tiles || [], {
         windowBars: 256,
         softFail: true,
       })
+      if (gen !== refreshGenRef.current) return
       const merged = ib ? mergeTrackerIb(trackerData, ib) : trackerData
       if (ib) {
         setTrackerData(merged)
@@ -337,7 +440,12 @@ export default function LiveIntelligenceCockpit() {
         })
       }
       const step = await runStep(merged.tiles || [], intelligence, portfolioRegime)
-      setIntelligence(step.intelligence_by_symbol || {})
+      if (gen !== refreshGenRef.current) return
+      const nextIntel = step.intelligence_by_symbol || {}
+      const nTiles = (merged.tiles || []).length
+      if (shouldApplyIntelligence(nextIntel, nTiles)) {
+        setIntelligence(nextIntel)
+      }
       setPortfolioRegime(step.portfolio_regime || {})
       const ev = step.feed_events || []
       if (ev.length) {
@@ -345,7 +453,9 @@ export default function LiveIntelligenceCockpit() {
         setTimeline((t) => [...ev.map((e) => ({ ...e, kind: 'MATERIAL' })), ...t].slice(0, 200))
       }
     } catch (e) {
-      setError(e.message || 'Live refresh failed')
+      if (gen === refreshGenRef.current) {
+        setError(e.message || 'Live refresh failed')
+      }
     }
   }, [bootReady, fetchIbLive, intelligence, portfolioRegime, runStep, trackerData])
 
@@ -356,8 +466,8 @@ export default function LiveIntelligenceCockpit() {
     return [...tiles].sort((a, b) => {
       const sa = String(a.symbol || '').toUpperCase()
       const sb = String(b.symbol || '').toUpperCase()
-      const ia = intelligence[sa]?.attention_score ?? 0
-      const ib = intelligence[sb]?.attention_score ?? 0
+      const ia = attentionScoreNumber(intelligence[sa])
+      const ib = attentionScoreNumber(intelligence[sb])
       return ib - ia
     })
   }, [trackerData.tiles, intelligence])
@@ -433,10 +543,19 @@ export default function LiveIntelligenceCockpit() {
       {error ? <div className="lic-error">{error}</div> : null}
 
       <div className={`lic-banner ${portfolioRegime.active ? 'lic-banner--active' : ''}`}>
-        {portfolioRegime.banner_text || 'Portfolio regime: no latent book shock detected.'}
+        {safeText(
+          portfolioRegime.banner_text,
+          'Portfolio regime: no latent book shock detected.',
+        )}
       </div>
 
       {loading ? <p className="lic-muted">Loading bootstrap…</p> : null}
+
+      {!loading && bootReady && ranked.length === 0 ? (
+        <p className="lic-empty-book">
+          No open positions in the bootstrap tracker. If you expect holdings here, reload bootstrap or confirm the active portfolio in Symbol Tracker.
+        </p>
+      ) : null}
 
       <div className="lic-grid">
         <div className="lic-main">
@@ -454,9 +573,9 @@ export default function LiveIntelligenceCockpit() {
                 >
                   {formatSymbolLabel(t.symbol, t.market_type)}
                   {' · '}
-                  <span className="lic-attn-band">{intel?.attention_band || '—'}</span>
+                  <span className="lic-attn-band">{safeText(intel?.attention_band)}</span>
                   {' · '}
-                  {intel?.attention_score?.toFixed?.(0) ?? '—'}
+                  {intel == null ? '\u2014' : String(Math.round(attentionScoreNumber(intel)))}
                 </button>
               )
             })}
@@ -467,7 +586,9 @@ export default function LiveIntelligenceCockpit() {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
               const rd = intel?.recommendation_display || {}
-              const headline = rd.headline || bandLabel(intel?.final_recommendation)
+              const headline = rd.headline != null && rd.headline !== ''
+                ? safeText(rd.headline)
+                : bandLabel(intel?.final_recommendation)
               const au = intel?.analog_ui || {}
               return (
                 <button
@@ -493,22 +614,25 @@ export default function LiveIntelligenceCockpit() {
                   <div className="lic-tile-dominant">{headline}</div>
                   {rd.confidence != null ? (
                     <div className="lic-tile-conf">
-                      Confidence {Math.round(Number(rd.confidence) * 100)}%
-                      <span className="lic-tile-conf-cap">{rd.confidence_caption}</span>
+                      Confidence {(() => {
+                        const p = Math.round(Number(rd.confidence) * 100)
+                        return Number.isFinite(p) ? p : 0
+                      })()}%
+                      <span className="lic-tile-conf-cap">{safeText(rd.confidence_caption, '')}</span>
                     </div>
                   ) : null}
-                  <div className="lic-tile-thesis">{intel?.thesis_plain || '—'}</div>
+                  <div className="lic-tile-thesis">{safeText(intel?.thesis_plain)}</div>
                   <ul className="lic-tile-drivers">
-                    {(intel?.decision_drivers || []).map((d) => (
-                      <li key={d}>{d}</li>
+                    {asArray(intel?.decision_drivers).map((d, di) => (
+                      <li key={`${s}-d-${di}-${di}`}>{safeText(d)}</li>
                     ))}
                   </ul>
                   <div className="lic-tile-chips">
-                    <span className="lic-chip">Attention: {intel?.attention_band || '—'}</span>
-                    <span className="lic-chip">{intel?.novelty_plain || '—'}</span>
-                    <span className="lic-chip">{au.confidence_plain || 'History match'}</span>
-                    <span className="lic-chip">{intel?.portfolio_factor_chip || '—'}</span>
-                    <span className="lic-chip">{intel?.regret_tilt_label || '—'}</span>
+                    <span className="lic-chip">Attention: {safeText(intel?.attention_band)}</span>
+                    <span className="lic-chip">{safeText(intel?.novelty_plain)}</span>
+                    <span className="lic-chip">{safeText(au.confidence_plain, 'History match')}</span>
+                    <span className="lic-chip">{safeText(intel?.portfolio_factor_chip)}</span>
+                    <span className="lic-chip">{safeText(intel?.regret_tilt_label)}</span>
                   </div>
                 </button>
               )
@@ -520,25 +644,27 @@ export default function LiveIntelligenceCockpit() {
           <h4 className="lic-aside-title">Case file</h4>
           <div className="lic-feed">
             {feed.length === 0 ? <div className="lic-feed-empty">No material events yet.</div> : null}
-            {feed.map((row) => {
-              const k = `${row.ts || row.timestamp || ''}_${row.symbol}_${row.state_transition || row.transition || ''}`
-              const body = row.reason || row.what_changed || row.why_now_human || ''
-              const trans = row.state_transition || row.transition || ''
-              const sev = row.severity || ''
+            {feed.map((row, fri) => {
+              if (!row || typeof row !== 'object') return null
+              const k = `${row.ts || row.timestamp || ''}_${row.symbol}_${row.state_transition || row.transition || ''}_${fri}`
+              const rawBody = row.reason || row.what_changed || row.why_now_human || ''
+              const body = safeText(rawBody, '')
+              const trans = safeText(row.state_transition || row.transition || '', '')
+              const sev = safeText(row.severity || '', '')
               return (
                 <div key={k} className={`lic-feed-row lic-feed-row--${String(sev).toLowerCase()}`}>
                   <div className="lic-feed-time">{formatFeedTime(row)}</div>
                   <div className="lic-feed-row-head">
-                    <b>{row.symbol}</b>
+                    <b>{safeText(row.symbol)}</b>
                     {row.final_recommendation && row.symbol !== 'SESSION' ? (
                       <span className="lic-feed-band"> · {bandLabel(row.final_recommendation)}</span>
                     ) : null}
                     {sev ? <span className="lic-feed-sev">{sev}</span> : null}
                   </div>
                   {trans ? <div className="lic-feed-trans">{trans}</div> : null}
-                  <div className="lic-feed-body">{body}</div>
+                  {body ? <div className="lic-feed-body">{body}</div> : null}
                   {row.action_implication ? (
-                    <div className="lic-feed-action">Next move: {row.action_implication}</div>
+                    <div className="lic-feed-action">Next move: {safeText(row.action_implication)}</div>
                   ) : null}
                 </div>
               )
@@ -609,20 +735,20 @@ export default function LiveIntelligenceCockpit() {
 
               {detailTab === 'worlds' && (
                 <div className="lic-worlds">
-                  {(activeIntel.scenario_worlds || []).map((w) => (
-                    <div key={w.id} className="lic-world-card">
+                  {asArray(activeIntel.scenario_worlds).map((w, wi) => (
+                    <div key={w?.id ?? w?.title ?? `w-${wi}`} className="lic-world-card">
                       <div className="lic-world-head">
-                        <span className="lic-world-title">{w.title}</span>
-                        <span className="lic-world-pct">{w.probability_pct ?? Math.round((w.probability || 0) * 100)}%</span>
+                        <span className="lic-world-title">{safeText(w?.title)}</span>
+                        <span className="lic-world-pct">{w?.probability_pct ?? Math.round((w?.probability || 0) * 100)}%</span>
                       </div>
-                      <p className="lic-world-expl">{w.explanation}</p>
+                      <p className="lic-world-expl">{safeText(w?.explanation)}</p>
                       <div className="lic-world-sub">If this scenario dominates</div>
                       <ul className="lic-world-triggers">
-                        {(w.trigger_conditions || []).map((x) => (
-                          <li key={x}>{x}</li>
+                        {asArray(w?.trigger_conditions).map((x, xi) => (
+                          <li key={`${wi}-tr-${xi}`}>{safeText(x)}</li>
                         ))}
                       </ul>
-                      <div className="lic-world-action">{w.action_if_dominant}</div>
+                      <div className="lic-world-action">{safeText(w?.action_if_dominant)}</div>
                     </div>
                   ))}
                 </div>
@@ -634,15 +760,15 @@ export default function LiveIntelligenceCockpit() {
                     return (
                       <>
                         <div className="lic-analog-grid">
-                          <div><span className="lic-k">Match quality</span><span>{u.confidence_plain}</span></div>
-                          <div><span className="lic-k">Bias</span><span>{u.bias_plain}</span></div>
-                          <div><span className="lic-k">Episodes</span><span>{u.analog_count ?? 0}</span></div>
-                          <div><span className="lic-k">Win / loss mix</span><span>{u.winners ?? 0} / {u.losers ?? 0}</span></div>
+                          <div><span className="lic-k">Match quality</span><span>{safeText(u.confidence_plain)}</span></div>
+                          <div><span className="lic-k">Bias</span><span>{safeText(u.bias_plain)}</span></div>
+                          <div><span className="lic-k">Episodes</span><span>{safeText(u.analog_count ?? 0)}</span></div>
+                          <div><span className="lic-k">Win / loss mix</span><span>{safeText(u.winners ?? 0)} / {safeText(u.losers ?? 0)}</span></div>
                         </div>
-                        <p className="lic-analog-line">{u.forward_outcome_summary}</p>
-                        <p className="lic-analog-line">{u.exit_timing_hint_plain}</p>
+                        <p className="lic-analog-line">{safeText(u.forward_outcome_summary)}</p>
+                        <p className="lic-analog-line">{safeText(u.exit_timing_hint_plain)}</p>
                         {u.low_similarity_note ? (
-                          <p className="lic-analog-warn">{u.low_similarity_note}</p>
+                          <p className="lic-analog-warn">{safeText(u.low_similarity_note)}</p>
                         ) : null}
                       </>
                     )
@@ -654,13 +780,13 @@ export default function LiveIntelligenceCockpit() {
                   {(() => {
                     const sim = activeIntel.action_simulation || {}
                     const best = sim.best_action || {}
-                    const rows = sim.alternatives || []
+                    const rows = asArray(sim.alternatives)
                     return (
                       <>
                         <div className="lic-sim-best">
                           <div className="lic-sim-best-label">Favored action</div>
-                          <div className="lic-sim-best-action">{best.label}</div>
-                          <p className="lic-sim-best-why">{best.why}</p>
+                          <div className="lic-sim-best-action">{safeText(best.label)}</div>
+                          <p className="lic-sim-best-why">{safeText(best.why)}</p>
                         </div>
                         <table className="lic-sim-table">
                           <thead>
@@ -673,19 +799,19 @@ export default function LiveIntelligenceCockpit() {
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map((r) => (
-                              <tr key={r.action}>
-                                <td>{r.label}</td>
-                                <td>{r.expected_upside}</td>
-                                <td>{r.expected_downside}</td>
-                                <td>{r.giveback_risk}</td>
-                                <td>{r.regret_tilt}</td>
+                            {rows.map((r, ri) => (
+                              <tr key={r?.action ?? r?.label ?? `sim-${ri}`}>
+                                <td>{safeText(r?.label)}</td>
+                                <td>{safeText(r?.expected_upside)}</td>
+                                <td>{safeText(r?.expected_downside)}</td>
+                                <td>{safeText(r?.giveback_risk)}</td>
+                                <td>{safeText(r?.regret_tilt)}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
-                        {rows.map((r) => (
-                          <p key={`${r.action}-rat`} className="lic-sim-rat"><b>{r.label}:</b> {r.rationale}</p>
+                        {rows.map((r, ri) => (
+                          <p key={`${r?.action ?? ri}-rat`} className="lic-sim-rat"><b>{r?.label}:</b> {r?.rationale}</p>
                         ))}
                       </>
                     )
@@ -700,10 +826,10 @@ export default function LiveIntelligenceCockpit() {
                     timeline.filter((x) => x.symbol === selectedSymbol).slice(0, 24).map((ev, idx) => (
                       <div key={`${ev.ts || ev.timestamp || idx}-${ev.state_transition || idx}`} className="lic-tl-row">
                         <div className="lic-tl-time">{formatFeedTime(ev)}</div>
-                        <div className="lic-tl-sev">{ev.severity}</div>
-                        <div className="lic-tl-trans">{ev.state_transition}</div>
-                        <div className="lic-tl-body">{ev.reason || ev.what_changed}</div>
-                        <div className="lic-tl-act">Next: {ev.action_implication}</div>
+                        <div className="lic-tl-sev">{safeText(ev.severity)}</div>
+                        <div className="lic-tl-trans">{safeText(ev.state_transition)}</div>
+                        <div className="lic-tl-body">{safeText(ev.reason || ev.what_changed)}</div>
+                        <div className="lic-tl-act">Next: {safeText(ev.action_implication)}</div>
                       </div>
                     ))
                   )}
@@ -731,11 +857,11 @@ export default function LiveIntelligenceCockpit() {
                           <div className="lic-ev-col">
                             <div className="lic-ev-supports">
                               <span className="lic-ev-tag">Supports recommendation</span>
-                              <ul>{(sec.supports || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                              <ul>{asArray(sec.supports).map((x, xi) => (<li key={`${k}-s-${xi}-${String(x)}`}>{x}</li>))}</ul>
                             </div>
                             <div className="lic-ev-opp">
                               <span className="lic-ev-tag lic-ev-tag--opp">Pushes the other way</span>
-                              <ul>{(sec.opposes || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                              <ul>{asArray(sec.opposes).map((x, xi) => (<li key={`${k}-o-${xi}-${String(x)}`}>{x}</li>))}</ul>
                             </div>
                           </div>
                         </section>
@@ -747,16 +873,16 @@ export default function LiveIntelligenceCockpit() {
                     <div className="lic-ev-col">
                       <div className="lic-ev-supports">
                         <span className="lic-ev-tag">Why this call</span>
-                        <ul>{(activeIntel.supporting_signals || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                        <ul>{asArray(activeIntel.supporting_signals).map((x, xi) => (<li key={`syn-s-${xi}-${String(x)}`}>{x}</li>))}</ul>
                       </div>
                       <div className="lic-ev-opp">
                         <span className="lic-ev-tag lic-ev-tag--opp">Counterpoints</span>
-                        <ul>{(activeIntel.opposing_signals || []).map((x) => (<li key={x}>{x}</li>))}</ul>
+                        <ul>{asArray(activeIntel.opposing_signals).map((x, xi) => (<li key={`syn-o-${xi}-${String(x)}`}>{x}</li>))}</ul>
                       </div>
                     </div>
                   </section>
                   {activeIntel.portfolio_factor_local ? (
-                    <p className="lic-ev-foot">{activeIntel.portfolio_factor_local.localized_plain}</p>
+                    <p className="lic-ev-foot">{safeText(activeIntel.portfolio_factor_local.localized_plain)}</p>
                   ) : null}
                 </div>
               )}
@@ -773,5 +899,13 @@ export default function LiveIntelligenceCockpit() {
         </aside>
       </div>
     </div>
+  )
+}
+
+export default function LiveIntelligenceCockpit() {
+  return (
+    <LicErrorBoundary>
+      <LiveIntelligenceCockpitInner />
+    </LicErrorBoundary>
   )
 }

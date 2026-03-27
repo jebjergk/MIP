@@ -53,7 +53,7 @@ export default function LicTileMiniChart({ tile }) {
     return <div className="lic-mini-chart lic-mini-chart--empty">No price path</div>
   }
 
-  const { W, H, linePath, normY, normX, ref, curIdx } = model
+  const { W, H, linePath, normY, normX, ref, curIdx, cur, lo, hi, med, entry, sl, tp } = model
   const cx = normX(curIdx)
   const cy = normY(cur)
 

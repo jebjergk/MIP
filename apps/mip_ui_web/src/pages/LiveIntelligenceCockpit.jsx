@@ -207,9 +207,12 @@ const PRIOR_INTEL_SLIM_KEYS = new Set([
   'last_ai_refresh_at',
   'last_material_change_at',
   'sl_near',
+  'dsl_bucket',
+  'target_room_bucket',
   'analog_tier_key',
   'dominant_world_id',
   'regret_bucket',
+  'portfolio_factor_local',
 ])
 
 function slimPriorIntelligence(intelBySymbol) {
@@ -493,13 +496,13 @@ function LiveIntelligenceCockpitInner() {
   )
 
   const activeIntel = selectedSymbol ? intelligence[selectedSymbol] : null
-  const workspacePres = useMemo(
-    () => (activeIntel ? resolveDecisionPresentation(activeIntel) : null),
-    [activeIntel],
-  )
   const activeTile = useMemo(() => {
     return (trackerData.tiles || []).find((t) => String(t.symbol || '').toUpperCase() === selectedSymbol) || null
   }, [trackerData.tiles, selectedSymbol])
+  const workspacePres = useMemo(
+    () => (activeIntel ? resolveDecisionPresentation(activeIntel, activeTile) : null),
+    [activeIntel, activeTile],
+  )
 
   const chartData = useMemo(() => {
     const bars = activeTile?.chart?.bars || []

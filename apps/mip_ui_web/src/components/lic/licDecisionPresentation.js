@@ -1,6 +1,6 @@
 /**
  * Single presentation resolver for Live Intelligence — primary vs fallback actions.
- * All UI copy for "what to do now" should derive from resolveDecisionPresentation(intel).
+ * All UI copy for "what to do now" should derive from resolveDecisionPresentation(intel, tile?).
  * No backend calls; pure functions over bootstrap/step intelligence objects.
  */
 
@@ -53,35 +53,189 @@ function pickFallbackLabel(bestActionKey, primaryBand) {
   return 'Fallback if risk rises'
 }
 
-function buildFlipTrigger(intel) {
-  const parts = []
-  if (intel?.sl_near) {
-    parts.push('Break into or through the stop buffer, or a sustained move toward the stop')
+function progressMetrics(tile) {
+  const pm = tile?.progress_metrics || {}
+  const dsl = Number(pm.distance_to_sl_pct)
+  const dtp = Number(pm.distance_to_tp_pct)
+  return {
+    dsl: Number.isFinite(dsl) ? dsl : null,
+    dtp: Number.isFinite(dtp) ? dtp : null,
   }
-  const th = String(intel?.thesis_fracture || '').toUpperCase()
-  if (th === 'THESIS_BROKEN') {
-    parts.push('Thesis treated as broken for risk purposes (not just stretched)')
-  } else if (th === 'THESIS_DAMAGED') {
-    parts.push('Further thesis damage or conflicting tape vs the original setup')
-  }
-  const dsl = Number(intel?.progress_metrics?.distance_to_sl_pct)
-  if (Number.isFinite(dsl) && dsl < 0.08 && dsl >= 0 && !intel?.sl_near) {
-    parts.push('Stop danger tightening materially (distance to stop shrinking)')
-  }
-  if (!parts.length) {
-    parts.push('Sustained divergence from the expected path plus rising execution or regret risk')
-  }
-  return parts.join('; ') + '.'
 }
 
-function buildPrimaryReason(intel) {
-  const rs = str(intel?.final_recommendation_reason_summary, '').trim()
-  if (rs) return rs
-  const thesis = str(intel?.thesis_plain, '').trim()
-  if (thesis) return thesis
-  const drivers = asArray(intel?.decision_drivers)
-  if (drivers.length) return str(drivers[0], '')
-  return 'Resolved stance follows the deterministic risk ladder for this snapshot.'
+function medianPrice(tile) {
+  const exp = tile?.expectation?.center_path
+  if (!Array.isArray(exp) || !exp[0]) return null
+  const p = Number(exp[0].price)
+  return Number.isFinite(p) ? p : null
+}
+
+/** One clause beyond API summary: path vs median, aligned with tile drivers. */
+function workspaceExtraClause(intel, tile) {
+  const cur = Number(tile?.current_price)
+  const med = medianPrice(tile)
+  const side = String(tile?.side || '').toUpperCase()
+  const parts = []
+  if (Number.isFinite(cur) && med != null) {
+    const eps = med * 0.002
+    if (cur < med - eps) {
+      parts.push('Price still trades under the expectation median — the path has to prove itself on the next sequences.')
+    } else if (cur > med + eps) {
+      parts.push('Price is still above the expectation median — working better than the median path for now.')
+    }
+  }
+  const pnl = Number(tile?.unrealized_pnl)
+  if (Number.isFinite(pnl) && side === 'LONG') {
+    if (pnl > 0) {
+      parts.push('Realized cushion on the position still offsets some near-stop anxiety.')
+    } else if (pnl < 0) {
+      parts.push('Underwater P&L means the next weak sequence carries more regret risk.')
+    }
+  }
+  return parts.length ? parts[0] : ''
+}
+
+function primaryReasonFromMetrics(intel, tile) {
+  const b = String(intel?.final_recommendation || 'STAY_COURSE').toUpperCase()
+  const head = bandLabel(b)
+  const th = String(intel?.thesis_fracture || '').toUpperCase()
+  const { dsl, dtp } = progressMetrics(tile)
+  const slTight = dsl != null && dsl < 0.035
+  const slCrit = dsl != null && dsl < 0.02
+  const nearTp = dtp != null && Math.abs(dtp) < 0.04
+  const wideTp = dtp != null && Math.abs(dtp) > 0.06
+  const mq = Number(intel?.analog_summary?.match_quality)
+  const mqWeak = Number.isFinite(mq) && mq < 0.18
+  const regime = String(intel?.portfolio_factor_local?.localized || '')
+  const regimeActive = regime === 'portfolio_wide' || regime === 'mixed'
+
+  if (b === 'EXIT_NOW') {
+    let tail = 'immediate protection is warranted versus the remaining setup.'
+    if (slCrit) {
+      tail =
+        'price sits inside the critical stop buffer — cut or hedge before slippage dominates.'
+    } else if (th === 'THESIS_BROKEN' || th === 'THESIS_DAMAGED') {
+      tail = 'thesis and risk stack no longer justify holding full size.'
+    }
+    return `${head} — ${tail}`
+  }
+
+  if (b === 'PREPARE_EXIT') {
+    const bits = [
+      `${head} wins because the setup is still alive, but reward-to-risk has narrowed enough to shift posture defensive — the path is weakening, stop danger is elevated, and remaining upside no longer clearly pays for the risk.`,
+    ]
+    if (nearTp) {
+      bits.push(
+        'Target is close — you are accepting giveback risk if you wait for the last increment of upside.',
+      )
+    } else if (mqWeak) {
+      bits.push('Weak history match means you are leaning more on live price than backward-looking stats.')
+    }
+    if (regimeActive) {
+      bits.push('Shared book stress is part of what you are still underwriting.')
+    }
+    return bits.join(' ')
+  }
+
+  if (b === 'WATCH_CLOSELY') {
+    if (slTight) {
+      return `${head} stays primary with stop pressure building — you are buying time while the path proves itself on the next bars.`
+    }
+    if (th === 'THESIS_STRETCHED') {
+      return `${head} stays primary while the thesis is only stretched, not broken — you are accepting headline volatility until structure improves or fails.`
+    }
+    return `${head} stays primary because nothing has forced the ladder to exit yet, but several reads are fragile enough that the next adverse sequence could flip posture quickly.`
+  }
+
+  const bits = [`${head} remains primary because the path is still intact`]
+  if (slCrit || slTight) {
+    bits.push('stop danger is elevated but not yet at a forced-exit breach')
+  } else {
+    bits.push('stop danger is not yet dictating a forced exit')
+  }
+  if (nearTp) {
+    bits.push(
+      'target is nearby so upside is partly realized — you are underwriting giveback for a possible last push',
+    )
+  } else if (wideTp) {
+    bits.push('meaningful target runway remains if the path holds')
+  } else {
+    bits.push('some upside room still exists versus the modeled target')
+  }
+  if (th === 'THESIS_INTACT') {
+    bits.push('thesis is still coherent with price action')
+  } else if (th === 'THESIS_STRETCHED') {
+    bits.push(
+      'thesis is stretched but not invalidated — you are accepting wobble while watching for a clean failure',
+    )
+  }
+  if (mqWeak) bits.push('you are accepting thinner historical backup than usual')
+  if (regimeActive) bits.push('shared-factor stress is a conscious tradeoff')
+  return `${bits.join(', ')}.`
+}
+
+function buildPrimaryReason(intel, tile) {
+  const api = str(intel?.final_recommendation_reason_summary, '').trim()
+  const generic = /synthesized from tape/i.test(api)
+  let base = api && !generic ? api : primaryReasonFromMetrics(intel, tile)
+  const extra = workspaceExtraClause(intel, tile)
+  if (extra) {
+    const frag = extra.slice(0, 28).toLowerCase()
+    if (!base.toLowerCase().includes(frag)) {
+      base = `${base} ${extra}`.trim()
+    }
+  }
+  return base
+}
+
+function buildFlipTrigger(intel, tile) {
+  const b = String(intel?.final_recommendation || 'STAY_COURSE').toUpperCase()
+  const th = String(intel?.thesis_fracture || '').toUpperCase()
+  const { dsl, dtp } = progressMetrics(tile)
+  const slNear = intel?.sl_near === true || (dsl != null && dsl < 0.02)
+  const tightSl = dsl != null && dsl < 0.05
+  const compressedTarget = dtp != null && Math.abs(dtp) < 0.045
+
+  if (b === 'EXIT_NOW') {
+    return (
+      'Flip softer only if price reopens a clear buffer above the stop, the tape stabilizes, and thesis damage is walked back — not on one lucky tick.'
+    )
+  }
+
+  if (b === 'PREPARE_EXIT') {
+    return (
+      'Flip to EXIT OR CUT NOW if weakness continues and price moves materially closer to stop than to target on the next sequences. ' +
+      'Flip back toward HOLD only if the path stabilizes, stop pressure eases, and upside cushion clearly widens again.'
+    )
+  }
+
+  if (b === 'WATCH_CLOSELY') {
+    return (
+      'Flip to PREPARE EXIT if the next weak sequence cuts target room while stop pressure increases, or if thesis damage deepens. ' +
+      'Flip back toward HOLD if price holds the path and stop distance meaningfully widens.'
+    )
+  }
+
+  // HOLD / STAY_COURSE
+  const parts = []
+  if (slNear || tightSl) {
+    parts.push(
+      'Flip if price keeps drifting toward the stop without a recovery bounce and remaining upside compresses further.',
+    )
+  } else {
+    parts.push(
+      'Flip if the next weak sequence shrinks target room while distance-to-stop trends down — i.e., risk is closing in faster than reward.',
+    )
+  }
+  if (th === 'THESIS_INTACT' || th === 'THESIS_STRETCHED') {
+    parts.push(
+      'Also flip if thesis moves to damaged or broken while tape and stop context disagree with staying full size.',
+    )
+  }
+  if (compressedTarget) {
+    parts.push('Near target, treat a failure to hold gains as a signal to de-risk even if the stop is not tickling yet.')
+  }
+  return parts.join(' ')
 }
 
 /**
@@ -97,7 +251,7 @@ function buildPrimaryReason(intel) {
  *   sim_best_label: string,
  * }}
  */
-export function resolveDecisionPresentation(intel) {
+export function resolveDecisionPresentation(intel, tile) {
   const empty = {
     primary_band: '',
     primary_action: '—',
@@ -133,14 +287,16 @@ export function resolveDecisionPresentation(intel) {
     fallback_strip_text = world
   }
 
+  const t = tile && typeof tile === 'object' ? tile : null
+
   return {
     primary_band,
     primary_action,
     fallback_action,
     fallback_label,
     fallback_strip_text,
-    primary_reason: buildPrimaryReason(intel),
-    flip_trigger: buildFlipTrigger(intel),
+    primary_reason: buildPrimaryReason(intel, t),
+    flip_trigger: buildFlipTrigger(intel, t),
     sim_best_action,
     sim_best_label,
   }
@@ -151,6 +307,10 @@ export function caseFileImplicationDisplay(row, intelligenceBySymbol) {
   const sym = String(row?.symbol || '').toUpperCase()
   const raw = row?.action_implication != null ? str(row.action_implication) : ''
   if (!sym || sym === 'SESSION' || !raw) return raw
+
+  if (raw.includes('retained') || /[→]|->/.test(raw)) {
+    return raw
+  }
 
   const intel = intelligenceBySymbol?.[sym]
   if (!intel) return raw

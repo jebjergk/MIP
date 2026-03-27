@@ -7,8 +7,32 @@ from typing import Any
 
 from app.services.live_intelligence import lic_display
 
-# Minimum wall time between case-file rows for the same symbol when only non-material signature fields drift.
+# Minimum wall time between case-file rows for the same symbol when signature differs but narrative is low-urgency.
 CASE_FILE_MIN_EMIT_INTERVAL_SEC = 180
+
+
+def distance_to_sl_bucket(dist_sl_pct: float | None) -> str:
+    """Coarse stop-risk bucket for signatures and deltas (aligned with sl_near ~ H)."""
+    if dist_sl_pct is None:
+        return "U"
+    d = float(dist_sl_pct)
+    if d < 0.02:
+        return "H"
+    if d < 0.05:
+        return "M"
+    return "L"
+
+
+def distance_to_tp_room_bucket(dist_tp_pct: float | None) -> str:
+    """Target-room bucket: near take-profit vs mid vs wide runway."""
+    if dist_tp_pct is None:
+        return "U"
+    a = abs(float(dist_tp_pct))
+    if a < 0.03:
+        return "N"
+    if a > 0.06:
+        return "W"
+    return "M"
 
 # Aligned with exit urgency ladder (higher = more defensive)
 BAND_ORDER = {"STAY_COURSE": 0, "WATCH_CLOSELY": 1, "PREPARE_EXIT": 2, "EXIT_NOW": 3}
@@ -89,8 +113,25 @@ def resolve_final_recommendation(
     if BAND_ORDER.get(band, 0) < floor:
         band = urgency_to_final_band(exit_urgency)
 
-    reason = (
-        f"{lic_display.recommendation_headline(band)} — synthesized from tape, thesis, portfolio context, and history match."
+    pm = tile.get("progress_metrics") or {}
+
+    def _opt_float(v: Any) -> float | None:
+        if v is None or v == "":
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    dist_sl_f = _opt_float(pm.get("distance_to_sl_pct"))
+    dist_tp_f = _opt_float(pm.get("distance_to_tp_pct"))
+    reason = lic_display.recommendation_reason_operational(
+        band,
+        thesis_fracture,
+        dist_sl_pct=dist_sl_f,
+        dist_tp_pct=dist_tp_f,
+        regime_active=regime_active,
+        analog_mq=float(analog_match_quality or 0),
     )
     return band, reason, supporting[:6], opposing[:4]
 
@@ -139,6 +180,9 @@ def build_feed_fingerprint(
     analog_tier: str,
     dominant_world: str,
     regret_bucket: str,
+    dsl_bucket: str,
+    tp_room_bucket: str,
+    pf_localized: str,
 ) -> str:
     mq = round(float(analog_match_quality or 0), 2)
     parts = [
@@ -153,6 +197,9 @@ def build_feed_fingerprint(
         str(analog_tier or ""),
         str(dominant_world or ""),
         str(regret_bucket or ""),
+        str(dsl_bucket or ""),
+        str(tp_room_bucket or ""),
+        str(pf_localized or ""),
     ]
     return "|".join(parts)
 
@@ -167,56 +214,43 @@ def build_case_file_signature(
     *,
     final_band: str,
     sim: dict[str, Any],
-    attention_score: float,
     confidence_headline: float,
     thesis_fracture: str,
     analog_tier: str,
-    sl_near: bool,
     regret_bucket: str,
+    dsl_bucket: str,
+    tp_room_bucket: str,
+    pf_localized: str,
 ) -> str:
-    """Coarse posture key for case-file dedupe — ignores noisy fingerprint fields (e.g. raw mq)."""
+    """Posture key for case-file dedupe — only dimensions that should drive a new retained-state row."""
     best = sim.get("best_action") or {}
     fallback_action = str(best.get("action") or "")
-    attn = float(attention_score or 0)
-    attn_b = "H" if attn >= 70.0 else ("M" if attn >= 40.0 else "L")
     ch = float(confidence_headline or 0)
     conf_b = "H" if ch >= 0.72 else ("M" if ch >= 0.55 else "L")
     parts = [
         str(final_band or ""),
         fallback_action,
-        attn_b,
         conf_b,
         str(thesis_fracture or ""),
+        str(dsl_bucket or ""),
+        str(tp_room_bucket or ""),
         str(analog_tier or ""),
-        "1" if sl_near else "0",
         str(regret_bucket or ""),
+        str(pf_localized or ""),
     ]
     return "|".join(parts)
 
 
 def case_file_event_material_override(prior_signature: str, new_signature: str) -> bool:
-    """True => allow a case-file row even inside the rate-limit window.
+    """True => allow a case-file row inside the rate-limit window.
 
-    Material = primary band, simulator fallback (best action), confidence bucket,
-    or thesis fracture changed. (Primary band flip covers escalation/de-escalation on the ladder.)
+    With the posture-only signature, any change is material; this matches that contract.
     """
     ps = str(prior_signature or "").strip()
+    ns = str(new_signature or "").strip()
     if not ps:
         return True
-    a = ps.split("|")
-    b = str(new_signature or "").strip().split("|")
-    need = 8
-    if len(a) < need or len(b) < need:
-        return True
-    if a[0] != b[0]:
-        return True
-    if a[1] != b[1]:
-        return True
-    if a[3] != b[3]:
-        return True
-    if a[4] != b[4]:
-        return True
-    return False
+    return ps != ns
 
 
 def seconds_between_iso(earlier_iso: str | None, later_iso: str) -> float | None:
@@ -366,6 +400,9 @@ def build_delta_fields(
     analog_tier_key: str = "",
     dominant_world: str = "",
     regret_bucket: str = "",
+    dsl_bucket: str = "",
+    tp_room_bucket: str = "",
+    portfolio_localized: str = "",
 ) -> dict[str, Any]:
     crossed: list[str] = []
     if not prior:
@@ -401,6 +438,16 @@ def build_delta_fields(
     prb = prior.get("regret_bucket")
     if prb is not None and str(prb) != str(regret_bucket):
         crossed.append(f"regret_bucket:{prb}->{regret_bucket}")
+    if prior.get("dsl_bucket") is not None and str(prior.get("dsl_bucket")) != str(dsl_bucket):
+        crossed.append(f"stop_buffer:{prior.get('dsl_bucket')}->{dsl_bucket}")
+    if prior.get("target_room_bucket") is not None and str(prior.get("target_room_bucket")) != str(
+        tp_room_bucket
+    ):
+        crossed.append(f"target_room:{prior.get('target_room_bucket')}->{tp_room_bucket}")
+    if prior.get("portfolio_factor_local") is not None:
+        pfl = str((prior.get("portfolio_factor_local") or {}).get("localized") or "")
+        if pfl != str(portfolio_localized or ""):
+            crossed.append(f"portfolio_factor:{pfl}->{portfolio_localized}")
     persistent = len(crossed) == 0
     label = "Stable refresh" if persistent else "Material shift"
     human = (

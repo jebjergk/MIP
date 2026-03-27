@@ -48,6 +48,83 @@ def recommendation_headline(band: str) -> str:
     return m.get(b, "HOLD")
 
 
+def recommendation_reason_operational(
+    band: str,
+    thesis_fracture: str,
+    *,
+    dist_sl_pct: float | None,
+    dist_tp_pct: float | None,
+    regime_active: bool,
+    analog_mq: float,
+) -> str:
+    """One-line recommendation rationale aligned with tile/workspace vocabulary (not generic synthesis)."""
+    b = str(band or "").upper()
+    head = recommendation_headline(band)
+    th = str(thesis_fracture or "").upper()
+    sl_tight = dist_sl_pct is not None and float(dist_sl_pct) < 0.035
+    sl_crit = dist_sl_pct is not None and float(dist_sl_pct) < 0.02
+    near_tp = dist_tp_pct is not None and abs(float(dist_tp_pct)) < 0.04
+    wide_tp = dist_tp_pct is not None and abs(float(dist_tp_pct)) > 0.06
+    mq_weak = float(analog_mq or 0) < 0.18
+
+    if b == "EXIT_NOW":
+        tail = "immediate protection is warranted versus the remaining setup."
+        if sl_crit:
+            tail = "price sits inside the critical stop buffer — cut or hedge before slippage dominates."
+        elif th in {"THESIS_BROKEN", "THESIS_DAMAGED"}:
+            tail = "thesis and risk stack no longer justify holding full size."
+        return f"{head} — {tail}"
+
+    if b == "PREPARE_EXIT":
+        parts = [
+            f"{head} wins because the setup is still alive, but reward-to-risk has narrowed enough to shift posture defensive — plan exits while liquidity is still reasonable."
+        ]
+        if sl_tight:
+            parts.append("Stop danger is elevated — you are accepting continued tape risk for limited incremental upside.")
+        elif near_tp:
+            parts.append("Target is close — you are accepting giveback risk if you wait for the last increment of upside.")
+        elif mq_weak:
+            parts.append("Weak history match means you are leaning more on live price than backward-looking stats.")
+        if regime_active:
+            parts.append("Shared book stress is part of what you are still underwriting.")
+        return " ".join(parts)
+
+    if b == "WATCH_CLOSELY":
+        core = (
+            f"{head} stays primary because nothing has forced the ladder to exit yet, "
+            f"but several reads are fragile enough that the next adverse sequence could flip posture quickly."
+        )
+        if sl_tight:
+            return f"{head} stays primary with stop pressure building — you are buying time while the path proves itself."
+        if th == "THESIS_STRETCHED":
+            return f"{head} stays primary while the thesis is only stretched, not broken — you are accepting headline volatility until structure improves or fails."
+        return core
+
+    # STAY_COURSE / default
+    bits = [
+        f"{head} remains primary because the path is still intact",
+    ]
+    if sl_crit or sl_tight:
+        bits.append("stop danger is elevated but not yet at a forced-exit breach")
+    else:
+        bits.append("stop danger is not yet dictating a forced exit")
+    if near_tp:
+        bits.append("target is nearby so upside is partly realized — you are underwriting giveback for a possible last push")
+    elif wide_tp:
+        bits.append("meaningful target runway remains if the path holds")
+    else:
+        bits.append("some upside room still exists versus the modeled target")
+    if th == "THESIS_INTACT":
+        bits.append("thesis is still coherent with price action")
+    elif th == "THESIS_STRETCHED":
+        bits.append("thesis is stretched but not invalidated — you are accepting wobble while watching for a clean failure")
+    if mq_weak:
+        bits.append("you are accepting thinner historical backup than usual")
+    if regime_active:
+        bits.append("shared-factor stress is a conscious tradeoff")
+    return ", ".join(bits) + "."
+
+
 def primary_action_plain(action_key: str) -> str:
     k = str(action_key or "hold").lower()
     m = {
@@ -58,6 +135,18 @@ def primary_action_plain(action_key: str) -> str:
         "exit_now": "Exit now",
     }
     return m.get(k, "Hold")
+
+
+def simulator_fallback_label(best_action_key: str, primary_band: str) -> str:
+    k = str(best_action_key or "").lower()
+    b = str(primary_band or "").upper()
+    if k == "exit_now" and b != "EXIT_NOW":
+        return "Defensive alternative"
+    if k in {"trim_50", "trim_25"}:
+        return "Lower-risk alternative"
+    if k == "tighten_stop":
+        return "Protective tightening"
+    return "Fallback if risk rises"
 
 
 def build_analog_ui(analog_summary: dict[str, Any]) -> dict[str, Any]:
@@ -196,10 +285,151 @@ def build_feed_reason_plain(crossed: list[str]) -> str:
         elif c.startswith("dominant_world:"):
             parts.append("Dominant scenario outlook changed.")
         elif c.startswith("stop_danger:"):
-            parts.append("Stop proximity crossed a material threshold.")
+            parts.append("Stop proximity crossed the near-stop flag.")
+        elif c.startswith("stop_buffer:"):
+            parts.append("Distance-to-stop bucket changed — stop pressure materially shifted.")
+        elif c.startswith("target_room:"):
+            parts.append("Target-room bucket changed — upside runway versus target shifted.")
+        elif c.startswith("portfolio_factor:"):
+            parts.append("Symbol vs portfolio-wide factor posture changed.")
         else:
             parts.append(c)
     return " ".join(parts)
+
+
+def _split_arrow_cross(token: str) -> tuple[str, str] | None:
+    if "->" not in token:
+        return None
+    a, b = token.split("->", 1)
+    return a.strip(), b.strip()
+
+
+def _retained_narrative_from_crossed(crossed: list[str]) -> str:
+    """Event-style clause for retained stance — emphasize what moved inside the posture."""
+    if not crossed:
+        return ""
+    order = (
+        "stance:",
+        "thesis:",
+        "stop_danger:",
+        "stop_buffer:",
+        "target_room:",
+        "regret_bucket:",
+        "analog_tier:",
+        "dominant_world:",
+        "portfolio_factor:",
+        "portfolio_regime:",
+        "pattern:",
+        "novelty:",
+    )
+    ranked = sorted(crossed, key=lambda x: next((i for i, p in enumerate(order) if x.startswith(p)), 99))
+
+    def phrase(c: str) -> str:
+        if c.startswith("thesis:"):
+            pair = _split_arrow_cross(c.replace("thesis:", "", 1))
+            if not pair:
+                return "thesis read shifted"
+            _old, new = pair
+            if "BROKEN" in new.upper():
+                return "thesis damage worsened toward a broken read"
+            if "DAMAGED" in new.upper():
+                return "thesis stress increased"
+            if "STRETCHED" in new.upper():
+                return "thesis moved into stretched territory"
+            if "INTACT" in new.upper():
+                return "thesis stabilized back toward intact"
+            return "thesis assessment moved"
+        if c.startswith("stop_danger:"):
+            pair = _split_arrow_cross(c.replace("stop_danger:", "", 1))
+            if pair and pair[1] == "1":
+                return "price entered the near-stop band"
+            if pair and pair[1] == "0":
+                return "price eased back from the near-stop band"
+            return "near-stop flag flipped"
+        if c.startswith("stop_buffer:"):
+            pair = _split_arrow_cross(c.replace("stop_buffer:", "", 1))
+            if not pair:
+                return "stop buffer posture shifted"
+            o, n = pair
+            risk_rank = {"U": 0, "L": 1, "M": 2, "H": 3}
+            ro, rn = risk_rank.get(o, 1), risk_rank.get(n, 1)
+            if rn > ro:
+                return "stop pressure tightened — less air to the stop"
+            if rn < ro:
+                return "stop pressure eased — more buffer returned"
+            return "stop-distance bucket updated"
+        if c.startswith("target_room:"):
+            pair = _split_arrow_cross(c.replace("target_room:", "", 1))
+            if not pair:
+                return "target-room posture shifted"
+            o, n = pair
+            tight_rank = {"U": 1, "W": 0, "M": 1, "N": 2}
+            ro, rn = tight_rank.get(o, 1), tight_rank.get(n, 1)
+            if rn > ro:
+                return "upside room compressed toward target"
+            if rn < ro:
+                return "target runway widened again"
+            return "target positioning versus goal changed"
+        if c.startswith("regret_bucket:"):
+            pair = _split_arrow_cross(c.replace("regret_bucket:", "", 1))
+            if not pair:
+                return "hold vs exit balance shifted"
+            _o, n = pair
+            if "exit" in n.lower():
+                return "defensive exit case strengthened in the regret lens"
+            if "hold" in n.lower():
+                return "hold case strengthened versus exit in the regret lens"
+            return "least-regret posture between hold and exit moved"
+        if c.startswith("analog_tier:"):
+            return "historical match tier shifted"
+        if c.startswith("dominant_world:"):
+            return "lead scenario outlook changed"
+        if c.startswith("portfolio_factor:"):
+            return "idiosyncratic vs shared-book posture shifted"
+        if c.startswith("portfolio_regime:"):
+            return "portfolio-wide risk hypothesis changed"
+        if c.startswith("pattern:"):
+            return "short-term tape pattern flipped"
+        if c.startswith("novelty:"):
+            return "novelty regime changed"
+        if c.startswith("stance:"):
+            return ""
+        return ""
+
+    for c in ranked:
+        p = phrase(c)
+        if p:
+            return p
+    return ""
+
+
+def build_case_file_action_implication(
+    *,
+    symbol: str,
+    prior_band: str,
+    final_band: str,
+    crossed: list[str],
+    primary_headline: str,
+    fallback_label: str | None,
+    fallback_action: str | None,
+) -> str:
+    """Full feed implication line: transition or retained stance with internal delta."""
+    sym = str(symbol or "").upper()
+    pb = str(prior_band or "").upper()
+    fb = str(final_band or "").upper()
+    if pb != fb:
+        tail = build_feed_reason_plain(crossed).strip()
+        trans = f"{recommendation_headline(pb)} → {recommendation_headline(fb)}"
+        if tail:
+            return f"{sym}: {trans} — {tail}"
+        return f"{sym}: {trans}"
+
+    focus = _retained_narrative_from_crossed(crossed)
+    if focus:
+        return f"{sym}: {primary_headline} retained; {focus}"
+    if fallback_action and fallback_label:
+        return f"{sym}: {primary_headline} retained; {fallback_label.lower()}: {fallback_action}"
+    return f"{sym}: {primary_headline} retained"
 
 
 def build_evidence_sections(

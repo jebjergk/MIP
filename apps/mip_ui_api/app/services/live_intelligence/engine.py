@@ -16,6 +16,8 @@ from app.services.live_intelligence.resolver import (
     build_why_now_bullets,
     case_file_event_material_override,
     confidence_block,
+    distance_to_sl_bucket,
+    distance_to_tp_room_bucket,
     dominant_world_key,
     novelty_explanation_one_liner,
     regret_bucket_from_sim,
@@ -344,6 +346,10 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             giveback=giveback,
             tile=tile,
         )
+        dsl_b = distance_to_sl_bucket(dist_sl)
+        tp_room_b = distance_to_tp_room_bucket(dist_tp)
+        pf_loc = str(pf_sym.get("localized") or "")
+
         delta_fields = build_delta_fields(
             prior,
             final_band=final_band,
@@ -357,6 +363,9 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             analog_tier_key=tier_k,
             dominant_world=dominant_w,
             regret_bucket=regret_b,
+            dsl_bucket=dsl_b,
+            tp_room_bucket=tp_room_b,
+            portfolio_localized=pf_loc,
         )
 
         fingerprint = build_feed_fingerprint(
@@ -371,6 +380,9 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
             analog_tier=tier_k,
             dominant_world=dominant_w,
             regret_bucket=regret_b,
+            dsl_bucket=dsl_b,
+            tp_room_bucket=tp_room_b,
+            pf_localized=pf_loc,
         )
 
         crossed = delta_fields.get("trigger_crossed") or []
@@ -392,12 +404,13 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
         case_file_signature = build_case_file_signature(
             final_band=final_band,
             sim=sim,
-            attention_score=attn,
             confidence_headline=float(conf_block.get("headline") or 0),
             thesis_fracture=thesis_fracture,
             analog_tier=tier_k,
-            sl_near=sl_near,
             regret_bucket=regret_b,
+            dsl_bucket=dsl_b,
+            tp_room_bucket=tp_room_b,
+            pf_localized=pf_loc,
         )
         evidence_sections = lic_display.build_evidence_sections(
             feats=feats,
@@ -507,7 +520,20 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
                         f"{lic_display.recommendation_headline(prior_band)} → {lic_display.recommendation_headline(final_band)}"
                     )
                     reason_plain = lic_display.build_feed_reason_plain(crossed)
-                    act_label = ba.get("label") or lic_display.primary_action_plain(ba.get("action"))
+                    fb_action = None
+                    fb_lbl = None
+                    if sim.get("aligns_with_tile_recommendation") is False and ba.get("label"):
+                        fb_action = str(ba.get("label") or "")
+                        fb_lbl = lic_display.simulator_fallback_label(str(ba.get("action") or ""), final_band)
+                    act_impl = lic_display.build_case_file_action_implication(
+                        symbol=sym,
+                        prior_band=str(prior_band or ""),
+                        final_band=final_band,
+                        crossed=crossed,
+                        primary_headline=lic_display.recommendation_headline(final_band),
+                        fallback_label=fb_lbl,
+                        fallback_action=fb_action,
+                    )
                     sev = lic_display.feed_event_severity(final_band, thesis_fracture, sl_near)
                     feed_events.append(
                         {
@@ -519,7 +545,7 @@ def run_deterministic_step(body: dict[str, Any]) -> dict[str, Any]:
                             "state_transition": transition_plain,
                             "reason": reason_plain,
                             "what_changed": reason_plain,
-                            "action_implication": act_label,
+                            "action_implication": act_impl,
                             "final_recommendation": final_band,
                             "severity": sev,
                         }

@@ -142,34 +142,36 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
         a = build_case_file_signature(
             final_band="STAY_COURSE",
             sim=sim,
-            attention_score=42,
             confidence_headline=0.62,
             thesis_fracture="THESIS_INTACT",
             analog_tier="weak",
-            sl_near=False,
             regret_bucket="exit_favored",
+            dsl_bucket="L",
+            tp_room_bucket="M",
+            pf_localized="symbol_specific",
         )
         b = build_case_file_signature(
             final_band="STAY_COURSE",
             sim=sim,
-            attention_score=43,
             confidence_headline=0.63,
             thesis_fracture="THESIS_INTACT",
             analog_tier="weak",
-            sl_near=False,
             regret_bucket="exit_favored",
+            dsl_bucket="L",
+            tp_room_bucket="M",
+            pf_localized="symbol_specific",
         )
         self.assertEqual(a, b)
 
     def test_case_file_event_material_override(self):
-        base = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|balanced"
-        regret_only = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|exit_favored"
-        self.assertFalse(case_file_event_material_override(base, regret_only))
-        band_flip = "WATCH_CLOSELY|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        base = "STAY_COURSE|hold|M|THESIS_INTACT|L|M|weak|balanced|symbol_specific"
+        regret_only = "STAY_COURSE|hold|M|THESIS_INTACT|L|M|weak|exit_favored|symbol_specific"
+        self.assertTrue(case_file_event_material_override(base, regret_only))
+        band_flip = "WATCH_CLOSELY|hold|M|THESIS_INTACT|L|M|weak|balanced|symbol_specific"
         self.assertTrue(case_file_event_material_override(base, band_flip))
-        fb_change = "STAY_COURSE|exit_now|M|M|THESIS_INTACT|weak|0|balanced"
+        fb_change = "STAY_COURSE|exit_now|M|THESIS_INTACT|L|M|weak|balanced|symbol_specific"
         self.assertTrue(case_file_event_material_override(base, fb_change))
-        thesis = "STAY_COURSE|hold|M|M|THESIS_DAMAGED|weak|0|balanced"
+        thesis = "STAY_COURSE|hold|M|THESIS_DAMAGED|L|M|weak|balanced|symbol_specific"
         self.assertTrue(case_file_event_material_override(base, thesis))
         self.assertTrue(case_file_event_material_override("", base))
 
@@ -178,10 +180,11 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
         b = "2025-06-01T12:02:30+00:00"
         self.assertEqual(seconds_between_iso(a, b), 150.0)
 
-    def test_rate_limit_blocks_non_material_signature_drift(self):
-        sig_a = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|balanced"
-        sig_b = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|exit_favored"
-        self.assertFalse(case_file_event_material_override(sig_a, sig_b))
+    def test_regret_bucket_change_emits_even_inside_case_file_interval(self):
+        """Regret bucket is part of posture signature — a real shift should still produce a row."""
+        sig_a = "STAY_COURSE|hold|M|THESIS_INTACT|L|M|weak|balanced|symbol_specific"
+        sig_b = "STAY_COURSE|hold|M|THESIS_INTACT|L|M|weak|exit_favored|symbol_specific"
+        self.assertTrue(case_file_event_material_override(sig_a, sig_b))
         with patch.object(lic_engine, "build_case_file_signature", return_value=sig_a):
             o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})
         prior = dict(o1["intelligence_by_symbol"]["TEST"])
@@ -194,15 +197,11 @@ class LiveIntelligenceEngineTests(unittest.TestCase):
             patch.object(lic_engine, "CASE_FILE_MIN_EMIT_INTERVAL_SEC", 3600),
         ):
             o2 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {"TEST": prior}})
-        self.assertEqual(
-            o2["feed_events"],
-            [],
-            "non-material signature change inside min interval should not emit",
-        )
+        self.assertEqual(len(o2["feed_events"]), 1)
 
     def test_rate_limit_override_when_material(self):
-        sig_a = "STAY_COURSE|hold|M|M|THESIS_INTACT|weak|0|balanced"
-        sig_b = "WATCH_CLOSELY|hold|M|M|THESIS_INTACT|weak|0|balanced"
+        sig_a = "STAY_COURSE|hold|M|THESIS_INTACT|L|M|weak|balanced|symbol_specific"
+        sig_b = "WATCH_CLOSELY|hold|M|THESIS_INTACT|L|M|weak|balanced|symbol_specific"
         self.assertTrue(case_file_event_material_override(sig_a, sig_b))
         with patch.object(lic_engine, "build_case_file_signature", return_value=sig_a):
             o1 = run_deterministic_step({"positions": [_tile()], "prior_intelligence": {}})

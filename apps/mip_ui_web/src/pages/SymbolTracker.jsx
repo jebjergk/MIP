@@ -296,6 +296,21 @@ export default function SymbolTracker() {
     if (tiles.length >= 2 && samples.every((s) => String(s.urgency || '').toUpperCase() === 'PREPARE')) {
       console.warn('[LivingChart] All open symbols have exit urgency PREPARE — check engine thresholds if unexpected.', samples)
     }
+    if (tiles.length >= 2) {
+      const postureLabels = tiles.map((t) => {
+        const sym = String(t.symbol || '').toUpperCase()
+        return resolveLivingChartSymbolDisplay(
+          t,
+          committeeBySymbol[sym],
+          exitRecBySymbol[sym],
+          committeeBySymbol[sym]?.live_state || null,
+        ).committeePosture
+      })
+      const uniq = new Set(postureLabels)
+      if (uniq.size === 1 && !postureLabels.includes('HOLD')) {
+        console.warn('[LivingChart] All symbols share the same non-HOLD committee posture — verify data if unexpected.', postureLabels)
+      }
+    }
     for (const t of tiles) {
       const sym = String(t.symbol || '').toUpperCase()
       if (!committeeBySymbol[sym]) {

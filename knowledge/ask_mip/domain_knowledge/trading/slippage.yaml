@@ -1,0 +1,23 @@
+artifact_id: domain_slippage
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+topic_id: slippage
+category: trading_basics
+title: Slippage
+plain_language_explanation: >
+  Slippage is the difference between the price you expect when placing an order and
+  the price you actually get when the trade executes, usually due to market movement
+  or liquidity.
+deeper_explanation: >
+  In fast markets or thin liquidity, the best available price can move between signal
+  time and fill time. Brokers and algos often model expected slippage to size orders.
+related_mip_concepts:
+  - Live execution settings may include slippage limits — see live portfolio config in-app.
+common_user_questions:
+  - Why did my fill differ from the chart price?
+examples:
+  - Buying on a spike may fill above the last printed quote.
+cautions:
+  - General markets education; MIP-specific limits come from configuration and docs, not this file alone.

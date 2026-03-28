@@ -1,0 +1,44 @@
+# Ask MIP 2.0 — page contract (MVP)
+artifact_id: page_symbol_tracker
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+app_version_introduced: "0.7"
+page_id: symbol_tracker
+page_title: Living Chart
+route: /symbol-tracker
+purpose: >
+  Monitor open simulation/live symbols with intraday charts, committee stance,
+  exit urgency, and risk overlays.
+target_user: trader_operator
+business_questions_answered:
+  - What is the committee saying about this symbol right now?
+  - Should I prepare to exit?
+main_workflows:
+  - Select a symbol tile and read posture, urgency, and chart overlays.
+filters_inputs:
+  - URL symbol query parameter
+  - Sensitivity mode (conservative / balanced / aggressive)
+sections:
+  - section_id: chart_main
+    section_title: Main chart
+    purpose: Price action and overlays for the selected symbol.
+    widget_ids:
+      - living_chart_main
+    typical_user_questions:
+      - What does PREPARE exit mean?
+      - Why is the posture WATCH?
+linked_pages:
+  - route: /training
+    page_id: training_status
+refresh_behavior: Data refreshes on an interval and on manual IB live refresh.
+dependencies:
+  - symbol-tracker tiles API
+  - IB live bars when available
+caveats:
+  - Committee output is model-assisted interpretation of signals, not a guarantee.
+known_issues: []
+linked_backend_objects:
+  - object_ref: api_symbol_tracker_tiles
+    note: Primary data for tiles and chart series.

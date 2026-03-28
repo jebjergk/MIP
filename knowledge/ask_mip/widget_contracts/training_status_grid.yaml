@@ -1,0 +1,37 @@
+artifact_id: widget_training_status_grid
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+widget_id: training_status_grid
+page_id: training_status
+section_id: training_grid
+visible_label: Training status table
+widget_type: table
+purpose: Show per-pattern training maturity and gate metrics.
+business_meaning: Qualifies how much evidence supports using a pattern in live workflows.
+source_objects:
+  - mart_training_status_api
+logic_summary: >
+  Rows are keyed by market, symbol, and pattern. Maturity stage summarizes pipeline
+  readiness; trust and coverage columns reflect data quality — see metric dictionary
+  for precise field meanings when documented.
+inputs_affecting_widget:
+  - filters on market, symbol, pattern
+output_fields:
+  - maturity_stage
+  - trust metrics
+  - horizon columns
+related_metrics:
+  - metric_maturity_stage
+thresholds_or_status_meanings: []
+lead_text: ""
+help_text: ""
+interpretation_guidance: >
+  Weak training status on this page does not automatically invalidate unrelated
+  live recommendations; use cross-page reconciliation language when users ask.
+edge_cases: []
+common_user_confusions:
+  - Expecting training metrics to match live P&L.
+related_widgets: []
+known_issues: []

@@ -19,6 +19,7 @@ import LearningLedger from './pages/LearningLedger'
 import PerformanceDashboard from './pages/PerformanceDashboard'
 import GlossaryAdminPage from './pages/GlossaryAdminPage'
 import AppLayout from './components/AppLayout'
+import { AskMipRuntimeProvider } from './context/AskMipRuntimeContext'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
 import IntradayPatternDetailPage from './pages/intraday/IntradayPatternDetailPage'
 import IntradayTerrainExplorerPage from './pages/intraday/IntradayTerrainExplorerPage'
@@ -85,7 +86,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route element={<AppLayout />}>
+      <Route element={<AskMipRuntimeProvider><AppLayout /></AskMipRuntimeProvider>}>
         <Route path="/" element={<Navigate to="/cockpit" replace />} />
         <Route path="/cockpit" element={<Cockpit />} />
         <Route path="/home" element={<Home />} />

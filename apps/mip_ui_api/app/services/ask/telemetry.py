@@ -31,7 +31,10 @@ def _write_telemetry(ctx: AskContext, resolution: AskResolution) -> None:
               WEB_FALLBACK_USED,
               ANSWER_FAILED,
               SUGGESTED_TERMS,
-              UNKNOWN_TERMS
+              UNKNOWN_TERMS,
+              PAGE_ID,
+              SNOWFLAKE_FACT_LOOKUP,
+              RETRIEVAL_SOURCE_GROUPS
             )
             SELECT
               CURRENT_TIMESTAMP(),
@@ -44,6 +47,9 @@ def _write_telemetry(ctx: AskContext, resolution: AskResolution) -> None:
               %s,
               %s,
               PARSE_JSON(%s),
+              PARSE_JSON(%s),
+              %s,
+              %s,
               PARSE_JSON(%s)
             """,
             (
@@ -60,6 +66,9 @@ def _write_telemetry(ctx: AskContext, resolution: AskResolution) -> None:
                 not bool(resolution.answer.strip()),
                 json.dumps(resolution.did_you_mean),
                 json.dumps(resolution.unknown_terms),
+                ctx.effective_page_id,
+                ctx.snowflake_fact_lookup,
+                json.dumps(ctx.retrieval_source_groups or []),
             ),
         )
         if resolution.unknown_terms:

@@ -1,7 +1,8 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 
 import { API_BASE } from '../config/apiBase'
+import { useAskMipRuntime } from '../context/AskMipRuntimeContext'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import {
@@ -136,6 +137,8 @@ function mergeIbLiveRows(prevData, livePayload) {
 
 export default function SymbolTracker() {
   const { formatSymbolLabel } = useSymbolMeta()
+  const { pathname } = useLocation()
+  const { mergeAskMipRuntime } = useAskMipRuntime()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [sensitivityMode, setSensitivityMode] = useState('BALANCED')
@@ -408,6 +411,35 @@ export default function SymbolTracker() {
     if (!activeTile) return null
     return resolveLivingChartSymbolDisplay(activeTile, committee, exitRec, liveState)
   }, [activeTile, committee, exitRec, liveState])
+
+  useEffect(() => {
+    const urgency = exitRec?.urgency != null ? String(exitRec.urgency) : null
+    const posture = activeDisplay?.committeePosture != null ? String(activeDisplay.committeePosture) : null
+    const badges = [urgency, posture].filter(Boolean)
+    const kpi = {}
+    if (urgency) kpi.exit_urgency = urgency
+    if (posture) kpi.committee_stance = posture
+    mergeAskMipRuntime({
+      page_id: 'symbol_tracker',
+      page_route: pathname,
+      session_mode: 'live',
+      symbol: selectedSymbol || null,
+      visible_widget_ids: ['living_chart_main'],
+      selected_widget_id: 'living_chart_main',
+      current_kpi_snapshot: Object.keys(kpi).length ? kpi : null,
+      current_badges_or_statuses: badges,
+    })
+    return () => {
+      mergeAskMipRuntime({
+        symbol: null,
+        visible_widget_ids: [],
+        selected_widget_id: null,
+        current_kpi_snapshot: null,
+        current_badges_or_statuses: [],
+        page_id: null,
+      })
+    }
+  }, [pathname, selectedSymbol, exitRec, activeDisplay, mergeAskMipRuntime])
 
   const bumpChartLayout = useCallback(() => {
     setLayoutRevision((r) => r + 1)

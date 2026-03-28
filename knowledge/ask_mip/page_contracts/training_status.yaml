@@ -1,0 +1,44 @@
+artifact_id: page_training_status
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+app_version_introduced: "0.7"
+page_id: training_status
+page_title: Training Status
+route: /training
+purpose: >
+  Review pattern maturity, trust gates, sample coverage, and horizon metrics
+  used to qualify research signals for trading workflows.
+target_user: researcher_trader
+business_questions_answered:
+  - Is this pattern ready for production use?
+  - Why is maturity INSUFFICIENT or WARMING_UP?
+main_workflows:
+  - Filter by market, symbol, pattern
+  - Expand a row for timeline detail
+filters_inputs:
+  - market_type
+  - symbol search
+  - pattern_id
+sections:
+  - section_id: training_grid
+    section_title: Status grid
+    purpose: Tabular training metrics per symbol/pattern.
+    widget_ids:
+      - training_status_grid
+    typical_user_questions:
+      - What does trust gate mean?
+      - Is higher sample count better?
+linked_pages:
+  - route: /symbol-tracker
+    page_id: symbol_tracker
+refresh_behavior: Loaded on page open; user refreshes browser to pull latest.
+dependencies:
+  - /training/status API
+caveats:
+  - Training metrics are historical pipeline outputs; they do not replace live risk checks.
+known_issues: []
+linked_backend_objects:
+  - object_ref: mart_training_status_api
+    note: Aggregated training status rows for the UI grid.

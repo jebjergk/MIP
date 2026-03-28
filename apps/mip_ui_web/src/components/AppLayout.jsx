@@ -4,6 +4,7 @@ import StatusBanner from './StatusBanner'
 import LiveHeader from './LiveHeader'
 import AskMipFab from './AskMipFab'
 import AskMipPanel from './AskMipPanel'
+import { useAskMipRuntime } from '../context/AskMipRuntimeContext'
 import './AppLayout.css'
 
 const SIDEBAR_WIDTH = 240
@@ -58,8 +59,13 @@ export default function AppLayout() {
   const [newsTicker, setNewsTicker] = useState('')
   const latestNewsTsRef = useRef(null)
   const { pathname } = useLocation()
+  const { mergeAskMipRuntime } = useAskMipRuntime()
 
   const closeSidebar = () => setSidebarOpen(false)
+
+  useEffect(() => {
+    mergeAskMipRuntime({ page_route: pathname })
+  }, [pathname, mergeAskMipRuntime])
 
   useEffect(() => {
     let cancelled = false

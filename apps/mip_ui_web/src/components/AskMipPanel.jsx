@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { sectionForRoute } from '../guide/index'
 import { API_BASE } from '../config/apiBase'
+import { useAskMipRuntime } from '../context/AskMipRuntimeContext'
 import AskAnswerSections from './AskAnswerSections'
 import AskDidYouMean from './AskDidYouMean'
 import './AskMipPanel.css'
@@ -11,7 +12,21 @@ import './AskMipPanel.css'
  * Slide-over panel for "Ask MIP" — shows contextual guide content
  * and provides a chat interface powered by Cortex COMPLETE.
  */
+function getOrCreateAskSessionId() {
+  try {
+    let id = sessionStorage.getItem('mip.ask.session_id')
+    if (!id && typeof crypto !== 'undefined' && crypto.randomUUID) {
+      id = crypto.randomUUID()
+      sessionStorage.setItem('mip.ask.session_id', id)
+    }
+    return id || null
+  } catch {
+    return null
+  }
+}
+
 export default function AskMipPanel({ open, onClose, pathname }) {
+  const { runtime: askRuntime } = useAskMipRuntime()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -50,7 +65,18 @@ export default function AskMipPanel({ open, onClose, pathname }) {
       // Build history (last 10 messages for context window management)
       const history = [...messages, userMsg].slice(-10).map(({ role, content }) => ({ role, content }))
 
-      const res = await fetch(`${API_BASE}/ask/v2`, {
+      const runtimePayload = {
+        ...askRuntime,
+        session_id: getOrCreateAskSessionId(),
+        as_of_timestamp: new Date().toISOString(),
+        app_version: import.meta.env.VITE_APP_VERSION || '0.0.1',
+        page_route: pathname || askRuntime?.page_route || null,
+      }
+      Object.keys(runtimePayload).forEach((k) => {
+        if (runtimePayload[k] === undefined) delete runtimePayload[k]
+      })
+
+      const res = await fetch(`${API_BASE}/ask/v3`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -59,6 +85,7 @@ export default function AskMipPanel({ open, onClose, pathname }) {
           page_title: guideSection?.title || null,
           page_hint: guideSection?.markdown?.slice(0, 900) || null,
           history,
+          runtime: runtimePayload,
         }),
         signal: controller.signal,
       })
@@ -93,7 +120,7 @@ export default function AskMipPanel({ open, onClose, pathname }) {
       clearTimeout(timeoutId)
       setLoading(false)
     }
-  }, [input, loading, messages, pathname])
+  }, [input, loading, messages, pathname, guideSection, askRuntime])
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

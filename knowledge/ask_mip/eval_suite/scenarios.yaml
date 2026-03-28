@@ -1,0 +1,68 @@
+# Ask MIP 2.0 — regression / smoke scenarios (spec §20)
+# Run via: pytest MIP/apps/mip_ui_api/tests/test_ask_mip_v3.py -q
+version: "1"
+scenarios:
+  - id: page_help_no_widget
+    description: Ask from page without widget selected — page contract grounds answer
+    endpoint: v3
+    question: What is this page for?
+    route: /symbol-tracker
+    runtime:
+      page_id: symbol_tracker
+      visible_widget_ids: []
+    expect_intent_one_of:
+      - mip_feature_behavior
+      - mixed
+      - term_definition
+    expect_source_types_contain:
+      - PAGE_CONTRACT
+
+  - id: kpi_metric_meaning
+    description: KPI meaning uses widget + metric dictionary when snapshot present
+    question: What does this number mean for exit urgency?
+    route: /symbol-tracker
+    runtime:
+      page_id: symbol_tracker
+      visible_widget_ids:
+        - living_chart_main
+      selected_widget_id: living_chart_main
+      current_kpi_snapshot:
+        exit_urgency: PREPARE
+    expect_source_types_contain:
+      - METRIC_DICTIONARY
+
+  - id: prepare_exit_why
+    question: Why is this symbol marked PREPARE exit?
+    route: /symbol-tracker
+    runtime:
+      page_id: symbol_tracker
+      symbol: AAPL
+      current_badges_or_statuses:
+        - PREPARE
+    expect_intent: state_diagnosis
+
+  - id: lineage_value_source
+    question: Where does this figure come from?
+    route: /training
+    runtime:
+      page_id: training_status
+    expect_intent: source_lineage
+
+  - id: slippage_domain
+    question: What is slippage?
+    route: /cockpit
+    expect_intent: trading_concept
+    expect_source_types_contain:
+      - DOMAIN_KNOWLEDGE
+
+  - id: cross_page_tension
+    question: Why does this page disagree with Training Status?
+    route: /symbol-tracker
+    expect_intent: state_diagnosis
+
+  - id: undocumented_metric_honesty
+    question: What is the exact internal formula for committee stance scoring?
+    route: /symbol-tracker
+    runtime:
+      page_id: symbol_tracker
+    notes: Composer should refuse undocumented coefficients; automated test checks retrieval only

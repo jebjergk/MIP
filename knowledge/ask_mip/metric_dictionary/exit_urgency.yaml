@@ -1,0 +1,28 @@
+artifact_id: metric_exit_urgency
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+metric_id: exit_urgency
+widget_id: living_chart_main
+page_id: symbol_tracker
+metric_name: exit_urgency
+display_label: Exit urgency
+business_definition: >
+  Relative urgency label for exit preparation (e.g. PREPARE) from the exit
+  recommendation helper on the Living Chart.
+formula_or_derivation: >
+  Computed client-side from committee and live state heuristics. If the user asks
+  for exact thresholds, say they are not fully documented in Ask MIP artifacts.
+grain: per_symbol_per_refresh
+source_objects:
+  - symbol_tracker_exit_recommendation
+refresh_cadence: On committee cycle updates
+expected_range_or_interpretation: >
+  PREPARE-style labels mean tighten monitoring and verify against playbook; not automatic liquidation.
+directionality: lower_is_better
+caveats:
+  - Labels are diagnostic hints, not orders.
+sample_question_forms:
+  - Why is this symbol PREPARE_EXIT?
+fact_type: derived

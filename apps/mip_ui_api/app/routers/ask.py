@@ -16,7 +16,8 @@ from app.config import get_askmip_model
 from app.db import get_connection
 from app.guide_loader import get_guide_content
 from app.services.ask.glossary_repository import list_glossary, search_glossary, upsert_glossary_entry
-from app.services.ask.orchestrator import resolve_question
+from app.services.ask.orchestrator import resolve_question, resolve_question_v3
+from app.services.ask.runtime_schema import AskV3RequestBody
 from app.services.ask.telemetry import log_resolution_event
 
 logger = logging.getLogger(__name__)
@@ -307,6 +308,69 @@ def ask_mip_v2(req: AskRequest):
     except Exception as exc:
         logger.error("Ask MIP v2 failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Ask MIP v2 failed.") from exc
+
+
+@router.post("/v3", response_model=AskV2Response)
+def ask_mip_v3(req: AskV3RequestBody):
+    """
+    Ask MIP 2.0 foundation: runtime UI context, knowledge artifacts, source-aware
+    retrieval, optional Snowflake facts, truth-zone prompting.
+    """
+    model_name = get_askmip_model()
+    try:
+        history = [{"role": m.role, "content": m.content} for m in req.history[-10:]]
+        ctx, resolution = resolve_question_v3(
+            req.question,
+            req.route,
+            history,
+            page_title=req.page_title,
+            page_hint=req.page_hint,
+            runtime=req.runtime,
+        )
+        log_resolution_event(ctx, resolution)
+        return AskV2Response(
+            answer=resolution.answer,
+            model=model_name,
+            section_id=None,
+            sections=[
+                AskAnswerSection(
+                    section_type=section.section_type,
+                    title=section.title,
+                    text=section.text,
+                    sources=[
+                        AskSource(
+                            source_type=source.source_type,
+                            source_ref=source.source_ref,
+                            label=source.label,
+                            confidence=source.confidence,
+                        )
+                        for source in section.sources
+                    ],
+                )
+                for section in resolution.sections
+            ],
+            sources=[
+                AskSource(
+                    source_type=source.source_type,
+                    source_ref=source.source_ref,
+                    label=source.label,
+                    confidence=source.confidence,
+                )
+                for source in resolution.sources
+            ],
+            confidence=AskConfidence(
+                docs_confidence=resolution.confidence.docs_confidence,
+                glossary_confidence=resolution.confidence.glossary_confidence,
+                web_confidence=resolution.confidence.web_confidence,
+                overall=resolution.confidence.overall,
+            ),
+            did_you_mean=resolution.did_you_mean,
+            unknown_terms=resolution.unknown_terms,
+            fallback_used=resolution.fallback_used,
+        )
+    except Exception as exc:
+        logger.error("Ask MIP v3 failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Ask MIP v3 failed.") from exc
 
 
 @router.get("/glossary/search")

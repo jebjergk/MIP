@@ -8,6 +8,7 @@ _ROUTE_FILE_HINTS = {
     "/live-portfolio-activity": "29-live-portfolio-activity.md",
     "/live-portfolio-config": "27-live-portfolio-config.md",
     "/symbol-tracker": "17-symbol-tracker.md",
+    "/living-chart": "17-symbol-tracker.md",
     "/training": "15-training-status.md",
     "/decision-console": "28-ai-agent-decisions.md",
     "/news-intelligence": "26-news-intelligence.md",

@@ -36,6 +36,11 @@ class AskContext:
     history: list[dict[str, str]]
     normalized_tokens: list[str]
     intent: str
+    # Ask MIP 2.0 / v3 (optional; v2 leaves defaults)
+    effective_page_id: str | None = None
+    runtime: dict | None = None
+    snowflake_fact_lookup: bool = False
+    retrieval_source_groups: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -1,0 +1,29 @@
+artifact_id: metric_committee_stance
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+metric_id: committee_stance
+widget_id: living_chart_main
+page_id: symbol_tracker
+metric_name: committee_stance
+display_label: Committee stance / posture
+business_definition: >
+  Summarized posture from the symbol committee evaluation (e.g. risk-off, watch,
+  thesis intact). Represents MIP's structured read of multiple inputs for that symbol.
+formula_or_derivation: >
+  Derived in application logic from committee scores and thresholds. Exact formula
+  is not fully specified in this dictionary entry — state that if asked for coefficients.
+grain: per_symbol_per_refresh
+source_objects:
+  - symbol_tracker_committee_engine
+refresh_cadence: On tile refresh and live bar merge cycles
+expected_range_or_interpretation: >
+  Non-HOLD postures imply elevated attention; combine with exit urgency and live state.
+directionality: depends
+caveats:
+  - Not a trade recommendation; explanatory signal only.
+sample_question_forms:
+  - Why is stance ESCALATE?
+  - What does THESIS_INTACT mean here?
+fact_type: derived

@@ -1,0 +1,28 @@
+artifact_id: metric_maturity_stage
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+metric_id: maturity_stage
+widget_id: training_status_grid
+page_id: training_status
+metric_name: maturity_stage
+display_label: Maturity stage
+business_definition: >
+  Pipeline stage describing how much historical evidence and stability support
+  using a pattern (e.g. INSUFFICIENT, WARMING_UP, LEARNING, CONFIDENT).
+formula_or_derivation: >
+  Produced by training pipeline rules in Snowflake/application procedures.
+  Refer users to training documentation; do not invent stage transition thresholds.
+grain: per_symbol_pattern
+source_objects:
+  - training_status_pipeline
+refresh_cadence: After training pipeline runs
+expected_range_or_interpretation: >
+  Higher stages indicate more evidence; INSUFFICIENT means not ready for reliance.
+directionality: higher_is_better
+caveats:
+  - Stages are research quality signals, not market forecasts.
+sample_question_forms:
+  - Why is maturity WARMING_UP?
+fact_type: historical

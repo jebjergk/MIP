@@ -1,0 +1,23 @@
+artifact_id: page_cockpit
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-03-28"
+app_version_introduced: "0.7"
+page_id: cockpit
+page_title: Cockpit
+route: /cockpit
+purpose: Primary operational dashboard for portfolio context and daily workflow entry points.
+target_user: trader_operator
+business_questions_answered:
+  - What should I look at first today?
+main_workflows:
+  - Scan KPIs and navigate to detail pages.
+filters_inputs: []
+sections: []
+linked_pages: []
+refresh_behavior: Standard app navigation; KPIs follow underlying APIs.
+dependencies: []
+caveats: []
+known_issues: []
+linked_backend_objects: []

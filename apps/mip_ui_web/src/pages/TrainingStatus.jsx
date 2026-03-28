@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
 import InfoTooltip from '../components/InfoTooltip'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
@@ -7,6 +7,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import { useAskMipRuntime } from '../context/AskMipRuntimeContext'
 import TrainingTimelineInline from '../components/TrainingTimelineInline'
 import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
@@ -42,6 +43,8 @@ function getRowKey(row, get) {
 
 export default function TrainingStatus() {
   const { formatSymbolLabel } = useSymbolMeta()
+  const { pathname } = useLocation()
+  const { mergeAskMipRuntime } = useAskMipRuntime()
   const [searchParams] = useSearchParams()
   const appliedUrlRef = useRef(false)
   const [data, setData] = useState(null)
@@ -115,6 +118,55 @@ export default function TrainingStatus() {
       }
     }
   }, [filteredRows, expandedRowId])
+
+  useEffect(() => {
+    const expanded = expandedRowId
+      ? filteredRows.find((r) => getRowKey(r, get) === expandedRowId)
+      : null
+    mergeAskMipRuntime({
+      page_id: 'training_status',
+      page_route: pathname,
+      session_mode: 'research',
+      active_filters: {
+        market_type: marketTypeFilter || null,
+        symbol_search: symbolSearch || null,
+        pattern_id: patternIdFilter || null,
+      },
+      visible_widget_ids: ['training_status_grid'],
+      selected_widget_id: expandedRowId ? 'training_status_grid' : null,
+      selected_row_context: expanded
+        ? {
+            symbol: get(expanded, 'symbol'),
+            market_type: get(expanded, 'market_type'),
+            pattern_id: get(expanded, 'pattern_id'),
+            maturity_stage: get(expanded, 'maturity_stage'),
+          }
+        : null,
+      current_kpi_snapshot: {
+        filtered_row_count: filteredRows.length,
+        total_row_count: rows.length,
+      },
+    })
+    return () => {
+      mergeAskMipRuntime({
+        page_id: null,
+        active_filters: {},
+        visible_widget_ids: [],
+        selected_widget_id: null,
+        selected_row_context: null,
+        current_kpi_snapshot: null,
+      })
+    }
+  }, [
+    pathname,
+    filteredRows,
+    rows.length,
+    marketTypeFilter,
+    symbolSearch,
+    patternIdFilter,
+    expandedRowId,
+    mergeAskMipRuntime,
+  ])
 
   // Keyboard handler for Esc to collapse
   useEffect(() => {

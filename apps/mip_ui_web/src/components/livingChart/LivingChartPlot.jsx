@@ -138,8 +138,8 @@ export default function LivingChartPlot({
           x: tx,
           y: upper,
           fill: 'tonexty',
-          fillcolor: 'rgba(251, 191, 36, 0.07)',
-          line: { color: 'rgba(251,191,36,0.2)', width: 0.6, dash: '5px,4px' },
+          fillcolor: 'rgba(251, 191, 36, 0.11)',
+          line: { color: 'rgba(251,191,36,0.32)', width: 0.75, dash: '5px,4px' },
           hoverinfo: 'skip',
         })
       }
@@ -150,7 +150,7 @@ export default function LivingChartPlot({
           name: 'Expected path',
           x: tx,
           y: center,
-          line: { color: 'rgba(234, 179, 8, 0.88)', width: 1.25, dash: '8px,4px' },
+          line: { color: 'rgba(250, 204, 21, 0.95)', width: 1.45, dash: '8px,4px' },
           connectgaps: false,
           hovertemplate: 'Expected: %{y:.4f}<extra></extra>',
         })
@@ -159,10 +159,10 @@ export default function LivingChartPlot({
 
     if (lastClose != null && lastT != null) {
       let fill = '#f8fafc'
-      let line = { color: '#38bdf8', width: 2.75 }
+      let line = { color: '#38bdf8', width: 3.1 }
       if (liveState?.derived_features?.inside_cone === false) {
         fill = '#fef9c3'
-        line = { color: '#eab308', width: 2.75 }
+        line = { color: '#eab308', width: 3.1 }
       } else if (
         fwd?.lower?.[0] != null
         && fwd?.upper?.[0] != null
@@ -171,7 +171,7 @@ export default function LivingChartPlot({
       ) {
         if (lastClose < fwd.lower[0] || lastClose > fwd.upper[0]) {
           fill = '#ffedd5'
-          line = { color: '#fb923c', width: 2.75 }
+          line = { color: '#fb923c', width: 3.1 }
         }
       }
       traces.push({
@@ -180,8 +180,8 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 28,
-          color: 'rgba(56, 189, 248, 0.2)',
+          size: 36,
+          color: 'rgba(56, 189, 248, 0.28)',
           line: { width: 0 },
         },
         hoverinfo: 'skip',
@@ -194,7 +194,7 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 16,
+          size: 17,
           color: fill,
           line,
         },

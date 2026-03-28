@@ -1,6 +1,37 @@
 /**
- * Pure presentation helpers for Living Chart — single governed vocabulary (Pass 3).
+ * Pure presentation helpers for Living Chart — governed vocabulary.
+ *
+ * Per-symbol data binding (page layer): rail/header must pass the tile’s own
+ * committee + exitRec from committeeBySymbol[sym] / exitRecBySymbol[sym];
+ * selected header uses activeTile’s committee/exitRec only. Chart chips use
+ * activeTile only. No shared “selected” object should be passed into other rows.
  */
+
+/** Committee stance only — not exit urgency (prevents PREPARE flooding “posture”). */
+export function committeePostureLabel(committee) {
+  const s = String(committee?.committee_stance || 'UNKNOWN').toUpperCase()
+  if (s === 'ESCALATE') return 'ALERT'
+  if (s === 'WATCH_CLOSELY' || s === 'RISK_OFF') return 'WATCH'
+  if (s === 'THESIS_INTACT') return 'HOLD'
+  return 'HOLD'
+}
+
+/** Rail / compact — committee stance only. */
+export function committeePostureShort(committee) {
+  const s = String(committee?.committee_stance || 'UNKNOWN').toUpperCase()
+  if (s === 'ESCALATE') return 'ALT'
+  if (s === 'WATCH_CLOSELY' || s === 'RISK_OFF') return 'WATCH'
+  return 'HOLD'
+}
+
+/** Exit layer only; null when HOLD (no extra chip). */
+export function exitActionDisplay(exitRec) {
+  const u = String(exitRec?.urgency || 'HOLD').toUpperCase()
+  if (u === 'EXIT_NOW') return 'EXIT'
+  if (u === 'PREPARE') return 'PREPARE'
+  if (u === 'MONITOR') return 'MONITOR'
+  return null
+}
 
 /** @returns {'calm'|'elevated'|'high'} */
 export function riskPressureTier(committee, exitRec, liveState, tile) {
@@ -51,22 +82,16 @@ export function healthLabel(tier) {
   return m[tier] || tier
 }
 
-/** Primary posture: exit urgency overrides committee stance. */
+/** @deprecated Use committeePostureLabel — was conflating exit urgency into posture. */
 export function primaryPostureLabel(committee, exitRec) {
-  const urg = String(exitRec?.urgency || 'HOLD').toUpperCase()
-  if (urg === 'EXIT_NOW') return 'EXIT'
-  if (urg === 'PREPARE') return 'PREPARE EXIT'
-  if (urg === 'MONITOR') return 'WATCH'
-  const stance = String(committee?.committee_stance || '').toUpperCase()
-  if (stance === 'ESCALATE' || stance === 'WATCH_CLOSELY' || stance === 'RISK_OFF') return 'WATCH'
-  return 'HOLD'
+  void exitRec
+  return committeePostureLabel(committee)
 }
 
-/** Rail / compact (4–6 chars). */
+/** @deprecated Use committeePostureShort */
 export function primaryPostureShort(committee, exitRec) {
-  const full = primaryPostureLabel(committee, exitRec)
-  if (full === 'PREPARE EXIT') return 'PREP'
-  return full
+  void exitRec
+  return committeePostureShort(committee)
 }
 
 /** Thesis from tile payload only — INTACT | FRAGILE | BROKEN */
@@ -78,6 +103,21 @@ export function thesisStateLabel(tile) {
   if (u.includes('WEAK')) return 'FRAGILE'
   if (u.includes('INTACT')) return 'INTACT'
   return 'INTACT'
+}
+
+/**
+ * Single contract for strip + rail + tooltips. Same resolver for every symbol.
+ */
+export function resolveLivingChartSymbolDisplay(tile, committee, exitRec, liveState) {
+  return {
+    committeePosture: committeePostureLabel(committee),
+    committeePostureShort: committeePostureShort(committee),
+    exitUrgency: String(exitRec?.urgency || 'HOLD').toUpperCase(),
+    exitActionLabel: exitActionDisplay(exitRec),
+    thesisState: thesisStateLabel(tile),
+    riskLabel: riskPressureLabel(committee, exitRec, liveState, tile),
+    riskTier: riskPressureTier(committee, exitRec, liveState, tile),
+  }
 }
 
 export function pathDriftActive(liveState) {
@@ -132,12 +172,11 @@ export function liveConditionChips(conditionalKeys, liveState, tile) {
 }
 
 /**
- * At most one strip cue; deduped vs chart chip keys and primary posture.
+ * At most one strip cue; deduped vs chart chip keys (not exit action — shown separately).
  * @param {Set<string>|string[]} chartChipKeys — `key` from liveConditionChips
  */
 export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipKeys) {
   const chartKeys = chartChipKeys instanceof Set ? chartChipKeys : new Set(chartChipKeys || [])
-  const posture = primaryPostureLabel(committee, exitRec)
   const tp = Number(tile?.overlays?.take_profit)
   const hasTarget = Number.isFinite(tp)
   const distTp = liveState?.derived_features?.distance_to_tp_pct ?? tile?.progress_metrics?.distance_to_tp_pct
@@ -169,14 +208,16 @@ export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipK
   return null
 }
 
-/** @deprecated Prefer primaryPostureShort(committee, exitRec) */
+/** @deprecated Prefer committeePostureShort */
 export function postureShort(committee, exitRec = null) {
-  return primaryPostureShort(committee, exitRec || {})
+  void exitRec
+  return committeePostureShort(committee)
 }
 
-/** @deprecated Prefer primaryPostureLabel(committee, exitRec) */
+/** @deprecated Prefer committeePostureLabel */
 export function postureLabel(committee, exitRec = null) {
-  return primaryPostureLabel(committee, exitRec || {})
+  void exitRec
+  return committeePostureLabel(committee)
 }
 
 /** @deprecated Use thesisStateLabel */

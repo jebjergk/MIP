@@ -15,10 +15,7 @@ import {
 } from '../lib/livingChartOverlays'
 import {
   riskPressureTier,
-  primaryPostureLabel,
-  primaryPostureShort,
-  thesisStateLabel,
-  riskPressureLabel,
+  resolveLivingChartSymbolDisplay,
   liveConditionChips,
   stripOptionalCue,
 } from '../lib/livingChartVisualState'
@@ -288,6 +285,40 @@ export default function SymbolTracker() {
     }
   }, [sensitivityMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!import.meta.env.DEV || tiles.length === 0) return
+    const samples = tiles.map((t) => {
+      const sym = String(t.symbol || '').toUpperCase()
+      const c = committeeBySymbol[sym]
+      const e = exitRecBySymbol[sym]
+      return { sym, stance: c?.committee_stance, urgency: e?.urgency }
+    })
+    if (tiles.length >= 2 && samples.every((s) => String(s.urgency || '').toUpperCase() === 'PREPARE')) {
+      console.warn('[LivingChart] All open symbols have exit urgency PREPARE — check engine thresholds if unexpected.', samples)
+    }
+    for (const t of tiles) {
+      const sym = String(t.symbol || '').toUpperCase()
+      if (!committeeBySymbol[sym]) {
+        console.warn('[LivingChart] Missing committeeBySymbol entry for tiled symbol (possible key mismatch).', sym)
+      }
+    }
+    try {
+      const qs = new URLSearchParams(window.location.search)
+      if (qs.get('lcDebug') === '1') {
+        const bySym = {}
+        for (const t of tiles) {
+          const sym = String(t.symbol || '').toUpperCase()
+          const c = committeeBySymbol[sym]
+          const rowLive = c?.live_state || null
+          bySym[sym] = resolveLivingChartSymbolDisplay(t, c, exitRecBySymbol[sym], rowLive)
+        }
+        window.__lcLivingChartDebug = { updatedAt: new Date().toISOString(), bySym }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [tiles, committeeBySymbol, exitRecBySymbol])
+
   const refreshIbOnly = useCallback(async () => {
     try {
       setError('')
@@ -356,6 +387,11 @@ export default function SymbolTracker() {
   const activeRiskTier = useMemo(() => {
     if (!activeTile) return 'calm'
     return riskPressureTier(committee, exitRec, liveState, activeTile)
+  }, [activeTile, committee, exitRec, liveState])
+
+  const activeDisplay = useMemo(() => {
+    if (!activeTile) return null
+    return resolveLivingChartSymbolDisplay(activeTile, committee, exitRec, liveState)
   }, [activeTile, committee, exitRec, liveState])
 
   const bumpChartLayout = useCallback(() => {
@@ -463,6 +499,7 @@ export default function SymbolTracker() {
                 type="button"
                 className="lc-btn lc-btn--small"
                 onClick={unlockFollowLatest}
+                aria-label="Jump to latest bar and resume tracking latest bars"
                 title="Re-centers the time axis on the latest bar and turns tracking back on. Your manual zoom may reset."
               >
                 Jump to latest
@@ -500,21 +537,27 @@ export default function SymbolTracker() {
               const rowComm = committeeBySymbol[sym]
               const rowExit = exitRecBySymbol[sym]
               const rowLive = rowComm?.live_state || null
-              const rowRisk = riskPressureTier(rowComm, rowExit, rowLive, t)
-              const postureS = primaryPostureShort(rowComm, rowExit)
+              const rowDisplay = resolveLivingChartSymbolDisplay(t, rowComm, rowExit, rowLive)
+              const rowRisk = rowDisplay.riskTier
               const label = formatSymbolLabel(t.symbol, t.market_type)
+              const exitCue = rowDisplay.exitActionLabel
+              const exitTone = exitCue === 'EXIT' ? 'bad' : exitCue === 'PREPARE' ? 'warn' : 'info'
+              const tipExit = exitCue ? ` · ${exitCue}` : ''
               return (
                 <button
                   key={sym}
                   type="button"
-                  title={`${label} · ${primaryPostureLabel(rowComm, rowExit)} · ${riskPressureLabel(rowComm, rowExit, rowLive, t)}`}
+                  title={`${label} · ${rowDisplay.committeePosture} · ${rowDisplay.riskLabel}${tipExit}`}
                   className={`lc-rail-btn lc-rail-btn--risk-${rowRisk}${active ? ' lc-rail-btn--active' : ''}`}
                   onClick={() => selectSymbol(sym)}
                 >
                   <span className="lc-rail-top">
                     <span className="lc-rail-accent" aria-hidden />
                     <span className="lc-rail-sym">{label}</span>
-                    <span className="lc-rail-posture">{postureS}</span>
+                    <span className="lc-rail-posture">{rowDisplay.committeePostureShort}</span>
+                    {exitCue ? (
+                      <span className={`lc-rail-exit lc-rail-exit--${exitTone}`} title={exitCue}>{exitCue}</span>
+                    ) : null}
                   </span>
                   <span className={`lc-rail-pnl ${Number(t.unrealized_pnl) >= 0 ? 'lc-rail-pnl--pos' : 'lc-rail-pnl--neg'}`}>
                     {fmtSigned(t.unrealized_pnl, 0)}
@@ -534,9 +577,26 @@ export default function SymbolTracker() {
                       <span className="lc-strip-meta">{activeTile.side} · Qty {fmtNum(activeTile.quantity, 0)}</span>
                     </div>
                     <div className="lc-strip-state" aria-label="Position state">
-                      <span className="lc-state-primary">{primaryPostureLabel(committee, exitRec)}</span>
-                      <span className="lc-state-thesis">{thesisStateLabel(activeTile)}</span>
-                      <span className="lc-state-risk">{riskPressureLabel(committee, exitRec, liveState, activeTile)}</span>
+                      {activeDisplay ? (
+                        <>
+                          <span className="lc-state-primary">{activeDisplay.committeePosture}</span>
+                          {activeDisplay.exitActionLabel ? (
+                            <span
+                              className={`lc-state-exit lc-chip lc-chip--${
+                                activeDisplay.exitActionLabel === 'EXIT'
+                                  ? 'bad'
+                                  : activeDisplay.exitActionLabel === 'PREPARE'
+                                    ? 'warn'
+                                    : 'info'
+                              }`}
+                            >
+                              {activeDisplay.exitActionLabel}
+                            </span>
+                          ) : null}
+                          <span className="lc-state-thesis">{activeDisplay.thesisState}</span>
+                          <span className="lc-state-risk">{activeDisplay.riskLabel}</span>
+                        </>
+                      ) : null}
                     </div>
                     <div className="lc-strip-kpis-wrap">
                       <div className="lc-strip-cluster" aria-label="Price and P and L">

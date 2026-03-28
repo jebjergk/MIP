@@ -1470,7 +1470,8 @@
 .lc-rail-top {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.35rem;
   min-width: 0;
 }
 
@@ -1526,6 +1527,39 @@
   max-width: 3.4rem;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-rail-exit {
+  flex-shrink: 0;
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.06rem 0.24rem;
+  border-radius: 4px;
+  max-width: 4.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-rail-exit--bad {
+  color: #fecaca;
+  border: 1px solid rgba(239, 68, 68, 0.55);
+  background: rgba(127, 29, 29, 0.4);
+}
+
+.lc-rail-exit--warn {
+  color: #fde68a;
+  border: 1px solid rgba(234, 179, 8, 0.5);
+  background: rgba(113, 63, 18, 0.4);
+}
+
+.lc-rail-exit--info {
+  color: #bae6fd;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  background: rgba(12, 74, 110, 0.4);
 }
 
 .lc-rail-pnl {
@@ -1611,6 +1645,16 @@
   letter-spacing: 0.06em;
   color: #f8fafc;
   line-height: 1.15;
+}
+
+.lc-state-exit {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  align-self: flex-start;
+  padding: 0.12rem 0.38rem;
+  border-radius: 6px;
+  line-height: 1.1;
 }
 
 .lc-state-thesis {

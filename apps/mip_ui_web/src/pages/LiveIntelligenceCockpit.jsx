@@ -1,11 +1,10 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE } from '../config/apiBase'
 import { fetchWithRetry } from '../utils/fetchRetry'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
-import LicTileMiniChart from '../components/lic/LicTileMiniChart'
+import LicTopTile from '../components/lic/LicTopTile'
 import { caseFileImplicationDisplay, resolveDecisionPresentation } from '../components/lic/licDecisionPresentation'
 import { buildVisibleTilePresentation } from '../components/lic/licTilePresentation'
 import './LiveIntelligenceCockpit.css'
@@ -55,12 +54,21 @@ function sessionFeedRow() {
     scope: 'session',
     transition: 'SESSION_START',
     state_transition: 'SESSION_START',
-    what_changed: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
-    reason: 'Baseline intelligence computed. New feed rows appear only when the server fingerprint changes vs your prior step (no spam on refresh).',
-    action_implication: 'Review each tile for primary stance vs defensive fallback (reconciliation block in workspace).',
+    what_changed: 'Baseline set — new rows only on material changes vs prior step.',
+    reason: 'Baseline set — new rows only on material changes vs prior step.',
+    action_implication: 'Scan tiles: primary action, chart, strip.',
     final_recommendation: '\u2014',
     severity: 'INFO',
   }
+}
+
+function feedEventHasBody(ev) {
+  if (!ev || typeof ev !== 'object') return false
+  if (String(ev.symbol || '').toUpperCase() === 'SESSION') return true
+  const impl = String(ev.action_implication || '').trim()
+  const r = String(ev.reason || ev.what_changed || '').trim()
+  const tr = String(ev.state_transition || ev.transition || '').trim()
+  return Boolean(impl || r || tr)
 }
 
 function attentionTooltip(intel) {
@@ -88,14 +96,6 @@ function safeText(v, fallback = '\u2014') {
     }
   }
   return String(v)
-}
-
-/** Short tile copy + full string for title/tooltip drill-down. */
-function truncateTileText(s, maxLen) {
-  const t = String(s || '').trim()
-  if (!t) return { short: '', full: '' }
-  if (t.length <= maxLen) return { short: t, full: t }
-  return { short: `${t.slice(0, Math.max(0, maxLen - 1))}…`, full: t }
 }
 
 function attentionScoreNumber(intel) {
@@ -388,9 +388,9 @@ function LiveIntelligenceCockpitInner() {
         setPortfolioRegime(step.portfolio_regime || {})
         const ev = step.feed_events || []
         const session = sessionFeedRow()
-        setFeed((f) => [...ev, session, ...f].slice(0, 120))
+        setFeed((f) => [...ev.filter(feedEventHasBody), session, ...f].slice(0, 120))
         setTimeline((t) => [
-          ...ev.map((e) => ({ ...e, kind: 'MATERIAL' })),
+          ...ev.filter(feedEventHasBody).map((e) => ({ ...e, kind: 'MATERIAL' })),
           { ...session, kind: 'SESSION' },
           ...t,
         ].slice(0, 200))
@@ -465,8 +465,8 @@ function LiveIntelligenceCockpitInner() {
       setPortfolioRegime(step.portfolio_regime || {})
       const ev = step.feed_events || []
       if (ev.length) {
-        setFeed((f) => [...ev, ...f].slice(0, 120))
-        setTimeline((t) => [...ev.map((e) => ({ ...e, kind: 'MATERIAL' })), ...t].slice(0, 200))
+        setFeed((f) => [...ev.filter(feedEventHasBody), ...f].slice(0, 120))
+        setTimeline((t) => [...ev.filter(feedEventHasBody).map((e) => ({ ...e, kind: 'MATERIAL' })), ...t].slice(0, 200))
       }
     } catch (e) {
       if (gen === refreshGenRef.current) {
@@ -490,8 +490,8 @@ function LiveIntelligenceCockpitInner() {
 
   const tilePresentation = useMemo(
     () =>
-      buildVisibleTilePresentation(ranked, intelligence, (intel) =>
-        intel ? resolveDecisionPresentation(intel).primary_action : '—',
+      buildVisibleTilePresentation(ranked, intelligence, (intel, tile) =>
+        intel ? resolveDecisionPresentation(intel, tile).primary_action : '—',
       ),
     [ranked, intelligence],
   )
@@ -648,9 +648,8 @@ function LiveIntelligenceCockpitInner() {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
               const rd = intel?.recommendation_display || {}
-              const pres = intel ? resolveDecisionPresentation(intel) : null
+              const pres = intel ? resolveDecisionPresentation(intel, t) : null
               const primaryAction = pres?.primary_action || '—'
-              const au = intel?.analog_ui || {}
               const capFull = safeText(rd.confidence_caption, '')
               const thesisPlain = safeText(intel?.thesis_plain, '')
               const copy = tilePresentation.get(s)
@@ -665,97 +664,35 @@ function LiveIntelligenceCockpitInner() {
               const chipSuppress = copy?.chipSuppress || {}
               const fallbackStrip = pres?.fallback_strip_text?.trim() || ''
               const confTitle = capFull ? `Decision confidence: ${capFull}` : 'Confidence blends thesis, tape, and analog match.'
+              const confPct = (() => {
+                const p = Math.round(Number(rd.confidence) * 100)
+                return Number.isFinite(p) ? p : 0
+              })()
               return (
-                <button
+                <LicTopTile
                   key={s}
-                  type="button"
-                  className={`lic-tile ${selectedSymbol === s ? 'lic-tile--selected' : ''}`}
-                  onClick={() => setSelectedSymbol(s)}
-                >
-                  <div className="lic-tile-head">
-                    <div className="lic-tile-head-main">
-                      <span className="lic-tile-sym">{formatSymbolLabel(t.symbol, t.market_type)}</span>
-                      <span className="lic-tile-side">{t.side}</span>
-                      <Link
-                        className="lic-tile-chart-link"
-                        to={`/symbol-tracker?symbol=${encodeURIComponent(s)}`}
-                        title="Open Living Chart for this symbol"
-                        onClick={(ev) => ev.stopPropagation()}
-                      >
-                        Chart
-                      </Link>
-                    </div>
-                    <div className="lic-tile-head-metrics">
-                      <span>{Number.isFinite(Number(t.current_price)) ? Number(t.current_price).toFixed(2) : '—'}</span>
-                      <span className={Number(t.unrealized_pnl) < 0 ? 'lic-pnl-neg' : 'lic-pnl-pos'}>
-                        {formatMoney(t.unrealized_pnl)}
-                      </span>
-                      <span className="lic-tile-age">{formatHoldingAge(t.opened_at)}</span>
-                    </div>
-                  </div>
-                  <div className="lic-tile-rec">{primaryAction}</div>
-                  {rd.confidence != null ? (
-                    <div className="lic-tile-conf" title={confTitle}>
-                      <span className="lic-tile-conf-pct">
-                        Confidence{' '}
-                        {(() => {
-                          const p = Math.round(Number(rd.confidence) * 100)
-                          return Number.isFinite(p) ? p : 0
-                        })()}
-                        %
-                      </span>
-                    </div>
-                  ) : null}
-                  <LicTileMiniChart tile={t} recommendationBand={intel?.final_recommendation} />
-                  {fallbackStrip ? (
-                    <div
-                      className="lic-tile-fallback-strip"
-                      title="Context and defensive scoring — official stance is the primary action above."
-                    >
-                      {fallbackStrip}
-                    </div>
-                  ) : null}
-                  <div className="lic-tile-thesis" title={thesisTooltip}>
-                    {thesisLine}
-                  </div>
-                  <ul className="lic-tile-drivers">
-                    {driverLines.map((d, di) => {
-                      const txt = safeText(d)
-                      const t = truncateTileText(txt, 72)
-                      return (
-                        <li key={`${s}-d-${di}`} className="lic-tile-driver-li" title={t.full !== t.short ? t.full : undefined}>
-                          {t.short || txt}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                  <div className="lic-tile-chips">
-                    {!chipSuppress.attention ? (
-                      <span className="lic-chip" title="Attention">
-                        <span className="lic-chip-k">Attention</span>
-                        <span className="lic-chip-v">{safeText(intel?.attention_band)}</span>
-                      </span>
-                    ) : null}
-                    {!chipSuppress.analog ? (
-                      <span className="lic-chip" title="Historical analog">
-                        <span className="lic-chip-k">Analog</span>
-                        <span className="lic-chip-v">{safeText(au.chip_verdict || au.confidence_plain, '—')}</span>
-                      </span>
-                    ) : null}
-                    {!chipSuppress.factor ? (
-                      <span className="lic-chip" title="Portfolio factor">
-                        <span className="lic-chip-k">Factor</span>
-                        <span className="lic-chip-v">{safeText(intel?.portfolio_factor_chip)}</span>
-                      </span>
-                    ) : null}
-                    {!chipSuppress.regret ? (
-                      <span className="lic-chip" title="Regret tilt">
-                        <span className="lic-chip-k">Regret</span>
-                        <span className="lic-chip-v">{safeText(intel?.regret_tilt_label)}</span>
-                      </span>
-                    ) : null}
-                  </div>
-                </button>
+                  symbolKey={s}
+                  selected={selectedSymbol === s}
+                  onSelect={() => setSelectedSymbol(s)}
+                  symbolLabel={formatSymbolLabel(t.symbol, t.market_type)}
+                  side={t.side}
+                  priceStr={Number.isFinite(Number(t.current_price)) ? Number(t.current_price).toFixed(2) : '—'}
+                  pnlStr={formatMoney(t.unrealized_pnl)}
+                  pnlNeg={Number(t.unrealized_pnl) < 0}
+                  ageStr={formatHoldingAge(t.opened_at)}
+                  primaryAction={primaryAction}
+                  showConfidence={rd.confidence != null}
+                  confPct={confPct}
+                  confTitle={confTitle}
+                  recommendationBand={intel?.final_recommendation}
+                  tile={t}
+                  fallbackStrip={fallbackStrip}
+                  thesisLine={thesisLine}
+                  thesisTooltip={thesisTooltip}
+                  driverLines={driverLines}
+                  chipSuppress={chipSuppress}
+                  intel={intel}
+                />
               )
             })}
           </div>

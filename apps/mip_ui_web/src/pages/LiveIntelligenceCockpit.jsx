@@ -290,6 +290,7 @@ function LiveIntelligenceCockpitInner() {
   const [feed, setFeed] = useState([])
   const [timeline, setTimeline] = useState([])
   const [selectedSymbol, setSelectedSymbol] = useState(null)
+  const [portfolioFocusMode, setPortfolioFocusMode] = useState(false)
   const [detailTab, setDetailTab] = useState('chart')
   const [aiResult, setAiResult] = useState(null)
   const [aiBusy, setAiBusy] = useState(false)
@@ -297,6 +298,50 @@ function LiveIntelligenceCockpitInner() {
   const [bootReady, setBootReady] = useState(false)
   const bootstrapGenRef = useRef(0)
   const refreshGenRef = useRef(0)
+  const workspaceSectionRef = useRef(null)
+  const portfolioScrollYRef = useRef(0)
+
+  const selectSymbolForCockpit = useCallback(
+    (rawSym) => {
+      const sym = String(rawSym || '').toUpperCase()
+      if (!sym) return
+      if (portfolioFocusMode && selectedSymbol === sym) {
+        setSelectedSymbol(null)
+        setPortfolioFocusMode(false)
+        return
+      }
+      if (!portfolioFocusMode && typeof window !== 'undefined') {
+        portfolioScrollYRef.current = window.scrollY
+      }
+      setSelectedSymbol(sym)
+      setPortfolioFocusMode(true)
+    },
+    [portfolioFocusMode, selectedSymbol],
+  )
+
+  const exitPortfolioFocus = useCallback(() => {
+    setPortfolioFocusMode(false)
+    const y = portfolioScrollYRef.current
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: y, behavior: 'smooth' })
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedSymbol) {
+      setPortfolioFocusMode(false)
+    }
+  }, [selectedSymbol])
+
+  useEffect(() => {
+    if (!portfolioFocusMode || !selectedSymbol) return
+    const id = window.requestAnimationFrame(() => {
+      workspaceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [portfolioFocusMode, selectedSymbol])
 
   const fetchIbLive = useCallback(async (tiles, options = {}) => {
     const windowBars = Number.isFinite(Number(options.windowBars)) ? Number(options.windowBars) : 780
@@ -370,6 +415,7 @@ function LiveIntelligenceCockpitInner() {
       setPortfolioContext(data.portfolio_context || {})
       const tr = data.tracker || { tiles: [] }
       setTrackerData(tr)
+      setPortfolioFocusMode(false)
       if (!selectedSymbol && tr.tiles?.[0]?.symbol) {
         setSelectedSymbol(String(tr.tiles[0].symbol).toUpperCase())
       }
@@ -487,6 +533,11 @@ function LiveIntelligenceCockpitInner() {
       return ib - ia
     })
   }, [trackerData.tiles, intelligence])
+
+  const visibleRanked = useMemo(() => {
+    if (!portfolioFocusMode || !selectedSymbol) return ranked
+    return ranked.filter((t) => String(t.symbol || '').toUpperCase() === selectedSymbol)
+  }, [ranked, portfolioFocusMode, selectedSymbol])
 
   const tilePresentation = useMemo(
     () =>
@@ -618,9 +669,17 @@ function LiveIntelligenceCockpitInner() {
         </p>
       ) : null}
 
-      <div className="lic-layout">
+      <div className={`lic-layout${portfolioFocusMode ? ' lic-layout--focus' : ''}`}>
       <div className="lic-grid">
         <div className="lic-main">
+          {portfolioFocusMode ? (
+            <div className="lic-focus-toolbar">
+              <button type="button" className="lic-back-portfolio-btn" onClick={exitPortfolioFocus}>
+                Back to Portfolio
+              </button>
+              <span className="lic-focus-toolbar-hint">Focused on one symbol — workspace below.</span>
+            </div>
+          ) : null}
           <div className="lic-leaderboard">
             {ranked.map((t) => {
               const s = String(t.symbol || '').toUpperCase()
@@ -631,7 +690,7 @@ function LiveIntelligenceCockpitInner() {
                   type="button"
                   className={`lic-lb-chip ${selectedSymbol === s ? 'lic-lb-chip--on' : ''}`}
                   title={attentionTooltip(intel)}
-                  onClick={() => setSelectedSymbol(s)}
+                  onClick={() => selectSymbolForCockpit(s)}
                 >
                   {formatSymbolLabel(t.symbol, t.market_type)}
                   {' · '}
@@ -644,7 +703,7 @@ function LiveIntelligenceCockpitInner() {
           </div>
 
           <div className="lic-tiles">
-            {ranked.map((t) => {
+            {visibleRanked.map((t) => {
               const s = String(t.symbol || '').toUpperCase()
               const intel = intelligence[s]
               const rd = intel?.recommendation_display || {}
@@ -673,7 +732,7 @@ function LiveIntelligenceCockpitInner() {
                   key={s}
                   symbolKey={s}
                   selected={selectedSymbol === s}
-                  onSelect={() => setSelectedSymbol(s)}
+                  onSelect={() => selectSymbolForCockpit(s)}
                   symbolLabel={formatSymbolLabel(t.symbol, t.market_type)}
                   side={t.side}
                   priceStr={Number.isFinite(Number(t.current_price)) ? Number(t.current_price).toFixed(2) : '—'}
@@ -739,7 +798,11 @@ function LiveIntelligenceCockpitInner() {
         </aside>
         </div>
 
-        <section className="lic-workspace" aria-label="Selected symbol workspace">
+        <section
+          ref={workspaceSectionRef}
+          className="lic-workspace lic-workspace--focus-anchor"
+          aria-label="Selected symbol workspace"
+        >
           {!selectedSymbol ? (
             <p className="lic-workspace-empty">Select a symbol from the tiles or attention strip to open the workspace.</p>
           ) : !activeIntel ? (

@@ -145,6 +145,11 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
     const bandU = String(recommendationBand || '').toUpperCase()
     const mood = chartMoodFromBand(bandU)
 
+    let liveBelowExpected = false
+    if (med != null && Number.isFinite(cur) && Number.isFinite(med) && cur < med * 0.998) {
+      liveBelowExpected = true
+    }
+
     let lineClass = 'lic-mini-line'
     if (bandU === 'EXIT_NOW') lineClass = 'lic-mini-line lic-mini-line--stress'
     else if (bandU === 'PREPARE_EXIT') lineClass = 'lic-mini-line lic-mini-line--caution'
@@ -176,6 +181,8 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
       dangerRect,
       rewardRect,
       showDotHalo: bandU === 'EXIT_NOW' || bandU === 'PREPARE_EXIT',
+      liveBelowExpected:
+        liveBelowExpected && (bandU === 'EXIT_NOW' || bandU === 'PREPARE_EXIT'),
     }
   }, [tile, recommendationBand])
 
@@ -199,12 +206,14 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
     dangerRect,
     rewardRect,
     showDotHalo,
+    liveBelowExpected,
   } = model
 
   const moodClass = mood ? `lic-mini-chart--mood-${mood}` : ''
+  const belowClass = liveBelowExpected ? 'lic-mini-chart--live-below-expected' : ''
 
   return (
-    <div className={`lic-mini-chart ${moodClass}`.trim()}>
+    <div className={`lic-mini-chart ${moodClass} ${belowClass}`.trim()}>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="lic-mini-svg" aria-hidden>
         {dangerRect ? (
           <rect

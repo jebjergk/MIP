@@ -141,6 +141,29 @@ function thesisDriverLine(intel) {
   return null
 }
 
+/**
+ * When path driver already states live below expectation median, avoid repeating the same failure
+ * in thesis (path vs risk vs reward stay dimensionally distinct).
+ */
+function thesisDriverLineDeduped(tile, intel) {
+  const pathLine = pathVsExpectedLine(tile)
+  const pathAlreadyBelow =
+    pathLine && /below expectation median|below.*modeled path/i.test(String(pathLine))
+  if (!pathAlreadyBelow) return thesisDriverLine(intel)
+
+  const th = String(intel?.thesis_fracture || '').toUpperCase()
+  if (th === 'THESIS_STRETCHED') {
+    return `Opening thesis still allows noise — focus on whether the plan stays internally consistent.`
+  }
+  if (th === 'THESIS_DAMAGED') {
+    return `The plan's core assumptions no longer line up cleanly — risk framing matters more than the headline story.`
+  }
+  if (th === 'THESIS_BROKEN') {
+    return `Treat the original thesis as closed for sizing — from here, discipline is about limits and liquidity.`
+  }
+  return thesisDriverLine(intel)
+}
+
 /** Buckets for at-most-one driver per dimension. */
 const BUCKET_ORDER = ['stop', 'thesis', 'pathVsExpected', 'target', 'pnl', 'analog', 'factor', 'other']
 
@@ -189,7 +212,7 @@ export function buildTileDrivers(tile, intel) {
 
   const structured = [
     ['stop', stopDriverLine(tile, intel)],
-    ['thesis', thesisDriverLine(intel)],
+    ['thesis', thesisDriverLineDeduped(tile, intel)],
     ['pathVsExpected', pathVsExpectedLine(tile)],
     ['target', targetDriverLine(tile)],
     ['pnl', pnlDriverLine(tile)],

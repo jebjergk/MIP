@@ -683,11 +683,12 @@
   opacity: 0.98;
 }
 
+/* Target guide: lightest in hierarchy (live > danger > expected > target) */
 .lic-mini-ref--tp {
-  stroke: #4ade80;
-  stroke-width: 0.6;
-  stroke-dasharray: 5 5;
-  opacity: 0.72;
+  stroke: #22c55e;
+  stroke-width: 0.48;
+  stroke-dasharray: 6 6;
+  opacity: 0.44;
 }
 
 .lic-mini-zone {
@@ -695,50 +696,79 @@
   pointer-events: none;
 }
 
+/* Danger band: second-strongest visual cue after live path */
 .lic-mini-zone--danger {
-  fill: rgba(248, 113, 113, 0.14);
+  fill: rgba(248, 113, 113, 0.17);
 }
 
 .lic-mini-chart--mood-exit .lic-mini-zone--danger {
-  fill: rgba(248, 113, 113, 0.22);
+  fill: rgba(248, 113, 113, 0.26);
+}
+
+.lic-mini-chart--mood-prepare .lic-mini-zone--danger {
+  fill: rgba(248, 113, 113, 0.2);
 }
 
 .lic-mini-zone--reward {
-  fill: rgba(74, 222, 128, 0.07);
+  fill: rgba(74, 222, 128, 0.05);
 }
 
+/* Expected path: clearly secondary vs live */
 .lic-mini-expected {
-  stroke: #94a3b8;
-  stroke-width: 0.95;
-  stroke-dasharray: 6 5;
-  opacity: 0.78;
+  stroke: #64748b;
+  stroke-width: 0.78;
+  stroke-dasharray: 7 6;
+  opacity: 0.55;
 }
 
-.lic-mini-chart--mood-exit .lic-mini-expected {
-  stroke: #cbd5e1;
-  opacity: 0.88;
+/* EXIT/PREPARE: fade expected further (do not brighten — reads as failure vs plan) */
+.lic-mini-chart--mood-exit .lic-mini-expected,
+.lic-mini-chart--mood-prepare .lic-mini-expected {
+  stroke: #475569;
+  opacity: 0.4;
 }
 
+.lic-mini-chart--live-below-expected.lic-mini-chart--mood-exit .lic-mini-expected,
+.lic-mini-chart--live-below-expected.lic-mini-chart--mood-prepare .lic-mini-expected {
+  opacity: 0.32;
+}
+
+/* Live path: strongest */
 .lic-mini-line {
-  stroke: #38bdf8;
-  stroke-width: 1.5;
+  stroke: #0ea5e9;
+  stroke-width: 1.62;
   stroke-linecap: round;
   stroke-linejoin: round;
+  opacity: 1;
 }
 
 .lic-mini-line--watch {
-  stroke: #7dd3fc;
-  stroke-width: 1.42;
+  stroke: #38bdf8;
+  stroke-width: 1.55;
 }
 
 .lic-mini-line--caution {
-  stroke: #fcd34d;
-  stroke-width: 1.48;
+  stroke: #fbbf24;
+  stroke-width: 1.6;
 }
 
 .lic-mini-line--stress {
-  stroke: #fca5a5;
-  stroke-width: 1.55;
+  stroke: #f87171;
+  stroke-width: 1.65;
+}
+
+.lic-mini-chart--mood-exit .lic-mini-line--stress,
+.lic-mini-chart--mood-prepare .lic-mini-line--caution {
+  stroke-width: 1.72;
+}
+
+.lic-mini-chart--live-below-expected.lic-mini-chart--mood-exit .lic-mini-line--stress {
+  stroke-width: 1.82;
+  stroke: #ef4444;
+}
+
+.lic-mini-chart--live-below-expected.lic-mini-chart--mood-prepare .lic-mini-line--caution {
+  stroke-width: 1.78;
 }
 
 .lic-mini-dot {

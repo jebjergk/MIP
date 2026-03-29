@@ -4,10 +4,9 @@
  * 1) Thesis strength — activeIntel.confidence.thesis_confidence (0–1); else thesis_fracture map.
  * 2) Live vs expected — (current − med) / med; LONG: above expected scores higher; SHORT: inverted.
  *    score = 50 + 50 * tanh(dev / 0.004), clamped 0–100; no med → 50.
- * 3) Stop safety — distance_to_sl_pct (fraction); farther from stop → higher.
- *    clamp01((dsl − 0.005) / 0.12) * 100.
- * 4) Target opportunity — distance_to_tp_pct; more room → higher.
- *    clamp01((dtp − 0.01) / 0.12) * 100; invalid → 50.
+ * 3) Stop safety — farther from stop → higher; mapped 0–1 then pow 1.22 so danger reads near chart center.
+ * 4) Target opportunity — more room → higher; pow 1.2 on normalized room so tight-to-target reads near center.
+ *    PolarRadiusAxis domain [0,100]: 0 = center, 100 = outer edge (ideal hex).
  * 5) Analog support — 100 * match_quality * (0.5 + 0.5 * (w−l)/n) when n>0; n=0 → ~28.
  * 6) Portfolio fit — symbol_specific + regime inactive → 90; active + portfolio_wide → 28;
  *    active + mixed → 52; else 60.
@@ -51,14 +50,16 @@ function liveVsExpectedAlignment(tile) {
 function stopSafety(tile) {
   const dsl = Number((tile?.progress_metrics || {}).distance_to_sl_pct)
   if (!Number.isFinite(dsl)) return 50
-  return clamp0100(clamp01((dsl - 0.005) / 0.12) * 100)
+  const u = clamp01((dsl - 0.004) / 0.11)
+  return clamp0100(100 * u ** 1.22)
 }
 
 function targetOpportunity(tile) {
   const dtp = Number((tile?.progress_metrics || {}).distance_to_tp_pct)
   if (!Number.isFinite(dtp)) return 50
   const room = Math.max(0, dtp)
-  return clamp0100(clamp01((room - 0.01) / 0.12) * 100)
+  const u = clamp01((room - 0.008) / 0.11)
+  return clamp0100(100 * u ** 1.2)
 }
 
 function analogSupport(intel) {
@@ -121,17 +122,26 @@ export const RADAR_AXIS_META = [
 export function alignRadarTupleToBand(tuple, finalRecommendation) {
   const b = String(finalRecommendation || 'STAY_COURSE').toUpperCase()
   const profiles = {
-    EXIT_NOW: [30, 26, 20, 34, 38, 42],
-    PREPARE_EXIT: [48, 44, 42, 46, 52, 50],
-    WATCH_CLOSELY: [62, 56, 54, 58, 60, 58],
-    STAY_COURSE: [80, 74, 72, 74, 68, 76],
+    EXIT_NOW: [28, 24, 18, 32, 36, 40],
+    PREPARE_EXIT: [46, 42, 40, 38, 50, 48],
+    WATCH_CLOSELY: [66, 58, 56, 62, 64, 62],
+    STAY_COURSE: [84, 78, 76, 78, 72, 80],
   }
   const p = profiles[b] || profiles.STAY_COURSE
-  const baseW = b === 'EXIT_NOW' ? 0.52 : b === 'PREPARE_EXIT' ? 0.44 : b === 'WATCH_CLOSELY' ? 0.4 : 0.34
-  const exitPull = [0.55, 0.58, 0.62, 0.48, 0.5, 0.48]
+  const baseW = b === 'EXIT_NOW' ? 0.58 : b === 'PREPARE_EXIT' ? 0.5 : b === 'WATCH_CLOSELY' ? 0.44 : 0.38
+  const exitPull = [0.6, 0.64, 0.68, 0.52, 0.54, 0.5]
+  const watchDent = [0.08, 0.1, 0.09, 0.07, 0.04, 0.05]
   return tuple.map((v, i) => {
-    const w = b === 'EXIT_NOW' ? exitPull[i] : baseW
-    return clamp0100((1 - w) * v + w * p[i])
+    let w = b === 'EXIT_NOW' ? exitPull[i] : baseW
+    let target = p[i]
+    if (b === 'WATCH_CLOSELY') {
+      target = clamp0100(p[i] - watchDent[i] * 100)
+    }
+    if (b === 'PREPARE_EXIT') {
+      const skew = [0, -4, -2, -8, 2, 0]
+      target = clamp0100(p[i] + skew[i])
+    }
+    return clamp0100((1 - w) * v + w * target)
   })
 }
 

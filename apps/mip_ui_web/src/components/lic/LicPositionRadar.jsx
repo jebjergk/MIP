@@ -79,19 +79,19 @@ export default function LicPositionRadar({ data, finalRecommendation, hint }) {
             data={data}
             margin={{ top: 14, right: 20, bottom: 14, left: 20 }}
           >
-            <PolarGrid stroke="#475569" strokeOpacity={0.45} />
+            <PolarGrid stroke="#334155" strokeOpacity={0.35} />
             <PolarAngleAxis dataKey="shortLabel" tickLine={false} tick={angleAxisTick} />
             <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} axisLine={false} />
             <Tooltip content={<RadarTooltip />} />
             <Radar
               name="Ideal"
               dataKey="ideal"
-              stroke="#64748b"
-              fill="#64748b"
-              fillOpacity={0.08}
-              strokeOpacity={0.5}
-              strokeWidth={1}
-              strokeDasharray="5 4"
+              stroke="#94a3b8"
+              fill="#94a3b8"
+              fillOpacity={0.035}
+              strokeOpacity={0.62}
+              strokeWidth={1.2}
+              strokeDasharray="4 3"
               dot={false}
               isAnimationActive={false}
             />
@@ -100,8 +100,8 @@ export default function LicPositionRadar({ data, finalRecommendation, hint }) {
               dataKey="score"
               stroke={stroke}
               fill={fill}
-              fillOpacity={0.5}
-              strokeWidth={2.35}
+              fillOpacity={0.56}
+              strokeWidth={2.55}
               dot={false}
               isAnimationActive
               animationDuration={450}

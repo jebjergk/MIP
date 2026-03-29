@@ -1361,6 +1361,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid #273549;
 }
 
 .lc-field {
@@ -1484,6 +1486,31 @@
   background: #475569;
 }
 
+.lc-rail-urgency {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  align-self: center;
+  background: #475569;
+  opacity: 0.85;
+}
+
+.lc-rail-urgency--calm {
+  background: #22c55e;
+  opacity: 0.9;
+}
+
+.lc-rail-urgency--elevated {
+  background: #eab308;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.lc-rail-urgency--high {
+  background: #ef4444;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
 .lc-rail-btn--tier-calm .lc-rail-accent,
 .lc-rail-btn--risk-calm .lc-rail-accent {
   background: #22c55e;
@@ -1524,7 +1551,21 @@
   border-radius: 4px;
   border: 1px solid #334155;
   background: rgba(15, 23, 42, 0.65);
-  max-width: 3.4rem;
+  max-width: 3.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-rail-fallback {
+  display: block;
+  font-size: 0.52rem;
+  font-weight: 500;
+  line-height: 1.25;
+  color: #64748b;
+  font-style: italic;
+  padding-left: 0.15rem;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1639,12 +1680,31 @@
   min-width: 0;
 }
 
+.lc-strip-state-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.12rem;
+  width: 100%;
+  min-width: 0;
+}
+
 .lc-state-primary {
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   color: #f8fafc;
   line-height: 1.15;
+}
+
+.lc-state-fallback {
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #64748b;
+  line-height: 1.3;
+  font-style: italic;
+  max-width: 100%;
 }
 
 .lc-state-exit {
@@ -1658,10 +1718,11 @@
 }
 
 .lc-state-thesis {
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   color: #94a3b8;
+  margin-top: 0.08rem;
 }
 
 .lc-state-risk {
@@ -1679,6 +1740,8 @@
   gap: 0.45rem 0.65rem;
   align-items: stretch;
   min-width: 0;
+  padding-left: 0.5rem;
+  border-left: 1px solid rgba(51, 65, 85, 0.65);
 }
 
 .lc-strip-monitor .lc-strip-ts {
@@ -1727,6 +1790,8 @@
   .lc-strip-kpis-wrap {
     grid-column: 1 / -1;
     grid-row: 3;
+    padding-left: 0;
+    border-left: none;
   }
 
   .lc-strip-monitor .lc-strip-ts {

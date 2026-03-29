@@ -352,9 +352,9 @@ export function buildNowLabelAnnotation(xLastMs, yPrice) {
     text: 'Now',
     showarrow: false,
     xanchor: 'left',
-    xshift: 12,
-    yshift: -16,
-    font: { size: 10, color: '#e2e8f0' },
+    xshift: 14,
+    yshift: -18,
+    font: { size: 11, color: '#f1f5f9', family: 'system-ui, sans-serif' },
   }]
 }
 

@@ -300,18 +300,18 @@ export default function SymbolTracker() {
       console.warn('[LivingChart] All open symbols have exit urgency PREPARE — check engine thresholds if unexpected.', samples)
     }
     if (tiles.length >= 2) {
-      const postureLabels = tiles.map((t) => {
+      const primaryLabels = tiles.map((t) => {
         const sym = String(t.symbol || '').toUpperCase()
         return resolveLivingChartSymbolDisplay(
           t,
           committeeBySymbol[sym],
           exitRecBySymbol[sym],
           committeeBySymbol[sym]?.live_state || null,
-        ).committeePosture
+        ).primaryAction
       })
-      const uniq = new Set(postureLabels)
-      if (uniq.size === 1 && !postureLabels.includes('HOLD')) {
-        console.warn('[LivingChart] All symbols share the same non-HOLD committee posture — verify data if unexpected.', postureLabels)
+      const uniq = new Set(primaryLabels)
+      if (uniq.size === 1 && !primaryLabels.includes('HOLD')) {
+        console.warn('[LivingChart] All symbols share the same non-HOLD primary action — verify data if unexpected.', primaryLabels)
       }
     }
     for (const t of tiles) {
@@ -395,12 +395,14 @@ export default function SymbolTracker() {
     [activeTile, liveState, conditionalKeys],
   )
 
-  const optionalStripCue = useMemo(
-    () => (activeTile
-      ? stripOptionalCue(activeTile, exitRec, liveState, committee, chartChips.map((c) => c.key))
-      : null),
-    [activeTile, exitRec, liveState, committee, chartChips],
-  )
+  const optionalStripCue = useMemo(() => {
+    if (!activeTile) return null
+    const cue = stripOptionalCue(activeTile, exitRec, liveState, committee, chartChips.map((c) => c.key))
+    if (!cue) return null
+    const chipLabels = new Set(chartChips.map((c) => c.label))
+    if (chipLabels.has(cue.label)) return null
+    return cue
+  }, [activeTile, exitRec, liveState, committee, chartChips])
 
   const activeRiskTier = useMemo(() => {
     if (!activeTile) return 'calm'
@@ -413,12 +415,12 @@ export default function SymbolTracker() {
   }, [activeTile, committee, exitRec, liveState])
 
   useEffect(() => {
-    const urgency = exitRec?.urgency != null ? String(exitRec.urgency) : null
-    const posture = activeDisplay?.committeePosture != null ? String(activeDisplay.committeePosture) : null
-    const badges = [urgency, posture].filter(Boolean)
+    const primary = activeDisplay?.primaryAction != null ? String(activeDisplay.primaryAction) : null
+    const sub = activeDisplay?.secondaryFallback?.line
+    const badges = primary ? [primary] : []
     const kpi = {}
-    if (urgency) kpi.exit_urgency = urgency
-    if (posture) kpi.committee_stance = posture
+    if (primary) kpi.primary_action = primary
+    if (sub) kpi.caution_line = sub
     mergeAskMipRuntime({
       page_id: 'symbol_tracker',
       page_route: pathname,
@@ -439,7 +441,7 @@ export default function SymbolTracker() {
         page_id: null,
       })
     }
-  }, [pathname, selectedSymbol, exitRec, activeDisplay, mergeAskMipRuntime])
+  }, [pathname, selectedSymbol, activeDisplay, mergeAskMipRuntime])
 
   const bumpChartLayout = useCallback(() => {
     setLayoutRevision((r) => r + 1)
@@ -491,7 +493,7 @@ export default function SymbolTracker() {
 
       <div className="lc-toolbar" role="toolbar" aria-label="Chart controls">
         <div className="lc-toolbar-group">
-          <span className="lc-toolbar-group-label">View</span>
+          <span className="lc-toolbar-group-label">Display</span>
           <div className="lc-toolbar-group-fields">
             <label className="lc-field">
               <span>Chart</span>
@@ -521,11 +523,11 @@ export default function SymbolTracker() {
         </div>
         <div className="lc-toolbar-divider" aria-hidden />
         <div className="lc-toolbar-group">
-          <span className="lc-toolbar-group-label">Time window</span>
+          <span className="lc-toolbar-group-label">Follow price</span>
           <div className="lc-toolbar-group-fields lc-toolbar-group-fields--row">
             <label
               className="lc-check"
-              title="While checked, the chart stays scrolled to the newest bar until you pan or zoom away."
+              title="Keeps the chart scrolled to the latest bar until you pan or zoom away."
             >
               <input
                 type="checkbox"
@@ -552,19 +554,36 @@ export default function SymbolTracker() {
                 Jump to latest
               </button>
             ) : null}
-            <label className="lc-check">
+            <label
+              className="lc-check"
+              title="Adds VWAP, Bollinger bands, and support/resistance on the chart."
+            >
               <input
                 type="checkbox"
                 checked={showAdvancedTA}
                 onChange={(e) => setShowAdvancedTA(e.target.checked)}
               />
-              More context (VWAP/BB/S/R)
+              Extra chart context
             </label>
           </div>
         </div>
-        <div className="lc-toolbar-actions">
-          <button type="button" className="lc-btn" onClick={refreshIbOnly}>Refresh live</button>
-          <button type="button" className="lc-btn lc-btn--secondary" onClick={loadContext}>Reload context</button>
+        <div className="lc-toolbar-actions" aria-label="Data refresh">
+          <button
+            type="button"
+            className="lc-btn"
+            onClick={refreshIbOnly}
+            title="Fetches latest intraday bars and prices for open positions only."
+          >
+            Update intraday
+          </button>
+          <button
+            type="button"
+            className="lc-btn lc-btn--secondary"
+            onClick={loadContext}
+            title="Reloads full position context from the server (tiles, thesis, levels)."
+          >
+            Reload positions
+          </button>
         </div>
       </div>
 
@@ -587,25 +606,29 @@ export default function SymbolTracker() {
               const rowDisplay = resolveLivingChartSymbolDisplay(t, rowComm, rowExit, rowLive)
               const rowRisk = rowDisplay.riskTier
               const label = formatSymbolLabel(t.symbol, t.market_type)
-              const exitCue = rowDisplay.exitActionLabel
-              const exitTone = exitCue === 'EXIT' ? 'bad' : exitCue === 'PREPARE' ? 'warn' : 'info'
-              const tipExit = exitCue ? ` · ${exitCue}` : ''
+              const subLine = rowDisplay.secondaryFallback?.line
+              const tipSub = subLine ? ` · ${subLine}` : ''
               return (
                 <button
                   key={sym}
                   type="button"
-                  title={`${label} · ${rowDisplay.committeePosture} · ${rowDisplay.riskLabel}${tipExit}`}
+                  title={`${label} · ${rowDisplay.primaryAction} · ${rowDisplay.riskLabel}${tipSub}`}
                   className={`lc-rail-btn lc-rail-btn--risk-${rowRisk}${active ? ' lc-rail-btn--active' : ''}`}
                   onClick={() => selectSymbol(sym)}
                 >
                   <span className="lc-rail-top">
                     <span className="lc-rail-accent" aria-hidden />
+                    <span
+                      className={`lc-rail-urgency lc-rail-urgency--${rowRisk}`}
+                      title={rowDisplay.riskLabel}
+                      aria-hidden
+                    />
                     <span className="lc-rail-sym">{label}</span>
-                    <span className="lc-rail-posture">{rowDisplay.committeePostureShort}</span>
-                    {exitCue ? (
-                      <span className={`lc-rail-exit lc-rail-exit--${exitTone}`} title={exitCue}>{exitCue}</span>
-                    ) : null}
+                    <span className="lc-rail-posture">{rowDisplay.primaryActionShort}</span>
                   </span>
+                  {subLine ? (
+                    <span className="lc-rail-fallback" title={subLine}>{subLine}</span>
+                  ) : null}
                   <span className={`lc-rail-pnl ${Number(t.unrealized_pnl) >= 0 ? 'lc-rail-pnl--pos' : 'lc-rail-pnl--neg'}`}>
                     {fmtSigned(t.unrealized_pnl, 0)}
                   </span>
@@ -625,24 +648,14 @@ export default function SymbolTracker() {
                     </div>
                     <div className="lc-strip-state" aria-label="Position state">
                       {activeDisplay ? (
-                        <>
-                          <span className="lc-state-primary">{activeDisplay.committeePosture}</span>
-                          {activeDisplay.exitActionLabel ? (
-                            <span
-                              className={`lc-state-exit lc-chip lc-chip--${
-                                activeDisplay.exitActionLabel === 'EXIT'
-                                  ? 'bad'
-                                  : activeDisplay.exitActionLabel === 'PREPARE'
-                                    ? 'warn'
-                                    : 'info'
-                              }`}
-                            >
-                              {activeDisplay.exitActionLabel}
-                            </span>
+                        <div className="lc-strip-state-inner">
+                          <span className="lc-state-primary">{activeDisplay.primaryAction}</span>
+                          {activeDisplay.secondaryFallback ? (
+                            <span className="lc-state-fallback">{activeDisplay.secondaryFallback.line}</span>
                           ) : null}
                           <span className="lc-state-thesis">{activeDisplay.thesisState}</span>
                           <span className="lc-state-risk">{activeDisplay.riskLabel}</span>
-                        </>
+                        </div>
                       ) : null}
                     </div>
                     <div className="lc-strip-kpis-wrap">
@@ -691,6 +704,7 @@ export default function SymbolTracker() {
                         liveState={liveState}
                         committee={committee}
                         exitRec={exitRec}
+                        conditionalKeys={conditionalKeys}
                         followLatest={followLatest}
                         viewportLocked={viewportLocked}
                         onViewportLockedChange={onViewportLockedChange}

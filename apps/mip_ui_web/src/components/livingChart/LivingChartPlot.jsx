@@ -4,10 +4,17 @@ import {
   buildExpectationForwardSeries,
   buildLivingChartShapesAndTA,
   barTimeMs,
-  LIVING_CHART_COLORS,
 } from '../../lib/livingChartOverlays'
 
 const UI_REVISION_BASE = 'living-chart-v2'
+
+/** One subtle full-plot tint from highest-priority conditional zone (parent passes sorted keys). */
+const LIVE_STATE_TINT = {
+  stop_danger: { paper: '#140a0d', plot: '#12080c' },
+  target_near: { paper: '#071210', plot: '#061110' },
+  thesis_weakening: { paper: '#121008', plot: '#100e0a' },
+  mean_reversion: { paper: '#071218', plot: '#061016' },
+}
 
 const BASE_LAYOUT = {
   paper_bgcolor: '#0f172a',
@@ -60,6 +67,7 @@ export default function LivingChartPlot({
   liveState,
   committee,
   exitRec,
+  conditionalKeys = [],
   followLatest,
   viewportLocked,
   onViewportLockedChange,
@@ -138,8 +146,8 @@ export default function LivingChartPlot({
           x: tx,
           y: upper,
           fill: 'tonexty',
-          fillcolor: 'rgba(251, 191, 36, 0.11)',
-          line: { color: 'rgba(251,191,36,0.32)', width: 0.75, dash: '5px,4px' },
+          fillcolor: 'rgba(251, 191, 36, 0.1)',
+          line: { color: 'rgba(251,191,36,0.45)', width: 1, dash: '4px,3px' },
           hoverinfo: 'skip',
         })
       }
@@ -150,7 +158,7 @@ export default function LivingChartPlot({
           name: 'Expected path',
           x: tx,
           y: center,
-          line: { color: 'rgba(250, 204, 21, 0.95)', width: 1.45, dash: '8px,4px' },
+          line: { color: 'rgba(253, 224, 71, 0.98)', width: 1.85, dash: '10px,5px' },
           connectgaps: false,
           hovertemplate: 'Expected: %{y:.4f}<extra></extra>',
         })
@@ -159,19 +167,31 @@ export default function LivingChartPlot({
 
     if (lastClose != null && lastT != null) {
       let fill = '#f8fafc'
-      let line = { color: '#38bdf8', width: 3.1 }
-      if (liveState?.derived_features?.inside_cone === false) {
+      let line = { color: '#38bdf8', width: 3.25 }
+      const inside = liveState?.derived_features?.inside_cone
+      if (inside === false) {
         fill = '#fef9c3'
-        line = { color: '#eab308', width: 3.1 }
+        line = { color: '#eab308', width: 3.25 }
       } else if (
         fwd?.lower?.[0] != null
         && fwd?.upper?.[0] != null
         && Number.isFinite(fwd.lower[0])
         && Number.isFinite(fwd.upper[0])
       ) {
-        if (lastClose < fwd.lower[0] || lastClose > fwd.upper[0]) {
+        const lo = fwd.lower[0]
+        const hi = fwd.upper[0]
+        if (lastClose < lo || lastClose > hi) {
           fill = '#ffedd5'
-          line = { color: '#fb923c', width: 3.1 }
+          line = { color: '#fb923c', width: 3.25 }
+        } else {
+          const span = hi - lo
+          if (span > 0) {
+            const t = (lastClose - lo) / span
+            if (t < 0.22 || t > 0.78) {
+              fill = '#fffbeb'
+              line = { color: '#fbbf24', width: 3.25 }
+            }
+          }
         }
       }
       traces.push({
@@ -180,9 +200,22 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 36,
-          color: 'rgba(56, 189, 248, 0.28)',
+          size: 40,
+          color: 'rgba(56, 189, 248, 0.32)',
           line: { width: 0 },
+        },
+        hoverinfo: 'skip',
+        showlegend: false,
+      })
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        x: [lastT],
+        y: [lastClose],
+        marker: {
+          size: 20,
+          color: fill,
+          line,
         },
         hoverinfo: 'skip',
         showlegend: false,
@@ -194,9 +227,9 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 17,
-          color: fill,
-          line,
+          size: 7,
+          color: '#0f172a',
+          line: { width: 0 },
         },
         hovertemplate: 'Now: %{y:.4f}<extra></extra>',
       })
@@ -225,8 +258,13 @@ export default function LivingChartPlot({
   const symbolKey = String(tile?.symbol || '').toUpperCase() || 'none'
 
   const layout = useMemo(() => {
+    const topKey = Array.isArray(conditionalKeys) && conditionalKeys.length > 0 ? conditionalKeys[0] : null
+    const tint = topKey && LIVE_STATE_TINT[topKey] ? LIVE_STATE_TINT[topKey] : null
+
     const ly = {
       ...BASE_LAYOUT,
+      paper_bgcolor: tint?.paper ?? BASE_LAYOUT.paper_bgcolor,
+      plot_bgcolor: tint?.plot ?? BASE_LAYOUT.plot_bgcolor,
       shapes: shapePack.shapes || [],
       annotations: shapePack.annotations || [],
       // Include symbol so pan/zoom from one ticker is not reused after switching symbols.
@@ -247,7 +285,7 @@ export default function LivingChartPlot({
     }
 
     return ly
-  }, [shapePack, followLatest, viewportLocked, xExtents, layoutRevision, symbolKey])
+  }, [shapePack, followLatest, viewportLocked, xExtents, layoutRevision, symbolKey, conditionalKeys])
 
   const onRelayout = useCallback(
     (e) => {

@@ -33,6 +33,48 @@ export function exitActionDisplay(exitRec) {
   return null
 }
 
+/**
+ * Single headline action for strip/rail (governed set). Exit urgency outranks committee
+ * for EXIT_NOW and PREPARE; MONITOR maps to WATCH; else committee stance up to WATCH.
+ * @returns {'HOLD'|'WATCH'|'PREPARE EXIT'|'EXIT'}
+ */
+export function resolvePrimaryAction(committee, exitRec) {
+  const urg = String(exitRec?.urgency || 'HOLD').toUpperCase()
+  if (urg === 'EXIT_NOW') return 'EXIT'
+  if (urg === 'PREPARE') return 'PREPARE EXIT'
+  if (urg === 'MONITOR') return 'WATCH'
+
+  const stance = String(committee?.committee_stance || '').toUpperCase()
+  if (stance === 'ESCALATE' || stance === 'RISK_OFF' || stance === 'WATCH_CLOSELY') return 'WATCH'
+  return 'HOLD'
+}
+
+/** Compact rail badge from primaryAction only. */
+export function primaryActionShortLabel(primaryAction) {
+  const p = String(primaryAction || 'HOLD')
+  if (p === 'PREPARE EXIT') return 'PREP'
+  return p
+}
+
+/**
+ * Subordinate caution line — never peers primary; null when primary already states exit prep.
+ * @returns {{ line: string } | null}
+ */
+export function resolveSecondaryFallback(primaryAction, committee, exitRec) {
+  const pa = String(primaryAction || 'HOLD')
+  if (pa === 'EXIT' || pa === 'PREPARE EXIT') return null
+
+  const urg = String(exitRec?.urgency || 'HOLD').toUpperCase()
+  const stance = String(committee?.committee_stance || '').toUpperCase()
+  if (pa === 'WATCH' && urg === 'HOLD' && stance === 'ESCALATE') {
+    return { line: 'If pressure continues: prepare exit' }
+  }
+  if (pa === 'WATCH' && urg === 'HOLD' && stance === 'WATCH_CLOSELY') {
+    return { line: 'If pressure builds: prepare exit' }
+  }
+  return null
+}
+
 /** @returns {'calm'|'elevated'|'high'} */
 export function riskPressureTier(committee, exitRec, liveState, tile) {
   const urg = String(exitRec?.urgency || 'HOLD').toUpperCase()
@@ -109,7 +151,11 @@ export function thesisStateLabel(tile) {
  * Single contract for strip + rail + tooltips. Same resolver for every symbol.
  */
 export function resolveLivingChartSymbolDisplay(tile, committee, exitRec, liveState) {
+  const primaryAction = resolvePrimaryAction(committee, exitRec)
   return {
+    primaryAction,
+    primaryActionShort: primaryActionShortLabel(primaryAction),
+    secondaryFallback: resolveSecondaryFallback(primaryAction, committee, exitRec),
     committeePosture: committeePostureLabel(committee),
     committeePostureShort: committeePostureShort(committee),
     exitUrgency: String(exitRec?.urgency || 'HOLD').toUpperCase(),
@@ -154,25 +200,25 @@ export function liveConditionChips(conditionalKeys, liveState, tile) {
 
   for (const k of keys) {
     if (k === 'stop_danger') push('stop_danger', 'STOP PRESSURE', 'bad')
-    else if (k === 'target_near') push('target_near', 'TARGET NEAR', 'good')
-    else if (k === 'mean_reversion') push('mean_reversion', 'MEAN REVERSION LIVE', 'info')
+    else if (k === 'target_near') push('target_near', 'NEAR TARGET', 'good')
+    else if (k === 'mean_reversion') push('mean_reversion', 'MEAN REVERSION', 'info')
     else if (k === 'thesis_weakening') {
-      if (pathDriftActive(liveState)) push('path_diverging', 'PATH DIVERGING', 'warn')
-      else if (thesisStringFragile(tile)) push('thesis_fragile', 'THESIS FRAGILE', 'warn')
-      else push('thesis_weakening', 'THESIS FRAGILE', 'warn')
+      if (pathDriftActive(liveState)) push('path_diverging', 'OFF EXPECTED PATH', 'warn')
+      else if (thesisStringFragile(tile)) push('thesis_fragile', 'THESIS WEAKENING', 'warn')
+      else push('thesis_weakening', 'THESIS WEAKENING', 'warn')
     }
   }
 
   const inside = liveState?.derived_features?.inside_cone
   if (inside === false && !used.has('path_diverging') && out.length < CHIP_MAX) {
-    push('outside_cone', 'PATH DIVERGING', 'warn')
+    push('outside_cone', 'OFF EXPECTED PATH', 'warn')
   }
 
   return out.slice(0, CHIP_MAX)
 }
 
 /**
- * At most one strip cue; deduped vs chart chip keys (not exit action — shown separately).
+ * At most one strip cue; deduped vs chart chip keys (avoid repeating the same phrase as chart chips).
  * @param {Set<string>|string[]} chartChipKeys — `key` from liveConditionChips
  */
 export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipKeys) {
@@ -192,7 +238,7 @@ export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipK
     && Math.abs(distTpN) < 0.03
     && !chartKeys.has('target_near')
   ) {
-    return { key: 'upside_limited', label: 'UPSIDE LIMITED', tone: 'warn' }
+    return { key: 'upside_limited', label: 'LIMITED UPSIDE', tone: 'warn' }
   }
 
   if (

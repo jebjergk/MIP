@@ -7,7 +7,9 @@ import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTopTile from '../components/lic/LicTopTile'
 import LicPositionRadar from '../components/lic/LicPositionRadar'
 import {
+  alignRadarTupleToBand,
   computeRawRadarTuple,
+  radarInterpretationHint,
   radarTupleToChartData,
   smoothRadarScores,
 } from '../components/lic/licPositionRadarModel'
@@ -582,9 +584,14 @@ function LiveIntelligenceCockpitInner() {
     }
   }, [activeTile])
 
-  const rawRadarTuple = useMemo(
+  const baseRadarTuple = useMemo(
     () => computeRawRadarTuple(activeIntel, activeTile, portfolioRegime),
     [activeIntel, activeTile, portfolioRegime],
+  )
+
+  const alignedRadarTuple = useMemo(
+    () => alignRadarTupleToBand(baseRadarTuple, activeIntel?.final_recommendation),
+    [baseRadarTuple, activeIntel?.final_recommendation],
   )
 
   const radarSmoothRef = useRef(null)
@@ -599,17 +606,22 @@ function LiveIntelligenceCockpitInner() {
     }
     if (radarLastSymbolRef.current !== selectedSymbol) {
       radarLastSymbolRef.current = selectedSymbol
-      const snap = [...rawRadarTuple]
+      const snap = [...alignedRadarTuple]
       radarSmoothRef.current = snap
       setRadarDisplayTuple(snap)
       return
     }
-    const next = smoothRadarScores(radarSmoothRef.current, rawRadarTuple, 0.32)
+    const next = smoothRadarScores(radarSmoothRef.current, alignedRadarTuple, 0.32)
     radarSmoothRef.current = next
     setRadarDisplayTuple(next)
-  }, [rawRadarTuple, selectedSymbol, activeIntel, activeTile])
+  }, [alignedRadarTuple, selectedSymbol, activeIntel, activeTile])
 
   const radarChartData = useMemo(() => radarTupleToChartData(radarDisplayTuple), [radarDisplayTuple])
+
+  const radarHintLine = useMemo(
+    () => radarInterpretationHint(radarDisplayTuple, activeIntel?.final_recommendation),
+    [radarDisplayTuple, activeIntel?.final_recommendation],
+  )
 
   const snapshotStripMetrics = useMemo(() => {
     if (!activeTile) return { dsl: null, dtp: null, vsExpPct: null }
@@ -917,7 +929,7 @@ function LiveIntelligenceCockpitInner() {
                       </div>
                     </div>
                     <div className="lic-snapshot-radar">
-                      <LicPositionRadar data={radarChartData} finalRecommendation={activeIntel?.final_recommendation} />
+                      <LicPositionRadar data={radarChartData} finalRecommendation={activeIntel?.final_recommendation} hint={radarHintLine} />
                     </div>
                   </div>
                   <div className="lic-snapshot-actions lic-chart-decision-actions">

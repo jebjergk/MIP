@@ -1002,15 +1002,30 @@
 
 .lic-snapshot-radar {
   width: 220px;
-  height: 220px;
+  height: auto;
   flex-shrink: 0;
   align-self: start;
   justify-self: end;
 }
 
+.lic-position-radar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.lic-radar-hint {
+  font-size: 0.62rem;
+  line-height: 1.35;
+  color: #94a3b8;
+  text-align: center;
+  padding: 0 2px;
+}
+
 .lic-position-radar-chart {
   width: 100%;
-  height: 100%;
+  height: 200px;
 }
 
 .lic-snapshot-foot-row .lic-chart-foot-v {

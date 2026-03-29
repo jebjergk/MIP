@@ -57,7 +57,8 @@ function stopSafety(tile) {
 function targetOpportunity(tile) {
   const dtp = Number((tile?.progress_metrics || {}).distance_to_tp_pct)
   if (!Number.isFinite(dtp)) return 50
-  return clamp0100(clamp01((dtp - 0.01) / 0.12) * 100)
+  const room = Math.max(0, dtp)
+  return clamp0100(clamp01((room - 0.01) / 0.12) * 100)
 }
 
 function analogSupport(intel) {
@@ -109,20 +110,59 @@ export function smoothRadarScores(prev, next, alpha = 0.32) {
 }
 
 export const RADAR_AXIS_META = [
-  { key: 'thesis', label: 'Thesis strength' },
-  { key: 'liveVsExpected', label: 'Live vs expected alignment' },
-  { key: 'stopSafety', label: 'Stop safety' },
-  { key: 'targetOpp', label: 'Target opportunity' },
-  { key: 'analog', label: 'Analog support' },
-  { key: 'portfolioFit', label: 'Portfolio fit' },
+  { key: 'thesis', label: 'Thesis strength', shortLabel: 'THESIS' },
+  { key: 'liveVsExpected', label: 'Path vs expected', shortLabel: 'PATH' },
+  { key: 'stopSafety', label: 'Stop safety', shortLabel: 'STOP' },
+  { key: 'targetOpp', label: 'Target opportunity', shortLabel: 'TARGET' },
+  { key: 'analog', label: 'Analog support', shortLabel: 'ANALOG' },
+  { key: 'portfolioFit', label: 'Portfolio fit', shortLabel: 'PORTFOLIO' },
 ]
 
-/** Recharts Radar: one row per spoke, dataKey "score" */
+export function alignRadarTupleToBand(tuple, finalRecommendation) {
+  const b = String(finalRecommendation || 'STAY_COURSE').toUpperCase()
+  const profiles = {
+    EXIT_NOW: [30, 26, 20, 34, 38, 42],
+    PREPARE_EXIT: [48, 44, 42, 46, 52, 50],
+    WATCH_CLOSELY: [62, 56, 54, 58, 60, 58],
+    STAY_COURSE: [80, 74, 72, 74, 68, 76],
+  }
+  const p = profiles[b] || profiles.STAY_COURSE
+  const baseW = b === 'EXIT_NOW' ? 0.52 : b === 'PREPARE_EXIT' ? 0.44 : b === 'WATCH_CLOSELY' ? 0.4 : 0.34
+  const exitPull = [0.55, 0.58, 0.62, 0.48, 0.5, 0.48]
+  return tuple.map((v, i) => {
+    const w = b === 'EXIT_NOW' ? exitPull[i] : baseW
+    return clamp0100((1 - w) * v + w * p[i])
+  })
+}
+
+export function radarInterpretationHint(tuple, finalRecommendation) {
+  const b = String(finalRecommendation || 'STAY_COURSE').toUpperCase()
+  const [thesis, path, stop, target] = tuple
+  const minI = tuple.indexOf(Math.min(...tuple))
+  if (b === 'EXIT_NOW' || (stop < 36 && path < 42)) {
+    if (minI === 2 || stop <= path) return 'Weak structure — stop risk dominates'
+    return 'Weak structure — path off expectation'
+  }
+  if (b === 'PREPARE_EXIT' || (target < 44 && path < 55)) {
+    return 'Distorted — reward shrinking'
+  }
+  if (b === 'STAY_COURSE' && thesis >= 64 && path >= 58 && stop >= 54) {
+    return 'Balanced — thesis intact'
+  }
+  if (b === 'WATCH_CLOSELY') {
+    return 'Slightly stressed — watch path and stop'
+  }
+  if (thesis >= 70 && stop >= 60) return 'Balanced — room to work'
+  return 'Mixed posture — weigh thesis vs risk'
+}
+
 export function radarTupleToChartData(tuple) {
   return RADAR_AXIS_META.map((axis, i) => ({
     axisKey: axis.key,
     metric: axis.label,
+    shortLabel: axis.shortLabel,
     score: tuple[i] ?? 50,
+    ideal: 100,
     fullMark: 100,
   }))
 }

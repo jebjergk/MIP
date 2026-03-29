@@ -611,35 +611,8 @@ function LiveIntelligenceCockpitInner() {
       .filter(Boolean)
   }, [activeTile])
 
-  const chartYDomain = useMemo(() => {
-    const vals = []
-    for (const r of chartDecisionSeries) {
-      vals.push(r.c)
-      if (r.exp != null) vals.push(r.exp)
-    }
-    const co = chartOverlay
-    const add = (x) => {
-      if (x != null && Number.isFinite(x)) vals.push(x)
-    }
-    add(co.sl)
-    add(co.tp)
-    add(co.entry)
-    add(co.med)
-    add(co.lo)
-    add(co.hi)
-    const cur = Number(activeTile?.current_price)
-    add(cur)
-    if (vals.length === 0) return null
-    const lo = Math.min(...vals)
-    const hi = Math.max(...vals)
-    const span = hi - lo || Math.abs(hi) * 0.01 || 1
-    const pad = span * 0.1
-    return [lo - pad, hi + pad]
-  }, [chartDecisionSeries, chartOverlay, activeTile])
-
-  const chartStopTargetBands = useMemo(() => {
-    const sl = chartOverlay.sl
-    const tp = chartOverlay.tp
+  /** Half-widths for stop/target bands; reused for Y-domain so zones stay in view. */
+  const chartBandHalfWidths = useMemo(() => {
     const series = chartDecisionSeries
     const prices = series.map((r) => r.c).filter((x) => Number.isFinite(x))
     const span = prices.length ? Math.max(...prices) - Math.min(...prices) : 0
@@ -647,12 +620,81 @@ function LiveIntelligenceCockpitInner() {
     const ref = Number.isFinite(cur) ? Math.abs(cur) : prices.length ? Math.abs(prices[prices.length - 1]) : 1
     const halfStop = Math.max(span * 0.018, ref * 1.5e-4, 1e-6)
     const halfTp = halfStop * 0.85
+    return { halfStop, halfTp }
+  }, [chartDecisionSeries, activeTile])
+
+  const licChartYDomainRef = useRef(null)
+  const licChartYDomainSymbolRef = useRef(selectedSymbol)
+  if (licChartYDomainSymbolRef.current !== selectedSymbol) {
+    licChartYDomainSymbolRef.current = selectedSymbol
+    licChartYDomainRef.current = null
+  }
+
+  const chartYDomain = useMemo(() => {
+    const co = chartOverlay
+    const vals = []
+    const add = (x) => {
+      if (x != null && Number.isFinite(x)) vals.push(x)
+    }
+    for (const r of chartDecisionSeries) {
+      add(r.c)
+      if (r.exp != null) add(r.exp)
+    }
+    add(co.entry)
+    add(co.sl)
+    add(co.tp)
+    const cur = Number(activeTile?.current_price)
+    add(cur)
+    const { halfStop, halfTp } = chartBandHalfWidths
+    if (co.sl != null && Number.isFinite(co.sl)) {
+      add(co.sl - halfStop)
+      add(co.sl + halfStop)
+    }
+    if (co.tp != null && Number.isFinite(co.tp)) {
+      add(co.tp - halfTp)
+      add(co.tp + halfTp)
+    }
+    if (vals.length === 0) return null
+    const lo = Math.min(...vals)
+    const hi = Math.max(...vals)
+    const span = hi - lo || Math.abs(hi) * 0.008 || 1
+    const pad = span * 0.08
+    const next = [lo - pad, hi + pad]
+
+    const prev = licChartYDomainRef.current
+    if (!prev || prev.length !== 2) {
+      licChartYDomainRef.current = next
+      return next
+    }
+    const [p0, p1] = prev
+    const nSpan = next[1] - next[0]
+    const pSpan = p1 - p0
+    const slack = Math.max(nSpan, pSpan) * 0.015
+    const insidePrev = vals.every((v) => v >= p0 + slack && v <= p1 - slack)
+    if (insidePrev && nSpan <= pSpan * 0.97) {
+      const alpha = 0.32
+      const merged = [p0 * (1 - alpha) + next[0] * alpha, p1 * (1 - alpha) + next[1] * alpha]
+      licChartYDomainRef.current = merged
+      return merged
+    }
+    if (!insidePrev) {
+      licChartYDomainRef.current = next
+      return next
+    }
+    licChartYDomainRef.current = prev
+    return prev
+  }, [chartDecisionSeries, chartOverlay, activeTile, chartBandHalfWidths])
+
+  const chartStopTargetBands = useMemo(() => {
+    const sl = chartOverlay.sl
+    const tp = chartOverlay.tp
+    const { halfStop, halfTp } = chartBandHalfWidths
     let stop = null
     let target = null
     if (sl != null && Number.isFinite(sl)) stop = { y1: sl - halfStop, y2: sl + halfStop }
     if (tp != null && Number.isFinite(tp)) target = { y1: tp - halfTp, y2: tp + halfTp }
     return { stop, target }
-  }, [chartOverlay, chartDecisionSeries, activeTile])
+  }, [chartOverlay, chartBandHalfWidths])
 
   const chartLineVisual = useMemo(() => {
     const b = String(activeIntel?.final_recommendation || 'STAY_COURSE').toUpperCase()

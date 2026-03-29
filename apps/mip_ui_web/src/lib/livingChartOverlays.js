@@ -4,7 +4,6 @@
  */
 
 import { computeChartOverlays } from '../pages/symbolTrackerCommittee'
-import { pathDriftActive } from './livingChartVisualState'
 
 const COLORS = {
   price: '#60a5fa',
@@ -354,7 +353,7 @@ export function buildNowLabelAnnotation(xLastMs, yPrice) {
     xanchor: 'left',
     xshift: 14,
     yshift: -18,
-    font: { size: 11, color: '#f1f5f9', family: 'system-ui, sans-serif' },
+    font: { size: 11, color: '#f8fafc', family: 'system-ui, sans-serif' },
   }]
 }
 
@@ -390,9 +389,10 @@ export function buildLivingChartShapesAndTA({
     if (s) shapes.push(s)
   }
 
-  if (entry != null) addHLine(entry, '#a78bfa', '6px,4px', { width: 1.35 })
-  if (tp != null) addHLine(tp, '#22c55e', '4px,3px', { width: 2.25 })
-  if (sl != null) addHLine(sl, '#ef4444', '4px,3px', { width: 2.5 })
+  /* Structural levels: cooler, thinner — distinct from temporal conditional zones. */
+  if (entry != null) addHLine(entry, '#8b7eb8', '8px,5px', { width: 1.05 })
+  if (tp != null) addHLine(tp, '#15803d', '5px,4px', { width: 1.65 })
+  if (sl != null) addHLine(sl, '#b91c1c', '5px,4px', { width: 1.85 })
 
   let taOverlays = null
   if (showAdvancedTA && bars.length >= 8) {
@@ -462,26 +462,17 @@ export function buildLivingChartShapesAndTA({
     annotations.push(a)
   }
 
-  if (conditionalKeys.includes('thesis_weakening') && pathDriftActive(liveState) && spot != null) {
-    annotations.push({
-      xref: 'x',
-      yref: 'y',
-      x: x1,
-      y: spot,
-      text: 'Drift',
-      showarrow: false,
-      xanchor: 'right',
-      xshift: -8,
-      yshift: 12,
-      font: { size: 10, color: 'rgba(251, 191, 36, 0.95)' },
-    })
-  }
+  /* Temporal zones: clip x-extent to recent tape so they read as “live” bands, not full-history furniture. */
+  const stepMs = barStepSeconds(tile) * 1000
+  const temporalWindowMs = stepMs * 56
+  const xTemporalLeft = Math.max(x0 - xPad, x1 - temporalWindowMs)
+  const xTemporalRight = x1 + span * 0.18
 
   for (const z of zones) {
     const zLayer = z.layer || 'above'
     if (z.kind === 'hline' && z.y != null) {
       const lw = z.line?.width ?? 2
-      const s = hLineShape(z.y, x0 - xPad, x1 + span * 0.35, z.line.color, z.line.dash, {
+      const s = hLineShape(z.y, xTemporalLeft, xTemporalRight, z.line.color, z.line.dash, {
         width: lw,
         layer: zLayer,
       })
@@ -489,7 +480,7 @@ export function buildLivingChartShapesAndTA({
       continue
     }
     if (z.y0 != null && z.y1 != null) {
-      const sh = shapeForHorizontalBand(z.y0, z.y1, x0 - xPad, x1 + span * 0.4, z.fillcolor, z.line, zLayer)
+      const sh = shapeForHorizontalBand(z.y0, z.y1, xTemporalLeft, xTemporalRight, z.fillcolor, z.line, zLayer)
       if (sh) shapes.push(sh)
     }
   }

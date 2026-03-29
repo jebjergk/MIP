@@ -181,10 +181,107 @@ export function thesisStringFragile(tile) {
   return u.includes('WEAK')
 }
 
-const CHIP_MAX = 4
+const CHIP_MAX_LEGACY = 4
 
 /**
- * Uppercase live condition chips for chart chrome (max 4).
+ * Canonical active-condition keys (temporal live state — not primary posture).
+ * stop_pressure: from zone stop_danger
+ */
+/**
+ * Expand pickConditionalZones keys into ordered canonical active keys (max meaningful sequence).
+ * @returns {string[]} e.g. stop_pressure, target_near, path_diverging, mean_reversion, thesis_pressure
+ */
+export function resolveExpandedActiveKeys(conditionalKeys, liveState, tile) {
+  const keys = Array.isArray(conditionalKeys) ? conditionalKeys : []
+  const out = []
+  const seen = new Set()
+  const add = (canonical) => {
+    if (!canonical || seen.has(canonical)) return
+    seen.add(canonical)
+    out.push(canonical)
+  }
+
+  for (const k of keys) {
+    if (k === 'stop_danger') add('stop_pressure')
+    else if (k === 'target_near') add('target_near')
+    else if (k === 'mean_reversion') add('mean_reversion')
+    else if (k === 'thesis_weakening') {
+      if (pathDriftActive(liveState)) add('path_diverging')
+      else add('thesis_pressure')
+    }
+  }
+  if (liveState?.derived_features?.inside_cone === false && !seen.has('path_diverging')) {
+    add('path_diverging')
+  }
+  return out
+}
+
+/**
+ * @returns {{ dominantKey: string | null, secondaryKey: string | null }}
+ */
+export function resolveActiveConditionSummary(conditionalKeys, liveState, tile) {
+  const expanded = resolveExpandedActiveKeys(conditionalKeys, liveState, tile)
+  const dominantKey = expanded[0] ?? null
+  const secondaryKey = expanded.length > 1 && expanded[1] !== dominantKey ? expanded[1] : null
+  return { dominantKey, secondaryKey }
+}
+
+/**
+ * One-line header attention (observational, not a trading command).
+ * Never substitute for primary posture (HOLD / WATCH / PREPARE EXIT / EXIT).
+ * @returns {{ line: string } | null}
+ */
+export function resolveDominantAttention(dominantKey) {
+  if (!dominantKey) return null
+  const m = {
+    stop_pressure: 'Stop pressure rising',
+    target_near: 'Target nearly hit',
+    path_diverging: 'Path diverging',
+    mean_reversion: 'Mean reversion active',
+    thesis_pressure: 'Thesis weakening',
+  }
+  const line = m[dominantKey]
+  return line ? { line } : null
+}
+
+/** Short tag for Plotly annotation near last bar (mirrors header). */
+export function dominantActivePlotTag(dominantKey) {
+  if (!dominantKey) return null
+  const m = {
+    stop_pressure: 'Stop pressure',
+    target_near: 'Near target',
+    path_diverging: 'Off path',
+    mean_reversion: 'MR active',
+    thesis_pressure: 'Thesis weak',
+  }
+  return m[dominantKey] || null
+}
+
+const ACTIVE_CHIP_MAX = 2
+
+/**
+ * Chart micro-chips: governed labels, at most two active conditions.
+ */
+export function liveConditionChipsActive(conditionalKeys, liveState, tile, max = ACTIVE_CHIP_MAX) {
+  const expanded = resolveExpandedActiveKeys(conditionalKeys, liveState, tile)
+  const out = []
+  const push = (key, label, tone) => {
+    if (out.length >= max) return
+    out.push({ key, label, tone })
+  }
+  for (const c of expanded) {
+    if (out.length >= max) break
+    if (c === 'stop_pressure') push('stop_pressure', 'STOP PRESSURE', 'bad')
+    else if (c === 'target_near') push('target_near', 'TARGET NEAR', 'good')
+    else if (c === 'path_diverging') push('path_diverging', 'PATH DIVERGING', 'warn')
+    else if (c === 'mean_reversion') push('mean_reversion', 'MR ACTIVE', 'info')
+    else if (c === 'thesis_pressure') push('thesis_pressure', 'THESIS WEAKENING', 'warn')
+  }
+  return out
+}
+
+/**
+ * Uppercase live condition chips for chart chrome (max 4) — legacy; prefer liveConditionChipsActive.
  * @param {string[]} conditionalKeys from pickConditionalZones
  */
 export function liveConditionChips(conditionalKeys, liveState, tile) {
@@ -193,7 +290,7 @@ export function liveConditionChips(conditionalKeys, liveState, tile) {
   const used = new Set()
 
   const push = (key, label, tone) => {
-    if (out.length >= CHIP_MAX || used.has(key)) return
+    if (out.length >= CHIP_MAX_LEGACY || used.has(key)) return
     used.add(key)
     out.push({ key, label, tone })
   }
@@ -210,18 +307,19 @@ export function liveConditionChips(conditionalKeys, liveState, tile) {
   }
 
   const inside = liveState?.derived_features?.inside_cone
-  if (inside === false && !used.has('path_diverging') && out.length < CHIP_MAX) {
+  if (inside === false && !used.has('path_diverging') && out.length < CHIP_MAX_LEGACY) {
     push('outside_cone', 'OFF EXPECTED PATH', 'warn')
   }
 
-  return out.slice(0, CHIP_MAX)
+  return out.slice(0, CHIP_MAX_LEGACY)
 }
 
 /**
  * At most one strip cue; deduped vs chart chip keys (avoid repeating the same phrase as chart chips).
- * @param {Set<string>|string[]} chartChipKeys — `key` from liveConditionChips
+ * @param {Set<string>|string[]} chartChipKeys — chip `key` from liveConditionChipsActive
+ * @param {string | null} [dominantActiveKey] — canonical key from resolveActiveConditionSummary; suppress cue if redundant
  */
-export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipKeys) {
+export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipKeys, dominantActiveKey = null) {
   const chartKeys = chartChipKeys instanceof Set ? chartChipKeys : new Set(chartChipKeys || [])
   const tp = Number(tile?.overlays?.take_profit)
   const hasTarget = Number.isFinite(tp)
@@ -238,6 +336,7 @@ export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipK
     && Math.abs(distTpN) < 0.03
     && !chartKeys.has('target_near')
   ) {
+    if (dominantActiveKey === 'target_near') return null
     return { key: 'upside_limited', label: 'LIMITED UPSIDE', tone: 'warn' }
   }
 
@@ -248,6 +347,7 @@ export function stripOptionalCue(tile, exitRec, liveState, committee, chartChipK
     && !chartKeys.has('thesis_weakening')
     && !chartKeys.has('thesis_fragile')
   ) {
+    if (dominantActiveKey === 'path_diverging') return null
     return { key: 'path_watch', label: 'OFF EXPECTED PATH', tone: 'warn' }
   }
 

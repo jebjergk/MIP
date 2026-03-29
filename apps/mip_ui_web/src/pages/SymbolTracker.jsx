@@ -17,7 +17,9 @@ import {
 import {
   riskPressureTier,
   resolveLivingChartSymbolDisplay,
-  liveConditionChips,
+  resolveActiveConditionSummary,
+  resolveDominantAttention,
+  liveConditionChipsActive,
   stripOptionalCue,
 } from '../lib/livingChartVisualState'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
@@ -388,21 +390,41 @@ export default function SymbolTracker() {
     return pack.conditionalKeys || []
   }, [activeTile, liveState, committee, exitRec, showAdvancedTA, horizonBars])
 
+  const activeConditionSummary = useMemo(
+    () => (activeTile && liveState
+      ? resolveActiveConditionSummary(conditionalKeys, liveState, activeTile)
+      : { dominantKey: null, secondaryKey: null }),
+    [activeTile, liveState, conditionalKeys],
+  )
+
   const chartChips = useMemo(
     () => (activeTile && liveState
-      ? liveConditionChips(conditionalKeys, liveState, activeTile)
+      ? liveConditionChipsActive(conditionalKeys, liveState, activeTile, 2)
       : []),
     [activeTile, liveState, conditionalKeys],
   )
 
+  const dominantAttention = useMemo(
+    () => resolveDominantAttention(activeConditionSummary.dominantKey),
+    [activeConditionSummary.dominantKey],
+  )
+
   const optionalStripCue = useMemo(() => {
     if (!activeTile) return null
-    const cue = stripOptionalCue(activeTile, exitRec, liveState, committee, chartChips.map((c) => c.key))
+    const cue = stripOptionalCue(
+      activeTile,
+      exitRec,
+      liveState,
+      committee,
+      chartChips.map((c) => c.key),
+      activeConditionSummary.dominantKey,
+    )
     if (!cue) return null
+    if (cue.key === 'path_watch' && activeConditionSummary.dominantKey === 'path_diverging') return null
     const chipLabels = new Set(chartChips.map((c) => c.label))
     if (chipLabels.has(cue.label)) return null
     return cue
-  }, [activeTile, exitRec, liveState, committee, chartChips])
+  }, [activeTile, exitRec, liveState, committee, chartChips, activeConditionSummary.dominantKey])
 
   const activeRiskTier = useMemo(() => {
     if (!activeTile) return 'calm'
@@ -606,13 +628,11 @@ export default function SymbolTracker() {
               const rowDisplay = resolveLivingChartSymbolDisplay(t, rowComm, rowExit, rowLive)
               const rowRisk = rowDisplay.riskTier
               const label = formatSymbolLabel(t.symbol, t.market_type)
-              const subLine = rowDisplay.secondaryFallback?.line
-              const tipSub = subLine ? ` · ${subLine}` : ''
               return (
                 <button
                   key={sym}
                   type="button"
-                  title={`${label} · ${rowDisplay.primaryAction} · ${rowDisplay.riskLabel}${tipSub}`}
+                  title={`${label} · ${rowDisplay.primaryAction} · ${rowDisplay.riskLabel}`}
                   className={`lc-rail-btn lc-rail-btn--risk-${rowRisk}${active ? ' lc-rail-btn--active' : ''}`}
                   onClick={() => selectSymbol(sym)}
                 >
@@ -626,9 +646,6 @@ export default function SymbolTracker() {
                     <span className="lc-rail-sym">{label}</span>
                     <span className="lc-rail-posture">{rowDisplay.primaryActionShort}</span>
                   </span>
-                  {subLine ? (
-                    <span className="lc-rail-fallback" title={subLine}>{subLine}</span>
-                  ) : null}
                   <span className={`lc-rail-pnl ${Number(t.unrealized_pnl) >= 0 ? 'lc-rail-pnl--pos' : 'lc-rail-pnl--neg'}`}>
                     {fmtSigned(t.unrealized_pnl, 0)}
                   </span>
@@ -650,6 +667,9 @@ export default function SymbolTracker() {
                       {activeDisplay ? (
                         <div className="lc-strip-state-inner">
                           <span className="lc-state-primary">{activeDisplay.primaryAction}</span>
+                          {dominantAttention ? (
+                            <span className="lc-attention-cue" title="Live condition">{dominantAttention.line}</span>
+                          ) : null}
                           {activeDisplay.secondaryFallback ? (
                             <span className="lc-state-fallback">{activeDisplay.secondaryFallback.line}</span>
                           ) : null}
@@ -687,7 +707,7 @@ export default function SymbolTracker() {
 
                 <div className="lc-chart-shell">
                   {chartChips.length > 0 ? (
-                    <div className="lc-chart-cues" aria-label="Active chart overlays">
+                    <div className="lc-chart-cues" aria-label="Active live conditions">
                       {chartChips.map((b) => (
                         <span key={b.key} className={`lc-cue lc-cue--${b.tone}`}>{b.label}</span>
                       ))}
@@ -705,6 +725,7 @@ export default function SymbolTracker() {
                         committee={committee}
                         exitRec={exitRec}
                         conditionalKeys={conditionalKeys}
+                        dominantActiveKey={activeConditionSummary.dominantKey}
                         followLatest={followLatest}
                         viewportLocked={viewportLocked}
                         onViewportLockedChange={onViewportLockedChange}

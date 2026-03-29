@@ -5,15 +5,16 @@ import {
   buildLivingChartShapesAndTA,
   barTimeMs,
 } from '../../lib/livingChartOverlays'
+import { dominantActivePlotTag } from '../../lib/livingChartVisualState'
 
 const UI_REVISION_BASE = 'living-chart-v2'
 
 /** One subtle full-plot tint from highest-priority conditional zone (parent passes sorted keys). */
 const LIVE_STATE_TINT = {
-  stop_danger: { paper: '#140a0d', plot: '#12080c' },
-  target_near: { paper: '#071210', plot: '#061110' },
-  thesis_weakening: { paper: '#121008', plot: '#100e0a' },
-  mean_reversion: { paper: '#071218', plot: '#061016' },
+  stop_danger: { paper: '#12090c', plot: '#10080b' },
+  target_near: { paper: '#081210', plot: '#07100f' },
+  thesis_weakening: { paper: '#110f0a', plot: '#0f0d09' },
+  mean_reversion: { paper: '#061218', plot: '#051015' },
 }
 
 const BASE_LAYOUT = {
@@ -146,8 +147,8 @@ export default function LivingChartPlot({
           x: tx,
           y: upper,
           fill: 'tonexty',
-          fillcolor: 'rgba(251, 191, 36, 0.1)',
-          line: { color: 'rgba(251,191,36,0.45)', width: 1, dash: '4px,3px' },
+          fillcolor: 'rgba(251, 191, 36, 0.085)',
+          line: { color: 'rgba(251,191,36,0.5)', width: 1.05, dash: '3px,3px' },
           hoverinfo: 'skip',
         })
       }
@@ -158,7 +159,7 @@ export default function LivingChartPlot({
           name: 'Expected path',
           x: tx,
           y: center,
-          line: { color: 'rgba(253, 224, 71, 0.98)', width: 1.85, dash: '10px,5px' },
+          line: { color: 'rgba(254, 240, 138, 0.99)', width: 2, dash: '12px,5px' },
           connectgaps: false,
           hovertemplate: 'Expected: %{y:.4f}<extra></extra>',
         })
@@ -187,9 +188,9 @@ export default function LivingChartPlot({
           const span = hi - lo
           if (span > 0) {
             const t = (lastClose - lo) / span
-            if (t < 0.22 || t > 0.78) {
-              fill = '#fffbeb'
-              line = { color: '#fbbf24', width: 3.25 }
+            if (t < 0.2 || t > 0.8) {
+              fill = '#fff7ed'
+              line = { color: '#f59e0b', width: 3.35 }
             }
           }
         }
@@ -200,8 +201,8 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 40,
-          color: 'rgba(56, 189, 248, 0.32)',
+          size: 44,
+          color: 'rgba(56, 189, 248, 0.36)',
           line: { width: 0 },
         },
         hoverinfo: 'skip',
@@ -213,9 +214,9 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 20,
+          size: 22,
           color: fill,
-          line,
+          line: { ...line, width: (line?.width || 3) + 0.15 },
         },
         hoverinfo: 'skip',
         showlegend: false,
@@ -227,7 +228,7 @@ export default function LivingChartPlot({
         x: [lastT],
         y: [lastClose],
         marker: {
-          size: 7,
+          size: 8,
           color: '#0f172a',
           line: { width: 0 },
         },
@@ -261,12 +262,43 @@ export default function LivingChartPlot({
     const topKey = Array.isArray(conditionalKeys) && conditionalKeys.length > 0 ? conditionalKeys[0] : null
     const tint = topKey && LIVE_STATE_TINT[topKey] ? LIVE_STATE_TINT[topKey] : null
 
+    const ann = [...(shapePack.annotations || [])]
+    const tag = dominantActivePlotTag(dominantActiveKey)
+    const barList = Array.isArray(bars) ? bars : []
+    if (tag && barList.length > 0 && tile) {
+      const lastBar = barList[barList.length - 1]
+      const tLast = barTimeMs(lastBar)
+      const spot =
+        toNum(liveState?.last_price)
+        ?? toNum(tile?.current_price)
+        ?? toNum(lastBar?.close)
+        ?? toNum(lastBar?.low)
+      if (tLast != null && spot != null && Number.isFinite(spot)) {
+        ann.push({
+          xref: 'x',
+          yref: 'y',
+          x: tLast,
+          y: spot,
+          text: tag,
+          showarrow: false,
+          xanchor: 'right',
+          xshift: -4,
+          yshift: 28,
+          font: { size: 9, color: '#e2e8f0' },
+          bgcolor: 'rgba(15,23,42,0.9)',
+          bordercolor: 'rgba(51,65,85,0.95)',
+          borderwidth: 1,
+          borderpad: 3,
+        })
+      }
+    }
+
     const ly = {
       ...BASE_LAYOUT,
       paper_bgcolor: tint?.paper ?? BASE_LAYOUT.paper_bgcolor,
       plot_bgcolor: tint?.plot ?? BASE_LAYOUT.plot_bgcolor,
       shapes: shapePack.shapes || [],
-      annotations: shapePack.annotations || [],
+      annotations: ann,
       // Include symbol so pan/zoom from one ticker is not reused after switching symbols.
       uirevision: `${UI_REVISION_BASE}-${layoutRevision}-${symbolKey}`,
     }
@@ -285,7 +317,19 @@ export default function LivingChartPlot({
     }
 
     return ly
-  }, [shapePack, followLatest, viewportLocked, xExtents, layoutRevision, symbolKey, conditionalKeys])
+  }, [
+    shapePack,
+    followLatest,
+    viewportLocked,
+    xExtents,
+    layoutRevision,
+    symbolKey,
+    conditionalKeys,
+    dominantActiveKey,
+    bars,
+    tile,
+    liveState,
+  ])
 
   const onRelayout = useCallback(
     (e) => {

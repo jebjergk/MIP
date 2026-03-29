@@ -221,6 +221,12 @@ export function buildTileDrivers(tile, intel) {
 function oneSentence(s) {
   let t = String(s || '').trim()
   if (!t) return t
+  const semi = t.search(/;\s+/)
+  const firstDot = t.indexOf('. ')
+  if (semi > 0 && semi < 220 && (firstDot < 0 || semi < firstDot)) {
+    t = t.slice(0, semi).trim()
+    if (t && !/[.!?]$/.test(t)) t += '.'
+  }
   const idx = t.search(/\.\s+[A-Z]/)
   if (idx > 0 && idx < 220) {
     t = t.slice(0, idx + 1)

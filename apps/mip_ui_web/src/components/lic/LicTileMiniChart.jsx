@@ -10,9 +10,15 @@ function barClose(b) {
   return num(b.close ?? b.CLOSE ?? b.c ?? b.last ?? b.Close ?? b.adj_close)
 }
 
+function chartMoodFromBand(bandU) {
+  if (bandU === 'EXIT_NOW') return 'exit'
+  if (bandU === 'PREPARE_EXIT') return 'prepare'
+  if (bandU === 'WATCH_CLOSELY') return 'watch'
+  return 'hold'
+}
+
 /**
- * Tile microchart contract: live path, expected path, stop, target, current marker only.
- * No entry line, legends, or in-chart labels.
+ * Decision-support microchart: live vs expected, stop/target zones, current marker.
  */
 export default function LicTileMiniChart({ tile, recommendationBand }) {
   const model = useMemo(() => {
@@ -83,7 +89,7 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
     ymax += pad
 
     const W = 120
-    const H = 92
+    const H = 112
     const normYRaw = (y) => H - ((y - ymin) / (ymax - ymin)) * H
     const clampY = (y) => Math.min(H - 0.5, Math.max(0.5, y))
     const normY = (y) => clampY(normYRaw(y))
@@ -109,12 +115,50 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
     const ySl = sl != null ? normY(sl) : null
     const yTp = tp != null ? normY(tp) : null
 
+    const priceSpan = ymax - ymin || 1
+    const bandHalf = Math.max(priceSpan * 0.016, Math.abs(sl || cur || 1) * 1.4e-4, 1e-8)
+
+    let dangerRect = null
+    if (sl != null && Number.isFinite(ySl)) {
+      const pHi = sl + bandHalf
+      const pLo = sl - bandHalf
+      const yTop = Math.min(normY(pHi), normY(pLo))
+      const yBot = Math.max(normY(pHi), normY(pLo))
+      const h = Math.max(yBot - yTop, 3)
+      dangerRect = { x: 0, y: yTop, w: W, h }
+    }
+
+    let rewardRect = null
+    if (tp != null && Number.isFinite(yTp)) {
+      const pHi = tp + bandHalf * 0.85
+      const pLo = tp - bandHalf * 0.85
+      const yTop = Math.min(normY(pHi), normY(pLo))
+      const yBot = Math.max(normY(pHi), normY(pLo))
+      const h = Math.max(yBot - yTop, 2)
+      rewardRect = { x: 0, y: yTop, w: W, h }
+    }
+
     const curIdx = closes.length - 1
     const cx = normX(curIdx)
     const cy = normY(cur)
 
     const bandU = String(recommendationBand || '').toUpperCase()
-    const stress = bandU === 'EXIT_NOW'
+    const mood = chartMoodFromBand(bandU)
+
+    let lineClass = 'lic-mini-line'
+    if (bandU === 'EXIT_NOW') lineClass = 'lic-mini-line lic-mini-line--stress'
+    else if (bandU === 'PREPARE_EXIT') lineClass = 'lic-mini-line lic-mini-line--caution'
+    else if (bandU === 'WATCH_CLOSELY') lineClass = 'lic-mini-line lic-mini-line--watch'
+
+    let dotR = 3.2
+    let dotClass = 'lic-mini-dot'
+    if (bandU === 'EXIT_NOW') {
+      dotR = 4.2
+      dotClass = 'lic-mini-dot lic-mini-dot--stress'
+    } else if (bandU === 'PREPARE_EXIT') {
+      dotR = 3.85
+      dotClass = 'lic-mini-dot lic-mini-dot--caution'
+    }
 
     return {
       W,
@@ -125,9 +169,13 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
       yTp,
       cx,
       cy,
-      lineClass: stress ? 'lic-mini-line lic-mini-line--stress' : 'lic-mini-line',
-      dotR: stress ? 3.6 : 3,
-      dotClass: stress ? 'lic-mini-dot lic-mini-dot--stress' : 'lic-mini-dot',
+      lineClass,
+      dotR,
+      dotClass,
+      mood,
+      dangerRect,
+      rewardRect,
+      showDotHalo: bandU === 'EXIT_NOW' || bandU === 'PREPARE_EXIT',
     }
   }, [tile, recommendationBand])
 
@@ -135,13 +183,49 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
     return <div className="lic-mini-chart lic-mini-chart--empty">No bars yet — refresh live data.</div>
   }
 
-  const { W, H, linePath, expectedPathD, ySl, yTp, cx, cy, lineClass, dotR, dotClass } = model
+  const {
+    W,
+    H,
+    linePath,
+    expectedPathD,
+    ySl,
+    yTp,
+    cx,
+    cy,
+    lineClass,
+    dotR,
+    dotClass,
+    mood,
+    dangerRect,
+    rewardRect,
+    showDotHalo,
+  } = model
+
+  const moodClass = mood ? `lic-mini-chart--mood-${mood}` : ''
 
   return (
-    <div className="lic-mini-chart">
+    <div className={`lic-mini-chart ${moodClass}`.trim()}>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="lic-mini-svg" aria-hidden>
+        {dangerRect ? (
+          <rect
+            x={dangerRect.x}
+            y={dangerRect.y}
+            width={dangerRect.w}
+            height={dangerRect.h}
+            className="lic-mini-zone lic-mini-zone--danger"
+          />
+        ) : null}
+        {rewardRect ? (
+          <rect
+            x={rewardRect.x}
+            y={rewardRect.y}
+            width={rewardRect.w}
+            height={rewardRect.h}
+            className="lic-mini-zone lic-mini-zone--reward"
+          />
+        ) : null}
         {expectedPathD ? (
-          <path d={expectedPathD} fill="none" className="lic-mini-median" vectorEffect="non-scaling-stroke" />
+          <path d={expectedPathD} fill="none" className="lic-mini-expected" vectorEffect="non-scaling-stroke" />
         ) : null}
         {ySl != null && Number.isFinite(ySl) ? (
           <line x1={0} x2={W} y1={ySl} y2={ySl} className="lic-mini-ref lic-mini-ref--sl" vectorEffect="non-scaling-stroke" />
@@ -150,6 +234,7 @@ export default function LicTileMiniChart({ tile, recommendationBand }) {
           <line x1={0} x2={W} y1={yTp} y2={yTp} className="lic-mini-ref lic-mini-ref--tp" vectorEffect="non-scaling-stroke" />
         ) : null}
         <path d={linePath} fill="none" className={lineClass} vectorEffect="non-scaling-stroke" />
+        {showDotHalo ? <circle cx={cx} cy={cy} r={dotR + 5} className="lic-mini-dot-halo" /> : null}
         <circle cx={cx} cy={cy} r={dotR} className={dotClass} vectorEffect="non-scaling-stroke" />
       </svg>
     </div>

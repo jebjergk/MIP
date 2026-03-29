@@ -635,12 +635,27 @@
 .lic-pnl-neg { color: #fca5a5; }
 
 .lic-mini-chart {
-  margin: 0.25rem 0 0.5rem;
-  min-height: 92px;
+  margin: 0.2rem 0 0.35rem;
+  min-height: 112px;
   border-radius: 8px;
   background: #020617;
   border: 1px solid #1e293b;
   overflow: hidden;
+}
+
+.lic-mini-chart--mood-exit {
+  background: linear-gradient(180deg, #1c0a0c 0%, #0a0f1a 55%, #020617 100%);
+  border-color: #3f1d24;
+}
+
+.lic-mini-chart--mood-prepare {
+  background: linear-gradient(180deg, #1a1408 0%, #0c1018 50%, #020617 100%);
+  border-color: #2a2418;
+}
+
+.lic-mini-chart--mood-watch {
+  background: linear-gradient(180deg, #0f1520 0%, #080f18 100%);
+  border-color: #1e2a3d;
 }
 
 .lic-mini-chart--empty {
@@ -652,7 +667,7 @@
 .lic-mini-svg {
   display: block;
   width: 100%;
-  height: 92px;
+  height: 112px;
 }
 
 .lic-mini-ref {
@@ -662,44 +677,93 @@
 }
 
 .lic-mini-ref--sl {
-  stroke: #f87171;
-  stroke-width: 0.65;
-  stroke-dasharray: 5 3;
+  stroke: #fb7185;
+  stroke-width: 1.05;
+  stroke-dasharray: 4 3;
+  opacity: 0.98;
 }
 
 .lic-mini-ref--tp {
   stroke: #4ade80;
-  stroke-width: 0.55;
-  stroke-dasharray: 4 4;
+  stroke-width: 0.6;
+  stroke-dasharray: 5 5;
+  opacity: 0.72;
 }
 
-.lic-mini-median {
-  stroke: #a78bfa;
-  stroke-width: 0.85;
-  stroke-dasharray: 5 4;
-  opacity: 0.95;
+.lic-mini-zone {
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.lic-mini-zone--danger {
+  fill: rgba(248, 113, 113, 0.14);
+}
+
+.lic-mini-chart--mood-exit .lic-mini-zone--danger {
+  fill: rgba(248, 113, 113, 0.22);
+}
+
+.lic-mini-zone--reward {
+  fill: rgba(74, 222, 128, 0.07);
+}
+
+.lic-mini-expected {
+  stroke: #94a3b8;
+  stroke-width: 0.95;
+  stroke-dasharray: 6 5;
+  opacity: 0.78;
+}
+
+.lic-mini-chart--mood-exit .lic-mini-expected {
+  stroke: #cbd5e1;
+  opacity: 0.88;
 }
 
 .lic-mini-line {
   stroke: #38bdf8;
-  stroke-width: 1.35;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
+.lic-mini-line--watch {
+  stroke: #7dd3fc;
+  stroke-width: 1.42;
+}
+
+.lic-mini-line--caution {
+  stroke: #fcd34d;
+  stroke-width: 1.48;
+}
+
 .lic-mini-line--stress {
-  stroke: #f87171;
-  stroke-width: 1.45;
+  stroke: #fca5a5;
+  stroke-width: 1.55;
 }
 
 .lic-mini-dot {
   fill: #fbbf24;
   stroke: #0f172a;
-  stroke-width: 0.35;
+  stroke-width: 0.4;
+}
+
+.lic-mini-dot--caution {
+  fill: #fcd34d;
 }
 
 .lic-mini-dot--stress {
-  fill: #f87171;
+  fill: #fb7185;
+}
+
+.lic-mini-dot-halo {
+  fill: none;
+  stroke: rgba(251, 113, 133, 0.35);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.lic-mini-chart--mood-prepare .lic-mini-dot-halo {
+  stroke: rgba(252, 211, 77, 0.32);
 }
 
 .lic-tile-dominant,
@@ -738,7 +802,7 @@
   font-weight: 500;
   color: #a8b5c4;
   line-height: 1.3;
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.28rem;
   padding: 0.28rem 0.4rem;
   border-radius: 6px;
   background: rgba(30, 41, 59, 0.55);
@@ -767,7 +831,7 @@
   font-size: 0.65rem;
   color: #64748b;
   line-height: 1.32;
-  margin: 0.2rem 0 0.3rem;
+  margin: 0.12rem 0 0.22rem;
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
@@ -775,7 +839,7 @@
 }
 
 .lic-tile-drivers {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.28rem;
   padding-left: 0.85rem;
   font-size: 0.64rem;
   color: #94a3b8;

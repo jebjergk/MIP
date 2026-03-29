@@ -975,6 +975,140 @@
   min-height: 280px;
 }
 
+/* Workspace Chart tab — decision snapshot (not full trading chart) */
+.lic-chart-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: min(78vh, 720px);
+  max-height: none;
+}
+
+.lic-chart-decision-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.65rem 1.25rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid #334155;
+}
+
+.lic-chart-decision-strip-left {
+  min-width: min(100%, 220px);
+}
+
+.lic-chart-decision-primary {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #f8fafc;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.lic-chart-decision-fallback {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+.lic-chart-decision-strip-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+}
+
+.lic-chart-metric-k {
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.62rem;
+  margin-right: 0.15rem;
+}
+
+.lic-chart-metric-v {
+  font-weight: 600;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+
+.lic-chart-decision-chartwell {
+  flex: 1 1 auto;
+  width: 100%;
+  height: min(58vh, 480px);
+  min-height: min(52vh, 360px);
+}
+
+.lic-chart-decision .lic-chart-decision-chartwell .recharts-responsive-container {
+  height: 100% !important;
+  min-height: min(52vh, 360px);
+}
+
+.lic-chart-decision-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0.25rem 0;
+}
+
+.lic-chart-decision-foot-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 140px) 1fr;
+  gap: 0.5rem;
+  align-items: start;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+@media (max-width: 640px) {
+  .lic-chart-decision-foot-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lic-chart-foot-k {
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.62rem;
+}
+
+.lic-chart-foot-v {
+  color: #94a3b8;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lic-chart-decision-actions {
+  padding-top: 0.15rem;
+}
+
+.lic-open-interactive-chart {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: #e0f2fe;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.lic-open-interactive-chart:hover {
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
 .lic-chart-legend-keys {
   display: flex;
   flex-wrap: wrap;

@@ -1,11 +1,16 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Link } from 'react-router-dom'
+import { Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE } from '../config/apiBase'
 import { fetchWithRetry } from '../utils/fetchRetry'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTopTile from '../components/lic/LicTopTile'
-import { caseFileImplicationDisplay, resolveDecisionPresentation } from '../components/lic/licDecisionPresentation'
+import {
+  bandLabel,
+  caseFileImplicationDisplay,
+  resolveDecisionPresentation,
+} from '../components/lic/licDecisionPresentation'
 import { buildVisibleTilePresentation } from '../components/lic/licTilePresentation'
 import './LiveIntelligenceCockpit.css'
 
@@ -556,45 +561,6 @@ function LiveIntelligenceCockpitInner() {
     [activeIntel, activeTile],
   )
 
-  const chartData = useMemo(() => {
-    const bars = activeTile?.chart?.bars || []
-    const med = Number(activeTile?.expectation?.center_path?.[0]?.price)
-    const m = Number.isFinite(med) ? med : null
-    return bars
-      .map((b, i) => ({
-        i,
-        c: Number(b.close),
-        m,
-        ts: String(b.ts || '').slice(11, 19) || i,
-      }))
-      .filter((r) => Number.isFinite(r.c))
-  }, [activeTile])
-
-  const chartCallouts = useMemo(() => {
-    if (!activeTile) return []
-    const lines = []
-    const exp = activeTile.expectation || {}
-    const med = Number(exp?.center_path?.[0]?.price)
-    const cur = Number(activeTile.current_price)
-    const pm = activeTile.progress_metrics || {}
-    const dsl = Number(pm.distance_to_sl_pct)
-    const dtp = Number(pm.distance_to_tp_pct)
-    if (Number.isFinite(med) && Number.isFinite(cur)) {
-      if (cur < med) {
-        lines.push('Price sits below the expectation median — more path pressure versus the planned center.')
-      } else if (cur > med) {
-        lines.push('Price is above the expectation median — working better than the median path for now.')
-      }
-    }
-    if (Number.isFinite(dsl) && dsl < 0.03) {
-      lines.push('Stop is close — small adverse moves can matter quickly.')
-    }
-    if (Number.isFinite(dtp) && Math.abs(dtp) < 0.04) {
-      lines.push('Near the take-profit zone — much of the modeled reward may already be in the price.')
-    }
-    return lines
-  }, [activeTile])
-
   const chartOverlay = useMemo(() => {
     if (!activeTile) return {}
     const o = activeTile.overlays || {}
@@ -612,6 +578,129 @@ function LiveIntelligenceCockpitInner() {
       hi: nf(exp?.upper_path?.[0]?.price),
     }
   }, [activeTile])
+
+  const chartDecisionSeries = useMemo(() => {
+    const bars = activeTile?.chart?.bars || []
+    const n = bars.length
+    const centerPath = Array.isArray(activeTile?.expectation?.center_path)
+      ? activeTile.expectation.center_path
+      : []
+    const expPrices = centerPath.map((p) => Number(p?.price)).filter((x) => Number.isFinite(x))
+    return bars
+      .map((b, i) => {
+        const c = Number(b.close)
+        if (!Number.isFinite(c)) return null
+        let exp = null
+        if (expPrices.length >= 2) {
+          const t = n <= 1 ? 0 : i / (n - 1)
+          const idx = t * (expPrices.length - 1)
+          const lo = Math.floor(idx)
+          const hi = Math.min(lo + 1, expPrices.length - 1)
+          const f = idx - lo
+          exp = expPrices[lo] * (1 - f) + expPrices[hi] * f
+        } else if (expPrices.length === 1) {
+          exp = expPrices[0]
+        }
+        return {
+          i,
+          c,
+          exp: Number.isFinite(exp) ? exp : null,
+          ts: String(b.ts || '').slice(11, 19) || String(i),
+        }
+      })
+      .filter(Boolean)
+  }, [activeTile])
+
+  const chartYDomain = useMemo(() => {
+    const vals = []
+    for (const r of chartDecisionSeries) {
+      vals.push(r.c)
+      if (r.exp != null) vals.push(r.exp)
+    }
+    const co = chartOverlay
+    const add = (x) => {
+      if (x != null && Number.isFinite(x)) vals.push(x)
+    }
+    add(co.sl)
+    add(co.tp)
+    add(co.entry)
+    add(co.med)
+    add(co.lo)
+    add(co.hi)
+    const cur = Number(activeTile?.current_price)
+    add(cur)
+    if (vals.length === 0) return null
+    const lo = Math.min(...vals)
+    const hi = Math.max(...vals)
+    const span = hi - lo || Math.abs(hi) * 0.01 || 1
+    const pad = span * 0.1
+    return [lo - pad, hi + pad]
+  }, [chartDecisionSeries, chartOverlay, activeTile])
+
+  const chartStopTargetBands = useMemo(() => {
+    const sl = chartOverlay.sl
+    const tp = chartOverlay.tp
+    const series = chartDecisionSeries
+    const prices = series.map((r) => r.c).filter((x) => Number.isFinite(x))
+    const span = prices.length ? Math.max(...prices) - Math.min(...prices) : 0
+    const cur = Number(activeTile?.current_price)
+    const ref = Number.isFinite(cur) ? Math.abs(cur) : prices.length ? Math.abs(prices[prices.length - 1]) : 1
+    const halfStop = Math.max(span * 0.018, ref * 1.5e-4, 1e-6)
+    const halfTp = halfStop * 0.85
+    let stop = null
+    let target = null
+    if (sl != null && Number.isFinite(sl)) stop = { y1: sl - halfStop, y2: sl + halfStop }
+    if (tp != null && Number.isFinite(tp)) target = { y1: tp - halfTp, y2: tp + halfTp }
+    return { stop, target }
+  }, [chartOverlay, chartDecisionSeries, activeTile])
+
+  const chartLineVisual = useMemo(() => {
+    const b = String(activeIntel?.final_recommendation || 'STAY_COURSE').toUpperCase()
+    if (b === 'EXIT_NOW') {
+      return { liveStroke: '#f87171', liveWidth: 2.75, expectedStroke: '#64748b', expectedOpacity: 0.5 }
+    }
+    if (b === 'PREPARE_EXIT') {
+      return { liveStroke: '#fbbf24', liveWidth: 2.55, expectedStroke: '#64748b', expectedOpacity: 0.48 }
+    }
+    if (b === 'WATCH_CLOSELY') {
+      return { liveStroke: '#38bdf8', liveWidth: 2.45, expectedStroke: '#64748b', expectedOpacity: 0.58 }
+    }
+    return { liveStroke: '#0ea5e9', liveWidth: 2.5, expectedStroke: '#64748b', expectedOpacity: 0.62 }
+  }, [activeIntel])
+
+  const chartWorkspaceStripMetrics = useMemo(() => {
+    if (!activeTile) return { dsl: null, dtp: null, vsExpPct: null }
+    const pm = activeTile.progress_metrics || {}
+    const dsl = Number(pm.distance_to_sl_pct)
+    const dtp = Number(pm.distance_to_tp_pct)
+    const med = chartOverlay.med
+    const cur = Number(activeTile.current_price)
+    let vsExpPct = null
+    if (Number.isFinite(cur) && med != null && Number.isFinite(med) && med !== 0) {
+      vsExpPct = ((cur - med) / med) * 100
+    }
+    return {
+      dsl: Number.isFinite(dsl) ? dsl : null,
+      dtp: Number.isFinite(dtp) ? dtp : null,
+      vsExpPct,
+    }
+  }, [activeTile, chartOverlay])
+
+  const interactiveChartHref = useMemo(() => {
+    if (!selectedSymbol) return '/living-chart'
+    const q = new URLSearchParams()
+    q.set('symbol', selectedSymbol)
+    const ent = chartOverlay.entry
+    const sl = chartOverlay.sl
+    const tp = chartOverlay.tp
+    if (ent != null && Number.isFinite(ent)) q.set('entry', String(ent))
+    if (sl != null && Number.isFinite(sl)) q.set('stop', String(sl))
+    if (tp != null && Number.isFinite(tp)) q.set('target', String(tp))
+    if (activeIntel?.final_recommendation != null) {
+      q.set('recommendation', bandLabel(activeIntel.final_recommendation))
+    }
+    return `/living-chart?${q.toString()}`
+  }, [selectedSymbol, chartOverlay, activeIntel])
 
   const runAi = useCallback(async () => {
     if (!selectedSymbol || !activeIntel) return
@@ -855,67 +944,169 @@ function LiveIntelligenceCockpitInner() {
               </div>
 
               {detailTab === 'chart' && (
-                <div className="lic-drill-panel lic-drill-panel--chart lic-chart-wrap lic-chart-wrap--drill">
-                  {chartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={chartData}>
-                        <XAxis dataKey="ts" tick={{ fill: '#e2e8f0', fontSize: 9 }} stroke="#64748b" />
-                        <YAxis domain={['auto', 'auto']} tick={{ fill: '#e2e8f0', fontSize: 9 }} width={42} stroke="#64748b" />
-                        <Tooltip
-                          contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }}
-                          labelStyle={{ color: '#cbd5e1' }}
-                        />
-                        {chartOverlay.lo != null ? (
-                          <ReferenceLine y={chartOverlay.lo} stroke="#475569" strokeDasharray="4 3" />
-                        ) : null}
-                        {chartOverlay.hi != null ? (
-                          <ReferenceLine y={chartOverlay.hi} stroke="#475569" strokeDasharray="4 3" />
-                        ) : null}
-                        {chartOverlay.med != null ? (
-                          <ReferenceLine y={chartOverlay.med} stroke="#a78bfa" strokeDasharray="2 2" />
-                        ) : null}
-                        {chartOverlay.entry != null ? (
-                          <ReferenceLine y={chartOverlay.entry} stroke="#94a3b8" />
-                        ) : null}
-                        {chartOverlay.sl != null ? (
-                          <ReferenceLine y={chartOverlay.sl} stroke="#f87171" />
-                        ) : null}
-                        {chartOverlay.tp != null ? (
-                          <ReferenceLine y={chartOverlay.tp} stroke="#4ade80" />
-                        ) : null}
-                        <Line type="monotone" dataKey="c" name="Close" stroke="#38bdf8" dot={false} strokeWidth={2} />
-                        {chartData.some((r) => r.m != null) ? (
-                          <Line
-                            type="stepAfter"
-                            dataKey="m"
-                            name="Median"
-                            stroke="#a78bfa"
-                            dot={false}
-                            strokeWidth={1.2}
-                            strokeDasharray="4 3"
-                            connectNulls
-                          />
-                        ) : null}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="lic-chart-empty">No bars</div>
-                  )}
-                  <div className="lic-chart-legend-keys">
-                    <span><i className="lic-lg sw" />Close</span>
-                    <span><i className="lic-lg med" />Expectation median</span>
-                    <span><i className="lic-lg band" />Expectation band</span>
-                    <span><i className="lic-lg ent" />Entry</span>
-                    <span><i className="lic-lg sl" />Stop</span>
-                    <span><i className="lic-lg tp" />Target</span>
+                <div className="lic-drill-panel lic-drill-panel--chart lic-chart-decision">
+                  <div className="lic-chart-decision-strip">
+                    <div className="lic-chart-decision-strip-left">
+                      <div className="lic-chart-decision-primary">{safeText(workspacePres?.primary_action, '—')}</div>
+                      <div className="lic-chart-decision-fallback">
+                        {workspacePres?.fallback_action
+                          ? `Fallback: ${safeText(workspacePres.fallback_action)}`
+                          : 'No simulator fallback'}
+                      </div>
+                    </div>
+                    <div className="lic-chart-decision-strip-right">
+                      <div>
+                        <span className="lic-chart-metric-k">To stop</span>{' '}
+                        <span className="lic-chart-metric-v">
+                          {chartWorkspaceStripMetrics.dsl != null
+                            ? `${(chartWorkspaceStripMetrics.dsl * 100).toFixed(2)}%`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="lic-chart-metric-k">To target</span>{' '}
+                        <span className="lic-chart-metric-v">
+                          {chartWorkspaceStripMetrics.dtp != null
+                            ? `${(chartWorkspaceStripMetrics.dtp * 100).toFixed(2)}%`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="lic-chart-metric-k">vs expected</span>{' '}
+                        <span className="lic-chart-metric-v">
+                          {chartWorkspaceStripMetrics.vsExpPct != null
+                            ? `${chartWorkspaceStripMetrics.vsExpPct >= 0 ? '+' : ''}${chartWorkspaceStripMetrics.vsExpPct.toFixed(2)}%`
+                            : '—'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  {chartCallouts.length ? (
-                    <ul className="lic-chart-callouts">
-                      {chartCallouts.map((line, ci) => (
-                        <li key={`co-${ci}`}>{line}</li>
-                      ))}
-                    </ul>
-                  ) : null}
+                  <div className="lic-chart-decision-chartwell">
+                    {chartDecisionSeries.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartDecisionSeries} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+                          <XAxis dataKey="ts" tick={{ fill: '#94a3b8', fontSize: 9 }} stroke="#475569" />
+                          <YAxis
+                            domain={chartYDomain || ['auto', 'auto']}
+                            tick={{ fill: '#94a3b8', fontSize: 9 }}
+                            width={46}
+                            stroke="#475569"
+                            tickFormatter={(v) => (Number.isFinite(v) ? v.toFixed(2) : '')}
+                          />
+                          <Tooltip
+                            contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }}
+                            labelStyle={{ color: '#cbd5e1' }}
+                          />
+                          {chartStopTargetBands.target ? (
+                            <ReferenceArea
+                              y1={chartStopTargetBands.target.y1}
+                              y2={chartStopTargetBands.target.y2}
+                              fill="#22c55e"
+                              fillOpacity={0.07}
+                              strokeOpacity={0}
+                            />
+                          ) : null}
+                          {chartStopTargetBands.stop ? (
+                            <ReferenceArea
+                              y1={chartStopTargetBands.stop.y1}
+                              y2={chartStopTargetBands.stop.y2}
+                              fill="#f87171"
+                              fillOpacity={0.2}
+                              strokeOpacity={0}
+                            />
+                          ) : null}
+                          {chartOverlay.lo != null ? (
+                            <ReferenceLine
+                              y={chartOverlay.lo}
+                              stroke="#334155"
+                              strokeDasharray="5 4"
+                              strokeOpacity={0.45}
+                            />
+                          ) : null}
+                          {chartOverlay.hi != null ? (
+                            <ReferenceLine
+                              y={chartOverlay.hi}
+                              stroke="#334155"
+                              strokeDasharray="5 4"
+                              strokeOpacity={0.45}
+                            />
+                          ) : null}
+                          {chartOverlay.entry != null ? (
+                            <ReferenceLine
+                              y={chartOverlay.entry}
+                              stroke="#64748b"
+                              strokeDasharray="6 4"
+                              strokeWidth={1}
+                            />
+                          ) : null}
+                          {chartOverlay.tp != null ? (
+                            <ReferenceLine
+                              y={chartOverlay.tp}
+                              stroke="#22c55e"
+                              strokeDasharray="4 5"
+                              strokeOpacity={0.35}
+                              strokeWidth={0.8}
+                            />
+                          ) : null}
+                          {chartOverlay.sl != null ? (
+                            <ReferenceLine y={chartOverlay.sl} stroke="#fb7185" strokeWidth={1.2} strokeDasharray="3 3" />
+                          ) : null}
+                          {chartDecisionSeries.some((r) => r.exp != null) ? (
+                            <Line
+                              type="monotone"
+                              dataKey="exp"
+                              name="Expected"
+                              stroke={chartLineVisual.expectedStroke}
+                              dot={false}
+                              strokeWidth={1.15}
+                              strokeDasharray="6 5"
+                              strokeOpacity={chartLineVisual.expectedOpacity}
+                              connectNulls
+                            />
+                          ) : null}
+                          <Line
+                            type="monotone"
+                            dataKey="c"
+                            name="Live"
+                            stroke={chartLineVisual.liveStroke}
+                            dot={(dotProps) => {
+                              const { cx, cy, index } = dotProps
+                              if (index !== chartDecisionSeries.length - 1 || cx == null || cy == null) return null
+                              return (
+                                <circle
+                                  cx={cx}
+                                  cy={cy}
+                                  r={5}
+                                  fill="#fbbf24"
+                                  stroke="#0f172a"
+                                  strokeWidth={1.2}
+                                />
+                              )
+                            }}
+                            strokeWidth={chartLineVisual.liveWidth}
+                            activeDot={{ r: 5 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="lic-chart-empty">No bars</div>
+                    )}
+                  </div>
+                  <div className="lic-chart-decision-foot">
+                    <div className="lic-chart-decision-foot-row">
+                      <span className="lic-chart-foot-k">Why this still works</span>
+                      <span className="lic-chart-foot-v">{safeText(workspacePres?.primary_reason)}</span>
+                    </div>
+                    <div className="lic-chart-decision-foot-row">
+                      <span className="lic-chart-foot-k">What would break it</span>
+                      <span className="lic-chart-foot-v">{safeText(workspacePres?.flip_trigger)}</span>
+                    </div>
+                  </div>
+                  <div className="lic-chart-decision-actions">
+                    <Link className="lic-open-interactive-chart" to={interactiveChartHref}>
+                      Open Interactive Chart
+                    </Link>
+                  </div>
                 </div>
               )}
 

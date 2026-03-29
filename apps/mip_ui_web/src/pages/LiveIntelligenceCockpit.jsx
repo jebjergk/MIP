@@ -1,11 +1,16 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { API_BASE } from '../config/apiBase'
 import { fetchWithRetry } from '../utils/fetchRetry'
 import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTopTile from '../components/lic/LicTopTile'
+import LicPositionRadar from '../components/lic/LicPositionRadar'
+import {
+  computeRawRadarTuple,
+  radarTupleToChartData,
+  smoothRadarScores,
+} from '../components/lic/licPositionRadarModel'
 import {
   bandLabel,
   caseFileImplicationDisplay,
@@ -61,7 +66,7 @@ function sessionFeedRow() {
     state_transition: 'SESSION_START',
     what_changed: 'Baseline set — new rows only on material changes vs prior step.',
     reason: 'Baseline set — new rows only on material changes vs prior step.',
-    action_implication: 'Scan tiles: primary action, chart, strip.',
+    action_implication: 'Scan tiles: primary action, snapshot, strip.',
     final_recommendation: '\u2014',
     severity: 'INFO',
   }
@@ -296,7 +301,7 @@ function LiveIntelligenceCockpitInner() {
   const [timeline, setTimeline] = useState([])
   const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [portfolioFocusMode, setPortfolioFocusMode] = useState(false)
-  const [detailTab, setDetailTab] = useState('chart')
+  const [detailTab, setDetailTab] = useState('snapshot')
   const [aiResult, setAiResult] = useState(null)
   const [aiBusy, setAiBusy] = useState(false)
   const [peakPnl, setPeakPnl] = useState({})
@@ -561,7 +566,7 @@ function LiveIntelligenceCockpitInner() {
     [activeIntel, activeTile],
   )
 
-  const chartOverlay = useMemo(() => {
+  const snapshotOverlay = useMemo(() => {
     if (!activeTile) return {}
     const o = activeTile.overlays || {}
     const exp = activeTile.expectation || {}
@@ -574,148 +579,44 @@ function LiveIntelligenceCockpitInner() {
       sl: nf(o.stop_loss),
       tp: nf(o.take_profit),
       med: nf(exp?.center_path?.[0]?.price),
-      lo: nf(exp?.lower_path?.[0]?.price),
-      hi: nf(exp?.upper_path?.[0]?.price),
     }
   }, [activeTile])
 
-  const chartDecisionSeries = useMemo(() => {
-    const bars = activeTile?.chart?.bars || []
-    const n = bars.length
-    const centerPath = Array.isArray(activeTile?.expectation?.center_path)
-      ? activeTile.expectation.center_path
-      : []
-    const expPrices = centerPath.map((p) => Number(p?.price)).filter((x) => Number.isFinite(x))
-    return bars
-      .map((b, i) => {
-        const c = Number(b.close)
-        if (!Number.isFinite(c)) return null
-        let exp = null
-        if (expPrices.length >= 2) {
-          const t = n <= 1 ? 0 : i / (n - 1)
-          const idx = t * (expPrices.length - 1)
-          const lo = Math.floor(idx)
-          const hi = Math.min(lo + 1, expPrices.length - 1)
-          const f = idx - lo
-          exp = expPrices[lo] * (1 - f) + expPrices[hi] * f
-        } else if (expPrices.length === 1) {
-          exp = expPrices[0]
-        }
-        return {
-          i,
-          c,
-          exp: Number.isFinite(exp) ? exp : null,
-          ts: String(b.ts || '').slice(11, 19) || String(i),
-        }
-      })
-      .filter(Boolean)
-  }, [activeTile])
+  const rawRadarTuple = useMemo(
+    () => computeRawRadarTuple(activeIntel, activeTile, portfolioRegime),
+    [activeIntel, activeTile, portfolioRegime],
+  )
 
-  /** Half-widths for stop/target bands; reused for Y-domain so zones stay in view. */
-  const chartBandHalfWidths = useMemo(() => {
-    const series = chartDecisionSeries
-    const prices = series.map((r) => r.c).filter((x) => Number.isFinite(x))
-    const span = prices.length ? Math.max(...prices) - Math.min(...prices) : 0
-    const cur = Number(activeTile?.current_price)
-    const ref = Number.isFinite(cur) ? Math.abs(cur) : prices.length ? Math.abs(prices[prices.length - 1]) : 1
-    const halfStop = Math.max(span * 0.018, ref * 1.5e-4, 1e-6)
-    const halfTp = halfStop * 0.85
-    return { halfStop, halfTp }
-  }, [chartDecisionSeries, activeTile])
+  const radarSmoothRef = useRef(null)
+  const radarLastSymbolRef = useRef(null)
+  const [radarDisplayTuple, setRadarDisplayTuple] = useState([50, 50, 50, 50, 50, 50])
 
-  const licChartYDomainRef = useRef(null)
-  const licChartYDomainSymbolRef = useRef(selectedSymbol)
-  if (licChartYDomainSymbolRef.current !== selectedSymbol) {
-    licChartYDomainSymbolRef.current = selectedSymbol
-    licChartYDomainRef.current = null
-  }
+  useEffect(() => {
+    if (!activeIntel || !activeTile) {
+      setRadarDisplayTuple([50, 50, 50, 50, 50, 50])
+      radarSmoothRef.current = null
+      return
+    }
+    if (radarLastSymbolRef.current !== selectedSymbol) {
+      radarLastSymbolRef.current = selectedSymbol
+      const snap = [...rawRadarTuple]
+      radarSmoothRef.current = snap
+      setRadarDisplayTuple(snap)
+      return
+    }
+    const next = smoothRadarScores(radarSmoothRef.current, rawRadarTuple, 0.32)
+    radarSmoothRef.current = next
+    setRadarDisplayTuple(next)
+  }, [rawRadarTuple, selectedSymbol, activeIntel, activeTile])
 
-  const chartYDomain = useMemo(() => {
-    const co = chartOverlay
-    const vals = []
-    const add = (x) => {
-      if (x != null && Number.isFinite(x)) vals.push(x)
-    }
-    for (const r of chartDecisionSeries) {
-      add(r.c)
-      if (r.exp != null) add(r.exp)
-    }
-    add(co.entry)
-    add(co.sl)
-    add(co.tp)
-    const cur = Number(activeTile?.current_price)
-    add(cur)
-    const { halfStop, halfTp } = chartBandHalfWidths
-    if (co.sl != null && Number.isFinite(co.sl)) {
-      add(co.sl - halfStop)
-      add(co.sl + halfStop)
-    }
-    if (co.tp != null && Number.isFinite(co.tp)) {
-      add(co.tp - halfTp)
-      add(co.tp + halfTp)
-    }
-    if (vals.length === 0) return null
-    const lo = Math.min(...vals)
-    const hi = Math.max(...vals)
-    const span = hi - lo || Math.abs(hi) * 0.008 || 1
-    const pad = span * 0.08
-    const next = [lo - pad, hi + pad]
+  const radarChartData = useMemo(() => radarTupleToChartData(radarDisplayTuple), [radarDisplayTuple])
 
-    const prev = licChartYDomainRef.current
-    if (!prev || prev.length !== 2) {
-      licChartYDomainRef.current = next
-      return next
-    }
-    const [p0, p1] = prev
-    const nSpan = next[1] - next[0]
-    const pSpan = p1 - p0
-    const slack = Math.max(nSpan, pSpan) * 0.015
-    const insidePrev = vals.every((v) => v >= p0 + slack && v <= p1 - slack)
-    if (insidePrev && nSpan <= pSpan * 0.97) {
-      const alpha = 0.32
-      const merged = [p0 * (1 - alpha) + next[0] * alpha, p1 * (1 - alpha) + next[1] * alpha]
-      licChartYDomainRef.current = merged
-      return merged
-    }
-    if (!insidePrev) {
-      licChartYDomainRef.current = next
-      return next
-    }
-    licChartYDomainRef.current = prev
-    return prev
-  }, [chartDecisionSeries, chartOverlay, activeTile, chartBandHalfWidths])
-
-  const chartStopTargetBands = useMemo(() => {
-    const sl = chartOverlay.sl
-    const tp = chartOverlay.tp
-    const { halfStop, halfTp } = chartBandHalfWidths
-    let stop = null
-    let target = null
-    if (sl != null && Number.isFinite(sl)) stop = { y1: sl - halfStop, y2: sl + halfStop }
-    if (tp != null && Number.isFinite(tp)) target = { y1: tp - halfTp, y2: tp + halfTp }
-    return { stop, target }
-  }, [chartOverlay, chartBandHalfWidths])
-
-  const chartLineVisual = useMemo(() => {
-    const b = String(activeIntel?.final_recommendation || 'STAY_COURSE').toUpperCase()
-    if (b === 'EXIT_NOW') {
-      return { liveStroke: '#f87171', liveWidth: 2.75, expectedStroke: '#64748b', expectedOpacity: 0.5 }
-    }
-    if (b === 'PREPARE_EXIT') {
-      return { liveStroke: '#fbbf24', liveWidth: 2.55, expectedStroke: '#64748b', expectedOpacity: 0.48 }
-    }
-    if (b === 'WATCH_CLOSELY') {
-      return { liveStroke: '#38bdf8', liveWidth: 2.45, expectedStroke: '#64748b', expectedOpacity: 0.58 }
-    }
-    return { liveStroke: '#0ea5e9', liveWidth: 2.5, expectedStroke: '#64748b', expectedOpacity: 0.62 }
-  }, [activeIntel])
-
-  const chartWorkspaceStripMetrics = useMemo(() => {
+  const snapshotStripMetrics = useMemo(() => {
     if (!activeTile) return { dsl: null, dtp: null, vsExpPct: null }
     const pm = activeTile.progress_metrics || {}
     const dsl = Number(pm.distance_to_sl_pct)
     const dtp = Number(pm.distance_to_tp_pct)
-    const med = chartOverlay.med
+    const med = snapshotOverlay.med
     const cur = Number(activeTile.current_price)
     let vsExpPct = null
     if (Number.isFinite(cur) && med != null && Number.isFinite(med) && med !== 0) {
@@ -726,15 +627,15 @@ function LiveIntelligenceCockpitInner() {
       dtp: Number.isFinite(dtp) ? dtp : null,
       vsExpPct,
     }
-  }, [activeTile, chartOverlay])
+  }, [activeTile, snapshotOverlay])
 
   const interactiveChartHref = useMemo(() => {
     if (!selectedSymbol) return '/living-chart'
     const q = new URLSearchParams()
     q.set('symbol', selectedSymbol)
-    const ent = chartOverlay.entry
-    const sl = chartOverlay.sl
-    const tp = chartOverlay.tp
+    const ent = snapshotOverlay.entry
+    const sl = snapshotOverlay.sl
+    const tp = snapshotOverlay.tp
     if (ent != null && Number.isFinite(ent)) q.set('entry', String(ent))
     if (sl != null && Number.isFinite(sl)) q.set('stop', String(sl))
     if (tp != null && Number.isFinite(tp)) q.set('target', String(tp))
@@ -742,7 +643,7 @@ function LiveIntelligenceCockpitInner() {
       q.set('recommendation', bandLabel(activeIntel.final_recommendation))
     }
     return `/living-chart?${q.toString()}`
-  }, [selectedSymbol, chartOverlay, activeIntel])
+  }, [selectedSymbol, snapshotOverlay, activeIntel])
 
   const runAi = useCallback(async () => {
     if (!selectedSymbol || !activeIntel) return
@@ -942,36 +843,17 @@ function LiveIntelligenceCockpitInner() {
             <>
               <div className="lic-workspace-head">
                 <h3 className="lic-workspace-title">Workspace · {selectedSymbol}</h3>
-                {workspacePres ? (
-                  <div className="lic-workspace-primary-pill" title="Official stance for this symbol">
-                    {workspacePres.primary_action}
-                  </div>
-                ) : null}
               </div>
-              {workspacePres ? (
-                <div className="lic-reconcile" aria-label="Decision reconciliation">
-                  <div className="lic-reconcile-row">
-                    <span className="lic-reconcile-k">Primary action</span>
-                    <span className="lic-reconcile-v lic-reconcile-v--primary">{workspacePres.primary_action}</span>
-                  </div>
-                  <div className="lic-reconcile-row">
-                    <span className="lic-reconcile-k">Fallback action</span>
-                    <span className="lic-reconcile-v lic-reconcile-v--fallback">
-                      {workspacePres.fallback_action || '—'}
-                    </span>
-                  </div>
-                  <div className="lic-reconcile-row">
-                    <span className="lic-reconcile-k">Why primary still wins</span>
-                    <span className="lic-reconcile-v">{safeText(workspacePres.primary_reason)}</span>
-                  </div>
-                  <div className="lic-reconcile-row">
-                    <span className="lic-reconcile-k">Flip trigger</span>
-                    <span className="lic-reconcile-v">{safeText(workspacePres.flip_trigger)}</span>
-                  </div>
-                </div>
-              ) : null}
               <div className="lic-tabs" role="tablist" aria-label="Drill-down panels">
-                {['chart', 'worlds', 'analog', 'simulator', 'timeline', 'evidence', 'ai'].map((tab) => (
+                {[
+                  ['snapshot', 'Snapshot'],
+                  ['worlds', 'worlds'],
+                  ['analog', 'analog'],
+                  ['simulator', 'simulator'],
+                  ['timeline', 'timeline'],
+                  ['evidence', 'evidence'],
+                  ['ai', 'ai'],
+                ].map(([tab, label]) => (
                   <button
                     key={tab}
                     type="button"
@@ -980,14 +862,14 @@ function LiveIntelligenceCockpitInner() {
                     className={detailTab === tab ? 'lic-tab--on' : ''}
                     onClick={() => setDetailTab(tab)}
                   >
-                    {tab}
+                    {label}
                   </button>
                 ))}
               </div>
 
-              {detailTab === 'chart' && (
-                <div className="lic-drill-panel lic-drill-panel--chart lic-chart-decision">
-                  <div className="lic-chart-decision-strip">
+              {detailTab === 'snapshot' && (
+                <div className="lic-drill-panel lic-drill-panel--snapshot lic-snapshot">
+                  <div className="lic-snapshot-strip lic-chart-decision-strip">
                     <div className="lic-chart-decision-strip-left">
                       <div className="lic-chart-decision-primary">{safeText(workspacePres?.primary_action, '—')}</div>
                       <div className="lic-chart-decision-fallback">
@@ -1000,151 +882,45 @@ function LiveIntelligenceCockpitInner() {
                       <div>
                         <span className="lic-chart-metric-k">To stop</span>{' '}
                         <span className="lic-chart-metric-v">
-                          {chartWorkspaceStripMetrics.dsl != null
-                            ? `${(chartWorkspaceStripMetrics.dsl * 100).toFixed(2)}%`
+                          {snapshotStripMetrics.dsl != null
+                            ? `${(snapshotStripMetrics.dsl * 100).toFixed(2)}%`
                             : '—'}
                         </span>
                       </div>
                       <div>
                         <span className="lic-chart-metric-k">To target</span>{' '}
                         <span className="lic-chart-metric-v">
-                          {chartWorkspaceStripMetrics.dtp != null
-                            ? `${(chartWorkspaceStripMetrics.dtp * 100).toFixed(2)}%`
+                          {snapshotStripMetrics.dtp != null
+                            ? `${(snapshotStripMetrics.dtp * 100).toFixed(2)}%`
                             : '—'}
                         </span>
                       </div>
                       <div>
                         <span className="lic-chart-metric-k">vs expected</span>{' '}
                         <span className="lic-chart-metric-v">
-                          {chartWorkspaceStripMetrics.vsExpPct != null
-                            ? `${chartWorkspaceStripMetrics.vsExpPct >= 0 ? '+' : ''}${chartWorkspaceStripMetrics.vsExpPct.toFixed(2)}%`
+                          {snapshotStripMetrics.vsExpPct != null
+                            ? `${snapshotStripMetrics.vsExpPct >= 0 ? '+' : ''}${snapshotStripMetrics.vsExpPct.toFixed(2)}%`
                             : '—'}
                         </span>
                       </div>
                     </div>
                   </div>
-                  <div className="lic-chart-decision-chartwell">
-                    {chartDecisionSeries.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartDecisionSeries} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-                          <XAxis dataKey="ts" tick={{ fill: '#94a3b8', fontSize: 9 }} stroke="#475569" />
-                          <YAxis
-                            domain={chartYDomain || ['auto', 'auto']}
-                            tick={{ fill: '#94a3b8', fontSize: 9 }}
-                            width={46}
-                            stroke="#475569"
-                            tickFormatter={(v) => (Number.isFinite(v) ? v.toFixed(2) : '')}
-                          />
-                          <Tooltip
-                            contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }}
-                            labelStyle={{ color: '#cbd5e1' }}
-                          />
-                          {chartStopTargetBands.target ? (
-                            <ReferenceArea
-                              y1={chartStopTargetBands.target.y1}
-                              y2={chartStopTargetBands.target.y2}
-                              fill="#22c55e"
-                              fillOpacity={0.07}
-                              strokeOpacity={0}
-                            />
-                          ) : null}
-                          {chartStopTargetBands.stop ? (
-                            <ReferenceArea
-                              y1={chartStopTargetBands.stop.y1}
-                              y2={chartStopTargetBands.stop.y2}
-                              fill="#f87171"
-                              fillOpacity={0.2}
-                              strokeOpacity={0}
-                            />
-                          ) : null}
-                          {chartOverlay.lo != null ? (
-                            <ReferenceLine
-                              y={chartOverlay.lo}
-                              stroke="#334155"
-                              strokeDasharray="5 4"
-                              strokeOpacity={0.45}
-                            />
-                          ) : null}
-                          {chartOverlay.hi != null ? (
-                            <ReferenceLine
-                              y={chartOverlay.hi}
-                              stroke="#334155"
-                              strokeDasharray="5 4"
-                              strokeOpacity={0.45}
-                            />
-                          ) : null}
-                          {chartOverlay.entry != null ? (
-                            <ReferenceLine
-                              y={chartOverlay.entry}
-                              stroke="#64748b"
-                              strokeDasharray="6 4"
-                              strokeWidth={1}
-                            />
-                          ) : null}
-                          {chartOverlay.tp != null ? (
-                            <ReferenceLine
-                              y={chartOverlay.tp}
-                              stroke="#22c55e"
-                              strokeDasharray="4 5"
-                              strokeOpacity={0.35}
-                              strokeWidth={0.8}
-                            />
-                          ) : null}
-                          {chartOverlay.sl != null ? (
-                            <ReferenceLine y={chartOverlay.sl} stroke="#fb7185" strokeWidth={1.2} strokeDasharray="3 3" />
-                          ) : null}
-                          {chartDecisionSeries.some((r) => r.exp != null) ? (
-                            <Line
-                              type="monotone"
-                              dataKey="exp"
-                              name="Expected"
-                              stroke={chartLineVisual.expectedStroke}
-                              dot={false}
-                              strokeWidth={1.15}
-                              strokeDasharray="6 5"
-                              strokeOpacity={chartLineVisual.expectedOpacity}
-                              connectNulls
-                            />
-                          ) : null}
-                          <Line
-                            type="monotone"
-                            dataKey="c"
-                            name="Live"
-                            stroke={chartLineVisual.liveStroke}
-                            dot={(dotProps) => {
-                              const { cx, cy, index } = dotProps
-                              if (index !== chartDecisionSeries.length - 1 || cx == null || cy == null) return null
-                              return (
-                                <circle
-                                  cx={cx}
-                                  cy={cy}
-                                  r={5}
-                                  fill="#fbbf24"
-                                  stroke="#0f172a"
-                                  strokeWidth={1.2}
-                                />
-                              )
-                            }}
-                            strokeWidth={chartLineVisual.liveWidth}
-                            activeDot={{ r: 5 }}
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="lic-chart-empty">No bars</div>
-                    )}
-                  </div>
-                  <div className="lic-chart-decision-foot">
-                    <div className="lic-chart-decision-foot-row">
-                      <span className="lic-chart-foot-k">Why this still works</span>
-                      <span className="lic-chart-foot-v">{safeText(workspacePres?.primary_reason)}</span>
+                  <div className="lic-snapshot-body">
+                    <div className="lic-snapshot-copy">
+                      <div className="lic-snapshot-foot-row lic-chart-decision-foot-row">
+                        <span className="lic-chart-foot-k">Why this still works</span>
+                        <span className="lic-chart-foot-v">{safeText(workspacePres?.primary_reason)}</span>
+                      </div>
+                      <div className="lic-snapshot-foot-row lic-chart-decision-foot-row">
+                        <span className="lic-chart-foot-k">What would break it</span>
+                        <span className="lic-chart-foot-v">{safeText(workspacePres?.flip_trigger)}</span>
+                      </div>
                     </div>
-                    <div className="lic-chart-decision-foot-row">
-                      <span className="lic-chart-foot-k">What would break it</span>
-                      <span className="lic-chart-foot-v">{safeText(workspacePres?.flip_trigger)}</span>
+                    <div className="lic-snapshot-radar">
+                      <LicPositionRadar data={radarChartData} finalRecommendation={activeIntel?.final_recommendation} />
                     </div>
                   </div>
-                  <div className="lic-chart-decision-actions">
+                  <div className="lic-snapshot-actions lic-chart-decision-actions">
                     <Link className="lic-open-interactive-chart" to={interactiveChartHref}>
                       Open Interactive Chart
                     </Link>

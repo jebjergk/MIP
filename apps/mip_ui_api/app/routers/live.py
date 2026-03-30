@@ -312,11 +312,36 @@ def _fetch_live_action_state(action_id: str) -> dict | None:
 
 
 def _normalize_broker_order_id(value) -> str:
-    if value is None:
+    """Canonical string for permId/orderId matching across IB snapshot vs DB (avoid 2123724407.0 vs 2123724407)."""
+    if value is None or isinstance(value, bool):
         return ""
+    try:
+        from decimal import Decimal
+
+        if isinstance(value, Decimal):
+            if value == value.to_integral_value():
+                return str(int(value))
+            norm = str(value).strip()
+            if norm in ("", "0", "0.0", "None", "none", "NULL", "null"):
+                return ""
+            return norm
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, float) and value == int(value):
+            return str(int(value))
+    except Exception:
+        pass
     norm = str(value).strip()
     if norm in ("", "0", "0.0", "None", "none", "NULL", "null"):
         return ""
+    if len(norm) > 2 and norm.endswith(".0") and norm[:-2].lstrip("-").isdigit():
+        return norm[:-2]
+    try:
+        f = float(norm)
+        if f == int(f):
+            return str(int(f))
+    except Exception:
+        pass
     return norm
 
 
@@ -665,7 +690,12 @@ def _fetch_live_symbol_position_qty(cur, portfolio_id: int | None, symbol: str |
     return float(broker_truth.get("symbol_position_qty") or 0.0)
 
 
-def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) -> dict:
+def _fetch_latest_broker_truth(
+    cur,
+    account_id: str,
+    symbol: str | None = None,
+    asset_class: str | None = None,
+) -> dict:
     # Anchor on the newest snapshot bundle for this account — not NAV-only. The IBKR
     # sync may skip inserting a NAV row when account summary tags are missing, while
     # still writing OPEN_ORDER / POSITION rows for the same run; NAV-only lookup then
@@ -706,19 +736,32 @@ def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) 
     symbol_position_qty = 0.0
     has_symbol_position = False
     if symbol:
+        # IBKR FX: POSITION rows use SYMBOL=base, CURRENCY=quote (e.g. AUD + JPY), not "AUD/JPY".
         cur.execute(
             """
-            select coalesce(sum(POSITION_QTY), 0) as POSITION_QTY
+            select
+              upper(coalesce(SYMBOL, '')) as SYMBOL,
+              upper(coalesce(CURRENCY, '')) as CURRENCY,
+              upper(coalesce(SECURITY_TYPE, '')) as SECURITY_TYPE,
+              POSITION_QTY
             from MIP.LIVE.BROKER_SNAPSHOTS
             where SNAPSHOT_TYPE = 'POSITION'
               and IBKR_ACCOUNT_ID = %s
               and SNAPSHOT_TS = %s
-              and upper(SYMBOL) = upper(%s)
+              and coalesce(POSITION_QTY, 0) <> 0
             """,
-            (account_id, latest_snapshot_ts, symbol),
+            (account_id, latest_snapshot_ts),
         )
         pos_rows = fetch_all(cur)
-        symbol_position_qty = float((pos_rows[0] or {}).get("POSITION_QTY") or 0.0)
+        for row in pos_rows:
+            if _broker_position_matches_live_action(
+                str(row.get("SYMBOL") or ""),
+                row.get("CURRENCY"),
+                row.get("SECURITY_TYPE"),
+                symbol,
+                asset_class,
+            ):
+                symbol_position_qty += float(row.get("POSITION_QTY") or 0.0)
         has_symbol_position = abs(symbol_position_qty) > 0
 
     return {
@@ -7689,7 +7732,12 @@ def reject_stale_live_action(action_id: str, req: RejectStaleActionRequest):
             cfg_rows = fetch_all(cur)
             account_id = (cfg_rows[0] or {}).get("IBKR_ACCOUNT_ID") if cfg_rows else None
             if account_id:
-                broker_truth = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+                broker_truth = _fetch_latest_broker_truth(
+                    cur,
+                    str(account_id),
+                    str(action.get("SYMBOL") or ""),
+                    action.get("ASSET_CLASS"),
+                )
                 broker_open_ids = broker_truth.get("open_order_ids") or set()
                 cur.execute(
                     """
@@ -8507,7 +8555,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
 
         proposed_qty = action.get("PROPOSED_QTY")
         if is_exit and (proposed_qty is None or float(proposed_qty) <= 0):
-            broker_truth_for_exit = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL")))
+            broker_truth_for_exit = _fetch_latest_broker_truth(
+                cur, str(account_id), str(action.get("SYMBOL")), action.get("ASSET_CLASS")
+            )
             symbol_position_qty = float(broker_truth_for_exit.get("symbol_position_qty") or 0.0)
             if abs(symbol_position_qty) <= 0:
                 reason_codes.append("EXIT_POSITION_MISSING")
@@ -8802,7 +8852,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 except Exception as cancel_exc:
                     pre_exit_cancel_result = {"warning": f"Pre-exit bracket cancel failed (non-fatal): {cancel_exc}"}
                 submit_attempt_payload["pre_exit_cancel_result"] = pre_exit_cancel_result
-                truth_before_submit = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+                truth_before_submit = _fetch_latest_broker_truth(
+                    cur, str(account_id), str(action.get("SYMBOL") or ""), action.get("ASSET_CLASS")
+                )
                 exit_symbol_qty_before = float(truth_before_submit.get("symbol_position_qty") or 0.0)
                 pos_gate_eps = 1e-5
                 if is_exit and side == "SELL" and exit_symbol_qty_before <= pos_gate_eps:
@@ -9031,6 +9083,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             broker_order_ids |= _broker_order_ids_from_ibkr_submit_payload(broker_submit_payload)
             truth_attempts = max(1, int(os.getenv("LIVE_BROKER_TRUTH_RETRIES", "2")))
             truth_sleep_sec = max(0.0, float(os.getenv("LIVE_BROKER_TRUTH_RETRY_SLEEP_SEC", "1.5")))
+            sym_u = str(action.get("SYMBOL") or "")
+            if str(action.get("ASSET_CLASS") or "").upper() == "FX" or _live_parse_fx_pair_for_broker(sym_u):
+                truth_attempts = max(truth_attempts, 3)
+                truth_sleep_sec = max(truth_sleep_sec, 2.0)
             exec_port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
             snapshot_port = int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002")))
             broker_truth_raw: dict = {}
@@ -9045,7 +9101,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     account=str(account_id),
                     portfolio_id=action.get("PORTFOLIO_ID"),
                 )
-                broker_truth_raw = _fetch_latest_broker_truth(cur, str(account_id), str(action.get("SYMBOL") or ""))
+                broker_truth_raw = _fetch_latest_broker_truth(
+                    cur, str(account_id), str(action.get("SYMBOL") or ""), action.get("ASSET_CLASS")
+                )
                 broker_open_ids = broker_truth_raw.get("open_order_ids") or set()
                 has_open_order = bool(broker_order_ids and broker_order_ids.intersection(broker_open_ids))
                 has_position = bool(broker_truth_raw.get("has_symbol_position"))
@@ -10230,7 +10288,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             if ibkr_account_id and symbol_upper:
                 has_live_position = live_position_cache.get(symbol_upper)
                 if has_live_position is None:
-                    broker_truth = _fetch_latest_broker_truth(cur, ibkr_account_id, symbol_upper)
+                    broker_truth = _fetch_latest_broker_truth(
+                        cur, ibkr_account_id, symbol_upper, p.get("MARKET_TYPE")
+                    )
                     has_live_position = bool(broker_truth.get("has_symbol_position"))
                     live_position_cache[symbol_upper] = has_live_position
                 if has_live_position:

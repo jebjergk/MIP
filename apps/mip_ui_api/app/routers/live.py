@@ -362,15 +362,15 @@ def _broker_open_order_ids_from_snapshot_rows(open_orders: list[dict] | None) ->
     return out
 
 
-def _broker_order_ids_from_ibkr_submit_payload(payload: dict | None) -> set[str]:
-    """IDs from place_ibkr_order.py output; parent legs sometimes omit perm_id while open_trade_ids_account is populated."""
+def _broker_placement_order_ids_from_ibkr_submit_payload(payload: dict | None) -> set[str]:
+    """
+    Perm/order ids from this submit bundle only (orders / orders_after_wait).
+    Do not union all account open trades — that caused false post-submit ack when any
+    unrelated working order appeared in a stale snapshot while the new legs did not.
+    """
     if not isinstance(payload, dict):
         return set()
     out: set[str] = set()
-    for x in payload.get("open_trade_ids_account") or []:
-        nid = _normalize_broker_order_id(x)
-        if nid:
-            out.add(nid)
     for key in ("orders_after_wait", "orders"):
         for ow in payload.get(key) or []:
             if not isinstance(ow, dict):
@@ -379,6 +379,18 @@ def _broker_order_ids_from_ibkr_submit_payload(payload: dict | None) -> set[str]
                 nid = _normalize_broker_order_id(ow.get(fld))
                 if nid:
                     out.add(nid)
+    return out
+
+
+def _broker_order_ids_from_ibkr_submit_payload(payload: dict | None) -> set[str]:
+    """Union of placement ids plus open_trade_ids_account (diagnostics / legacy callers)."""
+    out = _broker_placement_order_ids_from_ibkr_submit_payload(payload)
+    if not isinstance(payload, dict):
+        return out
+    for x in payload.get("open_trade_ids_account") or []:
+        nid = _normalize_broker_order_id(x)
+        if nid:
+            out.add(nid)
     return out
 
 
@@ -696,22 +708,36 @@ def _fetch_latest_broker_truth(
     symbol: str | None = None,
     asset_class: str | None = None,
 ) -> dict:
-    # Anchor on the newest snapshot bundle for this account — not NAV-only. The IBKR
-    # sync may skip inserting a NAV row when account summary tags are missing, while
-    # still writing OPEN_ORDER / POSITION rows for the same run; NAV-only lookup then
-    # points at an older SNAPSHOT_TS and fails post-submit truth checks (false
-    # IBKR_TRUTH_MISSING_ORDER_ACK).
+    # Use the latest row *per snapshot type*. Global max(SNAPSHOT_TS) can be NAV-only
+    # (or another type) with no OPEN_ORDER rows at that timestamp, which yields an empty
+    # open-order set and false NOT_ACTIVE_AT_BROKER / truth mismatches.
     cur.execute(
         """
         select max(SNAPSHOT_TS) as SNAPSHOT_TS
         from MIP.LIVE.BROKER_SNAPSHOTS
         where IBKR_ACCOUNT_ID = %s
+          and SNAPSHOT_TYPE = 'OPEN_ORDER'
         """,
         (account_id,),
     )
-    ts_rows = fetch_all(cur)
-    latest_snapshot_ts = (ts_rows[0] or {}).get("SNAPSHOT_TS") if ts_rows else None
-    if not latest_snapshot_ts:
+    open_ts_rows = fetch_all(cur)
+    latest_open_ts = (open_ts_rows[0] or {}).get("SNAPSHOT_TS") if open_ts_rows else None
+
+    latest_pos_ts = None
+    if symbol:
+        cur.execute(
+            """
+            select max(SNAPSHOT_TS) as SNAPSHOT_TS
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TYPE = 'POSITION'
+            """,
+            (account_id,),
+        )
+        pos_ts_rows = fetch_all(cur)
+        latest_pos_ts = (pos_ts_rows[0] or {}).get("SNAPSHOT_TS") if pos_ts_rows else None
+
+    if not latest_open_ts and not latest_pos_ts:
         return {
             "snapshot_ts": None,
             "open_order_ids": set(),
@@ -720,22 +746,24 @@ def _fetch_latest_broker_truth(
             "has_symbol_position": False,
         }
 
-    cur.execute(
-        """
-        select OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED, OPEN_ORDER_REMAINING, PAYLOAD
-        from MIP.LIVE.BROKER_SNAPSHOTS
-        where SNAPSHOT_TYPE = 'OPEN_ORDER'
-          and IBKR_ACCOUNT_ID = %s
-          and SNAPSHOT_TS = %s
-        """,
-        (account_id, latest_snapshot_ts),
-    )
-    open_orders = fetch_all(cur)
+    open_orders: list[dict] = []
+    if latest_open_ts:
+        cur.execute(
+            """
+            select OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED, OPEN_ORDER_REMAINING, PAYLOAD
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'OPEN_ORDER'
+              and IBKR_ACCOUNT_ID = %s
+              and SNAPSHOT_TS = %s
+            """,
+            (account_id, latest_open_ts),
+        )
+        open_orders = fetch_all(cur)
     open_order_ids = _broker_open_order_ids_from_snapshot_rows(open_orders)
 
     symbol_position_qty = 0.0
     has_symbol_position = False
-    if symbol:
+    if symbol and latest_pos_ts:
         # IBKR FX: POSITION rows use SYMBOL=base, CURRENCY=quote (e.g. AUD + JPY), not "AUD/JPY".
         cur.execute(
             """
@@ -750,7 +778,7 @@ def _fetch_latest_broker_truth(
               and SNAPSHOT_TS = %s
               and coalesce(POSITION_QTY, 0) <> 0
             """,
-            (account_id, latest_snapshot_ts),
+            (account_id, latest_pos_ts),
         )
         pos_rows = fetch_all(cur)
         for row in pos_rows:
@@ -764,8 +792,12 @@ def _fetch_latest_broker_truth(
                 symbol_position_qty += float(row.get("POSITION_QTY") or 0.0)
         has_symbol_position = abs(symbol_position_qty) > 0
 
+    meta_ts = latest_open_ts or latest_pos_ts
+    if latest_open_ts and latest_pos_ts:
+        meta_ts = max(latest_open_ts, latest_pos_ts)
+
     return {
-        "snapshot_ts": latest_snapshot_ts,
+        "snapshot_ts": meta_ts,
         "open_order_ids": open_order_ids,
         "open_orders": open_orders,
         "symbol_position_qty": symbol_position_qty,
@@ -8816,6 +8848,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         ib_live_orders_inserted = False
         if use_ibkr_submit:
             exit_symbol_qty_before = 0.0
+            entry_symbol_qty_before = 0.0
             ibkr_entry_price = None if is_exit else (float(entry_price) if entry_price is not None else None)
             submit_attempt_payload = {
                 "account": str(account_id),
@@ -8881,6 +8914,12 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                             "symbol_position_qty": exit_symbol_qty_before,
                         },
                     )
+
+            else:
+                truth_before_entry = _fetch_latest_broker_truth(
+                    cur, str(account_id), str(action.get("SYMBOL") or ""), action.get("ASSET_CLASS")
+                )
+                entry_symbol_qty_before = float(truth_before_entry.get("symbol_position_qty") or 0.0)
 
             cur.execute(
                 """
@@ -9074,12 +9113,15 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     },
                 )
             ib_live_orders_inserted = True
-            # Fail closed: do not accept local execution state unless broker-truth snapshot confirms it.
-            broker_order_ids = {
+            # Fail closed: confirm **this** bundle's broker ids (or entry position change vs pre-submit),
+            # not unrelated account-wide open trades intersecting a stale snapshot.
+            placement_broker_ids = {
                 _normalize_broker_order_id(leg.get("broker_order_id"))
                 for leg in order_legs
                 if _normalize_broker_order_id(leg.get("broker_order_id"))
             }
+            placement_broker_ids |= _broker_placement_order_ids_from_ibkr_submit_payload(broker_submit_payload)
+            broker_order_ids = set(placement_broker_ids)
             broker_order_ids |= _broker_order_ids_from_ibkr_submit_payload(broker_submit_payload)
             truth_attempts = max(1, int(os.getenv("LIVE_BROKER_TRUTH_RETRIES", "2")))
             truth_sleep_sec = max(0.0, float(os.getenv("LIVE_BROKER_TRUTH_RETRY_SLEEP_SEC", "1.5")))
@@ -9091,8 +9133,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             snapshot_port = int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002")))
             broker_truth_raw: dict = {}
             broker_open_ids: set[str] = set()
-            has_open_order = False
-            has_position = False
+            truth_ack = False
+            pos_truth_eps = 1e-5
             for attempt_idx in range(truth_attempts):
                 if attempt_idx > 0 and truth_sleep_sec > 0:
                     time.sleep(truth_sleep_sec)
@@ -9105,9 +9147,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     cur, str(account_id), str(action.get("SYMBOL") or ""), action.get("ASSET_CLASS")
                 )
                 broker_open_ids = broker_truth_raw.get("open_order_ids") or set()
-                has_open_order = bool(broker_order_ids and broker_order_ids.intersection(broker_open_ids))
-                has_position = bool(broker_truth_raw.get("has_symbol_position"))
-                if has_open_order or has_position:
+                has_placements_in_snapshot = bool(
+                    placement_broker_ids and placement_broker_ids.intersection(broker_open_ids)
+                )
+                qty_snap = float(broker_truth_raw.get("symbol_position_qty") or 0.0)
+                if is_exit:
+                    has_position = bool(broker_truth_raw.get("has_symbol_position"))
+                    if has_placements_in_snapshot or has_position:
+                        truth_ack = True
+                        break
+                elif has_placements_in_snapshot or abs(qty_snap - entry_symbol_qty_before) > pos_truth_eps:
+                    truth_ack = True
                     break
             qty_after = float(broker_truth_raw.get("symbol_position_qty") or 0.0)
             pos_flat_eps = 1e-5
@@ -9129,7 +9179,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "symbol_position_qty_after": qty_after,
                 "exit_ack_via_flat": exit_ack_via_flat,
             }
-            if not has_open_order and not has_position and not exit_ack_via_flat:
+            if not truth_ack and not exit_ack_via_flat:
                 idem_keys = [str(leg["idempotency_key"]) for leg in order_legs if leg.get("idempotency_key")]
                 if idem_keys:
                     placeholders = ",".join(["%s"] * len(idem_keys))
@@ -9155,6 +9205,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         ),
                         "reason_codes": final_reason_codes,
                         "broker_order_ids": sorted(broker_order_ids),
+                        "placement_broker_ids": sorted(placement_broker_ids),
                         "submit_open_trade_count": submit_trade_cnt,
                         "submit_open_trade_ids": broker_submit_payload.get("open_trade_ids_account"),
                         "ibkr_exec_port": exec_port,

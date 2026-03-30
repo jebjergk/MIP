@@ -464,9 +464,15 @@ def _negative_broker_line_blocks_long_only_entry(
     if not is_fx_entry:
         return sec != "CASH"
 
+    # FX entry: equity/option shorts still violate long-only for the whole account.
     if sec != "CASH":
         return True
-    return bool(c) and s != c
+    # Negative CASH *pair* line (base != quote): only block this BUY if it is the **same**
+    # pair as the proposal. Otherwise unrelated FX exposure (e.g. short EUR/USD) falsely
+    # blocked AUD/JPY BUY with "short / long-only" messaging.
+    if not c or s == c:
+        return False
+    return _broker_position_matches_live_action(s, c, sec, action_symbol, asset_class)
 
 
 def _recent_unmapped_execution_summary(
@@ -8491,7 +8497,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 reason_codes.append("ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY")
             if long_only_guard["short_symbols"]:
                 reason_codes.append("BROKER_SHORT_POSITION_OUT_OF_POLICY")
-            if symbol_position_qty is not None and symbol_position_qty < 0:
+            # BUY reduces an existing short; do not block as "you are short" (common FX/stock cover).
+            if symbol_position_qty is not None and symbol_position_qty < 0 and side != "BUY":
                 reason_codes.append("SYMBOL_SHORT_POSITION_OUT_OF_POLICY")
 
         max_positions = cfg.get("MAX_POSITIONS")

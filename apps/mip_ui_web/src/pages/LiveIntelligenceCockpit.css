@@ -1431,3 +1431,147 @@
   line-height: 1.35;
   margin: 0.25rem 0 0;
 }
+
+
+/* Worlds tab — three outcome scenarios from analog_summary */
+.lic-worlds--scenarios {
+  min-width: 0;
+}
+
+.lic-worlds-scenarios {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.lic-worlds-scenarios--empty {
+  padding: 0.5rem 0.25rem;
+}
+
+.lic-worlds-empty-msg {
+  margin: 0 0 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.lic-worlds-empty-sub {
+  margin: 0;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.lic-worlds-lead {
+  margin: 0 0 0.15rem;
+  font-size: 0.68rem;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.lic-worlds-banner {
+  font-size: 0.65rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  line-height: 1.3;
+}
+
+.lic-worlds-banner--caution {
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  color: #fde68a;
+}
+
+.lic-worlds-banner--warn {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fecaca;
+}
+
+.lic-worlds-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+@media (max-width: 720px) {
+  .lic-worlds-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lic-worlds-card {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.lic-worlds-card--upside {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.lic-worlds-card--base {
+  color: #94a3b8;
+  border-color: #475569;
+}
+
+.lic-worlds-card--downside {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.lic-worlds-card-title {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #cbd5e1;
+  margin-bottom: 0.15rem;
+}
+
+.lic-worlds-card--upside .lic-worlds-card-title { color: #86efac; }
+.lic-worlds-card--downside .lic-worlds-card-title { color: #fca5a5; }
+
+.lic-worlds-card-prob {
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.lic-worlds-card-sub {
+  font-size: 0.58rem;
+  color: #64748b;
+  margin-bottom: 0.35rem;
+}
+
+.lic-worlds-card-return {
+  font-size: 0.68rem;
+  color: #cbd5e1;
+  margin-bottom: 0.25rem;
+}
+
+.lic-worlds-card-return span {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+}
+
+.lic-worlds-path {
+  width: 100%;
+  height: 44px;
+  margin-bottom: 0.25rem;
+}
+
+.lic-worlds-card-n {
+  font-size: 0.6rem;
+  color: #64748b;
+  margin-top: auto;
+}

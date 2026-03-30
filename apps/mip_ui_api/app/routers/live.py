@@ -719,6 +719,26 @@ def _is_order_active_in_broker_truth(order_row: dict, broker_open_order_ids: set
     return bool(broker_order_id and broker_order_id in broker_open_order_ids)
 
 
+def _live_order_display_status(
+    order_row: dict,
+    broker_open_order_ids: set[str],
+    held_symbols: set[str],
+) -> str:
+    """
+    Align UI status with IBKR snapshot: local working states only if the order id is
+    open at the broker (or the symbol still has a position — snapshot lag carve-out).
+    """
+    raw = str(order_row.get("STATUS") or "").upper()
+    if raw not in LIVE_ORDER_ACTIVE_STATUSES:
+        return str(order_row.get("STATUS") or "") or "—"
+    broker_truth_active = _is_order_active_in_broker_truth(order_row, broker_open_order_ids)
+    symbol_upper = str((order_row.get("SYMBOL") or "")).upper()
+    broker_truth_in_position = bool(symbol_upper and symbol_upper in held_symbols)
+    if not broker_truth_active and not broker_truth_in_position:
+        return "NOT_ACTIVE_AT_BROKER"
+    return str(order_row.get("STATUS") or "") or "—"
+
+
 def _compute_snapshot_freshness_state(snapshot_age_sec: int | None, threshold_sec: int | None) -> str:
     if snapshot_age_sec is None:
         return "BLOCKED"
@@ -2342,6 +2362,51 @@ def _force_refresh_latest_one_minute_bars(cur, symbol: str | None = None) -> dic
     Direct IBKR-only 1-minute refresh before revalidation.
     """
     return _run_agent_ibkr_bar_refresh(symbol)
+
+
+def _fetch_ibkr_mart_reference_close(cur, symbol: str | None) -> float | None:
+    """
+    Latest IBKR close from MIP.MART.MARKET_BARS using the same mart path as
+    revalidate_live_action (IBKR 1m, then IBKR 15/60/1440 fallback).
+    Keeps PROPOSED_PRICE from committee apply aligned with revalidation reference.
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+    try:
+        cur.execute(
+            """
+            select CLOSE
+            from MIP.MART.MARKET_BARS
+            where SYMBOL = %s
+              and INTERVAL_MINUTES = 1
+              and upper(coalesce(SOURCE, '')) = 'IBKR'
+            order by TS desc
+            limit 1
+            """,
+            (sym,),
+        )
+        bar = cur.fetchone()
+        if bar and bar[0] is not None:
+            return float(bar[0])
+        cur.execute(
+            """
+            select CLOSE
+            from MIP.MART.MARKET_BARS
+            where SYMBOL = %s
+              and INTERVAL_MINUTES in (15, 60, 1440)
+              and upper(coalesce(SOURCE, '')) = 'IBKR'
+            order by TS desc
+            limit 1
+            """,
+            (sym,),
+        )
+        fallback = cur.fetchone()
+        if fallback and fallback[0] is not None:
+            return float(fallback[0])
+    except Exception:
+        return None
+    return None
 
 
 def _fetch_training_min_signals(cur) -> int:
@@ -5131,6 +5196,11 @@ def get_live_activity_overview(
         )
         orders = fetch_all(cur)
         broker_open_order_ids = {_normalize_broker_order_id(r.get("OPEN_ORDER_ID")) for r in open_orders if _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))}
+        held_symbols = {
+            str((r.get("SYMBOL") or "")).upper()
+            for r in open_positions
+            if str((r.get("SYMBOL") or "")).strip()
+        }
         order_groups: dict[str, list[dict]] = {}
         for order in orders:
             key = str(order.get("ACTION_ID") or "")
@@ -5145,11 +5215,11 @@ def get_live_activity_overview(
             stop_loss_leg = None
             for ord_row in action_orders:
                 order_type = str(ord_row.get("ORDER_TYPE") or "").upper()
-                status = str(ord_row.get("STATUS") or "").upper()
+                status_display = _live_order_display_status(ord_row, broker_open_order_ids, held_symbols)
                 leg = {
                     "order_id": ord_row.get("ORDER_ID"),
                     "broker_order_id": ord_row.get("BROKER_ORDER_ID"),
-                    "status": status,
+                    "status": str(status_display).upper(),
                     "order_type": order_type,
                     "side": ord_row.get("SIDE"),
                     "limit_price": float(ord_row.get("LIMIT_PRICE")) if ord_row.get("LIMIT_PRICE") is not None else None,
@@ -5190,7 +5260,8 @@ def get_live_activity_overview(
               cv.SIZE_FACTOR as COMMITTEE_SIZE_FACTOR,
               cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
               la.PROPOSED_QTY, la.PROPOSED_PRICE, la.TARGET_OPEN_CONDITION_FACTOR, la.TRAINING_SIZE_CAP_FACTOR,
-              la.TARGET_EXPECTATION_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT
+              la.TARGET_EXPECTATION_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT,
+              la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.REVALIDATION_TS, la.REVALIDATION_OUTCOME
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
               on cv.RUN_ID = la.COMMITTEE_RUN_ID
@@ -5256,7 +5327,6 @@ def get_live_activity_overview(
             and reconciliation_state != "REQUIRED"
         )
         page_actionable = page_actionable_base and market_open
-        held_symbols = {str((r.get("SYMBOL") or "")).upper() for r in open_positions}
         nav_eur = float(nav.get("NET_LIQUIDATION_EUR") or 0.0) if nav else 0.0
 
         pending_decisions = []
@@ -5430,6 +5500,18 @@ def get_live_activity_overview(
                         "timestamps": {
                             "created_at": row.get("CREATED_AT"),
                             "updated_at": row.get("UPDATED_AT"),
+                        },
+                        "price_guard": {
+                            "revalidation_price": float(row["REVALIDATION_PRICE"])
+                            if row.get("REVALIDATION_PRICE") is not None
+                            else None,
+                            "price_deviation_pct": float(row["PRICE_DEVIATION_PCT"])
+                            if row.get("PRICE_DEVIATION_PCT") is not None
+                            else None,
+                            "revalidation_ts": row.get("REVALIDATION_TS"),
+                            "revalidation_outcome": row.get("REVALIDATION_OUTCOME"),
+                            "pass_max_pct": 0.02,
+                            "reduced_max_pct": 0.04,
                         },
                     }
                 )
@@ -5776,14 +5858,10 @@ def get_live_activity_overview(
         orders_enriched = []
         for ord_row in orders:
             action_key = str(ord_row.get("ACTION_ID") or "")
-            status_upper = str(ord_row.get("STATUS") or "").upper()
             broker_truth_active = _is_order_active_in_broker_truth(ord_row, broker_open_order_ids)
             symbol_upper = str(ord_row.get("SYMBOL") or "").upper()
             broker_truth_in_position = symbol_upper in held_symbols
-            status_for_display = ord_row.get("STATUS")
-            if status_upper in LIVE_ORDER_ACTIVE_STATUSES and not broker_truth_active and not broker_truth_in_position:
-                # Enforce IBKR truth in display: local active states must be broker-confirmed.
-                status_for_display = "NOT_ACTIVE_AT_BROKER"
+            status_for_display = _live_order_display_status(ord_row, broker_open_order_ids, held_symbols)
             orders_enriched.append(
                 {
                     **ord_row,
@@ -7232,40 +7310,8 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
 
         # Derive proposed price/qty so row no longer remains fully pending.
-        proposed_price_derived = None
+        proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
         proposed_qty_derived = None
-        try:
-            cur.execute(
-                """
-                select CLOSE
-                from MIP.MART.MARKET_BARS
-                where SYMBOL = %s
-                  and INTERVAL_MINUTES = 1
-                order by TS desc
-                limit 1
-                """,
-                (action.get("SYMBOL"),),
-            )
-            bar_rows = fetch_all(cur)
-            if bar_rows and bar_rows[0].get("CLOSE") is not None:
-                proposed_price_derived = float(bar_rows[0].get("CLOSE"))
-            else:
-                cur.execute(
-                    """
-                    select CLOSE
-                    from MIP.MART.MARKET_BARS
-                    where SYMBOL = %s
-                      and INTERVAL_MINUTES in (15, 60, 1440)
-                    order by TS desc
-                    limit 1
-                    """,
-                    (action.get("SYMBOL"),),
-                )
-                fallback_rows = fetch_all(cur)
-                if fallback_rows and fallback_rows[0].get("CLOSE") is not None:
-                    proposed_price_derived = float(fallback_rows[0].get("CLOSE"))
-        except Exception:
-            proposed_price_derived = None
 
         try:
             param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))

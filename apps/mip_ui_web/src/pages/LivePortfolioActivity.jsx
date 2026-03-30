@@ -95,6 +95,11 @@ function summarizeReasonCodes(reasonCodes) {
   return unique.length ? unique.join(' ') : ''
 }
 
+function hasPriceGuardFailReason(reasonCodes) {
+  if (!Array.isArray(reasonCodes)) return false
+  return reasonCodes.some((c) => String(c || '').toUpperCase() === 'PRICE_GUARD_FAIL')
+}
+
 function messageFromApiFailure(payload, fallback) {
   const detail = payload?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
@@ -862,6 +867,20 @@ export default function LivePortfolioActivity() {
                         ) : (
                           <div>—</div>
                         )}
+                        {hasPriceGuardFailReason(d.reason_codes) &&
+                        d.price_guard != null &&
+                        d.price_guard.price_deviation_pct != null ? (
+                          <div className="lpa-subtle lpa-price-guard-hint">
+                            Price guard: {fmtNum(d.price_guard.price_deviation_pct * 100, 2)}% deviation vs proposed
+                            (full pass ≤{fmtNum((d.price_guard.pass_max_pct ?? 0.02) * 100, 0)}%, reduced{' '}
+                            {fmtNum((d.price_guard.pass_max_pct ?? 0.02) * 100, 0)}–
+                            {fmtNum((d.price_guard.reduced_max_pct ?? 0.04) * 100, 0)}%, fail &gt;
+                            {fmtNum((d.price_guard.reduced_max_pct ?? 0.04) * 100, 0)}%).
+                            {d.price_guard.revalidation_price != null
+                              ? ` Reference close at last revalidation: ${fmtNum(d.price_guard.revalidation_price, 4)}.`
+                              : ''}
+                          </div>
+                        ) : null}
                         <div className="lpa-subtle lpa-next-step">Next: {d.required_next_step || '—'}</div>
                       </td>
                       <td>
@@ -954,6 +973,9 @@ export default function LivePortfolioActivity() {
 
           <section className="lpa-section">
             <h3>Orders (Broker Lifecycle)</h3>
+            <div className="lpa-subtle">
+              Row status reflects the latest IB snapshot: if MIP still has a working state but that broker order id is not open and you have no position in the symbol, the UI shows NOT_ACTIVE_AT_BROKER (use Archived to review).
+            </div>
             <div className="lpa-controls">
               <label className="lpa-control">
                 <span>Orders Lookback</span>
@@ -1054,7 +1076,9 @@ export default function LivePortfolioActivity() {
                       <td>
                         {(() => {
                           const statusUpper = String(o.STATUS || '').toUpperCase()
-                          const canCancel = ['SUBMITTED', 'ACKNOWLEDGED', 'PENDINGSUBMIT', 'PRESUBMITTED', 'PARTIAL_FILL', 'PARTIALLYFILLED'].includes(statusUpper)
+                          const canCancel =
+                            statusUpper !== 'NOT_ACTIVE_AT_BROKER' &&
+                            ['SUBMITTED', 'ACKNOWLEDGED', 'PENDINGSUBMIT', 'PRESUBMITTED', 'PARTIAL_FILL', 'PARTIALLYFILLED'].includes(statusUpper)
                           return (
                             <button
                               className="lpa-btn lpa-btn-secondary lpa-btn-compact"

@@ -72,7 +72,7 @@ def match_analogs(
                 "realized_return": ep.get("realized_return"),
                 "outcome_winner": ep.get("outcome_winner"),
             }
-            for ep in closest[:5]
+            for ep in closest[:k]
         ],
         "winners": winners,
         "losers": losers,

@@ -6,6 +6,7 @@ import useVisibleInterval from '../hooks/useVisibleInterval'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTopTile from '../components/lic/LicTopTile'
 import LicPositionRadar from '../components/lic/LicPositionRadar'
+import LicWorldsScenarios from '../components/lic/LicWorldsScenarios'
 import {
   alignRadarTupleToBand,
   computeRawRadarTuple,
@@ -941,27 +942,11 @@ function LiveIntelligenceCockpitInner() {
               )}
 
               {detailTab === 'worlds' && (
-                <div className="lic-drill-panel lic-worlds">
-                  {asArray(activeIntel.scenario_worlds).map((w, wi) => (
-                    <div
-                      key={w?.id ?? w?.title ?? `w-${wi}`}
-                      className={`lic-world-card${String(w?.id) === String(activeIntel?.dominant_world_id) ? ' lic-world-card--dominant' : ''}`}
-                    >
-                      <div className="lic-world-head">
-                        <span className="lic-world-title">{safeText(w?.title)}</span>
-                        <span className="lic-world-pct">{w?.probability_pct ?? Math.round((w?.probability || 0) * 100)}%</span>
-                      </div>
-                      <p className="lic-world-expl">{safeText(w?.explanation)}</p>
-                      <div className="lic-world-sub">Triggers to watch</div>
-                      <ul className="lic-world-triggers">
-                        {asArray(w?.trigger_conditions).map((x, xi) => (
-                          <li key={`${wi}-tr-${xi}`}>{safeText(x)}</li>
-                        ))}
-                      </ul>
-                      <div className="lic-world-sub lic-world-sub--action">If this view dominates</div>
-                      <div className="lic-world-action">{safeText(w?.action_if_dominant)}</div>
-                    </div>
-                  ))}
+                <div className="lic-drill-panel lic-worlds lic-worlds--scenarios">
+                  <LicWorldsScenarios
+                    analogSummary={activeIntel.analog_summary}
+                    finalRecommendation={activeIntel.final_recommendation}
+                  />
                 </div>
               )}
               {detailTab === 'analog' && (

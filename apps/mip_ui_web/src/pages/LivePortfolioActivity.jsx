@@ -974,7 +974,7 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Orders (Broker Lifecycle)</h3>
             <div className="lpa-subtle">
-              Row status reflects the latest IB snapshot: if MIP still has a working state but that broker order id is not open and you have no position in the symbol, the UI shows NOT_ACTIVE_AT_BROKER (use Archived to review).
+              Row status reflects the latest IB open-order snapshot: if your MIP row is still PreSubmitted/PendingSubmit/etc. but that broker order id is not in IB&apos;s open orders, the UI shows NOT_ACTIVE_AT_BROKER (see Archived). Refresh From IB first.
             </div>
             <div className="lpa-controls">
               <label className="lpa-control">

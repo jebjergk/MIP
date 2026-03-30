@@ -320,6 +320,23 @@ def _normalize_broker_order_id(value) -> str:
     return norm
 
 
+def _broker_open_order_ids_from_snapshot_rows(open_orders: list[dict] | None) -> set[str]:
+    """Union of OPEN_ORDER_ID and payload perm/order ids so LIVE_ORDERS rows match IB truth."""
+    out: set[str] = set()
+    for r in open_orders or []:
+        oid = _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))
+        if oid:
+            out.add(oid)
+        payload = _parse_variant(r.get("PAYLOAD"))
+        if not isinstance(payload, dict):
+            continue
+        for key in ("permId", "perm_id", "orderId", "order_id"):
+            nid = _normalize_broker_order_id(payload.get(key))
+            if nid:
+                out.add(nid)
+    return out
+
+
 def _broker_order_ids_from_ibkr_submit_payload(payload: dict | None) -> set[str]:
     """IDs from place_ibkr_order.py output; parent legs sometimes omit perm_id while open_trade_ids_account is populated."""
     if not isinstance(payload, dict):
@@ -669,7 +686,7 @@ def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) 
 
     cur.execute(
         """
-        select OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED, OPEN_ORDER_REMAINING
+        select OPEN_ORDER_ID, OPEN_ORDER_STATUS, SYMBOL, OPEN_ORDER_QTY, OPEN_ORDER_FILLED, OPEN_ORDER_REMAINING, PAYLOAD
         from MIP.LIVE.BROKER_SNAPSHOTS
         where SNAPSHOT_TYPE = 'OPEN_ORDER'
           and IBKR_ACCOUNT_ID = %s
@@ -678,11 +695,7 @@ def _fetch_latest_broker_truth(cur, account_id: str, symbol: str | None = None) 
         (account_id, latest_snapshot_ts),
     )
     open_orders = fetch_all(cur)
-    open_order_ids = {
-        _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))
-        for r in open_orders
-        if _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))
-    }
+    open_order_ids = _broker_open_order_ids_from_snapshot_rows(open_orders)
 
     symbol_position_qty = 0.0
     has_symbol_position = False
@@ -719,22 +732,19 @@ def _is_order_active_in_broker_truth(order_row: dict, broker_open_order_ids: set
     return bool(broker_order_id and broker_order_id in broker_open_order_ids)
 
 
-def _live_order_display_status(
-    order_row: dict,
-    broker_open_order_ids: set[str],
-    held_symbols: set[str],
-) -> str:
+def _live_order_display_status(order_row: dict, broker_open_order_ids: set[str]) -> str:
     """
-    Align UI status with IBKR snapshot: local working states only if the order id is
-    open at the broker (or the symbol still has a position — snapshot lag carve-out).
+    Align UI status with IBKR snapshot: local working states only if this row's
+    BROKER_ORDER_ID is still in the latest open-order snapshot.
+
+    We intentionally do **not** carve out \"symbol still has a position\": stale bracket
+    legs (parent/TP/SL) would otherwise stay PENDINGSUBMIT forever while the stock
+    is held for an unrelated working position.
     """
     raw = str(order_row.get("STATUS") or "").upper()
     if raw not in LIVE_ORDER_ACTIVE_STATUSES:
         return str(order_row.get("STATUS") or "") or "—"
-    broker_truth_active = _is_order_active_in_broker_truth(order_row, broker_open_order_ids)
-    symbol_upper = str((order_row.get("SYMBOL") or "")).upper()
-    broker_truth_in_position = bool(symbol_upper and symbol_upper in held_symbols)
-    if not broker_truth_active and not broker_truth_in_position:
+    if not _is_order_active_in_broker_truth(order_row, broker_open_order_ids):
         return "NOT_ACTIVE_AT_BROKER"
     return str(order_row.get("STATUS") or "") or "—"
 
@@ -5142,6 +5152,9 @@ def get_live_activity_overview(
             for r in position_trend_rows
         ]
 
+        # Load enough open-order snapshot rows to match order_limit / action limit; default 200 was too low.
+        open_order_snapshot_row_cap = min(2500, max(int(order_limit), int(limit), 500))
+
         open_positions = []
         open_orders = []
         cockpit_broker_clusters: list[dict] = []
@@ -5175,7 +5188,7 @@ def get_live_activity_overview(
                 order by OPEN_ORDER_ID
                 limit %s
                 """,
-                (account_id, latest_snapshot_ts, limit),
+                (account_id, latest_snapshot_ts, open_order_snapshot_row_cap),
             )
             open_orders = fetch_all(cur)
             cockpit_broker_clusters = _cluster_broker_open_orders_for_cockpit(open_orders)
@@ -5195,7 +5208,7 @@ def get_live_activity_overview(
             (portfolio_id, order_lookback_days, order_limit),
         )
         orders = fetch_all(cur)
-        broker_open_order_ids = {_normalize_broker_order_id(r.get("OPEN_ORDER_ID")) for r in open_orders if _normalize_broker_order_id(r.get("OPEN_ORDER_ID"))}
+        broker_open_order_ids = _broker_open_order_ids_from_snapshot_rows(open_orders)
         held_symbols = {
             str((r.get("SYMBOL") or "")).upper()
             for r in open_positions
@@ -5215,7 +5228,7 @@ def get_live_activity_overview(
             stop_loss_leg = None
             for ord_row in action_orders:
                 order_type = str(ord_row.get("ORDER_TYPE") or "").upper()
-                status_display = _live_order_display_status(ord_row, broker_open_order_ids, held_symbols)
+                status_display = _live_order_display_status(ord_row, broker_open_order_ids)
                 leg = {
                     "order_id": ord_row.get("ORDER_ID"),
                     "broker_order_id": ord_row.get("BROKER_ORDER_ID"),
@@ -5861,7 +5874,7 @@ def get_live_activity_overview(
             broker_truth_active = _is_order_active_in_broker_truth(ord_row, broker_open_order_ids)
             symbol_upper = str(ord_row.get("SYMBOL") or "").upper()
             broker_truth_in_position = symbol_upper in held_symbols
-            status_for_display = _live_order_display_status(ord_row, broker_open_order_ids, held_symbols)
+            status_for_display = _live_order_display_status(ord_row, broker_open_order_ids)
             orders_enriched.append(
                 {
                     **ord_row,

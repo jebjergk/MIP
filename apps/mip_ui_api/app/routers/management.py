@@ -518,18 +518,48 @@ def get_ib_manual_daily_health():
         cur = conn.cursor()
         cur.execute(
             """
-            with latest as (
-                select
-                    max(TS::date) as LATEST_DATE,
-                    max(TS) as LATEST_TS
-                from MIP.MART.MARKET_BARS
-                where INTERVAL_MINUTES = 1440
-            ),
-            u as (
+            with u as (
                 select distinct upper(replace(SYMBOL, '/', '')) as SYMBOL_N, upper(MARKET_TYPE) as MARKET_TYPE
                 from MIP.APP.INGEST_UNIVERSE
                 where coalesce(IS_ENABLED, true)
                   and INTERVAL_MINUTES = 1440
+            ),
+            universe_count as (
+                select count(*) as universe_n from u
+            ),
+            per_day_coverage as (
+                select
+                    d,
+                    count(*) as bar_symbols_on_day
+                from (
+                    select distinct
+                        TS::date as d,
+                        upper(replace(SYMBOL, '/', '')) as SYMBOL_N,
+                        upper(MARKET_TYPE) as MARKET_TYPE
+                    from MIP.MART.MARKET_BARS
+                    where INTERVAL_MINUTES = 1440
+                ) x
+                group by d
+            ),
+            latest_date_pick as (
+                -- Prefer the newest day where *all* universe symbols have a bar. Raw max(TS::date) alone
+                -- misleads when one symbol lands on the next calendar day (e.g. FX/UTC vs NY, IB bar date).
+                select coalesce(
+                    (
+                        select max(p.d)
+                        from per_day_coverage p
+                        cross join universe_count uc
+                        where p.bar_symbols_on_day = uc.universe_n
+                    ),
+                    (select max(TS::date) from MIP.MART.MARKET_BARS where INTERVAL_MINUTES = 1440)
+                ) as LATEST_DATE
+            ),
+            latest_ts_pick as (
+                select max(m.TS) as LATEST_TS
+                from MIP.MART.MARKET_BARS m
+                cross join latest_date_pick l
+                where m.INTERVAL_MINUTES = 1440
+                  and m.TS::date = l.LATEST_DATE
             ),
             b as (
                 select distinct
@@ -537,12 +567,12 @@ def get_ib_manual_daily_health():
                     upper(MARKET_TYPE) as MARKET_TYPE
                 from MIP.MART.MARKET_BARS
                 where INTERVAL_MINUTES = 1440
-                  and TS::date = (select LATEST_DATE from latest)
+                  and TS::date = (select LATEST_DATE from latest_date_pick)
             )
             select
-                (select LATEST_DATE from latest) as LATEST_DAILY_BAR_DATE,
-                (select LATEST_TS from latest) as LATEST_DAILY_BAR_TS,
-                (select count(*) from u) as UNIVERSE_SYMBOLS,
+                (select LATEST_DATE from latest_date_pick) as LATEST_DAILY_BAR_DATE,
+                (select LATEST_TS from latest_ts_pick) as LATEST_DAILY_BAR_TS,
+                (select universe_n from universe_count) as UNIVERSE_SYMBOLS,
                 (select count(*) from b) as BAR_SYMBOLS_ON_LATEST_DATE,
                 (
                     select count(*)

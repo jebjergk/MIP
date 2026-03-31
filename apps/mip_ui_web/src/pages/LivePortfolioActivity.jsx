@@ -610,7 +610,14 @@ export default function LivePortfolioActivity() {
   const openPositions = overview?.open_positions || []
   const orders = overview?.orders || []
   const executions = overview?.executions || []
-  const archivedOrderStatuses = new Set(['CANCELED', 'CANCELLED', 'REJECTED', 'FILLED', 'NOT_ACTIVE_AT_BROKER'])
+  const archivedOrderStatuses = new Set([
+    'CANCELED',
+    'CANCELLED',
+    'REJECTED',
+    'FILLED',
+    'NOT_ACTIVE_AT_BROKER',
+    'UNCONFIRMED_AT_BROKER',
+  ])
   const displayedOrders = orders.filter((o) => {
     const status = String(o?.STATUS || '').toUpperCase()
     const isArchived = archivedOrderStatuses.has(status)

@@ -8654,19 +8654,23 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "idempotency_key": idempotency_key,
                     },
                 )
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": (
-                        "This execution attempt already has live order rows. Duplicate IB submission is blocked. "
-                        "Check LIVE orders and IBKR; use attempt_n+1 only after confirming the prior order state."
-                    ),
-                    "reason_codes": ["LIVE_IDEMPOTENT_SUBMIT_ALREADY_RECORDED"],
-                    "order_id": existing_order.get("ORDER_ID"),
-                    "order_status": st,
-                    "idempotency_key": idempotency_key,
-                },
-            )
+            if st in ("CANCELED", "CANCELLED", "REJECTED"):
+                # Prior attempt ended at broker or was reconciled locally; same attempt_n may submit again.
+                pass
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "This execution attempt already has live order rows. Duplicate IB submission is blocked. "
+                            "Check LIVE orders and IBKR; use attempt_n+1 only after confirming the prior order state."
+                        ),
+                        "reason_codes": ["LIVE_IDEMPOTENT_SUBMIT_ALREADY_RECORDED"],
+                        "order_id": existing_order.get("ORDER_ID"),
+                        "order_status": st,
+                        "idempotency_key": idempotency_key,
+                    },
+                )
 
         cur.execute(
             """

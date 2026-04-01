@@ -1,5 +1,6 @@
 -- 18_entry_intel_lifecycle_smoke.sql
--- Phase 1: EIS immutability (append role), proposal→snapshot, link, closeout chain checks.
+-- EIS immutability (append role), proposal→snapshot, link, closeout chain checks.
+-- Phase 2: partial-fill / closeout v1 policy documented in MIP/docs/validation/phase2_entry_intel_validation.md
 -- Run as MIP_ADMIN_ROLE except where noted. Review last statements for expected errors.
 
 use role MIP_ADMIN_ROLE;

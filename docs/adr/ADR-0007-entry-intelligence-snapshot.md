@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — Phase 1 backbone (immutable snapshot + linkage + closeout).
+Accepted — Phase 1 backbone (immutable snapshot + linkage + closeout). **Phase 2** adds real `WORLDS_SPEC` / `ALPHA_SPEC`; see [ADR-0007-phase2-eis-worlds-alpha.md](./ADR-0007-phase2-eis-worlds-alpha.md).
 
 ## Context
 
@@ -25,7 +25,7 @@ MIP previously used the word “worlds” for several different mechanisms (port
 ### 3. Historical Outcome Distribution (HOD)
 
 - **What:** Distribution built from **analog** historical outcomes (e.g. `RECOMMENDATION_OUTCOMES` / LIC analog matching — today’s `LicWorldsScenarios` / bootstrap analog packs).
-- **Role:** **Source data** for `WORLDS_SPEC` inside EIS (Phase 1 may stub; Phase 2+ fills).
+- **Role:** **Source data** for `WORLDS_SPEC` inside EIS (Phase 1 stub; **Phase 2** populated via `F_BUILD_ENTRY_INTEL_FOR_PROPOSAL`).
 - **Not interchangeable with:** PPW (portfolio/day) or RSM (session heuristic).
 
 ### 4. Runtime Scenario Mix (RSM)
@@ -48,10 +48,12 @@ MIP previously used the word “worlds” for several different mechanisms (port
 ## Consequences
 
 - All lifecycle audit questions resolve to: **which `SNAPSHOT_ID`** was bound at committee/execution/closeout.
-- Application roles that must not mutate history use **append-only** grants (see `411_entry_intel_grants.sql`).
+- Application roles that must not mutate history use **append-only** grants (see [`411_entry_intel_append_only_role.sql`](../../SQL/deploy/411_entry_intel_append_only_role.sql)).
 - Committee and APIs must pass **`entry_intel_snapshot_id`** explicitly in payloads and verdict envelopes.
 
 ## References
 
 - Implementation plan: `.cursor/plans/parallel_worlds_implementation_roadmap.plan.md`
 - DDL: `MIP/SQL/app/410_entry_intel_lifecycle.sql`
+- Phase 2 rules: `MIP/docs/adr/ADR-0007-phase2-eis-worlds-alpha.md`
+- Validation log: `MIP/docs/validation/phase2_entry_intel_validation.md`

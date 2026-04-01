@@ -1,8 +1,11 @@
-"""Phase 1 Entry Intelligence Snapshot (EIS) lifecycle hooks — Snowflake only."""
+"""Entry Intelligence Snapshot (EIS) lifecycle hooks — Snowflake only."""
 from __future__ import annotations
 
 import json
+import logging
 import uuid
+
+_log = logging.getLogger(__name__)
 
 
 def fetch_latest_snapshot_id_for_proposal(cur, proposal_id: int) -> str | None:
@@ -23,7 +26,15 @@ def fetch_latest_snapshot_id_for_proposal(cur, proposal_id: int) -> str | None:
 
 
 def ensure_entry_intel_for_proposal(cur, proposal_id: int) -> None:
-    cur.execute("call MIP.APP.SP_ENSURE_ENTRY_INTEL_FOR_PROPOSAL(%s)", (proposal_id,))
+    try:
+        cur.execute("call MIP.APP.SP_ENSURE_ENTRY_INTEL_FOR_PROPOSAL(%s)", (proposal_id,))
+    except Exception as exc:
+        _log.warning(
+            "EIS SP_ENSURE_ENTRY_INTEL_FOR_PROPOSAL failed proposal_id=%s: %s",
+            proposal_id,
+            exc,
+            exc_info=True,
+        )
 
 
 def insert_entry_intel_action_link(cur, proposal_id: int, entry_action_id: str) -> None:
@@ -60,6 +71,11 @@ def map_exit_type_code(raw: str | None) -> str:
 
 
 def maybe_write_trade_closeout_on_exit_filled(cur, exit_action_id: str) -> None:
+    """
+    v1 closeout policy: write TRADE_CLOSEOUT only when this EXIT live action's order is fully FILLED
+    (see update_live_order_status: QTY_FILLED set to full qty for FILLED). No closeout on PARTIAL_FILL.
+    One closeout row per ENTRY_ACTION_ID (unique constraint). Entry-side partial fills do not create closeouts.
+    """
     cur.execute(
         """
         select PORTFOLIO_ID, SYMBOL, ACTION_INTENT, EXIT_TYPE, UPDATED_AT

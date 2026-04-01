@@ -3,6 +3,7 @@ GET /live/metrics — lightweight live metrics for header and Suggestions.
 Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outcomes.
 """
 import json
+import logging
 import os
 import subprocess
 import time
@@ -29,6 +30,7 @@ from app.entry_intel_hooks import (
 )
 
 router = APIRouter(prefix="/live", tags=["live"])
+_log = logging.getLogger(__name__)
 
 
 class PmAcceptRequest(BaseModel):
@@ -1016,6 +1018,69 @@ def _parse_variant(v):
         except Exception:
             return {}
     return {}
+
+
+def _fetch_entry_intel_baseline(cur, snapshot_id: str | None) -> dict | None:
+    if not snapshot_id:
+        return None
+    try:
+        cur.execute(
+            """
+            select WORLDS_SPEC, ALPHA_SPEC
+            from MIP.LIVE.ENTRY_INTEL_SNAPSHOT
+            where SNAPSHOT_ID = %s
+            limit 1
+            """,
+            (snapshot_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "snapshot_id": snapshot_id,
+            "worlds_spec": _parse_variant(row[0]),
+            "alpha_spec": _parse_variant(row[1]),
+        }
+    except Exception:
+        return None
+
+
+def _alpha_committee_alignment_pair(alpha_action: str, committee_rec: str) -> tuple[str, str]:
+    a = (alpha_action or "UNKNOWN").upper()
+    c = (committee_rec or "UNKNOWN").upper()
+    if a == "ENTER" and c == "PROCEED":
+        return "ALIGNED", "alpha_ENTER_committee_PROCEED"
+    if a == "ENTER" and c == "PROCEED_REDUCED":
+        return "DIVERGENT", "alpha_ENTER_committee_REDUCED_SIZE"
+    if a == "ENTER" and c == "BLOCK":
+        return "DIVERGENT", "alpha_ENTER_committee_BLOCK"
+    if a == "REDUCE" and c == "PROCEED":
+        return "DIVERGENT", "alpha_REDUCE_committee_PROCEED"
+    if a == "REDUCE" and c == "PROCEED_REDUCED":
+        return "ALIGNED", "alpha_REDUCE_committee_PROCEED_REDUCED"
+    if a == "REDUCE" and c == "BLOCK":
+        return "ALIGNED", "alpha_REDUCE_committee_BLOCK"
+    if a == "SKIP" and c == "BLOCK":
+        return "ALIGNED", "alpha_SKIP_committee_BLOCK"
+    if a == "SKIP" and c in ("PROCEED", "PROCEED_REDUCED"):
+        return "DIVERGENT", "alpha_SKIP_committee_PROCEED"
+    return "UNKNOWN", f"alpha_{a}_committee_{c}"
+
+
+def _committee_verdict_alignment_fields(context: dict, verdict: dict) -> dict:
+    baseline = context.get("entry_intel_baseline") if isinstance(context, dict) else None
+    alpha = (baseline or {}).get("alpha_spec") if isinstance(baseline, dict) else {}
+    if not isinstance(alpha, dict):
+        alpha = {}
+    base_action = str(alpha.get("recommended_action") or "UNKNOWN").upper()
+    rec = str(verdict.get("recommendation") or "").upper()
+    align, notes = _alpha_committee_alignment_pair(base_action, rec)
+    return {
+        "alpha_baseline_action": base_action,
+        "committee_recommendation_summary": rec,
+        "alpha_committee_alignment": align,
+        "committee_vs_alpha_notes": notes,
+    }
 
 
 def _parse_list_variant(v):
@@ -3265,6 +3330,24 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
             f"- Market regime: {regime_label} (confidence: {regime_conf}). "
             f"In BEAR/VOLATILE_BEAR regimes, be more cautious on bullish entries; in BULL regimes, momentum trades get tailwind.\n"
         )
+    eib = context.get("entry_intel_baseline") if isinstance(context.get("entry_intel_baseline"), dict) else {}
+    alpha_b = eib.get("alpha_spec") if isinstance(eib.get("alpha_spec"), dict) else {}
+    worlds_b = eib.get("worlds_spec") if isinstance(eib.get("worlds_spec"), dict) else {}
+    dist = worlds_b.get("historical_distribution") if isinstance(worlds_b.get("historical_distribution"), dict) else {}
+    eis_line = ""
+    if alpha_b.get("alpha_schema_version"):
+        hod_n = dist.get("sample_size")
+        eis_line = (
+            "- Pre-trade baseline (EIS, immutable snapshot): "
+            f"recommended_action={alpha_b.get('recommended_action')}, "
+            f"recommended_size_band={alpha_b.get('recommended_size_band')}, "
+            f"expected_value_net={alpha_b.get('expected_value_net')}, "
+            f"confidence_band={alpha_b.get('confidence_band')}, "
+            f"downside_risk_band={alpha_b.get('downside_risk_band')}, "
+            f"HOD_sample_size={hod_n}.\n"
+            "- Full WORLDS_SPEC and ALPHA_SPEC are in context.entry_intel_baseline; use them as the auditable quantitative baseline.\n"
+            "- You may diverge from the baseline but should justify materially different size or proceed/block choices.\n"
+        )
     return (
         "You are one role in an institutional multi-agent trade committee.\n"
         "Return ONLY a JSON object with keys:\n"
@@ -3279,6 +3362,7 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         f"{strategy_line}"
         f"{conflict_line}"
         f"{regime_line}"
+        f"{eis_line}"
         "- Contribute to joint decision dimensions: enter/size/target/stop/hold/early-exit.\n"
         "- stop_loss_pct must be positive and risk-aware versus expected edge after fees.\n"
         "- Return ONE valid JSON object only, no preface/suffix.\n"
@@ -3954,6 +4038,12 @@ def _build_action_decision_context(cur, action: dict) -> dict:
             entry_intel_snapshot_id = fetch_latest_snapshot_id_for_proposal(cur, int(pid))
         except Exception:
             entry_intel_snapshot_id = None
+    entry_intel_baseline = None
+    if entry_intel_snapshot_id:
+        try:
+            entry_intel_baseline = _fetch_entry_intel_baseline(cur, entry_intel_snapshot_id)
+        except Exception:
+            entry_intel_baseline = None
     context = {
         "action_id": action.get("ACTION_ID"),
         "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -3980,6 +4070,7 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "latest_symbol_news_context": latest_news_snapshot,
         "parallel_worlds_evidence": pw_evidence,
         "entry_intel_snapshot_id": entry_intel_snapshot_id,
+        "entry_intel_baseline": entry_intel_baseline,
         "execution_risk_config": risk_cfg,
     }
     return context
@@ -7204,7 +7295,17 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 verdict["confidence"],
                 verdict["blocked"],
                 json.dumps(reason_codes),
-                json.dumps({"verdict": verdict, "outputs": outputs, "joint_decision": verdict.get("joint_decision"), "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id")}),
+                json.dumps(
+                    {
+                        **{
+                            "verdict": verdict,
+                            "outputs": outputs,
+                            "joint_decision": verdict.get("joint_decision"),
+                            "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id"),
+                        },
+                        **_committee_verdict_alignment_fields(context, verdict),
+                    }
+                ),
             ),
         )
         cur.execute(
@@ -7493,7 +7594,16 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                 verdict["confidence"],
                 verdict["blocked"],
                 json.dumps(reason_codes),
-                json.dumps({"verdict": verdict, "joint_decision": verdict.get("joint_decision"), "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id")}),
+                json.dumps(
+                    {
+                        **{
+                            "verdict": verdict,
+                            "joint_decision": verdict.get("joint_decision"),
+                            "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id"),
+                        },
+                        **_committee_verdict_alignment_fields(context, verdict),
+                    }
+                ),
             ),
         )
         cur.execute(
@@ -9603,6 +9713,7 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
             )
 
         if action_id and target_status == "FILLED":
+            # v1: closeout only on full FILLED (not PARTIAL_FILL); see maybe_write_trade_closeout_on_exit_filled
             try:
                 maybe_write_trade_closeout_on_exit_filled(cur, str(action_id))
             except Exception:
@@ -10471,8 +10582,14 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 try:
                     ensure_entry_intel_for_proposal(cur, int(proposal_id))
                     insert_entry_intel_action_link(cur, int(proposal_id), action_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning(
+                        "EIS ensure/link failed on research import proposal_id=%s action_id=%s: %s",
+                        proposal_id,
+                        action_id,
+                        exc,
+                        exc_info=True,
+                    )
             _append_learning_ledger_event(
                 cur,
                 event_name="LIVE_RESEARCH_IMPORT",
@@ -10666,7 +10783,7 @@ def list_live_proposal_candidates(
     finally:
         conn.close()
 
-# --- Entry Intelligence Snapshot (Phase 1) read-only API ---
+# --- Entry Intelligence Snapshot read-only API ---
 
 
 @router.get("/entry-intel/snapshot/by-proposal/{proposal_id}")
@@ -10706,6 +10823,69 @@ def get_entry_intel_snapshot_by_action(action_id: str):
         )
         rows = fetch_all(cur)
         return {"ok": True, "action_id": action_id, "snapshot": serialize_rows(rows)[0] if rows else None}
+    finally:
+        conn.close()
+
+
+@router.get("/entry-intel/summary/by-action/{action_id}")
+def get_entry_intel_summary_by_action(action_id: str):
+    """Compact EIS projection for debugging / LIC page-open bootstrap (single fetch, no polling)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select
+              e.SNAPSHOT_ID,
+              e.PROPOSAL_ID,
+              e.WORLDS_SPEC,
+              e.ALPHA_SPEC,
+              e.SOURCE_VERSION
+            from MIP.LIVE.ENTRY_INTEL_ACTION_LINK l
+            join MIP.LIVE.ENTRY_INTEL_SNAPSHOT e on e.SNAPSHOT_ID = l.SNAPSHOT_ID
+            where l.ENTRY_ACTION_ID = %s
+            limit 1
+            """,
+            (action_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return {"ok": True, "action_id": action_id, "summary": None}
+        r = rows[0]
+        ws = _parse_variant(r.get("WORLDS_SPEC"))
+        al = _parse_variant(r.get("ALPHA_SPEC"))
+        dist = ws.get("historical_distribution") if isinstance(ws.get("historical_distribution"), dict) else {}
+        sup = ws.get("supporting") if isinstance(ws.get("supporting"), dict) else {}
+        worlds_summary = {
+            "schema_version": ws.get("schema_version"),
+            "symbol": ws.get("symbol"),
+            "proposal_id": ws.get("proposal_id"),
+            "sample_size": dist.get("sample_size"),
+            "horizon_bars": sup.get("horizon_bars"),
+            "insufficient_sample": sup.get("insufficient_sample"),
+        }
+        alpha_summary = {
+            "alpha_schema_version": al.get("alpha_schema_version"),
+            "expected_value_gross": al.get("expected_value_gross"),
+            "expected_value_net": al.get("expected_value_net"),
+            "estimated_cost_floor": al.get("estimated_cost_floor"),
+            "confidence_band": al.get("confidence_band"),
+            "downside_risk_band": al.get("downside_risk_band"),
+            "recommended_action": al.get("recommended_action"),
+            "recommended_size_band": al.get("recommended_size_band"),
+            "alpha_summary_text": al.get("alpha_summary_text"),
+        }
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "summary": {
+                "snapshot_id": r.get("SNAPSHOT_ID"),
+                "proposal_id": r.get("PROPOSAL_ID"),
+                "source_version": r.get("SOURCE_VERSION"),
+                "worlds_summary": worlds_summary,
+                "alpha_summary": alpha_summary,
+            },
+        }
     finally:
         conn.close()
 

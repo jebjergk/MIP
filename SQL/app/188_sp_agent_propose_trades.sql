@@ -57,6 +57,7 @@ declare
     v_daily_bar_max_age_hours number := 30;
     v_daily_bar_age_hours number := null;
     v_daily_data_stale boolean := false;
+    v_eis_err string := null;
 begin
     select
         p.PROFILE_ID,
@@ -1108,11 +1109,23 @@ begin
             'PROPOSED'
         );
 
-    -- Phase 1: immutable Entry Intelligence Snapshot (EIS) per proposal (idempotent).
+    -- Entry Intelligence Snapshot (EIS) per proposal (idempotent). Failures are logged, not fatal.
     begin
         call MIP.APP.SP_ENSURE_ENTRY_INTEL_FOR_RUN(:P_RUN_ID, :P_PORTFOLIO_ID);
     exception
-        when other then null;
+        when other then
+            v_eis_err := sqlerrm;
+            insert into MIP.APP.EIS_ENSURE_FAILURE_LOG (
+                LOG_ID, RUN_ID, PORTFOLIO_ID, PROPOSAL_ID, ERROR_MESSAGE, CREATED_TS
+            )
+            values (
+                uuid_string(),
+                :P_RUN_ID,
+                :P_PORTFOLIO_ID,
+                null,
+                :v_eis_err,
+                current_timestamp()
+            );
     end;
 
     -- Count proposals inserted for this run (SQLROWCOUNT not reliable after MERGE)

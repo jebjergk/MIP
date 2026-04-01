@@ -1,5 +1,9 @@
 -- 411_entry_intel_append_only_role.sql
 -- Role with INSERT + SELECT only on EIS lifecycle tables (UPDATE must fail for this role).
+--
+-- Requires a role that can CREATE ROLE on the account (typically ACCOUNTADMIN).
+-- If this fails with "Insufficient privileges to operate on account", run as ACCOUNTADMIN
+-- and record the immutability smoke result in MIP/docs/validation/phase2_entry_intel_validation.md.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;

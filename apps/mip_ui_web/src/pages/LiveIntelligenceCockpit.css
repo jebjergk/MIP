@@ -1560,6 +1560,14 @@
   letter-spacing: -0.02em;
 }
 
+.lic-worlds-card-prob--soft {
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+  font-variant-numeric: normal;
+}
+
 .lic-worlds-card-sub {
   font-size: 0.58rem;
   color: #64748b;
@@ -1724,6 +1732,27 @@
 
 .lic-worlds-path--empty {
   opacity: 0.45;
+}
+
+.lic-worlds-path--weak-n {
+  opacity: 0.58;
+}
+
+.lic-worlds-card--empty-world {
+  border-style: dashed;
+  border-color: rgba(148, 163, 184, 0.4) !important;
+}
+
+.lic-worlds-card-empty-msg {
+  margin: 0.25rem 0 0.45rem;
+  font-size: 0.64rem;
+  line-height: 1.4;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.lic-worlds-card-n--empty-footer {
+  margin-top: auto;
 }
 
 .lic-worlds-card--downside {

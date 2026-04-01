@@ -1,10 +1,10 @@
 import {
   buildThreeWorldScenariosFromAnalog,
   formatScenarioReturnDisplay,
+  worldsBucketProbabilityPresentation,
   worldsConfidenceTier,
   worldsDominantHeaderLine,
   worldsMostLikelyKey,
-  worldsProbabilityStrengthLabel,
   worldsRecommendationMismatch,
   worldsScenarioGuidance,
   worldsScenarioInterpretation,
@@ -13,18 +13,14 @@ import {
 
 const PATH_EXAG = 1.45
 
-function ScenarioPath({ scenarioKey, minReturn, maxReturn, avgReturn, hasSamples }) {
+function ScenarioPath({ scenarioKey, minReturn, maxReturn, avgReturn, sampleSize }) {
   const x0 = 8
   const x1 = 92
   const yMid = 22
   const amp = 18 * PATH_EXAG
 
-  if (!hasSamples) {
-    return (
-      <svg className="lic-worlds-path lic-worlds-path--empty" viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden>
-        <line x1={x0} y1={yMid} x2={x1} y2={yMid} stroke="currentColor" strokeWidth={0.5} strokeDasharray="4 3" opacity={0.35} />
-      </svg>
-    )
+  if (!sampleSize) {
+    return null
   }
 
   let y1 = yMid
@@ -107,7 +103,7 @@ export default function LicWorldsScenarios({ analogSummary, finalRecommendation 
 
   const { scenarios, totalN } = worlds
   const conf = worldsConfidenceTier(totalN)
-  const dominantLine = worldsDominantHeaderLine(scenarios)
+  const dominantLine = worldsDominantHeaderLine(scenarios, totalN)
   const likelyKey = worldsMostLikelyKey(scenarios)
 
   return (
@@ -133,6 +129,7 @@ export default function LicWorldsScenarios({ analogSummary, finalRecommendation 
       <div className="lic-worlds-cards">
         {scenarios.map((s) => {
           const hasSamples = s.sampleSize > 0
+          const probPres = worldsBucketProbabilityPresentation(s, totalN)
           const ret = formatScenarioReturnDisplay(s.avgReturn)
           const retCls =
             ret.tone === "pos"
@@ -140,14 +137,16 @@ export default function LicWorldsScenarios({ analogSummary, finalRecommendation 
               : ret.tone === "neg"
                 ? "lic-worlds-card-return-val--neg"
                 : "lic-worlds-card-return-val--neutral"
-          const isLikely = likelyKey === s.key && s.probability > 0
+          const isLikely = hasSamples && likelyKey === s.key && s.probability > 0
           const lowConf = conf.key === "very_low" || conf.key === "low"
+          const emptyWorld = s.sampleSize === 0
+          const cardOpacity = emptyWorld ? Math.min(conf.cardOpacity, 0.55) : conf.cardOpacity
 
           return (
             <div
               key={s.key}
-              className={`lic-worlds-card lic-worlds-card--${s.key}${isLikely ? " lic-worlds-card--most-likely" : ""}${lowConf ? " lic-worlds-card--low-conf" : ""}`}
-              style={{ opacity: conf.cardOpacity }}
+              className={`lic-worlds-card lic-worlds-card--${s.key}${isLikely ? " lic-worlds-card--most-likely" : ""}${lowConf ? " lic-worlds-card--low-conf" : ""}${emptyWorld ? " lic-worlds-card--empty-world" : ""}`}
+              style={{ opacity: cardOpacity }}
             >
               <div className="lic-worlds-card-confidence" aria-label={`Confidence ${conf.label}`}>
                 <span className="lic-worlds-card-confidence-emoji" aria-hidden>
@@ -160,22 +159,41 @@ export default function LicWorldsScenarios({ analogSummary, finalRecommendation 
                 {s.label}
                 {isLikely ? <span className="lic-worlds-card-most-likely-badge"> Most likely</span> : null}
               </div>
-              <div className="lic-worlds-card-prob">{(s.probability * 100).toFixed(0)}%</div>
-              <div className="lic-worlds-card-prob-label">{worldsProbabilityStrengthLabel(s.probability)}</div>
-              <div className="lic-worlds-card-sub">of matched sample</div>
-              <div className="lic-worlds-card-return">
-                Avg outcome <span className={`lic-worlds-card-return-val ${retCls}`}>{ret.text}</span>
-              </div>
-              <ScenarioPath
-                scenarioKey={s.key}
-                minReturn={s.minReturn}
-                maxReturn={s.maxReturn}
-                avgReturn={s.avgReturn}
-                hasSamples={hasSamples}
-              />
-              <p className="lic-worlds-card-interpret">{worldsScenarioInterpretation(s.key)}</p>
-              <div className="lic-worlds-card-n">n = {s.sampleSize} in this bucket</div>
-              <p className="lic-worlds-card-guidance">{worldsScenarioGuidance(s.key)}</p>
+              {emptyWorld ? (
+                <>
+                  <p className="lic-worlds-card-empty-msg">No historical examples for this scenario</p>
+                  <div className="lic-worlds-card-n lic-worlds-card-n--empty-footer">n = 0 in this bucket</div>
+                </>
+              ) : (
+                <>
+                  {probPres.showProbBlock ? (
+                    <>
+                      <div
+                        className={`lic-worlds-card-prob${/^\d{1,3}%$/.test(String(probPres.mainLine).trim()) ? "" : " lic-worlds-card-prob--soft"}`}
+                      >
+                        {probPres.mainLine}
+                      </div>
+                      {probPres.strengthLabel ? (
+                        <div className="lic-worlds-card-prob-label">{probPres.strengthLabel}</div>
+                      ) : null}
+                      {probPres.subLine ? <div className="lic-worlds-card-sub">{probPres.subLine}</div> : null}
+                    </>
+                  ) : null}
+                  <div className="lic-worlds-card-return">
+                    Avg outcome <span className={`lic-worlds-card-return-val ${retCls}`}>{ret.text}</span>
+                  </div>
+                  <ScenarioPath
+                    scenarioKey={s.key}
+                    minReturn={s.minReturn}
+                    maxReturn={s.maxReturn}
+                    avgReturn={s.avgReturn}
+                    sampleSize={s.sampleSize}
+                  />
+                  <p className="lic-worlds-card-interpret">{worldsScenarioInterpretation(s.key)}</p>
+                  <div className="lic-worlds-card-n">n = {s.sampleSize} in this bucket</div>
+                  <p className="lic-worlds-card-guidance">{worldsScenarioGuidance(s.key)}</p>
+                </>
+              )}
             </div>
           )
         })}

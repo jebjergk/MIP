@@ -102,6 +102,9 @@ export function worldsConfidenceTier(totalN) {
   return { key: 'strong', emoji: String.fromCodePoint(0x1f7e2), label: 'STRONG CONFIDENCE', cardOpacity: 1 }
 }
 
+/** Minimum total n before showing literal 0% / 100% as percentages */
+export const WORLDS_HARD_PERCENT_MIN_N = 40
+
 export function worldsProbabilityStrengthLabel(probability) {
   const p = probability * 100
   if (p > 60) return 'Strong likelihood'
@@ -110,9 +113,47 @@ export function worldsProbabilityStrengthLabel(probability) {
   return 'Low likelihood'
 }
 
+/**
+ * How to show bucket share: avoid false certainty on small samples.
+ */
+export function worldsBucketProbabilityPresentation(scenario, totalN) {
+  if (scenario.sampleSize === 0) {
+    return {
+      showProbBlock: false,
+      strengthLabel: null,
+    }
+  }
+  const p = scenario.probability
+  const hard = totalN >= WORLDS_HARD_PERCENT_MIN_N
+  if (!hard) {
+    if (p >= 1 - 1e-12) {
+      return {
+        showProbBlock: true,
+        mainLine: 'All observed cases in this sample',
+        subLine: 'Not a population rate — small match set',
+        strengthLabel: null,
+      }
+    }
+    if (p <= 1e-12) {
+      return {
+        showProbBlock: true,
+        mainLine: 'None in this sample',
+        subLine: 'No episodes fell in this bucket',
+        strengthLabel: null,
+      }
+    }
+  }
+  return {
+    showProbBlock: true,
+    mainLine: `${(p * 100).toFixed(0)}%`,
+    subLine: 'of matched sample',
+    strengthLabel: worldsProbabilityStrengthLabel(p),
+  }
+}
+
 export function formatScenarioReturnDisplay(decimalReturn) {
   if (decimalReturn == null || !Number.isFinite(decimalReturn)) {
-    return { text: '—', tone: 'neutral' }
+    return { text: 'No data', tone: 'neutral' }
   }
   const pct = decimalReturn * 100
   const a = Math.abs(pct)
@@ -129,11 +170,19 @@ export function formatScenarioReturnDisplay(decimalReturn) {
   return { text, tone }
 }
 
-export function worldsDominantHeaderLine(scenarios) {
+export function worldsDominantHeaderLine(scenarios, totalN) {
   if (!scenarios?.length) return 'No dominant outcome — mixed setup'
   const best = scenarios.reduce((a, s) => (s.probability > a.probability ? s : a), scenarios[0])
   if (best.probability < 0.5 || best.sampleSize === 0) {
     return 'No dominant outcome — mixed setup'
+  }
+  const limited = totalN < WORLDS_HARD_PERCENT_MIN_N
+  const fullyConcentrated = best.probability >= 1 - 1e-12
+  if (limited && fullyConcentrated) {
+    return `Outcomes concentrated in ${best.label} (low confidence — not a forecast)`
+  }
+  if (limited) {
+    return `Dominant outcome: ${best.label} (limited sample)`
   }
   return `Clear dominant outcome: ${best.label}`
 }

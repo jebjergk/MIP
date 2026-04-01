@@ -1648,3 +1648,85 @@
   margin-top: auto;
   line-height: 1.25;
 }
+
+.lic-worlds-dominant {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  line-height: 1.3;
+}
+
+.lic-worlds-card-confidence {
+  font-size: 0.55rem;
+  line-height: 1.25;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  color: #94a3b8;
+}
+
+.lic-worlds-card-confidence-emoji {
+  font-size: 0.65rem;
+  vertical-align: -0.05em;
+}
+
+.lic-worlds-card-confidence-label {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+}
+
+.lic-worlds-card-confidence-n {
+  font-weight: 500;
+  color: #64748b;
+}
+
+.lic-worlds-card-prob-label {
+  font-size: 0.58rem;
+  color: #64748b;
+  margin: 0.1rem 0 0.15rem;
+  font-weight: 600;
+}
+
+.lic-worlds-card-return-val--neutral {
+  color: #94a3b8;
+}
+
+.lic-worlds-card--most-likely {
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.55), 0 0 12px rgba(59, 130, 246, 0.2);
+}
+
+.lic-worlds-card-most-likely-badge {
+  display: inline-block;
+  margin-left: 0.25rem;
+  font-size: 0.52rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #93c5fd;
+  vertical-align: middle;
+}
+
+.lic-worlds-card--low-conf {
+  border-style: dashed;
+  border-color: rgba(234, 179, 8, 0.45);
+}
+
+.lic-worlds-card-guidance {
+  margin: 0.35rem 0 0;
+  font-size: 0.6rem;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.lic-worlds-path--empty {
+  opacity: 0.45;
+}
+
+.lic-worlds-card--downside {
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.15), 0 2px 8px rgba(127, 29, 29, 0.12);
+}

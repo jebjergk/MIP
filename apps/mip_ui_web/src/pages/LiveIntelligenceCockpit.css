@@ -1469,6 +1469,15 @@
   line-height: 1.35;
 }
 
+.lic-worlds-lead-code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.62em;
+  padding: 0.05em 0.25em;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+}
+
 .lic-worlds-banner {
   font-size: 0.65rem;
   padding: 0.35rem 0.45rem;
@@ -1505,25 +1514,30 @@
   background: #0f172a;
   border: 1px solid #334155;
   border-radius: 8px;
-  padding: 0.45rem 0.5rem 0.4rem;
+  padding: 0.5rem 0.55rem 0.45rem;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  gap: 0;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.6);
 }
 
 .lic-worlds-card--upside {
   color: #4ade80;
-  border-color: rgba(74, 222, 128, 0.35);
+  border-color: rgba(74, 222, 128, 0.5);
+  background: linear-gradient(165deg, rgba(74, 222, 128, 0.08) 0%, #0f172a 55%);
 }
 
 .lic-worlds-card--base {
   color: #94a3b8;
-  border-color: #475569;
+  border-color: #64748b;
+  background: linear-gradient(165deg, rgba(148, 163, 184, 0.06) 0%, #0f172a 55%);
 }
 
 .lic-worlds-card--downside {
   color: #f87171;
-  border-color: rgba(248, 113, 113, 0.35);
+  border-color: rgba(248, 113, 113, 0.5);
+  background: linear-gradient(165deg, rgba(248, 113, 113, 0.08) 0%, #0f172a 55%);
 }
 
 .lic-worlds-card-title {
@@ -1558,20 +1572,79 @@
   margin-bottom: 0.25rem;
 }
 
-.lic-worlds-card-return span {
+.lic-worlds-card-return-val {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: inherit;
+}
+
+.lic-worlds-card--upside .lic-worlds-card-return-val--pos,
+.lic-worlds-card--base .lic-worlds-card-return-val--pos,
+.lic-worlds-card--downside .lic-worlds-card-return-val--pos {
+  color: #86efac;
+}
+
+.lic-worlds-card--upside .lic-worlds-card-return-val--neg,
+.lic-worlds-card--base .lic-worlds-card-return-val--neg,
+.lic-worlds-card--downside .lic-worlds-card-return-val--neg {
+  color: #fca5a5;
+}
+
+.lic-worlds-card-return-val:not(.lic-worlds-card-return-val--pos):not(.lic-worlds-card-return-val--neg) {
+  color: #e2e8f0;
 }
 
 .lic-worlds-path {
   width: 100%;
-  height: 44px;
-  margin-bottom: 0.25rem;
+  height: 48px;
+  margin: 0.1rem 0 0.3rem;
+  flex-shrink: 0;
+}
+
+.lic-worlds-path--upside {
+  opacity: 1;
+  filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.2));
+}
+
+.lic-worlds-path--downside {
+  opacity: 1;
+  filter: drop-shadow(0 0 4px rgba(248, 113, 113, 0.2));
+}
+
+.lic-worlds-path--base {
+  opacity: 0.95;
+}
+
+.lic-worlds-card-interpret {
+  margin: 0 0 0.35rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.lic-worlds-card-samplewarn {
+  font-size: 0.58rem;
+  line-height: 1.3;
+  padding: 0.28rem 0.35rem;
+  border-radius: 5px;
+  margin-bottom: 0.35rem;
+}
+
+.lic-worlds-card-samplewarn--strong {
+  background: rgba(234, 179, 8, 0.14);
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  color: #fde68a;
+}
+
+.lic-worlds-card-samplewarn--moderate {
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #cbd5e1;
 }
 
 .lic-worlds-card-n {
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   color: #64748b;
   margin-top: auto;
+  line-height: 1.25;
 }

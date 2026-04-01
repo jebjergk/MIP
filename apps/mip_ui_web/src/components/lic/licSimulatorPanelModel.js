@@ -221,7 +221,106 @@ export function primaryRationaleBullets(holdRow, recRow, tierKey) {
   if (tierKey === 'very_low' || tierKey === 'low') {
     bullets.push('Scale size cautiously — Worlds confidence is thin.')
   }
-  return bullets.slice(0, 4)
+  return bullets.slice(0, 3)
+}
+
+/** Inline confidence for hero (no "Confidence:" prefix). */
+export function worldsConfidenceInline(worldsStrip) {
+  const line = worldsStrip?.confidenceLine || ''
+  const trimmed = line.replace(/^\s*Confidence:\s*/i, '').trim()
+  return trimmed || '—'
+}
+
+/**
+ * Single-line trade-off summary vs HOLD (for decision hero).
+ */
+export function tradeoffOneLineVsHold(holdRow, recRow) {
+  if (!holdRow || !recRow || recRow.action === 'hold') {
+    return 'vs HOLD: baseline — compare rows below for trims and exit trade-offs.'
+  }
+  const chunks = []
+  const dImp = ppImprovement(holdRow.expected_downside, recRow.expected_downside, true)
+  const gImp = ppImprovement(holdRow.giveback_risk, recRow.giveback_risk, true)
+  const uImp = ppImprovement(holdRow.expected_upside, recRow.expected_upside, false)
+  const recUp = Number(recRow.expected_upside)
+
+  if (dImp != null && dImp > 0.05) chunks.push(`↓ downside (${formatSimPct(holdRow.expected_downside)}→${formatSimPct(recRow.expected_downside)})`)
+  else if (dImp != null && dImp < -0.05) chunks.push(`↑ downside vs HOLD`)
+
+  if (gImp != null && gImp > 0.05) chunks.push(`↓ giveback (${formatSimPct(holdRow.giveback_risk)}→${formatSimPct(recRow.giveback_risk)})`)
+  else if (gImp != null && gImp < -0.05) chunks.push(`↑ giveback vs HOLD`)
+
+  if (uImp != null && uImp > 0.05) chunks.push(`↑ upside (${formatSimPct(recRow.expected_upside)})`)
+  else if (uImp != null && uImp < -0.05) chunks.push(`↓ upside (${formatSimPct(recRow.expected_upside)})`)
+  else if (Number.isFinite(recUp) && recUp >= 0.06) chunks.push(`↑ upside retained (${formatSimPct(recRow.expected_upside)})`)
+
+  if (!chunks.length) return 'vs HOLD: mixed deltas — see strip below.'
+  return `vs HOLD: ${chunks.join(' · ')}.`
+}
+
+/**
+ * Three fixed slots for compact impact strip (Downside / Giveback / Upside).
+ */
+export function impactStripVsHold(holdRow, recRow) {
+  const base = (key, label, hVal, rVal, lowerBetter) => {
+    if (!holdRow || !recRow || recRow.action === 'hold') {
+      return { key, label, arrow: '—', value: 'baseline', tone: 'neutral' }
+    }
+    const h = Number(hVal)
+    const r = Number(rVal)
+    if (!Number.isFinite(h) || !Number.isFinite(r)) {
+      return { key, label, arrow: '—', value: '—', tone: 'neutral' }
+    }
+    const imp = ppImprovement(hVal, rVal, lowerBetter)
+    let arrow = '→'
+    let tone = 'neutral'
+    if (lowerBetter) {
+      if (imp > 0.05) {
+        arrow = '↓'
+        tone = 'good'
+      } else if (imp < -0.05) {
+        arrow = '↑'
+        tone = 'bad'
+      }
+    } else {
+      if (imp > 0.05) {
+        arrow = '↑'
+        tone = 'good'
+      } else if (imp < -0.05) {
+        arrow = '↓'
+        tone = 'bad'
+      }
+    }
+    return {
+      key,
+      label,
+      arrow,
+      value: `${formatSimPct(hVal)}→${formatSimPct(rVal)}`,
+      tone,
+    }
+  }
+
+  return [
+    base('down', 'Downside', holdRow.expected_downside, recRow.expected_downside, true),
+    base('give', 'Giveback', holdRow.giveback_risk, recRow.giveback_risk, true),
+    base('up', 'Upside', holdRow.expected_upside, recRow.expected_upside, false),
+  ]
+}
+
+/** Single-line regret from existing API copy (no new calculations). */
+export function regretShortPhrase(row) {
+  if (!row) return '—'
+  const tilt = String(row.regret_tilt || '').trim()
+  if (tilt) return tilt
+  return '—'
+}
+
+/** Second-ranked action by net_score (for table highlight). */
+export function secondBestActionKey(rows) {
+  const list = Array.isArray(rows) ? [...rows] : []
+  if (list.length < 2) return null
+  const sorted = [...list].sort((a, b) => Number(b.net_score) - Number(a.net_score))
+  return sorted[1]?.action ?? null
 }
 
 export function netScoreSubtitle(recRow, holdRow) {

@@ -2,15 +2,17 @@ import {
   buildSimulatorWorldsStrip,
   findSimRow,
   formatSimPct,
+  impactStripVsHold,
   netScoreSubtitle,
-  partialActionGuidance,
   positionChangeCopy,
   primaryRationaleBullets,
   recommendedActionHardLabel,
-  regretHumanNarrative,
+  regretShortPhrase,
+  secondBestActionKey,
   simNumTone,
   sortRowsByNetBenefitVsHold,
-  tradeoffVsHoldLines,
+  tradeoffOneLineVsHold,
+  worldsConfidenceInline,
 } from './licSimulatorPanelModel'
 
 function safeText(v, fallback = '\u2014') {
@@ -41,7 +43,7 @@ function resolveRecommendedRow(rows, bestKey) {
 }
 
 /**
- * Simulator drill panel: decision communication + Worlds context (interpretation only).
+ * Simulator drill panel — compressed decision hierarchy (presentation only).
  */
 export default function LicSimulatorPanel({ activeIntel, workspacePres }) {
   const sim = activeIntel?.action_simulation || {}
@@ -55,151 +57,97 @@ export default function LicSimulatorPanel({ activeIntel, workspacePres }) {
 
   const worldsStrip = buildSimulatorWorldsStrip(activeIntel?.analog_summary)
   const tierKey = worldsStrip.tierKey
-  const tradeoffLines = tradeoffVsHoldLines(holdRow, recRow)
   const rationaleBullets = primaryRationaleBullets(holdRow, recRow, tierKey)
   const netSub = netScoreSubtitle(recRow, holdRow)
   const pos = positionChangeCopy(recRow?.action)
-  const regretStory = regretHumanNarrative(recRow, recRow?.action)
-  const softGuidance = partialActionGuidance(tierKey)
+  const tradeLine = tradeoffOneLineVsHold(holdRow, recRow)
+  const impactSlots = impactStripVsHold(holdRow, recRow)
+  const runnerKey = secondBestActionKey(rawRows)
   const displayRows = sortRowsByNetBenefitVsHold(rawRows, holdRow)
+  const confInline = worldsConfidenceInline(worldsStrip)
+
+  const worldsSub =
+    worldsStrip.upsidePct != null && worldsStrip.downsidePct != null
+      ? `${worldsStrip.tag} · ↑${worldsStrip.upsidePct}% / ↓${worldsStrip.downsidePct}%`
+      : `${worldsStrip.tag} · bucket rates need more analogs`
 
   if (!rawRows.length) {
     return <p className="lic-drill-muted">No simulator rows loaded for this symbol.</p>
   }
 
   return (
-    <>
-      <div className="lic-sim-worlds-strip" aria-label="Worlds context for simulator">
-        <div className="lic-sim-worlds-strip-tag">{worldsStrip.tag}</div>
-        <div className="lic-sim-worlds-strip-metrics">
-          {worldsStrip.upsidePct != null && worldsStrip.downsidePct != null ? (
-            <>
-              Upside: {worldsStrip.upsidePct}% <span className="lic-sim-worlds-sep">·</span> Downside:{' '}
-              {worldsStrip.downsidePct}%
-            </>
-          ) : (
-            <span className="lic-sim-worlds-muted">Bucket rates unavailable on thin analog sample</span>
-          )}
-        </div>
-        <div className="lic-sim-worlds-strip-conf">{worldsStrip.confidenceLine}</div>
-        <div className="lic-sim-worlds-strip-arrow">
-          → {worldsStrip.interpret}
-        </div>
-      </div>
-
-      <p className="lic-sim-tile-ref">
-        Official tile: <strong>{safeText(pres?.primary_action)}</strong>
-        <span
-          className="lic-sim-tile-ref-hint"
-          title="Risk ladder posture vs exploratory net-score ranking in the table below."
-        >
-          {' '}
-          · simulator compares five actions on modeled upside, downside, and giveback
-        </span>
-      </p>
-
-      {misaligned && pres?.fallback_action ? (
-        <div className="lic-sim-misalign" role="status">
-          <div className="lic-sim-misalign-title">Tile vs simulator</div>
-          <p className="lic-sim-misalign-copy">
-            Net-score lens ranks <strong>{safeText(recRow?.label || best.label)}</strong> ahead of the tile-preferred{' '}
-            <strong>{safeText(pres.fallback_action)}</strong>. Primary stance stays{' '}
-            <strong>{safeText(pres.primary_action)}</strong> unless you explicitly prioritize this defensive ranking.
-            {sim.misalignment_note ? <> {safeText(sim.misalignment_note)}</> : null}
-          </p>
-          {pres?.primary_reason ? (
-            <p className="lic-sim-misalign-rationale">
-              Tile rationale:{' '}
-              {(() => {
-                const pr = safeText(pres.primary_reason)
-                return pr.length > 180 ? `${pr.slice(0, 180)}…` : pr
-              })()}
-            </p>
-          ) : null}
-        </div>
-      ) : misaligned ? (
-        <div className="lic-sim-misalign" role="status">
-          <div className="lic-sim-misalign-title">Tile vs simulator</div>
-          <p className="lic-sim-misalign-copy">
-            Simulator net-score winner differs from the official tile stance. {safeText(sim.misalignment_note)}
-          </p>
-        </div>
-      ) : (
-        <p className="lic-sim-frame lic-sim-frame--sub">
-          Net-score leader matches the primary stance — use the table to compare trims and tightening versus full exit.
-        </p>
-      )}
-
-      <div className={`lic-sim-primary-block ${misaligned ? 'lic-sim-primary-block--misalign' : ''}`}>
-        <div className="lic-sim-primary-kicker">Primary decision (simulator)</div>
-        <div className="lic-sim-primary-action-row">
-          <span className="lic-sim-primary-label">Recommended action:</span>{' '}
-          <span className="lic-sim-primary-action">
-            {recommendedActionHardLabel(recRow?.label || best.label)}
+    <div className="lic-sim-stack">
+      <div
+        className={`lic-sim-decision-hero ${misaligned ? 'lic-sim-decision-hero--warn' : ''}`}
+        aria-label="Simulator recommendation"
+      >
+        <div className="lic-sim-hero-title">
+          <span className="lic-sim-hero-action">{recommendedActionHardLabel(recRow?.label || best.label)}</span>
+          <span className="lic-sim-hero-conf" title={worldsStrip.confidenceLine}>
+            · {confInline}
           </span>
         </div>
-        <div className="lic-sim-primary-confidence">{worldsStrip.confidenceLine}</div>
-        {softGuidance ? <p className="lic-sim-primary-soft">{softGuidance}</p> : null}
-        <div className="lic-sim-primary-rationale">
-          <span className="lic-sim-primary-rationale-k">Rationale</span>
-          <ul>
-            {rationaleBullets.map((b, i) => (
-              <li key={`rat-${i}`}>{b}</li>
-            ))}
-          </ul>
+        <div className="lic-sim-hero-sub">
+          {worldsSub}
+          {' · '}
+          Tile {safeText(pres?.primary_action)}
+          {tierKey === 'very_low' || tierKey === 'low' ? ' · thin Worlds — size conservatively' : ''}
         </div>
-        <p className="lic-sim-net-line" title={netSub.tooltip}>
-          {netSub.title}
+        {misaligned ? (
+          <div className="lic-sim-hero-clash" role="status">
+            Simulator pick differs from official tile ({safeText(pres?.primary_action)}).
+          </div>
+        ) : null}
+        <ul className="lic-sim-hero-bullets">
+          {rationaleBullets.map((b, i) => (
+            <li key={`b-${i}`}>{b}</li>
+          ))}
+        </ul>
+        <p className="lic-sim-hero-trade" title={netSub.tooltip}>
+          {tradeLine}
         </p>
       </div>
 
-      {recRow && recRow.action !== 'hold' ? (
-        <div className="lic-sim-tradeoff-block">
-          <div className="lic-sim-tradeoff-h">Impact vs HOLD</div>
-          <ul className="lic-sim-tradeoff-list">
-            {tradeoffLines.map((line) => (
-              <li
-                key={line.key}
-                className={line.good ? 'lic-sim-tradeoff-line--good' : 'lic-sim-tradeoff-line--warn'}
-              >
-                {line.text}
-              </li>
-            ))}
-          </ul>
-          {tradeoffLines.length === 0 ? (
-            <p className="lic-sim-tradeoff-empty">No material deltas vs HOLD on these metrics.</p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="lic-sim-position-block">
-        <div className="lic-sim-position-h">Position change (notional)</div>
-        <p className="lic-sim-position-lines">
-          Current: {pos.currentPct}% → Target: {pos.targetPct}%<br />
-          <span className="lic-sim-position-detail">{pos.detail}</span>
-        </p>
+      <div className="lic-sim-impact-strip" aria-label="Impact versus HOLD">
+        {impactSlots.map((slot) => (
+          <div
+            key={slot.key}
+            className={`lic-sim-impact-cell lic-sim-impact-cell--${slot.tone}`}
+          >
+            <span className="lic-sim-impact-arrow">{slot.arrow}</span>
+            <span className="lic-sim-impact-name">{slot.label}</span>
+            <span className="lic-sim-impact-val">{slot.value}</span>
+          </div>
+        ))}
       </div>
 
-      {recRow ? (
-        <div className="lic-sim-regret-block">
-          <div className="lic-sim-regret-h">Regret (plain language)</div>
-          <p className="lic-sim-regret-copy">{regretStory}</p>
+      <div className="lic-sim-pos-compact" title={pos.detail}>
+        <div className="lic-sim-pos-bar-label">Exposure</div>
+        <div className="lic-sim-pos-bar-row">
+          <span className="lic-sim-pos-bar-ext">0</span>
+          <div className="lic-sim-pos-bar-track">
+            <div className="lic-sim-pos-bar-fill" style={{ width: `${pos.targetPct}%` }} />
+          </div>
+          <span className="lic-sim-pos-bar-ext">100%</span>
         </div>
-      ) : null}
+        <div className="lic-sim-pos-bar-caption">
+          {pos.currentPct}% now → <strong>{pos.targetPct}%</strong> target
+        </div>
+      </div>
 
-      <section className="lic-drill-section">
-        <h5 className="lic-drill-h">All actions</h5>
-        <p className="lic-drill-muted">
-          Sorted by net benefit vs HOLD. The recommended row is highlighted; official tile stance is in the strip above
-          when it differs.
-        </p>
-        <div className="lic-sim-table-wrap">
-          <table className="lic-sim-table lic-sim-table--readable">
+      <p className="lic-sim-regret-one">
+        Regret: {regretShortPhrase(recRow)}
+      </p>
+
+      <section className="lic-sim-table-section">
+        <h5 className="lic-sim-table-h">Actions</h5>
+        <div className="lic-sim-table-wrap lic-sim-table-wrap--tight">
+          <table className="lic-sim-table lic-sim-table--readable lic-sim-table--scan">
             <thead>
               <tr>
                 <th>Action</th>
                 <th className="lic-sim-th-num">Upside</th>
-                <th className="lic-sim-th-num">Downside</th>
+                <th className="lic-sim-th-num">Down</th>
                 <th className="lic-sim-th-num">Giveback</th>
                 <th>Regret</th>
               </tr>
@@ -207,14 +155,14 @@ export default function LicSimulatorPanel({ activeIntel, workspacePres }) {
             <tbody>
               {displayRows.map((r, ri) => {
                 const isBest = r?.action === bestKey
+                const isRunner = r?.action === runnerKey && !isBest
                 const tones = simNumTone(r?.expected_upside, r?.expected_downside)
+                const rowClass = isBest ? 'lic-sim-row--best' : isRunner ? 'lic-sim-row--runner' : 'lic-sim-row--dim'
                 return (
-                  <tr
-                    key={r?.action ?? r?.label ?? `sim-${ri}`}
-                    className={isBest ? 'lic-sim-row--best' : undefined}
-                  >
+                  <tr key={r?.action ?? r?.label ?? `sim-${ri}`} className={rowClass}>
                     <td className="lic-sim-td-action">
                       {isBest ? <span className="lic-sim-rec-badge">Recommended</span> : null}
+                      {isRunner ? <span className="lic-sim-run-badge">2nd</span> : null}
                       {safeText(r?.label)}
                     </td>
                     <td className={`lic-sim-td-num ${tones.upClass}`}>{formatSimPct(r?.expected_upside)}</td>
@@ -228,15 +176,6 @@ export default function LicSimulatorPanel({ activeIntel, workspacePres }) {
           </table>
         </div>
       </section>
-
-      <section className="lic-drill-section">
-        <h5 className="lic-drill-h">Rationale by action</h5>
-        {displayRows.map((r, ri) => (
-          <p key={`${r?.action ?? ri}-rat`} className="lic-sim-rat">
-            <b>{r?.label}:</b> {safeText(r?.rationale)}
-          </p>
-        ))}
-      </section>
-    </>
+    </div>
   )
 }

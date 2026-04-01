@@ -130,7 +130,7 @@ export default function LicWorldsScenarios({ analogSummary, finalRecommendation 
         {scenarios.map((s) => {
           const hasSamples = s.sampleSize > 0
           const probPres = worldsBucketProbabilityPresentation(s, totalN)
-          const ret = formatScenarioReturnDisplay(s.avgReturn)
+          const ret = formatScenarioReturnDisplay(s.avgReturn, s.key)
           const retCls =
             ret.tone === "pos"
               ? "lic-worlds-card-return-val--pos"

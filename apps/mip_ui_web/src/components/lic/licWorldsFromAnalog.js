@@ -151,22 +151,57 @@ export function worldsBucketProbabilityPresentation(scenario, totalN) {
   }
 }
 
-export function formatScenarioReturnDisplay(decimalReturn) {
+/** Decimal return magnitude below this is treated as exactly zero for display. */
+const RETURN_DISPLAY_ZERO_EPS = 1e-14
+
+function trimDecimalString(s) {
+  if (!s.includes('.')) return s
+  const neg = s.startsWith('-')
+  const u = neg ? s.slice(1) : s
+  const [intPart, frac = ''] = u.split('.')
+  const fracTrim = frac.replace(/0+$/, '')
+  const num = fracTrim.length ? `${intPart}.${fracTrim}` : intPart
+  return neg ? `-${num}` : num
+}
+
+/**
+ * Average outcome for a world card: enough precision to avoid false 0.00%;
+ * Base bucket can use plain-language near-flat when appropriate.
+ */
+export function formatScenarioReturnDisplay(decimalReturn, scenarioKey) {
   if (decimalReturn == null || !Number.isFinite(decimalReturn)) {
     return { text: 'No data', tone: 'neutral' }
   }
   const pct = decimalReturn * 100
-  const a = Math.abs(pct)
-  if (a < 1e-12) {
+  const ap = Math.abs(pct)
+
+  if (ap < RETURN_DISPLAY_ZERO_EPS) {
+    if (scenarioKey === 'base') {
+      return { text: 'Flat (~0%)', tone: 'neutral' }
+    }
     return { text: '0.00%', tone: 'neutral' }
   }
-  if (a < 0.01) {
-    return { text: '<0.01%', tone: 'neutral' }
+
+  // Tight base band: reads better than a tiny signed % that looks like noise
+  if (scenarioKey === 'base' && ap < 0.012) {
+    return { text: 'Approximately flat', tone: 'neutral' }
   }
-  const decimals = a >= 1 ? 2 : 3
-  const rounded = pct.toFixed(decimals)
-  const tone = pct > 1e-12 ? 'pos' : pct < -1e-12 ? 'neg' : 'neutral'
-  const text = `${pct > 0 ? '+' : ''}${rounded}%`
+
+  let d = 2
+  if (ap < 1) d = 3
+  if (ap < 0.1) d = 4
+  if (ap < 0.01) d = 5
+
+  let dUse = d
+  while (dUse < 6 && ap >= RETURN_DISPLAY_ZERO_EPS) {
+    const mag = Math.abs(parseFloat(pct.toFixed(dUse)))
+    if (mag > 1e-12) break
+    dUse += 1
+  }
+
+  const body = trimDecimalString(pct.toFixed(dUse))
+  const text = `${pct > 0 ? '+' : ''}${body}%`
+  const tone = pct > RETURN_DISPLAY_ZERO_EPS ? 'pos' : pct < -RETURN_DISPLAY_ZERO_EPS ? 'neg' : 'neutral'
   return { text, tone }
 }
 

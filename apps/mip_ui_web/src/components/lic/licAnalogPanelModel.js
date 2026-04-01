@@ -110,38 +110,66 @@ export function buildAnalogRates(parsed) {
 }
 
 export function buildAnalogBullets(parsed, summary) {
-  const { w, l, n, bias, raw } = parsed
+  const { w, l, n, raw } = parsed
   const items = []
   const sum = summary && typeof summary === 'object' ? summary : {}
 
   if (n === 0) {
-    items.push('No episodes matched closely enough in the bootstrap slice')
+    items.push('0 comparable cases')
     if (raw.low_similarity_note) {
-      items.push(String(raw.low_similarity_note).replace(/\s+/g, ' ').trim())
+      const note = String(raw.low_similarity_note).replace(/\s+/g, ' ').trim()
+      if (note.length > 120) items.push(`${note.slice(0, 117)}…`)
+      else items.push(note)
     }
     return items.slice(0, 5)
   }
 
-  items.push(`${n} similar episodes`)
+  const winPct = Math.round((w / n) * 100)
+  const lossPct = Math.round((l / n) * 100)
+
+  items.push(`${n} comparable cases`)
+  items.push(`${winPct}% win rate · ${lossPct}% loss rate`)
 
   const avg = sum.avg_forward_return
   if (avg != null && Number.isFinite(Number(avg))) {
     const p = Number(avg) * 100
-    items.push(`Average forward return in cluster ~${p.toFixed(1)}%`)
-  }
-
-  if (bias === 'loser_leaning' && w === 0) {
-    items.push('No winners observed in this cluster')
-  } else if (bias === 'winner_leaning' && l === 0) {
-    items.push('No losers observed in this cluster')
+    items.push(`Cluster avg forward ~${p.toFixed(1)}%`)
   }
 
   const cp = raw.confidence_plain
   if (cp && items.length < 5) {
-    items.push(`Historical match: ${cp}`)
+    items.push(`Match quality: ${cp}`)
   }
 
   return items.slice(0, 5)
+}
+
+/** One-line summary from nearest neighbor in analog_summary.closest (no new pipeline). */
+export function buildClosestAnalogLine(summary) {
+  const sum = summary && typeof summary === 'object' ? summary : {}
+  const closest = Array.isArray(sum.closest) ? sum.closest : []
+  const ep = closest[0]
+  if (!ep || typeof ep !== 'object') return null
+
+  const win = ep.outcome_winner === true || ep.outcome_winner === 1 || ep.outcome_winner === 'true'
+  const rr = num(ep.realized_return, NaN)
+  const hb = ep.horizon_bars
+
+  const bits = []
+  bits.push(win ? 'winner' : 'loser')
+  if (Number.isFinite(rr)) {
+    const p = rr * 100
+    const sign = p > 0 ? '+' : ''
+    bits.push(`${sign}${p.toFixed(2)}% fwd`)
+  }
+  if (hb != null && Number.isFinite(Number(hb))) {
+    bits.push(`~${Math.round(Number(hb))} bars`)
+  }
+
+  if (bits.length === 1 && !Number.isFinite(rr)) {
+    return `Closest analog: ${bits[0]} (return n/a)`
+  }
+  return `Closest analog: ${bits.join(', ')}`
 }
 
 export function buildAnalogTiming(parsed, summary) {

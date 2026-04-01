@@ -1428,7 +1428,8 @@
 }
 
 .lic-sim-row--best {
-  background: rgba(56, 189, 248, 0.12);
+  background: rgba(56, 189, 248, 0.18);
+  box-shadow: inset 0 0 0 2px rgba(56, 189, 248, 0.55);
 }
 
 .lic-sim-row--best td {
@@ -1480,6 +1481,12 @@
   line-height: 1.35;
   font-size: 0.72rem;
 }
+.lic-sim-misalign-rationale {
+  margin: 0.35rem 0 0;
+  color: #cbd5e1;
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
 
 .lic-sim-table {
   width: 100%;
@@ -1497,6 +1504,198 @@
 }
 .lic-sim-table th { color: #94a3b8; font-weight: 600; }
 .lic-sim-rat { margin: 0.25rem 0; color: #94a3b8; line-height: 1.35; }
+
+/* Simulator — Worlds strip + decision blocks */
+.lic-sim-worlds-strip {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.55rem;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+.lic-sim-worlds-strip-tag {
+  font-weight: 700;
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  margin-bottom: 0.15rem;
+}
+.lic-sim-worlds-strip-metrics { color: #cbd5e1; }
+.lic-sim-worlds-sep { color: #64748b; margin: 0 0.2rem; }
+.lic-sim-worlds-muted { color: #64748b; font-style: italic; }
+.lic-sim-worlds-strip-conf {
+  color: #94a3b8;
+  margin-top: 0.2rem;
+  font-size: 0.64rem;
+}
+.lic-sim-worlds-strip-arrow {
+  color: #7dd3fc;
+  margin-top: 0.25rem;
+  font-size: 0.65rem;
+}
+
+.lic-sim-primary-block {
+  border: 1px solid #38bdf8;
+  border-radius: 8px;
+  padding: 0.55rem 0.6rem;
+  margin: 0.5rem 0;
+  background: rgba(15, 23, 42, 0.92);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.12);
+}
+.lic-sim-primary-block--misalign {
+  border-color: #f59e0b;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.12);
+}
+.lic-sim-primary-kicker {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  margin-bottom: 0.25rem;
+}
+.lic-sim-primary-action-row { margin-bottom: 0.2rem; }
+.lic-sim-primary-label {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+.lic-sim-primary-action {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #f8fafc;
+  letter-spacing: 0.02em;
+}
+.lic-sim-primary-confidence {
+  font-size: 0.65rem;
+  color: #fcd34d;
+  margin-bottom: 0.25rem;
+}
+.lic-sim-primary-soft {
+  margin: 0 0 0.35rem;
+  font-size: 0.64rem;
+  color: #fde68a;
+  line-height: 1.35;
+}
+.lic-sim-primary-rationale { margin-top: 0.2rem; }
+.lic-sim-primary-rationale-k {
+  display: block;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  margin-bottom: 0.15rem;
+}
+.lic-sim-primary-rationale ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #e2e8f0;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+.lic-sim-net-line {
+  margin: 0.45rem 0 0;
+  font-size: 0.64rem;
+  color: #7dd3fc;
+  cursor: help;
+  border-bottom: 1px dotted rgba(125, 211, 252, 0.35);
+  display: inline-block;
+}
+
+.lic-sim-tradeoff-block {
+  border: 1px solid #475569;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  margin-bottom: 0.45rem;
+  background: rgba(15, 23, 42, 0.75);
+}
+.lic-sim-tradeoff-h {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  margin-bottom: 0.25rem;
+}
+.lic-sim-tradeoff-list {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+.lic-sim-tradeoff-line--good { color: #86efac; }
+.lic-sim-tradeoff-line--warn { color: #fca5a5; }
+.lic-sim-tradeoff-empty {
+  margin: 0;
+  font-size: 0.64rem;
+  color: #64748b;
+}
+
+.lic-sim-position-block {
+  margin-bottom: 0.45rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(51, 65, 85, 0.35);
+  border: 1px solid #334155;
+}
+.lic-sim-position-h {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 0.15rem;
+}
+.lic-sim-position-lines {
+  margin: 0;
+  font-size: 0.7rem;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+.lic-sim-position-detail {
+  color: #94a3b8;
+  font-size: 0.64rem;
+}
+
+.lic-sim-regret-block {
+  margin-bottom: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-left: 3px solid #a78bfa;
+  background: rgba(30, 27, 75, 0.25);
+  border-radius: 0 6px 6px 0;
+}
+.lic-sim-regret-h {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  color: #c4b5fd;
+  margin-bottom: 0.2rem;
+}
+.lic-sim-regret-copy {
+  margin: 0;
+  font-size: 0.68rem;
+  color: #e2e8f0;
+  line-height: 1.45;
+}
+
+.lic-sim-table--readable .lic-sim-th-num,
+.lic-sim-table--readable .lic-sim-td-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lic-sim-num--up-high { color: #86efac; }
+.lic-sim-num--down-high { color: #fca5a5; }
+.lic-sim-td-action {
+  vertical-align: top;
+}
+.lic-sim-rec-badge {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0.08rem 0.28rem;
+  border-radius: 4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0f172a;
+  background: #38bdf8;
+}
 
 .lic-timeline { display: flex; flex-direction: column; gap: 0.45rem; }
 .lic-tl-row {

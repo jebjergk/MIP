@@ -8,6 +8,7 @@ import LicTopTile from '../components/lic/LicTopTile'
 import LicPositionRadar from '../components/lic/LicPositionRadar'
 import LicWorldsScenarios from '../components/lic/LicWorldsScenarios'
 import LicAnalogPanel from '../components/lic/LicAnalogPanel'
+import LicSimulatorPanel from '../components/lic/LicSimulatorPanel'
 import {
   alignRadarTupleToBand,
   computeRawRadarTuple,
@@ -89,12 +90,6 @@ function attentionTooltip(intel) {
   const c = intel?.attention_components || {}
   const parts = Object.entries(c).map(([k, v]) => `${k}: ${v}`)
   return parts.length ? parts.join(' \u00b7 ') : 'Attention breakdown'
-}
-
-function formatSimPct(v) {
-  const x = Number(v)
-  if (!Number.isFinite(x)) return '\u2014'
-  return `${(x * 100).toFixed(1)}%`
 }
 
 /** Coerce API values so React never receives objects as text children. */
@@ -957,89 +952,10 @@ function LiveIntelligenceCockpitInner() {
               )}
               {detailTab === 'simulator' && (
                 <div className="lic-drill-panel lic-sim-panel">
-                  {(() => {
-                    const sim = activeIntel.action_simulation || {}
-                    const best = sim.best_action || {}
-                    const rows = asArray(sim.alternatives)
-                    const bestKey = best?.action
-                    const pres = workspacePres || resolveDecisionPresentation(activeIntel)
-                    const misaligned = sim.aligns_with_tile_recommendation === false
-                    return (
-                      <>
-                        <p className="lic-sim-tile-ref">
-                          Primary stance remains <strong>{pres.primary_action}</strong>
-                          <span className="lic-sim-tile-ref-hint" title="Official posture from the risk ladder; table is a heuristic net-score lens.">
-                            {' '}· simulator net score = upside − downside (exploratory)
-                          </span>
-                        </p>
-                        {misaligned && pres.fallback_action ? (
-                          <p className="lic-sim-frame lic-sim-frame--sub">
-                            Defensive scoring prefers <strong>{pres.fallback_action}</strong> if capital preservation is prioritized.
-                            {' '}
-                            <strong>{pres.primary_action}</strong> remains the official posture; rationale:{' '}
-                            {(() => {
-                              const pr = safeText(pres.primary_reason)
-                              return pr.length > 160 ? `${pr.slice(0, 160)}…` : pr
-                            })()}
-                          </p>
-                        ) : (
-                          <p className="lic-sim-frame lic-sim-frame--sub">
-                            Heuristic net-score leader matches the primary stance — use the table to compare trims and tightening
-                            versus full exit under different regret assumptions.
-                          </p>
-                        )}
-                        <div className={`lic-sim-best ${misaligned ? 'lic-sim-best--subordinate' : ''}`}>
-                          <div className="lic-sim-best-label">
-                            {misaligned ? 'Highest net-score action (defensive lens)' : 'Net-score leader (aligned with primary)'}
-                          </div>
-                          <div className="lic-sim-best-action">{safeText(best.label)}</div>
-                          <p className="lic-sim-best-why">{safeText(best.why)}</p>
-                        </div>
-                        <section className="lic-drill-section">
-                          <h5 className="lic-drill-h">All actions</h5>
-                          <p className="lic-drill-muted">
-                            Highlighted row is the heuristic net-score winner. Official stance stays the primary action in the
-                            reconciliation block above when the two differ.
-                          </p>
-                          <div className="lic-sim-table-wrap">
-                            <table className="lic-sim-table">
-                              <thead>
-                                <tr>
-                                  <th>Action</th>
-                                  <th>Upside</th>
-                                  <th>Downside</th>
-                                  <th>Giveback</th>
-                                  <th>Regret</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {rows.map((r, ri) => (
-                                  <tr
-                                    key={r?.action ?? r?.label ?? `sim-${ri}`}
-                                    className={r?.action === bestKey ? 'lic-sim-row--best' : undefined}
-                                  >
-                                    <td>{safeText(r?.label)}</td>
-                                    <td>{formatSimPct(r?.expected_upside)}</td>
-                                    <td>{formatSimPct(r?.expected_downside)}</td>
-                                    <td>{formatSimPct(r?.giveback_risk)}</td>
-                                    <td>{safeText(r?.regret_tilt)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </section>
-                        <section className="lic-drill-section">
-                          <h5 className="lic-drill-h">Rationale by action</h5>
-                          {rows.map((r, ri) => (
-                            <p key={`${r?.action ?? ri}-rat`} className="lic-sim-rat">
-                              <b>{r?.label}:</b> {r?.rationale}
-                            </p>
-                          ))}
-                        </section>
-                      </>
-                    )
-                  })()}
+                  <LicSimulatorPanel
+                    activeIntel={activeIntel}
+                    workspacePres={workspacePres || resolveDecisionPresentation(activeIntel)}
+                  />
                 </div>
               )}
               {detailTab === 'timeline' && (

@@ -21,6 +21,12 @@ from app.config import get_snowflake_config
 from app.db import get_connection, fetch_all, serialize_row, serialize_rows, SnowflakeAuthError
 from app.live_execution_utils import to_dt_utc, is_close_like_execution
 from app.training_status import score_training_status_row, DEFAULT_MIN_SIGNALS
+from app.entry_intel_hooks import (
+    ensure_entry_intel_for_proposal,
+    fetch_latest_snapshot_id_for_proposal,
+    insert_entry_intel_action_link,
+    maybe_write_trade_closeout_on_exit_filled,
+)
 
 router = APIRouter(prefix="/live", tags=["live"])
 
@@ -3941,6 +3947,13 @@ def _build_action_decision_context(cur, action: dict) -> dict:
             }
     except Exception:
         market_regime = {}
+    entry_intel_snapshot_id = None
+    pid = action.get("PROPOSAL_ID")
+    if pid is not None:
+        try:
+            entry_intel_snapshot_id = fetch_latest_snapshot_id_for_proposal(cur, int(pid))
+        except Exception:
+            entry_intel_snapshot_id = None
     context = {
         "action_id": action.get("ACTION_ID"),
         "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -3966,6 +3979,7 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "action_news_context_snapshot": action_news_snapshot,
         "latest_symbol_news_context": latest_news_snapshot,
         "parallel_worlds_evidence": pw_evidence,
+        "entry_intel_snapshot_id": entry_intel_snapshot_id,
         "execution_risk_config": risk_cfg,
     }
     return context
@@ -7190,7 +7204,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 verdict["confidence"],
                 verdict["blocked"],
                 json.dumps(reason_codes),
-                json.dumps({"verdict": verdict, "outputs": outputs, "joint_decision": verdict.get("joint_decision")}),
+                json.dumps({"verdict": verdict, "outputs": outputs, "joint_decision": verdict.get("joint_decision"), "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id")}),
             ),
         )
         cur.execute(
@@ -7479,7 +7493,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                 verdict["confidence"],
                 verdict["blocked"],
                 json.dumps(reason_codes),
-                json.dumps({"verdict": verdict, "joint_decision": verdict.get("joint_decision")}),
+                json.dumps({"verdict": verdict, "joint_decision": verdict.get("joint_decision"), "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id")}),
             ),
         )
         cur.execute(
@@ -9588,6 +9602,12 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                 },
             )
 
+        if action_id and target_status == "FILLED":
+            try:
+                maybe_write_trade_closeout_on_exit_filled(cur, str(action_id))
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "order_id": order_id,
@@ -10447,6 +10467,12 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     news_snapshot.get("policy_version"),
                 ),
             )
+            if proposal_id is not None and str(action_intent or "").upper() == "ENTRY":
+                try:
+                    ensure_entry_intel_for_proposal(cur, int(proposal_id))
+                    insert_entry_intel_action_link(cur, int(proposal_id), action_id)
+                except Exception:
+                    pass
             _append_learning_ledger_event(
                 cur,
                 event_name="LIVE_RESEARCH_IMPORT",
@@ -10637,5 +10663,68 @@ def list_live_proposal_candidates(
             "max_proposal_age_days": max_proposal_age_days,
             "candidates": serialize_rows(deduped_out),
         }
+    finally:
+        conn.close()
+
+# --- Entry Intelligence Snapshot (Phase 1) read-only API ---
+
+
+@router.get("/entry-intel/snapshot/by-proposal/{proposal_id}")
+def get_entry_intel_snapshot_by_proposal(proposal_id: int):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select *
+            from MIP.LIVE.ENTRY_INTEL_SNAPSHOT
+            where PROPOSAL_ID = %s
+            order by EIS_VERSION desc
+            """,
+            (proposal_id,),
+        )
+        rows = fetch_all(cur)
+        return {"ok": True, "proposal_id": proposal_id, "snapshots": serialize_rows(rows)}
+    finally:
+        conn.close()
+
+
+@router.get("/entry-intel/snapshot/by-action/{action_id}")
+def get_entry_intel_snapshot_by_action(action_id: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select e.*
+            from MIP.LIVE.ENTRY_INTEL_ACTION_LINK l
+            join MIP.LIVE.ENTRY_INTEL_SNAPSHOT e on e.SNAPSHOT_ID = l.SNAPSHOT_ID
+            where l.ENTRY_ACTION_ID = %s
+            limit 1
+            """,
+            (action_id,),
+        )
+        rows = fetch_all(cur)
+        return {"ok": True, "action_id": action_id, "snapshot": serialize_rows(rows)[0] if rows else None}
+    finally:
+        conn.close()
+
+
+@router.get("/entry-intel/closeout/by-entry-action/{entry_action_id}")
+def get_trade_closeout_by_entry_action(entry_action_id: str):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select *
+            from MIP.LIVE.TRADE_CLOSEOUT
+            where ENTRY_ACTION_ID = %s
+            limit 1
+            """,
+            (entry_action_id,),
+        )
+        rows = fetch_all(cur)
+        return {"ok": True, "entry_action_id": entry_action_id, "closeout": serialize_rows(rows)[0] if rows else None}
     finally:
         conn.close()

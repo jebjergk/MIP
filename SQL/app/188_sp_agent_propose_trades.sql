@@ -1108,6 +1108,13 @@ begin
             'PROPOSED'
         );
 
+    -- Phase 1: immutable Entry Intelligence Snapshot (EIS) per proposal (idempotent).
+    begin
+        call MIP.APP.SP_ENSURE_ENTRY_INTEL_FOR_RUN(:P_RUN_ID, :P_PORTFOLIO_ID);
+    exception
+        when other then null;
+    end;
+
     -- Count proposals inserted for this run (SQLROWCOUNT not reliable after MERGE)
     select
         count(*) as total_inserted,

@@ -311,51 +311,60 @@ as
 $$
 declare
     v_inserted number := 0;
-begin
-    insert into MIP.LIVE.ENTRY_INTEL_SNAPSHOT (
-        SNAPSHOT_ID,
-        PROPOSAL_ID,
-        PORTFOLIO_ID,
-        EIS_VERSION,
-        SIGNAL_RUN_ID,
-        SYMBOL,
-        PATTERN_ID,
-        WORLDS_SPEC,
-        ALPHA_SPEC,
-        SOURCE_VERSION,
-        EIS_NOTE
-    )
-    select
-        uuid_string(),
-        b.proposal_id,
-        b.portfolio_id,
-        1,
-        b.run_id_varchar,
-        b.symbol,
-        b.signal_pattern_id,
-        coalesce(b.payload:WORLDS_SPEC, object_construct('schema_version', 'WORLDS_SPEC_V1', 'build_error', true)),
-        coalesce(b.payload:ALPHA_SPEC, object_construct('alpha_schema_version', 'ALPHA_SPEC_V1', 'build_error', true)),
-        'EIS_SCHEMA_V2',
-        null
-    from (
-        select
-            op.proposal_id,
-            op.portfolio_id,
-            op.run_id_varchar,
-            op.symbol,
-            op.signal_pattern_id,
-            mip.app.f_build_entry_intel_for_proposal(op.proposal_id) as payload
+    v_payload variant;
+    v_has number;
+    c1 cursor for
+        select op.proposal_id as pid
         from MIP.AGENT_OUT.ORDER_PROPOSALS op
         where op.run_id_varchar = :P_RUN_ID
-          and op.portfolio_id = :P_PORTFOLIO_ID
-    ) b
-    where not exists (
-        select 1
+          and op.portfolio_id = :P_PORTFOLIO_ID;
+begin
+    for row1 in c1 do
+        select count(*) into :v_has
         from MIP.LIVE.ENTRY_INTEL_SNAPSHOT e
-        where e.proposal_id = b.proposal_id
-    );
+        where e.proposal_id = row1.pid;
 
-    v_inserted := sqlrowcount;
+        if (:v_has = 0) then
+            select mip.app.f_build_entry_intel_for_proposal(row1.pid) into :v_payload;
+
+            insert into MIP.LIVE.ENTRY_INTEL_SNAPSHOT (
+                SNAPSHOT_ID,
+                PROPOSAL_ID,
+                PORTFOLIO_ID,
+                EIS_VERSION,
+                SIGNAL_RUN_ID,
+                SYMBOL,
+                PATTERN_ID,
+                WORLDS_SPEC,
+                ALPHA_SPEC,
+                SOURCE_VERSION,
+                EIS_NOTE
+            )
+            select
+                uuid_string(),
+                op.proposal_id,
+                op.portfolio_id,
+                1,
+                op.run_id_varchar,
+                op.symbol,
+                op.signal_pattern_id,
+                coalesce(
+                    get_path(:v_payload, 'WORLDS_SPEC'),
+                    object_construct('schema_version', 'WORLDS_SPEC_V1', 'build_error', true)
+                ),
+                coalesce(
+                    get_path(:v_payload, 'ALPHA_SPEC'),
+                    object_construct('alpha_schema_version', 'ALPHA_SPEC_V1', 'build_error', true)
+                ),
+                'EIS_SCHEMA_V2',
+                null
+            from MIP.AGENT_OUT.ORDER_PROPOSALS op
+            where op.proposal_id = row1.pid;
+
+            v_inserted := :v_inserted + sqlrowcount;
+        end if;
+    end for;
+
     return object_construct(
         'status', 'SUCCESS',
         'inserted_count', :v_inserted,
@@ -375,7 +384,24 @@ as
 $$
 declare
     v_inserted number := 0;
+    v_payload variant;
+    v_has number;
 begin
+    select count(*) into :v_has
+    from MIP.LIVE.ENTRY_INTEL_SNAPSHOT e
+    where e.proposal_id = :P_PROPOSAL_ID;
+
+    if (:v_has > 0) then
+        return object_construct(
+            'status', 'SUCCESS',
+            'inserted_count', 0,
+            'proposal_id', :P_PROPOSAL_ID,
+            'note', 'EIS_ALREADY_EXISTS'
+        );
+    end if;
+
+    select mip.app.f_build_entry_intel_for_proposal(:P_PROPOSAL_ID) into :v_payload;
+
     insert into MIP.LIVE.ENTRY_INTEL_SNAPSHOT (
         SNAPSHOT_ID,
         PROPOSAL_ID,
@@ -391,30 +417,24 @@ begin
     )
     select
         uuid_string(),
-        b.proposal_id,
-        b.portfolio_id,
+        op.proposal_id,
+        op.portfolio_id,
         1,
-        b.run_id_varchar,
-        b.symbol,
-        b.signal_pattern_id,
-        coalesce(b.payload:WORLDS_SPEC, object_construct('schema_version', 'WORLDS_SPEC_V1', 'build_error', true)),
-        coalesce(b.payload:ALPHA_SPEC, object_construct('alpha_schema_version', 'ALPHA_SPEC_V1', 'build_error', true)),
+        op.run_id_varchar,
+        op.symbol,
+        op.signal_pattern_id,
+        coalesce(
+            get_path(:v_payload, 'WORLDS_SPEC'),
+            object_construct('schema_version', 'WORLDS_SPEC_V1', 'build_error', true)
+        ),
+        coalesce(
+            get_path(:v_payload, 'ALPHA_SPEC'),
+            object_construct('alpha_schema_version', 'ALPHA_SPEC_V1', 'build_error', true)
+        ),
         'EIS_SCHEMA_V2',
         null
-    from (
-        select
-            op.proposal_id,
-            op.portfolio_id,
-            op.run_id_varchar,
-            op.symbol,
-            op.signal_pattern_id,
-            mip.app.f_build_entry_intel_for_proposal(op.proposal_id) as payload
-        from MIP.AGENT_OUT.ORDER_PROPOSALS op
-        where op.proposal_id = :P_PROPOSAL_ID
-    ) b
-    where not exists (
-        select 1 from MIP.LIVE.ENTRY_INTEL_SNAPSHOT e where e.proposal_id = b.proposal_id
-    );
+    from MIP.AGENT_OUT.ORDER_PROPOSALS op
+    where op.proposal_id = :P_PROPOSAL_ID;
 
     v_inserted := sqlrowcount;
     return object_construct(

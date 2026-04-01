@@ -7,6 +7,7 @@ import { useSymbolMeta } from '../context/SymbolMetaContext'
 import LicTopTile from '../components/lic/LicTopTile'
 import LicPositionRadar from '../components/lic/LicPositionRadar'
 import LicWorldsScenarios from '../components/lic/LicWorldsScenarios'
+import LicAnalogPanel from '../components/lic/LicAnalogPanel'
 import {
   alignRadarTupleToBand,
   computeRawRadarTuple,
@@ -951,52 +952,7 @@ function LiveIntelligenceCockpitInner() {
               )}
               {detailTab === 'analog' && (
                 <div className="lic-drill-panel lic-analog-panel">
-                  {(() => {
-                    const u = activeIntel.analog_ui || {}
-                    const weak = u.low_similarity_note || (u.confidence_tier === 'weak' && (u.analog_count ?? 0) > 0)
-                    const tier = safeText(u.confidence_tier, '')
-                    const n = Number(u.analog_count ?? 0)
-                    const whyConf =
-                      n <= 0
-                        ? 'No close analog cluster in the bootstrap slice — tier reflects missing history, not a bad tape read.'
-                        : tier === 'strong'
-                          ? 'High match quality and a usable sample size — backward-looking stats carry more weight.'
-                          : tier === 'moderate'
-                            ? 'Partial match to history — use analogs as context alongside tape and thesis.'
-                            : 'Low match quality or thin sample — treat averages as exploratory only.'
-                    return (
-                      <>
-                        <section className="lic-drill-section">
-                          <h5 className="lic-drill-h">Analog confidence</h5>
-                          <p className="lic-drill-lead">{safeText(u.chip_verdict || u.confidence_plain)}</p>
-                          <p className="lic-drill-muted">{whyConf}</p>
-                        </section>
-                        <section className="lic-drill-section">
-                          <h5 className="lic-drill-h">Bias & sample</h5>
-                          <div className="lic-analog-grid lic-analog-grid--drill">
-                            <div><span className="lic-k">Bias</span><span>{safeText(u.bias_plain)}</span></div>
-                            <div><span className="lic-k">Episodes</span><span>{safeText(u.analog_count ?? 0)}</span></div>
-                            <div><span className="lic-k">Winners</span><span>{safeText(u.winners ?? 0)}</span></div>
-                            <div><span className="lic-k">Losers</span><span>{safeText(u.losers ?? 0)}</span></div>
-                          </div>
-                        </section>
-                        <section className="lic-drill-section">
-                          <h5 className="lic-drill-h">Forward outcome (historical)</h5>
-                          <p className="lic-analog-line">{safeText(u.forward_outcome_summary)}</p>
-                        </section>
-                        <section className="lic-drill-section">
-                          <h5 className="lic-drill-h">Exit timing hint</h5>
-                          <p className="lic-analog-line">{safeText(u.exit_timing_hint_plain)}</p>
-                        </section>
-                        {weak ? (
-                          <div className="lic-analog-weakbox">
-                            <div className="lic-analog-weaktitle">Analog guidance weak</div>
-                            <p className="lic-analog-warn">{safeText(u.low_similarity_note || 'Current path has low similarity to trained historical episodes — lean on tape, thesis, and risk limits.')}</p>
-                          </div>
-                        ) : null}
-                      </>
-                    )
-                  })()}
+                  <LicAnalogPanel analogUi={activeIntel.analog_ui} analogSummary={activeIntel.analog_summary} />
                 </div>
               )}
               {detailTab === 'simulator' && (

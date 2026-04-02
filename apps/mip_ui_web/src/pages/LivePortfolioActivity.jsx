@@ -643,6 +643,7 @@ export default function LivePortfolioActivity() {
   const positionTrend = overview?.activity_trends?.positions || []
   const reconciliationRequired = String(readiness?.reconciliation_state || '').toUpperCase() === 'REQUIRED'
   const unmappedExecutionCount = Number(readiness?.unmapped_execution_count || 0)
+  const unmappedOnFlatSymbols = Number(readiness?.unmapped_on_flat_symbols_count || 0)
   const unmappedSymbols = Array.isArray(readiness?.unmapped_execution_symbols) ? readiness.unmapped_execution_symbols : []
   const outsideHours = readiness.market_open === false
   const posCount = openPositions.length
@@ -723,6 +724,14 @@ export default function LivePortfolioActivity() {
               Broker reconciliation required before new submissions. Recent broker fills are present but not fully linked locally
               ({unmappedExecutionCount}{unmappedSymbols.length ? ` across ${unmappedSymbols.join(', ')}` : ''}).
               Please use Refresh From IB and reconcile before trading.
+            </div>
+          ) : null}
+          {!reconciliationRequired && unmappedOnFlatSymbols > 0 ? (
+            <div className="lpa-notice-inline" role="status">
+              IB shows no open position for symbols that still have unmapped broker fills in the lookback window (
+              {unmappedOnFlatSymbols} execution{unmappedOnFlatSymbols === 1 ? '' : 's'}). Those are treated as historical
+              lineage gaps and do not block trading. If you add a new position in IB without MIP, unmapped fills on an
+              open symbol will block again until lineage is aligned.
             </div>
           ) : null}
           <div className="lpa-kpis">

@@ -13,8 +13,9 @@ from app.services.live_intelligence.entry_lifecycle_ui import (
     build_operator_entry_lifecycle,
     fetch_entry_lifecycle_rows,
 )
+from app.services.live_intelligence.lifecycle_reconciliation_v1 import run_lifecycle_reconciliation
 
-BOOTSTRAP_VERSION = "1.0.0"
+BOOTSTRAP_VERSION = "1.1.0"
 _MAX_ANALOG_GLOBAL = 2500
 _MAX_ANALOG_PER_SYMBOL = 400
 
@@ -106,10 +107,10 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
     return num / (denx * deny)
 
 
-def _active_portfolio_id(cur) -> int | None:
+def _active_live_portfolio(cur) -> tuple[int | None, str | None]:
     cur.execute(
         """
-        select PORTFOLIO_ID
+        select PORTFOLIO_ID, IBKR_ACCOUNT_ID
         from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
         where coalesce(IS_ACTIVE, true) = true
         order by PORTFOLIO_ID
@@ -118,11 +119,19 @@ def _active_portfolio_id(cur) -> int | None:
     )
     rows = fetch_all(cur)
     if not rows:
-        return None
+        return None, None
+    r = rows[0]
     try:
-        return int(rows[0].get("PORTFOLIO_ID"))
+        pid = int(r.get("PORTFOLIO_ID"))
     except (TypeError, ValueError):
-        return None
+        return None, None
+    acc = r.get("IBKR_ACCOUNT_ID") or r.get("ibkr_account_id")
+    return pid, (str(acc).strip() if acc else None)
+
+
+def _active_portfolio_id(cur) -> int | None:
+    pid, _acc = _active_live_portfolio(cur)
+    return pid
 
 
 def _portfolio_context(tiles: list[dict[str, Any]]) -> dict[str, Any]:
@@ -179,7 +188,9 @@ def build_bootstrap_payload() -> dict[str, Any]:
         analog = _fetch_analog_episodes(cur, symbols)
         portfolio_ctx = _portfolio_context(tiles)
         entry_lifecycle_by_symbol: dict[str, Any] = {}
-        pid = _active_portfolio_id(cur)
+        reconciliation_by_symbol: dict[str, Any] = {}
+        reconciliation_meta: dict[str, Any] = {}
+        pid, ibkr_account_id = _active_live_portfolio(cur)
         if pid and symbols:
             try:
                 raw_by_sym = fetch_entry_lifecycle_rows(cur, pid, symbols)
@@ -191,6 +202,21 @@ def build_bootstrap_payload() -> dict[str, Any]:
                 _log.warning(
                     "entry_lifecycle_by_symbol skipped (need MIP.LIVE.ENTRY_INTEL_ACTION_LINK + related "
                     "objects from MIP/SQL/app/410_entry_intel_lifecycle.sql and grants for the API role): %s",
+                    exc,
+                    exc_info=True,
+                )
+        if pid and ibkr_account_id and tiles:
+            try:
+                reconciliation_by_symbol, reconciliation_meta = run_lifecycle_reconciliation(
+                    cur,
+                    pid,
+                    ibkr_account_id,
+                    tiles,
+                    entry_lifecycle_by_symbol,
+                )
+            except Exception as exc:
+                _log.warning(
+                    "reconciliation_by_symbol skipped (see MIP/SQL/migrations/20260401_lifecycle_reconciliation_v1.sql): %s",
                     exc,
                     exc_info=True,
                 )
@@ -208,6 +234,8 @@ def build_bootstrap_payload() -> dict[str, Any]:
             "analog_episodes_by_symbol": analog,
             "portfolio_context": portfolio_ctx,
             "entry_lifecycle_by_symbol": entry_lifecycle_by_symbol,
+            "reconciliation_by_symbol": reconciliation_by_symbol,
+            "reconciliation_meta": reconciliation_meta,
             "news_snapshot": news_snapshot[:50],
         }
     finally:

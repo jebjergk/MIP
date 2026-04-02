@@ -327,6 +327,16 @@
   font-size: 12px;
 }
 
+.lpa-notice-inline {
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
+  color: #1e3a5f;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
 .lpa-ready-chip {
   border: 1px solid #7dc48b;
   background: #f3fff6;

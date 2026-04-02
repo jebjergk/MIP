@@ -78,6 +78,17 @@
   background: #0f172a;
 }
 
+.lic-recon-ghost-banner {
+  margin: 0.5rem 0 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fcd34d;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 .lic-banner--active {
   border-color: #f59e0b;
   background: #1c1410;
@@ -2157,6 +2168,46 @@
   border: 1px solid rgba(234, 179, 8, 0.35);
   color: #fde68a;
   font-size: 0.78rem;
+}
+
+.lic-ei-recon {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.lic-ei-recon-kicker {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7dd3fc;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.lic-ei-recon-class {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #e0f2fe;
+  margin-bottom: 0.35rem;
+}
+
+.lic-ei-recon-headline {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+  color: #f0f9ff;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.lic-ei-recon-detail,
+.lic-ei-recon-note {
+  margin: 0.25rem 0 0;
+  font-size: 0.76rem;
+  color: #bae6fd;
+  line-height: 1.45;
 }
 
 .lic-ei-grid {

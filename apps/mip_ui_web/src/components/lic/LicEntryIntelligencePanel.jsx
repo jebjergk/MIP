@@ -20,10 +20,25 @@ function fmtAvgR(v) {
   return `${(x * 100).toFixed(2)}%`
 }
 
+function LicReconciliationBanner({ reconciliation }) {
+  if (!reconciliation || typeof reconciliation !== 'object') return null
+  if (!reconciliation.requires_operator_attention) return null
+  const cls = String(reconciliation.reconciliation_class || '')
+  return (
+    <div className="lic-ei-recon" role="status" aria-label="Broker reconciliation">
+      <div className="lic-ei-recon-kicker">Broker reconciliation · {safeText(reconciliation.rule_version, 'RECON_V1')}</div>
+      <div className="lic-ei-recon-class">{safeText(cls)}</div>
+      <p className="lic-ei-recon-headline">{safeText(reconciliation.operator_headline)}</p>
+      <p className="lic-ei-recon-detail">{safeText(reconciliation.operator_detail)}</p>
+      <p className="lic-ei-recon-note">{safeText(reconciliation.ib_is_truth_note)}</p>
+    </div>
+  )
+}
+
 /**
  * Entry intelligence + committee + optional closeout — fed only from LIC bootstrap (no polling).
  */
-export default function LicEntryIntelligencePanel({ lifecycle }) {
+export default function LicEntryIntelligencePanel({ lifecycle, reconciliation }) {
   const body = useMemo(() => {
     if (!lifecycle || typeof lifecycle !== 'object') {
       return { mode: 'none' }
@@ -41,10 +56,17 @@ export default function LicEntryIntelligencePanel({ lifecycle }) {
   if (body.mode === 'unlinked') {
     return (
       <section className="lic-ei" aria-label="Entry analysis">
+        <LicReconciliationBanner reconciliation={reconciliation} />
         <h4 className="lic-ei-title">Entry analysis</h4>
         <p className="lic-ei-muted">
           {safeText(body.reason, 'No linked pre-trade analysis for this position. Reload Snowflake bootstrap after a new entry is linked.')}
         </p>
+        {reconciliation?.requires_operator_attention ? (
+          <p className="lic-ei-muted lic-ei-small">
+            Pre-trade analysis is not shown because there is no trustworthy entry-intelligence link. IB still shows this
+            position — treat sizing and risk as broker-originated until MIP lifecycle is explicitly linked.
+          </p>
+        ) : null}
       </section>
     )
   }
@@ -58,6 +80,7 @@ export default function LicEntryIntelligencePanel({ lifecycle }) {
 
   return (
     <section className="lic-ei" aria-label="Entry analysis">
+      <LicReconciliationBanner reconciliation={reconciliation} />
       <h4 className="lic-ei-title">Entry analysis</h4>
       <p className="lic-ei-lead">
         Pre-trade snapshot and committee context (loaded once with this page — refresh via &quot;Reload bootstrap&quot;).

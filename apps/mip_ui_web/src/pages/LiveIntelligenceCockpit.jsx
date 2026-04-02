@@ -308,6 +308,8 @@ function LiveIntelligenceCockpitInner() {
   const [bootReady, setBootReady] = useState(false)
   /** Snowflake-backed entry intel + committee + closeout — set only from bootstrap, never from IB refresh. */
   const [entryLifecycleBySymbol, setEntryLifecycleBySymbol] = useState({})
+  const [reconciliationBySymbol, setReconciliationBySymbol] = useState({})
+  const [reconciliationMeta, setReconciliationMeta] = useState({})
   const bootstrapGenRef = useRef(0)
   const refreshGenRef = useRef(0)
   const workspaceSectionRef = useRef(null)
@@ -415,6 +417,8 @@ function LiveIntelligenceCockpitInner() {
     setError('')
     setBootReady(false)
     setEntryLifecycleBySymbol({})
+    setReconciliationBySymbol({})
+    setReconciliationMeta({})
     setFeed([])
     setTimeline([])
     try {
@@ -432,6 +436,14 @@ function LiveIntelligenceCockpitInner() {
         data.entry_lifecycle_by_symbol && typeof data.entry_lifecycle_by_symbol === 'object'
           ? data.entry_lifecycle_by_symbol
           : {},
+      )
+      setReconciliationBySymbol(
+        data.reconciliation_by_symbol && typeof data.reconciliation_by_symbol === 'object'
+          ? data.reconciliation_by_symbol
+          : {},
+      )
+      setReconciliationMeta(
+        data.reconciliation_meta && typeof data.reconciliation_meta === 'object' ? data.reconciliation_meta : {},
       )
       setPortfolioFocusMode(false)
       if (!selectedSymbol && tr.tiles?.[0]?.symbol) {
@@ -712,6 +724,14 @@ function LiveIntelligenceCockpitInner() {
         )}
       </div>
 
+      {!loading && bootReady && Array.isArray(reconciliationMeta.ghost_symbols) && reconciliationMeta.ghost_symbols.length > 0 ? (
+        <div className="lic-recon-ghost-banner" role="status">
+          <strong>Lifecycle vs IB:</strong> MIP shows an open linked entry with no closeout for{' '}
+          {reconciliationMeta.ghost_symbols.map((g) => safeText(g.symbol)).join(', ')} while the latest IB snapshot has
+          no open position there — review broker fills and TRADE_CLOSEOUT.
+        </div>
+      ) : null}
+
       {loading ? <p className="lic-muted">Loading bootstrap…</p> : null}
 
       {!loading && bootReady && ranked.length === 0 ? (
@@ -896,6 +916,7 @@ function LiveIntelligenceCockpitInner() {
                           'No linked pre-trade analysis for this symbol in the last bootstrap. Use Reload bootstrap after the entry is linked to entry intelligence.',
                       }
                     }
+                    reconciliation={reconciliationBySymbol[selectedSymbol]}
                   />
                   <div className="lic-snapshot-strip lic-chart-decision-strip">
                     <div className="lic-chart-decision-strip-left">

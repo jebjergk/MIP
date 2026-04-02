@@ -6,6 +6,9 @@ Bootstrap returns:
 - bootstrap_version: str
 - analog_episodes_by_symbol: preloaded rows for k-NN without Snowflake after load
 - portfolio_context: exposure summary + return correlation matrix + optional regime hint
+- entry_lifecycle_by_symbol: operator entry intel + committee + closeout (when linked)
+- reconciliation_by_symbol: RECON_V1 broker vs MIP lifecycle classification per open symbol
+- reconciliation_meta: ghost_symbols (IB flat vs MIP open), rule_version, matching summary
 """
 
 from __future__ import annotations

@@ -609,6 +609,8 @@ def _recent_unmapped_execution_summary(
                 "latest_snapshot_ts": None,
                 "symbols": [],
                 "sample_broker_order_ids": [],
+                "unmapped_on_flat_symbols_count": 0,
+                "unmapped_total_before_flat_filter": 0,
             }
 
         # 2) Known broker IDs from LIVE_ORDERS.
@@ -670,17 +672,73 @@ def _recent_unmapped_execution_summary(
                 "latest_snapshot_ts": None,
                 "symbols": [],
                 "sample_broker_order_ids": [],
+                "unmapped_on_flat_symbols_count": 0,
+                "unmapped_total_before_flat_filter": 0,
             }
 
-        unmapped_rows.sort(key=lambda x: str(x.get("SNAPSHOT_TS") or ""), reverse=True)
-        sample_rows = unmapped_rows[:sample_limit]
+        # 5) IB is truth for the *current* book: unmapped executions on symbols that are
+        # flat at the latest NAV-linked snapshot are historical lineage gaps, not an
+        # active risk that should block new submissions after a broker-side flatten.
+        ib_open_symbols: set[str] = set()
+        latest_nav_ts = None
+        try:
+            cur.execute(
+                """
+                with latest as (
+                  select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                  from MIP.LIVE.BROKER_SNAPSHOTS
+                  where SNAPSHOT_TYPE = 'NAV'
+                    and IBKR_ACCOUNT_ID = %s
+                )
+                select
+                  l.SNAPSHOT_TS,
+                  upper(coalesce(p.SYMBOL, '')) as SYMBOL
+                from latest l
+                left join MIP.LIVE.BROKER_SNAPSHOTS p
+                  on p.SNAPSHOT_TYPE = 'POSITION'
+                 and p.IBKR_ACCOUNT_ID = %s
+                 and p.SNAPSHOT_TS = l.SNAPSHOT_TS
+                 and coalesce(p.POSITION_QTY, 0) <> 0
+                """,
+                (account_id, account_id),
+            )
+            pos_rows = fetch_all(cur)
+            for pr in pos_rows:
+                if pr.get("SNAPSHOT_TS") is not None and latest_nav_ts is None:
+                    latest_nav_ts = pr.get("SNAPSHOT_TS")
+                sym_p = str(pr.get("SYMBOL") or "").strip().upper()
+                if sym_p:
+                    ib_open_symbols.add(sym_p)
+        except Exception:
+            ib_open_symbols = set()
+            latest_nav_ts = None
+
+        blocking_unmapped: list[dict] = []
+        flat_unmapped: list[dict] = []
+        if latest_nav_ts is None:
+            # Cannot align to a book snapshot — stay conservative.
+            blocking_unmapped = list(unmapped_rows)
+        else:
+            for r in unmapped_rows:
+                sym = str(r.get("SYMBOL") or "").strip().upper()
+                if not sym:
+                    blocking_unmapped.append(r)
+                elif sym in ib_open_symbols:
+                    blocking_unmapped.append(r)
+                else:
+                    flat_unmapped.append(r)
+
+        blocking_unmapped.sort(key=lambda x: str(x.get("SNAPSHOT_TS") or ""), reverse=True)
+        sample_rows = blocking_unmapped[:sample_limit]
         symbols = sorted({str(r.get("SYMBOL") or "").upper() for r in sample_rows if str(r.get("SYMBOL") or "").strip()})
         sample_ids = [str(r.get("BROKER_ORDER_ID")) for r in sample_rows if r.get("BROKER_ORDER_ID") is not None]
         return {
-            "count": len(unmapped_rows),
-            "latest_snapshot_ts": unmapped_rows[0].get("SNAPSHOT_TS"),
+            "count": len(blocking_unmapped),
+            "latest_snapshot_ts": blocking_unmapped[0].get("SNAPSHOT_TS") if blocking_unmapped else None,
             "symbols": symbols,
             "sample_broker_order_ids": sample_ids,
+            "unmapped_on_flat_symbols_count": len(flat_unmapped),
+            "unmapped_total_before_flat_filter": len(unmapped_rows),
         }
     except Exception:
         return {
@@ -688,6 +746,8 @@ def _recent_unmapped_execution_summary(
             "latest_snapshot_ts": None,
             "symbols": [],
             "sample_broker_order_ids": [],
+            "unmapped_on_flat_symbols_count": 0,
+            "unmapped_total_before_flat_filter": 0,
         }
 
 
@@ -6364,6 +6424,12 @@ def get_live_activity_overview(
                 "unmapped_execution_latest_ts": unmapped_exec_summary.get("latest_snapshot_ts"),
                 "unmapped_execution_symbols": unmapped_exec_summary.get("symbols") or [],
                 "unmapped_execution_sample_broker_order_ids": unmapped_exec_summary.get("sample_broker_order_ids") or [],
+                "unmapped_on_flat_symbols_count": int(
+                    unmapped_exec_summary.get("unmapped_on_flat_symbols_count") or 0
+                ),
+                "unmapped_total_before_flat_filter": int(
+                    unmapped_exec_summary.get("unmapped_total_before_flat_filter") or 0
+                ),
                 "market_open": market_open,
                 "market_window_open_utc": open_utc,
                 "market_window_close_utc": close_utc,

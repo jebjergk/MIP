@@ -23,6 +23,8 @@ from app.db import get_connection, fetch_all, serialize_row, serialize_rows, Sno
 from app.live_execution_utils import to_dt_utc, is_close_like_execution
 from app.training_status import score_training_status_row, DEFAULT_MIN_SIGNALS
 from app.entry_intel_hooks import (
+    build_closeout_api_intel,
+    build_closeout_summary_for_api,
     ensure_entry_intel_for_proposal,
     fetch_latest_snapshot_id_for_proposal,
     insert_entry_intel_action_link,
@@ -11069,8 +11071,24 @@ def get_entry_intel_summary_by_action(action_id: str):
             (action_id,),
         )
         rows = fetch_all(cur)
+        cur.execute(
+            """
+            select *
+            from MIP.LIVE.TRADE_CLOSEOUT
+            where ENTRY_ACTION_ID = %s
+            limit 1
+            """,
+            (action_id,),
+        )
+        co_rows = fetch_all(cur)
+        co_raw = serialize_rows(co_rows)[0] if co_rows else None
         if not rows:
-            return {"ok": True, "action_id": action_id, "summary": None}
+            return {
+                "ok": True,
+                "action_id": action_id,
+                "summary": None,
+                "closeout_summary": build_closeout_summary_for_api(co_raw),
+            }
         r = rows[0]
         ws = _parse_variant(r.get("WORLDS_SPEC"))
         al = _parse_variant(r.get("ALPHA_SPEC"))
@@ -11105,6 +11123,7 @@ def get_entry_intel_summary_by_action(action_id: str):
                 "worlds_summary": worlds_summary,
                 "alpha_summary": alpha_summary,
             },
+            "closeout_summary": build_closeout_summary_for_api(co_raw),
         }
     finally:
         conn.close()
@@ -11125,6 +11144,12 @@ def get_trade_closeout_by_entry_action(entry_action_id: str):
             (entry_action_id,),
         )
         rows = fetch_all(cur)
-        return {"ok": True, "entry_action_id": entry_action_id, "closeout": serialize_rows(rows)[0] if rows else None}
+        raw = serialize_rows(rows)[0] if rows else None
+        return {
+            "ok": True,
+            "entry_action_id": entry_action_id,
+            "closeout": raw,
+            "closeout_intel": build_closeout_api_intel(raw),
+        }
     finally:
         conn.close()

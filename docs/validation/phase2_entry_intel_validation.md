@@ -144,4 +144,34 @@ Until this fix is deployed, **new EIS rows from procs may fail** while standalon
 
 ---
 
-_Last updated: Phase 3 committee integration + prior Phase 2 validation._
+## 8. Phase 4 — TRADE_CLOSEOUT + ALIGN_RULE_V1 (2026-04-01)
+
+**ADR:** [`ADR-0007-phase4-trade-closeout-alignment.md`](../adr/ADR-0007-phase4-trade-closeout-alignment.md)
+
+**Smoke:** `MIP/SQL/smoke/29_entry_intel_phase4_closeout_smoke.sql`
+
+**Python tests:** `MIP/apps/mip_ui_api/tests/test_closeout_alignment_v1.py`
+
+### 8.1 Open blockers (carry forward — still visible)
+
+| Blocker | Status |
+|---------|--------|
+| **411** `MIP_EIS_APPEND_ONLY` | Unchanged: requires ACCOUNTADMIN; denied-UPDATE proof not run |
+| **E2E chain** | Still depends on real `ENTRY_INTEL_ACTION_LINK` + exit `FILLED` + `TRADE_CLOSEOUT`; capture IDs here when available |
+| **Summary route** | `GET /live/entry-intel/summary/by-action/{action_id}` now returns **`closeout_summary`** when closeout exists; validate with a real linked `ENTRY_ACTION_ID` when data exists |
+
+### 8.2 Phase 4 smoke / deploy log
+
+| Check | Result | Notes |
+|--------|--------|--------|
+| Deploy `migrations/phase4_trade_closeout_hardening.sql` | **Pass** | `TRADE_CLOSEOUT` new columns + `V_ENTRY_INTEL_LIFECYCLE_RECONSTRUCTION` created |
+| `29_entry_intel_phase4_closeout_smoke.sql` | **Pass** | `P4_TC_COL_*` and `P4_VIEW_RECONSTRUCTION` cnt = 1; account had **0** `TRADE_CLOSEOUT` rows → `P4_CLOSEOUT_ALIGN_RULE_SAMPLE` shows `NO_ROWS` |
+| `pytest tests/test_closeout_alignment_v1.py` | **Pass** | 11 tests; deterministic ALIGN_RULE_V1 + override / transition cases |
+
+### 8.3 LIC closeout display readiness
+
+Phase 4 is **sufficient to start** future LIC closeout UI work: API exposes `closeout_summary` on the by-action summary route and `closeout_intel` on the closeout route, with documented `FROZEN_ENTRY_EXPECTATION` + `ALIGNMENT_JSON` schema in the Phase 4 ADR.
+
+---
+
+_Last updated: Phase 4 trade closeout + alignment v1 + prior Phase 2/3 validation._

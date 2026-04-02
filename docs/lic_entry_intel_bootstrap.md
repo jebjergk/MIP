@@ -28,6 +28,14 @@ Operators must click **Reload bootstrap (Snowflake)** to refresh entry analysis 
 - `GET /live/entry-intel/summary/by-action/{action_id}` — same underlying facts as bootstrap per action; useful for curl/debug.
 - `GET /live/entry-intel/closeout/by-entry-action/{id}` — raw + parsed closeout when debugging.
 
+## Troubleshooting
+
+**`ENTRY_INTEL_ACTION_LINK` does not exist or not authorized**
+
+- Deploy entry-intel DDL: [`410_entry_intel_lifecycle.sql`](../SQL/app/410_entry_intel_lifecycle.sql) (creates `MIP.LIVE.ENTRY_INTEL_SNAPSHOT`, `ENTRY_INTEL_ACTION_LINK`, `TRADE_CLOSEOUT`, and related objects).
+- Ensure the Snowflake role used by **mip_ui_api** has `USAGE` on schema `MIP.LIVE` and `SELECT` on those tables (and any Phase 4 migration columns if applicable).
+- If DDL is not deployed yet, **bootstrap still succeeds**: the entry-lifecycle batch is skipped and `entry_lifecycle_by_symbol` is `{}`; LIC shows “no linked pre-trade analysis” until objects exist.
+
 ## Validation (manual)
 
 1. **Linked V2 baseline, open position:** open LIC → Snapshot → see **Pre-trade recommendation** and **Similar setups**; **Outcome** explains still open; expand **Technical details** for IDs.

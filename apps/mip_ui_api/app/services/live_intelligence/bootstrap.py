@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +17,8 @@ from app.services.live_intelligence.entry_lifecycle_ui import (
 BOOTSTRAP_VERSION = "1.0.0"
 _MAX_ANALOG_GLOBAL = 2500
 _MAX_ANALOG_PER_SYMBOL = 400
+
+_log = logging.getLogger(__name__)
 
 
 def _fetch_analog_episodes(cur, symbols: list[str]) -> dict[str, list[dict[str, Any]]]:
@@ -178,10 +181,19 @@ def build_bootstrap_payload() -> dict[str, Any]:
         entry_lifecycle_by_symbol: dict[str, Any] = {}
         pid = _active_portfolio_id(cur)
         if pid and symbols:
-            raw_by_sym = fetch_entry_lifecycle_rows(cur, pid, symbols)
-            for sym in symbols:
-                if sym in raw_by_sym:
-                    entry_lifecycle_by_symbol[sym] = build_operator_entry_lifecycle(sym, raw_by_sym[sym])
+            try:
+                raw_by_sym = fetch_entry_lifecycle_rows(cur, pid, symbols)
+                for sym in symbols:
+                    if sym in raw_by_sym:
+                        entry_lifecycle_by_symbol[sym] = build_operator_entry_lifecycle(sym, raw_by_sym[sym])
+            except Exception as exc:
+                # Missing DDL, role grants, or wrong database — do not fail the whole LIC bootstrap.
+                _log.warning(
+                    "entry_lifecycle_by_symbol skipped (need MIP.LIVE.ENTRY_INTEL_ACTION_LINK + related "
+                    "objects from MIP/SQL/app/410_entry_intel_lifecycle.sql and grants for the API role): %s",
+                    exc,
+                    exc_info=True,
+                )
         news_snapshot = []
         for t in tiles:
             sym = str(t.get("symbol") or "").upper()

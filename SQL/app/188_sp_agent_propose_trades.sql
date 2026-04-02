@@ -1115,17 +1115,17 @@ begin
     exception
         when other then
             v_eis_err := sqlerrm;
+            -- Snowflake rejects UUID_STRING() inside INSERT...VALUES (non-deterministic); use SELECT.
             insert into MIP.APP.EIS_ENSURE_FAILURE_LOG (
                 LOG_ID, RUN_ID, PORTFOLIO_ID, PROPOSAL_ID, ERROR_MESSAGE, CREATED_TS
             )
-            values (
+            select
                 uuid_string(),
                 :P_RUN_ID,
                 :P_PORTFOLIO_ID,
                 null,
                 :v_eis_err,
-                current_timestamp()
-            );
+                current_timestamp();
     end;
 
     -- Count proposals inserted for this run (SQLROWCOUNT not reliable after MERGE)

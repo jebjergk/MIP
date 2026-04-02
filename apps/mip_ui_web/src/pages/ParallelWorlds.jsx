@@ -9,6 +9,7 @@ import {
   AreaChart, Area, BarChart, Bar, Cell,
 } from 'recharts'
 import './ParallelWorlds.css'
+import TradeReviewTab from './tradeReview/TradeReviewTab'
 
 /* ── Helpers ─────────────────────────────────────────── */
 
@@ -1097,7 +1098,7 @@ export default function ParallelWorlds() {
   const [regimeData, setRegimeData] = useState(null)
   const [recommendations, setRecommendations] = useState(null)
   const [safetyCache, setSafetyCache] = useState({})
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState('trade-review')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [expandedRow, setExpandedRow] = useState(null)
@@ -1223,7 +1224,7 @@ export default function ParallelWorlds() {
       <header className="pw-header">
         <div className="pw-header-left">
           <h2 className="pw-title">Parallel Worlds</h2>
-          <p className="pw-subtitle">Counterfactual analysis &amp; policy tuning lab</p>
+          <p className="pw-subtitle">Post-trade review, counterfactual analysis &amp; policy tuning</p>
         </div>
         <div className="pw-header-right">
           <select
@@ -1246,6 +1247,7 @@ export default function ParallelWorlds() {
       {/* Tab navigation */}
       <nav className="pw-tab-bar">
         {[
+          { id: 'trade-review', label: 'Trade Review' },
           { id: 'overview', label: 'Overview' },
           { id: 'signal-tuning', label: 'Signal Tuning' },
           { id: 'portfolio-tuning', label: 'Portfolio Tuning' },
@@ -1260,7 +1262,7 @@ export default function ParallelWorlds() {
         ))}
       </nav>
 
-      {loading && <LoadingState message="Loading parallel worlds..." />}
+      {activeTab === 'overview' && loading && <LoadingState message="Loading parallel worlds..." />}
       {error && <div className="pw-error">Error: {error}</div>}
       {!loading && !error && liveFilterLoaded && livePortfolios.length === 0 && (
         <EmptyState
@@ -1268,6 +1270,11 @@ export default function ParallelWorlds() {
           explanation="Parallel Worlds is restricted to live portfolios only."
           reasons={['Create/activate at least one row in Live Portfolio Config.', 'Sim portfolios are intentionally hidden on this page.']}
         />
+      )}
+
+      {/* Trade Review Tab */}
+      {!error && livePortfolios.length > 0 && activeTab === 'trade-review' && (
+        <TradeReviewTab portfolioId={selectedPortfolio} active />
       )}
 
       {/* Overview Tab */}

@@ -9,6 +9,7 @@ import LicPositionRadar from '../components/lic/LicPositionRadar'
 import LicWorldsScenarios from '../components/lic/LicWorldsScenarios'
 import LicAnalogPanel from '../components/lic/LicAnalogPanel'
 import LicSimulatorPanel from '../components/lic/LicSimulatorPanel'
+import LicEntryIntelligencePanel from '../components/lic/LicEntryIntelligencePanel'
 import {
   alignRadarTupleToBand,
   computeRawRadarTuple,
@@ -305,6 +306,8 @@ function LiveIntelligenceCockpitInner() {
   const [aiBusy, setAiBusy] = useState(false)
   const [peakPnl, setPeakPnl] = useState({})
   const [bootReady, setBootReady] = useState(false)
+  /** Snowflake-backed entry intel + committee + closeout — set only from bootstrap, never from IB refresh. */
+  const [entryLifecycleBySymbol, setEntryLifecycleBySymbol] = useState({})
   const bootstrapGenRef = useRef(0)
   const refreshGenRef = useRef(0)
   const workspaceSectionRef = useRef(null)
@@ -411,6 +414,7 @@ function LiveIntelligenceCockpitInner() {
     setLoading(true)
     setError('')
     setBootReady(false)
+    setEntryLifecycleBySymbol({})
     setFeed([])
     setTimeline([])
     try {
@@ -424,6 +428,11 @@ function LiveIntelligenceCockpitInner() {
       setPortfolioContext(data.portfolio_context || {})
       const tr = data.tracker || { tiles: [] }
       setTrackerData(tr)
+      setEntryLifecycleBySymbol(
+        data.entry_lifecycle_by_symbol && typeof data.entry_lifecycle_by_symbol === 'object'
+          ? data.entry_lifecycle_by_symbol
+          : {},
+      )
       setPortfolioFocusMode(false)
       if (!selectedSymbol && tr.tiles?.[0]?.symbol) {
         setSelectedSymbol(String(tr.tiles[0].symbol).toUpperCase())
@@ -684,7 +693,8 @@ function LiveIntelligenceCockpitInner() {
         <div>
           <h2>Live Intelligence Cockpit</h2>
           <p>
-            Snowflake bootstrap once · IB live only after load · deterministic + event AI · v{bootstrapVersion || '…'}
+            Snowflake bootstrap once (positions + entry analysis) · IB live refresh does not re-query entry analysis ·
+            deterministic + event AI · v{bootstrapVersion || '…'}
           </p>
         </div>
         <div className="lic-actions">
@@ -878,6 +888,15 @@ function LiveIntelligenceCockpitInner() {
 
               {detailTab === 'snapshot' && (
                 <div className="lic-drill-panel lic-drill-panel--snapshot lic-snapshot">
+                  <LicEntryIntelligencePanel
+                    lifecycle={
+                      entryLifecycleBySymbol[selectedSymbol] ?? {
+                        has_entry_intel_link: false,
+                        unavailable_reason:
+                          'No linked pre-trade analysis for this symbol in the last bootstrap. Use Reload bootstrap after the entry is linked to entry intelligence.',
+                      }
+                    }
+                  />
                   <div className="lic-snapshot-strip lic-chart-decision-strip">
                     <div className="lic-chart-decision-strip-left">
                       <div className="lic-chart-decision-primary">{safeText(workspacePres?.primary_action, '—')}</div>

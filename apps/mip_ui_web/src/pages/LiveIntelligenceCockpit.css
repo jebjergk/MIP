@@ -2118,3 +2118,175 @@
   border-width: 2px;
   box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.15), 0 2px 8px rgba(127, 29, 29, 0.12);
 }
+
+/* Entry intelligence (bootstrap-only lifecycle) */
+.lic-ei {
+  margin: 0 0 1.25rem;
+  padding: 1rem 1.1rem;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  background: linear-gradient(165deg, #0f172a 0%, #020617 100%);
+}
+
+.lic-ei-title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  color: #f1f5f9;
+  font-weight: 650;
+}
+
+.lic-ei-lead {
+  margin: 0 0 1rem;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.lic-ei-muted {
+  margin: 0.35rem 0;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.lic-ei-warn {
+  margin: 0 0 0.65rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  color: #fde68a;
+  font-size: 0.78rem;
+}
+
+.lic-ei-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+}
+
+.lic-ei-card {
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #1e293b;
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.lic-ei-card-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.lic-ei-dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.lic-ei-dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.15rem;
+}
+
+.lic-ei-dl dt {
+  margin: 0;
+  font-size: 0.65rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.lic-ei-dl dd {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #e2e8f0;
+  line-height: 1.35;
+}
+
+.lic-ei-dl--compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+}
+
+.lic-ei-dl--compact > div {
+  min-width: 5.5rem;
+}
+
+.lic-ei-dl--debug dt {
+  font-size: 0.62rem;
+}
+
+.lic-ei-dl--debug dd {
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.lic-ei-one-liner {
+  margin: 0.55rem 0 0;
+  font-size: 0.76rem;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.lic-ei-narrative {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  color: #e2e8f0;
+  line-height: 1.4;
+}
+
+.lic-ei-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.45rem 0;
+}
+
+.lic-ei-chip {
+  font-size: 0.68rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #cbd5e1;
+  border: 1px solid #334155;
+}
+
+.lic-ei-committee-headline {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: #f8fafc;
+}
+
+.lic-ei-note {
+  margin: 0.45rem 0 0;
+  font-size: 0.72rem;
+  color: #a5b4fc;
+  line-height: 1.4;
+}
+
+.lic-ei-small {
+  font-size: 0.72rem !important;
+}
+
+.lic-ei-details {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.lic-ei-details summary {
+  cursor: pointer;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.lic-ei-details[open] summary {
+  margin-bottom: 0.5rem;
+}

@@ -172,6 +172,23 @@ Until this fix is deployed, **new EIS rows from procs may fail** while standalon
 
 Phase 4 is **sufficient to start** future LIC closeout UI work: API exposes `closeout_summary` on the by-action summary route and `closeout_intel` on the closeout route, with documented `FROZEN_ENTRY_EXPECTATION` + `ALIGNMENT_JSON` schema in the Phase 4 ADR.
 
+### 8.4 LIC Live Intelligence Cockpit (entry analysis panel)
+
+**Doc:** [`lic_entry_intel_bootstrap.md`](../lic_entry_intel_bootstrap.md)
+
+**Behavior:** `GET /live-intelligence/bootstrap` returns `entry_lifecycle_by_symbol`. LIC Snapshot tab renders **Entry analysis** from that map only; **Refresh IB + step** does **not** reload it.
+
+**Manual checks:**
+
+| Case | Expect |
+|------|--------|
+| Open position + linked EIS | Pre-trade + Similar setups + Committee blocks populated |
+| Open position, no link | Plain “no linked pre-trade analysis” message |
+| After exit + closeout (if row present) | Outcome block with alignment / return |
+| Network | No repeat `bootstrap` until “Reload bootstrap” |
+
+**Unit:** `pytest MIP/apps/mip_ui_api/tests/test_entry_lifecycle_ui.py`
+
 ---
 
 _Last updated: Phase 4 trade closeout + alignment v1 + prior Phase 2/3 validation._

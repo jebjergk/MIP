@@ -8,6 +8,10 @@ from typing import Any
 
 from app.db import fetch_all, get_connection
 from app.routers.symbol_tracker import _in_placeholders, _to_float, assemble_symbol_tracker_tiles
+from app.services.live_intelligence.entry_lifecycle_ui import (
+    build_operator_entry_lifecycle,
+    fetch_entry_lifecycle_rows,
+)
 
 BOOTSTRAP_VERSION = "1.0.0"
 _MAX_ANALOG_GLOBAL = 2500
@@ -99,6 +103,25 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
     return num / (denx * deny)
 
 
+def _active_portfolio_id(cur) -> int | None:
+    cur.execute(
+        """
+        select PORTFOLIO_ID
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where coalesce(IS_ACTIVE, true) = true
+        order by PORTFOLIO_ID
+        limit 1
+        """
+    )
+    rows = fetch_all(cur)
+    if not rows:
+        return None
+    try:
+        return int(rows[0].get("PORTFOLIO_ID"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _portfolio_context(tiles: list[dict[str, Any]]) -> dict[str, Any]:
     symbols = [str(t.get("symbol") or "").upper() for t in tiles if t.get("symbol")]
     gross_notional = 0.0
@@ -152,6 +175,13 @@ def build_bootstrap_payload() -> dict[str, Any]:
         symbols = [str(t.get("symbol") or "").upper() for t in tiles if t.get("symbol")]
         analog = _fetch_analog_episodes(cur, symbols)
         portfolio_ctx = _portfolio_context(tiles)
+        entry_lifecycle_by_symbol: dict[str, Any] = {}
+        pid = _active_portfolio_id(cur)
+        if pid and symbols:
+            raw_by_sym = fetch_entry_lifecycle_rows(cur, pid, symbols)
+            for sym in symbols:
+                if sym in raw_by_sym:
+                    entry_lifecycle_by_symbol[sym] = build_operator_entry_lifecycle(sym, raw_by_sym[sym])
         news_snapshot = []
         for t in tiles:
             sym = str(t.get("symbol") or "").upper()
@@ -165,6 +195,7 @@ def build_bootstrap_payload() -> dict[str, Any]:
             "tracker": tracker,
             "analog_episodes_by_symbol": analog,
             "portfolio_context": portfolio_ctx,
+            "entry_lifecycle_by_symbol": entry_lifecycle_by_symbol,
             "news_snapshot": news_snapshot[:50],
         }
     finally:

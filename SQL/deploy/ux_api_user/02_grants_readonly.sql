@@ -16,6 +16,7 @@ grant usage on database MIP to role MIP_UI_API_ROLE;
 grant usage on schema MIP.APP       to role MIP_UI_API_ROLE;
 grant usage on schema MIP.MART      to role MIP_UI_API_ROLE;
 grant usage on schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;
+grant usage on schema MIP.LIVE      to role MIP_UI_API_ROLE;
 
 -- Tables (MIP.APP)
 grant select on table MIP.APP.PORTFOLIO             to role MIP_UI_API_ROLE;
@@ -90,6 +91,22 @@ grant usage on procedure MIP.APP.SP_AGENT_GENERATE_PORTFOLIO_NARRATIVE(number, v
 grant usage on future procedures in schema MIP.APP to role MIP_UI_API_ROLE;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
+-- MIP.LIVE (symbol tracker, live execution, entry intelligence, committee)
+-- Explicit grants for objects created before "future" LIVE grants were added.
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+grant select on table MIP.LIVE.LIVE_PORTFOLIO_CONFIG to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.BROKER_SNAPSHOTS to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.LIVE_ORDERS to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.LIVE_ACTIONS to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.ENTRY_INTEL_SNAPSHOT to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.ENTRY_INTEL_ACTION_LINK to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.TRADE_CLOSEOUT to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.COMMITTEE_RUN to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.COMMITTEE_VERDICT to role MIP_UI_API_ROLE;
+grant select on table MIP.LIVE.COMMITTEE_ROLE_OUTPUT to role MIP_UI_API_ROLE;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
 -- FUTURE GRANTS: Auto-grant SELECT on all future tables/views in all MIP schemas
 -- Run once as MIP_ADMIN_ROLE or ACCOUNTADMIN. Covers everything created after this.
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -107,3 +124,7 @@ grant select on future views  in schema MIP.MART      to role MIP_UI_API_ROLE;
 -- Schema: MIP.AGENT_OUT
 grant select on future tables in schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;
 grant select on future views  in schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;
+
+-- Schema: MIP.LIVE — future grants (run as schema owner if 003001; see 04_grants_live_readonly.sql notes)
+-- grant select on future tables in schema MIP.LIVE to role MIP_UI_API_ROLE;
+-- grant select on future views in schema MIP.LIVE to role MIP_UI_API_ROLE;

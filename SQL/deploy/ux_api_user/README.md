@@ -10,8 +10,10 @@ Idempotent SQL scripts to create and configure the MIP UX API service user (read
 ## Run order
 
 1. **01_create_role_and_user.sql** — Create role and user
-2. **02_grants_readonly.sql** — Grant read-only access (MIP.APP, MIP.MART, MIP.AGENT_OUT)
+2. **02_grants_readonly.sql** — Grant read-only access (MIP.APP, MIP.MART, MIP.AGENT_OUT, MIP.LIVE usage + LIVE table SELECTs)
 3. **03_set_rsa_public_key.sql** — Set RSA public key for keypair auth (MFA environments)
+
+**LIVE / entry intelligence:** `02` now includes `MIP.LIVE` usage and explicit `SELECT` on live execution + entry-intel + committee tables. **`04_grants_live_readonly.sql`** is a focused re-run if you ever need to apply only those grants again (idempotent).
 
 ## Placeholders
 

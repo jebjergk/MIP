@@ -828,3 +828,67 @@ def get_safety_checks(
         }
     finally:
         conn.close()
+
+
+# GET /parallel-worlds/trade-intelligence
+# Frozen contract: parallel_worlds_trade_intelligence_v1
+#   Top-level keys: ok, portfolio_id, count, meta, trades
+#   trades: array of objects; keys are snake_case columns from MIP.MART.V_TRADE_INTELLIGENCE
+#     (portfolio_id, symbol, entry_action_id, closeout_id, entry_ts, exit_ts, has_eis,
+#      expected_return, expectation_summary, committee_action_raw, committee_action_normalized,
+#      override_class, realized_return, realized_pnl, alignment_class, outcome_class,
+#      best_pw_scenario_name, best_pw_scenario_return, best_pw_vs_actual_delta,
+#      pw_regret_amount, pw_regret_driver, reconciliation_class, has_entry_intel_link,
+#      recon_state_as_of_ts)
+#   Query: portfolio_id required; limit optional default 100, max 500.
+@router.get("/trade-intelligence")
+def get_trade_intelligence(
+    portfolio_id: int = Query(..., description="Portfolio ID"),
+    limit: int = Query(100, ge=1, le=500, description="Max rows returned"),
+):
+    """
+    Trade Intelligence Record (TIR) list — one row per resolved closeout.
+
+    Response shape (frozen for Phase 2 UX): ok, portfolio_id, count, meta, trades.
+    Collection key is always ``trades`` (not ``items``).
+    """
+    meta = {
+        "contract": "parallel_worlds_trade_intelligence_v1",
+        "collection_key": "trades",
+        "pw_context": "portfolio_day_exit_date",
+        "pw_date_matching": (
+            "Primary: join V_PARALLEL_WORLD_DIFF on calendar date of EXIT_TS. "
+            "Fallback: if EXIT_TS is null, use ENTRY_TS::date for the join only. "
+            "This is portfolio-day contextual PW, not a trade-path replay."
+        ),
+        "pw_detail": (
+            "PW_* fields come from the best active scenario (max PNL_DELTA) for that portfolio-day; "
+            "not position-level counterfactuals."
+        ),
+        "reconciliation_context": "current_symbol_portfolio_state_not_historical_to_closeout",
+        "reconciliation_detail": (
+            "RECON_* fields reflect LIFECYCLE_RECONCILIATION_STATE as of last update — "
+            "not guaranteed to match state at closeout time."
+        ),
+    }
+    sql = """
+    SELECT *
+    FROM MIP.MART.V_TRADE_INTELLIGENCE
+    WHERE PORTFOLIO_ID = %s
+    ORDER BY EXIT_TS DESC NULLS LAST
+    LIMIT %s
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, (portfolio_id, limit))
+        rows = _fetch_all(cur)
+        return {
+            "ok": True,
+            "portfolio_id": portfolio_id,
+            "count": len(rows),
+            "meta": meta,
+            "trades": serialize_rows(rows),
+        }
+    finally:
+        conn.close()

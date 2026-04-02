@@ -128,3 +128,5 @@ grant select on future views  in schema MIP.AGENT_OUT to role MIP_UI_API_ROLE;
 -- Schema: MIP.LIVE — future grants (run as schema owner if 003001; see 04_grants_live_readonly.sql notes)
 -- grant select on future tables in schema MIP.LIVE to role MIP_UI_API_ROLE;
 -- grant select on future views in schema MIP.LIVE to role MIP_UI_API_ROLE;
+-- Trade Intelligence (TIR) Phase 1
+grant select on view MIP.MART.V_TRADE_INTELLIGENCE to role MIP_UI_API_ROLE;

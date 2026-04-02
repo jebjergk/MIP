@@ -132,6 +132,16 @@ Until this fix is deployed, **new EIS rows from procs may fail** while standalon
 
 **Proceed with Phase 3 planning**, with operational caveats: ensure **410 procedural fix** is deployed everywhere Phase 2 ran; complete **411** + one **E2E** chain when an import exists; optionally re-smoke `19` for `EIS_V2_ROWS`.
 
+## 7. Phase 3+ operational tracking (do not lose)
+
+| Track | Owner / note |
+|-------|----------------|
+| **411** `MIP_EIS_APPEND_ONLY` | ACCOUNTADMIN deploy; immutability UPDATE smoke |
+| **E2E chain** | `PROPOSAL_ID` → `SNAPSHOT_ID` → `ENTRY_ACTION_ID` → `TRADE_CLOSEOUT` when import + exit exist |
+| **Summary route** | `GET /live/entry-intel/summary/by-action/{action_id}` after `ENTRY_INTEL_ACTION_LINK` row exists |
+
+**Phase 3 code (merged):** committee `VERDICT_JSON` includes `alpha_override_class`, `entry_intel_audit_v1`, and deterministic `ALPHA_OVERRIDE_*` / `ALPHA_DEVIATION_JUSTIFICATION_*` reason codes — see `ADR-0007-phase3-committee-alpha.md`.
+
 ---
 
-_Last updated: post–Phase 2 data validation + SP_ENSURE fix._
+_Last updated: Phase 3 committee integration + prior Phase 2 validation._

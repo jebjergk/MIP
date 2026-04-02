@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — Phase 1 backbone (immutable snapshot + linkage + closeout). **Phase 2** adds real `WORLDS_SPEC` / `ALPHA_SPEC`; see [ADR-0007-phase2-eis-worlds-alpha.md](./ADR-0007-phase2-eis-worlds-alpha.md).
+Accepted — Phase 1 backbone (immutable snapshot + linkage + closeout). **Phase 2** adds real `WORLDS_SPEC` / `ALPHA_SPEC`; see [ADR-0007-phase2-eis-worlds-alpha.md](./ADR-0007-phase2-eis-worlds-alpha.md). **Phase 3** hardens committee vs alpha; see [ADR-0007-phase3-committee-alpha.md](./ADR-0007-phase3-committee-alpha.md).
 
 ## Context
 
@@ -56,4 +56,5 @@ MIP previously used the word “worlds” for several different mechanisms (port
 - Implementation plan: `.cursor/plans/parallel_worlds_implementation_roadmap.plan.md`
 - DDL: `MIP/SQL/app/410_entry_intel_lifecycle.sql`
 - Phase 2 rules: `MIP/docs/adr/ADR-0007-phase2-eis-worlds-alpha.md`
+- Phase 3 committee: `MIP/docs/adr/ADR-0007-phase3-committee-alpha.md`
 - Validation log: `MIP/docs/validation/phase2_entry_intel_validation.md`

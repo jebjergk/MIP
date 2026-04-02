@@ -1026,7 +1026,7 @@ def _fetch_entry_intel_baseline(cur, snapshot_id: str | None) -> dict | None:
     try:
         cur.execute(
             """
-            select WORLDS_SPEC, ALPHA_SPEC
+            select WORLDS_SPEC, ALPHA_SPEC, SOURCE_VERSION, EIS_VERSION
             from MIP.LIVE.ENTRY_INTEL_SNAPSHOT
             where SNAPSHOT_ID = %s
             limit 1
@@ -1040,9 +1040,27 @@ def _fetch_entry_intel_baseline(cur, snapshot_id: str | None) -> dict | None:
             "snapshot_id": snapshot_id,
             "worlds_spec": _parse_variant(row[0]),
             "alpha_spec": _parse_variant(row[1]),
+            "eis_source_version": row[2],
+            "eis_version": row[3],
         }
     except Exception:
         return None
+
+
+def _effective_alpha_baseline_action(alpha: dict | None) -> str | None:
+    """
+    Phase 1 stub rows (phase=1, stub) or missing schema have no actionable baseline.
+    """
+    if not isinstance(alpha, dict) or not alpha:
+        return None
+    if alpha.get("stub") is True and alpha.get("phase") == 1:
+        return None
+    if not alpha.get("alpha_schema_version") and not alpha.get("recommended_action"):
+        return None
+    act = str(alpha.get("recommended_action") or "").upper()
+    if act in ("ENTER", "REDUCE", "SKIP"):
+        return act
+    return None
 
 
 def _alpha_committee_alignment_pair(alpha_action: str, committee_rec: str) -> tuple[str, str]:
@@ -1067,19 +1085,197 @@ def _alpha_committee_alignment_pair(alpha_action: str, committee_rec: str) -> tu
     return "UNKNOWN", f"alpha_{a}_committee_{c}"
 
 
+def _classify_alpha_override_class(alpha_action: str | None, committee_rec: str) -> str:
+    """
+    Phase 3 explicit committee vs alpha semantics (ENTRY-oriented).
+    """
+    if not alpha_action:
+        return "NO_ALPHA_BASELINE"
+    a = alpha_action.upper()
+    c = (committee_rec or "UNKNOWN").upper()
+    if a == "ENTER" and c == "PROCEED":
+        return "ACCEPT_ALPHA"
+    if a == "ENTER" and c == "PROCEED_REDUCED":
+        return "REDUCE_VS_ALPHA"
+    if a == "ENTER" and c == "BLOCK":
+        return "BLOCK_DESPITE_ALPHA"
+    if a == "REDUCE" and c == "PROCEED":
+        return "INCREASE_VS_ALPHA"
+    if a == "REDUCE" and c in ("PROCEED_REDUCED", "BLOCK"):
+        return "ACCEPT_ALPHA"
+    if a == "SKIP" and c == "BLOCK":
+        return "ACCEPT_ALPHA"
+    if a == "SKIP" and c in ("PROCEED", "PROCEED_REDUCED"):
+        return "INCREASE_VS_ALPHA"
+    return "UNKNOWN_OVERRIDE"
+
+
+def _outputs_acknowledge_alpha_deviation(outputs: list[dict]) -> bool:
+    """True if any role reason/summary plausibly addresses baseline deviation or alignment."""
+    markers = (
+        "ALPHA_BASELINE_ALIGNED",
+        "ALPHA_BASELINE_DEVIATION",
+        "EIS_BASELINE",
+        "PRE-TRADE BASELINE",
+        "PRE_TRADE",
+        "WORLDS_SPEC",
+        "DEVIATE FROM BASELINE",
+        "AGAINST_ALPHA",
+        "BASELINE_SKIP",
+        "BASELINE_ENTER",
+        "BASELINE_REDUCE",
+    )
+    for o in outputs or []:
+        reasons = o.get("reasons") if isinstance(o.get("reasons"), list) else []
+        for r in reasons:
+            rs = str(r).upper()
+            if any(m in rs for m in markers):
+                return True
+            if "BASELINE" in rs and ("ALIGN" in rs or "DIVERG" in rs or "DEVIAT" in rs):
+                return True
+        summary = str(o.get("summary") or "").upper()
+        if "PRE-TRADE" in summary or "EIS" in summary or "ALPHA BASELINE" in summary:
+            return True
+    return False
+
+
+def _alpha_override_consensus_note_v1(override_class: str) -> str:
+    if override_class == "BLOCK_DESPITE_ALPHA":
+        return (
+            "V1: BLOCK uses existing committee supermajority rule. "
+            "BLOCK_DESPITE_ALPHA is high-impact; all roles should cite explicit rationale vs alpha."
+        )
+    if override_class == "INCREASE_VS_ALPHA":
+        return (
+            "V1: INCREASE_VS_ALPHA (e.g. proceeding vs SKIP baseline) is high-impact; "
+            "no extra consensus gate yet—document in reasons. Phase 4+ may add gates."
+        )
+    if override_class == "REDUCE_VS_ALPHA":
+        return "V1: REDUCE_VS_ALPHA is expected when risk layers tighten vs deterministic alpha; document drivers."
+    if override_class == "ACCEPT_ALPHA":
+        return "V1: Outcome class matches deterministic alpha posture for this recommendation."
+    if override_class == "NO_ALPHA_BASELINE":
+        return "V1: No actionable alpha baseline (missing EIS, stub, or unknown action); committee operates without alpha binding."
+    return "V1: Unknown override mapping; review alpha vs recommendation manually."
+
+
+def _append_alpha_phase3_reason_codes(
+    reason_codes: list[str],
+    override_class: str,
+    justification_status: str,
+) -> None:
+    """Mutates reason_codes with deterministic audit tags (idempotent append)."""
+    tag = f"ALPHA_OVERRIDE_{override_class}"
+    if tag not in reason_codes:
+        reason_codes.append(tag)
+    jst = f"ALPHA_DEVIATION_JUSTIFICATION_{justification_status}"
+    if jst not in reason_codes:
+        reason_codes.append(jst)
+
+
+def _committee_alpha_phase3_envelope(
+    context: dict,
+    verdict: dict,
+    outputs: list[dict] | None,
+    *,
+    action_intent: str,
+    manual_apply: bool,
+    reason_codes: list[str],
+) -> dict:
+    """
+    Phase 3 VERDICT_JSON extension: override class, justification audit, nested entry_intel_audit_v1.
+    Mutates reason_codes.
+    """
+    intent_u = str(action_intent or "ENTRY").upper()
+    baseline = context.get("entry_intel_baseline") if isinstance(context.get("entry_intel_baseline"), dict) else {}
+    alpha = baseline.get("alpha_spec") if isinstance(baseline.get("alpha_spec"), dict) else {}
+    effective = _effective_alpha_baseline_action(alpha)
+    rec = str(verdict.get("recommendation") or "").upper()
+    override = _classify_alpha_override_class(effective, rec)
+
+    if intent_u == "EXIT":
+        justification_status = "NOT_APPLICABLE_EXIT"
+    elif manual_apply:
+        justification_status = "NOT_EVALUATED_MANUAL_APPLY"
+    elif override in ("NO_ALPHA_BASELINE", "UNKNOWN_OVERRIDE", "ACCEPT_ALPHA"):
+        justification_status = "NOT_REQUIRED"
+    elif _outputs_acknowledge_alpha_deviation(outputs or []):
+        justification_status = "PRESENT"
+    else:
+        justification_status = "MISSING"
+
+    _append_alpha_phase3_reason_codes(reason_codes, override, justification_status)
+
+    flat = _committee_verdict_alignment_fields(context, verdict)
+    audit = _entry_intel_audit_v1(
+        context,
+        verdict,
+        outputs,
+        action_intent=intent_u,
+        manual_apply=manual_apply,
+        justification_status=justification_status,
+    )
+    return {**flat, "entry_intel_audit_v1": audit}
+
+
 def _committee_verdict_alignment_fields(context: dict, verdict: dict) -> dict:
+    """Flat legacy fields on VERDICT_JSON (compat). Prefer entry_intel_audit_v1 for new consumers."""
     baseline = context.get("entry_intel_baseline") if isinstance(context, dict) else None
     alpha = (baseline or {}).get("alpha_spec") if isinstance(baseline, dict) else {}
     if not isinstance(alpha, dict):
         alpha = {}
-    base_action = str(alpha.get("recommended_action") or "UNKNOWN").upper()
+    effective = _effective_alpha_baseline_action(alpha)
+    base_action = str(effective or "UNKNOWN").upper()
     rec = str(verdict.get("recommendation") or "").upper()
     align, notes = _alpha_committee_alignment_pair(base_action, rec)
+    override = _classify_alpha_override_class(effective, rec)
     return {
         "alpha_baseline_action": base_action,
         "committee_recommendation_summary": rec,
         "alpha_committee_alignment": align,
         "committee_vs_alpha_notes": notes,
+        "alpha_override_class": override,
+    }
+
+
+def _entry_intel_audit_v1(
+    context: dict,
+    verdict: dict,
+    outputs: list[dict] | None,
+    *,
+    action_intent: str,
+    manual_apply: bool,
+    justification_status: str,
+) -> dict:
+    """Structured audit block for COMMITTEE_VERDICT.VERDICT_JSON (Phase 3)."""
+    baseline = context.get("entry_intel_baseline") if isinstance(context.get("entry_intel_baseline"), dict) else {}
+    alpha = baseline.get("alpha_spec") if isinstance(baseline.get("alpha_spec"), dict) else {}
+    worlds = baseline.get("worlds_spec") if isinstance(baseline.get("worlds_spec"), dict) else {}
+    effective = _effective_alpha_baseline_action(alpha)
+    rec = str(verdict.get("recommendation") or "").upper()
+    override = _classify_alpha_override_class(effective, rec)
+    align, notes = _alpha_committee_alignment_pair(str(effective or "UNKNOWN").upper(), rec)
+    dist = worlds.get("historical_distribution") if isinstance(worlds.get("historical_distribution"), dict) else {}
+    return {
+        "comparison_rule_version": "ALPHA_COMMITTEE_V3",
+        "action_intent": str(action_intent or "ENTRY").upper(),
+        "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id"),
+        "eis_source_version": baseline.get("eis_source_version"),
+        "eis_version": baseline.get("eis_version"),
+        "worlds_schema_version": worlds.get("schema_version"),
+        "alpha_schema_version": alpha.get("alpha_schema_version"),
+        "hod_sample_size": dist.get("sample_size"),
+        "alpha_baseline_action": str(effective or "UNKNOWN").upper(),
+        "alpha_baseline_size_band": alpha.get("recommended_size_band"),
+        "alpha_expected_value_net": alpha.get("expected_value_net"),
+        "committee_recommendation": rec,
+        "alpha_override_class": override,
+        "alpha_committee_alignment_legacy": align,
+        "committee_vs_alpha_notes": notes,
+        "alpha_deviation_justification_status": justification_status,
+        "alpha_override_consensus_note_v1": _alpha_override_consensus_note_v1(override),
+        "manual_stream_apply": bool(manual_apply),
+        "role_output_count": len(outputs or []),
     }
 
 
@@ -3334,8 +3530,9 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
     alpha_b = eib.get("alpha_spec") if isinstance(eib.get("alpha_spec"), dict) else {}
     worlds_b = eib.get("worlds_spec") if isinstance(eib.get("worlds_spec"), dict) else {}
     dist = worlds_b.get("historical_distribution") if isinstance(worlds_b.get("historical_distribution"), dict) else {}
+    effective_alpha = _effective_alpha_baseline_action(alpha_b)
     eis_line = ""
-    if alpha_b.get("alpha_schema_version"):
+    if alpha_b.get("alpha_schema_version") or effective_alpha:
         hod_n = dist.get("sample_size")
         eis_line = (
             "- Pre-trade baseline (EIS, immutable snapshot): "
@@ -3345,9 +3542,16 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
             f"confidence_band={alpha_b.get('confidence_band')}, "
             f"downside_risk_band={alpha_b.get('downside_risk_band')}, "
             f"HOD_sample_size={hod_n}.\n"
-            "- Full WORLDS_SPEC and ALPHA_SPEC are in context.entry_intel_baseline; use them as the auditable quantitative baseline.\n"
-            "- You may diverge from the baseline but should justify materially different size or proceed/block choices.\n"
+            "- Full WORLDS_SPEC and ALPHA_SPEC are in context.entry_intel_baseline.worlds_spec / alpha_spec.\n"
+            "- Committee aggregates a joint PROCEED / PROCEED_REDUCED / BLOCK versus this baseline; the system classifies ACCEPT_ALPHA, REDUCE_VS_ALPHA, INCREASE_VS_ALPHA, or BLOCK_DESPITE_ALPHA for audit.\n"
         )
+        if effective_alpha and not is_exit:
+            eis_line += (
+                "- MANDATORY for each role: add to `reasons` either `ALPHA_BASELINE_ALIGNED` "
+                "OR a token starting with `ALPHA_BASELINE_DEVIATION:` plus a concise explanation "
+                "(e.g. ALPHA_BASELINE_DEVIATION: news shock overrides SKIP). "
+                "If you materially disagree with the deterministic alpha posture, the deviation token is required.\n"
+            )
     return (
         "You are one role in an institutional multi-agent trade committee.\n"
         "Return ONLY a JSON object with keys:\n"
@@ -7277,6 +7481,14 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         except Exception:
             proposed_qty_derived = None
 
+        verdict_phase3 = _committee_alpha_phase3_envelope(
+            context,
+            verdict,
+            outputs,
+            action_intent=action_intent,
+            manual_apply=False,
+            reason_codes=reason_codes,
+        )
         cur.execute(
             """
             insert into MIP.LIVE.COMMITTEE_VERDICT (
@@ -7303,7 +7515,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                             "joint_decision": verdict.get("joint_decision"),
                             "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id"),
                         },
-                        **_committee_verdict_alignment_fields(context, verdict),
+                        **verdict_phase3,
                     }
                 ),
             ),
@@ -7517,6 +7729,14 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         reason_codes.append("COMMITTEE_REVIEWED")
         verdict["tier_c_conflict"] = tier_c_conflict
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
+        verdict_phase3_apply = _committee_alpha_phase3_envelope(
+            context,
+            verdict,
+            [],
+            action_intent=action_intent,
+            manual_apply=True,
+            reason_codes=reason_codes,
+        )
 
         # Derive proposed price/qty so row no longer remains fully pending.
         proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
@@ -7601,7 +7821,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                             "joint_decision": verdict.get("joint_decision"),
                             "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id"),
                         },
-                        **_committee_verdict_alignment_fields(context, verdict),
+                        **verdict_phase3_apply,
                     }
                 ),
             ),

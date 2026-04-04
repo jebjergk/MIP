@@ -3579,6 +3579,28 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
             f"({conflict_types}). These indicate downward pressure at the same timestamp. "
             "Factor this conflict into your decision — it may warrant BLOCK, reduced size, or tighter stop loss.\n"
         )
+    prop_pw = context.get("proposal_pw_enrichment") if isinstance(context.get("proposal_pw_enrichment"), dict) else {}
+    pw_prop_line = ""
+    if prop_pw.get("pw_available"):
+        pw_prop_line = (
+            "- Proposal-time Parallel Worlds overlay (soft ranking signal at generation; NOT a hard gate; does not replace trust or policy): "
+            f"confidence_bucket={prop_pw.get('confidence_bucket')}, "
+            f"scenario_spread={prop_pw.get('scenario_spread')}, "
+            f"avg_cumulative_regret={prop_pw.get('avg_cumulative_regret')}, "
+            f"supporting_scenarios={prop_pw.get('analog_support_count')}, "
+            f"pw_score_adjustment_applied={prop_pw.get('pw_score_adjustment_applied')}, "
+            f"summary={prop_pw.get('summary_text', '')}\n"
+            "- parallel_worlds_evidence (live rollup) may differ from proposal_pw_enrichment; treat both as structured context.\n"
+        )
+    elif isinstance(prop_pw, dict) and prop_pw.get("reason"):
+        pw_prop_line = (
+            f"- Proposal-time Parallel Worlds: unavailable ({prop_pw.get('reason')}). "
+            "Do not infer risk from missing PW at proposal time.\n"
+        )
+    elif isinstance(prop_pw, dict):
+        pw_prop_line = (
+            "- Proposal-time Parallel Worlds: pw_available=false. Do not treat absence as a risk signal.\n"
+        )
     regime = context.get("market_regime") or {}
     regime_line = ""
     if regime.get("regime"):
@@ -3627,6 +3649,7 @@ def _committee_prompt(role: str, context: dict, round_n: int = 1, prior_messages
         f"{objective_line}"
         f"{strategy_line}"
         f"{conflict_line}"
+        f"{pw_prop_line}"
         f"{regime_line}"
         f"{eis_line}"
         "- Contribute to joint decision dimensions: enter/size/target/stop/hold/early-exit.\n"
@@ -4310,6 +4333,35 @@ def _build_action_decision_context(cur, action: dict) -> dict:
             entry_intel_baseline = _fetch_entry_intel_baseline(cur, entry_intel_snapshot_id)
         except Exception:
             entry_intel_baseline = None
+    proposal_pw_enrichment: dict = {"pw_available": False, "reason": "NO_PROPOSAL_ID"}
+    proposal_diagnostics: dict = {}
+    proposal_policy_version = None
+    pid_ctx = action.get("PROPOSAL_ID")
+    if pid_ctx is not None:
+        try:
+            cur.execute(
+                """
+                select PROPOSAL_POLICY_VERSION, PROPOSAL_DIAGNOSTICS, PW_ENRICHMENT
+                from MIP.AGENT_OUT.ORDER_PROPOSALS
+                where PROPOSAL_ID = %s
+                limit 1
+                """,
+                (int(pid_ctx),),
+            )
+            cols = [d[0] for d in (cur.description or [])]
+            row = cur.fetchone()
+            if row and cols:
+                prow = dict(zip(cols, row))
+                proposal_policy_version = prow.get("PROPOSAL_POLICY_VERSION")
+                proposal_diagnostics = _parse_variant(prow.get("PROPOSAL_DIAGNOSTICS"))
+                if not isinstance(proposal_diagnostics, dict):
+                    proposal_diagnostics = {}
+                proposal_pw_enrichment = _parse_variant(prow.get("PW_ENRICHMENT"))
+                if not isinstance(proposal_pw_enrichment, dict):
+                    proposal_pw_enrichment = {"pw_available": False, "reason": "INVALID_PW_ENRICHMENT"}
+        except Exception as exc:
+            proposal_pw_enrichment = {"pw_available": False, "reason": f"ORDER_PROPOSALS_QUERY_FAILED:{exc}"}
+            proposal_diagnostics = {}
     context = {
         "action_id": action.get("ACTION_ID"),
         "portfolio_id": action.get("PORTFOLIO_ID"),
@@ -4335,6 +4387,14 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "action_news_context_snapshot": action_news_snapshot,
         "latest_symbol_news_context": latest_news_snapshot,
         "parallel_worlds_evidence": pw_evidence,
+        "proposal_pw_enrichment": proposal_pw_enrichment,
+        "proposal_diagnostics": proposal_diagnostics,
+        "proposal_policy_version": proposal_policy_version,
+        "decision_lifecycle": {
+            "proposal_stage": "AUTONOMOUS_AGENT_OUT",
+            "committee_stage": "EXECUTION_TIME_PRE_SUBMIT",
+            "manual_submit": "POST_COMMITTEE_APPROVAL",
+        },
         "entry_intel_snapshot_id": entry_intel_snapshot_id,
         "entry_intel_baseline": entry_intel_baseline,
         "execution_risk_config": risk_cfg,

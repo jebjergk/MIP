@@ -37,3 +37,13 @@ alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
 -- Canonical run key: pipeline RUN_ID (UUID string). Scoping uses RUN_ID_VARCHAR only; SIGNAL_RUN_ID is optional/legacy linkage.
 alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
     add column if not exists RUN_ID_VARCHAR varchar(64);
+
+-- Autonomous proposal audit + Parallel Worlds overlay (see 491_proposal_policy_pw_schema.sql, SP_AGENT_PROPOSE_TRADES)
+alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
+    add column if not exists PROPOSAL_POLICY_VERSION varchar(32);
+
+alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
+    add column if not exists PROPOSAL_DIAGNOSTICS variant;
+
+alter table if exists MIP.AGENT_OUT.ORDER_PROPOSALS
+    add column if not exists PW_ENRICHMENT variant;

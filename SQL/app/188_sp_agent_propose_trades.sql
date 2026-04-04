@@ -1,5 +1,8 @@
 -- 188_sp_agent_propose_trades.sql
--- Purpose: Deterministic agent proposal generator with symbol-level trust gating.
+-- Purpose: Deterministic autonomous proposal generator with symbol-level trust gating,
+-- explicit versioned proposal policy (MIP.APP.PROPOSAL_POLICY_*), operational ingest-universe
+-- filter (MIP.APP.INGEST_UNIVERSE IS_ENABLED, 1440), and Parallel Worlds soft ranking overlay
+-- (MIP.MART.V_PROPOSAL_PW_PORTFOLIO_CONTEXT). Committee is not invoked here — execution-time only.
 --
 -- IMPORTANT: Candidate selection starts from latest-day trusted candidates, then enforces
 -- symbol-level trust (from V_TRAINING_DIGEST_SNAPSHOT_SYMBOL). No RUN_ID filter is applied since
@@ -58,6 +61,7 @@ declare
     v_daily_bar_age_hours number := null;
     v_daily_data_stale boolean := false;
     v_eis_err string := null;
+    v_proposal_policy_version string := null;
 begin
     select
         p.PROFILE_ID,
@@ -383,14 +387,45 @@ begin
     -- left as zero to avoid optimizer/internal errors in this branch.
     v_skipped_held_count := 0;
 
+    begin
+        select m.POLICY_VERSION
+          into :v_proposal_policy_version
+          from MIP.APP.PROPOSAL_POLICY_MANIFEST m
+         where coalesce(m.IS_ACTIVE, true)
+         order by coalesce(m.IS_DEFAULT, false) desc, m.EFFECTIVE_FROM desc
+         limit 1;
+    exception
+        when other then
+            v_proposal_policy_version := null;
+    end;
+    if (v_proposal_policy_version is null) then
+        v_proposal_policy_version := '2026_04_03_V1';
+    end if;
+
     merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target
     using (
-        with held_symbols as (
+        with         held_symbols as (
             select distinct
                 p.SYMBOL
             from MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
             where p.PORTFOLIO_ID = :P_PORTFOLIO_ID
               and p.CURRENT_BAR_INDEX = :v_current_bar_index
+        ),
+        ingest_enabled_universe as (
+            select distinct
+                upper(trim(SYMBOL)) as SYMBOL_U,
+                upper(trim(MARKET_TYPE)) as MARKET_TYPE_U
+            from MIP.APP.INGEST_UNIVERSE
+            where coalesce(IS_ENABLED, true)
+              and INTERVAL_MINUTES = 1440
+        ),
+        policy_rules as (
+            select
+                PATTERN_FAMILY,
+                MR_DIRECTION,
+                IS_ELIGIBLE
+            from MIP.APP.PROPOSAL_POLICY_RULE
+            where POLICY_VERSION = :v_proposal_policy_version
         ),
         news_cfg as (
             select
@@ -599,6 +634,12 @@ begin
                         )
                     )
                 ) as NEWS_IS_STALE,
+                pd.PATTERN_TYPE as CANDIDATE_PATTERN_TYPE,
+                iff(
+                    pd.PATTERN_TYPE = 'MEAN_REVERSION',
+                    coalesce(nullif(upper(trim(s.DETAILS:direction::string)), ''), 'UNKNOWN'),
+                    null
+                ) as CANDIDATE_MR_DIRECTION,
                 case
                     when s.MARKET_TYPE = 'FX' then 'FX'
                     else 'STOCK'
@@ -606,6 +647,17 @@ begin
             from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS s
             join MIP.APP.PATTERN_DEFINITION pd
               on pd.PATTERN_ID = s.PATTERN_ID
+            inner join ingest_enabled_universe iu
+              on iu.SYMBOL_U = upper(trim(s.SYMBOL))
+             and iu.MARKET_TYPE_U = upper(trim(s.MARKET_TYPE))
+            join policy_rules pr
+              on pr.PATTERN_FAMILY = pd.PATTERN_TYPE
+             and pr.MR_DIRECTION = iff(
+                    pd.PATTERN_TYPE = 'MEAN_REVERSION',
+                    coalesce(nullif(upper(trim(s.DETAILS:direction::string)), ''), 'UNKNOWN'),
+                    '*'
+                )
+             and pr.IS_ELIGIBLE = true
             cross join news_cfg cfg
             left join news_latest nl
               on nl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
@@ -613,11 +665,6 @@ begin
               on nfl.RECOMMENDATION_ID = s.RECOMMENDATION_ID
             left join news_agg_latest na
               on na.RECOMMENDATION_ID = s.RECOMMENDATION_ID
-            where (
-                pd.PATTERN_TYPE = 'MOMENTUM'
-                or (pd.PATTERN_TYPE = 'MEAN_REVERSION'
-                    and coalesce(s.DETAILS:direction::string, '') = 'BULLISH')
-            )
         ),
         symbol_local_health as (
             select
@@ -740,6 +787,47 @@ begin
                 ) as NEWS_EVENT_RISK_PROXY
             from deduped_candidates d
         ),
+        pw_enriched as (
+            select
+                d.*,
+                ctx.PW_AS_OF_TS,
+                ctx.PW_SCENARIO_COUNT,
+                ctx.PW_SUPPORTING_SCENARIOS,
+                ctx.PW_AVG_OUTPERFORM_PCT,
+                ctx.PW_AVG_CUMULATIVE_REGRET,
+                ctx.PW_BEST_CASE_DELTA,
+                ctx.PW_WORST_CASE_DELTA,
+                ctx.PW_SCENARIO_SPREAD,
+                ctx.PW_DOMINANT_CONFIDENCE_CLASS,
+                least(
+                    0.03,
+                    greatest(
+                        -0.01,
+                        coalesce(
+                            case ctx.PW_DOMINANT_CONFIDENCE_CLASS
+                                when 'STRONG' then 0.02
+                                when 'EMERGING' then 0.012
+                                when 'WEAK' then 0.004
+                                when 'NOISE' then -0.004
+                                else 0.0
+                            end,
+                            0.0
+                        )
+                        + coalesce(
+                            case
+                                when ctx.PW_AVG_OUTPERFORM_PCT is null then 0.0
+                                when ctx.PW_AVG_OUTPERFORM_PCT >= 65 then 0.008
+                                when ctx.PW_AVG_OUTPERFORM_PCT >= 50 then 0.004
+                                else 0.0
+                            end,
+                            0.0
+                        )
+                    )
+                ) as PW_SCORE_ADJ
+            from enriched_news d
+            left join MIP.MART.V_PROPOSAL_PW_PORTFOLIO_CONTEXT ctx
+              on ctx.PORTFOLIO_ID = :P_PORTFOLIO_ID
+        ),
         scored_candidates as (
             select
                 e.*,
@@ -775,13 +863,13 @@ begin
                 -- News is diagnostic context at proposal time. Proposal ranking
                 -- and blocking are trust-gate driven; committee handles news.
                 0.0 as NEWS_SCORE_ADJ_APPLIED
-            from enriched_news e
+            from pw_enriched e
         ),
         prioritized as (
             select
                 s.*,
                 iff(h.SYMBOL is null, 0, 1) as HELD_PRIORITY,
-                s.SCORE as FINAL_SCORE,
+                (s.SCORE + coalesce(s.PW_SCORE_ADJ, 0)) as FINAL_SCORE,
                 false as NEWS_BLOCK_NEW_ENTRY
             from scored_candidates s
             left join held_symbols h
@@ -919,7 +1007,18 @@ begin
                 'held_priority', s.HELD_PRIORITY,
                 'market_type_group', s.MARKET_TYPE_GROUP,
                 'trust_reason', 'SYMBOL_LOCAL_TRUSTED',
+                'pattern_trusted_via', 'V_TRUSTED_SIGNALS_LATEST_TS',
+                'symbol_trusted', true,
+                'policy_eligible', true,
+                'proposal_policy_version', :v_proposal_policy_version,
+                'policy_pattern_family', s.CANDIDATE_PATTERN_TYPE,
+                'policy_mr_direction', s.CANDIDATE_MR_DIRECTION,
+                'ingest_operational_universe', true,
+                'lifecycle_stage', 'PROPOSED_AUTONOMOUS',
+                'committee_is_execution_gate', true,
                 'base_score', s.SCORE,
+                'pw_score_adjustment', coalesce(s.PW_SCORE_ADJ, 0),
+                'final_score_ranking', s.FINAL_SCORE,
                 'final_score', s.FINAL_SCORE,
                 'news_enabled', iff(s.NEWS_ENABLED = 'true', true, false),
                 'news_display_only', iff(s.NEWS_DISPLAY_ONLY = 'true', true, false),
@@ -1060,8 +1159,58 @@ begin
                 'news_block_new_entry', s.NEWS_BLOCK_NEW_ENTRY,
                 'news_reasons', s.NEWS_REASONS,
                 'news_snapshot_age_minutes', s.NEWS_SNAPSHOT_AGE_MINUTES,
-                'news_is_stale', s.NEWS_IS_STALE
-            ) as RATIONALE
+                'news_is_stale', s.NEWS_IS_STALE,
+                'proposal_policy_version', :v_proposal_policy_version,
+                'policy_pattern_family', s.CANDIDATE_PATTERN_TYPE,
+                'policy_mr_direction', s.CANDIDATE_MR_DIRECTION,
+                'pw_score_adjustment', coalesce(s.PW_SCORE_ADJ, 0),
+                'pw_changed_ranking', coalesce(s.PW_SCORE_ADJ, 0) <> 0,
+                'lifecycle_stage', 'PROPOSED_AUTONOMOUS',
+                'committee_is_execution_gate', true
+            ) as RATIONALE,
+            :v_proposal_policy_version as PROPOSAL_POLICY_VERSION,
+            object_construct(
+                'lifecycle_stage', 'PROPOSED_AUTONOMOUS',
+                'committee_is_execution_gate', true,
+                'pattern_trusted_via', 'V_TRUSTED_SIGNALS_LATEST_TS',
+                'symbol_trust_label', coalesce(s.SYMBOL_LOCAL_TRUST_LABEL, 'UNKNOWN'),
+                'symbol_trusted', true,
+                'policy_version', :v_proposal_policy_version,
+                'policy_pattern_family', s.CANDIDATE_PATTERN_TYPE,
+                'policy_mr_direction', s.CANDIDATE_MR_DIRECTION,
+                'policy_eligible', true,
+                'policy_reason', 'INCLUDED_BY_ACTIVE_RULE',
+                'ingest_universe_enabled_match', true,
+                'selected', true,
+                'selection_rank', s.SELECTION_RANK,
+                'base_score', s.SCORE,
+                'pw_score_adjustment', coalesce(s.PW_SCORE_ADJ, 0),
+                'final_score_after_pw', s.FINAL_SCORE
+            ) as PROPOSAL_DIAGNOSTICS,
+            object_construct(
+                'pw_available', s.PW_AS_OF_TS is not null,
+                'pw_grain', 'PORTFOLIO_SCENARIOS',
+                'pw_as_of_ts', s.PW_AS_OF_TS,
+                'pw_scenario_count', s.PW_SCENARIO_COUNT,
+                'pw_supporting_scenarios', s.PW_SUPPORTING_SCENARIOS,
+                'confidence_bucket', s.PW_DOMINANT_CONFIDENCE_CLASS,
+                'avg_outperform_pct', s.PW_AVG_OUTPERFORM_PCT,
+                'avg_cumulative_regret', s.PW_AVG_CUMULATIVE_REGRET,
+                'best_case_delta', s.PW_BEST_CASE_DELTA,
+                'worst_case_delta', s.PW_WORST_CASE_DELTA,
+                'scenario_spread', s.PW_SCENARIO_SPREAD,
+                'analog_support_count', s.PW_SUPPORTING_SCENARIOS,
+                'pw_score_adjustment_applied', coalesce(s.PW_SCORE_ADJ, 0),
+                'summary_text',
+                    concat(
+                        'Parallel Worlds portfolio rollup: dominant_confidence=',
+                        coalesce(s.PW_DOMINANT_CONFIDENCE_CLASS::string, 'N/A'),
+                        ', scenarios=',
+                        coalesce(s.PW_SCENARIO_COUNT::string, '0'),
+                        ', spread=',
+                        coalesce(s.PW_SCENARIO_SPREAD::string, 'N/A')
+                    )
+            ) as PW_ENRICHMENT
         from final_ranked s
         where s.SELECTION_RANK <= :v_remaining_capacity
     ) as source
@@ -1070,7 +1219,10 @@ begin
     when matched and target.STATUS = 'PROPOSED' then update set
         target.RUN_ID_VARCHAR = source.RUN_ID_VARCHAR,
         target.RATIONALE = source.RATIONALE,
-        target.SOURCE_SIGNALS = source.SOURCE_SIGNALS
+        target.SOURCE_SIGNALS = source.SOURCE_SIGNALS,
+        target.PROPOSAL_POLICY_VERSION = source.PROPOSAL_POLICY_VERSION,
+        target.PROPOSAL_DIAGNOSTICS = source.PROPOSAL_DIAGNOSTICS,
+        target.PW_ENRICHMENT = source.PW_ENRICHMENT
     when not matched then
         insert (
             RUN_ID_VARCHAR,
@@ -1088,6 +1240,9 @@ begin
             SIGNAL_SNAPSHOT,
             SOURCE_SIGNALS,
             RATIONALE,
+            PROPOSAL_POLICY_VERSION,
+            PROPOSAL_DIAGNOSTICS,
+            PW_ENRICHMENT,
             STATUS
         )
         values (
@@ -1106,6 +1261,9 @@ begin
             source.SIGNAL_SNAPSHOT,
             source.SOURCE_SIGNALS,
             source.RATIONALE,
+            source.PROPOSAL_POLICY_VERSION,
+            source.PROPOSAL_DIAGNOSTICS,
+            source.PW_ENRICHMENT,
             'PROPOSED'
         );
 
@@ -1186,7 +1344,10 @@ begin
                 'FX', :v_selected_fx,
                 'ETF', :v_selected_etf
             ),
-            'skipped_held_count', :v_skipped_held_count
+            'skipped_held_count', :v_skipped_held_count,
+            'proposal_policy_version', :v_proposal_policy_version,
+            'proposal_autonomous', true,
+            'committee_execution_gate_only', true
         );
 
     -- Learning-to-Decision ledger append (non-fatal).
@@ -1221,7 +1382,8 @@ begin
                 'proposal_selected', :v_selected_count,
                 'proposal_inserted', :v_inserted_count,
                 'picked_stock', :v_selected_stock,
-                'picked_fx', :v_selected_fx
+                'picked_fx', :v_selected_fx,
+                'proposal_policy_version', :v_proposal_policy_version
             ),
             object_construct(
                 'eligibility_changed', iff(:v_candidate_count_raw != :v_candidate_count_trusted, true, false),
@@ -1230,7 +1392,10 @@ begin
                     'target_weight', :v_target_weight,
                     'max_position_pct', :v_max_position_pct
                 ),
-                'trusted_rejected_count', :v_trusted_rejected_count
+                'trusted_rejected_count', :v_trusted_rejected_count,
+                'lifecycle_stage', 'PROPOSED_AUTONOMOUS',
+                'parallel_worlds_soft_overlay', true,
+                'committee_is_final_pre_submit_validation', true
             ),
             object_construct(
                 'run_id', :P_RUN_ID,
@@ -1264,7 +1429,10 @@ begin
             'FX', :v_selected_fx,
             'ETF', :v_selected_etf
         ),
-        'skipped_held_count', :v_skipped_held_count
+        'skipped_held_count', :v_skipped_held_count,
+        'proposal_policy_version', :v_proposal_policy_version,
+        'proposal_autonomous', true,
+        'parallel_worlds_soft_overlay', true
     );
 end;
 $$;

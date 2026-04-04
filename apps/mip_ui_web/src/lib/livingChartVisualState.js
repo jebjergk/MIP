@@ -375,3 +375,31 @@ export function thesisBadge(tile) {
 export function chartOverlayCueBadges(conditionalKeys) {
   return liveConditionChips(conditionalKeys, {}, {})
 }
+
+/* ——— Flow Intelligence (v1) ——— */
+
+const FLOW_CHIP_BY_QUALITY = {
+  unwind_high: { key: 'flow_unwind', label: 'UNWIND RISK', tone: 'bad' },
+  unwind_elevated: { key: 'flow_unwind', label: 'UNWIND RISK', tone: 'warn' },
+  absorption_buy: { key: 'flow_absorb', label: 'BUY ABSORPTION', tone: 'warn' },
+  absorption_sell: { key: 'flow_absorb', label: 'SELL ABSORPTION', tone: 'warn' },
+  exhaustion: { key: 'flow_exhaust', label: 'MOVE TIRING', tone: 'warn' },
+  liquidity_high: { key: 'flow_liq', label: 'THIN TAPE', tone: 'warn' },
+  liquidity_elevated: { key: 'flow_liq', label: 'LIQUIDITY STRESS', tone: 'info' },
+  inefficient: { key: 'flow_eff', label: 'LOSING EFFICIENCY', tone: 'warn' },
+  efficient: { key: 'flow_eff_ok', label: 'EFFICIENT MOVE', tone: 'good' },
+  normal: { key: 'flow_norm', label: 'NORMAL', tone: 'info' },
+}
+
+/** Max 1 flow chip if any condition chips; max 2 if zero condition chips. */
+export function selectFlowChipsForChart(visible, conditionChipCount) {
+  if (!visible || visible.confidence === 'UNAVAILABLE' || visible.confidence === 'LOW') return []
+  const q = visible.quality_key_visible
+  if (!q || q === 'none') return []
+  const primary = FLOW_CHIP_BY_QUALITY[q]
+  if (!primary) return []
+  const out = [primary]
+  if (conditionChipCount > 0) return out.slice(0, 1)
+  return out.slice(0, 2)
+}
+

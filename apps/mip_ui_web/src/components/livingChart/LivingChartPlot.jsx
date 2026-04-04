@@ -74,6 +74,8 @@ export default function LivingChartPlot({
   viewportLocked,
   onViewportLockedChange,
   layoutRevision = 0,
+  flowBurst = null,
+  flowAnnotationText = null,
   className,
 }) {
   const { data, shapePack, xExtents } = useMemo(() => {
@@ -245,6 +247,7 @@ export default function LivingChartPlot({
       exitRec,
       showAdvancedTA,
       horizonBars,
+      flowBurst,
     })
 
     for (const t of shapePack.taTraces) {
@@ -255,7 +258,7 @@ export default function LivingChartPlot({
     const fwdEnd = fwd?.tMs?.length ? fwd.tMs[fwd.tMs.length - 1] : null
     const xMax = fwdEnd != null ? Math.max(tMs[tMs.length - 1], fwdEnd) : tMs[tMs.length - 1]
     return { data: traces, shapePack, xExtents: { xMin, xMax } }
-  }, [tile, bars, chartStyle, horizonBars, showAdvancedTA, liveState, committee, exitRec])
+  }, [tile, bars, chartStyle, horizonBars, showAdvancedTA, liveState, committee, exitRec, flowBurst])
 
   const symbolKey = String(tile?.symbol || '').toUpperCase() || 'none'
 
@@ -288,6 +291,32 @@ export default function LivingChartPlot({
           font: { size: 9, color: '#e2e8f0' },
           bgcolor: 'rgba(15,23,42,0.9)',
           bordercolor: 'rgba(51,65,85,0.95)',
+          borderwidth: 1,
+          borderpad: 3,
+        })
+      }
+    } else if (flowAnnotationText && barList.length > 0 && tile) {
+      const lastBar = barList[barList.length - 1]
+      const tLast = barTimeMs(lastBar)
+      const spot =
+        toNum(liveState?.last_price)
+        ?? toNum(tile?.current_price)
+        ?? toNum(lastBar?.close)
+        ?? toNum(lastBar?.low)
+      if (tLast != null && spot != null && Number.isFinite(spot)) {
+        ann.push({
+          xref: 'x',
+          yref: 'y',
+          x: tLast,
+          y: spot,
+          text: flowAnnotationText,
+          showarrow: false,
+          xanchor: 'right',
+          xshift: -4,
+          yshift: 42,
+          font: { size: 9, color: '#cbd5e1' },
+          bgcolor: 'rgba(30,41,59,0.88)',
+          bordercolor: 'rgba(71,85,105,0.9)',
           borderwidth: 1,
           borderpad: 3,
         })
@@ -327,6 +356,7 @@ export default function LivingChartPlot({
     symbolKey,
     conditionalKeys,
     dominantActiveKey,
+    flowAnnotationText,
     bars,
     tile,
     liveState,

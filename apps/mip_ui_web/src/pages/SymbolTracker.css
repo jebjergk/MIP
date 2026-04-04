@@ -1670,6 +1670,33 @@
   min-width: 0;
 }
 
+
+.lc-strip-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.06rem;
+  margin-bottom: 0.12rem;
+  padding-bottom: 0.1rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.45);
+  width: 100%;
+}
+.lc-flow-line {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #cbd5e1;
+  line-height: 1.25;
+}
+.lc-flow-line--quality {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+.lc-cue--flow {
+  border-style: dashed;
+  opacity: 0.95;
+}
+
 .lc-strip-monitor .lc-strip-state {
   grid-column: 2;
   grid-row: 1 / -1;

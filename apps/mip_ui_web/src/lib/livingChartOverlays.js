@@ -368,6 +368,7 @@ export function buildLivingChartShapesAndTA({
   exitRec,
   showAdvancedTA,
   horizonBars,
+  flowBurst = null,
 }) {
   const tMs = bars.map(barTimeMs).filter((x) => x != null)
   if (tMs.length === 0) return { shapes: [], taTraces: [], annotations: [], conditionalKeys: [] }
@@ -482,6 +483,35 @@ export function buildLivingChartShapesAndTA({
     if (z.y0 != null && z.y1 != null) {
       const sh = shapeForHorizontalBand(z.y0, z.y1, xTemporalLeft, xTemporalRight, z.fillcolor, z.line, zLayer)
       if (sh) shapes.push(sh)
+    }
+  }
+
+
+  /* v1: single subtle confirmed-burst highlight (flow intelligence) */
+  if (
+    flowBurst
+    && flowBurst.x0_ms != null
+    && flowBurst.x1_ms != null
+    && flowBurst.y0 != null
+    && flowBurst.y1 != null
+  ) {
+    const xA = Number(flowBurst.x0_ms)
+    const xB = Number(flowBurst.x1_ms)
+    const yA = Number(flowBurst.y0)
+    const yB = Number(flowBurst.y1)
+    if (Number.isFinite(xA) && Number.isFinite(xB) && Number.isFinite(yA) && Number.isFinite(yB)) {
+      shapes.push({
+        type: 'rect',
+        xref: 'x',
+        yref: 'y',
+        x0: Math.min(xA, xB),
+        x1: Math.max(xA, xB),
+        y0: Math.min(yA, yB),
+        y1: Math.max(yA, yB),
+        fillcolor: 'rgba(251, 191, 36, 0.07)',
+        line: { width: 0 },
+        layer: 'below',
+      })
     }
   }
 

@@ -21,7 +21,14 @@ import {
   resolveDominantAttention,
   liveConditionChipsActive,
   stripOptionalCue,
+  dominantActivePlotTag,
+  selectFlowChipsForChart,
 } from '../lib/livingChartVisualState'
+import {
+  computeFlowIntelligenceRaw,
+  applyFlowVisibleState,
+  getFlowAnnotationText,
+} from '../lib/livingChartFlowIntelligence'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
 
 const LivingChartPlot = lazy(() => import('../components/livingChart/LivingChartPlot'))
@@ -162,6 +169,8 @@ export default function SymbolTracker() {
   const [exitRecBySymbol, setExitRecBySymbol] = useState({})
 
   const prevSelectedSymbolRef = useRef(null)
+  const flowHystRef = useRef({})
+
 
   const fetchIbLive = useCallback(async (tiles) => {
     const symbols = (Array.isArray(tiles) ? tiles : [])
@@ -334,10 +343,26 @@ export default function SymbolTracker() {
         }
         window.__lcLivingChartDebug = { updatedAt: new Date().toISOString(), bySym }
       }
+      if (qs.get('lcFlowDebug') === '1') {
+        const flowDbg = {}
+        for (const tile of tiles) {
+          const sym = String(tile.symbol || '').toUpperCase()
+          const barList = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
+          const rowComm = committeeBySymbol[sym]
+          const raw = computeFlowIntelligenceRaw({
+            bars: barList,
+            tile,
+            liveState: rowComm?.live_state || null,
+            liveUpdatedAt: liveUpdatedAt,
+          })
+          flowDbg[sym] = { raw, hysteresis: flowHystRef.current[sym] }
+        }
+        window.__lcFlowDebug = { updatedAt: new Date().toISOString(), bySym: flowDbg }
+      }
     } catch {
       /* ignore */
     }
-  }, [tiles, committeeBySymbol, exitRecBySymbol])
+  }, [tiles, committeeBySymbol, exitRecBySymbol, liveUpdatedAt])
 
   const refreshIbOnly = useCallback(async () => {
     try {
@@ -436,6 +461,63 @@ export default function SymbolTracker() {
     return resolveLivingChartSymbolDisplay(activeTile, committee, exitRec, liveState)
   }, [activeTile, committee, exitRec, liveState])
 
+  const [flowVisibleBySymbol, setFlowVisibleBySymbol] = useState({})
+
+  useEffect(() => {
+    const out = {}
+    const uid = liveUpdatedAt || data?.updated_at
+    for (const tile of tiles) {
+      const sym = String(tile?.symbol || '').toUpperCase()
+      const barList = Array.isArray(tile?.chart?.bars) ? tile.chart.bars : []
+      const rowComm = committeeBySymbol[sym]
+      const liveSt = rowComm?.live_state || null
+      const raw = computeFlowIntelligenceRaw({
+        bars: barList,
+        tile,
+        liveState: liveSt,
+        liveUpdatedAt: uid,
+      })
+      const prevH = flowHystRef.current[sym] ?? null
+      const vis = applyFlowVisibleState(prevH, raw)
+      flowHystRef.current[sym] = vis.hysteresis
+      out[sym] = vis
+    }
+    setFlowVisibleBySymbol(out)
+  }, [tiles, committeeBySymbol, liveUpdatedAt, data?.updated_at])
+
+  const activeFlowVisible = useMemo(() => {
+    if (!activeTile) return null
+    const sym = String(activeTile.symbol || '').toUpperCase()
+    return flowVisibleBySymbol[sym] || null
+  }, [activeTile, flowVisibleBySymbol])
+
+  const positionPlotTag = useMemo(
+    () => dominantActivePlotTag(activeConditionSummary.dominantKey),
+    [activeConditionSummary.dominantKey],
+  )
+
+  const flowAnnotationText = useMemo(() => {
+    if (positionPlotTag) return null
+    return getFlowAnnotationText(activeFlowVisible?.annotation_key)
+  }, [positionPlotTag, activeFlowVisible?.annotation_key])
+
+  const flowBurstForPlot = useMemo(() => {
+    if (!activeFlowVisible?.burst_overlay) return null
+    const { burst_x0_ms, burst_x1_ms, burst_y0, burst_y1 } = activeFlowVisible
+    if (burst_x0_ms == null || burst_x1_ms == null || burst_y0 == null || burst_y1 == null) return null
+    return {
+      x0_ms: burst_x0_ms,
+      x1_ms: burst_x1_ms,
+      y0: burst_y0,
+      y1: burst_y1,
+    }
+  }, [activeFlowVisible])
+
+  const flowChips = useMemo(
+    () => selectFlowChipsForChart(activeFlowVisible, chartChips.length),
+    [activeFlowVisible, chartChips.length],
+  )
+
   useEffect(() => {
     const primary = activeDisplay?.primaryAction != null ? String(activeDisplay.primaryAction) : null
     const sub = activeDisplay?.secondaryFallback?.line
@@ -443,6 +525,16 @@ export default function SymbolTracker() {
     const kpi = {}
     if (primary) kpi.primary_action = primary
     if (sub) kpi.caution_line = sub
+    if (activeFlowVisible && activeFlowVisible.confidence !== 'UNAVAILABLE') {
+      kpi.flow_direction = activeFlowVisible.flow_direction
+      kpi.move_efficiency = activeFlowVisible.move_efficiency
+      kpi.move_quality_line = activeFlowVisible.line2
+      kpi.flow_caution_line = activeFlowVisible.line2
+      kpi.absorption_state = activeFlowVisible.absorption_state
+      kpi.exhaustion_state = activeFlowVisible.exhaustion_state
+      kpi.unwind_risk = activeFlowVisible.unwind_risk
+      kpi.liquidity_stress = activeFlowVisible.liquidity_stress
+    }
     mergeAskMipRuntime({
       page_id: 'symbol_tracker',
       page_route: pathname,
@@ -463,7 +555,7 @@ export default function SymbolTracker() {
         page_id: null,
       })
     }
-  }, [pathname, selectedSymbol, activeDisplay, mergeAskMipRuntime])
+  }, [pathname, selectedSymbol, activeDisplay, activeFlowVisible, mergeAskMipRuntime])
 
   const bumpChartLayout = useCallback(() => {
     setLayoutRevision((r) => r + 1)
@@ -664,6 +756,12 @@ export default function SymbolTracker() {
                       <span className="lc-strip-meta">{activeTile.side} · Qty {fmtNum(activeTile.quantity, 0)}</span>
                     </div>
                     <div className="lc-strip-state" aria-label="Position state">
+                      {activeFlowVisible && activeFlowVisible.confidence !== 'UNAVAILABLE' ? (
+                        <div className="lc-strip-flow" aria-label="Flow intelligence">
+                          <span className="lc-flow-line">{activeFlowVisible.line1}</span>
+                          <span className="lc-flow-line lc-flow-line--quality">{activeFlowVisible.line2}</span>
+                        </div>
+                      ) : null}
                       {activeDisplay ? (
                         <div className="lc-strip-state-inner">
                           <span className="lc-state-primary">{activeDisplay.primaryAction}</span>
@@ -706,10 +804,13 @@ export default function SymbolTracker() {
                 </div>
 
                 <div className="lc-chart-shell">
-                  {chartChips.length > 0 ? (
+                  {(chartChips.length > 0 || flowChips.length > 0) ? (
                     <div className="lc-chart-cues" aria-label="Active live conditions">
                       {chartChips.map((b) => (
                         <span key={b.key} className={`lc-cue lc-cue--${b.tone}`}>{b.label}</span>
+                      ))}
+                      {flowChips.map((b) => (
+                        <span key={b.key} className={`lc-cue lc-cue--flow lc-cue--${b.tone}`}>{b.label}</span>
                       ))}
                     </div>
                   ) : null}
@@ -730,6 +831,8 @@ export default function SymbolTracker() {
                         viewportLocked={viewportLocked}
                         onViewportLockedChange={onViewportLockedChange}
                         layoutRevision={layoutRevision}
+                        flowBurst={flowBurstForPlot}
+                        flowAnnotationText={flowAnnotationText}
                         className="lc-plot"
                       />
                     </LivingChartErrorBoundary>

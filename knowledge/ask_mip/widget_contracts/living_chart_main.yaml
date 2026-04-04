@@ -2,21 +2,21 @@ artifact_id: widget_living_chart_main
 version: "1"
 status: active
 owner: platform
-last_updated: "2026-03-28"
+last_updated: "2026-04-04"
 widget_id: living_chart_main
 page_id: symbol_tracker
 section_id: chart_main
 visible_label: Living Chart
 widget_type: chart
-purpose: Display intraday or daily price series with MIP overlays and committee context.
-business_meaning: Visual anchor for symbol-level risk and exit posture.
+purpose: Display intraday or daily price series with MIP overlays, committee context, and bar-derived Flow Intelligence.
+business_meaning: Visual anchor for symbol-level risk, exit posture, and advisory read on move quality vs directional pressure.
 source_objects:
   - api_symbol_tracker_tiles
   - ib_live_bars_optional
 logic_summary: >
   Series and overlays are assembled server-side for each tile; client merges IB live
-  updates when configured. Exact overlay rules are defined in application code —
-  if not in the metric dictionary, say logic is not fully documented here.
+  updates when configured. Flow Intelligence (move efficiency anchor, direction, quality line)
+  is computed client-side from bars — advisory heuristics, not order-book truth.
 inputs_affecting_widget:
   - selected symbol
   - chart style and horizon
@@ -24,6 +24,13 @@ inputs_affecting_widget:
 output_fields:
   - bars
   - overlay shapes
+  - flow_direction
+  - move_efficiency
+  - move_quality_line
+  - absorption_state
+  - exhaustion_state
+  - unwind_risk
+  - liquidity_stress
 related_metrics:
   - metric_committee_stance
   - metric_exit_urgency
@@ -31,11 +38,15 @@ thresholds_or_status_meanings: []
 lead_text: ""
 help_text: ""
 interpretation_guidance: >
-  Compare committee posture and exit urgency panels alongside the chart; sudden
-  alignment of multiple risk cues warrants manual review.
+  Flow Intelligence is bar-derived and advisory — not participant intent.
+  Compare committee posture and exit urgency alongside the chart; align flow quality
+  with thesis, stops, targets, and expectation band. Sudden alignment of multiple risk
+  cues warrants manual review.
 edge_cases:
   - IB live data may be unavailable; chart falls back to stored bars.
+  - Sparse or coarse bars lower flow confidence; flow chips may be suppressed.
 common_user_confusions:
   - Confusing delayed simulation data with live broker fills.
+  - Reading Flow direction and Move quality as contradictory — quality refines the same move.
 related_widgets: []
 known_issues: []

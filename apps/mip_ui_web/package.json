@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "generate:glossary": "node scripts/generate_glossary.js",
-    "validate:glossary": "node scripts/generate_glossary.js --check"
+    "validate:glossary": "node scripts/generate_glossary.js --check",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "plotly.js-dist-min": "^3.4.0",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
     "vite": "^5.0.0",
+    "vitest": "^4.1.2",
     "yaml": "^2.3.4"
   }
 }

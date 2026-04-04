@@ -6,6 +6,12 @@ Living Chart is a **chart-first companion** to the [Live Intelligence Cockpit](/
 
 From the cockpit, open **Chart** on a tile to jump here with `?symbol=` in the URL.
 
+## Flow Intelligence (v1)
+
+Bar-derived **advisory** read on how the recent move looks: directional pressure plus **move quality** on a second line that always starts with **`Move quality:`** (for example Efficient, Possible buy absorption, Unwind risk elevated). This is **not** order-book truth — interpret alongside thesis, stops, targets, and committee posture. Flow does **not** change HOLD / WATCH / PREPARE EXIT / EXIT in v1.
+
+**Debug:** add `?lcFlowDebug=1` to dump raw flow scores per symbol to `window.__lcFlowDebug` (use with `lcDebug=1` optional for committee debug).
+
 ## Data refresh
 
 - **Reload context** loads Snowflake-backed tracker tiles once (bootstrap).
@@ -13,7 +19,7 @@ From the cockpit, open **Chart** on a tile to jump here with `?symbol=` in the U
 
 ## Controls
 
-- **Follow latest**: keeps the time window anchored on the latest bar until you pan or zoom; then use **Snap to latest** to re-anchor.
+- **Track latest bars**: keeps the time window anchored on the latest bar until you pan or zoom; then use **Jump to latest** to re-anchor.
 - **More context (VWAP, BB, S/R)**: optional technical overlays (off by default to avoid clutter).
 
 ## Labels you may see

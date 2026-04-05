@@ -274,3 +274,36 @@
   border-left: 3px solid #1565c0;
   background: #fafbfc;
 }
+
+.training-pattern-label-cell {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.training-direction-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.training-direction-long {
+  background: #e3f2fd;
+  color: #0d47a1;
+}
+
+.training-direction-short {
+  background: #fce4ec;
+  color: #880e4f;
+}
+
+.training-research-stage {
+  font-size: 0.7rem;
+  color: #666;
+  margin-left: 0.25rem;
+}

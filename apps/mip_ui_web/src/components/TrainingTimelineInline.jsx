@@ -112,6 +112,7 @@ export default function TrainingTimelineInline({
   symbol,
   marketType,
   patternId = 1,
+  signalDirection = 'LONG',
   horizonBars = 5,
   intervalMinutes = 1440,
   cachedData,
@@ -142,6 +143,7 @@ export default function TrainingTimelineInline({
     const params = new URLSearchParams({
       symbol,
       market_type: marketType,
+      signal_direction: String(signalDirection || 'LONG').toUpperCase(),
       pattern_id: String(patternId),
       horizon_bars: String(horizonBars),
       interval_minutes: String(intervalMinutes),
@@ -168,7 +170,7 @@ export default function TrainingTimelineInline({
     return () => {
       cancelled = true
     }
-  }, [symbol, marketType, patternId, horizonBars, intervalMinutes, cachedData, onDataLoaded])
+  }, [symbol, marketType, patternId, signalDirection, horizonBars, intervalMinutes, cachedData, onDataLoaded])
 
   // Transform series data for recharts
   const chartData = useMemo(() => {
@@ -283,6 +285,7 @@ export default function TrainingTimelineInline({
           <div className="training-timeline-meta-inline">
             <span>Symbol: <strong>{data.symbol}</strong></span>
             <span>Pattern: <strong>{data.pattern_id}</strong></span>
+            <span>Direction: <strong>{data.signal_direction ?? signalDirection}</strong></span>
             <span>Horizon: <strong>{data.horizon_bars} bars</strong></span>
             <span>Points: <strong>{data.series.length}</strong></span>
           </div>

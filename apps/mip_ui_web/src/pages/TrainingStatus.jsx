@@ -13,7 +13,7 @@ import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
-const BASE_COLUMN_COUNT = 11 // Columns before horizon columns (expand, market, symbol, pattern, interval, as_of, maturity, trust gate, sample, coverage, horizons)
+const BASE_COLUMN_COUNT = 13 // expand, market, symbol, pattern_id, pattern label, direction, interval, as_of, maturity, trust, sample, coverage, horizons
 
 function stageGlossaryKey(stage) {
   if (!stage) return 'maturity_stage'
@@ -36,9 +36,10 @@ function formatNum(n) {
   return Number.isInteger(x) ? String(x) : x.toFixed(4)
 }
 
-/** Generate a unique key for a row */
+/** Generate a unique key for a row (five-field identity + interval) */
 function getRowKey(row, get) {
-  return `${get(row, 'market_type')}-${get(row, 'symbol')}-${get(row, 'pattern_id')}`
+  const dir = String(get(row, 'signal_direction') || 'LONG').toUpperCase()
+  return `${get(row, 'market_type')}-${get(row, 'symbol')}-${get(row, 'pattern_id')}-${get(row, 'interval_minutes')}-${dir}`
 }
 
 export default function TrainingStatus() {
@@ -134,11 +135,12 @@ export default function TrainingStatus() {
       },
       visible_widget_ids: ['training_status_grid'],
       selected_widget_id: expandedRowId ? 'training_status_grid' : null,
-      selected_row_context: expanded
+            selected_row_context: expanded
         ? {
             symbol: get(expanded, 'symbol'),
             market_type: get(expanded, 'market_type'),
             pattern_id: get(expanded, 'pattern_id'),
+            signal_direction: get(expanded, 'signal_direction'),
             maturity_stage: get(expanded, 'maturity_stage'),
           }
         : null,
@@ -267,6 +269,8 @@ export default function TrainingStatus() {
               <th>Market type <InfoTooltip scope={SCOPE} entryKey="market_type" variant="short" /></th>
               <th>Symbol <InfoTooltip scope={SCOPE} entryKey="symbol" variant="short" /></th>
               <th>Pattern <InfoTooltip scope={SCOPE} entryKey="pattern_id" variant="short" /></th>
+              <th>Label</th>
+              <th>Direction</th>
               <th>Interval <InfoTooltip scope={SCOPE} entryKey="interval_minutes" variant="short" /></th>
               <th>As of <InfoTooltip scope={SCOPE} entryKey="as_of_ts" variant="short" /></th>
               <th>Maturity <InfoTooltip scope={SCOPE} entryKey="maturity_score" variant="long" /></th>
@@ -285,7 +289,11 @@ export default function TrainingStatus() {
               const score = get(row, 'maturity_score') != null ? Number(get(row, 'maturity_score')) : 0
               const stageKey = stageGlossaryKey(maturityStage)
               const stageTitle = getGlossaryEntry(SCOPE, stageKey)?.short ?? maturityStage
-              const trustGate = String(get(row, 'trust_gate') ?? 'UNKNOWN').toUpperCase()
+              const trustRaw = get(row, 'trust_gate')
+              const trustGate =
+                trustRaw == null || String(trustRaw).trim() === ''
+                  ? null
+                  : String(trustRaw).toUpperCase()
               const rowKey = getRowKey(row, get)
               const isExpanded = expandedRowId === rowKey
               const cachedData = timelineCacheRef.current[rowKey]
@@ -309,6 +317,23 @@ export default function TrainingStatus() {
                     <td>{get(row, 'market_type') ?? '—'}</td>
                     <td className="training-symbol-cell">{formatSymbolLabel(get(row, 'symbol') ?? '—', get(row, 'market_type'))}</td>
                     <td>{get(row, 'pattern_id') ?? '—'}</td>
+                    <td className="training-pattern-label-cell" title={get(row, 'pattern_parameter_summary') || ''}>
+                      {get(row, 'pattern_display_name') ?? '—'}
+                    </td>
+                    <td>
+                      <span
+                        className={`training-direction-badge training-direction-${String(get(row, 'signal_direction') || 'LONG').toLowerCase()}`}
+                        title={get(row, 'pattern_family') || ''}
+                      >
+                        {String(get(row, 'signal_direction') || 'LONG').toUpperCase()}
+                      </span>
+                      {get(row, 'research_evidence_stage') ? (
+                        <span className="training-research-stage" title="SHORT research evidence (not production trust)">
+                          {' '}
+                          {get(row, 'research_evidence_stage')}
+                        </span>
+                      ) : null}
+                    </td>
                     <td>{get(row, 'interval_minutes') ?? '—'}</td>
                     <td>{get(row, 'as_of_ts') ?? '—'}</td>
                     <td className="training-maturity-cell">
@@ -327,9 +352,13 @@ export default function TrainingStatus() {
                       </span>
                     </td>
                     <td>
-                      <span className={`training-trust-badge training-trust-${trustGate.toLowerCase().replace('_', '-')}`}>
-                        {trustGate}
-                      </span>
+                      {trustGate ? (
+                        <span className={`training-trust-badge training-trust-${trustGate.toLowerCase().replace('_', '-')}`}>
+                          {trustGate}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td>{formatNum(get(row, 'recs_total'))}</td>
                     <td>{formatPct(get(row, 'coverage_ratio'))}</td>
@@ -340,11 +369,12 @@ export default function TrainingStatus() {
                   </tr>
                   {isExpanded && (
                     <tr className="training-detail-row">
-                      <td colSpan={BASE_COLUMN_COUNT + horizonDefs.length + 1} className="training-detail-cell">
+                      <td colSpan={BASE_COLUMN_COUNT + horizonDefs.length} className="training-detail-cell">
                         <TrainingTimelineInline
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}
                           patternId={get(row, 'pattern_id')}
+                          signalDirection={String(get(row, 'signal_direction') || 'LONG').toUpperCase()}
                           horizonBars={5}
                           intervalMinutes={intervalMinutes}
                           cachedData={cachedData}

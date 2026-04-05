@@ -59,6 +59,7 @@ with latest_ts as (
     select max(TS) as TS
     from MIP.APP.RECOMMENDATION_LOG
     where INTERVAL_MINUTES = 1440
+      and (SIGNAL_DIRECTION is null or SIGNAL_DIRECTION = 'LONG')
 )
 select
     r.RECOMMENDATION_ID,
@@ -74,6 +75,7 @@ select
 from MIP.APP.RECOMMENDATION_LOG r
 cross join latest_ts lt
 where r.INTERVAL_MINUTES = 1440
+  and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
   and r.TS = lt.TS;
 
 -- ------------------------------------------------------------------------------
@@ -92,6 +94,7 @@ with latest_ts as (
     select max(TS) as TS
     from MIP.APP.RECOMMENDATION_LOG
     where INTERVAL_MINUTES = 1440
+      and (SIGNAL_DIRECTION is null or SIGNAL_DIRECTION = 'LONG')
 ),
 trusted_ph as (
     -- Aggregate trust by PATTERN_TYPE: if ANY pattern of a given type is trusted,
@@ -185,6 +188,7 @@ candidates as (
      and pa.PATTERN_ID = r.PATTERN_ID
      and pa.HORIZON_BARS = t.HORIZON_BARS
     where r.INTERVAL_MINUTES = 1440
+      and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
       and r.TS = lt.TS
 )
 select

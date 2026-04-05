@@ -16,6 +16,7 @@ with recs as (
         r.GENERATED_AT,
         r.DETAILS
     from MIP.APP.RECOMMENDATION_LOG r
+    where (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
 ),
 policy_scored as (
     select

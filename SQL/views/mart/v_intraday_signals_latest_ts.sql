@@ -36,4 +36,5 @@ from MIP.APP.RECOMMENDATION_LOG r
 cross join latest_ts lt
 cross join cfg c
 where r.INTERVAL_MINUTES = c.INTERVAL_MINUTES
+  and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
   and r.TS = lt.TS;

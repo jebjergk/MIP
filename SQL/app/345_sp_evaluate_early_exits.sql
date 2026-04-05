@@ -197,6 +197,7 @@ begin
                     where rl2.SYMBOL = :v_pos_symbol
                       and rl2.MARKET_TYPE = :v_pos_market_type
                       and rl2.INTERVAL_MINUTES = 1440
+                      and (rl2.SIGNAL_DIRECTION is null or rl2.SIGNAL_DIRECTION = 'LONG')
                       and rl2.TS < :v_pos_entry_ts
                 ),
                 target_candidates as (
@@ -213,6 +214,7 @@ begin
                       on rl.SYMBOL = :v_pos_symbol
                      and rl.MARKET_TYPE = :v_pos_market_type
                      and rl.INTERVAL_MINUTES = 1440
+                     and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                      and rl.TS::date = sa.SIGNAL_DATE
                     join MIP.MART.V_TRUSTED_SIGNALS ts
                       on ts.PATTERN_ID = rl.PATTERN_ID
@@ -391,12 +393,14 @@ begin
                 where rl.SYMBOL = :v_pos_symbol
                   and rl.MARKET_TYPE = :v_pos_market_type
                   and rl.INTERVAL_MINUTES = 1440
+                  and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                   and rl.TS = (
                       select max(rl2.TS)
                       from MIP.APP.RECOMMENDATION_LOG rl2
                       where rl2.SYMBOL = rl.SYMBOL
                         and rl2.MARKET_TYPE = rl.MARKET_TYPE
                         and rl2.INTERVAL_MINUTES = 1440
+                        and (rl2.SIGNAL_DIRECTION is null or rl2.SIGNAL_DIRECTION = 'LONG')
                         and rl2.TS < :v_pos_entry_ts
                   )
                 qualify row_number() over (

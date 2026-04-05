@@ -69,6 +69,14 @@ using (
     select 'SPREAD_BPS',
            '0',
            'Optional bid/ask spread (bps, applied half per side)'
+    union all
+    select 'SHORT_MOMENTUM_GENERATION_ENABLED',
+           'false',
+           'When true, SP_GENERATE_MOMENTUM_RECS may emit MOMENTUM_SHORT rows.'
+    union all
+    select 'SHORT_MOMENTUM_PATTERN_TYPES',
+           'MOMENTUM_SHORT',
+           'Comma-separated PATTERN_TYPE values for short momentum when generation is enabled.'
 ) s
 on t.CONFIG_KEY = s.CONFIG_KEY
 when matched then update set

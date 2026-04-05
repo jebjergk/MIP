@@ -36,6 +36,7 @@ symbol_recs as (
         max(r.TS) as LATEST_SIGNAL_TS
     from MIP.APP.RECOMMENDATION_LOG r
     where r.INTERVAL_MINUTES = 1440
+      and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
 ),
 symbol_outcomes as (
@@ -50,6 +51,7 @@ symbol_outcomes as (
     from MIP.APP.RECOMMENDATION_LOG r
     join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
     where r.INTERVAL_MINUTES = 1440
+      and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID
 ),
 symbol_maturity as (

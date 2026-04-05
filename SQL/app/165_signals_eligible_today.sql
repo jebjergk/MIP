@@ -23,6 +23,7 @@ with recs as (
             partition by r.TS, r.MARKET_TYPE, r.INTERVAL_MINUTES
         ) as RUN_GENERATED_AT
     from MIP.APP.RECOMMENDATION_LOG r
+    where (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
 ),
 latest_interval_day as (
     select

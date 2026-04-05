@@ -141,6 +141,14 @@ create table if not exists MIP.APP.PATTERN_DEFINITION (
     constraint UQ_PATTERN_NAME unique (NAME)
 );
 
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists PATTERN_FAMILY varchar;
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists DISPLAY_NAME varchar;
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists DISPLAY_SHORT_NAME varchar;
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists SIGNAL_DIRECTION varchar;
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists PARAM_FAST number;
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists PARAM_SLOW number;
+alter table MIP.APP.PATTERN_DEFINITION add column if not exists PARAM_HORIZON varchar;
+
 -- Seed core momentum patterns (idempotent)
 merge into MIP.APP.PATTERN_DEFINITION t
 using (
@@ -250,6 +258,8 @@ alter table MIP.APP.RECOMMENDATION_LOG
     add column if not exists SCORE number(38,10);
 alter table MIP.APP.RECOMMENDATION_LOG
     add column if not exists DETAILS variant;
+alter table MIP.APP.RECOMMENDATION_LOG
+    add column if not exists SIGNAL_DIRECTION varchar;
 
 -----------------------------
 -- 3. RECOMMENDATION_OUTCOMES

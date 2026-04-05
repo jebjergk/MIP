@@ -54,6 +54,7 @@ with base as (
       and r.MARKET_TYPE = %(market_type)s
       and r.PATTERN_ID = %(pattern_id)s
       and r.INTERVAL_MINUTES = %(interval_minutes)s
+      and iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG') = %(signal_direction)s
       and o.HORIZON_BARS = %(horizon_bars)s
       and o.EVAL_STATUS = 'SUCCESS'
       and o.REALIZED_RETURN is not null
@@ -90,6 +91,7 @@ where r.SYMBOL = %(symbol)s
   and r.MARKET_TYPE = %(market_type)s
   and r.PATTERN_ID = %(pattern_id)s
   and r.INTERVAL_MINUTES = %(interval_minutes)s
+  and iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG') = %(signal_direction)s
   and o.HORIZON_BARS = %(horizon_bars)s
   and o.EVAL_STATUS = 'INSUFFICIENT_FUTURE_DATA'
 """
@@ -103,6 +105,7 @@ where SYMBOL = %(symbol)s
   and MARKET_TYPE = %(market_type)s
   and PATTERN_ID = %(pattern_id)s
   and INTERVAL_MINUTES = %(interval_minutes)s
+  and iff(trim(coalesce(SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG') = %(signal_direction)s
 """
 
 
@@ -136,6 +139,7 @@ join MIP.APP.RECOMMENDATION_LOG r on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
 where r.PATTERN_ID = %(pattern_id)s
   and r.MARKET_TYPE = %(market_type)s
   and r.INTERVAL_MINUTES = %(interval_minutes)s
+  and iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG') = %(signal_direction)s
   and o.HORIZON_BARS = %(horizon_bars)s
   and o.EVAL_STATUS = 'SUCCESS'
 """
@@ -402,11 +406,21 @@ def get_pattern_trust_status(
     horizon_bars: int,
     params: GateParams,
     interval_minutes: int = 1440,
+    signal_direction: str = "LONG",
 ) -> dict[str, Any]:
     """
     Get pattern-level trust status (aggregated across all symbols).
     This is what actually determines if signals can be traded.
     """
+    if signal_direction == "SHORT":
+        return {
+            "is_trusted": False,
+            "n_signals": 0,
+            "hit_rate": None,
+            "avg_return": None,
+            "confidence": None,
+            "reason": "SHORT series is research-only; production trust applies to LONG",
+        }
     cur = conn.cursor()
     
     # Check if pattern is in trusted patterns view
@@ -438,6 +452,7 @@ def get_pattern_trust_status(
             "market_type": market_type,
             "horizon_bars": horizon_bars,
             "interval_minutes": interval_minutes,
+            "signal_direction": signal_direction,
         })
         agg_row = cur.fetchone()
         
@@ -478,6 +493,7 @@ def build_training_timeline(
     conn,
     symbol: str,
     market_type: str,
+    signal_direction: str,
     pattern_id: int,
     horizon_bars: int = 5,
     rolling_window: int = 20,
@@ -503,26 +519,29 @@ def build_training_timeline(
     params = get_gate_params(conn)
     
     # Get pattern-level trust status (what actually matters for trading)
-    pattern_trust = get_pattern_trust_status(conn, pattern_id, market_type, horizon_bars, params, interval_minutes)
+    pattern_trust = get_pattern_trust_status(
+        conn, pattern_id, market_type, horizon_bars, params, interval_minutes, signal_direction
+    )
 
     # Get symbol snapshot trust (source used by Training Status trust badge/proposal gate).
     snapshot_trust = None
-    try:
-        cur = conn.cursor()
-        cur.execute(SYMBOL_SNAPSHOT_TRUST_SQL, {
-            "symbol": symbol,
-            "market_type": market_type,
-            "pattern_id": pattern_id,
-        })
-        tr = cur.fetchone()
-        if tr:
-            snapshot_trust = {
-                "trust_label": tr[0],
-                "recommended_action": tr[1],
-                "reason": tr[2],
-            }
-    except Exception:
-        snapshot_trust = None
+    if signal_direction == "LONG":
+        try:
+            cur = conn.cursor()
+            cur.execute(SYMBOL_SNAPSHOT_TRUST_SQL, {
+                "symbol": symbol,
+                "market_type": market_type,
+                "pattern_id": pattern_id,
+            })
+            tr = cur.fetchone()
+            if tr:
+                snapshot_trust = {
+                    "trust_label": tr[0],
+                    "recommended_action": tr[1],
+                    "reason": tr[2],
+                }
+        except Exception:
+            snapshot_trust = None
     
     # Get first signal date
     cur = conn.cursor()
@@ -531,6 +550,7 @@ def build_training_timeline(
         "market_type": market_type,
         "pattern_id": pattern_id,
         "interval_minutes": interval_minutes,
+        "signal_direction": signal_direction,
     })
     first_signal_row = cur.fetchone()
     first_signal_ts = first_signal_row[0] if first_signal_row else None
@@ -557,6 +577,7 @@ def build_training_timeline(
             "pattern_id": pattern_id,
             "horizon_bars": horizon_bars,
             "interval_minutes": interval_minutes,
+            "signal_direction": signal_direction,
         })
         pending_row = cur.fetchone()
         if pending_row and pending_row[0]:
@@ -576,6 +597,7 @@ def build_training_timeline(
         "pattern_id": pattern_id,
         "horizon_bars": horizon_bars,
         "interval_minutes": interval_minutes,
+        "signal_direction": signal_direction,
     })
     rows = fetch_all(cur)
     
@@ -587,6 +609,7 @@ def build_training_timeline(
         return {
             "symbol": symbol,
             "market_type": market_type,
+            "signal_direction": signal_direction,
             "pattern_id": pattern_id,
             "horizon_bars": horizon_bars,
             "thresholds": {
@@ -660,7 +683,13 @@ def build_training_timeline(
 
     # Add one "now snapshot" point (real current metrics) at latest market bar.
     # This avoids fake flat extension while still showing current gate metrics on chart.
-    if interval_minutes == 1440 and series and latest_market_ts is not None and snapshot_trust is not None:
+    if (
+        signal_direction == "LONG"
+        and interval_minutes == 1440
+        and series
+        and latest_market_ts is not None
+        and snapshot_trust is not None
+    ):
         try:
             latest_eval_dt = datetime.fromisoformat(str(latest_evaluated_signal_ts))
             latest_market_dt = latest_market_ts if isinstance(latest_market_ts, datetime) else datetime.fromisoformat(str(latest_market_ts))
@@ -698,6 +727,7 @@ def build_training_timeline(
     return {
         "symbol": symbol,
         "market_type": market_type,
+        "signal_direction": signal_direction,
         "pattern_id": pattern_id,
         "horizon_bars": horizon_bars,
         "thresholds": {

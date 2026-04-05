@@ -49,6 +49,10 @@ declare
     v_effective_min_zscore    float;
     v_patterns_processed      number := 0;
     v_run_id                  string := coalesce(nullif(current_query_tag(), ''), uuid_string());
+    v_short_gen_enabled       boolean := false;
+    v_short_types_csv         string := 'MOMENTUM_SHORT';
+    v_pattern_type            string;
+    v_is_short_pattern        boolean := false;
 begin
     call MIP.APP.SP_LOG_EVENT(
         'RECOMMENDATIONS',
@@ -109,6 +113,24 @@ begin
         v_vol_adj_threshold := 1.0;
     end if;
 
+    select try_to_boolean(lower(trim(CONFIG_VALUE)))
+      into :v_short_gen_enabled
+      from MIP.APP.APP_CONFIG
+     where CONFIG_KEY = 'SHORT_MOMENTUM_GENERATION_ENABLED'
+     limit 1;
+    if (v_short_gen_enabled is null) then
+        v_short_gen_enabled := false;
+    end if;
+
+    select CONFIG_VALUE
+      into :v_short_types_csv
+      from MIP.APP.APP_CONFIG
+     where CONFIG_KEY = 'SHORT_MOMENTUM_PATTERN_TYPES'
+     limit 1;
+    if (v_short_types_csv is null or trim(v_short_types_csv) = '') then
+        v_short_types_csv := 'MOMENTUM_SHORT';
+    end if;
+
     -- Default parameters based on MOMENTUM_DEMO (fallback to literals if missing)
     begin
         select
@@ -145,7 +167,8 @@ begin
             coalesce(PARAMS_JSON:slow_window::number, ?) as SLOW_WINDOW,
             coalesce(PARAMS_JSON:lookback_days::number, ?) as LOOKBACK_DAYS,
             coalesce(PARAMS_JSON:min_return::float, ?, ?) as MIN_RETURN,
-            coalesce(PARAMS_JSON:min_zscore::float, ?) as MIN_ZSCORE
+            coalesce(PARAMS_JSON:min_zscore::float, ?) as MIN_ZSCORE,
+            coalesce(PATTERN_TYPE, ''MOMENTUM'') as PATTERN_TYPE
         from MIP.APP.PATTERN_DEFINITION
         where coalesce(IS_ACTIVE, ''N'') = ''Y''
           and coalesce(ENABLED, true)
@@ -195,6 +218,20 @@ begin
         v_pattern_min_zscore    := pattern_row.MIN_ZSCORE;
         v_pattern_id            := pattern_row.PATTERN_ID;
         v_pattern_key           := pattern_row.PATTERN_KEY;
+        v_pattern_type          := coalesce(pattern_row.PATTERN_TYPE::string, 'MOMENTUM');
+        v_is_short_pattern      := false;
+        select count(*) > 0
+          into :v_is_short_pattern
+          from table(flatten(input => split(:v_short_types_csv, ','))) x
+         where trim(upper(x.value::string)) = trim(upper(:v_pattern_type));
+
+        if (v_is_short_pattern and not v_short_gen_enabled) then
+            v_status_msgs := v_status_msgs ||
+                'Pattern ' || v_pattern_key ||
+                ' (' || v_pattern_market_type || '/' || v_pattern_interval ||
+                '): SHORT momentum generation disabled (SHORT_MOMENTUM_GENERATION_ENABLED). ';
+            continue;
+        end if;
 
         v_effective_min_zscore := coalesce(P_MIN_ZSCORE, v_pattern_min_zscore, v_default_min_zscore);
         v_history_days_for_stats := greatest(
@@ -260,6 +297,7 @@ begin
               from MIP.APP.RECOMMENDATION_LOG
              where PATTERN_ID = :v_pattern_id;
 
+            if (not v_is_short_pattern) then
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
@@ -268,7 +306,8 @@ begin
                     INTERVAL_MINUTES,
                     TS,
                     SCORE,
-                    DETAILS
+                    DETAILS,
+                    SIGNAL_DIRECTION
                 )
                 with returns_filtered as (
                     select
@@ -343,7 +382,8 @@ begin
                        INTERVAL_MINUTES,
                        TS,
                        SCORE,
-                       DETAILS
+                       DETAILS,
+                       ''LONG'' as SIGNAL_DIRECTION
                 from pattern_recs p
                 where not exists (
                     select 1
@@ -373,6 +413,124 @@ begin
                 v_as_of_ts,
                 v_as_of_ts
             );
+            else
+            execute immediate '
+                insert into MIP.APP.RECOMMENDATION_LOG (
+                    PATTERN_ID,
+                    SYMBOL,
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    TS,
+                    SCORE,
+                    DETAILS,
+                    SIGNAL_DIRECTION
+                )
+                with returns_filtered as (
+                    select
+                        r.*,
+                        row_number() over (
+                            partition by r.SYMBOL, r.MARKET_TYPE, r.INTERVAL_MINUTES
+                            order by r.TS
+                        ) as RN
+                    from MIP.MART.MARKET_RETURNS r
+                  where r.MARKET_TYPE = ?
+                    and r.INTERVAL_MINUTES = ?
+                      and r.RETURN_SIMPLE is not null
+                      and r.VOLUME >= ?
+                      and r.TS::date >= dateadd(day, -?, ?::date)
+                      and exists (
+                        select 1
+                        from MIP.APP.INGEST_UNIVERSE iu
+                        where upper(replace(iu.SYMBOL, chr(47), '''')) = upper(replace(r.SYMBOL, chr(47), ''''))
+                          and upper(iu.MARKET_TYPE) = upper(r.MARKET_TYPE)
+                          and iu.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                          and coalesce(iu.IS_ENABLED, true)
+                      )
+                ),
+                scored as (
+                    select
+                        rf.*,
+                        (select count(*) from returns_filtered rf2
+                          where rf2.SYMBOL = rf.SYMBOL
+                            and rf2.MARKET_TYPE = rf.MARKET_TYPE
+                            and rf2.INTERVAL_MINUTES = rf.INTERVAL_MINUTES
+                            and rf2.RN < rf.RN
+                            and rf2.RN >= rf.RN - ?
+                            and rf2.RETURN_SIMPLE < 0) as NEGATIVE_LAG_COUNT,
+                        (select min(rf2.CLOSE) from returns_filtered rf2
+                          where rf2.SYMBOL = rf.SYMBOL
+                            and rf2.MARKET_TYPE = rf.MARKET_TYPE
+                            and rf2.INTERVAL_MINUTES = rf.INTERVAL_MINUTES
+                            and rf2.RN < rf.RN
+                            and rf2.RN >= rf.RN - ?) as MIN_LAG_CLOSE,
+                        (select stddev_samp(rf2.RETURN_SIMPLE) from returns_filtered rf2
+                          where rf2.SYMBOL = rf.SYMBOL
+                            and rf2.MARKET_TYPE = rf.MARKET_TYPE
+                            and rf2.INTERVAL_MINUTES = rf.INTERVAL_MINUTES
+                            and rf2.RN > rf.RN - ?
+                            and rf2.RN <= rf.RN) as STDDEV_WINDOW
+                    from returns_filtered rf
+                ),
+                pattern_recs as (
+                    select
+                        ? as PATTERN_ID,
+                        rf.SYMBOL,
+                        rf.MARKET_TYPE,
+                        rf.INTERVAL_MINUTES,
+                        rf.TS,
+                        rf.RETURN_SIMPLE as SCORE,
+                        object_construct(
+                            ''pattern_key'', ?,
+                            ''return_simple'', rf.RETURN_SIMPLE,
+                            ''prev_close'', rf.PREV_CLOSE,
+                            ''close'', rf.CLOSE,
+                            ''signal_direction'', ''SHORT''
+                        ) as DETAILS
+                    from scored rf
+                    where rf.RETURN_SIMPLE <= -?
+                      and rf.NEGATIVE_LAG_COUNT >= ?
+                      and (rf.MIN_LAG_CLOSE is null or rf.CLOSE <= rf.MIN_LAG_CLOSE)
+                      and (? is null or rf.STDDEV_WINDOW is null or (rf.STDDEV_WINDOW > 0 and rf.RETURN_SIMPLE / rf.STDDEV_WINDOW <= -?))
+                      and rf.TS::date between dateadd(day, -(? - 1), ?::date) and ?::date
+                )
+                select PATTERN_ID,
+                       SYMBOL,
+                       MARKET_TYPE,
+                       INTERVAL_MINUTES,
+                       TS,
+                       SCORE,
+                       DETAILS,
+                       ''SHORT'' as SIGNAL_DIRECTION
+                from pattern_recs p
+                where not exists (
+                    select 1
+                    from MIP.APP.RECOMMENDATION_LOG existing
+                    where existing.PATTERN_ID = p.PATTERN_ID
+                      and existing.SYMBOL = p.SYMBOL
+                      and existing.MARKET_TYPE = p.MARKET_TYPE
+                      and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
+                      and existing.TS = p.TS
+                )
+            ' using (
+                v_pattern_market_type,
+                v_pattern_interval,
+                v_min_volume,
+                v_history_days_for_stats,
+                v_as_of_ts,
+                v_pattern_slow_window,
+                v_pattern_fast_window,
+                v_pattern_fast_window,
+                v_pattern_id,
+                v_pattern_key,
+                v_pattern_min_return,
+                v_pattern_slow_window,
+                v_effective_min_zscore,
+                v_effective_min_zscore,
+                v_insert_days,
+                v_as_of_ts,
+                v_as_of_ts
+            );
+            end if;
 
             select count(*)
               into :v_after
@@ -410,6 +568,7 @@ begin
               from MIP.APP.RECOMMENDATION_LOG
              where PATTERN_ID = :v_pattern_id;
 
+            if (not v_is_short_pattern) then
             execute immediate '
                 insert into MIP.APP.RECOMMENDATION_LOG (
                     PATTERN_ID,
@@ -418,7 +577,8 @@ begin
                     INTERVAL_MINUTES,
                     TS,
                     SCORE,
-                    DETAILS
+                    DETAILS,
+                    SIGNAL_DIRECTION
                 )
                 with bars as (
                     select
@@ -512,7 +672,8 @@ begin
                        INTERVAL_MINUTES,
                        TS,
                        SCORE,
-                       DETAILS
+                       DETAILS,
+                       ''LONG'' as SIGNAL_DIRECTION
                 from pattern_recs p
                 where not exists (
                     select 1
@@ -541,6 +702,142 @@ begin
                 v_as_of_ts,
                 v_as_of_ts
             );
+            else
+            execute immediate '
+                insert into MIP.APP.RECOMMENDATION_LOG (
+                    PATTERN_ID,
+                    SYMBOL,
+                    MARKET_TYPE,
+                    INTERVAL_MINUTES,
+                    TS,
+                    SCORE,
+                    DETAILS,
+                    SIGNAL_DIRECTION
+                )
+                with bars as (
+                    select
+                        mb.*,
+                        row_number() over (
+                            partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
+                            order by mb.TS
+                        ) as RN,
+                        lag(mb.CLOSE) over (
+                            partition by mb.SYMBOL, mb.MARKET_TYPE, mb.INTERVAL_MINUTES
+                            order by mb.TS
+                        ) as PREV_CLOSE
+                    from MIP.MART.MARKET_BARS mb
+                  where mb.MARKET_TYPE = ?
+                    and mb.INTERVAL_MINUTES = ?
+                      and mb.TS::date >= dateadd(day, -?, ?::date)
+                      and exists (
+                        select 1
+                        from MIP.APP.INGEST_UNIVERSE iu
+                        where upper(replace(iu.SYMBOL, chr(47), '''')) = upper(replace(mb.SYMBOL, chr(47), ''''))
+                          and upper(iu.MARKET_TYPE) = upper(mb.MARKET_TYPE)
+                          and iu.INTERVAL_MINUTES = mb.INTERVAL_MINUTES
+                          and coalesce(iu.IS_ENABLED, true)
+                      )
+                ),
+                returns as (
+                    select
+                        b.*,
+                        case when b.PREV_CLOSE is null or b.PREV_CLOSE = 0 then null else (b.CLOSE / b.PREV_CLOSE) - 1 end as RETURN_SIMPLE
+                    from bars b
+                ),
+                scored as (
+                    select
+                        r.*,
+                        (select avg(r2.CLOSE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as SMA_FAST,
+                        (select avg(r2.CLOSE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as SMA_SLOW,
+                        (select avg(r2.RETURN_SIMPLE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as AVG_RETURN_WINDOW,
+                        (select stddev_samp(r2.RETURN_SIMPLE) from returns r2
+                          where r2.SYMBOL = r.SYMBOL
+                            and r2.MARKET_TYPE = r.MARKET_TYPE
+                            and r2.INTERVAL_MINUTES = r.INTERVAL_MINUTES
+                            and r2.RN > r.RN - ?
+                            and r2.RN <= r.RN) as STDDEV_WINDOW
+                    from returns r
+                ),
+                pattern_recs as (
+                    select
+                        ? as PATTERN_ID,
+                        r.SYMBOL,
+                        r.MARKET_TYPE,
+                        r.INTERVAL_MINUTES,
+                        r.TS,
+                        r.RETURN_SIMPLE as SCORE,
+                        object_construct(
+                            ''pattern_key'', ?,
+                            ''return_simple'', r.RETURN_SIMPLE,
+                            ''prev_close'', r.PREV_CLOSE,
+                            ''close'', r.CLOSE,
+                            ''sma_fast'', r.SMA_FAST,
+                            ''sma_slow'', r.SMA_SLOW,
+                            ''avg_return_window'', r.AVG_RETURN_WINDOW,
+                            ''signal_direction'', ''SHORT''
+                        ) as DETAILS
+                    from scored r
+                    where r.RETURN_SIMPLE is not null
+                      and r.SMA_FAST is not null
+                      and r.SMA_SLOW is not null
+                      and r.CLOSE <= r.SMA_FAST
+                      and r.CLOSE <= r.SMA_SLOW
+                      and coalesce(r.AVG_RETURN_WINDOW, 0) <= -?
+                      and (? is null or r.STDDEV_WINDOW is null or r.STDDEV_WINDOW = 0 or r.RETURN_SIMPLE / r.STDDEV_WINDOW <= -?)
+                      and r.TS::date between dateadd(day, -(? - 1), ?::date) and ?::date
+                )
+                select PATTERN_ID,
+                       SYMBOL,
+                       MARKET_TYPE,
+                       INTERVAL_MINUTES,
+                       TS,
+                       SCORE,
+                       DETAILS,
+                       ''SHORT'' as SIGNAL_DIRECTION
+                from pattern_recs p
+                where not exists (
+                    select 1
+                    from MIP.APP.RECOMMENDATION_LOG existing
+                    where existing.PATTERN_ID = p.PATTERN_ID
+                      and existing.SYMBOL = p.SYMBOL
+                      and existing.MARKET_TYPE = p.MARKET_TYPE
+                      and existing.INTERVAL_MINUTES = p.INTERVAL_MINUTES
+                      and existing.TS = p.TS
+                )
+            ' using (
+                v_pattern_market_type,
+                v_pattern_interval,
+                v_history_days_for_stats,
+                v_as_of_ts,
+                v_pattern_fast_window,
+                v_pattern_slow_window,
+                v_pattern_fast_window,
+                v_pattern_fast_window,
+                v_pattern_id,
+                v_pattern_key,
+                v_pattern_min_return,
+                v_effective_min_zscore,
+                v_effective_min_zscore,
+                v_insert_days,
+                v_as_of_ts,
+                v_as_of_ts
+            );
+            end if;
 
             select count(*)
               into :v_after

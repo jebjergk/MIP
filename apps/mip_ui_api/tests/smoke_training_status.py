@@ -44,7 +44,7 @@ def main() -> int:
         print(f"OK: {len(out)} rows")
         for i, r in enumerate(out[:3]):
             print(f"  [{i}] {r.get('market_type')} {r.get('symbol')} pattern_id={r.get('pattern_id')} "
-                  f"score={r.get('maturity_score')} stage={r.get('maturity_stage')}")
+                  f"dir={r.get('signal_direction')} score={r.get('maturity_score')} stage={r.get('maturity_stage')}")
         if len(out) > 3:
             print(f"  ... and {len(out) - 3} more")
         return 0

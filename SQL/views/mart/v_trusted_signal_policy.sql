@@ -34,6 +34,7 @@ recent_kpis as (
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+     and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     where o.ENTRY_TS >= dateadd(day, -90, current_date())
     group by r.PATTERN_ID, r.MARKET_TYPE, r.INTERVAL_MINUTES, o.HORIZON_BARS
 )

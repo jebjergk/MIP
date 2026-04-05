@@ -30,6 +30,7 @@ begin
       from MIP.APP.RECOMMENDATION_OUTCOMES o
       join MIP.APP.RECOMMENDATION_LOG r
         on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+       and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
       join MIP.APP.INGEST_UNIVERSE iu
         on upper(iu.SYMBOL) = upper(r.SYMBOL)
        and upper(iu.MARKET_TYPE) = upper(r.MARKET_TYPE)
@@ -57,6 +58,7 @@ begin
             where upper(coalesce(iu.SYMBOL_COHORT, 'CORE')) = upper(:P_SYMBOL_COHORT)
               and upper(r.MARKET_TYPE) = upper(:P_MARKET_TYPE)
               and r.INTERVAL_MINUTES = :P_INTERVAL_MINUTES
+              and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
               and r.TS >= :v_from_ts
               and r.TS <= :v_to_ts
         ),
@@ -212,6 +214,7 @@ begin
       from MIP.APP.RECOMMENDATION_OUTCOMES o
       join MIP.APP.RECOMMENDATION_LOG r
         on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+       and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
       join MIP.APP.INGEST_UNIVERSE iu
         on upper(iu.SYMBOL) = upper(r.SYMBOL)
        and upper(iu.MARKET_TYPE) = upper(r.MARKET_TYPE)

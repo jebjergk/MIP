@@ -23,6 +23,7 @@ with rec_base as (
     from MIP.APP.RECOMMENDATION_LOG rl
     join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = rl.PATTERN_ID
     where rl.INTERVAL_MINUTES = 1440
+      and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
 ),
 bar_context as (
     select

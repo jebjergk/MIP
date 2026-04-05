@@ -1,8 +1,8 @@
 """
-Training Status: per (market_type, symbol, pattern_id, interval_minutes).
+Training Status: per (market_type, symbol, pattern_id, interval_minutes, signal_direction).
 Supports both daily (1440) and intraday intervals via query parameter.
 Uses MIP.APP.RECOMMENDATION_LOG, MIP.APP.RECOMMENDATION_OUTCOMES;
-optional MIP.APP.PATTERN_DEFINITION (labels), MIP.APP.TRAINING_GATE_PARAMS (thresholds).
+MIP.MART.V_PATTERN_METADATA_UI (labels); MIP.APP.TRAINING_GATE_PARAMS (thresholds).
 """
 from typing import Optional
 
@@ -88,6 +88,7 @@ with recs as (
     r.SYMBOL,
     r.PATTERN_ID,
     r.INTERVAL_MINUTES,
+    iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG') as SIGNAL_DIRECTION,
     count(*) as recs_total,
     max(r.TS) as as_of_ts
   from MIP.APP.RECOMMENDATION_LOG r
@@ -97,7 +98,8 @@ with recs as (
    and iu.INTERVAL_MINUTES = r.INTERVAL_MINUTES
    and coalesce(iu.IS_ENABLED, true)
   where r.INTERVAL_MINUTES = {interval_minutes}
-  group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
+  group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES,
+    iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG')
 ),
 gate_cfg as (
   select
@@ -113,6 +115,7 @@ outcomes_agg as (
     r.SYMBOL,
     r.PATTERN_ID,
     r.INTERVAL_MINUTES,
+    iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG') as SIGNAL_DIRECTION,
     count(*) as outcomes_total,
     sum(case when o.EVAL_STATUS = 'SUCCESS' then 1 else 0 end) as success_count,
     sum(case when o.EVAL_STATUS = 'SUCCESS' and o.HIT_FLAG then 1 else 0 end) as hit_count,
@@ -122,32 +125,66 @@ outcomes_agg as (
   from MIP.APP.RECOMMENDATION_LOG r
   join MIP.APP.RECOMMENDATION_OUTCOMES o on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
   where r.INTERVAL_MINUTES = {interval_minutes}
-  group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES
+  group by r.MARKET_TYPE, r.SYMBOL, r.PATTERN_ID, r.INTERVAL_MINUTES,
+    iff(trim(coalesce(r.SIGNAL_DIRECTION, '')) = 'SHORT', 'SHORT', 'LONG')
 )
 select
   recs.MARKET_TYPE as market_type,
   recs.SYMBOL as symbol,
   recs.PATTERN_ID as pattern_id,
   recs.INTERVAL_MINUTES as interval_minutes,
+  recs.SIGNAL_DIRECTION as signal_direction,
+  pm.DISPLAY_NAME as pattern_display_name,
+  pm.PATTERN_FAMILY as pattern_family,
+  pm.PARAM_SUMMARY as pattern_parameter_summary,
   recs.as_of_ts as as_of_ts,
-  upper(coalesce(snap.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN')) as trust_gate,
+  case
+    when recs.SIGNAL_DIRECTION = 'SHORT' then null
+    else upper(coalesce(snap.SNAPSHOT_JSON:trust:trust_label::string, 'UNKNOWN'))
+  end as trust_gate,
   recs.recs_total as recs_total,
   coalesce(o.outcomes_total, 0) as outcomes_total,
   coalesce(o.horizons_covered, 0) as horizons_covered,
   case when recs.recs_total > 0 and (recs.recs_total * {n_horizons}) > 0
     then least(1.0, coalesce(o.outcomes_total, 0)::float / (recs.recs_total * {n_horizons}))
     else 0.0 end as coverage_ratio,
-  {select_cols}
+  {select_cols},
+  se.research_evidence_stage as research_evidence_stage
 from recs
 left join outcomes_agg o
   on o.MARKET_TYPE = recs.MARKET_TYPE and o.SYMBOL = recs.SYMBOL
   and o.PATTERN_ID = recs.PATTERN_ID and o.INTERVAL_MINUTES = recs.INTERVAL_MINUTES
+  and o.SIGNAL_DIRECTION = recs.SIGNAL_DIRECTION
+left join MIP.MART.V_PATTERN_METADATA_UI pm
+  on pm.PATTERN_ID = recs.PATTERN_ID
 left join MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL snap
   on snap.MARKET_TYPE = recs.MARKET_TYPE
  and snap.SYMBOL = recs.SYMBOL
  and snap.PATTERN_ID = recs.PATTERN_ID
+ and recs.SIGNAL_DIRECTION = 'LONG'
+left join (
+  select
+    PATTERN_ID,
+    MARKET_TYPE,
+    INTERVAL_MINUTES,
+    max_by(
+      EVIDENCE_STAGE,
+      case EVIDENCE_STAGE
+        when 'RICH' then 3
+        when 'EMERGING' then 2
+        when 'SPARSE' then 1
+        else 0
+      end
+    ) as research_evidence_stage
+  from MIP.MART.V_SHORT_RESEARCH_EVIDENCE_STAGE
+  group by PATTERN_ID, MARKET_TYPE, INTERVAL_MINUTES
+) se
+  on se.PATTERN_ID = recs.PATTERN_ID
+ and upper(se.MARKET_TYPE) = upper(recs.MARKET_TYPE)
+ and se.INTERVAL_MINUTES = recs.INTERVAL_MINUTES
+ and recs.SIGNAL_DIRECTION = 'SHORT'
 cross join gate_cfg cfg
-order by recs.MARKET_TYPE, recs.SYMBOL, recs.PATTERN_ID
+order by recs.MARKET_TYPE, recs.SYMBOL, recs.PATTERN_ID, recs.SIGNAL_DIRECTION
 """
 
 
@@ -210,7 +247,7 @@ def get_training_status(
     interval_minutes: Optional[int] = Query(None, description="Bar interval: 1440=daily (default), 15=intraday, etc."),
 ):
     """
-    Training Status: per (market_type, symbol, pattern_id, interval_minutes).
+    Training Status: per (market_type, symbol, pattern_id, interval_minutes, signal_direction).
     Returns recs_total, outcomes_total, horizons_covered, coverage_ratio,
     dynamic avg_outcome columns based on HORIZON_DEFINITION,
     maturity_score (0–100), maturity_stage, reasons[].
@@ -283,6 +320,7 @@ def get_training_status_debug():
 def get_training_timeline(
     symbol: str = Query(..., description="Symbol to query"),
     market_type: str = Query(..., description="Market type (STOCK, ETF, FX)"),
+    signal_direction: str = Query(..., description="LONG or SHORT (required)"),
     pattern_id: Optional[int] = Query(None, description="Pattern ID (optional, defaults to pattern 1)"),
     horizon_bars: Optional[int] = Query(None, description="Horizon bars (default 5)"),
     rolling_window: Optional[int] = Query(None, description="Rolling window size for hit rate (default 20)"),
@@ -296,6 +334,12 @@ def get_training_timeline(
     Includes narrative bullets explaining key turning points.
     """
     iv = interval_minutes if interval_minutes and interval_minutes > 0 else 1440
+    sd = (signal_direction or "").strip().upper()
+    if sd not in ("LONG", "SHORT"):
+        raise HTTPException(
+            status_code=400,
+            detail="signal_direction is required and must be LONG or SHORT",
+        )
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -320,6 +364,7 @@ def get_training_timeline(
             conn,
             symbol=symbol,
             market_type=market_type,
+            signal_direction=sd,
             pattern_id=pattern_id or 1,
             horizon_bars=horizon_bars or 5,
             rolling_window=rolling_window or 20,

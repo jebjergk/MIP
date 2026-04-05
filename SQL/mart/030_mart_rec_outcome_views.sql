@@ -20,6 +20,7 @@ select
 from MIP.APP.RECOMMENDATION_OUTCOMES o
 join MIP.APP.RECOMMENDATION_LOG r
   on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+ and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
 group by
     r.PATTERN_ID,
     r.MARKET_TYPE,
@@ -45,6 +46,7 @@ select
 from MIP.APP.RECOMMENDATION_OUTCOMES o
 join MIP.APP.RECOMMENDATION_LOG r
   on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+ and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
 where o.EVAL_STATUS = 'SUCCESS'
   and o.REALIZED_RETURN is not null
 group by
@@ -124,6 +126,7 @@ join MIP.MART.V_TRUSTED_SIGNALS ts
  and ts.MARKET_TYPE = rl.MARKET_TYPE
  and ts.INTERVAL_MINUTES = rl.INTERVAL_MINUTES
 where rl.INTERVAL_MINUTES = 1440
+  and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
   and ts.IS_TRUSTED = true
 qualify row_number() over (
     partition by rl.RECOMMENDATION_ID
@@ -147,6 +150,7 @@ with scored as (
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+     and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     where o.EVAL_STATUS = 'SUCCESS'
 )
 select
@@ -185,6 +189,7 @@ with scored as (
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+     and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     where o.EVAL_STATUS = 'SUCCESS'
 )
 select

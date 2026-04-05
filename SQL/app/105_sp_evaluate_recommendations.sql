@@ -48,7 +48,11 @@ BEGIN
                 r.MARKET_TYPE,
                 r.INTERVAL_MINUTES,
                 r.TS AS ENTRY_TS,
-                b.CLOSE::FLOAT AS ENTRY_PRICE
+                b.CLOSE::FLOAT AS ENTRY_PRICE,
+                CASE
+                    WHEN TRIM(COALESCE(r.SIGNAL_DIRECTION, '')) = 'SHORT' THEN 'SHORT'
+                    ELSE 'LONG'
+                END AS SIG_DIR
             FROM MIP.APP.RECOMMENDATION_LOG r
             LEFT JOIN MIP.MART.MARKET_BARS b
               ON b.SYMBOL = r.SYMBOL
@@ -98,7 +102,8 @@ BEGIN
                 e.ENTRY_PRICE,
                 rh.HORIZON_BARS,
                 fr.EXIT_TS,
-                fr.EXIT_PRICE
+                fr.EXIT_PRICE,
+                e.SIG_DIR
             FROM entry_bars e
             JOIN rec_bar_horizons rh ON rh.RECOMMENDATION_ID = e.RECOMMENDATION_ID
             LEFT JOIN future_ranked fr
@@ -135,7 +140,8 @@ BEGIN
                 e.ENTRY_PRICE,
                 -1 AS HORIZON_BARS,
                 eod.EXIT_TS,
-                eod.EXIT_PRICE
+                eod.EXIT_PRICE,
+                e.SIG_DIR
             FROM entry_bars e
             JOIN eod_exits eod ON eod.RECOMMENDATION_ID = e.RECOMMENDATION_ID
         ),
@@ -157,15 +163,21 @@ BEGIN
             CASE
                 WHEN ao.ENTRY_PRICE IS NOT NULL AND ao.ENTRY_PRICE <> 0
                  AND ao.EXIT_PRICE  IS NOT NULL AND ao.EXIT_PRICE  <> 0
+                 AND ao.SIG_DIR = 'SHORT'
+                THEN (ao.ENTRY_PRICE / ao.EXIT_PRICE) - 1
+                WHEN ao.ENTRY_PRICE IS NOT NULL AND ao.ENTRY_PRICE <> 0
+                 AND ao.EXIT_PRICE  IS NOT NULL AND ao.EXIT_PRICE  <> 0
                 THEN (ao.EXIT_PRICE / ao.ENTRY_PRICE) - 1
                 ELSE NULL
             END AS REALIZED_RETURN,
-            'LONG' AS DIRECTION,
+            ao.SIG_DIR AS DIRECTION,
             CASE
-                WHEN ao.ENTRY_PRICE IS NOT NULL AND ao.ENTRY_PRICE <> 0
-                 AND ao.EXIT_PRICE  IS NOT NULL AND ao.EXIT_PRICE  <> 0
-                THEN ((ao.EXIT_PRICE / ao.ENTRY_PRICE) - 1) >= :v_thr
-                ELSE NULL
+                WHEN ao.ENTRY_PRICE IS NULL OR ao.ENTRY_PRICE = 0
+                  OR ao.EXIT_PRICE  IS NULL OR ao.EXIT_PRICE  = 0
+                THEN NULL
+                WHEN ao.SIG_DIR = 'SHORT'
+                THEN ((ao.ENTRY_PRICE / ao.EXIT_PRICE) - 1) >= :v_thr
+                ELSE ((ao.EXIT_PRICE / ao.ENTRY_PRICE) - 1) >= :v_thr
             END AS HIT_FLAG,
             'THRESHOLD' AS HIT_RULE,
             :v_thr AS MIN_RETURN_THRESHOLD,

@@ -448,7 +448,8 @@ begin
                                 select distinct RECOMMENDATION_ID
                                 from MIP.MART.V_PORTFOLIO_SIGNALS
                             ) ps on ps.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
-                            where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440;
+                            where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440
+                              and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG');
                         exception when other then
                             v_newly_eligible := 0;
                             v_newly_excluded := 0;
@@ -471,6 +472,7 @@ begin
                                     from MIP.MART.V_PORTFOLIO_SIGNALS
                                 ) ps on ps.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
                                 where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440
+                                  and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                                   and ps.RECOMMENDATION_ID is null
                                   and rl.SCORE >= (coalesce(pd.PARAMS_JSON:min_return::float, 0.002) + :v_return_delta)
                                   and coalesce(try_to_double(rl.DETAILS:deviation_pct::string), coalesce(pd.PARAMS_JSON:min_zscore::float, 0))
@@ -521,6 +523,7 @@ begin
                                  and tc.TS = rl.TS
                                  and tc.PATTERN_ID = rl.PATTERN_ID
                                 where rl.TS::date = :v_as_of_ts::date and rl.INTERVAL_MINUTES = 1440
+                                  and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                             );
                         exception when other then
                             v_cf_trades_json := array_construct();
@@ -567,6 +570,7 @@ begin
                                  and rl.MARKET_TYPE = t.MARKET_TYPE
                                  and rl.INTERVAL_MINUTES = 1440
                                  and rl.TS::date = t.TRADE_TS::date
+                                 and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                                 join MIP.APP.RECOMMENDATION_OUTCOMES ro
                                   on ro.RECOMMENDATION_ID = rl.RECOMMENDATION_ID
                                  and ro.HORIZON_BARS = :v_hold_horizon
@@ -617,6 +621,7 @@ begin
                                      and rl2.MARKET_TYPE = t.MARKET_TYPE
                                      and rl2.INTERVAL_MINUTES = 1440
                                      and rl2.TS::date = t.TRADE_TS::date
+                                     and (rl2.SIGNAL_DIRECTION is null or rl2.SIGNAL_DIRECTION = 'LONG')
                                     join MIP.APP.RECOMMENDATION_OUTCOMES ro
                                       on ro.RECOMMENDATION_ID = rl2.RECOMMENDATION_ID
                                      and ro.HORIZON_BARS = :v_hold_horizon
@@ -690,6 +695,7 @@ begin
                                  and rl.MARKET_TYPE = t.MARKET_TYPE
                                  and rl.INTERVAL_MINUTES = 1440
                                  and rl.TS::date = t.TRADE_TS::date
+                                 and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                                 join MIP.MART.V_TRUSTED_SIGNALS ts
                                   on ts.PATTERN_ID = rl.PATTERN_ID
                                  and ts.MARKET_TYPE = rl.MARKET_TYPE
@@ -766,6 +772,7 @@ begin
                                      and rl.MARKET_TYPE = t.MARKET_TYPE
                                      and rl.INTERVAL_MINUTES = 1440
                                      and rl.TS::date = t.TRADE_TS::date
+                                     and (rl.SIGNAL_DIRECTION is null or rl.SIGNAL_DIRECTION = 'LONG')
                                     join MIP.MART.V_TRUSTED_SIGNALS ts
                                       on ts.PATTERN_ID = rl.PATTERN_ID
                                      and ts.MARKET_TYPE = rl.MARKET_TYPE

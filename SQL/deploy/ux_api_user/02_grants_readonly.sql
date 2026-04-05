@@ -60,6 +60,11 @@ grant select on view MIP.MART.V_TRUSTED_SIGNAL_POLICY       to role MIP_UI_API_R
 grant select on view MIP.MART.V_TRUSTED_SIGNALS             to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_PATTERN_HORIZONS   to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS   to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_PATTERN_METADATA_UI           to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_SIGNAL_OUTCOMES_BASE_RESEARCH to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_TRAINING_KPIS_RESEARCH        to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_TRAINING_LEADERBOARD_RESEARCH to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_SHORT_RESEARCH_EVIDENCE_STAGE to role MIP_UI_API_ROLE;
 
 grant select on view MIP.MART.V_PORTFOLIO_RUN_KPIS          to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PORTFOLIO_RUN_EVENTS        to role MIP_UI_API_ROLE;

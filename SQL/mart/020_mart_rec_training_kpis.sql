@@ -21,6 +21,7 @@ with base as (
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+     and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     where o.EVAL_STATUS = 'SUCCESS'
       and o.REALIZED_RETURN is not null
 ),

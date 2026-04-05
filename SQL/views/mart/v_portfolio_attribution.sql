@@ -142,6 +142,7 @@ rec_map as (
      and r.MARKET_TYPE = pm.MARKET_TYPE
      and r.INTERVAL_MINUTES = pm.INTERVAL_MINUTES
      and r.TS = pm.ENTRY_TS
+     and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     left join MIP.APP.RECOMMENDATION_OUTCOMES o
       on o.RECOMMENDATION_ID = r.RECOMMENDATION_ID
     qualify row_number() over (

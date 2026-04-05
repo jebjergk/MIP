@@ -55,6 +55,7 @@ begin
         from MIP.APP.RECOMMENDATION_OUTCOMES o
         join MIP.APP.RECOMMENDATION_LOG r
           on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+         and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
         where o.EVAL_STATUS = 'SUCCESS'
           and o.ENTRY_TS::date between :v_start_date and :v_end_date
           and (:v_market_type is null or r.MARKET_TYPE = :v_market_type)
@@ -154,6 +155,7 @@ begin
     from MIP.APP.RECOMMENDATION_OUTCOMES o
     join MIP.APP.RECOMMENDATION_LOG r
       on r.RECOMMENDATION_ID = o.RECOMMENDATION_ID
+     and (r.SIGNAL_DIRECTION is null or r.SIGNAL_DIRECTION = 'LONG')
     where o.EVAL_STATUS = 'SUCCESS'
       and o.REALIZED_RETURN is not null
       and o.ENTRY_TS::date between :v_start_date and :v_end_date

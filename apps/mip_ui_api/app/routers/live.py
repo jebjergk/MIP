@@ -3121,6 +3121,36 @@ def _to_dt_utc(v):
     return to_dt_utc(v)
 
 
+def _coerce_flat_book_nav_eur(net_liq, total_cash, gross_exposure):
+    """When gross exposure is ~flat, NetLiquidation can be USD/BASE while TotalCashValue is EUR.
+
+    Snapshots then store a spurious NAV (e.g. 4115) next to correct EUR cash (3000).
+    For display and trend math, trust TotalCashValue as NAV on a flat book.
+    """
+    try:
+        cash_f = float(total_cash) if total_cash is not None else None
+    except (TypeError, ValueError):
+        cash_f = None
+    try:
+        nav_f = float(net_liq) if net_liq is not None else None
+    except (TypeError, ValueError):
+        nav_f = None
+    try:
+        gross_f = float(gross_exposure) if gross_exposure is not None else 0.0
+    except (TypeError, ValueError):
+        gross_f = 0.0
+    flat = abs(gross_f) < 1.0
+    if not flat:
+        return nav_f
+    if cash_f is None:
+        return nav_f
+    if nav_f is None:
+        return cash_f
+    if abs(nav_f - cash_f) <= 1.0:
+        return nav_f
+    return cash_f
+
+
 def _is_close_like_execution(action_intent: str | None, action_side: str | None, execution_side: str | None) -> bool:
     return is_close_like_execution(action_intent, action_side, execution_side)
 
@@ -5592,7 +5622,15 @@ def get_live_activity_overview(
             (account_id,),
         )
         nav_rows = fetch_all(cur)
-        nav = nav_rows[0] if nav_rows else {}
+        nav = dict(nav_rows[0]) if nav_rows else {}
+        if nav:
+            coerced = _coerce_flat_book_nav_eur(
+                nav.get("NET_LIQUIDATION_EUR"),
+                nav.get("TOTAL_CASH_EUR"),
+                nav.get("GROSS_POSITION_VALUE_EUR"),
+            )
+            if coerced is not None:
+                nav["NET_LIQUIDATION_EUR"] = coerced
         latest_snapshot_ts = nav.get("SNAPSHOT_TS")
         snapshot_age_sec = None
         if latest_snapshot_ts and hasattr(latest_snapshot_ts, "replace"):
@@ -5610,15 +5648,23 @@ def get_live_activity_overview(
             (account_id, snapshot_lookback_days),
         )
         nav_trend_rows = fetch_all(cur)
-        nav_trend = [
-            {
-                "snapshot_ts": r.get("SNAPSHOT_TS"),
-                "nav_eur": float(r.get("NET_LIQUIDATION_EUR")) if r.get("NET_LIQUIDATION_EUR") is not None else None,
-                "cash_eur": float(r.get("TOTAL_CASH_EUR")) if r.get("TOTAL_CASH_EUR") is not None else None,
-                "gross_exposure_eur": float(r.get("GROSS_POSITION_VALUE_EUR")) if r.get("GROSS_POSITION_VALUE_EUR") is not None else None,
-            }
-            for r in nav_trend_rows
-        ]
+        nav_trend = []
+        for r in nav_trend_rows:
+            nv = _coerce_flat_book_nav_eur(
+                r.get("NET_LIQUIDATION_EUR"),
+                r.get("TOTAL_CASH_EUR"),
+                r.get("GROSS_POSITION_VALUE_EUR"),
+            )
+            nav_trend.append(
+                {
+                    "snapshot_ts": r.get("SNAPSHOT_TS"),
+                    "nav_eur": float(nv) if nv is not None else None,
+                    "cash_eur": float(r.get("TOTAL_CASH_EUR")) if r.get("TOTAL_CASH_EUR") is not None else None,
+                    "gross_exposure_eur": float(r.get("GROSS_POSITION_VALUE_EUR"))
+                    if r.get("GROSS_POSITION_VALUE_EUR") is not None
+                    else None,
+                }
+            )
 
         cur.execute(
             """

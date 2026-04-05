@@ -44,6 +44,7 @@ Deploy in dependency order (see §2). Minimum set that **must** be proven LONG-s
 | `MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_GLOBAL` | [`MIP/SQL/views/mart/v_training_digest_snapshot_global.sql`](MIP/SQL/views/mart/v_training_digest_snapshot_global.sql) |
 | `MIP.MART.V_SYMBOL_TRAINING_READINESS` | [`MIP/SQL/views/mart/v_symbol_training_readiness.sql`](MIP/SQL/views/mart/v_symbol_training_readiness.sql) |
 | `MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION` | [`MIP/SQL/app/164_trusted_signal_classification.sql`](MIP/SQL/app/164_trusted_signal_classification.sql) |
+| `MIP.APP.V_SIGNALS_ELIGIBLE_TODAY` | [`MIP/SQL/app/165_signals_eligible_today.sql`](MIP/SQL/app/165_signals_eligible_today.sql) |
 | `MIP.MART.REC_OUTCOME_COVERAGE` | [`MIP/SQL/mart/030_mart_rec_outcome_views.sql`](MIP/SQL/mart/030_mart_rec_outcome_views.sql) |
 | `MIP.MART.REC_OUTCOME_PERF` | Same |
 | `MIP.MART.REC_PATTERN_TRUST_RANKING` | Same |
@@ -103,15 +104,16 @@ New SQL file suggestion: `MIP/SQL/mart/037_mart_short_momentum_research_views.sq
 |--------|------|
 | **Modify** | [`MIP/SQL/deploy/ux_api_user/02_grants_readonly.sql`](MIP/SQL/deploy/ux_api_user/02_grants_readonly.sql) — `SELECT` on `V_PATTERN_METADATA_UI` and any new mart views the API queries |
 
-### 1.9 Procs — **read-path filter only** (if views insufficient)
+### 1.9 Procs — **direct LONG filter (required)**
 
-Only if Parallel Worlds or another protected proc cannot be isolated by views alone:
+Per §5.2, these procs read shared tables **directly** — **not** optional. Add **`SIGNAL_DIRECTION IS NULL OR SIGNAL_DIRECTION = 'LONG'`** on every `RECOMMENDATION_LOG` reference.
 
-| Object | File | Note |
-|--------|------|------|
-| `MIP.APP.SP_RUN_PARALLEL_WORLDS` | [`235_sp_run_parallel_worlds.sql`](MIP/SQL/app/235_sp_run_parallel_worlds.sql) | Add `JOIN RECOMMENDATION_LOG` + `SIGNAL_DIRECTION` filter on outcome-driving rows **only** if PW reads outcomes without a fixable view — **minimal diff** |
-
-Same pattern for [`345_sp_evaluate_early_exits.sql`](MIP/SQL/app/345_sp_evaluate_early_exits.sql), [`386_sp_train_news_calibration.sql`](MIP/SQL/app/386_sp_train_news_calibration.sql), [`365_sp_bootstrap_evaluate_recommendations_cohort.sql`](MIP/SQL/app/365_sp_bootstrap_evaluate_recommendations_cohort.sql) **only if** they read from tables directly and SHORT rows would enter.
+| Object | File |
+|--------|------|
+| `MIP.APP.SP_RUN_PARALLEL_WORLDS` | [`235_sp_run_parallel_worlds.sql`](MIP/SQL/app/235_sp_run_parallel_worlds.sql) |
+| `MIP.APP.SP_EVALUATE_EARLY_EXITS` | [`345_sp_evaluate_early_exits.sql`](MIP/SQL/app/345_sp_evaluate_early_exits.sql) |
+| `MIP.APP.SP_TRAIN_NEWS_CALIBRATION` | [`386_sp_train_news_calibration.sql`](MIP/SQL/app/386_sp_train_news_calibration.sql) |
+| `MIP.APP.SP_BOOTSTRAP_EVALUATE_RECOMMENDATIONS_COHORT` | [`365_sp_bootstrap_evaluate_recommendations_cohort.sql`](MIP/SQL/app/365_sp_bootstrap_evaluate_recommendations_cohort.sql) |
 
 ---
 
@@ -233,15 +235,29 @@ Existing columns remain authoritative for **detection** behavior: `PARAMS_JSON`,
 
 ## 5. LONG-safe protection plan
 
-**Standard filter** on any object that aggregates or displays production/trusted outcomes from shared tables:
+**Authoritative rule (required):** Every protected consumer must restrict rows using **`RECOMMENDATION_LOG.SIGNAL_DIRECTION IS NULL OR RECOMMENDATION_LOG.SIGNAL_DIRECTION = 'LONG'`** (via join or subquery on `RECOMMENDATION_ID`). **`RECOMMENDATION_OUTCOMES.DIRECTION` alone is not sufficient** — outcomes can exist for SHORT recs; filtering only on outcomes would miss rows or allow inconsistent joins. Apply the log-based predicate anywhere `RECOMMENDATION_OUTCOMES` is used without an existing log join.
 
-- Join `RECOMMENDATION_LOG` as `r` where needed and apply  
-  **`r.SIGNAL_DIRECTION IS NULL OR r.SIGNAL_DIRECTION = 'LONG'`**  
-- **Defense in depth:** where `PATTERN_TYPE` is available, also  
-  **`r.PATTERN_ID NOT IN (SELECT PATTERN_ID FROM ... WHERE PATTERN_TYPE = 'MOMENTUM_SHORT')`**  
-  — use only as supplement; **direction on log is authoritative** for evaluation.
+**Defense in depth (optional):** `PATTERN_TYPE = 'MOMENTUM_SHORT'` exclusion on `PATTERN_DEFINITION` — **supplement only**; log direction remains authoritative.
 
-Per-object strategy:
+### 5.1 `MOMENTUM_SHORT` / `PATTERN_TYPE` — production and decisioning surfaces
+
+Relying on “`MOMENTUM_SHORT` never reaches trusted leaderboard” is **not** sufficient: raw `RECOMMENDATION_LOG` drives many surfaces. **Explicit log-direction filter** is required below. **PATTERN_TYPE borrow** in `V_TRUSTED_SIGNALS_LATEST_TS` does not add SHORT to trusted horizons if leaderboard is LONG-only, but **candidate signals** could still be SHORT unless `r` is filtered.
+
+| Object | Already safe today? | `MOMENTUM_SHORT` / SHORT rows after launch | Protection method |
+|--------|---------------------|---------------------------------------------|-------------------|
+| `MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS` | N/A (no SHORT yet) | **Needs** filter on `r` in `candidates` CTE | `r.SIGNAL_DIRECTION IS NULL OR r.SIGNAL_DIRECTION = 'LONG'` |
+| `MIP.MART.V_SIGNALS_LATEST_TS` | Same | **Needs** same on `r` | Log-direction filter |
+| `MIP.APP.V_SIGNALS_ELIGIBLE_TODAY` | Same | **Needs** filter in `recs` CTE on `r` | Log-direction filter |
+| `MIP.MART.V_TRUSTED_PATTERN_HORIZONS` / `V_TRUSTED_TOP10` | Same | Safe **if** `V_TRAINING_LEADERBOARD` is LONG-only | LONG-safe `V_TRAINING_KPIS` upstream |
+| `MIP.MART.V_TRUSTED_SIGNAL_POLICY` | Same | Safe **if** `V_SIGNAL_OUTCOME_KPIS` LONG-only | Filter in KPI view |
+| `MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL` / `_GLOBAL` | Same | **Needs** filter on all log arms | Log-direction filter |
+| `MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION` | Same | **Needs** filter in `recs` CTE | Log-direction filter |
+| `MIP.MART.V_PORTFOLIO_SIGNALS` | Same | **Needs** filter on `rl` | Log-direction filter |
+| `MIP.MART.V_SIGNAL_OUTCOME_KPIS` | Same | **Needs** join log + filter | Log-direction filter |
+| `MIP.APP.SP_AGENT_PROPOSE_TRADES` | N/A | **No proc edit** per scope — protected **only if** `V_TRUSTED_SIGNALS_LATEST_TS` (and any other inputs) are LONG-filtered | Upstream views |
+| `MIP.APP.V_RECOMMENDATION_QUALITY_SCORE` | Same | **Audit** — branches on `PATTERN_TYPE`; add log join + filter if base includes SHORT recs | Log-direction filter on `r` |
+
+Per-object strategy (LONG-safe via log):
 
 | Object / area | Strategy |
 |---------------|----------|
@@ -255,9 +271,20 @@ Per-object strategy:
 | `V_TRUSTED_SIGNAL_CLASSIFICATION` | Restrict `recs` CTE to LONG-only log rows |
 | `REC_OUTCOME_*`, `V_TRUSTED_SIGNALS`, `V_PORTFOLIO_SIGNALS`, `SCORE_CALIBRATION`, `V_SIGNALS_WITH_EXPECTED_RETURN`, `REC_TRAINING_KPIS` | Join log; LONG-only |
 | `V_PORTFOLIO_ATTRIBUTION`, `V_SCORE_CALIBRATION`, `V_AGENT_DAILY_SIGNAL_BRIEF` | Join log; LONG-only |
-| `SP_RUN_PARALLEL_WORLDS` / early exits / news calibration / bootstrap cohort | Prefer filtering via views they read; else add narrow `JOIN RECOMMENDATION_LOG` + LONG filter on outcome-driving subqueries |
+| `SP_RUN_PARALLEL_WORLDS` / `SP_EVALUATE_EARLY_EXITS` / `SP_TRAIN_NEWS_CALIBRATION` / `SP_BOOTSTRAP_EVALUATE_RECOMMENDATIONS_COHORT` | **Direct change required** — each reads `RECOMMENDATION_LOG` / `RECOMMENDATION_OUTCOMES` **directly**, not via LONG-safe mart views (see §5.2) |
 
 **Preserve:** Object names and consumer contracts for production paths; **only** narrow row sets.
+
+### 5.2 Shared-table procs — not safe via views alone
+
+These procedures **join `MIP.APP.RECOMMENDATION_LOG` and/or `MIP.APP.RECOMMENDATION_OUTCOMES` directly**. LONG-safe mart views **do not** wrap those joins. **Each proc requires** the same log predicate on every `RECOMMENDATION_LOG` alias: **`SIGNAL_DIRECTION IS NULL OR SIGNAL_DIRECTION = 'LONG'`** (and on correlated subqueries that scan the log).
+
+| Procedure | Upstream view sufficient? | Action |
+|-----------|-------------------------|--------|
+| `MIP.APP.SP_RUN_PARALLEL_WORLDS` | **No** — multiple subqueries on `RECOMMENDATION_LOG` + outcomes without going through filtered views | **Direct filter** on each `rl` / `rl2` arm |
+| `MIP.APP.SP_EVALUATE_EARLY_EXITS` | **No** — uses `RECOMMENDATION_LOG` and outcomes; joins `V_PORTFOLIO_SIGNALS` / `V_TRUSTED_SIGNALS` but hold-to-end block uses raw `rl` | **Direct filter** on `rl` / `rl2` in that block; **and** LONG-safe `V_PORTFOLIO_SIGNALS` |
+| `MIP.APP.SP_TRAIN_NEWS_CALIBRATION` | **No** — `JOIN RECOMMENDATION_LOG r` already present | **Direct filter** on `r` |
+| `MIP.APP.SP_BOOTSTRAP_EVALUATE_RECOMMENDATIONS_COHORT` | **No** — `JOIN RECOMMENDATION_LOG r` | **Direct filter** on `r` |
 
 ---
 
@@ -304,13 +331,15 @@ Each row **must** include:
 
 ### 7.3 Timeline request contract (`GET /training/timeline`)
 
-**Required query parameters:**
+**Required query parameters (mandatory — no silent default):**
 
 - `symbol`, `market_type`, `interval_minutes` (existing)
 - `pattern_id` (existing)
-- **`signal_direction`** — required; values `LONG` \| `SHORT` (reject or default to `LONG` only if documented; **prefer required** to avoid wrong-series bugs)
+- **`signal_direction`** — **required**; values `LONG` \| `SHORT`. API returns **400** if missing or invalid (implementation must not infer from `pattern_id` alone).
 
-**Behavior:** SQL filters `RECOMMENDATION_LOG` by all five dimensions (pattern_id + signal_direction + symbol + market_type + interval).
+**Behavior:** Timeline SQL filters `RECOMMENDATION_LOG` by the **full five-field identity** (§7.1). **Legacy NULL log rows:** treat as LONG only inside SQL (`COALESCE(SIGNAL_DIRECTION,'LONG') = :param`) while the **request** still must pass `signal_direction=LONG` for that series.
+
+**React/UI:** `TrainingTimelineInline` (and any caller) must pass `signal_direction` in the query string; **`getRowKey` / expander cache** must include `signal_direction` (same five fields as §7.1).
 
 ---
 
@@ -365,7 +394,7 @@ Each row **must** include:
 
 4. **Training Status `trust_gate` join** — Today joins `V_TRAINING_DIGEST_SNAPSHOT_SYMBOL` (LONG/production). SHORT rows must **not** pick up wrong trust label; either **NULL**/separate field for SHORT or **research_evidence_stage** only.
 
-5. **Default `signal_direction` in API** — Omitting `signal_direction` on timeline could chart the wrong series; **require parameter** or hard-default **LONG** with explicit logging.
+5. **`signal_direction` omitted on timeline** — Mitigated by **mandatory** parameter + **400** on missing (§7.3).
 
 6. **Deploy order skew** — If eval deploys before LONG view filters, a brief window could exist with SHORT outcomes visible in old views; **deploy LONG filters before enabling gate**, or enable gate only after full stack.
 

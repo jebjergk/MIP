@@ -37,6 +37,16 @@ function formatNum(n) {
   return Number.isInteger(x) ? String(x) : x.toFixed(4)
 }
 
+/** Compact date for grid (full value in title). */
+function formatAsOfForGrid(ts) {
+  if (ts == null || ts === '') return '—'
+  const s = String(ts).trim()
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (m) return m[1]
+  if (s.length >= 10) return s.slice(0, 10)
+  return s
+}
+
 /** Short preview for primary row (full grid in expanded section). */
 function horizonOutcomePreview(row, horizonDefs, get) {
   if (!horizonDefs.length) return '—'
@@ -278,19 +288,19 @@ export default function TrainingStatus() {
           <thead>
             <tr>
               <th className="training-expand-col" aria-label="Expand"></th>
-              <th>Market type <InfoTooltip scope={SCOPE} entryKey="market_type" variant="short" /></th>
-              <th>Symbol <InfoTooltip scope={SCOPE} entryKey="symbol" variant="short" /></th>
-              <th>Pattern <InfoTooltip scope={SCOPE} entryKey="pattern_id" variant="short" /></th>
-              <th>Label</th>
-              <th>Direction</th>
-              <th>Interval <InfoTooltip scope={SCOPE} entryKey="interval_minutes" variant="short" /></th>
-              <th>As of <InfoTooltip scope={SCOPE} entryKey="as_of_ts" variant="short" /></th>
-              <th>Maturity <InfoTooltip scope={SCOPE} entryKey="maturity_score" variant="long" /></th>
-              <th>Trust gate <InfoTooltip scope={SCOPE} entryKey="trust_gate" variant="long" /></th>
-              <th>Sample size <InfoTooltip scope={SCOPE} entryKey="recs_total" variant="short" /></th>
-              <th>Coverage <InfoTooltip scope={SCOPE} entryKey="coverage_ratio" variant="short" /></th>
-              <th>Horizons <InfoTooltip scope={SCOPE} entryKey="horizons_covered" variant="short" /></th>
-              <th title="Per-horizon averages — expand row for full table">Avg outcomes</th>
+              <th className="training-col-market">Market <InfoTooltip scope={SCOPE} entryKey="market_type" variant="short" /></th>
+              <th className="training-col-symbol">Symbol <InfoTooltip scope={SCOPE} entryKey="symbol" variant="short" /></th>
+              <th className="training-col-pattern">ID <InfoTooltip scope={SCOPE} entryKey="pattern_id" variant="short" /></th>
+              <th className="training-col-label">Label</th>
+              <th className="training-col-dir">Dir.</th>
+              <th className="training-col-interval">Int. <InfoTooltip scope={SCOPE} entryKey="interval_minutes" variant="short" /></th>
+              <th className="training-col-asof">As of <InfoTooltip scope={SCOPE} entryKey="as_of_ts" variant="short" /></th>
+              <th className="training-col-maturity">Maturity <InfoTooltip scope={SCOPE} entryKey="maturity_score" variant="long" /></th>
+              <th className="training-col-trust">Trust <InfoTooltip scope={SCOPE} entryKey="trust_gate" variant="long" /></th>
+              <th className="training-col-narrow">n <InfoTooltip scope={SCOPE} entryKey="recs_total" variant="short" /></th>
+              <th className="training-col-narrow">Cov. <InfoTooltip scope={SCOPE} entryKey="coverage_ratio" variant="short" /></th>
+              <th className="training-col-narrow">Hz <InfoTooltip scope={SCOPE} entryKey="horizons_covered" variant="short" /></th>
+              <th className="training-col-avgout" title="Per-horizon averages — expand row for full table">Avg outcomes</th>
             </tr>
           </thead>
           <tbody>
@@ -324,13 +334,21 @@ export default function TrainingStatus() {
                         &#9658;
                       </span>
                     </td>
-                    <td>{get(row, 'market_type') ?? '—'}</td>
-                    <td className="training-symbol-cell">{formatSymbolLabel(get(row, 'symbol') ?? '—', get(row, 'market_type'))}</td>
-                    <td>{get(row, 'pattern_id') ?? '—'}</td>
-                    <td className="training-pattern-label-cell" title={get(row, 'pattern_parameter_summary') || ''}>
+                    <td className="training-col-market">{get(row, 'market_type') ?? '—'}</td>
+                    <td
+                      className="training-symbol-cell"
+                      title={formatSymbolLabel(get(row, 'symbol') ?? '—', get(row, 'market_type'))}
+                    >
+                      {formatSymbolLabel(get(row, 'symbol') ?? '—', get(row, 'market_type'))}
+                    </td>
+                    <td className="training-col-pattern">{get(row, 'pattern_id') ?? '—'}</td>
+                    <td
+                      className="training-pattern-label-cell"
+                      title={get(row, 'pattern_parameter_summary') || get(row, 'pattern_display_name') || ''}
+                    >
                       {get(row, 'pattern_display_name') ?? '—'}
                     </td>
-                    <td>
+                    <td className="training-col-dir">
                       <span
                         className={`training-direction-badge training-direction-${String(get(row, 'signal_direction') || 'LONG').toLowerCase()}`}
                         title={get(row, 'pattern_family') || ''}
@@ -344,24 +362,30 @@ export default function TrainingStatus() {
                         </span>
                       ) : null}
                     </td>
-                    <td>{get(row, 'interval_minutes') ?? '—'}</td>
-                    <td>{get(row, 'as_of_ts') ?? '—'}</td>
-                    <td className="training-maturity-cell">
-                      <span
-                        className={`training-maturity-badge training-stage-${(get(row, 'maturity_stage') || '').toLowerCase().replace('_', '-')}`}
-                        title={stageTitle}
-                      >
-                        {get(row, 'maturity_stage') ?? '—'}
-                      </span>
-                      <InfoTooltip scope={SCOPE} entryKey={stageKey} variant="short" />
-                      <div className="training-progress-wrap" title={stageTitle}>
-                        <div className="training-progress-bar" style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
-                      </div>
-                      <span className="training-score-num" title={getGlossaryEntry(SCOPE, 'maturity_score')?.short}>
-                        {formatNum(get(row, 'maturity_score'))}
-                      </span>
+                    <td className="training-col-interval">{get(row, 'interval_minutes') ?? '—'}</td>
+                    <td className="training-col-asof" title={get(row, 'as_of_ts') != null ? String(get(row, 'as_of_ts')) : ''}>
+                      {formatAsOfForGrid(get(row, 'as_of_ts'))}
                     </td>
-                    <td>
+                    <td className="training-maturity-cell">
+                      <div className="training-maturity-top">
+                        <span
+                          className={`training-maturity-badge training-stage-${(get(row, 'maturity_stage') || '').toLowerCase().replace('_', '-')}`}
+                          title={stageTitle}
+                        >
+                          {get(row, 'maturity_stage') ?? '—'}
+                        </span>
+                        <InfoTooltip scope={SCOPE} entryKey={stageKey} variant="short" />
+                      </div>
+                      <div className="training-maturity-bottom">
+                        <div className="training-progress-wrap" title={stageTitle}>
+                          <div className="training-progress-bar" style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
+                        </div>
+                        <span className="training-score-num" title={getGlossaryEntry(SCOPE, 'maturity_score')?.short}>
+                          {formatNum(get(row, 'maturity_score'))}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="training-trust-cell">
                       {trustGate ? (
                         <span className={`training-trust-badge training-trust-${trustGate.toLowerCase().replace('_', '-')}`}>
                           {trustGate}
@@ -370,12 +394,12 @@ export default function TrainingStatus() {
                         '—'
                       )}
                     </td>
-                    <td>{formatNum(get(row, 'recs_total'))}</td>
-                    <td>{formatPct(get(row, 'coverage_ratio'))}</td>
-                    <td>{formatNum(get(row, 'horizons_covered'))}</td>
+                    <td className="training-col-narrow">{formatNum(get(row, 'recs_total'))}</td>
+                    <td className="training-col-narrow">{formatPct(get(row, 'coverage_ratio'))}</td>
+                    <td className="training-col-narrow">{formatNum(get(row, 'horizons_covered'))}</td>
                     <td
                       className="training-horizon-preview-cell"
-                      title="Expand row for all horizons"
+                      title={horizonOutcomePreview(row, horizonDefs, get)}
                     >
                       {horizonOutcomePreview(row, horizonDefs, get)}
                     </td>

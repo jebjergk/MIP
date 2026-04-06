@@ -79,20 +79,26 @@
   margin: 0.5rem 0;
   border: 1px solid #ddd;
   border-radius: 4px;
+  /* Let the table define width; scroll horizontally instead of crushing columns */
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .training-status-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 0.9rem;
-  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  width: max-content;
+  min-width: min(100%, 72rem);
+  font-size: 0.875rem;
 }
 
 .training-status-table th,
 .training-status-table td {
-  padding: 0.4rem 0.5rem;
+  padding: 0.45rem 0.55rem;
   text-align: left;
   border: 1px solid #ddd;
+  box-sizing: border-box;
 }
 
 .training-status-table thead th {
@@ -102,14 +108,91 @@
   background: #f0f0f0;
   box-shadow: 0 1px 0 #ccc;
   white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .training-status-table td {
-  vertical-align: middle;
+  vertical-align: top;
+}
+
+/* Column widths — minimums so content does not overlap; table grows → horizontal scroll */
+.training-col-market {
+  min-width: 4.25rem;
+  max-width: 5.5rem;
+}
+
+.training-col-symbol {
+  min-width: 12rem;
+  max-width: 18rem;
+}
+
+.training-col-pattern {
+  min-width: 3rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.training-col-label {
+  min-width: 11rem;
+  max-width: 20rem;
+}
+
+.training-col-dir {
+  min-width: 5.5rem;
+}
+
+.training-col-interval {
+  min-width: 3rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.training-col-asof {
+  min-width: 6.5rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+}
+
+.training-col-maturity {
+  min-width: 8.5rem;
+}
+
+.training-col-trust {
+  min-width: 6.75rem;
+}
+
+.training-col-narrow {
+  min-width: 3.75rem;
+  max-width: 5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.training-col-avgout {
+  min-width: 14rem;
+  max-width: 24rem;
 }
 
 .training-maturity-cell {
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.training-maturity-top,
+.training-maturity-bottom {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.training-maturity-bottom {
+  margin-top: 0.2rem;
+}
+
+.training-trust-cell {
+  min-width: 6.75rem;
+  vertical-align: middle;
 }
 
 .training-maturity-badge {
@@ -178,14 +261,13 @@
 }
 
 .training-progress-wrap {
-  display: inline-block;
-  width: 60px;
+  flex: 0 0 72px;
+  width: 72px;
+  min-width: 72px;
   height: 8px;
   background: #e0e0e0;
   border-radius: 4px;
   overflow: hidden;
-  vertical-align: middle;
-  margin-left: 0.25rem;
 }
 
 .training-progress-bar {
@@ -196,8 +278,9 @@
 }
 
 .training-score-num {
-  margin-left: 0.35rem;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
 }
 
 .training-status-empty {
@@ -279,29 +362,28 @@
 }
 
 .training-pattern-label-cell {
-  max-width: 10rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.9rem;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+  font-size: 0.84rem;
+  hyphens: auto;
 }
 
-/* Symbol cell — emphasis + ellipsis */
+/* Symbol cell — ticker + name wrap; full string in title */
 .training-symbol-cell {
   font-weight: 600;
   color: #1565c0;
-  max-width: 11rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+  hyphens: auto;
 }
 
 .training-horizon-preview-cell {
-  max-width: 14rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.82rem;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+  font-size: 0.8rem;
   color: #444;
 }
 

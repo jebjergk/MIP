@@ -1,8 +1,62 @@
 -- 036_mart_trusted_gate_views.sql
 -- Purpose: Trusted signal gate — allow-list from V_TRAINING_LEADERBOARD + TRAINING_GATE_PARAMS; trusted-signals-at-latest-TS; top-N.
+--
+-- Trust semantics (avoid conflating labels):
+-- - V_TRUSTED_PATTERN_HORIZONS: "Trusted (training leaderboard)" — global KPI bar for research, intraday reuse, briefs.
+-- - V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS: "Eligible (autonomous proposals)" — family/market/interval participation
+--   from AUTONOMOUS_TRUST_FAMILY_GATE + leaderboard; feeds V_TRUSTED_SIGNALS_LATEST_TS only.
+-- - SP_AGENT_PROPOSE_TRADES: "Trusted (symbol-local)" via V_TRAINING_DIGEST_SNAPSHOT_SYMBOL + PROPOSAL_POLICY_RULE.
 
 use role MIP_ADMIN_ROLE;
 use database MIP;
+
+-- ------------------------------------------------------------------------------
+-- V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS
+-- Rows that may participate in autonomous daily proposal path (per MIP.APP.AUTONOMOUS_TRUST_FAMILY_GATE).
+-- Families/markets/intervals with no gate row are excluded (e.g. MEAN_REVERSION, BEARISH_MOMENTUM for STOCK/1440).
+-- ------------------------------------------------------------------------------
+create or replace view MIP.MART.V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS as
+with active_version as (
+    select TRAINING_VERSION
+    from MIP.APP.V_TRAINING_VERSION_CURRENT
+    where POLICY_NAME = 'DAILY_POLICY'
+),
+p as (
+    select
+        MIN_SIGNALS,
+        coalesce(MIN_SIGNALS_BOOTSTRAP, 5) as MIN_SIGNALS_BOOTSTRAP
+    from MIP.APP.TRAINING_GATE_PARAMS
+    where IS_ACTIVE
+    qualify row_number() over (order by PARAM_SET) = 1
+)
+select
+    av.TRAINING_VERSION,
+    l.PATTERN_ID,
+    l.MARKET_TYPE,
+    l.INTERVAL_MINUTES,
+    l.HORIZON_BARS,
+    l.N_SIGNALS,
+    l.N_SUCCESS,
+    l.HIT_RATE_SUCCESS,
+    l.AVG_RETURN_SUCCESS,
+    l.SHARPE_LIKE_SUCCESS,
+    case
+        when l.N_SIGNALS >= p.MIN_SIGNALS then 'HIGH'
+        when l.N_SIGNALS >= p.MIN_SIGNALS_BOOTSTRAP then 'LOW'
+        else 'LOW'
+    end as CONFIDENCE
+from MIP.MART.V_TRAINING_LEADERBOARD l
+cross join active_version av
+cross join p
+inner join MIP.APP.PATTERN_DEFINITION pd
+  on pd.PATTERN_ID = l.PATTERN_ID
+inner join MIP.APP.AUTONOMOUS_TRUST_FAMILY_GATE g
+  on g.PATTERN_TYPE = pd.PATTERN_TYPE
+ and g.MARKET_TYPE = l.MARKET_TYPE
+ and g.INTERVAL_MINUTES = l.INTERVAL_MINUTES
+where (l.N_SIGNALS >= p.MIN_SIGNALS or l.N_SIGNALS >= p.MIN_SIGNALS_BOOTSTRAP)
+  and coalesce(l.HIT_RATE_SUCCESS, 0) >= g.MIN_HIT_RATE
+  and coalesce(l.AVG_RETURN_SUCCESS, -999) >= g.MIN_AVG_RETURN;
 
 -- ------------------------------------------------------------------------------
 -- D1: V_TRUSTED_PATTERN_HORIZONS
@@ -80,8 +134,8 @@ where r.INTERVAL_MINUTES = 1440
 
 -- ------------------------------------------------------------------------------
 -- D2: V_TRUSTED_SIGNALS_LATEST_TS
--- Today's trusted candidates: RECOMMENDATION_LOG at latest recommendation TS, restricted to
--- (pattern_id, market_type, interval_minutes, horizon_bars) in V_TRUSTED_PATTERN_HORIZONS.
+-- Today's trusted candidates for AUTONOMOUS proposals: RECOMMENDATION_LOG at latest recommendation TS, restricted to
+-- (pattern_id, market_type, interval_minutes, horizon_bars) in V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS.
 -- One row per (recommendation_id, horizon_bars); explainability fields from trusted horizon.
 --
 -- IMPORTANT: Uses RECOMMENDATION_LOG directly, NOT V_SIGNAL_OUTCOMES_BASE.
@@ -111,7 +165,7 @@ trusted_ph as (
         tp.AVG_RETURN_SUCCESS,
         tp.SHARPE_LIKE_SUCCESS,
         tp.CONFIDENCE
-    from MIP.MART.V_TRUSTED_PATTERN_HORIZONS tp
+    from MIP.MART.V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS tp
     join MIP.APP.PATTERN_DEFINITION pd
       on pd.PATTERN_ID = tp.PATTERN_ID
     qualify row_number() over (
@@ -238,3 +292,4 @@ qualify row_number() over (order by SHARPE_LIKE_SUCCESS desc nulls last) <= 10;
 -- select * from MIP.MART.V_TRUSTED_PATTERN_HORIZONS order by SHARPE_LIKE_SUCCESS desc nulls last limit 50;
 -- select count(*) as trusted_count from MIP.MART.V_TRUSTED_PATTERN_HORIZONS;
 -- select * from MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS limit 50;
+-- select * from MIP.MART.V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS order by PATTERN_ID, HORIZON_BARS;

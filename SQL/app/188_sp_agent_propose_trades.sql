@@ -159,7 +159,7 @@ begin
     );
     v_latest_daily_bar_ts := :v_latest_bar_ts;
     v_latest_rec_ts := (select max(TS) from MIP.APP.RECOMMENDATION_LOG where INTERVAL_MINUTES = 1440);
-    v_trusted_pattern_count := (select count(*) from MIP.MART.V_TRUSTED_PATTERN_HORIZONS);
+    v_trusted_pattern_count := (select count(*) from MIP.MART.V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS);
     begin
         select
             coalesce(max(iff(CONFIG_KEY = 'DAILY_BAR_STALE_BLOCK_ENABLED', try_to_boolean(CONFIG_VALUE), null)), true),
@@ -399,7 +399,7 @@ begin
             v_proposal_policy_version := null;
     end;
     if (v_proposal_policy_version is null) then
-        v_proposal_policy_version := '2026_04_03_V1';
+        v_proposal_policy_version := '2026_04_07_V2';
     end if;
 
     merge into MIP.AGENT_OUT.ORDER_PROPOSALS as target

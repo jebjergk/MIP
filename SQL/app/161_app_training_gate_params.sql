@@ -1,5 +1,6 @@
 -- 161_app_training_gate_params.sql
 -- Purpose: Param-driven training gate for V_TRUSTED_PATTERN_HORIZONS (auditable thresholds).
+-- Autonomous proposal path uses MIP.APP.AUTONOMOUS_TRUST_FAMILY_GATE + V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS (see 492, 036).
 
 use role MIP_ADMIN_ROLE;
 use database MIP;

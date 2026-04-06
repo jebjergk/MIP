@@ -95,3 +95,20 @@ Enforce via default **`PROPOSAL_POLICY_RULE`** (e.g. `MEAN_REVERSION` not eligib
 ## 8. Required conclusion (single recommendation)
 
 **Best minimal correction:** Implement **family-aware** horizon gating (not a global `MIN_HIT_RATE` cut alone) so **`MOMENTUM`** re-enters the proposal path for STOCK/1440, with family-level trust as **participation control** rather than the **dominant** statistical veto; pair with **default policy** that keeps **MR** and **bearish momentum** from autonomous origination unless explicitly enabled; **preserve symbol-local enforcement** as the **deciding** factor for origination and keep **momentum ranking symbol-focused** (§3). Document **two (or three) named trust concepts** for UI vs autonomous eligibility vs symbol-local.
+
+---
+
+## Implementation record (deployed)
+
+| Object | Role |
+|--------|------|
+| `MIP.APP.AUTONOMOUS_TRUST_FAMILY_GATE` | Config table: `MOMENTUM` × STOCK/ETF/FX × 1440 with `MIN_HIT_RATE=0.52`, `MIN_AVG_RETURN=0.0005`. No rows for MR/bearish → excluded from autonomous slice. |
+| `MIP.MART.V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS` | Leaderboard rows matching gate keys + thresholds. |
+| `MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS` | `trusted_ph` now sourced from autonomous view (not `V_TRUSTED_PATTERN_HORIZONS`). |
+| `MIP.MART.V_TRUSTED_PATTERN_HORIZONS` | Unchanged global bar for training / intraday / briefs. |
+| `PROPOSAL_POLICY_MANIFEST` / `PROPOSAL_POLICY_RULE` | **`2026_04_07_V2`** default: `MOMENTUM` eligible, `MEAN_REVERSION` all directions ineligible for autonomous, `BEARISH_MOMENTUM` off. |
+| `SP_AGENT_PROPOSE_TRADES` | Counts autonomous horizons; fallback policy version `2026_04_07_V2`. |
+
+**Files:** [`492_autonomous_trust_family_gate.sql`](../SQL/app/492_autonomous_trust_family_gate.sql), [`036_mart_trusted_gate_views.sql`](../SQL/mart/036_mart_trusted_gate_views.sql), [`493_proposal_policy_2026_04_07_v2.sql`](../SQL/app/493_proposal_policy_2026_04_07_v2.sql), [`188_sp_agent_propose_trades.sql`](../SQL/app/188_sp_agent_propose_trades.sql), [`15_autonomous_trust_momentum_smoke.sql`](../SQL/smoke/15_autonomous_trust_momentum_smoke.sql), grants in [`02_grants_readonly.sql`](../SQL/deploy/ux_api_user/02_grants_readonly.sql).
+
+**Note:** Do not put unescaped `;` inside string literals in SQL files run by `query_snowflake.py` statement splitter (use commas in descriptions).

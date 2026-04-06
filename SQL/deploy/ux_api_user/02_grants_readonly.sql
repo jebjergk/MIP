@@ -34,6 +34,7 @@ grant select on table MIP.APP.RECOMMENDATION_OUTCOMES to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.INGEST_UNIVERSE       to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.PATTERN_DEFINITION    to role MIP_UI_API_ROLE;
 grant select on table MIP.APP.TRAINING_GATE_PARAMS  to role MIP_UI_API_ROLE;
+grant select on table MIP.APP.AUTONOMOUS_TRUST_FAMILY_GATE to role MIP_UI_API_ROLE;
 
 -- Tables (MIP.AGENT_OUT)
 grant select on table MIP.AGENT_OUT.MORNING_BRIEF   to role MIP_UI_API_ROLE;
@@ -59,6 +60,7 @@ grant select on view MIP.APP.V_TRUSTED_SIGNAL_CLASSIFICATION to role MIP_UI_API_
 grant select on view MIP.MART.V_TRUSTED_SIGNAL_POLICY       to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_SIGNALS             to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_PATTERN_HORIZONS   to role MIP_UI_API_ROLE;
+grant select on view MIP.MART.V_AUTONOMOUS_PROPOSAL_TRUSTED_PATTERN_HORIZONS to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS   to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_PATTERN_METADATA_UI           to role MIP_UI_API_ROLE;
 grant select on view MIP.MART.V_SIGNAL_OUTCOMES_BASE_RESEARCH to role MIP_UI_API_ROLE;

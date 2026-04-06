@@ -18,3 +18,7 @@ where r.SIGNAL_DIRECTION = 'SHORT';
 select 'rec_log_short_count' as check_name, count(*) as n
 from MIP.APP.RECOMMENDATION_LOG
 where SIGNAL_DIRECTION = 'SHORT';
+
+-- Research backfill (optional): requires active MOMENTUM_SHORT patterns + SHORT_MOMENTUM_GENERATION_ENABLED.
+-- Dry-run (no writes): batches_completed only.
+-- call MIP.APP.SP_BACKFILL_SHORT_MOMENTUM('2025-08-01'::date, current_date()::date, 'STOCK', 1440, null, null, null, 7, true);

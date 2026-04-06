@@ -2,12 +2,16 @@
 use role MIP_ADMIN_ROLE;
 use database MIP;
 
+-- Snowflake cannot replace across arity: drop legacy 5-arg overload before 6-arg (P_AS_OF_TS) deploy.
+drop procedure if exists MIP.APP.SP_GENERATE_MOMENTUM_RECS(NUMBER, VARCHAR, NUMBER, NUMBER, FLOAT);
+
 create or replace procedure MIP.APP.SP_GENERATE_MOMENTUM_RECS(
     P_MIN_RETURN       number,      -- e.g. 0.002 for +0.2% threshold
     P_MARKET_TYPE      string default 'STOCK',
     P_INTERVAL_MINUTES number default null, -- P_INTERVAL_MINUTES = NULL means "use whatever interval each pattern defines
     P_LOOKBACK_DAYS    number default null,
-    P_MIN_ZSCORE       float default null
+    P_MIN_ZSCORE       float default null,
+    P_AS_OF_TS         timestamp_ntz default null  -- NULL = live (max TS); set for historical backfill (bar date = this date)
 )
 returns varchar
 language sql
@@ -67,7 +71,8 @@ begin
             'interval_minutes', :P_INTERVAL_MINUTES,
             'min_return', :P_MIN_RETURN,
             'lookback_days', :P_LOOKBACK_DAYS,
-            'min_zscore', :P_MIN_ZSCORE
+            'min_zscore', :P_MIN_ZSCORE,
+            'as_of_ts_override', :P_AS_OF_TS
         ),
         null,
         :v_run_id,
@@ -252,17 +257,35 @@ begin
         end if;
 
         if (v_pattern_market_type in ('STOCK', 'ETF')) then
-            select max(TS)
-              into :v_as_of_ts
-              from MIP.MART.MARKET_RETURNS
-             where MARKET_TYPE = :v_pattern_market_type
-               and INTERVAL_MINUTES = :v_pattern_interval;
+            if (:P_AS_OF_TS is not null) then
+                select max(TS)
+                  into :v_as_of_ts
+                  from MIP.MART.MARKET_RETURNS
+                 where MARKET_TYPE = :v_pattern_market_type
+                   and INTERVAL_MINUTES = :v_pattern_interval
+                   and TS::date = :P_AS_OF_TS::date;
+            else
+                select max(TS)
+                  into :v_as_of_ts
+                  from MIP.MART.MARKET_RETURNS
+                 where MARKET_TYPE = :v_pattern_market_type
+                   and INTERVAL_MINUTES = :v_pattern_interval;
+            end if;
         elseif (v_pattern_market_type = 'FX') then
-            select max(TS)
-              into :v_as_of_ts
-              from MIP.MART.MARKET_BARS
-             where MARKET_TYPE = :v_pattern_market_type
-               and INTERVAL_MINUTES = :v_pattern_interval;
+            if (:P_AS_OF_TS is not null) then
+                select max(TS)
+                  into :v_as_of_ts
+                  from MIP.MART.MARKET_BARS
+                 where MARKET_TYPE = :v_pattern_market_type
+                   and INTERVAL_MINUTES = :v_pattern_interval
+                   and TS::date = :P_AS_OF_TS::date;
+            else
+                select max(TS)
+                  into :v_as_of_ts
+                  from MIP.MART.MARKET_BARS
+                 where MARKET_TYPE = :v_pattern_market_type
+                   and INTERVAL_MINUTES = :v_pattern_interval;
+            end if;
         end if;
 
         if (v_as_of_ts is null) then

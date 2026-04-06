@@ -13,7 +13,8 @@ import { getGlossaryEntry } from '../data/glossary'
 import './TrainingStatus.css'
 
 const SCOPE = 'training_status'
-const BASE_COLUMN_COUNT = 13 // expand, market, symbol, pattern_id, pattern label, direction, interval, as_of, maturity, trust, sample, coverage, horizons
+/** Main row columns (horizon averages live in expanded section only). */
+const MAIN_COLUMN_COUNT = 14
 
 function stageGlossaryKey(stage) {
   if (!stage) return 'maturity_stage'
@@ -34,6 +35,17 @@ function formatNum(n) {
   if (n == null || Number.isNaN(n)) return '—'
   const x = Number(n)
   return Number.isInteger(x) ? String(x) : x.toFixed(4)
+}
+
+/** Short preview for primary row (full grid in expanded section). */
+function horizonOutcomePreview(row, horizonDefs, get) {
+  if (!horizonDefs.length) return '—'
+  const parts = horizonDefs.slice(0, 2).map((h) => {
+    const v = formatNum(get(row, `avg_outcome_${h.key.toLowerCase()}`))
+    return `${h.key}: ${v}`
+  })
+  const suffix = horizonDefs.length > 2 ? ' …' : ''
+  return `${parts.join(' · ')}${suffix}`
 }
 
 /** Generate a unique key for a row (five-field identity + interval) */
@@ -278,9 +290,7 @@ export default function TrainingStatus() {
               <th>Sample size <InfoTooltip scope={SCOPE} entryKey="recs_total" variant="short" /></th>
               <th>Coverage <InfoTooltip scope={SCOPE} entryKey="coverage_ratio" variant="short" /></th>
               <th>Horizons <InfoTooltip scope={SCOPE} entryKey="horizons_covered" variant="short" /></th>
-              {horizonDefs.map((h) => (
-                <th key={h.key} title={h.label}>Avg {h.key}</th>
-              ))}
+              <th title="Per-horizon averages — expand row for full table">Avg outcomes</th>
             </tr>
           </thead>
           <tbody>
@@ -363,13 +373,37 @@ export default function TrainingStatus() {
                     <td>{formatNum(get(row, 'recs_total'))}</td>
                     <td>{formatPct(get(row, 'coverage_ratio'))}</td>
                     <td>{formatNum(get(row, 'horizons_covered'))}</td>
-                    {horizonDefs.map((h) => (
-                      <td key={h.key}>{formatNum(get(row, `avg_outcome_${h.key.toLowerCase()}`))}</td>
-                    ))}
+                    <td
+                      className="training-horizon-preview-cell"
+                      title="Expand row for all horizons"
+                    >
+                      {horizonOutcomePreview(row, horizonDefs, get)}
+                    </td>
                   </tr>
                   {isExpanded && (
                     <tr className="training-detail-row">
-                      <td colSpan={BASE_COLUMN_COUNT + horizonDefs.length} className="training-detail-cell">
+                      <td colSpan={MAIN_COLUMN_COUNT} className="training-detail-cell">
+                        {horizonDefs.length > 0 ? (
+                          <div className="training-expanded-horizons" aria-label="Average outcomes by horizon">
+                            <div className="training-expanded-horizons-title">Average outcomes by horizon</div>
+                            <table className="training-horizon-mini-table">
+                              <thead>
+                                <tr>
+                                  {horizonDefs.map((h) => (
+                                    <th key={h.key} title={h.label}>{h.key}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  {horizonDefs.map((h) => (
+                                    <td key={h.key}>{formatNum(get(row, `avg_outcome_${h.key.toLowerCase()}`))}</td>
+                                  ))}
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : null}
                         <TrainingTimelineInline
                           symbol={get(row, 'symbol')}
                           marketType={get(row, 'market_type')}

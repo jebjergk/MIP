@@ -36,9 +36,11 @@ What it does:
 
 ## 3) SQL fallback (operator)
 
-If you need to run SQL directly after bars are already ingested:
+If you need to run SQL directly after bars are already ingested, set session schema first (the procedure uses temporary tables):
 
 ```sql
+use schema MIP.APP;
+
 call MIP.APP.SP_RUN_IB_SYMBOL_ONBOARDING(
     parse_json('["SMCI","PLTR","COIN"]'),
     'STOCK',

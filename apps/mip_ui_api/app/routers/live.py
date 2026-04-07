@@ -1582,6 +1582,244 @@ def _live_ib_entry_risk_reason_codes(
     return codes
 
 
+def _load_bracket_realism_config(cur) -> dict:
+    """APP_CONFIG for portfolio-relative bracket realism (Layer A + B)."""
+    keys = [
+        "LIVE_BRACKET_REALISM_ENABLED",
+        "LIVE_BRACKET_REALISM_MODE",
+        "LIVE_BRACKET_REALISM_APPLY_TO_PAPER",
+        "LIVE_BRACKET_ABS_MIN_GROSS_TP_USD",
+        "LIVE_BRACKET_ABS_MIN_GROSS_SL_USD",
+        "LIVE_BRACKET_MIN_GROSS_TP_PCT_OF_NOTIONAL",
+        "LIVE_BRACKET_MIN_NET_TP_PCT_OF_NOTIONAL",
+        "LIVE_BRACKET_MIN_GROSS_SL_PCT_OF_NOTIONAL",
+        "LIVE_BRACKET_MIN_GROSS_TP_BPS_OF_NAV",
+        "LIVE_BRACKET_NAV_RULE_CAP_MULT",
+        "LIVE_BRACKET_SMALL_POS_MAX_PCT_NAV",
+        "LIVE_BRACKET_SMALL_POS_STRICT_MULT",
+        "LIVE_MIN_BRACKET_WIDTH_BPS",
+    ]
+    raw = _read_app_config(cur, keys)
+
+    def _f(key: str, default: float) -> float:
+        try:
+            v = raw.get(key)
+            if v is None or str(v).strip() == "":
+                return float(default)
+            return float(v)
+        except Exception:
+            return float(default)
+
+    enabled = _parse_bool_config(raw.get("LIVE_BRACKET_REALISM_ENABLED"), True)
+    mode = str(raw.get("LIVE_BRACKET_REALISM_MODE") or os.getenv("LIVE_BRACKET_REALISM_MODE") or "BLOCK").upper()
+    apply_paper = _parse_bool_config(raw.get("LIVE_BRACKET_REALISM_APPLY_TO_PAPER"), False)
+
+    return {
+        "enabled": enabled,
+        "mode": mode if mode in ("OFF", "WARN", "BLOCK") else "BLOCK",
+        "apply_to_paper": apply_paper,
+        "abs_min_gross_tp_usd": _f("LIVE_BRACKET_ABS_MIN_GROSS_TP_USD", 1.0),
+        "abs_min_gross_sl_usd": _f("LIVE_BRACKET_ABS_MIN_GROSS_SL_USD", 1.0),
+        "min_gross_tp_pct_notional": _f("LIVE_BRACKET_MIN_GROSS_TP_PCT_OF_NOTIONAL", 0.015),
+        "min_net_tp_pct_notional": _f("LIVE_BRACKET_MIN_NET_TP_PCT_OF_NOTIONAL", 0.01),
+        "min_gross_sl_pct_notional": _f("LIVE_BRACKET_MIN_GROSS_SL_PCT_OF_NOTIONAL", 0.01),
+        "min_gross_tp_bps_of_nav": _f("LIVE_BRACKET_MIN_GROSS_TP_BPS_OF_NAV", 12.0),
+        "nav_rule_cap_mult": max(1.0, _f("LIVE_BRACKET_NAV_RULE_CAP_MULT", 5.0)),
+        "small_pos_max_pct_nav": max(1e-9, _f("LIVE_BRACKET_SMALL_POS_MAX_PCT_NAV", 0.10)),
+        "small_pos_strict_mult": max(1.0, _f("LIVE_BRACKET_SMALL_POS_STRICT_MULT", 1.2)),
+        "min_bracket_width_bps": max(0.0, _f("LIVE_MIN_BRACKET_WIDTH_BPS", 25.0)),
+    }
+
+
+def _live_bracket_realism_codes_pure(
+    *,
+    nav_scale: float,
+    side: str,
+    entry_price: float,
+    qty: float,
+    tp_price: float,
+    sl_price: float,
+    target_return: float | None,
+    fee_params: dict,
+    rcfg: dict,
+) -> list[str]:
+    """
+    Atomic bracket realism checks (no DB). Used by tests and live router.
+    """
+    side_u = str(side or "").upper()
+    if side_u not in ("BUY", "SELL"):
+        return []
+
+    ep = float(entry_price)
+    qv = float(qty)
+    if ep <= 0 or qv <= 0:
+        return []
+
+    tp = float(tp_price)
+    sl = float(sl_price)
+    notional = abs(ep * qv)
+
+    slippage_bps = float(fee_params.get("slippage_bps") or 2.0)
+    fee_bps = float(fee_params.get("fee_bps") or 1.0)
+    spread_bps = float(fee_params.get("spread_bps") or 0.0)
+    fee_return_floor = (slippage_bps + fee_bps + (spread_bps / 2.0)) / 10000.0
+
+    if side_u == "BUY":
+        gross_tp_usd = max(0.0, (tp - ep) * qv)
+        gross_sl_usd = max(0.0, (ep - sl) * qv)
+        tp_move_bps = abs(tp / ep - 1.0) * 10000.0
+        sl_move_bps = abs(ep - sl) / ep * 10000.0
+    else:
+        gross_tp_usd = max(0.0, (ep - tp) * qv)
+        gross_sl_usd = max(0.0, (sl - ep) * qv)
+        tp_move_bps = abs(ep - tp) / ep * 10000.0
+        sl_move_bps = abs(sl / ep - 1.0) * 10000.0
+
+    net_tp_usd = 0.0
+    if target_return is not None:
+        tr = float(target_return)
+        net_tp_usd = max(0.0, (tr - fee_return_floor)) * notional
+
+    nav = float(nav_scale)
+    small_line = bool(nav > 0 and (notional / nav) < float(rcfg["small_pos_max_pct_nav"]))
+    smult = float(rcfg["small_pos_strict_mult"]) if small_line else 1.0
+
+    base_tp_pct = float(rcfg["min_gross_tp_pct_notional"])
+    base_net_pct = float(rcfg["min_net_tp_pct_notional"])
+    base_sl_pct = float(rcfg["min_gross_sl_pct_notional"])
+    strict_tp_pct = base_tp_pct * smult
+    strict_net_pct = base_net_pct * smult
+    strict_sl_pct = base_sl_pct * smult
+
+    abs_tp = float(rcfg["abs_min_gross_tp_usd"])
+    abs_sl = float(rcfg["abs_min_gross_sl_usd"])
+    bps_nav = float(rcfg["min_gross_tp_bps_of_nav"])
+    cap_mult = float(rcfg["nav_rule_cap_mult"])
+    nav_tp_floor = min(nav * (bps_nav / 10000.0), cap_mult * base_tp_pct * notional) if nav > 0 else 0.0
+
+    req_net = strict_net_pct * notional
+    min_width = float(rcfg["min_bracket_width_bps"])
+    leg_min_bps = min(tp_move_bps, sl_move_bps)
+
+    mode = str(rcfg.get("mode") or "BLOCK").upper()
+    if mode == "WARN":
+        return []
+
+    codes: list[str] = []
+    if gross_tp_usd < abs_tp:
+        codes.append("LIVE_BRACKET_ABS_GROSS_TP_BELOW_MIN_USD")
+    if gross_tp_usd < strict_tp_pct * notional:
+        codes.append("LIVE_BRACKET_REL_GROSS_TP_BELOW_PCT_NOTIONAL")
+    if nav > 0 and gross_tp_usd < nav_tp_floor:
+        codes.append("LIVE_BRACKET_REL_GROSS_TP_BELOW_BPS_NAV")
+    if net_tp_usd < req_net:
+        codes.append("LIVE_BRACKET_REL_NET_TP_BELOW_PCT_NOTIONAL")
+    if gross_sl_usd < abs_sl:
+        codes.append("LIVE_BRACKET_ABS_GROSS_SL_BELOW_MIN_USD")
+    if gross_sl_usd < strict_sl_pct * notional:
+        codes.append("LIVE_BRACKET_REL_GROSS_SL_BELOW_PCT_NOTIONAL")
+    if min_width > 0 and leg_min_bps < min_width:
+        codes.append("LIVE_BRACKET_WIDTH_BELOW_MIN_BPS")
+
+    return sorted(set(codes))
+
+
+def _live_bracket_realism_reason_codes(
+    cur,
+    *,
+    live_cfg: dict | None,
+    side: str,
+    entry_price: float | None,
+    qty: float | None,
+    tp_price: float | None,
+    sl_price: float | None,
+    target_return: float | None,
+    fee_params: dict,
+    preloaded_realism_cfg: dict | None = None,
+) -> list[str]:
+    """Layer A + B bracket realism; loads NAV from BROKER_SNAPSHOTS."""
+    cfg_row = live_cfg or {}
+    adapter_mode = str(cfg_row.get("ADAPTER_MODE") or "PAPER").upper()
+    execution_mode = str(os.getenv("LIVE_EXECUTION_MODE", "AUTO")).upper()
+    use_ibkr_submit = adapter_mode == "LIVE"
+    if execution_mode == "IBKR":
+        use_ibkr_submit = True
+    elif execution_mode == "PLACEHOLDER":
+        use_ibkr_submit = False
+
+    rcfg = preloaded_realism_cfg if preloaded_realism_cfg is not None else _load_bracket_realism_config(cur)
+    if not rcfg.get("enabled") or str(rcfg.get("mode") or "").upper() == "OFF":
+        return []
+
+    apply_paper = bool(rcfg.get("apply_to_paper"))
+    if not use_ibkr_submit and not (apply_paper and adapter_mode == "PAPER"):
+        return []
+
+    ep = float(entry_price) if entry_price is not None else None
+    qv = float(qty) if qty is not None else None
+    if ep is None or qv is None or tp_price is None or sl_price is None:
+        return []
+
+    account_id = str((cfg_row or {}).get("IBKR_ACCOUNT_ID") or "").strip()
+    nav_scale = 0.0
+    if account_id:
+        try:
+            cur.execute(
+                """
+                select NET_LIQUIDATION_EUR
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where SNAPSHOT_TYPE = 'NAV'
+                  and IBKR_ACCOUNT_ID = %s
+                order by SNAPSHOT_TS desc
+                limit 1
+                """,
+                (account_id,),
+            )
+            nav_rows = fetch_all(cur)
+            if nav_rows and nav_rows[0].get("NET_LIQUIDATION_EUR") is not None:
+                nav_scale = float(nav_rows[0].get("NET_LIQUIDATION_EUR") or 0.0)
+        except Exception:
+            nav_scale = 0.0
+
+    return _live_bracket_realism_codes_pure(
+        nav_scale=nav_scale,
+        side=side,
+        entry_price=ep,
+        qty=qv,
+        tp_price=float(tp_price),
+        sl_price=float(sl_price),
+        target_return=target_return,
+        fee_params=fee_params,
+        rcfg=rcfg,
+    )
+
+
+def _live_entry_tp_sl_prices(
+    side: str,
+    entry_price: float,
+    target_return: float | None,
+    stop_loss_pct: float | None,
+) -> tuple[float | None, float | None]:
+    """Mirror execute_live_action bracket price math for committee/qty path."""
+    side_u = str(side or "").upper()
+    ep = float(entry_price)
+    tp_price = None
+    sl_price = None
+    if target_return is not None:
+        tr = float(target_return)
+        if side_u == "BUY":
+            tp_price = ep * (1 + tr)
+        elif side_u == "SELL":
+            tp_price = max(ep * (1 - tr), 0.0001)
+    if stop_loss_pct is not None:
+        sl = float(stop_loss_pct)
+        if side_u == "BUY":
+            sl_price = max(ep * (1 - sl), 0.0001)
+        elif side_u == "SELL":
+            sl_price = ep * (1 + sl)
+    return tp_price, sl_price
+
+
 def _read_live_min_viable_uplift_settings(cur) -> dict:
     """APP_CONFIG overrides; env fallback. LIVE_MIN_ENTRY_NOTIONAL_EUR=0 disables notional floor only."""
     keys = [
@@ -1700,6 +1938,27 @@ def _apply_post_committee_entry_viability_and_qty(
     if risk_codes:
         return committee_qty, _merge_unique_reason_codes(reason_codes, risk_codes)
 
+    realism_cfg = _load_bracket_realism_config(cur)
+
+    def _bracket_codes_for_qty(qty_val: float) -> list[str]:
+        if proposed_price is None or float(proposed_price) <= 0:
+            return []
+        tp_p, sl_p = _live_entry_tp_sl_prices(side_u, float(proposed_price), target_return, stop_loss_pct)
+        if tp_p is None or sl_p is None:
+            return []
+        return _live_bracket_realism_reason_codes(
+            cur,
+            live_cfg=live_cfg,
+            side=side_u,
+            entry_price=float(proposed_price),
+            qty=qty_val,
+            tp_price=tp_p,
+            sl_price=sl_p,
+            target_return=target_return,
+            fee_params=fee_params,
+            preloaded_realism_cfg=realism_cfg,
+        )
+
     uplift_cfg = _read_live_min_viable_uplift_settings(cur)
     if (
         not uplift_cfg["enabled"]
@@ -1707,6 +1966,11 @@ def _apply_post_committee_entry_viability_and_qty(
         or committee_qty is None
         or float(proposed_price) <= 0
     ):
+        if committee_qty is not None:
+            q0 = max(1, int(round(float(committee_qty))))
+            bc0 = _bracket_codes_for_qty(float(q0))
+            if bc0:
+                return committee_qty, _merge_unique_reason_codes(reason_codes, bc0)
         return committee_qty, reason_codes
 
     committee_int = max(1, int(round(float(committee_qty))))
@@ -1720,13 +1984,17 @@ def _apply_post_committee_entry_viability_and_qty(
     max_allowed = max(max_allowed, committee_int)
 
     if wanted_qty <= committee_int:
+        bc = _bracket_codes_for_qty(float(committee_int))
+        if bc:
+            return float(committee_int), _merge_unique_reason_codes(reason_codes, bc)
         return float(committee_int), reason_codes
 
     if wanted_qty > max_allowed:
-        return float(committee_int), _merge_unique_reason_codes(
-            reason_codes,
-            ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"],
-        )
+        rc = _merge_unique_reason_codes(reason_codes, ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"])
+        bc = _bracket_codes_for_qty(float(committee_int))
+        if bc:
+            rc = _merge_unique_reason_codes(rc, bc)
+        return float(committee_int), rc
 
     account_id = str(live_cfg.get("IBKR_ACCOUNT_ID") or "").strip()
     cur.execute(
@@ -1748,19 +2016,25 @@ def _apply_post_committee_entry_viability_and_qty(
     max_position_pct = live_cfg.get("MAX_POSITION_PCT")
     if nav_eur > 0 and max_position_pct is not None:
         if (est_notional / nav_eur) > float(max_position_pct):
-            return float(committee_int), _merge_unique_reason_codes(
-                reason_codes,
-                ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"],
-            )
+            rc = _merge_unique_reason_codes(reason_codes, ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"])
+            bc = _bracket_codes_for_qty(float(committee_int))
+            if bc:
+                rc = _merge_unique_reason_codes(rc, bc)
+            return float(committee_int), rc
 
     if side_u == "BUY" and nav_eur > 0:
         cash_buffer_pct = float(live_cfg.get("CASH_BUFFER_PCT") or 0.0)
         min_cash_after = nav_eur * cash_buffer_pct
         if (cash_eur - est_notional) < min_cash_after:
-            return float(committee_int), _merge_unique_reason_codes(
-                reason_codes,
-                ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"],
-            )
+            rc = _merge_unique_reason_codes(reason_codes, ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"])
+            bc = _bracket_codes_for_qty(float(committee_int))
+            if bc:
+                rc = _merge_unique_reason_codes(rc, bc)
+            return float(committee_int), rc
+
+    bc_up = _bracket_codes_for_qty(float(wanted_qty))
+    if bc_up:
+        return float(committee_int), _merge_unique_reason_codes(reason_codes, bc_up)
 
     rc2 = _merge_unique_reason_codes(reason_codes, ["LIVE_QTY_UPLIFTED_TO_MIN_VIABLE"])
     uplift_meta = {
@@ -9696,6 +9970,27 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     status_code=409,
                     detail={
                         "message": "Execution blocked: live IB trades require valid TP/SL and minimum risk-reward edge.",
+                        "reason_codes": final_reason_codes,
+                    },
+                )
+            bracket_realism_codes = _live_bracket_realism_reason_codes(
+                cur,
+                live_cfg=cfg,
+                side=side,
+                entry_price=float(entry_price) if entry_price is not None else None,
+                qty=float(qty_ordered) if qty_ordered is not None else None,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                target_return=target_return,
+                fee_params=fee_params,
+            )
+            if bracket_realism_codes:
+                final_reason_codes = sorted(set(reason_codes + bracket_realism_codes))
+                _write_reason_codes(cur, action_id, final_reason_codes)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Execution blocked: bracket does not meet portfolio-relative realism gates.",
                         "reason_codes": final_reason_codes,
                     },
                 )

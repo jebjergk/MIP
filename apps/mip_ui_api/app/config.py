@@ -32,8 +32,8 @@ def training_debug_enabled() -> bool:
 
 
 def get_askmip_model() -> str:
-    """LLM model name for the Ask MIP feature. Default: claude-3-5-sonnet. Set ASKMIP_MODEL to override."""
-    return (os.getenv("ASKMIP_MODEL") or "claude-3-5-sonnet").strip()
+    """LLM model name for the Ask MIP feature. Default: claude-4-sonnet. Set ASKMIP_MODEL to override."""
+    return (os.getenv("ASKMIP_MODEL") or "claude-4-sonnet").strip()
 
 
 def askmip_enable_glossary() -> bool:

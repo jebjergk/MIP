@@ -345,7 +345,7 @@ export default function LivePortfolioActivity() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           actor: 'committee_orchestrator',
-          model: 'claude-3-5-sonnet',
+          model: 'claude-4-sonnet',
           verdict: verdict || {},
         }),
       })
@@ -411,7 +411,7 @@ export default function LivePortfolioActivity() {
     setStreamLogs([{ type: 'system', summary: 'Starting committee stream...' }])
     setLiveLineTarget('Starting committee stream...')
     const es = new EventSource(
-      `${API_BASE}/live/trades/actions/${actionId}/committee/live-prompt?actor=committee_orchestrator&model=claude-3-5-sonnet`,
+      `${API_BASE}/live/trades/actions/${actionId}/committee/live-prompt?actor=committee_orchestrator&model=claude-4-sonnet`,
     )
     streamRef.current = es
 

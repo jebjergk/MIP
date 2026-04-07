@@ -91,7 +91,7 @@ class ApproveAndSubmitLiveDecisionRequest(BaseModel):
     intent_approve_actor: str = "intent_approver"
     execution_actor: str = "execution_operator"
     committee_actor: str = "committee_orchestrator"
-    committee_model: str = "claude-3-5-sonnet"
+    committee_model: str = "claude-4-sonnet"
     attempt_n: int = 1
     force_refresh_1m: bool = True
     committee_recheck_before_submit: bool = True
@@ -135,7 +135,7 @@ class CancelSingleOrderRequest(BaseModel):
 
 class CommitteeRunRequest(BaseModel):
     actor: str = "committee_orchestrator"
-    model: str = "claude-3-5-sonnet"
+    model: str = "claude-4-sonnet"
     force_rerun: bool = False
     refresh_ibkr_news: bool = True
     ibkr_news_max_symbols: int = 20
@@ -146,7 +146,7 @@ class CommitteeRunRequest(BaseModel):
 
 class ApplyCommitteeVerdictRequest(BaseModel):
     actor: str = "committee_orchestrator"
-    model: str = "claude-3-5-sonnet"
+    model: str = "claude-4-sonnet"
     verdict: dict = Field(default_factory=dict)
 
 
@@ -8042,7 +8042,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
 def stream_live_trade_committee_prompt(
     action_id: str,
     actor: str = Query(default="committee_orchestrator"),
-    model: str = Query(default="claude-3-5-sonnet"),
+    model: str = Query(default="claude-4-sonnet"),
 ):
     def event_stream():
         out_queue: Queue = Queue()
@@ -8146,7 +8146,7 @@ def stream_live_trade_committee_prompt(
 @router.get("/trades/actions/{action_id}/revalidate/live-prompt")
 def stream_revalidate_prompt(
     action_id: str,
-    model: str = Query(default="claude-3-5-sonnet"),
+    model: str = Query(default="claude-4-sonnet"),
 ):
     def event_stream():
         conn = get_connection()

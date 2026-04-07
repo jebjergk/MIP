@@ -4,6 +4,7 @@ Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outco
 """
 import json
 import logging
+import math
 import os
 import subprocess
 import time
@@ -1441,6 +1442,336 @@ def _parse_bool_config(value: str | None, default: bool) -> bool:
     if raw in ("0", "false", "no", "off", "n"):
         return False
     return default
+
+
+def _merge_unique_reason_codes(base: list[str], extra: list[str]) -> list[str]:
+    """Append uppercase reason codes from extra onto base without duplicates; preserve order."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in (base or []) + (extra or []):
+        u = str(item).strip().upper()
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return out
+
+
+def _live_execution_requires_ib_risk_gates(cfg_row: dict | None) -> bool:
+    """Match execute_live_action use_ibkr_submit semantics for bracket/risk gates."""
+    adapter_mode = str((cfg_row or {}).get("ADAPTER_MODE") or "PAPER").upper()
+    execution_mode = str(os.getenv("LIVE_EXECUTION_MODE", "AUTO")).upper()
+    use_ibkr_submit = adapter_mode == "LIVE"
+    if execution_mode == "IBKR":
+        use_ibkr_submit = True
+    elif execution_mode == "PLACEHOLDER":
+        use_ibkr_submit = False
+    return use_ibkr_submit
+
+
+def _load_live_entry_fee_params(cur) -> dict:
+    slippage_bps = 2.0
+    fee_bps = 1.0
+    spread_bps = 0.0
+    try:
+        cur.execute(
+            """
+            select
+              coalesce(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then try_to_number(CONFIG_VALUE) end), 2) as SLIPPAGE_BPS,
+              coalesce(max(case when CONFIG_KEY = 'FEE_BPS' then try_to_number(CONFIG_VALUE) end), 1) as FEE_BPS,
+              coalesce(max(case when CONFIG_KEY = 'SPREAD_BPS' then try_to_number(CONFIG_VALUE) end), 0) as SPREAD_BPS
+            from MIP.APP.APP_CONFIG
+            where CONFIG_KEY in ('SLIPPAGE_BPS','FEE_BPS','SPREAD_BPS')
+            """
+        )
+        fee_rows = fetch_all(cur)
+        if fee_rows:
+            slippage_bps = float(fee_rows[0].get("SLIPPAGE_BPS") or slippage_bps)
+            fee_bps = float(fee_rows[0].get("FEE_BPS") or fee_bps)
+            spread_bps = float(fee_rows[0].get("SPREAD_BPS") or spread_bps)
+    except Exception:
+        pass
+    return {
+        "slippage_bps": slippage_bps,
+        "fee_bps": fee_bps,
+        "spread_bps": spread_bps,
+        "min_net_tp_bps": float(os.getenv("LIVE_MIN_NET_TP_BPS", "5")),
+        "min_rr": float(os.getenv("LIVE_MIN_R_MULTIPLE", "1.10")),
+    }
+
+
+def _live_target_and_stop_from_joint_decision(
+    joint_decision: dict | None,
+    bust_pct_default: float | None,
+) -> tuple[float | None, float | None]:
+    """Prefer early-exit target then realistic return; cap stop at bust_pct (execute_live_action parity)."""
+    jd = joint_decision or {}
+    target_return = None
+    try:
+        if jd.get("acceptable_early_exit_target_return") is not None:
+            target_return = float(jd.get("acceptable_early_exit_target_return"))
+    except Exception:
+        target_return = None
+    if target_return is None:
+        try:
+            if jd.get("realistic_target_return") is not None:
+                target_return = float(jd.get("realistic_target_return"))
+        except Exception:
+            target_return = None
+    stop_loss_pct = None
+    try:
+        if jd.get("stop_loss_pct") is not None:
+            stop_loss_pct = float(jd.get("stop_loss_pct"))
+    except Exception:
+        stop_loss_pct = None
+    if stop_loss_pct is not None and bust_pct_default is not None:
+        stop_loss_pct = min(float(stop_loss_pct), float(bust_pct_default))
+    return target_return, stop_loss_pct
+
+
+def _live_ib_entry_risk_reason_codes(
+    *,
+    side: str,
+    is_exit: bool,
+    entry_price: float | None,
+    target_return: float | None,
+    stop_loss_pct: float | None,
+    fee_params: dict,
+) -> list[str]:
+    """
+    Live IB entry bracket viability: same rules as execute_live_action (TP/SL presence,
+    net edge vs fees, R-multiple). Quantity does not affect these percentage checks.
+    """
+    if is_exit:
+        return []
+    codes: list[str] = []
+    if target_return is None or target_return <= 0:
+        codes.append("LIVE_TP_REQUIRED_MISSING")
+    if stop_loss_pct is None or stop_loss_pct <= 0:
+        codes.append("LIVE_SL_REQUIRED_MISSING")
+    tp_price = None
+    sl_price = None
+    if entry_price is not None:
+        ep = float(entry_price)
+        if target_return is not None:
+            if side == "BUY":
+                tp_price = ep * (1 + float(target_return))
+            elif side == "SELL":
+                tp_price = max(ep * (1 - float(target_return)), 0.0001)
+        if stop_loss_pct is not None:
+            sl = float(stop_loss_pct)
+            if side == "BUY":
+                sl_price = max(ep * (1 - sl), 0.0001)
+            elif side == "SELL":
+                sl_price = ep * (1 + sl)
+    if tp_price is None or sl_price is None:
+        codes.append("LIVE_BRACKET_REQUIRED")
+    slippage_bps = float(fee_params.get("slippage_bps") or 2.0)
+    fee_bps = float(fee_params.get("fee_bps") or 1.0)
+    spread_bps = float(fee_params.get("spread_bps") or 0.0)
+    fee_return_floor = (slippage_bps + fee_bps + (spread_bps / 2.0)) / 10000.0
+    min_net_tp_bps = float(fee_params.get("min_net_tp_bps") or 5.0)
+    min_rr = float(fee_params.get("min_rr") or 1.10)
+    min_tp_required = fee_return_floor + (min_net_tp_bps / 10000.0)
+    if target_return is not None and target_return <= min_tp_required:
+        codes.append("LIVE_TP_NET_EDGE_TOO_LOW")
+    if target_return is not None and stop_loss_pct is not None and stop_loss_pct > 0:
+        rr_multiple = float(target_return) / float(stop_loss_pct)
+        if rr_multiple < min_rr:
+            codes.append("LIVE_RISK_REWARD_TOO_LOW")
+    return codes
+
+
+def _read_live_min_viable_uplift_settings(cur) -> dict:
+    """APP_CONFIG overrides; env fallback. LIVE_MIN_ENTRY_NOTIONAL_EUR=0 disables notional floor only."""
+    keys = [
+        "LIVE_MIN_ENTRY_NOTIONAL_EUR",
+        "LIVE_MIN_VIABLE_UPLIFT_MAX_MULT",
+        "LIVE_MIN_VIABLE_UPLIFT_ENABLED",
+    ]
+    raw = _read_app_config(cur, keys)
+    enabled = _parse_bool_config(
+        raw.get("LIVE_MIN_VIABLE_UPLIFT_ENABLED"),
+        str(os.getenv("LIVE_MIN_VIABLE_UPLIFT_ENABLED", "true")).strip().lower() in ("1", "true", "yes", "on"),
+    )
+    min_notional = 0.0
+    try:
+        v = raw.get("LIVE_MIN_ENTRY_NOTIONAL_EUR") or os.getenv("LIVE_MIN_ENTRY_NOTIONAL_EUR") or "100"
+        min_notional = float(v)
+    except Exception:
+        min_notional = 0.0
+    max_mult = 10.0
+    try:
+        v = raw.get("LIVE_MIN_VIABLE_UPLIFT_MAX_MULT") or os.getenv("LIVE_MIN_VIABLE_UPLIFT_MAX_MULT") or "10"
+        max_mult = float(v)
+    except Exception:
+        max_mult = 10.0
+    if max_mult < 1.0:
+        max_mult = 1.0
+    return {"enabled": enabled, "min_notional_eur": max(0.0, min_notional), "max_uplift_mult": max_mult}
+
+
+def _compute_min_viable_qty_from_notional_floor(
+    *,
+    proposed_price: float,
+    committee_qty: int,
+    min_notional_eur: float,
+) -> int:
+    """Whole-share quantity at least committee_qty and at least ceil(min_notional / price) when floor > 0."""
+    px = max(float(proposed_price), 1e-9)
+    q0 = max(1, int(committee_qty))
+    if min_notional_eur <= 0:
+        return q0
+    from_floor = int(math.ceil(min_notional_eur / px))
+    return max(q0, from_floor)
+
+
+def _append_min_viable_uplift_param_snapshot(cur, action_id: str, uplift_meta: dict) -> None:
+    action = _fetch_live_action(cur, action_id)
+    if not action:
+        return
+    ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    if not isinstance(ps, dict):
+        ps = {}
+    ps["min_viable_live_uplift"] = uplift_meta
+    cur.execute(
+        """
+        update MIP.LIVE.LIVE_ACTIONS
+           set PARAM_SNAPSHOT = parse_json(%s),
+               UPDATED_AT = current_timestamp()
+         where ACTION_ID = %s
+        """,
+        (json.dumps(ps), action_id),
+    )
+
+
+def _apply_post_committee_entry_viability_and_qty(
+    cur,
+    *,
+    action_id: str,
+    portfolio_id: int,
+    side: str,
+    is_exit: bool,
+    is_committee_blocked: bool,
+    proposed_price: float | None,
+    committee_qty: float | None,
+    joint_decision: dict | None,
+    reason_codes: list[str],
+) -> tuple[float | None, list[str]]:
+    """
+    After committee sizing: persist IB viability reason codes for live adapter; optionally uplift qty
+    to meet min notional within guardrails. Returns (final_qty, merged_reason_codes).
+    """
+    if is_exit or is_committee_blocked:
+        return committee_qty, reason_codes
+
+    cur.execute(
+        """
+        select
+          IBKR_ACCOUNT_ID, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, BUST_PCT
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where PORTFOLIO_ID = %s
+        """,
+        (portfolio_id,),
+    )
+    cfg_rows = fetch_all(cur)
+    live_cfg = cfg_rows[0] if cfg_rows else {}
+    if not _live_execution_requires_ib_risk_gates(live_cfg):
+        return committee_qty, reason_codes
+
+    side_u = str(side or "").upper()
+    bust_pct_default = None
+    try:
+        if live_cfg.get("BUST_PCT") is not None:
+            bust_pct_default = float(live_cfg.get("BUST_PCT"))
+    except Exception:
+        bust_pct_default = None
+
+    target_return, stop_loss_pct = _live_target_and_stop_from_joint_decision(joint_decision, bust_pct_default)
+    fee_params = _load_live_entry_fee_params(cur)
+    risk_codes = _live_ib_entry_risk_reason_codes(
+        side=side_u,
+        is_exit=False,
+        entry_price=proposed_price,
+        target_return=target_return,
+        stop_loss_pct=stop_loss_pct,
+        fee_params=fee_params,
+    )
+    if risk_codes:
+        return committee_qty, _merge_unique_reason_codes(reason_codes, risk_codes)
+
+    uplift_cfg = _read_live_min_viable_uplift_settings(cur)
+    if (
+        not uplift_cfg["enabled"]
+        or proposed_price is None
+        or committee_qty is None
+        or float(proposed_price) <= 0
+    ):
+        return committee_qty, reason_codes
+
+    committee_int = max(1, int(round(float(committee_qty))))
+    px = float(proposed_price)
+    wanted_qty = _compute_min_viable_qty_from_notional_floor(
+        proposed_price=px,
+        committee_qty=committee_int,
+        min_notional_eur=float(uplift_cfg["min_notional_eur"]),
+    )
+    max_allowed = int(math.ceil(float(committee_int) * float(uplift_cfg["max_uplift_mult"])))
+    max_allowed = max(max_allowed, committee_int)
+
+    if wanted_qty <= committee_int:
+        return float(committee_int), reason_codes
+
+    if wanted_qty > max_allowed:
+        return float(committee_int), _merge_unique_reason_codes(
+            reason_codes,
+            ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"],
+        )
+
+    account_id = str(live_cfg.get("IBKR_ACCOUNT_ID") or "").strip()
+    cur.execute(
+        """
+        select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR
+        from MIP.LIVE.BROKER_SNAPSHOTS
+        where SNAPSHOT_TYPE = 'NAV'
+          and IBKR_ACCOUNT_ID = %s
+        order by SNAPSHOT_TS desc
+        limit 1
+        """,
+        (account_id,),
+    )
+    nav_rows = fetch_all(cur)
+    nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+    cash_eur = float((nav_rows[0] or {}).get("TOTAL_CASH_EUR") or 0.0) if nav_rows else 0.0
+
+    est_notional = float(wanted_qty) * px
+    max_position_pct = live_cfg.get("MAX_POSITION_PCT")
+    if nav_eur > 0 and max_position_pct is not None:
+        if (est_notional / nav_eur) > float(max_position_pct):
+            return float(committee_int), _merge_unique_reason_codes(
+                reason_codes,
+                ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"],
+            )
+
+    if side_u == "BUY" and nav_eur > 0:
+        cash_buffer_pct = float(live_cfg.get("CASH_BUFFER_PCT") or 0.0)
+        min_cash_after = nav_eur * cash_buffer_pct
+        if (cash_eur - est_notional) < min_cash_after:
+            return float(committee_int), _merge_unique_reason_codes(
+                reason_codes,
+                ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"],
+            )
+
+    rc2 = _merge_unique_reason_codes(reason_codes, ["LIVE_QTY_UPLIFTED_TO_MIN_VIABLE"])
+    uplift_meta = {
+        "committee_qty": committee_int,
+        "uplifted_qty": wanted_qty,
+        "reference_price": px,
+        "min_notional_eur_config": float(uplift_cfg["min_notional_eur"]),
+        "max_uplift_mult": float(uplift_cfg["max_uplift_mult"]),
+    }
+    _append_min_viable_uplift_param_snapshot(cur, action_id, uplift_meta)
+    return float(wanted_qty), rc2
 
 
 def _opening_policy(cur, cfg: dict, action: dict) -> dict:
@@ -5831,7 +6162,7 @@ def get_live_activity_overview(
               cv.SIZE_FACTOR as COMMITTEE_SIZE_FACTOR,
               cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
               la.PROPOSED_QTY, la.PROPOSED_PRICE, la.TARGET_OPEN_CONDITION_FACTOR, la.TRAINING_SIZE_CAP_FACTOR,
-              la.TARGET_EXPECTATION_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT,
+              la.TARGET_EXPECTATION_SNAPSHOT, la.PARAM_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT,
               la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.REVALIDATION_TS, la.REVALIDATION_OUTCOME
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
@@ -5920,6 +6251,9 @@ def get_live_activity_overview(
             action_intent = _normalize_action_intent(row.get("SIDE"), row.get("ACTION_INTENT"))
             is_exit = action_intent == "EXIT"
             joint_decision = _parse_variant(row.get("COMMITTEE_JOINT_DECISION"))
+            param_snap_row = _parse_variant(row.get("PARAM_SNAPSHOT"))
+            if not isinstance(param_snap_row, dict):
+                param_snap_row = {}
             proposed_qty = float(row.get("PROPOSED_QTY")) if row.get("PROPOSED_QTY") is not None else None
             proposed_price = float(row.get("PROPOSED_PRICE")) if row.get("PROPOSED_PRICE") is not None else None
             estimated_notional = (abs(proposed_qty) * abs(proposed_price)) if (proposed_qty is not None and proposed_price is not None) else None
@@ -5962,6 +6296,7 @@ def get_live_activity_overview(
                 "LIVE_BRACKET_REQUIRED",
                 "LIVE_TP_NET_EDGE_TOO_LOW",
                 "LIVE_RISK_REWARD_TOO_LOW",
+                "LIVE_MIN_VIABLE_SIZE_NOT_REACHED",
                 "BROKER_SHORT_POSITION_OUT_OF_POLICY",
                 "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
                 "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
@@ -5985,6 +6320,7 @@ def get_live_activity_overview(
                     "LIVE_BRACKET_REQUIRED",
                     "LIVE_TP_NET_EDGE_TOO_LOW",
                     "LIVE_RISK_REWARD_TOO_LOW",
+                    "LIVE_MIN_VIABLE_SIZE_NOT_REACHED",
                 }
             execution_hard_blocked = bool(
                 action_reason_codes
@@ -6066,6 +6402,7 @@ def get_live_activity_overview(
                             "final_qty_preview": final_qty_preview,
                             "availability_reason": sizing_reason,
                             "max_position_pct_limit": float(cfg.get("MAX_POSITION_PCT")) if cfg.get("MAX_POSITION_PCT") is not None else None,
+                            "min_viable_uplift": param_snap_row.get("min_viable_live_uplift"),
                         },
                         "protection": {"planned": protection_planned, **protection_details},
                         "timestamps": {
@@ -7655,6 +7992,19 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         except Exception:
             proposed_qty_derived = None
 
+        proposed_qty_derived, reason_codes = _apply_post_committee_entry_viability_and_qty(
+            cur,
+            action_id=action_id,
+            portfolio_id=int(action.get("PORTFOLIO_ID") or 0),
+            side=str(action.get("SIDE") or "").upper(),
+            is_exit=is_exit,
+            is_committee_blocked=bool(verdict.get("blocked")),
+            proposed_price=proposed_price_derived,
+            committee_qty=proposed_qty_derived,
+            joint_decision=_parse_variant(verdict.get("joint_decision")),
+            reason_codes=reason_codes,
+        )
+
         verdict_phase3 = _committee_alpha_phase3_envelope(
             context,
             verdict,
@@ -7903,14 +8253,6 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         reason_codes.append("COMMITTEE_REVIEWED")
         verdict["tier_c_conflict"] = tier_c_conflict
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
-        verdict_phase3_apply = _committee_alpha_phase3_envelope(
-            context,
-            verdict,
-            [],
-            action_intent=action_intent,
-            manual_apply=True,
-            reason_codes=reason_codes,
-        )
 
         # Derive proposed price/qty so row no longer remains fully pending.
         proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
@@ -7952,6 +8294,28 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                     proposed_qty_derived = max(int(est_notional / max(proposed_price_derived, 1e-9)), 1)
         except Exception:
             proposed_qty_derived = None
+
+        proposed_qty_derived, reason_codes = _apply_post_committee_entry_viability_and_qty(
+            cur,
+            action_id=action_id,
+            portfolio_id=int(action.get("PORTFOLIO_ID") or 0),
+            side=str(action.get("SIDE") or "").upper(),
+            is_exit=is_exit,
+            is_committee_blocked=bool(verdict.get("blocked")),
+            proposed_price=proposed_price_derived,
+            committee_qty=proposed_qty_derived,
+            joint_decision=_parse_variant(verdict.get("joint_decision")),
+            reason_codes=reason_codes,
+        )
+
+        verdict_phase3_apply = _committee_alpha_phase3_envelope(
+            context,
+            verdict,
+            [],
+            action_intent=action_intent,
+            manual_apply=True,
+            reason_codes=reason_codes,
+        )
 
         run_id = str(uuid.uuid4())
         cur.execute(
@@ -8876,7 +9240,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         cur.execute(
             """
             select
-              IBKR_ACCOUNT_ID, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT,
+              IBKR_ACCOUNT_ID, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, BUST_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
@@ -9316,44 +9680,15 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             tp_price = None
             sl_price = None
         if use_ibkr_submit and not is_exit:
-            risk_reason_codes = []
-            if target_return is None or target_return <= 0:
-                risk_reason_codes.append("LIVE_TP_REQUIRED_MISSING")
-            if stop_loss_pct is None or stop_loss_pct <= 0:
-                risk_reason_codes.append("LIVE_SL_REQUIRED_MISSING")
-            if tp_price is None or sl_price is None:
-                risk_reason_codes.append("LIVE_BRACKET_REQUIRED")
-            slippage_bps = 2.0
-            fee_bps = 1.0
-            spread_bps = 0.0
-            try:
-                cur.execute(
-                    """
-                    select
-                      coalesce(max(case when CONFIG_KEY = 'SLIPPAGE_BPS' then try_to_number(CONFIG_VALUE) end), 2) as SLIPPAGE_BPS,
-                      coalesce(max(case when CONFIG_KEY = 'FEE_BPS' then try_to_number(CONFIG_VALUE) end), 1) as FEE_BPS,
-                      coalesce(max(case when CONFIG_KEY = 'SPREAD_BPS' then try_to_number(CONFIG_VALUE) end), 0) as SPREAD_BPS
-                    from MIP.APP.APP_CONFIG
-                    where CONFIG_KEY in ('SLIPPAGE_BPS','FEE_BPS','SPREAD_BPS')
-                    """
-                )
-                fee_rows = fetch_all(cur)
-                if fee_rows:
-                    slippage_bps = float(fee_rows[0].get("SLIPPAGE_BPS") or slippage_bps)
-                    fee_bps = float(fee_rows[0].get("FEE_BPS") or fee_bps)
-                    spread_bps = float(fee_rows[0].get("SPREAD_BPS") or spread_bps)
-            except Exception:
-                pass
-            fee_return_floor = (slippage_bps + fee_bps + (spread_bps / 2.0)) / 10000.0
-            min_net_tp_bps = float(os.getenv("LIVE_MIN_NET_TP_BPS", "5"))
-            min_rr = float(os.getenv("LIVE_MIN_R_MULTIPLE", "1.10"))
-            min_tp_required = fee_return_floor + (min_net_tp_bps / 10000.0)
-            if target_return is not None and target_return <= min_tp_required:
-                risk_reason_codes.append("LIVE_TP_NET_EDGE_TOO_LOW")
-            if target_return is not None and stop_loss_pct is not None and stop_loss_pct > 0:
-                rr_multiple = float(target_return) / float(stop_loss_pct)
-                if rr_multiple < min_rr:
-                    risk_reason_codes.append("LIVE_RISK_REWARD_TOO_LOW")
+            fee_params = _load_live_entry_fee_params(cur)
+            risk_reason_codes = _live_ib_entry_risk_reason_codes(
+                side=side,
+                is_exit=False,
+                entry_price=float(entry_price) if entry_price is not None else None,
+                target_return=target_return,
+                stop_loss_pct=stop_loss_pct,
+                fee_params=fee_params,
+            )
             if risk_reason_codes:
                 final_reason_codes = sorted(set(reason_codes + risk_reason_codes))
                 _write_reason_codes(cur, action_id, final_reason_codes)

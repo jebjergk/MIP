@@ -6556,7 +6556,17 @@ def get_live_activity_overview(
 
             status = (row.get("STATUS") or "").upper()
             action_reason_codes = _parse_list_variant(row.get("REASON_CODES"))
-            blocked = status == "OPEN_BLOCKED" or bool(action_reason_codes and any("BLOCK" in str(x).upper() for x in action_reason_codes))
+            bracket_realism_rc = bool(
+                action_reason_codes
+                and any(str(x).strip().upper().startswith("LIVE_BRACKET_") for x in action_reason_codes)
+            )
+            blocked = status == "OPEN_BLOCKED" or bool(
+                action_reason_codes
+                and (
+                    any("BLOCK" in str(x).upper() for x in action_reason_codes)
+                    or bracket_realism_rc
+                )
+            )
             committee_should_enter = joint_decision.get("should_enter")
             committee_blocks_entry = (action_intent != "EXIT") and (committee_should_enter is False)
             hard_block_codes = {
@@ -6598,9 +6608,9 @@ def get_live_activity_overview(
                 }
             execution_hard_blocked = bool(
                 action_reason_codes
-                and any(
-                    str(x).upper() in hard_block_codes
-                    for x in action_reason_codes
+                and (
+                    any(str(x).upper() in hard_block_codes for x in action_reason_codes)
+                    or bracket_realism_rc
                 )
             )
             trade_surface_ok = page_actionable_base and (market_open or is_exit)

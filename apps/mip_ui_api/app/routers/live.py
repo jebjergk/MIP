@@ -29,7 +29,9 @@ from app.entry_intel_hooks import (
     ensure_entry_intel_for_proposal,
     fetch_latest_snapshot_id_for_proposal,
     insert_entry_intel_action_link,
+    is_protective_leg_order,
     maybe_write_trade_closeout_on_exit_filled,
+    maybe_write_trade_closeout_on_protective_leg_filled,
 )
 
 router = APIRouter(prefix="/live", tags=["live"])
@@ -10747,11 +10749,45 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
             )
 
         if action_id and target_status == "FILLED":
-            # v1: closeout only on full FILLED (not PARTIAL_FILL); see maybe_write_trade_closeout_on_exit_filled
+            # v1: closeout only on full FILLED (not PARTIAL_FILL)
+            post_order = {
+                **order,
+                "STATUS": target_status,
+                "QTY_FILLED": new_qty_filled,
+            }
             try:
-                maybe_write_trade_closeout_on_exit_filled(cur, str(action_id))
-            except Exception:
-                pass
+                if is_protective_leg_order(post_order):
+                    co = maybe_write_trade_closeout_on_protective_leg_filled(cur, order_id)
+                else:
+                    co = maybe_write_trade_closeout_on_exit_filled(cur, str(action_id))
+                extra_keys = (
+                    "entry_action_id",
+                    "exit_type",
+                    "status",
+                    "action_intent",
+                    "entry_status",
+                    "qty_ordered",
+                    "qty_filled",
+                )
+                _log.info(
+                    "trade_closeout_attempt order_id=%s broker_order_id=%s action_id=%s path=%s outcome=%s reason=%s extra=%s",
+                    order_id,
+                    req.broker_order_id or order.get("BROKER_ORDER_ID"),
+                    action_id,
+                    co.get("path"),
+                    co.get("outcome"),
+                    co.get("reason"),
+                    {k: co.get(k) for k in extra_keys if co.get(k) is not None},
+                )
+            except Exception as exc:
+                _log.exception(
+                    "trade_closeout_attempt_failed order_id=%s broker_order_id=%s action_id=%s protective=%s err=%s",
+                    order_id,
+                    req.broker_order_id or order.get("BROKER_ORDER_ID"),
+                    action_id,
+                    is_protective_leg_order(post_order),
+                    exc,
+                )
 
         return {
             "ok": True,

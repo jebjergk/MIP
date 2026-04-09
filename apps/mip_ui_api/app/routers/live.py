@@ -33,6 +33,7 @@ from app.entry_intel_hooks import (
     maybe_write_trade_closeout_on_exit_filled,
     maybe_write_trade_closeout_on_protective_leg_filled,
 )
+from app.routers.live_bracket_calibration import _calibrate_live_entry_bracket_to_min_viable
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -1531,6 +1532,67 @@ def _live_target_and_stop_from_joint_decision(
     return target_return, stop_loss_pct
 
 
+def _load_executable_entry_bracket_for_action(
+    cur,
+    *,
+    action: dict,
+    committee_run_id,
+    bust_pct_default: float | None,
+) -> tuple[float | None, float | None, str]:
+    """
+    Prefer PARAM_SNAPSHOT.executable_bracket (post-committee calibration); else COMMITTEE_VERDICT.
+    Returns (target_return, stop_loss_pct, source) where source is snapshot|verdict|none.
+    """
+    ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    if isinstance(ps, dict):
+        eb = ps.get("executable_bracket")
+        if isinstance(eb, dict) and eb.get("blocked"):
+            return None, None, "blocked"
+        if isinstance(eb, dict) and eb.get("target_return") is not None:
+            try:
+                tr = float(eb["target_return"])
+                sl_raw = eb.get("stop_loss_pct")
+                sl = float(sl_raw) if sl_raw is not None else None
+            except Exception:
+                tr, sl = None, None
+            else:
+                if sl is not None and bust_pct_default is not None:
+                    sl = min(float(sl), float(bust_pct_default))
+                if tr is not None and tr > 0 and sl is not None and sl > 0:
+                    return tr, sl, "snapshot"
+    if not committee_run_id:
+        return None, None, "none"
+    cur.execute(
+        """
+        select
+          VERDICT_JSON:verdict:joint_decision:realistic_target_return::float as TARGET_RETURN,
+          VERDICT_JSON:verdict:joint_decision:acceptable_early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN,
+          VERDICT_JSON:verdict:joint_decision:stop_loss_pct::float as STOP_LOSS_PCT
+        from MIP.LIVE.COMMITTEE_VERDICT
+        where RUN_ID = %s
+        limit 1
+        """,
+        (committee_run_id,),
+    )
+    verdict_rows = fetch_all(cur)
+    verdict = verdict_rows[0] if verdict_rows else {}
+    realistic_target_return = verdict.get("TARGET_RETURN")
+    early_exit_target_return = verdict.get("EARLY_EXIT_TARGET_RETURN")
+    committee_stop_loss_pct = verdict.get("STOP_LOSS_PCT")
+    target_return = (
+        float(early_exit_target_return)
+        if early_exit_target_return is not None
+        else (float(realistic_target_return) if realistic_target_return is not None else None)
+    )
+    stop_loss_pct_default = float(bust_pct_default) if bust_pct_default is not None else None
+    stop_loss_pct = float(committee_stop_loss_pct) if committee_stop_loss_pct is not None else stop_loss_pct_default
+    if stop_loss_pct is not None and stop_loss_pct_default is not None:
+        stop_loss_pct = min(float(stop_loss_pct), float(stop_loss_pct_default))
+    if target_return is not None and stop_loss_pct is not None:
+        return target_return, stop_loss_pct, "verdict"
+    return None, None, "none"
+
+
 def _live_ib_entry_risk_reason_codes(
     *,
     side: str,
@@ -1556,16 +1618,17 @@ def _live_ib_entry_risk_reason_codes(
     if entry_price is not None:
         ep = float(entry_price)
         if target_return is not None:
+            trv = float(target_return)
             if side == "BUY":
-                tp_price = ep * (1 + float(target_return))
+                tp_price = math.fsum([ep, ep * trv])
             elif side == "SELL":
-                tp_price = max(ep * (1 - float(target_return)), 0.0001)
+                tp_price = max(math.fsum([ep, -ep * trv]), 0.0001)
         if stop_loss_pct is not None:
             sl = float(stop_loss_pct)
             if side == "BUY":
-                sl_price = max(ep * (1 - sl), 0.0001)
+                sl_price = max(math.fsum([ep, -ep * sl]), 0.0001)
             elif side == "SELL":
-                sl_price = ep * (1 + sl)
+                sl_price = math.fsum([ep, ep * sl])
     if tp_price is None or sl_price is None:
         codes.append("LIVE_BRACKET_REQUIRED")
     slippage_bps = float(fee_params.get("slippage_bps") or 2.0)
@@ -1802,7 +1865,7 @@ def _live_entry_tp_sl_prices(
     target_return: float | None,
     stop_loss_pct: float | None,
 ) -> tuple[float | None, float | None]:
-    """Mirror execute_live_action bracket price math for committee/qty path."""
+    """Bracket prices from return/stop; fsum avoids float slip vs notional-% gates at boundaries."""
     side_u = str(side or "").upper()
     ep = float(entry_price)
     tp_price = None
@@ -1810,15 +1873,15 @@ def _live_entry_tp_sl_prices(
     if target_return is not None:
         tr = float(target_return)
         if side_u == "BUY":
-            tp_price = ep * (1 + tr)
+            tp_price = math.fsum([ep, ep * tr])
         elif side_u == "SELL":
-            tp_price = max(ep * (1 - tr), 0.0001)
+            tp_price = max(math.fsum([ep, -ep * tr]), 0.0001)
     if stop_loss_pct is not None:
         sl = float(stop_loss_pct)
         if side_u == "BUY":
-            sl_price = max(ep * (1 - sl), 0.0001)
+            sl_price = max(math.fsum([ep, -ep * sl]), 0.0001)
         elif side_u == "SELL":
-            sl_price = ep * (1 + sl)
+            sl_price = math.fsum([ep, ep * sl])
     return tp_price, sl_price
 
 
@@ -1885,6 +1948,76 @@ def _append_min_viable_uplift_param_snapshot(cur, action_id: str, uplift_meta: d
     )
 
 
+def _read_live_bracket_calibration_settings(cur) -> dict:
+    keys = [
+        "LIVE_BRACKET_CALIB_ENABLED",
+        "LIVE_BRACKET_CALIB_MAX_TP_MULT",
+        "LIVE_BRACKET_CALIB_MAX_SL_MULT",
+        "LIVE_BRACKET_CALIB_MAX_TP_ABS_ADD",
+    ]
+    raw = _read_app_config(cur, keys)
+    enabled = _parse_bool_config(
+        raw.get("LIVE_BRACKET_CALIB_ENABLED"),
+        str(os.getenv("LIVE_BRACKET_CALIB_ENABLED", "true")).strip().lower() in ("1", "true", "yes", "on"),
+    )
+    max_tp_mult = 2.5
+    try:
+        v = raw.get("LIVE_BRACKET_CALIB_MAX_TP_MULT") or os.getenv("LIVE_BRACKET_CALIB_MAX_TP_MULT")
+        if v is not None and str(v).strip() != "":
+            max_tp_mult = float(v)
+    except Exception:
+        pass
+    max_sl_mult = 2.0
+    try:
+        v = raw.get("LIVE_BRACKET_CALIB_MAX_SL_MULT") or os.getenv("LIVE_BRACKET_CALIB_MAX_SL_MULT")
+        if v is not None and str(v).strip() != "":
+            max_sl_mult = float(v)
+    except Exception:
+        pass
+    max_tp_abs_add = 0.03
+    try:
+        v = raw.get("LIVE_BRACKET_CALIB_MAX_TP_ABS_ADD") or os.getenv("LIVE_BRACKET_CALIB_MAX_TP_ABS_ADD")
+        if v is not None and str(v).strip() != "":
+            max_tp_abs_add = float(v)
+    except Exception:
+        pass
+    return {
+        "enabled": enabled,
+        "max_tp_mult": max(1.0, max_tp_mult),
+        "max_sl_mult": max(1.0, max_sl_mult),
+        "max_tp_abs_add": max(0.0, max_tp_abs_add),
+    }
+
+
+def _committee_bracket_baseline_snapshot(joint_decision: dict | None) -> dict:
+    jd = joint_decision if isinstance(joint_decision, dict) else {}
+    return {
+        "realistic_target_return": jd.get("realistic_target_return"),
+        "acceptable_early_exit_target_return": jd.get("acceptable_early_exit_target_return"),
+        "stop_loss_pct": jd.get("stop_loss_pct"),
+    }
+
+
+def _merge_live_action_param_snapshot_patch(cur, action_id: str, patch: dict) -> None:
+    action = _fetch_live_action(cur, action_id)
+    if not action:
+        return
+    ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    if not isinstance(ps, dict):
+        ps = {}
+    for k, v in patch.items():
+        ps[k] = v
+    cur.execute(
+        """
+        update MIP.LIVE.LIVE_ACTIONS
+           set PARAM_SNAPSHOT = parse_json(%s),
+               UPDATED_AT = current_timestamp()
+         where ACTION_ID = %s
+        """,
+        (json.dumps(ps), action_id),
+    )
+
+
 def _apply_post_committee_entry_viability_and_qty(
     cur,
     *,
@@ -1899,8 +2032,8 @@ def _apply_post_committee_entry_viability_and_qty(
     reason_codes: list[str],
 ) -> tuple[float | None, list[str]]:
     """
-    After committee sizing: persist IB viability reason codes for live adapter; optionally uplift qty
-    to meet min notional within guardrails. Returns (final_qty, merged_reason_codes).
+    After committee sizing: calibrate TP/SL for live bracket realism (bounded), persist executable
+    bracket on PARAM_SNAPSHOT, run IB risk checks; optionally uplift qty for min notional.
     """
     if is_exit or is_committee_blocked:
         return committee_qty, reason_codes
@@ -1927,8 +2060,107 @@ def _apply_post_committee_entry_viability_and_qty(
     except Exception:
         bust_pct_default = None
 
-    target_return, stop_loss_pct = _live_target_and_stop_from_joint_decision(joint_decision, bust_pct_default)
+    orig_target_return, orig_stop_loss_pct = _live_target_and_stop_from_joint_decision(
+        joint_decision, bust_pct_default
+    )
+    target_return, stop_loss_pct = orig_target_return, orig_stop_loss_pct
+
     fee_params = _load_live_entry_fee_params(cur)
+    realism_cfg = _load_bracket_realism_config(cur)
+    calib_cfg = _read_live_bracket_calibration_settings(cur)
+
+    account_id = str(live_cfg.get("IBKR_ACCOUNT_ID") or "").strip()
+    nav_eur = 0.0
+    if account_id:
+        cur.execute(
+            """
+            select NET_LIQUIDATION_EUR
+            from MIP.LIVE.BROKER_SNAPSHOTS
+            where SNAPSHOT_TYPE = 'NAV'
+              and IBKR_ACCOUNT_ID = %s
+            order by SNAPSHOT_TS desc
+            limit 1
+            """,
+            (account_id,),
+        )
+        nav_rows = fetch_all(cur)
+        nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+
+    baseline_snapshot = {
+        "committee_bracket_baseline": _committee_bracket_baseline_snapshot(
+            joint_decision if isinstance(joint_decision, dict) else None
+        ),
+    }
+    calib_any = False
+    calib_meta_accum: dict = {}
+
+    def _patch_executable_bracket(
+        tr_v: float | None,
+        sl_v: float | None,
+        *,
+        calibrated: bool,
+        meta: dict,
+        blocked: bool,
+        block_codes: list[str] | None,
+    ) -> None:
+        if blocked:
+            eb = {"blocked": True, "reason_codes": list(block_codes or []), "meta": meta}
+            _merge_live_action_param_snapshot_patch(cur, action_id, {**baseline_snapshot, "executable_bracket": eb})
+        elif tr_v is not None and sl_v is not None:
+            eb = {
+                "target_return": float(tr_v),
+                "stop_loss_pct": float(sl_v),
+                "calibrated": bool(calibrated),
+                "blocked": False,
+                "meta": meta,
+            }
+            _merge_live_action_param_snapshot_patch(cur, action_id, {**baseline_snapshot, "executable_bracket": eb})
+        else:
+            _merge_live_action_param_snapshot_patch(cur, action_id, baseline_snapshot)
+
+    can_calibrate = (
+        proposed_price is not None
+        and float(proposed_price) > 0
+        and committee_qty is not None
+        and orig_target_return is not None
+        and orig_stop_loss_pct is not None
+        and float(orig_target_return) > 0
+        and float(orig_stop_loss_pct) > 0
+    )
+
+    if can_calibrate:
+        committee_int0 = max(1, int(round(float(committee_qty))))
+        cres = _calibrate_live_entry_bracket_to_min_viable(
+            side=side_u,
+            entry_price=float(proposed_price),
+            qty=float(committee_int0),
+            nav_scale=nav_eur,
+            baseline_target_return=float(orig_target_return),
+            baseline_stop_loss_pct=float(orig_stop_loss_pct),
+            bust_pct=bust_pct_default,
+            fee_params=fee_params,
+            rcfg=realism_cfg,
+            calib_cfg=calib_cfg,
+        )
+        if not cres.ok:
+            rc = _merge_unique_reason_codes(reason_codes, cres.reason_codes)
+            _patch_executable_bracket(None, None, calibrated=False, meta=cres.meta, blocked=True, block_codes=cres.reason_codes)
+            return committee_qty, rc
+        target_return = float(cres.target_return)  # type: ignore[assignment]
+        stop_loss_pct = float(cres.stop_loss_pct)  # type: ignore[assignment]
+        calib_any = bool(cres.calibrated)
+        calib_meta_accum = dict(cres.meta)
+        _patch_executable_bracket(
+            target_return,
+            stop_loss_pct,
+            calibrated=calib_any,
+            meta=calib_meta_accum,
+            blocked=False,
+            block_codes=None,
+        )
+    else:
+        _merge_live_action_param_snapshot_patch(cur, action_id, baseline_snapshot)
+
     risk_codes = _live_ib_entry_risk_reason_codes(
         side=side_u,
         is_exit=False,
@@ -1940,10 +2172,10 @@ def _apply_post_committee_entry_viability_and_qty(
     if risk_codes:
         return committee_qty, _merge_unique_reason_codes(reason_codes, risk_codes)
 
-    realism_cfg = _load_bracket_realism_config(cur)
-
     def _bracket_codes_for_qty(qty_val: float) -> list[str]:
         if proposed_price is None or float(proposed_price) <= 0:
+            return []
+        if target_return is None or stop_loss_pct is None:
             return []
         tp_p, sl_p = _live_entry_tp_sl_prices(side_u, float(proposed_price), target_return, stop_loss_pct)
         if tp_p is None or sl_p is None:
@@ -1998,7 +2230,6 @@ def _apply_post_committee_entry_viability_and_qty(
             rc = _merge_unique_reason_codes(rc, bc)
         return float(committee_int), rc
 
-    account_id = str(live_cfg.get("IBKR_ACCOUNT_ID") or "").strip()
     cur.execute(
         """
         select SNAPSHOT_TS, NET_LIQUIDATION_EUR, TOTAL_CASH_EUR
@@ -2011,22 +2242,22 @@ def _apply_post_committee_entry_viability_and_qty(
         (account_id,),
     )
     nav_rows = fetch_all(cur)
-    nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+    nav_eur2 = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
     cash_eur = float((nav_rows[0] or {}).get("TOTAL_CASH_EUR") or 0.0) if nav_rows else 0.0
 
     est_notional = float(wanted_qty) * px
     max_position_pct = live_cfg.get("MAX_POSITION_PCT")
-    if nav_eur > 0 and max_position_pct is not None:
-        if (est_notional / nav_eur) > float(max_position_pct):
+    if nav_eur2 > 0 and max_position_pct is not None:
+        if (est_notional / nav_eur2) > float(max_position_pct):
             rc = _merge_unique_reason_codes(reason_codes, ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"])
             bc = _bracket_codes_for_qty(float(committee_int))
             if bc:
                 rc = _merge_unique_reason_codes(rc, bc)
             return float(committee_int), rc
 
-    if side_u == "BUY" and nav_eur > 0:
+    if side_u == "BUY" and nav_eur2 > 0:
         cash_buffer_pct = float(live_cfg.get("CASH_BUFFER_PCT") or 0.0)
-        min_cash_after = nav_eur * cash_buffer_pct
+        min_cash_after = nav_eur2 * cash_buffer_pct
         if (cash_eur - est_notional) < min_cash_after:
             rc = _merge_unique_reason_codes(reason_codes, ["LIVE_MIN_VIABLE_SIZE_NOT_REACHED"])
             bc = _bracket_codes_for_qty(float(committee_int))
@@ -2036,7 +2267,35 @@ def _apply_post_committee_entry_viability_and_qty(
 
     bc_up = _bracket_codes_for_qty(float(wanted_qty))
     if bc_up:
-        return float(committee_int), _merge_unique_reason_codes(reason_codes, bc_up)
+        if can_calibrate:
+            cres2 = _calibrate_live_entry_bracket_to_min_viable(
+                side=side_u,
+                entry_price=px,
+                qty=float(wanted_qty),
+                nav_scale=nav_eur,
+                baseline_target_return=float(orig_target_return),  # type: ignore[arg-type]
+                baseline_stop_loss_pct=float(orig_stop_loss_pct),  # type: ignore[arg-type]
+                bust_pct=bust_pct_default,
+                fee_params=fee_params,
+                rcfg=realism_cfg,
+                calib_cfg=calib_cfg,
+            )
+            if cres2.ok:
+                target_return = float(cres2.target_return)  # type: ignore[assignment]
+                stop_loss_pct = float(cres2.stop_loss_pct)  # type: ignore[assignment]
+                calib_any = calib_any or bool(cres2.calibrated)
+                calib_meta_accum = {**calib_meta_accum, "uplift_recalibrate": cres2.meta}
+                _patch_executable_bracket(
+                    target_return,
+                    stop_loss_pct,
+                    calibrated=calib_any,
+                    meta=calib_meta_accum,
+                    blocked=False,
+                    block_codes=None,
+                )
+                bc_up = _bracket_codes_for_qty(float(wanted_qty))
+        if bc_up:
+            return float(committee_int), _merge_unique_reason_codes(reason_codes, bc_up)
 
     rc2 = _merge_unique_reason_codes(reason_codes, ["LIVE_QTY_UPLIFTED_TO_MIN_VIABLE"])
     uplift_meta = {
@@ -6583,6 +6842,9 @@ def get_live_activity_overview(
                 "LIVE_TP_NET_EDGE_TOO_LOW",
                 "LIVE_RISK_REWARD_TOO_LOW",
                 "LIVE_MIN_VIABLE_SIZE_NOT_REACHED",
+                "LIVE_BRACKET_NOT_VIABLE_WITHIN_GUARDRAILS",
+                "LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_TP",
+                "LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_SL",
                 "BROKER_SHORT_POSITION_OUT_OF_POLICY",
                 "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
                 "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
@@ -6623,9 +6885,15 @@ def get_live_activity_overview(
             action_orders = order_groups.get(action_id) or []
             has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
             protection_details = protection_by_action.get(action_id) or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None}
+            eb_row = param_snap_row.get("executable_bracket") if isinstance(param_snap_row, dict) else None
             protection_planned = bool(
                 joint_decision.get("realistic_target_return") is not None
                 or joint_decision.get("acceptable_early_exit_target_return") is not None
+                or (
+                    isinstance(eb_row, dict)
+                    and eb_row.get("blocked") is not True
+                    and eb_row.get("target_return") is not None
+                )
             )
 
             submission_gate_hints: list[str] = []
@@ -6689,6 +6957,7 @@ def get_live_activity_overview(
                             "availability_reason": sizing_reason,
                             "max_position_pct_limit": float(cfg.get("MAX_POSITION_PCT")) if cfg.get("MAX_POSITION_PCT") is not None else None,
                             "min_viable_uplift": param_snap_row.get("min_viable_live_uplift"),
+                            "executable_bracket": param_snap_row.get("executable_bracket"),
                         },
                         "protection": {"planned": protection_planned, **protection_details},
                         "timestamps": {
@@ -9921,52 +10190,103 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         elif execution_mode == "PLACEHOLDER":
             use_ibkr_submit = False
 
-        cur.execute(
-            """
-            select
-              VERDICT_JSON:verdict:joint_decision:realistic_target_return::float as TARGET_RETURN,
-              VERDICT_JSON:verdict:joint_decision:acceptable_early_exit_target_return::float as EARLY_EXIT_TARGET_RETURN,
-              VERDICT_JSON:verdict:joint_decision:stop_loss_pct::float as STOP_LOSS_PCT
-            from MIP.LIVE.COMMITTEE_VERDICT
-            where RUN_ID = %s
-            limit 1
-            """,
-            (action.get("COMMITTEE_RUN_ID"),),
-        )
-        verdict_rows = fetch_all(cur)
-        verdict = verdict_rows[0] if verdict_rows else {}
-        realistic_target_return = verdict.get("TARGET_RETURN")
-        early_exit_target_return = verdict.get("EARLY_EXIT_TARGET_RETURN")
-        committee_stop_loss_pct = verdict.get("STOP_LOSS_PCT")
-        target_return = (
-            float(early_exit_target_return)
-            if early_exit_target_return is not None
-            else (float(realistic_target_return) if realistic_target_return is not None else None)
-        )
         stop_loss_pct_default = float(cfg.get("BUST_PCT")) if cfg.get("BUST_PCT") is not None else None
-        stop_loss_pct = float(committee_stop_loss_pct) if committee_stop_loss_pct is not None else stop_loss_pct_default
-        if stop_loss_pct is not None and stop_loss_pct_default is not None:
-            # Never allow committee stop wider than configured portfolio bust guard.
-            stop_loss_pct = min(float(stop_loss_pct), float(stop_loss_pct_default))
+        target_return, stop_loss_pct, bracket_src = _load_executable_entry_bracket_for_action(
+            cur,
+            action=action,
+            committee_run_id=action.get("COMMITTEE_RUN_ID"),
+            bust_pct_default=stop_loss_pct_default,
+        )
+        if bracket_src == "blocked":
+            ps_blk = _parse_variant(action.get("PARAM_SNAPSHOT"))
+            eb_blk = ps_blk.get("executable_bracket") if isinstance(ps_blk, dict) else None
+            blk_codes = (
+                list(eb_blk.get("reason_codes"))
+                if isinstance(eb_blk, dict) and eb_blk.get("reason_codes")
+                else ["LIVE_BRACKET_NOT_VIABLE_WITHIN_GUARDRAILS"]
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Execution blocked: live bracket not viable at committee calibration (see reason_codes).",
+                    "reason_codes": blk_codes,
+                },
+            )
 
-        tp_price = None
-        sl_price = None
-        if target_return is not None:
-            if side == "BUY":
-                tp_price = entry_price * (1 + target_return)
-            elif side == "SELL":
-                tp_price = max(entry_price * (1 - target_return), 0.0001)
-        if stop_loss_pct is not None:
-            if side == "BUY":
-                sl_price = max(entry_price * (1 - stop_loss_pct), 0.0001)
-            elif side == "SELL":
-                sl_price = entry_price * (1 + stop_loss_pct)
+        tp_price, sl_price = _live_entry_tp_sl_prices(
+            str(side),
+            float(entry_price),
+            target_return,
+            stop_loss_pct,
+        )
         if is_exit:
             # Exit intent should submit a close order without opening a new bracket.
             tp_price = None
             sl_price = None
         if use_ibkr_submit and not is_exit:
             fee_params = _load_live_entry_fee_params(cur)
+            realism_cfg_x = _load_bracket_realism_config(cur)
+            calib_cfg_x = _read_live_bracket_calibration_settings(cur)
+
+            def _execute_recalibrate_from_baseline() -> tuple[float | None, float | None]:
+                ps0 = _parse_variant(action.get("PARAM_SNAPSHOT"))
+                if not isinstance(ps0, dict):
+                    return None, None
+                base = ps0.get("committee_bracket_baseline")
+                if not isinstance(base, dict):
+                    return None, None
+                jd0 = {
+                    "realistic_target_return": base.get("realistic_target_return"),
+                    "acceptable_early_exit_target_return": base.get("acceptable_early_exit_target_return"),
+                    "stop_loss_pct": base.get("stop_loss_pct"),
+                }
+                b_tr, b_sl = _live_target_and_stop_from_joint_decision(jd0, stop_loss_pct_default)
+                if (
+                    b_tr is None
+                    or b_sl is None
+                    or float(b_tr) <= 0
+                    or float(b_sl) <= 0
+                    or entry_price is None
+                    or float(entry_price) <= 0
+                    or qty_ordered is None
+                    or float(qty_ordered) <= 0
+                ):
+                    return None, None
+                acct = str(cfg.get("IBKR_ACCOUNT_ID") or "").strip()
+                nav_x = 0.0
+                if acct:
+                    try:
+                        cur.execute(
+                            """
+                            select NET_LIQUIDATION_EUR
+                            from MIP.LIVE.BROKER_SNAPSHOTS
+                            where SNAPSHOT_TYPE = 'NAV'
+                              and IBKR_ACCOUNT_ID = %s
+                            order by SNAPSHOT_TS desc
+                            limit 1
+                            """,
+                            (acct,),
+                        )
+                        nr = fetch_all(cur)
+                        nav_x = float((nr[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nr else 0.0
+                    except Exception:
+                        nav_x = 0.0
+                cr = _calibrate_live_entry_bracket_to_min_viable(
+                    side=side,
+                    entry_price=float(entry_price),
+                    qty=float(qty_ordered),
+                    nav_scale=nav_x,
+                    baseline_target_return=float(b_tr),
+                    baseline_stop_loss_pct=float(b_sl),
+                    bust_pct=stop_loss_pct_default,
+                    fee_params=fee_params,
+                    rcfg=realism_cfg_x,
+                    calib_cfg=calib_cfg_x,
+                )
+                if cr.ok and cr.target_return is not None and cr.stop_loss_pct is not None:
+                    return float(cr.target_return), float(cr.stop_loss_pct)
+                return None, None
+
             risk_reason_codes = _live_ib_entry_risk_reason_codes(
                 side=side,
                 is_exit=False,
@@ -9975,16 +10295,6 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 stop_loss_pct=stop_loss_pct,
                 fee_params=fee_params,
             )
-            if risk_reason_codes:
-                final_reason_codes = sorted(set(reason_codes + risk_reason_codes))
-                _write_reason_codes(cur, action_id, final_reason_codes)
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "message": "Execution blocked: live IB trades require valid TP/SL and minimum risk-reward edge.",
-                        "reason_codes": final_reason_codes,
-                    },
-                )
             bracket_realism_codes = _live_bracket_realism_reason_codes(
                 cur,
                 live_cfg=cfg,
@@ -9996,6 +10306,60 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 target_return=target_return,
                 fee_params=fee_params,
             )
+            if risk_reason_codes or bracket_realism_codes:
+                tr_new, sl_new = _execute_recalibrate_from_baseline()
+                if tr_new is not None and sl_new is not None:
+                    target_return = tr_new
+                    stop_loss_pct = sl_new
+                    tp_price, sl_price = _live_entry_tp_sl_prices(
+                        str(side),
+                        float(entry_price),
+                        target_return,
+                        stop_loss_pct,
+                    )
+                    risk_reason_codes = _live_ib_entry_risk_reason_codes(
+                        side=side,
+                        is_exit=False,
+                        entry_price=float(entry_price) if entry_price is not None else None,
+                        target_return=target_return,
+                        stop_loss_pct=stop_loss_pct,
+                        fee_params=fee_params,
+                    )
+                    bracket_realism_codes = _live_bracket_realism_reason_codes(
+                        cur,
+                        live_cfg=cfg,
+                        side=side,
+                        entry_price=float(entry_price) if entry_price is not None else None,
+                        qty=float(qty_ordered) if qty_ordered is not None else None,
+                        tp_price=tp_price,
+                        sl_price=sl_price,
+                        target_return=target_return,
+                        fee_params=fee_params,
+                    )
+                    if not risk_reason_codes and not bracket_realism_codes:
+                        _merge_live_action_param_snapshot_patch(
+                            cur,
+                            action_id,
+                            {
+                                "executable_bracket": {
+                                    "target_return": float(target_return),
+                                    "stop_loss_pct": float(stop_loss_pct),
+                                    "calibrated": True,
+                                    "blocked": False,
+                                    "meta": {"execute_time_recalibrate": True},
+                                }
+                            },
+                        )
+            if risk_reason_codes:
+                final_reason_codes = sorted(set(reason_codes + risk_reason_codes))
+                _write_reason_codes(cur, action_id, final_reason_codes)
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Execution blocked: live IB trades require valid TP/SL and minimum risk-reward edge.",
+                        "reason_codes": final_reason_codes,
+                    },
+                )
             if bracket_realism_codes:
                 final_reason_codes = sorted(set(reason_codes + bracket_realism_codes))
                 _write_reason_codes(cur, action_id, final_reason_codes)

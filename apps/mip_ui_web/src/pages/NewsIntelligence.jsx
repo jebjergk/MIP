@@ -61,6 +61,18 @@ export default function NewsIntelligence() {
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof localStorage === 'undefined') return
+    if (localStorage.getItem('mip_news_diag') !== '1') return
+    if (!data) return
+    const heads = data?.market_context?.top_headlines || []
+    console.info('[mip_news_diag]', {
+      client_request_logged_at: new Date().toISOString(),
+      generated_at: data?.generated_at,
+      headline_fingerprint: heads.map((h) => `${h?.symbol}|${String(h?.title || '').slice(0, 48)}`),
+    })
+  }, [data])
+
   const cards = useMemo(() => data?.symbol_cards || [], [data])
   const bullets = useMemo(() => data?.summary_bullets || [], [data])
   const topHeadlines = useMemo(() => data?.market_context?.top_headlines || [], [data])

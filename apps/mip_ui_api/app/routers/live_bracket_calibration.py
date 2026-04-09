@@ -109,6 +109,111 @@ def _bracket_realism_constraints_active(rcfg: dict) -> bool:
     return mode == "BLOCK"
 
 
+# Baseline bracket pass/fail at this notional (EUR) distinguishes tiny-line NAV floor vs weak committee %s.
+BLOCKED_BRACKET_PROBE_MIN_NOTIONAL_EUR = 250.0
+
+
+def classify_blocked_bracket_for_diagnostics(
+    *,
+    side: str,
+    entry_price: float,
+    qty: float,
+    nav_scale: float,
+    baseline_target_return: float,
+    baseline_stop_loss_pct: float,
+    fee_params: dict,
+    rcfg: dict,
+    last_bracket: list[str] | None,
+    calibration_reason_codes: list[str] | None,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Classify blocked executable-bracket outcomes for diagnostics (PARAM_SNAPSHOT / SQL).
+
+    - TINY_LINE_NAV_FLOOR: small line vs NAV and NAV-based gross TP stress at TP-cap failure
+      (calibration ended with EXCEEDS_MAX_TP and BPS_NAV signal).
+    - WEAK_BASELINE_BRACKET: baseline TR/SL still fail realism/risk at probe notional (dominant).
+    - MIXED: both tiny-line NAV TP-cap pattern and weak baseline at probe.
+    """
+    from app.routers.live import _live_bracket_realism_codes_pure, _live_ib_entry_risk_reason_codes
+
+    side_u = str(side or "").upper()
+    ep = float(entry_price)
+    qv = float(qty)
+    nav = float(nav_scale)
+    notional = abs(ep * qv)
+    small_pos_max = float(rcfg.get("small_pos_max_pct_nav") or 0.10)
+    pos_pct_nav = (notional / nav) if nav > 0 else None
+    small_line = pos_pct_nav is not None and pos_pct_nav < small_pos_max
+
+    lb_upper = [str(x).strip().upper() for x in (last_bracket or [])]
+    has_bps_nav = "LIVE_BRACKET_REL_GROSS_TP_BELOW_BPS_NAV" in lb_upper
+    calib_u = [str(x).strip().upper() for x in (calibration_reason_codes or [])]
+
+    tiny_line_nav_floor = bool(
+        small_line
+        and (
+            ("LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_TP" in calib_u and has_bps_nav)
+            or ("LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_TP" in calib_u and not lb_upper)
+        )
+    )
+
+    probe_notional = max(notional, BLOCKED_BRACKET_PROBE_MIN_NOTIONAL_EUR)
+    q_probe = probe_notional / max(ep, 1e-9)
+    b_tr = float(baseline_target_return)
+    b_sl = float(baseline_stop_loss_pct)
+
+    tp_p, sl_p = _entry_tp_sl_prices(side_u, ep, b_tr, b_sl)
+    probe_risk: list[str] = []
+    probe_bracket: list[str] = []
+    if tp_p is None or sl_p is None:
+        weak_baseline = True
+    else:
+        probe_risk = _live_ib_entry_risk_reason_codes(
+            side=side_u,
+            is_exit=False,
+            entry_price=ep,
+            target_return=b_tr,
+            stop_loss_pct=b_sl,
+            fee_params=fee_params,
+        )
+        if _bracket_realism_constraints_active(rcfg):
+            probe_bracket = _live_bracket_realism_codes_pure(
+                nav_scale=nav,
+                side=side_u,
+                entry_price=ep,
+                qty=q_probe,
+                tp_price=float(tp_p),
+                sl_price=float(sl_p),
+                target_return=b_tr,
+                fee_params=fee_params,
+                rcfg=rcfg,
+            )
+        weak_baseline = bool(probe_risk or probe_bracket)
+
+    detail: dict[str, Any] = {
+        "small_line_vs_config": small_line,
+        "position_pct_nav": pos_pct_nav,
+        "has_bps_nav_in_last_bracket": has_bps_nav,
+        "probe_min_notional_eur": BLOCKED_BRACKET_PROBE_MIN_NOTIONAL_EUR,
+        "probe_notional_eur": probe_notional,
+        "probe_qty": q_probe,
+        "baseline_passes_bracket_risk_at_probe_notional": not weak_baseline,
+        "probe_bracket_codes": probe_bracket,
+        "probe_risk_codes": probe_risk,
+    }
+
+    if tiny_line_nav_floor and weak_baseline:
+        label = "MIXED"
+    elif tiny_line_nav_floor:
+        label = "TINY_LINE_NAV_FLOOR"
+    elif weak_baseline:
+        label = "WEAK_BASELINE_BRACKET"
+    else:
+        label = "MIXED"
+
+    return label, detail
+
+
 def _calibrate_live_entry_bracket_to_min_viable(
     *,
     side: str,

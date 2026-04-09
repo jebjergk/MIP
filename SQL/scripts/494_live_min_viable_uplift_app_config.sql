@@ -12,7 +12,7 @@ using (
            'When true, live committee completion may uplift whole-share qty toward min notional within caps.' as DESCRIPTION
     union all
     select 'LIVE_MIN_ENTRY_NOTIONAL_EUR',
-           '100',
+           '150',
            'Minimum entry notional (EUR) for live IB entries. Uplifts whole-share qty toward this floor within caps. Set to 0 to disable notional-floor uplift only.'
     union all
     select 'LIVE_MIN_VIABLE_UPLIFT_MAX_MULT',
@@ -23,9 +23,9 @@ on t.CONFIG_KEY = s.CONFIG_KEY
 when not matched then insert (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION, UPDATED_AT)
 values (s.CONFIG_KEY, s.CONFIG_VALUE, s.DESCRIPTION, current_timestamp());
 
--- Apply default notional 100 for existing installs (prior seed used 0).
+-- Apply default notional 150 for existing installs (496 may also bump prior 100 rows).
 update MIP.APP.APP_CONFIG
-   set CONFIG_VALUE = '100',
+   set CONFIG_VALUE = '150',
        DESCRIPTION = 'Minimum entry notional (EUR) for live IB entries. Uplifts whole-share qty toward this floor within caps. Set to 0 to disable notional-floor uplift only.',
        UPDATED_AT = current_timestamp()
  where CONFIG_KEY = 'LIVE_MIN_ENTRY_NOTIONAL_EUR';

@@ -33,7 +33,10 @@ from app.entry_intel_hooks import (
     maybe_write_trade_closeout_on_exit_filled,
     maybe_write_trade_closeout_on_protective_leg_filled,
 )
-from app.routers.live_bracket_calibration import _calibrate_live_entry_bracket_to_min_viable
+from app.routers.live_bracket_calibration import (
+    _calibrate_live_entry_bracket_to_min_viable,
+    classify_blocked_bracket_for_diagnostics,
+)
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -1886,7 +1889,7 @@ def _live_entry_tp_sl_prices(
 
 
 def _read_live_min_viable_uplift_settings(cur) -> dict:
-    """APP_CONFIG overrides; env fallback. LIVE_MIN_ENTRY_NOTIONAL_EUR=0 disables notional floor only."""
+    """APP_CONFIG overrides; env fallback. LIVE_MIN_ENTRY_NOTIONAL_EUR=0 disables notional floor only. Default 150 EUR."""
     keys = [
         "LIVE_MIN_ENTRY_NOTIONAL_EUR",
         "LIVE_MIN_VIABLE_UPLIFT_MAX_MULT",
@@ -1899,7 +1902,7 @@ def _read_live_min_viable_uplift_settings(cur) -> dict:
     )
     min_notional = 0.0
     try:
-        v = raw.get("LIVE_MIN_ENTRY_NOTIONAL_EUR") or os.getenv("LIVE_MIN_ENTRY_NOTIONAL_EUR") or "100"
+        v = raw.get("LIVE_MIN_ENTRY_NOTIONAL_EUR") or os.getenv("LIVE_MIN_ENTRY_NOTIONAL_EUR") or "150"
         min_notional = float(v)
     except Exception:
         min_notional = 0.0
@@ -2104,7 +2107,12 @@ def _apply_post_committee_entry_viability_and_qty(
         block_codes: list[str] | None,
     ) -> None:
         if blocked:
-            eb = {"blocked": True, "reason_codes": list(block_codes or []), "meta": meta}
+            eb = {
+                "blocked": True,
+                "reason_codes": list(block_codes or []),
+                "meta": meta,
+                "blocked_bracket_class": (meta or {}).get("blocked_bracket_class"),
+            }
             _merge_live_action_param_snapshot_patch(cur, action_id, {**baseline_snapshot, "executable_bracket": eb})
         elif tr_v is not None and sl_v is not None:
             eb = {
@@ -2144,7 +2152,28 @@ def _apply_post_committee_entry_viability_and_qty(
         )
         if not cres.ok:
             rc = _merge_unique_reason_codes(reason_codes, cres.reason_codes)
-            _patch_executable_bracket(None, None, calibrated=False, meta=cres.meta, blocked=True, block_codes=cres.reason_codes)
+            lb_raw = cres.meta.get("last_bracket") or []
+            lb_list = [str(x) for x in lb_raw] if isinstance(lb_raw, list) else []
+            bclass, bdetail = classify_blocked_bracket_for_diagnostics(
+                side=side_u,
+                entry_price=float(proposed_price),
+                qty=float(committee_int0),
+                nav_scale=nav_eur,
+                baseline_target_return=float(orig_target_return),
+                baseline_stop_loss_pct=float(orig_stop_loss_pct),
+                fee_params=fee_params,
+                rcfg=realism_cfg,
+                last_bracket=lb_list,
+                calibration_reason_codes=list(cres.reason_codes),
+            )
+            blocked_meta = {
+                **cres.meta,
+                "blocked_bracket_class": bclass,
+                "blocked_bracket_detail": bdetail,
+            }
+            _patch_executable_bracket(
+                None, None, calibrated=False, meta=blocked_meta, blocked=True, block_codes=cres.reason_codes
+            )
             return committee_qty, rc
         target_return = float(cres.target_return)  # type: ignore[assignment]
         stop_loss_pct = float(cres.stop_loss_pct)  # type: ignore[assignment]
@@ -6958,6 +6987,11 @@ def get_live_activity_overview(
                             "max_position_pct_limit": float(cfg.get("MAX_POSITION_PCT")) if cfg.get("MAX_POSITION_PCT") is not None else None,
                             "min_viable_uplift": param_snap_row.get("min_viable_live_uplift"),
                             "executable_bracket": param_snap_row.get("executable_bracket"),
+                            "blocked_bracket_class": (
+                                (eb_row or {}).get("blocked_bracket_class")
+                                if isinstance(eb_row, dict) and eb_row.get("blocked")
+                                else None
+                            ),
                         },
                         "protection": {"planned": protection_planned, **protection_details},
                         "timestamps": {

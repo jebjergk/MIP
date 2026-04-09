@@ -5,7 +5,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.routers.live import _live_bracket_realism_codes_pure
-from app.routers.live_bracket_calibration import _calibrate_live_entry_bracket_to_min_viable
+from app.routers.live_bracket_calibration import (
+    _calibrate_live_entry_bracket_to_min_viable,
+    classify_blocked_bracket_for_diagnostics,
+)
 
 
 def _frozen_rcfg():
@@ -162,6 +165,56 @@ class TestLoadExecutableBracketSnapshot(unittest.TestCase):
         self.assertEqual(src, "snapshot")
         self.assertAlmostEqual(tr, 0.02)
         self.assertAlmostEqual(sl, 0.012)
+
+
+class TestClassifyBlockedBracket(unittest.TestCase):
+    def test_ko_style_tiny_line_nav_floor(self):
+        rcfg = _frozen_rcfg()
+        fee = _fee_params()
+        label, det = classify_blocked_bracket_for_diagnostics(
+            side="BUY",
+            entry_price=78.13,
+            qty=1.0,
+            nav_scale=4070.36,
+            baseline_target_return=0.02145,
+            baseline_stop_loss_pct=0.017727272727272727,
+            fee_params=fee,
+            rcfg=rcfg,
+            last_bracket=["LIVE_BRACKET_REL_GROSS_TP_BELOW_BPS_NAV"],
+            calibration_reason_codes=[
+                "LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_TP",
+                "LIVE_BRACKET_NOT_VIABLE_WITHIN_GUARDRAILS",
+            ],
+        )
+        self.assertEqual(label, "TINY_LINE_NAV_FLOOR")
+        self.assertTrue(det["small_line_vs_config"])
+        self.assertTrue(det["baseline_passes_bracket_risk_at_probe_notional"])
+
+    def test_mcd_style_weak_baseline(self):
+        rcfg = _frozen_rcfg()
+        fee = _fee_params()
+        label, det = classify_blocked_bracket_for_diagnostics(
+            side="BUY",
+            entry_price=310.76,
+            qty=1.0,
+            nav_scale=4070.36,
+            baseline_target_return=0.0077,
+            baseline_stop_loss_pct=0.0056363636363636355,
+            fee_params=fee,
+            rcfg=rcfg,
+            last_bracket=[
+                "LIVE_BRACKET_REL_GROSS_SL_BELOW_PCT_NOTIONAL",
+                "LIVE_BRACKET_REL_GROSS_TP_BELOW_BPS_NAV",
+            ],
+            calibration_reason_codes=[
+                "LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_SL",
+                "LIVE_BRACKET_NOT_VIABLE_WITHIN_GUARDRAILS",
+            ],
+        )
+        self.assertEqual(label, "WEAK_BASELINE_BRACKET")
+        # Under 10% NAV is still "small line" for strict mult; failure mode is SL/TP %, not TP-cap NAV floor.
+        self.assertTrue(det["small_line_vs_config"])
+        self.assertFalse(det["baseline_passes_bracket_risk_at_probe_notional"])
 
 
 if __name__ == "__main__":

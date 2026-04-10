@@ -342,8 +342,6 @@ export default function LivingChartPlot({
     committee,
     exitRec,
     flowBurst,
-    tapeSnapshot,
-    showVolumePanel,
   ])
 
   const symbolKey = String(tile?.symbol || '').toUpperCase() || 'none'

@@ -457,3 +457,60 @@ INFO:     127.0.0.1:51647 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
 INFO:     127.0.0.1:64291 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57975 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
 Error 300, reqId 22: Can't find EId with tickerId:22
+INFO:     Started server process [17480]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8095 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55304 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50121 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+Error 10089, reqId 4: Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details.Delayed market data is available.JNJ NYSE/TOP/ALL, contract: Stock(conId=8719, symbol='JNJ', exchange='SMART', primaryExchange='NYSE', currency='USD', localSymbol='JNJ', tradingClass='JNJ')
+INFO:     127.0.0.1:64344 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54201 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49688 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51681 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52907 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60043 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61403 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56078 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50242 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51519 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59139 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55408 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62455 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55313 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60810 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63665 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56372 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53044 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51041 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55039 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53361 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54779 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56208 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58384 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53366 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51733 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50485 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54232 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51235 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55141 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58949 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51211 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49682 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57091 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59643 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55935 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51930 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63261 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64811 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50703 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53356 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57977 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61014 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60078 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57355 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51655 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50834 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62009 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64614 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59411 - "GET /tape/v1/snapshot?symbol=JNJ HTTP/1.1" 200 OK

@@ -1697,6 +1697,39 @@
   opacity: 0.95;
 }
 
+.lc-strip-tape {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.04rem;
+  margin-bottom: 0.1rem;
+  padding-top: 0.06rem;
+  width: 100%;
+}
+
+.lc-tape-line {
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #a5b4fc;
+  line-height: 1.25;
+}
+
+.lc-tape-health {
+  font-size: 0.58rem;
+  font-weight: 500;
+  color: #64748b;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  max-width: 100%;
+}
+
+.lc-cue--tape {
+  border-color: rgba(129, 140, 248, 0.55);
+  color: #c7d2fe;
+  background: rgba(49, 46, 129, 0.25);
+}
+
 .lc-strip-monitor .lc-strip-state {
   grid-column: 2;
   grid-row: 1 / -1;

@@ -21,7 +21,7 @@ const BASE_LAYOUT = {
   paper_bgcolor: '#0f172a',
   plot_bgcolor: '#0f172a',
   font: { color: '#94a3b8', size: 11 },
-  margin: { t: 22, r: 52, b: 44, l: 52 },
+  margin: { t: 22, r: 52, b: 52, l: 52 },
   showlegend: false,
   legend: {
     orientation: 'h',
@@ -46,11 +46,22 @@ const BASE_LAYOUT = {
     gridcolor: '#1e293b',
     zeroline: false,
     side: 'right',
+    domain: [0.3, 1],
     showspikes: true,
     spikemode: 'across',
     spikesnap: 'cursor',
     spikecolor: '#64748b',
     spikethickness: 1,
+  },
+  yaxis2: {
+    gridcolor: '#1e293b',
+    zeroline: false,
+    side: 'right',
+    overlaying: false,
+    domain: [0.02, 0.24],
+    title: { text: 'Vol', font: { size: 10, color: '#64748b' } },
+    fixedrange: false,
+    showspikes: false,
   },
 }
 
@@ -76,6 +87,8 @@ export default function LivingChartPlot({
   layoutRevision = 0,
   flowBurst = null,
   flowAnnotationText = null,
+  tapeSnapshot = null,
+  showVolumePanel = false,
   className,
 }) {
   const { data, shapePack, xExtents } = useMemo(() => {
@@ -85,6 +98,7 @@ export default function LivingChartPlot({
     const high = []
     const low = []
     const close = []
+    const vol = []
     for (const b of list) {
       const t = barTimeMs(b)
       if (t == null) continue
@@ -93,6 +107,8 @@ export default function LivingChartPlot({
       high.push(toNum(b.high))
       low.push(toNum(b.low))
       close.push(toNum(b.close))
+      const vv = toNum(b.volume)
+      vol.push(vv != null && vv > 0 ? vv : 0)
     }
 
     if (tMs.length === 0) {
@@ -254,11 +270,62 @@ export default function LivingChartPlot({
       traces.push(t)
     }
 
+    const hasVol = showVolumePanel && vol.some((v) => v > 0)
+    if (hasVol) {
+      const sideAgg = tapeSnapshot?.side_confidence_aggregate
+      const tapeSigned = Number(tapeSnapshot?.tape_pressure_score)
+      const lastIdx = tMs.length - 1
+      const colors = vol.map((_, i) => {
+        if (sideAgg === 'high' && i === lastIdx && Number.isFinite(tapeSigned)) {
+          if (tapeSigned > 0.08) return 'rgba(16,185,129,0.65)'
+          if (tapeSigned < -0.08) return 'rgba(239,68,68,0.65)'
+        }
+        return 'rgba(71,85,105,0.75)'
+      })
+      const buyV = tapeSnapshot?.buy_volume_60s
+      const sellV = tapeSnapshot?.sell_volume_60s
+      const hoverText = vol.map((v, i) => {
+        const lines = [`Volume: ${v.toLocaleString()}`]
+        if (i === lastIdx && tapeSnapshot) {
+          if (sideAgg === 'high' && buyV != null && sellV != null) {
+            lines.push(`Buy (60s): ${Number(buyV).toLocaleString()}`)
+            lines.push(`Sell (60s): ${Number(sellV).toLocaleString()}`)
+          } else if (sideAgg === 'medium' || sideAgg === 'low') {
+            lines.push('Side split hidden — tape side confidence not high')
+          }
+        }
+        return lines.join('<br>')
+      })
+      traces.push({
+        type: 'bar',
+        name: 'Volume',
+        x: tMs,
+        y: vol,
+        xaxis: 'x',
+        yaxis: 'y2',
+        marker: { color: colors, line: { width: 0 } },
+        text: hoverText,
+        hovertemplate: '%{text}<extra></extra>',
+      })
+    }
+
     const xMin = tMs[0]
     const fwdEnd = fwd?.tMs?.length ? fwd.tMs[fwd.tMs.length - 1] : null
     const xMax = fwdEnd != null ? Math.max(tMs[tMs.length - 1], fwdEnd) : tMs[tMs.length - 1]
     return { data: traces, shapePack, xExtents: { xMin, xMax } }
-  }, [tile, bars, chartStyle, horizonBars, showAdvancedTA, liveState, committee, exitRec, flowBurst])
+  }, [
+    tile,
+    bars,
+    chartStyle,
+    horizonBars,
+    showAdvancedTA,
+    liveState,
+    committee,
+    exitRec,
+    flowBurst,
+    tapeSnapshot,
+    showVolumePanel,
+  ])
 
   const symbolKey = String(tile?.symbol || '').toUpperCase() || 'none'
 
@@ -323,14 +390,28 @@ export default function LivingChartPlot({
       }
     }
 
+    const hasVolPanel =
+      showVolumePanel
+      && barList.some((b) => {
+        const v = toNum(b.volume)
+        return v != null && v > 0
+      })
+
     const ly = {
       ...BASE_LAYOUT,
       paper_bgcolor: tint?.paper ?? BASE_LAYOUT.paper_bgcolor,
       plot_bgcolor: tint?.plot ?? BASE_LAYOUT.plot_bgcolor,
       shapes: shapePack.shapes || [],
       annotations: ann,
+      yaxis: {
+        ...BASE_LAYOUT.yaxis,
+        ...(hasVolPanel ? { domain: [0.3, 1] } : { domain: [0, 1] }),
+      },
       // Include symbol so pan/zoom from one ticker is not reused after switching symbols.
       uirevision: `${UI_REVISION_BASE}-${layoutRevision}-${symbolKey}`,
+    }
+    if (hasVolPanel) {
+      ly.yaxis2 = { ...BASE_LAYOUT.yaxis2 }
     }
 
     if (followLatest && !viewportLocked && xExtents) {
@@ -360,6 +441,8 @@ export default function LivingChartPlot({
     bars,
     tile,
     liveState,
+    showVolumePanel,
+    bars,
   ])
 
   const onRelayout = useCallback(

@@ -4,6 +4,7 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
 import { useAskMipRuntime } from '../context/AskMipRuntimeContext'
 import useVisibleInterval from '../hooks/useVisibleInterval'
+import { useTapeSnapshot, isTapeObserverEnabled } from '../hooks/useTapeSnapshot'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import {
   buildLiveState,
@@ -63,6 +64,25 @@ function fmtTime(iso) {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function formatTapeHealthSubtitle(snap) {
+  if (!snap) return ''
+  const parts = []
+  parts.push(`Tape feed: ${snap.feed_health || '—'}`)
+  if (snap.warmup_state && snap.warmup_state !== 'ready') {
+    parts.push(`warmup: ${snap.warmup_state}`)
+  }
+  if (snap.quote_sizes_available === false) {
+    parts.push('quote sizes unavailable')
+  }
+  if (snap.side_confidence_aggregate === 'medium' || snap.side_confidence_aggregate === 'low') {
+    parts.push(`side confidence: ${snap.side_confidence_aggregate}`)
+  }
+  if (snap.snapshot_schema_version) {
+    parts.push(`schema ${snap.snapshot_schema_version}`)
+  }
+  return parts.join(' · ')
 }
 
 class LivingChartErrorBoundary extends Component {
@@ -491,6 +511,8 @@ export default function SymbolTracker() {
     return flowVisibleBySymbol[sym] || null
   }, [activeTile, flowVisibleBySymbol])
 
+  const tapeSnapshot = useTapeSnapshot(selectedSymbol, 3200)
+
   const positionPlotTag = useMemo(
     () => dominantActivePlotTag(activeConditionSummary.dominantKey),
     [activeConditionSummary.dominantKey],
@@ -762,6 +784,16 @@ export default function SymbolTracker() {
                           <span className="lc-flow-line lc-flow-line--quality">{activeFlowVisible.line2}</span>
                         </div>
                       ) : null}
+                      {isTapeObserverEnabled() && tapeSnapshot ? (
+                        <div className="lc-strip-tape" aria-label="Tape observation">
+                          <span className="lc-tape-line">
+                            Tape: {tapeSnapshot.explanation_short || tapeSnapshot.move_quality || '—'}
+                          </span>
+                          <span className="lc-tape-health" title={tapeSnapshot.explanation_long || ''}>
+                            {formatTapeHealthSubtitle(tapeSnapshot)}
+                          </span>
+                        </div>
+                      ) : null}
                       {activeDisplay ? (
                         <div className="lc-strip-state-inner">
                           <span className="lc-state-primary">{activeDisplay.primaryAction}</span>
@@ -804,7 +836,8 @@ export default function SymbolTracker() {
                 </div>
 
                 <div className="lc-chart-shell">
-                  {(chartChips.length > 0 || flowChips.length > 0) ? (
+                  {(chartChips.length > 0 || flowChips.length > 0
+                    || (isTapeObserverEnabled() && tapeSnapshot?.active_chips?.length > 0)) ? (
                     <div className="lc-chart-cues" aria-label="Active live conditions">
                       {chartChips.map((b) => (
                         <span key={b.key} className={`lc-cue lc-cue--${b.tone}`}>{b.label}</span>
@@ -812,6 +845,11 @@ export default function SymbolTracker() {
                       {flowChips.map((b) => (
                         <span key={b.key} className={`lc-cue lc-cue--flow lc-cue--${b.tone}`}>{b.label}</span>
                       ))}
+                      {isTapeObserverEnabled() && Array.isArray(tapeSnapshot?.active_chips)
+                        ? tapeSnapshot.active_chips.map((label, idx) => (
+                          <span key={`tape-${idx}-${label}`} className="lc-cue lc-cue--tape">{label}</span>
+                        ))
+                        : null}
                     </div>
                   ) : null}
                   <Suspense fallback={<div className="lc-loading">Loading chart…</div>}>
@@ -833,6 +871,8 @@ export default function SymbolTracker() {
                         layoutRevision={layoutRevision}
                         flowBurst={flowBurstForPlot}
                         flowAnnotationText={flowAnnotationText}
+                        tapeSnapshot={tapeSnapshot}
+                        showVolumePanel={isTapeObserverEnabled()}
                         className="lc-plot"
                       />
                     </LivingChartErrorBoundary>

@@ -12,13 +12,22 @@
 #   IBKR_HOST, IBKR_PORT, TAPE_IB_CLIENT_ID   live IB (see README)
 #   PYTHON=/path/to/python   override interpreter
 #
+# Windows: if `python` hits the Microsoft Store stub, disable App execution aliases for
+# python.exe / python3.exe, or: export PYTHON="<repo>/cursorfiles/.venv/Scripts/python.exe"
+# The script also tries that venv and `py -3` before plain `python` on PATH.
+#
 # After start, set on mip_ui_api:  TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095
 
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OBSERVER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# mip_0.7/MIP/apps/mip_market_observer -> ../../../ = repo root
+REPO_ROOT="$(cd "$OBSERVER_DIR/../../.." && pwd)"
 cd "$OBSERVER_DIR" || exit 1
+
+# Populated by resolve_python_cmd(): interpreter + args for uvicorn
+TAPE_PY_CMD=()
 
 PID_FILE="$OBSERVER_DIR/.tape-observer.pid"
 LOG_FILE="$OBSERVER_DIR/.tape-observer.log"
@@ -43,28 +52,55 @@ usage() {
   exit 0
 }
 
-resolve_python() {
+# True if this interpreter runs (skips Windows Store python.exe stubs).
+python_ok() {
+  "$@" -c "import sys" >/dev/null 2>&1
+}
+
+try_path_python() {
+  local p="$1"
+  [[ -n "$p" ]] || return 1
+  [[ -f "$p" ]] || [[ -x "$p" ]] || return 1
+  if python_ok "$p"; then
+    TAPE_PY_CMD=("$p")
+    return 0
+  fi
+  return 1
+}
+
+try_py_launcher() {
+  command -v py >/dev/null 2>&1 || return 1
+  if python_ok py -3; then
+    TAPE_PY_CMD=("py" "-3")
+    return 0
+  fi
+  return 1
+}
+
+try_path_lookup() {
+  local name="$1"
+  local p
+  p="$(command -v "$name" 2>/dev/null)" || return 1
+  [[ -n "$p" ]] || return 1
+  try_path_python "$p"
+}
+
+# Sets global TAPE_PY_CMD; returns 0 on success.
+resolve_python_cmd() {
+  TAPE_PY_CMD=()
   if [[ -n "${PYTHON:-}" ]]; then
-    echo "$PYTHON"
-    return
+    try_path_python "$PYTHON" && return 0
+    echo "PYTHON is set but not usable: ${PYTHON}" >&2
+    return 1
   fi
-  if [[ -x "$OBSERVER_DIR/.venv/bin/python" ]]; then
-    echo "$OBSERVER_DIR/.venv/bin/python"
-    return
-  fi
-  if [[ -x "$OBSERVER_DIR/.venv/Scripts/python.exe" ]]; then
-    echo "$OBSERVER_DIR/.venv/Scripts/python.exe"
-    return
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    command -v python3
-    return
-  fi
-  if command -v python >/dev/null 2>&1; then
-    command -v python
-    return
-  fi
-  echo ""
+  try_path_python "$OBSERVER_DIR/.venv/bin/python" && return 0
+  try_path_python "$OBSERVER_DIR/.venv/Scripts/python.exe" && return 0
+  try_path_python "$REPO_ROOT/cursorfiles/.venv/bin/python" && return 0
+  try_path_python "$REPO_ROOT/cursorfiles/.venv/Scripts/python.exe" && return 0
+  try_py_launcher && return 0
+  try_path_lookup python3 && return 0
+  try_path_lookup python && return 0
+  return 1
 }
 
 is_running() {
@@ -89,17 +125,18 @@ cmd_start() {
     echo "Tape observer already running (PID $(tr -d ' \r\n' <"$PID_FILE"))."
     exit 0
   fi
-  local py
-  py="$(resolve_python)"
-  if [[ -z "$py" ]]; then
-    echo "No Python found. Create a venv under:"
-    echo "  $OBSERVER_DIR"
-    echo "  pip install -r requirements.txt"
-    echo "Or set PYTHON=/path/to/python"
+  if ! resolve_python_cmd; then
+    echo "No working Python found."
+    echo "  1) Use repo agent venv (Snowflake tooling):"
+    echo "       export PYTHON=\"$REPO_ROOT/cursorfiles/.venv/Scripts/python.exe\""
+    echo "     (Git Bash: use /c/Users/... style if needed.)"
+    echo "  2) Or create $OBSERVER_DIR/.venv and pip install -r requirements.txt"
+    echo "  3) Or install Python from python.org and ensure 'py -3' works"
+    echo "  4) Windows: Settings → Apps → Advanced → App execution aliases — turn OFF python.exe / python3.exe stubs"
     exit 1
   fi
 
-  echo "Using: $py"
+  echo "Using: ${TAPE_PY_CMD[*]}"
   echo "Working dir: $OBSERVER_DIR"
   echo "Binding: $BASE_URL"
   echo "Log file: $LOG_FILE"
@@ -109,7 +146,7 @@ cmd_start() {
 
   touch "$LOG_FILE"
   # shellcheck disable=SC2086
-  nohup "$py" -m uvicorn app.main:app --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
+  nohup "${TAPE_PY_CMD[@]}" -m uvicorn app.main:app --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
 
   sleep 2

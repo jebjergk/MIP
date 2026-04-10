@@ -2,7 +2,18 @@
 
 Read-only **Tape** service: executed trades + L1 quotes → rolling metrics → HTTP snapshot for Living Chart. Does **not** write to Snowflake and does not affect committee, training, or execution.
 
-## Run locally
+## Run locally (bash helper)
+
+```bash
+# from repo root — Git Bash / WSL / Linux / macOS
+export TAPE_OBSERVER_SIMULATE=1   # optional: no TWS
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh start
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh status
+```
+
+See [`scripts/tape-observer.sh`](scripts/tape-observer.sh) for `stop | restart | health | init`.
+
+## Run locally (manual)
 
 ```powershell
 cd MIP\apps\mip_market_observer
@@ -59,6 +70,6 @@ TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095
 
 Proxy debug: `GET /api/observation/tape/v1/snapshot/debug?symbol=TSLA` (same gate on observer).
 
-## Ops reminder
+## Ops
 
-See [`TAPE_BASH_SCRIPT_REMINDER.md`](TAPE_BASH_SCRIPT_REMINDER.md) — add a bash start/stop/tape-init script when you harden deployment.
+Control script: [`scripts/tape-observer.sh`](scripts/tape-observer.sh) and [`TAPE_BASH_SCRIPT_REMINDER.md`](TAPE_BASH_SCRIPT_REMINDER.md).

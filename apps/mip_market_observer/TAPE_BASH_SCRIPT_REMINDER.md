@@ -1,11 +1,33 @@
-# Reminder: Tape service bash script (not implemented yet)
+# Tape observer — bash control script
 
-When you are ready to operationalize the stack, add a **bash** script (or pair of scripts) that can:
+Implemented: [`scripts/tape-observer.sh`](scripts/tape-observer.sh)
 
-1. **Start** the Tape observer (`uvicorn app.main:app` on the chosen port) with the right env vars.
-2. **Stop** it cleanly (PID file or `pkill` pattern).
-3. **Initiate / health-check** Tape (optional `curl` to `/health` and `/tape/v1/snapshot?symbol=...`).
+## Quick use (Git Bash / WSL / Linux / macOS)
 
-Windows users may still want a **PowerShell** equivalent; the original note asked specifically for **bash** (e.g. WSL, Git Bash, CI Linux).
+From anywhere:
 
-Delete this file after the script exists, or keep it as a pointer in your runbook.
+```bash
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh start
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh status
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh health
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh init
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh stop
+```
+
+Or `cd MIP/apps/mip_market_observer/scripts && chmod +x tape-observer.sh && ./tape-observer.sh start`
+
+## Simulate (no TWS)
+
+```bash
+export TAPE_OBSERVER_SIMULATE=1
+bash MIP/apps/mip_market_observer/scripts/tape-observer.sh restart
+```
+
+## Files created at runtime
+
+- `.tape-observer.pid` — process id (gitignored)
+- `.tape-observer.log` — uvicorn stdout/stderr (gitignored)
+
+## mip_ui_api
+
+Set `TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095` (or your `TAPE_HOST`/`TAPE_PORT`) and restart the API.

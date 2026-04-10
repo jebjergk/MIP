@@ -32,6 +32,8 @@ bash MIP/apps/mip_market_observer/scripts/tape-observer.sh restart
 
 Set `TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095` (or your `TAPE_HOST`/`TAPE_PORT`) and restart the API.
 
+Living Chart shows tape UI only when the snapshot has **`tape_active_for_ui: true`** (strict live gate + dwell). See [README.md](README.md) “UI (Living Chart — binary tape)”.
+
 ## Windows: “Python wurde nicht gefunden” / Store opens
 
 `python` on PATH is often the Microsoft Store stub. The script now prefers `mip_market_observer/.venv`, then repo `cursorfiles/.venv/Scripts/python.exe`, then `py -3`, and only then `python3`/`python` (each must pass `import sys`).

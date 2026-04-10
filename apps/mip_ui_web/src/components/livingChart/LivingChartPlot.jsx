@@ -128,8 +128,8 @@ export default function LivingChartPlot({
   layoutRevision = 0,
   flowBurst = null,
   flowAnnotationText = null,
+  /** When tape_active_for_ui, chart may draw tape overlay hints only — never bar volume coloring. */
   tapeSnapshot = null,
-  showVolumePanel = false,
   className,
 }) {
   const { data, shapePack, xExtents } = useMemo(() => {
@@ -311,32 +311,10 @@ export default function LivingChartPlot({
       traces.push(t)
     }
 
-    const hasVol = showVolumePanel && vol.some((v) => v > 0)
+    const hasVol = vol.some((v) => v > 0)
     if (hasVol) {
-      const sideAgg = tapeSnapshot?.side_confidence_aggregate
-      const tapeSigned = Number(tapeSnapshot?.tape_pressure_score)
-      const lastIdx = tMs.length - 1
-      const colors = vol.map((_, i) => {
-        if (sideAgg === 'high' && i === lastIdx && Number.isFinite(tapeSigned)) {
-          if (tapeSigned > 0.08) return 'rgba(16,185,129,0.65)'
-          if (tapeSigned < -0.08) return 'rgba(239,68,68,0.65)'
-        }
-        return 'rgba(71,85,105,0.75)'
-      })
-      const buyV = tapeSnapshot?.buy_volume_60s
-      const sellV = tapeSnapshot?.sell_volume_60s
-      const hoverText = vol.map((v, i) => {
-        const lines = [`Volume: ${v.toLocaleString()}`]
-        if (i === lastIdx && tapeSnapshot) {
-          if (sideAgg === 'high' && buyV != null && sellV != null) {
-            lines.push(`Buy (60s): ${Number(buyV).toLocaleString()}`)
-            lines.push(`Sell (60s): ${Number(sellV).toLocaleString()}`)
-          } else if (sideAgg === 'medium' || sideAgg === 'low') {
-            lines.push('Side split hidden — tape side confidence not high')
-          }
-        }
-        return lines.join('<br>')
-      })
+      const neutral = 'rgba(71,85,105,0.75)'
+      const hoverText = vol.map((v) => `Volume: ${v.toLocaleString()}`)
       traces.push({
         type: 'bar',
         name: 'Volume',
@@ -344,7 +322,7 @@ export default function LivingChartPlot({
         y: vol,
         xaxis: 'x',
         yaxis: 'y2',
-        marker: { color: colors, line: { width: 0 } },
+        marker: { color: vol.map(() => neutral), line: { width: 0 } },
         text: hoverText,
         hovertemplate: '%{text}<extra></extra>',
       })
@@ -431,12 +409,10 @@ export default function LivingChartPlot({
       }
     }
 
-    const hasVolPanel =
-      showVolumePanel
-      && barList.some((b) => {
-        const v = toNum(b.volume)
-        return v != null && v > 0
-      })
+    const hasVolPanel = barList.some((b) => {
+      const v = toNum(b.volume)
+      return v != null && v > 0
+    })
 
     const ly = {
       ...BASE_LAYOUT,
@@ -461,7 +437,9 @@ export default function LivingChartPlot({
       }
     }
 
-    const tapeShapes = tapeOverlayShapes(tapeSnapshot?.overlay_hints)
+    const tapeHints =
+      tapeSnapshot?.tape_active_for_ui === true ? tapeSnapshot?.overlay_hints : []
+    const tapeShapes = tapeOverlayShapes(tapeHints)
     if (tapeShapes.length > 0) {
       ly.shapes = [...(ly.shapes || []), ...tapeShapes]
     }
@@ -493,7 +471,6 @@ export default function LivingChartPlot({
     bars,
     tile,
     liveState,
-    showVolumePanel,
     tapeSnapshot,
   ])
 

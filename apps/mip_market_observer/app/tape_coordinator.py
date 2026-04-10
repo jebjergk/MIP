@@ -17,6 +17,12 @@ from app.engine.hysteresis import ChipHysteresis, LabelHysteresis
 from app.engine.trade_side import infer_trade_side
 from app.replay_store import replay_store
 from app.session_regime import compute_session_regime, opening_price_discovery_window
+from app.tape_ui_gate import (
+    maybe_log_tape_ui_inactive,
+    strict_tape_ui_raw,
+    tape_ui_inactive_reason_code,
+    update_tape_ui_dwell,
+)
 from app.threshold_profile import (
     BASELINE_DEQUE_MAX,
     BASELINE_LOW_MAX,
@@ -58,6 +64,9 @@ class SymbolRuntime:
     last_quote_sizes: bool = False
     last_touch_ts: datetime = field(default_factory=utc_now)
     burst_history: deque = field(default_factory=lambda: deque(maxlen=22))
+    tape_ui_since: datetime | None = None
+    tape_ui_snap_streak: int = 0
+    tape_ui_last_log_ts: datetime | None = None
 
     def touch_poll(self) -> None:
         self.last_touch_ts = utc_now()
@@ -315,6 +324,35 @@ class TapeCoordinator:
                 )
             )
 
+            quote_sizes_available = bool(
+                last_bs is not None and last_as is not None and (last_bs + last_as) > 0
+            )
+            strict_raw = strict_tape_ui_raw(
+                feed_health=feed_health,
+                warmup_state=wu,
+                quote_sizes_available=quote_sizes_available,
+                side_confidence_aggregate=side_agg,
+                buy_volume_60s=buy_v,
+                sell_volume_60s=sell_v,
+                ib_connected=self.ib_connected,
+                simulate_mode=self.simulate_mode,
+            )
+            tape_active_for_ui = update_tape_ui_dwell(rt, now, strict_raw)
+            if not tape_active_for_ui:
+                inactive_reason = tape_ui_inactive_reason_code(
+                    feed_health=feed_health,
+                    warmup_state=wu,
+                    quote_sizes_available=quote_sizes_available,
+                    side_confidence_aggregate=side_agg,
+                    buy_volume_60s=buy_v,
+                    sell_volume_60s=sell_v,
+                    ib_connected=self.ib_connected,
+                    simulate_mode=self.simulate_mode,
+                )
+                maybe_log_tape_ui_inactive(
+                    sym, rt, now, tape_active=False, reason_code=inactive_reason
+                )
+
             mid_ret = self._mid_ret_60s(rt, now)
             open_win = opening_price_discovery_window(now, sym)
             session_regime = compute_session_regime(now, sym)
@@ -400,9 +438,8 @@ class TapeCoordinator:
                 "last_price": last_px,
                 "mid_price": mid,
                 "spread": spread,
-                "quote_sizes_available": bool(
-                    last_bs is not None and last_as is not None and (last_bs + last_as) > 0
-                ),
+                "quote_sizes_available": quote_sizes_available,
+                "tape_active_for_ui": tape_active_for_ui,
                 "volume_60s": total,
                 "buy_volume_60s": buy_v if side_agg == "high" else None,
                 "sell_volume_60s": sell_v if side_agg == "high" else None,
@@ -646,6 +683,7 @@ class TapeCoordinator:
             "last_quote_age_sec": None,
             "baseline_sample_count": 0,
             "trades_60s_count": 0,
+            "tape_active_for_ui": False,
         }
 
 

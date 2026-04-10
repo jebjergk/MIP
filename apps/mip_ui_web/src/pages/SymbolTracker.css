@@ -1730,6 +1730,84 @@
   background: rgba(49, 46, 129, 0.25);
 }
 
+.lc-recent-tape {
+  margin: 0.35rem 0 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  background: rgba(30, 27, 75, 0.35);
+  max-width: 100%;
+}
+
+.lc-recent-tape__head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.lc-recent-tape__title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #c7d2fe;
+}
+
+.lc-recent-tape__help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  cursor: help;
+}
+
+.lc-recent-tape__nums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.lc-recent-tape__buy {
+  color: #6ee7b7;
+}
+
+.lc-recent-tape__sell {
+  color: #fca5a5;
+}
+
+.lc-recent-tape__unk {
+  color: #cbd5e1;
+}
+
+.lc-recent-tape__bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.lc-recent-tape__seg--buy {
+  background: rgba(16, 185, 129, 0.85);
+}
+
+.lc-recent-tape__seg--sell {
+  background: rgba(239, 68, 68, 0.85);
+}
+
+.lc-recent-tape__seg--unk {
+  background: rgba(148, 163, 184, 0.75);
+}
+
 .lc-strip-monitor .lc-strip-state {
   grid-column: 2;
   grid-row: 1 / -1;

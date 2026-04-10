@@ -1,4 +1,23 @@
-"""Single source of truth for Tape Phase 1 thresholds. Bump threshold_profile_version when changed."""
+"""Single source of truth for Tape Phase 1 thresholds. Bump threshold_profile_version when changed.
+
+feed_health (see tape_coordinator.build_snapshot + feed_health.combine_worst):
+  - disconnected: IB not connected (non-sim), OR no trade/quote yet and
+    (now - created_ts) > DISCONNECTED_GRACE_SEC (30s).
+  - delayed (bootstrap): no events yet and session_age <= DISCONNECTED_GRACE_SEC — internal label, not exchange delay.
+  - Otherwise feed_health = combine_worst(trade_tier, quote_tier, quotes_expected) where each tier comes from
+    tier_from_age_sec (feed_health.py):
+      * live: age_sec <= STALE_LIVE_MAX (3.0s)
+      * delayed: 3.0s < age_sec <= STALE_DELAYED_MAX (10.0s)
+      * stale: age_sec > 10.0s
+    If quotes_expected is False, combined uses trade_tier or \"stale\".
+
+warmup_state (warmup.compute_warmup_state):
+  - cold: no first_event_ts OR (elapsed < 10s AND trade_count_session < 5)
+  - warming: not cold, but elapsed < 45s OR trades < 25 OR baseline_sample_count < WARMUP_READY_MIN_BASELINE (env TAPE_WARMUP_MIN_BASELINE, default 30)
+  - ready: all of the above thresholds satisfied
+
+Living Chart tape UI: strict gate + dwell in tape_ui_gate / TAPE_UI_DWELL_SEC / TAPE_UI_MIN_SNAPSHOTS.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +27,13 @@ import os
 def _env_int(key: str, default: int) -> int:
     try:
         return int((os.getenv(key) or str(default)).strip())
+    except ValueError:
+        return default
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float((os.getenv(key) or str(default)).strip())
     except ValueError:
         return default
 
@@ -48,6 +74,10 @@ OPENING_TAPE_PRESSURE_MULT = 1.2
 HYSTERESIS_SNAPSHOTS = 3
 
 BASELINE_DEQUE_MAX = 120
+
+# Living Chart — tape_active_for_ui dwell (strict gate must hold; reset on any failure)
+TAPE_UI_DWELL_SEC = _env_float("TAPE_UI_DWELL_SEC", 8.0)
+TAPE_UI_MIN_SNAPSHOTS = _env_int("TAPE_UI_MIN_SNAPSHOTS", 3)
 
 # Phase 2 — vacuum / absorption / exhaustion / burst gates
 VACUUM_SCORE_MIN = 0.52

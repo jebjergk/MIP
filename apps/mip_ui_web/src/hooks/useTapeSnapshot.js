@@ -1,37 +1,36 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../config/apiBase'
 
-const TAPE_ENABLED = import.meta.env.VITE_TAPE_OBSERVER_ENABLED === '1'
+/** When set, the client may poll the tape snapshot API. Does not imply tape UI is shown — use snapshot.tape_active_for_ui. */
+const TAPE_API_ENABLED = import.meta.env.VITE_TAPE_OBSERVER_ENABLED === '1'
 
 let _tapeProxyWarned = false
 
 function warnTapeProxyOnce(status, detail) {
+  if (!import.meta.env.DEV) return
   if (_tapeProxyWarned || typeof console === 'undefined' || !console.warn) return
   _tapeProxyWarned = true
   if (status === 503) {
     console.warn(
-      '[tape] mip_ui_api returned 503 — set TAPE_OBSERVER_BASE_URL (e.g. http://127.0.0.1:8095) on the API and restart it. See MIP/apps/mip_ui_api/.env.example',
+      '[tape] mip_ui_api returned 503 — set TAPE_OBSERVER_BASE_URL on the API. Tape UI still requires tape_active_for_ui from the observer.',
     )
     return
   }
   if (status === 502) {
-    console.warn(
-      '[tape] mip_ui_api could not reach the observer — start tape-observer (port 8095) and check TAPE_OBSERVER_BASE_URL.',
-    )
+    console.warn('[tape] Could not reach the observer — check TAPE_OBSERVER_BASE_URL and port 8095.')
     return
   }
   console.warn('[tape] snapshot request failed:', status, detail || '')
 }
 
 /**
- * Polls Tape observer snapshot (via mip_ui_api proxy). Server owns hysteresis.
- * Returns null when disabled or on error (non-throwing).
+ * Polls tape snapshot (via mip_ui_api). Living Chart tape chrome uses only `tape_active_for_ui` from the payload.
  */
 export function useTapeSnapshot(symbol, pollMs = 3000) {
   const [snapshot, setSnapshot] = useState(null)
 
   useEffect(() => {
-    if (!TAPE_ENABLED) {
+    if (!TAPE_API_ENABLED) {
       setSnapshot(null)
       return undefined
     }
@@ -77,9 +76,15 @@ export function useTapeSnapshot(symbol, pollMs = 3000) {
     }
   }, [symbol, pollMs])
 
-  return TAPE_ENABLED ? snapshot : null
+  return TAPE_API_ENABLED ? snapshot : null
 }
 
+/** True when VITE allows calling the tape API (not “show tape UI”). */
+export function isTapeApiEnabled() {
+  return TAPE_API_ENABLED
+}
+
+/** @deprecated use isTapeApiEnabled */
 export function isTapeObserverEnabled() {
-  return TAPE_ENABLED
+  return TAPE_API_ENABLED
 }

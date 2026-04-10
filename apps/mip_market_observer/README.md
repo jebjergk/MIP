@@ -54,7 +54,13 @@ TAPE_DEBUG_ENDPOINT=1
 
 - `GET /tape/v1/snapshot/debug?symbol=TSLA` — full snapshot JSON without writing replay (requires `TAPE_DEBUG_ENDPOINT=1` on the observer).
 
-## UI
+## UI (Living Chart — binary tape)
+
+Snapshots include **`tape_active_for_ui`** (boolean). It is `true` only when **all** hold: `feed_health == live`, `warmup_state == ready`, `quote_sizes_available`, `side_confidence_aggregate == high`, finite `buy_volume_60s` / `sell_volume_60s`, and IB connected (or simulate mode). A **dwell** then requires the strict gate to stay true for at least **`TAPE_UI_DWELL_SEC`** (default 8) and **`TAPE_UI_MIN_SNAPSHOTS`** (default 3) consecutive snapshot builds; any failure resets dwell.
+
+**Exact age/warmup math** is documented in [`app/threshold_profile.py`](app/threshold_profile.py) and [`app/warmup.py`](app/warmup.py).
+
+The **frontend shows tape strip, chips, overlays, and the recent buy/sell module only when `tape_active_for_ui === true`**. `VITE_TAPE_OBSERVER_ENABLED=1` only allows the client to **call** the tape API — it does not show tape UI by itself.
 
 Set in `mip_ui_web` env:
 
@@ -62,11 +68,13 @@ Set in `mip_ui_web` env:
 VITE_TAPE_OBSERVER_ENABLED=1
 ```
 
-And in **mip_ui_api** `.env`:
+And in **mip_ui_api** repo root `.env` (see `mip_ui_api` `config.py`):
 
 ```env
 TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095
 ```
+
+When `tape_active_for_ui` is false, the observer logs a throttled **diagnostic** reason (`tape_active_for_ui=false symbol=... reason=...`) — not intended as end-user chart copy.
 
 Proxy debug: `GET /api/observation/tape/v1/snapshot/debug?symbol=TSLA` (same gate on observer).
 

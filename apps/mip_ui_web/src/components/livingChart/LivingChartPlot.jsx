@@ -71,6 +71,46 @@ function toNum(v) {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * yaxis2 max for bar volume: match the price chart's x window when "follow latest" is on,
+ * so one old multi-million share bar does not squash everything in the visible intraday window.
+ */
+function volumeAxisMaxForBars(barList, xExtents, followLatest, viewportLocked) {
+  const pairs = []
+  for (const b of barList) {
+    const t = barTimeMs(b)
+    if (t == null) continue
+    const v = toNum(b.volume)
+    pairs.push({ t, v: v != null && v > 0 ? v : 0 })
+  }
+  if (pairs.length === 0) return 0
+  pairs.sort((a, b) => a.t - b.t)
+
+  const xMaxData = pairs[pairs.length - 1].t
+  const xMinData = pairs[0].t
+
+  let winLo = xMinData
+  let winHi = xMaxData
+  if (followLatest && !viewportLocked && xExtents) {
+    const { xMin, xMax } = xExtents
+    const span = Math.max(xMax - xMin, 120000)
+    const windowMs = Math.min(span, Math.max(span * 0.35, 45 * 60 * 1000))
+    winHi = xMax + span * 0.08
+    winLo = winHi - windowMs
+  }
+
+  let maxInWin = 0
+  for (const { t, v } of pairs) {
+    if (v > 0 && t >= winLo && t <= winHi) maxInWin = Math.max(maxInWin, v)
+  }
+  if (maxInWin > 0) return maxInWin
+
+  const nonzero = pairs.filter((p) => p.v > 0)
+  const tail = nonzero.slice(-96)
+  if (tail.length === 0) return 0
+  return Math.max(...tail.map((p) => p.v))
+}
+
 export default function LivingChartPlot({
   tile,
   bars,
@@ -412,7 +452,13 @@ export default function LivingChartPlot({
       uirevision: `${UI_REVISION_BASE}-${layoutRevision}-${symbolKey}`,
     }
     if (hasVolPanel) {
-      ly.yaxis2 = { ...BASE_LAYOUT.yaxis2 }
+      const vMax = volumeAxisMaxForBars(barList, xExtents, followLatest, viewportLocked)
+      const y2Top = vMax > 0 ? vMax * 1.12 : 1
+      ly.yaxis2 = {
+        ...BASE_LAYOUT.yaxis2,
+        range: [0, y2Top],
+        autorange: false,
+      }
     }
 
     const tapeShapes = tapeOverlayShapes(tapeSnapshot?.overlay_hints)

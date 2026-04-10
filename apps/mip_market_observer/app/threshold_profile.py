@@ -12,7 +12,7 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
-THRESHOLD_PROFILE_VERSION = "tape_phase1_v1"
+THRESHOLD_PROFILE_VERSION = "tape_phase2_v1"
 
 # feed_health ages (seconds since last event)
 STALE_LIVE_MAX = 3.0
@@ -48,3 +48,12 @@ OPENING_TAPE_PRESSURE_MULT = 1.2
 HYSTERESIS_SNAPSHOTS = 3
 
 BASELINE_DEQUE_MAX = 120
+
+# Phase 2 — vacuum / absorption / exhaustion / burst gates
+VACUUM_SCORE_MIN = 0.52
+VACUUM_RET_MULT_BASE = 0.00018  # scaled by regime_mult
+ABSORPTION_SCORE_MIN = 0.45
+EXHAUSTION_SCORE_MIN = 0.48
+BURST_STRONG = 0.62
+REGIME_AFTERHOURS_VACUUM_MULT = 0.82
+REGIME_PREMARKET_VACUUM_MULT = 0.88

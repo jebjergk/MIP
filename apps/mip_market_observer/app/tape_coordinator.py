@@ -10,10 +10,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.feed_health import combine_worst, tier_from_age_sec
+from app.engine.advanced_metrics import compute_advanced_metrics
 from app.engine.classifier_phase1 import classify_phase1_raw
+from app.engine.classifier_phase2 import classify_phase2_raw
 from app.engine.hysteresis import ChipHysteresis, LabelHysteresis
 from app.engine.trade_side import infer_trade_side
-from app.session_regime import opening_price_discovery_window
+from app.replay_store import replay_store
+from app.session_regime import compute_session_regime, opening_price_discovery_window
 from app.threshold_profile import (
     BASELINE_DEQUE_MAX,
     BASELINE_LOW_MAX,
@@ -25,7 +28,7 @@ from app.threshold_profile import (
 )
 from app.warmup import WarmupInputs, compute_warmup_state, utc_now
 
-SNAPSHOT_SCHEMA_VERSION = "1.0.0"
+SNAPSHOT_SCHEMA_VERSION = "2.0.0"
 
 _PRUNE_SEC = 200.0
 _EPS = 1e-9
@@ -54,6 +57,7 @@ class SymbolRuntime:
     chip_hyst: ChipHysteresis = field(default_factory=ChipHysteresis)
     last_quote_sizes: bool = False
     last_touch_ts: datetime = field(default_factory=utc_now)
+    burst_history: deque = field(default_factory=lambda: deque(maxlen=22))
 
     def touch_poll(self) -> None:
         self.last_touch_ts = utc_now()
@@ -231,7 +235,7 @@ class TapeCoordinator:
             return None
         return (cur - past) / past
 
-    def build_snapshot(self, symbol: str) -> dict[str, Any]:
+    def build_snapshot(self, symbol: str, *, record_replay: bool = True) -> dict[str, Any]:
         sym = symbol.strip().upper()
         now = utc_now()
         with self._lock:
@@ -313,8 +317,47 @@ class TapeCoordinator:
 
             mid_ret = self._mid_ret_60s(rt, now)
             open_win = opening_price_discovery_window(now, sym)
+            session_regime = compute_session_regime(now, sym)
 
-            raw_mq = classify_phase1_raw(
+            burst_hist = list(rt.burst_history)
+            burst_peak = max(burst_hist) if burst_hist else 0.0
+
+            adv = compute_advanced_metrics(
+                trades=rt.trades,
+                quotes=rt.quotes,
+                now=now,
+                vol_60s=total,
+                tape_signed=tape_signed,
+                spread=spread,
+                burst_history=burst_hist,
+            )
+
+            raw_mq = classify_phase2_raw(
+                warmup_state=wu,
+                baseline_confidence=baseline_conf,
+                feed_health=feed_health,
+                side_confidence_aggregate=side_agg,
+                tape_pressure_signed=tape_signed,
+                book_pressure_signed=book_signed,
+                mid_ret_60s=mid_ret,
+                spread=spread,
+                relative_volume_score=rv_score,
+                opening_price_discovery_window=open_win,
+                session_regime=session_regime,
+                burst_score=float(adv["burst_score"]),
+                mid_ret_5s=adv.get("mid_ret_5s"),
+                vacuum_up_score=float(adv["vacuum_up_score"]),
+                vacuum_down_score=float(adv["vacuum_down_score"]),
+                absorption_against_buyers_score=float(adv["absorption_against_buyers_score"]),
+                absorption_against_sellers_score=float(adv["absorption_against_sellers_score"]),
+                exhaustion_up_score=float(adv["exhaustion_up_score"]),
+                exhaustion_down_score=float(adv["exhaustion_down_score"]),
+                burst_peak_recent=burst_peak,
+            )
+
+            rt.burst_history.append(float(adv["burst_score"]))
+
+            raw_phase1_only = classify_phase1_raw(
                 warmup_state=wu,
                 baseline_confidence=baseline_conf,
                 feed_health=feed_health,
@@ -336,14 +379,16 @@ class TapeCoordinator:
                 wu,
                 feed_health,
                 rt.last_quote_sizes,
+                adv,
             )
             chips = list(rt.chip_hyst.update(chips_raw))
 
             expl = self._explain(emitted, open_win, side_agg, wu, feed_health)
 
             last_px = rt.trades[-1][1] if rt.trades else mid
+            overlay_hints = self._overlay_hints(now, mid, adv, raw_mq)
 
-            return {
+            out = {
                 "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
                 "threshold_profile_version": THRESHOLD_PROFILE_VERSION,
                 "symbol": sym,
@@ -351,6 +396,7 @@ class TapeCoordinator:
                 "feed_health": feed_health,
                 "warmup_state": wu,
                 "baseline_confidence": baseline_conf,
+                "session_regime": session_regime,
                 "last_price": last_px,
                 "mid_price": mid,
                 "spread": spread,
@@ -365,17 +411,84 @@ class TapeCoordinator:
                 "relative_volume_score": rv_score,
                 "tape_pressure_score": tape_signed,
                 "book_pressure_score": book_signed,
+                "burst_score": float(adv["burst_score"]),
+                "vacuum_up_score": float(adv["vacuum_up_score"]),
+                "vacuum_down_score": float(adv["vacuum_down_score"]),
+                "absorption_against_buyers_score": float(adv["absorption_against_buyers_score"]),
+                "absorption_against_sellers_score": float(adv["absorption_against_sellers_score"]),
+                "exhaustion_up_score": float(adv["exhaustion_up_score"]),
+                "exhaustion_down_score": float(adv["exhaustion_down_score"]),
+                "spread_mean_60s": adv.get("spread_mean_60s"),
+                "spread_z": adv.get("spread_z"),
+                "mid_ret_5s": adv.get("mid_ret_5s"),
                 "move_quality": emitted,
                 "move_quality_raw": raw_mq,
+                "move_quality_phase1_raw": raw_phase1_only,
                 "opening_price_discovery_window": open_win,
                 "explanation_short": expl[0],
                 "explanation_long": expl[1],
                 "active_chips": chips,
+                "overlay_hints": overlay_hints,
                 "last_trade_age_sec": trade_age,
                 "last_quote_age_sec": quote_age,
                 "baseline_sample_count": rt.baseline_sample_count,
                 "trades_60s_count": n60,
             }
+
+        if record_replay:
+            replay_store.record(sym, out)
+        return out
+
+    def _overlay_hints(
+        self,
+        now: datetime,
+        mid: float | None,
+        adv: dict[str, Any],
+        mq: str,
+    ) -> list[dict[str, Any]]:
+        t_end = now.timestamp() * 1000
+        t_start = (now.timestamp() - 28.0) * 1000
+        hints: list[dict[str, Any]] = []
+        bs = float(adv.get("burst_score") or 0)
+        if bs > 0.48:
+            hints.append(
+                {
+                    "kind": "burst_zone",
+                    "t_start_ms": t_start,
+                    "t_end_ms": t_end,
+                    "severity": min(1.0, bs),
+                }
+            )
+        if mq.startswith("vacuum"):
+            hints.append(
+                {
+                    "kind": "vacuum",
+                    "t_start_ms": t_start,
+                    "t_end_ms": t_end,
+                    "severity": max(float(adv.get("vacuum_up_score") or 0), float(adv.get("vacuum_down_score") or 0)),
+                }
+            )
+        if mq.startswith("absorption") and mid is not None and mid > 0:
+            band = mid * 0.00035
+            hints.append(
+                {
+                    "kind": "absorption_band",
+                    "t_start_ms": t_start - 18_000,
+                    "t_end_ms": t_end,
+                    "price_low": mid - band,
+                    "price_high": mid + band,
+                }
+            )
+        if mq.startswith("exhaustion"):
+            hints.append(
+                {
+                    "kind": "exhaustion",
+                    "t_start_ms": t_start,
+                    "t_end_ms": t_end,
+                    "severity": max(float(adv.get("exhaustion_up_score") or 0), float(adv.get("exhaustion_down_score") or 0)),
+                }
+            )
+        return hints[:4]
 
     def _chips_raw(
         self,
@@ -386,6 +499,7 @@ class TapeCoordinator:
         warmup: str,
         health: str,
         quote_sizes: bool,
+        adv: dict[str, Any],
     ) -> list[str]:
         chips: list[str] = []
         if warmup != "ready":
@@ -400,6 +514,17 @@ class TapeCoordinator:
             chips.append("Low-confidence side")
         if not quote_sizes and health != "disconnected":
             chips.append("Quote sizes N/A")
+        bs = float(adv.get("burst_score") or 0)
+        if bs > 0.55:
+            chips.append("Burst")
+        if float(adv.get("vacuum_up_score") or 0) > 0.45 or float(adv.get("vacuum_down_score") or 0) > 0.45:
+            chips.append("Vacuum risk")
+        if float(adv.get("absorption_against_buyers_score") or 0) > 0.4:
+            chips.append("Absorption (buys)")
+        if float(adv.get("absorption_against_sellers_score") or 0) > 0.4:
+            chips.append("Absorption (sells)")
+        if float(adv.get("exhaustion_up_score") or 0) > 0.42 or float(adv.get("exhaustion_down_score") or 0) > 0.42:
+            chips.append("Exhaustion risk")
         if tape > 0.35:
             chips.append("Buyer-led tape")
         elif tape < -0.35:
@@ -410,8 +535,7 @@ class TapeCoordinator:
             chips.append("Heavy ask L1")
         if mq in ("directional_push_up", "directional_push_down"):
             chips.append("Tape push")
-        # cap 4
-        return chips[:6]
+        return chips[:8]
 
     def _explain(
         self,
@@ -438,9 +562,44 @@ class TapeCoordinator:
                 prefix + "Tape: upward push on executed flow.",
                 prefix + "Buy-led volume and short-horizon mid drift support a directional read (advisory only).",
             )
+        if mq == "directional_push_down":
+            return (
+                prefix + "Tape: downward push on executed flow.",
+                prefix + "Sell-led volume and short-horizon mid drift support a directional read (advisory only).",
+            )
+        if mq == "vacuum_jump_up":
+            return (
+                prefix + "Tape: upward vacuum — price lifted through thin touch / widening spread.",
+                prefix + "Fast mid move with weak displayed liquidity; follow-through may be fragile (advisory).",
+            )
+        if mq == "vacuum_jump_down":
+            return (
+                prefix + "Tape: downward vacuum — price dropped through thin liquidity.",
+                prefix + "Fast mid move with weak displayed liquidity; bounce risk (advisory).",
+            )
+        if mq == "absorption_against_buyers":
+            return (
+                prefix + "Tape: buying absorbed — heavy buy flow, little upward progress.",
+                prefix + "Aggressive buys met without sustained lift; possible supply overhead (advisory).",
+            )
+        if mq == "absorption_against_sellers":
+            return (
+                prefix + "Tape: selling absorbed — heavy sell flow, little downward progress.",
+                prefix + "Aggressive sells met without sustained drop; possible demand below (advisory).",
+            )
+        if mq == "exhaustion_after_up_push":
+            return (
+                prefix + "Tape: upward push losing steam.",
+                prefix + "Prior burst faded; directional conviction weakened (advisory).",
+            )
+        if mq == "exhaustion_after_down_push":
+            return (
+                prefix + "Tape: downward push losing steam.",
+                prefix + "Prior burst faded; sell pressure may be tiring (advisory).",
+            )
         return (
-            prefix + "Tape: downward push on executed flow.",
-            prefix + "Sell-led volume and short-horizon mid drift support a directional read (advisory only).",
+            prefix + "Tape: mixed or quiet — no clear push.",
+            prefix + "See metrics for detail (advisory only).",
         )
 
     def _empty_snapshot(self, sym: str, now: datetime, *, reason: str) -> dict[str, Any]:
@@ -452,6 +611,7 @@ class TapeCoordinator:
             "feed_health": "disconnected",
             "warmup_state": "cold",
             "baseline_confidence": "low",
+            "session_regime": compute_session_regime(now, sym),
             "last_price": None,
             "mid_price": None,
             "spread": None,
@@ -464,12 +624,24 @@ class TapeCoordinator:
             "relative_volume_score": None,
             "tape_pressure_score": 0.0,
             "book_pressure_score": None,
+            "burst_score": 0.0,
+            "vacuum_up_score": 0.0,
+            "vacuum_down_score": 0.0,
+            "absorption_against_buyers_score": 0.0,
+            "absorption_against_sellers_score": 0.0,
+            "exhaustion_up_score": 0.0,
+            "exhaustion_down_score": 0.0,
+            "spread_mean_60s": None,
+            "spread_z": None,
+            "mid_ret_5s": None,
             "move_quality": "insufficient_evidence",
             "move_quality_raw": "insufficient_evidence",
+            "move_quality_phase1_raw": "insufficient_evidence",
             "opening_price_discovery_window": opening_price_discovery_window(now, sym),
             "explanation_short": "Tape: offline or symbol not active.",
             "explanation_long": reason,
             "active_chips": ["Tape offline"],
+            "overlay_hints": [],
             "last_trade_age_sec": None,
             "last_quote_age_sec": None,
             "baseline_sample_count": 0,

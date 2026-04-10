@@ -5,6 +5,7 @@ import {
   buildLivingChartShapesAndTA,
   barTimeMs,
 } from '../../lib/livingChartOverlays'
+import { tapeOverlayShapes } from '../../lib/livingChartTapeOverlays'
 import { dominantActivePlotTag } from '../../lib/livingChartVisualState'
 
 const UI_REVISION_BASE = 'living-chart-v2'
@@ -414,6 +415,11 @@ export default function LivingChartPlot({
       ly.yaxis2 = { ...BASE_LAYOUT.yaxis2 }
     }
 
+    const tapeShapes = tapeOverlayShapes(tapeSnapshot?.overlay_hints)
+    if (tapeShapes.length > 0) {
+      ly.shapes = [...(ly.shapes || []), ...tapeShapes]
+    }
+
     if (followLatest && !viewportLocked && xExtents) {
       const { xMin, xMax } = xExtents
       const span = Math.max(xMax - xMin, 120000)
@@ -442,7 +448,7 @@ export default function LivingChartPlot({
     tile,
     liveState,
     showVolumePanel,
-    bars,
+    tapeSnapshot,
   ])
 
   const onRelayout = useCallback(

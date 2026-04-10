@@ -10,14 +10,33 @@ from app.threshold_profile import OPENING_WINDOW_MINUTES
 _NY = ZoneInfo("America/New_York")
 
 
+def compute_session_regime(now_utc: datetime, symbol: str) -> str:
+    """US session bucket for regime-aware interpretation (equities); FX → fx_session."""
+    sym = str(symbol or "").strip().upper()
+    if "/" in sym:
+        return "fx_session"
+    dt = now_utc.astimezone(_NY)
+    if dt.weekday() >= 5:
+        return "weekend"
+    cur = dt.hour * 60 + dt.minute
+    if cur < 4 * 60:
+        return "closed"
+    if cur < 9 * 60 + 30:
+        return "pre_market"
+    if cur < 9 * 60 + 30 + OPENING_WINDOW_MINUTES:
+        return "open_window"
+    if cur < 15 * 60 + 30:
+        return "regular_session"
+    if cur < 16 * 60:
+        return "closing_window"
+    if cur < 20 * 60:
+        return "after_hours"
+    return "closed"
+
+
 def opening_price_discovery_window(now_utc: datetime, symbol: str) -> bool:
     sym = str(symbol or "").strip().upper()
-    if "/" in sym or len(sym) == 6 and sym.isalpha() and not sym.isdigit():
-        # crude FX pair detection
-        if "/" in sym:
-            return False
-    # 6-letter could be stock — still apply US window only if "US equity" heuristic: no slash
-    if "/" in symbol:
+    if "/" in sym:
         return False
     dt = now_utc.astimezone(_NY)
     if dt.weekday() >= 5:

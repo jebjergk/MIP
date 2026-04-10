@@ -9,7 +9,7 @@ import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.collector.ibkr_bridge import IbkrTapeBridge
@@ -90,6 +90,23 @@ def tape_snapshot(symbol: str = Query(..., min_length=1, max_length=32)):
     sym = symbol.strip().upper()
     coordinator.touch(sym)
     return coordinator.build_snapshot(sym)
+
+
+@app.get("/tape/v1/snapshot/debug")
+def tape_snapshot_debug(symbol: str = Query(..., min_length=1, max_length=32)):
+    """Phase 3 — same snapshot without replay write; gated by TAPE_DEBUG_ENDPOINT=1."""
+    if (os.getenv("TAPE_DEBUG_ENDPOINT") or "").strip().lower() not in ("1", "true", "yes"):
+        raise HTTPException(status_code=404, detail="Tape debug endpoint disabled.")
+    sym = symbol.strip().upper()
+    coordinator.touch(sym)
+    snap = coordinator.build_snapshot(sym, record_replay=False)
+    return {
+        "snapshot": snap,
+        "replay": {
+            "periodic_path": bool((os.getenv("TAPE_REPLAY_JSONL") or "").strip()),
+            "anomaly_path": bool((os.getenv("TAPE_REPLAY_ANOMALY_JSONL") or "").strip()),
+        },
+    }
 
 
 @app.get("/")

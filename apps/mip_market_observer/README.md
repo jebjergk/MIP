@@ -27,6 +27,22 @@ The UI API proxies snapshots when `TAPE_OBSERVER_BASE_URL` is set, e.g. `http://
 - `GET /health` — liveness + `ib_connected`
 - `GET /tape/v1/snapshot?symbol=TSLA` — full Phase 1 snapshot (`snapshot_schema_version`, `threshold_profile_version`)
 
+## Phase 2 (snapshot schema `2.0.0`)
+
+Extended `move_quality`, `burst_score`, vacuum / absorption / exhaustion scores, `session_regime`, `overlay_hints` for the chart. Threshold bundle: `tape_phase2_v1`.
+
+## Phase 3 — replay + debug
+
+```env
+TAPE_REPLAY_JSONL=C:/path/tape_periodic.jsonl
+TAPE_REPLAY_ANOMALY_JSONL=C:/path/tape_anomaly.jsonl
+TAPE_REPLAY_INTERVAL_SEC=5
+TAPE_REPLAY_ANOMALY_COOLDOWN_SEC=12
+TAPE_DEBUG_ENDPOINT=1
+```
+
+- `GET /tape/v1/snapshot/debug?symbol=TSLA` — full snapshot JSON without writing replay (requires `TAPE_DEBUG_ENDPOINT=1` on the observer).
+
 ## UI
 
 Set in `mip_ui_web` env:
@@ -40,3 +56,9 @@ And in **mip_ui_api** `.env`:
 ```env
 TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095
 ```
+
+Proxy debug: `GET /api/observation/tape/v1/snapshot/debug?symbol=TSLA` (same gate on observer).
+
+## Ops reminder
+
+See [`TAPE_BASH_SCRIPT_REMINDER.md`](TAPE_BASH_SCRIPT_REMINDER.md) — add a bash start/stop/tape-init script when you harden deployment.

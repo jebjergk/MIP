@@ -52,6 +52,25 @@ def test_ib_api_overrides_snapshot_host_port(monkeypatch):
     assert ep.port == 7497
 
 
+def test_ingest_read_follows_ib_api_port(monkeypatch):
+    mod = _reload_config(monkeypatch, IB_API_PORT="7497")
+    ep = mod.resolve_ingest_read()
+    assert ep.port == 7497
+    assert ep.client_id == mod.DEFAULT_CLIENT_INGEST
+
+
+def test_ingest_client_collision_with_snapshot_raises(monkeypatch):
+    mod = _reload_config(
+        monkeypatch,
+        IB_CLIENT_ID_SNAPSHOT="9402",
+        IB_CLIENT_ID_LIVE_BARS="9436",
+        IB_CLIENT_ID_TAPE="991",
+        IB_CLIENT_ID_INGEST="9402",
+    )
+    with pytest.raises(mod.IbkrClientIdCollisionError):
+        mod.validate_read_client_ids_no_collision()
+
+
 def test_live_bars_default_client_9436(monkeypatch):
     mod = _reload_config(monkeypatch)
     ep = mod.resolve_live_bars_read()

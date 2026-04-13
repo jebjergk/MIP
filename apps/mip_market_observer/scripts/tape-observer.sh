@@ -24,6 +24,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OBSERVER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # mip_0.7/MIP/apps/mip_market_observer -> ../../../ = repo root
 REPO_ROOT="$(cd "$OBSERVER_DIR/../../.." && pwd)"
+# Load repo root .env when present (IB_*, IBKR_*, TAPE_* for IB socket + API)
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$REPO_ROOT/.env"
+  set +a
+fi
 cd "$OBSERVER_DIR" || exit 1
 
 # Populated by resolve_python_cmd(): interpreter + args for uvicorn

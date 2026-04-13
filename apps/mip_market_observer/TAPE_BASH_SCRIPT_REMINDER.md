@@ -32,6 +32,10 @@ bash MIP/apps/mip_market_observer/scripts/tape-observer.sh restart
 
 Set `TAPE_OBSERVER_BASE_URL=http://127.0.0.1:8095` (or your `TAPE_HOST`/`TAPE_PORT`) and restart the API.
 
+## IB host / Gateway / TWS
+
+Put IB variables in the **repo root** `.env` (same file the UI API loads). `tape-observer.sh` **sources** that `.env` automatically when it exists, so the tape process picks up `IB_API_*`, `IBKR_HOST`, `TAPE_IB_CLIENT_ID`, etc. For **TWS**, change `IB_API_PORT` (and matching legacy ports) to your TWS API port (paper often `7497`) and set `IB_HOST_MODE=tws`.
+
 Living Chart shows tape UI only when the snapshot has **`tape_active_for_ui: true`** (strict live gate + dwell). See [README.md](README.md) “UI (Living Chart — binary tape)”.
 
 ## Windows: “Python wurde nicht gefunden” / Store opens

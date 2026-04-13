@@ -17217,3 +17217,1311 @@ INFO:     127.0.0.1:58555 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
 INFO:     127.0.0.1:58556 - "GET /health HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57301 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
 INFO:     127.0.0.1:57302 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56483 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56484 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58617 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58618 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53601 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53602 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:51118 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51119 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52057 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52058 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51244 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51245 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64321 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64323 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58005 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58006 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61139 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61141 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63160 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63161 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:56355 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56356 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:61281 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61282 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     Started server process [22096]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8095 (Press CTRL+C to quit)
+INFO:     127.0.0.1:63863 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:56596 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60221 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:65301 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65302 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64066 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64067 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55741 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55742 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:51257 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51258 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58716 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58717 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53109 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53110 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60559 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60560 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:58027 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63535 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63536 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58936 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58937 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51340 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51341 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:52620 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52621 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62577 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62578 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63313 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63314 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57905 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57906 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64133 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64134 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:62897 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62898 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55100 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55101 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58673 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58674 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53685 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53686 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52058 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52059 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:64126 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64127 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56765 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56766 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64921 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64922 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64395 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64396 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52696 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52697 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:58103 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58104 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53782 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53783 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62691 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62692 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60100 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60101 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60079 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60080 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:54383 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54384 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61706 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61707 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65199 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65200 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53642 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53647 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56999 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62389 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62390 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65235 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65236 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:53889 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53890 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60159 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60160 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63389 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63390 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51006 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51007 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57485 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57486 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62394 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62395 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52081 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52082 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64015 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64016 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64895 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64896 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62662 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62663 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63473 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63474 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:59924 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59925 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61722 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61723 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59922 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59923 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62392 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62393 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49671 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61137 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61138 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55816 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55817 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54354 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54355 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53391 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53392 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55233 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55234 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:57836 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57837 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63672 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63673 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57729 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57730 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59028 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59029 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60701 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60702 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59338 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54226 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54227 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:49226 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49227 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58287 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58288 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62240 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62241 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64048 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64049 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62178 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62179 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65011 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65012 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:61939 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61940 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52901 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52902 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57463 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57464 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56242 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56243 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54762 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54763 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54207 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54208 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:60211 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60212 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55840 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55841 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53075 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53076 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59333 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59334 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65277 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65278 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54941 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54942 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63100 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63101 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:63236 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63237 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61904 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61905 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56652 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56653 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56209 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56210 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52859 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52860 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63410 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63411 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58430 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58431 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:54125 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54126 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52112 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52113 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55599 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55600 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56811 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56812 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64005 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64006 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61029 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61030 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58375 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58376 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:56920 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56921 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52824 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52825 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62362 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62363 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54572 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54573 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58497 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58498 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51644 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51645 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53221 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53222 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:65002 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65003 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50891 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50892 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57482 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57484 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64070 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64071 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49966 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49967 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:54660 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54661 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:64427 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64429 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56482 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56483 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51135 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51136 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56151 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56153 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:55920 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55921 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61817 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61818 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65195 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65196 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49955 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49956 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49675 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60299 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60300 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50591 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50592 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58213 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58214 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53648 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53649 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:55263 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55264 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56379 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56380 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50967 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50968 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57874 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57875 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50648 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50649 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55554 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55555 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56428 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56429 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62200 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62201 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61493 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61494 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:53386 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53387 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61439 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61440 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63176 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63177 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51533 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51534 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61496 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61497 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60092 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60093 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:50062 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50063 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59113 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64988 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64989 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50616 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50617 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:53100 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53101 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54831 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54832 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53944 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53945 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55905 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55906 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55189 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55190 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53567 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53568 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55810 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55811 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63846 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63847 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49848 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49849 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65261 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65262 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:52900 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52901 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51912 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51913 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54512 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54513 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65235 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65236 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55551 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55552 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64686 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64687 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49673 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57518 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57519 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57038 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57039 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61438 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61441 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:50126 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50127 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52795 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52796 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59452 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59453 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64862 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64863 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51783 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51784 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51999 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54328 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54329 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52599 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52600 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62203 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62204 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57495 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57496 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:52096 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52097 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65463 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65464 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50197 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50198 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49921 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49922 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61458 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61459 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62629 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62630 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62628 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62631 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50296 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50297 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59414 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59415 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59909 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59910 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:53854 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53855 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53999 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62437 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62438 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55600 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55601 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54818 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54819 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58536 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58537 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60976 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60977 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65517 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65518 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59834 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59835 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54740 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54741 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:52386 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52387 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53106 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53107 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55334 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55335 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58672 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58673 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55536 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55537 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54605 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54606 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62823 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62824 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51221 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51224 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55175 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55176 - "GET /health HTTP/1.1" 200 OK
+INFO:     Started server process [40832]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8095 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55849 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51683 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51684 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:61867 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61868 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:55807 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55809 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:56030 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56031 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49673 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49675 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:64201 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64202 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:51363 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51364 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55386 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55387 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:57333 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57334 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60099 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60100 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:62158 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62159 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60782 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60783 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:57939 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57940 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49859 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49860 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:49294 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49295 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52656 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52657 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58748 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58749 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:62233 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62234 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51268 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51269 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:54058 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54059 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52280 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52281 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59213 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59214 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:60265 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60266 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62694 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62696 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55469 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55470 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:54719 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54720 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     127.0.0.1:62109 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62110 - "GET /health HTTP/1.1" 200 OK
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:4002: [WinError 1225] The remote computer refused the network connection
+INFO:     Started server process [38748]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8095 (Press CTRL+C to quit)
+INFO:     127.0.0.1:56335 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60470 - "GET /health HTTP/1.1" 200 OK
+Error 10089, reqId 4: Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details.PBR NYSE/TOP/ALL, contract: Stock(conId=10828168, symbol='PBR', exchange='SMART', primaryExchange='NYSE', currency='USD', localSymbol='PBR', tradingClass='PBR')
+INFO:     127.0.0.1:55322 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55323 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57386 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57387 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65060 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65061 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60851 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60852 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50855 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50856 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62277 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62278 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50314 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50315 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52577 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52578 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58867 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58868 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59615 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59616 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56071 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56072 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54089 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54090 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52636 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52637 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55265 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55266 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57510 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57511 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49952 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49953 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56918 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56919 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54002 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54003 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61957 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61958 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55918 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55919 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57129 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57130 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53832 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53833 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64182 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64183 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52068 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52069 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59398 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59399 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52153 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52154 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49673 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49675 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55486 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55487 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50834 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50835 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59607 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59608 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59781 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59782 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63705 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63706 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64317 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64318 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64974 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64975 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51954 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51955 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56984 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56985 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63212 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63213 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53295 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53296 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59970 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59971 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65067 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65068 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64128 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64129 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60356 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60357 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51448 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51449 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58208 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58209 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54995 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54996 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51135 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51136 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55746 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55747 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63877 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63878 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51619 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51620 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50547 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50548 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55180 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55181 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54973 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54974 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53568 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53569 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59321 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59322 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53190 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53191 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54707 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54708 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52088 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52089 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52924 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52925 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55555 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55556 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50690 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50691 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65232 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65233 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55196 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55197 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61813 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61814 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57065 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57066 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65470 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65471 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62622 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62623 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58797 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58798 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60559 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60560 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56000 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56001 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49733 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49734 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49212 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49213 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60313 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60314 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56379 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56380 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58761 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58762 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57370 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57371 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55153 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55154 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49671 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62377 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62378 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52990 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52991 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56554 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56555 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60138 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60139 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50062 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50063 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61820 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61821 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63216 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63217 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53856 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53857 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56147 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56148 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62839 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62840 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63331 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63332 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54337 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54338 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55954 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55955 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55181 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55182 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60362 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60363 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62947 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62948 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64211 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64212 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54405 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54406 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49722 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49723 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55361 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55362 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52629 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52630 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58789 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58790 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60341 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60342 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51040 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51041 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54321 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54322 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60156 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60157 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62966 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62967 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49673 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60784 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60785 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52023 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52024 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50162 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50163 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57467 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57468 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64125 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64126 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56538 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56539 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53831 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53832 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55784 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55785 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52454 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52455 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57021 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57022 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58667 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58668 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63298 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63299 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58554 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58555 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50675 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50676 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50968 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50969 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60584 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60585 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54632 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54633 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52691 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52692 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52282 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52283 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54151 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54152 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53309 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53310 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56443 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56444 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52306 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52307 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51714 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51715 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50995 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50996 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61704 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61705 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58452 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58453 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49671 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53924 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53925 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65228 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65229 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57868 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57869 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58370 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58371 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56510 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56511 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57178 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57179 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60220 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60221 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60642 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60643 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60715 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60716 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63094 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63095 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62363 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62364 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56022 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56023 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56467 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56468 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52936 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52937 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55831 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55832 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58568 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58569 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61138 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61139 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65512 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65513 - "GET /health HTTP/1.1" 200 OK
+Error 300, reqId 4: Can't find EId with tickerId:4
+INFO:     127.0.0.1:62324 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62325 - "GET /health HTTP/1.1" 200 OK
+Error 10089, reqId 6: Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details.PBR NYSE/TOP/ALL, contract: Stock(conId=10828168, symbol='PBR', exchange='SMART', primaryExchange='NYSE', currency='USD', localSymbol='PBR', tradingClass='PBR')
+INFO:     127.0.0.1:59755 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59756 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58254 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58255 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58519 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58520 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61438 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61439 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56188 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56189 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49866 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49867 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59619 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59620 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49712 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49713 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54094 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54095 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55315 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55316 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57311 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57312 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61704 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61705 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54179 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54180 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60960 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60961 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60787 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60788 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56690 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56691 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53244 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53245 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56890 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56891 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49692 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49693 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52939 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52940 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50205 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50206 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56216 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56218 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53640 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62441 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62442 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50789 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49396 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49397 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49907 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49908 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51851 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51852 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51400 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51401 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55948 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55949 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54443 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54444 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61170 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61171 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55649 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55650 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56961 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56962 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57024 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57025 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61440 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61441 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64879 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64880 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59465 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59466 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63181 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63182 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54754 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54755 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64291 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64292 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60662 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60663 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62176 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62177 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54628 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54629 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59874 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59875 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63766 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63767 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63340 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63341 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61843 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61844 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55430 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55431 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53320 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53321 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63589 - "GET /tape/v1/snapshot?symbol=PBR HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63590 - "GET /health HTTP/1.1" 200 OK
+Error 300, reqId 6: Can't find EId with tickerId:6

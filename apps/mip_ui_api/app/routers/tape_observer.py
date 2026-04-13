@@ -21,6 +21,18 @@ def _tape_base_url() -> str | None:
     return raw or None
 
 
+def _tape_observer_health_diagnostics(base: str) -> dict | None:
+    try:
+        url = f"{base.rstrip('/')}/health"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode())
+            diag = data.get("ib_host_diagnostics")
+            return diag if isinstance(diag, dict) else None
+    except Exception:
+        return None
+
+
 @router.get("/v1/snapshot")
 def tape_snapshot_proxy(symbol: str = Query(..., min_length=1, max_length=32)):
     base = _tape_base_url()
@@ -34,8 +46,24 @@ def tape_snapshot_proxy(symbol: str = Query(..., min_length=1, max_length=32)):
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=6) as resp:
-            body = resp.read().decode()
-            return json.loads(body)
+            body = json.loads(resp.read().decode())
+        diag = _tape_observer_health_diagnostics(base)
+        if diag is None:
+            try:
+                from app.integrations.ibkr_read_host import diagnostics_template, merge_diagnostics
+
+                diag = merge_diagnostics(
+                    diagnostics_template("tape_observer"),
+                    surface_freshness="unknown",
+                    surface_freshness_reason="tape_health_unreachable",
+                    tape_transport_state="unknown",
+                )
+            except Exception:
+                diag = None
+        if diag is not None:
+            body = dict(body)
+            body["ib_host_diagnostics"] = diag
+        return body
     except urllib.error.HTTPError as e:
         _log.warning("Tape observer HTTP %s: %s", e.code, e.reason)
         raise HTTPException(status_code=502, detail=f"Tape observer HTTP {e.code}") from e

@@ -9,6 +9,11 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.integrations.ibkr_read_host import (
+    diagnostics_live_bars_subprocess_result,
+    get_live_bars_subprocess_args,
+)
+
 
 def project_root() -> Path:
     path = Path(__file__).resolve()
@@ -55,6 +60,7 @@ def run_agent_ibkr_live_bars(
     window_bars: int,
     bar_seconds: int | None = None,
     timeout_sec: int = 60,
+    diagnostics_surface: str = "living_charts",
 ) -> dict[str, Any]:
     root = project_root()
     py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
@@ -81,11 +87,29 @@ def run_agent_ibkr_live_bars(
         market_types.append(mkt)
 
     if not symbols:
-        return {"status": "SUCCESS", "symbols": []}
+        diag = diagnostics_live_bars_subprocess_result(
+            surface_name=diagnostics_surface,
+            subprocess_ok=True,
+            payload_status="SUCCESS",
+        )
+        return {"status": "SUCCESS", "symbols": [], "ib_host_diagnostics": diag}
+
+    try:
+        conn = get_live_bars_subprocess_args()
+    except (ImportError, ModuleNotFoundError):
+        conn = {"host": "127.0.0.1", "port": 4002, "client_id": 9436, "connect_timeout_sec": 10}
 
     cmd = [
         str(py),
         str(script),
+        "--host",
+        str(conn["host"]),
+        "--port",
+        str(int(conn["port"])),
+        "--client-id",
+        str(int(conn["client_id"])),
+        "--connect-timeout-sec",
+        str(int(conn.get("connect_timeout_sec") or 10)),
         "--symbols",
         ",".join(symbols),
         "--market-types",
@@ -107,6 +131,13 @@ def run_agent_ibkr_live_bars(
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
     payload = parse_json_payload(stdout, stderr)
+    st = str((payload or {}).get("status") or "").upper() or None
+    ok = proc.returncode == 0
+    diag = diagnostics_live_bars_subprocess_result(
+        surface_name=diagnostics_surface,
+        subprocess_ok=ok,
+        payload_status=st,
+    )
     if proc.returncode != 0:
         raise HTTPException(
             status_code=502,
@@ -115,6 +146,9 @@ def run_agent_ibkr_live_bars(
                 "stdout": stdout[-2000:],
                 "stderr": stderr[-2000:],
                 "payload": payload or None,
+                "ib_host_diagnostics": diag,
             },
         )
-    return payload or {"status": "SUCCESS", "symbols": []}
+    out = payload or {"status": "SUCCESS", "symbols": []}
+    out["ib_host_diagnostics"] = diag
+    return out

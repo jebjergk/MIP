@@ -226,7 +226,30 @@ def build_bootstrap_payload() -> dict[str, Any]:
             for ev in t.get("events") or []:
                 if str(ev.get("type") or "").upper() == "NEWS":
                     news_snapshot.append({"symbol": sym, **ev})
-        return {
+        try:
+            from app.integrations.ibkr_read_host import diagnostics_template, get_live_bars_subprocess_args, merge_diagnostics
+
+            _args = get_live_bars_subprocess_args()
+            _lic_diag = merge_diagnostics(
+                diagnostics_template("live_intelligence"),
+                effective_host=_args["host"],
+                effective_port=int(_args["port"]),
+                effective_client_id=int(_args["client_id"]),
+                surface_freshness="unknown",
+                surface_freshness_reason="bootstrap_no_ib_fetch",
+                tape_transport_state="not_applicable",
+                tape_operational_validity=None,
+                tape_operational_reason_code=None,
+            )
+        except Exception as exc:
+            _log.warning("ib_host_diagnostics for LIC bootstrap degraded: %s", exc)
+            try:
+                from app.integrations.ibkr_read_host import diagnostics_template
+
+                _lic_diag = diagnostics_template("live_intelligence")
+            except Exception:
+                _lic_diag = None
+        out = {
             "ok": True,
             "bootstrap_version": BOOTSTRAP_VERSION,
             "bootstrap_at": datetime.now(timezone.utc).isoformat(),
@@ -238,5 +261,14 @@ def build_bootstrap_payload() -> dict[str, Any]:
             "reconciliation_meta": reconciliation_meta,
             "news_snapshot": news_snapshot[:50],
         }
+        if not _lic_diag:
+            try:
+                from app.integrations.ibkr_read_host import diagnostics_template
+
+                _lic_diag = diagnostics_template("live_intelligence")
+            except Exception:
+                _lic_diag = {}
+        out["ib_host_diagnostics"] = _lic_diag
+        return out
     finally:
         conn.close()

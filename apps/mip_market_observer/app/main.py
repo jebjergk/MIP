@@ -6,10 +6,16 @@ import asyncio
 import logging
 import os
 import random
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+
+_cf = Path(__file__).resolve().parents[4] / "cursorfiles"
+if _cf.is_dir() and str(_cf) not in sys.path:
+    sys.path.insert(0, str(_cf))
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.collector.ibkr_bridge import IbkrTapeBridge
@@ -30,6 +36,7 @@ async def _idle_gc_loop() -> None:
 async def _simulate_loop() -> None:
     coordinator.simulate_mode = True
     coordinator.set_ib_connected(True)
+    coordinator.set_ib_transport_state("connected")
     while True:
         await asyncio.sleep(2.0)
         now = datetime.now(timezone.utc)
@@ -56,11 +63,23 @@ async def lifespan(app: FastAPI):
         _log.info("Tape observer SIMULATE mode (no IBKR)")
         asyncio.create_task(_simulate_loop())
     else:
-        _bridge = IbkrTapeBridge(
-            host=(os.getenv("IBKR_HOST") or "127.0.0.1").strip(),
-            port=int((os.getenv("IBKR_PORT") or "4002").strip() or "4002"),
-            client_id=int((os.getenv("TAPE_IB_CLIENT_ID") or "991").strip() or "991"),
-        )
+        try:
+            from ibkr_host_config import resolve_tape_read, validate_read_client_ids_no_collision
+
+            validate_read_client_ids_no_collision()
+            tape_ep = resolve_tape_read()
+            _bridge = IbkrTapeBridge(
+                host=tape_ep.host,
+                port=tape_ep.port,
+                client_id=tape_ep.client_id,
+            )
+        except Exception as exc:
+            _log.warning("ibkr_host_config unavailable or invalid (%s); legacy tape env.", exc)
+            _bridge = IbkrTapeBridge(
+                host=(os.getenv("IBKR_HOST") or "127.0.0.1").strip(),
+                port=int((os.getenv("IBKR_PORT") or "4002").strip() or "4002"),
+                client_id=int((os.getenv("TAPE_IB_CLIENT_ID") or "991").strip() or "991"),
+            )
         _bridge.start()
 
     asyncio.create_task(_idle_gc_loop())
@@ -80,9 +99,56 @@ app.add_middleware(
 )
 
 
+def _tape_ib_host_diagnostics() -> dict:
+    import ibkr_host_config as ic
+
+    base = ic.ib_host_diagnostics_template(ic.SURFACE_TAPE_OBSERVER)
+    ep = ic.resolve_tape_read()
+    tr_raw = coordinator.get_ib_transport_state()
+    tr = tr_raw if tr_raw in ("disconnected", "reconnecting", "connected") else "unknown"
+    conn = tr == "connected"
+    valid, reason = coordinator.tape_operational_sample()
+    if coordinator.simulate_mode:
+        valid, reason = True, None
+        fresh = "live"
+    elif conn and valid:
+        fresh = "live"
+        reason = None
+    elif conn:
+        fresh = "stale"
+        if reason is None:
+            reason = "tape_not_live_ready"
+    elif tr == "disconnected":
+        fresh = "unavailable"
+    else:
+        fresh = "unknown"
+
+    return ic.merge_diagnostics(
+        base,
+        effective_host=ep.host,
+        effective_port=ep.port,
+        effective_client_id=ep.client_id,
+        socket_connected=conn or bool(coordinator.simulate_mode),
+        api_ready=conn or bool(coordinator.simulate_mode),
+        transport_state=tr,
+        tape_transport_state=tr,
+        tape_operational_validity=valid,
+        tape_operational_reason_code=reason,
+        surface_freshness=fresh,
+        surface_freshness_reason=reason,
+        last_message_ts=None,
+    )
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "mip_tape_observer", "ib_connected": coordinator.ib_connected}
+    return {
+        "ok": True,
+        "service": "mip_tape_observer",
+        "ib_connected": coordinator.ib_connected,
+        "ib_transport_state": coordinator.get_ib_transport_state(),
+        "ib_host_diagnostics": _tape_ib_host_diagnostics(),
+    }
 
 
 @app.get("/tape/v1/snapshot")

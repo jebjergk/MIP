@@ -88,10 +88,29 @@ class TapeCoordinator:
         self._symbols: dict[str, SymbolRuntime] = {}
         self.ib_connected: bool = False
         self.simulate_mode: bool = False
+        self._ib_transport_state: str = "disconnected"
 
     def set_ib_connected(self, ok: bool) -> None:
         with self._lock:
             self.ib_connected = ok
+
+    def set_ib_transport_state(self, state: str) -> None:
+        with self._lock:
+            self._ib_transport_state = str(state or "unknown")
+
+    def get_ib_transport_state(self) -> str:
+        with self._lock:
+            return self._ib_transport_state
+
+    def tape_operational_sample(self) -> tuple[bool | None, str | None]:
+        """Single-symbol sample for /health diagnostics; does not change strict per-symbol UI rules."""
+        with self._lock:
+            syms = sorted(self._symbols.keys())
+        if not syms:
+            return False, "no_active_symbols"
+        snap = self.build_snapshot(syms[0], record_replay=False)
+        ok = bool(snap.get("tape_active_for_ui"))
+        return ok, None if ok else "strict_tape_ui_not_ready"
 
     def touch(self, symbol: str) -> None:
         sym = symbol.strip().upper()

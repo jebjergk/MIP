@@ -3099,11 +3099,31 @@ def _run_on_demand_snapshot_sync(
 
 
 def _default_snapshot_sync_params() -> dict:
-    return {
-        "host": os.getenv("IBKR_SNAPSHOT_HOST", os.getenv("IBKR_EXEC_HOST", "127.0.0.1")),
-        "port": int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002"))),
-        "client_id": int(os.getenv("IBKR_SNAPSHOT_CLIENT_ID", "9402")),
-    }
+    try:
+        from app.integrations.ibkr_read_host import get_snapshot_sync_params
+
+        return get_snapshot_sync_params()
+    except (ImportError, ModuleNotFoundError):
+        return {
+            "host": os.getenv("IBKR_SNAPSHOT_HOST", os.getenv("IBKR_EXEC_HOST", "127.0.0.1")),
+            "port": int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002"))),
+            "client_id": int(os.getenv("IBKR_SNAPSHOT_CLIENT_ID", "9402")),
+        }
+
+
+def _live_portfolio_ib_host_diagnostics(
+    *,
+    snapshot_state: str,
+    latest_snapshot_ts=None,
+    threshold_sec=None,
+) -> dict:
+    from app.integrations.ibkr_read_host import diagnostics_live_portfolio_overview
+
+    return diagnostics_live_portfolio_overview(
+        snapshot_state=snapshot_state,
+        latest_snapshot_ts=latest_snapshot_ts,
+        threshold_sec=threshold_sec,
+    )
 
 
 def _submit_ibkr_order_bundle(
@@ -6480,6 +6500,7 @@ def get_live_activity_overview(
                     "pending_decisions_count": 0,
                 },
                 "updated_at": datetime.now(timezone.utc).isoformat(),
+                "ib_host_diagnostics": _live_portfolio_ib_host_diagnostics(snapshot_state="BLOCKED"),
             }
         cfg = cfg_rows[0]
         portfolio_id = cfg.get("PORTFOLIO_ID")
@@ -7520,6 +7541,11 @@ def get_live_activity_overview(
                 "pending_decisions_count": len(pending_decisions),
             },
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            "ib_host_diagnostics": _live_portfolio_ib_host_diagnostics(
+                snapshot_state=str(snapshot_state or "BLOCKED"),
+                latest_snapshot_ts=latest_snapshot_ts,
+                threshold_sec=cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC"),
+            ),
         }
     finally:
         conn.close()

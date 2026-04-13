@@ -405,7 +405,13 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
         window_bars=window_bars,
         bar_seconds=bar_seconds,
         timeout_sec=90 if bar_seconds else 60,
+        diagnostics_surface="living_charts",
     )
+    ib_diag = ib_payload.pop("ib_host_diagnostics", None)
+    if ib_diag is None:
+        from app.integrations.ibkr_read_host import diagnostics_template
+
+        ib_diag = diagnostics_template("living_charts")
 
     rows: list[dict[str, Any]] = []
     for item in ib_payload.get("symbols") or []:
@@ -451,6 +457,7 @@ def get_symbol_tracker_ib_live(payload: dict[str, Any] = Body(default_factory=di
         "window_bars": window_bars,
         "rows": rows,
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "ib_host_diagnostics": ib_diag,
     }
 
 

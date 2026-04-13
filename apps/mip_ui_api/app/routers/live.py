@@ -10084,17 +10084,37 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             if (cash_eur - est_notional) < min_cash_after:
                 reason_codes.append("CASH_BUFFER_BREACH")
 
-        proposal_or_action = action.get("PROPOSAL_ID") if action.get("PROPOSAL_ID") is not None else action_id
-        idempotency_key = f"{action.get('PORTFOLIO_ID')}:{proposal_or_action}:{req.attempt_n}"
-        cur.execute(
-            """
-            select ORDER_ID, STATUS
-            from MIP.LIVE.LIVE_ORDERS
-            where IDEMPOTENCY_KEY = %s
-            limit 1
-            """,
-            (idempotency_key,),
+        # Idempotency is scoped to ACTION_ID so duplicate LIVE_ACTION rows for the same PROPOSAL_ID
+        # cannot block each other. Rows written before this change used portfolio:PROPOSAL_ID:attempt
+        # for the parent key; for the same action only, we still honor that legacy parent key so
+        # retries after deploy cannot double-submit.
+        portfolio_id_val = action.get("PORTFOLIO_ID")
+        idempotency_key = f"{portfolio_id_val}:{action_id}:{req.attempt_n}"
+        proposal_id_val = action.get("PROPOSAL_ID")
+        legacy_parent_key = (
+            f"{portfolio_id_val}:{proposal_id_val}:{req.attempt_n}" if proposal_id_val is not None else None
         )
+        if legacy_parent_key:
+            cur.execute(
+                """
+                select ORDER_ID, STATUS
+                from MIP.LIVE.LIVE_ORDERS
+                where IDEMPOTENCY_KEY = %s
+                   or (ACTION_ID = %s and IDEMPOTENCY_KEY = %s)
+                limit 1
+                """,
+                (idempotency_key, action_id, legacy_parent_key),
+            )
+        else:
+            cur.execute(
+                """
+                select ORDER_ID, STATUS
+                from MIP.LIVE.LIVE_ORDERS
+                where IDEMPOTENCY_KEY = %s
+                limit 1
+                """,
+                (idempotency_key,),
+            )
         existing_order_rows = fetch_all(cur)
         if existing_order_rows:
             existing_order = existing_order_rows[0]

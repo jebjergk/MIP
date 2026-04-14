@@ -37,6 +37,11 @@ from app.routers.live_bracket_calibration import (
     _calibrate_live_entry_bracket_to_min_viable,
     classify_blocked_bracket_for_diagnostics,
 )
+from app.services.broker_execution_reconcile import (
+    insert_reconcile_audit,
+    run_reconcile_dry_run,
+    verify_apply_item,
+)
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -69,6 +74,7 @@ class LivePortfolioConfigUpsertRequest(BaseModel):
     validity_window_sec: int | None = None
     quote_freshness_threshold_sec: int | None = None
     snapshot_freshness_threshold_sec: int | None = None
+    max_bar_end_lag_sec: int | None = None
     drawdown_stop_pct: float | None = None
     bust_pct: float | None = None
     cooldown_bars: int | None = None
@@ -179,6 +185,28 @@ class UpdateLiveOrderStatusRequest(BaseModel):
     broker_order_id: str | None = None
     total_commission: float | None = None
     notes: str | None = None
+
+
+class ReconcileApplyItem(BaseModel):
+    exec_key: str
+    order_id: str
+
+
+class ReconcileExecutionsDryRunRequest(BaseModel):
+    portfolio_id: int
+    lookback_days: int = Field(default=14, ge=1, le=90)
+    actor: str = "reconcile_operator"
+
+
+class ReconcileExecutionsApplyRequest(BaseModel):
+    portfolio_id: int
+    lookback_days: int = Field(default=14, ge=1, le=90)
+    actor: str
+    confirm_apply: bool = Field(
+        ...,
+        description="Must be true after reviewing dry-run; prevents accidental writes.",
+    )
+    items: list[ReconcileApplyItem] = Field(min_length=1)
 
 
 class SimulatePaperWorkflowRequest(BaseModel):
@@ -9545,11 +9573,12 @@ def revalidate_live_action(
         portfolio_id = action.get("PORTFOLIO_ID")
         action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
         is_exit = action_intent == "EXIT"
-        freshness_threshold_sec = 900
+        quote_freshness_threshold_sec = 900
+        max_bar_end_lag_sec: int | None = None
         try:
             cur.execute(
                 """
-                select coalesce(QUOTE_FRESHNESS_THRESHOLD_SEC, 900)
+                select coalesce(QUOTE_FRESHNESS_THRESHOLD_SEC, 900), MAX_BAR_END_LAG_SEC
                 from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                 where PORTFOLIO_ID = %s
                 limit 1
@@ -9558,9 +9587,18 @@ def revalidate_live_action(
             )
             cfg_row = cur.fetchone()
             if cfg_row and cfg_row[0] is not None:
-                freshness_threshold_sec = int(cfg_row[0])
+                quote_freshness_threshold_sec = int(cfg_row[0])
+            if cfg_row and len(cfg_row) > 1 and cfg_row[1] is not None:
+                max_bar_end_lag_sec = int(cfg_row[1])
         except Exception:
-            freshness_threshold_sec = 900
+            quote_freshness_threshold_sec = 900
+            max_bar_end_lag_sec = None
+        freshness_threshold_sec = quote_freshness_threshold_sec
+        effective_entry_bar_age_threshold_sec = (
+            min(quote_freshness_threshold_sec, max_bar_end_lag_sec)
+            if max_bar_end_lag_sec is not None
+            else quote_freshness_threshold_sec
+        )
         refresh_info = {"attempted": False}
         if req.force_refresh_1m:
             refresh_info = _force_refresh_latest_one_minute_bars(cur, symbol)
@@ -9630,13 +9668,20 @@ def revalidate_live_action(
         now_utc = datetime.now(timezone.utc)
         bar_age_sec = (now_utc - ref_ts_utc).total_seconds()
         market_open_now = _is_extended_trading_open_ny(now_utc)
-        if bar_age_sec > freshness_threshold_sec and not is_exit and market_open_now:
+        if bar_age_sec > effective_entry_bar_age_threshold_sec and not is_exit and market_open_now:
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"IBKR bar is stale ({int(bar_age_sec)}s old > {int(freshness_threshold_sec)}s threshold), "
-                    "revalidation blocked."
-                ),
+                detail={
+                    "message": (
+                        f"IBKR bar is stale ({int(bar_age_sec)}s old > "
+                        f"{int(effective_entry_bar_age_threshold_sec)}s effective entry threshold), revalidation blocked."
+                    ),
+                    "reason_codes": ["IBKR_BAR_STALE_ENTRY_BLOCKED"],
+                    "bar_age_sec": int(bar_age_sec),
+                    "quote_freshness_threshold_sec": int(quote_freshness_threshold_sec),
+                    "max_bar_end_lag_sec": max_bar_end_lag_sec,
+                    "effective_entry_bar_age_threshold_sec": int(effective_entry_bar_age_threshold_sec),
+                },
             )
 
         deviation = None
@@ -9655,12 +9700,20 @@ def revalidate_live_action(
         reason_codes: list[str] = []
         reduced_size_factor = None
         target_open_condition_factor = 1.0
-        if is_exit and bar_age_sec > freshness_threshold_sec:
+        if is_exit and bar_age_sec > quote_freshness_threshold_sec:
             reason_codes.append("EXIT_REVALIDATION_STALE_BAR_BYPASS")
-        if (not is_exit) and (not market_open_now) and bar_age_sec > freshness_threshold_sec:
+        if (not is_exit) and (not market_open_now) and bar_age_sec > effective_entry_bar_age_threshold_sec:
             reason_codes.append("REVALIDATION_STALE_BAR_OUTSIDE_SESSION_ALLOWED")
         if source == "IBKR_DIRECT_1M":
             reason_codes.append("REVALIDATION_PRICE_FROM_IBKR_DIRECT")
+            rp = refresh_info.get("payload") if isinstance(refresh_info, dict) else None
+            if isinstance(rp, dict) and rp.get("fetched_at_utc"):
+                reason_codes.append("IBKR_BAR_FETCH_INSTRUMENTATION_V1")
+        if (
+            max_bar_end_lag_sec is not None
+            and effective_entry_bar_age_threshold_sec < quote_freshness_threshold_sec
+        ):
+            reason_codes.append("MAX_BAR_END_LAG_CAP_ACTIVE")
 
         if is_exit:
             # Live IB exits submit MKT; PROPOSED_PRICE is reference-only. A tight % band vs a 1m bar
@@ -11245,6 +11298,197 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
         conn.close()
 
 
+@router.post("/trades/reconcile-executions/dry-run")
+def reconcile_executions_dry_run(req: ReconcileExecutionsDryRunRequest):
+    """
+    Match BROKER_SNAPSHOTS EXECUTION rows to LIVE_ORDERS by broker id (read-only).
+    Returns matched / ambiguous / unmatched / already_synced — no writes.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select IBKR_ACCOUNT_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            limit 1
+            """,
+            (req.portfolio_id,),
+        )
+        row = cur.fetchone()
+        account_id = str((row or [None])[0] or "").strip()
+        if not account_id:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Live portfolio config or IBKR_ACCOUNT_ID not found.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+            )
+        out = run_reconcile_dry_run(
+            cur,
+            portfolio_id=req.portfolio_id,
+            account_id=account_id,
+            lookback_days=req.lookback_days,
+        )
+        out["dry_run"] = True
+        out["actor"] = req.actor
+        return {"ok": True, **out}
+    finally:
+        conn.close()
+
+
+@router.post("/trades/reconcile-executions/apply")
+def reconcile_executions_apply(req: ReconcileExecutionsApplyRequest):
+    """
+    Apply broker execution → LIVE_ORDERS status updates after dry-run review.
+    Each item is re-validated; every applied row writes BROKER_EVENT_LEDGER (EXECUTION_RECONCILE_APPLY).
+    """
+    if not req.confirm_apply:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "confirm_apply must be true.", "reason_codes": ["RECONCILE_APPLY_NOT_CONFIRMED"]},
+        )
+    reconcile_run_id = str(uuid.uuid4())
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select IBKR_ACCOUNT_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            limit 1
+            """,
+            (req.portfolio_id,),
+        )
+        row = cur.fetchone()
+        account_id = str((row or [None])[0] or "").strip()
+        if not account_id:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": "Live portfolio config or IBKR_ACCOUNT_ID not found.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
+            )
+    finally:
+        conn.close()
+
+    results: list[dict] = []
+    for item in req.items:
+        clf: dict | None = None
+        before: dict = {}
+        conn_i = get_connection()
+        try:
+            cur_i = conn_i.cursor()
+            v = verify_apply_item(
+                cur_i,
+                portfolio_id=req.portfolio_id,
+                account_id=account_id,
+                lookback_days=req.lookback_days,
+                exec_key=item.exec_key,
+                order_id=item.order_id,
+            )
+            if not v.get("ok"):
+                results.append(
+                    {
+                        "exec_key": item.exec_key,
+                        "order_id": item.order_id,
+                        "ok": False,
+                        "reason": v.get("reason"),
+                        "classification": v.get("classification"),
+                    }
+                )
+                continue
+            clf = v["classification"]
+            cur_i.execute(
+                """
+                select ORDER_ID, STATUS, BROKER_ORDER_ID, QTY_ORDERED, QTY_FILLED, AVG_FILL_PRICE, ACTION_ID
+                from MIP.LIVE.LIVE_ORDERS
+                where ORDER_ID = %s
+                  and PORTFOLIO_ID = %s
+                limit 1
+                """,
+                (item.order_id, req.portfolio_id),
+            )
+            orow = cur_i.fetchone()
+            cols = [d[0] for d in (cur_i.description or [])]
+            before = dict(zip(cols, orow)) if orow and cols else {}
+            insert_reconcile_audit(
+                cur_i,
+                portfolio_id=req.portfolio_id,
+                action_id=str(before.get("ACTION_ID") or "") or None,
+                event_type="EXECUTION_RECONCILE_APPLY",
+                payload={
+                    "reconcile_run_id": reconcile_run_id,
+                    "actor": req.actor,
+                    "phase": "before_update_live_order_status",
+                    "exec_key": item.exec_key,
+                    "order_id": item.order_id,
+                    "order_before": {k: before.get(k) for k in ("STATUS", "BROKER_ORDER_ID", "QTY_FILLED", "AVG_FILL_PRICE") if k in before},
+                    "classification": {
+                        "proposed_status": clf.get("proposed_status"),
+                        "proposed_qty_filled": clf.get("proposed_qty_filled"),
+                        "proposed_avg_fill_price": clf.get("proposed_avg_fill_price"),
+                        "reason_detail": clf.get("reason_detail"),
+                    },
+                },
+            )
+            try:
+                conn_i.commit()
+            except Exception:
+                pass
+        finally:
+            conn_i.close()
+
+        if clf is None:
+            continue
+
+        st = str(clf.get("proposed_status") or "FILLED").upper()
+        ureq = UpdateLiveOrderStatusRequest(
+            actor=req.actor,
+            status=st,  # type: ignore[arg-type]
+            qty_filled=float(clf["proposed_qty_filled"]) if clf.get("proposed_qty_filled") is not None else None,
+            avg_fill_price=float(clf["proposed_avg_fill_price"]) if clf.get("proposed_avg_fill_price") is not None else None,
+            broker_order_id=str(before.get("BROKER_ORDER_ID") or "") or None,
+            notes=f"broker_execution_reconcile run={reconcile_run_id} exec_key={item.exec_key}",
+        )
+        try:
+            uout = update_live_order_status(item.order_id, ureq)
+            results.append(
+                {
+                    "exec_key": item.exec_key,
+                    "order_id": item.order_id,
+                    "ok": True,
+                    "update_live_order_status": uout,
+                }
+            )
+        except HTTPException as hex_exc:
+            results.append(
+                {
+                    "exec_key": item.exec_key,
+                    "order_id": item.order_id,
+                    "ok": False,
+                    "reason": "update_live_order_status_failed",
+                    "http_detail": hex_exc.detail,
+                }
+            )
+        except Exception as exc:
+            results.append(
+                {
+                    "exec_key": item.exec_key,
+                    "order_id": item.order_id,
+                    "ok": False,
+                    "reason": "update_live_order_status_error",
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "ok": True,
+        "reconcile_run_id": reconcile_run_id,
+        "portfolio_id": req.portfolio_id,
+        "account_id": account_id,
+        "results": results,
+    }
+
+
 @router.post("/trades/smoke/paper-workflow")
 def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
     """
@@ -11585,6 +11829,7 @@ def list_live_portfolio_configs():
               PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
               DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
@@ -11608,6 +11853,7 @@ def get_live_portfolio_config(portfolio_id: int):
               PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
               DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
@@ -11648,6 +11894,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                        VALIDITY_WINDOW_SEC = coalesce(%s, VALIDITY_WINDOW_SEC),
                        QUOTE_FRESHNESS_THRESHOLD_SEC = coalesce(%s, QUOTE_FRESHNESS_THRESHOLD_SEC),
                        SNAPSHOT_FRESHNESS_THRESHOLD_SEC = coalesce(%s, SNAPSHOT_FRESHNESS_THRESHOLD_SEC),
+                       MAX_BAR_END_LAG_SEC = coalesce(%s, MAX_BAR_END_LAG_SEC),
                        DRAWDOWN_STOP_PCT = coalesce(%s, DRAWDOWN_STOP_PCT),
                        BUST_PCT = coalesce(%s, BUST_PCT),
                        COOLDOWN_BARS = coalesce(%s, COOLDOWN_BARS),
@@ -11667,6 +11914,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                     req.validity_window_sec,
                     req.quote_freshness_threshold_sec,
                     req.snapshot_freshness_threshold_sec,
+                    req.max_bar_end_lag_sec,
                     req.drawdown_stop_pct,
                     req.bust_pct,
                     req.cooldown_bars,
@@ -11683,6 +11931,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                   PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
                   MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
                   VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+                  MAX_BAR_END_LAG_SEC,
                   DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
                   CREATED_AT, UPDATED_AT
                 )
@@ -11690,6 +11939,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                   %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
                   %s, %s, %s, %s,
                   coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
+                  %s,
                   %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
                   current_timestamp(), current_timestamp()
                 )
@@ -11706,6 +11956,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                     req.validity_window_sec,
                     req.quote_freshness_threshold_sec,
                     req.snapshot_freshness_threshold_sec,
+                    req.max_bar_end_lag_sec,
                     req.drawdown_stop_pct,
                     req.bust_pct,
                     req.cooldown_bars,
@@ -11719,6 +11970,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
               PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
               DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
@@ -11753,6 +12005,7 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
               PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
               CREATED_AT, UPDATED_AT
             )
@@ -11760,6 +12013,7 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
               %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
               %s, %s, %s, %s,
               coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
+              %s,
               %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
               current_timestamp(), current_timestamp()
             )
@@ -11776,6 +12030,7 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
                 req.validity_window_sec,
                 req.quote_freshness_threshold_sec,
                 req.snapshot_freshness_threshold_sec,
+                req.max_bar_end_lag_sec,
                 req.drawdown_stop_pct,
                 req.bust_pct,
                 req.cooldown_bars,
@@ -11789,6 +12044,7 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
               PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+              MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
               DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG

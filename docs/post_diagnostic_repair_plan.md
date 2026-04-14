@@ -2,6 +2,8 @@
 
 **Evidence base:** [live_trade_diagnostic_phase4_memo.md](live_trade_diagnostic_phase4_memo.md), [19_closeout_feedback_path_trace.md](19_closeout_feedback_path_trace.md), [17_ib_api_bar_path_and_market_data_mode.md](17_ib_api_bar_path_and_market_data_mode.md), [18_strategy_shape_misalignment.sql](../SQL/scripts/live_trade_diagnostic/18_strategy_shape_misalignment.sql).
 
+**Track A operations:** Step-by-step dry-run / apply / SQL + API verification — [execution_truth_reconcile_playbook.md](execution_truth_reconcile_playbook.md).
+
 This document is the **binding implementation guardrail** for the first repair build. Strategy redesign stays **out of scope** until after A/B ship, diagnostics rerun, and a **formal post-fix strategy review**.
 
 ---

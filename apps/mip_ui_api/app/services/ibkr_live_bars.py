@@ -97,7 +97,7 @@ def run_agent_ibkr_live_bars(
     try:
         conn = get_live_bars_subprocess_args()
     except (ImportError, ModuleNotFoundError):
-        conn = {"host": "127.0.0.1", "port": 4002, "client_id": 9436, "connect_timeout_sec": 10}
+        conn = {"host": "127.0.0.1", "port": 7497, "client_id": 9436, "connect_timeout_sec": 10}
 
     cmd = [
         str(py),

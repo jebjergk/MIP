@@ -76,6 +76,10 @@ The **Live Portfolio Activity** “Trades” table ([`LivePortfolioActivity.jsx`
 - Cross-read `MIP.MART.V_TRADE_INTELLIGENCE` narrative fields for closed trades.  
 - Optional: enrich with `COMMITTEE_ROLE_OUTPUT` for role-level stances.
 
+## Live market data (2026-04)
+
+**Paper portfolio; IB real-time data off ~1 month (subscription).** Delayed 1m / bar context is **expected**. **Track A** (execution truth, reconciles, closeouts) stays in scope; **do not** assume real-time intraday bars for strategy work in this window — prefer daily / next-session framing, pattern quality, horizon realism, brackets, and path-awareness. **No further IB delay investigation** unless subscriptions change. Canonical wording: [live_market_data_path_fix_spec.md §12–§13](live_market_data_path_fix_spec.md#12-operating-stance-2026-04--delayed-data-period). **Execution reconcile runbook:** [execution_truth_reconcile_playbook.md](execution_truth_reconcile_playbook.md). **Strategy-basis planning (no implementation):** [strategy_basis_diagnostic_memo.md](strategy_basis_diagnostic_memo.md).
+
 ## Guardrails
 
 - No threshold or strategy changes based on this memo alone.  

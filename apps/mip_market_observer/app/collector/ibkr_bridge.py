@@ -31,7 +31,7 @@ class IbkrTapeBridge:
         self,
         *,
         host: str = "127.0.0.1",
-        port: int = 4002,
+        port: int = 7497,
         client_id: int = 991,
     ) -> None:
         self.host = host

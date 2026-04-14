@@ -75,6 +75,7 @@ def test_live_bars_default_client_9436(monkeypatch):
     mod = _reload_config(monkeypatch)
     ep = mod.resolve_live_bars_read()
     assert ep.client_id == 9436
+    assert ep.port == 7497  # TWS paper default when no IB_* port env set
 
 
 def test_tape_legacy_ibkr_host(monkeypatch):

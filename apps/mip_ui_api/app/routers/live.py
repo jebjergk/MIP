@@ -3134,7 +3134,7 @@ def _default_snapshot_sync_params() -> dict:
     except (ImportError, ModuleNotFoundError):
         return {
             "host": os.getenv("IBKR_SNAPSHOT_HOST", os.getenv("IBKR_EXEC_HOST", "127.0.0.1")),
-            "port": int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002"))),
+            "port": int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "7497"))),
             "client_id": int(os.getenv("IBKR_SNAPSHOT_CLIENT_ID", "9402")),
         }
 
@@ -3179,7 +3179,7 @@ def _submit_ibkr_order_bundle(
         )
 
     host = os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
-    port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
+    port = int(os.getenv("IBKR_EXEC_PORT", "7497"))
     client_id = int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
     connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
     exchange = os.getenv("IBKR_EXEC_EXCHANGE", "SMART")
@@ -3300,7 +3300,7 @@ def _cancel_ibkr_open_orders(
         )
 
     host = os.getenv("IBKR_EXEC_HOST", "127.0.0.1")
-    port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
+    port = int(os.getenv("IBKR_EXEC_PORT", "7497"))
     client_id = int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410"))
     connect_timeout_sec = int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12"))
 
@@ -5431,7 +5431,7 @@ def refresh_live_snapshot(
     portfolio_id: int | None = Query(None, description="Optional LIVE portfolio ID to stamp snapshot rows"),
     account: str | None = Query(None, description="IBKR account code (optional if only one managed account)"),
     host: str = Query("127.0.0.1", description="IB Gateway/TWS host"),
-    port: int = Query(4002, description="IB paper port (4002 for Gateway paper, 7497 for TWS paper)"),
+    port: int = Query(7497, description="IB paper port (7497 TWS paper default, 4002 Gateway paper)"),
     client_id: int = Query(9402, description="IB client id"),
 ):
     """
@@ -10526,7 +10526,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "tif": "DAY",
                 "runtime": {
                     "host": os.getenv("IBKR_EXEC_HOST", "127.0.0.1"),
-                    "port": int(os.getenv("IBKR_EXEC_PORT", "4002")),
+                    "port": int(os.getenv("IBKR_EXEC_PORT", "7497")),
                     "client_id": int(os.getenv("IBKR_EXEC_CLIENT_ID", "9410")),
                     "connect_timeout_sec": int(os.getenv("IBKR_EXEC_CONNECT_TIMEOUT_SEC", "12")),
                     "exchange": os.getenv("IBKR_EXEC_EXCHANGE", "SMART"),
@@ -10790,8 +10790,8 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             if str(action.get("ASSET_CLASS") or "").upper() == "FX" or _live_parse_fx_pair_for_broker(sym_u):
                 truth_attempts = max(truth_attempts, 3)
                 truth_sleep_sec = max(truth_sleep_sec, 2.0)
-            exec_port = int(os.getenv("IBKR_EXEC_PORT", "4002"))
-            snapshot_port = int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "4002")))
+            exec_port = int(os.getenv("IBKR_EXEC_PORT", "7497"))
+            snapshot_port = int(os.getenv("IBKR_SNAPSHOT_PORT", os.getenv("IBKR_EXEC_PORT", "7497")))
             broker_truth_raw: dict = {}
             broker_open_ids: set[str] = set()
             truth_ack = False
@@ -11129,6 +11129,28 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
         target_status = req.status.upper()
         current_status = (order.get("STATUS") or "").upper()
         if current_status == target_status:
+            # Reconcile may set FILLED before avg price is known; closeout hooks need AVG_FILL_PRICE.
+            if (
+                target_status == "FILLED"
+                and order.get("AVG_FILL_PRICE") is None
+                and req.avg_fill_price is not None
+            ):
+                cur.execute(
+                    """
+                    update MIP.LIVE.LIVE_ORDERS
+                       set AVG_FILL_PRICE = %s,
+                           LAST_UPDATED_AT = current_timestamp()
+                     where ORDER_ID = %s
+                    """,
+                    (float(req.avg_fill_price), order_id),
+                )
+                return {
+                    "ok": True,
+                    "order_id": order_id,
+                    "status": target_status,
+                    "avg_fill_price_patched": True,
+                    "avg_fill_price": float(req.avg_fill_price),
+                }
             return {"ok": True, "order_id": order_id, "status": target_status, "idempotent_replay": True}
 
         qty_ordered = float(order.get("QTY_ORDERED") or 0.0)

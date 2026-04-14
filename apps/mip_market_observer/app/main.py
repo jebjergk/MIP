@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
             _log.warning("ibkr_host_config unavailable or invalid (%s); legacy tape env.", exc)
             _bridge = IbkrTapeBridge(
                 host=(os.getenv("IBKR_HOST") or "127.0.0.1").strip(),
-                port=int((os.getenv("IBKR_PORT") or "4002").strip() or "4002"),
+                port=int((os.getenv("IBKR_PORT") or "7497").strip() or "7497"),
                 client_id=int((os.getenv("TAPE_IB_CLIENT_ID") or "991").strip() or "991"),
             )
         _bridge.start()

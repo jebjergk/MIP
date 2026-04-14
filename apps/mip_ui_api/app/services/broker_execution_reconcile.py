@@ -58,8 +58,9 @@ def _execution_fill_fields(payload: Any) -> tuple[float | None, float | None]:
                 break
             except Exception:
                 pass
+    # IBKR / snapshot serialization varies: camelCase (avgPrice), snake (avg_price), or last price only.
     px = None
-    for pk in ("price", "avgPrice"):
+    for pk in ("avg_price", "avgPrice", "price"):
         if payload.get(pk) is not None:
             try:
                 px = float(payload.get(pk))
@@ -357,7 +358,7 @@ def insert_reconcile_audit(
         insert into MIP.LIVE.BROKER_EVENT_LEDGER (
           EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, ACTION_ID, PAYLOAD
         )
-        values (%s, current_timestamp(), %s, %s, %s, parse_json(%s))
+        select %s, current_timestamp(), %s, %s, %s, parse_json(%s)
         """,
         (eid, event_type, portfolio_id, action_id, json.dumps(payload)),
     )

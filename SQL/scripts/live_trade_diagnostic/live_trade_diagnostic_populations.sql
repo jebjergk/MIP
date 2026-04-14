@@ -102,4 +102,7 @@ committee_considered_post_reset as (
         iff(upper(coalesce(la.SIDE, '')) = 'SELL', 'EXIT', 'ENTRY'))) = 'ENTRY'
 )
 */
+-- Population A′ (not duplicated here): see 09_ib_snapshot_executions_post_reset.sql
+-- (BROKER_SNAPSHOTS EXECUTION + LIVE_ORDERS / LIVE_ACTIONS join — UI-aligned fills.)
+
 -- End of paste blocks (do not execute this file as-is).

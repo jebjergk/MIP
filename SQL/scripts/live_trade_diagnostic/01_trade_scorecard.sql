@@ -237,7 +237,7 @@ live_portfolios as (
     where upper(coalesce(ADAPTER_MODE, '')) = 'LIVE'
 ),
 entry_leg_orders as (
-    select lo.ORDER_ID, lo.ACTION_ID, lo.FILLED_AT, la.PORTFOLIO_ID, la.SYMBOL, la.STATUS, la.UPDATED_AT
+    select lo.ORDER_ID, lo.ACTION_ID, lo.FILLED_AT, la.PORTFOLIO_ID, la.SYMBOL, la.STATUS, la.UPDATED_AT, la.COMMITTEE_RUN_ID
     from MIP.LIVE.LIVE_ORDERS lo
     inner join MIP.LIVE.LIVE_ACTIONS la on la.ACTION_ID = lo.ACTION_ID
     inner join live_portfolios lp on lp.PORTFOLIO_ID = la.PORTFOLIO_ID
@@ -252,6 +252,7 @@ first_entry_fill as (
 executed_entries_scoped as (
     select
         la.ACTION_ID as entry_action_id,
+        la.COMMITTEE_RUN_ID,
         coalesce(f.FILLED_AT, tc.ENTRY_TS, iff(f.FILLED_AT is null and tc.ENTRY_TS is null
             and upper(coalesce(la.STATUS, '')) in ('EXECUTED','EXECUTION_REQUESTED','INTENT_APPROVED','REVALIDATED_PASS'),
             la.UPDATED_AT, null)) as canonical_entry_ts,
@@ -291,7 +292,7 @@ live_portfolios as (
     where upper(coalesce(ADAPTER_MODE, '')) = 'LIVE'
 ),
 entry_leg_orders as (
-    select lo.ORDER_ID, lo.ACTION_ID, lo.FILLED_AT, la.STATUS, la.UPDATED_AT
+    select lo.ORDER_ID, lo.ACTION_ID, lo.FILLED_AT, la.STATUS, la.UPDATED_AT, la.COMMITTEE_RUN_ID
     from MIP.LIVE.LIVE_ORDERS lo
     inner join MIP.LIVE.LIVE_ACTIONS la on la.ACTION_ID = lo.ACTION_ID
     inner join live_portfolios lp on lp.PORTFOLIO_ID = la.PORTFOLIO_ID
@@ -306,6 +307,7 @@ first_entry_fill as (
 executed_entries_scoped as (
     select
         la.ACTION_ID as entry_action_id,
+        la.COMMITTEE_RUN_ID,
         coalesce(f.FILLED_AT, tc.ENTRY_TS, iff(f.FILLED_AT is null and tc.ENTRY_TS is null
             and upper(coalesce(la.STATUS, '')) in ('EXECUTED','EXECUTION_REQUESTED','INTENT_APPROVED','REVALIDATED_PASS'),
             la.UPDATED_AT, null)) as canonical_entry_ts,

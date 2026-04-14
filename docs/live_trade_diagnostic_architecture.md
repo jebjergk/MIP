@@ -2,7 +2,17 @@
 
 This note supports the read-only SQL under [`MIP/SQL/scripts/live_trade_diagnostic/`](../SQL/scripts/live_trade_diagnostic/). It records **verified** Snowflake object names and how layers join.
 
-**Scripts:** `00_scope_and_trade_set.sql` … `08_chronological_trades.sql`, plus `live_trade_diagnostic_populations.sql` (comment-only CTE paste reference).
+**Scripts:** `00_scope_and_trade_set.sql` … `08_chronological_trades.sql`, [`09_ib_snapshot_executions_post_reset.sql`](../SQL/scripts/live_trade_diagnostic/09_ib_snapshot_executions_post_reset.sql) (Population **A′**, UI-aligned IB fills), plus `live_trade_diagnostic_populations.sql` (comment-only CTE paste reference).
+
+## UI “Trades” table vs Population A
+
+| Layer | What the MIP Live Portfolio Activity **Trades** table uses | What diagnostic **Population A** (`00`–`08`) uses |
+|-------|------------------------------------------------------------|--------------------------------------------------|
+| Primary fills | `BROKER_SNAPSHOTS` **`SNAPSHOT_TYPE = 'EXECUTION'`** (`PAYLOAD` = IB execution) | `LIVE_ORDERS` **`FILLED_AT`** + non-protective entry leg |
+| Closeout P&amp;L | Per-fill from payload or MIP estimate from **`POSITION`** snapshots | `TRADE_CLOSEOUT` |
+| API | `GET /live/activity/overview` → `executions[]` ([`live.py`](../apps/mip_ui_api/app/routers/live.py) `get_live_activity_overview`) | N/A (SQL only) |
+
+If executions land in **`BROKER_SNAPSHOTS`** but **`LIVE_ORDERS`** never records **`FILLED_AT`**, the UI shows trades while Population A is empty. Use **script `09`** (A′) to analyze the same broker-ingested fills the overview route prefers.
 
 ## Verified objects
 
@@ -22,6 +32,7 @@ This note supports the read-only SQL under [`MIP/SQL/scripts/live_trade_diagnost
 | Training digest | `MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL` |
 | Trusted signals (current snapshot) | `MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS` |
 | Broker NAV | `MIP.LIVE.BROKER_SNAPSHOTS` (`SNAPSHOT_TYPE = 'NAV'`) |
+| IB executions (UI trades list) | `MIP.LIVE.BROKER_SNAPSHOTS` (`SNAPSHOT_TYPE = 'EXECUTION'`) |
 
 ## Two canonical populations (kept separate)
 

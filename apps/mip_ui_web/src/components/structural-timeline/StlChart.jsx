@@ -9,12 +9,15 @@ const STATE_COLORS = {
   BREAKOUT_EXPANSION: '#26a69a',
   TREND_UP: '#66bb6a',
   PULLBACK_IN_UPTREND: '#a5d6a7',
+  PULLBACK_IN_TREND: '#a5d6a7',
   RANGE_BOUND: '#9e9e9e',
   RANGE_CONTRACTION: '#bdbdbd',
   PULLBACK_IN_DOWNTREND: '#ef9a9a',
   TREND_DOWN: '#ef5350',
   BREAKDOWN: '#c62828',
   RECOVERY: '#42a5f5',
+  REVERSAL_FORMING: '#7e57c2',
+  FAILED_MOVE: '#ff7043',
 }
 
 const LEVEL_COLORS = {
@@ -27,6 +30,13 @@ const LEVEL_COLORS = {
 function fmtDate(d) {
   if (!d) return ''
   return String(d).slice(0, 10)
+}
+
+function fmtPrice(v) {
+  if (v == null || isNaN(v)) return ''
+  if (v >= 100) return v.toFixed(0)
+  if (v >= 10) return v.toFixed(1)
+  return v.toFixed(2)
 }
 
 function CandlestickShape(props) {
@@ -63,10 +73,10 @@ function CandlestickShape(props) {
 function SetupMarkerShape(props) {
   const { cx, cy, payload } = props
   if (cx == null || cy == null || !payload) return null
-  const dir = (payload.DIRECTION || payload.direction || '').toUpperCase()
-  const isProposal = payload.BECAME_PROPOSAL || payload.became_proposal
+  const dir = (payload.setupDir || '').toUpperCase()
+  const hasProposal = payload.setupHasProposal
   const isLong = dir === 'LONG'
-  const fill = isProposal ? '#f9a825' : (isLong ? '#1a73e8' : '#d93025')
+  const fill = hasProposal ? '#f9a825' : (isLong ? '#1a73e8' : '#d93025')
   const size = 5
   const points = isLong
     ? `${cx},${cy - size} ${cx - size},${cy + size} ${cx + size},${cy + size}`
@@ -77,7 +87,12 @@ function SetupMarkerShape(props) {
 function ProposalMarkerShape(props) {
   const { cx, cy } = props
   if (cx == null || cy == null) return null
-  return <circle cx={cx} cy={cy} r={5} fill="#f9a825" stroke="#fff" strokeWidth={1.5} />
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={6} fill="#f9a825" stroke="#fff" strokeWidth={1.5} />
+      <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={8} fill="#fff" fontWeight="bold">P</text>
+    </g>
+  )
 }
 
 function ChartTooltip({ active, payload, label }) {
@@ -87,16 +102,21 @@ function ChartTooltip({ active, payload, label }) {
   return (
     <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 4, padding: '6px 10px', fontSize: '0.8rem', maxWidth: 260 }}>
       <div style={{ fontWeight: 600 }}>{label}</div>
-      {d.open != null && <div>O: {d.open?.toFixed(2)} H: {d.high?.toFixed(2)} L: {d.low?.toFixed(2)} C: {d.close?.toFixed(2)}</div>}
+      {d.open != null && <div>O: {fmtPrice(d.open)} H: {fmtPrice(d.high)} L: {fmtPrice(d.low)} C: {fmtPrice(d.close)}</div>}
       {d.STRUCTURAL_STATE && <div style={{ color: '#6c757d' }}>State: {d.STRUCTURAL_STATE.replace(/_/g, ' ')}</div>}
       {d.setupEvents && d.setupEvents.length > 0 && (
         <div style={{ marginTop: 4, borderTop: '1px solid #eee', paddingTop: 4 }}>
           {d.setupEvents.map((s, i) => (
             <div key={i} style={{ fontSize: '0.75rem', color: '#333' }}>
-              {s.SETUP_FAMILY?.replace(/_/g, ' ')} ({s.DIRECTION})
-              {s.BECAME_PROPOSAL ? ' → Proposal' : ''}
+              {(s.SETUP_FAMILY || s.setup_family || '').replace(/_/g, ' ')} ({s.DIRECTION || s.direction})
+              {(s.BECAME_PROPOSAL || s.became_proposal) ? ' → Proposal' : ''}
             </div>
           ))}
+        </div>
+      )}
+      {d.proposalEvents && d.proposalEvents.length > 0 && (
+        <div style={{ marginTop: 4, color: '#e37400', fontWeight: 600, fontSize: '0.75rem' }}>
+          Proposal: {(d.proposalEvents[0].SETUP_FAMILY || d.proposalEvents[0].setup_family || '').replace(/_/g, ' ')}
         </div>
       )}
     </div>
@@ -124,6 +144,17 @@ export default function StlChart({
       proposalsByDate[d].push(p)
     })
 
+    const lastBarDate = fmtDate(get(bars[bars.length - 1], 'BAR_DATE'))
+
+    // Attach orphan proposals (created after last bar) to the last bar
+    proposals.forEach(p => {
+      const d = fmtDate(get(p, 'PROPOSAL_CREATED_AT') || get(p, 'SETUP_DATE'))
+      if (d > lastBarDate) {
+        if (!proposalsByDate[lastBarDate]) proposalsByDate[lastBarDate] = []
+        if (!proposalsByDate[lastBarDate].includes(p)) proposalsByDate[lastBarDate].push(p)
+      }
+    })
+
     return bars.map(b => {
       const date = fmtDate(get(b, 'BAR_DATE'))
       const open = Number(get(b, 'OPEN'))
@@ -132,6 +163,11 @@ export default function StlChart({
       const close = Number(get(b, 'CLOSE'))
       const barSetups = setupsByDate[date] || []
       const barProposals = proposalsByDate[date] || []
+
+      // Pull direction from the first setup so the marker shape can read it
+      const firstSetup = barSetups[0]
+      const setupDir = firstSetup ? (get(firstSetup, 'DIRECTION') || '') : ''
+      const setupHasProposal = barSetups.some(s => get(s, 'BECAME_PROPOSAL'))
 
       return {
         date,
@@ -142,9 +178,11 @@ export default function StlChart({
         TREND_REGIME: get(b, 'TREND_REGIME'),
         stateColor: STATE_COLORS[get(b, 'STRUCTURAL_STATE')] || '#e0e0e0',
         stateVal: 1,
-        setupMarker: barSetups.length > 0 ? low - (high - low) * 0.08 : null,
+        setupMarker: barSetups.length > 0 ? (setupDir === 'LONG' ? low - (high - low) * 0.12 : high + (high - low) * 0.12) : null,
+        setupDir,
+        setupHasProposal,
         setupEvents: barSetups,
-        proposalMarker: barProposals.length > 0 ? high + (high - low) * 0.08 : null,
+        proposalMarker: barProposals.length > 0 ? high + (high - low) * 0.18 : null,
         proposalEvents: barProposals,
       }
     })
@@ -161,14 +199,58 @@ export default function StlChart({
 
     const seen = new Map()
     levels.forEach(l => {
-      const key = `${get(l, 'LEVEL_TYPE')}|${get(l, 'LEVEL_PRICE')}`
+      const price = Number(get(l, 'LEVEL_PRICE') || 0)
+      const rounded = Math.round(price * 10) / 10
+      const key = `${get(l, 'LEVEL_TYPE')}|${rounded}`
       const existing = seen.get(key)
-      if (!existing || (get(l, 'AS_OF_DATE') || '') > (get(existing, 'AS_OF_DATE') || '')) {
+      const sig = Number(get(l, 'LEVEL_SIGNIFICANCE') || 0)
+      if (!existing || sig > Number(get(existing, 'LEVEL_SIGNIFICANCE') || 0)) {
         seen.set(key, l)
       }
     })
+
     return [...seen.values()]
+      .sort((a, b) => Number(get(b, 'LEVEL_SIGNIFICANCE') || 0) - Number(get(a, 'LEVEL_SIGNIFICANCE') || 0))
+      .slice(0, 12)
   }, [levels, overlays.levels, selectedSetup, get])
+
+  // Entry zones: show for active setups when toggle is on, or for selected setup always
+  const entryZoneSetups = useMemo(() => {
+    const result = []
+    if (overlays.entryZones) {
+      setups.forEach(s => {
+        const status = (get(s, 'SETUP_STATUS') || '').toUpperCase()
+        if (status === 'DETECTED' || status === 'ELIGIBLE') {
+          const lo = Number(get(s, 'ENTRY_ZONE_LOW'))
+          const hi = Number(get(s, 'ENTRY_ZONE_HIGH'))
+          if (lo && hi && lo !== hi) result.push(s)
+        }
+      })
+    }
+    if (selectedSetup && !result.find(s => get(s, 'SETUP_EVENT_ID') === selectedSetupId)) {
+      result.push(selectedSetup)
+    }
+    return result
+  }, [setups, overlays.entryZones, selectedSetup, selectedSetupId, get])
+
+  // Invalidation lines: show for active setups when toggle on, or for selected setup
+  const invalidationSetups = useMemo(() => {
+    const result = []
+    if (overlays.invalidationLines) {
+      setups.forEach(s => {
+        const status = (get(s, 'SETUP_STATUS') || '').toUpperCase()
+        if (status === 'DETECTED' || status === 'ELIGIBLE') {
+          const inv = Number(get(s, 'PRICE_INVALIDATION_LEVEL'))
+          if (inv) result.push(s)
+        }
+      })
+    }
+    if (selectedSetup && !result.find(s => get(s, 'SETUP_EVENT_ID') === selectedSetupId)) {
+      const inv = Number(get(selectedSetup, 'PRICE_INVALIDATION_LEVEL'))
+      if (inv) result.push(selectedSetup)
+    }
+    return result
+  }, [setups, overlays.invalidationLines, selectedSetup, selectedSetupId, get])
 
   if (!chartData.length) return null
 
@@ -190,7 +272,12 @@ export default function StlChart({
         <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-          <YAxis domain={[yMin, yMax]} tick={{ fontSize: 10 }} width={60} />
+          <YAxis
+            domain={[yMin, yMax]}
+            tick={{ fontSize: 10 }}
+            width={60}
+            tickFormatter={fmtPrice}
+          />
           <Tooltip content={<ChartTooltip />} />
 
           {/* S/R levels — horizontal lines, historically faithful */}
@@ -224,24 +311,42 @@ export default function StlChart({
             )
           })}
 
-          {/* Selected setup: entry zone + invalidation */}
-          {selectedSetup && overlays.entryZones !== false && (
-            <ReferenceArea
-              y1={Number(get(selectedSetup, 'ENTRY_ZONE_LOW'))}
-              y2={Number(get(selectedSetup, 'ENTRY_ZONE_HIGH'))}
-              fill="rgba(26,115,232,0.12)"
-              strokeOpacity={0}
-            />
-          )}
-          {selectedSetup && (
-            <ReferenceLine
-              y={Number(get(selectedSetup, 'PRICE_INVALIDATION_LEVEL'))}
-              stroke="#d93025"
-              strokeDasharray="6 3"
-              strokeWidth={1.5}
-              label={{ value: 'Invalidation', position: 'right', fontSize: 10, fill: '#d93025' }}
-            />
-          )}
+          {/* Entry zones for active setups or selected setup */}
+          {entryZoneSetups.map(s => {
+            const lo = Number(get(s, 'ENTRY_ZONE_LOW'))
+            const hi = Number(get(s, 'ENTRY_ZONE_HIGH'))
+            const isSelected = get(s, 'SETUP_EVENT_ID') === selectedSetupId
+            if (!lo || !hi || lo === hi) return null
+            return (
+              <ReferenceArea
+                key={`ez-${get(s, 'SETUP_EVENT_ID')}`}
+                y1={Math.min(lo, hi)}
+                y2={Math.max(lo, hi)}
+                fill={isSelected ? 'rgba(26,115,232,0.18)' : 'rgba(26,115,232,0.08)'}
+                stroke={isSelected ? '#1a73e8' : 'none'}
+                strokeDasharray={isSelected ? '4 2' : ''}
+                strokeOpacity={0.5}
+              />
+            )
+          })}
+
+          {/* Invalidation lines for active setups or selected setup */}
+          {invalidationSetups.map(s => {
+            const inv = Number(get(s, 'PRICE_INVALIDATION_LEVEL'))
+            const isSelected = get(s, 'SETUP_EVENT_ID') === selectedSetupId
+            if (!inv) return null
+            return (
+              <ReferenceLine
+                key={`inv-${get(s, 'SETUP_EVENT_ID')}`}
+                y={inv}
+                stroke="#d93025"
+                strokeDasharray="6 3"
+                strokeWidth={isSelected ? 1.5 : 0.8}
+                strokeOpacity={isSelected ? 1 : 0.4}
+                label={isSelected ? { value: 'Invalidation', position: 'right', fontSize: 10, fill: '#d93025' } : undefined}
+              />
+            )
+          })}
 
           {/* Price series */}
           {chartMode === 'candle' ? (

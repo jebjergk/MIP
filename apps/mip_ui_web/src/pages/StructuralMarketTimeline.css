@@ -7,6 +7,90 @@
   max-width: 900px;
 }
 
+/* ── Back button ── */
+.stl-back-btn {
+  background: none;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #1a73e8;
+}
+.stl-back-btn:hover { background: #f0f4ff; }
+
+/* ── Symbol grid (overview) ── */
+.stl-grid-summary {
+  font-size: 0.85rem;
+  color: #6c757d;
+  margin-bottom: 0.5rem;
+}
+.stl-symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.stl-symbol-tile {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.stl-symbol-tile:hover {
+  border-color: #1a73e8;
+  box-shadow: 0 1px 4px rgba(26,115,232,0.12);
+}
+.stl-tile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.3rem;
+}
+.stl-tile-symbol {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #1a1a2e;
+}
+.stl-tile-market {
+  font-size: 0.7rem;
+  color: #6c757d;
+}
+.stl-tile-counts {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.2rem;
+}
+.stl-tile-count {
+  font-size: 0.75rem;
+  color: #adb5bd;
+  font-weight: 500;
+}
+.stl-count-has { color: #495057; }
+.stl-count-prop { color: #e37400; font-weight: 600; }
+.stl-count-trade { color: #1e8e3e; font-weight: 600; }
+.stl-tile-state {
+  font-size: 0.68rem;
+  color: #6c757d;
+  text-transform: lowercase;
+}
+.stl-tile-proposed {
+  border-left: 3px solid #e37400;
+}
+.stl-tile-traded {
+  border-left: 3px solid #1e8e3e;
+}
+.stl-tile-eligible {
+  border-left: 3px solid #1a73e8;
+}
+
+/* ── Detail anchor (prevents layout jump) ── */
+.stl-detail-anchor {
+  min-height: 0;
+}
+
 /* ── Symbol controls ── */
 .stl-controls {
   display: flex;
@@ -175,6 +259,7 @@
   cursor: pointer;
 }
 .stl-rail-row:hover { background: #f8f9fa; }
+.stl-rail-row--active { background: #e8f0fe !important; border-left: 3px solid #1a73e8; }
 .stl-rail-row:last-child { border-bottom: none; }
 .stl-rail-date { color: #6c757d; min-width: 80px; }
 .stl-rail-badge {
@@ -196,6 +281,8 @@
 .stl-badge-SETUP_STATUS_CHANGE { background: #f1f3f4; color: #5f6368; }
 .stl-rail-desc { flex: 1; }
 .stl-rail-family { color: #6c757d; font-size: 0.75rem; }
+.stl-rail-sep { width: 1px; height: 16px; background: #dee2e6; margin: 0 2px; }
+.stl-rail-empty { padding: 1rem; text-align: center; color: #6c757d; font-size: 0.85rem; }
 
 /* ── Setup detail panel ── */
 .stl-detail {

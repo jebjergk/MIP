@@ -24,20 +24,22 @@ def _date_clauses(start: Optional[str], end: Optional[str], date_col: str):
 
 @router.get("/symbols")
 def get_available_symbols(market_type: Optional[str] = Query(None)):
-    """Distinct symbols that have structural setup events."""
+    """Symbol grid with setup/proposal counts, current state, and trust info."""
     conn = get_connection()
     try:
-        clauses = ["MARKET_TYPE != 'ETF'"]
+        clauses = []
         params = []
         if market_type:
             clauses.append("MARKET_TYPE = %s")
             params.append(market_type.upper())
-        where = " WHERE " + " AND ".join(clauses)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = (
-            "SELECT DISTINCT SYMBOL, MARKET_TYPE"
-            " FROM MIP.APP.STRUCTURAL_SETUP_EVENTS"
+            "SELECT SYMBOL, MARKET_TYPE,"
+            " TOTAL_SETUPS, ELIGIBLE_SETUPS, PROPOSALS_CREATED, TRADES_EXECUTED,"
+            " DOMINANT_STATE, STRONGEST_FAMILY"
+            " FROM MIP.MART.V_STRUCTURAL_TIMELINE_SUMMARY"
             + where
-            + " ORDER BY SYMBOL"
+            + " ORDER BY PROPOSALS_CREATED DESC NULLS LAST, TOTAL_SETUPS DESC NULLS LAST, SYMBOL"
         )
         cur = conn.cursor()
         cur.execute(sql, params)

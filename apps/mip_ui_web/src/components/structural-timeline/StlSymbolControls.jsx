@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 
 const RANGES = [
   { label: '30d', value: '30' },
@@ -31,13 +31,18 @@ export default function StlSymbolControls({
   overlays, toggleOverlay,
   get,
 }) {
-  const [search, setSearch] = useState('')
+  const [input, setInput] = useState(symbol)
 
-  const filteredSymbols = useMemo(() => {
-    if (!search) return symbolList
-    const q = search.toUpperCase()
-    return symbolList.filter(s => (get(s, 'SYMBOL') || '').includes(q))
-  }, [symbolList, search, get])
+  useEffect(() => { setInput(symbol) }, [symbol])
+
+  const handleSubmit = useCallback(() => {
+    const val = input.trim().toUpperCase()
+    if (val && val !== symbol) setSymbol(val)
+  }, [input, symbol, setSymbol])
+
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') handleSubmit()
+  }, [handleSubmit])
 
   return (
     <>
@@ -53,39 +58,19 @@ export default function StlSymbolControls({
         <label>Symbol</label>
         <input
           type="text"
-          value={search || symbol}
-          onChange={e => setSearch(e.target.value)}
-          onFocus={() => setSearch('')}
-          placeholder="Search symbol…"
+          value={input}
+          onChange={e => setInput(e.target.value.toUpperCase())}
+          onKeyDown={handleKeyDown}
+          onBlur={handleSubmit}
+          placeholder="Type symbol…"
           list="stl-sym-list"
-          style={{ width: 110 }}
+          style={{ width: 100, textTransform: 'uppercase' }}
         />
         <datalist id="stl-sym-list">
-          {filteredSymbols.slice(0, 30).map(s => (
+          {symbolList.slice(0, 30).map(s => (
             <option key={get(s, 'SYMBOL')} value={get(s, 'SYMBOL')} />
           ))}
         </datalist>
-        {search && filteredSymbols.length > 0 && search !== symbol && (
-          <button
-            className="stl-range-btn"
-            onClick={() => { setSymbol(search.toUpperCase()); setSearch('') }}
-          >Go</button>
-        )}
-        {search && (
-          <select
-            size={1}
-            value=""
-            onChange={e => { setSymbol(e.target.value); setSearch('') }}
-            style={{ maxWidth: 130 }}
-          >
-            <option value="">Pick…</option>
-            {filteredSymbols.slice(0, 20).map(s => (
-              <option key={get(s, 'SYMBOL')} value={get(s, 'SYMBOL')}>
-                {get(s, 'SYMBOL')}
-              </option>
-            ))}
-          </select>
-        )}
 
         <div className="stl-sep" />
 

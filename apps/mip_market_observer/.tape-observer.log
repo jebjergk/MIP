@@ -19909,3 +19909,376 @@ Traceback (most recent call last):
 ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
 API connection failed: TimeoutError()
 IBHostSession connect failed 127.0.0.1:7497: 
+Peer closed connection.
+IBKR loop error: Socket disconnect
+Traceback (most recent call last):
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\tasks.py", line 258, in __step
+    result = coro.throw(exc)
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\tasks.py", line 652, in sleep
+    return await future
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py", line 284, in __await__
+    yield self  # This tells Task to wait for completion.
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\tasks.py", line 328, in __wakeup
+    future.result()
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py", line 196, in result
+    raise exc
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\ib_insync\util.py", line 341, in run
+    result = loop.run_until_complete(task)
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py", line 196, in result
+    raise exc
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\MIP\apps\mip_market_observer\app\collector\ibkr_bridge.py", line 110, in _run
+    ib.sleep(0.25)
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\ib_insync\util.py", line 386, in sleep
+    run(asyncio.sleep(secs))
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\ib_insync\util.py", line 343, in run
+    raise globalErrorEvent.value() or e
+ConnectionError: Socket disconnect
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: ConnectionRefusedError(22, 'The remote computer refused the network connection', None, 1225, None)
+Make sure API port on TWS/IBG is open
+IBHostSession connect failed 127.0.0.1:7497: [WinError 1225] The remote computer refused the network connection
+API connection failed: TimeoutError()
+IBHostSession connect failed 127.0.0.1:7497: 
+Error 10141, reqId -1: Paper trading disclaimer must first be accepted for API connection.
+Peer closed connection. clientId 991 already in use?
+Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost(None)>
+Traceback (most recent call last):
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\proactor_events.py", line 162, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+API connection failed: TimeoutError()
+IBHostSession connect failed 127.0.0.1:7497: 
+Error 10141, reqId -1: Paper trading disclaimer must first be accepted for API connection.
+Peer closed connection. clientId 991 already in use?
+Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)
+handle: <Handle _ProactorBasePipeTransport._call_connection_lost(None)>
+Traceback (most recent call last):
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\proactor_events.py", line 162, in _call_connection_lost
+    self._sock.shutdown(socket.SHUT_RDWR)
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+API connection failed: TimeoutError()
+IBHostSession connect failed 127.0.0.1:7497: 
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+Error 1102, reqId -1: Connectivity between IBKR and Trader Workstation has been restored - data maintained. All data farms are connected: eufarmnj; cashfarm; usopt.nj; usfarm.nj; eufarm; usfarm; euhmds; cashhmds; fundfarm; ushmds; secdefeu.
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+Error 1102, reqId -1: Connectivity between IBKR and Trader Workstation has been restored - data maintained. All data farms are connected: eufarmnj; cashfarm; usopt.nj; usfarm.nj; eufarm; usfarm; euhmds; cashhmds; fundfarm; ushmds; secdefeu.
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+Error 1102, reqId -1: Connectivity between IBKR and Trader Workstation has been restored - data maintained. All data farms are connected: eufarmnj; cashfarm; usopt.nj; usfarm.nj; eufarm; usfarm; euhmds; cashhmds; fundfarm; ushmds; secdefeu.
+Error 322, reqId 5: Error processing request.-'bY' : cause - Maximum number of account summary requests exceeded; desubscribe to previous request first
+Error 1100, reqId -1: Connectivity between IBKR and Trader Workstation has been lost.
+[WinError 64] The specified network name is no longer available
+IBKR loop error: Socket disconnect
+Traceback (most recent call last):
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\tasks.py", line 258, in __step
+    result = coro.throw(exc)
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\tasks.py", line 652, in sleep
+    return await future
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py", line 284, in __await__
+    yield self  # This tells Task to wait for completion.
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\tasks.py", line 328, in __wakeup
+    future.result()
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py", line 196, in result
+    raise exc
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\ib_insync\util.py", line 341, in run
+    result = loop.run_until_complete(task)
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+  File "C:\Users\kenne\AppData\Local\Programs\Python\Python39\lib\asyncio\futures.py", line 196, in result
+    raise exc
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\MIP\apps\mip_market_observer\app\collector\ibkr_bridge.py", line 110, in _run
+    ib.sleep(0.25)
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\ib_insync\util.py", line 386, in sleep
+    run(asyncio.sleep(secs))
+  File "C:\Users\kenne\OneDrive\Documents\Cursor\mip_0.7\cursorfiles\.venv\lib\site-packages\ib_insync\util.py", line 343, in run
+    raise globalErrorEvent.value() or e
+ConnectionError: Socket disconnect

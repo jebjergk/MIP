@@ -623,5 +623,63 @@
       "short": "How this setup family performs for individual symbols vs. the pooled average.",
       "long": "Symbol breakdown compares each symbol's meaningful hit rate and MFE/MAE ratio against the pooled family average. Symbols can be ALIGNED (similar to average), STRONGER (outperforming), WEAKER (underperforming), or INSUFFICIENT (too few samples to judge)."
     }
+  },
+  "structural_timeline": {
+    "structural_state": {
+      "short": "The structural regime of the symbol on a given date.",
+      "long": "Structural state classifies the symbol's price behavior relative to key levels: BREAKOUT_EXPANSION, TREND_UP, PULLBACK_IN_UPTREND, RANGE_BOUND, BREAKDOWN, etc. It drives setup detection and proposal eligibility."
+    },
+    "support_resistance_level": {
+      "short": "A price level where buying or selling pressure has historically concentrated.",
+      "long": "Levels are detected from touch analysis, reaction strength, and cluster scoring. Higher significance means the level has been tested and held multiple times with strong price reactions. Levels are shown from their detection date only to avoid hindsight bias."
+    },
+    "entry_zone": {
+      "short": "The price range where the system considers entry favorable for a setup.",
+      "long": "Entry zone is bounded by ENTRY_ZONE_LOW and ENTRY_ZONE_HIGH, typically near a key structural level. It defines where price should trade for the setup to be actionable."
+    },
+    "invalidation_level": {
+      "short": "The price at which the setup thesis is considered broken.",
+      "long": "If price closes beyond the invalidation level, the structural logic that supported the setup is no longer valid. This defines the risk boundary for the trade."
+    },
+    "setup_narrative": {
+      "short": "A backend-generated plain-language explanation of why a setup was detected.",
+      "long": "The narrative is computed from the setup family, level type, price, structural state, and confirmation scores. It explains the structural reasoning without frontend interpretation."
+    },
+    "proposal_skip_reason": {
+      "short": "Why a detected setup did not become a trade proposal.",
+      "long": "Common reasons: NO_ACTIVE_POLICY (no risk policy configured), REJECTED_TRUST (family trust label is REJECTED), RESEARCH_ONLY (insufficient evidence), WEAK_REGIME (poor regime compatibility). Computed by the backend."
+    },
+    "lifecycle_status": {
+      "short": "Where a setup is in its lifecycle: DETECTED, ELIGIBLE, STALE, INVALIDATED, EXPIRED.",
+      "long": "Setups progress from DETECTED (identified) to ELIGIBLE (meets criteria) to terminal states. STALE means price drifted away, INVALIDATED means structure broke, EXPIRED means the time window closed."
+    },
+    "event_timeline": {
+      "short": "Chronological stream of structural events for a symbol.",
+      "long": "Events include state changes, level detections, setup detections, eligibility changes, proposal creation, and invalidations. Each event links back to the chart date and underlying setup when applicable."
+    },
+    "symbol_vs_family": {
+      "short": "How this symbol compares to the pooled family averages.",
+      "long": "Compares the symbol's meaningful hit rate and MFE/MAE ratio against the family pool. Verdict is STRONGER (outperforming), ALIGNED (similar), WEAKER (underperforming), or INSUFFICIENT (too few samples)."
+    },
+    "mfe": {
+      "short": "Maximum Favorable Excursion — the best price movement in the trade's favor.",
+      "long": "MFE measures the peak unrealized gain during the evaluation window. Higher MFE means the trade thesis produced a significant favorable move, even if it later reversed."
+    },
+    "mae": {
+      "short": "Maximum Adverse Excursion — the worst price movement against the trade.",
+      "long": "MAE measures the peak unrealized loss during the evaluation window. Lower MAE (closer to zero) means the trade had less drawdown risk."
+    },
+    "failure_mode": {
+      "short": "How a setup failed to achieve its target move.",
+      "long": "Categories: SUCCESS (hit target), IMMEDIATE_FAILURE (failed within 2 bars), STRUCTURAL_BREAK (invalidation hit without any directional move), LATE_FADE (moved favorably then reversed), NO_MOVE (price stagnated)."
+    },
+    "regime_compat": {
+      "short": "How compatible the current market regime is with this setup type.",
+      "long": "GOOD means the volatility and trend environment historically supports this setup family. NEUTRAL is mixed. POOR means the regime has been unfavorable for this type of trade."
+    },
+    "structure_confidence": {
+      "short": "How confident the system is in the structural interpretation.",
+      "long": "A 0–1 score combining level significance, confirmation scores, and state coherence. Higher values mean the structural thesis is well-supported by multiple converging signals."
+    }
   }
 }

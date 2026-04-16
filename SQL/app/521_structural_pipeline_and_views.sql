@@ -127,6 +127,8 @@ DECLARE
     v_regime      VARIANT;
     v_setups      VARIANT;
     v_lifecycle   VARIANT;
+    v_outcomes    VARIANT;
+    v_trust       VARIANT;
     v_proposals   VARIANT;
 BEGIN
 
@@ -150,7 +152,15 @@ BEGIN
     CALL MIP.APP.SP_UPDATE_SETUP_LIFECYCLE(:v_as_of, NULL);
     v_lifecycle := (SELECT PARSE_JSON('{"status":"done"}'));
 
-    -- Step 6: Generate proposals
+    -- Step 6: Evaluate outcomes for setups old enough to have forward bars
+    CALL MIP.APP.SP_EVALUATE_STRUCTURAL_OUTCOMES(DATEADD('day', -90, :v_as_of), NULL, NULL);
+    v_outcomes := (SELECT PARSE_JSON('{"status":"done"}'));
+
+    -- Step 7: Refresh trust labels and path stats from evaluated outcomes
+    CALL MIP.APP.SP_COMPUTE_STRUCTURAL_TRUST();
+    v_trust := (SELECT PARSE_JSON('{"status":"done"}'));
+
+    -- Step 8: Generate proposals (now using up-to-date trust data)
     CALL MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(:P_PORTFOLIO_ID, :P_MAX_PROPOSALS, :v_as_of);
     v_proposals := (SELECT PARSE_JSON('{"status":"done"}'));
 
@@ -164,6 +174,8 @@ BEGIN
             'SP_COMPUTE_REGIME_TAGS',
             'SP_DETECT_STRUCTURAL_SETUPS',
             'SP_UPDATE_SETUP_LIFECYCLE',
+            'SP_EVALUATE_STRUCTURAL_OUTCOMES',
+            'SP_COMPUTE_STRUCTURAL_TRUST',
             'SP_PROPOSE_STRUCTURAL_TRADES'
         ),
         'elapsed_sec', DATEDIFF('second', :v_run_start, CURRENT_TIMESTAMP())

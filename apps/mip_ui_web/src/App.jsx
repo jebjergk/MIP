@@ -19,6 +19,7 @@ import LearningLedger from './pages/LearningLedger'
 import PerformanceDashboard from './pages/PerformanceDashboard'
 import GlossaryAdminPage from './pages/GlossaryAdminPage'
 import StructuralTrainingIntelligence from './pages/StructuralTrainingIntelligence'
+import StructuralMarketTimeline from './pages/StructuralMarketTimeline'
 import AppLayout from './components/AppLayout'
 import { AskMipRuntimeProvider } from './context/AskMipRuntimeContext'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
@@ -38,7 +39,8 @@ function pageTitleForPath(pathname) {
     { pattern: '/runs/:runId', title: 'Run Details' },
     { pattern: '/structural-training', title: 'Structural Training Intelligence' },
     { pattern: '/training', title: 'Legacy Training Status' },
-    { pattern: '/market-timeline', title: 'Market Timeline' },
+    { pattern: '/structural-timeline', title: 'Structural Market Timeline' },
+    { pattern: '/market-timeline', title: 'Legacy Market Timeline' },
     { pattern: '/symbol-tracker', title: 'Living Chart' },
     { pattern: '/living-chart', title: 'Living Chart' },
     { pattern: '/live-intelligence', title: 'Live Intelligence Cockpit' },
@@ -98,6 +100,7 @@ export default function App() {
         <Route path="/runs/:runId" element={<AuditViewer />} />
         <Route path="/structural-training" element={<StructuralTrainingIntelligence />} />
         <Route path="/training" element={<TrainingStatus />} />
+        <Route path="/structural-timeline" element={<StructuralMarketTimeline />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/symbol-tracker" element={<SymbolTracker />} />
         <Route path="/living-chart" element={<SymbolTracker />} />

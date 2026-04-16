@@ -29,7 +29,8 @@ const NAV_GROUPS = [
   {
     label: 'Research',
     items: [
-      { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Market Timeline' },
+      { to: '/structural-timeline', icon: '\uD83C\uDFD7\uFE0F', label: 'Structural Timeline' },
+      { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Legacy Market Timeline' },
       { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
       { to: '/structural-training', icon: '\uD83E\uDDEC', label: 'Structural Training' },
       { to: '/training',        icon: '\uD83C\uDFAF', label: 'Legacy Training' },

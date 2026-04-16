@@ -1,0 +1,342 @@
+/* ── Structural Market Timeline ── */
+
+.stl-intro {
+  color: #6c757d;
+  margin: 0 0 1rem;
+  font-size: 0.92rem;
+  max-width: 900px;
+}
+
+/* ── Symbol controls ── */
+.stl-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.8rem;
+  background: #f8f9fa;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+.stl-controls select,
+.stl-controls input[type="text"] {
+  padding: 0.32rem 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  background: #fff;
+}
+.stl-controls label {
+  font-size: 0.78rem;
+  color: #6c757d;
+  margin-right: 0.2rem;
+}
+.stl-range-btn {
+  padding: 0.28rem 0.6rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.stl-range-btn--active {
+  background: #1a1a2e;
+  color: #fff;
+  border-color: #1a1a2e;
+}
+.stl-chart-toggle {
+  padding: 0.28rem 0.5rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.stl-chart-toggle--active {
+  background: #3366cc;
+  color: #fff;
+  border-color: #3366cc;
+}
+.stl-sep { width: 1px; height: 24px; background: #dee2e6; }
+
+/* ── Overlay toggles ── */
+.stl-overlays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.stl-overlay-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid #dee2e6;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  background: #fff;
+  color: #6c757d;
+  user-select: none;
+}
+.stl-overlay-chip--on {
+  background: #e8f0fe;
+  color: #1a73e8;
+  border-color: #1a73e8;
+}
+
+/* ── Summary strip ── */
+.stl-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.stl-kpi {
+  flex: 0 0 auto;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  min-width: 110px;
+}
+.stl-kpi-label {
+  font-size: 0.72rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.stl-kpi-value {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+.stl-kpi-value--small {
+  font-size: 0.9rem;
+}
+
+/* ── Chart area ── */
+.stl-chart-wrap {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  padding: 0.5rem;
+  margin-bottom: 1rem;
+}
+.stl-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  padding: 0.4rem 0.5rem 0;
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+.stl-legend-item { display: flex; align-items: center; gap: 0.25rem; }
+.stl-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ── State strip ── */
+.stl-state-strip {
+  margin-top: 2px;
+}
+
+/* ── Event rail ── */
+.stl-rail {
+  margin-bottom: 1rem;
+}
+.stl-rail h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+}
+.stl-rail-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+.stl-rail-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+.stl-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.stl-rail-row:hover { background: #f8f9fa; }
+.stl-rail-row:last-child { border-bottom: none; }
+.stl-rail-date { color: #6c757d; min-width: 80px; }
+.stl-rail-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.stl-badge-STATE_CHANGED      { background: #e8f0fe; color: #1a73e8; }
+.stl-badge-SETUP_DETECTED     { background: #e6f4ea; color: #1e8e3e; }
+.stl-badge-SETUP_ELIGIBLE     { background: #fef7e0; color: #e37400; }
+.stl-badge-SETUP_INVALIDATED  { background: #fde7e9; color: #d93025; }
+.stl-badge-SETUP_EXPIRED      { background: #f1f3f4; color: #5f6368; }
+.stl-badge-SETUP_STALE        { background: #f1f3f4; color: #5f6368; }
+.stl-badge-PROPOSAL_CREATED   { background: #fff3cd; color: #856404; }
+.stl-badge-LEVEL_DETECTED     { background: #e8eaf6; color: #3f51b5; }
+.stl-badge-SETUP_STATUS_CHANGE { background: #f1f3f4; color: #5f6368; }
+.stl-rail-desc { flex: 1; }
+.stl-rail-family { color: #6c757d; font-size: 0.75rem; }
+
+/* ── Setup detail panel ── */
+.stl-detail {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.stl-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.stl-detail-header h3 { margin: 0; font-size: 1rem; }
+.stl-detail-close {
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  cursor: pointer;
+  color: #6c757d;
+}
+.stl-detail-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.stl-detail-section {
+  padding: 0.6rem;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+}
+.stl-detail-section h4 {
+  font-size: 0.82rem;
+  margin: 0 0 0.4rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stl-detail-narrative {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: #333;
+  background: #f8f9fa;
+  padding: 0.6rem;
+  border-radius: 4px;
+  margin-bottom: 0.8rem;
+  border-left: 3px solid #3366cc;
+}
+.stl-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem 1rem;
+  font-size: 0.82rem;
+}
+.stl-detail-label { color: #6c757d; }
+.stl-detail-value { font-weight: 500; }
+
+/* Trust/status badges */
+.stl-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.stl-badge-trusted     { background: #e6f4ea; color: #1e8e3e; }
+.stl-badge-provisional { background: #fef7e0; color: #e37400; }
+.stl-badge-research    { background: #e8f0fe; color: #1a73e8; }
+.stl-badge-rejected    { background: #fde7e9; color: #d93025; }
+.stl-badge-unknown     { background: #f1f3f4; color: #5f6368; }
+.stl-badge-long        { background: #e6f4ea; color: #1e8e3e; }
+.stl-badge-short       { background: #fde7e9; color: #d93025; }
+.stl-badge-success     { background: #e6f4ea; color: #1e8e3e; }
+.stl-badge-fail        { background: #fde7e9; color: #d93025; }
+
+/* Comparison table */
+.stl-comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.stl-comparison-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  color: #6c757d;
+  font-size: 0.75rem;
+}
+.stl-comparison-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+.stl-cmp-stronger { color: #1e8e3e; font-weight: 600; }
+.stl-cmp-weaker   { color: #d93025; font-weight: 600; }
+.stl-cmp-aligned  { color: #6c757d; }
+
+/* ── Symbol summary modules ── */
+.stl-sym-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+.stl-sym-card {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+}
+.stl-sym-card h4 {
+  font-size: 0.82rem;
+  margin: 0 0 0.5rem;
+  color: #1a1a2e;
+}
+.stl-funnel-bar {
+  display: flex;
+  height: 20px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f0f0f0;
+  margin-bottom: 0.3rem;
+}
+.stl-funnel-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: #fff;
+  font-weight: 600;
+}
+.stl-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.stl-mini-table td {
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+.stl-mini-table td:first-child { color: #6c757d; }
+.stl-mini-table td:last-child { text-align: right; font-weight: 500; }

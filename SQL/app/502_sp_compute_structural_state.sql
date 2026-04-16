@@ -209,44 +209,46 @@ BEGIN
                  AND cb.HIGH >= COALESCE(str.NEAREST_RESISTANCE_LOW, cb.HIGH + 1) - COALESCE(atr.ATR_20, 0) * 1.5
             THEN 'REVERSAL_FORMING'
 
+            -- PULLBACK_IN_TREND: was trending, now counter-move without breaking structure
+            -- Evaluated BEFORE TREND_UP/DOWN so that real pullbacks don't get absorbed by broad trend checks
+            -- Uptrend pullback: was TREND_UP, close crossed below SMA_10 (real pullback signal),
+            -- but swing low still intact (trend structure preserved)
+            WHEN COALESCE(ps.STRUCTURAL_STATE, '') IN ('TREND_UP', 'BREAKOUT_EXPANSION')
+                 AND cb.CLOSE < cb.SMA_10
+                 AND cb.LOW > COALESCE(str.RECENT_SWING_LOW, 0)
+                 AND pb.HIGHER_LOWS_15 >= 2
+            THEN 'PULLBACK_IN_TREND'
+
+            -- Downtrend pullback: was TREND_DOWN, close crossed above SMA_10, swing high intact
+            WHEN COALESCE(ps.STRUCTURAL_STATE, '') IN ('TREND_DOWN', 'BREAKDOWN_EXPANSION')
+                 AND cb.CLOSE > cb.SMA_10
+                 AND cb.HIGH < COALESCE(str.RECENT_SWING_HIGH, 999999)
+                 AND pb.LOWER_HIGHS_15 >= 2
+            THEN 'PULLBACK_IN_TREND'
+
+            -- Continue PULLBACK_IN_TREND: still between swing extremes, max 5 bars
+            WHEN COALESCE(ps.STRUCTURAL_STATE, '') = 'PULLBACK_IN_TREND'
+                 AND cb.LOW > COALESCE(str.RECENT_SWING_LOW, 0)
+                 AND cb.HIGH < COALESCE(str.RECENT_SWING_HIGH, 999999)
+                 AND COALESCE(ps.BARS_IN_STATE, 0) < 5
+            THEN 'PULLBACK_IN_TREND'
+
             -- TREND_UP: higher lows, above SMA, or breakout matured (>= 3 bars)
+            -- Also: pullback resolving back above SMA
             WHEN (pb.HIGHER_LOWS_15 >= 3 AND cb.CLOSE > cb.SMA_10)
                  OR (COALESCE(ps.STRUCTURAL_STATE, '') = 'BREAKOUT_EXPANSION'
                      AND COALESCE(ps.BARS_IN_STATE, 0) >= 3)
+                 OR (COALESCE(ps.STRUCTURAL_STATE, '') = 'PULLBACK_IN_TREND'
+                     AND cb.CLOSE > cb.SMA_10 AND pb.HIGHER_LOWS_15 >= 3)
             THEN 'TREND_UP'
 
             -- TREND_DOWN: lower highs, below SMA, or breakdown matured
+            -- Also: downtrend pullback resolving back below SMA
             WHEN (pb.LOWER_HIGHS_15 >= 3 AND cb.CLOSE < cb.SMA_10)
                  OR (COALESCE(ps.STRUCTURAL_STATE, '') = 'BREAKDOWN_EXPANSION'
                      AND COALESCE(ps.BARS_IN_STATE, 0) >= 3)
-            THEN 'TREND_DOWN'
-
-            -- PULLBACK_IN_TREND: was trending, now counter-move without structure break
-            WHEN COALESCE(ps.STRUCTURAL_STATE, '') IN ('TREND_UP', 'BREAKOUT_EXPANSION')
-                 AND pb.DOWN_BARS_5 >= 2
-                 AND cb.LOW > COALESCE(str.RECENT_SWING_LOW, 0)
-            THEN 'PULLBACK_IN_TREND'
-
-            WHEN COALESCE(ps.STRUCTURAL_STATE, '') IN ('TREND_DOWN', 'BREAKDOWN_EXPANSION')
-                 AND pb.UP_BARS_5 >= 2
-                 AND cb.HIGH < COALESCE(str.RECENT_SWING_HIGH, 999999)
-            THEN 'PULLBACK_IN_TREND'
-
-            -- Continue PULLBACK_IN_TREND if already in it
-            WHEN COALESCE(ps.STRUCTURAL_STATE, '') = 'PULLBACK_IN_TREND'
-                 AND cb.LOW > COALESCE(str.RECENT_SWING_LOW, 0)
-                 AND cb.HIGH < COALESCE(str.RECENT_SWING_HIGH, 999999)
-            THEN 'PULLBACK_IN_TREND'
-
-            -- Pullback resolving: return to trend
-            WHEN COALESCE(ps.STRUCTURAL_STATE, '') = 'PULLBACK_IN_TREND'
-                 AND cb.CLOSE > cb.SMA_10
-                 AND pb.HIGHER_LOWS_15 >= 3
-            THEN 'TREND_UP'
-
-            WHEN COALESCE(ps.STRUCTURAL_STATE, '') = 'PULLBACK_IN_TREND'
-                 AND cb.CLOSE < cb.SMA_10
-                 AND pb.LOWER_HIGHS_15 >= 3
+                 OR (COALESCE(ps.STRUCTURAL_STATE, '') = 'PULLBACK_IN_TREND'
+                     AND cb.CLOSE < cb.SMA_10 AND pb.LOWER_HIGHS_15 >= 3)
             THEN 'TREND_DOWN'
 
             -- RANGE_BOUND: default when no strong trend or breakout

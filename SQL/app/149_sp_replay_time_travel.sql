@@ -131,6 +131,13 @@ begin
             end for;
         end if;
 
+        -- Run structural strategy pipeline for this day
+        begin
+            call MIP.APP.SP_RUN_STRUCTURAL_DAILY_PIPELINE(:v_d, null, 5);
+        exception
+            when other then null;
+        end;
+
         if (:P_RUN_BRIEFS) then
             v_portfolios := (
                 select PORTFOLIO_ID

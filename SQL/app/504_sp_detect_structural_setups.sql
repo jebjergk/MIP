@@ -498,15 +498,16 @@ BEGIN
         'MEDIUM',
         OBJECT_CONSTRUCT('upper_wick_ratio', d.UPPER_WICK_RATIO, 'failed_high', GREATEST(d.HIGH, COALESCE(d.PREV1_HIGH, d.HIGH)))
     FROM TMP_DET_FINAL d
-    WHERE d.STRUCTURAL_STATE IN ('FAILED_MOVE', 'RANGE_BOUND', 'REVERSAL_FORMING')
+    WHERE d.STRUCTURAL_STATE IN ('FAILED_MOVE', 'RANGE_BOUND', 'REVERSAL_FORMING',
+                                  'TREND_UP', 'BREAKOUT_EXPANSION', 'PULLBACK_IN_TREND')
       AND d.RESISTANCE_PRICE IS NOT NULL
-      AND d.RESISTANCE_SIG >= 0.25
-      -- A recent bar attempted breakout (wick above resistance)
+      AND d.RESISTANCE_SIG >= 0.20
+      -- A recent bar attempted breakout (wick or close above resistance)
       AND (d.HIGH > COALESCE(d.RESISTANCE_HIGH, d.RESISTANCE_PRICE)
            OR COALESCE(d.PREV1_HIGH, 0) > COALESCE(d.RESISTANCE_HIGH, d.RESISTANCE_PRICE))
       -- Current bar closed back below resistance
       AND d.CLOSE < d.RESISTANCE_PRICE
-      AND d.UPPER_WICK_RATIO >= 0.35;
+      AND d.UPPER_WICK_RATIO >= 0.25;
 
     -- ============================================================
     -- STEP 3: Count inserted setups

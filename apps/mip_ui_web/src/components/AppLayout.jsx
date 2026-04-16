@@ -31,7 +31,8 @@ const NAV_GROUPS = [
     items: [
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Market Timeline' },
       { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
-      { to: '/training',        icon: '\uD83C\uDFAF', label: 'Training Status' },
+      { to: '/structural-training', icon: '\uD83E\uDDEC', label: 'Structural Training' },
+      { to: '/training',        icon: '\uD83C\uDFAF', label: 'Legacy Training' },
       { to: '/parallel-worlds', icon: '\uD83C\uDF10', label: 'Parallel Worlds' },
     ],
   },

@@ -529,5 +529,99 @@
       "short": "Most recent AI digest for the selected portfolio.",
       "long": "Latest digest is the most recent AI-generated digest for this portfolio. It includes as_of_ts and pipeline_run_id. Expand to see the full digest."
     }
+  },
+  "structural_training": {
+    "setup_family": {
+      "short": "A structural setup archetype (e.g. BREAKOUT RETEST LONG).",
+      "long": "Setup family is the core identity of the structural strategy engine. Each family represents a recurring price pattern detected from daily bars — breakout retests, wick rejections, three-bar reversals, trend pullbacks, and failed breakouts — in both long and short directions."
+    },
+    "direction": {
+      "short": "LONG (buying) or SHORT (selling).",
+      "long": "Direction indicates whether the setup expects price to rise (LONG) or fall (SHORT). The structural engine evaluates long and short families independently."
+    },
+    "best_window": {
+      "short": "The evaluation horizon (5, 10, or 20 bars) where this family performs best.",
+      "long": "Best window is the number of daily bars over which this setup family achieves its highest meaningful hit rate. The engine evaluates every setup at 5, 10, and 20 bars and selects the window with the strongest results."
+    },
+    "meaningful_hit_rate": {
+      "short": "How often the setup reaches a meaningful price move (2%+ for stocks).",
+      "long": "Meaningful hit rate measures how frequently a detected setup achieves a significant favorable move — at least 2% for stocks/ETFs, or a volatility-adjusted threshold for FX. Higher is better. 40%+ is strong; below 30% is weak."
+    },
+    "path_survival": {
+      "short": "How often the setup reaches its target before being stopped out.",
+      "long": "Path survival measures how frequently the setup reaches its meaningful move before structural invalidation is hit. A high path survival means the setup tends to work cleanly; low survival means it often triggers its stop first."
+    },
+    "mfe_mae_ratio": {
+      "short": "Reward-to-risk: how much the setup gains vs. how much it risks.",
+      "long": "MFE/MAE ratio compares the average maximum favorable excursion (best gain) to the average maximum adverse excursion (worst drawdown). A ratio above 1.5 indicates favorable risk-reward; below 1.0 means losses typically exceed gains."
+    },
+    "trust_label": {
+      "short": "Overall quality grade: TRUSTED, PROVISIONAL, RESEARCH, or REJECTED.",
+      "long": "Trust label is a deterministic quality grade assigned by the structural engine based on sample size, meaningful hit rate, MFE/MAE ratio, and path survival rate. TRUSTED (40+ samples, 40%+ MHR, 1.5+ ratio) means the family is reliable. PROVISIONAL is promising but needs more evidence. RESEARCH has data but quality is unproven. REJECTED has poor metrics."
+    },
+    "maturity": {
+      "short": "How much evidence the engine has accumulated for this setup family.",
+      "long": "Maturity reflects the sample size and evidence depth. INSUFFICIENT (<10 setups), EMERGING (10-19), RESEARCHING (20-29), PROVISIONAL (30-39), TRUSTED (40+). Higher maturity means more confidence in the quality metrics."
+    },
+    "regime_fit": {
+      "short": "How often this setup appears in favorable market conditions.",
+      "long": "Regime fit measures what percentage of detected setups occurred when the volatility, trend, and range regime was rated GOOD for this family. High regime fit means the setup naturally occurs in environments where it works well."
+    },
+    "state_compatibility": {
+      "short": "Which structural market states this family most often appears in.",
+      "long": "State compatibility shows the distribution of structural states (TREND_UP, RANGE_BOUND, BREAKOUT_EXPANSION, etc.) when this setup family is detected. Each setup has a natural affinity for certain states."
+    },
+    "structural_state": {
+      "short": "The market's structural condition: trending, ranging, breaking out, etc.",
+      "long": "Structural state is a daily classification of each symbol's market condition from the state machine: TREND_UP, TREND_DOWN, RANGE_BOUND, BREAKOUT_EXPANSION, BREAKDOWN_EXPANSION, PULLBACK_IN_TREND, REVERSAL_FORMING, or FAILED_MOVE."
+    },
+    "failure_mode": {
+      "short": "How a setup typically fails when it doesn't succeed.",
+      "long": "Failure mode classifies why a setup did not reach its target: IMMEDIATE_FAILURE (stopped out in 1-2 bars), STRUCTURAL_BREAK (invalidation hit without confirmation), WICK_FAILURE (initially right, then reversed), REVERSAL_AFTER_CONFIRMATION (confirmed then reversed), LATE_FADE (moved right but not enough), NO_MOVE (nothing happened)."
+    },
+    "proposal_readiness": {
+      "short": "Whether this family qualifies to generate trade proposals.",
+      "long": "Proposal readiness checks whether a setup family passes all quality gates: trust status (TRUSTED or PROVISIONAL), sufficient sample size, acceptable hit rate and risk-reward, and an active risk policy with assigned trailing/exit styles."
+    },
+    "risk_class": {
+      "short": "Risk classification: LOW, MEDIUM, or HIGH.",
+      "long": "Risk class is assigned based on the setup's invalidation distance and volatility context. LOW risk setups have tight invalidation; HIGH risk setups have wide invalidation or occur in volatile conditions."
+    },
+    "trailing_style": {
+      "short": "How the trailing stop is managed: STRUCTURAL, PROGRESS_BASED, or HYBRID.",
+      "long": "Trailing style defines the stop-loss management approach. STRUCTURAL trails behind key price levels. PROGRESS_BASED locks in profits at fixed thresholds. HYBRID combines both approaches."
+    },
+    "exit_style": {
+      "short": "How profits are taken: OPEN_RUNNER, STAGED_PARTIAL, or STRUCTURAL_TARGET.",
+      "long": "Exit style defines the profit-taking approach. OPEN_RUNNER holds the full position until the trail is hit. STAGED_PARTIAL takes partial profits at milestones. STRUCTURAL_TARGET exits at a predefined price level."
+    },
+    "path_quality": {
+      "short": "Overall assessment of how cleanly setups reach their targets.",
+      "long": "Path quality combines meaningful hit rate, path survival, MFE/MAE ratio, and adverse-before-favorable rate into an overall picture of whether this setup family produces clean, predictable outcomes."
+    },
+    "bars_to_threshold": {
+      "short": "Average number of bars before the meaningful move target is reached.",
+      "long": "Bars to threshold is the average time (in daily bars) it takes for successful setups to reach the meaningful move threshold. Shorter is better — it means the setup resolves quickly."
+    },
+    "adverse_before_favorable": {
+      "short": "How often the worst drawdown happens before the best gain.",
+      "long": "Adverse-before-favorable rate measures what percentage of setups experience their maximum adverse excursion before their maximum favorable excursion. High values mean the setup typically dips before working — a path quality concern."
+    },
+    "gap_risk": {
+      "short": "How much overnight gaps contribute to adverse excursions.",
+      "long": "Gap risk contribution measures what fraction of maximum adverse excursions are caused by overnight or weekend price gaps rather than intraday moves. High gap risk means the setup is vulnerable to events outside trading hours."
+    },
+    "trend_over_time": {
+      "short": "How this family's quality metrics have changed over recent months.",
+      "long": "Trend over time shows rolling 60-day windows of meaningful hit rate, path survival, and MFE/MAE ratio. Use it to see whether the family is improving, stable, or degrading."
+    },
+    "example_setups": {
+      "short": "Recent real instances of this setup family.",
+      "long": "Example setups show the most recent detections for this family with their symbol, date, structural state, regime, entry zone, outcome metrics, and whether they became trade proposals."
+    },
+    "symbol_breakdown": {
+      "short": "How this setup family performs for individual symbols vs. the pooled average.",
+      "long": "Symbol breakdown compares each symbol's meaningful hit rate and MFE/MAE ratio against the pooled family average. Symbols can be ALIGNED (similar to average), STRONGER (outperforming), WEAKER (underperforming), or INSUFFICIENT (too few samples to judge)."
+    }
   }
 }

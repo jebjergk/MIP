@@ -1,0 +1,674 @@
+/* Structural Training Intelligence: page shell, summary strip, filters, leaderboard, detail panel */
+
+.sti-intro {
+  color: #555;
+  font-size: 0.92rem;
+  margin: 0 0 1rem;
+  max-width: 72rem;
+}
+
+/* ── Summary strip ── */
+.sti-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 1.2rem;
+}
+
+.sti-summary-card {
+  flex: 1 1 120px;
+  max-width: 180px;
+  padding: 0.6rem 0.85rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.sti-summary-label {
+  font-size: 0.72rem;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+
+.sti-summary-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  font-variant-numeric: tabular-nums;
+}
+
+.sti-summary-value--small {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* ── Filter bar ── */
+.sti-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+}
+
+.sti-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sti-filter-group label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #495057;
+}
+
+.sti-filter-group select,
+.sti-filter-group input[type="search"] {
+  padding: 0.32rem 0.5rem;
+  font-size: 0.85rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.sti-filter-group input[type="search"] {
+  min-width: 120px;
+}
+
+.sti-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  color: #495057;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sti-toggle input[type="checkbox"] {
+  accent-color: #1565c0;
+}
+
+/* ── Leaderboard table ── */
+.sti-table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: min(65vh, 620px);
+  margin: 0.5rem 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  width: 100%;
+}
+
+.sti-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.84rem;
+}
+
+.sti-table th,
+.sti-table td {
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  border: 1px solid #ddd;
+}
+
+.sti-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f0f0f0;
+  box-shadow: 0 1px 0 #ccc;
+  white-space: nowrap;
+  vertical-align: bottom;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.78rem;
+}
+
+.sti-table thead th:hover {
+  background: #e4e8ed;
+}
+
+.sti-sort-arrow {
+  font-size: 0.65rem;
+  margin-left: 0.2rem;
+  color: #999;
+}
+
+.sti-sort-arrow--active {
+  color: #1565c0;
+}
+
+.sti-table td {
+  vertical-align: middle;
+}
+
+.sti-col-right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sti-col-center {
+  text-align: center;
+}
+
+/* ── Row interaction ── */
+.sti-row {
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.sti-row:hover {
+  background: #f5f8fa;
+}
+
+.sti-row:focus {
+  outline: 2px solid #1565c0;
+  outline-offset: -2px;
+}
+
+.sti-row:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.sti-row--expanded {
+  background: #e8f4fd !important;
+}
+
+.sti-expand-cell {
+  width: 28px;
+  text-align: center;
+  padding: 0.3rem !important;
+}
+
+.sti-expand-icon {
+  display: inline-block;
+  font-size: 0.65rem;
+  color: #999;
+  transition: transform 0.2s ease, color 0.15s;
+}
+
+.sti-expand-icon--open {
+  transform: rotate(90deg);
+  color: #1565c0;
+}
+
+/* ── Family name ── */
+.sti-family-name {
+  font-weight: 600;
+  color: #1565c0;
+  white-space: nowrap;
+}
+
+/* ── Badges ── */
+.sti-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.sti-dir-long {
+  background: #e3f2fd;
+  color: #0d47a1;
+}
+
+.sti-dir-short {
+  background: #fce4ec;
+  color: #880e4f;
+}
+
+.sti-trust-trusted {
+  background: #c8f5d0;
+  color: #0d5c0d;
+}
+
+.sti-trust-provisional {
+  background: #fff1c2;
+  color: #7d5a00;
+}
+
+.sti-trust-research {
+  background: #e3f2fd;
+  color: #0a5276;
+}
+
+.sti-trust-rejected {
+  background: #f5d0d0;
+  color: #8b0000;
+}
+
+.sti-trust-unknown {
+  background: #eceff3;
+  color: #5f6b7a;
+}
+
+.sti-trust-pill {
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+}
+
+/* Regime fit chips */
+.sti-regime-good {
+  background: #d4edda;
+  color: #155724;
+}
+
+.sti-regime-neutral {
+  background: #e2e8f0;
+  color: #495057;
+}
+
+.sti-regime-poor {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+/* Risk class */
+.sti-risk-low {
+  background: #d4edda;
+  color: #155724;
+}
+
+.sti-risk-medium {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.sti-risk-high {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+/* Proposal readiness */
+.sti-proposal-ready {
+  color: #198754;
+  font-weight: 700;
+}
+
+.sti-proposal-not {
+  color: #adb5bd;
+}
+
+/* Maturity progress in leaderboard row */
+.sti-maturity-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sti-maturity-bar {
+  width: 54px;
+  height: 6px;
+  background: #e0e0e0;
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sti-maturity-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #0066cc;
+  transition: width 0.2s;
+}
+
+.sti-maturity-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #555;
+  white-space: nowrap;
+}
+
+/* Color-coded metric values */
+.sti-val-good {
+  color: #198754;
+  font-weight: 600;
+}
+
+.sti-val-ok {
+  color: #b8860b;
+  font-weight: 600;
+}
+
+.sti-val-weak {
+  color: #dc3545;
+  font-weight: 600;
+}
+
+/* ── Detail panel ── */
+.sti-detail-row {
+  background: transparent;
+}
+
+.sti-detail-row:hover {
+  background: transparent;
+}
+
+.sti-detail-cell {
+  padding: 0 !important;
+  border-left: 3px solid #1565c0;
+  background: #fafbfc;
+}
+
+.sti-detail-panel {
+  padding: 1rem 1.25rem;
+}
+
+.sti-detail-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e5e7eb;
+  margin-bottom: 1rem;
+}
+
+.sti-detail-tab {
+  padding: 0.45rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #6c757d;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.12s;
+}
+
+.sti-detail-tab:hover {
+  color: #1565c0;
+}
+
+.sti-detail-tab--active {
+  color: #1565c0;
+  border-bottom-color: #1565c0;
+  font-weight: 600;
+}
+
+/* Module cards within detail panel */
+.sti-module {
+  margin-bottom: 1rem;
+}
+
+.sti-module-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Metric cards grid (used by path quality, identity, etc.) */
+.sti-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.6rem;
+}
+
+.sti-metric-card {
+  padding: 0.5rem 0.65rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.sti-metric-label {
+  font-size: 0.7rem;
+  color: #6c757d;
+  margin-bottom: 0.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.sti-metric-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.sti-metric-bar {
+  height: 4px;
+  background: #e9ecef;
+  border-radius: 2px;
+  margin-top: 0.25rem;
+  overflow: hidden;
+}
+
+.sti-metric-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+
+/* Identity card */
+.sti-identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.sti-identity-main {
+  flex: 1 1 280px;
+}
+
+.sti-identity-chips {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.sti-identity-desc {
+  font-size: 0.85rem;
+  color: #555;
+  margin-top: 0.4rem;
+  line-height: 1.45;
+}
+
+/* Failure mode stacked bar */
+.sti-failure-bar {
+  display: flex;
+  height: 24px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.sti-failure-segment {
+  height: 100%;
+  position: relative;
+  min-width: 2px;
+  transition: flex 0.2s;
+}
+
+.sti-failure-segment:hover {
+  opacity: 0.85;
+}
+
+.sti-failure-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.75rem;
+  color: #555;
+}
+
+.sti-failure-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 0.2rem;
+  vertical-align: middle;
+}
+
+/* Window behavior mini table */
+.sti-window-table {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+.sti-window-table th,
+.sti-window-table td {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #e5e7eb;
+  text-align: right;
+}
+
+.sti-window-table th {
+  background: #f0f0f0;
+  font-weight: 600;
+  text-align: center;
+  font-size: 0.78rem;
+}
+
+.sti-window-best {
+  background: #e8f4fd;
+  font-weight: 600;
+}
+
+/* State/regime bars */
+.sti-state-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.sti-state-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.sti-state-bar-label {
+  width: 140px;
+  text-align: right;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.sti-state-bar-track {
+  flex: 1;
+  height: 14px;
+  background: #e9ecef;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sti-state-bar-fill {
+  height: 100%;
+  background: #1565c0;
+  border-radius: 3px;
+  transition: width 0.2s;
+}
+
+.sti-state-bar-pct {
+  width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #555;
+}
+
+/* Example cards */
+.sti-examples-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.6rem;
+}
+
+.sti-example-card {
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.sti-example-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.sti-example-symbol {
+  font-weight: 600;
+  color: #1565c0;
+}
+
+.sti-example-date {
+  color: #6c757d;
+  font-size: 0.75rem;
+}
+
+.sti-example-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  font-size: 0.78rem;
+  color: #444;
+}
+
+/* Proposal readiness checklist */
+.sti-readiness-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.sti-readiness-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.sti-readiness-pass {
+  color: #198754;
+}
+
+.sti-readiness-fail {
+  color: #dc3545;
+}
+
+.sti-readiness-icon {
+  font-size: 0.9rem;
+  width: 1.1rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Sparkline wrapper */
+.sti-sparkline {
+  display: inline-block;
+  width: 56px;
+  height: 20px;
+  vertical-align: middle;
+}

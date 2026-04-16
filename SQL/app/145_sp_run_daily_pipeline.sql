@@ -107,6 +107,11 @@ declare
     v_pw_shadow_status string := 'SKIPPED';
     v_pw_shadow_start timestamp_ntz;
     v_pw_shadow_end timestamp_ntz;
+    -- Structural strategy pipeline variables
+    v_structural_result variant;
+    v_structural_status string := 'SKIPPED';
+    v_structural_start timestamp_ntz;
+    v_structural_end timestamp_ntz;
     -- Error capture variables (used in exception handlers)
     v_ingest_error_query_id string;
     v_ingest_duration_ms number;
@@ -1334,6 +1339,36 @@ begin
         end if;
     end;
 
+    -- ----------------------------------------------------------------
+    -- STRUCTURAL STRATEGY PIPELINE (daily bar structural analysis)
+    -- Runs after portfolio sim so daily bars are guaranteed fresh.
+    -- Wrapped in BEGIN/EXCEPTION so a structural failure never blocks
+    -- the legacy pipeline from completing and reporting.
+    -- ----------------------------------------------------------------
+    v_structural_start := current_timestamp();
+    begin
+        v_structural_result := (call MIP.APP.SP_RUN_STRUCTURAL_DAILY_PIPELINE(
+            :v_effective_to_ts::date, null, 5
+        ));
+        v_structural_status := 'SUCCESS';
+    exception
+        when other then
+            v_structural_status := 'FAIL';
+            v_structural_result := object_construct('error', sqlerrm);
+    end;
+    v_structural_end := current_timestamp();
+
+    call MIP.APP.SP_AUDIT_LOG_STEP(
+        :v_run_id,
+        'STRUCTURAL_PIPELINE',
+        :v_structural_status,
+        null,
+        :v_structural_result,
+        iff(:v_structural_status = 'FAIL', :v_structural_result:error::string, null),
+        null, null, null,
+        timestampdiff(millisecond, :v_structural_start, :v_structural_end)
+    );
+
     v_pipeline_root_status := iff(:v_any_step_skipped_or_degraded, 'SUCCESS_WITH_SKIPS', 'SUCCESS');
     v_pipeline_status_reason := iff(:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS'), 'RATE_LIMIT', null);
 
@@ -1376,6 +1411,10 @@ begin
         'pw_symbol_shadow', object_construct(
             'status', :v_pw_shadow_status,
             'result', :v_pw_shadow_result
+        ),
+        'structural_pipeline', object_construct(
+            'status', :v_structural_status,
+            'result', :v_structural_result
         ),
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,

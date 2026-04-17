@@ -14,6 +14,9 @@ from app.services.live_intelligence.entry_lifecycle_ui import (
     fetch_entry_lifecycle_rows,
 )
 from app.services.live_intelligence.lifecycle_reconciliation_v1 import run_lifecycle_reconciliation
+from app.services.live_intelligence.broker_mirror import build_broker_mirror
+from app.services.live_intelligence.semantic_reconciliation_v2 import run_semantic_reconciliation
+from app.services.live_intelligence.trail_activation import evaluate_trail_candidates
 
 BOOTSTRAP_VERSION = "1.1.0"
 _MAX_ANALOG_GLOBAL = 2500
@@ -205,6 +208,8 @@ def build_bootstrap_payload() -> dict[str, Any]:
                     exc,
                     exc_info=True,
                 )
+        reconciliation_v2_by_symbol: dict[str, Any] = {}
+        reconciliation_v2_meta: dict[str, Any] = {}
         if pid and ibkr_account_id and tiles:
             try:
                 reconciliation_by_symbol, reconciliation_meta = run_lifecycle_reconciliation(
@@ -220,6 +225,34 @@ def build_bootstrap_payload() -> dict[str, Any]:
                     exc,
                     exc_info=True,
                 )
+            try:
+                broker_mirrors = build_broker_mirror(cur, ibkr_account_id)
+                reconciliation_v2_by_symbol, reconciliation_v2_meta = run_semantic_reconciliation(
+                    cur, pid, ibkr_account_id, broker_mirrors,
+                )
+            except Exception as exc:
+                _log.warning("reconciliation_v2 skipped: %s", exc, exc_info=True)
+        trail_candidates_summary: list[dict] = []
+        if pid:
+            try:
+                trail_cands = evaluate_trail_candidates(cur, portfolio_id=pid)
+                from dataclasses import asdict
+                trail_candidates_summary = [
+                    {
+                        "symbol": c.symbol,
+                        "direction": c.direction,
+                        "activated": c.activated,
+                        "activation_reason": c.activation_reason,
+                        "mfe_risk_multiple": round(c.mfe_risk_multiple, 2),
+                        "trail_activation_type": c.trail_activation_type,
+                        "current_price": c.current_price,
+                        "entry_fill_price": c.entry_fill_price,
+                        "trail_amount": c.trail_amount,
+                    }
+                    for c in trail_cands
+                ]
+            except Exception as exc:
+                _log.warning("trail_activation eval skipped: %s", exc, exc_info=True)
         news_snapshot = []
         for t in tiles:
             sym = str(t.get("symbol") or "").upper()
@@ -259,6 +292,9 @@ def build_bootstrap_payload() -> dict[str, Any]:
             "entry_lifecycle_by_symbol": entry_lifecycle_by_symbol,
             "reconciliation_by_symbol": reconciliation_by_symbol,
             "reconciliation_meta": reconciliation_meta,
+            "reconciliation_v2_by_symbol": reconciliation_v2_by_symbol,
+            "reconciliation_v2_meta": reconciliation_v2_meta,
+            "trail_activation_candidates": trail_candidates_summary,
             "news_snapshot": news_snapshot[:50],
         }
         if not _lic_diag:

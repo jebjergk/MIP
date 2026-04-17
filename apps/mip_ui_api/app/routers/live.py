@@ -42,6 +42,9 @@ from app.services.broker_execution_reconcile import (
     run_reconcile_dry_run,
     verify_apply_item,
 )
+from app.services.live_intelligence.structural_committee import (
+    run_structural_committee,
+)
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -90,6 +93,15 @@ class ImportLiveActionsFromProposalsRequest(BaseModel):
     allow_stale_import: bool = False
     dedupe_by_symbol: bool = True
     max_proposal_age_days: int = Field(default=7, ge=1, le=180)
+
+
+class ImportStructuralProposalsRequest(BaseModel):
+    live_portfolio_id: int
+    limit: int = Field(default=10, ge=1, le=50)
+    max_proposal_age_days: int = Field(default=7, ge=1, le=30)
+    dedupe_by_symbol: bool = True
+    skip_stale: bool = True
+    entry_zone_tolerance_pct: float = Field(default=2.0, ge=0, le=20.0)
 
 
 class ExecuteLiveActionRequest(BaseModel):
@@ -3165,6 +3177,10 @@ def _submit_ibkr_order_bundle(
     sl_price: float | None,
     tif: str = "DAY",
     child_tif: str | None = None,
+    direction: str | None = None,
+    trail_amount: float | None = None,
+    trail_percent: float | None = None,
+    oca_group: str | None = None,
 ) -> dict:
     """
     Submit parent + optional TP/SL bundle to IBKR through cursorfiles runtime.
@@ -3222,6 +3238,14 @@ def _submit_ibkr_order_bundle(
         cmd.extend(["--sl-price", str(float(sl_price))])
     if outside_rth:
         cmd.append("--outside-rth")
+    if direction:
+        cmd.extend(["--direction", str(direction).upper()])
+    if trail_amount is not None:
+        cmd.extend(["--trail-amount", str(float(trail_amount))])
+    if trail_percent is not None:
+        cmd.extend(["--trail-percent", str(float(trail_percent))])
+    if oca_group:
+        cmd.extend(["--oca-group", str(oca_group)])
 
     child_env = dict(os.environ)
     for key in list(child_env.keys()):
@@ -5372,6 +5396,25 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "entry_intel_baseline": entry_intel_baseline,
         "execution_risk_config": risk_cfg,
     }
+    if action.get("SETUP_FAMILY"):
+        context["structural"] = {
+            "setup_event_id": action.get("SETUP_EVENT_ID"),
+            "setup_family": action.get("SETUP_FAMILY"),
+            "direction": action.get("DIRECTION"),
+            "entry_zone_low": action.get("ENTRY_ZONE_LOW"),
+            "entry_zone_high": action.get("ENTRY_ZONE_HIGH"),
+            "invalidation_level": action.get("INVALIDATION_LEVEL"),
+            "invalidation_rule": action.get("INVALIDATION_RULE"),
+            "structure_confidence": action.get("STRUCTURE_CONFIDENCE"),
+            "trust_label": action.get("TRUST_LABEL"),
+            "meaningful_hit_rate": action.get("MEANINGFUL_HIT_RATE"),
+            "regime_compat": action.get("REGIME_COMPAT"),
+            "freshness_assessment": action.get("FRESHNESS_ASSESSMENT"),
+            "expected_hold_character": action.get("EXPECTED_HOLD_CHARACTER"),
+            "trail_style": action.get("TRAIL_STYLE"),
+            "trail_activation_type": action.get("TRAIL_ACTIVATION_TYPE"),
+            "setup_narrative": action.get("SETUP_NARRATIVE"),
+        }
     return context
 
 
@@ -6700,7 +6743,10 @@ def get_live_activity_overview(
             select
               ORDER_ID, ACTION_ID, BROKER_ORDER_ID, STATUS, SYMBOL, SIDE, ORDER_TYPE,
               QTY_ORDERED, LIMIT_PRICE, QTY_FILLED, AVG_FILL_PRICE,
-              SUBMITTED_AT, ACKNOWLEDGED_AT, FILLED_AT, LAST_UPDATED_AT, CREATED_AT
+              SUBMITTED_AT, ACKNOWLEDGED_AT, FILLED_AT, LAST_UPDATED_AT, CREATED_AT,
+              ORDER_ROLE, PARENT_ORDER_ID, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
+              TRAIL_STYLE, TRAIL_ACTIVATED, TRAIL_ACTIVATED_AT,
+              TRAIL_AMOUNT, TRAIL_PERCENT, BROKER_TRAIL_STATE
             from MIP.LIVE.LIVE_ORDERS
             where PORTFOLIO_ID = %s
               and coalesce(LAST_UPDATED_AT, CREATED_AT) >= dateadd(day, -%s, current_timestamp())
@@ -6776,7 +6822,10 @@ def get_live_activity_overview(
               cv.VERDICT_JSON:verdict:joint_decision as COMMITTEE_JOINT_DECISION,
               la.PROPOSED_QTY, la.PROPOSED_PRICE, la.TARGET_OPEN_CONDITION_FACTOR, la.TRAINING_SIZE_CAP_FACTOR,
               la.TARGET_EXPECTATION_SNAPSHOT, la.PARAM_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT,
-              la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.REVALIDATION_TS, la.REVALIDATION_OUTCOME
+              la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.REVALIDATION_TS, la.REVALIDATION_OUTCOME,
+              la.SETUP_FAMILY, la.DIRECTION, la.ENTRY_ZONE_LOW, la.ENTRY_ZONE_HIGH,
+              la.INVALIDATION_LEVEL, la.TRAIL_STYLE, la.TRAIL_ACTIVATION_TYPE,
+              la.SETUP_NARRATIVE, la.FRESHNESS_ASSESSMENT, la.EXPECTED_HOLD_CHARACTER
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
               on cv.RUN_ID = la.COMMITTEE_RUN_ID
@@ -7021,6 +7070,12 @@ def get_live_activity_overview(
                         "is_blocked": bool(blocked),
                         "execution_hard_blocked": bool(execution_hard_blocked),
                         "committee_should_enter": committee_should_enter,
+                        "committee_decision": {
+                            "should_enter": joint_decision.get("should_enter") if joint_decision else None,
+                            "risk_notes": joint_decision.get("risk_notes") if joint_decision else None,
+                            "realistic_target_return": joint_decision.get("realistic_target_return") if joint_decision else None,
+                            "stop_loss_pct": joint_decision.get("stop_loss_pct") if joint_decision else None,
+                        } if joint_decision else None,
                         "held_in_broker_position": bool(in_position),
                         "sizing": {
                             "proposed_qty": proposed_qty,
@@ -7043,6 +7098,18 @@ def get_live_activity_overview(
                             ),
                         },
                         "protection": {"planned": protection_planned, **protection_details},
+                        "structural": {
+                            "setup_family": row.get("SETUP_FAMILY"),
+                            "direction": row.get("DIRECTION"),
+                            "entry_zone_low": float(row["ENTRY_ZONE_LOW"]) if row.get("ENTRY_ZONE_LOW") is not None else None,
+                            "entry_zone_high": float(row["ENTRY_ZONE_HIGH"]) if row.get("ENTRY_ZONE_HIGH") is not None else None,
+                            "invalidation_level": float(row["INVALIDATION_LEVEL"]) if row.get("INVALIDATION_LEVEL") is not None else None,
+                            "trail_style": row.get("TRAIL_STYLE"),
+                            "trail_activation_type": row.get("TRAIL_ACTIVATION_TYPE"),
+                            "setup_narrative": row.get("SETUP_NARRATIVE"),
+                            "freshness_assessment": row.get("FRESHNESS_ASSESSMENT"),
+                            "hold_character": row.get("EXPECTED_HOLD_CHARACTER"),
+                        } if row.get("SETUP_FAMILY") else None,
                         "timestamps": {
                             "created_at": row.get("CREATED_AT"),
                             "updated_at": row.get("UPDATED_AT"),
@@ -7477,6 +7544,27 @@ def get_live_activity_overview(
             except Exception:
                 exit_warning_signals = []
 
+        recon_v2_by_symbol: dict = {}
+        if portfolio_id and account_id:
+            try:
+                from app.services.live_intelligence.broker_mirror import build_broker_mirror
+                from app.services.live_intelligence.semantic_reconciliation_v2 import run_semantic_reconciliation
+                broker_mirrors = build_broker_mirror(cur, str(account_id))
+                _recon_map, _recon_meta = run_semantic_reconciliation(
+                    cur, int(portfolio_id), str(account_id), broker_mirrors,
+                )
+                for sym, detail in _recon_map.items():
+                    recon_v2_by_symbol[sym] = {
+                        "status": detail.get("status", "UNKNOWN"),
+                        "flags": detail.get("flags", []),
+                        "position_aligned": detail.get("position_aligned"),
+                        "protection_aligned": detail.get("protection_aligned"),
+                        "orphan_orders": detail.get("orphan_orders", []),
+                        "mismatches": detail.get("mismatches", []),
+                    }
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "portfolio": {
@@ -7555,6 +7643,7 @@ def get_live_activity_overview(
             "executions": serialize_rows(executions),
             "pending_decisions": serialize_rows(pending_decisions),
             "exit_warning_signals": serialize_rows(exit_warning_signals),
+            "reconciliation_v2": recon_v2_by_symbol,
             "counts": {
                 "pending_decisions": len(pending_decisions),
                 "orders": len(orders),
@@ -8485,6 +8574,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             ),
         )
 
+        is_structural = bool(action.get("SETUP_FAMILY"))
         context = _build_action_decision_context(cur, action)
         action_training_snapshot = context.get("training_qualification_snapshot") or {}
         action_target_snapshot = context.get("target_expectation_snapshot") or {}
@@ -8493,60 +8583,104 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         latest_news_snapshot = context.get("latest_symbol_news_context") or {}
         pw_evidence = context.get("parallel_worlds_evidence")
 
-        outputs, verdict = _run_multiagent_dialogue(
-            cur,
-            model=req.model,
-            context=context,
-            persist_run_id=run_id,
-            emit=None,
-        )
-        jd = _parse_variant(verdict.get("joint_decision"))
-        if not verdict.get("blocked") and (
-            jd.get("realistic_target_return") is None
-            or jd.get("stop_loss_pct") is None
-            or jd.get("hold_bars") is None
-            or jd.get("acceptable_early_exit_target_return") is None
-        ):
-            verdict = _backfill_joint_decision_from_policy(verdict, context)
         action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
         is_exit = action_intent == "EXIT"
         exit_position_qty = None
         exit_override_applied = False
-        if is_exit:
-            exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
-            jd_exit = _parse_variant(verdict.get("joint_decision"))
-            if abs(float(exit_position_qty)) <= 0:
-                verdict["recommendation"] = "BLOCK"
-                verdict["blocked"] = True
-                jd_exit["should_enter"] = False
-                jd_exit["should_execute_exit"] = False
-                verdict["joint_decision"] = jd_exit
-            elif verdict.get("blocked"):
-                verdict["blocked"] = False
-                if str(verdict.get("recommendation") or "").upper() == "BLOCK":
-                    verdict["recommendation"] = "PROCEED_REDUCED"
-                jd_exit["should_enter"] = True
-                jd_exit["should_execute_exit"] = True
-                verdict["joint_decision"] = jd_exit
-                exit_override_applied = True
-        verdict = _suppress_block_on_degraded_entry_quality(
-            verdict,
-            action_intent,
-            context.get("execution_risk_config"),
-        )
-        reason_codes = []
-        if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
-            reason_codes.append("EXIT_POSITION_MISSING")
-        if exit_override_applied:
-            reason_codes.append("EXIT_INTENT_OVERRIDE_APPLIED")
-        if news_fallback_active:
-            reason_codes.append("NEWS_FALLBACK_RSS_ONLY")
-        for rc in (news_readiness.get("reason_codes") or []):
-            if rc and rc not in reason_codes:
-                reason_codes.append(str(rc))
-        for rc in (verdict.get("quality_reason_codes") or []):
-            if rc and rc not in reason_codes:
-                reason_codes.append(str(rc))
+
+        if is_structural:
+            # ── Structural committee path ─────────────────────────────
+            structural_verdict = run_structural_committee(action)
+            outputs = structural_verdict.pop("evaluations", {})
+            verdict = structural_verdict
+            role_outputs_list = outputs.get("freshness", {}), outputs.get("trust", {}), outputs.get("regime", {}), outputs.get("path_quality", {}), outputs.get("trail", {})
+
+            for eval_data in role_outputs_list:
+                role_name = {
+                    id(outputs.get("freshness", {})): "StructuralValidator",
+                    id(outputs.get("trust", {})): "TrustGatekeeper",
+                    id(outputs.get("regime", {})): "RegimeAssessor",
+                    id(outputs.get("path_quality", {})): "PathAnalyst",
+                    id(outputs.get("trail", {})): "ProtectionAdvisor",
+                }.get(id(eval_data), "Unknown")
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
+                          RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+                        )
+                        SELECT %s, %s, %s, %s, %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
+                        """,
+                        (
+                            run_id,
+                            role_name,
+                            str(eval_data.get("passed", eval_data.get("freshness", "UNKNOWN"))).upper()[:20],
+                            eval_data.get("confidence", eval_data.get("size_mult", 0.5)),
+                            str(eval_data.get("reason", eval_data.get("note", "")))[:500],
+                            json.dumps(eval_data, default=str),
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            reason_codes = list(verdict.get("reason_codes") or [])
+            reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
+
+            outputs = [{"structural_evaluations": outputs}]
+
+        else:
+            # ── Legacy committee path ─────────────────────────────────
+            outputs, verdict = _run_multiagent_dialogue(
+                cur,
+                model=req.model,
+                context=context,
+                persist_run_id=run_id,
+                emit=None,
+            )
+            jd = _parse_variant(verdict.get("joint_decision"))
+            if not verdict.get("blocked") and (
+                jd.get("realistic_target_return") is None
+                or jd.get("stop_loss_pct") is None
+                or jd.get("hold_bars") is None
+                or jd.get("acceptable_early_exit_target_return") is None
+            ):
+                verdict = _backfill_joint_decision_from_policy(verdict, context)
+
+            if is_exit:
+                exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
+                jd_exit = _parse_variant(verdict.get("joint_decision"))
+                if abs(float(exit_position_qty)) <= 0:
+                    verdict["recommendation"] = "BLOCK"
+                    verdict["blocked"] = True
+                    jd_exit["should_enter"] = False
+                    jd_exit["should_execute_exit"] = False
+                    verdict["joint_decision"] = jd_exit
+                elif verdict.get("blocked"):
+                    verdict["blocked"] = False
+                    if str(verdict.get("recommendation") or "").upper() == "BLOCK":
+                        verdict["recommendation"] = "PROCEED_REDUCED"
+                    jd_exit["should_enter"] = True
+                    jd_exit["should_execute_exit"] = True
+                    verdict["joint_decision"] = jd_exit
+                    exit_override_applied = True
+            verdict = _suppress_block_on_degraded_entry_quality(
+                verdict,
+                action_intent,
+                context.get("execution_risk_config"),
+            )
+            reason_codes = []
+            if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
+                reason_codes.append("EXIT_POSITION_MISSING")
+            if exit_override_applied:
+                reason_codes.append("EXIT_INTENT_OVERRIDE_APPLIED")
+            if news_fallback_active:
+                reason_codes.append("NEWS_FALLBACK_RSS_ONLY")
+            for rc in (news_readiness.get("reason_codes") or []):
+                if rc and rc not in reason_codes:
+                    reason_codes.append(str(rc))
+            for rc in (verdict.get("quality_reason_codes") or []):
+                if rc and rc not in reason_codes:
+                    reason_codes.append(str(rc))
         if verdict["blocked"]:
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
@@ -8599,37 +8733,39 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             proposed_price_derived = None
 
         try:
-            param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
-            target_weight = param_snapshot.get("target_weight")
-            target_weight_abs = abs(float(target_weight)) if target_weight is not None else None
             committee_size_factor = float(verdict.get("size_factor") or 1.0)
-            training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
-            open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
-            effective_weight = None
-            if target_weight_abs is not None:
-                effective_weight = target_weight_abs * committee_size_factor * training_size_cap * open_factor
+            nav_eur = 0.0
+            max_position_pct = None
+            cur.execute(
+                """
+                SELECT c.IBKR_ACCOUNT_ID, c.MAX_POSITION_PCT, s.NET_LIQUIDATION_EUR
+                FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+                LEFT JOIN MIP.LIVE.BROKER_SNAPSHOTS s
+                  ON s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID AND s.SNAPSHOT_TYPE = 'NAV'
+                WHERE c.PORTFOLIO_ID = %s
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY c.PORTFOLIO_ID ORDER BY s.SNAPSHOT_TS DESC NULLS LAST) = 1
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            nav_rows = fetch_all(cur)
+            if nav_rows:
+                nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0)
+                max_position_pct = (nav_rows[0] or {}).get("MAX_POSITION_PCT")
 
-            if proposed_price_derived is not None and effective_weight is not None and effective_weight > 0:
-                cur.execute(
-                    """
-                    select
-                      c.IBKR_ACCOUNT_ID,
-                      s.NET_LIQUIDATION_EUR
-                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
-                    left join MIP.LIVE.BROKER_SNAPSHOTS s
-                      on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
-                     and s.SNAPSHOT_TYPE = 'NAV'
-                    where c.PORTFOLIO_ID = %s
-                    qualify row_number() over (
-                        partition by c.PORTFOLIO_ID
-                        order by s.SNAPSHOT_TS desc nulls last
-                    ) = 1
-                    """,
-                    (action.get("PORTFOLIO_ID"),),
-                )
-                nav_rows = fetch_all(cur)
-                nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
-                if nav_eur > 0:
+            if is_structural and proposed_price_derived and nav_eur > 0:
+                pos_pct = float(max_position_pct or 0.05)
+                max_notional = nav_eur * pos_pct * committee_size_factor
+                proposed_qty_derived = max(int(max_notional / max(proposed_price_derived, 1e-9)), 1)
+            elif proposed_price_derived and nav_eur > 0:
+                param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
+                target_weight = param_snapshot.get("target_weight")
+                target_weight_abs = abs(float(target_weight)) if target_weight is not None else None
+                training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
+                open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
+                effective_weight = None
+                if target_weight_abs is not None:
+                    effective_weight = target_weight_abs * committee_size_factor * training_size_cap * open_factor
+                if effective_weight is not None and effective_weight > 0:
                     est_notional = nav_eur * effective_weight
                     proposed_qty_derived = max(int(est_notional / max(proposed_price_derived, 1e-9)), 1)
         except Exception:
@@ -10314,7 +10450,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         order_id = str(uuid.uuid4())
         entry_price = float(action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"))
         qty_ordered = float(proposed_qty)
-        exit_side = "SELL" if side == "BUY" else "BUY"
+        is_structural = bool(action.get("SETUP_FAMILY"))
+        structural_direction = (action.get("DIRECTION") or "").upper() if is_structural else None
+        if structural_direction == "SHORT" and not is_exit:
+            side = "SELL"
+            exit_side = "BUY"
+        elif structural_direction == "LONG" and not is_exit:
+            side = "BUY"
+            exit_side = "SELL"
+        else:
+            exit_side = "SELL" if side == "BUY" else "BUY"
+        structural_oca_group = str(uuid.uuid4())[:8] if is_structural else None
         adapter_mode = str(cfg.get("ADAPTER_MODE") or "PAPER").upper()
         execution_mode = str(os.getenv("LIVE_EXECUTION_MODE", "AUTO")).upper()
         use_ibkr_submit = adapter_mode == "LIVE"
@@ -10352,8 +10498,30 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             target_return,
             stop_loss_pct,
         )
+        structural_trail_amount: float | None = None
+        structural_trail_percent: float | None = None
+        if is_structural and not is_exit:
+            inv_level = action.get("INVALIDATION_LEVEL")
+            if inv_level is not None:
+                sl_price = float(inv_level)
+            trail_cfg = _read_app_config(cur, ["TRAIL_ENABLED", "TRAIL_DRY_RUN"])
+            trail_enabled = _parse_bool_config(trail_cfg.get("TRAIL_ENABLED"), False)
+            trail_dry_run = _parse_bool_config(trail_cfg.get("TRAIL_DRY_RUN"), True)
+            if trail_enabled and not trail_dry_run and action.get("TRAIL_STYLE"):
+                trail_params = action.get("TRAIL_PARAMS")
+                if isinstance(trail_params, str):
+                    try:
+                        trail_params = json.loads(trail_params)
+                    except Exception:
+                        trail_params = None
+                if isinstance(trail_params, dict):
+                    structural_trail_amount = trail_params.get("trail_amount")
+                    structural_trail_percent = trail_params.get("trail_percent")
+                    if structural_trail_amount is not None:
+                        structural_trail_amount = float(structural_trail_amount)
+                    if structural_trail_percent is not None:
+                        structural_trail_percent = float(structural_trail_percent)
         if is_exit:
-            # Exit intent should submit a close order without opening a new bracket.
             tp_price = None
             sl_price = None
         if use_ibkr_submit and not is_exit:
@@ -10616,6 +10784,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     sl_price=float(sl_price) if sl_price is not None else None,
                     tif="DAY",
                     child_tif=os.getenv("IBKR_EXEC_CHILD_TIF", "GTC"),
+                    direction=structural_direction,
+                    trail_amount=structural_trail_amount,
+                    trail_percent=structural_trail_percent,
+                    oca_group=structural_oca_group,
                 )
             except HTTPException as exc:
                 cur.execute(
@@ -10725,6 +10897,23 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                             else (ib_aux_price if ib_aux_price is not None else None)
                         )
                     )
+                leg_order_role = None
+                leg_protection_type = None
+                leg_stop_price = None
+                if is_structural:
+                    if role == "PARENT":
+                        leg_order_role = "ENTRY"
+                    elif role == "STOP_LOSS":
+                        leg_order_role = "PROTECTIVE_STOP"
+                        leg_protection_type = "FIXED_STOP"
+                        leg_stop_price = ib_aux_price or (float(sl_price) if sl_price is not None else None)
+                    elif role == "TAKE_PROFIT":
+                        leg_order_role = "PROTECTIVE_TP"
+                        leg_protection_type = "TAKE_PROFIT"
+                    elif role == "TRAILING_STOP":
+                        leg_order_role = "TRAILING_STOP"
+                        leg_protection_type = "TRAILING_STOP"
+                        leg_stop_price = ib_aux_price
                 order_legs.append(
                     {
                         "order_id": str(uuid.uuid4()),
@@ -10735,6 +10924,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "limit_price": normalized_limit_price,
                         "role": role or "PARENT",
                         "status": str(ib_leg.get("status") or "SUBMITTED").upper(),
+                        "order_role": leg_order_role,
+                        "protection_type": leg_protection_type,
+                        "stop_price": leg_stop_price,
+                        "oca_group": ib_leg.get("oca_group") or structural_oca_group if role != "PARENT" else None,
                     }
                 )
             if not order_legs:
@@ -10742,18 +10935,28 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     status_code=409,
                     detail={"message": "IBKR submission returned no orders.", "reason_codes": ["IBKR_EMPTY_ORDER_BUNDLE"]},
                 )
+            entry_order_id = None
             for leg in order_legs:
+                if leg.get("order_role") == "ENTRY" or leg.get("role") == "PARENT":
+                    entry_order_id = leg["order_id"]
+                    break
+            for leg in order_legs:
+                parent_order_id = None
+                if leg.get("order_role") and leg["order_role"] != "ENTRY":
+                    parent_order_id = entry_order_id
                 cur.execute(
                     """
-                    insert into MIP.LIVE.LIVE_ORDERS (
+                    INSERT INTO MIP.LIVE.LIVE_ORDERS (
                       ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
                       SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+                      PARENT_ORDER_ID, ORDER_ROLE, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
                       SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                     )
-                    values (
+                    VALUES (
                       %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
                       %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
-                      current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
+                      %(parent_order_id)s, %(order_role)s, %(protection_type)s, %(oca_group)s, %(stop_price)s,
+                      CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                     )
                     """,
                     {
@@ -10771,6 +10974,11 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "order_type": leg["order_type"],
                         "qty_ordered": qty_ordered,
                         "limit_price": leg["limit_price"],
+                        "parent_order_id": parent_order_id,
+                        "order_role": leg.get("order_role"),
+                        "protection_type": leg.get("protection_type"),
+                        "oca_group": leg.get("oca_group"),
+                        "stop_price": leg.get("stop_price"),
                     },
                 )
             ib_live_orders_inserted = True
@@ -10890,6 +11098,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "limit_price": entry_price,
                     "role": "PARENT",
                     "status": "ACKNOWLEDGED",
+                    "order_role": "ENTRY" if is_structural else None,
+                    "protection_type": None,
+                    "stop_price": None,
+                    "oca_group": None,
                 }
             ]
             if tp_price is not None:
@@ -10903,6 +11115,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "limit_price": float(tp_price),
                         "role": "TAKE_PROFIT",
                         "status": "ACKNOWLEDGED",
+                        "order_role": "PROTECTIVE_TP" if is_structural else None,
+                        "protection_type": "TAKE_PROFIT" if is_structural else None,
+                        "stop_price": None,
+                        "oca_group": structural_oca_group,
                     }
                 )
             if sl_price is not None:
@@ -10916,6 +11132,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "limit_price": float(sl_price),
                         "role": "STOP_LOSS",
                         "status": "ACKNOWLEDGED",
+                        "order_role": "PROTECTIVE_STOP" if is_structural else None,
+                        "protection_type": "FIXED_STOP" if is_structural else None,
+                        "stop_price": float(sl_price),
+                        "oca_group": structural_oca_group,
                     }
                 )
 
@@ -10923,18 +11143,28 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         order_id = str((order_legs[0] or {}).get("order_id") or order_id)
 
         if not ib_live_orders_inserted:
+            entry_order_id = None
             for leg in order_legs:
+                if leg.get("order_role") == "ENTRY" or leg.get("role") == "PARENT":
+                    entry_order_id = leg["order_id"]
+                    break
+            for leg in order_legs:
+                parent_order_id = None
+                if leg.get("order_role") and leg["order_role"] != "ENTRY":
+                    parent_order_id = entry_order_id
                 cur.execute(
                     """
-                    insert into MIP.LIVE.LIVE_ORDERS (
+                    INSERT INTO MIP.LIVE.LIVE_ORDERS (
                       ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
                       SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
+                      PARENT_ORDER_ID, ORDER_ROLE, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
                       SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                     )
-                    values (
+                    VALUES (
                       %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
                       %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
-                      current_timestamp(), current_timestamp(), current_timestamp(), current_timestamp()
+                      %(parent_order_id)s, %(order_role)s, %(protection_type)s, %(oca_group)s, %(stop_price)s,
+                      CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                     )
                     """,
                     {
@@ -10952,6 +11182,11 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "order_type": leg["order_type"],
                         "qty_ordered": qty_ordered,
                         "limit_price": leg["limit_price"],
+                        "parent_order_id": parent_order_id,
+                        "order_role": leg.get("order_role"),
+                        "protection_type": leg.get("protection_type"),
+                        "oca_group": leg.get("oca_group"),
+                        "stop_price": leg.get("stop_price"),
                     },
                 )
 
@@ -11315,6 +11550,139 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
             "qty_filled": new_qty_filled,
             "avg_fill_price": req.avg_fill_price if req.avg_fill_price is not None else order.get("AVG_FILL_PRICE"),
             "total_commission": req.total_commission,
+        }
+    finally:
+        conn.close()
+
+
+class ReconcileV2Request(BaseModel):
+    live_portfolio_id: int
+    lookback_days: int = Field(default=7, ge=1, le=30)
+
+
+@router.post("/trades/reconcile-v2")
+def run_reconciliation_v2(req: ReconcileV2Request):
+    """
+    Two-layer reconciliation: broker mirror (Layer 1) + semantic comparison (Layer 2).
+    Returns per-symbol reconciliation with position, entry, protection, and orphan checks.
+    """
+    from app.services.live_intelligence.broker_mirror import build_broker_mirror
+    from app.services.live_intelligence.semantic_reconciliation_v2 import run_semantic_reconciliation
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT IBKR_ACCOUNT_ID FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG WHERE PORTFOLIO_ID = %s LIMIT 1",
+            (req.live_portfolio_id,),
+        )
+        cfg_rows = fetch_all(cur)
+        if not cfg_rows or not cfg_rows[0].get("IBKR_ACCOUNT_ID"):
+            raise HTTPException(status_code=404, detail="Portfolio not found or no IBKR account configured.")
+        account_id = str(cfg_rows[0]["IBKR_ACCOUNT_ID"])
+
+        broker_mirrors = build_broker_mirror(cur, account_id, lookback_days=req.lookback_days)
+        recon_by_symbol, recon_meta = run_semantic_reconciliation(
+            cur, req.live_portfolio_id, account_id, broker_mirrors,
+        )
+
+        mirror_summary = {
+            sym: m.to_dict() for sym, m in broker_mirrors.items()
+        }
+
+        return {
+            "ok": True,
+            "portfolio_id": req.live_portfolio_id,
+            "account_id": account_id,
+            "broker_mirror": mirror_summary,
+            "reconciliation": recon_by_symbol,
+            "meta": recon_meta,
+        }
+    finally:
+        conn.close()
+
+
+class TrailActivationRequest(BaseModel):
+    live_portfolio_id: int
+    dry_run: bool = True
+
+
+@router.post("/trades/trail-activation")
+def run_trail_activation(req: TrailActivationRequest):
+    """
+    Evaluate filled structural positions for trailing stop activation.
+    When activation conditions are met and dry_run=False, replaces fixed stops
+    with trailing stops at IB.
+    """
+    from app.services.live_intelligence.trail_activation import run_trail_activation_cycle
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        trail_cfg = _read_app_config(cur, ["TRAIL_ENABLED", "TRAIL_DRY_RUN"])
+        trail_enabled = _parse_bool_config(trail_cfg.get("TRAIL_ENABLED"), False)
+        trail_dry_run = _parse_bool_config(trail_cfg.get("TRAIL_DRY_RUN"), True)
+
+        if not trail_enabled:
+            return {
+                "ok": True,
+                "status": "TRAIL_DISABLED",
+                "message": "Trailing stops are disabled (TRAIL_ENABLED=false).",
+                "evaluated_count": 0,
+            }
+
+        effective_dry_run = req.dry_run or trail_dry_run
+
+        cur.execute(
+            "SELECT IBKR_ACCOUNT_ID FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG WHERE PORTFOLIO_ID = %s LIMIT 1",
+            (req.live_portfolio_id,),
+        )
+        cfg_rows = fetch_all(cur)
+        if not cfg_rows or not cfg_rows[0].get("IBKR_ACCOUNT_ID"):
+            raise HTTPException(status_code=404, detail="Portfolio not found or no IBKR account configured.")
+
+        def _cancel_adapter(*, account, symbol, broker_order_id):
+            return _cancel_ibkr_open_orders(
+                account=account,
+                symbol=symbol,
+                broker_order_id=broker_order_id,
+            )
+
+        def _place_adapter(*, account, symbol, side, qty, trail_amount, trail_percent, oca_group):
+            return _submit_ibkr_order_bundle(
+                account=account,
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                entry_price=None,
+                tp_price=None,
+                sl_price=None,
+                tif="GTC",
+                trail_amount=trail_amount,
+                trail_percent=trail_percent,
+                oca_group=oca_group,
+            )
+
+        result = run_trail_activation_cycle(
+            cur,
+            cancel_fn=_cancel_adapter,
+            place_fn=_place_adapter,
+            portfolio_id=req.live_portfolio_id,
+            dry_run=effective_dry_run,
+        )
+
+        return {
+            "ok": True,
+            "portfolio_id": req.live_portfolio_id,
+            "dry_run": effective_dry_run,
+            "trail_enabled": trail_enabled,
+            "trail_dry_run_config": trail_dry_run,
+            "evaluated_count": result.evaluated_count,
+            "activated_count": result.activated_count,
+            "skipped_count": result.skipped_count,
+            "error_count": result.error_count,
+            "candidates": result.candidates,
+            "errors": result.errors,
         }
     finally:
         conn.close()
@@ -12450,6 +12818,443 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
             "skipped_symbol_live_position_count": skipped_symbol_live_position_count,
             "imported_action_ids": imported_action_ids[:50],
+        }
+    finally:
+        conn.close()
+
+
+# ── Structural proposal import bridge ─────────────────────────────────
+
+_STRUCTURAL_PROPOSAL_QUERY = """
+WITH latest_bars AS (
+    SELECT SYMBOL,
+           MAX(TO_DATE(TS))              AS LATEST_BAR_DATE,
+           MAX_BY(CLOSE, TS)             AS CLOSE_PRICE
+    FROM MIP.MART.MARKET_BARS
+    WHERE INTERVAL_MINUTES = 1440
+    GROUP BY SYMBOL
+),
+latest_regime AS (
+    SELECT SYMBOL, MARKET_TYPE,
+           MAX_BY(OBJECT_CONSTRUCT(
+               'vol_regime',   VOL_REGIME,
+               'trend_regime', TREND_REGIME,
+               'range_regime', RANGE_REGIME
+           ), AS_OF_DATE) AS REGIME_TAGS
+    FROM MIP.APP.STRUCTURAL_REGIME_TAG
+    GROUP BY SYMBOL, MARKET_TYPE
+)
+SELECT
+    stp.PROPOSAL_ID,
+    stp.SETUP_EVENT_ID,
+    stp.SYMBOL,
+    se.MARKET_TYPE,
+    stp.SETUP_FAMILY,
+    stp.DIRECTION,
+    stp.ENTRY_ZONE_LOW,
+    stp.ENTRY_ZONE_HIGH,
+    se.LEVEL_PRICE                                          AS SUPPORTING_LEVEL,
+    stp.PRICE_INVALIDATION_LEVEL                            AS INVALIDATION_LEVEL,
+    stp.INVALIDATION_RULE,
+    stp.STRUCTURE_CONFIDENCE,
+    se.LEVEL_SIGNIFICANCE,
+    se.STRUCTURAL_STATE,
+    lr.REGIME_TAGS,
+    stp.REGIME_COMPAT,
+    COALESCE(st.TRUST_LABEL, 'UNKNOWN')                     AS TRUST_LABEL,
+    stp.MEANINGFUL_HIT_RATE,
+    stp.PATH_SURVIVAL_HIT_RATE                              AS PATH_SURVIVAL_RATE,
+    stp.MFE_MAE_RATIO,
+    st.AVG_BARS_TO_THRESHOLD,
+    st.FAILURE_MODE_DISTRIBUTION,
+    st.BEST_WINDOW,
+    stp.RISK_CLASS,
+    COALESCE(stp.EXIT_STYLE, rp.EXIT_STYLE, 'STRUCTURAL_TARGET') AS EXIT_STYLE,
+    COALESCE(stp.TRAIL_STYLE, rp.TRAIL_STYLE)               AS TRAIL_STYLE,
+    COALESCE(stp.TRAIL_PARAMS, rp.TRAIL_PARAMS)              AS TRAIL_PARAMS,
+    rp.TRAIL_ACTIVATION_TYPE,
+    rp.TRAIL_ACTIVATION_PARAM,
+    COALESCE(rp.MAX_HOLD_BARS, 20)                           AS MAX_HOLD_BARS,
+    stp.RATIONALE_TEXT                                       AS PROPOSAL_RATIONALE,
+    mb.LATEST_BAR_DATE,
+    mb.CLOSE_PRICE                                           AS CURRENT_PRICE,
+    se.SETUP_STATUS,
+    stp.CREATED_AT                                           AS PROPOSAL_CREATED_AT
+FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS stp
+JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
+    ON se.SETUP_EVENT_ID = stp.SETUP_EVENT_ID
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_TRUST st
+    ON st.SETUP_FAMILY = stp.SETUP_FAMILY
+   AND st.MARKET_TYPE  = se.MARKET_TYPE
+   AND st.EVAL_WINDOW  = 20
+LEFT JOIN MIP.APP.STRUCTURAL_RISK_POLICY rp
+    ON rp.SETUP_FAMILY = stp.SETUP_FAMILY
+   AND rp.DIRECTION    = stp.DIRECTION
+   AND rp.IS_ACTIVE    = TRUE
+LEFT JOIN latest_bars mb
+    ON mb.SYMBOL = stp.SYMBOL
+LEFT JOIN latest_regime lr
+    ON lr.SYMBOL      = stp.SYMBOL
+   AND lr.MARKET_TYPE = se.MARKET_TYPE
+WHERE stp.STATUS = 'PROPOSED'
+  AND stp.CREATED_AT >= DATEADD('day', -%s, CURRENT_DATE())
+ORDER BY stp.CREATED_AT DESC
+LIMIT %s
+"""
+
+
+def _compute_freshness(
+    p: dict,
+    entry_zone_tolerance_pct: float,
+) -> dict:
+    """Compute freshness/validation fields for a structural proposal."""
+    entry_low = float(p["ENTRY_ZONE_LOW"]) if p.get("ENTRY_ZONE_LOW") is not None else None
+    entry_high = float(p["ENTRY_ZONE_HIGH"]) if p.get("ENTRY_ZONE_HIGH") is not None else None
+    current_price = float(p["CURRENT_PRICE"]) if p.get("CURRENT_PRICE") is not None else None
+    setup_status = (p.get("SETUP_STATUS") or "").upper()
+    direction = (p.get("DIRECTION") or "LONG").upper()
+
+    setup_still_valid = setup_status in ("DETECTED", "ELIGIBLE")
+
+    zone_width = abs(entry_high - entry_low) if entry_low is not None and entry_high is not None else 0.0
+    if current_price is not None and entry_low is not None and entry_high is not None:
+        if direction == "LONG":
+            if current_price < entry_low:
+                distance = (entry_low - current_price) / entry_low * 100
+            elif current_price > entry_high:
+                distance = (current_price - entry_high) / entry_high * 100
+            else:
+                distance = 0.0
+        else:
+            if current_price > entry_high:
+                distance = (current_price - entry_high) / entry_high * 100
+            elif current_price < entry_low:
+                distance = (entry_low - current_price) / entry_low * 100
+            else:
+                distance = 0.0
+    else:
+        distance = None
+
+    price_moved_too_far = False
+    if distance is not None and zone_width > 0:
+        threshold = max(entry_zone_tolerance_pct, (zone_width / ((entry_low + entry_high) / 2)) * 200)
+        price_moved_too_far = distance > threshold
+
+    if not setup_still_valid:
+        freshness = "STALE_INVALID"
+    elif price_moved_too_far:
+        freshness = "STALE_INVALID"
+    elif distance is not None and distance > entry_zone_tolerance_pct:
+        freshness = "STALE_BUT_VALID"
+    else:
+        freshness = "CURRENT"
+
+    return {
+        "distance_to_entry_zone": round(distance, 4) if distance is not None else None,
+        "setup_still_valid": setup_still_valid,
+        "price_moved_too_far": price_moved_too_far,
+        "freshness_assessment": freshness,
+    }
+
+
+def _derive_hold_character(max_hold_bars: int | None) -> str:
+    if max_hold_bars is None:
+        return "MEDIUM_SWING"
+    if max_hold_bars <= 10:
+        return "SHORT_SWING"
+    if max_hold_bars <= 20:
+        return "MEDIUM_SWING"
+    return "PATIENT_STRUCTURAL"
+
+
+def _extract_dominant_failure(failure_dist) -> str | None:
+    """Extract top failure mode from FAILURE_MODE_DISTRIBUTION variant."""
+    if failure_dist is None:
+        return None
+    if isinstance(failure_dist, str):
+        try:
+            failure_dist = json.loads(failure_dist)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if isinstance(failure_dist, dict):
+        if not failure_dist:
+            return None
+        return max(failure_dist, key=lambda k: failure_dist[k])
+    return None
+
+
+def _build_setup_narrative(p: dict) -> str:
+    """Build a plain-language narrative from structural proposal fields."""
+    family = p.get("SETUP_FAMILY") or "UNKNOWN"
+    symbol = p.get("SYMBOL") or "?"
+    direction = (p.get("DIRECTION") or "LONG").upper()
+    level = p.get("SUPPORTING_LEVEL")
+    entry_low = p.get("ENTRY_ZONE_LOW")
+    entry_high = p.get("ENTRY_ZONE_HIGH")
+    state = p.get("STRUCTURAL_STATE") or "?"
+    regime = p.get("REGIME_COMPAT") or "?"
+
+    level_type = "SUPPORT" if direction == "LONG" else "RESISTANCE"
+    level_str = f"${level:.2f}" if level else "?"
+
+    zone_str = ""
+    if entry_low is not None and entry_high is not None:
+        zone_str = f"${entry_low:.2f}\u2013${entry_high:.2f}"
+
+    parts = [
+        f"{family.replace('_', ' ').title()} near {level_type} at {level_str}.",
+    ]
+    if zone_str:
+        parts.append(f"Entry zone: {zone_str}.")
+    parts.append(f"State: {state}. Regime: {regime}.")
+    return " ".join(parts)
+
+
+@router.post("/trades/actions/import-structural-proposals")
+def import_structural_proposals(req: ImportStructuralProposalsRequest):
+    """Import structural trade proposals into LIVE_ACTIONS with full canonical context."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+
+        # 1. Validate live portfolio config
+        cur.execute(
+            """
+            SELECT COALESCE(VALIDITY_WINDOW_SEC, 14400) AS VALIDITY_WINDOW_SEC,
+                   IBKR_ACCOUNT_ID
+            FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            WHERE PORTFOLIO_ID = %s AND COALESCE(IS_ACTIVE, TRUE) = TRUE
+            """,
+            (req.live_portfolio_id,),
+        )
+        cfg = cur.fetchone()
+        if not cfg:
+            raise HTTPException(status_code=400, detail="Live portfolio config not found or inactive.")
+        validity_window_sec, ibkr_account_id = cfg
+        ibkr_account_id = str(ibkr_account_id or "").strip()
+
+        # 2. Read feature flags
+        flags = _read_app_config(cur, ["LIVE_ENFORCE_LONG_ONLY"])
+        enforce_long_only = _parse_bool_config(flags.get("LIVE_ENFORCE_LONG_ONLY"), True)
+
+        # 3. Fetch structural proposals with all canonical joins
+        cur.execute(
+            _STRUCTURAL_PROPOSAL_QUERY,
+            (req.max_proposal_age_days, req.limit * 3),
+        )
+        proposals = fetch_all(cur)
+
+        # 4. Process each proposal
+        imported = 0
+        skipped_existing = 0
+        skipped_long_only = 0
+        skipped_stale = 0
+        skipped_live_position = 0
+        skipped_duplicate_symbol = 0
+        imported_action_ids: list[str] = []
+        seen_symbols: set[str] = set()
+        live_position_cache: dict[str, bool] = {}
+
+        for p in proposals:
+            if imported >= req.limit:
+                break
+
+            proposal_id = p.get("PROPOSAL_ID")
+            symbol = (p.get("SYMBOL") or "").upper().strip()
+            direction = (p.get("DIRECTION") or "LONG").upper()
+
+            if not proposal_id or not symbol:
+                continue
+
+            # Dedupe by symbol
+            if req.dedupe_by_symbol:
+                if symbol in seen_symbols:
+                    skipped_duplicate_symbol += 1
+                    continue
+                seen_symbols.add(symbol)
+
+            # Already imported?
+            cur.execute(
+                """
+                SELECT ACTION_ID FROM MIP.LIVE.LIVE_ACTIONS
+                WHERE PORTFOLIO_ID = %s AND PROPOSAL_ID = %s
+                LIMIT 1
+                """,
+                (req.live_portfolio_id, proposal_id),
+            )
+            if cur.fetchone():
+                skipped_existing += 1
+                continue
+
+            # Long-only gate
+            if enforce_long_only and direction == "SHORT":
+                skipped_long_only += 1
+                continue
+
+            # Freshness check
+            freshness = _compute_freshness(p, req.entry_zone_tolerance_pct)
+            if req.skip_stale and freshness["freshness_assessment"] == "STALE_INVALID":
+                skipped_stale += 1
+                continue
+
+            # Live position check
+            if ibkr_account_id and symbol:
+                has_live_pos = live_position_cache.get(symbol)
+                if has_live_pos is None:
+                    broker_truth = _fetch_latest_broker_truth(
+                        cur, ibkr_account_id, symbol, p.get("MARKET_TYPE")
+                    )
+                    has_live_pos = bool(broker_truth.get("has_symbol_position"))
+                    live_position_cache[symbol] = has_live_pos
+                if has_live_pos:
+                    skipped_live_position += 1
+                    continue
+
+            # Derive computed fields
+            max_hold = p.get("MAX_HOLD_BARS")
+            hold_character = _derive_hold_character(max_hold)
+            dominant_failure = _extract_dominant_failure(p.get("FAILURE_MODE_DISTRIBUTION"))
+            narrative = _build_setup_narrative(p)
+            side = "BUY" if direction == "LONG" else "SELL"
+            action_intent = "ENTRY"
+
+            # Serialize regime tags
+            regime_tags_raw = p.get("REGIME_TAGS")
+            if regime_tags_raw and isinstance(regime_tags_raw, str):
+                regime_tags_json = regime_tags_raw
+            elif regime_tags_raw and isinstance(regime_tags_raw, dict):
+                regime_tags_json = json.dumps(regime_tags_raw)
+            else:
+                regime_tags_json = None
+
+            # Serialize trail params
+            trail_params_raw = p.get("TRAIL_PARAMS")
+            if trail_params_raw and isinstance(trail_params_raw, str):
+                trail_params_json = trail_params_raw
+            elif trail_params_raw and isinstance(trail_params_raw, dict):
+                trail_params_json = json.dumps(trail_params_raw)
+            else:
+                trail_params_json = None
+
+            action_id = str(uuid.uuid4())
+
+            cur.execute(
+                """
+                INSERT INTO MIP.LIVE.LIVE_ACTIONS (
+                    ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE,
+                    ACTION_INTENT, STATUS,
+                    VALIDITY_WINDOW_END, ASSET_CLASS,
+                    COMMITTEE_REQUIRED, COMMITTEE_STATUS,
+                    -- Structural identity
+                    SETUP_EVENT_ID, MARKET_TYPE, SETUP_FAMILY, DIRECTION,
+                    -- Structural thesis
+                    ENTRY_ZONE_LOW, ENTRY_ZONE_HIGH, SUPPORTING_LEVEL,
+                    INVALIDATION_LEVEL, INVALIDATION_RULE,
+                    STRUCTURE_CONFIDENCE, LEVEL_SIGNIFICANCE,
+                    STRUCTURAL_STATE, REGIME_TAGS, REGIME_COMPAT,
+                    -- Training / path evidence
+                    TRUST_LABEL, MEANINGFUL_HIT_RATE, PATH_SURVIVAL_RATE,
+                    MFE_MAE_RATIO, AVG_BARS_TO_THRESHOLD,
+                    DOMINANT_FAILURE_MODE, BEST_WINDOW,
+                    -- Trade management
+                    RISK_CLASS, EXIT_STYLE, TRAIL_STYLE, TRAIL_PARAMS,
+                    TRAIL_ACTIVATION_TYPE, TRAIL_ACTIVATION_PARAM,
+                    EXPECTED_HOLD_CHARACTER, MAX_HOLD_BARS,
+                    -- Narrative
+                    SETUP_NARRATIVE, PROPOSAL_RATIONALE,
+                    -- Freshness
+                    LATEST_BAR_DATE, CURRENT_PRICE, DISTANCE_TO_ENTRY_ZONE,
+                    SETUP_STILL_VALID, PRICE_MOVED_TOO_FAR, FRESHNESS_ASSESSMENT,
+                    -- Timestamps
+                    CREATED_AT, UPDATED_AT
+                )
+                SELECT
+                    %s, %s, %s, %s, %s,
+                    %s, 'PENDING_OPEN_VALIDATION',
+                    DATEADD(SECOND, %s, CURRENT_TIMESTAMP()), %s,
+                    TRUE, 'PENDING',
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, PARSE_JSON(%s), %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s, PARSE_JSON(%s),
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+                """,
+                (
+                    action_id, proposal_id, req.live_portfolio_id, symbol, side,
+                    action_intent,
+                    int(validity_window_sec) if validity_window_sec else 14400, p.get("MARKET_TYPE"),
+                    p.get("SETUP_EVENT_ID"), p.get("MARKET_TYPE"), p.get("SETUP_FAMILY"), direction,
+                    p.get("ENTRY_ZONE_LOW"), p.get("ENTRY_ZONE_HIGH"), p.get("SUPPORTING_LEVEL"),
+                    p.get("INVALIDATION_LEVEL"), p.get("INVALIDATION_RULE"),
+                    p.get("STRUCTURE_CONFIDENCE"), p.get("LEVEL_SIGNIFICANCE"),
+                    p.get("STRUCTURAL_STATE"), regime_tags_json, p.get("REGIME_COMPAT"),
+                    p.get("TRUST_LABEL"), p.get("MEANINGFUL_HIT_RATE"), p.get("PATH_SURVIVAL_RATE"),
+                    p.get("MFE_MAE_RATIO"), p.get("AVG_BARS_TO_THRESHOLD"),
+                    dominant_failure, p.get("BEST_WINDOW"),
+                    p.get("RISK_CLASS"), p.get("EXIT_STYLE"), p.get("TRAIL_STYLE"), trail_params_json,
+                    p.get("TRAIL_ACTIVATION_TYPE"), p.get("TRAIL_ACTIVATION_PARAM"),
+                    hold_character, max_hold,
+                    narrative, p.get("PROPOSAL_RATIONALE"),
+                    p.get("LATEST_BAR_DATE"), p.get("CURRENT_PRICE"), freshness["distance_to_entry_zone"],
+                    freshness["setup_still_valid"], freshness["price_moved_too_far"], freshness["freshness_assessment"],
+                ),
+            )
+
+            _append_learning_ledger_event(
+                cur,
+                event_name="STRUCTURAL_PROPOSAL_IMPORT",
+                status="PENDING_OPEN_VALIDATION",
+                action_before=None,
+                action_after={
+                    "ACTION_ID": action_id,
+                    "PROPOSAL_ID": proposal_id,
+                    "PORTFOLIO_ID": req.live_portfolio_id,
+                    "SYMBOL": symbol,
+                    "SIDE": side,
+                    "DIRECTION": direction,
+                    "SETUP_FAMILY": p.get("SETUP_FAMILY"),
+                    "TRUST_LABEL": p.get("TRUST_LABEL"),
+                    "FRESHNESS_ASSESSMENT": freshness["freshness_assessment"],
+                },
+                influence_delta={
+                    "source": "STRUCTURAL_TRADE_PROPOSALS",
+                    "setup_event_id": p.get("SETUP_EVENT_ID"),
+                    "direction": direction,
+                    "trust_label": p.get("TRUST_LABEL"),
+                    "regime_compat": p.get("REGIME_COMPAT"),
+                    "freshness": freshness["freshness_assessment"],
+                    "trail_style": p.get("TRAIL_STYLE"),
+                    "exit_style": p.get("EXIT_STYLE"),
+                },
+                policy_version=LIVE_POLICY_VERSION,
+            )
+
+            imported += 1
+            imported_action_ids.append(action_id)
+
+        return {
+            "ok": True,
+            "source": "STRUCTURAL_TRADE_PROPOSALS",
+            "live_portfolio_id": req.live_portfolio_id,
+            "enforce_long_only": enforce_long_only,
+            "candidate_count": len(proposals),
+            "imported_count": imported,
+            "skipped_existing_count": skipped_existing,
+            "skipped_long_only_count": skipped_long_only,
+            "skipped_stale_count": skipped_stale,
+            "skipped_live_position_count": skipped_live_position,
+            "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
+            "imported_action_ids": imported_action_ids,
         }
     finally:
         conn.close()

@@ -646,3 +646,116 @@
   color: #925f00;
   border: 1px solid #ffe082;
 }
+
+/* Structural badges */
+.lpa-structural-badge {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+.lpa-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.lpa-badge--structural {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #90caf9;
+}
+
+.lpa-badge--long {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.lpa-badge--short {
+  background: #fce4ec;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
+}
+
+.lpa-badge--trail {
+  background: #f3e5f5;
+  color: #6a1b9a;
+  border: 1px solid #ce93d8;
+}
+
+.lpa-badge--entry {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #90caf9;
+}
+
+.lpa-badge--protect {
+  background: #fff8e1;
+  color: #925f00;
+  border: 1px solid #ffe082;
+}
+
+.lpa-narrative {
+  font-style: italic;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Trail activation state */
+.lpa-trail-active {
+  color: #6a1b9a;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* Reconciliation badges */
+.lpa-recon-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.lpa-recon-badge--ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.lpa-recon-badge--warn {
+  background: #fff8e1;
+  color: #925f00;
+  border: 1px solid #ffe082;
+}
+
+.lpa-recon-badge--bad {
+  background: #fce4ec;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
+}
+
+.lpa-recon-badge--neutral {
+  background: #eceff1;
+  color: #546e7a;
+  border: 1px solid #b0bec5;
+}
+
+/* Committee decision block */
+.lpa-committee-decision {
+  margin: 4px 0;
+  padding: 4px 0;
+  border-top: 1px solid #e0e0e0;
+  border-bottom: 1px solid #e0e0e0;
+  display: grid;
+  gap: 2px;
+}

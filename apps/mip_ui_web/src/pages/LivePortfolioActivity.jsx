@@ -637,6 +637,7 @@ export default function LivePortfolioActivity() {
     return acc
   }, new Map())
 
+  const reconV2 = overview?.reconciliation_v2 || {}
   const readiness = overview?.readiness || {}
   const driftStateDisplay = readiness?.drift_state_effective || readiness?.drift_state
   const navTrend = overview?.activity_trends?.nav || []
@@ -843,16 +844,42 @@ export default function LivePortfolioActivity() {
                       <td>
                         <div><b>{formatSymbolLabel(d.symbol, d.market_type)}</b> ({d.side})</div>
                         <div>Intent: {d.action_intent || 'ENTRY'}{d.exit_type ? ` (${d.exit_type})` : ''}</div>
+                        {d.structural ? (
+                          <div className="lpa-structural-badge">
+                            <span className="lpa-badge lpa-badge--structural">{d.structural.setup_family}</span>
+                            <span className={`lpa-badge lpa-badge--${d.structural.direction === 'SHORT' ? 'short' : 'long'}`}>{d.structural.direction}</span>
+                            {d.structural.trail_style ? <span className="lpa-badge lpa-badge--trail">{d.structural.trail_style}</span> : null}
+                          </div>
+                        ) : null}
+                        {d.structural?.entry_zone_low != null ? (
+                          <div className="lpa-subtle">Entry zone: {fmtNum(d.structural.entry_zone_low, 2)} – {fmtNum(d.structural.entry_zone_high, 2)} | Invalidation: {fmtNum(d.structural.invalidation_level, 2)}</div>
+                        ) : null}
+                        {d.structural?.setup_narrative ? (
+                          <div className="lpa-subtle lpa-narrative">{d.structural.setup_narrative}</div>
+                        ) : null}
                         <div>Action: {d.action_id}</div>
                         <div>Created: {fmtTs(d.timestamps?.created_at)} ({fmtAge(d.timestamps?.created_at)} ago)</div>
                         {isNewDecision(d.timestamps?.created_at) ? <div className="lpa-subtle">NEW</div> : null}
                         <div>Committee: {d.committee_verdict || '—'}</div>
+                        {d.structural?.freshness_assessment ? <div className="lpa-subtle">Freshness: {d.structural.freshness_assessment} | Hold: {d.structural.hold_character || '—'}</div> : null}
                       </td>
                       <td>
                         <div>{d.status || '—'}</div>
                         <div>Compliance: {d.compliance_status || '—'}</div>
                         <div>Committee run: {d.committee_run_id || '—'}</div>
                         <div>Committee at: {fmtTs(d.committee_completed_ts)}</div>
+                        {d.committee_decision ? (
+                          <div className="lpa-committee-decision">
+                            <div>
+                              <span className={`lpa-badge ${d.committee_decision.should_enter === true ? 'lpa-badge--long' : d.committee_decision.should_enter === false ? 'lpa-badge--short' : 'lpa-badge--structural'}`}>
+                                {d.committee_decision.should_enter === true ? 'APPROVED' : d.committee_decision.should_enter === false ? 'DENIED' : 'PENDING'}
+                              </span>
+                            </div>
+                            {d.committee_decision.risk_notes ? <div className="lpa-subtle lpa-narrative">{d.committee_decision.risk_notes}</div> : null}
+                            {d.committee_decision.realistic_target_return != null ? <div className="lpa-subtle">Target: {fmtPct(d.committee_decision.realistic_target_return)}</div> : null}
+                            {d.committee_decision.stop_loss_pct != null ? <div className="lpa-subtle">Stop: {fmtPct(d.committee_decision.stop_loss_pct)}</div> : null}
+                          </div>
+                        ) : null}
                         <div>Protected: {d.protection?.state || 'NONE'}</div>
                         <div>Plan: {d.protection?.planned ? 'TP/SL expected' : 'No bracket planned'}</div>
                       </td>
@@ -1080,10 +1107,30 @@ export default function LivePortfolioActivity() {
                         <div>Avg fill: {fmtNum(o.AVG_FILL_PRICE, 4)}</div>
                       </td>
                       <td>
-                        <div><b>{o.PROTECTION?.state || 'NONE'}</b></div>
-                        <div>Parent: {o.PROTECTION?.parent?.status || '—'}</div>
-                        <div>TP: {o.PROTECTION?.take_profit?.status || '—'}</div>
-                        <div>SL: {o.PROTECTION?.stop_loss?.status || '—'}</div>
+                        {o.ORDER_ROLE ? (
+                          <div>
+                            <span className={`lpa-badge lpa-badge--${o.ORDER_ROLE === 'ENTRY' ? 'entry' : o.ORDER_ROLE === 'TRAILING_STOP' ? 'trail' : 'protect'}`}>{o.ORDER_ROLE}</span>
+                            {o.PROTECTION_TYPE ? <span className="lpa-subtle"> ({o.PROTECTION_TYPE})</span> : null}
+                          </div>
+                        ) : (
+                          <div><b>{o.PROTECTION?.state || 'NONE'}</b></div>
+                        )}
+                        {o.TRAIL_ACTIVATED ? (
+                          <div className="lpa-trail-active">Trail Active{o.BROKER_TRAIL_STATE ? ` (${o.BROKER_TRAIL_STATE})` : ''}</div>
+                        ) : o.TRAIL_STYLE ? (
+                          <div className="lpa-subtle">Trail pending ({o.TRAIL_STYLE})</div>
+                        ) : null}
+                        {o.STOP_PRICE != null ? <div>Stop: {fmtNum(o.STOP_PRICE, 2)}</div> : null}
+                        {o.TRAIL_AMOUNT != null ? <div>Trail amt: {fmtNum(o.TRAIL_AMOUNT, 2)}</div> : null}
+                        {o.TRAIL_PERCENT != null ? <div>Trail %: {fmtNum(o.TRAIL_PERCENT, 1)}%</div> : null}
+                        {o.OCA_GROUP ? <div className="lpa-subtle">OCA: {o.OCA_GROUP}</div> : null}
+                        {!o.ORDER_ROLE ? (
+                          <>
+                            <div>Parent: {o.PROTECTION?.parent?.status || '—'}</div>
+                            <div>TP: {o.PROTECTION?.take_profit?.status || '—'}</div>
+                            <div>SL: {o.PROTECTION?.stop_loss?.status || '—'}</div>
+                          </>
+                        ) : null}
                       </td>
                       <td>
                         <div>Submitted: {fmtTs(o.SUBMITTED_AT)}</div>
@@ -1133,11 +1180,12 @@ export default function LivePortfolioActivity() {
                         <th>Avg Cost</th>
                         <th>Mkt Value</th>
                         <th>P&L</th>
+                        <th>Broker Alignment</th>
                         <th>Exit Setup</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {openPositions.length === 0 && <tr><td colSpan={6}>No open broker positions.</td></tr>}
+                      {openPositions.length === 0 && <tr><td colSpan={7}>No open broker positions.</td></tr>}
                       {openPositions.map((p, idx) => {
                         const symbol = String(p.SYMBOL || '').toUpperCase()
                         const positionQty = Number(p.POSITION_QTY || 0)
@@ -1156,6 +1204,27 @@ export default function LivePortfolioActivity() {
                             <td>{fmtNum(p.AVG_COST, 4)}</td>
                             <td>{fmtNum(p.MARKET_VALUE, 2)}</td>
                             <td className={Number(p.UNREALIZED_PNL || 0) >= 0 ? 'lpa-pos' : 'lpa-neg'}>{fmtSigned(p.UNREALIZED_PNL, 2)}</td>
+                            <td>
+                              {(() => {
+                                const recon = reconV2[symbol]
+                                if (!recon) return <span className="lpa-subtle">—</span>
+                                const st = String(recon.status || '').toUpperCase()
+                                const badgeClass = st === 'ALIGNED' ? 'ok' : st === 'MISMATCH' ? 'warn' : st === 'ORPHAN' ? 'bad' : 'neutral'
+                                return (
+                                  <>
+                                    <span className={`lpa-recon-badge lpa-recon-badge--${badgeClass}`}>{st}</span>
+                                    {recon.position_aligned === false ? <div className="lpa-subtle">Position mismatch</div> : null}
+                                    {recon.protection_aligned === false ? <div className="lpa-subtle">Protection mismatch</div> : null}
+                                    {Array.isArray(recon.flags) && recon.flags.length > 0 ? (
+                                      <div className="lpa-subtle">{recon.flags.join(', ')}</div>
+                                    ) : null}
+                                    {Array.isArray(recon.orphan_orders) && recon.orphan_orders.length > 0 ? (
+                                      <div className="lpa-subtle">{recon.orphan_orders.length} orphan order{recon.orphan_orders.length > 1 ? 's' : ''}</div>
+                                    ) : null}
+                                  </>
+                                )
+                              })()}
+                            </td>
                             <td>
                               <div className="lpa-exit-setup">
                                 <div className="lpa-position-exit-top">

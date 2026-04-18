@@ -2,8 +2,11 @@
 Optional silent live enrichment for politician trade disclosures (Phase 2).
 
 Not a hard dependency: any failure or empty response yields None (no exhibit, no user-visible error).
-Does not scrape third-party sites by default — wire MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE to a
-trusted JSON endpoint that returns { summary_lines, link_url?, source_label? }.
+
+- **JSON bridge:** `MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE` with `{symbol}` pointing at a trusted
+  endpoint returning `{ summary_lines, link_url?, source_label? }`.
+- **Capitol Trades link-out:** template `https://www.capitoltrades.com/trades?ticker={symbol}` (or same host
+  with `ticker=` and `{symbol}`) builds a deterministic exhibit with **no** HTTP fetch and **no** HTML scrape.
 """
 from __future__ import annotations
 
@@ -56,6 +59,37 @@ def _http_get_json(url: str, timeout_s: float = 2.5) -> Optional[Dict[str, Any]]
     return data if isinstance(data, dict) else None
 
 
+def _capitol_trades_linkout_exhibit(symbol: str, template: str) -> Optional[Dict[str, Any]]:
+    """
+    Capitol Trades trade search is HTML; emit a factual link-out only (spec: deterministic, no scrape).
+    """
+    if "{symbol}" not in template:
+        return None
+    compact = template.lower().replace(" ", "")
+    if "capitoltrades.com" not in compact:
+        return None
+    if "ticker=" not in compact:
+        return None
+    url = template.replace("{symbol}", urllib.parse.quote(symbol, safe=""))
+    ul = url.strip().lower()
+    if not (ul.startswith("https://") or ul.startswith("http://")):
+        return None
+    if "capitoltrades.com" not in ul:
+        return None
+    return {
+        "schema_version": "1",
+        "symbol": symbol,
+        "fetched_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source_label": "Capitol Trades (link-out)",
+        "summary_lines": [
+            f"Third-party politician trade feed filtered to ticker {symbol} on Capitol Trades.",
+            "MIP does not fetch or parse this page; use the link for disclosure context only.",
+        ],
+        "link_url": url.strip(),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 def _build_demo_exhibit(symbol: str) -> Dict[str, Any]:
     """Deterministic stub for local QA when HTTP bridge is not configured."""
     return {
@@ -95,6 +129,10 @@ def build_exhibit_live_politician_disclosure_context(proposal: Dict[str, Any]) -
     has_template = bool(template) and "{symbol}" in template
 
     if has_template:
+        cap = _capitol_trades_linkout_exhibit(symbol, template)
+        if cap is not None:
+            return cap
+
         url = template.replace("{symbol}", urllib.parse.quote(symbol, safe=""))
         data = _http_get_json(url)
         if not data:

@@ -15,6 +15,25 @@ from app.committee.live_politician_disclosure import (  # noqa: E402
 class TestLivePoliticianDisclosure(unittest.TestCase):
     @patch("app.committee.live_politician_disclosure.disclosure_context_flag_enabled", return_value=True)
     @patch("app.committee.live_politician_disclosure._live_flag_enabled", return_value=True)
+    @patch("app.committee.live_politician_disclosure.get_connection")
+    def test_capitol_trades_template_linkout_no_http(self, mock_gc, _lf, _dc):
+        mock_gc.return_value = MagicMock()
+        with patch.dict(
+            os.environ,
+            {
+                "MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE": "https://www.capitoltrades.com/trades?ticker={symbol}",
+            },
+            clear=False,
+        ):
+            out = build_exhibit_live_politician_disclosure_context({"SYMBOL": "NVDA", "DIRECTION": "LONG"})
+        self.assertIsNotNone(out)
+        self.assertEqual(out["symbol"], "NVDA")
+        self.assertIn("capitoltrades.com", out["link_url"].lower())
+        self.assertIn("ticker=nvda", out["link_url"].lower())
+        self.assertEqual(out["source_label"], "Capitol Trades (link-out)")
+
+    @patch("app.committee.live_politician_disclosure.disclosure_context_flag_enabled", return_value=True)
+    @patch("app.committee.live_politician_disclosure._live_flag_enabled", return_value=True)
     @patch("app.committee.live_politician_disclosure._http_get_json")
     @patch("app.committee.live_politician_disclosure.get_connection")
     def test_builds_exhibit_when_json_ok(self, mock_gc, mock_http, _lf, _dc):
@@ -60,7 +79,14 @@ class TestLivePoliticianDisclosure(unittest.TestCase):
     @patch("app.committee.live_politician_disclosure.get_connection")
     def test_demo_env_returns_stub(self, mock_gc, _lf, _dc):
         mock_gc.return_value = MagicMock()
-        with patch.dict(os.environ, {"MIP_POLITICIAN_DISCLOSURE_LIVE_DEMO": "true"}):
+        with patch.dict(
+            os.environ,
+            {
+                "MIP_POLITICIAN_DISCLOSURE_LIVE_DEMO": "true",
+                "MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE": "",
+            },
+            clear=False,
+        ):
             out = build_exhibit_live_politician_disclosure_context({"SYMBOL": "XYZ", "DIRECTION": "LONG"})
         self.assertIsNotNone(out)
         self.assertEqual(out["symbol"], "XYZ")

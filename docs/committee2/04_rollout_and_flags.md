@@ -12,5 +12,6 @@ Migration [`20260418_committee2_config_grants.sql`](../../SQL/migrations/2026041
 
 **Phase 2 live enrichment (optional):** When both `COMMITTEE2_CONTEXT_DISCLOSURE_ENABLED` and `COMMITTEE2_LIVE_POLITICIAN_DISCLOSURE_ENABLED` are true:
 
-- **Real JSON bridge (preferred when set):** `MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE` — URL containing `{symbol}`. Response JSON must include non-empty `summary_lines`. Optional: `link_url` (https), `source_label`. Errors/timeouts → **no** live exhibit.
+- **Capitol Trades (link-out, no scrape):** set `MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE=https://www.capitoltrades.com/trades?ticker={symbol}`. The API builds a deterministic exhibit pointing at their filtered trade list (HTML is **not** fetched or parsed).
+- **Other JSON bridge:** same env with a URL to your service; response JSON must include non-empty `summary_lines`. Optional: `link_url` (https), `source_label`. Errors/timeouts → **no** live exhibit.
 - **Local demo (no HTTP):** when **no** template is configured, set `MIP_POLITICIAN_DISCLOSURE_LIVE_DEMO=true` to return a deterministic stub and verify the **Live disclosure context** card. If both template and demo are set, the template wins.

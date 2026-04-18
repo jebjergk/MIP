@@ -20,6 +20,7 @@ import PerformanceDashboard from './pages/PerformanceDashboard'
 import GlossaryAdminPage from './pages/GlossaryAdminPage'
 import StructuralTrainingIntelligence from './pages/StructuralTrainingIntelligence'
 import StructuralMarketTimeline from './pages/StructuralMarketTimeline'
+import StructuralCommitteeHearing from './pages/StructuralCommitteeHearing'
 import AppLayout from './components/AppLayout'
 import { AskMipRuntimeProvider } from './context/AskMipRuntimeContext'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
@@ -40,6 +41,8 @@ function pageTitleForPath(pathname) {
     { pattern: '/structural-training', title: 'Structural Training Intelligence' },
     { pattern: '/training', title: 'Legacy Training Status' },
     { pattern: '/structural-timeline', title: 'Structural Market Timeline' },
+    { pattern: '/structural-committee/:hearingId', title: 'Committee 2.0 Hearing' },
+    { pattern: '/structural-committee', title: 'Committee 2.0 Hearing' },
     { pattern: '/market-timeline', title: 'Legacy Market Timeline' },
     { pattern: '/symbol-tracker', title: 'Living Chart' },
     { pattern: '/living-chart', title: 'Living Chart' },
@@ -74,6 +77,9 @@ function pageTitleForPath(pathname) {
     if (entry.pattern === '/intraday/pattern/:patternId' && match.params.patternId) {
       return `Pattern ${match.params.patternId}`
     }
+    if (entry.pattern === '/structural-committee/:hearingId' && match.params.hearingId) {
+      return `Committee ${String(match.params.hearingId).slice(0, 8)}…`
+    }
     return entry.title
   }
 
@@ -101,6 +107,8 @@ export default function App() {
         <Route path="/structural-training" element={<StructuralTrainingIntelligence />} />
         <Route path="/training" element={<TrainingStatus />} />
         <Route path="/structural-timeline" element={<StructuralMarketTimeline />} />
+        <Route path="/structural-committee" element={<StructuralCommitteeHearing />} />
+        <Route path="/structural-committee/:hearingId" element={<StructuralCommitteeHearing />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/symbol-tracker" element={<SymbolTracker />} />
         <Route path="/living-chart" element={<SymbolTracker />} />

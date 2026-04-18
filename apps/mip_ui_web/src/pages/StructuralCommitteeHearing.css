@@ -1,0 +1,358 @@
+.sch-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2.5rem;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.sch-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sch-header--premium {
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #f8fafc;
+  margin: -1rem -1.25rem 1.25rem;
+  padding: 1.25rem 1.25rem 1rem;
+  border-bottom: none;
+}
+
+.sch-header--premium .sch-sub {
+  color: #94a3b8;
+}
+
+.sch-header--premium code {
+  color: #fde68a;
+}
+
+.sch-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sch-sub {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.sch-muted {
+  color: #64748b;
+}
+
+.sch-error {
+  color: #b91c1c;
+}
+
+.sch-note {
+  padding: 0.5rem 0.75rem;
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.sch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.sch-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.sch-panel--live {
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+}
+
+.sch-panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #334155;
+}
+
+.sch-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.sch-dl dt {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.sch-dl dd {
+  margin: 0;
+}
+
+.sch-delta-strip {
+  margin-top: 1rem;
+}
+
+.sch-delta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.sch-delta-chip {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.4rem 0.65rem;
+  background: #f8fafc;
+  max-width: 220px;
+}
+
+.sch-delta-cat {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+
+.sch-delta-sum {
+  font-size: 0.8rem;
+  color: #0f172a;
+}
+
+.sch-role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.sch-role-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.sch-role-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+}
+
+.sch-role-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #475569;
+}
+
+.sch-role-badge {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.sch-role-line {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.sch-role-bullets {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.sch-mini {
+  margin-top: 0.5rem;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.sch-meter-bar {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sch-meter-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #6366f1);
+}
+
+.sch-mini-cap {
+  display: block;
+  margin-top: 0.2rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.sch-chair {
+  margin-top: 1rem;
+  border-color: #c7d2fe;
+  background: #eef2ff;
+}
+
+.sch-chair-line {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.sch-chair-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  font-size: 0.88rem;
+}
+
+.sch-chair-cols ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.sch-pre {
+  font-size: 0.75rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.75rem;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.sch-compare {
+  margin-top: 1rem;
+  border-style: dashed;
+}
+
+.sch-btn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.sch-header--premium .sch-btn {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #475569;
+}
+
+.sch-btn--primary {
+  background: #4f46e5;
+  color: #fff;
+  border-color: #4338ca;
+}
+
+.sch-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sch-conf {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fde68a;
+}
+
+.sch-stance {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.sch-stance--deny { background: #7f1d1d; color: #fecaca; }
+.sch-stance--defer { background: #9a3412; color: #ffedd5; }
+.sch-stance--wait_reclaim { background: #a16207; color: #fef9c3; }
+.sch-stance--approve_reduced { background: #1e40af; color: #dbeafe; }
+.sch-stance--approve { background: #14532d; color: #dcfce7; }
+
+.sch-wrap--landing .sch-landing-card {
+  margin-top: 0.5rem;
+}
+
+.sch-landing-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  line-height: 1.55;
+}
+
+.sch-landing-list a {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.sch-inline-code {
+  font-size: 0.8rem;
+  background: #f1f5f9;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+}
+
+.sch-landing-foot {
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+}
+
+.sch-note--warn {
+  background: #fffbeb;
+  border-color: #fbbf24;
+  color: #92400e;
+}
+
+.sch-live-bind {
+  margin-bottom: 1rem;
+}
+
+.sch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.sch-field-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.sch-input {
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  max-width: 32rem;
+}
+
+.sch-input:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+}

@@ -11,6 +11,7 @@ import StlChart from '../components/structural-timeline/StlChart'
 import StlEventRail from '../components/structural-timeline/StlEventRail'
 import StlSetupDetail from '../components/structural-timeline/StlSetupDetail'
 import StlSymbolSummary from '../components/structural-timeline/StlSymbolSummary'
+import StlHearingLaunch from '../components/structural-timeline/StlHearingLaunch'
 import './StructuralMarketTimeline.css'
 
 const get = (r, k) => r[k] ?? r[k.toUpperCase()] ?? r[k.toLowerCase()]
@@ -324,6 +325,8 @@ export default function StructuralMarketTimeline() {
       {!detailDataLoading && !error && (
         <>
           {summary && <StlSummaryStrip data={summary} get={get} />}
+
+          <StlHearingLaunch proposals={proposals} get={get} />
 
           <StlChart
             bars={bars}

@@ -1079,7 +1079,7 @@ function LiveIntelligenceCockpitInner() {
               {detailTab === 'ai' && (
                 <div className="lic-drill-panel lic-drill-panel--ai">
                   <button type="button" onClick={runAi} disabled={aiBusy}>
-                    {aiBusy ? 'Running…' : 'Run AI committee (event)'}
+                    {aiBusy ? 'Running…' : 'Run AI enrichment (event)'}
                   </button>
                   {aiBusy ? (
                     <p className="lic-muted" style={{ marginTop: 8 }}>Calling enrich endpoint…</p>

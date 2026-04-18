@@ -30,6 +30,7 @@ const NAV_GROUPS = [
     label: 'Research',
     items: [
       { to: '/structural-timeline', icon: '\uD83C\uDFD7\uFE0F', label: 'Structural Timeline' },
+      { to: '/structural-committee', icon: '\u2696\uFE0F', label: 'Committee 2.0' },
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Legacy Market Timeline' },
       { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
       { to: '/structural-training', icon: '\uD83E\uDDEC', label: 'Structural Training' },

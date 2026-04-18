@@ -237,6 +237,8 @@ export default function LivePortfolioActivity() {
   const [liveLineDisplay, setLiveLineDisplay] = useState('')
   const streamRef = useRef(null)
   const streamPaneRef = useRef(null)
+  /** Tracks whether the open stream is structural (Committee 2.0) for finalize copy. */
+  const committeeStreamContextRef = useRef({ structural: false })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -342,6 +344,7 @@ export default function LivePortfolioActivity() {
   }, [load])
 
   const finalizeCommitteeRevalidation = useCallback(async (actionId, verdict) => {
+    const syncC20 = Boolean(committeeStreamContextRef.current?.structural)
     setBusy(`committee:${actionId}`)
     setError('')
     setNotice('')
@@ -357,14 +360,25 @@ export default function LivePortfolioActivity() {
       })
       if (!resp.ok) {
         const body = await resp.json().catch(() => null)
-        throw new Error(messageFromApiFailure(body, 'Committee revalidation is currently unavailable.'))
+        throw new Error(
+          messageFromApiFailure(
+            body,
+            syncC20
+              ? 'Committee 2.0 sync is currently unavailable.'
+              : 'Committee revalidation is currently unavailable.',
+          ),
+        )
       }
       const applyData = await resp.json()
       const nextStatus = String(applyData?.action_status || '').toUpperCase()
       const canRunApproveFlow = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED'].includes(nextStatus)
       if (canRunApproveFlow) {
         setStreamStatus('Advancing approval flow...')
-        setLiveLineTarget('Committee complete. Advancing PM/Compliance/Intent approvals...')
+        setLiveLineTarget(
+          syncC20
+            ? 'Committee 2.0 verdict applied. Advancing PM/Compliance/Intent approvals...'
+            : 'Committee complete. Advancing PM/Compliance/Intent approvals...',
+        )
         const approveResp = await fetch(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -390,7 +404,11 @@ export default function LivePortfolioActivity() {
         }
         setLiveLineTarget('Revalidation complete. If gates are clear, decision is ready to submit.')
       } else {
-        setLiveLineTarget('Committee updated. No further revalidation step available for this status yet.')
+        setLiveLineTarget(
+          syncC20
+            ? 'Committee 2.0 verdict updated. No further revalidation step available for this status yet.'
+            : 'Committee updated. No further revalidation step available for this status yet.',
+        )
       }
       await load()
       setStreamStatus('Completed')
@@ -398,7 +416,12 @@ export default function LivePortfolioActivity() {
       setTimeout(() => setReadyPulseActionId(''), 20000)
       setActiveStreamActionId('')
     } catch (e) {
-      setError(e.message || 'Committee revalidation failed.')
+      setError(
+        e.message ||
+          (committeeStreamContextRef.current?.structural
+            ? 'Committee 2.0 sync failed.'
+            : 'Committee revalidation failed.'),
+      )
       setStreamStatus('Stopped')
       setActiveStreamActionId('')
     } finally {
@@ -406,7 +429,9 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
-  const openCommitteeStream = useCallback((actionId) => {
+  const openCommitteeStream = useCallback((actionId, opts = {}) => {
+    const syncC20 = Boolean(opts.structural)
+    committeeStreamContextRef.current = { structural: syncC20 }
     if (streamRef.current) {
       streamRef.current.close()
       streamRef.current = null
@@ -414,8 +439,13 @@ export default function LivePortfolioActivity() {
     setStreamActionId(actionId)
     setActiveStreamActionId(actionId)
     setStreamStatus('Connecting...')
-    setStreamLogs([{ type: 'system', summary: 'Starting committee stream...' }])
-    setLiveLineTarget('Starting committee stream...')
+    setStreamLogs([
+      {
+        type: 'system',
+        summary: syncC20 ? 'Starting Committee 2.0 sync stream...' : 'Starting committee stream...',
+      },
+    ])
+    setLiveLineTarget(syncC20 ? 'Starting Committee 2.0 sync...' : 'Starting committee stream...')
     const es = new EventSource(
       `${API_BASE}/live/trades/actions/${actionId}/committee/live-prompt?actor=committee_orchestrator&model=claude-4-sonnet`,
     )
@@ -428,8 +458,14 @@ export default function LivePortfolioActivity() {
         setStreamLogs((prev) => [...prev, { type: 'start', ...data }])
         setLiveLineTarget(`start: ${JSON.stringify(data)}`)
       } catch {
-        setStreamLogs((prev) => [...prev, { type: 'start', summary: 'Committee run started.' }])
-        setLiveLineTarget('Committee run started.')
+        setStreamLogs((prev) => [
+          ...prev,
+          {
+            type: 'start',
+            summary: syncC20 ? 'Committee 2.0 sync started.' : 'Committee run started.',
+          },
+        ])
+        setLiveLineTarget(syncC20 ? 'Committee 2.0 sync started.' : 'Committee run started.')
       }
     })
     es.addEventListener('agent_turn', (evt) => {
@@ -818,7 +854,8 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Workflow: Committee Revalidation, then Submit.
+              Decisions not yet broker-opened. Structural setups: commit in the Hearing Room, then Sync Committee 2.0, then Submit.
+              Other intents: committee revalidation stream, then Submit.
             </div>
             {outsideHours ? <div className="lpa-subtle">Market is closed. Submit sends DAY orders that IB queues for next session.</div> : null}
             <div className="lpa-table-wrap">
@@ -840,6 +877,7 @@ export default function LivePortfolioActivity() {
                     <Fragment key={d.action_id}>
                     {(() => {
                       const statusUpper = String(d.status || '').toUpperCase()
+                      const isStructuralC20 = Boolean(d.structural)
                       const canSubmit = statusUpper === 'REVALIDATED_PASS' && Boolean(d.submission_allowed)
                       const canRunCommittee = [
                         'RESEARCH_IMPORTED',
@@ -953,7 +991,8 @@ export default function LivePortfolioActivity() {
                         <div className="lpa-actions">
                         {isStaleRevalidationState(d) ? (
                           <div className="lpa-warning-inline">
-                            Revalidation expired - run Committee revalidation before submit.
+                            Revalidation expired —{' '}
+                            {isStructuralC20 ? 'sync Committee 2.0' : 'run committee revalidation'} before submit.
                           </div>
                         ) : null}
                         {!canSubmit && statusUpper === 'REVALIDATED_PASS' && Array.isArray(d.submission_gate_hints) && d.submission_gate_hints.length > 0 ? (
@@ -964,7 +1003,11 @@ export default function LivePortfolioActivity() {
                           </ul>
                         ) : null}
                         {!canSubmit && statusUpper !== 'REVALIDATED_PASS' ? (
-                          <div className="lpa-subtle">Submit to IBKR is enabled only when status is REVALIDATED_PASS (run Committee revalidation if needed).</div>
+                          <div className="lpa-subtle">
+                            Submit to IBKR is enabled only when status is REVALIDATED_PASS (
+                            {isStructuralC20 ? 'sync Committee 2.0 if needed' : 'run committee revalidation if needed'}
+                            ).
+                          </div>
                         ) : null}
                         <button
                           className="lpa-btn"
@@ -977,10 +1020,16 @@ export default function LivePortfolioActivity() {
                           className="lpa-btn lpa-btn-secondary"
                           disabled={busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id || !canRunCommittee}
                           onClick={() => {
-                            openCommitteeStream(d.action_id)
+                            openCommitteeStream(d.action_id, { structural: isStructuralC20 })
                           }}
                         >
-                          {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id ? 'Running...' : 'Committee revalidation'}
+                          {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id
+                            ? isStructuralC20
+                              ? 'Syncing…'
+                              : 'Running...'
+                            : isStructuralC20
+                              ? 'Sync Committee 2.0'
+                              : 'Committee revalidation'}
                         </button>
                         <button
                           className="lpa-btn lpa-btn-secondary"
@@ -996,11 +1045,17 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-subtle">
                             {d.execution_hard_blocked
                               ? 'Submit blocked by risk limits shown in reason codes. Adjust sizing/config or rerun committee.'
-                              : 'Run Committee revalidation. If committee says go, Submit will be enabled.'}
+                              : isStructuralC20
+                                ? 'Sync Committee 2.0 after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
+                                : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
                           </div>
                         ) : null}
                         {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
-                          <div className="lpa-subtle">Blocked by opening guard. Re-run Committee revalidation when data is fresher, or Reject stale to clear.</div>
+                          <div className="lpa-subtle">
+                            Blocked by opening guard.{' '}
+                            {isStructuralC20 ? 'Re-sync Committee 2.0' : 'Re-run committee revalidation'} when data is
+                            fresher, or Reject stale to clear.
+                          </div>
                         ) : null}
                         </div>
                       </td>
@@ -1012,7 +1067,8 @@ export default function LivePortfolioActivity() {
                         <td colSpan={5}>
                           <div className="lpa-stream">
                             <div>
-                              <b>Live Committee Stream</b> for {streamActionId} ({streamStatus || 'Idle'})
+                              <b>{d.structural ? 'Committee 2.0 sync' : 'Live committee stream'}</b> for{' '}
+                              {streamActionId} ({streamStatus || 'Idle'})
                             </div>
                             <div className="lpa-live-line">{liveLineDisplay}<span className="lpa-caret">|</span></div>
                             <div ref={streamPaneRef} className="lpa-stream-body">

@@ -42,8 +42,13 @@ from app.services.broker_execution_reconcile import (
     run_reconcile_dry_run,
     verify_apply_item,
 )
+from app.committee.committee2_live_bridge import (
+    fetch_committee2_final_decision_for_action,
+    structural_entry_verdict_from_committee2_final,
+)
 from app.services.live_intelligence.structural_committee import (
-    run_structural_committee,
+    build_structural_entry_joint_decision,
+    build_structural_exit_execution_only_verdict,
 )
 from app.services.live_intelligence.structural_routing import (
     STRUCTURAL_COMMITTEE_LOGIC_VERSION,
@@ -8743,6 +8748,14 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             is_structural_fn=is_structural_live_action,
         )
 
+        _committee_action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        _committee_is_exit = _committee_action_intent == "EXIT"
+        _committee_model_run = (
+            "STRUCTURAL_EXIT_EXECUTION_ONLY"
+            if is_structural_live_action(action) and _committee_is_exit
+            else ("STRUCTURAL_V1" if is_structural_live_action(action) else "LEGACY_MULTI_AGENT")
+        )
+
         run_id = str(uuid.uuid4())
         cur.execute(
             """
@@ -8760,7 +8773,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 json.dumps(
                     {
                         "actor": req.actor,
-                        "committee_model": "STRUCTURAL_V1" if is_structural_live_action(action) else "LEGACY_MULTI_AGENT",
+                        "committee_model": _committee_model_run,
                         "news_runtime": {
                             "refresh_ibkr_news": bool(req.refresh_ibkr_news),
                             "ibkr_ingest": news_ingest,
@@ -8807,42 +8820,71 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         exit_override_applied = False
 
         if is_structural:
-            # ── Structural committee path ─────────────────────────────
-            structural_verdict = run_structural_committee(action)
+            # ── Structural path: Committee 2.0 (ENTRY) or execution-only broker gate (EXIT) ──
+            if is_exit:
+                exit_position_qty = _fetch_live_symbol_position_qty(
+                    cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL")
+                )
+                structural_verdict = build_structural_exit_execution_only_verdict(
+                    action, exit_position_qty=exit_position_qty
+                )
+            else:
+                fd_row = fetch_committee2_final_decision_for_action(cur, action_id)
+                if not fd_row:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": "Committee 2.0 final decision required — commit the hearing with this action_id (POST /committee/hearing/{hearing_id}/commit).",
+                            "reason_codes": ["COMMITTEE2_FINAL_DECISION_REQUIRED"],
+                        },
+                    )
+                ap = action.get("PROPOSAL_ID")
+                if ap is not None and fd_row.get("PROPOSAL_ID") is not None:
+                    if int(ap) != int(fd_row["PROPOSAL_ID"]):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "message": "COMMITTEE_FINAL_DECISION.PROPOSAL_ID does not match LIVE_ACTIONS.PROPOSAL_ID.",
+                                "reason_codes": ["COMMITTEE2_ACTION_PROPOSAL_MISMATCH"],
+                            },
+                        )
+                structural_verdict = structural_entry_verdict_from_committee2_final(fd_row, action)
             outputs = structural_verdict.pop("evaluations", {})
             verdict = structural_verdict
             role_outputs_list = outputs.get("freshness", {}), outputs.get("trust", {}), outputs.get("regime", {}), outputs.get("path_quality", {}), outputs.get("trail", {})
 
-            for eval_data in role_outputs_list:
-                role_name = {
-                    id(outputs.get("freshness", {})): "StructuralValidator",
-                    id(outputs.get("trust", {})): "TrustGatekeeper",
-                    id(outputs.get("regime", {})): "RegimeAssessor",
-                    id(outputs.get("path_quality", {})): "PathAnalyst",
-                    id(outputs.get("trail", {})): "ProtectionAdvisor",
-                }.get(id(eval_data), "Unknown")
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
-                          RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+            if not is_exit:
+                for eval_data in role_outputs_list:
+                    role_name = {
+                        id(outputs.get("freshness", {})): "StructuralValidator",
+                        id(outputs.get("trust", {})): "TrustGatekeeper",
+                        id(outputs.get("regime", {})): "RegimeAssessor",
+                        id(outputs.get("path_quality", {})): "PathAnalyst",
+                        id(outputs.get("trail", {})): "ProtectionAdvisor",
+                    }.get(id(eval_data), "Unknown")
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO MIP.LIVE.COMMITTEE_ROLE_OUTPUT (
+                              RUN_ID, ROLE_NAME, STANCE, CONFIDENCE, SUMMARY, OUTPUT_JSON, CREATED_AT
+                            )
+                            SELECT %s, %s, %s, %s, %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
+                            """,
+                            (
+                                run_id,
+                                role_name,
+                                str(eval_data.get("passed", eval_data.get("freshness", "UNKNOWN"))).upper()[:20],
+                                eval_data.get("confidence", eval_data.get("size_mult", 0.5)),
+                                str(eval_data.get("reason", eval_data.get("note", "")))[:500],
+                                json.dumps(eval_data, default=str),
+                            ),
                         )
-                        SELECT %s, %s, %s, %s, %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
-                        """,
-                        (
-                            run_id,
-                            role_name,
-                            str(eval_data.get("passed", eval_data.get("freshness", "UNKNOWN"))).upper()[:20],
-                            eval_data.get("confidence", eval_data.get("size_mult", 0.5)),
-                            str(eval_data.get("reason", eval_data.get("note", "")))[:500],
-                            json.dumps(eval_data, default=str),
-                        ),
-                    )
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
 
             reason_codes = list(verdict.get("reason_codes") or [])
-            reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
+            if not is_exit:
+                reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
 
             outputs = [{"structural_evaluations": outputs}]
 
@@ -9205,44 +9247,51 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         is_exit = action_intent == "EXIT"
 
         if is_structural:
-            struct_result = run_structural_committee(dict(action))
+            if is_exit:
+                exit_position_qty_apply = _fetch_live_symbol_position_qty(
+                    cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL")
+                )
+                struct_result = build_structural_exit_execution_only_verdict(
+                    dict(action), exit_position_qty=exit_position_qty_apply
+                )
+            else:
+                fd_apply = fetch_committee2_final_decision_for_action(cur, action_id)
+                if not fd_apply:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": "Committee 2.0 final decision required — commit the hearing with this action_id first.",
+                            "reason_codes": ["COMMITTEE2_FINAL_DECISION_REQUIRED"],
+                        },
+                    )
+                ap = action.get("PROPOSAL_ID")
+                if ap is not None and fd_apply.get("PROPOSAL_ID") is not None:
+                    if int(ap) != int(fd_apply["PROPOSAL_ID"]):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "message": "COMMITTEE_FINAL_DECISION.PROPOSAL_ID does not match LIVE_ACTIONS.PROPOSAL_ID.",
+                                "reason_codes": ["COMMITTEE2_ACTION_PROPOSAL_MISMATCH"],
+                            },
+                        )
+                struct_result = structural_entry_verdict_from_committee2_final(fd_apply, dict(action))
             blocked = bool(struct_result.get("blocked"))
             recommendation = str(struct_result.get("recommendation") or "BLOCK").upper()
             size_factor = float(struct_result.get("size_factor") or 0.0)
             confidence = float(struct_result.get("confidence") or 0.5)
             jd = struct_result.get("joint_decision") or {}
             reason_codes = list(struct_result.get("reason_codes") or [])
-            reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
-            exit_position_qty = None
-            exit_override_applied = False
-            if is_exit:
-                exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
-                if abs(float(exit_position_qty or 0.0)) <= 0:
-                    blocked = True
-                    recommendation = "BLOCK"
-                    jd = _parse_variant(jd)
-                    jd["should_execute_exit"] = False
-                    jd["should_enter"] = False
-                    reason_codes.append("EXIT_POSITION_MISSING")
-                verdict = {
-                    "recommendation": recommendation,
-                    "size_factor": max(0.0, min(1.0, size_factor)),
-                    "confidence": max(0.0, min(1.0, confidence)),
-                    "blocked": blocked,
-                    "joint_decision": jd,
-                    "structural_source": True,
-                    "tier_c_conflict": False,
-                }
-            else:
-                verdict = {
-                    "recommendation": recommendation,
-                    "size_factor": max(0.0, min(1.0, size_factor)),
-                    "confidence": max(0.0, min(1.0, confidence)),
-                    "blocked": blocked,
-                    "joint_decision": jd,
-                    "structural_source": True,
-                    "tier_c_conflict": False,
-                }
+            if not is_exit:
+                reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
+            verdict = {
+                "recommendation": recommendation,
+                "size_factor": max(0.0, min(1.0, size_factor)),
+                "confidence": max(0.0, min(1.0, confidence)),
+                "blocked": blocked,
+                "joint_decision": jd,
+                "structural_source": True,
+                "tier_c_conflict": False,
+            }
             next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
             context = {"entry_intel_baseline": {}, "parallel_worlds_evidence": {}, "news_context_snapshot": {}}
         else:
@@ -9582,42 +9631,68 @@ def stream_live_trade_committee_prompt(
                 is_structural = is_structural_live_action(action)
 
                 if is_structural:
-                    sym = action.get("SYMBOL") or "—"
-                    fam = action.get("SETUP_FAMILY") or "—"
-                    direction = action.get("DIRECTION") or "—"
-                    out_queue.put(
-                        (
-                            "agent_turn",
-                            {
-                                "action_id": action_id,
-                                "role": "Chair",
-                                "type": "agent_turn",
-                                "summary": (
-                                    f"Opening structural review for {sym} ({fam} {direction}). "
-                                    "Each specialist reports in turn (deterministic gates, not a live model debate)."
-                                ),
-                            },
+                    action_intent_stream = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+                    is_exit_stream = action_intent_stream == "EXIT"
+                    if is_exit_stream:
+                        exit_qty_sse = _fetch_live_symbol_position_qty(
+                            cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL")
                         )
-                    )
-                    time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
-                    struct_verdict = run_structural_committee(dict(action))
-                    role_outputs = list(struct_verdict.pop("role_outputs", None) or [])
-                    result["outputs"] = []
-                    result["verdict"] = struct_verdict
-                    for out in role_outputs:
+                        struct_verdict = build_structural_exit_execution_only_verdict(
+                            dict(action), exit_position_qty=exit_qty_sse
+                        )
+                        result["outputs"] = []
+                        result["verdict"] = struct_verdict
+                        summary0 = (struct_verdict.get("role_outputs") or [{}])[0].get("summary") or ""
                         out_queue.put(
                             (
-                                "role_summary",
+                                "agent_turn",
                                 {
                                     "action_id": action_id,
-                                    "role": out.get("role"),
-                                    "stance": out.get("stance"),
-                                    "confidence": out.get("confidence"),
-                                    "summary": out.get("summary"),
+                                    "role": "Execution",
+                                    "type": "agent_turn",
+                                    "summary": summary0,
                                 },
                             )
                         )
                         time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
+                    else:
+                        fd_sse = fetch_committee2_final_decision_for_action(cur, action_id)
+                        if not fd_sse:
+                            result["error"] = (
+                                "Committee 2.0 required: Structural entry uses the hearing room. "
+                                "Commit with this action_id, then use Sync Committee 2.0 in Live Portfolio Activity."
+                            )
+                            return
+                        struct_verdict = structural_entry_verdict_from_committee2_final(fd_sse, dict(action))
+                        role_outputs = list(struct_verdict.get("role_outputs") or [])
+                        result["outputs"] = []
+                        result["verdict"] = struct_verdict
+                        out_queue.put(
+                            (
+                                "agent_turn",
+                                {
+                                    "action_id": action_id,
+                                    "role": "Chair",
+                                    "type": "agent_turn",
+                                    "summary": "Committee 2.0 — replaying committed specialist summaries (no legacy structural evaluator).",
+                                },
+                            )
+                        )
+                        time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
+                        for out in role_outputs:
+                            out_queue.put(
+                                (
+                                    "role_summary",
+                                    {
+                                        "action_id": action_id,
+                                        "role": out.get("role"),
+                                        "stance": out.get("stance"),
+                                        "confidence": out.get("confidence"),
+                                        "summary": out.get("summary"),
+                                    },
+                                )
+                            )
+                            time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
                 elif not _live_structural_only_enabled(cur):
                     context = _build_action_decision_context(cur, action)
 
@@ -9692,8 +9767,48 @@ def stream_revalidate_prompt(
                 return
             yield _sse_event("start", {"action_id": action_id, "stage": "revalidation", "model": model})
             if is_structural_live_action(action):
-                sv = run_structural_committee(dict(action))
-                role_outputs = list(sv.pop("role_outputs", None) or [])
+                intent_rv = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+                if intent_rv == "EXIT":
+                    exit_qty_rv = _fetch_live_symbol_position_qty(
+                        cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL")
+                    )
+                    sv = build_structural_exit_execution_only_verdict(
+                        dict(action), exit_position_qty=exit_qty_rv
+                    )
+                    ro = (sv.get("role_outputs") or [{}])[0]
+                    yield _sse_event(
+                        "role_summary",
+                        {
+                            "action_id": action_id,
+                            "role": ro.get("role"),
+                            "stance": ro.get("stance"),
+                            "confidence": ro.get("confidence"),
+                            "summary": ro.get("summary"),
+                        },
+                    )
+                    yield _sse_event(
+                        "final",
+                        {
+                            "action_id": action_id,
+                            "joint_decision": sv.get("joint_decision"),
+                            "verdict": sv,
+                            "committee_model": "STRUCTURAL_EXIT_EXECUTION_ONLY",
+                        },
+                    )
+                    return
+                fd_rv = fetch_committee2_final_decision_for_action(cur, action_id)
+                if not fd_rv:
+                    yield _sse_event(
+                        "error",
+                        {
+                            "action_id": action_id,
+                            "message": "Committee 2.0 final decision required for structural entry revalidation preview.",
+                            "reason_codes": ["COMMITTEE2_FINAL_DECISION_REQUIRED"],
+                        },
+                    )
+                    return
+                sv = structural_entry_verdict_from_committee2_final(fd_rv, dict(action))
+                role_outputs = list(sv.get("role_outputs") or [])
                 for i, out in enumerate(role_outputs):
                     yield _sse_event(
                         "role_summary",
@@ -9713,7 +9828,7 @@ def stream_revalidate_prompt(
                         "action_id": action_id,
                         "joint_decision": sv.get("joint_decision"),
                         "verdict": sv,
-                        "committee_model": "STRUCTURAL_V1",
+                        "committee_model": "COMMITTEE2",
                     },
                 )
                 return
@@ -10937,8 +11052,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         ):
             heal_meta["attempted"] = True
             try:
-                struct_heal = run_structural_committee(dict(action))
-                jd_h = (struct_heal or {}).get("joint_decision")
+                jd_h = build_structural_entry_joint_decision(dict(action))
                 if isinstance(jd_h, dict):
                     tr_h, sl_h = _live_target_and_stop_from_joint_decision(
                         jd_h, stop_loss_pct_default
@@ -10953,7 +11067,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         stop_loss_pct = float(sl_h)
                         heal_meta["ok"] = True
             except Exception:
-                _log.exception("structural execute: bracket self-heal (run_structural_committee) failed")
+                _log.exception(
+                    "structural execute: bracket self-heal (build_structural_entry_joint_decision) failed"
+                )
             try:
                 ps_h = _parse_variant(action.get("PARAM_SNAPSHOT"))
                 diag_h = ps_h.get("structural_diagnostics_v1") if isinstance(ps_h, dict) else {}

@@ -427,3 +427,58 @@
 }
 .stl-mini-table td:first-child { color: #6c757d; }
 .stl-mini-table td:last-child { text-align: right; font-weight: 500; }
+
+/* Committee 2.0 launch strip */
+.stl-hearing-launch {
+  margin: 0.75rem 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f5f3ff 0%, #fff 100%);
+}
+.stl-hearing-launch-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  color: #312e81;
+}
+.stl-hearing-launch-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+.stl-hearing-launch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.stl-hearing-launch-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  background: #fff;
+}
+.stl-hearing-meta {
+  font-size: 0.72rem;
+  color: #64748b;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stl-hearing-btn {
+  border: none;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.55rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stl-hearing-btn:hover { background: #4338ca; }

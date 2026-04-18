@@ -37,6 +37,13 @@ class HearingCommitRequest(BaseModel):
     note: Optional[str] = None
 
 
+def _norm_action_id(action_id: Any) -> Optional[str]:
+    if action_id is None:
+        return None
+    s = str(action_id).strip()
+    return s if s else None
+
+
 def _json_dumps(obj: Any) -> str:
     return json.dumps(obj, default=str)
 
@@ -190,15 +197,15 @@ def _assemble_payload(
     hearing: Dict[str, Any],
     snapshot: Dict[str, Any],
     proposal: Dict[str, Any],
+    cur=None,
 ) -> Dict[str, Any]:
     hid = hearing.get("HEARING_ID")
     snap_eng = _build_snapshot_engine_dict(snapshot)
     roles = []
     arts = []
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        for r in _roles_rows(cur, hid):
+    if cur is not None:
+        role_cur = cur
+        for r in _roles_rows(role_cur, hid):
             roles.append(
                 {
                     "role_name": r.get("ROLE_NAME"),
@@ -206,7 +213,7 @@ def _assemble_payload(
                     "evidence_refs": _variant(r.get("EVIDENCE_REFS")),
                 }
             )
-        for a in _artifacts_rows(cur, hid):
+        for a in _artifacts_rows(role_cur, hid):
             arts.append(
                 {
                     "artifact_kind": a.get("ARTIFACT_KIND"),
@@ -215,8 +222,29 @@ def _assemble_payload(
                     "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
                 }
             )
-    finally:
-        conn.close()
+    else:
+        conn = get_connection()
+        try:
+            c2 = conn.cursor()
+            for r in _roles_rows(c2, hid):
+                roles.append(
+                    {
+                        "role_name": r.get("ROLE_NAME"),
+                        "output": _variant(r.get("OUTPUT_JSON")),
+                        "evidence_refs": _variant(r.get("EVIDENCE_REFS")),
+                    }
+                )
+            for a in _artifacts_rows(c2, hid):
+                arts.append(
+                    {
+                        "artifact_kind": a.get("ARTIFACT_KIND"),
+                        "schema_version": a.get("SCHEMA_VERSION"),
+                        "payload": _variant(a.get("PAYLOAD_JSON")),
+                        "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
+                    }
+                )
+        finally:
+            conn.close()
 
     evidence = _variant(hearing.get("EVIDENCE_JSON")) or {}
     deltas = _variant(hearing.get("DELTAS_JSON")) or {}
@@ -370,7 +398,144 @@ def _run_refresh(conn, hearing_id: str, proposal_id: int, snapshot: Dict[str, An
     cur.execute("SELECT * FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s", (hearing_id,))
     hrows = fetch_all(cur)
     hearing = hrows[0]
-    return _assemble_payload(hearing, snapshot, proposal)
+    return _assemble_payload(hearing, snapshot, proposal, cur=cur)
+
+
+def committee_final_decision_commit_for_action(cur, hearing_id: str, req: HearingCommitRequest) -> Dict[str, Any]:
+    """
+    Insert or reconcile COMMITTEE_FINAL_DECISION for a hearing with ACTION_ID-aware rules:
+    same action_id -> idempotent; null ACTION_ID + request action_id -> UPDATE; conflicting ACTION_ID -> 409.
+    """
+    cur.execute(
+        "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
+        (hearing_id,),
+    )
+    existing_fd = fetch_all(cur)
+    req_aid = _norm_action_id(req.action_id)
+
+    if existing_fd:
+        row_raw = existing_fd[0]
+        ex_aid = _norm_action_id(row_raw.get("ACTION_ID"))
+        if ex_aid is not None and req_aid is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "This hearing is already bound to an action; pass action_id to confirm.",
+                    "reason_codes": ["COMMITTEE2_ACTION_ID_REQUIRED"],
+                },
+            )
+        if ex_aid is not None and req_aid is not None and ex_aid != req_aid:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Final decision for this hearing is bound to a different LIVE_ACTIONS row.",
+                    "reason_codes": ["COMMITTEE2_HEARING_BOUND_TO_OTHER_ACTION"],
+                    "bound_action_id": ex_aid,
+                },
+            )
+        if ex_aid is None and req_aid is not None:
+            cur.execute(
+                """
+                UPDATE MIP.APP.COMMITTEE_FINAL_DECISION
+                   SET ACTION_ID = %s,
+                       TRADE_ID = COALESCE(%s, TRADE_ID),
+                       COMMIT_NOTE = COALESCE(%s, COMMIT_NOTE)
+                 WHERE HEARING_ID = %s
+                """,
+                (req.action_id, req.trade_id, req.note, hearing_id),
+            )
+            cur.execute(
+                "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
+                (hearing_id,),
+            )
+            row = serialize_row(fetch_all(cur)[0])
+            row["already_committed"] = True
+            row["action_id_bound_updated"] = True
+            row["ok"] = True
+            return row
+        row = serialize_row(row_raw)
+        row["already_committed"] = True
+        row["ok"] = True
+        return row
+
+    hearing = _fetch_hearing_by_id(cur, hearing_id)
+    if not hearing:
+        raise HTTPException(status_code=404, detail="Hearing not found.")
+    proposal_id = int(hearing["PROPOSAL_ID"])
+    snapshot = _fetch_snapshot(cur, proposal_id)
+    if not snapshot:
+        raise HTTPException(status_code=400, detail="Snapshot missing.")
+
+    evidence = _variant(hearing.get("EVIDENCE_JSON")) or {}
+    deltas = _variant(hearing.get("DELTAS_JSON")) or {}
+    chair = _variant(hearing.get("CHAIR_OUTPUT_JSON")) or {}
+    operational = _variant(hearing.get("OPERATIONAL_JSON")) or {}
+    stance = hearing.get("STANCE")
+    conf = hearing.get("CONFIDENCE")
+
+    roles_out: Dict[str, Any] = {}
+    for r in _roles_rows(cur, hearing_id):
+        roles_out[r["ROLE_NAME"]] = _variant(r.get("OUTPUT_JSON"))
+    arts: Dict[str, Any] = {}
+    for a in _artifacts_rows(cur, hearing_id):
+        arts[a["ARTIFACT_KIND"]] = {
+            "payload": _variant(a.get("PAYLOAD_JSON")),
+            "schema_version": a.get("SCHEMA_VERSION"),
+            "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
+        }
+
+    posture = (operational or {}).get("posture") or {}
+    evidence_refs = (chair or {}).get("evidence_refs") or []
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.COMMITTEE_FINAL_DECISION (
+                HEARING_ID, PROPOSAL_ID, SNAPSHOT_ID, STANCE, CONFIDENCE,
+                CHAIR_OUTPUT_JSON, ROLE_OUTPUTS_JSON, DELTA_SUMMARY_JSON, POSTURE_JSON,
+                EVIDENCE_REFS_JSON, ARTIFACTS_JSON, ACTION_ID, TRADE_ID, COMMIT_NOTE, DECISION_TS
+            )
+            SELECT
+                %s, %s, %s, %s, %s,
+                PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                PARSE_JSON(%s), PARSE_JSON(%s), %s, %s, %s, CURRENT_TIMESTAMP()
+            """,
+            (
+                hearing_id,
+                proposal_id,
+                int(hearing["SNAPSHOT_ID"]),
+                stance,
+                conf,
+                _json_dumps(chair),
+                _json_dumps(roles_out),
+                _json_dumps(deltas),
+                _json_dumps(posture),
+                _json_dumps(evidence_refs),
+                _json_dumps(arts),
+                req.action_id,
+                req.trade_id,
+                req.note,
+            ),
+        )
+    except Exception as exc:
+        err = str(exc).lower()
+        if "unique" in err or "already exists" in err:
+            cur.execute(
+                "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
+                (hearing_id,),
+            )
+            rows = fetch_all(cur)
+            if rows:
+                return committee_final_decision_commit_for_action(cur, hearing_id, req)
+        raise
+    cur.execute(
+        "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
+        (hearing_id,),
+    )
+    row = serialize_row(fetch_all(cur)[0])
+    row["already_committed"] = False
+    row["ok"] = True
+    return row
 
 
 @router.post("/hearing/open")
@@ -468,98 +633,7 @@ def committee_hearing_commit(hearing_id: str, req: HearingCommitRequest = Body(d
     try:
         _require_enabled(conn)
         cur = conn.cursor()
-        cur.execute(
-            "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
-            (hearing_id,),
-        )
-        existing_fd = fetch_all(cur)
-        if existing_fd:
-            row = serialize_row(existing_fd[0])
-            row["already_committed"] = True
-            row["ok"] = True
-            return row
-
-        hearing = _fetch_hearing_by_id(cur, hearing_id)
-        if not hearing:
-            raise HTTPException(status_code=404, detail="Hearing not found.")
-        proposal_id = int(hearing["PROPOSAL_ID"])
-        snapshot = _fetch_snapshot(cur, proposal_id)
-        if not snapshot:
-            raise HTTPException(status_code=400, detail="Snapshot missing.")
-
-        evidence = _variant(hearing.get("EVIDENCE_JSON")) or {}
-        deltas = _variant(hearing.get("DELTAS_JSON")) or {}
-        chair = _variant(hearing.get("CHAIR_OUTPUT_JSON")) or {}
-        operational = _variant(hearing.get("OPERATIONAL_JSON")) or {}
-        stance = hearing.get("STANCE")
-        conf = hearing.get("CONFIDENCE")
-
-        roles_out: Dict[str, Any] = {}
-        for r in _roles_rows(cur, hearing_id):
-            roles_out[r["ROLE_NAME"]] = _variant(r.get("OUTPUT_JSON"))
-        arts: Dict[str, Any] = {}
-        for a in _artifacts_rows(cur, hearing_id):
-            arts[a["ARTIFACT_KIND"]] = {
-                "payload": _variant(a.get("PAYLOAD_JSON")),
-                "schema_version": a.get("SCHEMA_VERSION"),
-                "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
-            }
-
-        posture = (operational or {}).get("posture") or {}
-        evidence_refs = (chair or {}).get("evidence_refs") or []
-
-        try:
-            cur.execute(
-                """
-                INSERT INTO MIP.APP.COMMITTEE_FINAL_DECISION (
-                    HEARING_ID, PROPOSAL_ID, SNAPSHOT_ID, STANCE, CONFIDENCE,
-                    CHAIR_OUTPUT_JSON, ROLE_OUTPUTS_JSON, DELTA_SUMMARY_JSON, POSTURE_JSON,
-                    EVIDENCE_REFS_JSON, ARTIFACTS_JSON, ACTION_ID, TRADE_ID, COMMIT_NOTE, DECISION_TS
-                )
-                SELECT
-                    %s, %s, %s, %s, %s,
-                    PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
-                    PARSE_JSON(%s), PARSE_JSON(%s), %s, %s, %s, CURRENT_TIMESTAMP()
-                """,
-                (
-                    hearing_id,
-                    proposal_id,
-                    int(hearing["SNAPSHOT_ID"]),
-                    stance,
-                    conf,
-                    _json_dumps(chair),
-                    _json_dumps(roles_out),
-                    _json_dumps(deltas),
-                    _json_dumps(posture),
-                    _json_dumps(evidence_refs),
-                    _json_dumps(arts),
-                    req.action_id,
-                    req.trade_id,
-                    req.note,
-                ),
-            )
-        except Exception as exc:
-            err = str(exc).lower()
-            if "unique" in err or "already exists" in err:
-                cur.execute(
-                    "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
-                    (hearing_id,),
-                )
-                rows = fetch_all(cur)
-                if rows:
-                    row = serialize_row(rows[0])
-                    row["already_committed"] = True
-                    row["ok"] = True
-                    return row
-            raise
-        cur.execute(
-            "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
-            (hearing_id,),
-        )
-        row = serialize_row(fetch_all(cur)[0])
-        row["already_committed"] = False
-        row["ok"] = True
-        return row
+        return committee_final_decision_commit_for_action(cur, hearing_id, req)
     finally:
         conn.close()
 

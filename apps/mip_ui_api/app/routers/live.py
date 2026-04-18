@@ -46,6 +46,16 @@ from app.committee.committee2_live_bridge import (
     fetch_committee2_final_decision_for_action,
     structural_entry_verdict_from_committee2_final,
 )
+from app.routers.committee import (
+    HearingCommitRequest,
+    committee_final_decision_commit_for_action,
+    _require_enabled,
+    _fetch_proposal,
+    _fetch_snapshot,
+    _fetch_hearing_by_proposal,
+    _run_refresh,
+    _underlying_sf_conn,
+)
 from app.services.live_intelligence.structural_committee import (
     build_structural_entry_joint_decision,
     build_structural_exit_execution_only_verdict,
@@ -198,6 +208,12 @@ class ApplyCommitteeVerdictRequest(BaseModel):
     actor: str = "committee_orchestrator"
     model: str = "claude-4-sonnet"
     verdict: dict = Field(default_factory=dict)
+
+
+class Committee2OrchestrateRequest(BaseModel):
+    """LPA-first Committee 2.0: optional flags only — action_id and proposal_id come from LIVE_ACTIONS."""
+
+    force_rebuild_hearing: bool = False
 
 
 class OpeningValidationRequest(BaseModel):
@@ -6687,6 +6703,110 @@ def _build_mip_order_families_for_cockpit(
     return families
 
 
+# Structural ENTRY pending collapse: latest actionable proposal per symbol (see LPA Committee 2.0 spec).
+_STRUCTURAL_PROPOSAL_TERMINAL_STATUSES = frozenset({"EXECUTED", "REJECTED", "CANCELLED", "EXPIRED"})
+
+
+def _structural_proposal_status_is_actionable(status: str | None) -> bool:
+    """Non-terminal proposal — consistent with open-proposal handling elsewhere (e.g. market timeline)."""
+    s = (status or "PROPOSED").upper()
+    return s not in _STRUCTURAL_PROPOSAL_TERMINAL_STATUSES
+
+
+def _fetch_structural_proposal_status_map(cur, proposal_ids: list[int]) -> dict[int, str]:
+    if not proposal_ids:
+        return {}
+    uniq = sorted({int(p) for p in proposal_ids})
+    if not uniq:
+        return {}
+    placeholders = ",".join(["%s"] * len(uniq))
+    cur.execute(
+        f"""
+        select PROPOSAL_ID, STATUS
+        from MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+        where PROPOSAL_ID in ({placeholders})
+        """,
+        uniq,
+    )
+    out: dict[int, str] = {}
+    for r in fetch_all(cur):
+        try:
+            out[int(r["PROPOSAL_ID"])] = str(r.get("STATUS") or "PROPOSED")
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
+def _is_structural_entry_pending_row(row: dict) -> bool:
+    if str(row.get("live_intent_kind") or "").upper() != "STRUCTURAL":
+        return False
+    return row.get("action_intent") != "EXIT"
+
+
+def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) -> list[dict]:
+    """One canonical structural ENTRY pending row per symbol; non-actionable-only groups fall back to max PROPOSAL_ID."""
+    se_rows = [r for r in pending_decisions if _is_structural_entry_pending_row(r)]
+    if not se_rows:
+        return pending_decisions
+    other = [r for r in pending_decisions if not _is_structural_entry_pending_row(r)]
+    prop_ids: list[int] = []
+    for r in se_rows:
+        p = r.get("proposal_id")
+        if p is None:
+            continue
+        try:
+            prop_ids.append(int(p))
+        except (TypeError, ValueError):
+            continue
+    st_map = _fetch_structural_proposal_status_map(cur, prop_ids)
+    by_sym: dict[str, list[dict]] = {}
+    for r in se_rows:
+        sk = str(r.get("symbol") or "").upper().strip()
+        if not sk:
+            continue
+        by_sym.setdefault(sk, []).append(r)
+
+    deduped: list[dict] = []
+    for _sym, rows_g in by_sym.items():
+
+        def _pid_key(row: dict) -> int:
+            p = row.get("proposal_id")
+            try:
+                return int(p)
+            except (TypeError, ValueError):
+                return -1
+
+        def _row_actionable(row: dict) -> bool:
+            p = row.get("proposal_id")
+            if p is None:
+                return False
+            try:
+                pid = int(p)
+            except (TypeError, ValueError):
+                return False
+            st = st_map.get(pid, "PROPOSED")
+            return _structural_proposal_status_is_actionable(st)
+
+        actionable_subset = [x for x in rows_g if _row_actionable(x)]
+        pool = actionable_subset if actionable_subset else rows_g
+        canonical = max(pool, key=_pid_key)
+        others = [x for x in rows_g if x is not canonical]
+        if others:
+            canon = dict(canonical)
+            canon["superseded_pending"] = [
+                {
+                    "action_id": x.get("action_id"),
+                    "proposal_id": x.get("proposal_id"),
+                    "status": x.get("status"),
+                }
+                for x in others
+            ]
+            deduped.append(canon)
+        else:
+            deduped.append(canonical)
+    return other + deduped
+
+
 @router.get("/activity/overview")
 def get_live_activity_overview(
     limit: int = Query(200, ge=50, le=1000),
@@ -7315,6 +7435,8 @@ def get_live_activity_overview(
                         },
                     }
                 )
+
+        pending_decisions = _dedupe_structural_entry_pending_rows(cur, pending_decisions)
 
         # Keep one pending row per symbol (most relevant/latest) to avoid queue bloat in UI.
         pending_by_symbol: dict[str, dict] = {}
@@ -9209,6 +9331,411 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         conn.close()
 
 
+def _materialize_structural_entry_committee_apply(
+    cur,
+    action_id: str,
+    action: dict,
+    req: ApplyCommitteeVerdictRequest,
+    *,
+    apply_detail_source: str = "STREAM_APPLY",
+) -> dict:
+    """
+    Persist COMMITTEE_RUN / COMMITTEE_VERDICT / LIVE_ACTIONS for structural ENTRY after
+    COMMITTEE_FINAL_DECISION exists for action_id.
+    """
+    fd_apply = fetch_committee2_final_decision_for_action(cur, action_id)
+    if not fd_apply:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Committee 2.0 final decision required — commit the hearing with this action_id first.",
+                "reason_codes": ["COMMITTEE2_FINAL_DECISION_REQUIRED"],
+            },
+        )
+    ap = action.get("PROPOSAL_ID")
+    if ap is not None and fd_apply.get("PROPOSAL_ID") is not None:
+        if int(ap) != int(fd_apply["PROPOSAL_ID"]):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "COMMITTEE_FINAL_DECISION.PROPOSAL_ID does not match LIVE_ACTIONS.PROPOSAL_ID.",
+                    "reason_codes": ["COMMITTEE2_ACTION_PROPOSAL_MISMATCH"],
+                },
+            )
+    struct_result = structural_entry_verdict_from_committee2_final(fd_apply, dict(action))
+    blocked = bool(struct_result.get("blocked"))
+    recommendation = str(struct_result.get("recommendation") or "BLOCK").upper()
+    size_factor = float(struct_result.get("size_factor") or 0.0)
+    confidence = float(struct_result.get("confidence") or 0.5)
+    jd = struct_result.get("joint_decision") or {}
+    reason_codes = list(struct_result.get("reason_codes") or [])
+    reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
+    verdict = {
+        "recommendation": recommendation,
+        "size_factor": max(0.0, min(1.0, size_factor)),
+        "confidence": max(0.0, min(1.0, confidence)),
+        "blocked": blocked,
+        "joint_decision": jd,
+        "structural_source": True,
+        "tier_c_conflict": False,
+    }
+    next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
+    context: dict = {"entry_intel_baseline": {}, "parallel_worlds_evidence": {}, "news_context_snapshot": {}}
+    is_exit = False
+
+    proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
+    if proposed_price_derived is None and not is_exit:
+        for key in ("REVALIDATION_PRICE", "PROPOSED_PRICE", "CURRENT_PRICE", "ONE_MIN_BAR_CLOSE"):
+            v = action.get(key)
+            if v is not None:
+                try:
+                    proposed_price_derived = float(v)
+                    break
+                except (TypeError, ValueError):
+                    pass
+        if proposed_price_derived is None and action.get("ENTRY_ZONE_LOW") is not None and action.get("ENTRY_ZONE_HIGH") is not None:
+            try:
+                proposed_price_derived = (
+                    float(action["ENTRY_ZONE_LOW"]) + float(action["ENTRY_ZONE_HIGH"])
+                ) / 2.0
+            except (TypeError, ValueError):
+                pass
+    proposed_qty_derived = None
+
+    try:
+        committee_size_factor = float(verdict.get("size_factor") or 1.0)
+        training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
+        open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
+        if proposed_price_derived is None:
+            raise ValueError("no reference price for sizing")
+
+        cur.execute(
+            """
+            select
+              c.IBKR_ACCOUNT_ID,
+              c.MAX_POSITION_PCT,
+              s.NET_LIQUIDATION_EUR
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+            left join MIP.LIVE.BROKER_SNAPSHOTS s
+              on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
+             and s.SNAPSHOT_TYPE = 'NAV'
+            where c.PORTFOLIO_ID = %s
+            qualify row_number() over (
+              partition by c.PORTFOLIO_ID
+              order by s.SNAPSHOT_TS desc nulls last
+            ) = 1
+            """,
+            (action.get("PORTFOLIO_ID"),),
+        )
+        nav_rows = fetch_all(cur)
+        nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+
+        if nav_eur > 0:
+            max_position_pct = (nav_rows[0] or {}).get("MAX_POSITION_PCT")
+            pos_pct = float(max_position_pct or 0.05)
+            max_notional = (
+                nav_eur * pos_pct * committee_size_factor * training_size_cap * open_factor
+            )
+            proposed_qty_derived = max(int(max_notional / max(proposed_price_derived, 1e-9)), 1)
+    except Exception:
+        proposed_qty_derived = None
+
+    proposed_qty_derived, reason_codes = _apply_post_committee_entry_viability_and_qty(
+        cur,
+        action_id=action_id,
+        portfolio_id=int(action.get("PORTFOLIO_ID") or 0),
+        side=str(action.get("SIDE") or "").upper(),
+        is_exit=is_exit,
+        is_committee_blocked=bool(verdict.get("blocked")),
+        proposed_price=proposed_price_derived,
+        committee_qty=proposed_qty_derived,
+        joint_decision=_parse_variant(verdict.get("joint_decision")),
+        reason_codes=reason_codes,
+    )
+
+    verdict_phase3_apply = build_structural_verdict_envelope_v1(
+        action=action,
+        verdict=verdict,
+        reason_codes=reason_codes,
+        committee_run_id="",
+        outputs_wrapper=[],
+    )
+
+    run_id = str(uuid.uuid4())
+    if isinstance(verdict_phase3_apply.get("structural_verdict_envelope_v1"), dict):
+        verdict_phase3_apply["structural_verdict_envelope_v1"]["committee_run_id"] = run_id
+    cur.execute(
+        """
+        insert into MIP.LIVE.COMMITTEE_RUN (
+          RUN_ID, ACTION_ID, PORTFOLIO_ID, STATUS, MODEL_NAME, STARTED_AT, COMPLETED_AT, DETAILS
+        )
+        select
+          %s, %s, %s, 'COMPLETED', %s, current_timestamp(), current_timestamp(), try_parse_json(%s)
+        """,
+        (
+            run_id,
+            action_id,
+            action.get("PORTFOLIO_ID"),
+            req.model,
+            json.dumps({"actor": req.actor, "source": apply_detail_source}),
+        ),
+    )
+    cur.execute(
+        """
+        insert into MIP.LIVE.COMMITTEE_VERDICT (
+          RUN_ID, ACTION_ID, PORTFOLIO_ID, RECOMMENDATION, SIZE_FACTOR, CONFIDENCE, IS_BLOCKED,
+          REASON_CODES, VERDICT_JSON, CREATED_AT
+        )
+        select
+          %s, %s, %s, %s, %s, %s, %s, try_parse_json(%s), try_parse_json(%s), current_timestamp()
+        """,
+        (
+            run_id,
+            action_id,
+            action.get("PORTFOLIO_ID"),
+            verdict["recommendation"],
+            verdict["size_factor"],
+            verdict["confidence"],
+            verdict["blocked"],
+            json.dumps(reason_codes),
+            json.dumps(
+                {
+                    **{
+                        "verdict": verdict,
+                        "joint_decision": verdict.get("joint_decision"),
+                        "entry_intel_snapshot_id": context.get("entry_intel_snapshot_id"),
+                    },
+                    **verdict_phase3_apply,
+                }
+            ),
+        ),
+    )
+    cur.execute(
+        """
+        update MIP.LIVE.LIVE_ACTIONS
+           set COMMITTEE_STATUS = 'COMPLETED',
+               COMMITTEE_RUN_ID = %s,
+               COMMITTEE_COMPLETED_TS = current_timestamp(),
+               COMMITTEE_VERDICT = %s,
+               STATUS = %s,
+               PROPOSED_PRICE = coalesce(%s, PROPOSED_PRICE),
+               PROPOSED_QTY = coalesce(%s, PROPOSED_QTY),
+               REASON_CODES = parse_json(%s),
+               UPDATED_AT = current_timestamp()
+         where ACTION_ID = %s
+        """,
+        (
+            run_id,
+            verdict["recommendation"],
+            next_status,
+            proposed_price_derived,
+            proposed_qty_derived,
+            json.dumps(reason_codes),
+            action_id,
+        ),
+    )
+    _merge_structural_contract_and_diagnostics(
+        cur,
+        action_id=action_id,
+        committee_run_id=run_id,
+        verdict=verdict,
+        reason_codes=reason_codes,
+    )
+    return {
+        "ok": True,
+        "action_id": action_id,
+        "run_id": run_id,
+        "status": "COMPLETED",
+        "action_status": next_status,
+        "verdict": verdict,
+        "joint_decision": verdict.get("joint_decision"),
+        "reason_codes": reason_codes,
+        "derived_sizing": {"proposed_price": proposed_price_derived, "proposed_qty": proposed_qty_derived},
+    }
+
+
+_ORCHESTRATE_ALLOWED_STATUSES = frozenset(
+    {
+        "OPEN_BLOCKED",
+        "OPEN_ELIGIBLE",
+        "OPEN_CAUTION",
+        "PENDING_OPEN_STABILITY_REVIEW",
+        "READY_FOR_APPROVAL_FLOW",
+        "PM_ACCEPTED",
+        "COMPLIANCE_APPROVED",
+        "INTENT_SUBMITTED",
+        "INTENT_APPROVED",
+        "REVALIDATED_FAIL",
+        "REVALIDATED_PASS",
+    }
+)
+
+
+@router.post("/trades/actions/{action_id}/committee2/orchestrate")
+def orchestrate_committee2_structural_entry(
+    action_id: str,
+    req: Committee2OrchestrateRequest = Body(default_factory=Committee2OrchestrateRequest),
+):
+    """
+    Single operational path for structural ENTRY: refresh hearing, commit final decision bound to
+    this action_id, materialize LIVE committee tables (no separate Sync step).
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found.")
+        assert_live_committee_policy(
+            action,
+            _live_structural_only_enabled(cur),
+            is_structural_fn=is_structural_live_action,
+        )
+        if not is_structural_live_action(action):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Committee 2.0 orchestration applies to structural live actions only.",
+                    "reason_codes": ["COMMITTEE2_ORCHESTRATE_STRUCTURAL_ONLY"],
+                },
+            )
+        action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        if action_intent == "EXIT":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Structural EXIT is execution-only; orchestration is for ENTRY only.",
+                    "reason_codes": ["COMMITTEE2_ORCHESTRATE_ENTRY_ONLY"],
+                },
+            )
+
+        status_upper = (action.get("STATUS") or "").upper()
+        if status_upper not in _ORCHESTRATE_ALLOWED_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Committee orchestrate blocked for current status: {status_upper}.",
+            )
+
+        pid = action.get("PROPOSAL_ID")
+        if pid is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "LIVE_ACTIONS.PROPOSAL_ID is required for structural committee orchestration.",
+                    "reason_codes": ["COMMITTEE2_PROPOSAL_ID_REQUIRED"],
+                },
+            )
+        try:
+            proposal_id_int = int(pid)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=409, detail="Invalid PROPOSAL_ID on LIVE_ACTIONS row.")
+
+        _require_enabled(conn)
+        proposal = _fetch_proposal(cur, proposal_id_int)
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found.")
+        snapshot = _fetch_snapshot(cur, proposal_id_int)
+        if not snapshot:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "NO_SNAPSHOT",
+                    "message": "Immutable proposal snapshot missing; re-run structural propose or backfill snapshots.",
+                },
+            )
+
+        existing = _fetch_hearing_by_proposal(cur, proposal_id_int)
+        hearing_id = str(existing["HEARING_ID"]) if existing else str(uuid.uuid4())
+        _ = req.force_rebuild_hearing  # reserved; hearing is always refreshed (see LPA-first spec)
+
+        raw = _underlying_sf_conn(conn)
+        raw.autocommit(False)
+        refresh_payload: dict = {}
+        commit_payload: dict = {}
+        materialize_out: dict | None = None
+        idempotent_replay = False
+        try:
+            refresh_payload = _run_refresh(conn, hearing_id, proposal_id_int, snapshot, proposal)
+            commit_payload = committee_final_decision_commit_for_action(
+                cur,
+                hearing_id,
+                HearingCommitRequest(action_id=action_id, note="LPA Committee 2.0 orchestrate"),
+            )
+            action_refresh = _fetch_live_action(cur, action_id) or action
+            committee_status = (action_refresh.get("COMMITTEE_STATUS") or "").upper()
+            already_fd = bool(commit_payload.get("already_committed"))
+            idempotent_replay = bool(already_fd and committee_status == "COMPLETED")
+
+            if idempotent_replay:
+                materialize_out = None
+            else:
+                materialize_out = _materialize_structural_entry_committee_apply(
+                    cur,
+                    action_id,
+                    dict(action_refresh),
+                    ApplyCommitteeVerdictRequest(),
+                    apply_detail_source="COMMITTEE2_ORCHESTRATE",
+                )
+            raw.commit()
+        except HTTPException:
+            raw.rollback()
+            raise
+        except Exception:
+            raw.rollback()
+            raise
+        finally:
+            raw.autocommit(True)
+
+        stance = refresh_payload.get("stance")
+        conf = refresh_payload.get("confidence")
+        action_after = _fetch_live_action(cur, action_id) or action
+
+        if idempotent_replay:
+            fd = fetch_committee2_final_decision_for_action(cur, action_id)
+            if not fd:
+                raise HTTPException(status_code=500, detail="Final decision missing after orchestrate replay.")
+            vr = structural_entry_verdict_from_committee2_final(fd, dict(action_after))
+            return {
+                "ok": True,
+                "action_id": action_id,
+                "proposal_id": proposal_id_int,
+                "hearing_id": hearing_id,
+                "stance": stance,
+                "confidence": conf,
+                "blocked": bool(vr.get("blocked")),
+                "recommendation": str(vr.get("recommendation") or "").upper(),
+                "reason_codes": list(vr.get("reason_codes") or [])[:12],
+                "committee_run_id": str(action_after.get("COMMITTEE_RUN_ID") or ""),
+                "action_status": str(action_after.get("STATUS") or ""),
+                "already_committed": True,
+                "idempotent_replay": True,
+                "joint_decision": vr.get("joint_decision"),
+            }
+
+        mv = materialize_out or {}
+        verdict = mv.get("verdict") or {}
+        rc = list(mv.get("reason_codes") or [])[:12]
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "proposal_id": proposal_id_int,
+            "hearing_id": hearing_id,
+            "stance": stance,
+            "confidence": conf,
+            "blocked": bool(verdict.get("blocked")),
+            "recommendation": str(verdict.get("recommendation") or "").upper(),
+            "reason_codes": rc,
+            "committee_run_id": str(mv.get("run_id") or ""),
+            "action_status": str(mv.get("action_status") or action_after.get("STATUS") or ""),
+            "already_committed": bool(commit_payload.get("already_committed")),
+            "idempotent_replay": False,
+            "joint_decision": mv.get("joint_decision"),
+            "derived_sizing": mv.get("derived_sizing"),
+        }
+    finally:
+        conn.close()
+
+
 @router.post("/trades/actions/{action_id}/committee/apply")
 def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest):
     conn = get_connection()
@@ -9255,26 +9782,7 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                     dict(action), exit_position_qty=exit_position_qty_apply
                 )
             else:
-                fd_apply = fetch_committee2_final_decision_for_action(cur, action_id)
-                if not fd_apply:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "message": "Committee 2.0 final decision required — commit the hearing with this action_id first.",
-                            "reason_codes": ["COMMITTEE2_FINAL_DECISION_REQUIRED"],
-                        },
-                    )
-                ap = action.get("PROPOSAL_ID")
-                if ap is not None and fd_apply.get("PROPOSAL_ID") is not None:
-                    if int(ap) != int(fd_apply["PROPOSAL_ID"]):
-                        raise HTTPException(
-                            status_code=409,
-                            detail={
-                                "message": "COMMITTEE_FINAL_DECISION.PROPOSAL_ID does not match LIVE_ACTIONS.PROPOSAL_ID.",
-                                "reason_codes": ["COMMITTEE2_ACTION_PROPOSAL_MISMATCH"],
-                            },
-                        )
-                struct_result = structural_entry_verdict_from_committee2_final(fd_apply, dict(action))
+                return _materialize_structural_entry_committee_apply(cur, action_id, dict(action), req)
             blocked = bool(struct_result.get("blocked"))
             recommendation = str(struct_result.get("recommendation") or "BLOCK").upper()
             size_factor = float(struct_result.get("size_factor") or 0.0)

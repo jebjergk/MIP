@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LivePortfolioActivity.css'
@@ -239,6 +240,8 @@ export default function LivePortfolioActivity() {
   const streamPaneRef = useRef(null)
   /** Tracks whether the open stream is structural (Committee 2.0) for finalize copy. */
   const committeeStreamContextRef = useRef({ structural: false })
+  /** Last Committee 2.0 orchestrate result per action (structural ENTRY). */
+  const [c20OrchestrateByAction, setC20OrchestrateByAction] = useState({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -343,6 +346,104 @@ export default function LivePortfolioActivity() {
     }
   }, [load])
 
+  const advanceLiveActionAfterCommitteeApply = useCallback(
+    async (actionId, applyData, opts = {}) => {
+      const isStructuralC20Flow = Boolean(opts.isStructuralC20Flow)
+      const nextStatus = String(applyData?.action_status || '').toUpperCase()
+      const canRunApproveFlow = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED'].includes(
+        nextStatus,
+      )
+      if (canRunApproveFlow) {
+        setStreamStatus('Advancing approval flow...')
+        setLiveLineTarget(
+          isStructuralC20Flow
+            ? 'Committee 2.0 verdict applied. Advancing PM/Compliance/Intent approvals...'
+            : 'Committee complete. Advancing PM/Compliance/Intent approvals...',
+        )
+        const approveResp = await fetch(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+        if (!approveResp.ok) {
+          const body = await approveResp.json().catch(() => null)
+          throw new Error(messageFromApiFailure(body, 'Approval flow is currently blocked.'))
+        }
+      }
+      const canRunRevalidate =
+        ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(nextStatus) || canRunApproveFlow
+      if (canRunRevalidate) {
+        setStreamStatus('Revalidating 1m freshness...')
+        setLiveLineTarget('Applying committee result and forcing 1m-bar revalidation...')
+        const revalResp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/revalidate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force_refresh_1m: true }),
+        })
+        if (!revalResp.ok) {
+          const body = await revalResp.json().catch(() => null)
+          throw new Error(messageFromApiFailure(body, 'Revalidation is currently blocked.'))
+        }
+        setLiveLineTarget('Revalidation complete. If gates are clear, decision is ready to submit.')
+      } else {
+        setLiveLineTarget(
+          isStructuralC20Flow
+            ? 'Committee 2.0 verdict updated. No further revalidation step available for this status yet.'
+            : 'Committee updated. No further revalidation step available for this status yet.',
+        )
+      }
+      await load()
+      setStreamStatus('Completed')
+      setReadyPulseActionId(actionId)
+      setTimeout(() => setReadyPulseActionId(''), 20000)
+      setActiveStreamActionId('')
+    },
+    [load],
+  )
+
+  const runCommittee2Orchestrate = useCallback(
+    async (actionId) => {
+      setBusy(`c2orch:${actionId}`)
+      setError('')
+      setNotice('')
+      setC20OrchestrateByAction((prev) => ({
+        ...prev,
+        [actionId]: { ...(prev[actionId] || {}), loading: true, error: null },
+      }))
+      try {
+        const resp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/committee2/orchestrate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force_rebuild_hearing: false }),
+        })
+        const body = await resp.json().catch(() => null)
+        if (!resp.ok) {
+          throw new Error(messageFromApiFailure(body, 'Committee 2.0 orchestration failed.'))
+        }
+        setC20OrchestrateByAction((prev) => ({
+          ...prev,
+          [actionId]: { loading: false, error: null, lastResult: body, lastAt: Date.now() },
+        }))
+        await advanceLiveActionAfterCommitteeApply(actionId, body, { isStructuralC20Flow: true })
+        setNotice(
+          body?.idempotent_replay
+            ? `Committee 2.0 replay OK for ${actionId} (already materialized).`
+            : `Committee 2.0 applied for ${actionId}.`,
+        )
+      } catch (e) {
+        const msg = e.message || 'Committee 2.0 orchestration failed.'
+        setC20OrchestrateByAction((prev) => ({
+          ...prev,
+          [actionId]: { loading: false, error: msg, lastAt: Date.now() },
+        }))
+        setError(msg)
+      } finally {
+        setBusy('')
+      }
+    },
+    [advanceLiveActionAfterCommitteeApply],
+  )
+
   const finalizeCommitteeRevalidation = useCallback(async (actionId, verdict) => {
     const syncC20 = Boolean(committeeStreamContextRef.current?.structural)
     setBusy(`committee:${actionId}`)
@@ -370,51 +471,7 @@ export default function LivePortfolioActivity() {
         )
       }
       const applyData = await resp.json()
-      const nextStatus = String(applyData?.action_status || '').toUpperCase()
-      const canRunApproveFlow = ['READY_FOR_APPROVAL_FLOW', 'PM_ACCEPTED', 'COMPLIANCE_APPROVED', 'INTENT_SUBMITTED'].includes(nextStatus)
-      if (canRunApproveFlow) {
-        setStreamStatus('Advancing approval flow...')
-        setLiveLineTarget(
-          syncC20
-            ? 'Committee 2.0 verdict applied. Advancing PM/Compliance/Intent approvals...'
-            : 'Committee complete. Advancing PM/Compliance/Intent approvals...',
-        )
-        const approveResp = await fetch(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        })
-        if (!approveResp.ok) {
-          const body = await approveResp.json().catch(() => null)
-          throw new Error(messageFromApiFailure(body, 'Approval flow is currently blocked.'))
-        }
-      }
-      const canRunRevalidate = ['INTENT_APPROVED', 'REVALIDATED_FAIL', 'REVALIDATED_PASS'].includes(nextStatus) || canRunApproveFlow
-      if (canRunRevalidate) {
-        setStreamStatus('Revalidating 1m freshness...')
-        setLiveLineTarget('Applying committee result and forcing 1m-bar revalidation...')
-        const revalResp = await fetch(`${API_BASE}/live/trades/actions/${actionId}/revalidate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ force_refresh_1m: true }),
-        })
-        if (!revalResp.ok) {
-          const body = await revalResp.json().catch(() => null)
-          throw new Error(messageFromApiFailure(body, 'Revalidation is currently blocked.'))
-        }
-        setLiveLineTarget('Revalidation complete. If gates are clear, decision is ready to submit.')
-      } else {
-        setLiveLineTarget(
-          syncC20
-            ? 'Committee 2.0 verdict updated. No further revalidation step available for this status yet.'
-            : 'Committee updated. No further revalidation step available for this status yet.',
-        )
-      }
-      await load()
-      setStreamStatus('Completed')
-      setReadyPulseActionId(actionId)
-      setTimeout(() => setReadyPulseActionId(''), 20000)
-      setActiveStreamActionId('')
+      await advanceLiveActionAfterCommitteeApply(actionId, applyData, { isStructuralC20Flow: syncC20 })
     } catch (e) {
       setError(
         e.message ||
@@ -427,7 +484,7 @@ export default function LivePortfolioActivity() {
     } finally {
       setBusy('')
     }
-  }, [load])
+  }, [advanceLiveActionAfterCommitteeApply])
 
   const openCommitteeStream = useCallback((actionId, opts = {}) => {
     const syncC20 = Boolean(opts.structural)
@@ -854,8 +911,8 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Structural setups: commit in the Hearing Room, then Sync Committee 2.0, then Submit.
-              Other intents: committee revalidation stream, then Submit.
+              Decisions not yet broker-opened. Structural <strong>entry</strong>: use <strong>Apply Committee 2.0</strong> (one step), then Submit.
+              Optional full hearing for deep review. Structural <strong>exit</strong>: Sync replays execution-only verdict. Other intents: committee revalidation stream, then Submit.
             </div>
             {outsideHours ? <div className="lpa-subtle">Market is closed. Submit sends DAY orders that IB queues for next session.</div> : null}
             <div className="lpa-table-wrap">
@@ -873,11 +930,17 @@ export default function LivePortfolioActivity() {
                   {pending.length === 0 && (
                     <tr><td colSpan={5}>No pending decisions.</td></tr>
                   )}
-                  {pending.map((d) => (
+                  {pending.map((d) => {
+                    const isStructuralC20Row = Boolean(d.structural)
+                    const isStructuralEntryRow =
+                      isStructuralC20Row && String(d.action_intent || '').toUpperCase() !== 'EXIT'
+                    return (
                     <Fragment key={d.action_id}>
                     {(() => {
                       const statusUpper = String(d.status || '').toUpperCase()
-                      const isStructuralC20 = Boolean(d.structural)
+                      const isStructuralC20 = isStructuralC20Row
+                      const isStructuralEntry = isStructuralEntryRow
+                      const c20State = c20OrchestrateByAction[d.action_id] || {}
                       const canSubmit = statusUpper === 'REVALIDATED_PASS' && Boolean(d.submission_allowed)
                       const canRunCommittee = [
                         'RESEARCH_IMPORTED',
@@ -921,6 +984,55 @@ export default function LivePortfolioActivity() {
                         <div>Action: {d.action_id}</div>
                         <div>Created: {fmtTs(d.timestamps?.created_at)} ({fmtAge(d.timestamps?.created_at)} ago)</div>
                         {isNewDecision(d.timestamps?.created_at) ? <div className="lpa-subtle">NEW</div> : null}
+                        {isStructuralEntry &&
+                        Array.isArray(d.superseded_pending) &&
+                        d.superseded_pending.length > 0 ? (
+                          <div className="lpa-subtle">
+                            Superseded pending (read-only):{' '}
+                            {d.superseded_pending
+                              .map((s) => `${s.proposal_id ?? '—'} / ${s.action_id ?? '—'}`)
+                              .join('; ')}
+                          </div>
+                        ) : null}
+                        {isStructuralEntry && (c20State.lastResult || c20State.error) ? (
+                          <div className={`lpa-c2-panel${c20State.error ? ' lpa-c2-panel--err' : ''}`}>
+                            <div className="lpa-c2-panel-title">Committee 2.0 (last run)</div>
+                            {c20State.error ? (
+                              <div>{c20State.error}</div>
+                            ) : (
+                              <>
+                                <div>
+                                  Stance / confidence: {String(c20State.lastResult?.stance ?? '—')} /{' '}
+                                  {c20State.lastResult?.confidence != null
+                                    ? fmtNum(c20State.lastResult.confidence, 2)
+                                    : '—'}
+                                </div>
+                                <div>
+                                  Verdict: {String(c20State.lastResult?.recommendation || '—')}
+                                  {c20State.lastResult?.blocked ? ' (blocked)' : ''}
+                                  {c20State.lastResult?.idempotent_replay ? ' · replay' : ''}
+                                </div>
+                                {Array.isArray(c20State.lastResult?.reason_codes) &&
+                                c20State.lastResult.reason_codes.length > 0 ? (
+                                  <div className="lpa-subtle">
+                                    {c20State.lastResult.reason_codes.slice(0, 6).join(', ')}
+                                  </div>
+                                ) : null}
+                                {c20State.lastResult?.hearing_id && d.action_id && d.proposal_id != null ? (
+                                  <div className="lpa-c2-panel-links">
+                                    <Link
+                                      to={`/structural-committee/${encodeURIComponent(c20State.lastResult.hearing_id)}?action_id=${encodeURIComponent(
+                                        String(d.action_id),
+                                      )}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`}
+                                    >
+                                      Open full hearing
+                                    </Link>
+                                  </div>
+                                ) : null}
+                              </>
+                            )}
+                          </div>
+                        ) : null}
                         <div>Committee: {d.committee_verdict || '—'}</div>
                         {d.structural?.freshness_assessment ? <div className="lpa-subtle">Freshness: {d.structural.freshness_assessment} | Hold: {d.structural.hold_character || '—'}</div> : null}
                       </td>
@@ -992,7 +1104,12 @@ export default function LivePortfolioActivity() {
                         {isStaleRevalidationState(d) ? (
                           <div className="lpa-warning-inline">
                             Revalidation expired —{' '}
-                            {isStructuralC20 ? 'sync Committee 2.0' : 'run committee revalidation'} before submit.
+                            {isStructuralEntry
+                              ? 'run Apply Committee 2.0'
+                              : isStructuralC20
+                                ? 'sync Committee 2.0'
+                                : 'run committee revalidation'}{' '}
+                            before submit.
                           </div>
                         ) : null}
                         {!canSubmit && statusUpper === 'REVALIDATED_PASS' && Array.isArray(d.submission_gate_hints) && d.submission_gate_hints.length > 0 ? (
@@ -1005,7 +1122,11 @@ export default function LivePortfolioActivity() {
                         {!canSubmit && statusUpper !== 'REVALIDATED_PASS' ? (
                           <div className="lpa-subtle">
                             Submit to IBKR is enabled only when status is REVALIDATED_PASS (
-                            {isStructuralC20 ? 'sync Committee 2.0 if needed' : 'run committee revalidation if needed'}
+                            {isStructuralEntry
+                              ? 'Apply Committee 2.0 if needed'
+                              : isStructuralC20
+                                ? 'sync Committee 2.0 if needed'
+                                : 'run committee revalidation if needed'}
                             ).
                           </div>
                         ) : null}
@@ -1016,21 +1137,51 @@ export default function LivePortfolioActivity() {
                         >
                           {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}
                         </button>
-                        <button
-                          className="lpa-btn lpa-btn-secondary"
-                          disabled={busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id || !canRunCommittee}
-                          onClick={() => {
-                            openCommitteeStream(d.action_id, { structural: isStructuralC20 })
-                          }}
-                        >
-                          {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id
-                            ? isStructuralC20
-                              ? 'Syncing…'
-                              : 'Running...'
-                            : isStructuralC20
-                              ? 'Sync Committee 2.0'
-                              : 'Committee revalidation'}
-                        </button>
+                        {isStructuralEntry ? (
+                          <>
+                            <button
+                              type="button"
+                              className="lpa-btn"
+                              disabled={busy === `c2orch:${d.action_id}` || !canRunCommittee}
+                              onClick={() => runCommittee2Orchestrate(d.action_id)}
+                            >
+                              {busy === `c2orch:${d.action_id}` ? 'Applying…' : 'Apply Committee 2.0'}
+                            </button>
+                            <button
+                              type="button"
+                              className="lpa-btn lpa-btn-secondary lpa-btn--compact"
+                              disabled={
+                                busy === `committee:${d.action_id}` ||
+                                activeStreamActionId === d.action_id ||
+                                !canRunCommittee
+                              }
+                              onClick={() => openCommitteeStream(d.action_id, { structural: true })}
+                            >
+                              {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id
+                                ? 'SSE…'
+                                : 'Legacy SSE sync'}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="lpa-btn lpa-btn-secondary"
+                            disabled={
+                              busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id || !canRunCommittee
+                            }
+                            onClick={() => {
+                              openCommitteeStream(d.action_id, { structural: isStructuralC20 })
+                            }}
+                          >
+                            {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id
+                              ? isStructuralC20
+                                ? 'Syncing…'
+                                : 'Running...'
+                              : isStructuralC20
+                                ? 'Sync Committee 2.0'
+                                : 'Committee revalidation'}
+                          </button>
+                        )}
                         <button
                           className="lpa-btn lpa-btn-secondary"
                           disabled={busy === `reject:${d.action_id}`}
@@ -1045,16 +1196,22 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-subtle">
                             {d.execution_hard_blocked
                               ? 'Submit blocked by risk limits shown in reason codes. Adjust sizing/config or rerun committee.'
-                              : isStructuralC20
-                                ? 'Sync Committee 2.0 after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
-                                : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
+                              : isStructuralEntry
+                                ? 'Apply Committee 2.0 refreshes the hearing, commits to this action, and syncs LIVE. Then advance approvals; Submit enables when REVALIDATED_PASS.'
+                                : isStructuralC20
+                                  ? 'Sync Committee 2.0 after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
+                                  : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
                           </div>
                         ) : null}
                         {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
                           <div className="lpa-subtle">
                             Blocked by opening guard.{' '}
-                            {isStructuralC20 ? 'Re-sync Committee 2.0' : 'Re-run committee revalidation'} when data is
-                            fresher, or Reject stale to clear.
+                            {isStructuralEntry
+                              ? 'Re-apply Committee 2.0'
+                              : isStructuralC20
+                                ? 'Re-sync Committee 2.0'
+                                : 'Re-run committee revalidation'}{' '}
+                            when data is fresher, or Reject stale to clear.
                           </div>
                         ) : null}
                         </div>
@@ -1062,7 +1219,8 @@ export default function LivePortfolioActivity() {
                     </tr>
                       )
                     })()}
-                    {streamActionId === d.action_id ? (
+                    {streamActionId === d.action_id &&
+                    (!isStructuralEntryRow || activeStreamActionId === d.action_id) ? (
                       <tr>
                         <td colSpan={5}>
                           <div className="lpa-stream">
@@ -1087,7 +1245,8 @@ export default function LivePortfolioActivity() {
                       </tr>
                     ) : null}
                     </Fragment>
-                  ))}
+                  )
+                  })}
                 </tbody>
               </table>
             </div>

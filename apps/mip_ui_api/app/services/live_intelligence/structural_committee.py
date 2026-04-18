@@ -10,6 +10,46 @@ decision with explicit ownership:
   - Hold-character interpretation
 
 Does NOT invent structural thesis — only validates and shapes.
+
+Phase C — fields consumed beyond the original core (and how they affect output)
+================================================================================
+All of the following are read from the LIVE_ACTIONS / import payload dict.
+
+Newly wired (this module) — identity / context
+- MARKET_TYPE: informational reason code MARKET_TYPE_NOTE (CRYPTO/FUTURES); no hard block.
+- SETUP_NARRATIVE: if missing/short and STRUCTURE_CONFIDENCE < 0.45, adds
+  NARRATIVE_THIN_WITH_LOW_CONFIDENCE and applies size_mult 0.82 (deterministic).
+- STRUCTURAL_STATE: values BROKEN / INVALID / INVALIDATED (case-insensitive) hard-block with
+  STRUCTURAL_STATE_INVALID.
+- REGIME_TAGS: JSON or list parsed; tag CRISIS_HARD applies size_mult 0.55 and
+  REGIME_TAG_CRISIS_HARD; EXTREME_VOL applies size_mult 0.75 and reason tag.
+
+Newly wired — level / path timing (layer on top of path_quality)
+- LEVEL_SIGNIFICANCE: if present and < 0.35, applies size_mult 0.88 and
+  LEVEL_SIGNIFICANCE_LOW (warning tier; contributes to PROCEED_REDUCED).
+- AVG_BARS_TO_THRESHOLD: if > 80 and PATH_SURVIVAL_RATE < 0.35, adds
+  SLOW_PATH_HIGH_THRESHOLD and size_mult 0.85.
+- DOMINANT_FAILURE_MODE: if in {GAP, NEWS, LIQUIDITY} adds soft reason
+  DOMINANT_FAILURE_{MODE} (size_mult 0.92).
+- BEST_WINDOW: recorded in structural_context_eval for audit only (no block).
+
+Newly wired — risk / hold
+- RISK_CLASS: AGGRESSIVE with trust label not TRUSTED applies size_mult 0.85 and
+  RISK_CLASS_AGGRESSIVE_SIZE_CLAMP; SPECULATIVE applies 0.9 and reason tag.
+- EXIT_STYLE: recorded on joint_decision.exit_style for submit/diagnostics coherence.
+- MAX_HOLD_BARS / EXPECTED_HOLD_CHARACTER: already on joint_decision; hold used in risk note.
+
+Existing core (unchanged semantics, still consumed)
+- Freshness: FRESHNESS_ASSESSMENT, SETUP_STILL_VALID, PRICE_MOVED_TOO_FAR,
+  DISTANCE_TO_ENTRY_ZONE.
+- Trust: TRUST_LABEL, MEANINGFUL_HIT_RATE.
+- Regime: REGIME_COMPAT.
+- Path: MFE_MAE_RATIO, PATH_SURVIVAL_RATE, STRUCTURE_CONFIDENCE.
+- Trail: TRAIL_STYLE, TRAIL_ACTIVATION_TYPE, FRESHNESS_ASSESSMENT interplay.
+- Bracket: ENTRY_ZONE_*, INVALIDATION_*, DIRECTION, CURRENT_PRICE / bars, TARGET_EXPECTATION_SNAPSHOT.
+
+Exit intent (ACTION_INTENT == EXIT) routes to _run_structural_exit_committee: same trust/regime/freshness
+gates, joint_decision uses should_execute_exit instead of should_enter; TP/SL omitted (IB exit path).
 """
 
 from __future__ import annotations
@@ -43,6 +83,11 @@ ENTRY_ZONE_ADJUST_MAX_PCT = 5.0      # max % widening of entry zone
 INVALIDATION_ADJUST_MAX_PCT = 10.0   # max % tightening of invalidation
 TRAIL_ACTIVATION_ADJUST_RANGE = 0.5  # +/- 50% of policy default
 
+# Must match execute_live_action / LIVE_MIN_R_MULTIPLE default (IB bracket gates).
+_MIN_RR_FOR_LIVE_ENTRY = 1.10
+_DEFAULT_STRUCTURAL_SL_PCT = 0.05
+_MAX_STRUCTURAL_TP_PCT = 0.50
+
 
 def _safe_float(v, default=None) -> float | None:
     if v is None:
@@ -51,6 +96,47 @@ def _safe_float(v, default=None) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+def _structural_reference_price(action: dict) -> float | None:
+    """Best-effort price for invalidation-distance and TP/SL % (matches apply/execute fallbacks)."""
+    for key in ("CURRENT_PRICE", "REVALIDATION_PRICE", "PROPOSED_PRICE", "ONE_MIN_BAR_CLOSE"):
+        px = _safe_float(action.get(key))
+        if px is not None and px > 0:
+            return px
+    lo = _safe_float(action.get("ENTRY_ZONE_LOW"))
+    hi = _safe_float(action.get("ENTRY_ZONE_HIGH"))
+    if lo is not None and hi is not None and lo > 0 and hi > 0:
+        return (lo + hi) / 2.0
+    return None
+
+
+def _target_return_from_expectation_snapshot(action: dict) -> float | None:
+    raw = action.get("TARGET_EXPECTATION_SNAPSHOT")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            te = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    elif isinstance(raw, dict):
+        te = raw
+    else:
+        return None
+    if not isinstance(te, dict):
+        return None
+    bands = te.get("bands")
+    if isinstance(bands, dict):
+        for k in ("base", "mid", "strong", "median"):
+            v = _safe_float(bands.get(k))
+            if v is not None and v > 0:
+                return float(v)
+    for k in ("base_return", "expected_return", "realistic_target_return", "target_return"):
+        v = _safe_float(te.get(k))
+        if v is not None and v > 0:
+            return float(v)
+    return None
 
 
 def _evaluate_freshness(action: dict) -> dict:
@@ -213,6 +299,99 @@ def _build_risk_note(
     return " ".join(parts)
 
 
+def _is_exit_intent(action: dict) -> bool:
+    return str(action.get("ACTION_INTENT") or "").upper() == "EXIT"
+
+
+def _parse_regime_tags(action: dict) -> list[str]:
+    raw = action.get("REGIME_TAGS")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if isinstance(raw, list):
+        return [str(x).upper() for x in raw if x is not None]
+    if isinstance(raw, dict):
+        return [str(k).upper() for k, v in raw.items() if v]
+    return []
+
+
+def _evaluate_structural_extended_context(action: dict) -> dict:
+    """
+    Deterministic structural thesis / risk context beyond core gates.
+    Returns size_mult in (0, 1], reason_fragments, optional hard block.
+    """
+    mult = 1.0
+    reasons: list[str] = []
+    tags_add: list[str] = []
+    hard_block = False
+    block_msg = ""
+
+    mt = str(action.get("MARKET_TYPE") or "").upper()
+    if mt in ("CRYPTO", "FUTURE", "FUTURES"):
+        tags_add.append("MARKET_TYPE_NOTE")
+
+    state = str(action.get("STRUCTURAL_STATE") or "").upper()
+    if state in ("BROKEN", "INVALID", "INVALIDATED", "VOID"):
+        hard_block = True
+        block_msg = f"Structural state {state} blocks execution"
+        tags_add.append("STRUCTURAL_STATE_INVALID")
+
+    sig = _safe_float(action.get("LEVEL_SIGNIFICANCE"))
+    if sig is not None and sig < 0.35:
+        mult *= 0.88
+        tags_add.append("LEVEL_SIGNIFICANCE_LOW")
+
+    avg_bt = _safe_float(action.get("AVG_BARS_TO_THRESHOLD"))
+    surv = _safe_float(action.get("PATH_SURVIVAL_RATE"))
+    if avg_bt is not None and avg_bt > 80 and surv is not None and surv < 0.35:
+        mult *= 0.85
+        tags_add.append("SLOW_PATH_HIGH_THRESHOLD")
+
+    dfm = str(action.get("DOMINANT_FAILURE_MODE") or "").upper()
+    if dfm in ("GAP", "NEWS", "LIQUIDITY"):
+        mult *= 0.92
+        tags_add.append(f"DOMINANT_FAILURE_{dfm}")
+
+    risk_c = str(action.get("RISK_CLASS") or "").upper()
+    trust = str(action.get("TRUST_LABEL") or "").upper()
+    if risk_c == "AGGRESSIVE" and trust != "TRUSTED":
+        mult *= 0.85
+        tags_add.append("RISK_CLASS_AGGRESSIVE_SIZE_CLAMP")
+    elif risk_c == "SPECULATIVE":
+        mult *= 0.90
+        tags_add.append("RISK_CLASS_SPECULATIVE_NOTE")
+
+    narrative = str(action.get("SETUP_NARRATIVE") or "").strip()
+    conf = _safe_float(action.get("STRUCTURE_CONFIDENCE"), 1.0)
+    if (not narrative or len(narrative) < 12) and conf is not None and conf < 0.45:
+        mult *= 0.82
+        tags_add.append("NARRATIVE_THIN_WITH_LOW_CONFIDENCE")
+
+    for rt in _parse_regime_tags(action):
+        if rt in ("CRISIS_HARD", "CRISIS", "BLACK_SWAN"):
+            mult *= 0.55
+            tags_add.append("REGIME_TAG_CRISIS_HARD")
+        elif rt in ("EXTREME_VOL", "EXTREME_VOLATILITY"):
+            mult *= 0.75
+            tags_add.append("REGIME_TAG_EXTREME_VOL")
+
+    mult = max(0.15, min(1.0, float(mult)))
+    return {
+        "size_mult": mult,
+        "reason_tags": tags_add,
+        "notes": reasons,
+        "hard_block": hard_block,
+        "hard_block_message": block_msg,
+        "market_type": mt or None,
+        "best_window": action.get("BEST_WINDOW"),
+        "latest_bar_date": action.get("LATEST_BAR_DATE"),
+    }
+
+
 def _validate_trail_style(action: dict) -> dict:
     """Validate and potentially adjust trail style."""
     trail_style = action.get("TRAIL_STYLE")
@@ -234,6 +413,73 @@ def _validate_trail_style(action: dict) -> dict:
     }
 
 
+def _run_structural_exit_committee(action: dict) -> dict:
+    """Structural exit review — no TP/SL; gates on freshness/trust/regime only."""
+    freshness_eval = _evaluate_freshness(action)
+    trust_eval = _evaluate_trust(action)
+    regime_eval = _evaluate_regime(action)
+    ctx_eval = _evaluate_structural_extended_context(action)
+    blocked = bool(ctx_eval.get("hard_block"))
+    block_reasons: list[str] = []
+    reason_codes: list[str] = []
+
+    if freshness_eval["freshness"] == "STALE_INVALID":
+        blocked = True
+        block_reasons.append(freshness_eval["reason"])
+        reason_codes.append("SETUP_STALE_INVALID")
+    if not trust_eval["passed"]:
+        blocked = True
+        block_reasons.append(trust_eval["reason"])
+        reason_codes.append("TRUST_GATE_FAILED")
+    if not regime_eval["passed"]:
+        blocked = True
+        block_reasons.append(regime_eval["reason"])
+        reason_codes.append("REGIME_INCOMPATIBLE")
+    if ctx_eval.get("hard_block"):
+        blocked = True
+        block_reasons.append(str(ctx_eval.get("hard_block_message") or "Structural context block"))
+    reason_codes.extend(ctx_eval.get("reason_tags") or [])
+
+    recommendation = "BLOCK" if blocked else "PROCEED"
+    risk_note = _build_risk_note(action, trust_eval, regime_eval, freshness_eval, {"quality_ok": True, "flags": []})
+    jd: dict[str, Any] = {
+        "should_enter": False,
+        "should_execute_exit": not blocked,
+        "recommendation": recommendation,
+        "size_factor": 1.0 if not blocked else 0.0,
+        "position_size_factor": 1.0 if not blocked else 0.0,
+        "risk_note": risk_note,
+        "hold_bars": action.get("MAX_HOLD_BARS"),
+        "hold_character": action.get("EXPECTED_HOLD_CHARACTER") or "MEDIUM_SWING",
+        "exit_style": action.get("EXIT_STYLE"),
+        "realistic_target_return": None,
+        "stop_loss_pct": None,
+        "acceptable_early_exit_target_return": None,
+    }
+    role_outputs = [
+        {"role": "StructuralExitReviewer", "stance": "BLOCK" if blocked else "SUPPORT", "confidence": 0.85, "summary": risk_note[:500]},
+    ]
+    reason_codes.append("STRUCTURAL_EXIT_COMMITTEE_REVIEWED")
+    return {
+        "recommendation": recommendation,
+        "size_factor": 1.0 if not blocked else 0.0,
+        "confidence": _compute_confidence(trust_eval, regime_eval, {"quality_ok": True}),
+        "blocked": blocked,
+        "block_reasons": block_reasons,
+        "reason_codes": reason_codes,
+        "risk_note": risk_note,
+        "joint_decision": jd,
+        "role_outputs": role_outputs,
+        "evaluations": {
+            "freshness": freshness_eval,
+            "trust": trust_eval,
+            "regime": regime_eval,
+            "structural_context": ctx_eval,
+        },
+        "structural_source": True,
+    }
+
+
 def run_structural_committee(action: dict) -> dict:
     """
     Run the structural committee evaluation on a canonical live-intent action.
@@ -241,17 +487,25 @@ def run_structural_committee(action: dict) -> dict:
     Input: action dict with all structural columns from LIVE_ACTIONS.
     Output: committee verdict with recommendation, size_factor, evaluations, risk note.
     """
+    if _is_exit_intent(action):
+        return _run_structural_exit_committee(action)
+
     # 1. Evaluate each dimension
     freshness_eval = _evaluate_freshness(action)
     trust_eval = _evaluate_trust(action)
     regime_eval = _evaluate_regime(action)
     path_eval = _evaluate_path_quality(action)
     trail_eval = _validate_trail_style(action)
+    ctx_eval = _evaluate_structural_extended_context(action)
 
     # 2. Determine recommendation
     blocked = False
     block_reasons: list[str] = []
     reason_codes: list[str] = []
+
+    if ctx_eval.get("hard_block"):
+        blocked = True
+        block_reasons.append(str(ctx_eval.get("hard_block_message") or "Structural context block"))
 
     if freshness_eval["freshness"] == "STALE_INVALID":
         blocked = True
@@ -278,10 +532,16 @@ def run_structural_committee(action: dict) -> dict:
     if trail_eval.get("note"):
         reason_codes.append("TRAIL_DEFER_RECOMMENDED")
 
+    for tag in ctx_eval.get("reason_tags") or []:
+        if tag not in reason_codes:
+            reason_codes.append(tag)
+
     # 3. Compute size factor
     size_factor = 0.0 if blocked else _compute_size_factor(
         trust_eval, regime_eval, freshness_eval, path_eval
     )
+    if not blocked:
+        size_factor = round(float(size_factor) * float(ctx_eval.get("size_mult") or 1.0), 4)
 
     recommendation = "BLOCK" if blocked else (
         "PROCEED_REDUCED" if size_factor < 0.9 else "PROCEED"
@@ -312,6 +572,7 @@ def run_structural_committee(action: dict) -> dict:
         "should_enter": not blocked,
         "recommendation": recommendation,
         "size_factor": size_factor,
+        "position_size_factor": size_factor,
         "risk_note": risk_note,
         "hold_bars": max_hold,
         "hold_character": hold_character,
@@ -337,17 +598,30 @@ def run_structural_committee(action: dict) -> dict:
         },
     }
 
-    # Derive stop_loss_pct from invalidation distance
-    current_price = _safe_float(action.get("CURRENT_PRICE"))
-    if current_price and invalidation and current_price > 0:
+    # IB execute_live_action requires positive TP/SL % in joint_decision (LIVE_TP/SL_REQUIRED_MISSING).
+    ref_px = _structural_reference_price(action)
+    if ref_px and invalidation and ref_px > 0 and float(invalidation) > 0:
         if direction == "LONG":
-            jd["stop_loss_pct"] = round(abs(current_price - invalidation) / current_price, 6)
+            jd["stop_loss_pct"] = round(abs(ref_px - float(invalidation)) / ref_px, 6)
         else:
-            jd["stop_loss_pct"] = round(abs(invalidation - current_price) / current_price, 6)
+            jd["stop_loss_pct"] = round(abs(float(invalidation) - ref_px) / ref_px, 6)
+    sl_pct = _safe_float(jd.get("stop_loss_pct"))
+    if sl_pct is None or sl_pct <= 0:
+        jd["stop_loss_pct"] = float(_DEFAULT_STRUCTURAL_SL_PCT)
+        sl_pct = float(_DEFAULT_STRUCTURAL_SL_PCT)
+
+    tp_floor = float(sl_pct) * _MIN_RR_FOR_LIVE_ENTRY
+    te_tp = _target_return_from_expectation_snapshot(action)
+    candidate = max(tp_floor, float(te_tp) if te_tp is not None else 0.0, 0.02)
+    jd["realistic_target_return"] = round(min(candidate, _MAX_STRUCTURAL_TP_PCT), 6)
+    if te_tp is not None and float(te_tp) > 0:
+        jd["acceptable_early_exit_target_return"] = round(
+            min(float(te_tp) * 0.85, jd["realistic_target_return"]), 6
+        )
 
     # 8. Build role outputs (structural roles, not legacy agent stubs)
     role_outputs = _build_structural_role_outputs(
-        action, freshness_eval, trust_eval, regime_eval, path_eval, trail_eval
+        action, freshness_eval, trust_eval, regime_eval, path_eval, trail_eval, ctx_eval
     )
 
     return {
@@ -359,6 +633,7 @@ def run_structural_committee(action: dict) -> dict:
         "reason_codes": reason_codes,
         "risk_note": risk_note,
         "joint_decision": jd,
+        "role_outputs": role_outputs,
         "evaluations": {
             "freshness": freshness_eval,
             "trust": trust_eval,
@@ -439,5 +714,13 @@ def _build_structural_role_outputs(
         "confidence": 0.8,
         "summary": trail_summary,
     })
+
+    if isinstance(ctx_eval, dict) and ctx_eval.get("reason_tags"):
+        roles.append({
+            "role": "ThesisContext",
+            "stance": "CONDITIONAL" if float(ctx_eval.get("size_mult") or 1.0) < 0.95 else "SUPPORT",
+            "confidence": round(float(ctx_eval.get("size_mult") or 1.0), 2),
+            "summary": "Context tags: " + ", ".join(ctx_eval.get("reason_tags") or [])[:400],
+        })
 
     return roles

@@ -45,6 +45,13 @@ from app.services.broker_execution_reconcile import (
 from app.services.live_intelligence.structural_committee import (
     run_structural_committee,
 )
+from app.services.live_intelligence.structural_routing import (
+    STRUCTURAL_COMMITTEE_LOGIC_VERSION,
+    build_structural_execution_contract_v1,
+    build_structural_verdict_envelope_v1,
+    contract_executable_bracket,
+    is_structural_live_action,
+)
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -313,13 +320,23 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON, PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS,
           STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, REVALIDATION_TS, REVALIDATION_PRICE,
           PRICE_DEVIATION_PCT, PRICE_GUARD_RESULT, REASON_CODES, EXECUTION_PRICE_SOURCE,
-          PARAM_SNAPSHOT, ONE_MIN_BAR_TS,
+          PARAM_SNAPSHOT, ONE_MIN_BAR_TS, ONE_MIN_BAR_CLOSE,
           INTENT_SUBMITTED_BY, INTENT_SUBMITTED_TS, INTENT_APPROVED_BY, INTENT_APPROVED_TS, INTENT_REFERENCE_ID,
           COMMITTEE_REQUIRED, COMMITTEE_STATUS, COMMITTEE_RUN_ID, COMMITTEE_COMPLETED_TS, COMMITTEE_VERDICT,
           TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
           TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
           NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
-          REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE
+          REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE,
+          SETUP_FAMILY, DIRECTION, ENTRY_ZONE_LOW, ENTRY_ZONE_HIGH,
+          INVALIDATION_LEVEL, INVALIDATION_RULE, STRUCTURE_CONFIDENCE, LEVEL_SIGNIFICANCE,
+          STRUCTURAL_STATE, REGIME_TAGS, REGIME_COMPAT, TRUST_LABEL,
+          MEANINGFUL_HIT_RATE, PATH_SURVIVAL_RATE, MFE_MAE_RATIO, AVG_BARS_TO_THRESHOLD,
+          DOMINANT_FAILURE_MODE, BEST_WINDOW, RISK_CLASS, EXIT_STYLE,
+          TRAIL_STYLE, TRAIL_PARAMS, TRAIL_ACTIVATION_TYPE, TRAIL_ACTIVATION_PARAM,
+          EXPECTED_HOLD_CHARACTER, MAX_HOLD_BARS,
+          SETUP_NARRATIVE, PROPOSAL_RATIONALE,
+          CURRENT_PRICE, DISTANCE_TO_ENTRY_ZONE, SETUP_STILL_VALID, PRICE_MOVED_TOO_FAR, FRESHNESS_ASSESSMENT,
+          MARKET_TYPE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
         """,
@@ -1583,10 +1600,34 @@ def _load_executable_entry_bracket_for_action(
     bust_pct_default: float | None,
 ) -> tuple[float | None, float | None, str]:
     """
-    Prefer PARAM_SNAPSHOT.executable_bracket (post-committee calibration); else COMMITTEE_VERDICT.
-    Returns (target_return, stop_loss_pct, source) where source is snapshot|verdict|none.
+    Prefer structural_execution_contract_v1.executable_bracket, then PARAM_SNAPSHOT.executable_bracket,
+    else COMMITTEE_VERDICT joint_decision.
+    Returns (target_return, stop_loss_pct, source) where source is structural_contract|snapshot|verdict|none.
     """
     ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    if isinstance(ps, dict):
+        sec = ps.get("structural_execution_contract_v1")
+        if isinstance(sec, dict):
+            eb_sc = contract_executable_bracket(sec)
+            if isinstance(eb_sc, dict) and eb_sc.get("blocked"):
+                return None, None, "blocked"
+            if isinstance(eb_sc, dict) and eb_sc.get("target_return") is not None:
+                try:
+                    tr = float(eb_sc["target_return"])
+                    sl_raw = eb_sc.get("stop_loss_pct")
+                    sl = float(sl_raw) if sl_raw is not None else None
+                except Exception:
+                    tr, sl = None, None
+                else:
+                    if sl is not None and bust_pct_default is not None:
+                        sl = min(float(sl), float(bust_pct_default))
+                    if tr is not None and tr > 0 and sl is not None and sl > 0:
+                        return tr, sl, "structural_contract"
+            jd_sc = sec.get("joint_decision")
+            if isinstance(jd_sc, dict):
+                tr2, sl2 = _live_target_and_stop_from_joint_decision(jd_sc, bust_pct_default)
+                if tr2 is not None and sl2 is not None and float(tr2) > 0 and float(sl2) > 0:
+                    return float(tr2), float(sl2), "structural_contract"
     if isinstance(ps, dict):
         eb = ps.get("executable_bracket")
         if isinstance(eb, dict) and eb.get("blocked"):
@@ -2058,6 +2099,73 @@ def _merge_live_action_param_snapshot_patch(cur, action_id: str, patch: dict) ->
          where ACTION_ID = %s
         """,
         (json.dumps(ps), action_id),
+    )
+
+
+def _merge_structural_contract_and_diagnostics(
+    cur,
+    *,
+    action_id: str,
+    committee_run_id: str,
+    verdict: dict,
+    reason_codes: list[str],
+    self_heal: dict | None = None,
+) -> None:
+    """Persist canonical structural_execution_contract_v1 + diagnostics onto PARAM_SNAPSHOT."""
+    action_row = _fetch_live_action(cur, action_id)
+    if not action_row or not is_structural_live_action(action_row):
+        return
+    ps = _parse_variant(action_row.get("PARAM_SNAPSHOT"))
+    eb = ps.get("executable_bracket") if isinstance(ps, dict) else None
+    jd = _parse_variant(verdict.get("joint_decision"))
+    intent = _normalize_action_intent(action_row.get("SIDE"), action_row.get("ACTION_INTENT"))
+    entry_like = intent != "EXIT"
+    tr_ok = sl_ok = False
+    if isinstance(jd, dict):
+        try:
+            tr = float(jd.get("realistic_target_return")) if jd.get("realistic_target_return") is not None else None
+            sl = float(jd.get("stop_loss_pct")) if jd.get("stop_loss_pct") is not None else None
+            tr_ok = tr is not None and tr > 0
+            sl_ok = sl is not None and sl > 0
+        except (TypeError, ValueError):
+            tr_ok = sl_ok = False
+    has_blocked_eb = isinstance(eb, dict) and bool(eb.get("blocked"))
+    eb_has_legs = (
+        isinstance(eb, dict)
+        and eb.get("target_return") is not None
+        and eb.get("stop_loss_pct") is not None
+        and not eb.get("blocked")
+    )
+    contract_complete = (not entry_like) or (tr_ok and sl_ok and not has_blocked_eb and (eb is None or eb_has_legs or not isinstance(eb, dict)))
+    if entry_like and has_blocked_eb:
+        contract_complete = False
+    diagnostics = {
+        "routed_structural": True,
+        "structural_committee_run_id": committee_run_id,
+        "structural_contract_present": True,
+        "structural_contract_complete": contract_complete,
+        "legacy_path_used": False,
+        "committee_logic_version": STRUCTURAL_COMMITTEE_LOGIC_VERSION,
+        "reason_codes": list(reason_codes),
+    }
+    if self_heal:
+        diagnostics["structural_self_heal"] = self_heal
+    contract = build_structural_execution_contract_v1(
+        action=action_row,
+        verdict=verdict,
+        joint_decision=jd,
+        committee_run_id=committee_run_id,
+        param_snapshot_executable_bracket=eb if isinstance(eb, dict) else None,
+        diagnostics=diagnostics,
+    )
+    _merge_live_action_param_snapshot_patch(
+        cur,
+        action_id,
+        {
+            "structural_execution_contract_v1": contract,
+            "structural_diagnostics_v1": diagnostics,
+            "structural_source": True,
+        },
     )
 
 
@@ -5047,8 +5155,17 @@ def _run_multiagent_dialogue(
     context: dict,
     persist_run_id: str | None = None,
     emit=None,
+    live_action: dict | None = None,
 ) -> tuple[list[dict], dict]:
     """Run two dialogue rounds across committee roles."""
+    if live_action is not None and is_structural_live_action(live_action):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Legacy multi-agent committee is forbidden for structural live actions.",
+                "reason_codes": ["STRUCTURAL_ROW_LEGACY_COMMITTEE_FORBIDDEN"],
+            },
+        )
     round1: list[dict] = []
     prior_messages: list[dict] = []
     for role in COMMITTEE_ROLES:
@@ -5396,7 +5513,7 @@ def _build_action_decision_context(cur, action: dict) -> dict:
         "entry_intel_baseline": entry_intel_baseline,
         "execution_risk_config": risk_cfg,
     }
-    if action.get("SETUP_FAMILY"):
+    if is_structural_live_action(action):
         context["structural"] = {
             "setup_event_id": action.get("SETUP_EVENT_ID"),
             "setup_family": action.get("SETUP_FAMILY"),
@@ -6823,7 +6940,7 @@ def get_live_activity_overview(
               la.PROPOSED_QTY, la.PROPOSED_PRICE, la.TARGET_OPEN_CONDITION_FACTOR, la.TRAINING_SIZE_CAP_FACTOR,
               la.TARGET_EXPECTATION_SNAPSHOT, la.PARAM_SNAPSHOT, la.CREATED_AT, la.UPDATED_AT,
               la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.REVALIDATION_TS, la.REVALIDATION_OUTCOME,
-              la.SETUP_FAMILY, la.DIRECTION, la.ENTRY_ZONE_LOW, la.ENTRY_ZONE_HIGH,
+              la.SETUP_EVENT_ID, la.SETUP_FAMILY, la.DIRECTION, la.ENTRY_ZONE_LOW, la.ENTRY_ZONE_HIGH,
               la.INVALIDATION_LEVEL, la.TRAIL_STYLE, la.TRAIL_ACTIVATION_TYPE,
               la.SETUP_NARRATIVE, la.FRESHNESS_ASSESSMENT, la.EXPECTED_HOLD_CHARACTER
             from MIP.LIVE.LIVE_ACTIONS la
@@ -6975,6 +7092,8 @@ def get_live_activity_overview(
                 "BROKER_SHORT_POSITION_OUT_OF_POLICY",
                 "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
                 "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
+                "STRUCT_SUBMIT_CONTRACT_INCOMPLETE",
+                "STRUCTURAL_ROW_LEGACY_COMMITTEE_FORBIDDEN",
                 "FIRST_SESSION_REALISM_SOURCE_REQUIRED",
                 "FIRST_SESSION_REALISM_NO_1M_BAR",
                 "FIRST_SESSION_REALISM_MISSING_1M_REFERENCE",
@@ -7098,18 +7217,26 @@ def get_live_activity_overview(
                             ),
                         },
                         "protection": {"planned": protection_planned, **protection_details},
-                        "structural": {
-                            "setup_family": row.get("SETUP_FAMILY"),
-                            "direction": row.get("DIRECTION"),
-                            "entry_zone_low": float(row["ENTRY_ZONE_LOW"]) if row.get("ENTRY_ZONE_LOW") is not None else None,
-                            "entry_zone_high": float(row["ENTRY_ZONE_HIGH"]) if row.get("ENTRY_ZONE_HIGH") is not None else None,
-                            "invalidation_level": float(row["INVALIDATION_LEVEL"]) if row.get("INVALIDATION_LEVEL") is not None else None,
-                            "trail_style": row.get("TRAIL_STYLE"),
-                            "trail_activation_type": row.get("TRAIL_ACTIVATION_TYPE"),
-                            "setup_narrative": row.get("SETUP_NARRATIVE"),
-                            "freshness_assessment": row.get("FRESHNESS_ASSESSMENT"),
-                            "hold_character": row.get("EXPECTED_HOLD_CHARACTER"),
-                        } if row.get("SETUP_FAMILY") else None,
+                        "structural": (
+                            {
+                                "setup_event_id": row.get("SETUP_EVENT_ID"),
+                                "setup_family": row.get("SETUP_FAMILY"),
+                                "direction": row.get("DIRECTION"),
+                                "entry_zone_low": float(row["ENTRY_ZONE_LOW"]) if row.get("ENTRY_ZONE_LOW") is not None else None,
+                                "entry_zone_high": float(row["ENTRY_ZONE_HIGH"]) if row.get("ENTRY_ZONE_HIGH") is not None else None,
+                                "invalidation_level": float(row["INVALIDATION_LEVEL"]) if row.get("INVALIDATION_LEVEL") is not None else None,
+                                "trail_style": row.get("TRAIL_STYLE"),
+                                "trail_activation_type": row.get("TRAIL_ACTIVATION_TYPE"),
+                                "setup_narrative": row.get("SETUP_NARRATIVE"),
+                                "freshness_assessment": row.get("FRESHNESS_ASSESSMENT"),
+                                "hold_character": row.get("EXPECTED_HOLD_CHARACTER"),
+                                "committee_logic_version": STRUCTURAL_COMMITTEE_LOGIC_VERSION,
+                                "structural_diagnostics_v1": param_snap_row.get("structural_diagnostics_v1"),
+                                "structural_execution_contract_v1": param_snap_row.get("structural_execution_contract_v1"),
+                            }
+                            if is_structural_live_action(row)
+                            else None
+                        ),
                         "timestamps": {
                             "created_at": row.get("CREATED_AT"),
                             "updated_at": row.get("UPDATED_AT"),
@@ -8574,14 +8701,33 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             ),
         )
 
-        is_structural = bool(action.get("SETUP_FAMILY"))
-        context = _build_action_decision_context(cur, action)
-        action_training_snapshot = context.get("training_qualification_snapshot") or {}
-        action_target_snapshot = context.get("target_expectation_snapshot") or {}
-        decision_news_snapshot = context.get("news_context_snapshot") or {}
-        action_news_snapshot = context.get("action_news_context_snapshot") or {}
-        latest_news_snapshot = context.get("latest_symbol_news_context") or {}
-        pw_evidence = context.get("parallel_worlds_evidence")
+        is_structural = is_structural_live_action(action)
+        if is_structural:
+            context = {
+                "entry_intel_baseline": {},
+                "parallel_worlds_evidence": {},
+                "news_context_snapshot": {},
+                "entry_intel_snapshot_id": None,
+                "training_qualification_snapshot": {},
+                "target_expectation_snapshot": {},
+                "action_news_context_snapshot": {},
+                "latest_symbol_news_context": {},
+                "news_for_decision_source": None,
+            }
+            action_training_snapshot = {}
+            action_target_snapshot = {}
+            decision_news_snapshot = {}
+            action_news_snapshot = {}
+            latest_news_snapshot = {}
+            pw_evidence = {}
+        else:
+            context = _build_action_decision_context(cur, action)
+            action_training_snapshot = context.get("training_qualification_snapshot") or {}
+            action_target_snapshot = context.get("target_expectation_snapshot") or {}
+            decision_news_snapshot = context.get("news_context_snapshot") or {}
+            action_news_snapshot = context.get("action_news_context_snapshot") or {}
+            latest_news_snapshot = context.get("latest_symbol_news_context") or {}
+            pw_evidence = context.get("parallel_worlds_evidence")
 
         action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
         is_exit = action_intent == "EXIT"
@@ -8636,6 +8782,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 context=context,
                 persist_run_id=run_id,
                 emit=None,
+                live_action=action,
             )
             jd = _parse_variant(verdict.get("joint_decision"))
             if not verdict.get("blocked") and (
@@ -8685,15 +8832,18 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             reason_codes.append("COMMITTEE_BLOCKED")
         elif verdict["recommendation"] == "PROCEED_REDUCED":
             reason_codes.append("COMMITTEE_REDUCED_SIZE")
-        if verdict.get("quality_block_override_applied"):
-            reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
-        if verdict.get("quality_risk_normalized"):
-            reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
-        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, decision_news_snapshot)
-        if tier_c_conflict:
-            reason_codes.append("TIER_C_CONFLICT_ALERT")
-        if verdict.get("quality_backfilled"):
-            reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
+        if is_structural:
+            tier_c_conflict = False
+        else:
+            if verdict.get("quality_block_override_applied"):
+                reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
+            if verdict.get("quality_risk_normalized"):
+                reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
+            tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, decision_news_snapshot)
+            if tier_c_conflict:
+                reason_codes.append("TIER_C_CONFLICT_ALERT")
+            if verdict.get("quality_backfilled"):
+                reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
         reason_codes.append("COMMITTEE_REVIEWED")
         verdict["tier_c_conflict"] = tier_c_conflict
         next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
@@ -8875,6 +9025,14 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             ),
         )
         action_after = _fetch_live_action(cur, action_id)
+        if is_structural:
+            _merge_structural_contract_and_diagnostics(
+                cur,
+                action_id=action_id,
+                committee_run_id=run_id,
+                verdict=verdict,
+                reason_codes=reason_codes,
+            )
         _append_learning_ledger_event(
             cur,
             event_name="LIVE_COMMITTEE_COMPLETED",
@@ -8887,8 +9045,9 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 "recommendation": verdict["recommendation"],
                 "size_factor": verdict["size_factor"],
                 "blocked": verdict["blocked"],
-                "news_context_state": decision_news_snapshot.get("context_state"),
-                "news_event_shock_flag": bool(decision_news_snapshot.get("event_shock_flag")),
+                "structural_committee": bool(is_structural),
+                "news_context_state": (decision_news_snapshot or {}).get("context_state"),
+                "news_event_shock_flag": bool((decision_news_snapshot or {}).get("event_shock_flag")),
                 "news_for_decision_source": context.get("news_for_decision_source"),
                 "news_fallback_mode": "RSS_FALLBACK" if news_fallback_active else "IBKR_PRIMARY",
                 "ibkr_news_reason_codes": news_readiness.get("reason_codes") or [],
@@ -8964,111 +9123,194 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                 detail=f"Committee apply blocked for current status: {status_upper}.",
             )
 
-        verdict_in = dict(req.verdict or {})
-        jd = _parse_variant(verdict_in.get("joint_decision"))
-        action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
-        allows_execution = _decision_allows_execution(jd, action_intent)
-        recommendation = str(verdict_in.get("recommendation") or ("BLOCK" if not allows_execution else "PROCEED_REDUCED")).upper()
-        size_factor = float(verdict_in.get("size_factor") or jd.get("position_size_factor") or 1.0)
-        confidence = float(verdict_in.get("confidence") or 0.5)
-        blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (not allows_execution)
-        context = _build_action_decision_context(cur, action)
-        pw_evidence = context.get("parallel_worlds_evidence") or {}
-        decision_news_snapshot = context.get("news_context_snapshot") or {}
-
-        verdict = {
-            "recommendation": recommendation,
-            "size_factor": max(0.0, min(1.0, size_factor)),
-            "confidence": max(0.0, min(1.0, confidence)),
-            "blocked": blocked,
-            "joint_decision": jd,
-        }
-        verdict = _backfill_joint_decision_from_policy(verdict, context)
-        jd = _parse_variant(verdict.get("joint_decision"))
+        is_structural = is_structural_live_action(action)
         action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
         is_exit = action_intent == "EXIT"
-        exit_position_qty = None
-        exit_override_applied = False
-        if is_exit:
-            exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
-            if abs(float(exit_position_qty)) <= 0:
-                verdict["recommendation"] = "BLOCK"
-                verdict["blocked"] = True
-                jd["should_enter"] = False
-                jd["should_execute_exit"] = False
-                verdict["joint_decision"] = jd
-            elif verdict.get("blocked"):
-                verdict["blocked"] = False
-                if str(verdict.get("recommendation") or "").upper() == "BLOCK":
-                    verdict["recommendation"] = "PROCEED_REDUCED"
-                jd["should_enter"] = True
-                jd["should_execute_exit"] = True
-                verdict["joint_decision"] = jd
-                exit_override_applied = True
 
-        verdict = _suppress_block_on_degraded_entry_quality(
-            verdict,
-            action_intent,
-            context.get("execution_risk_config"),
-        )
-        reason_codes = []
-        if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
-            reason_codes.append("EXIT_POSITION_MISSING")
-        if exit_override_applied:
-            reason_codes.append("EXIT_INTENT_OVERRIDE_APPLIED")
-        if verdict["blocked"]:
-            reason_codes.append("COMMITTEE_BLOCKED")
-        elif verdict["recommendation"] == "PROCEED_REDUCED":
-            reason_codes.append("COMMITTEE_REDUCED_SIZE")
-        if verdict.get("quality_block_override_applied"):
-            reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
-        if verdict.get("quality_risk_normalized"):
-            reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
-        tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, decision_news_snapshot)
-        if tier_c_conflict:
-            reason_codes.append("TIER_C_CONFLICT_ALERT")
-        if verdict.get("quality_backfilled"):
-            reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
-        reason_codes.append("COMMITTEE_REVIEWED")
-        verdict["tier_c_conflict"] = tier_c_conflict
-        next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
+        if is_structural:
+            struct_result = run_structural_committee(dict(action))
+            blocked = bool(struct_result.get("blocked"))
+            recommendation = str(struct_result.get("recommendation") or "BLOCK").upper()
+            size_factor = float(struct_result.get("size_factor") or 0.0)
+            confidence = float(struct_result.get("confidence") or 0.5)
+            jd = struct_result.get("joint_decision") or {}
+            reason_codes = list(struct_result.get("reason_codes") or [])
+            reason_codes.append("STRUCTURAL_COMMITTEE_REVIEWED")
+            exit_position_qty = None
+            exit_override_applied = False
+            if is_exit:
+                exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
+                if abs(float(exit_position_qty or 0.0)) <= 0:
+                    blocked = True
+                    recommendation = "BLOCK"
+                    jd = _parse_variant(jd)
+                    jd["should_execute_exit"] = False
+                    jd["should_enter"] = False
+                    reason_codes.append("EXIT_POSITION_MISSING")
+                verdict = {
+                    "recommendation": recommendation,
+                    "size_factor": max(0.0, min(1.0, size_factor)),
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "blocked": blocked,
+                    "joint_decision": jd,
+                    "structural_source": True,
+                    "tier_c_conflict": False,
+                }
+            else:
+                verdict = {
+                    "recommendation": recommendation,
+                    "size_factor": max(0.0, min(1.0, size_factor)),
+                    "confidence": max(0.0, min(1.0, confidence)),
+                    "blocked": blocked,
+                    "joint_decision": jd,
+                    "structural_source": True,
+                    "tier_c_conflict": False,
+                }
+            next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
+            context = {"entry_intel_baseline": {}, "parallel_worlds_evidence": {}, "news_context_snapshot": {}}
+        else:
+            verdict_in = dict(req.verdict or {})
+            jd = _parse_variant(verdict_in.get("joint_decision"))
+            allows_execution = _decision_allows_execution(jd, action_intent)
+            recommendation = str(verdict_in.get("recommendation") or ("BLOCK" if not allows_execution else "PROCEED_REDUCED")).upper()
+            size_factor = float(verdict_in.get("size_factor") or jd.get("position_size_factor") or 1.0)
+            confidence = float(verdict_in.get("confidence") or 0.5)
+            blocked = bool(verdict_in.get("blocked")) or recommendation == "BLOCK" or (not allows_execution)
+            context = _build_action_decision_context(cur, action)
+            pw_evidence = context.get("parallel_worlds_evidence") or {}
+            decision_news_snapshot = context.get("news_context_snapshot") or {}
+
+            verdict = {
+                "recommendation": recommendation,
+                "size_factor": max(0.0, min(1.0, size_factor)),
+                "confidence": max(0.0, min(1.0, confidence)),
+                "blocked": blocked,
+                "joint_decision": jd,
+            }
+            verdict = _backfill_joint_decision_from_policy(verdict, context)
+            jd = _parse_variant(verdict.get("joint_decision"))
+            exit_position_qty = None
+            exit_override_applied = False
+            if is_exit:
+                exit_position_qty = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
+                if abs(float(exit_position_qty)) <= 0:
+                    verdict["recommendation"] = "BLOCK"
+                    verdict["blocked"] = True
+                    jd["should_enter"] = False
+                    jd["should_execute_exit"] = False
+                    verdict["joint_decision"] = jd
+                elif verdict.get("blocked"):
+                    verdict["blocked"] = False
+                    if str(verdict.get("recommendation") or "").upper() == "BLOCK":
+                        verdict["recommendation"] = "PROCEED_REDUCED"
+                    jd["should_enter"] = True
+                    jd["should_execute_exit"] = True
+                    verdict["joint_decision"] = jd
+                    exit_override_applied = True
+
+            verdict = _suppress_block_on_degraded_entry_quality(
+                verdict,
+                action_intent,
+                context.get("execution_risk_config"),
+            )
+            reason_codes = []
+            if is_exit and abs(float(exit_position_qty or 0.0)) <= 0:
+                reason_codes.append("EXIT_POSITION_MISSING")
+            if exit_override_applied:
+                reason_codes.append("EXIT_INTENT_OVERRIDE_APPLIED")
+            if verdict["blocked"]:
+                reason_codes.append("COMMITTEE_BLOCKED")
+            elif verdict["recommendation"] == "PROCEED_REDUCED":
+                reason_codes.append("COMMITTEE_REDUCED_SIZE")
+            if verdict.get("quality_block_override_applied"):
+                reason_codes.append("COMMITTEE_BLOCK_SUPPRESSED_QUALITY_DEGRADED")
+            if verdict.get("quality_risk_normalized"):
+                reason_codes.append("COMMITTEE_RISK_NORMALIZED_FOR_EXECUTION")
+            tier_c_conflict = _has_tier_c_conflict(verdict, pw_evidence, decision_news_snapshot)
+            if tier_c_conflict:
+                reason_codes.append("TIER_C_CONFLICT_ALERT")
+            if verdict.get("quality_backfilled"):
+                reason_codes.append("COMMITTEE_POLICY_BACKFILL_APPLIED")
+            reason_codes.append("COMMITTEE_REVIEWED")
+            verdict["tier_c_conflict"] = tier_c_conflict
+            next_status = "OPEN_BLOCKED" if verdict["blocked"] else "READY_FOR_APPROVAL_FLOW"
 
         # Derive proposed price/qty so row no longer remains fully pending.
         proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
+        if proposed_price_derived is None and not is_exit:
+            for key in ("REVALIDATION_PRICE", "PROPOSED_PRICE", "CURRENT_PRICE", "ONE_MIN_BAR_CLOSE"):
+                v = action.get(key)
+                if v is not None:
+                    try:
+                        proposed_price_derived = float(v)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+            if proposed_price_derived is None and action.get("ENTRY_ZONE_LOW") is not None and action.get("ENTRY_ZONE_HIGH") is not None:
+                try:
+                    proposed_price_derived = (
+                        float(action["ENTRY_ZONE_LOW"]) + float(action["ENTRY_ZONE_HIGH"])
+                    ) / 2.0
+                except (TypeError, ValueError):
+                    pass
+        if proposed_price_derived is None and is_exit:
+            for key in ("REVALIDATION_PRICE", "PROPOSED_PRICE", "CURRENT_PRICE", "ONE_MIN_BAR_CLOSE"):
+                v = action.get(key)
+                if v is not None:
+                    try:
+                        proposed_price_derived = float(v)
+                        break
+                    except (TypeError, ValueError):
+                        pass
         proposed_qty_derived = None
 
         try:
-            param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
-            target_weight = param_snapshot.get("target_weight")
-            target_weight_abs = abs(float(target_weight)) if target_weight is not None else None
             committee_size_factor = float(verdict.get("size_factor") or 1.0)
             training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
             open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
-            effective_weight = None
-            if target_weight_abs is not None:
-                effective_weight = target_weight_abs * committee_size_factor * training_size_cap * open_factor
+            if proposed_price_derived is None:
+                raise ValueError("no reference price for sizing")
 
-            if proposed_price_derived is not None and effective_weight is not None and effective_weight > 0:
-                cur.execute(
-                    """
-                    select
-                      c.IBKR_ACCOUNT_ID,
-                      s.NET_LIQUIDATION_EUR
-                    from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
-                    left join MIP.LIVE.BROKER_SNAPSHOTS s
-                      on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
-                     and s.SNAPSHOT_TYPE = 'NAV'
-                    where c.PORTFOLIO_ID = %s
-                    qualify row_number() over (
-                        partition by c.PORTFOLIO_ID
-                        order by s.SNAPSHOT_TS desc nulls last
-                    ) = 1
-                    """,
-                    (action.get("PORTFOLIO_ID"),),
+            cur.execute(
+                """
+                select
+                  c.IBKR_ACCOUNT_ID,
+                  c.MAX_POSITION_PCT,
+                  s.NET_LIQUIDATION_EUR
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+                left join MIP.LIVE.BROKER_SNAPSHOTS s
+                  on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
+                 and s.SNAPSHOT_TYPE = 'NAV'
+                where c.PORTFOLIO_ID = %s
+                qualify row_number() over (
+                  partition by c.PORTFOLIO_ID
+                  order by s.SNAPSHOT_TS desc nulls last
+                ) = 1
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            nav_rows = fetch_all(cur)
+            nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+
+            if is_structural and is_exit:
+                pq = _fetch_live_symbol_position_qty(cur, action.get("PORTFOLIO_ID"), action.get("SYMBOL"))
+                aq = abs(float(pq or 0.0))
+                proposed_qty_derived = max(int(aq), 1) if aq > 0 else None
+            elif is_structural and not is_exit and nav_eur > 0:
+                max_position_pct = (nav_rows[0] or {}).get("MAX_POSITION_PCT")
+                pos_pct = float(max_position_pct or 0.05)
+                max_notional = (
+                    nav_eur * pos_pct * committee_size_factor * training_size_cap * open_factor
                 )
-                nav_rows = fetch_all(cur)
-                nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
-                if nav_eur > 0:
+                proposed_qty_derived = max(int(max_notional / max(proposed_price_derived, 1e-9)), 1)
+            else:
+                param_snapshot = _parse_variant(action.get("PARAM_SNAPSHOT"))
+                target_weight = param_snapshot.get("target_weight")
+                target_weight_abs = abs(float(target_weight)) if target_weight is not None else None
+                effective_weight = None
+                if target_weight_abs is not None:
+                    effective_weight = target_weight_abs * committee_size_factor * training_size_cap * open_factor
+                if effective_weight is not None and effective_weight > 0 and nav_eur > 0:
                     est_notional = nav_eur * effective_weight
                     proposed_qty_derived = max(int(est_notional / max(proposed_price_derived, 1e-9)), 1)
         except Exception:
@@ -9087,16 +9329,27 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
             reason_codes=reason_codes,
         )
 
-        verdict_phase3_apply = _committee_alpha_phase3_envelope(
-            context,
-            verdict,
-            [],
-            action_intent=action_intent,
-            manual_apply=True,
-            reason_codes=reason_codes,
-        )
+        if is_structural:
+            verdict_phase3_apply = build_structural_verdict_envelope_v1(
+                action=action,
+                verdict=verdict,
+                reason_codes=reason_codes,
+                committee_run_id="",  # filled after insert
+                outputs_wrapper=[],
+            )
+        else:
+            verdict_phase3_apply = _committee_alpha_phase3_envelope(
+                context,
+                verdict,
+                [],
+                action_intent=action_intent,
+                manual_apply=True,
+                reason_codes=reason_codes,
+            )
 
         run_id = str(uuid.uuid4())
+        if is_structural and isinstance(verdict_phase3_apply.get("structural_verdict_envelope_v1"), dict):
+            verdict_phase3_apply["structural_verdict_envelope_v1"]["committee_run_id"] = run_id
         cur.execute(
             """
             insert into MIP.LIVE.COMMITTEE_RUN (
@@ -9167,6 +9420,14 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
                 action_id,
             ),
         )
+        if is_structural:
+            _merge_structural_contract_and_diagnostics(
+                cur,
+                action_id=action_id,
+                committee_run_id=run_id,
+                verdict=verdict,
+                reason_codes=reason_codes,
+            )
         return {
             "ok": True,
             "action_id": action_id,
@@ -9231,20 +9492,35 @@ def stream_live_trade_committee_prompt(
                 if status_upper not in allowed_for_stream:
                     result["error"] = f"Committee stream blocked until opening validation passes (current: {status_upper})."
                     return
-                context = _build_action_decision_context(cur, action)
+                is_structural = is_structural_live_action(action)
 
-                def cb(ev_name: str, payload: dict):
-                    out_queue.put((ev_name, {"action_id": action_id, **payload}))
+                if is_structural:
+                    out_queue.put(("agent_turn", {
+                        "action_id": action_id,
+                        "role": "StructuralCommittee",
+                        "type": "agent_turn",
+                        "summary": f"Running structural committee for {action.get('SYMBOL')} ({action.get('SETUP_FAMILY')} {action.get('DIRECTION')})...",
+                    }))
+                    struct_verdict = run_structural_committee(dict(action))
+                    role_outputs = list(struct_verdict.pop("role_outputs", None) or [])
+                    result["outputs"] = role_outputs
+                    result["verdict"] = struct_verdict
+                else:
+                    context = _build_action_decision_context(cur, action)
 
-                outputs, verdict = _run_multiagent_dialogue(
-                    cur,
-                    model=model,
-                    context=context,
-                    persist_run_id=None,
-                    emit=cb,
-                )
-                result["outputs"] = outputs or []
-                result["verdict"] = verdict or {}
+                    def cb(ev_name: str, payload: dict):
+                        out_queue.put((ev_name, {"action_id": action_id, **payload}))
+
+                    outputs, verdict = _run_multiagent_dialogue(
+                        cur,
+                        model=model,
+                        context=context,
+                        persist_run_id=None,
+                        emit=cb,
+                        live_action=action,
+                    )
+                    result["outputs"] = outputs or []
+                    result["verdict"] = verdict or {}
             except Exception as exc:
                 result["error"] = str(exc)
             finally:
@@ -9299,14 +9575,40 @@ def stream_revalidate_prompt(
             if not action:
                 yield _sse_event("error", {"message": "Action not found."})
                 return
+            yield _sse_event("start", {"action_id": action_id, "stage": "revalidation", "model": model})
+            if is_structural_live_action(action):
+                sv = run_structural_committee(dict(action))
+                role_outputs = list(sv.pop("role_outputs", None) or [])
+                for out in role_outputs:
+                    yield _sse_event(
+                        "role_summary",
+                        {
+                            "action_id": action_id,
+                            "role": out.get("role"),
+                            "stance": out.get("stance"),
+                            "confidence": out.get("confidence"),
+                            "summary": out.get("summary"),
+                        },
+                    )
+                yield _sse_event(
+                    "final",
+                    {
+                        "action_id": action_id,
+                        "joint_decision": sv.get("joint_decision"),
+                        "verdict": sv,
+                        "committee_model": "STRUCTURAL_V1",
+                    },
+                )
+                return
             context = _build_action_decision_context(cur, action)
             context["stage"] = "REVALIDATION_PREVIEW"
             context["revalidation"] = {
                 "last_outcome": action.get("REVALIDATION_OUTCOME"),
                 "last_ts": str(action.get("REVALIDATION_TS")) if action.get("REVALIDATION_TS") is not None else None,
             }
-            yield _sse_event("start", {"action_id": action_id, "stage": "revalidation", "model": model})
-            outputs, verdict = _run_multiagent_dialogue(cur, model=model, context=context, persist_run_id=None, emit=None)
+            outputs, verdict = _run_multiagent_dialogue(
+                cur, model=model, context=context, persist_run_id=None, emit=None, live_action=action
+            )
             for out in outputs:
                 yield _sse_event(
                     "agent_turn",
@@ -10450,7 +10752,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         order_id = str(uuid.uuid4())
         entry_price = float(action.get("REVALIDATION_PRICE") or action.get("PROPOSED_PRICE"))
         qty_ordered = float(proposed_qty)
-        is_structural = bool(action.get("SETUP_FAMILY"))
+        is_structural = is_structural_live_action(action)
         structural_direction = (action.get("DIRECTION") or "").upper() if is_structural else None
         if structural_direction == "SHORT" and not is_exit:
             side = "SELL"
@@ -10489,6 +10791,74 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 detail={
                     "message": "Execution blocked: live bracket not viable at committee calibration (see reason_codes).",
                     "reason_codes": blk_codes,
+                },
+            )
+
+        # Structural entries: COMMITTEE_VERDICT / PARAM_SNAPSHOT may predate joint_decision TP/SL
+        # (legacy apply). IB submit requires positive target_return + stop_loss_pct before risk gates.
+        heal_meta = {"attempted": False, "ok": False, "bracket_src_before": bracket_src}
+        if (
+            is_structural
+            and not is_exit
+            and (
+                target_return is None
+                or float(target_return) <= 0
+                or stop_loss_pct is None
+                or float(stop_loss_pct) <= 0
+            )
+        ):
+            heal_meta["attempted"] = True
+            try:
+                struct_heal = run_structural_committee(dict(action))
+                jd_h = (struct_heal or {}).get("joint_decision")
+                if isinstance(jd_h, dict):
+                    tr_h, sl_h = _live_target_and_stop_from_joint_decision(
+                        jd_h, stop_loss_pct_default
+                    )
+                    if (
+                        tr_h is not None
+                        and sl_h is not None
+                        and float(tr_h) > 0
+                        and float(sl_h) > 0
+                    ):
+                        target_return = float(tr_h)
+                        stop_loss_pct = float(sl_h)
+                        heal_meta["ok"] = True
+            except Exception:
+                _log.exception("structural execute: bracket self-heal (run_structural_committee) failed")
+            try:
+                ps_h = _parse_variant(action.get("PARAM_SNAPSHOT"))
+                diag_h = ps_h.get("structural_diagnostics_v1") if isinstance(ps_h, dict) else {}
+                if not isinstance(diag_h, dict):
+                    diag_h = {}
+                diag_h["structural_self_heal"] = {
+                    **heal_meta,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+                _merge_live_action_param_snapshot_patch(
+                    action_id,
+                    {"structural_diagnostics_v1": diag_h},
+                )
+            except Exception:
+                _log.exception("structural execute: failed to persist self-heal diagnostics")
+
+        if (
+            use_ibkr_submit
+            and is_structural
+            and not is_exit
+            and (
+                target_return is None
+                or float(target_return) <= 0
+                or stop_loss_pct is None
+                or float(stop_loss_pct) <= 0
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Structural execution contract incomplete: missing TP/SL after committee and self-heal.",
+                    "reason_codes": ["STRUCT_SUBMIT_CONTRACT_INCOMPLETE"],
+                    "structural_self_heal": heal_meta,
                 },
             )
 

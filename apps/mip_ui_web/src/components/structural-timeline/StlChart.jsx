@@ -193,12 +193,44 @@ export default function StlChart({
     return setups.find(s => get(s, 'SETUP_EVENT_ID') === selectedSetupId)
   }, [setups, selectedSetupId, get])
 
+  // Visible chart window derived from chartData (category axis uses these
+  // date strings verbatim; anything outside has to be snapped to them).
+  const chartDates = useMemo(() => chartData.map(d => d.date), [chartData])
+  const firstBarDate = chartDates[0]
+  const lastBarDate = chartDates[chartDates.length - 1]
+  const chartDateSet = useMemo(() => new Set(chartDates), [chartDates])
+
+  // Snap an arbitrary ISO date to the nearest category value on the x-axis.
+  // snapStart rounds forward (first bar on/after d), snapEnd rounds back.
+  const snapStart = (d) => {
+    if (!d) return firstBarDate
+    if (chartDateSet.has(d)) return d
+    for (let i = 0; i < chartDates.length; i++) {
+      if (chartDates[i] >= d) return chartDates[i]
+    }
+    return lastBarDate
+  }
+  const snapEnd = (d) => {
+    if (!d) return lastBarDate
+    if (chartDateSet.has(d)) return d
+    for (let i = chartDates.length - 1; i >= 0; i--) {
+      if (chartDates[i] <= d) return chartDates[i]
+    }
+    return firstBarDate
+  }
+
   const visibleLevels = useMemo(() => {
     if (!overlays.levels && !selectedSetup) return []
-    if (!levels.length) return []
+    if (!levels.length || !firstBarDate || !lastBarDate) return []
 
     const seen = new Map()
     levels.forEach(l => {
+      const first = fmtDate(get(l, 'FIRST_TOUCH_DATE'))
+      const last = fmtDate(get(l, 'LAST_TOUCH_DATE'))
+      // Drop levels whose active window does not intersect the visible chart.
+      if (last && last < firstBarDate) return
+      if (first && first > lastBarDate) return
+
       const price = Number(get(l, 'LEVEL_PRICE') || 0)
       const rounded = Math.round(price * 10) / 10
       const key = `${get(l, 'LEVEL_TYPE')}|${rounded}`
@@ -212,7 +244,7 @@ export default function StlChart({
     return [...seen.values()]
       .sort((a, b) => Number(get(b, 'LEVEL_SIGNIFICANCE') || 0) - Number(get(a, 'LEVEL_SIGNIFICANCE') || 0))
       .slice(0, 12)
-  }, [levels, overlays.levels, selectedSetup, get])
+  }, [levels, overlays.levels, selectedSetup, get, firstBarDate, lastBarDate])
 
   // Entry zones: show for active setups when toggle is on, or for selected setup always
   const entryZoneSetups = useMemo(() => {
@@ -280,29 +312,43 @@ export default function StlChart({
           />
           <Tooltip content={<ChartTooltip />} />
 
-          {/* S/R levels — horizontal lines, historically faithful */}
+          {/* S/R levels — drawn only across their active window
+              (FIRST_TOUCH_DATE → LAST_TOUCH_DATE) so flips between support
+              and resistance become visually obvious and historical levels
+              don't bleed across unrelated parts of the chart. A level whose
+              LAST_TOUCH_DATE is older than the last bar is faded to signal
+              it's no longer live. */}
           {(overlays.levels || selectedSetup) && visibleLevels.map(l => {
             const price = Number(get(l, 'LEVEL_PRICE'))
             const lType = (get(l, 'LEVEL_TYPE') || '').toUpperCase()
             const color = lType.includes('RESIST') ? '#ef5350' : '#26a69a'
+            const first = snapStart(fmtDate(get(l, 'FIRST_TOUCH_DATE')))
+            const last = snapEnd(fmtDate(get(l, 'LAST_TOUCH_DATE')))
+            const isLive = last === lastBarDate
             return (
               <ReferenceLine
                 key={get(l, 'LEVEL_ID') || `${lType}-${price}`}
-                y={price}
                 stroke={color}
                 strokeDasharray="4 3"
-                strokeOpacity={0.6}
+                strokeOpacity={isLive ? 0.7 : 0.35}
+                strokeWidth={isLive ? 1.2 : 0.8}
+                segment={[{ x: first, y: price }, { x: last, y: price }]}
+                ifOverflow="extendDomain"
               />
             )
           })}
 
-          {/* S/R zones */}
+          {/* S/R zones — bounded to each level's active window (x1/x2) */}
           {overlays.zones && visibleLevels.filter(l => get(l, 'LEVEL_LOW') && get(l, 'LEVEL_HIGH')).map(l => {
             const lType = (get(l, 'LEVEL_TYPE') || '').toUpperCase()
             const fill = lType.includes('RESIST') ? LEVEL_COLORS.RESISTANCE_ZONE : LEVEL_COLORS.SUPPORT_ZONE
+            const first = snapStart(fmtDate(get(l, 'FIRST_TOUCH_DATE')))
+            const last = snapEnd(fmtDate(get(l, 'LAST_TOUCH_DATE')))
             return (
               <ReferenceArea
                 key={`zone-${get(l, 'LEVEL_ID')}`}
+                x1={first}
+                x2={last}
                 y1={Number(get(l, 'LEVEL_LOW'))}
                 y2={Number(get(l, 'LEVEL_HIGH'))}
                 fill={fill}
@@ -311,18 +357,24 @@ export default function StlChart({
             )
           })}
 
-          {/* Entry zones for active setups or selected setup */}
+          {/* Entry zones — bounded to SETUP_DATE → EXPIRY_DATE (or last bar
+              if no expiry yet). A live setup will show as a compact band on
+              the right side of the chart rather than a full-width ribbon. */}
           {entryZoneSetups.map(s => {
             const lo = Number(get(s, 'ENTRY_ZONE_LOW'))
             const hi = Number(get(s, 'ENTRY_ZONE_HIGH'))
             const isSelected = get(s, 'SETUP_EVENT_ID') === selectedSetupId
             if (!lo || !hi || lo === hi) return null
+            const start = snapStart(fmtDate(get(s, 'SETUP_DATE')))
+            const end = snapEnd(fmtDate(get(s, 'EXPIRY_DATE')))
             return (
               <ReferenceArea
                 key={`ez-${get(s, 'SETUP_EVENT_ID')}`}
+                x1={start}
+                x2={end}
                 y1={Math.min(lo, hi)}
                 y2={Math.max(lo, hi)}
-                fill={isSelected ? 'rgba(26,115,232,0.18)' : 'rgba(26,115,232,0.08)'}
+                fill={isSelected ? 'rgba(26,115,232,0.22)' : 'rgba(26,115,232,0.10)'}
                 stroke={isSelected ? '#1a73e8' : 'none'}
                 strokeDasharray={isSelected ? '4 2' : ''}
                 strokeOpacity={0.5}
@@ -330,19 +382,22 @@ export default function StlChart({
             )
           })}
 
-          {/* Invalidation lines for active setups or selected setup */}
+          {/* Invalidation lines — bounded to setup active window */}
           {invalidationSetups.map(s => {
             const inv = Number(get(s, 'PRICE_INVALIDATION_LEVEL'))
             const isSelected = get(s, 'SETUP_EVENT_ID') === selectedSetupId
             if (!inv) return null
+            const start = snapStart(fmtDate(get(s, 'SETUP_DATE')))
+            const end = snapEnd(fmtDate(get(s, 'EXPIRY_DATE')))
             return (
               <ReferenceLine
                 key={`inv-${get(s, 'SETUP_EVENT_ID')}`}
-                y={inv}
                 stroke="#d93025"
                 strokeDasharray="6 3"
                 strokeWidth={isSelected ? 1.5 : 0.8}
                 strokeOpacity={isSelected ? 1 : 0.4}
+                segment={[{ x: start, y: inv }, { x: end, y: inv }]}
+                ifOverflow="extendDomain"
                 label={isSelected ? { value: 'Invalidation', position: 'right', fontSize: 10, fill: '#d93025' } : undefined}
               />
             )
@@ -382,30 +437,37 @@ export default function StlChart({
         </ComposedChart>
       </ResponsiveContainer>
 
-      {/* State strip */}
+      {/* State strip — rendered as a continuous HTML ribbon rather than a
+          Recharts <Bar>. Recharts always leaves a small gap between category
+          bars, which makes the strip look segmented/floating. A flex row of
+          equal-width colored cells gives a true solid band. The left/right
+          insets are chosen to match the main chart's plot area (YAxis width
+          60 on the left, 10px right margin) so each cell lines up with its
+          corresponding candle above. */}
       {overlays.stateStrip && (
-        <div className="stl-state-strip">
-          <ResponsiveContainer width="100%" height={28}>
-            <ComposedChart data={chartData} margin={{ top: 0, right: 10, bottom: 0, left: 0 }}>
-              <XAxis dataKey="date" hide />
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (!active || !payload || !payload.length) return null
-                  const d = payload[0]?.payload
-                  return d ? (
-                    <div style={{ background: '#fff', border: '1px solid #eee', borderRadius: 3, padding: '3px 8px', fontSize: '0.75rem' }}>
-                      {d.date}: {(d.STRUCTURAL_STATE || '—').replace(/_/g, ' ')}
-                    </div>
-                  ) : null
+        <div className="stl-state-strip" style={{ paddingLeft: 60, paddingRight: 10 }}>
+          <div
+            className="stl-state-ribbon"
+            style={{
+              display: 'flex',
+              width: '100%',
+              height: 12,
+              borderRadius: 2,
+              overflow: 'hidden',
+            }}
+          >
+            {chartData.map((d, i) => (
+              <div
+                key={i}
+                title={`${d.date}: ${(d.STRUCTURAL_STATE || '—').replace(/_/g, ' ')}`}
+                style={{
+                  flex: '1 1 0',
+                  minWidth: 0,
+                  background: d.stateColor,
                 }}
               />
-              <Bar dataKey="stateVal" isAnimationActive={false} barSize={4}>
-                {chartData.map((d, i) => (
-                  <Cell key={i} fill={d.stateColor} />
-                ))}
-              </Bar>
-            </ComposedChart>
-          </ResponsiveContainer>
+            ))}
+          </div>
         </div>
       )}
 

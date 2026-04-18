@@ -822,8 +822,10 @@
   box-shadow: 0 1px 12px rgba(57, 73, 171, 0.08);
   display: grid;
   gap: 10px;
-  max-height: min(72vh, 920px);
-  overflow: auto;
+  /* Let the panel grow with content; avoid a nested scrollbar (page scroll handles overflow). */
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 
 .lpa-c2-reveal {
@@ -1008,21 +1010,57 @@
   color: #5c6bc0;
 }
 
-.lpa-c2-freshness-inline {
-  font-size: 12px;
-  color: #546e7a;
+.lpa-c2-freshness-bar {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e8eaf6;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 14px;
 }
 
-.lpa-c2-freshness-label {
+.lpa-c2-freshness-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #455a64;
+}
+
+.lpa-c2-freshness-updated {
   font-weight: 700;
-  color: #37474f;
-  margin-right: 6px;
+  color: #1a237e;
+  font-size: 14px;
 }
 
-.lpa-c2-stale-hint {
-  margin-top: 6px;
+.lpa-c2-freshness-barline {
   font-size: 12px;
+  color: #607d8b;
+}
+
+.lpa-c2-freshness-barvalue {
+  font-weight: 600;
+  color: #37474f;
+}
+
+.lpa-c2-stale-badge {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ffebee;
   color: #c62828;
+  border: 1px solid #ffcdd2;
+  cursor: default;
+}
+
+.lpa-c2-geo-fallback {
+  line-height: 1.45;
 }
 
 .lpa-c2-exhibits-cols {
@@ -1054,6 +1092,226 @@
 .lpa-c2-card--strip {
   border-style: dashed;
   background: #fafafa;
+}
+
+.lpa-c2-card--fingerprint {
+  background: linear-gradient(165deg, #fafbff 0%, #fff 55%);
+  border-color: #c5cae9;
+}
+
+/* Phase 2 — public disclosure context inside LPA Committee 2 exhibits */
+.lpa-c2-pdc {
+  margin-top: 2px;
+}
+
+.lpa-c2-pdc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 8px;
+}
+
+.lpa-c2-pdc-asof {
+  font-size: 11px;
+  color: #78909c;
+}
+
+.lpa-c2-pdc-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eceff1;
+  color: #546e7a;
+  border: 1px solid #cfd8dc;
+}
+
+.lpa-c2-pdc-badge--unmapped,
+.lpa-c2-pdc-badge--unknown {
+  background: #fafafa;
+  color: #78909c;
+}
+
+.lpa-c2-pdc-badge--mapped {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-color: #c8e6c9;
+}
+
+.lpa-c2-pdc-badge--neutral {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.lpa-c2-pdc-badge--supportive {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.lpa-c2-pdc-badge--contradictory {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.lpa-c2-pdc-lines {
+  margin: 0 0 8px;
+  padding-left: 1.1rem;
+  font-size: 12px;
+  color: #455a64;
+  line-height: 1.45;
+}
+
+.lpa-c2-pdc-tx {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+}
+
+.lpa-c2-pdc-tx li {
+  border-top: 1px solid #eceff1;
+  padding: 4px 0;
+}
+
+.lpa-c2-pdc-tx-link {
+  color: #3949ab;
+  text-decoration: none;
+  display: block;
+}
+
+.lpa-c2-pdc-tx-link:hover {
+  text-decoration: underline;
+}
+
+.lpa-c2-pdc-tx-row {
+  display: block;
+  color: #37474f;
+}
+
+.lpa-c2-pdc-tx-date {
+  display: inline-block;
+  min-width: 4.8rem;
+  color: #78909c;
+}
+
+.lpa-c2-pdc-tx-side {
+  display: inline-block;
+  min-width: 2.2rem;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.lpa-c2-pdc-empty {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #78909c;
+}
+
+.lpa-c2-pdc-disclaimer {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid #eceff1;
+  font-size: 11px;
+  color: #78909c;
+  line-height: 1.4;
+}
+
+.lpa-c2-pdc--live {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #cfd8dc;
+}
+
+.lpa-c2-fp-lead {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #78909c;
+  line-height: 1.4;
+}
+
+.lpa-c2-fp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lpa-c2-fp-trait-pill {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #ede7f6;
+  color: #4527a0;
+  border: 1px solid #d1c4e9;
+}
+
+.lpa-c2-fp-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lpa-c2-fp-trait {
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  color: #424242;
+  max-width: 100%;
+}
+
+.lpa-c2-fp-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #546e7a;
+  padding-top: 4px;
+  border-top: 1px dashed #e0e0e0;
+}
+
+.lpa-c2-exec-panel {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.lpa-c2-exec-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.lpa-c2-exec-k {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #90a4ae;
+}
+
+.lpa-c2-exec-v {
+  font-weight: 600;
+  color: #263238;
+}
+
+.lpa-c2-exec-notes {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #78909c;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fafafa;
+  border-left: 3px solid #c5cae9;
 }
 
 .lpa-c2-card-head {

@@ -17,6 +17,8 @@ from app.committee.engine import (
     compute_hearing_bundle,
     bundle_to_db_json,
 )
+from app.committee.live_politician_disclosure import build_exhibit_live_politician_disclosure_context
+from app.committee.public_disclosure_context import build_exhibit_public_disclosure_context
 
 router = APIRouter(prefix="/committee", tags=["committee"])
 
@@ -205,12 +207,16 @@ def _assemble_payload(
     cur=None,
 ) -> Dict[str, Any]:
     hid = hearing.get("HEARING_ID")
-    snap_eng = _build_snapshot_engine_dict(snapshot)
     roles = []
     arts = []
-    if cur is not None:
-        role_cur = cur
-        for r in _roles_rows(role_cur, hid):
+    exhibit_public_disclosure_context = None
+    own_conn = None
+    row_cur = cur
+    if row_cur is None:
+        own_conn = get_connection()
+        row_cur = own_conn.cursor()
+    try:
+        for r in _roles_rows(row_cur, hid):
             roles.append(
                 {
                     "role_name": r.get("ROLE_NAME"),
@@ -218,7 +224,7 @@ def _assemble_payload(
                     "evidence_refs": _variant(r.get("EVIDENCE_REFS")),
                 }
             )
-        for a in _artifacts_rows(role_cur, hid):
+        for a in _artifacts_rows(row_cur, hid):
             arts.append(
                 {
                     "artifact_kind": a.get("ARTIFACT_KIND"),
@@ -227,36 +233,17 @@ def _assemble_payload(
                     "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
                 }
             )
-    else:
-        conn = get_connection()
-        try:
-            c2 = conn.cursor()
-            for r in _roles_rows(c2, hid):
-                roles.append(
-                    {
-                        "role_name": r.get("ROLE_NAME"),
-                        "output": _variant(r.get("OUTPUT_JSON")),
-                        "evidence_refs": _variant(r.get("EVIDENCE_REFS")),
-                    }
-                )
-            for a in _artifacts_rows(c2, hid):
-                arts.append(
-                    {
-                        "artifact_kind": a.get("ARTIFACT_KIND"),
-                        "schema_version": a.get("SCHEMA_VERSION"),
-                        "payload": _variant(a.get("PAYLOAD_JSON")),
-                        "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
-                    }
-                )
-        finally:
-            conn.close()
+        exhibit_public_disclosure_context = build_exhibit_public_disclosure_context(row_cur, proposal)
+    finally:
+        if own_conn is not None:
+            own_conn.close()
 
     evidence = _variant(hearing.get("EVIDENCE_JSON")) or {}
     deltas = _variant(hearing.get("DELTAS_JSON")) or {}
     chair = _variant(hearing.get("CHAIR_OUTPUT_JSON")) or {}
     operational = _variant(hearing.get("OPERATIONAL_JSON")) or {}
 
-    return {
+    out: Dict[str, Any] = {
         "ok": True,
         "hearing_id": hid,
         "proposal_id": hearing.get("PROPOSAL_ID"),
@@ -281,6 +268,12 @@ def _assemble_payload(
         "roles": roles,
         "artifacts": arts,
     }
+    if exhibit_public_disclosure_context is not None:
+        out["exhibit_public_disclosure_context"] = exhibit_public_disclosure_context
+        exhibit_live = build_exhibit_live_politician_disclosure_context(proposal)
+        if exhibit_live is not None:
+            out["exhibit_live_politician_disclosure_context"] = exhibit_live
+    return out
 
 
 def _persist_hearing_atomic(

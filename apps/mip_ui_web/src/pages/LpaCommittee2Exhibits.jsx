@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
+import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
+import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
 
 function fmtNum(v, digits = 2) {
   if (v == null) return '—'
@@ -14,6 +16,91 @@ function fmtShortDate(s) {
   return t || '—'
 }
 
+/** Bar date as a readable label (evidence anchor). */
+function fmtBarDateHuman(s) {
+  if (s == null || s === '') return '—'
+  const raw = String(s).slice(0, 10)
+  const d = new Date(`${raw}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return raw
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** Relative “Updated …” from API timestamp. */
+function humanRelativeUpdated(iso) {
+  if (iso == null || iso === '') return null
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return null
+  const sec = Math.max(0, Math.floor((Date.now() - t.getTime()) / 1000))
+  if (sec < 45) return 'Updated just now'
+  if (sec < 3600) return `Updated ${Math.floor(sec / 60)}m ago`
+  if (sec < 86400) return `Updated ${Math.floor(sec / 3600)}h ago`
+  if (sec < 86400 * 7) return `Updated ${Math.floor(sec / 86400)}d ago`
+  return `Updated ${t.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+}
+
+/** Calmer summary line for fingerprint (no “V1 baseline” tone). */
+function humanizeFingerprintSummary(text) {
+  if (text == null || typeof text !== 'string') return ''
+  let t = text
+    .replace(/\bV1\b/gi, '')
+    .replace(/\bbaseline\b/gi, 'default read')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (/^Limited fingerprint for\s+/i.test(t)) {
+    t = t.replace(
+      /^Limited fingerprint for\s+(\S+)\s+—\s*only setup family, trust label, and live vol are wired;\s*add path\/geometry numerics for a fuller read\.?/i,
+      'Snapshot is light on path and geometry for $1 — trust, setup, and live vol still apply.',
+    )
+    t = t.replace(/^Limited fingerprint for\s+(\S+)\s+—\s*/i, 'Snapshot detail is limited for $1 — ')
+  }
+  return t
+}
+
+/** Badge label for trait panel. */
+function fingerprintBadgeLabel(badge) {
+  const b = String(badge || '').toUpperCase()
+  if (b === 'THIN') return 'Sparse traits'
+  if (b === 'POOR' || b === 'OK' || b === 'MIXED') return badge
+  return badge || '—'
+}
+
+/** One bullet → short trait chip text. */
+function traitChipFromBullet(line) {
+  if (line == null) return ''
+  const s = String(line).trim()
+  if (s.length > 72) return `${s.slice(0, 69)}…`
+  return s
+}
+
+function ExecutionShapingPanel({ shaping }) {
+  const s = shaping && typeof shaping === 'object' && !Array.isArray(shaping) ? shaping : {}
+  const stance = s.stance != null ? String(s.stance).replace(/_/g, ' ') : '—'
+  const size = s.size_posture != null ? String(s.size_posture) : '—'
+  const trail = s.trail_posture != null ? String(s.trail_posture) : '—'
+  const notes = s.notes != null ? String(s.notes) : ''
+  return (
+    <div className="lpa-c2-exec-panel">
+      <div className="lpa-c2-exec-row">
+        <span className="lpa-c2-exec-k">Stance</span>
+        <span className="lpa-c2-exec-v">{stance}</span>
+      </div>
+      <div className="lpa-c2-exec-row">
+        <span className="lpa-c2-exec-k">Size posture</span>
+        <span className="lpa-c2-exec-v">{size}</span>
+      </div>
+      <div className="lpa-c2-exec-row">
+        <span className="lpa-c2-exec-k">Trail posture</span>
+        <span className="lpa-c2-exec-v">{trail}</span>
+      </div>
+      {notes ? (
+        <p className="lpa-c2-exec-notes" title={notes}>
+          {notes}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 /** Horizontal evidence meter: zone band, invalidation tick, last price marker. */
 function GeometryEvidenceMeter({ zoneLow, zoneHigh, price, inv, breached }) {
   const zl = Number(zoneLow)
@@ -21,7 +108,12 @@ function GeometryEvidenceMeter({ zoneLow, zoneHigh, price, inv, breached }) {
   const px = Number(price)
   const iv = inv != null ? Number(inv) : NaN
   if (![zl, zh, px].every((x) => Number.isFinite(x)) || zh <= zl) {
-    return <p className="lpa-c2-muted">Zone or price not available for scale diagram.</p>
+    return (
+      <p className="lpa-c2-muted lpa-c2-geo-fallback">
+        Scale view needs a valid entry zone and last price together. When one is missing, use the numeric summary below —
+        nothing is wrong with the hearing.
+      </p>
+    )
   }
   const candidates = [zl, zh, px]
   if (Number.isFinite(iv)) candidates.push(iv)
@@ -223,7 +315,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       return undefined
     }
     setRevealStep(0)
-    const maxStep = 8
+    const maxStep = inline.exhibit_public_disclosure_context != null ? 9 : 8
     let n = 0
     const tick = setInterval(() => {
       n += 1
@@ -247,6 +339,11 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const chair = inline.chair_board || {}
   const strip = Array.isArray(inline.what_changed_strip) ? inline.what_changed_strip : []
   const trace = gh.post_proposal_path_trace
+  const pdcExhibit = inline.exhibit_public_disclosure_context
+  const livePdcExhibit = inline.exhibit_live_politician_disclosure_context
+  const stripStep = pdcExhibit != null ? 6 : 5
+  const chairStep = pdcExhibit != null ? 7 : 6
+  const linkStep = pdcExhibit != null ? 8 : 7
 
   return (
     <div className="lpa-c2-exhibits">
@@ -264,14 +361,22 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             <span className="lpa-c2-pill">conf {fmtNum(inline.confidence, 2)}</span>
             <span className="lpa-c2-pill lpa-c2-pill--ghost">{inline.symbol || '—'}</span>
           </div>
-          <div className="lpa-c2-freshness-inline">
-            <span className="lpa-c2-freshness-label">Freshness</span>
-            <span>
-              bar {inline.evidence_bar_date || '—'} · {inline.hearing_updated_at || inline.hearing_ts || '—'}
+        </div>
+        <div className="lpa-c2-freshness-bar">
+          <div className="lpa-c2-freshness-primary">
+            <strong className="lpa-c2-freshness-updated">
+              {humanRelativeUpdated(inline.hearing_updated_at || inline.hearing_ts) || 'Updated time not available'}
+            </strong>
+            <span className="lpa-c2-freshness-barline">
+              Bar date <span className="lpa-c2-freshness-barvalue">{fmtBarDateHuman(inline.evidence_bar_date)}</span>
             </span>
           </div>
+          {inline.stale_hint ? (
+            <span className="lpa-c2-stale-badge" title={inline.stale_hint}>
+              Stale — consider refresh
+            </span>
+          ) : null}
         </div>
-        {inline.stale_hint ? <div className="lpa-c2-stale-hint">{inline.stale_hint}</div> : null}
       </Reveal>
 
       <div className="lpa-c2-exhibits-cols">
@@ -405,7 +510,16 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         </div>
       </div>
 
-      <Reveal show={revealStep >= 5} className="lpa-c2-card lpa-c2-card--strip">
+      {pdcExhibit != null ? (
+        <Reveal show={revealStep >= 5} className="lpa-c2-card lpa-c2-card--pdc">
+          <PublicDisclosureContextCard exhibit={pdcExhibit} variant="lpa" />
+          {livePdcExhibit != null ? (
+            <LivePoliticianDisclosureContextCard exhibit={livePdcExhibit} variant="lpa" />
+          ) : null}
+        </Reveal>
+      ) : null}
+
+      <Reveal show={revealStep >= stripStep} className="lpa-c2-card lpa-c2-card--strip">
         <div className="lpa-c2-card-head">Since proposal</div>
         {strip.length > 0 ? (
           <div className="lpa-c2-strip-chips">
@@ -420,7 +534,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         )}
       </Reveal>
 
-      <Reveal show={revealStep >= 6} className="lpa-c2-chair">
+      <Reveal show={revealStep >= chairStep} className="lpa-c2-chair">
         <div className="lpa-c2-card-head">
           <span className="lpa-c2-card-icon" aria-hidden>
             ⚖
@@ -449,14 +563,14 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             </ul>
           </div>
           <div>
-            <span className="lpa-c2-zone-label">Execution</span>
-            <pre className="lpa-c2-exec-pre">{JSON.stringify(chair.execution_shaping || {})}</pre>
+            <span className="lpa-c2-zone-label">Execution shaping</span>
+            <ExecutionShapingPanel shaping={chair.execution_shaping} />
           </div>
         </div>
       </Reveal>
 
-      <Reveal show={revealStep >= 7} className="lpa-c2-full-link">
-        {hearingHref ? <Link to={hearingHref}>Open full hearing room →</Link> : null}
+      <Reveal show={revealStep >= linkStep} className="lpa-c2-full-link">
+        {hearingHref ? <Link to={hearingHref}>Open full hearing →</Link> : null}
       </Reveal>
     </div>
   )

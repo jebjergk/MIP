@@ -380,3 +380,149 @@
   outline: 2px solid #3b82f6;
   outline-offset: 1px;
 }
+
+/* Phase 2 — public disclosure context (neutral labeling) */
+.sch-pdc {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  margin-bottom: 1rem;
+}
+
+.sch-pdc-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 0.65rem;
+}
+
+.sch-pdc-icon {
+  opacity: 0.75;
+  font-size: 0.95rem;
+}
+
+.sch-pdc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.sch-pdc-asof {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.sch-pdc-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.sch-pdc-badge--unmapped,
+.sch-pdc-badge--unknown {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.sch-pdc-badge--mapped {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.sch-pdc-badge--neutral {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.sch-pdc-badge--supportive {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sch-pdc-badge--contradictory {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.sch-pdc-lines {
+  margin: 0 0 0.75rem;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.sch-pdc-tx {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.82rem;
+}
+
+.sch-pdc-tx li {
+  border-top: 1px solid #f1f5f9;
+  padding: 0.35rem 0;
+}
+
+.sch-pdc-tx-link {
+  color: #1d4ed8;
+  text-decoration: none;
+  display: block;
+}
+
+.sch-pdc-tx-link:hover {
+  text-decoration: underline;
+}
+
+.sch-pdc-tx-row {
+  display: block;
+  color: #334155;
+}
+
+.sch-pdc-tx-date {
+  display: inline-block;
+  min-width: 5.5rem;
+  color: #64748b;
+}
+
+.sch-pdc-tx-side {
+  display: inline-block;
+  min-width: 2.5rem;
+  font-weight: 600;
+  margin-right: 0.35rem;
+}
+
+.sch-pdc-empty {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.sch-pdc-disclaimer {
+  margin: 0.75rem 0 0;
+  padding-top: 0.65rem;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.sch-pdc--live {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed #e2e8f0;
+}

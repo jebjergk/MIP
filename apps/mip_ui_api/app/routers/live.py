@@ -9675,7 +9675,7 @@ def _build_inline_hearing_payload(
     bar_dates = ev.get("recent_bar_dates") or []
     evidence_bar_date = bar_dates[0] if bar_dates else None
 
-    return {
+    out = {
         "action_id": action_id,
         "proposal_id": proposal_id,
         "hearing_id": hearing_id,
@@ -9705,6 +9705,13 @@ def _build_inline_hearing_payload(
         "roles_compact": roles_compact,
         "artifacts": refresh_payload.get("artifacts") or [],
     }
+    disc = refresh_payload.get("exhibit_public_disclosure_context")
+    if disc is not None:
+        out["exhibit_public_disclosure_context"] = disc
+    live_disc = refresh_payload.get("exhibit_live_politician_disclosure_context")
+    if live_disc is not None:
+        out["exhibit_live_politician_disclosure_context"] = live_disc
+    return out
 
 
 _ORCHESTRATE_ALLOWED_STATUSES = frozenset(

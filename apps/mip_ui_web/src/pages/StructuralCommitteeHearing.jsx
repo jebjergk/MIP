@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
+import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
+import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
 import './StructuralCommitteeHearing.css'
 
 function confFixed(v, digits = 2) {
@@ -271,6 +273,16 @@ export default function StructuralCommitteeHearing() {
           </dl>
         </section>
       </div>
+
+      {payload?.exhibit_public_disclosure_context ? (
+        <PublicDisclosureContextCard exhibit={payload.exhibit_public_disclosure_context} variant="hearing" />
+      ) : null}
+      {payload?.exhibit_live_politician_disclosure_context ? (
+        <LivePoliticianDisclosureContextCard
+          exhibit={payload.exhibit_live_politician_disclosure_context}
+          variant="hearing"
+        />
+      ) : null}
 
       <section className="sch-panel sch-delta-strip">
         <h2>Delta strip</h2>

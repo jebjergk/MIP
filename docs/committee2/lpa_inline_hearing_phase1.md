@@ -45,3 +45,5 @@ Structural **exit** is **execution-only** (`STRUCTURAL_EXIT_EXECUTION_ONLY`). LP
 ## Reserved (not Phase 1)
 
 Bounded LLM / politician disclosure layers, second hidden sync passes, heavy charting libraries, and multi-proposal choosers on LPA are **out of scope** for Phase 1. The `inline_hearing` model leaves room for future fields without breaking clients that ignore unknown keys.
+
+**Phase 2 (context confirmation layer):** see [phase2_context_confirmation_layer.md](./phase2_context_confirmation_layer.md) — deterministic public disclosure context card only; **not** LLM phrasing (Phase 3).

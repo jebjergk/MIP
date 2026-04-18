@@ -114,3 +114,9 @@ Single structural **entry** authority: **Committee 2.0 commit → LIVE materiali
 - **Default UX:** [LivePortfolioActivity.jsx](../apps/mip_ui_web/src/pages/LivePortfolioActivity.jsx) uses **`POST /live/trades/actions/{action_id}/committee2/orchestrate`** as the primary structural **entry** action (**Run Committee 2.0** / **Refresh decision**). The response includes **`inline_hearing`**: exhibit-oriented fields (geometry hero, path quality, regime continuity, protection, symbol fingerprint, what-changed strip, chair board). See [lpa_inline_hearing_phase1.md](./lpa_inline_hearing_phase1.md).
 - **Engine:** [engine.py](../apps/mip_ui_api/app/committee/engine.py) produces differentiated confidence, evidence-linked chair lines, and non-placeholder fingerprint/symbol behavior when metrics exist; [committee.py](../apps/mip_ui_api/app/routers/committee.py) `_live_context` supplies **`recent_bar_trace`** (daily closes, oldest→newest) for the hero sparkline.
 - **Standalone:** [StructuralCommitteeHearing.jsx](../apps/mip_ui_web/src/pages/StructuralCommitteeHearing.jsx) — when `action_id` is present in the query string, commit binds to it by default; manual override lives under **Advanced**.
+
+---
+
+## 7) Phase 2 — Context confirmation layer (roadmap)
+
+- **Spec:** [phase2_context_confirmation_layer.md](./phase2_context_confirmation_layer.md) — **politician trade disclosure** context (U.S. STOCK Act–style / [Capitol Trades](https://www.capitoltrades.com/)–class ingest concept) in Snowflake **first**, **compact card** on LPA inline + hearing page; optional **silent** live lookup only as non-blocking enrichment; **not** a primary signal and **not** LLM phrasing (Phase 3).

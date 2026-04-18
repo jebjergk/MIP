@@ -188,6 +188,16 @@ class TestInlineHearingPayload(unittest.TestCase):
                     },
                 },
             ],
+            "exhibit_public_disclosure_context": {
+                "schema_version": "1",
+                "symbol": "ABC",
+                "market_type": "STOCK",
+                "mapping_quality": "MAPPED",
+                "tone_vs_trade": "NEUTRAL",
+                "summary_lines": ["1 mapped public disclosure row(s) for ABC."],
+                "recent_transactions": [],
+                "disclaimer": "Public disclosure only; not a trade signal.",
+            },
         }
         proposal = {"SYMBOL": "ABC", "DIRECTION": "LONG", "SETUP_FAMILY": "SF1", "TRUST_LABEL": "TRUSTED"}
         out = _build_inline_hearing_payload(
@@ -203,6 +213,78 @@ class TestInlineHearingPayload(unittest.TestCase):
         self.assertEqual(out["exhibit_protection"]["cushion_pct"], 14.29)
         self.assertEqual(out["what_changed_strip"][0], "line a")
         self.assertTrue(len(out["chair_board"]["top_supports"]) >= 1)
+        self.assertEqual(out["exhibit_public_disclosure_context"]["symbol"], "ABC")
+
+    def test_build_inline_hearing_passes_live_disclosure_exhibit(self):
+        refresh = {
+            "stance": "APPROVE",
+            "confidence": 0.5,
+            "hearing_ts": "2026-04-10T12:00:00",
+            "updated_at": "2026-04-10T12:01:00",
+            "proposal": {"symbol": "ABC", "direction": "LONG"},
+            "snapshot_panel": {"ENTRY_ZONE_JSON": {"low": 1, "high": 2}, "INVALIDATION_JSON": {"rule": "R"}},
+            "hearing_evidence": {"recent_bar_dates": []},
+            "operational": {"posture": {}},
+            "chair": {
+                "stance": "APPROVE",
+                "confidence": 0.5,
+                "top_supports": [],
+                "top_tensions": [],
+                "execution_shaping": {},
+                "what_changed_since_proposal": [],
+            },
+            "roles": [],
+            "artifacts": [],
+            "exhibit_public_disclosure_context": {"schema_version": "1", "symbol": "ABC"},
+            "exhibit_live_politician_disclosure_context": {
+                "schema_version": "1",
+                "symbol": "ABC",
+                "summary_lines": ["Live line"],
+                "source_label": "S",
+                "fetched_at_utc": "2026-04-18T12:00:00Z",
+            },
+        }
+        out = _build_inline_hearing_payload(
+            action_id="a",
+            proposal_id=1,
+            hearing_id="h",
+            proposal={"SYMBOL": "ABC", "DIRECTION": "LONG"},
+            refresh_payload=refresh,
+        )
+        self.assertEqual(out["exhibit_live_politician_disclosure_context"]["summary_lines"], ["Live line"])
+
+    def test_build_inline_hearing_omits_disclosure_exhibit_when_not_in_refresh(self):
+        refresh = {
+            "stance": "APPROVE",
+            "confidence": 0.5,
+            "hearing_ts": "2026-04-10T12:00:00",
+            "updated_at": "2026-04-10T12:01:00",
+            "proposal": {"symbol": "ZZZ", "direction": "LONG"},
+            "snapshot_panel": {
+                "ENTRY_ZONE_JSON": {"low": 1, "high": 2},
+                "INVALIDATION_JSON": {"rule": "R"},
+            },
+            "hearing_evidence": {"recent_bar_dates": []},
+            "operational": {"posture": {}},
+            "chair": {
+                "stance": "APPROVE",
+                "confidence": 0.5,
+                "top_supports": [],
+                "top_tensions": [],
+                "execution_shaping": {},
+                "what_changed_since_proposal": [],
+            },
+            "roles": [],
+            "artifacts": [],
+        }
+        out = _build_inline_hearing_payload(
+            action_id="a",
+            proposal_id=1,
+            hearing_id="h",
+            proposal={"SYMBOL": "ZZZ", "DIRECTION": "LONG"},
+            refresh_payload=refresh,
+        )
+        self.assertNotIn("exhibit_public_disclosure_context", out)
 
 
 class TestCommitteeFinalDecisionCommitForAction(unittest.TestCase):

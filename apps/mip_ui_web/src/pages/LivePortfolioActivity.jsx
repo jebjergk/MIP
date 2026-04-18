@@ -229,7 +229,6 @@ export default function LivePortfolioActivity() {
   const [ordersView, setOrdersView] = useState('active')
   const [executionsLimit, setExecutionsLimit] = useState(60)
   const [snapshotLookbackDays, setSnapshotLookbackDays] = useState(14)
-  const [includeLegacyOverview, setIncludeLegacyOverview] = useState(false)
   const [streamActionId, setStreamActionId] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
@@ -259,7 +258,7 @@ export default function LivePortfolioActivity() {
         order_limit: String(ordersLimit),
         execution_limit: String(executionsLimit),
         snapshot_lookback_days: String(snapshotLookbackDays),
-        include_legacy: includeLegacyOverview ? 'true' : 'false',
+        include_legacy: 'false',
       })
       const resp = await fetch(`${API_BASE}/live/activity/overview?${params.toString()}`)
       if (!resp.ok) throw new Error('Could not load live activity. Please refresh.')
@@ -270,7 +269,7 @@ export default function LivePortfolioActivity() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays, includeLegacyOverview])
+  }, [ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays])
 
   useEffect(() => {
     load()
@@ -869,18 +868,6 @@ export default function LivePortfolioActivity() {
         <div>
           <h2>Live Portfolio Activity</h2>
           <p>Broker-truth operations console for the linked IBKR portfolio.</p>
-          {overview?.ui_hints?.live_structural_only ? (
-            <label className="lpa-legacy-toggle">
-              <input
-                type="checkbox"
-                checked={includeLegacyOverview}
-                onChange={(e) => setIncludeLegacyOverview(e.target.checked)}
-              />
-              <span>
-                Show legacy pattern-era pending rows (<code>include_legacy</code>)
-              </span>
-            </label>
-          ) : null}
         </div>
         <button className="lpa-btn" disabled={busy === 'refresh'} onClick={refreshBroker}>
           {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
@@ -1241,26 +1228,6 @@ export default function LivePortfolioActivity() {
                                   ? 'Refresh decision'
                                   : 'Run Committee 2.0'}
                             </button>
-                            <details className="lpa-c2-advanced">
-                              <summary>Advanced</summary>
-                              <div className="lpa-c2-advanced-body">
-                                <button
-                                  type="button"
-                                  className="lpa-btn lpa-btn-secondary lpa-btn--compact"
-                                  disabled={
-                                    busy === `committee:${d.action_id}` ||
-                                    activeStreamActionId === d.action_id ||
-                                    !canRunCommittee
-                                  }
-                                  onClick={() => openCommitteeStream(d.action_id, { structural: true })}
-                                >
-                                  {busy === `committee:${d.action_id}` || activeStreamActionId === d.action_id
-                                    ? 'SSE…'
-                                    : 'Legacy SSE sync'}
-                                </button>
-                                <span className="lpa-subtle"> Older path; prefer Run Committee 2.0.</span>
-                              </div>
-                            </details>
                           </>
                         ) : (
                           <button

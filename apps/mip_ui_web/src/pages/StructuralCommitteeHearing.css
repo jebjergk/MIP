@@ -526,3 +526,26 @@
   padding-top: 0.75rem;
   border-top: 1px dashed #e2e8f0;
 }
+
+.sch-disclosure-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: stretch;
+}
+
+.sch-disclosure-row > * {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.sch-disclosure-row .sch-pdc {
+  margin-bottom: 0;
+}
+
+.sch-disclosure-row .sch-pdc--live {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}

@@ -5,8 +5,9 @@ Not a hard dependency: any failure or empty response yields None (no exhibit, no
 
 - **JSON bridge:** `MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE` with `{symbol}` pointing at a trusted
   endpoint returning `{ summary_lines, link_url?, source_label? }`.
-- **Capitol Trades link-out:** template `https://www.capitoltrades.com/trades?ticker={symbol}` (or same host
-  with `ticker=` and `{symbol}`) builds a deterministic exhibit with **no** HTTP fetch and **no** HTML scrape.
+- **Capitol Trades link-out:** same template with **no** env flags builds a link-only exhibit (no HTTP).
+- **Capitol Trades POC scrape:** `MIP_POLITICIAN_DISCLOSURE_POC_SCRAPE=true` fetches that URL server-side,
+  parses embedded JSON from HTML, and fills the live card (informational only; fragile).
 """
 from __future__ import annotations
 
@@ -90,6 +91,52 @@ def _capitol_trades_linkout_exhibit(symbol: str, template: str) -> Optional[Dict
     }
 
 
+def _build_capitol_scraped_exhibit(
+    symbol: str,
+    trades: List[Dict[str, Any]],
+    page_url: str,
+    issuer_matched: bool,
+) -> Dict[str, Any]:
+    if issuer_matched:
+        summary_lines = [
+            f"POC scrape: {len(trades)} Capitol Trades row(s) matched ticker {symbol} (informational only).",
+            "Third-party public disclosures; verify on the site before acting.",
+        ]
+    else:
+        summary_lines = [
+            (
+                f"POC scrape: {len(trades)} row(s) from page snapshot; none matched {symbol} in embedded data "
+                "(ticker filter may be applied in the browser)."
+            ),
+            "Open the link for the filtered list; this batch is what the server embedded.",
+        ]
+    scraped_trades: List[Dict[str, Any]] = []
+    for t in trades[:5]:
+        pol = t.get("politician") or {}
+        name = f"{(pol.get('firstName') or '').strip()} {(pol.get('lastName') or '').strip()}".strip()
+        iss = t.get("issuer") or {}
+        tick = str(t.get("issuerTicker") or iss.get("issuerTicker") or "")
+        scraped_trades.append(
+            {
+                "filer_display_name": name or "—",
+                "side": str(t.get("txType") or "").upper(),
+                "transaction_date": str(t.get("txDate") or "")[:10],
+                "issuer_ticker": tick,
+            }
+        )
+    return {
+        "schema_version": "1",
+        "symbol": symbol,
+        "fetched_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source_label": "Capitol Trades (POC scrape)",
+        "summary_lines": summary_lines,
+        "link_url": page_url,
+        "scraped_trades": scraped_trades,
+        "disclaimer": DISCLAIMER,
+        "poc_scrape": True,
+    }
+
+
 def _build_demo_exhibit(symbol: str) -> Dict[str, Any]:
     """Deterministic stub for local QA when HTTP bridge is not configured."""
     return {
@@ -131,6 +178,12 @@ def build_exhibit_live_politician_disclosure_context(proposal: Dict[str, Any]) -
     if has_template:
         cap = _capitol_trades_linkout_exhibit(symbol, template)
         if cap is not None:
+            if _env_truthy("MIP_POLITICIAN_DISCLOSURE_POC_SCRAPE"):
+                from app.committee.capitol_trades_poc_scrape import scrape_capitol_trades_for_symbol
+
+                scraped, page_url, issuer_matched = scrape_capitol_trades_for_symbol(symbol)
+                if scraped:
+                    return _build_capitol_scraped_exhibit(symbol, scraped, page_url, issuer_matched)
             return cap
 
         url = template.replace("{symbol}", urllib.parse.quote(symbol, safe=""))

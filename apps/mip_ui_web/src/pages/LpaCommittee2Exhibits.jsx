@@ -315,7 +315,9 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       return undefined
     }
     setRevealStep(0)
-    const maxStep = inline.exhibit_public_disclosure_context != null ? 9 : 8
+    const hasDisclosure =
+      inline.exhibit_public_disclosure_context != null || inline.exhibit_live_politician_disclosure_context != null
+    const maxStep = hasDisclosure ? 9 : 8
     let n = 0
     const tick = setInterval(() => {
       n += 1
@@ -510,12 +512,14 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         </div>
       </div>
 
-      {pdcExhibit != null ? (
+      {hasDisclosureExhibit ? (
         <Reveal show={revealStep >= 5} className="lpa-c2-card lpa-c2-card--pdc">
-          <PublicDisclosureContextCard exhibit={pdcExhibit} variant="lpa" />
-          {livePdcExhibit != null ? (
-            <LivePoliticianDisclosureContextCard exhibit={livePdcExhibit} variant="lpa" />
-          ) : null}
+          <div className="lpa-c2-disclosure-pair">
+            {pdcExhibit != null ? <PublicDisclosureContextCard exhibit={pdcExhibit} variant="lpa" /> : null}
+            {livePdcExhibit != null ? (
+              <LivePoliticianDisclosureContextCard exhibit={livePdcExhibit} variant="lpa" />
+            ) : null}
+          </div>
         </Reveal>
       ) : null}
 

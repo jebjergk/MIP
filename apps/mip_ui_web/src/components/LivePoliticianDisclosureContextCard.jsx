@@ -3,6 +3,12 @@
  * Render only when API includes exhibit_live_politician_disclosure_context (success path).
  */
 
+function fmtShortDate(s) {
+  if (s == null) return '—'
+  const t = String(s).slice(0, 10)
+  return t || '—'
+}
+
 export default function LivePoliticianDisclosureContextCard({ exhibit, variant = 'hearing' }) {
   if (exhibit == null || typeof exhibit !== 'object') return null
 
@@ -19,6 +25,8 @@ export default function LivePoliticianDisclosureContextCard({ exhibit, variant =
   const fetched =
     exhibit.fetched_at_utc != null ? String(exhibit.fetched_at_utc).slice(0, 19).replace('T', ' ') + ' UTC' : '—'
   const link = exhibit.link_url != null ? String(exhibit.link_url).trim() : ''
+  const txList = Array.isArray(exhibit.scraped_trades) ? exhibit.scraped_trades : []
+  const txPrefix = variant === 'lpa' ? 'lpa-c2-pdc-tx' : 'sch-pdc-tx'
 
   return (
     <div className={root}>
@@ -43,6 +51,25 @@ export default function LivePoliticianDisclosureContextCard({ exhibit, variant =
           {lines.slice(0, 3).map((line, i) => (
             <li key={i}>{line}</li>
           ))}
+        </ul>
+      ) : null}
+
+      {txList.length > 0 ? (
+        <ul className={txPrefix}>
+          {txList.map((r, i) => {
+            const name = r.filer_display_name != null ? String(r.filer_display_name) : '—'
+            const side = r.side != null ? String(r.side) : '—'
+            const tick = r.issuer_ticker != null ? String(r.issuer_ticker) : ''
+            const td = fmtShortDate(r.transaction_date)
+            const who = tick ? `${tick} · ${name}` : name
+            return (
+              <li key={i}>
+                <span className={`${txPrefix}-date`}>{td}</span>
+                <span className={`${txPrefix}-side`}>{side}</span>
+                <span className={`${txPrefix}-name`}>{who}</span>
+              </li>
+            )
+          })}
         </ul>
       ) : null}
 

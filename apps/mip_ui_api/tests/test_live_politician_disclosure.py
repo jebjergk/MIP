@@ -13,6 +13,31 @@ from app.committee.live_politician_disclosure import (  # noqa: E402
 
 
 class TestLivePoliticianDisclosure(unittest.TestCase):
+    @patch("app.committee.capitol_trades_poc_scrape.scrape_capitol_trades_for_symbol")
+    @patch("app.committee.live_politician_disclosure.disclosure_context_flag_enabled", return_value=True)
+    @patch("app.committee.live_politician_disclosure._live_flag_enabled", return_value=True)
+    @patch("app.committee.live_politician_disclosure.get_connection")
+    def test_capitol_poc_scrape_wires_exhibit(self, mock_gc, _lf, _dc, mock_scrape):
+        mock_gc.return_value = MagicMock()
+        mock_scrape.return_value = (
+            [{"_txId": 1, "txType": "sell", "txDate": "2026-04-02", "issuerTicker": "ABC:US", "politician": {"firstName": "X", "lastName": "Y"}}],
+            "https://www.capitoltrades.com/trades?ticker=ABC",
+            True,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE": "https://www.capitoltrades.com/trades?ticker={symbol}",
+                "MIP_POLITICIAN_DISCLOSURE_POC_SCRAPE": "true",
+            },
+            clear=False,
+        ):
+            out = build_exhibit_live_politician_disclosure_context({"SYMBOL": "ABC", "DIRECTION": "LONG"})
+        self.assertIsNotNone(out)
+        self.assertTrue(out.get("poc_scrape"))
+        self.assertEqual(len(out.get("scraped_trades") or []), 1)
+        self.assertEqual(out["source_label"], "Capitol Trades (POC scrape)")
+
     @patch("app.committee.live_politician_disclosure.disclosure_context_flag_enabled", return_value=True)
     @patch("app.committee.live_politician_disclosure._live_flag_enabled", return_value=True)
     @patch("app.committee.live_politician_disclosure.get_connection")

@@ -274,14 +274,18 @@ export default function StructuralCommitteeHearing() {
         </section>
       </div>
 
-      {payload?.exhibit_public_disclosure_context ? (
-        <PublicDisclosureContextCard exhibit={payload.exhibit_public_disclosure_context} variant="hearing" />
-      ) : null}
-      {payload?.exhibit_live_politician_disclosure_context ? (
-        <LivePoliticianDisclosureContextCard
-          exhibit={payload.exhibit_live_politician_disclosure_context}
-          variant="hearing"
-        />
+      {payload?.exhibit_public_disclosure_context || payload?.exhibit_live_politician_disclosure_context ? (
+        <div className="sch-disclosure-row">
+          {payload?.exhibit_public_disclosure_context ? (
+            <PublicDisclosureContextCard exhibit={payload.exhibit_public_disclosure_context} variant="hearing" />
+          ) : null}
+          {payload?.exhibit_live_politician_disclosure_context ? (
+            <LivePoliticianDisclosureContextCard
+              exhibit={payload.exhibit_live_politician_disclosure_context}
+              variant="hearing"
+            />
+          ) : null}
+        </div>
       ) : null}
 
       <section className="sch-panel sch-delta-strip">

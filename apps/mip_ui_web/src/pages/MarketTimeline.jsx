@@ -5,6 +5,7 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import MarketTimelineDetail from '../components/MarketTimelineDetail'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 import './MarketTimeline.css'
 
 /**
@@ -14,6 +15,7 @@ import './MarketTimeline.css'
  * with inline expansion to view OHLC chart + event overlays + decision narrative.
  */
 export default function MarketTimeline() {
+  useAskMipPageRuntime('market_timeline', ['market_timeline_grid'])
   const { formatSymbolLabel } = useSymbolMeta()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)

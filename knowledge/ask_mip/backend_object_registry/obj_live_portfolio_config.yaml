@@ -1,0 +1,28 @@
+artifact_id: obj_live_portfolio_config
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+object_id: live_portfolio_config_table
+object_type: table
+object_name: LIVE_PORTFOLIO_CONFIG
+schema_database: MIP.LIVE
+purpose: Canonical live/paper portfolio adapter settings, risk caps, and drift indicators.
+grain: one row per portfolio_id
+key_fields:
+  - PORTFOLIO_ID
+  - ADAPTER_MODE
+  - MAX_POSITIONS
+  - MAX_POSITION_PCT
+  - CASH_BUFFER_PCT
+  - MAX_SLIPPAGE_PCT
+  - DRIFT_STATUS
+consumed_by_pages:
+  - live_portfolio_config
+consumed_by_widgets: []
+refresh_behavior: Updated on config save and adapter sync jobs
+related_workflows:
+  - proposal_to_execution
+notes: >
+  Ask MIP runtime facts may include a snapshot of this row for the active portfolio.
+used_by_ask_facts: true

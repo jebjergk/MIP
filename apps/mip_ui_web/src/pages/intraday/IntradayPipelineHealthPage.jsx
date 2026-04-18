@@ -4,8 +4,10 @@ import LoadingState from '../../components/LoadingState'
 import ErrorState from '../../components/ErrorState'
 import { fmtNum, IntradayHeader, HelpTip } from './IntradayTrainingCommon'
 import './IntradayTraining.css'
+import { useAskMipPageRuntime } from '../../hooks/useAskMipPageRuntime'
 
 export default function IntradayPipelineHealthPage() {
+  useAskMipPageRuntime('intraday_health', ['intraday_pipeline_health', 'intraday_backfill_runs'])
   const [health, setHealth] = useState(null)
   const [runs, setRuns] = useState([])
   const [selectedRun, setSelectedRun] = useState(null)

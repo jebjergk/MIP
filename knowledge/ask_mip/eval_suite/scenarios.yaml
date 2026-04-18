@@ -66,3 +66,59 @@ scenarios:
     runtime:
       page_id: symbol_tracker
     notes: Composer should refuse undocumented coefficients; automated test checks retrieval only
+
+  - id: bracket_domain_topic
+    question: What is a bracket order?
+    route: /live-portfolio-activity
+    expect_intent: trading_concept
+    expect_source_types_contain:
+      - DOMAIN_KNOWLEDGE
+
+  - id: training_handbook_module
+    question: What does training maturity mean here?
+    route: /training
+    runtime:
+      page_id: training_status
+    expect_source_types_contain:
+      - HANDBOOK_MODULE
+
+  - id: state_logic_trust
+    question: Why is this pattern not trusted yet?
+    route: /training
+    runtime:
+      page_id: training_status
+    expect_intent_one_of:
+      - state_diagnosis
+      - mip_feature_behavior
+      - mixed
+    expect_source_types_contain:
+      - STATE_LOGIC
+
+  - id: workflow_proposal_live
+    question: How does a proposal become a live trade?
+    route: /live-portfolio-config
+    runtime:
+      page_id: live_portfolio_config
+    expect_source_types_contain:
+      - WORKFLOW_REGISTRY
+
+  - id: backend_object_lineage
+    question: Where does live portfolio configuration come from in Snowflake?
+    route: /live-portfolio-config
+    runtime:
+      page_id: live_portfolio_config
+    expect_intent_one_of:
+      - source_lineage
+      - mip_feature_behavior
+      - mixed
+    expect_source_types_contain:
+      - BACKEND_OBJECT
+
+  - id: known_issue_broker_mismatch
+    question: Why would the UI disagree with my broker?
+    route: /live-portfolio-activity
+    runtime:
+      page_id: live_portfolio_activity
+    expect_intent: state_diagnosis
+    expect_source_types_contain:
+      - KNOWN_ISSUE

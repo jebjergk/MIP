@@ -1,0 +1,25 @@
+artifact_id: page_news_intelligence
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: news_intelligence
+page_title: News Intelligence
+route: /news-intelligence
+purpose: News-driven context, headlines, and intelligence overlays supporting research and risk review.
+target_user: researcher_trader
+business_questions_answered:
+  - What news context applies to this symbol or theme?
+main_workflows:
+  - Search and browse news panels tied to watchlists or symbols.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /symbol-tracker
+refresh_behavior: On load and search.
+dependencies:
+  - news intelligence API
+caveats:
+  - News is contextual, not a trade signal by itself.
+known_issues: []
+linked_backend_objects: []

@@ -189,7 +189,7 @@ export default function StructuralMarketTimeline() {
   // AskMip context
   useEffect(() => {
     mergeAskMipRuntime({
-      page_id: 'structural_timeline',
+      page_id: 'structural_market_timeline',
       page_route: pathname,
       session_mode: 'research',
       active_filters: { symbol, marketType, dateRange, dirFilter, familyFilter },

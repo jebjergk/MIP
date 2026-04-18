@@ -275,26 +275,31 @@ def get_news_intelligence(
         )
         open_rows = serialize_rows(fetch_all(cur))
 
-        cur.execute(
-            """
-            select
-                p.PROPOSAL_ID,
-                p.PORTFOLIO_ID,
-                p.SYMBOL,
-                p.MARKET_TYPE,
-                p.STATUS,
-                p.PROPOSED_AT,
-                p.SOURCE_SIGNALS,
-                p.RATIONALE
-            from MIP.AGENT_OUT.ORDER_PROPOSALS p
-            where p.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')
-              and (%s is null or p.PORTFOLIO_ID = %s)
-            order by p.PROPOSED_AT desc, p.PROPOSAL_ID desc
-            limit 300
-            """,
-            (portfolio_id, portfolio_id),
-        )
-        proposal_rows = serialize_rows(fetch_all(cur))
+        from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
+
+        if live_structural_only_enabled_cur(cur):
+            proposal_rows = []
+        else:
+            cur.execute(
+                """
+                select
+                    p.PROPOSAL_ID,
+                    p.PORTFOLIO_ID,
+                    p.SYMBOL,
+                    p.MARKET_TYPE,
+                    p.STATUS,
+                    p.PROPOSED_AT,
+                    p.SOURCE_SIGNALS,
+                    p.RATIONALE
+                from MIP.AGENT_OUT.ORDER_PROPOSALS p
+                where p.STATUS in ('PROPOSED', 'APPROVED', 'EXECUTED')
+                  and (%s is null or p.PORTFOLIO_ID = %s)
+                order by p.PROPOSED_AT desc, p.PROPOSAL_ID desc
+                limit 300
+                """,
+                (portfolio_id, portfolio_id),
+            )
+            proposal_rows = serialize_rows(fetch_all(cur))
 
         by_symbol = {(r.get("SYMBOL"), r.get("MARKET_TYPE")): r for r in news_rows}
         total_market_value = 0.0

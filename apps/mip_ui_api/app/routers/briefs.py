@@ -231,77 +231,78 @@ def _build_opportunities(brief_json: dict, cur=None, portfolio_id: int = None, r
     """
     opportunities = []
     
-    # First, try to get actual proposals from this run
+    # First, try to get actual proposals from this run (retired when LIVE_STRUCTURAL_ONLY)
     if cur and portfolio_id and run_id:
-        try:
-            cur.execute("""
-                select 
-                    PROPOSAL_ID,
-                    SYMBOL,
-                    MARKET_TYPE,
-                    SIDE,
-                    TARGET_WEIGHT,
-                    STATUS,
-                    SIGNAL_PATTERN_ID,
-                    SOURCE_SIGNALS,
-                    RATIONALE,
-                    PROPOSED_AT
-                from MIP.AGENT_OUT.ORDER_PROPOSALS
-                where PORTFOLIO_ID = %s
-                  and RUN_ID_VARCHAR = %s
-                order by PROPOSED_AT desc
-                limit 10
-            """, (portfolio_id, run_id))
-            
-            rows = cur.fetchall()
-            columns = [d[0].lower() for d in cur.description]
-            
-            for row in rows:
-                proposal = dict(zip(columns, row))
-                source_signals = proposal.get("source_signals") or {}
-                if isinstance(source_signals, str):
-                    import json
-                    try:
-                        source_signals = json.loads(source_signals)
-                    except:
-                        source_signals = {}
-                
-                score = source_signals.get("score")
-                status = proposal.get("status", "PROPOSED")
-                
-                # Determine confidence from status and score
-                if status == "EXECUTED":
-                    confidence = "EXECUTED"
-                elif status == "APPROVED":
-                    confidence = "HIGH"
-                elif status == "REJECTED":
-                    confidence = "REJECTED"
-                else:
-                    confidence = "MEDIUM"
-                
-                # Format why message
-                weight_pct = (proposal.get("target_weight") or 0) * 100
-                why = f"{status}: {weight_pct:.1f}% position"
-                if score:
-                    why += f", score {score:.4f}"
-                
-                opportunities.append({
-                    "proposal_id": proposal.get("proposal_id"),
-                    "symbol": proposal.get("symbol", "—"),
-                    "side": proposal.get("side", "BUY"),
-                    "market_type": proposal.get("market_type", "—"),
-                    "pattern_id": proposal.get("signal_pattern_id"),
-                    "target_weight": proposal.get("target_weight"),
-                    "status": status,
-                    "why": why,
-                    "confidence": confidence,
-                    "is_proposal": True,
-                })
-            
-            if opportunities:
-                return opportunities
-        except Exception:
-            pass  # Fall through to trusted signals fallback
+        from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
+
+        if not live_structural_only_enabled_cur(cur):
+            try:
+                cur.execute("""
+                    select 
+                        PROPOSAL_ID,
+                        SYMBOL,
+                        MARKET_TYPE,
+                        SIDE,
+                        TARGET_WEIGHT,
+                        STATUS,
+                        SIGNAL_PATTERN_ID,
+                        SOURCE_SIGNALS,
+                        RATIONALE,
+                        PROPOSED_AT
+                    from MIP.AGENT_OUT.ORDER_PROPOSALS
+                    where PORTFOLIO_ID = %s
+                      and RUN_ID_VARCHAR = %s
+                    order by PROPOSED_AT desc
+                    limit 10
+                """, (portfolio_id, run_id))
+
+                rows = cur.fetchall()
+                columns = [d[0].lower() for d in cur.description]
+
+                for row in rows:
+                    proposal = dict(zip(columns, row))
+                    source_signals = proposal.get("source_signals") or {}
+                    if isinstance(source_signals, str):
+                        import json
+                        try:
+                            source_signals = json.loads(source_signals)
+                        except Exception:
+                            source_signals = {}
+
+                    score = source_signals.get("score")
+                    status = proposal.get("status", "PROPOSED")
+
+                    if status == "EXECUTED":
+                        confidence = "EXECUTED"
+                    elif status == "APPROVED":
+                        confidence = "HIGH"
+                    elif status == "REJECTED":
+                        confidence = "REJECTED"
+                    else:
+                        confidence = "MEDIUM"
+
+                    weight_pct = (proposal.get("target_weight") or 0) * 100
+                    why = f"{status}: {weight_pct:.1f}% position"
+                    if score:
+                        why += f", score {score:.4f}"
+
+                    opportunities.append({
+                        "proposal_id": proposal.get("proposal_id"),
+                        "symbol": proposal.get("symbol", "—"),
+                        "side": proposal.get("side", "BUY"),
+                        "market_type": proposal.get("market_type", "—"),
+                        "pattern_id": proposal.get("signal_pattern_id"),
+                        "target_weight": proposal.get("target_weight"),
+                        "status": status,
+                        "why": why,
+                        "confidence": confidence,
+                        "is_proposal": True,
+                    })
+
+                if opportunities:
+                    return opportunities
+            except Exception:
+                pass  # Fall through to trusted signals fallback
     
     # Fallback: use trusted signals from brief (legacy behavior)
     signals = brief_json.get("signals", {}) or {}

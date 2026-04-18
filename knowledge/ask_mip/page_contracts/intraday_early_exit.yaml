@@ -1,0 +1,26 @@
+artifact_id: page_intraday_early_exit
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: intraday_early_exit
+page_title: Intraday Early Exit
+route: /intraday/early-exit
+purpose: Intraday decision console focused on early exit scenarios and pattern-driven risk actions.
+target_user: trader_operator
+business_questions_answered:
+  - Should I exit early on this intraday pattern?
+main_workflows:
+  - Review intraday signals and exit prompts.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /intraday/dashboard
+  - /symbol-tracker
+refresh_behavior: Intraday cadence.
+dependencies:
+  - intraday APIs
+caveats:
+  - Distinct from legacy Decision Console route naming; see also /decision-console.
+known_issues: []
+linked_backend_objects: []

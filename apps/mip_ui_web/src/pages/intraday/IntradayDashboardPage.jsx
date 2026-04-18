@@ -16,8 +16,10 @@ import LoadingState from '../../components/LoadingState'
 import ErrorState from '../../components/ErrorState'
 import { EvidenceBadge, fmtNum, IntradayHeader, HelpTip } from './IntradayTrainingCommon'
 import './IntradayTraining.css'
+import { useAskMipPageRuntime } from '../../hooks/useAskMipPageRuntime'
 
 export default function IntradayDashboardPage() {
+  useAskMipPageRuntime('intraday_dashboard', ['intraday_session_kpis', 'intraday_pattern_list'])
   const [dashboard, setDashboard] = useState(null)
   const [patterns, setPatterns] = useState([])
   const [loading, setLoading] = useState(true)

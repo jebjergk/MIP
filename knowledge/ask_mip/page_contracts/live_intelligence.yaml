@@ -1,0 +1,26 @@
+artifact_id: page_live_intelligence
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: live_intelligence
+page_title: Live Intelligence Cockpit
+route: /live-intelligence
+purpose: Operational live portfolio and intelligence overview for active trading sessions.
+target_user: trader_operator
+business_questions_answered:
+  - What is live risk and posture across portfolios?
+main_workflows:
+  - Monitor live KPIs and drill to activity/config.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /live-portfolio-activity
+  - /live-portfolio-config
+refresh_behavior: Periodic refresh and user actions.
+dependencies:
+  - live intelligence APIs
+caveats:
+  - Distinguish broker truth vs UI interpretation; see handbook and live activity pages.
+known_issues: []
+linked_backend_objects: []

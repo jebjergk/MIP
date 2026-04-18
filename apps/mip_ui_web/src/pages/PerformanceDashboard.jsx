@@ -18,6 +18,7 @@ import ErrorState from '../components/ErrorState'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import { usePortfolios } from '../context/PortfolioContext'
 import './PerformanceDashboard.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 function fmtPct(v, d = 1) {
   if (v == null || Number.isNaN(Number(v))) return '—'
@@ -169,6 +170,7 @@ function FeeAnalyticsTab({ data, loading, error, formatSymbolLabel }) {
 }
 
 export default function PerformanceDashboard() {
+  useAskMipPageRuntime('performance_dashboard', ['perf_equity_chart', 'perf_summary'])
   const { formatSymbolLabel } = useSymbolMeta()
   const { defaultPortfolioId } = usePortfolios()
   const [lookbackDays, setLookbackDays] = useState(90)

@@ -4,6 +4,7 @@ import LoadingState from '../../components/LoadingState'
 import ErrorState from '../../components/ErrorState'
 import { EvidenceBadge, fmtNum, IntradayHeader, HelpTip } from './IntradayTrainingCommon'
 import './IntradayTraining.css'
+import { useAskMipPageRuntime } from '../../hooks/useAskMipPageRuntime'
 
 function terrainColor(score) {
   const v = Number(score || 0)
@@ -15,6 +16,7 @@ function terrainColor(score) {
 }
 
 export default function IntradayTerrainExplorerPage() {
+  useAskMipPageRuntime('intraday_terrain', ['intraday_terrain_heatmap', 'intraday_terrain_top'])
   const [topRows, setTopRows] = useState([])
   const [heatmapRows, setHeatmapRows] = useState([])
   const [loading, setLoading] = useState(true)

@@ -545,6 +545,7 @@ export default function SymbolTracker() {
       page_route: pathname,
       session_mode: 'live',
       symbol: selectedSymbol || null,
+      market_type: activeTile?.market_type || null,
       visible_widget_ids: ['living_chart_main'],
       selected_widget_id: 'living_chart_main',
       current_kpi_snapshot: Object.keys(kpi).length ? kpi : null,
@@ -560,7 +561,7 @@ export default function SymbolTracker() {
         page_id: null,
       })
     }
-  }, [pathname, selectedSymbol, activeDisplay, activeFlowVisible, mergeAskMipRuntime])
+  }, [pathname, selectedSymbol, activeTile, activeDisplay, activeFlowVisible, mergeAskMipRuntime])
 
   const bumpChartLayout = useCallback(() => {
     setLayoutRevision((r) => r + 1)

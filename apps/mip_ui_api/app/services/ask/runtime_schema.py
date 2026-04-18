@@ -29,6 +29,10 @@ class AskRuntimePayload(BaseModel):
         description="sim, live, research, etc.",
     )
     symbol: str | None = None
+    market_type: str | None = Field(
+        default=None,
+        description="When known (e.g. STOCK, ETF, FX); used for narrow Snowflake lookups.",
+    )
     portfolio_id: int | None = None
     strategy_id: str | None = None
     as_of_timestamp: str | None = None

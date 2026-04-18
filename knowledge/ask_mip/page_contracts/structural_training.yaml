@@ -1,0 +1,31 @@
+artifact_id: page_structural_training
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: structural_training
+page_title: Structural Training Intelligence
+route: /structural-training
+purpose: Explore structural setups, trust labels, filters, and proposal-oriented training intelligence.
+target_user: researcher_trader
+business_questions_answered:
+  - Which structural setups meet trust or proposal filters?
+main_workflows:
+  - Filter by market, direction, trust, family; expand rows.
+filters_inputs:
+  - market_type
+  - direction
+  - trust_label
+  - setup_family
+  - proposal_only
+sections: []
+linked_pages:
+  - /training
+  - /symbol-tracker
+refresh_behavior: Client fetch on filter changes.
+dependencies:
+  - structural training API
+caveats:
+  - Research-oriented; align with Training Status for maturity detail.
+known_issues: []
+linked_backend_objects: []

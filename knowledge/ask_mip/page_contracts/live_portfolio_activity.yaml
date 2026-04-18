@@ -1,0 +1,28 @@
+artifact_id: page_live_portfolio_activity
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: live_portfolio_activity
+page_title: Live Portfolio Activity
+route: /live-portfolio-activity
+purpose: Orders, fills, positions, and live execution state reconciled against broker where available.
+target_user: trader_operator
+business_questions_answered:
+  - What is actually open or filled in the live account?
+main_workflows:
+  - Monitor orders and positions; compare to proposals.
+filters_inputs:
+  - portfolio selection
+sections: []
+linked_pages:
+  - /live-portfolio-config
+  - /decision-console
+refresh_behavior: Periodic and on user refresh.
+dependencies:
+  - live activity API
+  - broker snapshots
+caveats:
+  - Broker truth may differ from local UI interpretation during latency or partial sync.
+known_issues: []
+linked_backend_objects: []

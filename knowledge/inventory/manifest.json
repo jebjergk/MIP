@@ -1,0 +1,598 @@
+{
+  "version": 1,
+  "generated_by": "scripts/generate_knowledge_inventory.py",
+  "frontend_routes": [
+    {
+      "path": "/",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/cockpit",
+      "component": "Cockpit",
+      "is_redirect": false
+    },
+    {
+      "path": "/home",
+      "component": "Home",
+      "is_redirect": false
+    },
+    {
+      "path": "/portfolios",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/portfolios/:portfolioId",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/runs",
+      "component": "AuditViewer",
+      "is_redirect": false
+    },
+    {
+      "path": "/runs/:runId",
+      "component": "AuditViewer",
+      "is_redirect": false
+    },
+    {
+      "path": "/structural-training",
+      "component": "StructuralTrainingIntelligence",
+      "is_redirect": false
+    },
+    {
+      "path": "/training",
+      "component": "TrainingStatus",
+      "is_redirect": false
+    },
+    {
+      "path": "/structural-timeline",
+      "component": "StructuralMarketTimeline",
+      "is_redirect": false
+    },
+    {
+      "path": "/market-timeline",
+      "component": "MarketTimeline",
+      "is_redirect": false
+    },
+    {
+      "path": "/symbol-tracker",
+      "component": "SymbolTracker",
+      "is_redirect": false
+    },
+    {
+      "path": "/living-chart",
+      "component": "SymbolTracker",
+      "is_redirect": false
+    },
+    {
+      "path": "/live-intelligence",
+      "component": "LiveIntelligenceCockpit",
+      "is_redirect": false
+    },
+    {
+      "path": "/manage",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/parallel-worlds",
+      "component": "ParallelWorlds",
+      "is_redirect": false
+    },
+    {
+      "path": "/learning-ledger",
+      "component": "LearningLedger",
+      "is_redirect": false
+    },
+    {
+      "path": "/performance-dashboard",
+      "component": "PerformanceDashboard",
+      "is_redirect": false
+    },
+    {
+      "path": "/decision-console",
+      "component": "AiAgentDecisions",
+      "is_redirect": false
+    },
+    {
+      "path": "/intraday/early-exit",
+      "component": "DecisionConsole",
+      "is_redirect": false
+    },
+    {
+      "path": "/live-portfolio-activity",
+      "component": "LivePortfolioActivity",
+      "is_redirect": false
+    },
+    {
+      "path": "/live-portfolio-config",
+      "component": "LivePortfolioConfig",
+      "is_redirect": false
+    },
+    {
+      "path": "/news-intelligence",
+      "component": "NewsIntelligence",
+      "is_redirect": false
+    },
+    {
+      "path": "/intraday/dashboard",
+      "component": "IntradayDashboardPage",
+      "is_redirect": false
+    },
+    {
+      "path": "/intraday/pattern/:patternId",
+      "component": "IntradayPatternDetailPage",
+      "is_redirect": false
+    },
+    {
+      "path": "/intraday/terrain",
+      "component": "IntradayTerrainExplorerPage",
+      "is_redirect": false
+    },
+    {
+      "path": "/intraday/health",
+      "component": "IntradayPipelineHealthPage",
+      "is_redirect": false
+    },
+    {
+      "path": "/debug",
+      "component": "Debug",
+      "is_redirect": false
+    },
+    {
+      "path": "/guide",
+      "component": "UserGuide",
+      "is_redirect": false
+    },
+    {
+      "path": "/ask-glossary",
+      "component": "GlossaryAdminPage",
+      "is_redirect": false
+    },
+    {
+      "path": "/suggestions",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/signals",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/today",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/brief",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/digest",
+      "component": "Navigate",
+      "is_redirect": true
+    },
+    {
+      "path": "/portfolios/:portfolioId/digest",
+      "component": "Navigate",
+      "is_redirect": true
+    }
+  ],
+  "api_routers": [
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/ask.py",
+      "api_prefixes": [
+        "/ask"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.GLOSSARY_CANDIDATE_TERM",
+        "MIP.AGENT_OUT.GLOSSARY_REVIEW_EVENT",
+        "MIP.MART.V_ASK_COVERAGE_METRICS",
+        "MIP.MART.V_ASK_UNKNOWN_TERMS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/briefs.py",
+      "api_prefixes": [
+        "/briefs"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.MORNING_BRIEF",
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.V_PORTFOLIO_ACTIVE_EPISODE",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS",
+        "MIP.LIVE.LIVE_PORTFOLIO_CONFIG"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/decisions.py",
+      "api_prefixes": [
+        "/decisions"
+      ],
+      "snowflake_object_refs": []
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/digest.py",
+      "api_prefixes": [
+        "/digest"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.DAILY_DIGEST_NARRATIVE",
+        "MIP.AGENT_OUT.DAILY_DIGEST_SNAPSHOT"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/intraday.py",
+      "api_prefixes": [
+        "/intraday"
+      ],
+      "snowflake_object_refs": [
+        "MIP.MART.V_INTRADAY_PIPELINE_STATUS",
+        "MIP.MART.V_INTRADAY_UI_BACKFILL_RUNS",
+        "MIP.MART.V_INTRADAY_UI_PATTERN_CATALOG",
+        "MIP.MART.V_INTRADAY_UI_SIGNALS",
+        "MIP.MART.V_INTRADAY_UI_TERRAIN",
+        "MIP.MART.V_INTRADAY_UI_TRUST"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/learning_ledger.py",
+      "api_prefixes": [
+        "/learning-ledger"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.LEARNING_DECISION_LEDGER",
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.INFORMATION_SCHEMA.TABLES",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/live.py",
+      "api_prefixes": [
+        "/live"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.LEARNING_DECISION_LEDGER",
+        "MIP.AGENT_OUT.MORNING_BRIEF",
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.APP.APP_CONFIG",
+        "MIP.APP.INTRADAY_PIPELINE_RUN_LOG",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.PATTERN_DEFINITION",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.APP.RECOMMENDATION_OUTCOMES",
+        "MIP.APP.SP_LEDGER_APPEND_EVENT",
+        "MIP.APP.SP_RUN_HOURLY_EARLY_EXIT_MONITOR",
+        "MIP.APP.STRUCTURAL_REGIME_TAG",
+        "MIP.APP.STRUCTURAL_RISK_POLICY",
+        "MIP.APP.STRUCTURAL_SETUP_EVENTS",
+        "MIP.APP.STRUCTURAL_SETUP_TRUST",
+        "MIP.APP.STRUCTURAL_TRADE_PROPOSALS",
+        "MIP.APP.TRAINING_GATE_PARAMS",
+        "MIP.APP.V_LIVE_ACTION_PARALLEL_WORLDS_EVIDENCE",
+        "MIP.APP.V_TRAINING_VERSION_CURRENT",
+        "MIP.LIVE.BROKER_EVENT_LEDGER",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.LIVE.COMMITTEE_ROLE_OUTPUT",
+        "MIP.LIVE.COMMITTEE_RUN",
+        "MIP.LIVE.COMMITTEE_VERDICT",
+        "MIP.LIVE.DRIFT_LOG",
+        "MIP.LIVE.ENTRY_INTEL_ACTION_LINK",
+        "MIP.LIVE.ENTRY_INTEL_SNAPSHOT",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS",
+        "MIP.LIVE.LIVE_PORTFOLIO_CONFIG",
+        "MIP.LIVE.TRADE_CLOSEOUT",
+        "MIP.MART.MARKET_BARS",
+        "MIP.MART.V_MARKET_REGIME",
+        "MIP.MART.V_NEWS_AGG_LATEST",
+        "MIP.MART.V_NEWS_FEED_HEALTH",
+        "MIP.MART.V_SYMBOL_TRAINING_READINESS",
+        "MIP.NEWS.NEWS_RAW",
+        "MIP.NEWS.SP_AGGREGATE_NEWS_EVENTS",
+        "MIP.NEWS.SP_COMPUTE_INFO_STATE_DAILY",
+        "MIP.NEWS.SP_MAP_NEWS_SYMBOLS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/live_bracket_calibration.py",
+      "api_prefixes": [],
+      "snowflake_object_refs": []
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/live_intelligence.py",
+      "api_prefixes": [
+        "/live-intelligence"
+      ],
+      "snowflake_object_refs": []
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/management.py",
+      "api_prefixes": [
+        "/manage"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.INGEST_UNIVERSE",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.SP_RUN_DAILY_PIPELINE",
+        "MIP.APP.SP_RUN_IB_DAILY_CATCHUP",
+        "MIP.APP.SP_RUN_IB_SYMBOL_ONBOARDING",
+        "MIP.MART.MARKET_BARS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/market_pulse.py",
+      "api_prefixes": [
+        "/market"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.INGEST_UNIVERSE",
+        "MIP.MART.MARKET_BARS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/market_timeline.py",
+      "api_prefixes": [
+        "/market-timeline"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.APP.INGEST_UNIVERSE",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.PATTERN_DEFINITION",
+        "MIP.APP.PORTFOLIO_TRADES",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS",
+        "MIP.LIVE.LIVE_PORTFOLIO_CONFIG",
+        "MIP.MART.MARKET_BARS",
+        "MIP.MART.V_SIGNALS_LATEST_TS",
+        "MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL",
+        "MIP.MART.V_TRUSTED_PATTERN_HORIZONS",
+        "MIP.MART.V_TRUSTED_SIGNALS_LATEST_TS",
+        "MIP.MART.V_TRUSTED_SIGNAL_POLICY"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/news.py",
+      "api_prefixes": [
+        "/news"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.APP.APP_CONFIG",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.MART.MARKET_BARS",
+        "MIP.MART.V_NEWS_AGG_LATEST",
+        "MIP.MART.V_NEWS_FEATURES_BY_TS",
+        "MIP.MART.V_NEWS_FEED_HEALTH",
+        "MIP.NEWS.SP_AGGREGATE_NEWS_EVENTS",
+        "MIP.NEWS.SP_COMPUTE_INFO_STATE_DAILY",
+        "MIP.NEWS.SP_MAP_NEWS_SYMBOLS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/parallel_worlds.py",
+      "api_prefixes": [
+        "/parallel-worlds"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.PARALLEL_WORLD_NARRATIVE",
+        "MIP.APP.PARALLEL_WORLD_RESULT",
+        "MIP.APP.PARALLEL_WORLD_SCENARIO",
+        "MIP.MART.V_PARALLEL_WORLD_ACTUAL",
+        "MIP.MART.V_PARALLEL_WORLD_CONFIDENCE",
+        "MIP.MART.V_PARALLEL_WORLD_DIFF",
+        "MIP.MART.V_PARALLEL_WORLD_POLICY_DIAGNOSTICS",
+        "MIP.MART.V_PARALLEL_WORLD_REGRET",
+        "MIP.MART.V_PARALLEL_WORLD_REGRET_ATTRIBUTION",
+        "MIP.MART.V_PW_RECOMMENDATIONS",
+        "MIP.MART.V_PW_REGIME_SENSITIVITY",
+        "MIP.MART.V_PW_SAFETY_CHECKS",
+        "MIP.MART.V_PW_TUNING_SURFACE",
+        "MIP.MART.V_TRADE_INTELLIGENCE"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/performance.py",
+      "api_prefixes": [
+        "/performance"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.PORTFOLIO",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.APP.RECOMMENDATION_OUTCOMES",
+        "MIP.MART.V_PORTFOLIO_FEE_BY_PERIOD",
+        "MIP.MART.V_PORTFOLIO_FEE_BY_SYMBOL",
+        "MIP.MART.V_PORTFOLIO_FEE_TOTALS",
+        "MIP.MART.V_PORTFOLIO_MARGINAL_TRADES"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/performance_dashboard.py",
+      "api_prefixes": [
+        "/performance-dashboard"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.LEARNING_DECISION_LEDGER",
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT",
+        "MIP.APP.APP_CONFIG",
+        "MIP.APP.EARLY_EXIT_LOG",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.APP.RECOMMENDATION_OUTCOMES",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.LIVE.DRAWDOWN_LOG",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS",
+        "MIP.LIVE.LIVE_PORTFOLIO_CONFIG",
+        "MIP.MART.V_PARALLEL_WORLD_DIFF"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/portfolios.py",
+      "api_prefixes": [
+        "/portfolios"
+      ],
+      "snowflake_object_refs": []
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/reference.py",
+      "api_prefixes": [
+        "/reference"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.INGEST_UNIVERSE",
+        "MIP.NEWS.SYMBOL_ALIAS_DICT"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/runs.py",
+      "api_prefixes": [
+        "/runs"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.INTRADAY_PIPELINE_RUN_LOG",
+        "MIP.APP.MIP_AUDIT_LOG"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/signals.py",
+      "api_prefixes": [
+        "/signals"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.V_SIGNALS_ELIGIBLE_TODAY",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/status.py",
+      "api_prefixes": [],
+      "snowflake_object_refs": [
+        "MIP.APP.MIP_AUDIT_LOG"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/structural_timeline.py",
+      "api_prefixes": [
+        "/structural-timeline"
+      ],
+      "snowflake_object_refs": [
+        "MIP.MART.V_STRUCTURAL_TIMELINE_",
+        "MIP.MART.V_STRUCTURAL_TIMELINE_EVENTS",
+        "MIP.MART.V_STRUCTURAL_TIMELINE_LEVELS",
+        "MIP.MART.V_STRUCTURAL_TIMELINE_PRICE",
+        "MIP.MART.V_STRUCTURAL_TIMELINE_PROPOSALS",
+        "MIP.MART.V_STRUCTURAL_TIMELINE_SETUPS",
+        "MIP.MART.V_STRUCTURAL_TIMELINE_SUMMARY",
+        "MIP.MART.V_STRUCTURAL_TRAINING_SYMBOL"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/structural_training.py",
+      "api_prefixes": [
+        "/structural-training"
+      ],
+      "snowflake_object_refs": [
+        "MIP.MART.V_STRUCTURAL_TRAINING_",
+        "MIP.MART.V_STRUCTURAL_TRAINING_DETAIL",
+        "MIP.MART.V_STRUCTURAL_TRAINING_EXAMPLES",
+        "MIP.MART.V_STRUCTURAL_TRAINING_FAILURE_DIST",
+        "MIP.MART.V_STRUCTURAL_TRAINING_LEADERBOARD",
+        "MIP.MART.V_STRUCTURAL_TRAINING_SUMMARY",
+        "MIP.MART.V_STRUCTURAL_TRAINING_SYMBOL",
+        "MIP.MART.V_STRUCTURAL_TRAINING_TREND"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/symbol_tracker.py",
+      "api_prefixes": [
+        "/symbol-tracker"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.APP_CONFIG",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.APP.RECOMMENDATION_OUTCOMES",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.LIVE.LIVE_ACTIONS",
+        "MIP.LIVE.LIVE_ORDERS",
+        "MIP.LIVE.LIVE_PORTFOLIO_CONFIG",
+        "MIP.MART.MARKET_BARS",
+        "MIP.MART.V_NEWS_AGG_LATEST"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/tape_observer.py",
+      "api_prefixes": [
+        "/observation/tape"
+      ],
+      "snowflake_object_refs": []
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/today.py",
+      "api_prefixes": [],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.MORNING_BRIEF",
+        "MIP.AGENT_OUT.ORDER_PROPOSALS",
+        "MIP.APP.MIP_AUDIT_LOG",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.APP.RECOMMENDATION_OUTCOMES",
+        "MIP.APP.V_SIGNALS_ELIGIBLE_TODAY",
+        "MIP.LIVE.BROKER_SNAPSHOTS",
+        "MIP.LIVE.LIVE_PORTFOLIO_CONFIG",
+        "MIP.MART.V_TRUSTED_SIGNAL_POLICY"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/training.py",
+      "api_prefixes": [
+        "/training"
+      ],
+      "snowflake_object_refs": [
+        "MIP.APP.APP_CONFIG",
+        "MIP.APP.HORIZON_DEFINITION",
+        "MIP.APP.INGEST_UNIVERSE",
+        "MIP.APP.PATTERN_DEFINITION",
+        "MIP.APP.RECOMMENDATION_LOG",
+        "MIP.APP.RECOMMENDATION_OUTCOMES",
+        "MIP.APP.TRAINING_GATE_PARAMS",
+        "MIP.MART.MARKET_BARS",
+        "MIP.MART.V_INTRADAY_EXCURSION_STATS",
+        "MIP.MART.V_INTRADAY_PATTERN_STABILITY",
+        "MIP.MART.V_INTRADAY_PIPELINE_STATUS",
+        "MIP.MART.V_INTRADAY_TRUST_SCOREBOARD",
+        "MIP.MART.V_PATTERN_METADATA_UI",
+        "MIP.MART.V_SHORT_RESEARCH_EVIDENCE_STAGE",
+        "MIP.MART.V_TRAINING_DIGEST_SNAPSHOT_SYMBOL"
+      ]
+    },
+    {
+      "file": "MIP/apps/mip_ui_api/app/routers/training_digest.py",
+      "api_prefixes": [
+        "/training/digest"
+      ],
+      "snowflake_object_refs": [
+        "MIP.AGENT_OUT.TRAINING_DIGEST_NARRATIVE",
+        "MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT"
+      ]
+    }
+  ]
+}

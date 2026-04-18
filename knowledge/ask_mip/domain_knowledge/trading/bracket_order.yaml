@@ -1,0 +1,27 @@
+artifact_id: domain_bracket_order
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+topic_id: bracket_order
+category: trading_basics
+title: Bracket orders
+plain_language_explanation: >
+  A bracket order groups an entry with protective exits — typically a take-profit and
+  stop-loss — so risk is bounded around the entry fill.
+deeper_explanation: >
+  Brokers may model brackets as OCA (one-cancels-all) children. MIP live realism settings
+  affect how proposals map to bracket constraints.
+related_mip_concepts:
+  - Live portfolio config and viability checks
+examples:
+  - Buy stock with stop 5% below and target 8% above entry
+cautions:
+  - General markets education; IBKR-specific behavior may differ by product.
+common_user_questions:
+  - What is a bracket?
+retrieval_aliases:
+  - bracket
+  - bracket order
+  - take profit and stop
+  - oca

@@ -1,0 +1,24 @@
+artifact_id: page_intraday_health
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: intraday_health
+page_title: Intraday Pipeline Health
+route: /intraday/health
+purpose: Operational health of intraday data feeds, jobs, and pipeline stages.
+target_user: operator_engineer
+business_questions_answered:
+  - Is the intraday pipeline healthy right now?
+main_workflows:
+  - Read status tiles and logs; escalate to Debug/Runs.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /debug
+  - /runs
+refresh_behavior: Short polling or manual refresh.
+dependencies: []
+caveats: []
+known_issues: []
+linked_backend_objects: []

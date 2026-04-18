@@ -25,7 +25,20 @@ _DIAGNOSIS_CUES = (
     "disagree",
     "contradict",
 )
-_TRADING_CUES = ("trading", "slippage", "gtc", "exposure", "volatility", "catalyst")
+_TRADING_CUES = (
+    "trading",
+    "slippage",
+    "gtc",
+    "exposure",
+    "volatility",
+    "catalyst",
+    "bracket",
+    "stop loss",
+    "take profit",
+    "spread",
+    "limit order",
+    "market order",
+)
 _FOLLOW_UP_CUES = ("can you clarify", "explain more", "what about", "and for")
 
 

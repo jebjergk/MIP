@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/domain_knowledge_pack.schema.json",
+  "title": "DomainKnowledgePack",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "topic_id",
+    "category",
+    "title",
+    "plain_language_explanation"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "topic_id": { "type": "string" },
+    "category": { "type": "string" },
+    "title": { "type": "string" },
+    "plain_language_explanation": { "type": "string" },
+    "deeper_explanation": { "type": "string" },
+    "related_mip_concepts": { "type": "array", "items": { "type": "string" } },
+    "examples": { "type": "array", "items": { "type": "string" } },
+    "cautions": { "type": "array", "items": { "type": "string" } },
+    "common_user_questions": { "type": "array", "items": { "type": "string" } },
+    "retrieval_aliases": { "type": "array", "items": { "type": "string" } }
+  }
+}

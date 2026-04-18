@@ -1,0 +1,42 @@
+artifact_id: wf_proposal_to_execution
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+workflow_id: proposal_to_execution
+name: Proposal through viability to execution
+business_purpose: >
+  Translate an approved or candidate trade proposal through committee/viability checks
+  and broker-realism constraints into executable orders.
+start_conditions: Active live portfolio with valid adapter configuration.
+steps:
+  - Proposal generation from recommendations
+  - Committee and risk viability scoring
+  - Bracket and sizing realism checks
+  - Order submission and broker acknowledgement
+dependent_objects:
+  - MIP.AGENT_OUT.ORDER_PROPOSALS
+  - MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+user_visible_outputs:
+  - Live Portfolio Activity
+  - Live Portfolio Config drift status
+common_questions:
+  - Why did my proposal fail viability?
+failure_points:
+  - Notional limits
+  - Whole-share constraints
+  - Slippage or bracket calibration mismatch
+caveats:
+  - Broker truth may lag UI during session interruptions.
+related_pages:
+  - live_portfolio_activity
+  - live_portfolio_config
+  - decision_console
+retrieval_keywords:
+  - proposal
+  - execution
+  - viability
+  - committee
+  - bracket
+  - ibkr
+  - live

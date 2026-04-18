@@ -24,6 +24,7 @@ import {
 } from '../components/lic/licDecisionPresentation'
 import { buildVisibleTilePresentation } from '../components/lic/licTilePresentation'
 import './LiveIntelligenceCockpit.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 /** Prevents a single throw from blanking the whole app when API field shapes drift. */
 class LicErrorBoundary extends Component {
@@ -288,6 +289,7 @@ function slimPortfolioContextForStep(portfolioContext) {
 }
 
 function LiveIntelligenceCockpitInner() {
+  useAskMipPageRuntime('live_intelligence', ['lic_top_tile', 'lic_position_radar', 'lic_feed'])
   const { formatSymbolLabel } = useSymbolMeta()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

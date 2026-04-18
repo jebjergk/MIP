@@ -1,0 +1,26 @@
+artifact_id: page_performance_dashboard
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: performance_dashboard
+page_title: Performance Dashboard
+route: /performance-dashboard
+purpose: Portfolio and strategy performance analytics, KPIs, and historical outcomes.
+target_user: trader_operator
+business_questions_answered:
+  - How is the portfolio performing vs expectations?
+main_workflows:
+  - Select portfolio/strategy; read charts and tables.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /cockpit
+  - /symbol-tracker
+refresh_behavior: API-driven on filters and date range.
+dependencies:
+  - performance mart / API
+caveats:
+  - Sim vs live labels must be read from UI context.
+known_issues: []
+linked_backend_objects: []

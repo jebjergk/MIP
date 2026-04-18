@@ -1,0 +1,24 @@
+artifact_id: page_home
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: home
+page_title: Home
+route: /home
+purpose: Portfolio-oriented home surface for quick navigation and context (legacy/alternate entry).
+target_user: trader_operator
+business_questions_answered:
+  - Where do I start in MIP?
+main_workflows:
+  - Navigate to Cockpit or detail pages.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /cockpit
+refresh_behavior: On load.
+dependencies: []
+caveats:
+  - Many users land on Cockpit directly; behavior may overlap with Cockpit.
+known_issues: []
+linked_backend_objects: []

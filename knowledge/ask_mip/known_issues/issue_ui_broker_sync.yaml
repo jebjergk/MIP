@@ -1,0 +1,23 @@
+artifact_id: issue_ui_broker_sync
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+issue_id: ui_broker_interpretation_lag
+title: Broker truth vs UI interpretation can diverge briefly
+description: >
+  During active sessions, broker fills and position snapshots may arrive out of order
+  with respect to local UI state, causing apparent mismatches until refresh completes.
+affected_areas:
+  - live_portfolio_activity
+  - symbol_tracker
+symptoms: >
+  Order status in UI differs from IBKR for a short window; notional looks wrong until reload.
+likely_user_questions:
+  - Why doesn't the UI match my broker?
+cause: Latency, partial websocket updates, or manual broker-side changes.
+workaround: Refresh Live Portfolio Activity; verify against broker blotter as source of truth.
+issue_status: known_limitation
+user_safe_summary: >
+  If something looks off on live activity, refresh and compare to your broker —
+  the broker is the final authority for fills and positions.

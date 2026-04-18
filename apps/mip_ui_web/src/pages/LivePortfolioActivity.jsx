@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { API_BASE } from '../config/apiBase'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LivePortfolioActivity.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 function fmtTs(ts) {
   if (!ts) return '—'
@@ -211,6 +212,9 @@ function pickBetterProtection(current, candidate) {
 }
 
 export default function LivePortfolioActivity() {
+  useAskMipPageRuntime('live_portfolio_activity', ['live_orders', 'live_positions', 'live_fills'], {
+    session_mode: 'live',
+  })
   const { formatSymbolLabel } = useSymbolMeta()
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -223,6 +227,7 @@ export default function LivePortfolioActivity() {
   const [ordersView, setOrdersView] = useState('active')
   const [executionsLimit, setExecutionsLimit] = useState(60)
   const [snapshotLookbackDays, setSnapshotLookbackDays] = useState(14)
+  const [includeLegacyOverview, setIncludeLegacyOverview] = useState(false)
   const [streamActionId, setStreamActionId] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
@@ -243,6 +248,7 @@ export default function LivePortfolioActivity() {
         order_limit: String(ordersLimit),
         execution_limit: String(executionsLimit),
         snapshot_lookback_days: String(snapshotLookbackDays),
+        include_legacy: includeLegacyOverview ? 'true' : 'false',
       })
       const resp = await fetch(`${API_BASE}/live/activity/overview?${params.toString()}`)
       if (!resp.ok) throw new Error('Could not load live activity. Please refresh.')
@@ -253,7 +259,7 @@ export default function LivePortfolioActivity() {
     } finally {
       setLoading(false)
     }
-  }, [ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays])
+  }, [ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays, includeLegacyOverview])
 
   useEffect(() => {
     load()
@@ -706,6 +712,18 @@ export default function LivePortfolioActivity() {
         <div>
           <h2>Live Portfolio Activity</h2>
           <p>Broker-truth operations console for the linked IBKR portfolio.</p>
+          {overview?.ui_hints?.live_structural_only ? (
+            <label className="lpa-legacy-toggle">
+              <input
+                type="checkbox"
+                checked={includeLegacyOverview}
+                onChange={(e) => setIncludeLegacyOverview(e.target.checked)}
+              />
+              <span>
+                Show legacy pattern-era pending rows (<code>include_legacy</code>)
+              </span>
+            </label>
+          ) : null}
         </div>
         <button className="lpa-btn" disabled={busy === 'refresh'} onClick={refreshBroker}>
           {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
@@ -844,6 +862,11 @@ export default function LivePortfolioActivity() {
                       <td>
                         <div><b>{formatSymbolLabel(d.symbol, d.market_type)}</b> ({d.side})</div>
                         <div>Intent: {d.action_intent || 'ENTRY'}{d.exit_type ? ` (${d.exit_type})` : ''}</div>
+                        {d.live_intent_kind ? (
+                          <div>
+                            <span className="lpa-badge lpa-badge--intent-kind">{d.live_intent_kind}</span>
+                          </div>
+                        ) : null}
                         {d.structural ? (
                           <div className="lpa-structural-badge">
                             <span className="lpa-badge lpa-badge--structural">{d.structural.setup_family}</span>

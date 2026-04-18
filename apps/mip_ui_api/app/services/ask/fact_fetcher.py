@@ -17,6 +17,7 @@ from app.db import get_connection
 logger = logging.getLogger(__name__)
 
 _SAFE_SYMBOL = re.compile(r"^[A-Za-z0-9.\-]{1,32}$")
+_SAFE_MARKET = re.compile(r"^[A-Z0-9_]{2,16}$")
 
 
 def _sanitize_symbol(symbol: str | None) -> str | None:
@@ -26,6 +27,60 @@ def _sanitize_symbol(symbol: str | None) -> str | None:
     if not _SAFE_SYMBOL.match(s):
         return None
     return s
+
+
+def _sanitize_market_type(market_type: str | None) -> str | None:
+    if not market_type:
+        return None
+    s = str(market_type).strip().upper()
+    if not _SAFE_MARKET.match(s):
+        return None
+    return s
+
+
+def fetch_training_digest_facts(symbol: str | None, market_type: str | None) -> dict[str, Any] | None:
+    """Latest SYMBOL_TRAINING digest row (metadata only; JSON may be large — trim)."""
+    sym = _sanitize_symbol(symbol)
+    mt = _sanitize_market_type(market_type)
+    if not sym or not mt:
+        return None
+    conn = get_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+              s.SYMBOL,
+              s.MARKET_TYPE,
+              s.PATTERN_ID,
+              s.AS_OF_TS,
+              s.RUN_ID,
+              s.CREATED_AT
+            FROM MIP.AGENT_OUT.TRAINING_DIGEST_SNAPSHOT s
+            WHERE s.SCOPE = 'SYMBOL_TRAINING'
+              AND s.SYMBOL = %s
+              AND s.MARKET_TYPE = %s
+            ORDER BY s.CREATED_AT DESC
+            LIMIT 1
+            """,
+            (sym, mt),
+        )
+        row = cur.fetchone()
+        if not row or not cur.description:
+            return None
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, row))
+    except Exception:
+        logger.debug("fetch_training_digest_facts failed (non-fatal)", exc_info=True)
+        return None
+    finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        conn.close()
 
 
 def fetch_live_portfolio_facts(portfolio_id: int | None) -> dict[str, Any] | None:
@@ -76,16 +131,19 @@ def fetch_ask_facts(
     portfolio_id: int | None,
     symbol: str | None,
     session_mode: str | None = None,
+    market_type: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """
     Returns (facts_dict, lookup_attempted).
     facts_dict may be empty; never raises for Snowflake errors.
     """
     sym = _sanitize_symbol(symbol)
+    mt = _sanitize_market_type(market_type)
     payload: dict[str, Any] = {
         "session_mode": session_mode,
         "portfolio": None,
         "symbol": sym,
+        "market_type": mt,
         "note": "Snowflake snapshot for current context; values are factual rows, not advice.",
     }
     attempted = False
@@ -94,7 +152,11 @@ def fetch_ask_facts(
         attempted = True
     if pf:
         payload["portfolio"] = pf
-    # Reserved: symbol-level mart row (add when a stable narrow view exists)
+    if sym and mt:
+        td = fetch_training_digest_facts(sym, mt)
+        attempted = True
+        if td:
+            payload["training_digest_latest"] = td
     if sym and portfolio_id:
         payload["symbol_context"] = {"symbol": sym, "portfolio_id": portfolio_id}
     return payload, attempted

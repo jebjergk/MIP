@@ -1,3 +1,12 @@
+---
+guide_section_id: big-picture
+page_id: null
+artifact_refs:
+  - wf_signal_to_recommendation
+handbook_refs:
+  - MIP/docs/TRAINING_HANDBOOK/01-philosophy.md
+---
+
 # 1. The Big Picture
 
 MIP is an automated market intelligence platform.

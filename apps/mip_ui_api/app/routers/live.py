@@ -53,20 +53,21 @@ from app.services.live_intelligence.structural_routing import (
     is_structural_live_action,
 )
 from app.services.live_intelligence.live_intent_policy import (
-    CONFIG_LIVE_STRUCTURAL_ONLY,
-    ENV_LIVE_STRUCTURAL_ONLY,
     assert_legacy_execute_forbidden,
     assert_legacy_order_proposals_import_allowed,
     assert_live_committee_policy,
-    env_structural_only_flag,
     live_intent_kind_from_row,
+    live_structural_only_enabled_cur,
     overview_excluded_intent_kinds,
-    parse_structural_only_config,
     structural_proposal_minimum_contract_violations,
 )
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
+
+# Structural committee is deterministic (not multi-LLM). Pause briefly between SSE role lines
+# so the UI shows each specialist in turn instead of one instantaneous burst.
+_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC = float(os.environ.get("MIP_STRUCTURAL_COMMITTEE_SSE_DELAY_SEC", "0.38"))
 
 
 class PmAcceptRequest(BaseModel):
@@ -1523,18 +1524,7 @@ def _read_app_config(cur, keys: list[str]) -> dict[str, str]:
 
 def _live_structural_only_enabled(cur) -> bool:
     """Deployment flag: when true, legacy live proposal import and legacy committee are forbidden."""
-    cfg = _read_app_config(cur, [CONFIG_LIVE_STRUCTURAL_ONLY])
-    app_val = parse_structural_only_config(cfg.get(CONFIG_LIVE_STRUCTURAL_ONLY), default=True)
-    env_val = env_structural_only_flag()
-    if env_val is not None and env_val != app_val:
-        _log.warning(
-            "%s=%s disagrees with APP_CONFIG %s=%s; using APP_CONFIG value.",
-            ENV_LIVE_STRUCTURAL_ONLY,
-            env_val,
-            CONFIG_LIVE_STRUCTURAL_ONLY,
-            app_val,
-        )
-    return app_val
+    return live_structural_only_enabled_cur(cur)
 
 
 def _parse_bool_config(value: str | None, default: bool) -> bool:
@@ -9592,16 +9582,42 @@ def stream_live_trade_committee_prompt(
                 is_structural = is_structural_live_action(action)
 
                 if is_structural:
-                    out_queue.put(("agent_turn", {
-                        "action_id": action_id,
-                        "role": "StructuralCommittee",
-                        "type": "agent_turn",
-                        "summary": f"Running structural committee for {action.get('SYMBOL')} ({action.get('SETUP_FAMILY')} {action.get('DIRECTION')})...",
-                    }))
+                    sym = action.get("SYMBOL") or "—"
+                    fam = action.get("SETUP_FAMILY") or "—"
+                    direction = action.get("DIRECTION") or "—"
+                    out_queue.put(
+                        (
+                            "agent_turn",
+                            {
+                                "action_id": action_id,
+                                "role": "Chair",
+                                "type": "agent_turn",
+                                "summary": (
+                                    f"Opening structural review for {sym} ({fam} {direction}). "
+                                    "Each specialist reports in turn (deterministic gates, not a live model debate)."
+                                ),
+                            },
+                        )
+                    )
+                    time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
                     struct_verdict = run_structural_committee(dict(action))
                     role_outputs = list(struct_verdict.pop("role_outputs", None) or [])
-                    result["outputs"] = role_outputs
+                    result["outputs"] = []
                     result["verdict"] = struct_verdict
+                    for out in role_outputs:
+                        out_queue.put(
+                            (
+                                "role_summary",
+                                {
+                                    "action_id": action_id,
+                                    "role": out.get("role"),
+                                    "stance": out.get("stance"),
+                                    "confidence": out.get("confidence"),
+                                    "summary": out.get("summary"),
+                                },
+                            )
+                        )
+                        time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
                 elif not _live_structural_only_enabled(cur):
                     context = _build_action_decision_context(cur, action)
 
@@ -9678,7 +9694,7 @@ def stream_revalidate_prompt(
             if is_structural_live_action(action):
                 sv = run_structural_committee(dict(action))
                 role_outputs = list(sv.pop("role_outputs", None) or [])
-                for out in role_outputs:
+                for i, out in enumerate(role_outputs):
                     yield _sse_event(
                         "role_summary",
                         {
@@ -9689,6 +9705,8 @@ def stream_revalidate_prompt(
                             "summary": out.get("summary"),
                         },
                     )
+                    if i + 1 < len(role_outputs):
+                        time.sleep(_STRUCTURAL_COMMITTEE_SSE_ROLE_DELAY_SEC)
                 yield _sse_event(
                     "final",
                     {
@@ -13515,7 +13533,9 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
             if not proposal_id or not symbol:
                 continue
 
-            _viol = structural_proposal_minimum_contract_violations(p)
+            p_norm = dict(p)
+            p_norm["SETUP_NARRATIVE"] = p_norm.get("SETUP_NARRATIVE") or _build_setup_narrative(p_norm)
+            _viol = structural_proposal_minimum_contract_violations(p_norm)
             if _viol:
                 skipped_contract_violations += 1
                 continue
@@ -13568,7 +13588,7 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
             max_hold = p.get("MAX_HOLD_BARS")
             hold_character = _derive_hold_character(max_hold)
             dominant_failure = _extract_dominant_failure(p.get("FAILURE_MODE_DISTRIBUTION"))
-            narrative = _build_setup_narrative(p)
+            narrative = str(p_norm.get("SETUP_NARRATIVE") or "")
             side = "BUY" if direction == "LONG" else "SELL"
             action_intent = "ENTRY"
 

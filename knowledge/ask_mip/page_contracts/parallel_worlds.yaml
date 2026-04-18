@@ -1,0 +1,25 @@
+artifact_id: page_parallel_worlds
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: parallel_worlds
+page_title: Parallel Worlds
+route: /parallel-worlds
+purpose: Interpretive intelligence comparing scenarios or counterfactual paths; informative, not a hard gate alone.
+target_user: researcher_trader
+business_questions_answered:
+  - What alternate paths or interpretations does MIP surface?
+main_workflows:
+  - Review parallel world outputs alongside primary signals.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /decision-console
+  - /symbol-tracker
+refresh_behavior: On load.
+dependencies: []
+caveats:
+  - Evidence is interpretive; combine with trust, committee, and live checks.
+known_issues: []
+linked_backend_objects: []

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { API_BASE } from '../config/apiBase'
 import './LivePortfolioConfig.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 function pctToRatio(v) {
   if (v === '' || v == null) return null
@@ -38,6 +39,9 @@ const EMPTY_FORM = {
 }
 
 export default function LivePortfolioConfig() {
+  useAskMipPageRuntime('live_portfolio_config', ['live_portfolio_config_form', 'live_portfolio_config_list'], {
+    session_mode: 'live',
+  })
   const [configs, setConfigs] = useState([])
   const [wiringById, setWiringById] = useState({})
   const [view, setView] = useState('list') // list | create | edit

@@ -15,8 +15,22 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.db import get_connection, fetch_all, serialize_rows
+from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
 
 router = APIRouter(prefix="/market-timeline", tags=["market-timeline"])
+
+_PROPOSAL_COUNTS_EMPTY_CTE = """
+        proposal_counts as (
+            select
+                cast(null as varchar) as SYMBOL,
+                cast(null as varchar) as MARKET_TYPE,
+                0 as proposal_count,
+                0 as today_proposal_count,
+                0 as latest_bar_proposal_count,
+                0 as actionable_proposal_count
+            where false
+        ),
+"""
 
 
 # =============================================================================
@@ -157,41 +171,12 @@ def get_overview(
             market_filter = "and b.MARKET_TYPE = %s"
             params.append(market_type)
         batch_date = latest_ts.date() if hasattr(latest_ts, "date") else latest_ts
-        
-        # Symbols with bars in window, restricted to enabled INGEST_UNIVERSE (hidden when disabled)
-        sql = f"""
-        with enabled_univ as (
-            select
-                upper(replace(iu.SYMBOL, '/', '')) as sym_key,
-                upper(iu.MARKET_TYPE) as market_type_key
-            from MIP.APP.INGEST_UNIVERSE iu
-            where coalesce(iu.IS_ENABLED, true)
-              and iu.INTERVAL_MINUTES = %s
-        ),
-        symbols_in_window as (
-            select distinct b.SYMBOL, b.MARKET_TYPE
-            from MIP.MART.MARKET_BARS b
-            inner join enabled_univ u
-              on upper(replace(b.SYMBOL, '/', '')) = u.sym_key
-             and upper(b.MARKET_TYPE) = u.market_type_key
-            where b.INTERVAL_MINUTES = %s
-              and b.TS >= %s
-              {market_filter}
-        ),
-        signal_counts as (
-            select 
-                r.SYMBOL,
-                r.MARKET_TYPE,
-                count(*) as signal_count,
-                count(case when r.TS::date = %s then 1 end) as latest_bar_signal_count
-            from MIP.APP.RECOMMENDATION_LOG r
-            join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = r.PATTERN_ID
-            where r.TS >= %s
-              and r.INTERVAL_MINUTES = %s
-              and pd.PATTERN_TYPE = 'MOMENTUM'
-            group by r.SYMBOL, r.MARKET_TYPE
-        ),
-        proposal_counts as (
+
+        retire_order_proposals = live_structural_only_enabled_cur(cur)
+        if retire_order_proposals:
+            proposal_counts_sql = _PROPOSAL_COUNTS_EMPTY_CTE
+        else:
+            proposal_counts_sql = f"""        proposal_counts as (
             select
                 p.SYMBOL,
                 p.MARKET_TYPE,
@@ -227,7 +212,42 @@ def get_overview(
                        and coalesce(rl.DETAILS:direction::string, '') = 'BULLISH'))
               {"and p.PORTFOLIO_ID = %s" if portfolio_id else ""}
             group by p.SYMBOL, p.MARKET_TYPE
+        ),"""
+
+        # Symbols with bars in window, restricted to enabled INGEST_UNIVERSE (hidden when disabled)
+        sql = f"""
+        with enabled_univ as (
+            select
+                upper(replace(iu.SYMBOL, '/', '')) as sym_key,
+                upper(iu.MARKET_TYPE) as market_type_key
+            from MIP.APP.INGEST_UNIVERSE iu
+            where coalesce(iu.IS_ENABLED, true)
+              and iu.INTERVAL_MINUTES = %s
         ),
+        symbols_in_window as (
+            select distinct b.SYMBOL, b.MARKET_TYPE
+            from MIP.MART.MARKET_BARS b
+            inner join enabled_univ u
+              on upper(replace(b.SYMBOL, '/', '')) = u.sym_key
+             and upper(b.MARKET_TYPE) = u.market_type_key
+            where b.INTERVAL_MINUTES = %s
+              and b.TS >= %s
+              {market_filter}
+        ),
+        signal_counts as (
+            select 
+                r.SYMBOL,
+                r.MARKET_TYPE,
+                count(*) as signal_count,
+                count(case when r.TS::date = %s then 1 end) as latest_bar_signal_count
+            from MIP.APP.RECOMMENDATION_LOG r
+            join MIP.APP.PATTERN_DEFINITION pd on pd.PATTERN_ID = r.PATTERN_ID
+            where r.TS >= %s
+              and r.INTERVAL_MINUTES = %s
+              and pd.PATTERN_TYPE = 'MOMENTUM'
+            group by r.SYMBOL, r.MARKET_TYPE
+        ),
+        __PROPOSAL_COUNTS_CTE__
         live_trade_counts as (
             select
                 upper(o.SYMBOL) as SYMBOL,
@@ -306,7 +326,8 @@ def get_overview(
         {"where coalesce(pc.proposal_count, 0) + coalesce(ltc.live_trade_count, 0) + coalesce(stc.sim_trade_count, 0) > 0" if portfolio_id else ""}
         order by s.MARKET_TYPE, s.SYMBOL
         """
-        
+        sql = sql.replace("__PROPOSAL_COUNTS_CTE__", proposal_counts_sql)
+
         # Build params list
         query_params = [
             interval_minutes,  # enabled_univ.INTERVAL_MINUTES
@@ -319,14 +340,17 @@ def get_overview(
             batch_date,        # signal_counts latest bar
             window_start,      # signal_counts
             interval_minutes,  # signal_counts
-            batch_date,        # proposal_counts latest bar
-            batch_date,        # proposal_counts actionable batch date
         ])
-        query_params.extend([
-            window_start,      # proposal_counts
-        ])
-        if portfolio_id:
-            query_params.append(portfolio_id)
+        if not retire_order_proposals:
+            query_params.extend(
+                [
+                    batch_date,  # proposal_counts latest bar
+                    batch_date,  # proposal_counts actionable batch date
+                    window_start,  # proposal_counts window
+                ]
+            )
+            if portfolio_id:
+                query_params.append(portfolio_id)
         query_params.append(batch_date)  # live_trade_counts latest bar
         query_params.append(window_start)  # live_trade_counts
         if portfolio_id:
@@ -602,6 +626,8 @@ def get_detail(
                 bar_ts_anchors.append(datetime.fromisoformat(str(ts_raw)))
             except Exception:
                 continue
+
+        retire_order_proposals_detail = live_structural_only_enabled_cur(cur)
         
         # Get signal events
         signals = []
@@ -636,9 +662,9 @@ def get_detail(
                     "score": float(row.get("SCORE")) if row.get("SCORE") is not None else None,
                 })
         
-        # Get proposal events (research proposal source)
+        # Get proposal events (research proposal source; retired under LIVE_STRUCTURAL_ONLY)
         proposals = []
-        if window_start:
+        if window_start and not retire_order_proposals_detail:
             proposal_sql = """
                 select 
                     p.PROPOSAL_ID,
@@ -687,7 +713,7 @@ def get_detail(
                     "event_source": "ORDER_PROPOSALS",
                 })
 
-        # Get live action events (committee-based proposal lifecycle)
+        # Get live action events (committee-based lifecycle; structural-only avoids ORDER_PROPOSALS join)
         live_actions = []
         if window_start:
             def _align_to_prev_bar(ts_value):
@@ -698,41 +724,71 @@ def get_detail(
                     return max(candidates)
                 return min(bar_ts_anchors)
 
-            live_action_sql = """
-                select
-                    la.ACTION_ID,
-                    la.PROPOSAL_ID,
-                    la.PORTFOLIO_ID,
-                    la.CREATED_AT,
-                    la.VALIDITY_WINDOW_END,
-                    la.STATUS,
-                    la.SIDE,
-                    la.COMMITTEE_STATUS,
-                    la.COMMITTEE_VERDICT,
-                    la.REVALIDATION_OUTCOME,
-                    la.REASON_CODES,
-                    op.SIGNAL_TS as SOURCE_SIGNAL_TS,
-                    op.PROPOSED_AT as SOURCE_PROPOSED_AT
-                from MIP.LIVE.LIVE_ACTIONS la
-                join MIP.AGENT_OUT.ORDER_PROPOSALS op
-                  on op.PROPOSAL_ID = la.PROPOSAL_ID
-                join MIP.APP.RECOMMENDATION_LOG rl on rl.RECOMMENDATION_ID = op.RECOMMENDATION_ID
-                join MIP.APP.PATTERN_DEFINITION pdr on pdr.PATTERN_ID = rl.PATTERN_ID
-                where upper(la.SYMBOL) = upper(%s)
-                  and coalesce(la.ASSET_CLASS, 'STOCK') = %s
-                  and la.CREATED_AT >= %s
-                  and (pdr.PATTERN_TYPE = 'MOMENTUM'
-                       or (pdr.PATTERN_TYPE = 'MEAN_REVERSION'
-                           and coalesce(rl.DETAILS:direction::string, '') = 'BULLISH'))
-                  and (
-                    la.STATUS not in (
-                      'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
-                      'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
-                      'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
-                    )
-                    or coalesce(la.VALIDITY_WINDOW_END, la.CREATED_AT) >= current_timestamp()
-                  )
-            """
+            if retire_order_proposals_detail:
+                live_action_sql = """
+                    select
+                        la.ACTION_ID,
+                        la.PROPOSAL_ID,
+                        la.PORTFOLIO_ID,
+                        la.CREATED_AT,
+                        la.VALIDITY_WINDOW_END,
+                        la.STATUS,
+                        la.SIDE,
+                        la.COMMITTEE_STATUS,
+                        la.COMMITTEE_VERDICT,
+                        la.REVALIDATION_OUTCOME,
+                        la.REASON_CODES,
+                        cast(null as timestamp_ntz) as SOURCE_SIGNAL_TS,
+                        la.CREATED_AT as SOURCE_PROPOSED_AT
+                    from MIP.LIVE.LIVE_ACTIONS la
+                    where upper(la.SYMBOL) = upper(%s)
+                      and coalesce(la.ASSET_CLASS, 'STOCK') = %s
+                      and la.CREATED_AT >= %s
+                      and (
+                        la.STATUS not in (
+                          'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
+                          'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
+                          'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
+                        )
+                        or coalesce(la.VALIDITY_WINDOW_END, la.CREATED_AT) >= current_timestamp()
+                      )
+                """
+            else:
+                live_action_sql = """
+                    select
+                        la.ACTION_ID,
+                        la.PROPOSAL_ID,
+                        la.PORTFOLIO_ID,
+                        la.CREATED_AT,
+                        la.VALIDITY_WINDOW_END,
+                        la.STATUS,
+                        la.SIDE,
+                        la.COMMITTEE_STATUS,
+                        la.COMMITTEE_VERDICT,
+                        la.REVALIDATION_OUTCOME,
+                        la.REASON_CODES,
+                        op.SIGNAL_TS as SOURCE_SIGNAL_TS,
+                        op.PROPOSED_AT as SOURCE_PROPOSED_AT
+                    from MIP.LIVE.LIVE_ACTIONS la
+                    join MIP.AGENT_OUT.ORDER_PROPOSALS op
+                      on op.PROPOSAL_ID = la.PROPOSAL_ID
+                    join MIP.APP.RECOMMENDATION_LOG rl on rl.RECOMMENDATION_ID = op.RECOMMENDATION_ID
+                    join MIP.APP.PATTERN_DEFINITION pdr on pdr.PATTERN_ID = rl.PATTERN_ID
+                    where upper(la.SYMBOL) = upper(%s)
+                      and coalesce(la.ASSET_CLASS, 'STOCK') = %s
+                      and la.CREATED_AT >= %s
+                      and (pdr.PATTERN_TYPE = 'MOMENTUM'
+                           or (pdr.PATTERN_TYPE = 'MEAN_REVERSION'
+                               and coalesce(rl.DETAILS:direction::string, '') = 'BULLISH'))
+                      and (
+                        la.STATUS not in (
+                          'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
+                          'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW','PM_ACCEPTED','COMPLIANCE_APPROVED',
+                          'INTENT_SUBMITTED','INTENT_APPROVED','REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
+                        )
+                        or coalesce(la.VALIDITY_WINDOW_END, la.CREATED_AT) >= current_timestamp()
+                      )
+                """
             params = [symbol, market_type, window_start]
             if portfolio_id:
                 live_action_sql += " and la.PORTFOLIO_ID = %s"

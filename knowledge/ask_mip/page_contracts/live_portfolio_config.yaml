@@ -1,0 +1,27 @@
+artifact_id: page_live_portfolio_config
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: live_portfolio_config
+page_title: Live Portfolio Config
+route: /live-portfolio-config
+purpose: Configure live/paper adapter mode, risk limits, slippage assumptions, and portfolio linkage to IBKR.
+target_user: trader_operator
+business_questions_answered:
+  - What risk caps and realism settings apply to live trading?
+main_workflows:
+  - Edit limits; save; verify drift status.
+filters_inputs:
+  - portfolio_id
+sections: []
+linked_pages:
+  - /live-portfolio-activity
+refresh_behavior: On save and reload.
+dependencies:
+  - MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+caveats:
+  - Changes affect future proposals and sizing, not historical sim.
+known_issues: []
+linked_backend_objects:
+  - MIP.LIVE.LIVE_PORTFOLIO_CONFIG

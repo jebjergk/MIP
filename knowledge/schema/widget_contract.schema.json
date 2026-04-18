@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/widget_contract.schema.json",
+  "title": "WidgetContract",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "widget_id",
+    "page_id",
+    "widget_type",
+    "purpose"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "widget_id": { "type": "string" },
+    "page_id": { "type": "string" },
+    "section_id": { "type": "string" },
+    "visible_label": { "type": "string" },
+    "widget_type": { "type": "string" },
+    "purpose": { "type": "string" },
+    "business_meaning": { "type": "string" },
+    "source_objects": { "type": "array", "items": { "type": "string" } },
+    "logic_summary": { "type": "string" },
+    "lead_text": { "type": "string" },
+    "help_text": { "type": "string" },
+    "interpretation_guidance": { "type": "string" },
+    "edge_cases": { "type": "array", "items": { "type": "string" } },
+    "common_confusions": { "type": "array", "items": { "type": "string" } },
+    "related_widgets": { "type": "array", "items": { "type": "string" } },
+    "related_non_visible_concepts": { "type": "array", "items": { "type": "string" } }
+  }
+}

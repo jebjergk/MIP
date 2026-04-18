@@ -1,0 +1,35 @@
+artifact_id: logic_prepare_exit
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+logic_id: prepare_exit_urgency
+name: Exit urgency (PREPARE / prepare exit)
+category: risk_posture
+purpose: >
+  Diagnostic label on Living Chart indicating elevated exit preparation —
+  tighten monitoring and verify against playbook; not an automatic liquidation order.
+owning_object: symbol_tracker_exit_recommendation
+rule_logic: >
+  Derived from committee posture, live state heuristics, and client-side helpers.
+  Exact numeric thresholds are not fully documented in public artifacts.
+thresholds: See in-app committee and exit helper; do not invent coefficients.
+dependencies:
+  - committee_stance
+  - live session state
+example_trigger_scenarios:
+  - Committee escalates while position is open
+  - Flow quality degrades with adverse move
+common_misunderstandings:
+  - Assuming PREPARE means the system will flatten automatically
+related_pages:
+  - symbol_tracker
+related_widgets:
+  - living_chart_main
+related_metrics:
+  - exit_urgency
+retrieval_keywords:
+  - prepare
+  - exit
+  - urgency
+  - prepare exit

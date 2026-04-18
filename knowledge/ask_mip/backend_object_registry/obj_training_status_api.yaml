@@ -1,0 +1,22 @@
+artifact_id: obj_training_status_api
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+object_id: training_status_api_surface
+object_type: api_aggregate
+object_name: TRAINING_STATUS_UI_AGGREGATE
+schema_database: MIP.APP
+purpose: Aggregated rows served to the Training Status grid via UI API.
+grain: symbol-pattern or as defined by API contract
+key_fields: []
+consumed_by_pages:
+  - training_status
+consumed_by_widgets:
+  - training_status_grid
+refresh_behavior: After training pipeline runs
+related_workflows:
+  - signal_to_recommendation
+notes: >
+  Exact view/table name may vary; treat as logical aggregate for lineage explanations.
+used_by_ask_facts: false

@@ -139,8 +139,8 @@ def _build_artifact_domain_block(artifact_blocks: list[str], domain_blocks: list
     parts: list[str] = []
     if artifact_blocks:
         parts.append("<page_widget_metric_contracts>")
-        for i, block in enumerate(artifact_blocks[:8]):
-            parts.append(f"--- Contract block {i + 1} ---\n{block[:4500]}")
+        for i, block in enumerate(artifact_blocks[:14]):
+            parts.append(f"--- Contract block {i + 1} ---\n{block[:4000]}")
         parts.append("</page_widget_metric_contracts>")
     if domain_blocks:
         parts.append("<domain_knowledge>")
@@ -380,14 +380,24 @@ def resolve_question_v3(
     facts_payload: dict = {}
     used_sf = False
     sf_attempted = False
-    if runtime and (runtime.portfolio_id is not None or runtime.symbol):
+    if runtime and (
+        runtime.portfolio_id is not None or runtime.symbol or runtime.market_type
+    ):
         if intent not in ("trading_concept", "market_research_concept"):
             facts_payload, sf_attempted = fetch_ask_facts(
                 runtime.portfolio_id,
                 runtime.symbol,
                 runtime.session_mode,
+                runtime.market_type,
             )
-            used_sf = bool(sf_attempted and (facts_payload.get("portfolio") or facts_payload.get("symbol")))
+            used_sf = bool(
+                sf_attempted
+                and (
+                    facts_payload.get("portfolio")
+                    or facts_payload.get("training_digest_latest")
+                    or (facts_payload.get("symbol") and facts_payload.get("symbol_context"))
+                )
+            )
 
     facts_block = ""
     if facts_payload and sf_attempted:
@@ -496,4 +506,13 @@ def resolve_question_v3(
         snowflake_fact_lookup=sf_attempted,
         retrieval_source_groups=bundle.source_groups_used,
     )
+    if len(bundle.artifact_sources) < 2 and blended_docs < 0.35:
+        logger.info(
+            "ask_mip_v3 retrieval_gap intent=%s page=%s artifact_sources=%d docs=%.2f question=%s",
+            intent,
+            eff_page,
+            len(bundle.artifact_sources),
+            blended_docs,
+            (question[:160] + "…") if len(question) > 160 else question,
+        )
     return ctx, resolution

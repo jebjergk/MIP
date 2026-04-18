@@ -1,5 +1,10 @@
 # MIP Education Handbook
 
+> **Deprecated for ongoing maintenance.** The active conceptual handbook lives under
+> [`TRAINING_HANDBOOK/`](TRAINING_HANDBOOK/README.md) and is aligned with Ask MIP
+> `handbook_modules` YAML in [`MIP/knowledge/ask_mip/handbook_modules/`](../knowledge/ask_mip/handbook_modules/).
+> This file is kept for reference; prefer the new handbook tree for current architecture and mental models.
+
 A beginner-friendly guide to how MIP works, written for people with no prior knowledge of the platform's internals. Uses plain language, analogies, and visual diagrams throughout.
 
 ---

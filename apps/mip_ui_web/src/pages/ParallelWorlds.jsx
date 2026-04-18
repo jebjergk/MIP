@@ -9,6 +9,7 @@ import {
   AreaChart, Area, BarChart, Bar, Cell,
 } from 'recharts'
 import './ParallelWorlds.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 import TradeReviewTab from './tradeReview/TradeReviewTab'
 
 /* ── Helpers ─────────────────────────────────────────── */
@@ -1084,6 +1085,7 @@ function PortfolioTuningTab({ pid, surfaceData, regimeData, recommendations, onL
 /* ── Main Page ───────────────────────────────────────── */
 
 export default function ParallelWorlds() {
+  useAskMipPageRuntime('parallel_worlds', ['pw_chart', 'pw_trade_review'])
   const [selectedPortfolio, setSelectedPortfolio] = useState(null)
   const [livePortfolios, setLivePortfolios] = useState([])
   const [liveFilterLoaded, setLiveFilterLoaded] = useState(false)

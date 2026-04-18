@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
 
 from app.db import get_connection, fetch_all, serialize_row, serialize_rows
+from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
 
 router = APIRouter(prefix="/learning-ledger", tags=["learning-ledger"])
 
@@ -159,6 +160,17 @@ def _ledger_table_exists(cur) -> bool:
 
 
 def _fetch_run_impact(cur, run_id: str) -> dict:
+    if live_structural_only_enabled_cur(cur):
+        return {
+            "proposal_count": 0,
+            "proposed_count": 0,
+            "approved_count": 0,
+            "executed_count": 0,
+            "avg_target_weight": None,
+            "live_action_count": 0,
+            "live_order_count": 0,
+            "filled_or_partial_count": 0,
+        }
     cur.execute(
         """
         with p as (
@@ -588,9 +600,9 @@ def get_learning_ledger_detail(
             )
             audit_rows = fetch_all(cur)
 
-        # 2) Proposals for run
+        # 2) Proposals for run (ORDER_PROPOSALS retired when LIVE_STRUCTURAL_ONLY)
         proposal_rows = []
-        if effective_run_id:
+        if effective_run_id and not live_structural_only_enabled_cur(cur):
             proposal_wheres = ["RUN_ID_VARCHAR = %s"]
             proposal_params = [effective_run_id]
             if portfolio_id is not None:
@@ -758,23 +770,30 @@ def get_learning_effectiveness(
             rows = fetch_all(cur)
             news_effectiveness = serialize_row(rows[0]) if rows else {}
 
-        proposal_wheres = ["PROPOSED_AT >= dateadd(day, -%s, current_timestamp())"]
-        proposal_params: list = [days]
-        if portfolio_id is not None:
-            proposal_wheres.append("PORTFOLIO_ID = %s")
-            proposal_params.append(portfolio_id)
-        cur.execute(
-            f"""
-            select
-              count(*) as PROPOSAL_COUNT,
-              count_if(STATUS = 'APPROVED') as APPROVED_COUNT,
-              count_if(STATUS = 'EXECUTED') as EXECUTED_COUNT
-            from MIP.AGENT_OUT.ORDER_PROPOSALS
-            where {' and '.join(proposal_wheres)}
-            """,
-            tuple(proposal_params),
-        )
-        proposal_summary = serialize_row(fetch_all(cur)[0])
+        if live_structural_only_enabled_cur(cur):
+            proposal_summary = {
+                "PROPOSAL_COUNT": 0,
+                "APPROVED_COUNT": 0,
+                "EXECUTED_COUNT": 0,
+            }
+        else:
+            proposal_wheres = ["PROPOSED_AT >= dateadd(day, -%s, current_timestamp())"]
+            proposal_params = [days]
+            if portfolio_id is not None:
+                proposal_wheres.append("PORTFOLIO_ID = %s")
+                proposal_params.append(portfolio_id)
+            cur.execute(
+                f"""
+                select
+                  count(*) as PROPOSAL_COUNT,
+                  count_if(STATUS = 'APPROVED') as APPROVED_COUNT,
+                  count_if(STATUS = 'EXECUTED') as EXECUTED_COUNT
+                from MIP.AGENT_OUT.ORDER_PROPOSALS
+                where {' and '.join(proposal_wheres)}
+                """,
+                tuple(proposal_params),
+            )
+            proposal_summary = serialize_row(fetch_all(cur)[0])
 
         action_wheres = ["a.CREATED_AT >= dateadd(day, -%s, current_timestamp())"]
         action_params: list = [days]

@@ -633,7 +633,9 @@ def get_decisions(
         ]
 
         traded_map: dict = {}
-        if rec_ids:
+        from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
+
+        if rec_ids and not live_structural_only_enabled_cur(cur):
             ph = ",".join(["%s"] * len(rec_ids))
             trade_sql = f"""
             SELECT

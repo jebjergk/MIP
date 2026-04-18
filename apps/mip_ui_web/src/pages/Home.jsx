@@ -5,6 +5,7 @@ import EmptyState from '../components/EmptyState'
 import LoadingState from '../components/LoadingState'
 import { relativeTime } from '../components/LiveHeader'
 import { useDefaultPortfolioId } from '../context/PortfolioContext'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 import './Home.css'
 
 function formatActionStatus(status) {
@@ -18,6 +19,11 @@ function formatActionStatus(status) {
 
 export default function Home() {
   const defaultPortfolioId = useDefaultPortfolioId()
+  useAskMipPageRuntime(
+    'home',
+    ['home_live_metrics', 'home_actions', 'home_news'],
+    defaultPortfolioId != null ? { portfolio_id: defaultPortfolioId } : null,
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [liveMetrics, setLiveMetrics] = useState(null)

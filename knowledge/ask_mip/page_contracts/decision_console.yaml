@@ -1,0 +1,27 @@
+artifact_id: page_decision_console
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: decision_console
+page_title: AI Agent Decisions
+route: /decision-console
+purpose: Review AI agent recommendations, committee-style decisions, proposals, and gate states.
+target_user: trader_operator
+business_questions_answered:
+  - Why was this symbol recommended or blocked?
+main_workflows:
+  - Scan decision list; open detail; reconcile with live activity.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /live-portfolio-activity
+  - /symbol-tracker
+refresh_behavior: On navigation and refresh.
+dependencies:
+  - agent decision APIs
+  - AGENT_OUT where exposed to UI
+caveats:
+  - Recommendations are not orders; execution path is separate.
+known_issues: []
+linked_backend_objects: []

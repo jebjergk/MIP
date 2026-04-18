@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { API_BASE } from '../config/apiBase'
 import LoadingState from '../components/LoadingState'
 import './Debug.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 async function parseApiResponse(resp) {
   const text = await resp.text()
@@ -39,6 +40,7 @@ function previewFromData(data, isError = false) {
 }
 
 export default function Debug() {
+  useAskMipPageRuntime('debug', ['debug_api_probe', 'debug_ib_health'])
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(true)
   const [ibHealth, setIbHealth] = useState(null)

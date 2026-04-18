@@ -1,0 +1,27 @@
+artifact_id: page_structural_market_timeline
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: structural_market_timeline
+page_title: Structural Market Timeline
+route: /structural-timeline
+purpose: Timeline of structural setups and market context for research review.
+target_user: researcher_trader
+business_questions_answered:
+  - When did setups occur in this window?
+main_workflows:
+  - Select symbol, date range, filters; inspect setups.
+filters_inputs:
+  - symbol
+  - date_range
+  - direction
+  - family
+sections: []
+linked_pages:
+  - /structural-training
+refresh_behavior: On filter change and data load.
+dependencies: []
+caveats: []
+known_issues: []
+linked_backend_objects: []

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/state_logic_registry.schema.json",
+  "title": "StateLogicRegistry",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "logic_id",
+    "name",
+    "category",
+    "purpose"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "logic_id": { "type": "string" },
+    "name": { "type": "string" },
+    "category": { "type": "string" },
+    "purpose": { "type": "string" },
+    "owning_object": { "type": "string" },
+    "rule_logic": { "type": "string" },
+    "thresholds": { "type": "string" },
+    "dependencies": { "type": "array", "items": { "type": "string" } },
+    "override_logic": { "type": "string" },
+    "priority_rules": { "type": "string" },
+    "example_trigger_scenarios": { "type": "array", "items": { "type": "string" } },
+    "common_misunderstandings": { "type": "array", "items": { "type": "string" } },
+    "related_pages": { "type": "array", "items": { "type": "string" } },
+    "related_widgets": { "type": "array", "items": { "type": "string" } },
+    "related_metrics": { "type": "array", "items": { "type": "string" } },
+    "known_limitations": { "type": "array", "items": { "type": "string" } }
+  }
+}

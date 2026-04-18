@@ -1,0 +1,29 @@
+artifact_id: obj_training_digest_snapshot
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+object_id: training_digest_snapshot
+object_type: table
+object_name: TRAINING_DIGEST_SNAPSHOT
+schema_database: MIP.AGENT_OUT
+purpose: Latest per-symbol training digest snapshots for narrative and evidence packs.
+grain: symbol + market_type + pattern + as_of_ts
+key_fields:
+  - SCOPE
+  - SYMBOL
+  - MARKET_TYPE
+  - PATTERN_ID
+  - AS_OF_TS
+  - RUN_ID
+consumed_by_pages:
+  - training_status
+  - symbol_tracker
+consumed_by_widgets: []
+refresh_behavior: Written by training digest jobs
+related_workflows:
+  - signal_to_recommendation
+notes: >
+  Ask MIP may fetch a narrow metadata row (no full SNAPSHOT_JSON) for runtime facts when
+  symbol and market_type are present in the UI runtime payload.
+used_by_ask_facts: true

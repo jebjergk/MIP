@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/handbook_module.schema.json",
+  "title": "HandbookModule",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "module_id",
+    "title",
+    "concept_summary",
+    "why_it_matters"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "module_id": { "type": "string" },
+    "title": { "type": "string" },
+    "concept_summary": { "type": "string" },
+    "why_it_matters": { "type": "string" },
+    "where_seen_in_product": { "type": "array", "items": { "type": "string" } },
+    "related_metrics_statuses": { "type": "array", "items": { "type": "string" } },
+    "common_misunderstandings": { "type": "array", "items": { "type": "string" } },
+    "examples": { "type": "array", "items": { "type": "string" } },
+    "related_workflows": { "type": "array", "items": { "type": "string" } },
+    "handbook_doc_path": { "type": "string" }
+  }
+}

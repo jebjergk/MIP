@@ -5,6 +5,7 @@ import ErrorState from '../components/ErrorState'
 import EmptyState from '../components/EmptyState'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './NewsIntelligence.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 function fmtMins(v) {
   if (v == null) return '—'
@@ -41,6 +42,7 @@ function fmtSigned(v, digits = 3) {
 }
 
 export default function NewsIntelligence() {
+  useAskMipPageRuntime('news_intelligence', ['news_intelligence_overview'])
   const { formatSymbolLabel } = useSymbolMeta()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)

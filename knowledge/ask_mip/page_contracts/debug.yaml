@@ -1,0 +1,24 @@
+artifact_id: page_debug
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: debug
+page_title: Debug
+route: /debug
+purpose: Developer and operator diagnostics, raw responses, and internal state inspection.
+target_user: operator_engineer
+business_questions_answered:
+  - What raw data or errors is the UI seeing?
+main_workflows:
+  - Enable debug panels; copy payloads for support.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /runs
+refresh_behavior: On demand.
+dependencies: []
+caveats:
+  - Not for primary trading decisions; may expose technical detail.
+known_issues: []
+linked_backend_objects: []

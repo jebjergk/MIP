@@ -1,0 +1,26 @@
+artifact_id: obj_order_proposals
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+object_id: agent_order_proposals
+object_type: table
+object_name: ORDER_PROPOSALS
+schema_database: MIP.AGENT_OUT
+purpose: Agent-generated order proposals linked to decisions and execution tracking.
+grain: one row per proposal_id
+key_fields:
+  - PROPOSAL_ID
+  - PORTFOLIO_ID
+  - SYMBOL
+  - STATUS
+consumed_by_pages:
+  - decision_console
+  - live_portfolio_activity
+consumed_by_widgets: []
+refresh_behavior: Written by agent and pipeline jobs
+related_workflows:
+  - proposal_to_execution
+notes: >
+  UI may surface subsets via APIs; lineage questions should defer to object + API docs.
+used_by_ask_facts: false

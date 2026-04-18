@@ -1,0 +1,23 @@
+artifact_id: page_intraday_terrain
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: intraday_terrain
+page_title: Intraday Terrain Explorer
+route: /intraday/terrain
+purpose: Explore intraday market terrain visualizations and structural context.
+target_user: researcher_trader
+business_questions_answered:
+  - How does terrain visualization relate to current patterns?
+main_workflows:
+  - Pan/zoom terrain; link to patterns.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /intraday/dashboard
+refresh_behavior: On interaction.
+dependencies: []
+caveats: []
+known_issues: []
+linked_backend_objects: []

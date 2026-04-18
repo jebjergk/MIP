@@ -21,3 +21,7 @@ examples:
   - Buying on a spike may fill above the last printed quote.
 cautions:
   - General markets education; MIP-specific limits come from configuration and docs, not this file alone.
+retrieval_aliases:
+  - slippage
+  - execution slippage
+  - fill price difference

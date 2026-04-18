@@ -115,6 +115,80 @@ def retrieve_for_ask_v3(
                     SourceAttribution("METRIC_DICTIONARY", str(mc.get("artifact_id", mid)), f"Metric {mid}", 1.0)
                 )
 
+        for sec in artifact_loader.sections_for_page(page_id)[:2]:
+            bundle.artifact_blocks.append(artifact_loader.format_section_contract_for_prompt(sec))
+            bundle.artifact_sources.append(
+                SourceAttribution(
+                    "SECTION_CONTRACT",
+                    str(sec.get("artifact_id", sec.get("section_id", "section"))),
+                    "Section contract",
+                    1.0,
+                )
+            )
+
+        if intent in (
+            "source_lineage",
+            "mip_feature_behavior",
+            "state_diagnosis",
+            "mixed",
+            "metric_explanation",
+        ):
+            for bo in artifact_loader.backend_objects_for_page(page_id, limit=3):
+                bundle.artifact_blocks.append(artifact_loader.format_backend_object_for_prompt(bo))
+                bundle.artifact_sources.append(
+                    SourceAttribution(
+                        "BACKEND_OBJECT",
+                        str(bo.get("artifact_id", bo.get("object_id", "backend"))),
+                        str(bo.get("object_name", "Backend object")),
+                        1.0,
+                    )
+                )
+
+        for wf in artifact_loader.match_workflows_for_question(question, page_id, limit=2):
+            bundle.artifact_blocks.append(artifact_loader.format_workflow_for_prompt(wf))
+            bundle.artifact_sources.append(
+                SourceAttribution(
+                    "WORKFLOW_REGISTRY",
+                    str(wf.get("artifact_id", wf.get("workflow_id", "workflow"))),
+                    str(wf.get("name", "Workflow")),
+                    1.0,
+                )
+            )
+
+        badges = list(runtime.current_badges_or_statuses) if runtime and runtime.current_badges_or_statuses else None
+        for sl in artifact_loader.match_state_logic_for_context(question, badges, limit=3):
+            bundle.artifact_blocks.append(artifact_loader.format_state_logic_for_prompt(sl))
+            bundle.artifact_sources.append(
+                SourceAttribution(
+                    "STATE_LOGIC",
+                    str(sl.get("artifact_id", sl.get("logic_id", "logic"))),
+                    str(sl.get("name", "State logic")),
+                    1.0,
+                )
+            )
+
+        for hi in artifact_loader.match_known_issues_for_question(question, limit=2):
+            bundle.artifact_blocks.append(artifact_loader.format_known_issue_for_prompt(hi))
+            bundle.artifact_sources.append(
+                SourceAttribution(
+                    "KNOWN_ISSUE",
+                    str(hi.get("artifact_id", hi.get("issue_id", "issue"))),
+                    str(hi.get("title", "Known issue")),
+                    0.9,
+                )
+            )
+
+        for hm in artifact_loader.match_handbook_modules(question, page_id, limit=2):
+            bundle.artifact_blocks.append(artifact_loader.format_handbook_module_for_prompt(hm))
+            bundle.artifact_sources.append(
+                SourceAttribution(
+                    "HANDBOOK_MODULE",
+                    str(hm.get("artifact_id", hm.get("module_id", "handbook"))),
+                    str(hm.get("title", "Handbook")),
+                    0.92,
+                )
+            )
+
     # Domain pack (trading education)
     if "domain_knowledge" in groups:
         for entry in artifact_loader.match_domain_topics_by_question(question):

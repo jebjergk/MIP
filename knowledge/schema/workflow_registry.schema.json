@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/workflow_registry.schema.json",
+  "title": "WorkflowRegistry",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "workflow_id",
+    "name",
+    "business_purpose"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "workflow_id": { "type": "string" },
+    "name": { "type": "string" },
+    "business_purpose": { "type": "string" },
+    "start_conditions": { "type": "string" },
+    "steps": { "type": "array", "items": { "type": "string" } },
+    "dependent_objects": { "type": "array", "items": { "type": "string" } },
+    "user_visible_outputs": { "type": "array", "items": { "type": "string" } },
+    "common_questions": { "type": "array", "items": { "type": "string" } },
+    "failure_points": { "type": "array", "items": { "type": "string" } },
+    "caveats": { "type": "array", "items": { "type": "string" } },
+    "related_pages": { "type": "array", "items": { "type": "string" } }
+  }
+}

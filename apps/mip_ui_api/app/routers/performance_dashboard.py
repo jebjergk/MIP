@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from app.db import fetch_all, get_connection, serialize_row, serialize_rows
+from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
 
 router = APIRouter(prefix="/performance-dashboard", tags=["performance-dashboard"])
 
@@ -58,6 +59,18 @@ def get_performance_dashboard_overview(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if live_structural_only_enabled_cur(cur):
+            return {
+                "ok": True,
+                "lookback_days": lookback_days,
+                "legacy_order_proposals_metrics_retired": True,
+                "message": (
+                    "ORDER_PROPOSALS-linked funnel and dashboard metrics are retired under LIVE_STRUCTURAL_ONLY. "
+                    "Use Structural Training Intelligence and live structural views."
+                ),
+                "summary": {"verdict": {"status": "retired", "headline": "See structural intelligence surfaces."}},
+                "diagnostics": {},
+            }
         effective_start_row = _safe_row(
             cur,
             """

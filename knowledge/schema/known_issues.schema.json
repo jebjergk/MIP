@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/known_issues.schema.json",
+  "title": "KnownIssues",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "issue_id",
+    "title",
+    "description"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "issue_id": { "type": "string" },
+    "title": { "type": "string" },
+    "description": { "type": "string" },
+    "affected_areas": { "type": "array", "items": { "type": "string" } },
+    "symptoms": { "type": "string" },
+    "likely_user_questions": { "type": "array", "items": { "type": "string" } },
+    "cause": { "type": "string" },
+    "workaround": { "type": "string" },
+    "issue_status": { "type": "string" },
+    "opened_date": { "type": "string" },
+    "user_safe_summary": { "type": "string" }
+  }
+}

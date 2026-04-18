@@ -8,6 +8,8 @@ app_version_introduced: "0.7"
 page_id: symbol_tracker
 page_title: Living Chart
 route: /symbol-tracker
+alternate_routes:
+  - /living-chart
 purpose: >
   Monitor open simulation/live symbols with intraday charts, committee stance,
   exit urgency, and risk overlays.

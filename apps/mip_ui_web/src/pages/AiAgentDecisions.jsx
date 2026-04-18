@@ -3,6 +3,7 @@ import { API_BASE } from '../config/apiBase'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import GlossaryHoverCard from '../components/GlossaryHoverCard'
 import './AiAgentDecisions.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 function fmtTs(ts) {
   if (!ts) return '—'
@@ -55,6 +56,7 @@ function VerdictBadge({ shouldEnter }) {
 }
 
 export default function AiAgentDecisions() {
+  useAskMipPageRuntime('decision_console', ['ai_agent_decisions_grid', 'ai_agent_decision_detail'])
   const { formatSymbolLabel } = useSymbolMeta()
   const [liveLatestPerSymbol, setLiveLatestPerSymbol] = useState(true)
   const [rows, setRows] = useState([])

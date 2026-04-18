@@ -1,0 +1,34 @@
+artifact_id: logic_trust_gate
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+logic_id: training_trust_gate
+name: Training trust gate
+category: training_qualification
+purpose: >
+  Qualification flag indicating whether accumulated evidence supports treating a pattern
+  as production-trustworthy vs research-only.
+owning_object: training_status_mart
+rule_logic: >
+  Combines sample coverage, stability, horizon behavior, and policy thresholds from
+  the training pipeline. Specific thresholds live in Snowflake procedures — cite gap if unknown.
+dependencies:
+  - maturity_stage
+  - outcome history
+example_trigger_scenarios:
+  - Pattern recently promoted with few fills
+  - Symbol-local divergence from pattern-level stats
+common_misunderstandings:
+  - Confusing "untrusted" with "invalid" — it may still be informative research
+related_pages:
+  - training_status
+  - structural_training
+related_metrics:
+  - maturity_stage
+retrieval_keywords:
+  - trust
+  - gate
+  - trusted
+  - untrusted
+  - qualification

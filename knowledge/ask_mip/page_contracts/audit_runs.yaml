@@ -1,0 +1,29 @@
+artifact_id: page_audit_runs
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: audit_runs
+page_title: Runs (Audit Viewer)
+route: /runs
+alternate_routes:
+  - /runs/:runId
+purpose: Inspect pipeline and agent run history, audit events, and run-scoped diagnostics.
+target_user: operator_engineer
+business_questions_answered:
+  - What happened in run X?
+  - Why did the pipeline fail or warn?
+main_workflows:
+  - Open run list; drill into a run id.
+filters_inputs:
+  - run_id route parameter
+sections: []
+linked_pages:
+  - /debug
+refresh_behavior: Loaded from audit API on navigation.
+dependencies:
+  - runs audit API
+caveats:
+  - Technical detail; not primary trading workflow.
+known_issues: []
+linked_backend_objects: []

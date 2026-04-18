@@ -1,0 +1,31 @@
+artifact_id: handbook_training_maturity
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+module_id: training_maturity
+title: Training maturity and evidence depth
+concept_summary: >
+  Maturity stages summarize how much historical evidence supports relying on a pattern
+  for downstream trading workflows — they are research-quality gauges, not price forecasts.
+why_it_matters: >
+  Acting before maturity is sufficient increases variance; maturity complements trust gates
+  and committee review.
+where_seen_in_product:
+  - training_status
+  - structural_training
+related_metrics_statuses:
+  - maturity_stage
+  - training_trust_gate
+common_misunderstandings:
+  - Treating CONFIDENT as guaranteed profitability
+examples:
+  - INSUFFICIENT with rising sample count — still learning
+related_workflows:
+  - signal_to_recommendation
+retrieval_keywords:
+  - maturity
+  - warming
+  - insufficient
+  - confident
+handbook_doc_path: MIP/docs/TRAINING_HANDBOOK/02-trust-and-maturity.md

@@ -6,6 +6,7 @@ import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './DecisionConsole.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 /* ── helpers ──────────────────────────────────────────────────────── */
 
@@ -470,6 +471,7 @@ function FilterBar({ filters, onChange, symbols, portfolios }) {
 /* ── Main Page ────────────────────────────────────────────────────── */
 
 export default function DecisionConsole() {
+  useAskMipPageRuntime('intraday_early_exit', ['intraday_decision_stream', 'intraday_early_exit_panel'])
   const { formatSymbolLabel } = useSymbolMeta()
   const [mode, setMode] = useState('positions')
   const [positions, setPositions] = useState([])

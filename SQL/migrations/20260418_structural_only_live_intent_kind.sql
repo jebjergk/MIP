@@ -17,7 +17,7 @@ MERGE INTO MIP.APP.APP_CONFIG t
 USING (
     SELECT 'LIVE_STRUCTURAL_ONLY' AS CONFIG_KEY,
            'true' AS CONFIG_VALUE,
-           'When true, legacy ORDER_PROPOSALS import and legacy multi-agent committee are forbidden for live trading; only structural + operator exits are operational.' AS DESCRIPTION
+           'When true, legacy ORDER_PROPOSALS import and legacy multi-agent committee are forbidden for live trading. Only structural and operator exits are operational.' AS DESCRIPTION
     UNION ALL
     SELECT 'LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW',
            'false',

@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import LoadingState from '../components/LoadingState'
 import { getGlossaryEntry } from '../data/glossary'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 import './AuditViewer.css'
 
 const RUNS_PER_PAGE = 15
@@ -583,6 +584,11 @@ export default function AuditViewer() {
     status: searchParams.get('status') || '',
     fromDate: searchParams.get('from') || '',
     toDate: searchParams.get('to') || '',
+  })
+
+  useAskMipPageRuntime('audit_runs', ['audit_run_list', 'audit_run_detail'], {
+    active_filters: { pipeline: pipelineMode, status: filters.status || null },
+    selected_row_context: selectedRunId ? { run_id: selectedRunId } : null,
   })
 
   const totalPages = Math.max(1, Math.ceil(runs.length / RUNS_PER_PAGE))

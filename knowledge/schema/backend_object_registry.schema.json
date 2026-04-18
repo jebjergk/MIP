@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/backend_object_registry.schema.json",
+  "title": "BackendObjectRegistry",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "object_id",
+    "object_type",
+    "object_name",
+    "schema_database",
+    "purpose"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "object_id": { "type": "string" },
+    "object_type": { "type": "string" },
+    "object_name": { "type": "string" },
+    "schema_database": { "type": "string" },
+    "purpose": { "type": "string" },
+    "grain": { "type": "string" },
+    "key_fields": { "type": "array", "items": { "type": "string" } },
+    "consumed_by_pages": { "type": "array", "items": { "type": "string" } },
+    "consumed_by_widgets": { "type": "array", "items": { "type": "string" } },
+    "refresh_behavior": { "type": "string" },
+    "related_workflows": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "string" },
+    "used_by_ask_facts": { "type": "boolean" }
+  }
+}

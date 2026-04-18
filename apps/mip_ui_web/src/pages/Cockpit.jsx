@@ -10,6 +10,7 @@ import {
   BarChart, Bar, Cell, CartesianGrid, ReferenceLine,
 } from 'recharts'
 import './Cockpit.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 /* ── Helpers ─────────────────────────────────────────── */
 
@@ -1085,6 +1086,7 @@ function IbkrPositionsExpander({ liveOverview, formatSymbolLabel }) {
 /* ── Main Cockpit Page ───────────────────────────────── */
 
 export default function Cockpit() {
+  useAskMipPageRuntime('cockpit', ['cockpit_story_stack', 'cockpit_live_overview', 'cockpit_readiness'])
   const { loading: portfoliosLoading } = usePortfolios()
   const { formatSymbolLabel } = useSymbolMeta()
 

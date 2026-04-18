@@ -5,6 +5,7 @@ import ErrorState from '../components/ErrorState'
 import EmptyState from '../components/EmptyState'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LearningLedger.css'
+import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 
 function fmtTs(ts) {
   if (!ts) return '—'
@@ -133,6 +134,7 @@ function proposalWhyText(proposal) {
 }
 
 export default function LearningLedger() {
+  useAskMipPageRuntime('learning_ledger', ['learning_ledger_table'])
   const { formatSymbolLabel } = useSymbolMeta()
   const [events, setEvents] = useState([])
   const [chains, setChains] = useState([])

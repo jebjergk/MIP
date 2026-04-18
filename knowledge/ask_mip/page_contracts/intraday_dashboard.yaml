@@ -1,0 +1,24 @@
+artifact_id: page_intraday_dashboard
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: intraday_dashboard
+page_title: Intraday Dashboard
+route: /intraday/dashboard
+purpose: Summary dashboard for intraday pipeline health, patterns, and session KPIs.
+target_user: trader_operator
+business_questions_answered:
+  - What is the intraday session telling me?
+main_workflows:
+  - Scan KPIs; navigate to pattern or terrain views.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /intraday/pattern/:patternId
+  - /intraday/terrain
+refresh_behavior: Frequent refresh during session.
+dependencies: []
+caveats: []
+known_issues: []
+linked_backend_objects: []

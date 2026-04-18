@@ -1,3 +1,11 @@
+---
+guide_section_id: page-cockpit
+page_id: cockpit
+route: /cockpit
+artifact_refs:
+  - page_cockpit
+---
+
 # 12. Cockpit (Daily Dashboard)
 
 Your daily command center. The Cockpit uses a **two-column news layout** to display everything you need in one view: portfolio performance, market conditions, AI-generated narratives, signal candidates, and training progress.

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/page_contract.schema.json",
+  "title": "PageContract",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "page_id",
+    "page_title",
+    "route",
+    "purpose"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "supersedes": { "type": ["string", "null"] },
+    "app_version_introduced": { "type": "string" },
+    "page_id": { "type": "string", "minLength": 1 },
+    "page_title": { "type": "string" },
+    "route": { "type": "string" },
+    "purpose": { "type": "string" },
+    "target_user": { "type": "string" },
+    "business_questions_answered": { "type": "array", "items": { "type": "string" } },
+    "main_workflows": { "type": "array", "items": { "type": "string" } },
+    "filters_inputs": { "type": "array" },
+    "sections": { "type": "array" },
+    "linked_pages": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "route": { "type": "string" },
+              "page_id": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "refresh_behavior": { "type": "string" },
+    "dependencies": { "type": "array", "items": { "type": "string" } },
+    "caveats": { "type": "array", "items": { "type": "string" } },
+    "known_issues": { "type": "array", "items": { "type": "string" } },
+    "linked_backend_objects": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "object_ref": { "type": "string" },
+              "note": { "type": "string" }
+            }
+          }
+        ]
+      }
+    },
+    "related_domain_concepts": { "type": "array", "items": { "type": "string" } },
+    "guide_section_file": { "type": "string" },
+    "alternate_routes": { "type": "array", "items": { "type": "string" } }
+  }
+}

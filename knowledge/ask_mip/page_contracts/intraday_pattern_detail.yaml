@@ -1,0 +1,24 @@
+artifact_id: page_intraday_pattern_detail
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: intraday_pattern_detail
+page_title: Intraday Pattern Detail
+route: /intraday/pattern/:patternId
+purpose: Deep dive on a single intraday pattern instance with charts and diagnostics.
+target_user: researcher_trader
+business_questions_answered:
+  - What does this specific intraday pattern show?
+main_workflows:
+  - Open from dashboard; inspect pattern metadata and series.
+filters_inputs:
+  - patternId route parameter
+sections: []
+linked_pages:
+  - /intraday/dashboard
+refresh_behavior: On navigation.
+dependencies: []
+caveats: []
+known_issues: []
+linked_backend_objects: []

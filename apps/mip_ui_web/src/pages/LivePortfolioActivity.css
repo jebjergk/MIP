@@ -23,6 +23,21 @@
   color: #5f6b7a;
 }
 
+.lpa-legacy-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #5f6b7a;
+  cursor: pointer;
+  user-select: none;
+}
+
+.lpa-legacy-toggle input {
+  cursor: pointer;
+}
+
 .lpa-kpis {
   display: flex;
   flex-wrap: nowrap;
@@ -699,6 +714,12 @@
   background: #fff8e1;
   color: #925f00;
   border: 1px solid #ffe082;
+}
+
+.lpa-badge--intent-kind {
+  background: #eceff1;
+  color: #455a64;
+  border: 1px solid #cfd8dc;
 }
 
 .lpa-narrative {

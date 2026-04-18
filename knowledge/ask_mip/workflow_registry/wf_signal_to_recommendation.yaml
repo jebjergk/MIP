@@ -1,0 +1,38 @@
+artifact_id: wf_signal_to_recommendation
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+workflow_id: signal_to_recommendation
+name: Signal generation through recommendation
+business_purpose: >
+  Move from detected structural/statistical signals into evaluated recommendations
+  with trust and gating suitable for committee or operator review.
+start_conditions: Pattern or signal candidates pass minimum data availability checks.
+steps:
+  - Signal detection and logging
+  - Training maturity and trust evaluation
+  - Outcome history and hit-rate context
+  - Recommendation packaging for AI/decision surfaces
+dependent_objects:
+  - training status marts
+  - recommendation logs
+user_visible_outputs:
+  - Decision Console rows
+  - Training Status grid
+common_questions:
+  - Why is there no recommendation for this symbol?
+failure_points:
+  - Insufficient maturity or trust
+  - Contradictory committee inputs
+caveats:
+  - Simulated history does not guarantee live performance.
+related_pages:
+  - training_status
+  - decision_console
+retrieval_keywords:
+  - recommendation
+  - signal
+  - trust
+  - gate
+  - committee

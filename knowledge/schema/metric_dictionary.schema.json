@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mip.local/knowledge/metric_dictionary.schema.json",
+  "title": "MetricDictionary",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "artifact_id",
+    "version",
+    "status",
+    "owner",
+    "last_updated",
+    "metric_id",
+    "page_id",
+    "display_label",
+    "business_definition"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "active", "deprecated"] },
+    "owner": { "type": "string" },
+    "last_updated": { "type": "string" },
+    "metric_id": { "type": "string" },
+    "page_id": { "type": "string" },
+    "widget_id": { "type": "string" },
+    "metric_name": { "type": "string" },
+    "display_label": { "type": "string" },
+    "business_definition": { "type": "string" },
+    "formula_or_derivation": { "type": "string" },
+    "grain": { "type": "string" },
+    "source_objects": { "type": "array", "items": { "type": "string" } },
+    "fact_type": { "type": "string" },
+    "refresh_cadence": { "type": "string" },
+    "directionality": { "type": "string" },
+    "expected_range_or_interpretation": { "type": "string" },
+    "expected_interpretation": { "type": "string" },
+    "caveats": { "type": "array", "items": { "type": "string" } },
+    "sample_question_forms": { "type": "array", "items": { "type": "string" } },
+    "sample_user_questions": { "type": "array", "items": { "type": "string" } },
+    "related_statuses": { "type": "array", "items": { "type": "string" } }
+  }
+}

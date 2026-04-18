@@ -1,0 +1,25 @@
+artifact_id: page_learning_ledger
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: learning_ledger
+page_title: Learning Ledger
+route: /learning-ledger
+purpose: Chronicle of model and system learning events, digest snapshots, and narrative artifacts for review.
+target_user: researcher_trader
+business_questions_answered:
+  - What did the system learn or summarize recently?
+main_workflows:
+  - Browse ledger entries and linked narratives.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /training
+  - /runs
+refresh_behavior: On load and refresh actions.
+dependencies:
+  - AGENT_OUT digest tables where applicable
+caveats: []
+known_issues: []
+linked_backend_objects: []

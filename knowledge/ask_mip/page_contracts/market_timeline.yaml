@@ -1,0 +1,24 @@
+artifact_id: page_market_timeline
+version: "1"
+status: draft
+owner: platform
+last_updated: "2026-04-18"
+page_id: market_timeline
+page_title: Market Timeline
+route: /market-timeline
+purpose: Legacy market timeline for historical context and events (non-structural variant).
+target_user: researcher_trader
+business_questions_answered:
+  - What happened on this date for this market?
+main_workflows:
+  - Navigate timeline events and filters.
+filters_inputs: []
+sections: []
+linked_pages:
+  - /structural-timeline
+refresh_behavior: On load.
+dependencies: []
+caveats:
+  - Prefer Structural Market Timeline for structural workflows where applicable.
+known_issues: []
+linked_backend_objects: []

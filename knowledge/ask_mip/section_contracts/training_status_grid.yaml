@@ -1,0 +1,21 @@
+artifact_id: section_training_status_grid
+version: "1"
+status: active
+owner: platform
+last_updated: "2026-04-18"
+section_id: training_grid
+page_id: training_status
+section_title: Training status grid
+purpose: Tabular view of maturity, trust, samples, and horizon metrics per symbol/pattern.
+widget_ids:
+  - training_status_grid
+user_questions_answered:
+  - Why is maturity INSUFFICIENT?
+  - What does the trust column mean?
+interpretation_guidance: >
+  Read maturity as evidence depth; trust gates as eligibility for downstream workflows.
+  Low sample counts increase variance — see handbook modules on sample size.
+linked_logic_concepts:
+  - logic_trust_gate
+related_workflows:
+  - wf_signal_to_recommendation

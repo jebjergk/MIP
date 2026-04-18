@@ -16,6 +16,7 @@ import {
 } from 'recharts'
 import { EvidenceBadge, fmtNum, IntradayHeader, HelpTip } from './IntradayTrainingCommon'
 import './IntradayTraining.css'
+import { useAskMipPageRuntime } from '../../hooks/useAskMipPageRuntime'
 
 export default function IntradayPatternDetailPage() {
   const { patternId } = useParams()
@@ -26,6 +27,10 @@ export default function IntradayPatternDetailPage() {
   const [error, setError] = useState(null)
 
   const selectedPatternId = Number(patternId || 501)
+
+  useAskMipPageRuntime('intraday_pattern_detail', ['intraday_pattern_detail_charts'], {
+    active_filters: { pattern_id: selectedPatternId },
+  })
 
   useEffect(() => {
     let cancelled = false

@@ -5,11 +5,14 @@ Live intent classification and LIVE_STRUCTURAL_ONLY deployment policy.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Callable
 from typing import Any
 
 from fastapi import HTTPException
+
+_log = logging.getLogger(__name__)
 
 LIVE_INTENT_STRUCTURAL = "STRUCTURAL"
 LIVE_INTENT_LEGACY_PATTERN = "LEGACY_PATTERN"
@@ -74,6 +77,38 @@ def env_structural_only_flag() -> bool | None:
     if raw is None or str(raw).strip() == "":
         return None
     return parse_structural_only_config(raw, default=True)
+
+
+def live_structural_only_enabled_cur(cur) -> bool:
+    """
+    Read LIVE_STRUCTURAL_ONLY from APP_CONFIG (default true if missing).
+    Safe to call from any router; does not depend on live.py.
+    """
+    try:
+        cur.execute(
+            """
+            select CONFIG_VALUE
+            from MIP.APP.APP_CONFIG
+            where CONFIG_KEY = %s
+            limit 1
+            """,
+            (CONFIG_LIVE_STRUCTURAL_ONLY,),
+        )
+        row = cur.fetchone()
+        val = row[0] if row else None
+    except Exception:
+        val = None
+    app_val = parse_structural_only_config(str(val) if val is not None else None, default=True)
+    env_val = env_structural_only_flag()
+    if env_val is not None and env_val != app_val:
+        _log.warning(
+            "%s=%s disagrees with APP_CONFIG %s=%s; using APP_CONFIG value.",
+            ENV_LIVE_STRUCTURAL_ONLY,
+            env_val,
+            CONFIG_LIVE_STRUCTURAL_ONLY,
+            app_val,
+        )
+    return app_val
 
 
 def assert_legacy_order_proposals_import_allowed(app_structural_only: bool) -> None:

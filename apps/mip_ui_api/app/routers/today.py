@@ -556,27 +556,33 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                     if signals_generated == 0:
                         signals_generated = sum(run_signal_map.values())
 
-                # Proposal counts and details for this run
-                cur.execute(
-                    """
-                    select
-                      PROPOSAL_ID,
-                      PORTFOLIO_ID,
-                      PROPOSED_AT,
-                      SYMBOL,
-                      MARKET_TYPE,
-                      SIDE,
-                      TARGET_WEIGHT,
-                      SIGNAL_PATTERN_ID,
-                      STATUS
-                    from MIP.AGENT_OUT.ORDER_PROPOSALS
-                    where RUN_ID_VARCHAR = %s
-                      and (%s is null or PORTFOLIO_ID = %s)
-                    order by PROPOSED_AT desc
-                    """,
-                    (run_id, active_live_portfolio_id, active_live_portfolio_id),
-                )
-                proposal_rows = fetch_all(cur)
+                # Proposal counts and details for this run (ORDER_PROPOSALS retired when LIVE_STRUCTURAL_ONLY)
+                from app.services.live_intelligence.live_intent_policy import live_structural_only_enabled_cur
+
+                _order_proposals_retired = live_structural_only_enabled_cur(cur)
+                if _order_proposals_retired:
+                    proposal_rows = []
+                else:
+                    cur.execute(
+                        """
+                        select
+                          PROPOSAL_ID,
+                          PORTFOLIO_ID,
+                          PROPOSED_AT,
+                          SYMBOL,
+                          MARKET_TYPE,
+                          SIDE,
+                          TARGET_WEIGHT,
+                          SIGNAL_PATTERN_ID,
+                          STATUS
+                        from MIP.AGENT_OUT.ORDER_PROPOSALS
+                        where RUN_ID_VARCHAR = %s
+                          and (%s is null or PORTFOLIO_ID = %s)
+                        order by PROPOSED_AT desc
+                        """,
+                        (run_id, active_live_portfolio_id, active_live_portfolio_id),
+                    )
+                    proposal_rows = fetch_all(cur)
                 proposals_total = len(proposal_rows)
                 proposals_preview = []
 
@@ -685,20 +691,23 @@ def get_today(portfolio_id: int | None = Query(None, description="Portfolio ID f
                 )
                 trust_rows = fetch_all(cur)
 
-                cur.execute(
-                    """
-                    select
-                      MARKET_TYPE,
-                      count(*) as PROPOSALS_GENERATED
-                    from MIP.AGENT_OUT.ORDER_PROPOSALS
-                    where RUN_ID_VARCHAR = %s
-                      and (%s is null or PORTFOLIO_ID = %s)
-                    group by MARKET_TYPE
-                    order by MARKET_TYPE
-                    """,
-                    (run_id, active_live_portfolio_id, active_live_portfolio_id),
-                )
-                run_prop_rows = fetch_all(cur)
+                if _order_proposals_retired:
+                    run_prop_rows = []
+                else:
+                    cur.execute(
+                        """
+                        select
+                          MARKET_TYPE,
+                          count(*) as PROPOSALS_GENERATED
+                        from MIP.AGENT_OUT.ORDER_PROPOSALS
+                        where RUN_ID_VARCHAR = %s
+                          and (%s is null or PORTFOLIO_ID = %s)
+                        group by MARKET_TYPE
+                        order by MARKET_TYPE
+                        """,
+                        (run_id, active_live_portfolio_id, active_live_portfolio_id),
+                    )
+                    run_prop_rows = fetch_all(cur)
                 run_prop_map = {
                     str(r.get("MARKET_TYPE")): _as_int(r.get("PROPOSALS_GENERATED"), 0)
                     for r in run_prop_rows

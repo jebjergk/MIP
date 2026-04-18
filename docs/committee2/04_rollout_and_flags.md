@@ -10,6 +10,7 @@
 
 Migration [`20260418_committee2_config_grants.sql`](../../SQL/migrations/20260418_committee2_config_grants.sql) seeds `COMMITTEE2_ENABLED=true`.
 
-**Phase 2 live enrichment (optional):** When both `COMMITTEE2_CONTEXT_DISCLOSURE_ENABLED` and `COMMITTEE2_LIVE_POLITICIAN_DISCLOSURE_ENABLED` are true, the API may call a **trusted** HTTP JSON endpoint if the host sets:
+**Phase 2 live enrichment (optional):** When both `COMMITTEE2_CONTEXT_DISCLOSURE_ENABLED` and `COMMITTEE2_LIVE_POLITICIAN_DISCLOSURE_ENABLED` are true:
 
-`MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE` — URL string containing `{symbol}` (e.g. `https://internal.example.com/disclosures/{symbol}`). Response must be JSON with non-empty `summary_lines` (array of strings). Optional: `link_url` (https), `source_label`. Any error, timeout, or invalid body → **no** live exhibit (same UX as no data).
+- **Real JSON bridge (preferred when set):** `MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE` — URL containing `{symbol}`. Response JSON must include non-empty `summary_lines`. Optional: `link_url` (https), `source_label`. Errors/timeouts → **no** live exhibit.
+- **Local demo (no HTTP):** when **no** template is configured, set `MIP_POLITICIAN_DISCLOSURE_LIVE_DEMO=true` to return a deterministic stub and verify the **Live disclosure context** card. If both template and demo are set, the template wins.

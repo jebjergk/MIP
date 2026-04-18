@@ -56,6 +56,22 @@ def _http_get_json(url: str, timeout_s: float = 2.5) -> Optional[Dict[str, Any]]
     return data if isinstance(data, dict) else None
 
 
+def _build_demo_exhibit(symbol: str) -> Dict[str, Any]:
+    """Deterministic stub for local QA when HTTP bridge is not configured."""
+    return {
+        "schema_version": "1",
+        "symbol": symbol,
+        "fetched_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source_label": "Local demo (no HTTP)",
+        "summary_lines": [
+            f"Live disclosure demo - no external fetch. Symbol {symbol}.",
+            "Set MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE for a real JSON endpoint; unset MIP_POLITICIAN_DISCLOSURE_LIVE_DEMO when done.",
+        ],
+        "link_url": "https://www.capitoltrades.com/",
+        "disclaimer": DISCLAIMER,
+    }
+
+
 def build_exhibit_live_politician_disclosure_context(proposal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Returns None when disabled, misconfigured, or on any fetch/parse failure (silent).
@@ -63,9 +79,6 @@ def build_exhibit_live_politician_disclosure_context(proposal: Dict[str, Any]) -
     """
     symbol = (proposal.get("SYMBOL") or "").strip().upper()
     if not symbol:
-        return None
-    template = (os.environ.get("MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE") or "").strip()
-    if not template or "{symbol}" not in template:
         return None
 
     conn = get_connection()
@@ -78,35 +91,48 @@ def build_exhibit_live_politician_disclosure_context(proposal: Dict[str, Any]) -
     finally:
         conn.close()
 
-    url = template.replace("{symbol}", urllib.parse.quote(symbol, safe=""))
-    data = _http_get_json(url)
-    if not data:
-        return None
+    template = (os.environ.get("MIP_POLITICIAN_DISCLOSURE_LIVE_URL_TEMPLATE") or "").strip()
+    has_template = bool(template) and "{symbol}" in template
 
-    lines = data.get("summary_lines")
-    if not isinstance(lines, list):
-        return None
-    clean: List[str] = []
-    for x in lines:
-        if isinstance(x, str) and x.strip():
-            clean.append(x.strip())
-        if len(clean) >= 3:
-            break
-    if not clean:
-        return None
+    if has_template:
+        url = template.replace("{symbol}", urllib.parse.quote(symbol, safe=""))
+        data = _http_get_json(url)
+        if not data:
+            return None
 
-    link = data.get("link_url")
-    link_out: Optional[str] = None
-    if isinstance(link, str):
-        u = link.strip()
-        if u.startswith("http://") or u.startswith("https://"):
-            link_out = u
+        lines = data.get("summary_lines")
+        if not isinstance(lines, list):
+            return None
+        clean: List[str] = []
+        for x in lines:
+            if isinstance(x, str) and x.strip():
+                clean.append(x.strip())
+            if len(clean) >= 3:
+                break
+        if not clean:
+            return None
 
-    src = data.get("source_label")
-    src_l = str(src).strip()[:120] if isinstance(src, str) and str(src).strip() else "Live disclosure lookup"
+        link = data.get("link_url")
+        link_out: Optional[str] = None
+        if isinstance(link, str):
+            u = link.strip()
+            if u.startswith("http://") or u.startswith("https://"):
+                link_out = u
 
-    return {
-        "schema_version": "1",
-        "symbol": symbol,
-        "fetched_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-     
+        src = data.get("source_label")
+        src_l = str(src).strip()[:120] if isinstance(src, str) and str(src).strip() else "Live disclosure lookup"
+
+        return {
+            "schema_version": "1",
+            "symbol": symbol,
+            "fetched_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source_label": src_l,
+            "summary_lines": clean,
+            "link_url": link_out,
+            "disclaimer": DISCLAIMER,
+        }
+
+    if _env_truthy("MIP_POLITICIAN_DISCLOSURE_LIVE_DEMO"):
+        return _build_demo_exhibit(symbol)
+
+    return None

@@ -811,3 +811,720 @@
   font-size: 12px;
   padding: 4px 10px;
 }
+
+/* Committee 2.0 inline proof exhibits */
+.lpa-c2-exhibits {
+  margin: 4px 0;
+  padding: 10px 12px;
+  border: 1px solid #bfc8ea;
+  border-radius: 12px;
+  background: radial-gradient(120% 80% at 10% 0%, #eef2ff 0%, #fafbff 38%, #fff 100%);
+  box-shadow: 0 1px 12px rgba(57, 73, 171, 0.08);
+  display: grid;
+  gap: 10px;
+  max-height: min(72vh, 920px);
+  overflow: auto;
+}
+
+.lpa-c2-reveal {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.42s ease, transform 0.42s ease;
+}
+
+.lpa-c2-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.lpa-c2-inline-wip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #e8eaf6, #f3e5f5);
+  font-size: 13px;
+  font-weight: 500;
+  color: #4527a0;
+  border: 1px solid #d1c4e9;
+}
+
+.lpa-c2-wip {
+  position: relative;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #1a237e 0%, #283593 40%, #3949ab 100%);
+  color: #e8eaf6;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(26, 35, 126, 0.35);
+}
+
+.lpa-c2-wip-glow {
+  position: absolute;
+  inset: -40% -20%;
+  background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.2), transparent 55%);
+  pointer-events: none;
+}
+
+.lpa-c2-wip-head {
+  position: relative;
+  z-index: 1;
+}
+
+.lpa-c2-wip-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  margin-bottom: 8px;
+}
+
+.lpa-c2-wip-title {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.lpa-c2-wip-sub {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.88;
+}
+
+.lpa-c2-wip-current {
+  position: relative;
+  z-index: 1;
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lpa-c2-wip-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #80cbc4;
+  box-shadow: 0 0 0 0 rgba(128, 203, 196, 0.7);
+  animation: lpa-c2-pulse 1.2s ease-out infinite;
+}
+
+@keyframes lpa-c2-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(128, 203, 196, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(128, 203, 196, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(128, 203, 196, 0);
+  }
+}
+
+.lpa-c2-wip-steps {
+  position: relative;
+  z-index: 1;
+  margin: 14px 0 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.lpa-c2-wip-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+  opacity: 0.55;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.lpa-c2-wip-step.is-active {
+  opacity: 1;
+  color: #fff59d;
+}
+
+.lpa-c2-wip-step.is-done {
+  opacity: 0.95;
+}
+
+.lpa-c2-wip-step-ix {
+  flex: 0 0 1.2rem;
+  font-size: 12px;
+}
+
+.lpa-c2-wip-foot {
+  position: relative;
+  z-index: 1;
+  margin: 12px 0 0;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.lpa-c2-masthead {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid #e8eaf6;
+}
+
+.lpa-c2-masthead-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  align-items: center;
+}
+
+.lpa-c2-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: #e8eaf6;
+  color: #283593;
+}
+
+.lpa-c2-pill--stance {
+  background: #3949ab;
+  color: #fff;
+}
+
+.lpa-c2-pill--ghost {
+  background: #fff;
+  border: 1px solid #c5cae9;
+  color: #5c6bc0;
+}
+
+.lpa-c2-freshness-inline {
+  font-size: 12px;
+  color: #546e7a;
+}
+
+.lpa-c2-freshness-label {
+  font-weight: 700;
+  color: #37474f;
+  margin-right: 6px;
+}
+
+.lpa-c2-stale-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #c62828;
+}
+
+.lpa-c2-exhibits-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .lpa-c2-exhibits-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lpa-c2-col {
+  display: grid;
+  gap: 10px;
+}
+
+.lpa-c2-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.lpa-c2-card--strip {
+  border-style: dashed;
+  background: #fafafa;
+}
+
+.lpa-c2-card-head {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5c6bc0;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lpa-c2-card-icon {
+  font-size: 14px;
+  opacity: 0.9;
+}
+
+.lpa-c2-card-subhead {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #78909c;
+  margin: 10px 0 6px;
+}
+
+.lpa-c2-divider {
+  height: 1px;
+  background: #eceff1;
+  margin: 10px 0;
+}
+
+.lpa-c2-muted {
+  margin: 0;
+  font-size: 12px;
+  color: #78909c;
+  line-height: 1.4;
+}
+
+/* Geometry meter */
+.lpa-c2-geo-meter {
+  margin-bottom: 8px;
+}
+
+.lpa-c2-geo-track {
+  position: relative;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eceff1, #f5f5f5);
+  border: 1px solid #cfd8dc;
+}
+
+.lpa-c2-geo-zone {
+  position: absolute;
+  top: 2px;
+  height: calc(100% - 4px);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(129, 212, 250, 0.55), rgba(66, 165, 245, 0.35));
+  border: 1px solid rgba(30, 136, 229, 0.35);
+  box-sizing: border-box;
+}
+
+.lpa-c2-geo-marker {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 30px;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+.lpa-c2-geo-marker--inv {
+  background: #e65100;
+  box-shadow: 0 0 6px rgba(230, 81, 0, 0.5);
+}
+
+.lpa-c2-geo-marker--inv.is-breach {
+  background: #b71c1c;
+  box-shadow: 0 0 8px rgba(183, 28, 28, 0.6);
+}
+
+.lpa-c2-geo-marker--px {
+  width: 4px;
+  background: #1a237e;
+  box-shadow: 0 0 8px rgba(26, 35, 126, 0.45);
+}
+
+.lpa-c2-geo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #607d8b;
+}
+
+.lpa-c2-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.lpa-c2-swatch--zone {
+  background: linear-gradient(180deg, #81d4fa, #42a5f5);
+  border: 1px solid #1e88e5;
+}
+
+.lpa-c2-swatch--px {
+  background: #1a237e;
+}
+
+.lpa-c2-swatch--inv {
+  background: #e65100;
+}
+
+.lpa-c2-hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12px;
+  color: #37474f;
+  margin-top: 6px;
+}
+
+.lpa-c2-hero-inv {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+/* Chart */
+.lpa-c2-chart-wrap {
+  margin-top: 10px;
+}
+
+.lpa-c2-chart-cap {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #90a4ae;
+  margin-bottom: 4px;
+}
+
+.lpa-c2-chart-svg {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  display: block;
+}
+
+.lpa-c2-chart-baseline {
+  stroke: #cfd8dc;
+  stroke-width: 1;
+}
+
+.lpa-c2-chart-dot {
+  fill: #3949ab;
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.lpa-c2-chart-axis {
+  fill: #78909c;
+  font-size: 9px;
+}
+
+.lpa-c2-chart-fallback {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f5f5f5;
+  border: 1px dashed #bdbdbd;
+  font-size: 12px;
+  color: #546e7a;
+  line-height: 1.4;
+}
+
+.lpa-c2-chart-icon {
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Path meters */
+.lpa-c2-path-meters {
+  display: grid;
+  gap: 10px;
+}
+
+.lpa-c2-meter-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #90a4ae;
+  margin-bottom: 4px;
+}
+
+.lpa-c2-meter-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: #eceff1;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.lpa-c2-meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #5c6bc0, #7986cb);
+  min-width: 4px;
+  transition: width 0.6s ease;
+}
+
+.lpa-c2-meter-fill--alt {
+  background: linear-gradient(90deg, #00897b, #4db6ac);
+}
+
+.lpa-c2-path-bucket {
+  margin-top: 4px;
+}
+
+.lpa-c2-bucket-pill {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.lpa-c2-interpret {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #455a64;
+  line-height: 1.45;
+}
+
+.lpa-c2-micro-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #90a4ae;
+}
+
+.lpa-c2-regime-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.lpa-c2-regime-card {
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f8f9fa;
+  border: 1px solid #eceff1;
+  font-size: 12px;
+}
+
+.lpa-c2-regime-value {
+  font-weight: 700;
+  color: #263238;
+  margin: 4px 0 2px;
+}
+
+.lpa-c2-regime-ribbon {
+  flex: 0 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lpa-c2-regime-ribbon span {
+  display: block;
+  width: 3px;
+  height: 70%;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #5c6bc0, #9575cd);
+}
+
+.lpa-c2-subtle {
+  font-size: 11px;
+  color: #78909c;
+}
+
+.lpa-c2-continuity {
+  margin-top: 8px;
+  font-size: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.lpa-c2-continuity--aligned strong {
+  color: #2e7d32;
+}
+
+.lpa-c2-continuity--improved strong {
+  color: #1565c0;
+}
+
+.lpa-c2-continuity--drift strong,
+.lpa-c2-continuity--hostile strong {
+  color: #c62828;
+}
+
+.lpa-c2-protect-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.lpa-c2-protect-stat {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+}
+
+.lpa-c2-fp-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #eceff1;
+  color: #37474f;
+  margin-bottom: 6px;
+}
+
+.lpa-c2-fp-one {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #263238;
+}
+
+.lpa-c2-fp-bullets {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #455a64;
+  line-height: 1.4;
+}
+
+.lpa-c2-strip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lpa-c2-chip {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lpa-c2-chair {
+  border: 1px solid #3949ab;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #f8f9ff 0%, #fff 100%);
+}
+
+.lpa-c2-chair-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: baseline;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.lpa-c2-chair-zones {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .lpa-c2-chair-zones {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lpa-c2-zone-label {
+  font-weight: 700;
+  color: #37474f;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.lpa-c2-chair-zones ul {
+  margin: 0;
+  padding-left: 16px;
+  color: #455a64;
+}
+
+.lpa-c2-exec-pre {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #37474f;
+}
+
+.lpa-c2-full-link {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lpa-c2-full-link a {
+  color: #3949ab;
+}
+
+.lpa-c2-expand-btn {
+  margin-top: 6px;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  color: #3949ab;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.lpa-c2-expand-row td {
+  background: #eceff1;
+  border-top: none;
+  padding-top: 4px;
+  vertical-align: top;
+}
+
+.lpa-c2-advanced {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.lpa-c2-advanced summary {
+  cursor: pointer;
+  color: #5c6bc0;
+  user-select: none;
+}
+
+.lpa-c2-advanced-body {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.lpa-c2-progress-inline {
+  font-size: 12px;
+  color: #3949ab;
+}

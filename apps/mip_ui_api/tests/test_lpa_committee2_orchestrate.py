@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.routers.live import (  # noqa: E402
+    _build_inline_hearing_payload,
     _dedupe_structural_entry_pending_rows,
     _is_structural_entry_pending_row,
     _structural_proposal_status_is_actionable,
@@ -125,6 +126,83 @@ class TestDedupeStructuralEntryPending(unittest.TestCase):
             out = _dedupe_structural_entry_pending_rows(cur, pending)
         pids = {r.get("proposal_id") for r in out if r.get("action_id", "").startswith("x")}
         self.assertEqual(pids, {2})
+
+
+class TestInlineHearingPayload(unittest.TestCase):
+    def test_build_inline_hearing_includes_exhibits(self):
+        refresh = {
+            "stance": "APPROVE",
+            "confidence": 0.71,
+            "hearing_ts": "2026-04-10T12:00:00",
+            "updated_at": "2026-04-10T12:01:00",
+            "proposal": {"symbol": "ABC", "direction": "LONG", "setup_family": "SF1"},
+            "snapshot_panel": {
+                "TRUST_LABEL": "TRUSTED",
+                "REGIME_STATE": "GOOD",
+                "STRUCTURAL_STATE": "TREND_UP",
+                "ENTRY_ZONE_JSON": {"low": 10, "high": 11},
+                "INVALIDATION_JSON": {"level": 9, "rule": "BELOW"},
+            },
+            "hearing_evidence": {
+                "latest_price": 10.5,
+                "zone_distance_pct": 4.76,
+                "trend_regime_now": "UPTREND",
+                "vol_regime_now": "NORMAL",
+                "structural_state_now": "TREND_UP",
+                "invalidation_level": 9,
+                "invalidation_breached": False,
+                "invalidation_cushion_pct": 14.29,
+                "regime_continuity": "ALIGNED",
+                "regime_continuity_detail": "ok",
+                "path_quality_interpretation": "Test path line.",
+                "recent_bar_dates": ["2026-04-10"],
+                "recent_bar_trace": [{"bar_date": "2026-04-09", "close": 10.2}],
+            },
+            "operational": {"posture": {"trail_posture": "STANDARD", "size_posture": "FULL", "path_quality": "OK"}},
+            "chair": {
+                "stance": "APPROVE",
+                "confidence": 0.71,
+                "top_supports": ["s1"],
+                "top_tensions": ["t1"],
+                "execution_shaping": {"stance": "APPROVE"},
+                "what_changed_since_proposal": ["line a", "line b"],
+            },
+            "roles": [{"role_name": "REGIME", "output": {"stance_badge": "OK", "one_liner": "x"}}],
+            "artifacts": [
+                {
+                    "artifact_kind": "PATH_STRIP",
+                    "payload": {
+                        "pct_adverse": 0.3,
+                        "mhr": 0.5,
+                        "label": "OK",
+                        "interpretation": "interp",
+                    },
+                },
+                {
+                    "artifact_kind": "SYMBOL_FINGERPRINT",
+                    "payload": {
+                        "one_liner": "fp",
+                        "bullets": ["b1"],
+                        "badge": "MIXED",
+                        "trust_label": "TRUSTED",
+                    },
+                },
+            ],
+        }
+        proposal = {"SYMBOL": "ABC", "DIRECTION": "LONG", "SETUP_FAMILY": "SF1", "TRUST_LABEL": "TRUSTED"}
+        out = _build_inline_hearing_payload(
+            action_id="act-1",
+            proposal_id=99,
+            hearing_id="hid",
+            proposal=proposal,
+            refresh_payload=refresh,
+        )
+        self.assertEqual(out["exhibit_geometry_hero"]["symbol"], "ABC")
+        self.assertEqual(out["exhibit_path_quality"]["pct_adverse_before_favorable"], 0.3)
+        self.assertEqual(out["exhibit_regime_continuity"]["continuity_verdict"], "ALIGNED")
+        self.assertEqual(out["exhibit_protection"]["cushion_pct"], 14.29)
+        self.assertEqual(out["what_changed_strip"][0], "line a")
+        self.assertTrue(len(out["chair_board"]["top_supports"]) >= 1)
 
 
 class TestCommitteeFinalDecisionCommitForAction(unittest.TestCase):

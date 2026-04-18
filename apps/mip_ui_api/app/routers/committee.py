@@ -131,7 +131,7 @@ def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
         FROM MIP.MART.V_STRUCTURAL_TIMELINE_PRICE
         WHERE SYMBOL = %s AND MARKET_TYPE = %s
         ORDER BY BAR_DATE DESC
-        LIMIT 5
+        LIMIT 8
         """,
         (symbol.upper(), market_type.upper()),
     )
@@ -147,6 +147,10 @@ def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
     open_p = float(latest["OPEN"]) if latest.get("OPEN") is not None else None
     prior_close = float(prior["CLOSE"]) if prior and prior.get("CLOSE") is not None else None
     dates = [str(b["BAR_DATE"]) for b in bars if b.get("BAR_DATE") is not None]
+    trace_chron: List[Dict[str, Any]] = []
+    for b in reversed(bars):
+        if b.get("BAR_DATE") is not None and b.get("CLOSE") is not None:
+            trace_chron.append({"bar_date": str(b["BAR_DATE"]), "close": float(b["CLOSE"])})
     return LiveContext(
         latest_price=price,
         open_price=open_p,
@@ -155,6 +159,7 @@ def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
         trend_regime_now=latest.get("TREND_REGIME"),
         vol_regime_now=latest.get("VOL_REGIME"),
         bar_dates=dates,
+        recent_bar_trace=trace_chron,
     )
 
 

@@ -10,7 +10,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from queue import Empty, Queue
 from threading import Event, Thread
 from zoneinfo import ZoneInfo
@@ -9554,6 +9554,159 @@ def _materialize_structural_entry_committee_apply(
     }
 
 
+def _inline_hearing_stale_hint(ev: dict) -> str | None:
+    """Simple freshness cue from last bar embedded in hearing evidence."""
+    dates = ev.get("recent_bar_dates") or []
+    latest = dates[0] if dates else None
+    if not latest:
+        return "No daily bar anchor on this hearing — refresh after the session if you need same-day evidence."
+    try:
+        bd = date.fromisoformat(str(latest)[:10])
+    except ValueError:
+        return None
+    today = datetime.now(timezone.utc).date()
+    age = (today - bd).days
+    if age >= 2:
+        return (
+            f"Evidence bar {str(latest)[:10]} is {age} calendar days behind UTC today — "
+            "refresh if you need fresher structure."
+        )
+    return None
+
+
+def _build_inline_hearing_payload(
+    *,
+    action_id: str,
+    proposal_id: int,
+    hearing_id: str,
+    proposal: dict,
+    refresh_payload: dict,
+) -> dict:
+    """Structured exhibits for LPA inline renderer (Phase 1 proof surface)."""
+    ev = refresh_payload.get("hearing_evidence") or {}
+    chair = refresh_payload.get("chair") or {}
+    operational = refresh_payload.get("operational") or {}
+    posture = operational.get("posture") or {}
+    snap = refresh_payload.get("snapshot_panel") or {}
+    pop = refresh_payload.get("proposal") or {}
+    sym = (pop.get("symbol") or proposal.get("SYMBOL") or "").strip()
+    direction = (pop.get("direction") or proposal.get("DIRECTION") or "").strip()
+    setup_family = pop.get("setup_family") or proposal.get("SETUP_FAMILY")
+    trust_label = snap.get("TRUST_LABEL") or proposal.get("TRUST_LABEL")
+
+    zone = snap.get("ENTRY_ZONE_JSON") or {}
+    if hasattr(zone, "as_dict"):
+        zone = dict(zone)
+    zl = zh = None
+    if isinstance(zone, dict):
+        zl, zh = zone.get("low"), zone.get("high")
+
+    inv = snap.get("INVALIDATION_JSON") or {}
+    if hasattr(inv, "as_dict"):
+        inv = dict(inv)
+    inv_rule = inv.get("rule") if isinstance(inv, dict) else None
+
+    trace = ev.get("recent_bar_trace") or []
+    exhibit_geometry = {
+        "side": direction,
+        "symbol": sym,
+        "zone_low": zl,
+        "zone_high": zh,
+        "latest_price": ev.get("latest_price"),
+        "zone_distance_pct": ev.get("zone_distance_pct"),
+        "invalidation_level": ev.get("invalidation_level"),
+        "invalidation_rule": inv_rule,
+        "invalidation_breached": ev.get("invalidation_breached"),
+        "post_proposal_path_trace": trace or None,
+    }
+
+    path_strip: dict = {}
+    fp_art: dict = {}
+    for a in refresh_payload.get("artifacts") or []:
+        kind = a.get("artifact_kind")
+        if kind == "PATH_STRIP":
+            path_strip = a.get("payload") or {}
+        elif kind == "SYMBOL_FINGERPRINT":
+            fp_art = a.get("payload") or {}
+
+    exhibit_path = {
+        "pct_adverse_before_favorable": path_strip.get("pct_adverse"),
+        "mhr": path_strip.get("mhr"),
+        "path_quality_label": path_strip.get("label") or posture.get("path_quality"),
+        "interpretation": path_strip.get("interpretation") or ev.get("path_quality_interpretation"),
+    }
+    exhibit_regime = {
+        "proposal_regime": snap.get("REGIME_STATE"),
+        "trend_now": ev.get("trend_regime_now"),
+        "vol_now": ev.get("vol_regime_now"),
+        "structure_now": ev.get("structural_state_now"),
+        "structure_proposal": snap.get("STRUCTURAL_STATE"),
+        "continuity_verdict": ev.get("regime_continuity"),
+        "continuity_detail": ev.get("regime_continuity_detail"),
+    }
+    exhibit_protection = {
+        "invalidation_level": ev.get("invalidation_level"),
+        "cushion_pct": ev.get("invalidation_cushion_pct"),
+        "breached": ev.get("invalidation_breached"),
+        "trail_posture": posture.get("trail_posture"),
+        "size_posture": posture.get("size_posture"),
+    }
+    exhibit_fp = {
+        "one_liner": fp_art.get("one_liner"),
+        "bullets": fp_art.get("bullets") or [],
+        "badge": fp_art.get("badge"),
+        "trust_label": fp_art.get("trust_label") or trust_label,
+        "vol_regime_now": fp_art.get("vol_regime_now"),
+        "path_quality": fp_art.get("path_quality"),
+    }
+
+    what_changed = chair.get("what_changed_since_proposal") or []
+    roles_compact = []
+    for r in refresh_payload.get("roles") or []:
+        o = r.get("output") or {}
+        roles_compact.append(
+            {
+                "role_name": r.get("role_name"),
+                "stance_badge": o.get("stance_badge"),
+                "one_liner": o.get("one_liner"),
+            }
+        )
+
+    bar_dates = ev.get("recent_bar_dates") or []
+    evidence_bar_date = bar_dates[0] if bar_dates else None
+
+    return {
+        "action_id": action_id,
+        "proposal_id": proposal_id,
+        "hearing_id": hearing_id,
+        "symbol": sym,
+        "setup_family": setup_family,
+        "direction": direction,
+        "trust_label": trust_label,
+        "stance": refresh_payload.get("stance"),
+        "confidence": refresh_payload.get("confidence"),
+        "hearing_ts": refresh_payload.get("hearing_ts"),
+        "hearing_updated_at": refresh_payload.get("updated_at"),
+        "evidence_bar_date": evidence_bar_date,
+        "stale_hint": _inline_hearing_stale_hint(ev),
+        "exhibit_geometry_hero": exhibit_geometry,
+        "exhibit_path_quality": exhibit_path,
+        "exhibit_regime_continuity": exhibit_regime,
+        "exhibit_protection": exhibit_protection,
+        "exhibit_symbol_fingerprint": exhibit_fp,
+        "what_changed_strip": what_changed[:5],
+        "chair_board": {
+            "stance": chair.get("stance"),
+            "confidence": chair.get("confidence"),
+            "top_supports": chair.get("top_supports") or [],
+            "top_tensions": chair.get("top_tensions") or [],
+            "execution_shaping": chair.get("execution_shaping") or {},
+        },
+        "roles_compact": roles_compact,
+        "artifacts": refresh_payload.get("artifacts") or [],
+    }
+
+
 _ORCHESTRATE_ALLOWED_STATUSES = frozenset(
     {
         "OPEN_BLOCKED",
@@ -9689,6 +9842,13 @@ def orchestrate_committee2_structural_entry(
         stance = refresh_payload.get("stance")
         conf = refresh_payload.get("confidence")
         action_after = _fetch_live_action(cur, action_id) or action
+        inline_hearing = _build_inline_hearing_payload(
+            action_id=action_id,
+            proposal_id=proposal_id_int,
+            hearing_id=hearing_id,
+            proposal=dict(proposal),
+            refresh_payload=refresh_payload,
+        )
 
         if idempotent_replay:
             fd = fetch_committee2_final_decision_for_action(cur, action_id)
@@ -9710,6 +9870,7 @@ def orchestrate_committee2_structural_entry(
                 "already_committed": True,
                 "idempotent_replay": True,
                 "joint_decision": vr.get("joint_decision"),
+                "inline_hearing": inline_hearing,
             }
 
         mv = materialize_out or {}
@@ -9731,6 +9892,7 @@ def orchestrate_committee2_structural_entry(
             "idempotent_replay": False,
             "joint_decision": mv.get("joint_decision"),
             "derived_sizing": mv.get("derived_sizing"),
+            "inline_hearing": inline_hearing,
         }
     finally:
         conn.close()

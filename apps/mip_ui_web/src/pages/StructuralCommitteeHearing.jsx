@@ -28,6 +28,7 @@ export default function StructuralCommitteeHearing() {
   const [loading, setLoading] = useState(true)
   const [commitMsg, setCommitMsg] = useState(null)
   const [actionIdInput, setActionIdInput] = useState(() => (actionIdFromUrl || '').trim())
+  const [showAdvancedBind, setShowAdvancedBind] = useState(false)
 
   const loadByHearing = useCallback(async (hid) => {
     setLoading(true)
@@ -101,13 +102,17 @@ export default function StructuralCommitteeHearing() {
     }
   }
 
+  const boundActionId = (actionIdFromUrl || '').trim()
+
   const commit = async () => {
     if (!hearingId) return
     setCommitMsg(null)
-    const aid = (actionIdInput || '').trim()
+    const aid = showAdvancedBind
+      ? (actionIdInput || '').trim() || boundActionId
+      : boundActionId || (actionIdInput || '').trim()
     if (!aid) {
       setCommitMsg(
-        'Commit skipped: set Live action ID (required to link COMMITTEE_FINAL_DECISION for Sync Committee 2.0 in LPA).',
+        'Commit skipped: set Live action ID (required to link COMMITTEE_FINAL_DECISION for LPA).',
       )
       return
     }
@@ -208,21 +213,41 @@ export default function StructuralCommitteeHearing() {
 
       <section className="sch-panel sch-live-bind">
         <h2>Live action binding</h2>
-        <p className="sch-sub">
-          Paste the pending <strong>LIVE_ACTIONS.ACTION_ID</strong> for this proposal before <strong>Commit final</strong>{' '}
-          so Sync Committee 2.0 in Live Portfolio Activity can load this decision.
-        </p>
-        <label className="sch-field">
-          <span className="sch-field-label">action_id</span>
-          <input
-            type="text"
-            className="sch-input"
-            value={actionIdInput}
-            onChange={(e) => setActionIdInput(e.target.value)}
-            placeholder="e.g. from Pending Decisions row"
-            autoComplete="off"
-          />
-        </label>
+        {boundActionId ? (
+          <>
+            <p className="sch-sub">
+              Using <strong>action_id</strong> from the link. <strong>Commit final</strong> binds this hearing to that
+              pending LIVE row for LPA.
+            </p>
+            <div className="sch-bind-chips">
+              <span className="sch-chip">action_id: {boundActionId}</span>
+              {proposalId ? <span className="sch-chip">proposal_id: {proposalId}</span> : null}
+            </div>
+            {!showAdvancedBind ? (
+              <button type="button" className="sch-btn sch-btn--ghost" onClick={() => setShowAdvancedBind(true)}>
+                Advanced — change action_id
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <p className="sch-sub">
+            Paste the pending <strong>LIVE_ACTIONS.ACTION_ID</strong> for this proposal before <strong>Commit final</strong>{' '}
+            so Live Portfolio Activity can load this decision.
+          </p>
+        )}
+        {(showAdvancedBind || !boundActionId) && (
+          <label className="sch-field">
+            <span className="sch-field-label">action_id {boundActionId ? '(override)' : ''}</span>
+            <input
+              type="text"
+              className="sch-input"
+              value={actionIdInput}
+              onChange={(e) => setActionIdInput(e.target.value)}
+              placeholder="e.g. from Pending Decisions row"
+              autoComplete="off"
+            />
+          </label>
+        )}
       </section>
 
       <div className="sch-grid">

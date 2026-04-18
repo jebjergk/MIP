@@ -4,7 +4,7 @@ Operational output is JSON-safe dicts; explanatory strings are separate.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 # Stance ordering: worst (0) .. best (4)
@@ -68,6 +68,8 @@ class LiveContext:
     trend_regime_now: Optional[str]
     vol_regime_now: Optional[str]
     bar_dates: List[str]
+    # Oldest → newest: daily closes for inline path trace (LPA geometry hero).
+    recent_bar_trace: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _entry_zone(snapshot: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
@@ -104,6 +106,155 @@ def invalidation_breached(side: str, price: float, inv_level: Optional[float]) -
     if su == "SHORT":
         return price > inv_level
     return False
+
+
+def invalidation_cushion_pct(side: str, price: float, inv_level: Optional[float]) -> Optional[float]:
+    """Room to invalidation as % of price (positive = not yet breached)."""
+    if inv_level is None or price <= 0:
+        return None
+    su = (side or "").upper()
+    if su == "LONG":
+        return (price - inv_level) / price * 100.0
+    if su == "SHORT":
+        return (inv_level - price) / price * 100.0
+    return None
+
+
+def _compute_confidence_continuous(
+    stance: str,
+    dist_pct: Optional[float],
+    pct_adv: Optional[float],
+    mhr: Optional[float],
+    breach: bool,
+    thesis_broken: bool,
+    regime_hostile: bool,
+    chase_severe: bool,
+    stretch: bool,
+    path_ugly: bool,
+    path_weak: bool,
+) -> float:
+    """
+    Stance tier anchor + continuous adjustments (deterministic weights):
+    - dist_pct: further from zone mid → small penalty (cap 0.10).
+    - pct_adv: vs 0.32 baseline, ±0.22 per unit deviation.
+    - mhr: vs 0.42 baseline, +0.18 per unit above.
+    - path_ugly / path_weak: −0.06 / −0.05.
+    - thesis_broken: −0.08; regime_hostile: −0.07; chase_severe: −0.06; stretch alone: −0.03.
+    - breach: floor adjustment so confidence stays high (deny conviction).
+    """
+    base = {
+        "DENY": 0.86,
+        "DEFER": 0.44,
+        "WAIT_RECLAIM": 0.50,
+        "APPROVE_REDUCED": 0.60,
+        "APPROVE": 0.74,
+    }.get(stance.upper(), 0.65)
+
+    adj = 0.0
+    if dist_pct is not None:
+        adj -= min(0.10, max(0.0, (dist_pct - 1.5) * 0.006))
+    if pct_adv is not None:
+        adj -= (pct_adv - 0.32) * 0.22
+    if mhr is not None:
+        adj += (mhr - 0.42) * 0.18
+    if path_ugly:
+        adj -= 0.06
+    if path_weak:
+        adj -= 0.05
+    if thesis_broken:
+        adj -= 0.08
+    if regime_hostile:
+        adj -= 0.07
+    if stretch and not chase_severe:
+        adj -= 0.03
+    if chase_severe:
+        adj -= 0.06
+    if breach:
+        adj = max(adj, 0.12)
+
+    conf = base + adj
+    return max(0.08, min(0.94, conf))
+
+
+def _path_quality_interpretation(
+    pct_adv: Optional[float], mhr: Optional[float], path_ugly: bool, path_weak: bool
+) -> str:
+    parts: List[str] = []
+    if pct_adv is not None:
+        if pct_adv <= 0.32:
+            parts.append("adverse-before-favorable is light vs typical structural profiles")
+        elif pct_adv <= 0.42:
+            parts.append("adverse-before-favorable is elevated but still workable")
+        else:
+            parts.append("adverse-before-favorable is heavy — path is a headwind")
+    if mhr is not None:
+        if mhr >= 0.45:
+            parts.append("MHR supports follow-through")
+        elif mhr >= 0.38:
+            parts.append("MHR is middling — size discipline warranted")
+        else:
+            parts.append("MHR is soft — edge persistence is questionable")
+    if path_ugly or path_weak:
+        parts.append("path quality flags pulled stance toward caution")
+    if not parts:
+        return "Path metrics sparse — rely on geometry and regime exhibits."
+    return ("; ".join(parts)).capitalize()
+
+
+def _regime_continuity_label(
+    regime_hostile: bool, thesis_broken: bool, snap_regime: str, trend_now: str
+) -> Tuple[str, str]:
+    if regime_hostile:
+        return (
+            "HOSTILE",
+            "Proposal-time regime backdrop conflicts with current trend for this side.",
+        )
+    if thesis_broken:
+        return "DRIFT", "Structural state shifted vs proposal snapshot."
+    tb = _regime_bucket(trend_now)
+    if snap_regime == "GOOD" and tb == "BAD":
+        return "DRIFT", "Trend/regime bucket weakened vs proposal GOOD backdrop."
+    if snap_regime == "BAD" and tb == "GOOD":
+        return "IMPROVED", "Trend/regime improved vs proposal-time stress."
+    return "ALIGNED", "Backdrop consistent with proposal-time regime read."
+
+
+def _symbol_behavior_fingerprint(
+    sym: str,
+    setup_family: Optional[str],
+    trust: Optional[str],
+    vol: Optional[str],
+    path_quality: str,
+    dist_pct: Optional[float],
+    pct_adv: Optional[float],
+    mhr: Optional[float],
+) -> Tuple[str, List[str], str]:
+    bullets: List[str] = []
+    trust_s = (trust or "n/a").strip()
+    vol_s = (vol or "n/a").strip()
+    sf = setup_family or "n/a"
+    bullets.append(f"{sym} · {sf}")
+    bullets.append(f"Trust label (proposal): {trust_s}")
+    bullets.append(f"Vol regime (now): {vol_s}")
+    bullets.append(f"Path bucket: {path_quality}")
+    if dist_pct is not None:
+        bullets.append(f"Expression vs zone mid: {dist_pct:.2f}% distance")
+    if pct_adv is not None or mhr is not None:
+        bullets.append(
+            "Path stats: adv="
+            f"{pct_adv if pct_adv is not None else 'n/a'}, MHR={mhr if mhr is not None else 'n/a'}"
+        )
+    thin = trust_s.lower() == "n/a" and pct_adv is None and mhr is None and dist_pct is None
+    if thin:
+        one = (
+            f"Limited fingerprint for {sym} — only setup family, trust label, and live vol are wired; "
+            "add path/geometry numerics for a fuller read."
+        )
+        badge = "THIN"
+    else:
+        one = f"Fingerprint ties trust, vol, path bucket, and expression distance for {sym}."
+        badge = path_quality if path_quality in ("POOR", "OK") else "MIXED"
+    return one, bullets, badge
 
 
 def compute_hearing_bundle(
@@ -187,18 +338,35 @@ def compute_hearing_bundle(
     if path_ugly:
         stance = cap_stance_worse(stance, "APPROVE_REDUCED")
 
-    # --- Confidence ---
-    conf = 0.72
-    if stance == "DENY":
-        conf = 0.9
-    elif stance in ("DEFER", "WAIT_RECLAIM"):
-        conf = 0.55
-    elif stance == "APPROVE_REDUCED":
-        conf = 0.62
-    if path_weak:
-        conf *= 0.92
-    conf = max(0.05, min(0.95, conf))
+    inv_cushion_pct = invalidation_cushion_pct(side, price, inv_level)
+    r_cont, r_cont_detail = _regime_continuity_label(regime_hostile, thesis_broken, snap_regime, trend_now)
+    path_interpretation = _path_quality_interpretation(pct_adv, mhr, path_ugly, path_weak)
+    path_quality_bucket = "POOR" if path_ugly or path_weak else "OK"
+    fp_one, fp_bullets, fp_badge = _symbol_behavior_fingerprint(
+        sym,
+        snapshot.get("SETUP_FAMILY"),
+        snapshot.get("TRUST_LABEL"),
+        live.vol_regime_now,
+        path_quality_bucket,
+        dist_pct,
+        pct_adv,
+        mhr,
+    )
+    conf = _compute_confidence_continuous(
+        stance,
+        dist_pct,
+        pct_adv,
+        mhr,
+        breach,
+        thesis_broken,
+        regime_hostile,
+        chase_severe,
+        stretch,
+        path_ugly,
+        path_weak,
+    )
 
+    trace = list(live.recent_bar_trace) if live.recent_bar_trace else []
     evidence = {
         "latest_price": price,
         "open_price": live.open_price,
@@ -212,9 +380,14 @@ def compute_hearing_bundle(
         "trend_regime_now": live.trend_regime_now,
         "vol_regime_now": live.vol_regime_now,
         "recent_bar_dates": live.bar_dates[:5],
+        "recent_bar_trace": trace,
         "zone_distance_pct": dist_pct,
         "invalidation_level": inv_level,
         "invalidation_breached": breach,
+        "invalidation_cushion_pct": inv_cushion_pct,
+        "regime_continuity": r_cont,
+        "regime_continuity_detail": r_cont_detail,
+        "path_quality_interpretation": path_interpretation,
     }
 
     deltas: List[Dict[str, Any]] = [
@@ -303,26 +476,54 @@ def compute_hearing_bundle(
         {
             "artifact_kind": "REGIME_GAUGE",
             "schema_version": "1",
-            "payload": {"proposal": snapshot.get("REGIME_STATE"), "trend": live.trend_regime_now, "vol": live.vol_regime_now},
+            "payload": {
+                "proposal": snapshot.get("REGIME_STATE"),
+                "trend": live.trend_regime_now,
+                "vol": live.vol_regime_now,
+                "continuity": r_cont,
+                "continuity_detail": r_cont_detail,
+            },
             "evidence_refs": ["snapshot.REGIME_STATE", "hearing.trend_regime_now"],
         },
         {
             "artifact_kind": "PATH_STRIP",
             "schema_version": "1",
-            "payload": {"pct_adverse": pct_adv, "mhr": mhr, "label": posture["path_quality"]},
+            "payload": {
+                "pct_adverse": pct_adv,
+                "mhr": mhr,
+                "label": posture["path_quality"],
+                "interpretation": path_interpretation,
+            },
             "evidence_refs": ["snapshot.PATH_METRICS_JSON"],
         },
         {
             "artifact_kind": "PROTECTION_STRIP",
             "schema_version": "1",
-            "payload": {"invalidation": inv_level, "breached": breach, "rule": inv_rule},
+            "payload": {
+                "invalidation": inv_level,
+                "breached": breach,
+                "rule": inv_rule,
+                "cushion_pct": inv_cushion_pct,
+            },
             "evidence_refs": ["snapshot.INVALIDATION_JSON", "hearing.latest_price"],
         },
         {
             "artifact_kind": "SYMBOL_FINGERPRINT",
             "schema_version": "1",
-            "payload": {"symbol": sym, "setup_family": snapshot.get("SETUP_FAMILY"), "note": "V1 deterministic placeholder"},
-            "evidence_refs": ["snapshot.SYMBOL", "snapshot.SETUP_FAMILY"],
+            "payload": {
+                "symbol": sym,
+                "setup_family": snapshot.get("SETUP_FAMILY"),
+                "trust_label": snapshot.get("TRUST_LABEL"),
+                "vol_regime_now": live.vol_regime_now,
+                "path_quality": posture["path_quality"],
+                "zone_distance_pct": dist_pct,
+                "pct_adverse": pct_adv,
+                "mhr": mhr,
+                "one_liner": fp_one,
+                "bullets": fp_bullets,
+                "badge": fp_badge,
+            },
+            "evidence_refs": ["snapshot.SYMBOL", "snapshot.SETUP_FAMILY", "snapshot.TRUST_LABEL", "hearing.*"],
         },
     ]
 
@@ -383,33 +584,54 @@ def compute_hearing_bundle(
         },
         {
             "role_name": "SYMBOL_BEHAVIOR",
-            "stance_badge": "NEUTRAL",
-            "one_liner": "Symbol behavior — V1 baseline",
-            "bullets": [f"{sym} / {snapshot.get('SETUP_FAMILY')}", "No adverse fingerprint in V1"],
-            "influence": "Patience / nuance only",
-            "output": {"symbol_stance": "NEUTRAL"},
-            "evidence_refs": ["snapshot.SYMBOL", "snapshot.SETUP_FAMILY"],
+            "stance_badge": fp_badge,
+            "one_liner": fp_one,
+            "bullets": fp_bullets[1:5] if len(fp_bullets) > 4 else fp_bullets,
+            "influence": "Honest symbol read — trust, vol, path, expression",
+            "output": {
+                "symbol_stance": fp_badge,
+                "trust": snapshot.get("TRUST_LABEL"),
+                "vol_now": live.vol_regime_now,
+                "path_bucket": posture["path_quality"],
+            },
+            "evidence_refs": ["snapshot.SYMBOL", "snapshot.TRUST_LABEL", "snapshot.PATH_METRICS_JSON"],
         },
     ]
+
+    dist_note = f"Zone mid distance ~{dist_pct:.2f}% from last" if dist_pct is not None else "Zone distance n/a"
+    adv_note = (
+        f"Adverse-before-favorable {pct_adv:.3f}" if pct_adv is not None else "Adverse-before-favorable n/a"
+    )
+    mhr_note = f"MHR {mhr:.3f}" if mhr is not None else "MHR n/a"
+    inv_note = (
+        f"Invalidation cushion ~{inv_cushion_pct:.2f}% (breached)" if breach and inv_cushion_pct is not None
+        else f"Invalidation cushion ~{inv_cushion_pct:.2f}% to level" if inv_cushion_pct is not None
+        else "Invalidation distance n/a"
+    )
 
     chair = {
         "stance": stance,
         "confidence": conf,
         "top_supports": [
             s for s in [
-                "Geometry tolerable" if not chase_severe and not stretch else None,
-                "Invalidation holding" if not breach else None,
-                "Path not worst-in-class" if not path_ugly else None,
+                dist_note if not chase_severe and not stretch and dist_pct is not None else None,
+                inv_note if not breach and inv_level is not None else None,
+                f"{adv_note}; {mhr_note}" if not path_ugly and (pct_adv is not None or mhr is not None) else None,
+                f"Trust {snapshot.get('TRUST_LABEL')}" if snapshot.get("TRUST_LABEL") else None,
             ]
             if s
         ],
         "top_tensions": [
             t for t in [
-                "Chase / stretch vs zone" if (chase_severe or stretch) else None,
-                "Regime hostile to side" if regime_hostile else None,
-                "Path stats weak" if path_ugly or path_weak else None,
-                "Structural state shifted" if thesis_broken else None,
-                "Invalidation breached" if breach else None,
+                (
+                    f"Severe chase vs zone {'high' if side == 'LONG' else 'low'}"
+                    if chase_severe
+                    else "Stretch vs zone" if stretch else None
+                ),
+                "Regime hostile vs proposal GOOD read" if regime_hostile else None,
+                f"{adv_note} (heavy)" if path_ugly else f"{mhr_note} (soft)" if path_weak else None,
+                f"Structure {struct_snap} → {struct_now} (shift)" if thesis_broken else None,
+                f"Invalidation breached @ {inv_level}" if breach else None,
             ]
             if t
         ],

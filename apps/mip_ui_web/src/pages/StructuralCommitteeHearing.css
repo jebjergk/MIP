@@ -273,6 +273,30 @@
   cursor: not-allowed;
 }
 
+.sch-btn--ghost {
+  margin-top: 0.5rem;
+  background: transparent;
+  border: 1px dashed #94a3b8;
+  color: #64748b;
+  font-size: 0.8rem;
+}
+
+.sch-bind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.sch-chip {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
 .sch-conf {
   font-size: 0.85rem;
   font-weight: 600;

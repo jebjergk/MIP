@@ -52,6 +52,18 @@ from app.services.live_intelligence.structural_routing import (
     contract_executable_bracket,
     is_structural_live_action,
 )
+from app.services.live_intelligence.live_intent_policy import (
+    CONFIG_LIVE_STRUCTURAL_ONLY,
+    ENV_LIVE_STRUCTURAL_ONLY,
+    assert_legacy_execute_forbidden,
+    assert_legacy_order_proposals_import_allowed,
+    assert_live_committee_policy,
+    env_structural_only_flag,
+    live_intent_kind_from_row,
+    overview_excluded_intent_kinds,
+    parse_structural_only_config,
+    structural_proposal_minimum_contract_violations,
+)
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -327,7 +339,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
           NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
           REVALIDATION_OUTCOME, REVALIDATION_POLICY_VERSION, REVALIDATION_DATA_SOURCE,
-          SETUP_FAMILY, DIRECTION, ENTRY_ZONE_LOW, ENTRY_ZONE_HIGH,
+          SETUP_EVENT_ID, SETUP_FAMILY, DIRECTION, ENTRY_ZONE_LOW, ENTRY_ZONE_HIGH,
           INVALIDATION_LEVEL, INVALIDATION_RULE, STRUCTURE_CONFIDENCE, LEVEL_SIGNIFICANCE,
           STRUCTURAL_STATE, REGIME_TAGS, REGIME_COMPAT, TRUST_LABEL,
           MEANINGFUL_HIT_RATE, PATH_SURVIVAL_RATE, MFE_MAE_RATIO, AVG_BARS_TO_THRESHOLD,
@@ -336,7 +348,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           EXPECTED_HOLD_CHARACTER, MAX_HOLD_BARS,
           SETUP_NARRATIVE, PROPOSAL_RATIONALE,
           CURRENT_PRICE, DISTANCE_TO_ENTRY_ZONE, SETUP_STILL_VALID, PRICE_MOVED_TOO_FAR, FRESHNESS_ASSESSMENT,
-          MARKET_TYPE
+          MARKET_TYPE, LIVE_INTENT_KIND
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
         """,
@@ -1015,11 +1027,24 @@ def _auto_import_latest_proposals_for_live_portfolio(
     *,
     source_portfolio_id: int | None = None,
     limit: int = 200,
+    cur=None,
 ) -> dict:
     """
     Best-effort bridge from research proposals -> live actions so
     /live/activity/overview reflects latest proposal output.
     """
+    if cur is not None and _live_structural_only_enabled(cur):
+        return {
+            "attempted": False,
+            "ok": None,
+            "skipped_structural_only": True,
+            "candidate_count": 0,
+            "imported_count": 0,
+            "skipped_existing_count": 0,
+            "skipped_symbol_live_position_count": 0,
+            "source_scope": None,
+            "latest_batch_date": None,
+        }
     safe_limit = max(1, min(int(limit or 200), 1000))
     try:
         result = import_live_actions_from_proposals(
@@ -1494,6 +1519,22 @@ def _read_app_config(cur, keys: list[str]) -> dict[str, str]:
     )
     rows = fetch_all(cur)
     return {str(r.get("CONFIG_KEY")): str(r.get("CONFIG_VALUE")) for r in rows if r.get("CONFIG_KEY") is not None}
+
+
+def _live_structural_only_enabled(cur) -> bool:
+    """Deployment flag: when true, legacy live proposal import and legacy committee are forbidden."""
+    cfg = _read_app_config(cur, [CONFIG_LIVE_STRUCTURAL_ONLY])
+    app_val = parse_structural_only_config(cfg.get(CONFIG_LIVE_STRUCTURAL_ONLY), default=True)
+    env_val = env_structural_only_flag()
+    if env_val is not None and env_val != app_val:
+        _log.warning(
+            "%s=%s disagrees with APP_CONFIG %s=%s; using APP_CONFIG value.",
+            ENV_LIVE_STRUCTURAL_ONLY,
+            env_val,
+            CONFIG_LIVE_STRUCTURAL_ONLY,
+            app_val,
+        )
+    return app_val
 
 
 def _parse_bool_config(value: str | None, default: bool) -> bool:
@@ -6390,6 +6431,10 @@ def list_live_trade_actions(
     portfolio_id: int | None = Query(None),
     pending_only: bool = Query(True),
     limit: int = Query(200, ge=1, le=1000),
+    include_legacy: bool = Query(
+        False,
+        description="Include LEGACY_PATTERN / UNKNOWN LIVE_INTENT_KIND rows (debug).",
+    ),
 ):
     conn = get_connection()
     try:
@@ -6431,7 +6476,7 @@ def list_live_trade_actions(
           la.REVALIDATION_OUTCOME, la.REVALIDATION_POLICY_VERSION, la.REVALIDATION_DATA_SOURCE,
           la.REASON_CODES,
           la.ONE_MIN_BAR_TS, la.ONE_MIN_BAR_CLOSE, la.EXECUTION_PRICE_SOURCE,
-          la.CREATED_AT, la.UPDATED_AT
+          la.CREATED_AT, la.UPDATED_AT, la.LIVE_INTENT_KIND
         from MIP.LIVE.LIVE_ACTIONS la
         left join MIP.LIVE.COMMITTEE_VERDICT cv
           on cv.RUN_ID = la.COMMITTEE_RUN_ID
@@ -6443,6 +6488,9 @@ def list_live_trade_actions(
         """
         cur.execute(sql, params)
         rows = fetch_all(cur)
+        if not include_legacy:
+            _excl = overview_excluded_intent_kinds(include_legacy=False)
+            rows = [r for r in rows if live_intent_kind_from_row(r) not in _excl]
         return {"actions": serialize_rows(rows), "count": len(rows)}
     finally:
         conn.close()
@@ -6651,6 +6699,10 @@ def get_live_activity_overview(
     execution_limit: int = Query(60, ge=10, le=500),
     order_lookback_days: int = Query(30, ge=1, le=365),
     snapshot_lookback_days: int = Query(14, ge=1, le=365),
+    include_legacy: bool = Query(
+        False,
+        description="When true, include LEGACY_PATTERN/UNKNOWN live actions in pending decisions (debug/historical).",
+    ),
 ):
     conn = get_connection()
     try:
@@ -6693,13 +6745,16 @@ def get_live_activity_overview(
         cfg = cfg_rows[0]
         portfolio_id = cfg.get("PORTFOLIO_ID")
         account_id = cfg.get("IBKR_ACCOUNT_ID")
+        live_structural_only = _live_structural_only_enabled(cur)
         app_cfg = _read_app_config(
             cur,
             ["LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW", "LIVE_AUTO_IMPORT_PROPOSAL_LIMIT"],
         )
-        auto_import_enabled = str(
-            app_cfg.get("LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW", "true")
-        ).strip().lower() not in {"0", "false", "no", "off"}
+        auto_import_enabled = _parse_bool_config(
+            app_cfg.get("LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW"), default=False
+        )
+        if live_structural_only:
+            auto_import_enabled = False
         auto_import_limit_raw = app_cfg.get("LIVE_AUTO_IMPORT_PROPOSAL_LIMIT", "200")
         try:
             auto_import_limit = int(auto_import_limit_raw)
@@ -6711,6 +6766,7 @@ def get_live_activity_overview(
                 int(portfolio_id),
                 source_portfolio_id=int(portfolio_id),
                 limit=auto_import_limit,
+                cur=cur,
             )
         auto_import_summary["enabled"] = auto_import_enabled
 
@@ -6942,7 +6998,8 @@ def get_live_activity_overview(
               la.REVALIDATION_PRICE, la.PRICE_DEVIATION_PCT, la.REVALIDATION_TS, la.REVALIDATION_OUTCOME,
               la.SETUP_EVENT_ID, la.SETUP_FAMILY, la.DIRECTION, la.ENTRY_ZONE_LOW, la.ENTRY_ZONE_HIGH,
               la.INVALIDATION_LEVEL, la.TRAIL_STYLE, la.TRAIL_ACTIVATION_TYPE,
-              la.SETUP_NARRATIVE, la.FRESHNESS_ASSESSMENT, la.EXPECTED_HOLD_CHARACTER
+              la.SETUP_NARRATIVE, la.FRESHNESS_ASSESSMENT, la.EXPECTED_HOLD_CHARACTER,
+              la.LIVE_INTENT_KIND
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
               on cv.RUN_ID = la.COMMITTEE_RUN_ID
@@ -6958,6 +7015,13 @@ def get_live_activity_overview(
             (portfolio_id, limit),
         )
         action_rows = fetch_all(cur)
+        _excl_kinds = overview_excluded_intent_kinds(include_legacy=include_legacy)
+        if _excl_kinds:
+            action_rows = [
+                r
+                for r in action_rows
+                if live_intent_kind_from_row(r) not in _excl_kinds
+            ]
         action_meta_by_id: dict[str, dict] = {}
         for a in action_rows:
             action_id_key = str(a.get("ACTION_ID") or "")
@@ -7170,6 +7234,7 @@ def get_live_activity_overview(
                 pending_decisions.append(
                     {
                         "action_id": row.get("ACTION_ID"),
+                        "live_intent_kind": live_intent_kind_from_row(row),
                         "proposal_id": row.get("PROPOSAL_ID"),
                         "symbol": row.get("SYMBOL"),
                         "side": row.get("SIDE"),
@@ -7760,7 +7825,16 @@ def get_live_activity_overview(
                 "order_limit": order_limit,
                 "execution_limit": execution_limit,
                 "snapshot_lookback_days": snapshot_lookback_days,
+                "live_structural_only": live_structural_only,
+                "include_legacy_pending": include_legacy,
                 "auto_import_latest_proposals": auto_import_summary,
+                "live_intent_kinds": {
+                    "STRUCTURAL": "Imported from STRUCTURAL_TRADE_PROPOSALS; structural committee only.",
+                    "OPERATOR_EXIT": "Manual broker exit from Live Portfolio Activity; committee waived.",
+                    "LEGACY_PATTERN": "Historical pattern-era import from ORDER_PROPOSALS — hidden from default view when LIVE_STRUCTURAL_ONLY is true.",
+                    "UNKNOWN": "Unclassified legacy row — treat as non-operational; use debug include_legacy to inspect.",
+                    "note": "Default overview shows STRUCTURAL and OPERATOR_EXIT only unless include_legacy=true.",
+                },
             },
             "open_positions": serialize_rows(open_positions),
             "open_orders": serialize_rows(
@@ -7946,12 +8020,12 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
             insert into MIP.LIVE.LIVE_ACTIONS (
               ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON,
               PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS, STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS,
-              PARAM_SNAPSHOT, REASON_CODES, COMMITTEE_REQUIRED, COMMITTEE_STATUS, CREATED_AT, UPDATED_AT
+              PARAM_SNAPSHOT, REASON_CODES, COMMITTEE_REQUIRED, COMMITTEE_STATUS, LIVE_INTENT_KIND, CREATED_AT, UPDATED_AT
             )
             select
               %s, null, %s, %s, %s, 'EXIT', 'MANUAL', %s,
               %s, %s, null, 'READY_FOR_APPROVAL_FLOW', dateadd(second, %s, current_timestamp()), 'PENDING',
-              parse_json(%s), parse_json(%s), false, 'SKIPPED', current_timestamp(), current_timestamp()
+              parse_json(%s), parse_json(%s), false, 'SKIPPED', 'OPERATOR_EXIT', current_timestamp(), current_timestamp()
             """,
             (
                 action_id,
@@ -8672,6 +8746,13 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             if existing and (existing[0].get("STATUS") or "").upper() == "COMPLETED":
                 return {"ok": True, "action_id": action_id, "run_id": existing[0].get("RUN_ID"), "status": "COMPLETED", "idempotent_replay": True}
 
+        _structural_only_co = _live_structural_only_enabled(cur)
+        assert_live_committee_policy(
+            action,
+            _structural_only_co,
+            is_structural_fn=is_structural_live_action,
+        )
+
         run_id = str(uuid.uuid4())
         cur.execute(
             """
@@ -8689,6 +8770,7 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                 json.dumps(
                     {
                         "actor": req.actor,
+                        "committee_model": "STRUCTURAL_V1" if is_structural_live_action(action) else "LEGACY_MULTI_AGENT",
                         "news_runtime": {
                             "refresh_ibkr_news": bool(req.refresh_ibkr_news),
                             "ibkr_ingest": news_ingest,
@@ -9103,6 +9185,11 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
+        assert_live_committee_policy(
+            action,
+            _live_structural_only_enabled(cur),
+            is_structural_fn=is_structural_live_action,
+        )
 
         status_upper = (action.get("STATUS") or "").upper()
         if status_upper not in (
@@ -9492,6 +9579,16 @@ def stream_live_trade_committee_prompt(
                 if status_upper not in allowed_for_stream:
                     result["error"] = f"Committee stream blocked until opening validation passes (current: {status_upper})."
                     return
+                try:
+                    assert_live_committee_policy(
+                        action,
+                        _live_structural_only_enabled(cur),
+                        is_structural_fn=is_structural_live_action,
+                    )
+                except HTTPException as hex_stream:
+                    det = hex_stream.detail
+                    result["error"] = det if isinstance(det, str) else json.dumps(det)
+                    return
                 is_structural = is_structural_live_action(action)
 
                 if is_structural:
@@ -9505,7 +9602,7 @@ def stream_live_trade_committee_prompt(
                     role_outputs = list(struct_verdict.pop("role_outputs", None) or [])
                     result["outputs"] = role_outputs
                     result["verdict"] = struct_verdict
-                else:
+                elif not _live_structural_only_enabled(cur):
                     context = _build_action_decision_context(cur, action)
 
                     def cb(ev_name: str, payload: dict):
@@ -9521,6 +9618,8 @@ def stream_live_trade_committee_prompt(
                     )
                     result["outputs"] = outputs or []
                     result["verdict"] = verdict or {}
+                else:
+                    result["error"] = "Legacy committee stream is disabled under LIVE_STRUCTURAL_ONLY."
             except Exception as exc:
                 result["error"] = str(exc)
             finally:
@@ -9597,6 +9696,16 @@ def stream_revalidate_prompt(
                         "joint_decision": sv.get("joint_decision"),
                         "verdict": sv,
                         "committee_model": "STRUCTURAL_V1",
+                    },
+                )
+                return
+            if _live_structural_only_enabled(cur):
+                yield _sse_event(
+                    "error",
+                    {
+                        "action_id": action_id,
+                        "message": "Legacy revalidation preview is disabled under LIVE_STRUCTURAL_ONLY.",
+                        "reason_codes": ["LEGACY_REVALIDATION_SSE_FORBIDDEN", "LIVE_STRUCTURAL_ONLY_ENFORCED"],
                     },
                 )
                 return
@@ -10325,6 +10434,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
+        assert_legacy_execute_forbidden(action, _live_structural_only_enabled(cur))
 
         reason_codes: list[str] = []
         now_utc = datetime.now(timezone.utc)
@@ -12253,56 +12363,19 @@ def reconcile_executions_apply(req: ReconcileExecutionsApplyRequest):
 def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
     """
     One-click paper workflow simulation:
-    import -> PM accept -> compliance approve -> revalidate -> execute -> order status progression.
+    structural import -> PM accept -> compliance approve -> revalidate -> execute -> order status progression.
     """
     steps: list[dict] = []
 
-    source_portfolio_id = req.source_portfolio_id
-    if source_portfolio_id is None:
-        conn = get_connection()
-        try:
-            cur = conn.cursor()
-            source_wheres = [
-                "STATUS in ('PROPOSED', 'APPROVED')",
-                "SYMBOL is not null",
-                "SIDE in ('BUY', 'SELL')",
-            ]
-            source_params = []
-            if req.run_id:
-                source_wheres.append("RUN_ID_VARCHAR = %s")
-                source_params.append(req.run_id)
-            source_params.append(req.limit)
-            cur.execute(
-                f"""
-                select PORTFOLIO_ID
-                from MIP.AGENT_OUT.ORDER_PROPOSALS
-                where {' and '.join(source_wheres)}
-                order by PROPOSED_AT desc
-                limit %s
-                """,
-                tuple(source_params),
-            )
-            proposal_rows = fetch_all(cur)
-            if proposal_rows:
-                source_portfolio_id = int((proposal_rows[0] or {}).get("PORTFOLIO_ID"))
-        finally:
-            conn.close()
-
-    if source_portfolio_id is None:
-        raise HTTPException(
-            status_code=409,
-            detail="No source portfolio could be inferred for paper workflow smoke. Provide source_portfolio_id.",
-        )
-
-    import_result = import_live_actions_from_proposals(
-        ImportLiveActionsFromProposalsRequest(
+    _lim = max(1, min(int(req.limit or 5), 50))
+    import_result = import_structural_proposals(
+        ImportStructuralProposalsRequest(
             live_portfolio_id=req.live_portfolio_id,
-            source_portfolio_id=source_portfolio_id,
-            run_id=req.run_id,
-            limit=req.limit,
+            limit=_lim,
+            max_proposal_age_days=30,
         )
     )
-    steps.append({"step": "import_proposals", "result": import_result})
+    steps.append({"step": "import_structural_proposals", "result": import_result})
 
     action_id = None
     imported_action_ids = import_result.get("imported_action_ids") or []
@@ -12317,7 +12390,11 @@ def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
                 select ACTION_ID
                 from MIP.LIVE.LIVE_ACTIONS
                 where PORTFOLIO_ID = %s
-                  and STATUS in ('RESEARCH_IMPORTED', 'PROPOSED')
+                  and coalesce(LIVE_INTENT_KIND, '') = 'STRUCTURAL'
+                  and STATUS in (
+                    'PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION','OPEN_BLOCKED',
+                    'PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW'
+                  )
                 order by CREATED_AT desc
                 limit 1
                 """,
@@ -12330,7 +12407,7 @@ def run_paper_workflow_smoke(req: SimulatePaperWorkflowRequest):
     if not action_id:
         raise HTTPException(
             status_code=409,
-            detail="No importable or pending action found for workflow smoke.",
+            detail="No structural proposal imported and no pending structural live action found for workflow smoke.",
         )
 
     committee_result = run_live_trade_committee(action_id, CommitteeRunRequest(actor="smoke_committee"))
@@ -12870,6 +12947,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
     conn = get_connection()
     try:
         cur = conn.cursor()
+        assert_legacy_order_proposals_import_allowed(_live_structural_only_enabled(cur))
 
         cur.execute(
             """
@@ -13068,7 +13146,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
                   TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
                   NEWS_CONTEXT_SNAPSHOT, NEWS_CONTEXT_STATE, NEWS_EVENT_SHOCK_FLAG, NEWS_FRESHNESS_BUCKET, NEWS_CONTEXT_POLICY_VERSION,
-                  COMMITTEE_REQUIRED, COMMITTEE_STATUS,
+                  COMMITTEE_REQUIRED, COMMITTEE_STATUS, LIVE_INTENT_KIND,
                   CREATED_AT, UPDATED_AT
                 )
                 select
@@ -13077,7 +13155,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   parse_json(%s), %s, %s, %s,
                   parse_json(%s), %s, %s,
                   parse_json(%s), %s, %s, %s, %s,
-                  true, 'PENDING',
+                  true, 'PENDING', 'LEGACY_PATTERN',
                   current_timestamp(), current_timestamp()
                 """,
                 (
@@ -13421,6 +13499,7 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
         skipped_stale = 0
         skipped_live_position = 0
         skipped_duplicate_symbol = 0
+        skipped_contract_violations = 0
         imported_action_ids: list[str] = []
         seen_symbols: set[str] = set()
         live_position_cache: dict[str, bool] = {}
@@ -13434,6 +13513,11 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
             direction = (p.get("DIRECTION") or "LONG").upper()
 
             if not proposal_id or not symbol:
+                continue
+
+            _viol = structural_proposal_minimum_contract_violations(p)
+            if _viol:
+                skipped_contract_violations += 1
                 continue
 
             # Dedupe by symbol
@@ -13507,6 +13591,18 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
                 trail_params_json = None
 
             action_id = str(uuid.uuid4())
+            _import_ts = datetime.now(timezone.utc).isoformat()
+            param_snapshot_structural = json.dumps(
+                {
+                    "structural_source": True,
+                    "live_intent_kind": "STRUCTURAL",
+                    "import_route": "POST /live/trades/actions/import-structural-proposals",
+                    "source_table": "MIP.APP.STRUCTURAL_TRADE_PROPOSALS",
+                    "import_ts": _import_ts,
+                    "proposal_id": proposal_id,
+                    "setup_event_id": p.get("SETUP_EVENT_ID"),
+                }
+            )
 
             cur.execute(
                 """
@@ -13515,6 +13611,7 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
                     ACTION_INTENT, STATUS,
                     VALIDITY_WINDOW_END, ASSET_CLASS,
                     COMMITTEE_REQUIRED, COMMITTEE_STATUS,
+                    PARAM_SNAPSHOT, LIVE_INTENT_KIND,
                     -- Structural identity
                     SETUP_EVENT_ID, MARKET_TYPE, SETUP_FAMILY, DIRECTION,
                     -- Structural thesis
@@ -13543,6 +13640,7 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
                     %s, 'PENDING_OPEN_VALIDATION',
                     DATEADD(SECOND, %s, CURRENT_TIMESTAMP()), %s,
                     TRUE, 'PENDING',
+                    PARSE_JSON(%s), 'STRUCTURAL',
                     %s, %s, %s, %s,
                     %s, %s, %s,
                     %s, %s,
@@ -13563,6 +13661,7 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
                     action_id, proposal_id, req.live_portfolio_id, symbol, side,
                     action_intent,
                     int(validity_window_sec) if validity_window_sec else 14400, p.get("MARKET_TYPE"),
+                    param_snapshot_structural,
                     p.get("SETUP_EVENT_ID"), p.get("MARKET_TYPE"), p.get("SETUP_FAMILY"), direction,
                     p.get("ENTRY_ZONE_LOW"), p.get("ENTRY_ZONE_HIGH"), p.get("SUPPORTING_LEVEL"),
                     p.get("INVALIDATION_LEVEL"), p.get("INVALIDATION_RULE"),
@@ -13624,6 +13723,7 @@ def import_structural_proposals(req: ImportStructuralProposalsRequest):
             "skipped_stale_count": skipped_stale,
             "skipped_live_position_count": skipped_live_position,
             "skipped_duplicate_symbol_count": skipped_duplicate_symbol,
+            "skipped_contract_violations_count": skipped_contract_violations,
             "imported_action_ids": imported_action_ids,
         }
     finally:
@@ -13644,6 +13744,13 @@ def list_live_proposal_candidates(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        if _live_structural_only_enabled(cur):
+            return {
+                "candidates": [],
+                "count": 0,
+                "legacy_order_proposals_retired": True,
+                "message": "ORDER_PROPOSALS listing is retired under LIVE_STRUCTURAL_ONLY. Use structural proposals import.",
+            }
         wheres = [
             "op.STATUS in ('PROPOSED', 'APPROVED')",
             "op.SYMBOL is not null",

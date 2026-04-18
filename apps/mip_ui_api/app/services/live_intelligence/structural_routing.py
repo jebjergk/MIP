@@ -65,12 +65,16 @@ def is_structural_live_action(action: dict | None) -> bool:
     Structural rows must never use the legacy multi-agent committee.
 
     Predicate (any):
+    - LIVE_INTENT_KIND = STRUCTURAL when column is populated
     - SETUP_EVENT_ID present (structural import always sets this)
     - SETUP_FAMILY present
     - PARAM_SNAPSHOT.structural_source or structural_execution_contract_v1 marks structural
     """
     if not action:
         return False
+    lik = str(action.get("LIVE_INTENT_KIND") or "").strip().upper()
+    if lik == "STRUCTURAL":
+        return True
     if action.get("SETUP_EVENT_ID") is not None and str(action.get("SETUP_EVENT_ID")).strip() != "":
         return True
     if action.get("SETUP_FAMILY"):

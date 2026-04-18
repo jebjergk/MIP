@@ -590,7 +590,7 @@ def run_structural_committee(action: dict) -> dict:
             "adjusted": False,
         },
         "trail": {
-            "style": trail_eval.get("committee_trail_style"),
+            "style": trail_eval.get("committee_trail_style") or action.get("TRAIL_STYLE"),
             "activation_type": action.get("TRAIL_ACTIVATION_TYPE"),
             "activation_param": _safe_float(action.get("TRAIL_ACTIVATION_PARAM")),
             "adjusted": trail_eval.get("adjusted", False),
@@ -640,6 +640,7 @@ def run_structural_committee(action: dict) -> dict:
             "regime": regime_eval,
             "path_quality": path_eval,
             "trail": trail_eval,
+            "structural_context": ctx_eval,
         },
         "structural_source": True,
     }
@@ -662,6 +663,7 @@ def _build_structural_role_outputs(
     regime_eval: dict,
     path_eval: dict,
     trail_eval: dict,
+    ctx_eval: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Build committee role outputs using structural evaluations."""
     symbol = action.get("SYMBOL") or "?"

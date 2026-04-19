@@ -6,6 +6,17 @@ Provides:
   - run_agent_object()      — persistent CREATE AGENT objects (specialists, chair)
   - run_agent_objectless()  — objectless AGENT_RUN (challenge, revision)
   - extract_agent_text()    — pull final text from agent response content blocks
+
+Cortex Agents REST API contract (post-2025-09-01 schema):
+  - messages[].content is an ARRAY of typed content blocks, e.g.
+        {"role": "user", "content": [{"type": "text", "text": "..."}]}
+    Plain string content is rejected with 400 Bad Request.
+  - The objectless endpoint does NOT accept "system" as a message role.
+    System instructions go into the top-level `instructions.system` field.
+  - The model field for the objectless endpoint is `models.orchestration`,
+    not a flat `model` string.
+  - With `stream=false` the response body is NOT wrapped in a `messages`
+    array. It is a single object: {"role": "assistant", "content": [...]}.
 """
 from __future__ import annotations
 
@@ -96,6 +107,37 @@ def _auth_headers(account: str, user: str, private_key_path: str) -> Dict[str, s
 
 
 # ---------------------------------------------------------------------------
+# Message normalization
+# ---------------------------------------------------------------------------
+
+def _normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Normalize messages so each message's `content` is an array of typed
+    content blocks (the format Cortex Agents REST requires). String content
+    is wrapped as a single text block. Lists are passed through unchanged.
+
+    Also drops any 'system' role entries — system prompts are NOT permitted
+    in the messages array on Cortex Agents and produce a 400.
+    """
+    out: List[Dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+        if role == "system":
+            # Defensive: callers should never put system messages here.
+            logger.warning("shadow_cortex_client: dropping disallowed 'system' message")
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            content_blocks: List[Dict[str, Any]] = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            content_blocks = content
+        else:
+            content_blocks = [{"type": "text", "text": "" if content is None else str(content)}]
+        out.append({"role": role, "content": content_blocks})
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Persistent agent (CREATE AGENT object) runner
 # ---------------------------------------------------------------------------
 
@@ -117,11 +159,20 @@ async def run_agent_object(
         name=agent_name,
     )
     headers = _auth_headers(account, user, private_key_path)
-    body = {"messages": messages, "stream": False}
+    body = {
+        "messages": _normalize_messages(messages),
+        "stream": False,
+    }
 
     logger.debug("shadow_agent_object: POST %s (agent=%s)", url, agent_name)
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, json=body, headers=headers)
+        if resp.status_code >= 400:
+            # Surface Snowflake's error body so the caller logs explain *why* 4xx.
+            logger.warning(
+                "shadow_agent_object: %s -> HTTP %s body=%s",
+                agent_name, resp.status_code, resp.text[:1000],
+            )
         resp.raise_for_status()
         return resp.json()
 
@@ -144,6 +195,11 @@ async def run_agent_objectless(
     """
     Run an objectless Cortex agent (inline config, no CREATE AGENT object required).
     Used for challenge and revision turns where instructions are dynamically assembled.
+
+    Per the post-2025-09-01 Cortex Agents schema:
+      - The orchestration model goes under `models.orchestration`.
+      - The system prompt MUST go under `instructions.system`, NOT as a system
+        message in the messages array.
     """
     url = _AGENT_OBJECTLESS_URL.format(
         account=account.lower().replace("_", "-")
@@ -151,11 +207,12 @@ async def run_agent_objectless(
     headers = _auth_headers(account, user, private_key_path)
 
     body: Dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+        "models": {"orchestration": model},
+        "instructions": {
+            "system": system_prompt,
+            "response": "Return ONLY the JSON object specified in the system prompt. No prose. No markdown fences.",
+        },
+        "messages": _normalize_messages([{"role": "user", "content": user_message}]),
         "stream": False,
     }
     if tools:
@@ -166,6 +223,11 @@ async def run_agent_objectless(
     logger.debug("shadow_agent_objectless: POST %s (model=%s)", url, model)
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, json=body, headers=headers)
+        if resp.status_code >= 400:
+            logger.warning(
+                "shadow_agent_objectless: model=%s -> HTTP %s body=%s",
+                model, resp.status_code, resp.text[:1000],
+            )
         resp.raise_for_status()
         return resp.json()
 
@@ -174,40 +236,71 @@ async def run_agent_objectless(
 # Response text extraction
 # ---------------------------------------------------------------------------
 
+def _extract_text_from_content_blocks(content: Any) -> str:
+    """
+    Walk a Cortex Agents `content` array and return the concatenated text
+    from any `{"type": "text", "text": "..."}` blocks. Tool-use, tool-result,
+    and thinking blocks are ignored — only the final user-visible text matters
+    for downstream JSON parsing.
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    texts: List[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        # New schema: top-level "text" field on type=="text" blocks.
+        if block.get("type") == "text":
+            t = block.get("text")
+            if isinstance(t, str) and t:
+                texts.append(t)
+            # Some variants nest under "text": {"text": "..."}.
+            elif isinstance(t, dict):
+                tt = t.get("text")
+                if isinstance(tt, str) and tt:
+                    texts.append(tt)
+    return "\n".join(texts).strip()
+
+
 def extract_agent_text(response: Dict[str, Any]) -> str:
     """
     Pull the final text content from a Cortex Agent response.
 
-    Cortex Agents REST response format:
-      { "messages": [ { "role": "assistant", "content": [ {"type": "text", "text": "..."} ] } ] }
-    or a simple:
-      { "choices": [ { "message": { "content": "..." } } ] }
+    Non-streaming Cortex Agents REST response format (current schema):
+      { "role": "assistant", "content": [ {"type":"text", "text":"..."}, ... ] }
+
+    Legacy / fallback formats also handled defensively:
+      { "messages": [ { "role":"assistant", "content":[...] } ] }
+      { "choices": [ { "message": { "content":"..." } } ] }
     """
-    # Primary format: messages array
+    # 1) Primary: top-level role+content (current non-streaming shape)
+    if response.get("role") == "assistant":
+        text = _extract_text_from_content_blocks(response.get("content"))
+        if text:
+            return text
+
+    # 2) Legacy: messages array of role+content
     messages = response.get("messages") or []
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
-            content = msg.get("content") or []
-            if isinstance(content, str):
-                return content.strip()
-            if isinstance(content, list):
-                texts = [
-                    block.get("text", "")
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                ]
-                combined = " ".join(t for t in texts if t).strip()
-                if combined:
-                    return combined
+            text = _extract_text_from_content_blocks(msg.get("content"))
+            if text:
+                return text
 
-    # Fallback: choices format (some Cortex endpoints)
+    # 3) Fallback: choices format (some Cortex endpoints)
     choices = response.get("choices") or []
     for choice in choices:
         msg = choice.get("message") or {}
         content = msg.get("content") or ""
-        if content:
-            return str(content).strip()
+        if isinstance(content, str) and content:
+            return content.strip()
+        if isinstance(content, list):
+            text = _extract_text_from_content_blocks(content)
+            if text:
+                return text
 
-    # Last resort: dump the whole response as string
+    # 4) Last resort: dump the whole response as string
     import json
     return json.dumps(response)

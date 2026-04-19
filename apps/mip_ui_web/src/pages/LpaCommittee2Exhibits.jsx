@@ -311,6 +311,33 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
     [inline],
   )
 
+  // Shadow board strip — fetch silently; no error shown if unavailable.
+  // NOTE: hooks must be declared before any early returns to keep hook order
+  // stable across renders (otherwise React throws "Rendered more hooks than
+  // during the previous render" and unmounts the entire tree → blank page).
+  const hearingId = inline?.hearing_id || null
+  const [shadowStrip, setShadowStrip] = useState(null)
+  useEffect(() => {
+    if (!hearingId) {
+      setShadowStrip(null)
+      return undefined
+    }
+    setShadowStrip(null)
+    let cancelled = false
+    fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
+      .then((r) => {
+        if (r.status === 404 || r.status === 503) return null
+        return r.ok ? r.json() : null
+      })
+      .then((j) => {
+        if (!cancelled && j) setShadowStrip(j)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [hearingId])
+
   useEffect(() => {
     if (!inline) {
       setRevealStep(0)
@@ -360,23 +387,6 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const chairStep = 6 + intradayOffset + disclosureOffset
   const shadowStep = 7 + intradayOffset + disclosureOffset
   const linkStep = 8 + intradayOffset + disclosureOffset
-
-  // Shadow board strip — fetch silently; no error shown if unavailable
-  const hearingId = inline?.hearing_id
-  const [shadowStrip, setShadowStrip] = useState(null)
-  useEffect(() => {
-    if (!hearingId) return
-    setShadowStrip(null)
-    let cancelled = false
-    fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
-      .then(r => {
-        if (r.status === 404 || r.status === 503) return null
-        return r.ok ? r.json() : null
-      })
-      .then(j => { if (!cancelled && j) setShadowStrip(j) })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [hearingId])
 
   return (
     <div className="lpa-c2-exhibits">

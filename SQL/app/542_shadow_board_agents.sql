@@ -205,7 +205,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_STRUCTURAL_THESIS_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -273,7 +273,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -340,7 +340,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_REGIME_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -408,7 +408,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -476,7 +476,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_PROTECTION_EXIT_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -545,7 +545,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -638,7 +638,7 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
               - slice_name
     tool_resources:
       get_evidence_slice:
-        type: function
+        type: procedure
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
@@ -654,6 +654,18 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
 /* Grants for the stored procedure backing */
 GRANT USAGE ON PROCEDURE MIP.APP.GET_SHADOW_EVIDENCE_SLICE(VARCHAR, VARCHAR, VARCHAR) TO ROLE MIP_ADMIN_ROLE;
 GRANT USAGE ON PROCEDURE MIP.APP.GET_SHADOW_EVIDENCE_SLICE(VARCHAR, VARCHAR, VARCHAR) TO ROLE MIP_UI_API_ROLE;
+
+/* Grants for the agent objects — required because Cortex Agents REST API uses
+   the user's DEFAULT_ROLE under JWT auth (MIP_UI_API_ROLE for MIP_UI_API).
+   CREATE OR REPLACE AGENT drops grants, so this must be re-applied on each
+   redeploy. */
+GRANT USAGE ON AGENT MIP.APP.SHADOW_STRUCTURAL_THESIS_AGENT TO ROLE MIP_UI_API_ROLE;
+GRANT USAGE ON AGENT MIP.APP.SHADOW_ENTRY_GEOMETRY_AGENT    TO ROLE MIP_UI_API_ROLE;
+GRANT USAGE ON AGENT MIP.APP.SHADOW_REGIME_AGENT            TO ROLE MIP_UI_API_ROLE;
+GRANT USAGE ON AGENT MIP.APP.SHADOW_PATH_TRADEABILITY_AGENT TO ROLE MIP_UI_API_ROLE;
+GRANT USAGE ON AGENT MIP.APP.SHADOW_PROTECTION_EXIT_AGENT   TO ROLE MIP_UI_API_ROLE;
+GRANT USAGE ON AGENT MIP.APP.SHADOW_SYMBOL_BEHAVIOR_AGENT   TO ROLE MIP_UI_API_ROLE;
+GRANT USAGE ON AGENT MIP.APP.SHADOW_CHAIR_AGENT             TO ROLE MIP_UI_API_ROLE;
 
 INSERT INTO MIP.APP.APP_CONFIG (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION)
 SELECT 'SHADOW_BOARD_ENABLED', 'false', 'Shadow Board Phase 1 feature flag. Set to true to enable shadow board runs.'

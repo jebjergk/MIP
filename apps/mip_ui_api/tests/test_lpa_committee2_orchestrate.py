@@ -286,6 +286,79 @@ class TestInlineHearingPayload(unittest.TestCase):
         )
         self.assertNotIn("exhibit_public_disclosure_context", out)
 
+    def test_build_inline_hearing_passes_intraday_exhibit(self):
+        refresh = {
+            "stance": "APPROVE",
+            "confidence": 0.5,
+            "hearing_ts": "2026-04-10T12:00:00",
+            "updated_at": "2026-04-10T12:01:00",
+            "proposal": {"symbol": "ABC", "direction": "LONG"},
+            "snapshot_panel": {"ENTRY_ZONE_JSON": {"low": 1, "high": 2}, "INVALIDATION_JSON": {"rule": "R"}},
+            "hearing_evidence": {"recent_bar_dates": []},
+            "operational": {"posture": {}},
+            "chair": {
+                "stance": "APPROVE",
+                "confidence": 0.5,
+                "top_supports": [],
+                "top_tensions": [],
+                "execution_shaping": {},
+                "what_changed_since_proposal": [],
+            },
+            "roles": [],
+            "artifacts": [],
+            "exhibit_intraday_substantiation_map": {
+                "headline": "Expected vs observed today",
+                "bars": [
+                    {"ts": "2026-04-18 14:00:00", "o": 10, "h": 10.2, "l": 9.9, "c": 10.1, "v": 100},
+                    {"ts": "2026-04-18 14:15:00", "o": 10.1, "h": 10.3, "l": 10, "c": 10.2, "v": 110},
+                ],
+                "captions": {"trader_verdict_line": "Today is mixed vs proposal"},
+            },
+        }
+        out = _build_inline_hearing_payload(
+            action_id="a",
+            proposal_id=1,
+            hearing_id="h",
+            proposal={"SYMBOL": "ABC", "DIRECTION": "LONG"},
+            refresh_payload=refresh,
+        )
+        self.assertEqual(out["exhibit_intraday_substantiation_map"]["headline"], "Expected vs observed today")
+
+    def test_build_inline_hearing_intraday_from_artifacts_fallback(self):
+        refresh = {
+            "stance": "APPROVE",
+            "confidence": 0.5,
+            "hearing_ts": "2026-04-10T12:00:00",
+            "updated_at": "2026-04-10T12:01:00",
+            "proposal": {"symbol": "ABC", "direction": "LONG"},
+            "snapshot_panel": {"ENTRY_ZONE_JSON": {"low": 1, "high": 2}, "INVALIDATION_JSON": {"rule": "R"}},
+            "hearing_evidence": {"recent_bar_dates": []},
+            "operational": {"posture": {}},
+            "chair": {
+                "stance": "APPROVE",
+                "confidence": 0.5,
+                "top_supports": [],
+                "top_tensions": [],
+                "execution_shaping": {},
+                "what_changed_since_proposal": [],
+            },
+            "roles": [],
+            "artifacts": [
+                {
+                    "artifact_kind": "INTRADAY_SUBSTANTIATION_MAP",
+                    "payload": {"headline": "Expected vs observed today", "bars": []},
+                }
+            ],
+        }
+        out = _build_inline_hearing_payload(
+            action_id="a",
+            proposal_id=1,
+            hearing_id="h",
+            proposal={"SYMBOL": "ABC", "DIRECTION": "LONG"},
+            refresh_payload=refresh,
+        )
+        self.assertEqual(out["exhibit_intraday_substantiation_map"]["headline"], "Expected vs observed today")
+
 
 class TestCommitteeFinalDecisionCommitForAction(unittest.TestCase):
     def test_conflict_when_bound_to_other_action(self):

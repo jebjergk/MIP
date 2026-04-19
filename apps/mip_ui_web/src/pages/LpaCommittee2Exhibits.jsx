@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
+import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
 
@@ -315,9 +316,12 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       return undefined
     }
     setRevealStep(0)
+    const hasIntraday = inline.exhibit_intraday_substantiation_map != null
     const hasDisclosure =
       inline.exhibit_public_disclosure_context != null || inline.exhibit_live_politician_disclosure_context != null
-    const maxStep = hasDisclosure ? 9 : 8
+    const intradayOffset = hasIntraday ? 1 : 0
+    const disclosureOffset = hasDisclosure ? 1 : 0
+    const maxStep = 7 + intradayOffset + disclosureOffset + 1
     let n = 0
     const tick = setInterval(() => {
       n += 1
@@ -344,9 +348,16 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const pdcExhibit = inline.exhibit_public_disclosure_context
   const livePdcExhibit = inline.exhibit_live_politician_disclosure_context
   const hasDisclosureExhibit = pdcExhibit != null || livePdcExhibit != null
-  const stripStep = hasDisclosureExhibit ? 6 : 5
-  const chairStep = hasDisclosureExhibit ? 7 : 6
-  const linkStep = hasDisclosureExhibit ? 8 : 7
+  const hasIntradayExhibit = inline.exhibit_intraday_substantiation_map != null
+  const intradayOffset = hasIntradayExhibit ? 1 : 0
+  const disclosureOffset = hasDisclosureExhibit ? 1 : 0
+  const stepPath = 2 + intradayOffset
+  const stepReg = 3 + intradayOffset
+  const stepFp = 4 + intradayOffset
+  const stepDisclosure = 5 + intradayOffset
+  const stripStep = 5 + intradayOffset + disclosureOffset
+  const chairStep = 6 + intradayOffset + disclosureOffset
+  const linkStep = 7 + intradayOffset + disclosureOffset
 
   return (
     <div className="lpa-c2-exhibits">
@@ -411,7 +422,13 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             <CloseHistoryChart trace={trace} gradId={chartGradId} />
           </Reveal>
 
-          <Reveal show={revealStep >= 2} className="lpa-c2-card">
+          {hasIntradayExhibit ? (
+            <Reveal show={revealStep >= 2} className="lpa-c2-card lpa-c2-card--ism">
+              <IntradaySubstantiationMapCard exhibit={inline.exhibit_intraday_substantiation_map} variant="lpa" />
+            </Reveal>
+          ) : null}
+
+          <Reveal show={revealStep >= stepPath} className="lpa-c2-card">
             <div className="lpa-c2-card-head">
               <span className="lpa-c2-card-icon" aria-hidden>
                 ≋
@@ -495,7 +512,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             </div>
           </Reveal>
 
-          <Reveal show={revealStep >= 4} className="lpa-c2-card">
+          <Reveal show={revealStep >= stepFp} className="lpa-c2-card">
             <div className="lpa-c2-card-head">
               <span className="lpa-c2-card-icon" aria-hidden>
                 ✦
@@ -514,7 +531,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       </div>
 
       {hasDisclosureExhibit ? (
-        <Reveal show={revealStep >= 5} className="lpa-c2-card lpa-c2-card--pdc">
+        <Reveal show={revealStep >= stepDisclosure} className="lpa-c2-card lpa-c2-card--pdc">
           <div className="lpa-c2-disclosure-pair">
             {pdcExhibit != null ? <PublicDisclosureContextCard exhibit={pdcExhibit} variant="lpa" /> : null}
             {livePdcExhibit != null ? (

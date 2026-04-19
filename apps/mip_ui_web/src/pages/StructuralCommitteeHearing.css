@@ -549,3 +549,157 @@
   padding-top: 0;
   border-top: none;
 }
+
+.sch-panel--ism {
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 50%);
+}
+
+.sch-ism {
+  font-size: 0.88rem;
+  color: #334155;
+}
+
+.sch-ism__title {
+  font-weight: 800;
+  font-size: 1rem;
+  color: #1e3a8a;
+  margin: 0 0 0.5rem;
+}
+
+.sch-ism__expect {
+  margin: 0 0 0.6rem;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.sch-ism__badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.45rem;
+}
+
+.sch-ism__badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+}
+
+.sch-ism__meta {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+.sch-ism__interpret {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.sch-ism__verdict {
+  margin: 0 0 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.sch-ism--verdict-supports .sch-ism__verdict {
+  color: #047857;
+}
+
+.sch-ism--verdict-mixed .sch-ism__verdict {
+  color: #c2410c;
+}
+
+.sch-ism--verdict-challenges .sch-ism__verdict {
+  color: #b91c1c;
+}
+
+.sch-ism__svg {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+}
+
+.sch-ism__wsr {
+  fill: #f1f5f9;
+  opacity: 0.95;
+}
+
+.sch-ism__inv {
+  stroke: #b91c1c;
+  stroke-width: 1.25;
+  stroke-dasharray: 5 3;
+  opacity: 0.85;
+}
+
+.sch-ism__inv.is-breach {
+  stroke: #7f1d1d;
+  opacity: 1;
+}
+
+.sch-ism__line {
+  stroke: #1d4ed8;
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+}
+
+.sch-ism__last {
+  stroke: #0f766e;
+  stroke-width: 1;
+  opacity: 0.9;
+}
+
+.sch-ism__prop {
+  stroke: #7c3aed;
+  stroke-width: 1.25;
+  opacity: 0.85;
+}
+
+.sch-ism__vol {
+  fill: #94a3b8;
+  opacity: 0.45;
+}
+
+.sch-ism__dot {
+  fill: #ea580c;
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.sch-ism__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin-top: 0.45rem;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.sch-ism__swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.3rem;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.sch-ism__swatch--zone {
+  background: rgba(99, 102, 241, 0.35);
+}
+
+.sch-ism__swatch--inv {
+  background: repeating-linear-gradient(90deg, #b91c1c, #b91c1c 2px, transparent 2px, transparent 4px);
+}
+
+.sch-ism__swatch--last {
+  background: #0f766e;
+}

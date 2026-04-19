@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
+import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
 import './StructuralCommitteeHearing.css'
@@ -273,6 +274,12 @@ export default function StructuralCommitteeHearing() {
           </dl>
         </section>
       </div>
+
+      {payload?.exhibit_intraday_substantiation_map ? (
+        <section className="sch-panel sch-panel--ism">
+          <IntradaySubstantiationMapCard exhibit={payload.exhibit_intraday_substantiation_map} variant="hearing" />
+        </section>
+      ) : null}
 
       {payload?.exhibit_public_disclosure_context || payload?.exhibit_live_politician_disclosure_context ? (
         <div className="sch-disclosure-row">

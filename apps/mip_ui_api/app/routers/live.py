@@ -9711,6 +9711,14 @@ def _build_inline_hearing_payload(
     live_disc = refresh_payload.get("exhibit_live_politician_disclosure_context")
     if live_disc is not None:
         out["exhibit_live_politician_disclosure_context"] = live_disc
+    intra = refresh_payload.get("exhibit_intraday_substantiation_map")
+    if intra is None:
+        for a in refresh_payload.get("artifacts") or []:
+            if (a.get("artifact_kind") or "") == "INTRADAY_SUBSTANTIATION_MAP":
+                intra = a.get("payload")
+                break
+    if intra is not None:
+        out["exhibit_intraday_substantiation_map"] = intra
     return out
 
 

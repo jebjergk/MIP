@@ -19,7 +19,7 @@ from app.committee.engine import (
 )
 from app.committee.intraday_substantiation import (
     build_intraday_substantiation_artifact,
-    fetch_intraday_bars_15m,
+    fetch_intraday_bars_15m_ib,
 )
 from app.committee.live_politician_disclosure import build_exhibit_live_politician_disclosure_context
 from app.committee.public_disclosure_context import build_exhibit_public_disclosure_context
@@ -229,7 +229,6 @@ def _assemble_payload(
                     "evidence_refs": _variant(r.get("EVIDENCE_REFS")),
                 }
             )
-        exhibit_intraday_substantiation_map = None
         for a in _artifacts_rows(row_cur, hid):
             arts.append(
                 {
@@ -402,7 +401,7 @@ def _run_refresh(conn, hearing_id: str, proposal_id: int, snapshot: Dict[str, An
     snap_eng = _build_snapshot_engine_dict(snapshot)
     bundle = compute_hearing_bundle(snap_eng, live)
     try:
-        bars_15 = fetch_intraday_bars_15m(cur, str(symbol or "").strip(), "STOCK", 32)
+        bars_15 = fetch_intraday_bars_15m_ib(str(symbol or "").strip(), market_type=None)
         intraday_art = build_intraday_substantiation_artifact(
             snap_eng,
             live,
@@ -676,4 +675,6 @@ def committee_proposal_final_decision(proposal_id: int):
         rows = fetch_all(cur)
         if not rows:
             return {"ok": True, "final_decision": None}
-        return {"ok": True, "final_decision": serialize_row
+        return {"ok": True, "final_decision": serialize_row(rows[0])}
+    finally:
+        conn.close()

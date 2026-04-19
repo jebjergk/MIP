@@ -1,14 +1,16 @@
 """
 Evidence-only intraday chart payload for Committee 2.0 (INTRADAY_SUBSTANTIATION_MAP).
-Does not influence stance; deterministic heuristics from 15m MARKET_BARS.
+Does not influence stance. 15m bars are fetched on-demand from IBKR (subprocess), not Snowflake.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from fastapi import HTTPException
+
 from app.committee.engine import _entry_zone, _f, _invalidation, invalidation_breached
-from app.db import fetch_all
+from app.services.ibkr_live_bars import infer_ib_market_type, run_agent_ibkr_live_bars
 
 ARTIFACT_KIND = "INTRADAY_SUBSTANTIATION_MAP"
 MARKER_CAP = 5
@@ -53,23 +55,65 @@ def _parse_ts(v: Any) -> Optional[datetime]:
         return None
 
 
-def fetch_intraday_bars_15m(cur, symbol: str, market_type: str = "STOCK", limit: int = 32) -> List[Dict[str, Any]]:
-    """Latest `limit` 15m bars, oldest-first."""
-    cur.execute(
-        """
-        SELECT TS, OPEN, HIGH, LOW, CLOSE, VOLUME, SOURCE
-        FROM MIP.MART.MARKET_BARS
-        WHERE UPPER(SYMBOL) = %s
-          AND UPPER(MARKET_TYPE) = %s
-          AND INTERVAL_MINUTES = 15
-        ORDER BY TS DESC
-        LIMIT %s
-        """,
-        (symbol.upper(), market_type.upper(), int(limit)),
-    )
-    rows = fetch_all(cur)
-    rows.reverse()
-    return rows
+def fetch_intraday_bars_15m_ib(
+    symbol: str,
+    market_type: str | None = None,
+    *,
+    window_bars: int = 48,
+    timeout_sec: int = 75,
+) -> List[Dict[str, Any]]:
+    """
+    Latest 15m bars from IBKR at hearing refresh (cursorfiles/fetch_ibkr_live_bars.py).
+    Returns Snowflake-shaped rows (TS, OPEN, …) oldest-first. Empty on any failure.
+    """
+    sym = str(symbol or "").strip()
+    if not sym:
+        return []
+    mkt = infer_ib_market_type(sym, market_type)
+    try:
+        payload = run_agent_ibkr_live_bars(
+            [{"symbol": sym, "market_type": mkt}],
+            interval_minutes=15,
+            window_bars=max(15, min(int(window_bars), 120)),
+            timeout_sec=int(timeout_sec),
+            diagnostics_surface="committee2_intraday",
+        )
+    except HTTPException:
+        return []
+    except Exception:
+        return []
+
+    symbols = payload.get("symbols") or []
+    if not symbols:
+        return []
+    item = symbols[0]
+    if str(item.get("status") or "").upper() != "SUCCESS":
+        return []
+    bars_raw = item.get("bars") if isinstance(item.get("bars"), list) else []
+    out: List[Dict[str, Any]] = []
+    for b in bars_raw:
+        if not isinstance(b, dict):
+            continue
+        ts = b.get("ts")
+        o = b.get("open")
+        h = b.get("high")
+        l = b.get("low")
+        c = b.get("close")
+        v = b.get("volume")
+        if ts is None or c is None:
+            continue
+        out.append(
+            {
+                "TS": ts,
+                "OPEN": o,
+                "HIGH": h,
+                "LOW": l,
+                "CLOSE": c,
+                "VOLUME": v,
+                "SOURCE": "IBKR_DIRECT",
+            }
+        )
+    return out
 
 
 def _proposal_expectation_line(setup_family: Optional[str], side: str) -> str:
@@ -367,7 +411,7 @@ def build_intraday_substantiation_artifact(
             "window_start_ts": window_start_ts,
             "window_end_ts": window_end_ts,
             "bar_count": len(bars),
-            "source": "MIP.MART.MARKET_BARS",
+            "source": "IBKR_DIRECT",
         },
     }
 
@@ -375,5 +419,5 @@ def build_intraday_substantiation_artifact(
         "artifact_kind": ARTIFACT_KIND,
         "schema_version": "1",
         "payload": payload,
-        "evidence_refs": ["MIP.MART.MARKET_BARS", "snapshot.ENTRY_ZONE_JSON", "snapshot.INVALIDATION_JSON"],
+        "evidence_refs": ["IBKR_DIRECT.fetch_ibkr_live_bars", "snapshot.ENTRY_ZONE_JSON", "snapshot.INVALIDATION_JSON"],
     }

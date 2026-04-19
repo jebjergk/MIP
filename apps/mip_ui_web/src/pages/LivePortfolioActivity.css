@@ -1232,6 +1232,170 @@
   border-top: none;
 }
 
+/* Intraday substantiation map (Expected vs observed today) */
+.lpa-c2-card--ism {
+  background: linear-gradient(180deg, #fafbff 0%, #fff 45%);
+  border-color: #c5cae9;
+}
+
+.lpa-c2-ism {
+  font-size: 12px;
+  color: #37474f;
+}
+
+.lpa-c2-ism__title {
+  font-weight: 800;
+  font-size: 13px;
+  color: #1a237e;
+  margin: 0 0 6px;
+  letter-spacing: 0.01em;
+}
+
+.lpa-c2-ism__expect {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #455a64;
+  line-height: 1.4;
+}
+
+.lpa-c2-ism__badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.lpa-c2-ism__badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e8eaf6;
+  color: #3949ab;
+  border: 1px solid #c5cae9;
+}
+
+.lpa-c2-ism__meta {
+  font-size: 10px;
+  color: #78909c;
+}
+
+.lpa-c2-ism__interpret {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: #546e7a;
+  line-height: 1.35;
+}
+
+.lpa-c2-ism__verdict {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.lpa-c2-ism--verdict-supports .lpa-c2-ism__verdict {
+  color: #2e7d32;
+}
+
+.lpa-c2-ism--verdict-mixed .lpa-c2-ism__verdict {
+  color: #ef6c00;
+}
+
+.lpa-c2-ism--verdict-challenges .lpa-c2-ism__verdict {
+  color: #c62828;
+}
+
+.lpa-c2-ism__svg {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+}
+
+.lpa-c2-ism__zone {
+  pointer-events: none;
+}
+
+.lpa-c2-ism__wsr {
+  fill: #eceff1;
+  opacity: 0.9;
+}
+
+.lpa-c2-ism__inv {
+  stroke: #c62828;
+  stroke-width: 1.25;
+  stroke-dasharray: 5 3;
+  opacity: 0.85;
+}
+
+.lpa-c2-ism__inv.is-breach {
+  stroke: #b71c1c;
+  opacity: 1;
+}
+
+.lpa-c2-ism__line {
+  stroke: #3949ab;
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+}
+
+.lpa-c2-ism__last {
+  stroke: #00838f;
+  stroke-width: 1;
+  opacity: 0.9;
+}
+
+.lpa-c2-ism__prop {
+  stroke: #6a1b9a;
+  stroke-width: 1.25;
+  opacity: 0.85;
+}
+
+.lpa-c2-ism__vol {
+  fill: #90a4ae;
+  opacity: 0.45;
+}
+
+.lpa-c2-ism__dot {
+  fill: #ff6f00;
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.lpa-c2-ism__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: #78909c;
+}
+
+.lpa-c2-ism__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.lpa-c2-ism__swatch--zone {
+  background: rgba(92, 107, 192, 0.35);
+}
+
+.lpa-c2-ism__swatch--inv {
+  background: repeating-linear-gradient(90deg, #c62828, #c62828 2px, transparent 2px, transparent 4px);
+}
+
+.lpa-c2-ism__swatch--last {
+  background: linear-gradient(90deg, #00838f, #00838f);
+}
+
 .lpa-c2-fp-lead {
   margin: 0 0 8px;
   font-size: 12px;

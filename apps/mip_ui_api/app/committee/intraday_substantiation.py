@@ -4,6 +4,7 @@ Does not influence stance. 15m bars are fetched on-demand from IBKR (subprocess)
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,12 @@ TRADER_VERDICT_LINES = {
     VERDICT_MIXED: "Today is mixed vs proposal",
     VERDICT_CHALLENGES: "Today challenges immediate entry",
 }
+
+
+def committee_intraday_ib_use_rth_only() -> bool:
+    """If true, committee 15m request uses IB useRTH=1 (regular hours only). Default false = extended where IB provides it."""
+    v = os.getenv("COMMITTEE2_INTRADAY_IB_USE_RTH_ONLY", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def _ts_to_iso(v: Any) -> Optional[str]:
@@ -77,6 +84,7 @@ def fetch_intraday_bars_15m_ib(
             window_bars=max(15, min(int(window_bars), 120)),
             timeout_sec=int(timeout_sec),
             diagnostics_surface="committee2_intraday",
+            regular_trading_hours_only=committee_intraday_ib_use_rth_only(),
         )
     except HTTPException:
         return []
@@ -412,6 +420,9 @@ def build_intraday_substantiation_artifact(
             "window_end_ts": window_end_ts,
             "bar_count": len(bars),
             "source": "IBKR_DIRECT",
+            "ib_regular_trading_hours_only": committee_intraday_ib_use_rth_only(),
+            "historical_scope": "rolling_multi_day",
+            "historical_scope_note": "IB reqHistoricalData uses a multi-day duration ending at request time, not 'today' only.",
         },
     }
 

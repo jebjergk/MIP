@@ -61,6 +61,7 @@ def run_agent_ibkr_live_bars(
     bar_seconds: int | None = None,
     timeout_sec: int = 60,
     diagnostics_surface: str = "living_charts",
+    regular_trading_hours_only: bool = False,
 ) -> dict[str, Any]:
     root = project_root()
     py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
@@ -118,9 +119,12 @@ def run_agent_ibkr_live_bars(
         str(window_bars),
     ]
     if bar_seconds:
+        # Sub-minute path: keep prior default (RTH-only) unless callers opt into extended via flag later.
         cmd.extend(["--bar-seconds", str(int(bar_seconds)), "--use-rth"])
     else:
         cmd.extend(["--interval-minutes", str(interval_minutes)])
+        if regular_trading_hours_only:
+            cmd.append("--use-rth")
     proc = subprocess.run(
         cmd,
         cwd=str(root),

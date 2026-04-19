@@ -5,7 +5,8 @@ Evidence-only Committee 2.0 artifact: compares **expected** behavior (from propo
 ## Data
 
 - **Source:** **IBKR direct** at hearing refresh — `app.services.ibkr_live_bars.run_agent_ibkr_live_bars` → `cursorfiles/fetch_ibkr_live_bars.py` (15m bars, **no Snowflake**; stored 15m in MIP is not required).
-- **Window:** Configurable `window_bars` (default 48), oldest → newest (`meta.window_*_ts`).
+- **Window:** Configurable `window_bars` (default 48), oldest → newest (`meta.window_*_ts`). IB `durationStr` for 15m is **10 calendar days** (rolling history ending at request time — **not** limited to the current exchange calendar day, so weekends still show the prior session’s bars when IB returns them).
+- **Extended hours:** By default **does not** pass `--use-rth` (IB `useRTH=false` for stock 15m), so pre/post-market bars are included when IB provides them. To force **regular trading hours only**, set env **`COMMITTEE2_INTRADAY_IB_USE_RTH_ONLY=true`** on the API host (`meta.ib_regular_trading_hours_only` mirrors this).
 - **Degrade:** Fewer than two valid bars, IB unreachable, or subprocess failure → **no artifact** (no UI tile).
 
 ## Payload (schema v1)

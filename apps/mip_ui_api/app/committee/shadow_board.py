@@ -1,0 +1,996 @@
+"""
+Shadow Board Phase 1 — runtime orchestrator.
+
+Entry point: orchestrate_shadow_board(hearing_id, conn_factory)
+
+Stages:
+  0  Build ShadowEvidencePack + stage into SHADOW_EVIDENCE_PACK_CACHE
+  1  Run 6 specialist agents in parallel (CREATE AGENT objects)
+  2  Detect conflicts (Python-side)
+  3  Challenge turn (objectless AGENT_RUN, one round, no recursion)
+  4  Revision turn  (objectless AGENT_RUN, one round, no recursion)
+  5  Chair agent    (CREATE AGENT object)
+  6  Persist all results; expire cache entry
+
+Guarantees:
+  - COMMITTEE_FINAL_DECISION is never touched
+  - Real board stance / confidence / chair are never read or written
+  - All shadow tables get a DEGRADED=TRUE row on any stage failure
+  - Instrumentation: logs stage entry/exit + elapsed_ms for every agent call
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
+
+from app.config import get_snowflake_config
+from app.db import fetch_all, get_connection
+
+from .shadow_types import (
+    ChallengeTurn,
+    ConflictEntry,
+    DegradedPosition,
+    RevisionTurn,
+    ShadowBoardResult,
+    ShadowChairRuling,
+    ShadowEvidencePack,
+    SpecialistPosition,
+    build_shadow_evidence_pack,
+    detect_conflicts,
+    parse_chair_ruling,
+    parse_specialist_position,
+    pick_primary_conflict,
+)
+from .shadow_cortex_client import (
+    extract_agent_text,
+    run_agent_object,
+    run_agent_objectless,
+)
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Agent object names (must match CREATE AGENT DDL in 542_shadow_board_agents.sql)
+# ---------------------------------------------------------------------------
+_SPECIALIST_AGENTS = {
+    "STRUCTURAL_THESIS": "SHADOW_STRUCTURAL_THESIS_AGENT",
+    "ENTRY_GEOMETRY":    "SHADOW_ENTRY_GEOMETRY_AGENT",
+    "REGIME":            "SHADOW_REGIME_AGENT",
+    "PATH_TRADEABILITY": "SHADOW_PATH_TRADEABILITY_AGENT",
+    "PROTECTION_EXIT":   "SHADOW_PROTECTION_EXIT_AGENT",
+    "SYMBOL_BEHAVIOR":   "SHADOW_SYMBOL_BEHAVIOR_AGENT",
+}
+_CHAIR_AGENT = "SHADOW_CHAIR_AGENT"
+
+_OBJECTLESS_MODEL = "claude-4-sonnet"
+_CACHE_TTL_HOURS = 24
+
+
+# ---------------------------------------------------------------------------
+# Helpers: Snowflake JSON persistence (sync, run via asyncio.to_thread)
+# ---------------------------------------------------------------------------
+
+def _jdump(obj: Any) -> str:
+    return json.dumps(obj, default=str)
+
+
+def _get_snowflake_creds() -> Tuple[str, str, str]:
+    cfg = get_snowflake_config()
+    return (
+        cfg.get("account") or "",
+        cfg.get("user") or "",
+        cfg.get("private_key_path") or "",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 0: Build + stage evidence pack
+# ---------------------------------------------------------------------------
+
+def _fetch_hearing_data(hearing_id: str) -> Tuple[
+    Dict[str, Any], Dict[str, Any], Dict[str, Any],
+    List[Dict[str, Any]], List[Dict[str, Any]]
+]:
+    """Fetch all required rows for building ShadowEvidencePack."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s", (hearing_id,))
+        rows = fetch_all(cur)
+        if not rows:
+            raise ValueError(f"Hearing {hearing_id} not found")
+        hearing = rows[0]
+
+        proposal_id = int(hearing["PROPOSAL_ID"])
+        cur.execute("SELECT * FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS WHERE PROPOSAL_ID = %s", (proposal_id,))
+        proposals = fetch_all(cur)
+        if not proposals:
+            raise ValueError(f"Proposal {proposal_id} not found")
+        proposal = proposals[0]
+
+        cur.execute("SELECT * FROM MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT WHERE PROPOSAL_ID = %s", (proposal_id,))
+        snapshots = fetch_all(cur)
+        if not snapshots:
+            raise ValueError(f"Snapshot for proposal {proposal_id} not found")
+        snapshot = snapshots[0]
+
+        cur.execute(
+            "SELECT ROLE_NAME, OUTPUT_JSON, EVIDENCE_REFS FROM MIP.APP.COMMITTEE_ROLE_OUTPUT WHERE HEARING_ID = %s",
+            (hearing_id,),
+        )
+        roles = fetch_all(cur)
+
+        cur.execute(
+            "SELECT ARTIFACT_KIND, PAYLOAD_JSON FROM MIP.APP.COMMITTEE_EVIDENCE_ARTIFACT WHERE HEARING_ID = %s",
+            (hearing_id,),
+        )
+        artifacts = fetch_all(cur)
+
+        return hearing, snapshot, proposal, roles, artifacts
+    finally:
+        conn.close()
+
+
+def _stage_evidence_pack(pack: ShadowEvidencePack, session_id: str) -> None:
+    """Insert ShadowEvidencePack into SHADOW_EVIDENCE_PACK_CACHE."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_EVIDENCE_PACK_CACHE
+                (HEARING_ID, PACK_JSON, SESSION_ID, CREATED_AT, EXPIRES_AT)
+            SELECT
+                %s,
+                PARSE_JSON(%s),
+                %s,
+                CURRENT_TIMESTAMP(),
+                DATEADD('hour', %s, CURRENT_TIMESTAMP())
+            """,
+            (pack.hearing_id, _jdump(pack.to_cache_dict()), session_id, _CACHE_TTL_HOURS),
+        )
+    finally:
+        conn.close()
+
+
+def _expire_evidence_pack(hearing_id: str) -> None:
+    """Immediately expire the cache entry (set EXPIRES_AT = now)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE MIP.APP.SHADOW_EVIDENCE_PACK_CACHE
+               SET EXPIRES_AT = CURRENT_TIMESTAMP()
+             WHERE HEARING_ID = %s
+            """,
+            (hearing_id,),
+        )
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Stage 1: Specialist agents
+# ---------------------------------------------------------------------------
+
+async def _run_specialist(
+    role: str,
+    agent_name: str,
+    hearing_id: str,
+    account: str,
+    user: str,
+    pk_path: str,
+    timeout: float,
+) -> Tuple[str, SpecialistPosition | DegradedPosition, int]:
+    """Run one specialist agent; return (role, position, elapsed_ms)."""
+    t0 = time.monotonic()
+    try:
+        logger.info("shadow_stage1: starting %s (%s)", role, agent_name)
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"Hearing ID: {hearing_id}\n"
+                    f"You are the {role} specialist. Call get_evidence_slice to retrieve your evidence "
+                    f"slices, then form your position and return the JSON object as instructed."
+                ),
+            }
+        ]
+        resp = await run_agent_object(
+            account=account,
+            user=user,
+            private_key_path=pk_path,
+            agent_name=agent_name,
+            messages=messages,
+            timeout=timeout,
+        )
+        raw_text = extract_agent_text(resp)
+        position = parse_specialist_position(raw_text, role)
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.info("shadow_stage1: %s done in %dms stance=%s", role, elapsed, getattr(position, "stance", "?"))
+        return role, position, elapsed
+    except Exception as exc:
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.warning("shadow_stage1: %s FAILED in %dms: %s", role, elapsed, exc)
+        return role, DegradedPosition(
+            role=role,
+            degraded=True,
+            degraded_reason=str(exc)[:400],
+        ), elapsed
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: Challenge turn (objectless)
+# ---------------------------------------------------------------------------
+
+def _challenge_system_prompt(challenger_role: str, target_role: str) -> str:
+    return (
+        f"You are the {challenger_role} specialist on the Shadow Investment Committee. "
+        f"You disagree with the {target_role} specialist's position. "
+        f"You must articulate a focused, evidence-based challenge to their stance. "
+        f"Reference your own evidence and explain why their position is inconsistent with the evidence. "
+        f"Keep your challenge to 3-5 sentences. Be specific, not rhetorical. "
+        f"Return ONLY a JSON object: {{\"challenge_text\": \"<your challenge>\"}}"
+    )
+
+
+def _challenge_user_message(
+    challenger_role: str,
+    challenger_pos: SpecialistPosition | DegradedPosition,
+    target_role: str,
+    target_pos: SpecialistPosition | DegradedPosition,
+) -> str:
+    return (
+        f"Your stance: {getattr(challenger_pos, 'stance', 'DEFER')} "
+        f"(confidence {getattr(challenger_pos, 'confidence', 0.0):.2f}). "
+        f"Your rationale: {getattr(challenger_pos, 'rationale', 'n/a')}\n\n"
+        f"Target specialist {target_role} stance: {getattr(target_pos, 'stance', 'DEFER')} "
+        f"(confidence {getattr(target_pos, 'confidence', 0.0):.2f}). "
+        f"Their rationale: {getattr(target_pos, 'rationale', 'n/a')}\n\n"
+        f"Challenge their position with evidence from your domain."
+    )
+
+
+async def _run_challenge(
+    conflict: ConflictEntry,
+    positions: Dict[str, SpecialistPosition | DegradedPosition],
+    hearing_id: str,
+    account: str,
+    user: str,
+    pk_path: str,
+    timeout: float,
+) -> Tuple[ChallengeTurn, int]:
+    t0 = time.monotonic()
+    challenger_role = conflict.challenger_role
+    target_role = conflict.target_role
+    try:
+        logger.info("shadow_stage3: challenge %s -> %s", challenger_role, target_role)
+        sys_prompt = _challenge_system_prompt(challenger_role, target_role)
+        user_msg = _challenge_user_message(
+            challenger_role,
+            positions.get(challenger_role, DegradedPosition(role=challenger_role)),
+            target_role,
+            positions.get(target_role, DegradedPosition(role=target_role)),
+        )
+        resp = await run_agent_objectless(
+            account=account,
+            user=user,
+            private_key_path=pk_path,
+            model=_OBJECTLESS_MODEL,
+            system_prompt=sys_prompt,
+            user_message=user_msg,
+            timeout=timeout,
+        )
+        raw_text = extract_agent_text(resp)
+        # Parse challenge_text from JSON or use raw text
+        try:
+            data = json.loads(raw_text)
+            challenge_text = str(data.get("challenge_text") or raw_text)
+        except Exception:
+            challenge_text = raw_text[:2000]
+
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.info("shadow_stage3: challenge done in %dms", elapsed)
+        return ChallengeTurn(
+            challenger_role=challenger_role,
+            target_role=target_role,
+            challenge_text=challenge_text,
+        ), elapsed
+    except Exception as exc:
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.warning("shadow_stage3: challenge FAILED in %dms: %s", elapsed, exc)
+        return ChallengeTurn(
+            challenger_role=challenger_role or "UNKNOWN",
+            target_role=target_role or "UNKNOWN",
+            challenge_text="",
+            parse_ok=False,
+            degraded=True,
+            degraded_reason=str(exc)[:400],
+        ), elapsed
+
+
+# ---------------------------------------------------------------------------
+# Stage 4: Revision turn (objectless)
+# ---------------------------------------------------------------------------
+
+def _revision_system_prompt(target_role: str) -> str:
+    return (
+        f"You are the {target_role} specialist on the Shadow Investment Committee. "
+        f"A colleague has challenged your position. "
+        f"Review the challenge carefully. You may maintain your position if you can justify it, "
+        f"or revise your stance if the challenge reveals something you overlooked. "
+        f"You MUST pick exactly one of these stances: APPROVE, APPROVE_REDUCED, WAIT_RECLAIM, DEFER, DENY. "
+        f"Return ONLY a JSON object: "
+        f"{{\"revised_stance\": \"<stance>\", \"revision_note\": \"<2-3 sentences justifying your decision>\"}}"
+    )
+
+
+def _revision_user_message(
+    original_pos: SpecialistPosition | DegradedPosition,
+    challenge: ChallengeTurn,
+) -> str:
+    return (
+        f"Your original stance: {getattr(original_pos, 'stance', 'DEFER')} "
+        f"(confidence {getattr(original_pos, 'confidence', 0.0):.2f}). "
+        f"Your rationale: {getattr(original_pos, 'rationale', 'n/a')}\n\n"
+        f"Challenge from {challenge.challenger_role}:\n{challenge.challenge_text}\n\n"
+        f"Maintain or revise your stance. Justify your decision."
+    )
+
+
+async def _run_revision(
+    target_role: str,
+    original_pos: SpecialistPosition | DegradedPosition,
+    challenge: ChallengeTurn,
+    account: str,
+    user: str,
+    pk_path: str,
+    timeout: float,
+) -> Tuple[RevisionTurn, int]:
+    t0 = time.monotonic()
+    original_stance = getattr(original_pos, "stance", "DEFER")
+    try:
+        logger.info("shadow_stage4: revision for %s", target_role)
+        sys_prompt = _revision_system_prompt(target_role)
+        user_msg = _revision_user_message(original_pos, challenge)
+        resp = await run_agent_objectless(
+            account=account,
+            user=user,
+            private_key_path=pk_path,
+            model=_OBJECTLESS_MODEL,
+            system_prompt=sys_prompt,
+            user_message=user_msg,
+            timeout=timeout,
+        )
+        raw_text = extract_agent_text(resp)
+        try:
+            data = json.loads(raw_text)
+        except Exception:
+            # strip markdown fences
+            clean = raw_text.strip()
+            if clean.startswith("```"):
+                lines = [l for l in clean.splitlines() if not l.startswith("```")]
+                clean = "\n".join(lines).strip()
+            data = json.loads(clean)
+
+        revised = str(data.get("revised_stance") or original_stance).upper()
+        from .shadow_types import ALLOWED_STANCES
+        if revised not in ALLOWED_STANCES:
+            revised = original_stance
+
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.info("shadow_stage4: revision done in %dms %s -> %s", elapsed, original_stance, revised)
+        return RevisionTurn(
+            role_name=target_role,
+            revised_stance=revised,
+            original_stance=original_stance,
+            revision_note=str(data.get("revision_note") or "")[:2000],
+        ), elapsed
+    except Exception as exc:
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.warning("shadow_stage4: revision FAILED in %dms: %s", elapsed, exc)
+        return RevisionTurn(
+            role_name=target_role,
+            revised_stance=original_stance,
+            original_stance=original_stance,
+            parse_ok=False,
+            degraded=True,
+            degraded_reason=str(exc)[:400],
+        ), elapsed
+
+
+# ---------------------------------------------------------------------------
+# Stage 5: Chair agent
+# ---------------------------------------------------------------------------
+
+def _chair_context_message(
+    hearing_id: str,
+    positions: Dict[str, Any],
+    revisions: List[RevisionTurn],
+    conflicts: List[ConflictEntry],
+) -> str:
+    lines = [f"Hearing ID: {hearing_id}", "", "SPECIALIST POSITIONS (final after any revisions):"]
+    for role, pos in positions.items():
+        stance = getattr(pos, "stance", "DEFER")
+        conf = getattr(pos, "confidence", 0.0)
+        # Apply any revision
+        rev = next((r for r in revisions if r.role_name == role), None)
+        if rev and not rev.degraded:
+            stance = rev.revised_stance
+            lines.append(f"  {role}: {stance} (conf {conf:.2f}) [REVISED from {rev.original_stance}]")
+        else:
+            lines.append(f"  {role}: {stance} (conf {conf:.2f})")
+
+    if conflicts:
+        lines.append("")
+        lines.append(f"CONFLICTS DETECTED ({len(conflicts)}):")
+        for c in conflicts:
+            lines.append(f"  {c.role_a} [{c.stance_a}] vs {c.role_b} [{c.stance_b}] — {c.severity}")
+
+    lines.extend([
+        "",
+        "Now call get_evidence_slice with role_name=SHADOW_CHAIR to retrieve evidence slices as needed.",
+        "Then issue your shadow ruling as the JSON object specified in your instructions.",
+    ])
+    return "\n".join(lines)
+
+
+async def _run_chair(
+    hearing_id: str,
+    positions: Dict[str, Any],
+    revisions: List[RevisionTurn],
+    conflicts: List[ConflictEntry],
+    account: str,
+    user: str,
+    pk_path: str,
+    timeout: float,
+) -> Tuple[ShadowChairRuling, int]:
+    t0 = time.monotonic()
+    try:
+        logger.info("shadow_stage5: chair agent starting")
+        context_msg = _chair_context_message(hearing_id, positions, revisions, conflicts)
+        messages = [{"role": "user", "content": context_msg}]
+        resp = await run_agent_object(
+            account=account,
+            user=user,
+            private_key_path=pk_path,
+            agent_name=_CHAIR_AGENT,
+            messages=messages,
+            timeout=timeout,
+        )
+        raw_text = extract_agent_text(resp)
+        ruling = parse_chair_ruling(raw_text)
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.info("shadow_stage5: chair done in %dms stance=%s", elapsed, ruling.shadow_stance)
+        return ruling, elapsed
+    except Exception as exc:
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.warning("shadow_stage5: chair FAILED in %dms: %s", elapsed, exc)
+        return ShadowChairRuling(
+            shadow_stance="DEFER",
+            shadow_confidence=0.0,
+            parse_ok=False,
+            degraded=True,
+            degraded_reason=str(exc)[:400],
+        ), elapsed
+
+
+# ---------------------------------------------------------------------------
+# Stage 6: Persistence
+# ---------------------------------------------------------------------------
+
+def _persist_shadow_session(
+    result: ShadowBoardResult,
+    positions_elapsed: Dict[str, int],
+    challenge_elapsed: int,
+    revision_elapsed: Dict[str, int],
+    chair_elapsed: int,
+) -> None:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        sid = result.session_id
+        hid = result.hearing_id
+
+        # SHADOW_BOARD_SESSION
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_BOARD_SESSION
+                (SESSION_ID, HEARING_ID, PROPOSAL_ID,
+                 SHADOW_STANCE, SHADOW_CONFIDENCE,
+                 STAGE_REACHED, STATUS, DEGRADED, DEGRADED_REASON,
+                 RUN_MS, CREATED_AT, COMPLETED_AT)
+            SELECT
+                %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            """,
+            (
+                sid, hid, result.proposal_id,
+                result.shadow_stance, result.shadow_confidence,
+                result.stage_reached, result.status,
+                result.degraded, (result.degraded_reason or "")[:500],
+                result.run_ms,
+            ),
+        )
+
+        # SHADOW_SPECIALIST_POSITION
+        for pos in result.positions:
+            role = getattr(pos, "role", "UNKNOWN")
+            cur.execute(
+                """
+                INSERT INTO MIP.APP.SHADOW_SPECIALIST_POSITION
+                    (SESSION_ID, HEARING_ID, ROLE_NAME, STANCE, CONFIDENCE,
+                     RATIONALE, EVIDENCE_USED, RAW_RESPONSE,
+                     PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+                SELECT
+                    %s, %s, %s, %s, %s,
+                    %s, PARSE_JSON(%s), PARSE_JSON(%s),
+                    %s, %s, %s, %s
+                """,
+                (
+                    sid, hid, role,
+                    getattr(pos, "stance", "DEFER"),
+                    getattr(pos, "confidence", 0.0),
+                    getattr(pos, "rationale", "")[:2000],
+                    _jdump(getattr(pos, "evidence_used", [])),
+                    "{}",
+                    not getattr(pos, "degraded", False),
+                    bool(getattr(pos, "degraded", False)),
+                    (getattr(pos, "degraded_reason", "") or "")[:500],
+                    positions_elapsed.get(role, 0),
+                ),
+            )
+
+        # SHADOW_CONFLICT_MAP
+        for c in result.conflicts:
+            cur.execute(
+                """
+                INSERT INTO MIP.APP.SHADOW_CONFLICT_MAP
+                    (SESSION_ID, HEARING_ID, ROLE_A, ROLE_B,
+                     STANCE_A, STANCE_B, SEVERITY,
+                     CHALLENGER_ROLE, TARGET_ROLE)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    sid, hid, c.role_a, c.role_b,
+                    c.stance_a, c.stance_b, c.severity,
+                    c.challenger_role, c.target_role,
+                ),
+            )
+
+        # SHADOW_CHALLENGE_TURN
+        if result.challenge:
+            ch = result.challenge
+            cur.execute(
+                """
+                INSERT INTO MIP.APP.SHADOW_CHALLENGE_TURN
+                    (SESSION_ID, HEARING_ID, CHALLENGER_ROLE, TARGET_ROLE,
+                     CHALLENGE_TEXT, RAW_RESPONSE,
+                     PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+                SELECT
+                    %s, %s, %s, %s,
+                    %s, PARSE_JSON(%s),
+                    %s, %s, %s, %s
+                """,
+                (
+                    sid, hid, ch.challenger_role, ch.target_role,
+                    ch.challenge_text[:4000],
+                    "{}",
+                    ch.parse_ok, ch.degraded,
+                    (ch.degraded_reason or "")[:500],
+                    challenge_elapsed,
+                ),
+            )
+
+        # SHADOW_REVISION_TURN
+        for rev in result.revisions:
+            cur.execute(
+                """
+                INSERT INTO MIP.APP.SHADOW_REVISION_TURN
+                    (SESSION_ID, HEARING_ID, ROLE_NAME,
+                     REVISED_STANCE, ORIGINAL_STANCE, STANCE_CHANGED,
+                     REVISION_NOTE, RAW_RESPONSE,
+                     PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+                SELECT
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, PARSE_JSON(%s),
+                    %s, %s, %s, %s
+                """,
+                (
+                    sid, hid, rev.role_name,
+                    rev.revised_stance, rev.original_stance, rev.stance_changed,
+                    rev.revision_note[:2000],
+                    "{}",
+                    rev.parse_ok, rev.degraded,
+                    (rev.degraded_reason or "")[:500],
+                    revision_elapsed.get(rev.role_name, 0),
+                ),
+            )
+
+        # SHADOW_CHAIR_RULING
+        if result.chair:
+            ch = result.chair
+            trade_json = ch.shadow_trade.model_dump() if ch.shadow_trade else {}
+            cur.execute(
+                """
+                INSERT INTO MIP.APP.SHADOW_CHAIR_RULING
+                    (SESSION_ID, HEARING_ID,
+                     SHADOW_STANCE, SHADOW_CONFIDENCE,
+                     PLURALITY_BASIS, CONFLICT_RESOLUTION,
+                     SHADOW_TRADE_JSON, TOP_SUPPORTS, TOP_TENSIONS,
+                     RAW_RESPONSE,
+                     PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+                SELECT
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                    PARSE_JSON(%s),
+                    %s, %s, %s, %s
+                """,
+                (
+                    sid, hid,
+                    ch.shadow_stance, ch.shadow_confidence,
+                    ch.plurality_basis[:500],
+                    ch.conflict_resolution[:2000],
+                    _jdump(trade_json),
+                    _jdump(ch.top_supports),
+                    _jdump(ch.top_tensions),
+                    "{}",
+                    ch.parse_ok, ch.degraded,
+                    (ch.degraded_reason or "")[:500],
+                    chair_elapsed,
+                ),
+            )
+
+        logger.info("shadow_stage6: persisted session %s", sid)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Main orchestrator
+# ---------------------------------------------------------------------------
+
+async def orchestrate_shadow_board(hearing_id: str, timeout_sec: float = 120.0) -> ShadowBoardResult:
+    """
+    Run the full shadow board session for a given hearing_id.
+    Returns ShadowBoardResult regardless of success or failure.
+    Never touches COMMITTEE_FINAL_DECISION.
+    """
+    session_id = str(uuid.uuid4())
+    run_start = time.monotonic()
+    account, user, pk_path = _get_snowflake_creds()
+
+    result = ShadowBoardResult(
+        session_id=session_id,
+        hearing_id=hearing_id,
+        proposal_id=0,
+        status="RUNNING",
+        stage_reached=0,
+    )
+
+    positions_elapsed: Dict[str, int] = {}
+    challenge_elapsed = 0
+    revision_elapsed: Dict[str, int] = {}
+    chair_elapsed = 0
+
+    try:
+        # ------------------------------------------------------------------
+        # Stage 0: Build + stage evidence pack
+        # ------------------------------------------------------------------
+        logger.info("shadow_stage0: building evidence pack for hearing %s", hearing_id)
+        hearing, snapshot, proposal, roles, artifacts = await asyncio.to_thread(
+            _fetch_hearing_data, hearing_id
+        )
+        result.proposal_id = int(proposal.get("PROPOSAL_ID") or 0)
+        pack = build_shadow_evidence_pack(hearing, snapshot, proposal, roles, artifacts)
+        await asyncio.to_thread(_stage_evidence_pack, pack, session_id)
+        result.stage_reached = 0
+        logger.info("shadow_stage0: pack staged (hearing=%s session=%s)", hearing_id, session_id)
+
+        # ------------------------------------------------------------------
+        # Stage 1: Parallel specialist agents
+        # ------------------------------------------------------------------
+        logger.info("shadow_stage1: launching %d specialists in parallel", len(_SPECIALIST_AGENTS))
+        tasks = [
+            _run_specialist(
+                role=role,
+                agent_name=agent_name,
+                hearing_id=hearing_id,
+                account=account,
+                user=user,
+                pk_path=pk_path,
+                timeout=timeout_sec,
+            )
+            for role, agent_name in _SPECIALIST_AGENTS.items()
+        ]
+        stage1_results = await asyncio.gather(*tasks, return_exceptions=False)
+
+        positions_dict: Dict[str, SpecialistPosition | DegradedPosition] = {}
+        for role, position, elapsed in stage1_results:
+            positions_dict[role] = position
+            positions_elapsed[role] = elapsed
+            result.positions.append(position)
+
+        result.stage_reached = 1
+        valid_count = sum(1 for p in result.positions if not getattr(p, "degraded", False))
+        logger.info("shadow_stage1: %d/%d specialists succeeded", valid_count, len(_SPECIALIST_AGENTS))
+
+        # ------------------------------------------------------------------
+        # Stage 2: Conflict detection (Python-side, no agent call)
+        # ------------------------------------------------------------------
+        valid_positions = [
+            p for p in result.positions
+            if isinstance(p, SpecialistPosition) and not getattr(p, "degraded", False)
+        ]
+        conflicts = detect_conflicts(valid_positions)
+        result.conflicts = conflicts
+        result.stage_reached = 2
+        primary_conflict = pick_primary_conflict(conflicts)
+        logger.info("shadow_stage2: %d conflicts detected (primary=%s)", len(conflicts),
+                    primary_conflict.severity if primary_conflict else "none")
+
+        # ------------------------------------------------------------------
+        # Stage 3: Challenge turn (only if conflict exists)
+        # ------------------------------------------------------------------
+        challenge: Optional[ChallengeTurn] = None
+        if primary_conflict and primary_conflict.challenger_role and primary_conflict.target_role:
+            challenge, challenge_elapsed = await _run_challenge(
+                conflict=primary_conflict,
+                positions=positions_dict,
+                hearing_id=hearing_id,
+                account=account,
+                user=user,
+                pk_path=pk_path,
+                timeout=timeout_sec,
+            )
+            result.challenge = challenge
+        result.stage_reached = 3
+
+        # ------------------------------------------------------------------
+        # Stage 4: Revision turn (only if challenge exists and targets a valid specialist)
+        # ------------------------------------------------------------------
+        revisions: List[RevisionTurn] = []
+        if challenge and not challenge.degraded and challenge.target_role in positions_dict:
+            target_role = challenge.target_role
+            original_pos = positions_dict[target_role]
+            revision, rev_elapsed = await _run_revision(
+                target_role=target_role,
+                original_pos=original_pos,
+                challenge=challenge,
+                account=account,
+                user=user,
+                pk_path=pk_path,
+                timeout=timeout_sec,
+            )
+            revisions.append(revision)
+            revision_elapsed[target_role] = rev_elapsed
+
+            # Update positions_dict with revised stance for chair context
+            if not revision.degraded:
+                revised_pos = SpecialistPosition(
+                    role=target_role,
+                    stance=revision.revised_stance,
+                    confidence=getattr(original_pos, "confidence", 0.5),
+                    rationale=revision.revision_note,
+                    evidence_used=getattr(original_pos, "evidence_used", []),
+                ) if isinstance(original_pos, SpecialistPosition) else original_pos
+                positions_dict[target_role] = revised_pos
+
+        result.revisions = revisions
+        result.stage_reached = 4
+
+        # ------------------------------------------------------------------
+        # Stage 5: Chair ruling
+        # ------------------------------------------------------------------
+        chair_ruling, chair_elapsed = await _run_chair(
+            hearing_id=hearing_id,
+            positions=positions_dict,
+            revisions=revisions,
+            conflicts=conflicts,
+            account=account,
+            user=user,
+            pk_path=pk_path,
+            timeout=timeout_sec,
+        )
+        result.chair = chair_ruling
+        result.shadow_stance = chair_ruling.shadow_stance
+        result.shadow_confidence = chair_ruling.shadow_confidence
+        result.stage_reached = 5
+
+        # Determine final status
+        any_degraded = (
+            any(getattr(p, "degraded", False) for p in result.positions)
+            or (chair_ruling.degraded)
+        )
+        result.status = "DEGRADED" if any_degraded else "COMPLETE"
+        if any_degraded:
+            result.degraded = True
+            result.degraded_reason = "One or more stages produced degraded output"
+
+    except Exception as exc:
+        logger.error("shadow_board: orchestration FAILED for hearing %s: %s", hearing_id, exc, exc_info=True)
+        result.status = "FAILED"
+        result.degraded = True
+        result.degraded_reason = str(exc)[:500]
+        if not result.shadow_stance:
+            result.shadow_stance = "DEFER"
+            result.shadow_confidence = 0.0
+
+    finally:
+        result.run_ms = int((time.monotonic() - run_start) * 1000)
+
+        # Stage 6: Persist (always, even on failure)
+        try:
+            await asyncio.to_thread(
+                _persist_shadow_session,
+                result,
+                positions_elapsed,
+                challenge_elapsed,
+                revision_elapsed,
+                chair_elapsed,
+            )
+        except Exception as persist_exc:
+            logger.error("shadow_board: persistence FAILED for session %s: %s", session_id, persist_exc)
+
+        # Expire the evidence pack cache entry
+        try:
+            await asyncio.to_thread(_expire_evidence_pack, hearing_id)
+        except Exception as exp_exc:
+            logger.warning("shadow_board: cache expiry failed for hearing %s: %s", hearing_id, exp_exc)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Fetch cached session for GET endpoint (sync helper)
+# ---------------------------------------------------------------------------
+
+def fetch_shadow_session(hearing_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve the most recent shadow board session for a hearing (for GET endpoint).
+    Returns None if no session exists.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT * FROM MIP.APP.SHADOW_BOARD_SESSION
+            WHERE HEARING_ID = %s
+            ORDER BY CREATED_AT DESC
+            LIMIT 1
+            """,
+            (hearing_id,),
+        )
+        sessions = fetch_all(cur)
+        if not sessions:
+            return None
+        session = sessions[0]
+        sid = session["SESSION_ID"]
+
+        cur.execute(
+            "SELECT * FROM MIP.APP.SHADOW_SPECIALIST_POSITION WHERE SESSION_ID = %s ORDER BY ROLE_NAME",
+            (sid,),
+        )
+        specialist_rows = fetch_all(cur)
+
+        cur.execute(
+            "SELECT * FROM MIP.APP.SHADOW_CONFLICT_MAP WHERE SESSION_ID = %s",
+            (sid,),
+        )
+        conflict_rows = fetch_all(cur)
+
+        cur.execute(
+            "SELECT * FROM MIP.APP.SHADOW_CHALLENGE_TURN WHERE SESSION_ID = %s",
+            (sid,),
+        )
+        challenge_rows = fetch_all(cur)
+
+        cur.execute(
+            "SELECT * FROM MIP.APP.SHADOW_REVISION_TURN WHERE SESSION_ID = %s ORDER BY ROLE_NAME",
+            (sid,),
+        )
+        revision_rows = fetch_all(cur)
+
+        cur.execute(
+            "SELECT * FROM MIP.APP.SHADOW_CHAIR_RULING WHERE SESSION_ID = %s",
+            (sid,),
+        )
+        chair_rows = fetch_all(cur)
+
+        def _v(row: Dict[str, Any], k: str) -> Any:
+            v = row.get(k)
+            if isinstance(v, str):
+                try:
+                    return json.loads(v)
+                except Exception:
+                    return v
+            return v
+
+        return {
+            "ok": True,
+            "session_id": sid,
+            "hearing_id": hearing_id,
+            "proposal_id": session.get("PROPOSAL_ID"),
+            "shadow_stance": session.get("SHADOW_STANCE"),
+            "shadow_confidence": session.get("SHADOW_CONFIDENCE"),
+            "stage_reached": session.get("STAGE_REACHED"),
+            "status": session.get("STATUS"),
+            "degraded": session.get("DEGRADED"),
+            "degraded_reason": session.get("DEGRADED_REASON"),
+            "run_ms": session.get("RUN_MS"),
+            "created_at": str(session.get("CREATED_AT") or ""),
+            "positions": [
+                {
+                    "role": r.get("ROLE_NAME"),
+                    "stance": r.get("STANCE"),
+                    "confidence": r.get("CONFIDENCE"),
+                    "rationale": r.get("RATIONALE"),
+                    "evidence_used": _v(r, "EVIDENCE_USED"),
+                    "parse_ok": r.get("PARSE_OK"),
+                    "degraded": r.get("DEGRADED"),
+                    "degraded_reason": r.get("DEGRADED_REASON"),
+                }
+                for r in specialist_rows
+            ],
+            "conflicts": [
+                {
+                    "role_a": c.get("ROLE_A"),
+                    "role_b": c.get("ROLE_B"),
+                    "stance_a": c.get("STANCE_A"),
+                    "stance_b": c.get("STANCE_B"),
+                    "severity": c.get("SEVERITY"),
+                    "challenger_role": c.get("CHALLENGER_ROLE"),
+                    "target_role": c.get("TARGET_ROLE"),
+                }
+                for c in conflict_rows
+            ],
+            "challenge": (
+                {
+                    "challenger_role": challenge_rows[0].get("CHALLENGER_ROLE"),
+                    "target_role": challenge_rows[0].get("TARGET_ROLE"),
+                    "challenge_text": challenge_rows[0].get("CHALLENGE_TEXT"),
+                    "parse_ok": challenge_rows[0].get("PARSE_OK"),
+                    "degraded": challenge_rows[0].get("DEGRADED"),
+                }
+                if challenge_rows else None
+            ),
+            "revisions": [
+                {
+                    "role": r.get("ROLE_NAME"),
+                    "revised_stance": r.get("REVISED_STANCE"),
+                    "original_stance": r.get("ORIGINAL_STANCE"),
+                    "stance_changed": r.get("STANCE_CHANGED"),
+                    "revision_note": r.get("REVISION_NOTE"),
+                    "parse_ok": r.get("PARSE_OK"),
+                    "degraded": r.get("DEGRADED"),
+                }
+                for r in revision_rows
+            ],
+            "chair": (
+                {
+                    "shadow_stance": chair_rows[0].get("SHADOW_STANCE"),
+                    "shadow_confidence": chair_rows[0].get("SHADOW_CONFIDENCE"),
+                    "plurality_basis": chair_rows[0].get("PLURALITY_BASIS"),
+                    "conflict_resolution": chair_rows[0].get("CONFLICT_RESOLUTION"),
+                    "shadow_trade": _v(chair_rows[0], "SHADOW_TRADE_JSON"),
+                    "top_supports": _v(chair_rows[0], "TOP_SUPPORTS"),
+                    "top_tensions": _v(chair_rows[0], "TOP_TENSIONS"),
+                    "parse_ok": chair_rows[0].get("PARSE_OK"),
+                    "degraded": chair_rows[0].get("DEGRADED"),
+                }
+                if chair_rows else None
+            ),
+        }
+    finally:
+        conn.close()

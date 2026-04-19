@@ -4,6 +4,7 @@ import { API_BASE } from '../config/apiBase'
 import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
+import ShadowBoardPanel from '../components/committee/ShadowBoardPanel'
 import './StructuralCommitteeHearing.css'
 
 function confFixed(v, digits = 2) {
@@ -33,6 +34,68 @@ export default function StructuralCommitteeHearing() {
   const [actionIdInput, setActionIdInput] = useState(() => (actionIdFromUrl || '').trim())
   const [showAdvancedBind, setShowAdvancedBind] = useState(false)
 
+  // Shadow Board Phase 1 — non-blocking, secondary, zero authority
+  const [shadowPayload, setShadowPayload] = useState(null)
+  const [shadowLoading, setShadowLoading] = useState(false)
+  const [shadowError, setShadowError] = useState(null)
+  const [shadowRunLoading, setShadowRunLoading] = useState(false)
+
+  // Shadow board fetch (GET — display cached session)
+  const fetchShadow = useCallback(async (hid) => {
+    if (!hid) return
+    setShadowLoading(true)
+    setShadowError(null)
+    try {
+      const r = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hid)}/shadow-board`)
+      const j = await r.json()
+      if (r.status === 404) {
+        // No session yet — not an error, just not run
+        setShadowPayload(null)
+        return
+      }
+      if (r.status === 503) {
+        // Feature disabled — silently ignore
+        setShadowPayload(null)
+        return
+      }
+      if (!r.ok) throw new Error(j.detail ? JSON.stringify(j.detail) : r.statusText)
+      setShadowPayload(j)
+    } catch (e) {
+      setShadowError(e.message || String(e))
+      setShadowPayload(null)
+    } finally {
+      setShadowLoading(false)
+    }
+  }, [])
+
+  // Shadow board run (POST — starts new session)
+  const runShadow = useCallback(async (hid) => {
+    if (!hid) return
+    setShadowRunLoading(true)
+    setShadowError(null)
+    try {
+      const r = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hid)}/shadow-board/run`, {
+        method: 'POST',
+      })
+      const j = await r.json()
+      if (r.status === 503) {
+        // Feature disabled — silently ignore; do not surface as error
+        return
+      }
+      if (!r.ok) {
+        const msg = j.detail?.message || j.detail || r.statusText
+        setShadowError(`Shadow board run failed: ${msg}`)
+        return
+      }
+      // Run completed — now fetch the full session payload
+      await fetchShadow(hid)
+    } catch (e) {
+      setShadowError(e.message || String(e))
+    } finally {
+      setShadowRunLoading(false)
+    }
+  }, [fetchShadow])
+
   const loadByHearing = useCallback(async (hid) => {
     setLoading(true)
     setError(null)
@@ -41,13 +104,15 @@ export default function StructuralCommitteeHearing() {
       const j = await r.json()
       if (!r.ok) throw new Error(j.detail ? JSON.stringify(j.detail) : r.statusText)
       setPayload(j)
+      // Non-blocking: fetch shadow session after real board loads (do not await)
+      fetchShadow(hid)
     } catch (e) {
       setError(e.message || String(e))
       setPayload(null)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [fetchShadow])
 
   const openFromProposal = useCallback(async (pid) => {
     setLoading(true)
@@ -62,6 +127,8 @@ export default function StructuralCommitteeHearing() {
       if (!r.ok) throw new Error(j.detail ? JSON.stringify(j.detail) : r.statusText)
       navigate(`/structural-committee/${j.hearing_id}`, { replace: true })
       setPayload(j)
+      // Non-blocking: fetch shadow session after real board opens
+      fetchShadow(j.hearing_id)
     } catch (e) {
       setError(e.message || String(e))
       setPayload(null)
@@ -365,6 +432,17 @@ export default function StructuralCommitteeHearing() {
           <p className="sch-muted">Stance was {prevSnapshot.stance}; now {payload.stance}</p>
         </section>
       )}
+
+      {/* Shadow Board Phase 1 — secondary panel, zero authority, feature-flagged */}
+      <section className="sch-shadow-board-section">
+        <ShadowBoardPanel
+          shadowPayload={shadowPayload}
+          shadowLoading={shadowLoading}
+          shadowError={shadowError}
+          onRun={() => hearingId && runShadow(hearingId)}
+          runLoading={shadowRunLoading}
+        />
+      </section>
     </div>
   )
 }

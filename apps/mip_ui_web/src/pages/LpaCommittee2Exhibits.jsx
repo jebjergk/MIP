@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
+import { API_BASE } from '../config/apiBase'
 
 function fmtNum(v, digits = 2) {
   if (v == null) return '—'
@@ -321,7 +322,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       inline.exhibit_public_disclosure_context != null || inline.exhibit_live_politician_disclosure_context != null
     const intradayOffset = hasIntraday ? 1 : 0
     const disclosureOffset = hasDisclosure ? 1 : 0
-    const maxStep = 7 + intradayOffset + disclosureOffset + 1
+    const maxStep = 8 + intradayOffset + disclosureOffset + 1
     let n = 0
     const tick = setInterval(() => {
       n += 1
@@ -357,7 +358,25 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const stepDisclosure = 5 + intradayOffset
   const stripStep = 5 + intradayOffset + disclosureOffset
   const chairStep = 6 + intradayOffset + disclosureOffset
-  const linkStep = 7 + intradayOffset + disclosureOffset
+  const shadowStep = 7 + intradayOffset + disclosureOffset
+  const linkStep = 8 + intradayOffset + disclosureOffset
+
+  // Shadow board strip — fetch silently; no error shown if unavailable
+  const hearingId = inline?.hearing_id
+  const [shadowStrip, setShadowStrip] = useState(null)
+  useEffect(() => {
+    if (!hearingId) return
+    setShadowStrip(null)
+    let cancelled = false
+    fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
+      .then(r => {
+        if (r.status === 404 || r.status === 503) return null
+        return r.ok ? r.json() : null
+      })
+      .then(j => { if (!cancelled && j) setShadowStrip(j) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [hearingId])
 
   return (
     <div className="lpa-c2-exhibits">
@@ -590,6 +609,34 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
           </div>
         </div>
       </Reveal>
+
+      {shadowStrip && (
+        <Reveal show={revealStep >= shadowStep} className="lpa-c2-card lpa-c2-shadow-strip">
+          <div className="lpa-c2-card-head">
+            Shadow Board
+            <span className="lpa-c2-shadow-chip">advisory only</span>
+          </div>
+          <div className="lpa-c2-shadow-row">
+            <span
+              className={`lpa-c2-shadow-stance lpa-c2-shadow-stance--${(shadowStrip.shadow_stance || 'unknown').toLowerCase().replace(/_/g, '-')}`}
+            >
+              {(shadowStrip.shadow_stance || '—').replace(/_/g, ' ')}
+            </span>
+            <span className="lpa-c2-shadow-conf">
+              conf {shadowStrip.shadow_confidence != null ? Number(shadowStrip.shadow_confidence).toFixed(2) : '—'}
+            </span>
+            {shadowStrip.degraded && (
+              <span className="lpa-c2-shadow-degraded">degraded</span>
+            )}
+          </div>
+          {shadowStrip.chair?.plurality_basis && (
+            <p className="lpa-c2-shadow-basis">{shadowStrip.chair.plurality_basis}</p>
+          )}
+          {hearingHref && (
+            <Link to={hearingHref} className="lpa-c2-shadow-link">Full shadow board →</Link>
+          )}
+        </Reveal>
+      )}
 
       <Reveal show={revealStep >= linkStep} className="lpa-c2-full-link">
         {hearingHref ? <Link to={hearingHref}>Open full hearing →</Link> : null}

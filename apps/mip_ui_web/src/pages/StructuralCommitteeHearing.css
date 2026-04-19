@@ -703,3 +703,14 @@
 .sch-ism__swatch--last {
   background: #0f766e;
 }
+
+/* ============================================================
+   Shadow Board Phase 1 — section wrapper (below real board)
+   Real board is primary and unaffected. Shadow is secondary.
+   ============================================================ */
+.sch-shadow-board-section {
+  margin-top: 2rem;
+  border-top: 2px solid #2e3340;
+  border-radius: 8px;
+  overflow: hidden;
+}

@@ -1,17 +1,24 @@
 """
 Committee 2.0 API — structural hearing room (proposal-scoped).
 Separate from MIP.LIVE.COMMITTEE_*.
+
+Shadow Board Phase 1 endpoints are additive, feature-flagged, and read-only
+with respect to all real board tables (COMMITTEE_HEARING, COMMITTEE_FINAL_DECISION).
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Body
 from pydantic import BaseModel, Field
 
 from app.db import get_connection, fetch_all, serialize_row
+
+logger = logging.getLogger(__name__)
 from app.committee.engine import (
     LiveContext,
     compute_hearing_bundle,
@@ -678,3 +685,148 @@ def committee_proposal_final_decision(proposal_id: int):
         return {"ok": True, "final_decision": serialize_row(rows[0])}
     finally:
         conn.close()
+
+
+# ===========================================================================
+# Shadow Board Phase 1 — feature-flagged, zero live authority
+# ===========================================================================
+
+def _shadow_board_enabled(cur) -> bool:
+    cur.execute(
+        "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+        ("SHADOW_BOARD_ENABLED",),
+    )
+    rows = fetch_all(cur)
+    if not rows:
+        return False
+    val = (rows[0].get("CONFIG_VALUE") or "").strip().lower()
+    return val in ("1", "true", "yes")
+
+
+def _shadow_timeout_sec(cur) -> float:
+    cur.execute(
+        "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+        ("SHADOW_BOARD_TIMEOUT_SEC",),
+    )
+    rows = fetch_all(cur)
+    if not rows:
+        return 120.0
+    try:
+        return float(rows[0].get("CONFIG_VALUE") or "120")
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _require_shadow_enabled(conn):
+    cur = conn.cursor()
+    if not _committee2_enabled(cur):
+        raise HTTPException(status_code=503, detail="Committee 2.0 is disabled (COMMITTEE2_ENABLED).")
+    if not _shadow_board_enabled(cur):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "SHADOW_BOARD_DISABLED",
+                "message": "Shadow Board is disabled (SHADOW_BOARD_ENABLED). Set to 'true' in APP_CONFIG to enable.",
+            },
+        )
+
+
+@router.post("/hearing/{hearing_id}/shadow-board/run")
+async def committee_shadow_board_run(hearing_id: str):
+    """
+    Initiate a shadow board run for the given hearing.
+    Returns immediately with session_id and status=RUNNING.
+    The run executes asynchronously; poll GET /hearing/{id}/shadow-board for results.
+
+    Shadow Board is non-executing. Zero interaction with COMMITTEE_FINAL_DECISION.
+    Requires SHADOW_BOARD_ENABLED=true in APP_CONFIG.
+    """
+    from app.committee.shadow_board import orchestrate_shadow_board, fetch_shadow_session
+
+    conn = get_connection()
+    try:
+        _require_shadow_enabled(conn)
+        cur = conn.cursor()
+        timeout_sec = _shadow_timeout_sec(cur)
+
+        # Verify hearing exists
+        cur.execute("SELECT HEARING_ID, PROPOSAL_ID FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s", (hearing_id,))
+        rows = fetch_all(cur)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Hearing not found.")
+    finally:
+        conn.close()
+
+    logger.info("shadow_board_run: starting async run for hearing %s (timeout=%ss)", hearing_id, timeout_sec)
+
+    # Run shadow board fully — this is an async endpoint so we can await it.
+    # For long-running cases the client can poll; we return the completed result.
+    try:
+        result = await asyncio.wait_for(
+            orchestrate_shadow_board(hearing_id, timeout_sec=timeout_sec),
+            timeout=timeout_sec + 30,
+        )
+        return {
+            "ok": True,
+            "session_id": result.session_id,
+            "hearing_id": hearing_id,
+            "status": result.status,
+            "shadow_stance": result.shadow_stance,
+            "shadow_confidence": result.shadow_confidence,
+            "stage_reached": result.stage_reached,
+            "degraded": result.degraded,
+            "degraded_reason": result.degraded_reason,
+            "run_ms": result.run_ms,
+        }
+    except asyncio.TimeoutError:
+        logger.error("shadow_board_run: timed out for hearing %s", hearing_id)
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "SHADOW_BOARD_TIMEOUT",
+                "message": f"Shadow board run timed out after {timeout_sec + 30:.0f}s.",
+            },
+        )
+    except Exception as exc:
+        logger.error("shadow_board_run: failed for hearing %s: %s", hearing_id, exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "SHADOW_BOARD_ERROR",
+                "message": f"Shadow board run failed: {str(exc)[:200]}",
+            },
+        )
+
+
+@router.get("/hearing/{hearing_id}/shadow-board")
+def committee_shadow_board_get(hearing_id: str):
+    """
+    Retrieve the most recent shadow board session for a hearing.
+    Returns full structured payload (positions, conflicts, challenge, revisions, chair).
+
+    Returns 404 if no shadow session exists yet for this hearing.
+    Shadow data is advisory only. Real board stance is never included here.
+    """
+    from app.committee.shadow_board import fetch_shadow_session
+
+    conn = get_connection()
+    try:
+        _require_shadow_enabled(conn)
+        # Verify hearing exists
+        cur = conn.cursor()
+        cur.execute("SELECT HEARING_ID FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s", (hearing_id,))
+        if not fetch_all(cur):
+            raise HTTPException(status_code=404, detail="Hearing not found.")
+    finally:
+        conn.close()
+
+    result = fetch_shadow_session(hearing_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "SHADOW_SESSION_NOT_FOUND",
+                "message": "No shadow board session found for this hearing. Run POST .../shadow-board/run first.",
+            },
+        )
+    return result

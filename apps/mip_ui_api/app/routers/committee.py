@@ -17,6 +17,10 @@ from app.committee.engine import (
     compute_hearing_bundle,
     bundle_to_db_json,
 )
+from app.committee.intraday_substantiation import (
+    build_intraday_substantiation_artifact,
+    fetch_intraday_bars_15m,
+)
 from app.committee.live_politician_disclosure import build_exhibit_live_politician_disclosure_context
 from app.committee.public_disclosure_context import build_exhibit_public_disclosure_context
 
@@ -210,6 +214,7 @@ def _assemble_payload(
     roles = []
     arts = []
     exhibit_public_disclosure_context = None
+    exhibit_intraday_substantiation_map = None
     own_conn = None
     row_cur = cur
     if row_cur is None:
@@ -224,6 +229,7 @@ def _assemble_payload(
                     "evidence_refs": _variant(r.get("EVIDENCE_REFS")),
                 }
             )
+        exhibit_intraday_substantiation_map = None
         for a in _artifacts_rows(row_cur, hid):
             arts.append(
                 {
@@ -233,6 +239,8 @@ def _assemble_payload(
                     "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
                 }
             )
+            if (a.get("ARTIFACT_KIND") or "").upper() == "INTRADAY_SUBSTANTIATION_MAP":
+                exhibit_intraday_substantiation_map = _variant(a.get("PAYLOAD_JSON"))
         exhibit_public_disclosure_context = build_exhibit_public_disclosure_context(row_cur, proposal)
     finally:
         if own_conn is not None:
@@ -268,6 +276,8 @@ def _assemble_payload(
         "roles": roles,
         "artifacts": arts,
     }
+    if exhibit_intraday_substantiation_map is not None:
+        out["exhibit_intraday_substantiation_map"] = exhibit_intraday_substantiation_map
     if exhibit_public_disclosure_context is not None:
         out["exhibit_public_disclosure_context"] = exhibit_public_disclosure_context
         exhibit_live = build_exhibit_live_politician_disclosure_context(proposal)
@@ -391,6 +401,18 @@ def _run_refresh(conn, hearing_id: str, proposal_id: int, snapshot: Dict[str, An
     live = _live_context(cur, symbol)
     snap_eng = _build_snapshot_engine_dict(snapshot)
     bundle = compute_hearing_bundle(snap_eng, live)
+    try:
+        bars_15 = fetch_intraday_bars_15m(cur, str(symbol or "").strip(), "STOCK", 32)
+        intraday_art = build_intraday_substantiation_artifact(
+            snap_eng,
+            live,
+            bars_15,
+            snapshot.get("PROPOSAL_TS"),
+        )
+        if intraday_art:
+            bundle["artifacts"].append(intraday_art)
+    except Exception:
+        pass
     ver = "1.0.0"
     _persist_hearing_atomic(conn, hearing_id, proposal_id, int(snapshot["SNAPSHOT_ID"]), bundle, ver)
     cur.execute("SELECT * FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s", (hearing_id,))
@@ -654,6 +676,4 @@ def committee_proposal_final_decision(proposal_id: int):
         rows = fetch_all(cur)
         if not rows:
             return {"ok": True, "final_decision": None}
-        return {"ok": True, "final_decision": serialize_row(rows[0])}
-    finally:
-        conn.close()
+        return {"ok": True, "final_decision": serialize_row

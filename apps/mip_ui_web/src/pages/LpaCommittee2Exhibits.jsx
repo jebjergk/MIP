@@ -343,9 +343,10 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const trace = gh.post_proposal_path_trace
   const pdcExhibit = inline.exhibit_public_disclosure_context
   const livePdcExhibit = inline.exhibit_live_politician_disclosure_context
-  const stripStep = pdcExhibit != null ? 6 : 5
-  const chairStep = pdcExhibit != null ? 7 : 6
-  const linkStep = pdcExhibit != null ? 8 : 7
+  const hasDisclosureExhibit = pdcExhibit != null || livePdcExhibit != null
+  const stripStep = hasDisclosureExhibit ? 6 : 5
+  const chairStep = hasDisclosureExhibit ? 7 : 6
+  const linkStep = hasDisclosureExhibit ? 8 : 7
 
   return (
     <div className="lpa-c2-exhibits">

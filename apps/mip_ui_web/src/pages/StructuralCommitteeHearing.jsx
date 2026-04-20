@@ -24,6 +24,7 @@ export default function StructuralCommitteeHearing() {
   const [searchParams] = useSearchParams()
   const proposalId = searchParams.get('proposal_id')
   const actionIdFromUrl = searchParams.get('action_id')
+  const diagnostics = searchParams.get('diagnostics') === '1'
   const navigate = useNavigate()
 
   const [payload, setPayload] = useState(null)
@@ -74,9 +75,12 @@ export default function StructuralCommitteeHearing() {
     setShadowRunLoading(true)
     setShadowError(null)
     try {
-      const r = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hid)}/shadow-board/run`, {
-        method: 'POST',
-      })
+      // Phase 1 dual-hearing: this endpoint is now diagnostics/replay only and
+      // requires `force=true` because the primary kickoff is automatic from LPA.
+      const r = await fetch(
+        `${API_BASE}/committee/hearing/${encodeURIComponent(hid)}/shadow-board/run?force=true`,
+        { method: 'POST' },
+      )
       const j = await r.json()
       if (r.status === 503) {
         // Feature disabled — silently ignore; do not surface as error
@@ -260,6 +264,20 @@ export default function StructuralCommitteeHearing() {
 
   return (
     <div className="sch-wrap">
+      <div
+        className={`sch-replay-banner${diagnostics ? ' sch-replay-banner--diag' : ''}`}
+        role="note"
+        aria-live="polite"
+      >
+        <strong>Replay / Diagnostics view.</strong>{' '}
+        Live committee hearings now run inside the LPA hearing room (real and shadow boards side-by-side).
+        This page is for inspecting persisted hearings and for shadow-board re-runs against existing snapshots.
+        {!diagnostics && (
+          <span className="sch-replay-banner-hint">
+            {' '}Add <code>?diagnostics=1</code> to the URL to enable manual shadow re-runs.
+          </span>
+        )}
+      </div>
       <header className="sch-header sch-header--premium">
         <div>
           <h1>Committee 2.0 — Hearing</h1>
@@ -433,7 +451,9 @@ export default function StructuralCommitteeHearing() {
         </section>
       )}
 
-      {/* Shadow Board Phase 1 — secondary panel, zero authority, feature-flagged */}
+      {/* Shadow Board Phase 1 — secondary panel, zero authority, feature-flagged.
+          Manual re-run is gated behind ?diagnostics=1 because the primary kickoff
+          is now automatic from the LPA orchestrate path. */}
       <section className="sch-shadow-board-section">
         <ShadowBoardPanel
           shadowPayload={shadowPayload}
@@ -441,6 +461,9 @@ export default function StructuralCommitteeHearing() {
           shadowError={shadowError}
           onRun={() => hearingId && runShadow(hearingId)}
           runLoading={shadowRunLoading}
+          showManualRun={diagnostics}
+          evidenceHash={shadowPayload?.evidence_pack_hash}
+          snapshotId={shadowPayload?.snapshot_id}
         />
       </section>
     </div>

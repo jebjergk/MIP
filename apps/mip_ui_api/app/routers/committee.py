@@ -13,7 +13,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Body
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Body, Query
 from pydantic import BaseModel, Field
 
 from app.db import get_connection, fetch_all, serialize_row
@@ -732,16 +732,41 @@ def _require_shadow_enabled(conn):
 
 
 @router.post("/hearing/{hearing_id}/shadow-board/run")
-async def committee_shadow_board_run(hearing_id: str):
+async def committee_shadow_board_run(
+    hearing_id: str,
+    force: bool = Query(
+        False,
+        description=(
+            "Phase 1 dual-hearing: this manual endpoint is now diagnostics/replay only. "
+            "The primary kickoff fires automatically from the LPA orchestrate path. "
+            "Pass force=true to bypass the diagnostics gate and re-run anyway."
+        ),
+    ),
+):
     """
-    Initiate a shadow board run for the given hearing.
-    Returns immediately with session_id and status=RUNNING.
-    The run executes asynchronously; poll GET /hearing/{id}/shadow-board for results.
+    Diagnostics/replay endpoint — runs a shadow board session for the given hearing.
+
+    Phase 1 dual-hearing: the shadow board is normally launched automatically
+    by the LPA orchestrate path against the same frozen snapshot as the real
+    board. This endpoint is reserved for replay / diagnostic re-runs and is
+    gated behind `?force=true`. Without `force=true` it returns 409.
 
     Shadow Board is non-executing. Zero interaction with COMMITTEE_FINAL_DECISION.
     Requires SHADOW_BOARD_ENABLED=true in APP_CONFIG.
     """
     from app.committee.shadow_board import orchestrate_shadow_board, fetch_shadow_session
+
+    if not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SHADOW_MANUAL_RUN_GATED",
+                "message": (
+                    "Shadow board now runs automatically alongside the LPA hearing. "
+                    "Pass ?force=true to re-run for diagnostics/replay."
+                ),
+            },
+        )
 
     conn = get_connection()
     try:
@@ -799,15 +824,28 @@ async def committee_shadow_board_run(hearing_id: str):
 
 
 @router.get("/hearing/{hearing_id}/shadow-board")
-def committee_shadow_board_get(hearing_id: str):
+def committee_shadow_board_get(
+    hearing_id: str,
+    include_progress: bool = Query(
+        False,
+        description=(
+            "If true, return only the lightweight session-status payload "
+            "(status, stage_reached, evidence_pack_hash). Used by the LPA "
+            "auto-poll loop while the shadow board is still RUNNING."
+        ),
+    ),
+):
     """
     Retrieve the most recent shadow board session for a hearing.
     Returns full structured payload (positions, conflicts, challenge, revisions, chair).
 
+    Pass ?include_progress=1 to get a lightweight status-only payload
+    suitable for high-frequency polling while the session is still RUNNING.
+
     Returns 404 if no shadow session exists yet for this hearing.
     Shadow data is advisory only. Real board stance is never included here.
     """
-    from app.committee.shadow_board import fetch_shadow_session
+    from app.committee.shadow_board import fetch_shadow_session, fetch_shadow_progress
 
     conn = get_connection()
     try:
@@ -820,13 +858,25 @@ def committee_shadow_board_get(hearing_id: str):
     finally:
         conn.close()
 
+    if include_progress:
+        progress = fetch_shadow_progress(hearing_id)
+        if progress is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "SHADOW_SESSION_NOT_FOUND",
+                    "message": "No shadow board session found for this hearing yet.",
+                },
+            )
+        return progress
+
     result = fetch_shadow_session(hearing_id)
     if result is None:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "SHADOW_SESSION_NOT_FOUND",
-                "message": "No shadow board session found for this hearing. Run POST .../shadow-board/run first.",
+                "message": "No shadow board session found for this hearing. The LPA orchestrate path normally creates one automatically.",
             },
         )
     return result

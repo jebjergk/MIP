@@ -797,6 +797,74 @@
   padding: 4px 10px;
 }
 
+/* ----------------------------------------------------------------------
+ * Phase 1 dual-hearing — side-by-side real | shadow board layout.
+ * The grid stacks below ~1180px so narrow viewports still render usably.
+ * -------------------------------------------------------------------- */
+.lpa-c2-dual {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  margin: 4px 0;
+}
+
+@media (max-width: 1180px) {
+  .lpa-c2-dual {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lpa-c2-dual-real,
+.lpa-c2-dual-shadow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lpa-c2-dual-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.lpa-c2-dual-banner--real {
+  background: linear-gradient(90deg, rgba(57, 73, 171, 0.12), rgba(57, 73, 171, 0.02));
+  border: 1px solid rgba(57, 73, 171, 0.25);
+  color: #2c3a8c;
+}
+
+.lpa-c2-dual-banner--shadow {
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.12), rgba(96, 165, 250, 0.02));
+  border: 1px dashed rgba(96, 165, 250, 0.45);
+  color: #1d4ed8;
+}
+
+.lpa-c2-dual-chip {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(57, 73, 171, 0.18);
+  color: #2c3a8c;
+  font-size: 11px;
+}
+
+.lpa-c2-dual-chip--shadow {
+  background: rgba(96, 165, 250, 0.18);
+  color: #1d4ed8;
+}
+
+.lpa-c2-dual-banner-text {
+  color: inherit;
+  opacity: 0.85;
+}
+
 /* Committee 2.0 inline proof exhibits */
 .lpa-c2-exhibits {
   margin: 4px 0;

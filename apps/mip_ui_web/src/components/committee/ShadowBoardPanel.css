@@ -469,3 +469,104 @@
   background: var(--color-surface-3, #13151a);
   line-height: 1.4;
 }
+
+/* ---------------------------------------------------------------------------
+ * Phase 1 dual-hearing additions: progress strip + snapshot-bind footer
+ * ------------------------------------------------------------------------- */
+.sbp-progress-strip {
+  padding: 0.55rem 1rem 0.6rem;
+  background: var(--color-surface-2, #181b22);
+  border-bottom: 1px solid var(--color-border-subtle, #2e3340);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sbp-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sbp-progress-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text, #d4d7de);
+}
+
+.sbp-progress-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #60a5fa;
+  box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.7);
+  animation: sbp-progress-ping 1.4s ease-out infinite;
+}
+
+.sbp-progress-pulse--idle {
+  background: #4b5563;
+  animation: none;
+  box-shadow: none;
+}
+
+@keyframes sbp-progress-ping {
+  0%   { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.7); }
+  70%  { box-shadow: 0 0 0 8px rgba(96, 165, 250, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
+}
+
+.sbp-progress-track {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.sbp-progress-tick {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border-subtle, #2e3340);
+  transition: background 0.25s ease;
+}
+
+.sbp-progress-tick--done {
+  background: #60a5fa;
+}
+
+.sbp-progress-tick--active {
+  background: #93c5fd;
+  box-shadow: 0 0 8px rgba(147, 197, 253, 0.55);
+}
+
+.sbp-snapshot-bind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 1rem 0.55rem;
+  border-top: 1px dashed var(--color-border-subtle, #2e3340);
+  background: var(--color-surface-3, #13151a);
+  font-size: 0.66rem;
+  color: var(--color-text-dim, #6b7280);
+}
+
+.sbp-snapshot-bind-label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.6rem;
+  color: var(--color-text-dim, #6b7280);
+}
+
+.sbp-snapshot-bind-chip {
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  color: #93c5fd;
+  letter-spacing: 0.02em;
+}
+
+.sbp-snapshot-bind-chip--mono {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  font-size: 0.62rem;
+}

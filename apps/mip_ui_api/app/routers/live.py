@@ -9739,14 +9739,52 @@ _ORCHESTRATE_ALLOWED_STATUSES = frozenset(
 )
 
 
+def _shadow_board_enabled_for_orchestrate(cur) -> bool:
+    """Read SHADOW_BOARD_ENABLED at orchestrate time. Default off if missing."""
+    try:
+        cur.execute(
+            "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+            ("SHADOW_BOARD_ENABLED",),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return False
+        val = (rows[0].get("CONFIG_VALUE") or "").strip().lower()
+        return val in ("1", "true", "yes")
+    except Exception:
+        return False
+
+
+def _shadow_timeout_for_orchestrate(cur, default: float = 120.0) -> float:
+    """Read SHADOW_BOARD_TIMEOUT_SEC at orchestrate time. Falls back to default."""
+    try:
+        cur.execute(
+            "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+            ("SHADOW_BOARD_TIMEOUT_SEC",),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return default
+        return float((rows[0].get("CONFIG_VALUE") or "").strip())
+    except Exception:
+        return default
+
+
 @router.post("/trades/actions/{action_id}/committee2/orchestrate")
-def orchestrate_committee2_structural_entry(
+async def orchestrate_committee2_structural_entry(
     action_id: str,
     req: Committee2OrchestrateRequest = Body(default_factory=Committee2OrchestrateRequest),
 ):
     """
     Single operational path for structural ENTRY: refresh hearing, commit final decision bound to
     this action_id, materialize LIVE committee tables (no separate Sync step).
+
+    Phase 1 dual-hearing: after the deterministic real board refreshes, we
+    compute and persist EVIDENCE_PACK_HASH onto COMMITTEE_HEARING and fire an
+    idempotent shadow-board kickoff bound to that same snapshot identity. The
+    kickoff inserts a RUNNING placeholder synchronously and schedules the
+    full agentic run as a background asyncio task — the real-board response
+    is unaffected by shadow latency.
     """
     conn = get_connection()
     try:
@@ -9857,6 +9895,51 @@ def orchestrate_committee2_structural_entry(
         stance = refresh_payload.get("stance")
         conf = refresh_payload.get("confidence")
         action_after = _fetch_live_action(cur, action_id) or action
+
+        # ------------------------------------------------------------------
+        # Phase 1 dual-hearing: snapshot identity + idempotent shadow kickoff
+        # ------------------------------------------------------------------
+        # Compute deterministic EVIDENCE_PACK_HASH over (snapshot_id, snapshot
+        # row, proposal stable fields). Persist onto COMMITTEE_HEARING so the
+        # real and shadow boards both bind to the same snapshot identity.
+        evidence_pack_hash: str | None = None
+        shadow_kickoff: dict | None = None
+        try:
+            from app.committee.shadow_board import (
+                compute_evidence_pack_hash,
+                kickoff_shadow_board_for_snapshot,
+            )
+
+            evidence_pack_hash = compute_evidence_pack_hash(
+                snapshot_id=int(snapshot["SNAPSHOT_ID"]),
+                snapshot_row=dict(snapshot),
+                proposal_row=dict(proposal),
+            )
+            cur.execute(
+                """
+                UPDATE MIP.APP.COMMITTEE_HEARING
+                   SET EVIDENCE_PACK_HASH = %s
+                 WHERE HEARING_ID = %s
+                """,
+                (evidence_pack_hash, hearing_id),
+            )
+
+            if _shadow_board_enabled_for_orchestrate(cur):
+                shadow_kickoff = await kickoff_shadow_board_for_snapshot(
+                    hearing_id=hearing_id,
+                    proposal_id=proposal_id_int,
+                    snapshot_id=int(snapshot["SNAPSHOT_ID"]),
+                    evidence_pack_hash=evidence_pack_hash,
+                    timeout_sec=_shadow_timeout_for_orchestrate(cur),
+                    force=False,
+                )
+        except Exception as kickoff_exc:
+            # Real board must remain authoritative — shadow kickoff is advisory.
+            _log.warning(
+                "committee2_orchestrate: shadow kickoff failed (real board unaffected): %s",
+                kickoff_exc,
+            )
+
         inline_hearing = _build_inline_hearing_payload(
             action_id=action_id,
             proposal_id=proposal_id_int,
@@ -9864,6 +9947,12 @@ def orchestrate_committee2_structural_entry(
             proposal=dict(proposal),
             refresh_payload=refresh_payload,
         )
+        if evidence_pack_hash:
+            inline_hearing["evidence_pack_hash"] = evidence_pack_hash
+        if shadow_kickoff:
+            inline_hearing["shadow_session_id"] = shadow_kickoff.get("session_id")
+            inline_hearing["shadow_status"] = shadow_kickoff.get("status")
+            inline_hearing["shadow_reused"] = shadow_kickoff.get("reused")
 
         if idempotent_replay:
             fd = fetch_committee2_final_decision_for_action(cur, action_id)
@@ -12580,6 +12669,38 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "news_context_snapshot": news_snapshot,
             },
         )
+
+        # ------------------------------------------------------------------
+        # Phase 1 dual-hearing: durable executed-vs-shadow linkage.
+        # Fired the moment IBKR submit returns the pending-order ack.
+        # Failures inside write_shadow_trade_linkage are logged-only — the
+        # real order path never blocks on shadow observability.
+        # ------------------------------------------------------------------
+        try:
+            from app.committee.shadow_linkage import write_shadow_trade_linkage
+
+            real_trade_cfg_for_link = {
+                "side": side,
+                "qty_ordered": qty_ordered,
+                "entry_price": entry_price,
+                "tp_price": tp_price,
+                "sl_price": sl_price,
+                "trail_amount": structural_trail_amount,
+                "trail_percent": structural_trail_percent,
+                "order_legs": order_legs,
+                "idempotency_key": idempotency_key,
+            }
+            write_shadow_trade_linkage(
+                cur,
+                action_row=_fetch_live_action(cur, action_id) or action,
+                broker_order_payload=broker_submit_payload,
+                real_trade_config=real_trade_cfg_for_link,
+            )
+        except Exception as link_exc:
+            _log.warning(
+                "shadow_linkage: invocation failed action_id=%s (real order unaffected): %s",
+                action_id, link_exc,
+            )
 
         return {
             "ok": True,

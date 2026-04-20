@@ -198,14 +198,82 @@ function ShadowBoardSkeleton() {
   )
 }
 
-export default function ShadowBoardPanel({ shadowPayload, shadowLoading, shadowError, onRun, runLoading }) {
+const SHADOW_STAGE_LABELS = [
+  'Building evidence pack',
+  'Specialists deliberating',
+  'Detecting conflicts',
+  'Challenge round',
+  'Revision round',
+  'Chair drafting ruling',
+  'Persisting session',
+]
+
+function ShadowProgressStrip({ stageReached, status }) {
+  const total = SHADOW_STAGE_LABELS.length
+  const cur = Math.max(0, Math.min(total - 1, Number(stageReached) || 0))
+  const isRunning = (status || '').toUpperCase() === 'RUNNING'
+  return (
+    <div className="sbp-progress-strip" role="status" aria-live="polite">
+      <div className="sbp-progress-row">
+        <span className="sbp-progress-label">
+          {isRunning ? `Stage ${cur + 1}/${total} · ${SHADOW_STAGE_LABELS[cur]}` : 'Awaiting first response'}
+        </span>
+        <span className={`sbp-progress-pulse${isRunning ? '' : ' sbp-progress-pulse--idle'}`} aria-hidden />
+      </div>
+      <div className="sbp-progress-track">
+        {SHADOW_STAGE_LABELS.map((label, i) => (
+          <span
+            key={label}
+            className={`sbp-progress-tick${i <= cur ? ' sbp-progress-tick--done' : ''}${i === cur && isRunning ? ' sbp-progress-tick--active' : ''}`}
+            title={label}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SnapshotBindFooter({ evidenceHash, snapshotId, sessionId }) {
+  if (!evidenceHash && !snapshotId && !sessionId) return null
+  const shortHash = evidenceHash ? `${String(evidenceHash).slice(0, 12)}…` : null
+  return (
+    <div className="sbp-snapshot-bind" title="Phase 1 dual-hearing: same frozen snapshot as the real board">
+      <span className="sbp-snapshot-bind-label">Bound to</span>
+      {snapshotId != null && <span className="sbp-snapshot-bind-chip">snapshot #{snapshotId}</span>}
+      {shortHash && <span className="sbp-snapshot-bind-chip sbp-snapshot-bind-chip--mono">pack {shortHash}</span>}
+      {sessionId && (
+        <span className="sbp-snapshot-bind-chip sbp-snapshot-bind-chip--mono">
+          session {String(sessionId).slice(0, 8)}
+        </span>
+      )}
+    </div>
+  )
+}
+
+export default function ShadowBoardPanel({
+  shadowPayload,
+  shadowLoading,
+  shadowError,
+  onRun,
+  runLoading,
+  // Phase 1 dual-hearing additions
+  evidenceHash,
+  snapshotId,
+  runningProgress,
+  showManualRun = false,
+}) {
   const positions = Array.isArray(shadowPayload?.positions) ? shadowPayload.positions : []
   const conflicts = Array.isArray(shadowPayload?.conflicts) ? shadowPayload.conflicts : []
   const challenge = shadowPayload?.challenge || null
   const revisions = Array.isArray(shadowPayload?.revisions) ? shadowPayload.revisions : []
   const chair = shadowPayload?.chair || null
-  const status = shadowPayload?.status
+  const status = shadowPayload?.status || runningProgress?.status
   const isDegraded = Boolean(shadowPayload?.degraded)
+  const isRunning = String(status || '').toUpperCase() === 'RUNNING'
+  const stageReached = runningProgress?.stage_reached ?? shadowPayload?.stage_reached ?? 0
+  const effectiveSessionId = shadowPayload?.session_id || runningProgress?.session_id
+  const effectiveHash = shadowPayload?.evidence_pack_hash || runningProgress?.evidence_pack_hash || evidenceHash
+  const effectiveSnapshotId = shadowPayload?.snapshot_id ?? runningProgress?.snapshot_id ?? snapshotId
 
   return (
     <aside className="sbp-root">
@@ -214,27 +282,32 @@ export default function ShadowBoardPanel({ shadowPayload, shadowLoading, shadowE
           <span className="sbp-label-chip">SHADOW BOARD</span>
           <span className="sbp-header-subtitle">Independent · Advisory Only · Zero Authority</span>
         </div>
-        {shadowPayload && (
+        {(shadowPayload || runningProgress) && (
           <div className="sbp-header-meta">
             {isDegraded && <span className="sbp-degraded-chip">DEGRADED</span>}
-            <span className="sbp-status-chip sbp-status-chip--{(status || 'unknown').toLowerCase()}">{status || '—'}</span>
-            {shadowPayload.run_ms != null && (
+            <span className={`sbp-status-chip sbp-status-chip--${String(status || 'unknown').toLowerCase()}`}>{status || '—'}</span>
+            {shadowPayload?.run_ms != null && (
               <span className="sbp-muted">{(shadowPayload.run_ms / 1000).toFixed(1)}s</span>
             )}
           </div>
         )}
-        <button
-          type="button"
-          className="sbp-run-btn"
-          onClick={onRun}
-          disabled={runLoading || shadowLoading}
-          title="Re-run shadow board session"
-        >
-          {runLoading ? 'Running…' : shadowPayload ? 'Re-run' : 'Run shadow board'}
-        </button>
+        {showManualRun && (
+          <button
+            type="button"
+            className="sbp-run-btn"
+            onClick={onRun}
+            disabled={runLoading || shadowLoading}
+            title="Diagnostics: re-run shadow board session"
+          >
+            {runLoading ? 'Running…' : shadowPayload ? 'Re-run (diag)' : 'Run shadow board (diag)'}
+          </button>
+        )}
       </div>
 
-      {(shadowLoading || runLoading) && !shadowPayload && <ShadowBoardSkeleton />}
+      {/* Live progress strip while a session is RUNNING (placeholder + auto-poll). */}
+      {isRunning && <ShadowProgressStrip stageReached={stageReached} status={status} />}
+
+      {((shadowLoading || runLoading) && !shadowPayload && !isRunning) && <ShadowBoardSkeleton />}
 
       {shadowError && !shadowPayload && (
         <div className="sbp-error">
@@ -295,11 +368,22 @@ export default function ShadowBoardPanel({ shadowPayload, shadowLoading, shadowE
         </div>
       )}
 
-      {!shadowPayload && !shadowLoading && !runLoading && !shadowError && (
+      {!shadowPayload && !shadowLoading && !runLoading && !shadowError && !isRunning && (
         <div className="sbp-empty">
-          <p className="sbp-muted">No shadow session yet. Click <strong>Run shadow board</strong> to start.</p>
+          <p className="sbp-muted">
+            Shadow board has not started for this hearing.
+            {showManualRun ? ' Click Run shadow board (diag) to launch a diagnostics session.' : ''}
+          </p>
         </div>
       )}
+
+      {/* Snapshot binding footer — shows the (snapshot_id, pack hash, session) tuple
+          so the user can verify both boards reasoned from the same frozen world. */}
+      <SnapshotBindFooter
+        evidenceHash={effectiveHash}
+        snapshotId={effectiveSnapshotId}
+        sessionId={effectiveSessionId}
+      />
     </aside>
   )
 }

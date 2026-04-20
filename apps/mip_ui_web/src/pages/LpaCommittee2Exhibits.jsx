@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
+import ShadowBoardPanel from '../components/committee/ShadowBoardPanel'
 import { API_BASE } from '../config/apiBase'
 
 function fmtNum(v, digits = 2) {
@@ -311,32 +312,120 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
     [inline],
   )
 
-  // Shadow board strip — fetch silently; no error shown if unavailable.
+  // ----------------------------------------------------------------------
+  // Phase 1 dual-hearing: simultaneous shadow-board polling.
+  //
+  // The LPA orchestrate response already carries shadow_session_id +
+  // evidence_pack_hash (kicked off in parallel by the backend). We:
+  //   1. Poll the lightweight `?include_progress=1` endpoint every ~2s while
+  //      the session is still RUNNING (renders a live progress strip).
+  //   2. Once status flips to COMPLETE / DEGRADED / FAILED, fetch the full
+  //      session payload one time to render the full panel.
+  //
   // NOTE: hooks must be declared before any early returns to keep hook order
   // stable across renders (otherwise React throws "Rendered more hooks than
   // during the previous render" and unmounts the entire tree → blank page).
+  // ----------------------------------------------------------------------
   const hearingId = inline?.hearing_id || null
-  const [shadowStrip, setShadowStrip] = useState(null)
+  const inlineEvidenceHash = inline?.evidence_pack_hash || null
+  const inlineShadowStatus = inline?.shadow_status || null
+  const inlineShadowSession = inline?.shadow_session_id || null
+
+  const [shadowProgress, setShadowProgress] = useState(null)
+  const [shadowPayload, setShadowPayload] = useState(null)
+  const [shadowError, setShadowError] = useState(null)
+  const [shadowLoading, setShadowLoading] = useState(false)
+  const fullFetchedFor = useRef(null)
+
   useEffect(() => {
     if (!hearingId) {
-      setShadowStrip(null)
+      setShadowProgress(null)
+      setShadowPayload(null)
+      setShadowError(null)
+      setShadowLoading(false)
+      fullFetchedFor.current = null
       return undefined
     }
-    setShadowStrip(null)
+
     let cancelled = false
-    fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
-      .then((r) => {
-        if (r.status === 404 || r.status === 503) return null
-        return r.ok ? r.json() : null
+    let timer = null
+    setShadowError(null)
+    setShadowLoading(true)
+
+    // Seed progress with whatever orchestrate told us up-front.
+    if (inlineShadowSession || inlineShadowStatus) {
+      setShadowProgress((prev) => prev || {
+        session_id: inlineShadowSession,
+        status: inlineShadowStatus || 'RUNNING',
+        stage_reached: 0,
+        evidence_pack_hash: inlineEvidenceHash,
       })
-      .then((j) => {
-        if (!cancelled && j) setShadowStrip(j)
+    }
+
+    const fetchProgress = async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board?include_progress=1`,
+        )
+        if (cancelled) return
+        if (r.status === 404) {
+          // Session not visible yet — keep polling briefly.
+          return
+        }
+        if (r.status === 503) {
+          setShadowError('Shadow board disabled')
+          return
+        }
+        if (!r.ok) return
+        const j = await r.json()
+        if (cancelled || !j) return
+        setShadowProgress(j)
+
+        const status = String(j.status || '').toUpperCase()
+        if (
+          (status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED')
+          && fullFetchedFor.current !== j.session_id
+        ) {
+          fullFetchedFor.current = j.session_id
+          try {
+            const full = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
+            if (full.ok) {
+              const fj = await full.json()
+              if (!cancelled) setShadowPayload(fj)
+            }
+          } catch (_e) { /* ignore */ }
+        }
+      } catch (_e) {
+        // Silent — shadow is advisory and must never break the LPA page.
+      } finally {
+        if (!cancelled) setShadowLoading(false)
+      }
+    }
+
+    fetchProgress()
+
+    const tick = () => {
+      const status = String(shadowProgress?.status || inlineShadowStatus || 'RUNNING').toUpperCase()
+      if (status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED') {
+        // Stop polling once terminal.
+        return
+      }
+      fetchProgress().finally(() => {
+        if (!cancelled) {
+          timer = setTimeout(tick, 2000)
+        }
       })
-      .catch(() => {})
+    }
+
+    timer = setTimeout(tick, 2000)
     return () => {
       cancelled = true
+      if (timer) clearTimeout(timer)
     }
-  }, [hearingId])
+    // We intentionally only re-run when hearingId or the inline session changes
+    // (referencing shadowProgress in deps would create a tight re-render loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hearingId, inlineShadowSession])
 
   useEffect(() => {
     if (!inline) {
@@ -389,7 +478,13 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const linkStep = 8 + intradayOffset + disclosureOffset
 
   return (
-    <div className="lpa-c2-exhibits">
+    <div className="lpa-c2-dual">
+      <div className="lpa-c2-dual-real">
+        <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
+          <span className="lpa-c2-dual-chip">REAL BOARD</span>
+          <span className="lpa-c2-dual-banner-text">Authoritative · executes trades</span>
+        </div>
+        <div className="lpa-c2-exhibits">
       {loading && progressMsg ? (
         <div className="lpa-c2-inline-wip">
           <span className="lpa-c2-wip-pulse" aria-hidden />
@@ -620,37 +715,27 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         </div>
       </Reveal>
 
-      {shadowStrip && (
-        <Reveal show={revealStep >= shadowStep} className="lpa-c2-card lpa-c2-shadow-strip">
-          <div className="lpa-c2-card-head">
-            Shadow Board
-            <span className="lpa-c2-shadow-chip">advisory only</span>
-          </div>
-          <div className="lpa-c2-shadow-row">
-            <span
-              className={`lpa-c2-shadow-stance lpa-c2-shadow-stance--${(shadowStrip.shadow_stance || 'unknown').toLowerCase().replace(/_/g, '-')}`}
-            >
-              {(shadowStrip.shadow_stance || '—').replace(/_/g, ' ')}
-            </span>
-            <span className="lpa-c2-shadow-conf">
-              conf {shadowStrip.shadow_confidence != null ? Number(shadowStrip.shadow_confidence).toFixed(2) : '—'}
-            </span>
-            {shadowStrip.degraded && (
-              <span className="lpa-c2-shadow-degraded">degraded</span>
-            )}
-          </div>
-          {shadowStrip.chair?.plurality_basis && (
-            <p className="lpa-c2-shadow-basis">{shadowStrip.chair.plurality_basis}</p>
-          )}
-          {hearingHref && (
-            <Link to={hearingHref} className="lpa-c2-shadow-link">Full shadow board →</Link>
-          )}
-        </Reveal>
-      )}
-
       <Reveal show={revealStep >= linkStep} className="lpa-c2-full-link">
         {hearingHref ? <Link to={hearingHref}>Open full hearing →</Link> : null}
       </Reveal>
+        </div>
+      </div>
+
+      {/* Phase 1 dual-hearing — right column: agentic shadow board, same snapshot. */}
+      <div className="lpa-c2-dual-shadow">
+        <div className="lpa-c2-dual-banner lpa-c2-dual-banner--shadow">
+          <span className="lpa-c2-dual-chip lpa-c2-dual-chip--shadow">SHADOW BOARD</span>
+          <span className="lpa-c2-dual-banner-text">Advisory · same frozen snapshot · zero authority</span>
+        </div>
+        <ShadowBoardPanel
+          shadowPayload={shadowPayload}
+          shadowLoading={shadowLoading && !shadowPayload && !shadowProgress}
+          shadowError={shadowError}
+          runningProgress={shadowProgress}
+          evidenceHash={inlineEvidenceHash}
+          showManualRun={false}
+        />
+      </div>
     </div>
   )
 }

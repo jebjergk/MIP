@@ -21,6 +21,7 @@ Guarantees:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -85,6 +86,253 @@ def _get_snowflake_creds() -> Tuple[str, str, str]:
         cfg.get("user") or "",
         cfg.get("private_key_path") or "",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 dual-hearing: snapshot identity (hash) + idempotent kickoff
+#
+# The hash is a deterministic fingerprint of the shared frozen evidence both
+# boards reason from. Inputs:
+#   - snapshot_id (frozen at proposal time)
+#   - the proposal-snapshot row's stable fields
+#   - the live proposal row's stable fields (symbol, direction, setup family)
+# Volatile timestamps are excluded so the hash is stable across orchestrate
+# replays for the same underlying snapshot.
+# ---------------------------------------------------------------------------
+
+# Volatile / per-call fields that must not contribute to the snapshot identity.
+_HASH_EXCLUDE_KEYS = {
+    "CREATED_AT", "UPDATED_AT", "HEARING_TS", "PROPOSAL_TS",
+    "DECISION_TS", "EXPIRES_AT", "COMPLETED_AT",
+}
+
+
+def _canonical_for_hash(value: Any) -> Any:
+    """Recursively normalize a value into something deterministic & JSON-safe."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for k in sorted(value.keys()):
+            ku = str(k).upper()
+            if ku in _HASH_EXCLUDE_KEYS:
+                continue
+            v = value[k]
+            try:
+                out[ku] = _canonical_for_hash(v)
+            except Exception:
+                out[ku] = repr(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_canonical_for_hash(v) for v in value]
+    # Fall back to a stable string form (datetimes, Decimals, etc.).
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except Exception:
+        return str(value)
+
+
+def compute_evidence_pack_hash(
+    snapshot_id: int,
+    snapshot_row: Dict[str, Any],
+    proposal_row: Dict[str, Any],
+) -> str:
+    """
+    Deterministic SHA-256 over the frozen-snapshot identity inputs.
+    Same hash => same world state => idempotent shadow-session reuse.
+    """
+    payload = {
+        "snapshot_id": int(snapshot_id),
+        "snapshot": _canonical_for_hash(snapshot_row or {}),
+        "proposal": {
+            k: _canonical_for_hash((proposal_row or {}).get(k))
+            for k in ("PROPOSAL_ID", "SYMBOL", "DIRECTION", "SETUP_FAMILY")
+        },
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _find_existing_shadow_session_sync(
+    hearing_id: str,
+    evidence_pack_hash: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Return the most recent non-FAILED shadow session matching the hash.
+    Used for idempotent kickoff: if a RUNNING / COMPLETE / DEGRADED session
+    already exists for this snapshot identity, do not start another.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT SESSION_ID, STATUS, STAGE_REACHED, SHADOW_STANCE, SHADOW_CONFIDENCE,
+                   DEGRADED, DEGRADED_REASON, RUN_MS, CREATED_AT, COMPLETED_AT
+              FROM MIP.APP.SHADOW_BOARD_SESSION
+             WHERE HEARING_ID = %s
+               AND EVIDENCE_PACK_HASH = %s
+               AND STATUS IN ('RUNNING', 'COMPLETE', 'DEGRADED')
+             ORDER BY CREATED_AT DESC
+             LIMIT 1
+            """,
+            (hearing_id, evidence_pack_hash),
+        )
+        rows = fetch_all(cur)
+        return rows[0] if rows else None
+    finally:
+        conn.close()
+
+
+def _insert_running_placeholder_sync(
+    session_id: str,
+    hearing_id: str,
+    proposal_id: int,
+    snapshot_id: Optional[int],
+    evidence_pack_hash: str,
+) -> bool:
+    """
+    Race-safe placeholder insert: writes a RUNNING SHADOW_BOARD_SESSION row
+    only if no non-FAILED session already exists for (hearing, hash).
+
+    Returns True if our row was inserted (we own this session); False if
+    another caller raced ahead and we should reuse.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_BOARD_SESSION
+                (SESSION_ID, HEARING_ID, PROPOSAL_ID,
+                 SNAPSHOT_ID, EVIDENCE_PACK_HASH,
+                 STAGE_REACHED, STATUS, DEGRADED, CREATED_AT)
+            SELECT %s, %s, %s, %s, %s, 0, 'RUNNING', FALSE, CURRENT_TIMESTAMP()
+            WHERE NOT EXISTS (
+                SELECT 1 FROM MIP.APP.SHADOW_BOARD_SESSION
+                 WHERE HEARING_ID = %s
+                   AND EVIDENCE_PACK_HASH = %s
+                   AND STATUS IN ('RUNNING', 'COMPLETE', 'DEGRADED')
+            )
+            """,
+            (
+                session_id, hearing_id, proposal_id,
+                snapshot_id, evidence_pack_hash,
+                hearing_id, evidence_pack_hash,
+            ),
+        )
+        return int(getattr(cur, "rowcount", 0) or 0) > 0
+    finally:
+        conn.close()
+
+
+async def kickoff_shadow_board_for_snapshot(
+    hearing_id: str,
+    proposal_id: int,
+    snapshot_id: int,
+    evidence_pack_hash: str,
+    timeout_sec: float = 120.0,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """
+    Phase 1 dual-hearing kickoff.
+
+    - If a non-FAILED session already exists for (hearing_id, evidence_pack_hash)
+      and force is False, return that session (reused=True).
+    - Otherwise: insert a RUNNING placeholder row SYNCHRONOUSLY (so the LPA
+      poll has something to render within the same request), then schedule
+      the full orchestration as a background asyncio task.
+
+    Returns: {session_id, status, reused, evidence_pack_hash}
+    """
+    if not force:
+        existing = await asyncio.to_thread(
+            _find_existing_shadow_session_sync, hearing_id, evidence_pack_hash
+        )
+        if existing:
+            logger.info(
+                "shadow_kickoff: reusing existing session %s status=%s for hash=%s...",
+                existing.get("SESSION_ID"), existing.get("STATUS"), evidence_pack_hash[:12],
+            )
+            return {
+                "session_id": existing.get("SESSION_ID"),
+                "status": existing.get("STATUS"),
+                "reused": True,
+                "evidence_pack_hash": evidence_pack_hash,
+            }
+
+    session_id = str(uuid.uuid4())
+
+    # Guardrail: placeholder MUST land before the task is scheduled.
+    inserted = await asyncio.to_thread(
+        _insert_running_placeholder_sync,
+        session_id, hearing_id, proposal_id, snapshot_id, evidence_pack_hash,
+    )
+    if not inserted:
+        # Lost a race; reuse whichever placeholder won.
+        existing = await asyncio.to_thread(
+            _find_existing_shadow_session_sync, hearing_id, evidence_pack_hash
+        )
+        if existing:
+            return {
+                "session_id": existing.get("SESSION_ID"),
+                "status": existing.get("STATUS"),
+                "reused": True,
+                "evidence_pack_hash": evidence_pack_hash,
+            }
+        # Pathological: insert refused but no row visible. Fall through to
+        # schedule under our session_id and let orchestrate_shadow_board
+        # surface any failure during its own persistence.
+        logger.warning(
+            "shadow_kickoff: placeholder insert refused but no existing row found "
+            "for hearing=%s hash=%s; proceeding under session %s",
+            hearing_id, evidence_pack_hash[:12], session_id,
+        )
+
+    # Schedule the full orchestration; the running task carries the snapshot
+    # identity so persistence can write SNAPSHOT_ID/EVIDENCE_PACK_HASH.
+    asyncio.create_task(
+        _run_shadow_in_background(
+            session_id=session_id,
+            hearing_id=hearing_id,
+            snapshot_id=snapshot_id,
+            evidence_pack_hash=evidence_pack_hash,
+            timeout_sec=timeout_sec,
+        )
+    )
+    logger.info(
+        "shadow_kickoff: scheduled session %s for hearing=%s hash=%s...",
+        session_id, hearing_id, evidence_pack_hash[:12],
+    )
+    return {
+        "session_id": session_id,
+        "status": "RUNNING",
+        "reused": False,
+        "evidence_pack_hash": evidence_pack_hash,
+    }
+
+
+async def _run_shadow_in_background(
+    session_id: str,
+    hearing_id: str,
+    snapshot_id: Optional[int],
+    evidence_pack_hash: Optional[str],
+    timeout_sec: float,
+) -> None:
+    """Background wrapper. Never raises into the event loop."""
+    try:
+        await orchestrate_shadow_board(
+            hearing_id=hearing_id,
+            timeout_sec=timeout_sec,
+            session_id=session_id,
+            snapshot_id=snapshot_id,
+            evidence_pack_hash=evidence_pack_hash,
+        )
+    except Exception as exc:  # defensive — orchestrate_shadow_board already swallows
+        logger.error(
+            "shadow_kickoff: background run failed session=%s hearing=%s: %s",
+            session_id, hearing_id, exc, exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +738,8 @@ def _persist_shadow_session(
     challenge_elapsed: int,
     revision_elapsed: Dict[str, int],
     chair_elapsed: int,
+    snapshot_id: Optional[int] = None,
+    evidence_pack_hash: Optional[str] = None,
 ) -> None:
     conn = get_connection()
     try:
@@ -497,28 +747,60 @@ def _persist_shadow_session(
         sid = result.session_id
         hid = result.hearing_id
 
-        # SHADOW_BOARD_SESSION
+        # SHADOW_BOARD_SESSION — UPDATE first (Phase 1 dual-hearing kickoff
+        # may have inserted a RUNNING placeholder); fall through to INSERT
+        # if no placeholder existed (legacy / direct-call path).
         cur.execute(
             """
-            INSERT INTO MIP.APP.SHADOW_BOARD_SESSION
-                (SESSION_ID, HEARING_ID, PROPOSAL_ID,
-                 SHADOW_STANCE, SHADOW_CONFIDENCE,
-                 STAGE_REACHED, STATUS, DEGRADED, DEGRADED_REASON,
-                 RUN_MS, CREATED_AT, COMPLETED_AT)
-            SELECT
-                %s, %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            UPDATE MIP.APP.SHADOW_BOARD_SESSION
+               SET PROPOSAL_ID        = %s,
+                   SNAPSHOT_ID        = COALESCE(%s, SNAPSHOT_ID),
+                   EVIDENCE_PACK_HASH = COALESCE(%s, EVIDENCE_PACK_HASH),
+                   SHADOW_STANCE      = %s,
+                   SHADOW_CONFIDENCE  = %s,
+                   STAGE_REACHED      = %s,
+                   STATUS             = %s,
+                   DEGRADED           = %s,
+                   DEGRADED_REASON    = %s,
+                   RUN_MS             = %s,
+                   COMPLETED_AT       = CURRENT_TIMESTAMP()
+             WHERE SESSION_ID = %s
             """,
             (
-                sid, hid, result.proposal_id,
+                result.proposal_id,
+                snapshot_id, evidence_pack_hash,
                 result.shadow_stance, result.shadow_confidence,
                 result.stage_reached, result.status,
                 result.degraded, (result.degraded_reason or "")[:500],
                 result.run_ms,
+                sid,
             ),
         )
+        if int(getattr(cur, "rowcount", 0) or 0) == 0:
+            cur.execute(
+                """
+                INSERT INTO MIP.APP.SHADOW_BOARD_SESSION
+                    (SESSION_ID, HEARING_ID, PROPOSAL_ID,
+                     SNAPSHOT_ID, EVIDENCE_PACK_HASH,
+                     SHADOW_STANCE, SHADOW_CONFIDENCE,
+                     STAGE_REACHED, STATUS, DEGRADED, DEGRADED_REASON,
+                     RUN_MS, CREATED_AT, COMPLETED_AT)
+                SELECT
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s, %s,
+                    %s, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+                """,
+                (
+                    sid, hid, result.proposal_id,
+                    snapshot_id, evidence_pack_hash,
+                    result.shadow_stance, result.shadow_confidence,
+                    result.stage_reached, result.status,
+                    result.degraded, (result.degraded_reason or "")[:500],
+                    result.run_ms,
+                ),
+            )
 
         # SHADOW_SPECIALIST_POSITION
         for pos in result.positions:
@@ -660,13 +942,25 @@ def _persist_shadow_session(
 # Main orchestrator
 # ---------------------------------------------------------------------------
 
-async def orchestrate_shadow_board(hearing_id: str, timeout_sec: float = 120.0) -> ShadowBoardResult:
+async def orchestrate_shadow_board(
+    hearing_id: str,
+    timeout_sec: float = 120.0,
+    session_id: Optional[str] = None,
+    snapshot_id: Optional[int] = None,
+    evidence_pack_hash: Optional[str] = None,
+) -> ShadowBoardResult:
     """
     Run the full shadow board session for a given hearing_id.
     Returns ShadowBoardResult regardless of success or failure.
     Never touches COMMITTEE_FINAL_DECISION.
+
+    Phase 1 dual-hearing: when called from kickoff_shadow_board_for_snapshot,
+    `session_id` is the placeholder row's id and `snapshot_id`/
+    `evidence_pack_hash` are written through to persistence so the row binds
+    to the same snapshot identity as COMMITTEE_HEARING.
     """
-    session_id = str(uuid.uuid4())
+    if not session_id:
+        session_id = str(uuid.uuid4())
     run_start = time.monotonic()
     account, user, pk_path = _get_snowflake_creds()
 
@@ -838,6 +1132,8 @@ async def orchestrate_shadow_board(hearing_id: str, timeout_sec: float = 120.0) 
                 challenge_elapsed,
                 revision_elapsed,
                 chair_elapsed,
+                snapshot_id,
+                evidence_pack_hash,
             )
         except Exception as persist_exc:
             logger.error("shadow_board: persistence FAILED for session %s: %s", session_id, persist_exc)
@@ -922,6 +1218,8 @@ def fetch_shadow_session(hearing_id: str) -> Optional[Dict[str, Any]]:
             "session_id": sid,
             "hearing_id": hearing_id,
             "proposal_id": session.get("PROPOSAL_ID"),
+            "snapshot_id": session.get("SNAPSHOT_ID"),
+            "evidence_pack_hash": session.get("EVIDENCE_PACK_HASH"),
             "shadow_stance": session.get("SHADOW_STANCE"),
             "shadow_confidence": session.get("SHADOW_CONFIDENCE"),
             "stage_reached": session.get("STAGE_REACHED"),
@@ -991,6 +1289,44 @@ def fetch_shadow_session(hearing_id: str) -> Optional[Dict[str, Any]]:
                 }
                 if chair_rows else None
             ),
+        }
+    finally:
+        conn.close()
+
+
+def fetch_shadow_progress(hearing_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Lightweight status-only fetch for the LPA polling loop. Avoids the full
+    payload assembly (specialist rows, conflicts, chair) while a session is
+    still RUNNING. Returns None if no session exists.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT SESSION_ID, STATUS, STAGE_REACHED, DEGRADED,
+                   EVIDENCE_PACK_HASH, SNAPSHOT_ID, CREATED_AT
+              FROM MIP.APP.SHADOW_BOARD_SESSION
+             WHERE HEARING_ID = %s
+             ORDER BY CREATED_AT DESC
+             LIMIT 1
+            """,
+            (hearing_id,),
+        )
+        rows = fetch_all(cur)
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "ok": True,
+            "session_id": row.get("SESSION_ID"),
+            "status": row.get("STATUS"),
+            "stage_reached": row.get("STAGE_REACHED"),
+            "degraded": row.get("DEGRADED"),
+            "evidence_pack_hash": row.get("EVIDENCE_PACK_HASH"),
+            "snapshot_id": row.get("SNAPSHOT_ID"),
+            "created_at": str(row.get("CREATED_AT") or ""),
         }
     finally:
         conn.close()

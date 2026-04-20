@@ -50,11 +50,17 @@ CREATE TABLE IF NOT EXISTS MIP.APP.COMMITTEE_HEARING (
     CONFIDENCE            FLOAT,
     STATUS                VARCHAR(20)   DEFAULT 'OPEN',
     EVIDENCE_PACK_VERSION VARCHAR(32)   DEFAULT '1.0.0',
+    EVIDENCE_PACK_HASH    VARCHAR(64),
     UPDATED_AT            TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
 
+-- Phase 1 dual-hearing: ensure column exists on already-deployed table.
+ALTER TABLE MIP.APP.COMMITTEE_HEARING ADD COLUMN IF NOT EXISTS EVIDENCE_PACK_HASH VARCHAR(64);
+
 COMMENT ON TABLE MIP.APP.COMMITTEE_HEARING IS
-    'Committee 2.0 latest hearing only. Refresh overwrites. UNIQUE PROPOSAL_ID.';
+    'Committee 2.0 latest hearing only. Refresh overwrites. UNIQUE PROPOSAL_ID. '
+    'EVIDENCE_PACK_HASH binds this hearing to a deterministic snapshot identity '
+    'shared with the shadow board (Phase 1 dual-hearing).';
 
 -- ----------------------------------------------------------------
 -- COMMITTEE_ROLE_OUTPUT (current roles; overwritten on refresh)

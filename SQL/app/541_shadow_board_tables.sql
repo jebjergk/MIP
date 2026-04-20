@@ -34,25 +34,33 @@ COMMENT ON TABLE MIP.APP.SHADOW_EVIDENCE_PACK_CACHE IS
 -- Captures the full lifecycle: stage reached, final verdict, errors.
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS MIP.APP.SHADOW_BOARD_SESSION (
-    SESSION_ID        VARCHAR(36)   NOT NULL PRIMARY KEY,
-    HEARING_ID        VARCHAR(36)   NOT NULL,
-    PROPOSAL_ID       NUMBER        NOT NULL,
-    SHADOW_STANCE     VARCHAR(20),
-    SHADOW_CONFIDENCE FLOAT,
-    STAGE_REACHED     NUMBER        DEFAULT 0,
-    STATUS            VARCHAR(20)   DEFAULT 'RUNNING',
-    DEGRADED          BOOLEAN       DEFAULT FALSE,
-    DEGRADED_REASON   VARCHAR(500),
-    AGENT_MODEL       VARCHAR(80)   DEFAULT 'claude-4-sonnet',
-    PACK_VERSION      VARCHAR(32)   DEFAULT '1.0.0',
-    RUN_MS            NUMBER,
-    CREATED_AT        TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    COMPLETED_AT      TIMESTAMP_NTZ
+    SESSION_ID         VARCHAR(36)   NOT NULL PRIMARY KEY,
+    HEARING_ID         VARCHAR(36)   NOT NULL,
+    PROPOSAL_ID        NUMBER        NOT NULL,
+    SNAPSHOT_ID        NUMBER,
+    EVIDENCE_PACK_HASH VARCHAR(64),
+    SHADOW_STANCE      VARCHAR(20),
+    SHADOW_CONFIDENCE  FLOAT,
+    STAGE_REACHED      NUMBER        DEFAULT 0,
+    STATUS             VARCHAR(20)   DEFAULT 'RUNNING',
+    DEGRADED           BOOLEAN       DEFAULT FALSE,
+    DEGRADED_REASON    VARCHAR(500),
+    AGENT_MODEL        VARCHAR(80)   DEFAULT 'claude-4-sonnet',
+    PACK_VERSION       VARCHAR(32)   DEFAULT '1.0.0',
+    RUN_MS             NUMBER,
+    CREATED_AT         TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    COMPLETED_AT       TIMESTAMP_NTZ
 );
+
+-- Phase 1 dual-hearing: bind every shadow session to the shared snapshot identity.
+ALTER TABLE MIP.APP.SHADOW_BOARD_SESSION ADD COLUMN IF NOT EXISTS SNAPSHOT_ID        NUMBER;
+ALTER TABLE MIP.APP.SHADOW_BOARD_SESSION ADD COLUMN IF NOT EXISTS EVIDENCE_PACK_HASH VARCHAR(64);
 
 COMMENT ON TABLE MIP.APP.SHADOW_BOARD_SESSION IS
     'Shadow Board Phase 1: top-level session record per shadow hearing run. '
     'STATUS: RUNNING | COMPLETE | DEGRADED | FAILED. '
+    'EVIDENCE_PACK_HASH binds the session to the same frozen snapshot the real '
+    'board reasoned from; idempotent reuse keys on (HEARING_ID, EVIDENCE_PACK_HASH). '
     'Never touches COMMITTEE_FINAL_DECISION or executes real trades.';
 
 -- ----------------------------------------------------------------

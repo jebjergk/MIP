@@ -29,10 +29,9 @@
   background:
     radial-gradient(120% 80% at 100% 0%, rgba(229, 192, 123, 0.04), transparent 60%),
     linear-gradient(180deg, var(--sbp-surface-2), var(--sbp-surface-1));
-  border-left: 2px solid var(--sbp-border);
-  border-radius: 0 8px 8px 0;
+  border: 1px solid var(--sbp-border);
+  border-radius: 10px;
   overflow: hidden;
-  min-height: 480px;
   font-size: 0.85rem;
   color: var(--sbp-text);
   position: relative;
@@ -175,11 +174,13 @@
 .sbp-verdict-ribbon.sbp-pol--cautious { border-bottom-color: rgba(251, 191, 36, 0.35); }
 
 /* ---------- Two-column layout (rail + feed) ---------- */
+/* Full-width panel: rail stays narrow on the left, feed takes the rest.
+   Feed has its own clamp(420px, 56vh, 720px) height so the page never
+   stretches to accommodate a long deliberation. */
 .sbp-stage {
   display: grid;
-  grid-template-columns: 110px 1fr;
+  grid-template-columns: 130px 1fr;
   gap: 0;
-  flex: 1;
   min-height: 0;
 }
 
@@ -243,6 +244,15 @@
 .sbp-rail-label { letter-spacing: 0.02em; }
 
 /* ---------- Feed ---------- */
+/* Shell positions the floating "jump to latest" pill relative to the feed
+   without affecting the feed's own scroll surface. */
+.sbp-feed-shell {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .sbp-feed {
   display: flex;
   flex-direction: column;
@@ -250,6 +260,66 @@
   padding: 0.9rem 0.95rem 1rem;
   overflow-y: auto;
   scroll-behavior: smooth;
+}
+
+/* Chat-prompt mode: cap the feed height so the host page stays short and
+   the feed itself becomes the scroller (auto-pins to bottom on new
+   content via JS). 56vh on wide screens, capped to 720px so really tall
+   monitors don't swallow the page. */
+.sbp-feed--chat {
+  height: clamp(420px, 56vh, 720px);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
+/* Subtle scrollbar styling to match the dark surface. */
+.sbp-feed--chat::-webkit-scrollbar {
+  width: 8px;
+}
+.sbp-feed--chat::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sbp-feed--chat::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 4px;
+}
+.sbp-feed--chat::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.32);
+}
+
+/* "Jump to latest" pill — appears when the user has scrolled up off the
+   bottom while a live deliberation is still landing new bubbles. Floats
+   above the feed in the bottom-right of the shell. */
+.sbp-jump-latest {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #0f172a;
+  background: linear-gradient(180deg, #fde68a, #fcd34d);
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0,0,0,0.1) inset;
+  cursor: pointer;
+  z-index: 5;
+  animation: sbpJumpPop 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.sbp-jump-latest:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0,0,0,0.1) inset;
+}
+.sbp-jump-latest:active {
+  transform: translateY(0);
+}
+
+@keyframes sbpJumpPop {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.9); }
+  100% { opacity: 1; transform: translateY(0) scale(1);     }
 }
 
 /* ---------- Bubble (base) ---------- */

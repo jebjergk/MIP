@@ -798,21 +798,18 @@
 }
 
 /* ----------------------------------------------------------------------
- * Phase 1 dual-hearing — side-by-side real | shadow board layout.
- * The grid stacks below ~1180px so narrow viewports still render usably.
+ * Phase 1 dual-hearing — VERTICAL stack: real board on top (full width),
+ * shadow board directly underneath (also full width). Previously the two
+ * shared a 2:1 grid which made the shadow column very narrow and forced
+ * the user to scroll multiple page-heights through the agentic feed.
+ * Stacking + a self-scrolling chat panel inside the shadow board gives
+ * each board the full available column and keeps the page short.
  * -------------------------------------------------------------------- */
 .lpa-c2-dual {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
   margin: 4px 0;
-}
-
-@media (max-width: 1180px) {
-  .lpa-c2-dual {
-    grid-template-columns: 1fr;
-  }
 }
 
 .lpa-c2-dual-real,
@@ -821,6 +818,7 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  width: 100%;
 }
 
 .lpa-c2-dual-banner {

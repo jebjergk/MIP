@@ -15,7 +15,7 @@
  *   shadowPayload, shadowLoading, shadowError, onRun, runLoading,
  *   evidenceHash, snapshotId, runningProgress, showManualRun
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import './ShadowBoardPanel.css'
 
 // ---------------------------------------------------------------------------
@@ -669,6 +669,93 @@ function SnapshotBindFooter({ evidenceHash, snapshotId, sessionId }) {
 // Live ticker (run elapsed) — runs while RUNNING
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// ChatFeed — auto-scrolling chat-prompt-style container
+// ---------------------------------------------------------------------------
+// The deliberation feed can grow to ~10+ bubbles. Embedding it directly in
+// the page would force the host page to scroll several screen-heights as
+// new content arrives — the user explicitly does NOT want that.
+//
+// This wrapper:
+//   1. Bounds the feed to a fixed visual height so the page stays short.
+//   2. Auto-scrolls to the bottom whenever new content lands, exactly like
+//      a chat client (Claude / ChatGPT / Slack).
+//   3. Honours the user if they manually scroll up to read an earlier
+//      bubble — auto-scroll pauses and a small "↓ Jump to latest" pill
+//      appears so they can re-engage when they're ready.
+//
+// `chatSignals` is an array of values that, when changed, should trigger
+// an auto-scroll. We pass things like timeline length and stage_reached.
+
+function ChatFeed({ children, isRunning, chatSignals }) {
+  const scrollerRef = useRef(null)
+  const [autoStick, setAutoStick] = useState(true)
+  const [showJumpBtn, setShowJumpBtn] = useState(false)
+
+  // Did the user scroll away from the bottom? Use a 32px tolerance so a
+  // tiny rounding offset doesn't disengage auto-stick.
+  const handleScroll = () => {
+    const el = scrollerRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const atBottom = distanceFromBottom < 32
+    setAutoStick(atBottom)
+    setShowJumpBtn(!atBottom)
+  }
+
+  // Scroll-to-bottom on new content (after layout, before paint).
+  useLayoutEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    if (autoStick) {
+      el.scrollTop = el.scrollHeight
+    }
+    // We intentionally re-run when chatSignals changes (count of bubbles,
+    // stage_reached, chair-arrived-flag) so the feed pins as content
+    // materialises during the live run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, chatSignals)
+
+  // Re-arm auto-stick when a new run begins.
+  useEffect(() => {
+    if (isRunning) {
+      setAutoStick(true)
+      setShowJumpBtn(false)
+    }
+  }, [isRunning])
+
+  const jumpToLatest = () => {
+    const el = scrollerRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    setAutoStick(true)
+    setShowJumpBtn(false)
+  }
+
+  return (
+    <div className="sbp-feed-shell">
+      <div
+        className="sbp-feed sbp-feed--chat"
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        aria-live={isRunning ? 'polite' : 'off'}
+      >
+        {children}
+      </div>
+      {showJumpBtn && (
+        <button
+          type="button"
+          className="sbp-jump-latest"
+          onClick={jumpToLatest}
+          aria-label="Jump to latest message"
+        >
+          ↓ Jump to latest
+        </button>
+      )}
+    </div>
+  )
+}
+
 function useElapsedSeconds(active, startedAtMs) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -789,11 +876,21 @@ export default function ShadowBoardPanel({
         />
       )}
 
-      {/* Two-column body: stage rail (left) + deliberation feed (right) */}
+      {/* Two-column body: stage rail (left) + deliberation feed (right).
+          The feed is a self-scrolling chat surface that auto-pins to the
+          newest message as the deliberation unfolds — the host page does
+          NOT grow as bubbles arrive. */}
       <div className="sbp-stage">
         <StageRail stageReached={stageReached} isRunning={isRunning} isComplete={isComplete} />
 
-        <div className="sbp-feed">
+        <ChatFeed
+          isRunning={isRunning}
+          chatSignals={[
+            timeline.length,
+            chair ? 1 : 0,
+            isRunning ? stageReached : -1,
+          ]}
+        >
           {/* While running with no payload yet, show typing placeholder */}
           {isRunning && !shadowPayload && (
             <TypingPlaceholder stage={stageKey} isRunning={isRunning} />
@@ -874,7 +971,7 @@ export default function ShadowBoardPanel({
               </p>
             </div>
           )}
-        </div>
+        </ChatFeed>
       </div>
 
       <SnapshotBindFooter

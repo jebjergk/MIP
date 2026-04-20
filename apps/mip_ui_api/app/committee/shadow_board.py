@@ -769,7 +769,335 @@ async def _run_chair(
 
 
 # ---------------------------------------------------------------------------
-# Stage 6: Persistence
+# Incremental persistence checkpoints
+# ---------------------------------------------------------------------------
+# Without these, the orchestrator persists nothing until the entire 7-stage
+# pipeline completes (Stage 6 in `finally`). The frontend then sees a long
+# silence and a single "everything appears at once" snap. With these inline
+# checkpoints the LPA poll sees the deliberation unfold one bubble at a
+# time: stage rail advances, specialist bubbles cascade in, conflict marker
+# appears, challenge / revision land as threaded replies, chair finale
+# closes the session.
+#
+# Each helper is best-effort and idempotent enough that a partial run leaves
+# a coherent (if incomplete) row set behind. Wrap every call site in
+# try/except — a write hiccup must NOT break orchestration.
+
+def _checkpoint_session_progress_sync(
+    session_id: str,
+    stage_reached: int,
+    status: str = "RUNNING",
+) -> None:
+    """Bump SHADOW_BOARD_SESSION.{STAGE_REACHED,STATUS} so polling sees motion."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE MIP.APP.SHADOW_BOARD_SESSION
+               SET STAGE_REACHED = %s,
+                   STATUS = %s
+             WHERE SESSION_ID = %s
+            """,
+            (int(stage_reached), status, session_id),
+        )
+    finally:
+        conn.close()
+
+
+def _insert_specialist_position_sync(
+    session_id: str,
+    hearing_id: str,
+    pos: SpecialistPosition | DegradedPosition,
+    elapsed_ms: int,
+) -> None:
+    """Persist one specialist row immediately. Skip if a row for this
+    (session_id, role) already exists (idempotent for retried writes)."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        role = getattr(pos, "role", "UNKNOWN")
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_SPECIALIST_POSITION
+                (SESSION_ID, HEARING_ID, ROLE_NAME, STANCE, CONFIDENCE,
+                 RATIONALE, EVIDENCE_USED, RAW_RESPONSE,
+                 PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+            SELECT
+                %s, %s, %s, %s, %s,
+                %s, PARSE_JSON(%s), PARSE_JSON(%s),
+                %s, %s, %s, %s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM MIP.APP.SHADOW_SPECIALIST_POSITION
+                 WHERE SESSION_ID = %s AND ROLE_NAME = %s
+            )
+            """,
+            (
+                session_id, hearing_id, role,
+                getattr(pos, "stance", "DEFER"),
+                getattr(pos, "confidence", 0.0),
+                getattr(pos, "rationale", "")[:2000],
+                _jdump(getattr(pos, "evidence_used", [])),
+                "{}",
+                not getattr(pos, "degraded", False),
+                bool(getattr(pos, "degraded", False)),
+                (getattr(pos, "degraded_reason", "") or "")[:500],
+                int(elapsed_ms or 0),
+                session_id, role,
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def _replace_specialist_row_sync(
+    session_id: str,
+    hearing_id: str,
+    pos: SpecialistPosition | DegradedPosition,
+    elapsed_ms: int,
+) -> None:
+    """Replace any existing row for (session_id, role) with the latest result.
+    Used after the seeded "thinking" placeholder is superseded by the real
+    specialist response. DELETE+INSERT rather than UPDATE because the table
+    holds VARIANT columns (EVIDENCE_USED, RAW_RESPONSE) that PARSE_JSON in
+    INSERT but are awkward to set in UPDATE."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        role = getattr(pos, "role", "UNKNOWN")
+        cur.execute(
+            "DELETE FROM MIP.APP.SHADOW_SPECIALIST_POSITION WHERE SESSION_ID = %s AND ROLE_NAME = %s",
+            (session_id, role),
+        )
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_SPECIALIST_POSITION
+                (SESSION_ID, HEARING_ID, ROLE_NAME, STANCE, CONFIDENCE,
+                 RATIONALE, EVIDENCE_USED, RAW_RESPONSE,
+                 PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+            SELECT
+                %s, %s, %s, %s, %s,
+                %s, PARSE_JSON(%s), PARSE_JSON(%s),
+                %s, %s, %s, %s
+            """,
+            (
+                session_id, hearing_id, role,
+                getattr(pos, "stance", "DEFER"),
+                getattr(pos, "confidence", 0.0),
+                getattr(pos, "rationale", "")[:2000],
+                _jdump(getattr(pos, "evidence_used", [])),
+                "{}",
+                not getattr(pos, "degraded", False),
+                bool(getattr(pos, "degraded", False)),
+                (getattr(pos, "degraded_reason", "") or "")[:500],
+                int(elapsed_ms or 0),
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def _insert_conflict_row_sync(
+    session_id: str,
+    hearing_id: str,
+    c: ConflictEntry,
+) -> None:
+    """Persist one conflict row immediately."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_CONFLICT_MAP
+                (SESSION_ID, HEARING_ID, ROLE_A, ROLE_B,
+                 STANCE_A, STANCE_B, SEVERITY,
+                 CHALLENGER_ROLE, TARGET_ROLE)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                session_id, hearing_id, c.role_a, c.role_b,
+                c.stance_a, c.stance_b, c.severity,
+                c.challenger_role, c.target_role,
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def _insert_challenge_row_sync(
+    session_id: str,
+    hearing_id: str,
+    ch: ChallengeTurn,
+    elapsed_ms: int,
+) -> None:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_CHALLENGE_TURN
+                (SESSION_ID, HEARING_ID, CHALLENGER_ROLE, TARGET_ROLE,
+                 CHALLENGE_TEXT, RAW_RESPONSE,
+                 PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+            SELECT
+                %s, %s, %s, %s,
+                %s, PARSE_JSON(%s),
+                %s, %s, %s, %s
+            """,
+            (
+                session_id, hearing_id, ch.challenger_role, ch.target_role,
+                (ch.challenge_text or "")[:4000],
+                "{}",
+                ch.parse_ok, ch.degraded,
+                (ch.degraded_reason or "")[:500],
+                int(elapsed_ms or 0),
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def _insert_revision_row_sync(
+    session_id: str,
+    hearing_id: str,
+    rev: RevisionTurn,
+    elapsed_ms: int,
+) -> None:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_REVISION_TURN
+                (SESSION_ID, HEARING_ID, ROLE_NAME,
+                 REVISED_STANCE, ORIGINAL_STANCE, STANCE_CHANGED,
+                 REVISION_NOTE, RAW_RESPONSE,
+                 PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+            SELECT
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, PARSE_JSON(%s),
+                %s, %s, %s, %s
+            """,
+            (
+                session_id, hearing_id, rev.role_name,
+                rev.revised_stance, rev.original_stance, rev.stance_changed,
+                (rev.revision_note or "")[:2000],
+                "{}",
+                rev.parse_ok, rev.degraded,
+                (rev.degraded_reason or "")[:500],
+                int(elapsed_ms or 0),
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def _insert_chair_row_sync(
+    session_id: str,
+    hearing_id: str,
+    ch: ShadowChairRuling,
+    elapsed_ms: int,
+) -> None:
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        trade_json = ch.shadow_trade.model_dump() if ch.shadow_trade else {}
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.SHADOW_CHAIR_RULING
+                (SESSION_ID, HEARING_ID,
+                 SHADOW_STANCE, SHADOW_CONFIDENCE,
+                 PLURALITY_BASIS, CONFLICT_RESOLUTION,
+                 SHADOW_TRADE_JSON, TOP_SUPPORTS, TOP_TENSIONS,
+                 RAW_RESPONSE,
+                 PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS)
+            SELECT
+                %s, %s,
+                %s, %s,
+                %s, %s,
+                PARSE_JSON(%s), PARSE_JSON(%s), PARSE_JSON(%s),
+                PARSE_JSON(%s),
+                %s, %s, %s, %s
+            """,
+            (
+                session_id, hearing_id,
+                ch.shadow_stance, ch.shadow_confidence,
+                (ch.plurality_basis or "")[:500],
+                (ch.conflict_resolution or "")[:2000],
+                _jdump(trade_json),
+                _jdump(ch.top_supports),
+                _jdump(ch.top_tensions),
+                "{}",
+                ch.parse_ok, ch.degraded,
+                (ch.degraded_reason or "")[:500],
+                int(elapsed_ms or 0),
+            ),
+        )
+    finally:
+        conn.close()
+
+
+def _finalize_session_sync(
+    session_id: str,
+    stage_reached: int,
+    status: str,
+    shadow_stance: str,
+    shadow_confidence: float,
+    degraded: bool,
+    degraded_reason: str,
+    run_ms: int,
+    proposal_id: int,
+    snapshot_id: Optional[int] = None,
+    evidence_pack_hash: Optional[str] = None,
+) -> None:
+    """Final UPDATE on the session row — terminal state only. Child rows are
+    already in place via the per-stage checkpoints above."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE MIP.APP.SHADOW_BOARD_SESSION
+               SET PROPOSAL_ID        = COALESCE(%s, PROPOSAL_ID),
+                   SNAPSHOT_ID        = COALESCE(%s, SNAPSHOT_ID),
+                   EVIDENCE_PACK_HASH = COALESCE(%s, EVIDENCE_PACK_HASH),
+                   SHADOW_STANCE      = %s,
+                   SHADOW_CONFIDENCE  = %s,
+                   STAGE_REACHED      = %s,
+                   STATUS             = %s,
+                   DEGRADED           = %s,
+                   DEGRADED_REASON    = %s,
+                   RUN_MS             = %s,
+                   COMPLETED_AT       = CURRENT_TIMESTAMP()
+             WHERE SESSION_ID = %s
+            """,
+            (
+                proposal_id,
+                snapshot_id, evidence_pack_hash,
+                shadow_stance, shadow_confidence,
+                int(stage_reached), status,
+                bool(degraded), (degraded_reason or "")[:500],
+                int(run_ms or 0),
+                session_id,
+            ),
+        )
+    finally:
+        conn.close()
+
+
+async def _safe_checkpoint(coro_call_label: str, fn, *args) -> None:
+    """Run a sync persistence helper on a thread, swallowing exceptions.
+    Persistence hiccups must not break orchestration — at worst the user
+    loses one row's worth of "live" state and the final dump catches up."""
+    try:
+        await asyncio.to_thread(fn, *args)
+    except Exception as exc:
+        logger.warning("shadow_checkpoint: %s failed: %s", coro_call_label, exc)
+
+
+# ---------------------------------------------------------------------------
+# Stage 6: Persistence (legacy bulk fallback — kept for safety)
 # ---------------------------------------------------------------------------
 
 def _persist_shadow_session(
@@ -1029,14 +1357,36 @@ async def orchestrate_shadow_board(
         pack = build_shadow_evidence_pack(hearing, snapshot, proposal, roles, artifacts)
         await asyncio.to_thread(_stage_evidence_pack, pack, session_id)
         result.stage_reached = 0
+        await _safe_checkpoint("stage0_progress", _checkpoint_session_progress_sync, session_id, 0, "RUNNING")
         logger.info("shadow_stage0: pack staged (hearing=%s session=%s)", hearing_id, session_id)
 
         # ------------------------------------------------------------------
-        # Stage 1: Parallel specialist agents
+        # Stage 1: Parallel specialist agents — but stream results in as they
+        # land so the LPA poll can show specialist bubbles cascading in.
         # ------------------------------------------------------------------
         logger.info("shadow_stage1: launching %d specialists in parallel", len(_SPECIALIST_AGENTS))
+
+        positions_dict: Dict[str, SpecialistPosition | DegradedPosition] = {}
+        # Pre-seed degraded placeholders so EVERY specialist has a row from the
+        # moment Stage 1 begins. As real results land we UPSERT in place. This
+        # guarantees the user sees all 6 avatars immediately (with a "thinking"
+        # state) and never ends up with only 3 visible just because the
+        # background task got cancelled at the orchestrator-level timeout.
+        for role in _SPECIALIST_AGENTS.keys():
+            placeholder = DegradedPosition(
+                role=role,
+                degraded=True,
+                degraded_reason="awaiting_specialist",
+            )
+            positions_dict[role] = placeholder
+            await _safe_checkpoint(
+                f"stage1_seed_{role}",
+                _insert_specialist_position_sync,
+                session_id, hearing_id, placeholder, 0,
+            )
+
         tasks = [
-            _run_specialist(
+            asyncio.create_task(_run_specialist(
                 role=role,
                 agent_name=agent_name,
                 hearing_id=hearing_id,
@@ -1044,20 +1394,40 @@ async def orchestrate_shadow_board(
                 user=user,
                 pk_path=pk_path,
                 timeout=timeout_sec,
-            )
+            ))
             for role, agent_name in _SPECIALIST_AGENTS.items()
         ]
-        stage1_results = await asyncio.gather(*tasks, return_exceptions=False)
 
-        positions_dict: Dict[str, SpecialistPosition | DegradedPosition] = {}
-        for role, position, elapsed in stage1_results:
+        # Drain as each specialist completes — write its row immediately so
+        # the frontend poll sees bubbles arriving one at a time instead of
+        # all-at-once after a long silence.
+        for fut in asyncio.as_completed(tasks):
+            try:
+                role, position, elapsed = await fut
+            except Exception as exc:
+                logger.warning("shadow_stage1: drain task failed: %s", exc)
+                continue
             positions_dict[role] = position
             positions_elapsed[role] = elapsed
-            result.positions.append(position)
+            # Replace the seeded placeholder row with the real result.
+            try:
+                await asyncio.to_thread(
+                    _replace_specialist_row_sync,
+                    session_id, hearing_id, position, elapsed,
+                )
+            except Exception as exc:
+                logger.warning("shadow_stage1: row replace for %s failed: %s", role, exc)
+
+        # Snapshot final position list in-result (degraded placeholders for any
+        # specialist that never completed remain in positions_dict, so they
+        # carry forward into result.positions for the final payload too).
+        for role in _SPECIALIST_AGENTS.keys():
+            result.positions.append(positions_dict[role])
 
         result.stage_reached = 1
         valid_count = sum(1 for p in result.positions if not getattr(p, "degraded", False))
         logger.info("shadow_stage1: %d/%d specialists succeeded", valid_count, len(_SPECIALIST_AGENTS))
+        await _safe_checkpoint("stage1_progress", _checkpoint_session_progress_sync, session_id, 1, "RUNNING")
 
         # ------------------------------------------------------------------
         # Stage 2: Conflict detection (Python-side, no agent call)
@@ -1072,6 +1442,12 @@ async def orchestrate_shadow_board(
         primary_conflict = pick_primary_conflict(conflicts)
         logger.info("shadow_stage2: %d conflicts detected (primary=%s)", len(conflicts),
                     primary_conflict.severity if primary_conflict else "none")
+        for c in conflicts:
+            await _safe_checkpoint(
+                f"stage2_conflict_{c.role_a}_{c.role_b}",
+                _insert_conflict_row_sync, session_id, hearing_id, c,
+            )
+        await _safe_checkpoint("stage2_progress", _checkpoint_session_progress_sync, session_id, 2, "RUNNING")
 
         # ------------------------------------------------------------------
         # Stage 3: Challenge turn (only if conflict exists)
@@ -1088,7 +1464,13 @@ async def orchestrate_shadow_board(
                 timeout=timeout_sec,
             )
             result.challenge = challenge
+            await _safe_checkpoint(
+                "stage3_challenge",
+                _insert_challenge_row_sync,
+                session_id, hearing_id, challenge, challenge_elapsed,
+            )
         result.stage_reached = 3
+        await _safe_checkpoint("stage3_progress", _checkpoint_session_progress_sync, session_id, 3, "RUNNING")
 
         # ------------------------------------------------------------------
         # Stage 4: Revision turn (only if challenge exists and targets a valid specialist)
@@ -1108,6 +1490,11 @@ async def orchestrate_shadow_board(
             )
             revisions.append(revision)
             revision_elapsed[target_role] = rev_elapsed
+            await _safe_checkpoint(
+                f"stage4_revision_{target_role}",
+                _insert_revision_row_sync,
+                session_id, hearing_id, revision, rev_elapsed,
+            )
 
             # Update positions_dict with revised stance for chair context
             if not revision.degraded:
@@ -1122,6 +1509,7 @@ async def orchestrate_shadow_board(
 
         result.revisions = revisions
         result.stage_reached = 4
+        await _safe_checkpoint("stage4_progress", _checkpoint_session_progress_sync, session_id, 4, "RUNNING")
 
         # ------------------------------------------------------------------
         # Stage 5: Chair ruling
@@ -1140,6 +1528,12 @@ async def orchestrate_shadow_board(
         result.shadow_stance = chair_ruling.shadow_stance
         result.shadow_confidence = chair_ruling.shadow_confidence
         result.stage_reached = 5
+        await _safe_checkpoint(
+            "stage5_chair",
+            _insert_chair_row_sync,
+            session_id, hearing_id, chair_ruling, chair_elapsed,
+        )
+        await _safe_checkpoint("stage5_progress", _checkpoint_session_progress_sync, session_id, 5, "RUNNING")
 
         # Determine final status
         any_degraded = (
@@ -1163,20 +1557,44 @@ async def orchestrate_shadow_board(
     finally:
         result.run_ms = int((time.monotonic() - run_start) * 1000)
 
-        # Stage 6: Persist (always, even on failure)
+        # Stage 6: Finalize. Child rows (positions/conflicts/challenge/
+        # revision/chair) were written incrementally during the run via
+        # _safe_checkpoint(...) calls, so the only thing left is the
+        # terminal UPDATE on the session row (status, stance, confidence,
+        # run_ms, completed_at). If incremental writes were skipped due to
+        # an early exception, fall back to the legacy bulk persist so the
+        # UI still gets *something*.
         try:
             await asyncio.to_thread(
-                _persist_shadow_session,
-                result,
-                positions_elapsed,
-                challenge_elapsed,
-                revision_elapsed,
-                chair_elapsed,
+                _finalize_session_sync,
+                session_id,
+                result.stage_reached,
+                result.status,
+                result.shadow_stance or "DEFER",
+                float(result.shadow_confidence or 0.0),
+                bool(result.degraded),
+                (result.degraded_reason or ""),
+                result.run_ms,
+                result.proposal_id,
                 snapshot_id,
                 evidence_pack_hash,
             )
-        except Exception as persist_exc:
-            logger.error("shadow_board: persistence FAILED for session %s: %s", session_id, persist_exc)
+        except Exception as finalize_exc:
+            logger.error("shadow_board: finalize FAILED for session %s: %s", session_id, finalize_exc)
+            # Last-resort bulk write so we leave coherent rows behind.
+            try:
+                await asyncio.to_thread(
+                    _persist_shadow_session,
+                    result,
+                    positions_elapsed,
+                    challenge_elapsed,
+                    revision_elapsed,
+                    chair_elapsed,
+                    snapshot_id,
+                    evidence_pack_hash,
+                )
+            except Exception as persist_exc:
+                logger.error("shadow_board: bulk fallback also FAILED for session %s: %s", session_id, persist_exc)
 
         # Expire the evidence pack cache entry
         try:

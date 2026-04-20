@@ -369,7 +369,6 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         )
         if (cancelled) return
         if (r.status === 404) {
-          // Session not visible yet — keep polling briefly.
           return
         }
         if (r.status === 503) {
@@ -381,22 +380,26 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         if (cancelled || !j) return
         setShadowProgress(j)
 
+        // Always fetch the full payload too, even while RUNNING, so the
+        // boardroom UI can show specialists / conflicts / challenge bubbles
+        // landing live as the orchestrator writes them. (Backend now
+        // persists each stage incrementally, so this snapshot grows row by
+        // row over the ~2 minute run.)
         const status = String(j.status || '').toUpperCase()
-        if (
-          (status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED')
-          && fullFetchedFor.current !== j.session_id
-        ) {
-          fullFetchedFor.current = j.session_id
+        const stageReached = Number(j.stage_reached ?? 0)
+        const isTerminal = status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED'
+        const shouldFetchFull = isTerminal || stageReached >= 1
+        if (shouldFetchFull) {
           try {
             const full = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`)
             if (full.ok) {
               const fj = await full.json()
               if (!cancelled) setShadowPayload(fj)
+              if (isTerminal) fullFetchedFor.current = j.session_id
             }
           } catch (_e) { /* ignore */ }
         }
       } catch (_e) {
-        // Silent — shadow is advisory and must never break the LPA page.
       } finally {
         if (!cancelled) setShadowLoading(false)
       }
@@ -407,17 +410,21 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
     const tick = () => {
       const status = String(shadowProgress?.status || inlineShadowStatus || 'RUNNING').toUpperCase()
       if (status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED') {
-        // Stop polling once terminal.
+        // One last full fetch to catch any final-stage writes, then stop.
+        fetchProgress()
         return
       }
       fetchProgress().finally(() => {
         if (!cancelled) {
-          timer = setTimeout(tick, 2000)
+          // ~1.2s feels like the deliberation is breathing. Anything slower
+          // and bubbles appear in clumps; anything faster and we hammer
+          // Snowflake without visible benefit.
+          timer = setTimeout(tick, 1200)
         }
       })
     }
 
-    timer = setTimeout(tick, 2000)
+    timer = setTimeout(tick, 1200)
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)

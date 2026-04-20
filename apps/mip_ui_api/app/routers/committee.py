@@ -575,14 +575,91 @@ def committee_final_decision_commit_for_action(cur, hearing_id: str, req: Hearin
                 },
             )
         if ex_aid is not None and req_aid is not None and ex_aid != req_aid:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "Final decision for this hearing is bound to a different LIVE_ACTIONS row.",
-                    "reason_codes": ["COMMITTEE2_HEARING_BOUND_TO_OTHER_ACTION"],
-                    "bound_action_id": ex_aid,
-                },
-            )
+            # Before refusing, check whether the previously-bound action is
+            # actually a *legitimate* binding for this hearing. The hearing's
+            # PROPOSAL_ID must match the bound action's PROPOSAL_ID, and the
+            # bound action must still exist and not be in a terminal state.
+            # Otherwise we are looking at a corrupted / stale binding from a
+            # prior import / action-supersede flow — re-bind to the current
+            # request rather than block the operator forever.
+            stale_bind = False
+            stale_reason: str | None = None
+            try:
+                hearing_lookup = _fetch_hearing_by_id(cur, hearing_id)
+                hearing_proposal_id = (
+                    int(hearing_lookup["PROPOSAL_ID"])
+                    if hearing_lookup and hearing_lookup.get("PROPOSAL_ID") is not None
+                    else None
+                )
+            except Exception:
+                hearing_lookup = None
+                hearing_proposal_id = None
+            try:
+                cur.execute(
+                    """
+                    SELECT ACTION_ID, PROPOSAL_ID, STATUS
+                    FROM MIP.LIVE.LIVE_ACTIONS
+                    WHERE ACTION_ID = %s
+                    """,
+                    (ex_aid,),
+                )
+                bound_rows = fetch_all(cur)
+            except Exception:
+                bound_rows = []
+            if not bound_rows:
+                stale_bind = True
+                stale_reason = "BOUND_ACTION_MISSING"
+            else:
+                bound_row = bound_rows[0]
+                bound_proposal = bound_row.get("PROPOSAL_ID")
+                bound_status = str(bound_row.get("STATUS") or "").upper()
+                if (
+                    hearing_proposal_id is not None
+                    and bound_proposal is not None
+                    and int(bound_proposal) != int(hearing_proposal_id)
+                ):
+                    stale_bind = True
+                    stale_reason = "BOUND_ACTION_PROPOSAL_MISMATCH"
+                elif bound_status in {
+                    "EXECUTED",
+                    "REJECTED",
+                    "CANCELLED",
+                    "CLOSED",
+                    "EXPIRED",
+                    "SUPERSEDED",
+                }:
+                    stale_bind = True
+                    stale_reason = f"BOUND_ACTION_TERMINAL:{bound_status}"
+            if stale_bind:
+                cur.execute(
+                    """
+                    UPDATE MIP.APP.COMMITTEE_FINAL_DECISION
+                       SET ACTION_ID = %s,
+                           TRADE_ID = COALESCE(%s, TRADE_ID),
+                           COMMIT_NOTE = COALESCE(%s, COMMIT_NOTE)
+                     WHERE HEARING_ID = %s
+                    """,
+                    (req.action_id, req.trade_id, req.note, hearing_id),
+                )
+                # Refresh row_raw / ex_aid so the downstream stance-drift
+                # handler sees the up-to-date binding.
+                cur.execute(
+                    "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
+                    (hearing_id,),
+                )
+                refreshed = fetch_all(cur)
+                if refreshed:
+                    row_raw = refreshed[0]
+                    ex_aid = _norm_action_id(row_raw.get("ACTION_ID"))
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Final decision for this hearing is bound to a different LIVE_ACTIONS row.",
+                        "reason_codes": ["COMMITTEE2_HEARING_BOUND_TO_OTHER_ACTION"],
+                        "bound_action_id": ex_aid,
+                    },
+                )
         if ex_aid is None and req_aid is not None:
             cur.execute(
                 """

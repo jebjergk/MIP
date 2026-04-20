@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from datetime import date, datetime, timezone, timedelta
 from queue import Empty, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, HTTPException, Body
@@ -2938,7 +2938,15 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
     if bar_ts is not None:
         bar_ts_utc = _market_bar_ts_to_utc(bar_ts)
         if bar_ts_utc is not None:
-            bar_age_sec = (now_utc - bar_ts_utc).total_seconds()
+            # MIP.MART.MARKET_BARS.TS marks the START of the 1-minute bar, so
+            # a freshly-landed bar is already 60s old the instant it commits.
+            # Treat (TS + INTERVAL) as the "as of" instant when measuring age,
+            # otherwise a 60s freshness threshold can never pass for any 1m
+            # bar even when the IBKR ingest just ran.
+            bar_age_sec = max(
+                0.0,
+                (now_utc - bar_ts_utc).total_seconds() - 60.0,
+            )
 
     expected_entry_px = _expected_entry_reference(cur, action)
     gap_pct = None
@@ -2960,18 +2968,27 @@ def _run_opening_sanity_gate(cur, action: dict, *, force_refresh_1m: bool = Fals
 
     hard_reasons: list[str] = []
     caution_reasons: list[str] = []
-    if not _is_extended_trading_open_ny(now_utc):
+    market_extended_open = _is_extended_trading_open_ny(now_utc)
+    if not market_extended_open:
         hard_reasons.append("OPEN_MARKET_CLOSED")
     if not symbol:
         hard_reasons.append("OPEN_MISSING_SYMBOL")
     if bar_ts is None:
         hard_reasons.append("OPEN_SNAPSHOT_MISSING")
     effective_snapshot_max_age_sec = float(policy["snapshot_max_age_sec"])
-    if _is_extended_trading_open_ny(now_utc) and not _is_market_open_ny(now_utc):
+    if market_extended_open and not _is_market_open_ny(now_utc):
         # Extended-hours prints can be sparse; keep a wider tolerance than regular session.
         effective_snapshot_max_age_sec = max(effective_snapshot_max_age_sec, 1800.0)
     if bar_ts is not None and bar_age_sec is not None and bar_age_sec > effective_snapshot_max_age_sec:
-        hard_reasons.append("OPEN_SNAPSHOT_STALE")
+        # When the market is closed, OPEN_MARKET_CLOSED already explains why
+        # the snapshot is necessarily old — duplicating with OPEN_SNAPSHOT_STALE
+        # produces confusing "two redundant red errors" UX without adding any
+        # gating signal. Demote to caution in that case so operators reviewing
+        # actions during off-hours don't get a redundant hard block stack.
+        if market_extended_open:
+            hard_reasons.append("OPEN_SNAPSHOT_STALE")
+        else:
+            caution_reasons.append("OPEN_SNAPSHOT_STALE")
     if gap_pct is not None:
         if gap_pct > float(policy["gap_block_pct"]):
             hard_reasons.append("OPEN_GAP_BLOCK")
@@ -10335,6 +10352,30 @@ async def orchestrate_committee2_structural_entry(
         hearing_id = str(existing["HEARING_ID"]) if existing else str(uuid.uuid4())
         _ = req.force_rebuild_hearing  # reserved; hearing is always refreshed (see LPA-first spec)
 
+        # Always pull a fresh 1-minute IBKR bar before re-running the committee.
+        # When the action is RESEARCH_IMPORTED / PROPOSED / PENDING_OPEN_VALIDATION
+        # the opening sanity gate above already triggered this refresh; for all
+        # other statuses (OPEN_BLOCKED, READY_FOR_APPROVAL_FLOW, etc.) the chair
+        # would otherwise re-evaluate against whatever bar is sitting in MART —
+        # which can be tens of minutes stale during normal trading. That stale
+        # price is what causes "Run Committee 2.0" to keep the same verdict and
+        # show STALE — CONSIDER REFRESH even after the operator clicks the
+        # button. Force-refreshing here keeps the chair's `latest_price` /
+        # `latest_price_age_sec` evidence in sync with the live tape on every
+        # orchestrate.
+        if status_upper not in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
+            try:
+                _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
+            except Exception:
+                # Refresh is best-effort — committee re-run still proceeds with
+                # whatever MART has. The chair will simply report the stale
+                # `latest_price_age_sec` and the inline freshness hint will fire.
+                pass
+
         raw = _underlying_sf_conn(conn)
         raw.autocommit(False)
         refresh_payload: dict = {}
@@ -14913,9 +14954,44 @@ def _build_setup_narrative(p: dict) -> str:
     return " ".join(parts)
 
 
+_STRUCTURAL_IMPORT_LOCKS: dict[int, Lock] = {}
+_STRUCTURAL_IMPORT_LOCKS_GUARD = Lock()
+
+
+def _get_structural_import_lock(portfolio_id: int) -> Lock:
+    """Per-portfolio mutex so concurrent /import-structural-proposals (and the
+    auto-import path triggered by overview reloads / multiple browser tabs)
+    cannot race past the "Already imported?" check and double-insert
+    PENDING_OPEN_VALIDATION rows for the same PROPOSAL_ID. Snowflake offers no
+    cheap row lock, so serialise at the API layer.
+    """
+    with _STRUCTURAL_IMPORT_LOCKS_GUARD:
+        lock = _STRUCTURAL_IMPORT_LOCKS.get(int(portfolio_id))
+        if lock is None:
+            lock = Lock()
+            _STRUCTURAL_IMPORT_LOCKS[int(portfolio_id)] = lock
+        return lock
+
+
 @router.post("/trades/actions/import-structural-proposals")
 def import_structural_proposals(req: ImportStructuralProposalsRequest):
     """Import structural trade proposals into LIVE_ACTIONS with full canonical context."""
+    _import_lock = _get_structural_import_lock(int(req.live_portfolio_id))
+    if not _import_lock.acquire(timeout=30.0):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Structural import already running for this portfolio; retry shortly.",
+                "reason_codes": ["LIVE_STRUCTURAL_IMPORT_BUSY"],
+            },
+        )
+    try:
+        return _import_structural_proposals_locked(req)
+    finally:
+        _import_lock.release()
+
+
+def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
     conn = get_connection()
     try:
         cur = conn.cursor()

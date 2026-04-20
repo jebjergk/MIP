@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
 import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
@@ -40,8 +40,13 @@ export default function StructuralCommitteeHearing() {
   const [shadowLoading, setShadowLoading] = useState(false)
   const [shadowError, setShadowError] = useState(null)
   const [shadowRunLoading, setShadowRunLoading] = useState(false)
+  const shadowPollRef = useRef(null)
 
-  // Shadow board fetch (GET — display cached session)
+  // Shadow board fetch (GET — display cached session). Auto-polls while
+  // the session is RUNNING so the boardroom UI animates as specialists,
+  // conflicts, challenges and the chair finale are written incrementally
+  // by the orchestrator. Polling stops once the session is terminal
+  // (COMPLETE / DEGRADED / FAILED) or the hearing changes.
   const fetchShadow = useCallback(async (hid) => {
     if (!hid) return
     setShadowLoading(true)
@@ -50,17 +55,22 @@ export default function StructuralCommitteeHearing() {
       const r = await fetch(`${API_BASE}/committee/hearing/${encodeURIComponent(hid)}/shadow-board`)
       const j = await r.json()
       if (r.status === 404) {
-        // No session yet — not an error, just not run
         setShadowPayload(null)
         return
       }
       if (r.status === 503) {
-        // Feature disabled — silently ignore
         setShadowPayload(null)
         return
       }
       if (!r.ok) throw new Error(j.detail ? JSON.stringify(j.detail) : r.statusText)
       setShadowPayload(j)
+
+      const status = String(j?.status || '').toUpperCase()
+      const isTerminal = status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED'
+      if (!isTerminal) {
+        if (shadowPollRef.current) clearTimeout(shadowPollRef.current)
+        shadowPollRef.current = setTimeout(() => fetchShadow(hid), 1200)
+      }
     } catch (e) {
       setShadowError(e.message || String(e))
       setShadowPayload(null)
@@ -68,6 +78,10 @@ export default function StructuralCommitteeHearing() {
       setShadowLoading(false)
     }
   }, [])
+
+  useEffect(() => () => {
+    if (shadowPollRef.current) clearTimeout(shadowPollRef.current)
+  }, [hearingId])
 
   // Shadow board run (POST — starts new session)
   const runShadow = useCallback(async (hid) => {

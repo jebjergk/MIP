@@ -11,7 +11,11 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+_MARKET_BARS_TZ = ZoneInfo("America/New_York")
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Body, Query
 from pydantic import BaseModel, Field
@@ -137,6 +141,84 @@ def _fetch_hearing_by_id(cur, hearing_id: str) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
+def _fetch_latest_intraday_bar(cur, symbol: str) -> Optional[Tuple[datetime, float, str, int]]:
+    """
+    Return (ts_utc, close, source_label, interval_minutes) for the freshest
+    IBKR bar available in MIP.MART.MARKET_BARS, preferring 1-minute then
+    falling back to 15/60-minute. Returns None when nothing intraday exists.
+
+    The committee hearing's `latest_price` MUST track the live tape during the
+    session — defaulting to the prior daily close (V_STRUCTURAL_TIMELINE_PRICE)
+    causes every re-run to read the same stale price all day, producing
+    deterministic WAIT_RECLAIM/chase-severe verdicts that never update. This
+    helper supplies the fresher intraday reference; daily-bar lineage (regimes,
+    structural state, recent_bar_trace) is preserved separately.
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return None
+    try:
+        cur.execute(
+            """
+            SELECT TS, CLOSE, INTERVAL_MINUTES, SOURCE
+            FROM MIP.MART.MARKET_BARS
+            WHERE SYMBOL = %s
+              AND INTERVAL_MINUTES = 1
+              AND UPPER(COALESCE(SOURCE, '')) = 'IBKR'
+            ORDER BY TS DESC
+            LIMIT 1
+            """,
+            (sym,),
+        )
+        row = cur.fetchone()
+        if row and row[0] is not None and row[1] is not None:
+            return row[0], float(row[1]), "MARKET_BARS_1M_IBKR", 1
+        cur.execute(
+            """
+            SELECT TS, CLOSE, INTERVAL_MINUTES, SOURCE
+            FROM MIP.MART.MARKET_BARS
+            WHERE SYMBOL = %s
+              AND INTERVAL_MINUTES IN (15, 60)
+              AND UPPER(COALESCE(SOURCE, '')) = 'IBKR'
+            ORDER BY TS DESC
+            LIMIT 1
+            """,
+            (sym,),
+        )
+        row = cur.fetchone()
+        if row and row[0] is not None and row[1] is not None:
+            interval = int(row[2]) if row[2] is not None else 0
+            label = "MARKET_BARS_15M_IBKR" if interval == 15 else "MARKET_BARS_60M_IBKR"
+            return row[0], float(row[1]), label, interval
+    except Exception as exc:
+        logger.warning("intraday bar lookup failed for %s: %s", sym, exc)
+    return None
+
+
+def _intraday_bar_ts_to_utc(ts: Any) -> Optional[datetime]:
+    """
+    Coerce a `MIP.MART.MARKET_BARS.TS` value (TIMESTAMP_NTZ stored as NY session
+    clock time) into a tz-aware UTC datetime. ISO strings carrying explicit
+    offsets are honored as-is; naive datetimes / naive ISO strings are assumed
+    to be NY-local (matching the live router's `_market_bar_ts_to_utc`).
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        if ts.tzinfo:
+            return ts.astimezone(timezone.utc)
+        return ts.replace(tzinfo=_MARKET_BARS_TZ).astimezone(timezone.utc)
+    if isinstance(ts, str):
+        try:
+            parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo:
+            return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=_MARKET_BARS_TZ).astimezone(timezone.utc)
+    return None
+
+
 def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
     cur.execute(
         """
@@ -156,7 +238,7 @@ def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
         )
     latest = bars[0]
     prior = bars[1] if len(bars) > 1 else None
-    price = float(latest["CLOSE"])
+    daily_close = float(latest["CLOSE"])
     open_p = float(latest["OPEN"]) if latest.get("OPEN") is not None else None
     prior_close = float(prior["CLOSE"]) if prior and prior.get("CLOSE") is not None else None
     dates = [str(b["BAR_DATE"]) for b in bars if b.get("BAR_DATE") is not None]
@@ -164,6 +246,45 @@ def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
     for b in reversed(bars):
         if b.get("BAR_DATE") is not None and b.get("CLOSE") is not None:
             trace_chron.append({"bar_date": str(b["BAR_DATE"]), "close": float(b["CLOSE"])})
+
+    # ── Intraday overlay ─────────────────────────────────────────────────────
+    # If a fresher IBKR intraday bar exists in MIP.MART.MARKET_BARS, prefer
+    # that close as `latest_price`. We require the intraday bar to be strictly
+    # *newer* than the latest daily bar's date — otherwise the daily close is
+    # the most recent observation and we keep it.
+    price = daily_close
+    price_source: Optional[str] = "DAILY_CLOSE"
+    price_ts_iso: Optional[str] = None
+    price_age_sec: Optional[float] = None
+
+    intraday = _fetch_latest_intraday_bar(cur, symbol)
+    if intraday is not None:
+        intra_ts_raw, intra_close, intra_label, _interval = intraday
+        intra_ts_utc = _intraday_bar_ts_to_utc(intra_ts_raw)
+        latest_daily_date = latest.get("BAR_DATE")
+        latest_daily_str = str(latest_daily_date)[:10] if latest_daily_date is not None else None
+        # MARKET_BARS.TS is NY-local; daily BAR_DATE is the NY trading date.
+        # Compare on NY-date so an evening UTC tick doesn't accidentally appear
+        # to be a "next-day" observation relative to the daily close.
+        intra_ny_date_str = (
+            intra_ts_utc.astimezone(_MARKET_BARS_TZ).date().isoformat()
+            if intra_ts_utc is not None else None
+        )
+        is_strictly_newer = (
+            latest_daily_str is not None
+            and intra_ny_date_str is not None
+            and intra_ny_date_str > latest_daily_str
+        )
+        if is_strictly_newer:
+            price = intra_close
+            price_source = intra_label
+            if intra_ts_utc is not None:
+                price_ts_iso = intra_ts_utc.isoformat()
+                price_age_sec = max(
+                    0.0,
+                    (datetime.now(timezone.utc) - intra_ts_utc).total_seconds(),
+                )
+
     return LiveContext(
         latest_price=price,
         open_price=open_p,
@@ -173,6 +294,9 @@ def _live_context(cur, symbol: str, market_type: str = "STOCK") -> LiveContext:
         vol_regime_now=latest.get("VOL_REGIME"),
         bar_dates=dates,
         recent_bar_trace=trace_chron,
+        price_source=price_source,
+        price_ts_utc=price_ts_iso,
+        price_age_sec=price_age_sec,
     )
 
 
@@ -479,6 +603,97 @@ def committee_final_decision_commit_for_action(cur, hearing_id: str, req: Hearin
             row["action_id_bound_updated"] = True
             row["ok"] = True
             return row
+
+        # Same action already bound to this hearing. The committee may have
+        # been re-run against a fresher intraday price (LPA "Re-run hearing"),
+        # producing a new stance on COMMITTEE_HEARING while the existing
+        # FINAL_DECISION row still carries the previous stance. Detect stance
+        # drift and UPDATE the FD row in-place so the downstream materialize
+        # step can transition LIVE_ACTIONS.STATUS (e.g. OPEN_BLOCKED ->
+        # READY_FOR_APPROVAL_FLOW) instead of silently re-playing the stale
+        # BLOCK verdict.
+        hearing_latest = _fetch_hearing_by_id(cur, hearing_id)
+        if hearing_latest is not None:
+            hearing_stance = str(hearing_latest.get("STANCE") or "").upper()
+            hearing_conf = hearing_latest.get("CONFIDENCE")
+            committed_stance = str(row_raw.get("STANCE") or "").upper()
+            try:
+                committed_conf = (
+                    float(row_raw.get("CONFIDENCE"))
+                    if row_raw.get("CONFIDENCE") is not None
+                    else None
+                )
+            except (TypeError, ValueError):
+                committed_conf = None
+            try:
+                hearing_conf_f = (
+                    float(hearing_conf) if hearing_conf is not None else None
+                )
+            except (TypeError, ValueError):
+                hearing_conf_f = None
+            stance_drift = bool(hearing_stance) and hearing_stance != committed_stance
+            conf_drift = (
+                hearing_conf_f is not None
+                and committed_conf is not None
+                and abs(hearing_conf_f - committed_conf) >= 1e-6
+            )
+            if stance_drift or conf_drift:
+                chair_h = _variant(hearing_latest.get("CHAIR_OUTPUT_JSON")) or {}
+                deltas_h = _variant(hearing_latest.get("DELTAS_JSON")) or {}
+                operational_h = _variant(hearing_latest.get("OPERATIONAL_JSON")) or {}
+                roles_out_h: Dict[str, Any] = {}
+                for r in _roles_rows(cur, hearing_id):
+                    roles_out_h[r["ROLE_NAME"]] = _variant(r.get("OUTPUT_JSON"))
+                arts_h: Dict[str, Any] = {}
+                for a in _artifacts_rows(cur, hearing_id):
+                    arts_h[a["ARTIFACT_KIND"]] = {
+                        "payload": _variant(a.get("PAYLOAD_JSON")),
+                        "schema_version": a.get("SCHEMA_VERSION"),
+                        "evidence_refs": _variant(a.get("EVIDENCE_REFS")),
+                    }
+                posture_h = (operational_h or {}).get("posture") or {}
+                evidence_refs_h = (chair_h or {}).get("evidence_refs") or []
+                cur.execute(
+                    """
+                    UPDATE MIP.APP.COMMITTEE_FINAL_DECISION
+                       SET STANCE = %s,
+                           CONFIDENCE = %s,
+                           CHAIR_OUTPUT_JSON = PARSE_JSON(%s),
+                           ROLE_OUTPUTS_JSON = PARSE_JSON(%s),
+                           DELTA_SUMMARY_JSON = PARSE_JSON(%s),
+                           POSTURE_JSON = PARSE_JSON(%s),
+                           EVIDENCE_REFS_JSON = PARSE_JSON(%s),
+                           ARTIFACTS_JSON = PARSE_JSON(%s),
+                           COMMIT_NOTE = COALESCE(%s, COMMIT_NOTE),
+                           DECISION_TS = CURRENT_TIMESTAMP()
+                     WHERE HEARING_ID = %s
+                    """,
+                    (
+                        hearing_latest.get("STANCE"),
+                        hearing_conf,
+                        _json_dumps(chair_h),
+                        _json_dumps(roles_out_h),
+                        _json_dumps(deltas_h),
+                        _json_dumps(posture_h),
+                        _json_dumps(evidence_refs_h),
+                        _json_dumps(arts_h),
+                        req.note,
+                        hearing_id,
+                    ),
+                )
+                cur.execute(
+                    "SELECT * FROM MIP.APP.COMMITTEE_FINAL_DECISION WHERE HEARING_ID = %s",
+                    (hearing_id,),
+                )
+                row = serialize_row(fetch_all(cur)[0])
+                # Signal to orchestrate that materialize MUST re-run so
+                # LIVE_ACTIONS.STATUS / COMMITTEE_VERDICT can catch up.
+                row["already_committed"] = False
+                row["stance_drift_applied"] = True
+                row["previous_stance"] = committed_stance or None
+                row["ok"] = True
+                return row
+
         row = serialize_row(row_raw)
         row["already_committed"] = True
         row["ok"] = True

@@ -47,6 +47,32 @@ def _broker_keys_from_execution_row(row: dict[str, Any]) -> list[str]:
     return keys + [x for x in extra if x not in keys]
 
 
+def _preferred_broker_order_id(row: dict[str, Any]) -> str:
+    """
+    Return the most stable broker id for an execution row: prefer perm_id (OPEN_ORDER_ID
+    is coalesced to perm_id in fetch_deduped_executions), then payload.perm_id, then
+    fall back to TWS local order_id. Returns '' if nothing usable.
+    """
+    payload = row.get("PAYLOAD") if isinstance(row.get("PAYLOAD"), dict) else {}
+    for k in (
+        row.get("OPEN_ORDER_ID"),
+        payload.get("perm_id"),
+        payload.get("orderId"),
+        payload.get("order_id"),
+    ):
+        nk = _norm_id(k)
+        if nk:
+            try:
+                iv = int(float(nk))
+                # Treat 0 as "not yet assigned" — IB returns 0 for ApiPending.
+                if iv == 0:
+                    continue
+                return str(iv)
+            except Exception:
+                return nk
+    return ""
+
+
 def _execution_fill_fields(payload: Any) -> tuple[float | None, float | None]:
     if not isinstance(payload, dict):
         return None, None
@@ -177,6 +203,7 @@ def classify_execution_against_orders(
         "snapshot_ts": exec_row.get("SNAPSHOT_TS"),
         "symbol": sym,
         "broker_order_keys_tried": keys,
+        "preferred_broker_order_id": _preferred_broker_order_id(exec_row),
         "execution_qty": exec_qty,
         "execution_price": exec_price,
     }

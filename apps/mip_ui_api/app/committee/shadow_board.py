@@ -136,11 +136,50 @@ def compute_evidence_pack_hash(
     snapshot_id: int,
     snapshot_row: Dict[str, Any],
     proposal_row: Dict[str, Any],
+    hearing_row: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Deterministic SHA-256 over the frozen-snapshot identity inputs.
-    Same hash => same world state => idempotent shadow-session reuse.
+    Deterministic SHA-256 over the frozen-snapshot identity inputs PLUS the
+    current hearing's live-price fingerprint.
+
+    Rationale: the snapshot is immutable but the committee hearing is re-run
+    as intraday price ticks land. Without mixing the live-price fingerprint
+    into the hash, every re-run on the same snapshot produced the same hash
+    and `_find_existing_shadow_session_sync` returned the first shadow
+    session forever — the shadow board would stay stuck on the original
+    (possibly stale) price while the real board had already moved on.
+
+    Live-price fingerprint inputs (all optional, all coerced to strings):
+      - EVIDENCE_JSON.latest_price
+      - EVIDENCE_JSON.latest_price_ts_utc
+      - EVIDENCE_JSON.latest_price_source
+
+    When `hearing_row` is None the hash degrades to the legacy snapshot-only
+    fingerprint to preserve backwards compatibility with callers that do
+    not have a hearing yet.
     """
+    ev: Dict[str, Any] = {}
+    if isinstance(hearing_row, dict):
+        raw_ev = hearing_row.get("EVIDENCE_JSON") or hearing_row.get("evidence_json")
+        if isinstance(raw_ev, (bytes, bytearray)):
+            try:
+                raw_ev = raw_ev.decode("utf-8")
+            except Exception:
+                raw_ev = None
+        if isinstance(raw_ev, str):
+            try:
+                ev = json.loads(raw_ev) or {}
+            except Exception:
+                ev = {}
+        elif isinstance(raw_ev, dict):
+            ev = raw_ev
+
+    live_price_fp = {
+        "latest_price": _canonical_for_hash(ev.get("latest_price")),
+        "latest_price_ts_utc": _canonical_for_hash(ev.get("latest_price_ts_utc")),
+        "latest_price_source": _canonical_for_hash(ev.get("latest_price_source")),
+    }
+
     payload = {
         "snapshot_id": int(snapshot_id),
         "snapshot": _canonical_for_hash(snapshot_row or {}),
@@ -148,6 +187,7 @@ def compute_evidence_pack_hash(
             k: _canonical_for_hash((proposal_row or {}).get(k))
             for k in ("PROPOSAL_ID", "SYMBOL", "DIRECTION", "SETUP_FAMILY")
         },
+        "live_price_fp": live_price_fp,
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()

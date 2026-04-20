@@ -620,6 +620,177 @@ def _negative_broker_line_blocks_long_only_entry(
     return _broker_position_matches_live_action(s, c, sec, action_symbol, asset_class)
 
 
+def _backfill_local_order_id_to_perm_id(
+    cur,
+    portfolio_id: int | None = None,
+    account_id: str | None = None,
+    lookback_days: int = 14,
+    action_id: str | None = None,
+) -> dict:
+    """
+    Best-effort backfill: when LIVE_ORDERS.BROKER_ORDER_ID holds a TWS local order_id
+    (because IB returned perm_id=0 in the initial ack), look up matching EXECUTION
+    snapshots that carry both payload.order_id and payload.perm_id, and rewrite
+    LIVE_ORDERS.BROKER_ORDER_ID = perm_id.
+
+    Idempotent: rows whose BROKER_ORDER_ID already equals the perm_id are skipped.
+    Returns {scanned, mapped, updated, samples}.
+    """
+    out = {"scanned": 0, "mapped": 0, "updated": 0, "samples": []}
+    try:
+        lookback_days = int(lookback_days)
+        scopes: list[str] = []
+        params: list[object] = []
+        if portfolio_id is not None:
+            scopes.append("la.PORTFOLIO_ID = %s")
+            params.append(int(portfolio_id))
+        if account_id:
+            scopes.append("la.IBKR_ACCOUNT_ID = %s")
+            params.append(str(account_id))
+        if action_id:
+            scopes.append("la.ACTION_ID = %s")
+            params.append(str(action_id))
+        scope_sql = (" and " + " and ".join(scopes)) if scopes else ""
+
+        # Pull LIVE_ORDERS rows whose BROKER_ORDER_ID looks like a TWS local order id
+        # (small integer) and was touched recently.
+        cur.execute(
+            f"""
+            select la.ORDER_ID, la.BROKER_ORDER_ID, la.SYMBOL, la.IBKR_ACCOUNT_ID,
+                   la.PORTFOLIO_ID, la.ACTION_ID
+              from MIP.LIVE.LIVE_ORDERS la
+             where la.BROKER_ORDER_ID is not null
+               and try_to_number(la.BROKER_ORDER_ID) is not null
+               and try_to_number(la.BROKER_ORDER_ID) between 1 and 9999999
+               and coalesce(la.LAST_UPDATED_AT, la.CREATED_AT) >= dateadd(day, -%s, current_timestamp())
+               {scope_sql}
+            """,
+            tuple([lookback_days] + params),
+        )
+        candidate_rows = fetch_all(cur)
+        out["scanned"] = len(candidate_rows)
+        if not candidate_rows:
+            return out
+
+        # Build (account, local_id) -> [order rows] index.
+        idx: dict[tuple[str, str], list[dict]] = {}
+        for r in candidate_rows:
+            acct = str(r.get("IBKR_ACCOUNT_ID") or "").strip()
+            lid = str(r.get("BROKER_ORDER_ID") or "").strip()
+            if not acct or not lid:
+                continue
+            try:
+                lid_norm = str(int(float(lid)))
+            except Exception:
+                continue
+            idx.setdefault((acct, lid_norm), []).append(r)
+
+        if not idx:
+            return out
+
+        # Look up matching EXECUTION snapshots that expose both order_id and perm_id.
+        accounts = sorted({a for (a, _) in idx.keys()})
+        acct_placeholders = ",".join(["%s"] * len(accounts))
+        cur.execute(
+            f"""
+            select distinct
+                   IBKR_ACCOUNT_ID,
+                   try_to_number(payload:order_id::string)::string as LOCAL_ID,
+                   payload:perm_id::string as PERM_ID
+              from MIP.LIVE.BROKER_SNAPSHOTS
+             where SNAPSHOT_TYPE = 'EXECUTION'
+               and IBKR_ACCOUNT_ID in ({acct_placeholders})
+               and SNAPSHOT_TS >= dateadd(day, -%s, current_timestamp())
+               and payload:order_id is not null
+               and payload:perm_id is not null
+               and try_to_number(payload:perm_id::string) > 0
+            """,
+            tuple(accounts + [lookback_days]),
+        )
+        mapping_rows = fetch_all(cur)
+
+        # (account, local_id) -> perm_id
+        mapping: dict[tuple[str, str], str] = {}
+        for m in mapping_rows:
+            acct = str(m.get("IBKR_ACCOUNT_ID") or "").strip()
+            lid = str(m.get("LOCAL_ID") or "").strip()
+            pid = str(m.get("PERM_ID") or "").strip()
+            if not acct or not lid or not pid:
+                continue
+            try:
+                lid = str(int(float(lid)))
+                pid = str(int(float(pid)))
+            except Exception:
+                continue
+            if pid == lid:
+                continue
+            mapping.setdefault((acct, lid), pid)
+
+        out["mapped"] = len(mapping)
+        if not mapping:
+            return out
+
+        # Apply the rewrites and write audit ledger entries.
+        for (acct, lid), pid in mapping.items():
+            for row in idx.get((acct, lid), []):
+                order_id = str(row.get("ORDER_ID") or "")
+                if not order_id:
+                    continue
+                cur.execute(
+                    """
+                    update MIP.LIVE.LIVE_ORDERS
+                       set BROKER_ORDER_ID = %s,
+                           LAST_UPDATED_AT = current_timestamp()
+                     where ORDER_ID = %s
+                       and BROKER_ORDER_ID = %s
+                    """,
+                    (pid, order_id, lid),
+                )
+                # Best-effort audit (no PII, no semicolons in payload values).
+                try:
+                    cur.execute(
+                        """
+                        insert into MIP.LIVE.BROKER_EVENT_LEDGER (
+                          EVENT_ID, EVENT_TS, EVENT_TYPE, PORTFOLIO_ID, ACTION_ID,
+                          BROKER_ORDER_ID, SYMBOL, PAYLOAD
+                        )
+                        select %s, current_timestamp(), 'PERM_ID_BACKFILL', %s, %s,
+                               %s, %s, parse_json(%s)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            row.get("PORTFOLIO_ID"),
+                            row.get("ACTION_ID"),
+                            pid,
+                            row.get("SYMBOL"),
+                            json.dumps(
+                                {
+                                    "actor": "auto_backfill",
+                                    "order_id": order_id,
+                                    "before": {"BROKER_ORDER_ID": lid},
+                                    "after": {"BROKER_ORDER_ID": pid},
+                                }
+                            ),
+                        ),
+                    )
+                except Exception:
+                    pass
+                out["updated"] += 1
+                if len(out["samples"]) < 10:
+                    out["samples"].append(
+                        {
+                            "order_id": order_id,
+                            "symbol": row.get("SYMBOL"),
+                            "from": lid,
+                            "to": pid,
+                        }
+                    )
+        return out
+    except Exception as exc:
+        out["error"] = str(exc)
+        return out
+
+
 def _recent_unmapped_execution_summary(
     cur,
     portfolio_id: int,
@@ -648,6 +819,9 @@ def _recent_unmapped_execution_summary(
             }
 
         # 1) Recent broker executions (deduped by execution key).
+        # Capture *all* candidate broker keys per row (perm_id AND TWS local order_id),
+        # because LIVE_ORDERS may have been written with the local order_id when IB
+        # returned perm_id=0 in the initial ack.
         cur.execute(
             """
             select
@@ -658,6 +832,9 @@ def _recent_unmapped_execution_summary(
                 PAYLOAD:perm_id::string,
                 PAYLOAD:order_id::string
               ) as BROKER_ORDER_ID,
+              OPEN_ORDER_ID::string         as OPEN_ORDER_ID_KEY,
+              PAYLOAD:perm_id::string       as PERM_ID_KEY,
+              PAYLOAD:order_id::string      as LOCAL_ORDER_ID_KEY,
               coalesce(
                 PAYLOAD:exec_id::string,
                 concat_ws(
@@ -691,12 +868,33 @@ def _recent_unmapped_execution_summary(
             (account_id, lookback_days),
         )
         exec_rows = fetch_all(cur)
+
+        def _exec_candidate_keys(r: dict) -> list[str]:
+            keys: list[str] = []
+            for raw in (
+                r.get("OPEN_ORDER_ID_KEY"),
+                r.get("PERM_ID_KEY"),
+                r.get("LOCAL_ORDER_ID_KEY"),
+                r.get("BROKER_ORDER_ID"),
+            ):
+                if raw is None:
+                    continue
+                s = str(raw).strip()
+                if not s or s in keys:
+                    continue
+                keys.append(s)
+                # Normalize trailing ".0" coming from VARIANT casts.
+                if s.endswith(".0") and s[:-2].isdigit() and s[:-2] not in keys:
+                    keys.append(s[:-2])
+            return keys
+
         dedup_execs = [
             {
                 "SNAPSHOT_TS": r.get("SNAPSHOT_TS"),
                 "SYMBOL": str(r.get("SYMBOL") or "").upper(),
                 "BROKER_ORDER_ID": str(r.get("BROKER_ORDER_ID")) if r.get("BROKER_ORDER_ID") is not None else None,
                 "EXEC_KEY": str(r.get("EXEC_KEY") or ""),
+                "CANDIDATE_KEYS": _exec_candidate_keys(r),
             }
             for r in exec_rows
             if r.get("BROKER_ORDER_ID") is not None
@@ -760,10 +958,19 @@ def _recent_unmapped_execution_summary(
         )
 
         # 4) Compute unmapped fills against known local lineage.
-        unmapped_rows = [
-            r for r in dedup_execs
-            if str(r.get("BROKER_ORDER_ID") or "").strip() not in known_ids
-        ]
+        # An execution is "mapped" if ANY of its candidate keys (perm_id OR TWS local order_id)
+        # matches a known local id. This handles the case where LIVE_ORDERS stored the local
+        # order_id while BROKER_SNAPSHOTS later picked up the perm_id.
+        unmapped_rows = []
+        for r in dedup_execs:
+            cand = r.get("CANDIDATE_KEYS") or []
+            if not cand:
+                primary = str(r.get("BROKER_ORDER_ID") or "").strip()
+                if primary:
+                    cand = [primary]
+            mapped = any(k in known_ids for k in cand if k)
+            if not mapped:
+                unmapped_rows.append(r)
         if not unmapped_rows:
             return {
                 "count": 0,
@@ -1054,19 +1261,72 @@ def _auto_import_latest_proposals_for_live_portfolio(
     """
     Best-effort bridge from research proposals -> live actions so
     /live/activity/overview reflects latest proposal output.
+
+    When LIVE_STRUCTURAL_ONLY is enabled, the legacy ORDER_PROPOSALS
+    importer is disallowed by policy, but we still want the Structural
+    Timeline proposals to materialise automatically in LPA. Delegate to
+    the structural importer so AAPL/CAT/MCD etc. actually land as LIVE
+    actions without the operator having to curl the admin endpoint.
     """
     if cur is not None and _live_structural_only_enabled(cur):
-        return {
-            "attempted": False,
-            "ok": None,
-            "skipped_structural_only": True,
-            "candidate_count": 0,
-            "imported_count": 0,
-            "skipped_existing_count": 0,
-            "skipped_symbol_live_position_count": 0,
-            "source_scope": None,
-            "latest_batch_date": None,
-        }
+        try:
+            safe_struct_limit = max(1, min(int(limit or 10), 50))
+            struct_result = import_structural_proposals(
+                ImportStructuralProposalsRequest(
+                    live_portfolio_id=int(live_portfolio_id),
+                    limit=safe_struct_limit,
+                    max_proposal_age_days=7,
+                    dedupe_by_symbol=True,
+                    skip_stale=True,
+                )
+            )
+            res = struct_result if isinstance(struct_result, dict) else {}
+            return {
+                "attempted": True,
+                "ok": True,
+                "structural_only_mode": True,
+                "candidate_count": int(res.get("candidate_count") or 0),
+                "imported_count": int(res.get("imported_count") or 0),
+                "skipped_existing_count": int(res.get("skipped_existing_count") or 0),
+                "skipped_symbol_live_position_count": int(
+                    res.get("skipped_live_position_count") or 0
+                ),
+                "skipped_long_only_count": int(res.get("skipped_long_only_count") or 0),
+                "skipped_stale_count": int(res.get("skipped_stale_count") or 0),
+                "source_scope": "STRUCTURAL_TRADE_PROPOSALS",
+                "latest_batch_date": None,
+            }
+        except HTTPException as http_exc:
+            # Don't break overview load on import failure — surface diagnostics only.
+            try:
+                detail = http_exc.detail if isinstance(http_exc.detail, dict) else {"message": str(http_exc.detail)}
+            except Exception:
+                detail = {"message": "structural import failed"}
+            return {
+                "attempted": True,
+                "ok": False,
+                "structural_only_mode": True,
+                "candidate_count": 0,
+                "imported_count": 0,
+                "skipped_existing_count": 0,
+                "skipped_symbol_live_position_count": 0,
+                "source_scope": "STRUCTURAL_TRADE_PROPOSALS",
+                "latest_batch_date": None,
+                "error": detail,
+            }
+        except Exception as exc:
+            return {
+                "attempted": True,
+                "ok": False,
+                "structural_only_mode": True,
+                "candidate_count": 0,
+                "imported_count": 0,
+                "skipped_existing_count": 0,
+                "skipped_symbol_live_position_count": 0,
+                "source_scope": "STRUCTURAL_TRADE_PROPOSALS",
+                "latest_batch_date": None,
+                "error": {"message": str(exc)},
+            }
     safe_limit = max(1, min(int(limit or 200), 1000))
     try:
         result = import_live_actions_from_proposals(
@@ -3904,11 +4164,121 @@ def _evaluate_ibkr_news_readiness(
     }
 
 
+def _run_agent_ibkr_bar_ingest(symbol: str | None, timeout_sec: int = 180) -> dict:
+    """
+    Ingest latest IBKR 1-minute bars for `symbol` into MIP.MART.MARKET_BARS via
+    `cursorfiles/ingest_ibkr_bars.py`. Unlike `_run_agent_ibkr_bar_refresh`
+    (read-only) this one *persists* — required so downstream consumers that
+    only read MARKET_BARS (committee `_live_context`, opening sanity gate)
+    actually see fresh ticks instead of yesterday's daily close.
+    """
+    if not symbol:
+        return {"attempted": False, "status": "SKIPPED", "reason": "MISSING_SYMBOL"}
+
+    root = _project_root()
+    py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "ingest_ibkr_bars.py"
+    if not py.exists() or not script.exists():
+        return {
+            "attempted": False,
+            "status": "SKIPPED",
+            "reason": "IBKR_INGEST_RUNTIME_NOT_FOUND",
+        }
+
+    cmd = [
+        str(py),
+        str(script),
+        "--symbols",
+        str(symbol).upper(),
+        "--interval-minutes",
+        "1",
+        "--duration-str",
+        "1 D",
+    ]
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "attempted": True,
+            "status": "FAIL",
+            "executor": "agent_runtime_ibkr_ingest",
+            "error": f"timeout after {timeout_sec}s: {exc}",
+        }
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    payload: dict = {}
+    for stream in (stdout, stderr):
+        if not stream:
+            continue
+        start_idx = stream.find("{")
+        if start_idx < 0:
+            continue
+        try:
+            parsed = json.loads(stream[start_idx:])
+            if isinstance(parsed, dict):
+                payload = parsed
+                break
+        except Exception:
+            continue
+
+    if proc.returncode != 0:
+        return {
+            "attempted": True,
+            "status": "FAIL",
+            "executor": "agent_runtime_ibkr_ingest",
+            "payload": payload or None,
+            "stderr": stderr[-2000:],
+            "stdout": stdout[-2000:],
+        }
+
+    return {
+        "attempted": True,
+        "status": "SUCCESS",
+        "executor": "agent_runtime_ibkr_ingest",
+        "payload": payload,
+    }
+
+
 def _force_refresh_latest_one_minute_bars(cur, symbol: str | None = None) -> dict:
     """
-    Direct IBKR-only 1-minute refresh before revalidation.
+    Direct IBKR 1-minute refresh used before revalidation/committee re-runs.
+
+    Returns the read-only fetch payload (consumed directly by
+    `_extract_latest_one_min_bar_from_refresh` for revalidation's
+    IBKR_DIRECT_1M path) AND triggers a persisting ingest into
+    MIP.MART.MARKET_BARS so downstream consumers (committee `_live_context`,
+    opening sanity gate, mart-only readers) see the fresh tick. The persisted
+    ingest result is returned under `mart_ingest`; failures there don't fail
+    the refresh — the direct payload is still authoritative for the caller.
     """
-    return _run_agent_ibkr_bar_refresh(symbol)
+    refresh = _run_agent_ibkr_bar_refresh(symbol)
+    if symbol and str(refresh.get("status") or "").upper() == "SUCCESS":
+        try:
+            ingest = _run_agent_ibkr_bar_ingest(symbol)
+        except Exception as exc:
+            ingest = {
+                "attempted": True,
+                "status": "FAIL",
+                "executor": "agent_runtime_ibkr_ingest",
+                "error": str(exc),
+            }
+        if isinstance(refresh, dict):
+            refresh = dict(refresh)
+            refresh["mart_ingest"] = ingest
+    return refresh
 
 
 def _fetch_ibkr_mart_reference_close(cur, symbol: str | None) -> float | None:
@@ -5661,10 +6031,35 @@ def refresh_live_snapshot(
         account=account,
         portfolio_id=portfolio_id,
     )
+
+    # After fresh snapshots arrive, opportunistically rewrite any LIVE_ORDERS rows
+    # whose BROKER_ORDER_ID is still a TWS local order_id (because IB returned
+    # perm_id=0 in the initial submit ack) to the perm_id surfaced in EXECUTION
+    # snapshots. Idempotent and best-effort: never blocks the refresh.
+    backfill = {"scanned": 0, "mapped": 0, "updated": 0, "samples": []}
+    try:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            backfill = _backfill_local_order_id_to_perm_id(
+                cur,
+                portfolio_id=portfolio_id,
+                account_id=account,
+            )
+            try:
+                conn.commit()
+            except Exception:
+                pass
+        finally:
+            conn.close()
+    except Exception as exc:
+        backfill = {"scanned": 0, "mapped": 0, "updated": 0, "error": str(exc)}
+
     return {
         "ok": True,
         "mode": "on_demand",
         "result": result,
+        "perm_id_backfill": backfill,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -6868,8 +7263,13 @@ def get_live_activity_overview(
         auto_import_enabled = _parse_bool_config(
             app_cfg.get("LIVE_AUTO_IMPORT_PROPOSALS_ON_OVERVIEW"), default=False
         )
+        # Under LIVE_STRUCTURAL_ONLY the legacy importer is forbidden, but
+        # `_auto_import_latest_proposals_for_live_portfolio` now delegates to
+        # the structural importer so proposals materialise without manual
+        # admin calls. Force-enable the bridge in that mode so the Structural
+        # Timeline's AAPL/CAT/MCD entries become LPA actions automatically.
         if live_structural_only:
-            auto_import_enabled = False
+            auto_import_enabled = True
         auto_import_limit_raw = app_cfg.get("LIVE_AUTO_IMPORT_PROPOSAL_LIMIT", "200")
         try:
             auto_import_limit = int(auto_import_limit_raw)
@@ -8863,6 +9263,21 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
             if existing and (existing[0].get("STATUS") or "").upper() == "COMPLETED":
                 return {"ok": True, "action_id": action_id, "run_id": existing[0].get("RUN_ID"), "status": "COMPLETED", "idempotent_replay": True}
 
+        # When the operator explicitly forces a re-run from LPA (revalidate /
+        # "Re-run hearing"), pull a fresh IBKR 1-minute bar so the committee
+        # sees the live tape — without this, _live_context() can only read the
+        # latest persisted MARKET_BARS row, which may be minutes/hours old and
+        # produces deterministic verdicts that never update across re-runs.
+        if req.force_rerun and _is_extended_trading_open_ny(datetime.now(timezone.utc)):
+            try:
+                _force_refresh_latest_one_minute_bars(cur, action.get("SYMBOL"))
+            except Exception as exc:
+                logger.warning(
+                    "force_rerun 1m refresh failed for %s: %s",
+                    action.get("SYMBOL"),
+                    exc,
+                )
+
         _structural_only_co = _live_structural_only_enabled(cur)
         assert_live_committee_policy(
             action,
@@ -9555,10 +9970,35 @@ def _materialize_structural_entry_committee_apply(
 
 
 def _inline_hearing_stale_hint(ev: dict) -> str | None:
-    """Simple freshness cue from last bar embedded in hearing evidence."""
+    """Simple freshness cue from last bar embedded in hearing evidence.
+
+    An intraday price overlay (MARKET_BARS_1M_IBKR / 15M / 60M) that is less
+    than ~10 minutes old counts as "fresh tape" and suppresses the daily-bar
+    staleness hint — during a live session the latest daily bar is expected
+    to be yesterday's close until EOD, so firing a red badge on an otherwise
+    current committee run was misleading the operator.
+    """
+    price_source = str(ev.get("latest_price_source") or "").upper()
+    try:
+        price_age_sec = (
+            float(ev.get("latest_price_age_sec"))
+            if ev.get("latest_price_age_sec") is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        price_age_sec = None
+    intraday_sources = ("MARKET_BARS_1M_IBKR", "MARKET_BARS_15M_IBKR", "MARKET_BARS_60M_IBKR")
+    has_fresh_tape = (
+        price_source in intraday_sources
+        and price_age_sec is not None
+        and price_age_sec <= 600.0
+    )
+
     dates = ev.get("recent_bar_dates") or []
     latest = dates[0] if dates else None
     if not latest:
+        if has_fresh_tape:
+            return None
         return "No daily bar anchor on this hearing — refresh after the session if you need same-day evidence."
     try:
         bd = date.fromisoformat(str(latest)[:10])
@@ -9567,6 +10007,8 @@ def _inline_hearing_stale_hint(ev: dict) -> str | None:
     today = datetime.now(timezone.utc).date()
     age = (today - bd).days
     if age >= 2:
+        if has_fresh_tape:
+            return None
         return (
             f"Evidence bar {str(latest)[:10]} is {age} calendar days behind UTC today — "
             "refresh if you need fresher structure."
@@ -9613,6 +10055,9 @@ def _build_inline_hearing_payload(
         "zone_low": zl,
         "zone_high": zh,
         "latest_price": ev.get("latest_price"),
+        "latest_price_source": ev.get("latest_price_source"),
+        "latest_price_ts_utc": ev.get("latest_price_ts_utc"),
+        "latest_price_age_sec": ev.get("latest_price_age_sec"),
         "zone_distance_pct": ev.get("zone_distance_pct"),
         "invalidation_level": ev.get("invalidation_level"),
         "invalidation_rule": inv_rule,
@@ -9816,10 +10261,46 @@ async def orchestrate_committee2_structural_entry(
             )
 
         status_upper = (action.get("STATUS") or "").upper()
+        # LPA-first parity with the legacy /committee/run endpoint: when the action
+        # hasn't yet passed opening validation, auto-run the opening sanity gate so
+        # the operator doesn't have to drive a separate pre-step. If the gate hard-
+        # blocks (OPEN_BLOCKED), surface a structured 409 with the validation result;
+        # otherwise re-fetch and continue with the normal allowed-status check.
+        opening_gate_payload: dict | None = None
+        if status_upper in ("RESEARCH_IMPORTED", "PROPOSED", "PENDING_OPEN_VALIDATION"):
+            opening_gate_payload = _run_opening_sanity_gate(
+                cur,
+                action,
+                force_refresh_1m=True,
+                now_utc=datetime.now(timezone.utc),
+            )
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            action = _fetch_live_action(cur, action_id) or action
+            status_upper = (action.get("STATUS") or "").upper()
+            if status_upper == "OPEN_BLOCKED":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Opening validation blocked Committee 2.0 (OPEN_BLOCKED).",
+                        "reason_codes": opening_gate_payload.get("reason_codes") or ["OPEN_BLOCKED"],
+                        "blocked_stage": "OPENING_SANITY_GATE",
+                        "opening_validation": opening_gate_payload.get("opening_validation") or {},
+                        "status": status_upper,
+                    },
+                )
+
         if status_upper not in _ORCHESTRATE_ALLOWED_STATUSES:
             raise HTTPException(
                 status_code=409,
-                detail=f"Committee orchestrate blocked for current status: {status_upper}.",
+                detail={
+                    "message": f"Committee orchestrate blocked for current status: {status_upper}.",
+                    "reason_codes": ["COMMITTEE2_ORCHESTRATE_STATUS_BLOCKED"],
+                    "status": status_upper,
+                    "opening_validation": (opening_gate_payload or {}).get("opening_validation") or {},
+                },
             )
 
         pid = action.get("PROPOSAL_ID")
@@ -9910,10 +10391,17 @@ async def orchestrate_committee2_structural_entry(
                 kickoff_shadow_board_for_snapshot,
             )
 
+            cur.execute(
+                "SELECT * FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s",
+                (hearing_id,),
+            )
+            _hearing_rows_for_hash = fetch_all(cur)
+            _hearing_row_for_hash = _hearing_rows_for_hash[0] if _hearing_rows_for_hash else None
             evidence_pack_hash = compute_evidence_pack_hash(
                 snapshot_id=int(snapshot["SNAPSHOT_ID"]),
                 snapshot_row=dict(snapshot),
                 proposal_row=dict(proposal),
+                hearing_row=_hearing_row_for_hash,
             )
             cur.execute(
                 """
@@ -12436,6 +12924,19 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "symbol_position_qty_after": qty_after,
                 "exit_ack_via_flat": exit_ack_via_flat,
             }
+            # Best-effort: if any EXECUTION snapshot for this action already exposes
+            # local order_id ↔ perm_id, rewrite LIVE_ORDERS.BROKER_ORDER_ID to the
+            # perm_id so the reconciliation gate stays clean for follow-on submits.
+            try:
+                bf = _backfill_local_order_id_to_perm_id(
+                    cur,
+                    portfolio_id=action.get("PORTFOLIO_ID"),
+                    account_id=str(account_id) if account_id else None,
+                    action_id=action_id,
+                )
+                broker_truth_check["perm_id_backfill"] = bf
+            except Exception as bf_exc:
+                broker_truth_check["perm_id_backfill"] = {"error": str(bf_exc)}
             if not truth_ack and not exit_ack_via_flat:
                 idem_keys = [str(leg["idempotency_key"]) for leg in order_legs if leg.get("idempotency_key")]
                 if idem_keys:
@@ -13251,13 +13752,27 @@ def reconcile_executions_apply(req: ReconcileExecutionsApplyRequest):
             continue
 
         st = str(clf.get("proposed_status") or "FILLED").upper()
+        # Prefer the execution's stable id (perm_id) over whatever LIVE_ORDERS already
+        # has — typically the TWS local order_id stored when IB returned perm_id=0 in
+        # the initial ack. Rewriting BROKER_ORDER_ID to perm_id restores ground-truth
+        # lineage and lets _recent_unmapped_execution_summary clear without manual help.
+        existing_bid = str(before.get("BROKER_ORDER_ID") or "").strip()
+        preferred_bid = str(clf.get("preferred_broker_order_id") or "").strip()
+        new_bid = preferred_bid or existing_bid or None
         ureq = UpdateLiveOrderStatusRequest(
             actor=req.actor,
             status=st,  # type: ignore[arg-type]
             qty_filled=float(clf["proposed_qty_filled"]) if clf.get("proposed_qty_filled") is not None else None,
             avg_fill_price=float(clf["proposed_avg_fill_price"]) if clf.get("proposed_avg_fill_price") is not None else None,
-            broker_order_id=str(before.get("BROKER_ORDER_ID") or "") or None,
-            notes=f"broker_execution_reconcile run={reconcile_run_id} exec_key={item.exec_key}",
+            broker_order_id=new_bid,
+            notes=(
+                f"broker_execution_reconcile run={reconcile_run_id} exec_key={item.exec_key}"
+                + (
+                    f" perm_id_backfill {existing_bid}->{preferred_bid}"
+                    if preferred_bid and existing_bid and preferred_bid != existing_bid
+                    else ""
+                )
+            ),
         )
         try:
             uout = update_live_order_status(item.order_id, ureq)

@@ -71,6 +71,13 @@ class LiveContext:
     bar_dates: List[str]
     # Oldest → newest: daily closes for inline path trace (LPA geometry hero).
     recent_bar_trace: List[Dict[str, Any]] = field(default_factory=list)
+    # When `latest_price` is sourced from an intraday tick (e.g. 1m IBKR bar), these
+    # carry the source label and bar timestamp so the hearing can show "Latest tick
+    # @ HH:MM" instead of silently using yesterday's daily close. They are None
+    # when only daily bars were available.
+    price_source: Optional[str] = None
+    price_ts_utc: Optional[str] = None
+    price_age_sec: Optional[float] = None
 
 
 def _entry_zone(snapshot: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
@@ -370,6 +377,9 @@ def compute_hearing_bundle(
     trace = list(live.recent_bar_trace) if live.recent_bar_trace else []
     evidence = {
         "latest_price": price,
+        "latest_price_source": live.price_source,
+        "latest_price_ts_utc": live.price_ts_utc,
+        "latest_price_age_sec": live.price_age_sec,
         "open_price": live.open_price,
         "prior_close": live.prior_close,
         "gap_pct": (

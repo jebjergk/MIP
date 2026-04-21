@@ -21,6 +21,7 @@ import GlossaryAdminPage from './pages/GlossaryAdminPage'
 import StructuralTrainingIntelligence from './pages/StructuralTrainingIntelligence'
 import StructuralMarketTimeline from './pages/StructuralMarketTimeline'
 import StructuralCommitteeHearing from './pages/StructuralCommitteeHearing'
+import CommitteePerformance from './pages/CommitteePerformance'
 import AppLayout from './components/AppLayout'
 import { AskMipRuntimeProvider } from './context/AskMipRuntimeContext'
 import IntradayDashboardPage from './pages/intraday/IntradayDashboardPage'
@@ -43,6 +44,7 @@ function pageTitleForPath(pathname) {
     { pattern: '/structural-timeline', title: 'Structural Market Timeline' },
     { pattern: '/structural-committee/:hearingId', title: 'Committee 2.0 Hearing' },
     { pattern: '/structural-committee', title: 'Committee 2.0 Hearing' },
+    { pattern: '/committee-performance', title: 'Committee Bake-off' },
     { pattern: '/market-timeline', title: 'Legacy Market Timeline' },
     { pattern: '/symbol-tracker', title: 'Living Chart' },
     { pattern: '/living-chart', title: 'Living Chart' },
@@ -109,6 +111,7 @@ export default function App() {
         <Route path="/structural-timeline" element={<StructuralMarketTimeline />} />
         <Route path="/structural-committee" element={<StructuralCommitteeHearing />} />
         <Route path="/structural-committee/:hearingId" element={<StructuralCommitteeHearing />} />
+        <Route path="/committee-performance" element={<CommitteePerformance />} />
         <Route path="/market-timeline" element={<MarketTimeline />} />
         <Route path="/symbol-tracker" element={<SymbolTracker />} />
         <Route path="/living-chart" element={<SymbolTracker />} />

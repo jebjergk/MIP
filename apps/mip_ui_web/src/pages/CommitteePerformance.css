@@ -1,0 +1,393 @@
+/* Committee Bake-off — read-only sidecar comparison page. Light theme to match PerformanceDashboard. */
+
+.cbo-page {
+  display: grid;
+  gap: 1rem;
+  padding: 0.5rem 0.25rem 2rem;
+}
+
+.cbo-header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.cbo-header p {
+  margin: 0.25rem 0 0;
+  color: #6b7280;
+  font-size: 0.85rem;
+  max-width: 920px;
+}
+
+/* MTD recommendation banner */
+.cbo-mtd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.cbo-mtd-main {
+  flex: 1 1 240px;
+}
+
+.cbo-mtd-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+}
+
+.cbo-mtd-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-top: 0.15rem;
+}
+
+.cbo-mtd-value.prefer-real    { color: #1d4ed8; }
+.cbo-mtd-value.prefer-shadow  { color: #7c3aed; }
+.cbo-mtd-value.tie            { color: #4b5563; }
+.cbo-mtd-value.insufficient   { color: #9ca3af; }
+
+.cbo-mtd-sub {
+  margin-top: 0.2rem;
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+/* KPI strip */
+.cbo-kpi-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.cbo-kpi-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.cbo-kpi-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+}
+
+.cbo-kpi-value {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.cbo-kpi-hint {
+  font-size: 0.72rem;
+  color: #6b7280;
+}
+
+/* Per-board summary panels */
+.cbo-summary-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.cbo-panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+}
+
+.cbo-panel h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.95rem;
+}
+
+.cbo-panel-row {
+  font-size: 0.82rem;
+  color: #4b5563;
+  margin-bottom: 0.25rem;
+}
+
+.cbo-panel-row strong { color: #111827; }
+.cbo-pos { color: #15803d; }
+.cbo-neg { color: #b91c1c; }
+
+/* Label distribution */
+.cbo-label-table {
+  width: 100%;
+  font-size: 0.82rem;
+  border-collapse: collapse;
+}
+
+.cbo-label-table td {
+  padding: 0.2rem 0;
+  border-bottom: 1px dashed #e5e7eb;
+}
+
+.cbo-label-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #1f2937;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cbo-label-btn.active { color: #1d4ed8; font-weight: 600; }
+
+.cbo-label-clear {
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  cursor: pointer;
+}
+
+/* Filter chips */
+.cbo-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cbo-filter-row strong {
+  font-size: 0.85rem;
+}
+
+.cbo-chip {
+  border: 1px solid #d0d7de;
+  background: #fff;
+  color: #374151;
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.cbo-chip.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.cbo-row-count {
+  margin-left: auto;
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+/* Opportunities table */
+.cbo-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.cbo-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.cbo-table thead th {
+  background: #f9fafb;
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+  color: #374151;
+}
+
+.cbo-table tbody td {
+  padding: 0.55rem 0.7rem;
+  border-top: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.cbo-table tbody tr.excluded {
+  opacity: 0.65;
+  background: #fafafa;
+}
+
+.cbo-symbol {
+  font-weight: 600;
+}
+
+.cbo-direction {
+  margin-left: 0.4rem;
+  color: #6b7280;
+  font-size: 0.72rem;
+}
+
+.cbo-empty {
+  padding: 1.4rem;
+  text-align: center;
+  color: #6b7280;
+}
+
+.cbo-detail-btn {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  cursor: pointer;
+}
+
+.cbo-comparison {
+  font-size: 0.72rem;
+  color: #4b5563;
+}
+
+/* Stance / config / outcome badges */
+.cbo-stance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  border: 1px solid transparent;
+}
+
+.cbo-stance .normalized { opacity: 0.75; }
+
+.cbo-stance.enter  { color: #15803d; background: #ecfdf5; border-color: #bbf7d0; }
+.cbo-stance.deny   { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+.cbo-stance.defer  { color: #a16207; background: #fffbeb; border-color: #fde68a; }
+.cbo-stance.cash   { color: #4b5563; background: #f3f4f6; border-color: #e5e7eb; }
+
+.cbo-config {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  border: 1px solid transparent;
+}
+
+.cbo-config.scorable        { color: #15803d; background: #ecfdf5; border-color: #bbf7d0; }
+.cbo-config.partial         { color: #a16207; background: #fffbeb; border-color: #fde68a; }
+.cbo-config.unscorable      { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+.cbo-config.not_applicable  { color: #4b5563; background: #f3f4f6; border-color: #e5e7eb; }
+
+.cbo-outcome {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.cbo-outcome strong { font-size: 0.78rem; }
+.cbo-outcome span   { font-size: 0.72rem; color: #6b7280; }
+.cbo-outcome.win  strong { color: #15803d; }
+.cbo-outcome.loss strong { color: #b91c1c; }
+.cbo-outcome.flat strong { color: #4b5563; }
+
+.cbo-excluded-tag {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  color: #b45309;
+}
+
+/* Detail modal */
+.cbo-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  z-index: 100;
+}
+
+.cbo-modal {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  padding: 1rem 1.2rem;
+  width: 100%;
+  max-width: 920px;
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.cbo-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.cbo-modal-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.cbo-modal-close {
+  background: #fff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+
+.cbo-board-grid {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.cbo-board-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  background: #fafafa;
+}
+
+.cbo-board-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.cbo-board-line {
+  font-size: 0.78rem;
+  color: #4b5563;
+  margin-top: 0.25rem;
+}
+
+.cbo-board-reason {
+  margin-top: 0.3rem;
+  font-style: italic;
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+.cbo-json {
+  margin-top: 0.5rem;
+  font-size: 0.72rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.6rem;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 240px;
+}

@@ -76,6 +76,7 @@ from app.services.live_intelligence.live_intent_policy import (
     overview_excluded_intent_kinds,
     structural_proposal_minimum_contract_violations,
 )
+from app.services.live_intelligence import exit_policy as exit_policy_service
 
 router = APIRouter(prefix="/live", tags=["live"])
 _log = logging.getLogger(__name__)
@@ -12417,27 +12418,92 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         )
         structural_trail_amount: float | None = None
         structural_trail_percent: float | None = None
+        structural_exit_policy: str = exit_policy_service.EXIT_POLICY_FIXED
         if is_structural and not is_exit:
             inv_level = action.get("INVALIDATION_LEVEL")
             if inv_level is not None:
                 sl_price = float(inv_level)
-            trail_cfg = _read_app_config(cur, ["TRAIL_ENABLED", "TRAIL_DRY_RUN"])
-            trail_enabled = _parse_bool_config(trail_cfg.get("TRAIL_ENABLED"), False)
-            trail_dry_run = _parse_bool_config(trail_cfg.get("TRAIL_DRY_RUN"), True)
-            if trail_enabled and not trail_dry_run and action.get("TRAIL_STYLE"):
-                trail_params = action.get("TRAIL_PARAMS")
-                if isinstance(trail_params, str):
+
+            # Trailing Stop Phase 1: EXIT_POLICY-driven execution.
+            # The persisted contract on LIVE_ACTIONS is the source of truth.
+            # Legacy TRAIL_ENABLED / TRAIL_DRY_RUN flags are no longer
+            # consulted here; they remain in APP_CONFIG only for the
+            # deferred Phase 2 replacement path.
+            structural_exit_policy = (
+                str(action.get("EXIT_POLICY") or "").strip().upper()
+                or exit_policy_service.EXIT_POLICY_FIXED
+            )
+            if structural_exit_policy == exit_policy_service.EXIT_POLICY_TRAIL:
+                # Global Phase 1 kill switch — never silently downgrades.
+                trail_phase1_cfg = _read_app_config(
+                    cur, ["TRAIL_PHASE1_ENABLED"]
+                )
+                trail_phase1_enabled = _parse_bool_config(
+                    trail_phase1_cfg.get("TRAIL_PHASE1_ENABLED"), False
+                )
+                if not trail_phase1_enabled:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                "Trailing stop entry blocked: TRAIL_PHASE1_ENABLED is false. "
+                                "Re-enable in APP_CONFIG to allow TRAIL_BRACKET execution. "
+                                "Action will not be silently downgraded to a fixed stop."
+                            ),
+                            "reason_codes": ["TRAIL_PHASE1_DISABLED"],
+                            "exit_policy": structural_exit_policy,
+                        },
+                    )
+
+                trail_params_raw = action.get("TRAIL_PARAMS")
+                if isinstance(trail_params_raw, str):
                     try:
-                        trail_params = json.loads(trail_params)
+                        trail_params_parsed = json.loads(trail_params_raw)
                     except Exception:
-                        trail_params = None
-                if isinstance(trail_params, dict):
-                    structural_trail_amount = trail_params.get("trail_amount")
-                    structural_trail_percent = trail_params.get("trail_percent")
-                    if structural_trail_amount is not None:
-                        structural_trail_amount = float(structural_trail_amount)
-                    if structural_trail_percent is not None:
-                        structural_trail_percent = float(structural_trail_percent)
+                        trail_params_parsed = None
+                elif isinstance(trail_params_raw, dict):
+                    trail_params_parsed = trail_params_raw
+                else:
+                    trail_params_parsed = None
+
+                trail_violations = exit_policy_service.validate_trail_params(
+                    trail_params_parsed
+                )
+                if trail_violations:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                "Trailing stop entry blocked: TRAIL_PARAMS on the action "
+                                "is invalid or incomplete. No fixed-stop fallback is allowed."
+                            ),
+                            "reason_codes": ["TRAIL_PARAMS_INVALID", *trail_violations],
+                            "exit_policy": structural_exit_policy,
+                        },
+                    )
+
+                try:
+                    structural_trail_amount, structural_trail_percent = (
+                        exit_policy_service.broker_trail_args(trail_params_parsed)
+                    )
+                except ValueError as trail_exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": f"Trailing stop entry blocked: {trail_exc}",
+                            "reason_codes": ["TRAIL_PARAMS_INVALID"],
+                            "exit_policy": structural_exit_policy,
+                        },
+                    ) from trail_exc
+
+                # NOTE: sl_price intentionally LEFT POPULATED here so that the
+                # downstream realism gates (_live_bracket_realism_reason_codes)
+                # and target/stop calibration still see the structural
+                # invalidation level. It is explicitly cleared just before
+                # _submit_ibkr_order_bundle so the broker never receives both
+                # a fixed-stop and a trailing-stop. See the
+                # `if structural_exit_policy == TRAIL_BRACKET: sl_price = None`
+                # block guarding the IBKR submit below.
         if is_exit:
             tp_price = None
             sl_price = None
@@ -12592,6 +12658,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         broker_submit_payload = None
         broker_truth_check = None
         ib_live_orders_inserted = False
+        # Trailing Stop Phase 1: when EXIT_POLICY = TRAIL_BRACKET we send a
+        # TRAIL protective leg, never a fixed STP. Clear the broker-bound
+        # sl_price now that all upstream realism / risk gates have already
+        # consumed it. This guarantees place_ibkr_order.py receives only the
+        # trail args for the protective child.
+        broker_sl_price = sl_price
+        if (
+            structural_exit_policy == exit_policy_service.EXIT_POLICY_TRAIL
+            and not is_exit
+        ):
+            broker_sl_price = None
         if use_ibkr_submit:
             exit_symbol_qty_before = 0.0
             entry_symbol_qty_before = 0.0
@@ -12607,7 +12684,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "ibkr_entry_price": ibkr_entry_price,
                 "ibkr_order_type": "MKT" if is_exit else "LMT",
                 "tp_price": float(tp_price) if tp_price is not None else None,
-                "sl_price": float(sl_price) if sl_price is not None else None,
+                "sl_price": float(broker_sl_price) if broker_sl_price is not None else None,
+                "exit_policy": structural_exit_policy,
+                "trail_amount": structural_trail_amount,
+                "trail_percent": structural_trail_percent,
                 "tif": "DAY",
                 "runtime": {
                     "host": os.getenv("IBKR_EXEC_HOST", "127.0.0.1"),
@@ -12698,7 +12778,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     qty=qty_ordered,
                     entry_price=ibkr_entry_price,
                     tp_price=float(tp_price) if tp_price is not None else None,
-                    sl_price=float(sl_price) if sl_price is not None else None,
+                    sl_price=float(broker_sl_price) if broker_sl_price is not None else None,
                     tif="DAY",
                     child_tif=os.getenv("IBKR_EXEC_CHILD_TIF", "GTC"),
                     direction=structural_direction,
@@ -12831,6 +12911,22 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         leg_order_role = "TRAILING_STOP"
                         leg_protection_type = "TRAILING_STOP"
                         leg_stop_price = ib_aux_price
+                # Trailing Stop Phase 1: stamp trail_* on the protective leg
+                # so persistence in LIVE_ORDERS reflects the actual broker
+                # contract that place_ibkr_order.py used.
+                leg_trail_style = None
+                leg_trail_amount = None
+                leg_trail_percent = None
+                if role == "TRAILING_STOP":
+                    leg_trail_amount = structural_trail_amount
+                    leg_trail_percent = structural_trail_percent
+                    leg_trail_style = (
+                        action.get("TRAIL_STYLE")
+                        or (
+                            "PCT" if structural_trail_percent is not None
+                            else ("ABS" if structural_trail_amount is not None else None)
+                        )
+                    )
                 order_legs.append(
                     {
                         "order_id": str(uuid.uuid4()),
@@ -12845,6 +12941,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "protection_type": leg_protection_type,
                         "stop_price": leg_stop_price,
                         "oca_group": ib_leg.get("oca_group") or structural_oca_group if role != "PARENT" else None,
+                        "trail_style": leg_trail_style,
+                        "trail_amount": leg_trail_amount,
+                        "trail_percent": leg_trail_percent,
                     }
                 )
             if not order_legs:
@@ -12867,12 +12966,14 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
                       SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
                       PARENT_ORDER_ID, ORDER_ROLE, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
+                      TRAIL_STYLE, TRAIL_AMOUNT, TRAIL_PERCENT,
                       SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                     )
                     VALUES (
                       %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
                       %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
                       %(parent_order_id)s, %(order_role)s, %(protection_type)s, %(oca_group)s, %(stop_price)s,
+                      %(trail_style)s, %(trail_amount)s, %(trail_percent)s,
                       CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                     )
                     """,
@@ -12896,6 +12997,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "protection_type": leg.get("protection_type"),
                         "oca_group": leg.get("oca_group"),
                         "stop_price": leg.get("stop_price"),
+                        "trail_style": leg.get("trail_style"),
+                        "trail_amount": leg.get("trail_amount"),
+                        "trail_percent": leg.get("trail_percent"),
                     },
                 )
             ib_live_orders_inserted = True
@@ -13051,7 +13155,48 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "oca_group": structural_oca_group,
                     }
                 )
-            if sl_price is not None:
+            # Trailing Stop Phase 1 paper representation.
+            #
+            # PHASE 1 NOTE — TRAIL_PAPER is INTENT-ONLY in this phase:
+            # it proves contract wiring, persistence, and visibility of the
+            # trailing-bracket execution path (no fixed STP). It does NOT yet
+            # implement a high-water mark, ratchet, or trigger lifecycle —
+            # those are deferred to a follow-up phase. The paper protective
+            # leg is suppressed entirely when EXIT_POLICY = TRAIL_BRACKET so
+            # there is never both a fixed-stop and a trailing leg in paper.
+            if structural_exit_policy == exit_policy_service.EXIT_POLICY_TRAIL:
+                trail_params_for_paper = action.get("TRAIL_PARAMS")
+                if isinstance(trail_params_for_paper, str):
+                    try:
+                        trail_params_for_paper = json.loads(trail_params_for_paper)
+                    except Exception:
+                        trail_params_for_paper = {}
+                if not isinstance(trail_params_for_paper, dict):
+                    trail_params_for_paper = {}
+                trail_style_for_paper = (
+                    action.get("TRAIL_STYLE")
+                    or trail_params_for_paper.get("trail_mode")
+                )
+                order_legs.append(
+                    {
+                        "order_id": str(uuid.uuid4()),
+                        "broker_order_id": None,
+                        "idempotency_key": f"{idempotency_key}:TRAIL",
+                        "side": exit_side,
+                        "order_type": "TRAIL_PAPER",
+                        "limit_price": None,
+                        "role": "TRAILING_STOP",
+                        "status": "ACKNOWLEDGED",
+                        "order_role": "PROTECTIVE_TRAIL" if is_structural else None,
+                        "protection_type": "TRAILING_STOP" if is_structural else None,
+                        "stop_price": None,
+                        "oca_group": structural_oca_group,
+                        "trail_style": trail_style_for_paper,
+                        "trail_amount": structural_trail_amount,
+                        "trail_percent": structural_trail_percent,
+                    }
+                )
+            elif sl_price is not None:
                 order_legs.append(
                     {
                         "order_id": str(uuid.uuid4()),
@@ -13088,12 +13233,14 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY, BROKER_ORDER_ID, STATUS,
                       SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
                       PARENT_ORDER_ID, ORDER_ROLE, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
+                      TRAIL_STYLE, TRAIL_AMOUNT, TRAIL_PERCENT,
                       SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                     )
                     VALUES (
                       %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idempotency_key)s, %(broker_order_id)s, %(status)s,
                       %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
                       %(parent_order_id)s, %(order_role)s, %(protection_type)s, %(oca_group)s, %(stop_price)s,
+                      %(trail_style)s, %(trail_amount)s, %(trail_percent)s,
                       CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                     )
                     """,
@@ -13117,6 +13264,12 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "protection_type": leg.get("protection_type"),
                         "oca_group": leg.get("oca_group"),
                         "stop_price": leg.get("stop_price"),
+                        # Trailing fields are only populated for TRAIL_PAPER /
+                        # TRAIL legs. LIMIT_PRICE / STOP_PRICE remain NULL for
+                        # TRAIL_PAPER per the execution contract.
+                        "trail_style": leg.get("trail_style"),
+                        "trail_amount": leg.get("trail_amount"),
+                        "trail_percent": leg.get("trail_percent"),
                     },
                 )
 
@@ -13231,6 +13384,13 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 "trail_percent": structural_trail_percent,
                 "order_legs": order_legs,
                 "idempotency_key": idempotency_key,
+                # Trailing Stop Phase 1: persist the executed exit-policy
+                # contract so the shadow vs real comparison surfaces both the
+                # executed bracket type and the resolved profile reason.
+                "exit_policy": structural_exit_policy,
+                "exit_profile_reason": action.get("EXIT_POLICY_REASON"),
+                "trail_status": action.get("TRAIL_STATUS"),
+                "broker_sl_price": broker_sl_price,
             }
             write_shadow_trade_linkage(
                 cur,
@@ -13581,6 +13741,31 @@ def run_trail_activation(req: TrailActivationRequest):
     conn = get_connection()
     try:
         cur = conn.cursor()
+
+        # Trailing Stop Phase 2 hard block.
+        #
+        # Post-fill trail replacement is structurally unsafe today: the
+        # standalone-trail-after-cancel path places a MarketOrder parent
+        # alongside the TRAIL child, which would close the position
+        # immediately. This endpoint MUST remain disabled until that path
+        # is redesigned. Phase 1 only ships entry-time TRAIL_BRACKET via
+        # execute_live_action; replacement must not be relied on.
+        replacement_cfg = _read_app_config(cur, ["TRAIL_REPLACEMENT_ENABLED"])
+        replacement_enabled = _parse_bool_config(
+            replacement_cfg.get("TRAIL_REPLACEMENT_ENABLED"), False
+        )
+        if not replacement_enabled:
+            return {
+                "ok": True,
+                "status": "TRAIL_REPLACEMENT_DISABLED",
+                "message": (
+                    "Post-fill trail replacement is disabled (TRAIL_REPLACEMENT_ENABLED=false). "
+                    "Phase 2 is deferred; Phase 1 entry-time trailing is handled by execute_live_action."
+                ),
+                "reason_codes": ["TRAIL_REPLACEMENT_PHASE2_NOT_ENABLED"],
+                "evaluated_count": 0,
+            }
+
         trail_cfg = _read_app_config(cur, ["TRAIL_ENABLED", "TRAIL_DRY_RUN"])
         trail_enabled = _parse_bool_config(trail_cfg.get("TRAIL_ENABLED"), False)
         trail_dry_run = _parse_bool_config(trail_cfg.get("TRAIL_DRY_RUN"), True)
@@ -14816,6 +15001,12 @@ SELECT
     COALESCE(stp.EXIT_STYLE, rp.EXIT_STYLE, 'STRUCTURAL_TARGET') AS EXIT_STYLE,
     COALESCE(stp.TRAIL_STYLE, rp.TRAIL_STYLE)               AS TRAIL_STYLE,
     COALESCE(stp.TRAIL_PARAMS, rp.TRAIL_PARAMS)              AS TRAIL_PARAMS,
+    -- Trailing Stop Phase 1: bounded exit profile feeds EXIT_POLICY resolution
+    -- (proposal override > policy default > FIXED_STANDARD). NOTE: this
+    -- column drives the broker-executable TRAIL_PARAMS written into
+    -- LIVE_ACTIONS. The legacy COALESCE(TRAIL_PARAMS) above remains for
+    -- management-style consumers and is intentionally not overwritten.
+    COALESCE(stp.EXIT_PROFILE, rp.EXIT_PROFILE, 'FIXED_STANDARD') AS EXIT_PROFILE,
     rp.TRAIL_ACTIVATION_TYPE,
     rp.TRAIL_ACTIVATION_PARAM,
     COALESCE(rp.MAX_HOLD_BARS, 20)                           AS MAX_HOLD_BARS,
@@ -15048,6 +15239,38 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
 
             p_norm = dict(p)
             p_norm["SETUP_NARRATIVE"] = p_norm.get("SETUP_NARRATIVE") or _build_setup_narrative(p_norm)
+
+            # Trailing Stop Phase 1: resolve EXIT_POLICY from EXIT_PROFILE
+            # BEFORE validation. structural_proposal_minimum_contract_violations
+            # is now EXIT_POLICY-aware and only requires TRAIL_STYLE/TRAIL_PARAMS
+            # when EXIT_POLICY = TRAIL_BRACKET. Unknown profile -> reject as
+            # contract violation (never silently coerce to fixed).
+            try:
+                _resolved_policy = exit_policy_service.resolve_exit_policy_for_action(p_norm)
+                p_norm["EXIT_POLICY"] = _resolved_policy["exit_policy"]
+                p_norm["TRAIL_STATUS"] = _resolved_policy["trail_status"]
+                p_norm["EXIT_POLICY_REASON"] = _resolved_policy["resolved_profile"]
+                if _resolved_policy["exit_policy"] == exit_policy_service.EXIT_POLICY_TRAIL:
+                    # Overwrite TRAIL_STYLE/TRAIL_PARAMS with the broker-executable
+                    # shape for execution. STRUCTURAL_RISK_POLICY.TRAIL_PARAMS keeps
+                    # its management-style shape and is not modified.
+                    p_norm["TRAIL_STYLE"] = _resolved_policy["trail_style"]
+                    p_norm["TRAIL_PARAMS"] = _resolved_policy["trail_params"]
+                    _trail_viol = exit_policy_service.validate_trail_params(
+                        _resolved_policy["trail_params"]
+                    )
+                    if _trail_viol:
+                        skipped_contract_violations += 1
+                        continue
+                else:
+                    # FIXED_BRACKET: clear trailing fields so execution path is
+                    # unambiguous. Risk policy management TRAIL_PARAMS untouched.
+                    p_norm["TRAIL_STYLE"] = None
+                    p_norm["TRAIL_PARAMS"] = None
+            except ValueError:
+                skipped_contract_violations += 1
+                continue
+
             _viol = structural_proposal_minimum_contract_violations(p_norm)
             if _viol:
                 skipped_contract_violations += 1
@@ -15114,8 +15337,10 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
             else:
                 regime_tags_json = None
 
-            # Serialize trail params
-            trail_params_raw = p.get("TRAIL_PARAMS")
+            # Serialize trail params (broker-executable shape from resolved
+            # exit policy; NULL for FIXED_BRACKET). Risk-policy management
+            # shape is intentionally not propagated here.
+            trail_params_raw = p_norm.get("TRAIL_PARAMS")
             if trail_params_raw and isinstance(trail_params_raw, str):
                 trail_params_json = trail_params_raw
             elif trail_params_raw and isinstance(trail_params_raw, dict):
@@ -15158,6 +15383,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     DOMINANT_FAILURE_MODE, BEST_WINDOW,
                     -- Trade management
                     RISK_CLASS, EXIT_STYLE, TRAIL_STYLE, TRAIL_PARAMS,
+                    EXIT_POLICY, TRAIL_STATUS, EXIT_POLICY_REASON,
                     TRAIL_ACTIVATION_TYPE, TRAIL_ACTIVATION_PARAM,
                     EXPECTED_HOLD_CHARACTER, MAX_HOLD_BARS,
                     -- Narrative
@@ -15183,6 +15409,7 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     %s, %s,
                     %s, %s,
                     %s, %s, %s, PARSE_JSON(%s),
+                    %s, %s, %s,
                     %s, %s,
                     %s, %s,
                     %s, %s,
@@ -15203,7 +15430,8 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     p.get("TRUST_LABEL"), p.get("MEANINGFUL_HIT_RATE"), p.get("PATH_SURVIVAL_RATE"),
                     p.get("MFE_MAE_RATIO"), p.get("AVG_BARS_TO_THRESHOLD"),
                     dominant_failure, p.get("BEST_WINDOW"),
-                    p.get("RISK_CLASS"), p.get("EXIT_STYLE"), p.get("TRAIL_STYLE"), trail_params_json,
+                    p.get("RISK_CLASS"), p.get("EXIT_STYLE"), p_norm.get("TRAIL_STYLE"), trail_params_json,
+                    p_norm.get("EXIT_POLICY"), p_norm.get("TRAIL_STATUS"), p_norm.get("EXIT_POLICY_REASON"),
                     p.get("TRAIL_ACTIVATION_TYPE"), p.get("TRAIL_ACTIVATION_PARAM"),
                     hold_character, max_hold,
                     narrative, p.get("PROPOSAL_RATIONALE"),

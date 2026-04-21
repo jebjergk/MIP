@@ -423,7 +423,8 @@ proposal_counts AS (
     SELECT
         sp.SYMBOL,
         se.MARKET_TYPE,
-        COUNT(*)                                               AS PROPOSALS_CREATED
+        COUNT(*)                                                                AS PROPOSALS_CREATED,
+        COUNT(CASE WHEN sp.STATUS = 'PROPOSED' THEN 1 END)                      AS ACTIVE_PROPOSALS
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
     JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
     WHERE se.MARKET_TYPE != 'ETF'
@@ -507,6 +508,7 @@ SELECT
     sc.TOTAL_SETUPS,
     sc.ELIGIBLE_SETUPS,
     COALESCE(pc.PROPOSALS_CREATED, 0)          AS PROPOSALS_CREATED,
+    COALESCE(pc.ACTIVE_PROPOSALS, 0)           AS ACTIVE_PROPOSALS,
     COALESCE(tc.TRADES_EXECUTED, 0)            AS TRADES_EXECUTED,
     sc.LONG_SETUPS,
     sc.SHORT_SETUPS,

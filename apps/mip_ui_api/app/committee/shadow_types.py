@@ -211,6 +211,11 @@ class ShadowTradeArtifact(BaseModel):
     trail_posture: str = "NORMAL"
     key_condition: str = ""
     advisory_only: bool = True
+    # Trailing Stop Phase 1: shadow chair must also recommend an exit
+    # contract using the same bounded profile registry as the primary
+    # path. Empty string = no recommendation (treat as FIXED_STANDARD).
+    exit_profile: str = ""
+    exit_policy: str = ""
 
 
 class ShadowChairRuling(BaseModel):
@@ -328,6 +333,33 @@ def build_shadow_evidence_pack(
     trust_label = str(snapshot.get("TRUST_LABEL") or "")
     trailing_style = str(snapshot.get("TRAILING_STYLE") or "")
 
+    # Trailing Stop Phase 1 — surface the real action's exit-policy contract
+    # to the shadow chair so its shadow_trade recommendation can be compared
+    # against (and dissent from) the executed policy. EXIT_PROFILE lives on
+    # STRUCTURAL_TRADE_PROPOSALS / STRUCTURAL_RISK_POLICY (resolved into the
+    # proposal SELECT). EXIT_POLICY is materialized on LIVE_ACTIONS but we
+    # also derive it here from the profile so shadow runs that fire before a
+    # LIVE_ACTIONS row exists still see the intended bracket type.
+    real_exit_profile = str(
+        proposal.get("EXIT_PROFILE")
+        or snapshot.get("EXIT_PROFILE")
+        or proposal.get("EXIT_POLICY_REASON")
+        or ""
+    ).upper()
+    real_exit_policy = str(
+        proposal.get("EXIT_POLICY") or snapshot.get("EXIT_POLICY") or ""
+    ).upper()
+    if not real_exit_policy and real_exit_profile:
+        try:
+            from app.services.live_intelligence import (
+                exit_policy as _exit_policy_service,
+            )
+            real_exit_policy = _exit_policy_service.resolve_exit_policy(
+                real_exit_profile
+            )["exit_policy"]
+        except Exception:
+            real_exit_policy = ""
+
     # Compute zone distance (entry geometry)
     zone_low = entry_zone.get("low") or entry_zone.get("zone_low")
     zone_high = entry_zone.get("high") or entry_zone.get("zone_high")
@@ -381,6 +413,8 @@ def build_shadow_evidence_pack(
             "setup_family": setup_family,
             "proposal_ts": proposal_ts,
             "trailing_style": trailing_style,
+            "exit_policy": real_exit_policy,
+            "exit_profile": real_exit_profile,
         },
         "structural_state": {
             "structural_state_at_proposal": struct_snap,
@@ -504,6 +538,8 @@ def parse_chair_ruling(raw_text: str) -> ShadowChairRuling:
             trail_posture=str(trade_data.get("trail_posture") or "NORMAL"),
             key_condition=str(trade_data.get("key_condition") or ""),
             advisory_only=True,
+            exit_profile=str(trade_data.get("exit_profile") or "").upper(),
+            exit_policy=str(trade_data.get("exit_policy") or "").upper(),
         ) if trade_data else None
         return ShadowChairRuling(
             shadow_stance=stance,

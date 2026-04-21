@@ -130,7 +130,15 @@ DECLARE
     v_outcomes    VARIANT;
     v_trust       VARIANT;
     v_proposals   VARIANT;
+    v_expiry      VARIANT;
 BEGIN
+
+    -- Step 0: Expire prior-day PROPOSED rows BEFORE generating new ones.
+    --   Enforces "max one daily-bar cycle" lifetime: a structural proposal
+    --   created on day D becomes EXPIRED as soon as the day-(D+1) (or later)
+    --   pipeline runs. Cascades to open LIVE_ACTIONS (pre-broker only).
+    CALL MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(:v_as_of);
+    v_expiry := (SELECT PARSE_JSON('{"status":"done"}'));
 
     -- Step 1: Detect structural levels
     CALL MIP.APP.SP_DETECT_STRUCTURAL_LEVELS(:v_as_of, NULL, 10, 1.0);
@@ -169,6 +177,7 @@ BEGIN
         'status',      'SUCCESS',
         'as_of_date',  :v_as_of,
         'pipeline_steps', ARRAY_CONSTRUCT(
+            'SP_EXPIRE_STALE_DAILY_PROPOSALS',
             'SP_DETECT_STRUCTURAL_LEVELS',
             'SP_COMPUTE_STRUCTURAL_STATE',
             'SP_COMPUTE_REGIME_TAGS',

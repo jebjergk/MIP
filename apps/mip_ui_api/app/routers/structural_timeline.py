@@ -35,11 +35,12 @@ def get_available_symbols(market_type: Optional[str] = Query(None)):
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = (
             "SELECT SYMBOL, MARKET_TYPE,"
-            " TOTAL_SETUPS, ELIGIBLE_SETUPS, PROPOSALS_CREATED, TRADES_EXECUTED,"
+            " TOTAL_SETUPS, ELIGIBLE_SETUPS, PROPOSALS_CREATED, ACTIVE_PROPOSALS, TRADES_EXECUTED,"
             " DOMINANT_STATE, STRONGEST_FAMILY"
             " FROM MIP.MART.V_STRUCTURAL_TIMELINE_SUMMARY"
             + where
-            + " ORDER BY PROPOSALS_CREATED DESC NULLS LAST, TOTAL_SETUPS DESC NULLS LAST, SYMBOL"
+            + " ORDER BY ACTIVE_PROPOSALS DESC NULLS LAST, PROPOSALS_CREATED DESC NULLS LAST,"
+              " TOTAL_SETUPS DESC NULLS LAST, SYMBOL"
         )
         cur = conn.cursor()
         cur.execute(sql, params)

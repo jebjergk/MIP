@@ -206,15 +206,25 @@ def structural_proposal_minimum_contract_violations(p: dict) -> list[str]:
         violations.append("MISSING_INVALIDATION_LEVEL")
     if not (p.get("INVALIDATION_RULE") and str(p.get("INVALIDATION_RULE")).strip()):
         violations.append("MISSING_INVALIDATION_RULE")
-    if not (p.get("TRAIL_STYLE") and str(p.get("TRAIL_STYLE")).strip()):
-        violations.append("MISSING_TRAIL_STYLE")
-    tp_raw = p.get("TRAIL_PARAMS")
-    if tp_raw is None:
-        violations.append("MISSING_TRAIL_PARAMS")
-    elif isinstance(tp_raw, dict) and not tp_raw:
-        violations.append("MISSING_TRAIL_PARAMS")
-    elif isinstance(tp_raw, str) and not tp_raw.strip():
-        violations.append("MISSING_TRAIL_PARAMS")
+
+    # Trailing fields are only required when the resolved EXIT_POLICY is
+    # TRAIL_BRACKET. Trailing Stop Phase 1 requires the import path to
+    # resolve EXIT_POLICY (from EXIT_PROFILE on the proposal/policy row)
+    # BEFORE invoking this validator. If EXIT_POLICY is absent here, treat
+    # as FIXED_BRACKET so we never raise premature MISSING_TRAIL_*
+    # violations on rows that are effectively fixed by default.
+    exit_policy = str(p.get("EXIT_POLICY") or "").strip().upper()
+    if exit_policy == "TRAIL_BRACKET":
+        if not (p.get("TRAIL_STYLE") and str(p.get("TRAIL_STYLE")).strip()):
+            violations.append("MISSING_TRAIL_STYLE")
+        tp_raw = p.get("TRAIL_PARAMS")
+        if tp_raw is None:
+            violations.append("MISSING_TRAIL_PARAMS")
+        elif isinstance(tp_raw, dict) and not tp_raw:
+            violations.append("MISSING_TRAIL_PARAMS")
+        elif isinstance(tp_raw, str) and not tp_raw.strip():
+            violations.append("MISSING_TRAIL_PARAMS")
+
     if not (p.get("EXIT_STYLE") and str(p.get("EXIT_STYLE")).strip()):
         violations.append("MISSING_EXIT_STYLE")
     if not (p.get("TRUST_LABEL") and str(p.get("TRUST_LABEL")).strip()):

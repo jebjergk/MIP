@@ -253,12 +253,22 @@ export default function StructuralMarketTimeline() {
                 const mt = get(s, 'MARKET_TYPE')
                 const setups = Number(get(s, 'TOTAL_SETUPS') || 0)
                 const eligible = Number(get(s, 'ELIGIBLE_SETUPS') || 0)
-                const propCount = Number(get(s, 'PROPOSALS_CREATED') || 0)
+                const propLifetime = Number(get(s, 'PROPOSALS_CREATED') || 0)
+                const propActive = Number(get(s, 'ACTIVE_PROPOSALS') || 0)
                 const trades = Number(get(s, 'TRADES_EXECUTED') || 0)
                 const state = get(s, 'DOMINANT_STATE')
-                const hasProposals = propCount > 0
-                const hasTrades = trades > 0
-                const tileClass = hasTrades ? 'stl-tile-traded' : hasProposals ? 'stl-tile-proposed' : eligible > 0 ? 'stl-tile-eligible' : ''
+                const hasActiveProposals = propActive > 0
+                // Tile edge color escalates: nothing → signal (eligible setup) → proposal.
+                // TRADES_EXECUTED is lifetime/historical — kept as a badge below but
+                // intentionally NOT used to color the tile (would mask actionable proposals).
+                const tileClass = hasActiveProposals
+                  ? 'stl-tile-proposed'
+                  : eligible > 0
+                    ? 'stl-tile-eligible'
+                    : ''
+                const propBadgeTitle = propLifetime > propActive
+                  ? `${propActive} active proposal${propActive === 1 ? '' : 's'} (${propLifetime} lifetime, incl. expired/historical)`
+                  : `${propActive} active proposal${propActive === 1 ? '' : 's'}`
                 return (
                   <div
                     key={`${sym}-${mt}`}
@@ -273,7 +283,7 @@ export default function StructuralMarketTimeline() {
                     </div>
                     <div className="stl-tile-counts">
                       <span className={`stl-tile-count ${setups > 0 ? 'stl-count-has' : ''}`} title="Setups">S:{setups}</span>
-                      <span className={`stl-tile-count ${propCount > 0 ? 'stl-count-prop' : ''}`} title="Proposals">P:{propCount}</span>
+                      <span className={`stl-tile-count ${propActive > 0 ? 'stl-count-prop' : ''}`} title={propBadgeTitle}>P:{propActive}</span>
                       <span className={`stl-tile-count ${trades > 0 ? 'stl-count-trade' : ''}`} title="Trades">T:{trades}</span>
                     </div>
                     {state && <div className="stl-tile-state">{state.replace(/_/g, ' ')}</div>}

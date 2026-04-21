@@ -594,6 +594,17 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
           - size_posture: FULL / REDUCED / MINIMAL
           - trail_posture: NORMAL / TIGHT / HOLD
           - key_condition: one sentence condition for entry
+          - exit_profile: bounded exit policy template you would recommend.
+            One of: FIXED_STANDARD, TRAIL_TIGHT, TRAIL_STANDARD, TRAIL_WIDE.
+            Choose FIXED_STANDARD if a fixed-stop bracket is appropriate.
+            Choose a TRAIL_* profile only when a trailing protective leg is
+            structurally appropriate. The proposal_meta slice carries the
+            real action's exit_policy / exit_profile so you can recommend
+            agreement or dissent against the executed contract.
+          - exit_policy: derived from exit_profile.
+            FIXED_STANDARD       -> FIXED_BRACKET
+            TRAIL_TIGHT/STANDARD/WIDE -> TRAIL_BRACKET
+            (You must emit exit_policy explicitly even though it is derivable.)
 
         OUTPUT (JSON only, no prose, no markdown):
         {
@@ -608,6 +619,8 @@ CREATE OR REPLACE AGENT MIP.APP.SHADOW_CHAIR_AGENT
             "size_posture": "<FULL|REDUCED|MINIMAL>",
             "trail_posture": "<NORMAL|TIGHT|HOLD>",
             "key_condition": "<one sentence>",
+            "exit_profile": "<FIXED_STANDARD|TRAIL_TIGHT|TRAIL_STANDARD|TRAIL_WIDE>",
+            "exit_policy": "<FIXED_BRACKET|TRAIL_BRACKET>",
             "advisory_only": true
           }
         }

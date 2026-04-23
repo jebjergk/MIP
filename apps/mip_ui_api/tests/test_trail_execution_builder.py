@@ -305,5 +305,146 @@ class NoFixedSTPOnTrailBracketProofTests(unittest.TestCase):
         )
 
 
+class FetchLiveActionSelectContractTests(unittest.TestCase):
+    """
+    Regression guard for the live-actions read-side SELECT used by
+    execute_live_action. The bug we are pinning closed: _fetch_live_action's
+    SELECT shipped without EXIT_POLICY / TRAIL_STATUS / EXIT_POLICY_REASON,
+    so action.get("EXIT_POLICY") came back None at execution time and a
+    TRAIL_BRACKET row was silently downgraded to a fixed STP at the broker.
+    These columns MUST be in the SELECT.
+    """
+
+    def test_fetch_live_action_select_includes_exit_policy_columns(self):
+        # Read the source file directly to avoid importing app.routers.live
+        # (which pulls in app.db and requires Python 3.10+ for PEP 604 unions).
+        import os
+        import re
+
+        live_py = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "app", "routers", "live.py",
+        )
+        with open(live_py, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        m = re.search(
+            r"def _fetch_live_action\([^)]*\)[^:]*:(.*?)\n\s*rows\s*=\s*fetch_all",
+            text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            m, "could not locate _fetch_live_action body in live.py"
+        )
+        body = m.group(1)
+        for col in ("EXIT_POLICY", "TRAIL_STATUS", "EXIT_POLICY_REASON"):
+            self.assertIn(
+                col, body,
+                f"_fetch_live_action SELECT must include {col} so that "
+                "execute_live_action can resolve the persisted exit contract; "
+                "missing this column reintroduces the silent fixed-STP "
+                "downgrade bug.",
+            )
+        for col in ("TRAIL_STYLE", "TRAIL_PARAMS"):
+            self.assertIn(
+                col, body, f"missing {col} in _fetch_live_action SELECT"
+            )
+
+
+class ExitPolicyConsistencyGuardTests(unittest.TestCase):
+    """
+    Mirrors the fail-closed guard inside execute_live_action: if the persisted
+    action carries any trailing intent (TRAIL_STATUS=REQUESTED or non-empty
+    TRAIL_PARAMS) but the resolved EXIT_POLICY is not TRAIL_BRACKET, refuse
+    to execute. This prevents any future schema/SELECT/ETL drift from
+    silently emitting a fixed STP for what was meant to be a trailing trade.
+    """
+
+    def _check(self, *, exit_policy, trail_status, trail_params):
+        resolved = (str(exit_policy or "").strip().upper()
+                    or ep.EXIT_POLICY_FIXED)
+        persisted_status = str(trail_status or "").strip().upper()
+        if isinstance(trail_params, dict):
+            has_params = bool(trail_params)
+        elif isinstance(trail_params, str):
+            stripped = trail_params.strip()
+            has_params = bool(stripped) and stripped.lower() not in ("null", "{}")
+        else:
+            has_params = False
+        trailing_intent = (
+            persisted_status == ep.TRAIL_STATUS_REQUESTED or has_params
+        )
+        if trailing_intent and resolved != ep.EXIT_POLICY_TRAIL:
+            return "EXIT_POLICY_INCONSISTENT"
+        return None
+
+    def test_trail_status_requested_but_policy_fixed_blocks(self):
+        self.assertEqual(
+            self._check(
+                exit_policy="FIXED_BRACKET",
+                trail_status="REQUESTED",
+                trail_params=None,
+            ),
+            "EXIT_POLICY_INCONSISTENT",
+        )
+
+    def test_trail_status_requested_but_policy_missing_blocks(self):
+        # The original PLTR bug shape: SELECT omitted EXIT_POLICY entirely.
+        self.assertEqual(
+            self._check(
+                exit_policy=None,
+                trail_status="REQUESTED",
+                trail_params={"trail_mode": "PCT", "trail_value": 2.5},
+            ),
+            "EXIT_POLICY_INCONSISTENT",
+        )
+
+    def test_trail_params_present_but_policy_fixed_blocks(self):
+        self.assertEqual(
+            self._check(
+                exit_policy="FIXED_BRACKET",
+                trail_status=None,
+                trail_params={"trail_mode": "PCT", "trail_value": 2.5},
+            ),
+            "EXIT_POLICY_INCONSISTENT",
+        )
+
+    def test_trail_params_string_present_but_policy_fixed_blocks(self):
+        self.assertEqual(
+            self._check(
+                exit_policy="FIXED_BRACKET",
+                trail_status=None,
+                trail_params='{"trail_mode":"PCT","trail_value":2.5}',
+            ),
+            "EXIT_POLICY_INCONSISTENT",
+        )
+
+    def test_trail_bracket_with_intent_passes_guard(self):
+        self.assertIsNone(
+            self._check(
+                exit_policy="TRAIL_BRACKET",
+                trail_status="REQUESTED",
+                trail_params={"trail_mode": "PCT", "trail_value": 2.5},
+            )
+        )
+
+    def test_pure_fixed_action_passes_guard(self):
+        self.assertIsNone(
+            self._check(
+                exit_policy="FIXED_BRACKET",
+                trail_status="NOT_REQUESTED",
+                trail_params=None,
+            )
+        )
+
+    def test_pure_fixed_with_empty_string_trail_params_passes_guard(self):
+        self.assertIsNone(
+            self._check(
+                exit_policy="FIXED_BRACKET",
+                trail_status=None,
+                trail_params="null",
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

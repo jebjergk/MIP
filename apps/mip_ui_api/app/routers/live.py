@@ -368,6 +368,7 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           MEANINGFUL_HIT_RATE, PATH_SURVIVAL_RATE, MFE_MAE_RATIO, AVG_BARS_TO_THRESHOLD,
           DOMINANT_FAILURE_MODE, BEST_WINDOW, RISK_CLASS, EXIT_STYLE,
           TRAIL_STYLE, TRAIL_PARAMS, TRAIL_ACTIVATION_TYPE, TRAIL_ACTIVATION_PARAM,
+          EXIT_POLICY, TRAIL_STATUS, EXIT_POLICY_REASON,
           EXPECTED_HOLD_CHARACTER, MAX_HOLD_BARS,
           SETUP_NARRATIVE, PROPOSAL_RATIONALE,
           CURRENT_PRICE, DISTANCE_TO_ENTRY_ZONE, SETUP_STILL_VALID, PRICE_MOVED_TOO_FAR, FRESHNESS_ASSESSMENT,
@@ -12433,6 +12434,53 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 str(action.get("EXIT_POLICY") or "").strip().upper()
                 or exit_policy_service.EXIT_POLICY_FIXED
             )
+
+            # Fail-closed consistency guard. If the persisted action carries
+            # any trailing intent (TRAIL_STATUS = REQUESTED or TRAIL_PARAMS
+            # populated) but EXIT_POLICY did not resolve to TRAIL_BRACKET,
+            # something upstream is inconsistent (e.g. read-side SELECT
+            # missing the new EXIT_POLICY columns, partial migration, or
+            # manual SQL edit). Refuse to execute rather than silently
+            # downgrading to a fixed stop.
+            persisted_trail_status = (
+                str(action.get("TRAIL_STATUS") or "").strip().upper()
+            )
+            persisted_trail_params_raw = action.get("TRAIL_PARAMS")
+            has_trail_params = False
+            if isinstance(persisted_trail_params_raw, dict):
+                has_trail_params = bool(persisted_trail_params_raw)
+            elif isinstance(persisted_trail_params_raw, str):
+                stripped = persisted_trail_params_raw.strip()
+                has_trail_params = bool(stripped) and stripped.lower() not in (
+                    "null",
+                    "{}",
+                )
+            trailing_intent_persisted = (
+                persisted_trail_status == exit_policy_service.TRAIL_STATUS_REQUESTED
+                or has_trail_params
+            )
+            if (
+                trailing_intent_persisted
+                and structural_exit_policy != exit_policy_service.EXIT_POLICY_TRAIL
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "Action carries trailing intent (TRAIL_STATUS or "
+                            "TRAIL_PARAMS) but EXIT_POLICY did not resolve to "
+                            "TRAIL_BRACKET. Refusing to execute to avoid silent "
+                            "downgrade to a fixed stop. Investigate the "
+                            "EXIT_POLICY column on LIVE_ACTIONS for this row "
+                            "and any read-side SELECT that may be omitting it."
+                        ),
+                        "reason_codes": ["EXIT_POLICY_INCONSISTENT"],
+                        "exit_policy": structural_exit_policy,
+                        "trail_status": persisted_trail_status or None,
+                        "has_trail_params": has_trail_params,
+                    },
+                )
+
             if structural_exit_policy == exit_policy_service.EXIT_POLICY_TRAIL:
                 # Global Phase 1 kill switch — never silently downgrades.
                 trail_phase1_cfg = _read_app_config(

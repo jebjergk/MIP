@@ -5,6 +5,23 @@
    Deterministic real verdict engine. Produces one row per real open
    position per AS_OF_DATE in MIP.APP.DAILY_POSITION_VERDICT.
 
+   Phase 1 RE-ANCHOR (2026-04-26):
+     - Open-position source is now MIP.MART.V_LIVE_OPEN_POSITIONS,
+       which is anchored on MIP.LIVE.BROKER_SNAPSHOTS (real broker
+       truth) - NOT the legacy horizon-based research book
+       (PORTFOLIO_POSITIONS / PORTFOLIO_TRADES with HOLD_UNTIL_INDEX).
+     - All horizon math (EXPECTED_HORIZON_DAYS, HORIZON_SOURCE_CODE,
+       TIME_EFFICIENCY) is REMOVED from the verdict derivation. The
+       physical columns on MIP.APP.DAILY_POSITION_VERDICT remain for
+       one validation cycle but are explicitly written as NULL on
+       new rows; they will be dropped in Phase 2 once parity is proven.
+     - POSITION_EPISODE_KEY is now derived from
+       (PORTFOLIO_ID, IBKR_ACCOUNT_ID, SYMBOL, ENTRY_DATE) so it is
+       stable across daily snapshots without needing a sim EPISODE_ID.
+     - PROPOSAL_ID for the committee baseline link comes directly
+       from V_LIVE_OPEN_POSITIONS (sourced from LIVE_ACTIONS), not
+       from PORTFOLIO_TRADES.
+
    No weighted scoring. Precedence rules only.
    No LLM. Template-string summaries.
    No real position changes. Advisory only.
@@ -24,79 +41,44 @@ EXECUTE AS CALLER
 AS
 $$
 DECLARE
-    v_default_horizon_days NUMBER := 20;
-    v_engine_version VARCHAR := '1.0.0';
+    v_engine_version VARCHAR := '1.1.0-live-anchor';
     v_rows_written NUMBER := 0;
     v_run_started TIMESTAMP_NTZ := CURRENT_TIMESTAMP();
     v_summary VARIANT;
 BEGIN
-    SELECT TRY_TO_NUMBER(CONFIG_VALUE)
-      INTO :v_default_horizon_days
-      FROM MIP.APP.APP_CONFIG
-     WHERE CONFIG_KEY = 'POSITION_HEALTH_DEFAULT_HORIZON_DAYS';
-
-    IF (v_default_horizon_days IS NULL) THEN
-        v_default_horizon_days := 20;
-    END IF;
-
     /* ----------------------------------------------------------------
        Stage the verdict rows into a temp object (CTAS) so the MERGE
        remains a single statement with stable identity.
        ---------------------------------------------------------------- */
     CREATE OR REPLACE TEMPORARY TABLE TMP_DAILY_POSITION_VERDICT_STAGE AS
     WITH
-    /* ---- 1) Open positions today ---- */
+    /* ---- 1) Live open positions today (broker truth) ---- */
     open_positions AS (
         SELECT
             p.PORTFOLIO_ID,
-            p.EPISODE_ID,
+            p.IBKR_ACCOUNT_ID,
             p.SYMBOL,
             p.MARKET_TYPE,
             p.INTERVAL_MINUTES,
             p.ENTRY_TS,
-            p.ENTRY_TS::DATE                                       AS ENTRY_DATE,
+            p.ENTRY_DATE,
             p.ENTRY_PRICE,
-            p.ENTRY_INDEX,
-            p.HOLD_UNTIL_INDEX,
             p.QUANTITY,
             'LONG'::VARCHAR(8)                                     AS SIDE,
-            DATEDIFF('day', p.ENTRY_TS::DATE, :P_AS_OF_DATE)       AS DAYS_HELD,
+            DATEDIFF('day', p.ENTRY_DATE, :P_AS_OF_DATE)           AS DAYS_HELD,
             SHA2(
                 p.PORTFOLIO_ID::STRING || '|' ||
-                COALESCE(p.EPISODE_ID::STRING, 'NO_EPISODE') || '|' ||
+                COALESCE(p.IBKR_ACCOUNT_ID, 'NO_ACCOUNT') || '|' ||
                 p.SYMBOL || '|' ||
-                TO_CHAR(p.ENTRY_TS::DATE, 'YYYY-MM-DD'),
+                TO_CHAR(p.ENTRY_DATE, 'YYYY-MM-DD'),
                 256
             )                                                      AS POSITION_EPISODE_KEY,
-            CASE WHEN p.EPISODE_ID IS NOT NULL
-                 THEN 'EPISODE_SCOPED'
-                 ELSE 'TIMESTAMP_FALLBACK'
-            END                                                    AS POSITION_IDENTITY_SOURCE
-        FROM MIP.MART.V_PORTFOLIO_OPEN_POSITIONS_CANONICAL p
+            'LIVE_BROKER'::VARCHAR                                 AS POSITION_IDENTITY_SOURCE,
+            p.PROPOSAL_ID                                          AS LIVE_PROPOSAL_ID
+        FROM MIP.MART.V_LIVE_OPEN_POSITIONS p
         WHERE p.IS_OPEN = TRUE
     ),
-    /* ---- 2) Earliest BUY trade per position carries the PROPOSAL_ID baseline link ---- */
-    first_buy AS (
-        SELECT
-            t.PORTFOLIO_ID,
-            t.SYMBOL,
-            t.MARKET_TYPE,
-            t.PROPOSAL_ID,
-            ROW_NUMBER() OVER (
-                PARTITION BY t.PORTFOLIO_ID, t.SYMBOL, t.MARKET_TYPE
-                ORDER BY t.TRADE_TS ASC
-            ) AS RN,
-            t.TRADE_TS
-        FROM MIP.APP.PORTFOLIO_TRADES t
-        WHERE t.SIDE = 'BUY'
-          AND t.PROPOSAL_ID IS NOT NULL
-    ),
-    proposal_link AS (
-        SELECT PORTFOLIO_ID, SYMBOL, MARKET_TYPE, PROPOSAL_ID
-        FROM first_buy
-        WHERE RN = 1
-    ),
-    /* ---- 3) Committee baseline context ---- */
+    /* ---- 2) Committee baseline context (latest decision per PROPOSAL_ID) ---- */
     committee_baseline AS (
         SELECT
             cfd.PROPOSAL_ID,
@@ -114,7 +96,7 @@ BEGIN
         FROM committee_baseline
         WHERE RN = 1
     ),
-    /* ---- 4) Latest daily bar per symbol on or before AS_OF_DATE ---- */
+    /* ---- 3) Latest daily bar per symbol on or before AS_OF_DATE ---- */
     latest_bar AS (
         SELECT
             mb.SYMBOL,
@@ -138,7 +120,7 @@ BEGIN
         FROM latest_bar
         WHERE RN = 1
     ),
-    /* ---- 5) Today's regime per symbol ---- */
+    /* ---- 4) Today's regime per symbol ---- */
     regime_today AS (
         SELECT
             r.SYMBOL,
@@ -159,7 +141,7 @@ BEGIN
         FROM regime_today
         WHERE RN = 1
     ),
-    /* ---- 6) Today's structural state per symbol ---- */
+    /* ---- 5) Today's structural state per symbol ---- */
     state_today AS (
         SELECT
             s.SYMBOL,
@@ -179,7 +161,7 @@ BEGIN
         FROM state_today
         WHERE RN = 1
     ),
-    /* ---- 7) Nearest support level (proxy for invalidation distance) ---- */
+    /* ---- 6) Nearest support level (proxy for invalidation distance) ---- */
     nearest_support AS (
         SELECT
             l.SYMBOL,
@@ -198,7 +180,7 @@ BEGIN
         FROM nearest_support
         WHERE RN = 1
     ),
-    /* ---- 8) Path metrics: bars from ENTRY_DATE to AS_OF_DATE per position ---- */
+    /* ---- 7) Path metrics: bars from ENTRY_DATE to AS_OF_DATE per position ---- */
     path_bars AS (
         SELECT
             op.POSITION_EPISODE_KEY,
@@ -229,12 +211,12 @@ BEGIN
         FROM path_bars
         GROUP BY POSITION_EPISODE_KEY
     )
-    /* ---- 9) Stitch everything together and derive verdict ---- */
+    /* ---- 8) Stitch everything together and derive verdict ---- */
     SELECT
         :P_AS_OF_DATE                                  AS AS_OF_DATE,
         op.POSITION_EPISODE_KEY,
         op.PORTFOLIO_ID,
-        op.EPISODE_ID,
+        CAST(NULL AS NUMBER(38,0))                     AS EPISODE_ID,
         op.SYMBOL,
         op.SIDE,
         op.ENTRY_DATE,
@@ -281,38 +263,6 @@ BEGIN
             ELSE 'NEUTRAL'
         END                                            AS REGIME_ALIGNMENT,
 
-        /* ---- TIME_EFFICIENCY with horizon source recorded ---- */
-        CASE
-            WHEN op.HOLD_UNTIL_INDEX IS NOT NULL AND op.ENTRY_INDEX IS NOT NULL
-                 AND (op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX) > 0
-                 THEN op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX
-            ELSE :v_default_horizon_days
-        END                                            AS EXPECTED_HORIZON_DAYS,
-        CASE
-            WHEN op.HOLD_UNTIL_INDEX IS NOT NULL AND op.ENTRY_INDEX IS NOT NULL
-                 AND (op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX) > 0
-                 THEN 'POSITION_HOLD_UNTIL'
-            ELSE 'SYSTEM_DEFAULT_20D'
-        END                                            AS HORIZON_SOURCE_CODE,
-
-        CASE
-            WHEN op.DAYS_HELD::FLOAT / NULLIF(
-                    CASE
-                        WHEN op.HOLD_UNTIL_INDEX IS NOT NULL AND op.ENTRY_INDEX IS NOT NULL
-                             AND (op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX) > 0
-                             THEN (op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX)::FLOAT
-                        ELSE :v_default_horizon_days::FLOAT
-                    END, 0) < 0.8 THEN 'ON_TRACK'
-            WHEN op.DAYS_HELD::FLOAT / NULLIF(
-                    CASE
-                        WHEN op.HOLD_UNTIL_INDEX IS NOT NULL AND op.ENTRY_INDEX IS NOT NULL
-                             AND (op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX) > 0
-                             THEN (op.HOLD_UNTIL_INDEX - op.ENTRY_INDEX)::FLOAT
-                        ELSE :v_default_horizon_days::FLOAT
-                    END, 0) <= 1.2 THEN 'SLOW'
-            ELSE 'STALE'
-        END                                            AS TIME_EFFICIENCY,
-
         /* ---- DISTANCE_TO_INVALIDATION_PCT and FRAGILITY ---- */
         CASE
             WHEN ns.LEVEL_PRICE IS NOT NULL AND lb.CLOSE IS NOT NULL AND lb.CLOSE > 0
@@ -351,14 +301,12 @@ BEGIN
         pm.COMPARABLE_DAYS                             AS PATH_COMPARABLE_DAYS,
         pm.HIGH_WATER_CLOSE                            AS PATH_HIGH_WATER_CLOSE,
         pm.LAST_CLOSE                                  AS PATH_LAST_CLOSE,
-        op.POSITION_IDENTITY_SOURCE                    AS POSITION_IDENTITY_SOURCE
+        op.POSITION_IDENTITY_SOURCE                    AS POSITION_IDENTITY_SOURCE,
+        op.IBKR_ACCOUNT_ID                             AS IBKR_ACCOUNT_ID,
+        op.QUANTITY                                    AS QUANTITY
     FROM open_positions op
-    LEFT JOIN proposal_link pl
-           ON pl.PORTFOLIO_ID = op.PORTFOLIO_ID
-          AND pl.SYMBOL = op.SYMBOL
-          AND pl.MARKET_TYPE = op.MARKET_TYPE
     LEFT JOIN committee_baseline_latest cb
-           ON cb.PROPOSAL_ID = pl.PROPOSAL_ID
+           ON cb.PROPOSAL_ID = op.LIVE_PROPOSAL_ID
     LEFT JOIN latest_bar_one lb
            ON lb.SYMBOL = op.SYMBOL
           AND lb.MARKET_TYPE = op.MARKET_TYPE
@@ -377,6 +325,7 @@ BEGIN
     /* ----------------------------------------------------------------
        Derive HEALTH_STATE, VERDICT, severity, and summaries from the
        staged dimension columns. Use precedence rules - no scoring.
+       Horizon-based TIME_EFFICIENCY rules removed in Phase 1.
        ---------------------------------------------------------------- */
     CREATE OR REPLACE TEMPORARY TABLE TMP_DAILY_POSITION_VERDICT_FINAL AS
     SELECT
@@ -387,9 +336,7 @@ BEGIN
                  AND s.REGIME_ALIGNMENT = 'ADVERSE'
                  AND s.FRAGILITY = 'FRAGILE' THEN 'BROKEN'
             WHEN s.THESIS_INTEGRITY = 'WEAKENING' AND s.FRAGILITY = 'FRAGILE' THEN 'BROKEN'
-            WHEN s.TIME_EFFICIENCY = 'STALE' AND s.FRAGILITY IN ('TIGHTENING', 'FRAGILE') THEN 'DRIFTING'
             WHEN s.PATH_QUALITY = 'DETERIORATING' THEN 'DRIFTING'
-            WHEN s.TIME_EFFICIENCY = 'SLOW' THEN 'SLOW'
             WHEN s.REGIME_ALIGNMENT = 'ADVERSE' THEN 'SLOW'
             WHEN s.PATH_QUALITY = 'NOISY' THEN 'SLOW'
             WHEN s.THESIS_INTEGRITY = 'ALIGNED' AND s.PATH_QUALITY = 'CONSTRUCTIVE' THEN 'STRENGTHENING'
@@ -398,7 +345,12 @@ BEGIN
     FROM TMP_DAILY_POSITION_VERDICT_STAGE s;
 
     /* ----------------------------------------------------------------
-       MERGE into the canonical table by (AS_OF_DATE, POSITION_EPISODE_KEY)
+       MERGE into the canonical table by (AS_OF_DATE, POSITION_EPISODE_KEY).
+
+       Horizon columns (EXPECTED_HORIZON_DAYS, HORIZON_SOURCE_CODE,
+       TIME_EFFICIENCY) are intentionally written as NULL on every
+       new live-anchored row. The columns themselves remain on the
+       table for one validation cycle and will be dropped in Phase 2.
        ---------------------------------------------------------------- */
     MERGE INTO MIP.APP.DAILY_POSITION_VERDICT tgt
     USING (
@@ -425,7 +377,7 @@ BEGIN
             THESIS_INTEGRITY,
             PATH_QUALITY,
             REGIME_ALIGNMENT,
-            TIME_EFFICIENCY,
+            CAST(NULL AS VARCHAR(20))                            AS TIME_EFFICIENCY,
             FRAGILITY,
 
             CASE
@@ -435,8 +387,8 @@ BEGIN
                 ELSE 'LOW'
             END                                                  AS SEVERITY,
 
-            EXPECTED_HORIZON_DAYS,
-            HORIZON_SOURCE_CODE,
+            CAST(NULL AS NUMBER(18,0))                           AS EXPECTED_HORIZON_DAYS,
+            CAST(NULL AS VARCHAR(30))                            AS HORIZON_SOURCE_CODE,
             DISTANCE_TO_INVALIDATION_PCT,
             UNREALIZED_PNL_PCT,
 
@@ -447,9 +399,7 @@ BEGIN
                      AND REGIME_ALIGNMENT = 'ADVERSE'
                      AND FRAGILITY = 'FRAGILE' THEN 'PATH_REGIME_FRAGILITY_BROKEN'
                 WHEN THESIS_INTEGRITY = 'WEAKENING' AND FRAGILITY = 'FRAGILE' THEN 'WEAKENING_AND_FRAGILE'
-                WHEN TIME_EFFICIENCY = 'STALE' AND FRAGILITY IN ('TIGHTENING', 'FRAGILE') THEN 'STALE_AND_TIGHT'
                 WHEN PATH_QUALITY = 'DETERIORATING' THEN 'PATH_DETERIORATING'
-                WHEN TIME_EFFICIENCY = 'SLOW' THEN 'TIME_EFFICIENCY_SLOW'
                 WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN 'REGIME_ADVERSE'
                 WHEN PATH_QUALITY = 'NOISY' THEN 'PATH_NOISY'
                 WHEN THESIS_INTEGRITY = 'ALIGNED' AND PATH_QUALITY = 'CONSTRUCTIVE' THEN 'THESIS_PATH_STRONG'
@@ -462,9 +412,7 @@ BEGIN
                      AND REGIME_ALIGNMENT = 'ADVERSE'
                      AND FRAGILITY = 'FRAGILE' THEN 'Position is deteriorating into adverse regime with thin invalidation cushion.'
                 WHEN THESIS_INTEGRITY = 'WEAKENING' AND FRAGILITY = 'FRAGILE' THEN 'Thesis weakening while invalidation cushion has thinned.'
-                WHEN TIME_EFFICIENCY = 'STALE' AND FRAGILITY IN ('TIGHTENING', 'FRAGILE') THEN 'Position has overstayed expected horizon and protection cushion is thinning.'
                 WHEN PATH_QUALITY = 'DETERIORATING' THEN 'Realized path since entry is deteriorating.'
-                WHEN TIME_EFFICIENCY = 'SLOW' THEN 'Position is slower than expected horizon to deliver thesis.'
                 WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN 'Macro and trend regime is adverse to the position direction.'
                 WHEN PATH_QUALITY = 'NOISY' THEN 'Path since entry has been choppy with no clear progress.'
                 WHEN THESIS_INTEGRITY = 'ALIGNED' AND PATH_QUALITY = 'CONSTRUCTIVE' THEN 'Thesis intact and realized path is constructive.'
@@ -474,7 +422,6 @@ BEGIN
             /* ---- OBSERVATION_SUMMARY: what we observe today ---- */
             'Held ' || DAYS_HELD || 'd. Path: ' || PATH_QUALITY
               || '. Regime: ' || REGIME_ALIGNMENT
-              || '. Time: ' || TIME_EFFICIENCY
               || '. Fragility: ' || FRAGILITY
               || '. Thesis: ' || THESIS_INTEGRITY
               || '. PnL ' || COALESCE(TO_VARCHAR(ROUND(UNREALIZED_PNL_PCT, 2)), 'n/a') || '%.'
@@ -494,9 +441,7 @@ BEGIN
                      AND REGIME_ALIGNMENT = 'ADVERSE'
                      AND FRAGILITY = 'FRAGILE' THEN 'Triple-confluence: deteriorating path, adverse regime, thin cushion.'
                 WHEN THESIS_INTEGRITY = 'WEAKENING' AND FRAGILITY = 'FRAGILE' THEN 'Weakening thesis combined with thin invalidation cushion.'
-                WHEN TIME_EFFICIENCY = 'STALE' AND FRAGILITY IN ('TIGHTENING', 'FRAGILE') THEN 'Held ' || DAYS_HELD || 'd vs expected ' || EXPECTED_HORIZON_DAYS || 'd; cushion thinning.'
                 WHEN PATH_QUALITY = 'DETERIORATING' THEN 'Realized closes trending downward since entry.'
-                WHEN TIME_EFFICIENCY = 'SLOW' THEN 'Held ' || DAYS_HELD || 'd vs expected ' || EXPECTED_HORIZON_DAYS || 'd.'
                 WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN 'Trend regime ' || COALESCE(TREND_REGIME_NOW, 'unknown') || ' opposes position direction.'
                 WHEN PATH_QUALITY = 'NOISY' THEN 'Up-day ratio low and net move negligible.'
                 WHEN THESIS_INTEGRITY = 'ALIGNED' AND PATH_QUALITY = 'CONSTRUCTIVE' THEN 'Structure ' || COALESCE(STRUCTURAL_STATE_NOW, 'unknown') || ' and path constructive.'
@@ -519,7 +464,8 @@ BEGIN
                 'path_high_water_close',        PATH_HIGH_WATER_CLOSE,
                 'path_last_close',              PATH_LAST_CLOSE,
                 'position_identity_source',     POSITION_IDENTITY_SOURCE,
-                'horizon_fallback',             HORIZON_SOURCE_CODE = 'SYSTEM_DEFAULT_20D'
+                'ibkr_account_id',              IBKR_ACCOUNT_ID,
+                'live_quantity',                QUANTITY
             )                                                    AS DETAIL_JSON,
 
             :v_engine_version                                    AS ENGINE_VERSION,

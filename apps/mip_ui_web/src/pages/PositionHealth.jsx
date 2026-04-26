@@ -115,8 +115,6 @@ const REASON_PHRASES = {
   INVALIDATION_PROXIMITY: 'Price is close to invalidation',
   REGIME_ADVERSE: 'Regime turned against the trade',
   PATH_DETERIORATING: 'Path quality is deteriorating',
-  TIME_STALE: 'Trade is past its expected horizon',
-  TIME_SLOW: 'Trade is developing slowly',
   PROFIT_HOLDING: 'Trade is on track and profitable',
   ON_TRACK: 'Developing as expected',
   STRENGTHENING: 'Setup is strengthening',
@@ -559,7 +557,6 @@ export default function PositionHealth() {
                             thesis:{r.REAL_THESIS_INTEGRITY || '—'} ·
                             path:{r.REAL_PATH_QUALITY || '—'} ·
                             regime:{r.REAL_REGIME_ALIGNMENT || '—'} ·
-                            time:{r.REAL_TIME_EFFICIENCY || '—'} ·
                             fragility:{r.REAL_FRAGILITY || '—'}
                           </div>
                           <div className="ph-detail-grid">
@@ -569,8 +566,6 @@ export default function PositionHealth() {
                               <div className="ph-detail-line"><b>Verdict:</b> {r.REAL_VERDICT_SUMMARY || '—'}</div>
                               <div className="ph-detail-line"><b>Why:</b> {r.REAL_WHY_SUMMARY || '—'}</div>
                               <div className="ph-detail-line ph-subtle">
-                                Horizon: {r.EXPECTED_HORIZON_DAYS != null ? `${r.EXPECTED_HORIZON_DAYS}d` : '—'}
-                                {r.HORIZON_SOURCE_CODE ? ` (${r.HORIZON_SOURCE_CODE})` : ''} ·
                                 Baseline: {r.REAL_BASELINE_QUALITY || '—'} ·
                                 Reason code: {r.REAL_PRIMARY_REASON_CODE || '—'}
                               </div>

@@ -3,12 +3,19 @@ Daily Position Health V1 - per-position payload builder.
 
 Builds a compact PositionPayload for each open position on AS_OF_DATE by:
   - reading deterministic verdict rows (DAILY_POSITION_VERDICT) so the
-    shadow agent sees the same structural / regime / horizon facts
-  - looking up committee baseline context (best-effort)
+    shadow agent sees the same structural / regime facts
+  - looking up committee baseline context via the live execution
+    lineage exposed in MIP.MART.V_LIVE_OPEN_POSITIONS (PROPOSAL_ID
+    sourced from MIP.LIVE.LIVE_ACTIONS, NOT from the legacy horizon
+    research book MIP.APP.PORTFOLIO_TRADES)
   - computing a 20-trading-day path summary from MARKET_BARS
 
 Inputs are read in 3 batched queries; per-position payloads are stitched
 in Python to avoid N+1 round trips.
+
+Phase 1 re-anchor (2026-04-26): horizon scoring fields
+(EXPECTED_HORIZON_DAYS, HORIZON_SOURCE_CODE, TIME_EFFICIENCY) are
+no longer projected into the payload or the shadow LLM prompt.
 """
 from __future__ import annotations
 
@@ -53,10 +60,7 @@ _VERDICT_ROWS_SQL = """
         v.THESIS_INTEGRITY,
         v.PATH_QUALITY,
         v.REGIME_ALIGNMENT,
-        v.TIME_EFFICIENCY,
         v.FRAGILITY,
-        v.EXPECTED_HORIZON_DAYS,
-        v.HORIZON_SOURCE_CODE,
         v.DISTANCE_TO_INVALIDATION_PCT,
         v.UNREALIZED_PNL_PCT,
         v.PRIMARY_REASON_CODE,
@@ -69,24 +73,18 @@ _VERDICT_ROWS_SQL = """
 
 
 # ---------------------------------------------------------------------------
-# 2) Committee baseline (best-effort)
+# 2) Committee baseline (best-effort) - sourced from the live execution
+#    lineage (V_LIVE_OPEN_POSITIONS.PROPOSAL_ID), NOT from PORTFOLIO_TRADES.
 # ---------------------------------------------------------------------------
 
 _BASELINE_SQL = """
-    WITH first_buy AS (
+    WITH live_props AS (
         SELECT
-            t.PORTFOLIO_ID,
-            t.SYMBOL,
-            t.PROPOSAL_ID,
-            ROW_NUMBER() OVER (
-                PARTITION BY t.PORTFOLIO_ID, t.SYMBOL
-                ORDER BY t.TRADE_TS ASC
-            ) AS RN
-        FROM MIP.APP.PORTFOLIO_TRADES t
-        WHERE t.SIDE = 'BUY' AND t.PROPOSAL_ID IS NOT NULL
-    ),
-    proposal_link AS (
-        SELECT PORTFOLIO_ID, SYMBOL, PROPOSAL_ID FROM first_buy WHERE RN = 1
+            PORTFOLIO_ID,
+            SYMBOL,
+            PROPOSAL_ID
+        FROM MIP.MART.V_LIVE_OPEN_POSITIONS
+        WHERE PROPOSAL_ID IS NOT NULL
     ),
     latest_decision AS (
         SELECT
@@ -107,7 +105,7 @@ _BASELINE_SQL = """
         d.STANCE,
         d.CONFIDENCE,
         d.CHAIR_OUTPUT_JSON
-    FROM proposal_link p
+    FROM live_props p
     LEFT JOIN latest_decision d
            ON d.PROPOSAL_ID = p.PROPOSAL_ID
           AND d.RN = 1
@@ -288,7 +286,6 @@ def build_position_payloads(
             thesis_integrity=v.get("THESIS_INTEGRITY"),
             path_quality=v.get("PATH_QUALITY"),
             regime_alignment=v.get("REGIME_ALIGNMENT"),
-            time_efficiency=v.get("TIME_EFFICIENCY"),
             fragility=v.get("FRAGILITY"),
             primary_reason_code=v.get("PRIMARY_REASON_CODE"),
             observation_summary=v.get("OBSERVATION_SUMMARY"),
@@ -306,8 +303,6 @@ def build_position_payloads(
                 entry_date=v["ENTRY_DATE"],
                 entry_price=float(v["ENTRY_PRICE"]) if v.get("ENTRY_PRICE") is not None else None,
                 days_held=int(v.get("DAYS_HELD") or 0),
-                expected_horizon_days=int(v["EXPECTED_HORIZON_DAYS"]) if v.get("EXPECTED_HORIZON_DAYS") is not None else None,
-                horizon_source_code=v.get("HORIZON_SOURCE_CODE"),
                 latest_close=float(latest_close) if latest_close is not None else None,
                 unrealized_pnl_pct=float(v["UNREALIZED_PNL_PCT"]) if v.get("UNREALIZED_PNL_PCT") is not None else None,
                 structural_state_now=structural_state_now,

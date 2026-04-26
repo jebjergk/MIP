@@ -58,7 +58,11 @@ class PathSummary:
 
 @dataclass
 class RealVerdictContext:
-    """The deterministic real verdict for the same position on AS_OF_DATE."""
+    """The deterministic real verdict for the same position on AS_OF_DATE.
+
+    Phase 1 re-anchor: horizon-based TIME_EFFICIENCY field is removed
+    because the verdict engine no longer derives it.
+    """
 
     verdict: str
     health_state: str
@@ -67,7 +71,6 @@ class RealVerdictContext:
     thesis_integrity: Optional[str] = None
     path_quality: Optional[str] = None
     regime_alignment: Optional[str] = None
-    time_efficiency: Optional[str] = None
     fragility: Optional[str] = None
     primary_reason_code: Optional[str] = None
     observation_summary: Optional[str] = None
@@ -76,7 +79,13 @@ class RealVerdictContext:
 
 @dataclass
 class PositionPayload:
-    """Complete per-position context handed to the Cortex agent."""
+    """Complete per-position context handed to the Cortex agent.
+
+    Phase 1 re-anchor: horizon scoring fields
+    (expected_horizon_days, horizon_source_code) are removed - the
+    shadow agent now reasons about live broker positions, not
+    horizon-based research positions.
+    """
 
     position_episode_key: str
     portfolio_id: int
@@ -87,8 +96,6 @@ class PositionPayload:
     entry_date: date
     entry_price: Optional[float]
     days_held: int
-    expected_horizon_days: Optional[int]
-    horizon_source_code: Optional[str]
     latest_close: Optional[float]
     unrealized_pnl_pct: Optional[float]
 
@@ -112,8 +119,6 @@ class PositionPayload:
                 "entry_date": self.entry_date.isoformat(),
                 "entry_price": self.entry_price,
                 "days_held": self.days_held,
-                "expected_horizon_days": self.expected_horizon_days,
-                "horizon_source": self.horizon_source_code,
                 "latest_close": self.latest_close,
                 "unrealized_pnl_pct": self.unrealized_pnl_pct,
             },
@@ -153,7 +158,6 @@ class PositionPayload:
                     "thesis_integrity": self.real_verdict_context.thesis_integrity,
                     "path_quality": self.real_verdict_context.path_quality,
                     "regime_alignment": self.real_verdict_context.regime_alignment,
-                    "time_efficiency": self.real_verdict_context.time_efficiency,
                     "fragility": self.real_verdict_context.fragility,
                     "primary_reason_code": self.real_verdict_context.primary_reason_code,
                     "observation_summary": self.real_verdict_context.observation_summary,

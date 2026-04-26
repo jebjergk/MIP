@@ -1,37 +1,47 @@
 """
-Position Health summary for the cockpit.
+Position Health summary for the cockpit (live-trade-intelligence shape).
 
-Cockpit-shaped flattening of MIP.MART.V_POSITION_HEALTH_COMPARISON_LATEST,
-merged with the intraday overlay so the operator sees one row per
-currently-open live position with:
+This module composes the cockpit's primary operational object: one row
+per currently-open live position, enriched with everything an operator
+needs to make a judgment without leaving the page:
 
-  * plain-English Why text
-  * a single Attention chip ("Needs review", "Shadow says exit",
-    "Watching", "Pending shadow", "—")
-  * Today status (from the intraday overlay; "Today OK" is **only**
-    used when the overlay actually evaluated this row — never for
-    UNAVAILABLE / MARKET_CLOSED / NO_LIVE_CHECK rows)
+  * broker truth          — qty, avg_cost, current_price, unrealized P&L
+                            (dollars + decimal-fraction percent)
+  * protective levels     — TP, SL (with trailing-stop awareness)
+  * thesis context        — invalidation level, distilled thesis lines
+  * structural verdicts   — daily real verdict + plain-English label
+  * shadow context        — relation chip (agrees / harsher / softer
+                            / wants out / pending), kept secondary
+  * intraday overlay      — today's status / change-from-open / bars
+  * plan status           — ON_PLAN | AT_RISK | OFF_PLAN | NO_PLAN
+                            (decoupled from the recommendation so the
+                             two columns answer different questions)
+  * recommendation        — HOLD | WATCH | REVIEW | SELL plus a 4-line
+                            framing ({plan, now, on_plan, advice})
+  * combined chart        — single trade_chart_series with both daily-
+                            since-entry and current-day 15m points,
+                            ordered ascending; session_open_ts marks
+                            the visual divider for the frontend.
 
-This module deliberately uses the live-gated mart view so legacy
-horizon/sim verdict rows never leak through.
-
-Action-bias semantics (spec refinement #2)
-------------------------------------------
-SHADOW_VERDICT='EXIT_REVIEW' alone is **not** treated as "exit now".
-The cockpit only shows "Shadow says exit" when SHADOW_ACTION_BIAS
-indicates a true exit-now bias (EXIT_NOW / EXIT_SOON / TRIM_NOW). When
-SHADOW_VERDICT='EXIT_REVIEW' but SHADOW_ACTION_BIAS is MONITOR/HOLD/None,
-the chip is "Shadow says review".
+P&L source rule
+---------------
+P&L is sourced exclusively from broker truth (V_LIVE_OPEN_POSITIONS via
+`trade_plan.py`). The legacy UNREALIZED_PNL_PCT in
+V_POSITION_HEALTH_COMPARISON_LATEST is in **percent points** (1.23 →
+1.23%); using it as if it were a fraction was the exact bug that made
+the cockpit untrustworthy. We recompute the percentage as a decimal
+fraction (0.0123) so the frontend can apply a single `* 100` formatter.
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.db import fetch_all, get_connection, serialize_row
 
 from app.services.cockpit.intraday_overlay import IntradayOverlayRow
+from app.services.cockpit.trade_plan import TradePlan, TradePlanIndex
 
 logger = logging.getLogger(__name__)
 
@@ -47,54 +57,84 @@ _EXIT_NOW_BIASES = {"EXIT_NOW", "EXIT_SOON", "TRIM_NOW"}
 
 @dataclass
 class PositionHealthSummaryRow:
+    # Identity
     position_episode_key: str
     portfolio_id: int
     symbol: str
-    side: Optional[str]
+    side: Optional[str]                # 'LONG' | 'SHORT'
     days_held: Optional[int]
-    unrealized_pnl_pct: Optional[float]
     entry_date: Optional[str]
+
+    # Broker truth (P&L canonical source)
+    quantity: Optional[float]
+    avg_cost: Optional[float]
+    current_price: Optional[float]
+    unrealized_pnl: Optional[float]    # dollars
+    unrealized_pnl_pct: Optional[float]  # DECIMAL fraction
+    market_value: Optional[float]
+
+    # Protective levels (LIVE_ORDERS)
+    tp_price: Optional[float]
+    tp_label: Optional[str]
+    sl_price: Optional[float]
+    sl_label: Optional[str]
+    sl_is_dynamic: bool
+
+    # Thesis (LIVE_ACTIONS)
+    invalidation_level: Optional[float]
+    supporting_level: Optional[float]
+    thesis_line: Optional[str]
+    expectation_line: Optional[str]
     distance_to_invalidation_pct: Optional[float]
 
+    # Real verdict (daily)
     real_verdict: Optional[str]
     real_health_state: Optional[str]
-    real_verdict_label: str            # plain English
+    real_verdict_label: str
 
+    # Shadow (kept secondary)
     shadow_verdict: Optional[str]
     shadow_action_bias: Optional[str]
     shadow_run_status: Optional[str]
-    shadow_verdict_label: str          # plain English
-    # Shadow relation to real verdict, used for the Shadow chip on
-    # the cockpit table. Values: AGREES | HARSHER | SOFTER | EXIT_NOW
-    # | PENDING | NO_SHADOW | FAILED.
-    shadow_relation: str
+    shadow_verdict_label: str
+    shadow_relation: str               # AGREES | HARSHER | SOFTER | EXIT_NOW | PENDING | NO_SHADOW | FAILED
     shadow_relation_label: str
     shadow_relation_level: str         # neutral | info | warning | critical
+    shadow_summary_text: str
 
-    why_text: str
-    attention_label: str
-    attention_level: str               # neutral | info | warning | critical
-
+    # Intraday overlay
     intraday_status: Optional[str]
     intraday_action: Optional[str]
     intraday_reason: Optional[str]
-    today_label: str                   # short plain-English status
-    today_level: str                   # neutral | info | warning | critical
+    today_label: str
+    today_level: str
     today_change_pct: Optional[float]
     today_open: Optional[float]
     last_price: Optional[float]
+    intraday_summary_text: str
+
+    # Why text (legacy short reason)
+    why_text: str
+
+    # Plan status (decoupled from recommendation)
+    plan_status: str                   # ON_PLAN | AT_RISK | OFF_PLAN | NO_PLAN
+    plan_status_label: str
+    plan_status_level: str             # ok | warning | critical | neutral
+
+    # Recommendation
+    recommendation: str                # HOLD | WATCH | REVIEW | SELL
+    recommendation_label: str
+    recommendation_level: str          # ok | info | warning | critical
+    recommendation_text: str
+    recommendation_framing: Dict[str, str] = field(default_factory=dict)
+
+    # Combined trade chart (single series, segmented by `kind`)
+    trade_chart_series: List[Dict[str, Any]] = field(default_factory=list)
+    session_open_ts: Optional[str] = None
 
     # Long-form text for the inline expand panel.
-    real_summary_text: str
-    shadow_summary_text: str
-    intraday_summary_text: str
-    invalidation_summary_text: str
-    recommendation_text: str
-
-    # Chart-ready series for the inline expand panel. Both are
-    # JSON-friendly lists of dicts; never None.
-    intraday_bars: List[Dict[str, Any]] = field(default_factory=list)
-    daily_since_entry: List[Dict[str, Any]] = field(default_factory=list)
+    real_summary_text: str = ""
+    invalidation_summary_text: str = ""
 
     @property
     def has_shadow_exit_now_bias(self) -> bool:
@@ -107,8 +147,22 @@ class PositionHealthSummaryRow:
             "symbol": self.symbol,
             "side": self.side,
             "days_held": self.days_held,
-            "unrealized_pnl_pct": self.unrealized_pnl_pct,
             "entry_date": self.entry_date,
+            "quantity": self.quantity,
+            "avg_cost": self.avg_cost,
+            "current_price": self.current_price,
+            "unrealized_pnl": self.unrealized_pnl,
+            "unrealized_pnl_pct": self.unrealized_pnl_pct,
+            "market_value": self.market_value,
+            "tp_price": self.tp_price,
+            "tp_label": self.tp_label,
+            "sl_price": self.sl_price,
+            "sl_label": self.sl_label,
+            "sl_is_dynamic": self.sl_is_dynamic,
+            "invalidation_level": self.invalidation_level,
+            "supporting_level": self.supporting_level,
+            "thesis_line": self.thesis_line,
+            "expectation_line": self.expectation_line,
             "distance_to_invalidation_pct": self.distance_to_invalidation_pct,
             "real_verdict": self.real_verdict,
             "real_health_state": self.real_health_state,
@@ -120,9 +174,7 @@ class PositionHealthSummaryRow:
             "shadow_relation": self.shadow_relation,
             "shadow_relation_label": self.shadow_relation_label,
             "shadow_relation_level": self.shadow_relation_level,
-            "why_text": self.why_text,
-            "attention_label": self.attention_label,
-            "attention_level": self.attention_level,
+            "shadow_summary_text": self.shadow_summary_text,
             "intraday_status": self.intraday_status,
             "intraday_action": self.intraday_action,
             "intraday_reason": self.intraday_reason,
@@ -131,21 +183,26 @@ class PositionHealthSummaryRow:
             "today_change_pct": self.today_change_pct,
             "today_open": self.today_open,
             "last_price": self.last_price,
-            "real_summary_text": self.real_summary_text,
-            "shadow_summary_text": self.shadow_summary_text,
             "intraday_summary_text": self.intraday_summary_text,
-            "invalidation_summary_text": self.invalidation_summary_text,
+            "why_text": self.why_text,
+            "plan_status": self.plan_status,
+            "plan_status_label": self.plan_status_label,
+            "plan_status_level": self.plan_status_level,
+            "recommendation": self.recommendation,
+            "recommendation_label": self.recommendation_label,
+            "recommendation_level": self.recommendation_level,
             "recommendation_text": self.recommendation_text,
-            "intraday_bars": self.intraday_bars,
-            "daily_since_entry": self.daily_since_entry,
+            "recommendation_framing": self.recommendation_framing,
+            "trade_chart_series": self.trade_chart_series,
+            "session_open_ts": self.session_open_ts,
+            "real_summary_text": self.real_summary_text,
+            "invalidation_summary_text": self.invalidation_summary_text,
         }
 
 
 # --- SQL --------------------------------------------------------------------
 
-# Pull only what the cockpit needs. AGREEMENT_LABEL is computed in the
-# view but we also surface SHADOW_ACTION_BIAS so the cockpit can use the
-# more precise action-bias semantics for "exit now" urgency.
+
 _COMPARISON_SQL = """
     SELECT
         c.POSITION_EPISODE_KEY,
@@ -190,6 +247,8 @@ _SHADOW_VERDICT_LABELS = {
     "EXIT_REVIEW": "Shadow: Exit review",
 }
 
+_VERDICT_ORDER = {"KEEP": 0, "WATCH": 1, "EXIT_REVIEW": 2}
+
 
 def _real_verdict_label(verdict: Optional[str]) -> str:
     return _VERDICT_LABELS.get((verdict or "").upper(), verdict or "—")
@@ -207,12 +266,8 @@ def _shadow_verdict_label(verdict: Optional[str], run_status: Optional[str]) -> 
 
 
 def _why_text(row: Dict[str, Any]) -> str:
-    """One short sentence explaining the dominant signal. Prefers the
-    daily real WHY_SUMMARY when present, else falls back to a code-based
-    sentence."""
     real_summary = (row.get("REAL_WHY_SUMMARY") or "").strip()
     if real_summary:
-        # Daily real WHY_SUMMARY is already operator-tone and short.
         return real_summary[:200]
     verdict = (row.get("REAL_VERDICT") or "").upper()
     code = (row.get("REAL_PRIMARY_REASON_CODE") or "").upper()
@@ -225,69 +280,13 @@ def _why_text(row: Dict[str, Any]) -> str:
     return "No verdict yet."
 
 
-def _attention(
-    *,
-    real_verdict: Optional[str],
-    shadow_verdict: Optional[str],
-    shadow_action_bias: Optional[str],
-    shadow_run_status: Optional[str],
-    intraday_action: Optional[str],
-) -> tuple[str, str]:
-    """
-    Compute (attention_label, attention_level). Order of precedence:
-      1. Intraday SELL_NOW           → critical "Sell now (intraday)"
-      2. Intraday REVIEW_NOW         → warning  "Review (intraday)"
-      3. Real EXIT_REVIEW            → warning  "Needs review"
-      4. Shadow exit-now bias        → warning  "Shadow says exit"
-      5. Shadow EXIT_REVIEW (no bias)→ info     "Shadow says review"
-      6. Intraday WATCH_NOW          → info     "Watching"
-      7. Real WATCH                  → info     "Watching"
-      8. Pending shadow              → info     "Pending shadow"
-      9. otherwise                   → neutral  "—"
-    """
-    rv = (real_verdict or "").upper()
-    sv = (shadow_verdict or "").upper()
-    sab = (shadow_action_bias or "").upper()
-    srs = (shadow_run_status or "").upper()
-    ia = (intraday_action or "").upper()
-
-    if ia == "SELL_NOW":
-        return ("Sell now (intraday)", "critical")
-    if ia == "REVIEW_NOW":
-        return ("Review (intraday)", "warning")
-    if rv == "EXIT_REVIEW":
-        return ("Needs review", "warning")
-    if sab in _EXIT_NOW_BIASES:
-        return ("Shadow says exit", "warning")
-    if sv == "EXIT_REVIEW":
-        return ("Shadow says review", "info")
-    if ia == "WATCH_NOW":
-        return ("Watching", "info")
-    if rv == "WATCH":
-        return ("Watching", "info")
-    if not sv and srs in {"PENDING", "RUNNING", "QUEUED", ""}:
-        # No shadow result yet — surface so operators don't mistake "no
-        # disagreement" for "no shadow run".
-        return ("Pending shadow", "info") if srs else ("—", "neutral")
-    return ("—", "neutral")
-
-
-_VERDICT_ORDER = {"KEEP": 0, "WATCH": 1, "EXIT_REVIEW": 2}
-
-
 def _shadow_relation(
     *,
     real_verdict: Optional[str],
     shadow_verdict: Optional[str],
     shadow_action_bias: Optional[str],
     shadow_run_status: Optional[str],
-) -> tuple[str, str, str]:
-    """
-    Compute (relation_code, relation_label, level).
-
-    Code values are stable so the frontend can style chips off of them:
-        AGREES | HARSHER | SOFTER | EXIT_NOW | PENDING | NO_SHADOW | FAILED
-    """
+) -> Tuple[str, str, str]:
     rv = (real_verdict or "").upper()
     sv = (shadow_verdict or "").upper()
     sab = (shadow_action_bias or "").upper()
@@ -351,46 +350,7 @@ def _invalidation_text(distance_pct: Optional[float]) -> str:
     return f"Healthy cushion: {v:.1f}% to invalidation."
 
 
-def _recommendation_text(
-    *,
-    real_verdict: Optional[str],
-    shadow_relation: str,
-    intraday_action: Optional[str],
-) -> str:
-    """One operator-tone sentence summarising the stance. Deterministic
-    on inputs so it's reproducible."""
-    rv = (real_verdict or "").upper()
-    ia = (intraday_action or "").upper()
-
-    if ia == "SELL_NOW":
-        return "Manual exit advisable — intraday breakdown stacked on a cautious daily verdict."
-    if ia == "REVIEW_NOW":
-        return "Review now — meaningful intraday deterioration today."
-    if rv == "EXIT_REVIEW":
-        if ia == "WATCH_NOW":
-            return "Reduce or exit on plan — daily exit-review and today softening."
-        return "Reduce or exit on plan — daily verdict says exit-review."
-    if shadow_relation == "EXIT_NOW":
-        return "Hold but escalate — shadow is biased to exit even if daily is calmer."
-    if rv == "WATCH":
-        if ia == "WATCH_NOW":
-            return "Watch closely — daily watch and today mildly weaker."
-        if ia == "HOLD":
-            return "Hold and watch — daily watch but today stable."
-        return "Watch closely — daily verdict is on watch."
-    if rv == "KEEP":
-        if ia == "WATCH_NOW":
-            return "Hold — daily keep, but watch today for further weakness."
-        return "Hold — daily keep and today stable."
-    return "Hold — no material concern in current data."
-
-
-def _today_chip(intraday_row: Optional[IntradayOverlayRow]) -> tuple[str, str]:
-    """
-    Map the intraday overlay row into a short Today chip. Critically,
-    we never return "Today OK" when the overlay didn't actually
-    evaluate this row.
-    """
+def _today_chip(intraday_row: Optional[IntradayOverlayRow]) -> Tuple[str, str]:
     if intraday_row is None:
         return ("No live check", "neutral")
     status = (intraday_row.intraday_status or "").upper()
@@ -409,6 +369,283 @@ def _today_chip(intraday_row: Optional[IntradayOverlayRow]) -> tuple[str, str]:
     if status == "CONSTRUCTIVE":
         return ("Today constructive", "info")
     return ("Today OK", "neutral")
+
+
+# --- Plan-status / recommendation derivation --------------------------------
+
+# Plan status answers: "Are we still on plan?"
+# Recommendation answers: "What should we do right now?"
+# These are deliberately decoupled — a position can be on-plan and still
+# warrant Watch (e.g. early signs of softening), and one can be off-plan
+# and still rate Hold (e.g. invalidation breached but no live data).
+
+
+def _plan_status(
+    *,
+    real_verdict: Optional[str],
+    intraday_action: Optional[str],
+    pnl_pct: Optional[float],
+    distance_pct: Optional[float],
+) -> Tuple[str, str, str]:
+    """Returns (code, label, level)."""
+    rv = (real_verdict or "").upper()
+    ia = (intraday_action or "").upper()
+
+    if not rv:
+        return ("NO_PLAN", "No plan yet", "neutral")
+
+    off_plan = (
+        rv == "EXIT_REVIEW"
+        or ia in ("REVIEW_NOW", "SELL_NOW")
+        or (distance_pct is not None and distance_pct < 0)
+        or (pnl_pct is not None and pnl_pct < -0.03)
+    )
+    if off_plan:
+        return ("OFF_PLAN", "Off plan", "critical")
+
+    at_risk = (
+        rv == "WATCH"
+        or ia == "WATCH_NOW"
+        or (distance_pct is not None and distance_pct < 1.5)
+        or (pnl_pct is not None and -0.03 <= pnl_pct < -0.015)
+    )
+    if at_risk:
+        return ("AT_RISK", "At risk", "warning")
+
+    return ("ON_PLAN", "On plan", "ok")
+
+
+_RECOMMENDATION_LABELS = {
+    "SELL": ("Sell now", "critical"),
+    "REVIEW": ("Review now", "warning"),
+    "WATCH": ("Watch closely", "info"),
+    "HOLD": ("Hold", "ok"),
+}
+
+
+def _recommendation(
+    *,
+    real_verdict: Optional[str],
+    intraday_action: Optional[str],
+    shadow_relation_code: str,
+) -> Tuple[str, str, str]:
+    """Returns (code, label, level)."""
+    rv = (real_verdict or "").upper()
+    ia = (intraday_action or "").upper()
+
+    if ia == "SELL_NOW":
+        code = "SELL"
+    elif ia == "REVIEW_NOW" or rv == "EXIT_REVIEW":
+        code = "REVIEW"
+    elif ia == "WATCH_NOW" or rv == "WATCH" or shadow_relation_code == "EXIT_NOW":
+        code = "WATCH"
+    else:
+        code = "HOLD"
+
+    label, level = _RECOMMENDATION_LABELS[code]
+    return code, label, level
+
+
+def _recommendation_text_for(
+    *,
+    code: str,
+    real_verdict: Optional[str],
+    intraday_action: Optional[str],
+    shadow_relation_code: str,
+) -> str:
+    rv = (real_verdict or "").upper()
+    ia = (intraday_action or "").upper()
+    if code == "SELL":
+        return "Manual exit advisable — intraday breakdown stacked on a cautious daily verdict."
+    if code == "REVIEW":
+        if ia == "REVIEW_NOW" and rv == "EXIT_REVIEW":
+            return "Review and act — daily exit-review and intraday deterioration today."
+        if ia == "REVIEW_NOW":
+            return "Review now — meaningful intraday deterioration today."
+        return "Reduce or exit on plan — daily verdict says exit-review."
+    if code == "WATCH":
+        if shadow_relation_code == "EXIT_NOW":
+            return "Watch closely — shadow is biased to exit; daily is calmer."
+        if ia == "WATCH_NOW" and rv == "WATCH":
+            return "Watch closely — daily watch and today softening."
+        if ia == "WATCH_NOW":
+            return "Watch today — daily verdict still constructive."
+        return "Watch closely — daily verdict is on watch."
+    if rv == "KEEP":
+        return "Hold — daily keep and today stable."
+    return "Hold — no material concern in current data."
+
+
+def _format_money(v: Optional[float]) -> str:
+    if v is None:
+        return "—"
+    try:
+        return f"${float(v):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _format_pct(v: Optional[float], dp: int = 2) -> str:
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v) * 100:+.{dp}f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _build_recommendation_framing(
+    *,
+    symbol: str,
+    direction: Optional[str],
+    quantity: Optional[float],
+    avg_cost: Optional[float],
+    current_price: Optional[float],
+    pnl_pct: Optional[float],
+    today_change_pct: Optional[float],
+    tp_price: Optional[float],
+    sl_price: Optional[float],
+    sl_label: Optional[str],
+    invalidation_level: Optional[float],
+    real_verdict_label: str,
+    plan_status_code: str,
+    distance_pct: Optional[float],
+    recommendation_text: str,
+) -> Dict[str, str]:
+    """The 4-line framing the cockpit displays under the trade panel:
+
+      plan    — what we set out to do
+      now     — what is happening right now
+      on_plan — are we still on plan
+      advice  — one plain-English action stance
+    """
+    side = (direction or "").lower() or "position"
+    qty_text = (
+        f"{abs(int(quantity))}" if quantity is not None and quantity == int(quantity)
+        else (f"{abs(float(quantity)):.4f}" if quantity is not None else "—")
+    )
+    avg_text = _format_money(avg_cost)
+    tp_text = _format_money(tp_price)
+    sl_text = _format_money(sl_price)
+    inv_text = _format_money(invalidation_level)
+
+    if avg_cost is not None and (tp_price is not None or sl_price is not None or invalidation_level is not None):
+        sl_part_label = (sl_label or "stop").lower()
+        sl_part = (
+            f"{sl_part_label} {sl_text}" if sl_price is not None
+            else (f"invalidation {inv_text}" if invalidation_level is not None else "no stop set")
+        )
+        tp_part = f"target {tp_text}" if tp_price is not None else "no target set"
+        plan = f"{side.title()} {qty_text} {symbol} from {avg_text}; {tp_part}; {sl_part}."
+    else:
+        plan = f"{side.title()} {qty_text} {symbol} held — no structured plan recorded."
+
+    last_text = _format_money(current_price)
+    pnl_text = _format_pct(pnl_pct)
+    today_text = _format_pct(today_change_pct)
+    now = (
+        f"Last {last_text} ({pnl_text}); today {today_text} from open. "
+        f"Daily verdict: {real_verdict_label}."
+    )
+
+    if plan_status_code == "ON_PLAN":
+        on_plan = "Yes — daily verdict still constructive and price holding."
+    elif plan_status_code == "AT_RISK":
+        if distance_pct is not None and distance_pct < 1.5:
+            on_plan = f"Mostly — only {distance_pct:.1f}% cushion to invalidation."
+        else:
+            on_plan = "Mostly — verdict softening or P&L drawing down."
+    elif plan_status_code == "OFF_PLAN":
+        if distance_pct is not None and distance_pct < 0:
+            on_plan = f"No — through invalidation by {abs(distance_pct):.1f}%."
+        else:
+            on_plan = "No — daily verdict or intraday signal says exit-review."
+    else:
+        on_plan = "Plan not yet established."
+
+    return {
+        "plan": plan,
+        "now": now,
+        "on_plan": on_plan,
+        "advice": recommendation_text,
+    }
+
+
+# --- Combined trade chart series -------------------------------------------
+
+
+def _build_trade_chart_series(
+    *,
+    daily_bars: List[Dict[str, Any]],
+    intraday_bars: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Build a single chronological series suitable for one chart that
+    shows daily-since-entry continuing into today's 15m structure.
+
+    Each output entry has:
+      kind   : 'DAILY' | 'INTRADAY'
+      ts     : ISO-ish timestamp (daily uses '<date>T16:00:00')
+      label  : display label (daily 'MMM DD', intraday 'HH:MM')
+      close  : numeric close
+      date   : ISO date for the bar (helps the frontend group)
+
+    The intraday segment supersedes any daily entry on the same date,
+    so today's daily bar (if present) is dropped in favour of the live
+    15m points. `session_open_ts` is the timestamp of the first
+    intraday bar — the frontend draws it as a vertical divider.
+    """
+    today_date: Optional[str] = None
+    intraday_normalized: List[Dict[str, Any]] = []
+    for b in intraday_bars or []:
+        ts = b.get("ts")
+        close = b.get("close")
+        if ts is None or close is None:
+            continue
+        try:
+            close_f = float(close)
+        except (TypeError, ValueError):
+            continue
+        ts_str = str(ts)
+        date_part = ts_str[:10]
+        time_part = ts_str[11:16] if len(ts_str) >= 16 else ts_str
+        if today_date is None:
+            today_date = date_part
+        intraday_normalized.append({
+            "kind": "INTRADAY",
+            "ts": ts_str,
+            "label": time_part,
+            "close": close_f,
+            "date": date_part,
+        })
+
+    daily_normalized: List[Dict[str, Any]] = []
+    for d in daily_bars or []:
+        date = d.get("date")
+        close = d.get("close")
+        if date is None or close is None:
+            continue
+        try:
+            close_f = float(close)
+        except (TypeError, ValueError):
+            continue
+        date_str = str(date)[:10]
+        if today_date is not None and date_str == today_date:
+            continue
+        daily_normalized.append({
+            "kind": "DAILY",
+            "ts": f"{date_str}T16:00:00",
+            "label": date_str,
+            "close": close_f,
+            "date": date_str,
+        })
+
+    daily_normalized.sort(key=lambda x: x["ts"])
+    intraday_normalized.sort(key=lambda x: x["ts"])
+
+    series = daily_normalized + intraday_normalized
+    session_open_ts = intraday_normalized[0]["ts"] if intraday_normalized else None
+    return series, session_open_ts
 
 
 # --- Implementation ---------------------------------------------------------
@@ -433,16 +670,19 @@ def build_position_health_summary(
     intraday_rows: Optional[List[IntradayOverlayRow]] = None,
     entry_dates_by_key: Optional[Dict[str, str]] = None,
     daily_bars_by_symbol: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    trade_plans: Optional[TradePlanIndex] = None,
 ) -> List[PositionHealthSummaryRow]:
     """
-    Return one summary row per currently-open live position. Rows are
-    ordered with the most attention-worthy first.
+    Return one trade-intelligence row per currently-open live position.
+    Rows are ordered with the most attention-worthy first.
 
-    `entry_dates_by_key` and `daily_bars_by_symbol` are supplied by the
-    caller (overview composer) so the inline expand panel can chart
-    daily-since-entry without each row issuing its own query.
+    `entry_dates_by_key`, `daily_bars_by_symbol`, and `trade_plans` are
+    supplied by the caller (overview composer) so this function never
+    re-queries data that's already loaded for other parts of the
+    cockpit payload.
     """
     rows = _query_rows(_COMPARISON_SQL, {"portfolio_id": int(portfolio_id)})
+
     intraday_by_key: Dict[str, IntradayOverlayRow] = {}
     for ir in intraday_rows or []:
         if ir.position_episode_key:
@@ -450,22 +690,18 @@ def build_position_health_summary(
 
     entry_dates_by_key = entry_dates_by_key or {}
     daily_bars_by_symbol = daily_bars_by_symbol or {}
+    plans = trade_plans or TradePlanIndex()
 
     out: List[PositionHealthSummaryRow] = []
     for r in rows:
         key = str(r.get("POSITION_EPISODE_KEY") or "")
         symbol = str(r.get("SYMBOL") or "").upper()
-        side = r.get("SIDE")
+        side_view = r.get("SIDE")
         days_held_raw = r.get("DAYS_HELD")
         try:
             days_held = int(days_held_raw) if days_held_raw is not None else None
         except (TypeError, ValueError):
             days_held = None
-
-        try:
-            pnl_pct = float(r["UNREALIZED_PNL_PCT"]) if r.get("UNREALIZED_PNL_PCT") is not None else None
-        except (TypeError, ValueError):
-            pnl_pct = None
 
         try:
             distance_pct = (
@@ -474,6 +710,38 @@ def build_position_health_summary(
             )
         except (TypeError, ValueError):
             distance_pct = None
+
+        plan = plans.get(symbol)
+
+        # Broker-truth P&L (canonical). Falls back to view value only if
+        # broker data is entirely absent for the symbol.
+        if plan is not None:
+            quantity = plan.quantity
+            avg_cost = plan.avg_cost
+            current_price = plan.current_price
+            unrealized_pnl = plan.unrealized_pnl
+            unrealized_pnl_pct = plan.unrealized_pnl_pct
+            market_value = plan.market_value
+            tp_price = plan.tp_price
+            tp_label = plan.tp_label
+            sl_price = plan.sl_price
+            sl_label = plan.sl_label
+            sl_is_dynamic = plan.sl_is_dynamic
+            invalidation_level = plan.invalidation_level
+            supporting_level = plan.supporting_level
+            thesis_line = plan.thesis_line
+            expectation_line = plan.expectation_line
+            side = plan.direction or side_view
+        else:
+            quantity = avg_cost = current_price = None
+            unrealized_pnl = market_value = None
+            unrealized_pnl_pct = None
+            tp_price = sl_price = None
+            tp_label = sl_label = None
+            sl_is_dynamic = False
+            invalidation_level = supporting_level = None
+            thesis_line = expectation_line = None
+            side = side_view
 
         intraday = intraday_by_key.get(key)
         intraday_action = intraday.intraday_action if intraday else None
@@ -488,13 +756,8 @@ def build_position_health_summary(
         last_price = intraday.last_price if intraday else None
         intraday_bars = list(intraday.bars) if intraday and intraday.bars else []
 
-        attention_label, attention_level = _attention(
-            real_verdict=r.get("REAL_VERDICT"),
-            shadow_verdict=r.get("SHADOW_VERDICT"),
-            shadow_action_bias=r.get("SHADOW_ACTION_BIAS"),
-            shadow_run_status=r.get("SHADOW_RUN_STATUS"),
-            intraday_action=intraday_action,
-        )
+        if last_price is not None:
+            current_price = last_price
 
         relation_code, relation_label, relation_level = _shadow_relation(
             real_verdict=r.get("REAL_VERDICT"),
@@ -505,10 +768,46 @@ def build_position_health_summary(
 
         today_label, today_level = _today_chip(intraday)
 
-        recommendation = _recommendation_text(
+        plan_status_code, plan_status_label, plan_status_level = _plan_status(
             real_verdict=r.get("REAL_VERDICT"),
-            shadow_relation=relation_code,
             intraday_action=intraday_action,
+            pnl_pct=unrealized_pnl_pct,
+            distance_pct=distance_pct,
+        )
+
+        rec_code, rec_label, rec_level = _recommendation(
+            real_verdict=r.get("REAL_VERDICT"),
+            intraday_action=intraday_action,
+            shadow_relation_code=relation_code,
+        )
+        rec_text = _recommendation_text_for(
+            code=rec_code,
+            real_verdict=r.get("REAL_VERDICT"),
+            intraday_action=intraday_action,
+            shadow_relation_code=relation_code,
+        )
+
+        chart_series, session_open_ts = _build_trade_chart_series(
+            daily_bars=daily_bars_by_symbol.get(symbol, []),
+            intraday_bars=intraday_bars,
+        )
+
+        framing = _build_recommendation_framing(
+            symbol=symbol,
+            direction=side,
+            quantity=quantity,
+            avg_cost=avg_cost,
+            current_price=current_price,
+            pnl_pct=unrealized_pnl_pct,
+            today_change_pct=today_change_pct,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            sl_label=sl_label,
+            invalidation_level=invalidation_level,
+            real_verdict_label=_real_verdict_label(r.get("REAL_VERDICT")),
+            plan_status_code=plan_status_code,
+            distance_pct=distance_pct,
+            recommendation_text=rec_text,
         )
 
         out.append(
@@ -518,8 +817,22 @@ def build_position_health_summary(
                 symbol=symbol,
                 side=side,
                 days_held=days_held,
-                unrealized_pnl_pct=pnl_pct,
                 entry_date=entry_dates_by_key.get(key),
+                quantity=quantity,
+                avg_cost=avg_cost,
+                current_price=current_price,
+                unrealized_pnl=unrealized_pnl,
+                unrealized_pnl_pct=unrealized_pnl_pct,
+                market_value=market_value,
+                tp_price=tp_price,
+                tp_label=tp_label,
+                sl_price=sl_price,
+                sl_label=sl_label,
+                sl_is_dynamic=sl_is_dynamic,
+                invalidation_level=invalidation_level,
+                supporting_level=supporting_level,
+                thesis_line=thesis_line,
+                expectation_line=expectation_line,
                 distance_to_invalidation_pct=distance_pct,
                 real_verdict=r.get("REAL_VERDICT"),
                 real_health_state=r.get("REAL_HEALTH_STATE"),
@@ -533,9 +846,7 @@ def build_position_health_summary(
                 shadow_relation=relation_code,
                 shadow_relation_label=relation_label,
                 shadow_relation_level=relation_level,
-                why_text=_why_text(r),
-                attention_label=attention_label,
-                attention_level=attention_level,
+                shadow_summary_text=_shadow_summary_text(r),
                 intraday_status=intraday_status,
                 intraday_action=intraday_action,
                 intraday_reason=intraday_reason,
@@ -544,13 +855,20 @@ def build_position_health_summary(
                 today_change_pct=today_change_pct,
                 today_open=today_open_val,
                 last_price=last_price,
-                real_summary_text=_real_summary_text(r),
-                shadow_summary_text=_shadow_summary_text(r),
                 intraday_summary_text=intraday_summary_text,
+                why_text=_why_text(r),
+                plan_status=plan_status_code,
+                plan_status_label=plan_status_label,
+                plan_status_level=plan_status_level,
+                recommendation=rec_code,
+                recommendation_label=rec_label,
+                recommendation_level=rec_level,
+                recommendation_text=rec_text,
+                recommendation_framing=framing,
+                trade_chart_series=chart_series,
+                session_open_ts=session_open_ts,
+                real_summary_text=_real_summary_text(r),
                 invalidation_summary_text=_invalidation_text(distance_pct),
-                recommendation_text=recommendation,
-                intraday_bars=intraday_bars,
-                daily_since_entry=list(daily_bars_by_symbol.get(symbol, [])),
             )
         )
 
@@ -558,18 +876,25 @@ def build_position_health_summary(
     return out
 
 
-_ATTENTION_RANK = {
-    "critical": 0,
-    "warning": 1,
-    "info": 2,
-    "neutral": 3,
+_PLAN_STATUS_RANK = {
+    "OFF_PLAN": 0,
+    "AT_RISK": 1,
+    "NO_PLAN": 2,
+    "ON_PLAN": 3,
+}
+
+_RECOMMENDATION_RANK = {
+    "SELL": 0,
+    "REVIEW": 1,
+    "WATCH": 2,
+    "HOLD": 3,
 }
 
 
 def _attention_sort_key(row: PositionHealthSummaryRow) -> tuple:
     return (
-        _ATTENTION_RANK.get(row.attention_level, 9),
-        _ATTENTION_RANK.get(row.today_level, 9),
+        _RECOMMENDATION_RANK.get(row.recommendation, 9),
+        _PLAN_STATUS_RANK.get(row.plan_status, 9),
         -(row.days_held or 0),
         row.symbol,
     )

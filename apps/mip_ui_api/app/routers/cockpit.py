@@ -54,6 +54,23 @@ class LivePortfolioOverview(BaseModel):
     freshness_ts: Optional[str] = None
 
 
+class MarketPulseSparklinePoint(BaseModel):
+    ts: str
+    close: float
+
+
+class MarketPulseMover(BaseModel):
+    symbol: Optional[str] = None
+    day_return_pct: Optional[float] = None
+    last_close: Optional[float] = None
+    sparkline: List[MarketPulseSparklinePoint] = Field(default_factory=list)
+
+
+class MarketPulseIndexPoint(BaseModel):
+    ts: str
+    index_return_pct: float
+
+
 class MarketPulseCompact(BaseModel):
     available: bool
     market_type: Optional[str] = None
@@ -67,6 +84,24 @@ class MarketPulseCompact(BaseModel):
     pulse_label: Optional[str] = None
     direction: Optional[str] = None
     error: Optional[str] = None
+    index_series: List[MarketPulseIndexPoint] = Field(default_factory=list)
+    top_movers: List[MarketPulseMover] = Field(default_factory=list)
+    bottom_movers: List[MarketPulseMover] = Field(default_factory=list)
+
+
+class TradeChartPoint(BaseModel):
+    kind: str            # 'DAILY' | 'INTRADAY'
+    ts: str
+    label: str
+    close: float
+    date: str
+
+
+class RecommendationFraming(BaseModel):
+    plan: str
+    now: str
+    on_plan: str
+    advice: str
 
 
 class PositionHealthSummaryRowModel(BaseModel):
@@ -75,12 +110,31 @@ class PositionHealthSummaryRowModel(BaseModel):
     symbol: str
     side: Optional[str] = None
     days_held: Optional[int] = None
-    unrealized_pnl_pct: Optional[float] = None
     entry_date: Optional[str] = None
+
+    quantity: Optional[float] = None
+    avg_cost: Optional[float] = None
+    current_price: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    unrealized_pnl_pct: Optional[float] = None
+    market_value: Optional[float] = None
+
+    tp_price: Optional[float] = None
+    tp_label: Optional[str] = None
+    sl_price: Optional[float] = None
+    sl_label: Optional[str] = None
+    sl_is_dynamic: bool = False
+
+    invalidation_level: Optional[float] = None
+    supporting_level: Optional[float] = None
+    thesis_line: Optional[str] = None
+    expectation_line: Optional[str] = None
     distance_to_invalidation_pct: Optional[float] = None
+
     real_verdict: Optional[str] = None
     real_health_state: Optional[str] = None
     real_verdict_label: str
+
     shadow_verdict: Optional[str] = None
     shadow_action_bias: Optional[str] = None
     shadow_run_status: Optional[str] = None
@@ -88,9 +142,8 @@ class PositionHealthSummaryRowModel(BaseModel):
     shadow_relation: str
     shadow_relation_label: str
     shadow_relation_level: str
-    why_text: str
-    attention_label: str
-    attention_level: str
+    shadow_summary_text: str
+
     intraday_status: Optional[str] = None
     intraday_action: Optional[str] = None
     intraday_reason: Optional[str] = None
@@ -99,13 +152,25 @@ class PositionHealthSummaryRowModel(BaseModel):
     today_change_pct: Optional[float] = None
     today_open: Optional[float] = None
     last_price: Optional[float] = None
-    real_summary_text: str
-    shadow_summary_text: str
     intraday_summary_text: str
-    invalidation_summary_text: str
+
+    why_text: str
+
+    plan_status: str
+    plan_status_label: str
+    plan_status_level: str
+
+    recommendation: str
+    recommendation_label: str
+    recommendation_level: str
     recommendation_text: str
-    intraday_bars: List[Dict[str, Any]] = Field(default_factory=list)
-    daily_since_entry: List[Dict[str, Any]] = Field(default_factory=list)
+    recommendation_framing: RecommendationFraming
+
+    trade_chart_series: List[TradeChartPoint] = Field(default_factory=list)
+    session_open_ts: Optional[str] = None
+
+    real_summary_text: str = ""
+    invalidation_summary_text: str = ""
 
 
 class PriorityReviewListItem(BaseModel):

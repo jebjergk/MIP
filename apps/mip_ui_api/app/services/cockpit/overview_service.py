@@ -35,6 +35,7 @@ from app.services.cockpit.position_health_summary import (
     PositionHealthSummaryRow,
     build_position_health_summary,
 )
+from app.services.cockpit.trade_plan import TradePlanIndex, load_trade_plans
 
 logger = logging.getLogger(__name__)
 
@@ -270,11 +271,43 @@ def _build_live_portfolio_overview(
 # --- Market pulse compact block --------------------------------------------
 
 
+# Cap the number of mover sparklines so the cockpit payload stays
+# small. We pass top-3 and bottom-3 only; each sparkline is also
+# trimmed to the most recent N points for compactness.
+_MARKET_PULSE_MOVER_COUNT = 3
+_MARKET_PULSE_SPARKLINE_POINTS = 30
+_MARKET_PULSE_INDEX_POINTS = 30
+
+
+def _slim_sparkline(points: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not points:
+        return []
+    tail = points[-_MARKET_PULSE_SPARKLINE_POINTS:]
+    out: List[Dict[str, Any]] = []
+    for p in tail:
+        ts = p.get("ts") or p.get("TS")
+        close = p.get("close")
+        if ts is None or close is None:
+            continue
+        try:
+            close_f = float(close)
+        except (TypeError, ValueError):
+            continue
+        out.append({"ts": str(ts), "close": close_f})
+    return out
+
+
 def _build_market_pulse_compact() -> Dict[str, Any]:
     """
     Reuse the existing /market/pulse endpoint logic in stock_only mode.
     We call it as a regular Python function so we don't take the HTTP
     round-trip and can keep transactional Snowflake usage minimal.
+
+    Forwards a compact view of the existing payload plus three small
+    chart series for the cockpit:
+      * `index_series`         — equal-weight index pct over lookback
+      * `top_movers` (×3)      — symbol + day_return + sparkline
+      * `bottom_movers` (×3)   — symbol + day_return + sparkline
     """
     try:
         from app.routers.market_pulse import get_market_pulse  # type: ignore
@@ -288,6 +321,41 @@ def _build_market_pulse_compact() -> Dict[str, Any]:
         return {"available": False, "error": str(exc)}
     compact = (full or {}).get("compact") or {}
     aggregate = (full or {}).get("aggregate") or {}
+    symbols = (full or {}).get("symbols") or []
+    sparklines = (full or {}).get("sparklines") or {}
+    raw_index = (full or {}).get("index_series") or []
+
+    index_series: List[Dict[str, Any]] = []
+    for p in raw_index[-_MARKET_PULSE_INDEX_POINTS:]:
+        ts = p.get("ts") or p.get("TS")
+        val = p.get("index_return_pct")
+        if ts is None or val is None:
+            continue
+        try:
+            val_f = float(val)
+        except (TypeError, ValueError):
+            continue
+        index_series.append({"ts": str(ts), "index_return_pct": val_f})
+
+    movers_with_return = [s for s in symbols if s.get("day_return") is not None]
+
+    def _mover(sym: Dict[str, Any]) -> Dict[str, Any]:
+        s = sym.get("symbol")
+        return {
+            "symbol": s,
+            "day_return_pct": (
+                round(float(sym["day_return"]) * 100, 2)
+                if sym.get("day_return") is not None else None
+            ),
+            "last_close": sym.get("close"),
+            "sparkline": _slim_sparkline(sparklines.get(s) or []),
+        }
+
+    top_movers = [_mover(s) for s in movers_with_return[:_MARKET_PULSE_MOVER_COUNT]]
+    bottom_movers = [
+        _mover(s) for s in list(reversed(movers_with_return))[:_MARKET_PULSE_MOVER_COUNT]
+    ]
+
     return {
         "available": True,
         "market_type": "STOCK",
@@ -300,6 +368,9 @@ def _build_market_pulse_compact() -> Dict[str, Any]:
         "bottom_return_pct": compact.get("bottom_return_pct"),
         "pulse_label": (full or {}).get("pulse_label") or compact.get("pulse_label") or "Mixed",
         "direction": aggregate.get("direction"),
+        "index_series": index_series,
+        "top_movers": top_movers,
+        "bottom_movers": bottom_movers,
     }
 
 
@@ -323,9 +394,9 @@ def _row_short(row: PositionHealthSummaryRow) -> Dict[str, Any]:
         "shadow_action_bias": row.shadow_action_bias,
         "intraday_action": row.intraday_action,
         "why_text": row.why_text,
-        "attention_label": row.attention_label,
+        "attention_label": row.recommendation_label,
         "today_label": row.today_label,
-        "detail_route": row.detail_route,
+        "detail_route": f"/position-health#{row.position_episode_key}",
     }
 
 
@@ -531,11 +602,18 @@ def build_cockpit_overview(portfolio_id: Optional[int] = None) -> Dict[str, Any]
 
     entry_dates_by_key, daily_bars_by_symbol = _load_chart_context(int(portfolio_id))
 
+    try:
+        trade_plans = load_trade_plans(int(portfolio_id))
+    except Exception as exc:
+        logger.warning("cockpit: trade_plan load failed: %s", exc)
+        trade_plans = TradePlanIndex()
+
     ph_rows = build_position_health_summary(
         portfolio_id=int(portfolio_id),
         intraday_rows=list(intraday.rows),
         entry_dates_by_key=entry_dates_by_key,
         daily_bars_by_symbol=daily_bars_by_symbol,
+        trade_plans=trade_plans,
     )
 
     shadow_status_counts = _build_shadow_run_status_counts(ph_rows)

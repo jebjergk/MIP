@@ -11,9 +11,44 @@ from app.db import get_connection, fetch_all, serialize_rows
 router = APIRouter(prefix="/market", tags=["market"])
 
 
+def _pulse_label(direction: str, breadth_pct: float, avg_return_pct: float) -> str:
+    """
+    Deterministic compact tone label for the cockpit Market Pulse block.
+
+    Returns one of: "Supportive", "Mixed", "Weak", "No data".
+
+    Rules (operator-facing, intentionally simple):
+      * direction=='UP' and breadth >= 55%      → Supportive
+      * direction=='DOWN' or breadth <= 35%     → Weak
+      * direction=='NO_DATA'                    → No data
+      * otherwise                                → Mixed
+    Average return is used as a tie-breaker only; breadth is the primary
+    signal so a few outsized winners don't paint a weak tape supportive.
+    """
+    d = (direction or "").upper()
+    if d == "NO_DATA":
+        return "No data"
+    if d == "DOWN" or breadth_pct <= 35.0:
+        return "Weak"
+    if d == "UP" and breadth_pct >= 55.0:
+        return "Supportive"
+    if d == "UP" and avg_return_pct >= 0.5 and breadth_pct >= 50.0:
+        return "Supportive"
+    return "Mixed"
+
+
 @router.get("/pulse")
 def get_market_pulse(
     lookback_days: int = Query(30, ge=1, le=90, description="Days of bar history for charts"),
+    stock_only: bool = Query(
+        False,
+        description=(
+            "Cockpit-friendly mode. When true, restricts the universe to "
+            "MARKET_TYPE='STOCK' and adds a top-level pulse_label "
+            "(Supportive/Mixed/Weak/No data) for compact rendering. "
+            "Existing callers leave this false to preserve current shape."
+        ),
+    ),
 ):
     """
     Market Pulse — one-stop overview of the full symbol universe.
@@ -23,6 +58,9 @@ def get_market_pulse(
       - aggregate: up/down/flat counts, avg return, breadth
       - bars: recent daily bars for charting (last N days, all symbols)
     """
+    market_filter_sql = "and upper(MARKET_TYPE) = 'STOCK'" if stock_only else ""
+    universe_filter_sql = "and upper(MARKET_TYPE) = 'STOCK'" if stock_only else ""
+
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -30,12 +68,13 @@ def get_market_pulse(
         # 1. Per-symbol latest daily bar with return vs previous close.
         #    Include the full enabled daily universe even if a symbol has no latest bar yet.
         cur.execute(
-            """
+            f"""
             with universe as (
                 select distinct SYMBOL, MARKET_TYPE
                 from MIP.APP.INGEST_UNIVERSE
                 where coalesce(IS_ENABLED, true)
                   and INTERVAL_MINUTES = 1440
+                  {universe_filter_sql}
             ),
             deduped as (
                 select
@@ -46,6 +85,7 @@ def get_market_pulse(
                     ) as rn
                 from MIP.MART.MARKET_BARS
                 where INTERVAL_MINUTES = 1440
+                  {market_filter_sql}
             ),
             series as (
                 select
@@ -176,6 +216,7 @@ def get_market_pulse(
                 from MIP.MART.MARKET_BARS
                 where INTERVAL_MINUTES = 1440
                   and TS >= dateadd('day', -{lookback_days}, current_date())
+                  {market_filter_sql}
             ),
             bars as (
                 select TS, SYMBOL, MARKET_TYPE, OPEN, HIGH, LOW, CLOSE, VOLUME
@@ -228,6 +269,7 @@ def get_market_pulse(
                 from MIP.MART.MARKET_BARS
                 where INTERVAL_MINUTES = 1440
                   and TS >= dateadd('day', -{lookback_days}, current_date())
+                  {market_filter_sql}
             )
             select TS, SYMBOL, MARKET_TYPE, CLOSE
             from deduped
@@ -248,12 +290,40 @@ def get_market_pulse(
                 "close": _safe_float(r.get("CLOSE") or r.get("close")),
             })
 
-        return {
+        result: dict = {
             "symbols": symbols,
             "aggregate": aggregate,
             "index_series": index_series,
             "sparklines": sparklines,
         }
+        if stock_only:
+            # Cockpit-friendly extras. We only emit these when explicitly
+            # requested so existing callers are byte-compatible.
+            top = symbols[0] if symbols else None
+            bottom = symbols[-1] if symbols else None
+            result["pulse_label"] = _pulse_label(
+                aggregate.get("direction") or "NO_DATA",
+                float(aggregate.get("breadth_pct") or 0),
+                float(aggregate.get("avg_return_pct") or 0),
+            )
+            result["compact"] = {
+                "market_type": "STOCK",
+                "breadth_up": int(aggregate.get("up_count") or 0),
+                "breadth_total": int(aggregate.get("total_symbols") or 0),
+                "avg_return_pct": float(aggregate.get("avg_return_pct") or 0),
+                "top_symbol": (top or {}).get("symbol"),
+                "top_return_pct": (
+                    round(float((top or {}).get("day_return") or 0) * 100, 2)
+                    if top else None
+                ),
+                "bottom_symbol": (bottom or {}).get("symbol"),
+                "bottom_return_pct": (
+                    round(float((bottom or {}).get("day_return") or 0) * 100, 2)
+                    if bottom else None
+                ),
+                "pulse_label": result["pulse_label"],
+            }
+        return result
     finally:
         conn.close()
 

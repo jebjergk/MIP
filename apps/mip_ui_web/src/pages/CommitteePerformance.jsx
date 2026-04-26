@@ -91,6 +91,36 @@ const RECOMMENDATION_CLASS = {
   INSUFFICIENT_DATA: 'insufficient',
 }
 
+/* Plain-English headline answering "is shadow helping, hurting, or inconclusive?" */
+const RECOMMENDATION_HEADLINE = {
+  PREFER_REAL:       { tone: 'helping-real',  text: 'Shadow is hurting — real has done better month-to-date.' },
+  PREFER_SHADOW:     { tone: 'helping-shadow', text: 'Shadow is helping — its picks have done better than real.' },
+  TIE:               { tone: 'tie',            text: 'Inconclusive — real and shadow are roughly tied this month.' },
+  INSUFFICIENT_DATA: { tone: 'insufficient',   text: 'Inconclusive — not enough scored opportunities yet.' },
+}
+
+/* Plain-English mapping for COMPARISON_LABEL values produced by the bake-off SP. */
+const COMPARISON_LABEL_PLAIN = {
+  AGREE:                   'Both agreed',
+  BOTH_CASH:               'Both stayed out',
+  REAL_WIN__SHADOW_WIN:    'Both entered and won',
+  REAL_LOSS__SHADOW_LOSS:  'Both entered and lost',
+  REAL_WIN__SHADOW_LOSS:   'Real won; shadow lost',
+  REAL_LOSS__SHADOW_WIN:   'Real lost; shadow won',
+  REAL_WIN__SHADOW_CASH:   'Real won; shadow stayed out',
+  REAL_LOSS__SHADOW_CASH:  'Real lost; shadow stayed out',
+  REAL_CASH__SHADOW_WIN:   'Real stayed out; shadow won',
+  REAL_CASH__SHADOW_LOSS:  'Real stayed out; shadow lost',
+  UNCOMPARABLE:            'No fair comparison yet',
+  NULL:                    'No fair comparison yet',
+}
+
+function plainComparisonLabel(raw) {
+  if (!raw) return COMPARISON_LABEL_PLAIN.NULL
+  const key = String(raw).toUpperCase()
+  return COMPARISON_LABEL_PLAIN[key] || key.replace(/__/g, ' / ').replace(/_/g, ' ').toLowerCase()
+}
+
 export default function CommitteePerformance() {
   const [scorecard, setScorecard] = useState(null)
   const [mtd, setMtd] = useState(null)
@@ -229,7 +259,14 @@ export default function CommitteePerformance() {
               excludedReason={o.SHADOW_EXCLUDED_REASON}
             />
           </td>
-          <td><span className="cbo-comparison">{o.COMPARISON_LABEL || '—'}</span></td>
+          <td>
+            <span
+              className="cbo-comparison"
+              title={o.COMPARISON_LABEL || ''}
+            >
+              {plainComparisonLabel(o.COMPARISON_LABEL)}
+            </span>
+          </td>
           <td>
             <button type="button" className="cbo-detail-btn" onClick={() => openDetail(o.PROPOSAL_ID)}>
               Details
@@ -248,19 +285,22 @@ export default function CommitteePerformance() {
       <header className="cbo-header">
         <h1>Committee Bake-off</h1>
         <p>
-          Read-only side-by-side scoring of Committee 2.0 (real) vs the Shadow Board on shared opportunities.
-          One row per first-ENTER (or first terminal non-enter) decision per board. Live execution, the proposal
-          pipeline, the committee, and IBKR are not modified by this page.
+          One question: <b>is the shadow board helping, hurting, or inconclusive vs the real committee?</b>{' '}
+          Side-by-side scoring on shared opportunities, one row per first-ENTER (or first terminal
+          non-enter) decision per board. Diagnostics only — does not change live execution, the
+          proposal pipeline, or IBKR.
         </p>
       </header>
 
       <section className={`cbo-mtd ${recClass}`}>
         <div className="cbo-mtd-main">
-          <div className="cbo-mtd-label">Month-to-date recommendation</div>
-          <div className={`cbo-mtd-value ${recClass}`}>{recommendation}</div>
+          <div className="cbo-mtd-label">Is shadow helping, hurting, or inconclusive?</div>
+          <div className={`cbo-mtd-headline ${RECOMMENDATION_HEADLINE[recommendation]?.tone || 'insufficient'}`}>
+            {RECOMMENDATION_HEADLINE[recommendation]?.text || RECOMMENDATION_HEADLINE.INSUFFICIENT_DATA.text}
+          </div>
           <div className="cbo-mtd-sub">
-            Real avg {fmtRet(mtd?.REAL_AVG_RETURN)} · Shadow avg {fmtRet(mtd?.SHADOW_AVG_RETURN)} · Δ{' '}
-            {fmtRet(mtd?.AVG_RETURN_DELTA_REAL_MINUS_SHADOW)}
+            Month-to-date · real avg {fmtRet(mtd?.REAL_AVG_RETURN)} · shadow avg {fmtRet(mtd?.SHADOW_AVG_RETURN)} ·
+            difference {fmtRet(mtd?.AVG_RETURN_DELTA_REAL_MINUS_SHADOW)} · raw signal {recommendation.toLowerCase().replace(/_/g, ' ')}
           </div>
         </div>
         <KpiCard label="Total opportunities" value={totalOpps} />
@@ -318,8 +358,9 @@ export default function CommitteePerformance() {
                           type="button"
                           className={`cbo-label-btn ${active ? 'active' : ''}`}
                           onClick={() => setLabelFilter(active ? '' : name)}
+                          title={name}
                         >
-                          {name}
+                          {plainComparisonLabel(name)}
                         </button>
                       </td>
                       <td style={{ textAlign: 'right' }}>{l.N}</td>

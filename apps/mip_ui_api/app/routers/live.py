@@ -7084,6 +7084,7 @@ def _build_mip_order_families_for_cockpit(
             "parent": None,
             "take_profit": None,
             "stop_loss": None,
+            "trailing_stop": None,
         }
         if not _cockpit_mip_family_visible(enriched, protection):
             continue
@@ -7481,34 +7482,69 @@ def get_live_activity_overview(
             parent_leg = None
             take_profit_leg = None
             stop_loss_leg = None
+            trailing_stop_leg = None
             for ord_row in action_orders:
                 order_type = str(ord_row.get("ORDER_TYPE") or "").upper()
+                order_role = str(ord_row.get("ORDER_ROLE") or "").upper()
+                protection_type = str(ord_row.get("PROTECTION_TYPE") or "").upper()
                 status_display = _live_order_display_status(ord_row, broker_open_order_ids)
                 leg = {
                     "order_id": ord_row.get("ORDER_ID"),
                     "broker_order_id": ord_row.get("BROKER_ORDER_ID"),
                     "status": str(status_display).upper(),
                     "order_type": order_type,
+                    "order_role": order_role or None,
+                    "protection_type": protection_type or None,
                     "side": ord_row.get("SIDE"),
                     "limit_price": float(ord_row.get("LIMIT_PRICE")) if ord_row.get("LIMIT_PRICE") is not None else None,
+                    "stop_price": float(ord_row.get("STOP_PRICE")) if ord_row.get("STOP_PRICE") is not None else None,
+                    "trail_style": (str(ord_row.get("TRAIL_STYLE")).upper() if ord_row.get("TRAIL_STYLE") is not None else None),
+                    "trail_amount": float(ord_row.get("TRAIL_AMOUNT")) if ord_row.get("TRAIL_AMOUNT") is not None else None,
+                    "trail_percent": float(ord_row.get("TRAIL_PERCENT")) if ord_row.get("TRAIL_PERCENT") is not None else None,
                     "avg_fill_price": float(ord_row.get("AVG_FILL_PRICE")) if ord_row.get("AVG_FILL_PRICE") is not None else None,
                     "qty_ordered": float(ord_row.get("QTY_ORDERED")) if ord_row.get("QTY_ORDERED") is not None else None,
                     "qty_filled": float(ord_row.get("QTY_FILLED")) if ord_row.get("QTY_FILLED") is not None else None,
                     "broker_truth_active": _is_order_active_in_broker_truth(ord_row, broker_open_order_ids),
                 }
-                if any(token in order_type for token in ("STOP", "STP", "SL")):
-                    if stop_loss_leg is None:
-                        stop_loss_leg = leg
-                elif any(token in order_type for token in ("TP", "TAKE_PROFIT", "LIMIT_TP")):
-                    if take_profit_leg is None:
-                        take_profit_leg = leg
-                else:
-                    if parent_leg is None:
-                        parent_leg = leg
 
-            if take_profit_leg and stop_loss_leg:
+                # Classify by ORDER_ROLE / PROTECTION_TYPE first (authoritative,
+                # populated by execute_live_action). Fall back to ORDER_TYPE
+                # keyword sniffing for legacy rows that lack the role columns.
+                bucket: str | None = None
+                if order_role == "ENTRY":
+                    bucket = "parent"
+                elif order_role == "PROTECTIVE_TP" or protection_type == "TAKE_PROFIT":
+                    bucket = "take_profit"
+                elif order_role == "TRAILING_STOP" or protection_type == "TRAILING_STOP":
+                    bucket = "trailing_stop"
+                elif order_role == "PROTECTIVE_STOP" or protection_type == "FIXED_STOP":
+                    bucket = "stop_loss"
+                else:
+                    if order_type == "TRAIL":
+                        bucket = "trailing_stop"
+                    elif any(token in order_type for token in ("STOP", "STP", "SL")):
+                        bucket = "stop_loss"
+                    elif any(token in order_type for token in ("TP", "TAKE_PROFIT", "LIMIT_TP")):
+                        bucket = "take_profit"
+                    else:
+                        bucket = "parent"
+
+                if bucket == "parent" and parent_leg is None:
+                    parent_leg = leg
+                elif bucket == "take_profit" and take_profit_leg is None:
+                    take_profit_leg = leg
+                elif bucket == "stop_loss" and stop_loss_leg is None:
+                    stop_loss_leg = leg
+                elif bucket == "trailing_stop" and trailing_stop_leg is None:
+                    trailing_stop_leg = leg
+
+            # The position is fully protected if it has a take-profit AND any
+            # protective stop (fixed or trailing). Trailing counts the same as
+            # a fixed stop for "armed" purposes.
+            protective_stop_leg = stop_loss_leg or trailing_stop_leg
+            if take_profit_leg and protective_stop_leg:
                 protection_state = "FULL"
-            elif take_profit_leg or stop_loss_leg:
+            elif take_profit_leg or protective_stop_leg:
                 protection_state = "PARTIAL"
             else:
                 protection_state = "NONE"
@@ -7517,6 +7553,7 @@ def get_live_activity_overview(
                 "parent": parent_leg,
                 "take_profit": take_profit_leg,
                 "stop_loss": stop_loss_leg,
+                "trailing_stop": trailing_stop_leg,
             }
 
         cur.execute(
@@ -7728,7 +7765,7 @@ def get_live_activity_overview(
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
             has_active_order = any(_is_order_active_in_broker_truth(o, broker_open_order_ids) for o in action_orders)
-            protection_details = protection_by_action.get(action_id) or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None}
+            protection_details = protection_by_action.get(action_id) or {"state": "NONE", "parent": None, "take_profit": None, "stop_loss": None, "trailing_stop": None}
             eb_row = param_snap_row.get("executable_bracket") if isinstance(param_snap_row, dict) else None
             protection_planned = bool(
                 joint_decision.get("realistic_target_return") is not None

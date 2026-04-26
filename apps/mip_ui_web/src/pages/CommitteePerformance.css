@@ -52,6 +52,19 @@
 .cbo-mtd-value.tie            { color: #4b5563; }
 .cbo-mtd-value.insufficient   { color: #9ca3af; }
 
+/* Plain-English headline answering helping / hurting / inconclusive */
+.cbo-mtd-headline {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 0.15rem;
+}
+
+.cbo-mtd-headline.helping-shadow { color: #7c3aed; }
+.cbo-mtd-headline.helping-real   { color: #1d4ed8; }
+.cbo-mtd-headline.tie            { color: #4b5563; }
+.cbo-mtd-headline.insufficient   { color: #9ca3af; }
+
 .cbo-mtd-sub {
   margin-top: 0.2rem;
   color: #6b7280;

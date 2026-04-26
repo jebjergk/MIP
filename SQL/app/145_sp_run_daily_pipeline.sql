@@ -112,6 +112,13 @@ declare
     v_structural_status string := 'SKIPPED';
     v_structural_start timestamp_ntz;
     v_structural_end timestamp_ntz;
+    -- Position Health (Daily Position Verdict) variables
+    v_pos_health_enabled boolean := true;
+    v_pos_health_result variant;
+    v_pos_health_status string := 'SKIPPED';
+    v_pos_health_start timestamp_ntz;
+    v_pos_health_end timestamp_ntz;
+    v_pos_health_rows number := 0;
     -- Error capture variables (used in exception handlers)
     v_ingest_error_query_id string;
     v_ingest_duration_ms number;
@@ -1369,6 +1376,68 @@ begin
         timestampdiff(millisecond, :v_structural_start, :v_structural_end)
     );
 
+    -- ----------------------------------------------------------------
+    -- DAILY POSITION VERDICT (Position Health V1)
+    -- Runs after structural pipeline so STRUCTURAL_STATE_LOG and
+    -- STRUCTURAL_REGIME_TAG are guaranteed fresh for AS_OF_DATE.
+    -- Config-gated, non-fatal: a verdict failure must not block the
+    -- legacy pipeline from completing.
+    -- ----------------------------------------------------------------
+    begin
+        v_pos_health_enabled := (select try_to_boolean(CONFIG_VALUE) from MIP.APP.APP_CONFIG
+                                 where CONFIG_KEY = 'POSITION_HEALTH_ENABLED');
+    exception when other then
+        v_pos_health_enabled := true;
+    end;
+
+    if (:v_pos_health_enabled) then
+        v_pos_health_start := current_timestamp();
+        begin
+            v_pos_health_result := (call MIP.APP.SP_RUN_DAILY_POSITION_VERDICT(:v_effective_to_ts::date));
+            v_pos_health_status := coalesce(:v_pos_health_result:status::string, 'SUCCESS');
+            v_pos_health_rows := coalesce(:v_pos_health_result:rows_written::number, 0);
+        exception when other then
+            v_pos_health_status := 'FAIL';
+            v_pos_health_result := object_construct('status', 'FAIL', 'error', :sqlerrm);
+            v_pos_health_rows := 0;
+        end;
+        v_pos_health_end := current_timestamp();
+
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'POSITION_HEALTH_VERDICT',
+            :v_pos_health_status,
+            :v_pos_health_rows,
+            object_construct(
+                'step_name', 'position_health_verdict',
+                'scope', 'AGG',
+                'scope_key', null,
+                'started_at', :v_pos_health_start,
+                'completed_at', :v_pos_health_end,
+                'as_of_date', :v_effective_to_ts::date,
+                'result', :v_pos_health_result
+            ),
+            iff(:v_pos_health_status = 'FAIL', :v_pos_health_result:error::string, null)
+        );
+    else
+        v_pos_health_status := 'SKIPPED_DISABLED';
+        v_pos_health_result := object_construct('status', 'SKIPPED_DISABLED');
+
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'POSITION_HEALTH_VERDICT',
+            :v_pos_health_status,
+            0,
+            object_construct(
+                'step_name', 'position_health_verdict',
+                'scope', 'AGG',
+                'scope_key', null,
+                'reason', 'POSITION_HEALTH_ENABLED_FALSE'
+            ),
+            null
+        );
+    end if;
+
     v_pipeline_root_status := iff(:v_any_step_skipped_or_degraded, 'SUCCESS_WITH_SKIPS', 'SUCCESS');
     v_pipeline_status_reason := iff(:v_ingest_status in ('SKIP_RATE_LIMIT', 'SUCCESS_WITH_SKIPS'), 'RATE_LIMIT', null);
 
@@ -1415,6 +1484,12 @@ begin
         'structural_pipeline', object_construct(
             'status', :v_structural_status,
             'result', :v_structural_result
+        ),
+        'position_health_verdict', object_construct(
+            'enabled', :v_pos_health_enabled,
+            'status', :v_pos_health_status,
+            'rows_written', :v_pos_health_rows,
+            'result', :v_pos_health_result
         ),
         'eligible_signals', :v_eligible_signal_count,
         'proposals_proposed', :v_proposed_count,

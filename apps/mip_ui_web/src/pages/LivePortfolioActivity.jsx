@@ -842,14 +842,24 @@ export default function LivePortfolioActivity() {
     const prot = o?.PROTECTION || {}
     const tp = prot?.take_profit || null
     const sl = prot?.stop_loss || null
-    const activeAtBroker = Boolean(tp?.broker_truth_active || sl?.broker_truth_active)
+    const trail = prot?.trailing_stop || null
+    const protectiveStop = sl || trail
+    const activeAtBroker = Boolean(
+      tp?.broker_truth_active ||
+      sl?.broker_truth_active ||
+      trail?.broker_truth_active,
+    )
     const summary = {
       state: String(prot?.state || 'NONE').toUpperCase(),
       activeAtBroker,
       tpStatus: tp?.status || null,
       tpPrice: tp?.limit_price,
-      slStatus: sl?.status || null,
-      slPrice: sl?.limit_price,
+      slStatus: protectiveStop?.status || null,
+      slPrice: protectiveStop?.limit_price,
+      slKind: trail ? 'TRAIL' : (sl ? 'STOP' : null),
+      trailStyle: trail?.trail_style || null,
+      trailPercent: trail?.trail_percent ?? null,
+      trailAmount: trail?.trail_amount ?? null,
       updatedAt: o?.LAST_UPDATED_AT || o?.CREATED_AT || null,
     }
     const existing = acc.get(symbol)
@@ -1614,7 +1624,16 @@ export default function LivePortfolioActivity() {
                                   <>
                                     <div>State: <b>{exit.state}</b></div>
                                     <div>TP: {exit.tpStatus || '—'} {exit.tpPrice != null ? `@ ${fmtNum(exit.tpPrice, 4)}` : ''}</div>
-                                    <div>SL: {exit.slStatus || '—'} {exit.slPrice != null ? `@ ${fmtNum(exit.slPrice, 4)}` : ''}</div>
+                                    <div>
+                                      {exit.slKind === 'TRAIL' ? 'TRAIL' : 'SL'}: {exit.slStatus || '—'}
+                                      {exit.slKind === 'TRAIL' ? (
+                                        exit.trailPercent != null
+                                          ? ` @ ${fmtNum(exit.trailPercent, 1)}%`
+                                          : (exit.trailAmount != null ? ` @ ${fmtNum(exit.trailAmount, 2)}` : '')
+                                      ) : (
+                                        exit.slPrice != null ? ` @ ${fmtNum(exit.slPrice, 4)}` : ''
+                                      )}
+                                    </div>
                                   </>
                                 ) : (
                                   <div className="lpa-subtle">No TP/SL linked in latest order bundle.</div>

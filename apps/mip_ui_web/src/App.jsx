@@ -15,6 +15,7 @@ import DecisionConsole from './pages/DecisionConsole'
 import NewsIntelligence from './pages/NewsIntelligence'
 import LivePortfolioActivity from './pages/LivePortfolioActivity'
 import LivePortfolioConfig from './pages/LivePortfolioConfig'
+import PositionHealth from './pages/PositionHealth'
 import LearningLedger from './pages/LearningLedger'
 import PerformanceDashboard from './pages/PerformanceDashboard'
 import GlossaryAdminPage from './pages/GlossaryAdminPage'
@@ -57,6 +58,7 @@ function pageTitleForPath(pathname) {
     { pattern: '/intraday/early-exit', title: 'Intraday Early Exit' },
     { pattern: '/live-portfolio-activity', title: 'Live Portfolio Activity' },
     { pattern: '/live-portfolio-config', title: 'Live Portfolio Config' },
+    { pattern: '/position-health', title: 'Position Health' },
     { pattern: '/news-intelligence', title: 'News Intelligence' },
     { pattern: '/intraday/dashboard', title: 'Intraday Dashboard' },
     { pattern: '/intraday/pattern/:patternId', title: 'Intraday Pattern' },
@@ -124,6 +126,7 @@ export default function App() {
         <Route path="/intraday/early-exit" element={<DecisionConsole />} />
         <Route path="/live-portfolio-activity" element={<LivePortfolioActivity />} />
         <Route path="/live-portfolio-config" element={<LivePortfolioConfig />} />
+        <Route path="/position-health" element={<PositionHealth />} />
         <Route path="/news-intelligence" element={<NewsIntelligence />} />
         <Route path="/intraday/dashboard" element={<IntradayDashboardPage />} />
         <Route path="/intraday/pattern/:patternId" element={<IntradayPatternDetailPage />} />

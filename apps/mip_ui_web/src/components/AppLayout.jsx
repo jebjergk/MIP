@@ -31,7 +31,6 @@ const NAV_GROUPS = [
     items: [
       { to: '/structural-timeline', icon: '\uD83C\uDFD7\uFE0F', label: 'Structural Timeline' },
       { to: '/structural-committee', icon: '\u2696\uFE0F', label: 'Committee 2.0' },
-      { to: '/committee-performance', icon: '\uD83C\uDFC6', label: 'Committee Bake-off' },
       { to: '/market-timeline', icon: '\uD83D\uDCC5', label: 'Legacy Market Timeline' },
       { to: '/news-intelligence', icon: '\uD83D\uDCF0', label: 'News Intelligence' },
       { to: '/structural-training', icon: '\uD83E\uDDEC', label: 'Structural Training' },
@@ -52,6 +51,13 @@ const NAV_GROUPS = [
       { to: '/runs',  icon: '\u25B6\uFE0F', label: 'Runs (Audit)' },
       { to: '/debug', icon: '\uD83D\uDD27', label: 'Debug' },
       { to: '/ask-glossary', icon: '\uD83D\uDCD6', label: 'Ask Glossary Admin' },
+    ],
+  },
+  {
+    label: 'Diagnostics',
+    items: [
+      { to: '/position-health', icon: '\uD83E\uDE7A', label: 'Position Health' },
+      { to: '/committee-performance', icon: '\uD83C\uDFC6', label: 'Committee Bake-off' },
     ],
   },
 ]

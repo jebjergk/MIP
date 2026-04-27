@@ -62,6 +62,8 @@ def run_agent_ibkr_live_bars(
     timeout_sec: int = 60,
     diagnostics_surface: str = "living_charts",
     regular_trading_hours_only: bool = False,
+    include_snapshot_quote: bool = False,
+    snapshot_wait_sec: float = 2.5,
 ) -> dict[str, Any]:
     root = project_root()
     py = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
@@ -125,6 +127,12 @@ def run_agent_ibkr_live_bars(
         cmd.extend(["--interval-minutes", str(interval_minutes)])
         if regular_trading_hours_only:
             cmd.append("--use-rth")
+    if include_snapshot_quote:
+        cmd.extend([
+            "--include-snapshot-quote",
+            "--snapshot-wait-sec",
+            f"{float(snapshot_wait_sec):.2f}",
+        ])
     proc = subprocess.run(
         cmd,
         cwd=str(root),

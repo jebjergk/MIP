@@ -201,6 +201,255 @@
   margin-top: 2px;
 }
 
+/* ── Trade proposals subsection (inside Live Portfolio) ─ */
+
+.ck-co-tp-section {
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid #e9ecef;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ck-co-tp-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.ck-co-tp-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #495057;
+}
+
+.ck-co-tp-sub {
+  font-size: 0.74rem;
+  color: #6c757d;
+}
+.ck-co-tp-sub--warn { color: #fd7e14; }
+
+.ck-co-tp-note {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.ck-co-tp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ck-co-tp-row-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+.ck-co-tp-row-link:hover .ck-co-tp-row {
+  background: #f1f3f5;
+  border-color: #ced4da;
+}
+
+.ck-co-tp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 150px);
+  gap: 0.65rem;
+  align-items: center;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 7px;
+  padding: 0.45rem 0.6rem;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.ck-co-tp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.ck-co-tp-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+}
+
+.ck-co-tp-symbol {
+  font-weight: 700;
+  color: #212529;
+  font-size: 0.9rem;
+}
+
+.ck-co-tp-direction {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: #e9ecef;
+  color: #495057;
+}
+.ck-co-tp-direction--long  { background: #d1e7dd; color: #0f5132; }
+.ck-co-tp-direction--short { background: #f8d7da; color: #58151c; }
+
+.ck-co-tp-stance {
+  font-size: 0.74rem;
+  color: #495057;
+  background: #e9ecef;
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+}
+.ck-co-tp-stance--missing { font-style: italic; color: #6c757d; background: transparent; padding: 0; }
+
+.ck-co-tp-line {
+  font-size: 0.78rem;
+  color: #495057;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+.ck-co-tp-line-label {
+  color: #6c757d;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+.ck-co-tp-line-sep { color: #adb5bd; }
+.ck-co-tp-line-stale {
+  color: #868e96;
+  font-size: 0.7rem;
+  font-style: italic;
+  align-self: center;
+}
+.ck-co-tp-line--secondary {
+  font-size: 0.7rem;
+  color: #868e96;
+  margin-top: -0.05rem;
+}
+.ck-co-tp-line--secondary .ck-co-tp-line-label {
+  font-size: 0.6rem;
+  color: #adb5bd;
+}
+
+/* Live "Now" cluster ----------------------------------------------------- */
+.ck-co-tp-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+.ck-co-tp-now-label {
+  color: #0d6efd;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+.ck-co-tp-now-value {
+  color: #1f2933;
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+.ck-co-tp-now-source {
+  font-size: 0.65rem;
+  color: #868e96;
+  font-style: italic;
+}
+.ck-co-tp-now--unavailable .ck-co-tp-now-label {
+  color: #b02a37;
+}
+.ck-co-tp-now-hint { color: #adb5bd; }
+
+/* Per-proposal "Live unavailable" banner -------------------------------- */
+.ck-co-tp-banner {
+  font-size: 0.72rem;
+  color: #58151c;
+  background: #f8d7da;
+  border-radius: 3px;
+  padding: 0.18rem 0.45rem;
+  margin-top: 0.1rem;
+  align-self: flex-start;
+}
+
+.ck-co-tp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.ck-co-tp-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.08rem 0.4rem;
+  border-radius: 3px;
+  background: #e9ecef;
+  color: #495057;
+  white-space: nowrap;
+}
+.ck-co-tp-badge-sub { font-weight: 400; opacity: 0.85; }
+
+.ck-co-tp-badge--ok       { background: #d1e7dd; color: #0f5132; }
+.ck-co-tp-badge--info     { background: #cfe2ff; color: #052c65; }
+.ck-co-tp-badge--warn     { background: #fff3cd; color: #5c4400; }
+.ck-co-tp-badge--critical { background: #f8d7da; color: #58151c; }
+.ck-co-tp-badge--neutral  { background: #e9ecef; color: #495057; }
+
+.ck-co-tp-spark {
+  position: relative;
+  width: 100%;
+  height: 76px;
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.ck-co-tp-spark-empty {
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: #adb5bd;
+  background: #fff;
+  border: 1px dashed #e9ecef;
+  border-radius: 5px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* On narrower viewports the proposal row collapses to vertical: chart
+   sits below the info block. Keeps cockpit usable on smaller screens
+   without sacrificing the visual entry-zone interaction. */
+@media (max-width: 640px) {
+  .ck-co-tp-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Market pulse ─────────────────────────────────────── */
 
 .ck-co-market-row {

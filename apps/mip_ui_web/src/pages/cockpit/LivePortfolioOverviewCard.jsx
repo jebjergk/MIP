@@ -8,6 +8,8 @@
  */
 import { Link } from 'react-router-dom'
 
+import TradeProposalsPanel from './TradeProposalsPanel'
+
 function formatMoney(val) {
   if (val == null) return '\u2014'
   const n = Number(val)
@@ -42,7 +44,7 @@ function formatAge(tsIso) {
   }
 }
 
-export default function LivePortfolioOverviewCard({ data }) {
+export default function LivePortfolioOverviewCard({ data, proposals }) {
   if (!data || data.portfolio_id == null) {
     return (
       <div className="ck-co-card ck-co-card--portfolio">
@@ -79,8 +81,11 @@ export default function LivePortfolioOverviewCard({ data }) {
           <div className="ck-co-kpi-value">{data.working_order_count ?? 0}</div>
         </div>
       </div>
+
+      <TradeProposalsPanel data={proposals} />
+
       <div className="ck-co-card-footer">
-        <Link to="/live-portfolio-activity" className="ck-co-link">
+        <Link to="/live-portfolio-activity" className="ck-co-link ck-co-link--small">
           Open Live Portfolio Activity &rarr;
         </Link>
       </div>

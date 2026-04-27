@@ -1,0 +1,428 @@
+/**
+ * Compact Trade Proposals subsection embedded inside the Live Portfolio
+ * card.
+ *
+ * Renders deterministic structural proposals as a stacked column of
+ * compact rows. The panel is **pre-entry monitoring**: each row shows
+ *   - a live "Now" price (IBKR snapshot tick, refreshed each cockpit
+ *     poll), or a per-proposal "Live unavailable" banner when the
+ *     intraday fetch failed / market is closed,
+ *   - prev-close as a small secondary footer (always present),
+ *   - a mini chart that combines a daily backbone with today's
+ *     intraday tail, separated by a vertical "today" divider so the
+ *     operator can see in one glance whether price is approaching the
+ *     entry zone right now.
+ *
+ * The deeper-research surface lives at /structural-market-timeline.
+ */
+import { Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, YAxis } from 'recharts'
+import { Link } from 'react-router-dom'
+
+function fmtPrice(v) {
+  if (v == null) return '\u2014'
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '\u2014'
+  return n.toFixed(2)
+}
+
+function fmtZone(low, high) {
+  if (low == null || high == null) return '\u2014'
+  return `${fmtPrice(low)} \u2013 ${fmtPrice(high)}`
+}
+
+function fmtPct(decimal) {
+  if (decimal == null) return null
+  const n = Number(decimal) * 100
+  if (!Number.isFinite(n)) return null
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${n.toFixed(1)}%`
+}
+
+function fmtCloseDate(iso) {
+  if (!iso) return null
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const mo = months[parseInt(m[2], 10) - 1] || m[2]
+  return `${mo} ${parseInt(m[3], 10)}`
+}
+
+/** Format an ISO timestamp into a short HH:MM (local-ish; the server
+ *  already returns the IBKR exchange-local clock string). */
+function fmtQuoteClock(iso) {
+  if (!iso) return null
+  const m = String(iso).match(/(\d{2}):(\d{2})/)
+  if (!m) return null
+  return `${m[1]}:${m[2]}`
+}
+
+function zoneTone(code) {
+  switch (code) {
+    case 'IN_ZONE':           return 'ok'
+    case 'NEAR_ZONE':         return 'info'
+    case 'INVALIDATED':       return 'critical'
+    case 'TOO_FAR':           return 'neutral'
+    case 'ABOVE_ENTRY':
+    case 'BELOW_ENTRY':       return 'warn'
+    case 'LIVE_UNAVAILABLE':  return 'neutral'
+    default:                  return 'neutral'
+  }
+}
+
+function readinessTone(code) {
+  switch (code) {
+    case 'READY_NOW':         return 'ok'
+    case 'NEAR_READY':        return 'info'
+    case 'WAIT':              return 'warn'
+    case 'DO_NOT_ENTER':      return 'critical'
+    case 'LIVE_UNAVAILABLE':  return 'neutral'
+    default:                  return 'neutral'
+  }
+}
+
+function stanceLabel(stance) {
+  if (!stance) return null
+  const s = String(stance).toUpperCase()
+  switch (s) {
+    case 'APPROVE':         return 'Approve'
+    case 'APPROVE_REDUCED': return 'Approve (reduced)'
+    case 'DEFER':           return 'Defer'
+    case 'DENY':            return 'Deny'
+    case 'WAIT_RECLAIM':    return 'Wait for reclaim'
+    default:                return s.replace(/_/g, ' ').toLowerCase()
+  }
+}
+
+
+/**
+ * Build a Y domain that always shows the entry zone band prominently
+ * even when invalidation sits far away (which would otherwise crush
+ * the price action to a hairline). The invalidation level is honoured
+ * only when it is within ~30% of the price midpoint.
+ */
+function computeYDomain({ closes, zoneLow, zoneHigh, invalidation, currentPrice }) {
+  const candidates = closes.slice()
+  if (currentPrice != null && Number.isFinite(currentPrice)) candidates.push(currentPrice)
+  const priceLo = Math.min(...candidates)
+  const priceHi = Math.max(...candidates)
+  let lo = priceLo
+  let hi = priceHi
+  if (zoneLow != null) lo = Math.min(lo, zoneLow)
+  if (zoneHigh != null) hi = Math.max(hi, zoneHigh)
+
+  const span = Math.max(hi - lo, 1e-6)
+  const mid = (priceLo + priceHi) / 2
+  let drawInvalidation = false
+  if (invalidation != null && Number.isFinite(invalidation) && mid > 0) {
+    const dist = Math.abs(invalidation - mid) / mid
+    if (dist <= 0.30) {
+      lo = Math.min(lo, invalidation)
+      hi = Math.max(hi, invalidation)
+      drawInvalidation = true
+    }
+  }
+  const pad = Math.max((hi - lo) * 0.10, span * 0.05)
+  return { domain: [lo - pad, hi + pad], drawInvalidation }
+}
+
+function MiniChart({ proposal }) {
+  const series = proposal.mini_chart_series || []
+  if (series.length < 2) {
+    return <div className="ck-co-tp-spark-empty">no chart yet</div>
+  }
+
+  // Find the boundary where the intraday tail begins (first INTRADAY
+  // point). All points before are daily backbone; from this index on
+  // it's today's session.
+  const dividerIdx = series.findIndex((p) => p.kind === 'INTRADAY')
+  const hasIntraday = dividerIdx >= 0
+  const lastIdx = series.length - 1
+
+  // Build per-row data with two parallel keys (`daily`, `intraday`) so
+  // Recharts can render them as two visually distinct lines. We bridge
+  // the join (last DAILY index also gets `intraday=close`) so there's
+  // no visual gap.
+  const data = series.map((p, i) => {
+    const row = { i, ts: p.ts, close: p.close }
+    if (p.kind === 'INTRADAY') {
+      row.intraday = p.close
+    } else {
+      row.daily = p.close
+    }
+    return row
+  })
+  if (hasIntraday && dividerIdx > 0) {
+    // Bridge the join.
+    data[dividerIdx - 1].intraday = data[dividerIdx - 1].daily
+  }
+
+  const closes = data.map((d) => d.close).filter((v) => Number.isFinite(v))
+  if (closes.length < 2) {
+    return <div className="ck-co-tp-spark-empty">no chart yet</div>
+  }
+
+  const { domain, drawInvalidation } = computeYDomain({
+    closes,
+    zoneLow: proposal.entry_zone_low,
+    zoneHigh: proposal.entry_zone_high,
+    invalidation: proposal.invalidation_level,
+    currentPrice: proposal.current_price,
+  })
+
+  const dirLong = (proposal.direction || '').toUpperCase() === 'LONG'
+  const zoneFill = dirLong ? '#198754' : '#dc3545'
+  const dailyColor = '#adb5bd'   // muted backbone
+  const intradayColor = '#1f2933' // crisp today line
+
+  const inZone =
+    proposal.zone_status === 'IN_ZONE' ||
+    proposal.zone_status === 'NEAR_ZONE'
+
+  const renderLastIntradayDot = (props) => {
+    if (props.index !== lastIdx) return null
+    const { cx, cy } = props
+    const fill = inZone ? '#0d6efd' : '#1f2933'
+    return (
+      <circle cx={cx} cy={cy} r={3.4} fill={fill} stroke="#fff" strokeWidth={1.2} />
+    )
+  }
+  // When there's no intraday tail, put the dot on the last daily point
+  // instead so the latest reference price is still marked.
+  const renderLastDailyDot = (props) => {
+    if (hasIntraday) return null
+    if (props.index !== lastIdx) return null
+    const { cx, cy } = props
+    return (
+      <circle cx={cx} cy={cy} r={3.0} fill="#6c757d" stroke="#fff" strokeWidth={1} />
+    )
+  }
+
+  return (
+    <div className="ck-co-tp-spark">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data} margin={{ top: 6, right: 8, bottom: 4, left: 6 }}>
+          <YAxis hide domain={domain} type="number" allowDecimals />
+          {proposal.entry_zone_low != null && proposal.entry_zone_high != null ? (
+            <ReferenceArea
+              y1={proposal.entry_zone_low}
+              y2={proposal.entry_zone_high}
+              fill={zoneFill}
+              fillOpacity={0.22}
+              stroke={zoneFill}
+              strokeOpacity={0.45}
+              strokeDasharray="2 3"
+            />
+          ) : null}
+          {drawInvalidation && proposal.invalidation_level != null ? (
+            <ReferenceLine
+              y={proposal.invalidation_level}
+              stroke="#b02a37"
+              strokeDasharray="3 3"
+              strokeOpacity={0.7}
+            />
+          ) : null}
+          {hasIntraday && dividerIdx > 0 ? (
+            <ReferenceLine
+              x={dividerIdx}
+              stroke="#868e96"
+              strokeDasharray="1 3"
+              strokeOpacity={0.6}
+            />
+          ) : null}
+          <Line
+            type="monotone"
+            dataKey="daily"
+            stroke={dailyColor}
+            strokeWidth={1.2}
+            dot={renderLastDailyDot}
+            isAnimationActive={false}
+            connectNulls={false}
+          />
+          {hasIntraday ? (
+            <Line
+              type="monotone"
+              dataKey="intraday"
+              stroke={intradayColor}
+              strokeWidth={1.8}
+              dot={renderLastIntradayDot}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          ) : null}
+        </LineChart>
+      </ResponsiveContainer>
+      <span className="sr-only">
+        {`Mini chart for ${proposal.symbol}, current ${fmtPrice(proposal.current_price)}, zone ${fmtZone(proposal.entry_zone_low, proposal.entry_zone_high)}.`}
+      </span>
+    </div>
+  )
+}
+
+
+function NowLine({ proposal }) {
+  const live = proposal.current_price != null
+  if (!live) {
+    return (
+      <div className="ck-co-tp-now ck-co-tp-now--unavailable">
+        <span className="ck-co-tp-now-label">Live unavailable</span>
+        <span
+          className="ck-co-tp-now-hint"
+          title={'No tick data \u2014 TWS may be down, or the market is closed/pre-open.'}
+        >
+          {'\u2014'}
+        </span>
+      </div>
+    )
+  }
+  const sourceLabel =
+    proposal.current_price_source === 'LIVE_TICK'
+      ? 'live tick'
+      : proposal.current_price_source === 'INTRADAY_BAR'
+        ? '15m bar'
+        : null
+  const clock = fmtQuoteClock(proposal.current_price_ts)
+  return (
+    <div className="ck-co-tp-now">
+      <span className="ck-co-tp-now-label">Now</span>
+      <span className="ck-co-tp-now-value">{fmtPrice(proposal.current_price)}</span>
+      {sourceLabel ? (
+        <span className="ck-co-tp-now-source" title={`Source: ${sourceLabel}${clock ? ` at ${clock}` : ''}`}>
+          {sourceLabel}{clock ? ` ${clock}` : ''}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+
+function ProposalRow({ proposal }) {
+  const distancePct = fmtPct(proposal.distance_to_zone_pct)
+  const stance = stanceLabel(proposal.committee_stance)
+  const liveAvailable = proposal.current_price != null
+  return (
+    <div className="ck-co-tp-row">
+      <div className="ck-co-tp-info">
+        <div className="ck-co-tp-headline">
+          <span className="ck-co-tp-symbol">{proposal.symbol}</span>
+          <span className={`ck-co-tp-direction ck-co-tp-direction--${(proposal.direction || '').toLowerCase()}`}>
+            {proposal.direction || '\u2014'}
+          </span>
+          {stance ? (
+            <span className="ck-co-tp-stance" title={proposal.committee_stance_source ? `from ${proposal.committee_stance_source}` : ''}>
+              {stance}
+            </span>
+          ) : (
+            <span className="ck-co-tp-stance ck-co-tp-stance--missing">No verdict yet</span>
+          )}
+        </div>
+
+        <div className="ck-co-tp-line">
+          <span className="ck-co-tp-line-label">Zone</span>
+          <span>{fmtZone(proposal.entry_zone_low, proposal.entry_zone_high)}</span>
+          <span className="ck-co-tp-line-sep">{'\u00b7'}</span>
+          <NowLine proposal={proposal} />
+        </div>
+
+        <div className="ck-co-tp-line ck-co-tp-line--secondary">
+          <span
+            className="ck-co-tp-line-label"
+            title="Most recent daily close (not a live tick)"
+          >
+            Prev close
+          </span>
+          <span>{fmtPrice(proposal.last_close)}</span>
+          {proposal.last_close_date ? (
+            <span className="ck-co-tp-line-stale">
+              ({fmtCloseDate(proposal.last_close_date)})
+            </span>
+          ) : null}
+        </div>
+
+        {liveAvailable ? (
+          <div className="ck-co-tp-badges">
+            <span className={`ck-co-tp-badge ck-co-tp-badge--${zoneTone(proposal.zone_status)}`}>
+              {proposal.zone_status_label}
+              {distancePct && proposal.zone_status !== 'IN_ZONE' && proposal.zone_status !== 'INVALIDATED' ? (
+                <span className="ck-co-tp-badge-sub"> ({distancePct})</span>
+              ) : null}
+            </span>
+            <span className={`ck-co-tp-badge ck-co-tp-badge--${readinessTone(proposal.entry_readiness)}`}>
+              {proposal.entry_readiness_label}
+            </span>
+          </div>
+        ) : (
+          <div className="ck-co-tp-banner">
+            Live data unavailable {'\u2014'} zone status will update on the next refresh.
+          </div>
+        )}
+      </div>
+      <MiniChart proposal={proposal} />
+    </div>
+  )
+}
+
+
+function overlaySubLabel(status) {
+  switch (status) {
+    case 'OK':            return null   // healthy → no extra label needed
+    case 'PARTIAL':       return 'live partial'
+    case 'MARKET_CLOSED': return 'market closed'
+    case 'UNAVAILABLE':   return 'live unavailable'
+    default:              return null
+  }
+}
+
+
+export default function TradeProposalsPanel({ data }) {
+  if (!data) return null
+
+  const total = data.total_count || 0
+  const proposals = data.proposals || []
+  const moreCount = Math.max(0, total - proposals.length)
+  const overlayStatus = data.intraday_overlay_status || 'UNAVAILABLE'
+  const overlaySub = overlaySubLabel(overlayStatus)
+
+  if (!data.available) {
+    return (
+      <section className="ck-co-tp-section">
+        <header className="ck-co-tp-header">
+          <h3 className="ck-co-tp-title">Trade proposals</h3>
+          <span className="ck-co-tp-sub ck-co-tp-sub--warn">unavailable</span>
+        </header>
+        {data.note ? <p className="ck-co-tp-note">{data.note}</p> : null}
+      </section>
+    )
+  }
+
+  return (
+    <section className="ck-co-tp-section">
+      <header className="ck-co-tp-header">
+        <h3 className="ck-co-tp-title">Trade proposals</h3>
+        <span className="ck-co-tp-sub">
+          {proposals.length === 0 && total === 0 ? 'none today' : `${proposals.length} actionable`}
+          {moreCount > 0 ? ` \u00b7 +${moreCount} more` : ''}
+          {overlaySub ? ` \u00b7 ${overlaySub}` : ''}
+        </span>
+      </header>
+
+      {proposals.length === 0 ? (
+        <p className="ck-co-tp-note">
+          {data.note || 'No actionable proposals right now.'}
+        </p>
+      ) : (
+        <div className="ck-co-tp-list">
+          {proposals.map((p) => (
+            <Link
+              key={p.proposal_id}
+              to={p.detail_route || '#'}
+              className="ck-co-tp-row-link"
+              title={`Inspect ${p.symbol} on the structural market timeline`}
+            >
+              <ProposalRow proposal={p} />
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}

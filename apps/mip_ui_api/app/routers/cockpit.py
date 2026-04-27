@@ -222,11 +222,59 @@ class IntradaySummary(BaseModel):
     note: Optional[str] = None
 
 
+class TradeProposalChartPoint(BaseModel):
+    ts: str
+    close: float
+    kind: str = "DAILY"  # 'DAILY' | 'INTRADAY'
+
+
+class TradeProposal(BaseModel):
+    proposal_id: int
+    symbol: str
+    direction: str
+    setup_family: Optional[str] = None
+    committee_stance: Optional[str] = None
+    committee_stance_source: Optional[str] = None
+    committee_confidence: Optional[float] = None
+    entry_zone_low: Optional[float] = None
+    entry_zone_high: Optional[float] = None
+    invalidation_level: Optional[float] = None
+    # Live "Now" — driven by IBKR snapshot quote, then 15m bar close,
+    # then None (LIVE_UNAVAILABLE).
+    current_price: Optional[float] = None
+    current_price_source: Optional[str] = None  # 'LIVE_TICK' | 'INTRADAY_BAR' | None
+    current_price_ts: Optional[str] = None
+    # Stale fallback (footer text only).
+    last_close: Optional[float] = None
+    last_close_date: Optional[str] = None
+    zone_status: str
+    zone_status_label: str
+    entry_readiness: str
+    entry_readiness_label: str
+    distance_to_zone_pct: Optional[float] = None
+    intraday_status: str = "UNAVAILABLE"  # 'OK' | 'EMPTY' | 'FAILED' | 'UNAVAILABLE'
+    mini_chart_series: List[TradeProposalChartPoint] = Field(default_factory=list)
+    detail_route: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class TradeProposalsBlock(BaseModel):
+    available: bool
+    total_count: int = 0
+    intraday_overlay_status: str = "UNAVAILABLE"   # OK | PARTIAL | UNAVAILABLE | MARKET_CLOSED
+    intraday_evaluated_ts: Optional[str] = None
+    proposals: List[TradeProposal] = Field(default_factory=list)
+    note: Optional[str] = None
+
+
 class CockpitOverview(BaseModel):
     schema_version: str
     as_of_ts: str
     status: CockpitStatus
     live_portfolio_overview: LivePortfolioOverview
+    trade_proposals: TradeProposalsBlock = Field(
+        default_factory=lambda: TradeProposalsBlock(available=False)
+    )
     market_pulse: MarketPulseCompact
     position_health_summary_rows: List[PositionHealthSummaryRowModel]
     priority_review: PriorityReview

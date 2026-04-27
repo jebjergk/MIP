@@ -207,7 +207,10 @@ export default function Cockpit() {
       <CockpitStatusStrip status={status} />
 
       <div className="ck-co-top-row">
-        <LivePortfolioOverviewCard data={overview.live_portfolio_overview} />
+        <LivePortfolioOverviewCard
+          data={overview.live_portfolio_overview}
+          proposals={overview.trade_proposals}
+        />
         <MarketPulseCompact data={overview.market_pulse} />
       </div>
 

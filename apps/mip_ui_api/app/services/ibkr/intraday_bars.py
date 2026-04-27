@@ -48,12 +48,32 @@ class IntradayBar:
     volume: Optional[float]
 
 
+@dataclass(frozen=True)
+class LiveQuote:
+    """Live tick snapshot from IBKR's reqMktData (snapshot=True).
+
+    `best` is the consumer-friendly single number to render — it prefers
+    last trade, falls back to bid/ask mid, then ib_insync's marketPrice,
+    then the session close. Any of these may be None if the snapshot
+    populated only partially.
+    """
+    best: Optional[float]
+    last: Optional[float] = None
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    mid: Optional[float] = None
+    market_price: Optional[float] = None
+    session_close: Optional[float] = None
+    quote_ts: Optional[str] = None
+
+
 @dataclass
 class SymbolBars:
     symbol: str
     status: str  # SUCCESS | FAILED | EMPTY
     bars: List[IntradayBar] = field(default_factory=list)
     current_price: Optional[float] = None
+    live_quote: Optional[LiveQuote] = None
     error: Optional[str] = None
 
 
@@ -111,6 +131,71 @@ def _filter_to_today(bars: List[Dict[str, Any]], session_date: date) -> List[Int
     return out
 
 
+def _parse_live_quote(raw: Any) -> Optional[LiveQuote]:
+    """Convert the cursorfiles script's `live_quote` dict into a LiveQuote."""
+    if not isinstance(raw, dict):
+        return None
+    best = raw.get("best")
+    if best is None:
+        # Try to derive a best from the remaining fields if the script
+        # did not populate `best` (defensive against script revisions).
+        for key in ("last", "mid", "market_price", "session_close"):
+            v = raw.get(key)
+            if v is not None:
+                best = v
+                break
+    if best is None:
+        return None
+    return LiveQuote(
+        best=_safe_float(best),
+        last=_safe_float(raw.get("last")),
+        bid=_safe_float(raw.get("bid")),
+        ask=_safe_float(raw.get("ask")),
+        mid=_safe_float(raw.get("mid")),
+        market_price=_safe_float(raw.get("market_price")),
+        session_close=_safe_float(raw.get("session_close")),
+        quote_ts=str(raw.get("quote_ts")) if raw.get("quote_ts") is not None else None,
+    )
+
+
+def _safe_float(v: Any) -> Optional[float]:
+    try:
+        return float(v) if v is not None else None
+    except Exception:
+        return None
+
+
+def fetch_today_intraday_bars(
+    symbols: List[str],
+    *,
+    interval_minutes: int = 15,
+    window_bars: int = 80,
+    session_date: Optional[date] = None,
+    timeout_sec: int = 30,
+    diagnostics_surface: str = "live_intelligence",
+    include_live_quote: bool = False,
+    snapshot_wait_sec: float = 2.5,
+) -> IntradayBarsResult:
+    """
+    Generic intraday bar fetch with optional live tick snapshot.
+
+    Identical fail-soft contract as `fetch_today_15m_bars`. When
+    `include_live_quote=True`, each successful per-symbol entry gets a
+    populated `live_quote` (or None if the snapshot did not arrive in
+    time / the symbol has no current quote).
+    """
+    return _fetch_intraday(
+        symbols,
+        interval_minutes=interval_minutes,
+        window_bars=window_bars,
+        session_date=session_date,
+        timeout_sec=timeout_sec,
+        diagnostics_surface=diagnostics_surface,
+        include_live_quote=include_live_quote,
+        snapshot_wait_sec=snapshot_wait_sec,
+    )
+
+
 def fetch_today_15m_bars(
     symbols: List[str],
     *,
@@ -119,7 +204,8 @@ def fetch_today_15m_bars(
     diagnostics_surface: str = "live_intelligence",
 ) -> IntradayBarsResult:
     """
-    Fetch today's 15-minute RTH bars for the given symbols.
+    Fetch today's 15-minute RTH bars for the given symbols (no live
+    tick). Existing intraday-overlay callers use this entry point.
 
     Fail-soft contract:
       * Any exception below is caught and surfaced as
@@ -145,7 +231,29 @@ def fetch_today_15m_bars(
     diagnostics_surface : str
         Surface name for IB host diagnostics templates.
     """
-    # Local imports to keep top-of-module side effects minimal.
+    return _fetch_intraday(
+        symbols,
+        interval_minutes=15,
+        window_bars=80,
+        session_date=session_date,
+        timeout_sec=timeout_sec,
+        diagnostics_surface=diagnostics_surface,
+        include_live_quote=False,
+        snapshot_wait_sec=0.0,
+    )
+
+
+def _fetch_intraday(
+    symbols: List[str],
+    *,
+    interval_minutes: int,
+    window_bars: int,
+    session_date: Optional[date],
+    timeout_sec: int,
+    diagnostics_surface: str,
+    include_live_quote: bool,
+    snapshot_wait_sec: float,
+) -> IntradayBarsResult:
     fetched_at_utc = datetime.now(timezone.utc).isoformat()
     target_date = session_date or datetime.now(timezone.utc).date()
 
@@ -157,8 +265,6 @@ def fetch_today_15m_bars(
         )
 
     try:
-        # Imported lazily so a missing dependency in the subprocess wrapper
-        # cannot crash module import time.
         from app.services.ibkr_live_bars import run_agent_ibkr_live_bars
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("intraday_bars: subprocess wrapper import failed: %s", exc)
@@ -169,24 +275,20 @@ def fetch_today_15m_bars(
             error=f"runtime_missing: {exc}",
         )
 
-    # Build per-symbol specs. All cockpit positions are STOCK (V_LIVE_OPEN_POSITIONS
-    # hard-codes MARKET_TYPE='STOCK' today), but we still pass market_type
-    # so the subprocess script normalises correctly for any FX positions
-    # added later.
     symbol_specs = [{"symbol": s, "market_type": "STOCK"} for s in symbols]
 
     try:
         payload = run_agent_ibkr_live_bars(
             symbol_specs,
-            interval_minutes=15,
-            window_bars=80,  # 80 * 15min = 20h, comfortably covers a full RTH session.
+            interval_minutes=interval_minutes,
+            window_bars=window_bars,
             timeout_sec=timeout_sec,
             diagnostics_surface=diagnostics_surface,
             regular_trading_hours_only=True,
+            include_snapshot_quote=include_live_quote,
+            snapshot_wait_sec=snapshot_wait_sec,
         )
     except Exception as exc:
-        # run_agent_ibkr_live_bars raises HTTPException on subprocess
-        # failure. The cockpit must NOT propagate that — fail soft.
         msg = _extract_subprocess_error(exc)
         logger.info("intraday_bars: fetch unavailable (%s)", msg)
         return IntradayBarsResult(
@@ -215,6 +317,7 @@ def fetch_today_15m_bars(
         if not sym:
             continue
         row_status = str(row.get("status") or "").upper()
+        live_quote = _parse_live_quote(row.get("live_quote")) if include_live_quote else None
         if row_status == "SUCCESS":
             today_bars = _filter_to_today(row.get("bars") or [], target_date)
             current_price = today_bars[-1].close if today_bars else row.get("current_price")
@@ -223,17 +326,19 @@ def fetch_today_15m_bars(
                 status="SUCCESS" if today_bars else "EMPTY",
                 bars=today_bars,
                 current_price=current_price,
+                live_quote=live_quote,
             )
             if today_bars:
                 any_success = True
             else:
-                any_failure = True  # got bars but none for today → treat as missing
+                any_failure = True
         else:
             any_failure = True
             out[sym] = SymbolBars(
                 symbol=sym,
                 status="FAILED",
                 error=str(row.get("error") or "fetch_failed"),
+                live_quote=live_quote,
             )
 
     if any_success and not any_failure:
@@ -241,7 +346,6 @@ def fetch_today_15m_bars(
     elif any_success and any_failure:
         top_status = "PARTIAL"
     else:
-        # No symbol returned a bar for today. This is the weekend / pre-open path.
         top_status = "PARTIAL"
 
     return IntradayBarsResult(

@@ -36,6 +36,11 @@ from app.services.cockpit.position_health_summary import (
     build_position_health_summary,
 )
 from app.services.cockpit.trade_plan import TradePlanIndex, load_trade_plans
+from app.services.cockpit.trade_proposals import (
+    TradeProposalsPayload,
+    load_trade_proposals,
+    to_payload_dict as trade_proposals_payload_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -629,6 +634,14 @@ def build_cockpit_overview(
 
     shadow_status_counts = _build_shadow_run_status_counts(ph_rows)
 
+    try:
+        proposals_payload = load_trade_proposals(int(portfolio_id))
+    except Exception as exc:
+        logger.warning("cockpit: trade_proposals load failed: %s", exc)
+        proposals_payload = TradeProposalsPayload(
+            available=False, total_count=0, note=f"trade_proposals_failed: {exc}"
+        )
+
     return {
         "schema_version": "1.0.0",
         "as_of_ts": datetime.now(timezone.utc).isoformat(),
@@ -641,6 +654,7 @@ def build_cockpit_overview(
         "live_portfolio_overview": _build_live_portfolio_overview(
             portfolio_id=int(portfolio_id), account_id=account_id
         ),
+        "trade_proposals": trade_proposals_payload_dict(proposals_payload),
         "market_pulse": _build_market_pulse_compact(),
         "position_health_summary_rows": [r.to_dict() for r in ph_rows],
         "priority_review": _build_priority_review(ph_rows),
@@ -679,6 +693,14 @@ def _empty_overview() -> Dict[str, Any]:
             "open_position_count": 0,
             "working_order_count": 0,
             "freshness_ts": None,
+        },
+        "trade_proposals": {
+            "available": False,
+            "total_count": 0,
+            "intraday_overlay_status": "UNAVAILABLE",
+            "intraday_evaluated_ts": None,
+            "proposals": [],
+            "note": "No active live portfolio configured.",
         },
         "market_pulse": _build_market_pulse_compact(),
         "position_health_summary_rows": [],

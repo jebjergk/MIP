@@ -247,9 +247,20 @@ def get_cockpit_overview(
             "live portfolio from MIP.LIVE.LIVE_PORTFOLIO_CONFIG."
         ),
     ),
+    force_refresh: bool = Query(
+        False,
+        description=(
+            "Bypass the 60s intraday-overlay cache and force a fresh "
+            "TWS fetch. Used by the cockpit Refresh button so the "
+            "intraday card reflects the latest 15m bars on demand."
+        ),
+    ),
 ):
     try:
-        return build_cockpit_overview(portfolio_id=portfolio_id)
+        return build_cockpit_overview(
+            portfolio_id=portfolio_id,
+            force_refresh_intraday=force_refresh,
+        )
     except Exception as exc:
         logger.exception("cockpit.overview: composition failed")
         raise HTTPException(status_code=500, detail=f"cockpit overview failed: {exc}")

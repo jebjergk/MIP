@@ -18,7 +18,7 @@
  * small <details> drawer at the bottom; ops can still trigger them
  * without polluting the operator-first layout.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { API_BASE } from '../config/apiBase'
 import LoadingState from '../components/LoadingState'
 import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
@@ -53,16 +53,24 @@ export default function Cockpit() {
 
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
 
   // Demoted ops drawer state (full IB daily job + partial RTH variant).
   const [opsRunning, setOpsRunning] = useState(false)
   const [opsMsg, setOpsMsg] = useState({ type: '', text: '' })
 
-  const loadOverview = useCallback(async () => {
+  // Track an in-flight overview fetch so auto-polls don't trample a
+  // user-triggered manual refresh and vice-versa.
+  const inFlightRef = useRef(false)
+
+  const loadOverview = useCallback(async ({ forceRefresh = false } = {}) => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     setError('')
     try {
-      const resp = await fetch(`${API_BASE}/cockpit/overview`)
+      const url = `${API_BASE}/cockpit/overview${forceRefresh ? '?force_refresh=true' : ''}`
+      const resp = await fetch(url)
       const data = await resp.json().catch(() => ({}))
       if (!resp.ok) {
         throw new Error(data?.detail || `Cockpit overview failed (${resp.status})`)
@@ -70,9 +78,10 @@ export default function Cockpit() {
       setOverview(data)
     } catch (e) {
       setError(e?.message || 'Failed to load cockpit overview.')
-      setOverview(null)
+      setOverview((prev) => prev || null)
     } finally {
       setLoading(false)
+      inFlightRef.current = false
     }
   }, [])
 
@@ -80,19 +89,41 @@ export default function Cockpit() {
     loadOverview()
   }, [loadOverview])
 
-  // Best-effort broker snapshot refresh on demand. We intentionally do
-  // NOT block initial render on this — the overview already reflects
-  // the most recent persisted snapshot, and waiting for a synchronous
-  // IBKR roundtrip just to render the page is exactly what the
-  // refactor avoids.
-  const handleRefresh = useCallback(async () => {
-    try {
-      await fetch(`${API_BASE}/live/snapshot/refresh`, { method: 'POST' })
-    } catch {
-      // non-fatal
+  // Auto-poll every 90s while the tab is visible so the intraday card,
+  // status freshness timestamps, and counts stay current without the
+  // user having to click Refresh. The server's 60s intraday-overlay
+  // cache absorbs duplicate hits within the window.
+  useEffect(() => {
+    const POLL_MS = 90_000
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      loadOverview()
     }
-    await loadOverview()
+    const id = setInterval(tick, POLL_MS)
+    return () => clearInterval(id)
   }, [loadOverview])
+
+  // Manual refresh: drop the broker snapshot cache, drop the intraday
+  // overlay cache, then pull a fresh overview with `force_refresh=true`
+  // so the next intraday read goes straight to TWS. Visual loading
+  // state is essential — without it the button looked dead because
+  // the network call returned cached data instantly.
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await Promise.allSettled([
+        fetch(`${API_BASE}/live/snapshot/refresh`, { method: 'POST' }),
+        fetch(`${API_BASE}/cockpit/overview/refresh-cache`, { method: 'POST' }),
+      ])
+    } finally {
+      try {
+        await loadOverview({ forceRefresh: true })
+      } finally {
+        setRefreshing(false)
+      }
+    }
+  }, [loadOverview, refreshing])
 
   const runIbJob = useCallback(async (synthIntraday) => {
     const prompt = synthIntraday
@@ -159,8 +190,14 @@ export default function Cockpit() {
         <h1>Cockpit</h1>
         <span className="ck-co-page-sub">As of {formatTs(overview.as_of_ts)}</span>
         <span style={{ marginLeft: 'auto' }}>
-          <button className="ck-op-btn" type="button" onClick={handleRefresh}>
-            Refresh
+          <button
+            className="ck-op-btn"
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Force a fresh broker + intraday read"
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
         </span>
       </div>

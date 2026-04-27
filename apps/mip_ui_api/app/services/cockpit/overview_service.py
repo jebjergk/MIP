@@ -577,10 +577,18 @@ def _load_chart_context(
 # --- Public entry point ----------------------------------------------------
 
 
-def build_cockpit_overview(portfolio_id: Optional[int] = None) -> Dict[str, Any]:
+def build_cockpit_overview(
+    portfolio_id: Optional[int] = None,
+    *,
+    force_refresh_intraday: bool = False,
+) -> Dict[str, Any]:
     """
     Compose the full /cockpit/overview payload for the active live
     portfolio (or the explicitly-passed portfolio_id).
+
+    `force_refresh_intraday` bypasses the 60s overlay TTL cache so the
+    cockpit Refresh button can pull a fresh TWS read on demand. Normal
+    page loads / auto-polls leave it False so the cache absorbs traffic.
     """
     if portfolio_id is None:
         cfg = _query_one(_ACTIVE_PORTFOLIO_SQL, {})
@@ -598,7 +606,10 @@ def build_cockpit_overview(portfolio_id: Optional[int] = None) -> Dict[str, Any]
 
     # Intraday overlay first — it's fail-soft and we feed it into the PH
     # summary so each row's Today chip is consistent with the overlay.
-    intraday = get_intraday_overlay(int(portfolio_id))
+    intraday = get_intraday_overlay(
+        int(portfolio_id),
+        force_refresh=force_refresh_intraday,
+    )
 
     entry_dates_by_key, daily_bars_by_symbol = _load_chart_context(int(portfolio_id))
 

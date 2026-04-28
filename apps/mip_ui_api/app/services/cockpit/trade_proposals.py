@@ -485,13 +485,15 @@ class _IntradayFetch:
     overlay_status: str
     evaluated_ts: Optional[str]
     by_symbol: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
 
 
 def _fetch_intraday_for_proposals(symbols: List[str]) -> _IntradayFetch:
     """
     Fetch today's 15-minute bars + a live tick snapshot for each
     proposal symbol. Fail-soft: any error returns
-    overlay_status='UNAVAILABLE' with empty by_symbol.
+    overlay_status='UNAVAILABLE' with empty by_symbol and a populated
+    `error` so the cockpit can surface the real reason in the UI.
     """
     if not symbols:
         return _IntradayFetch(overlay_status="OK", evaluated_ts=None)
@@ -502,22 +504,41 @@ def _fetch_intraday_for_proposals(symbols: List[str]) -> _IntradayFetch:
         # contract of the cockpit overview).
         from app.services.ibkr.intraday_bars import fetch_today_intraday_bars
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("trade_proposals: intraday import failed: %s", exc)
-        return _IntradayFetch(overlay_status="UNAVAILABLE", evaluated_ts=None)
+        logger.warning(
+            "trade_proposals: intraday import failed for %s: %s",
+            symbols, exc,
+        )
+        return _IntradayFetch(
+            overlay_status="UNAVAILABLE",
+            evaluated_ts=None,
+            error=f"intraday_import_failed: {exc}",
+        )
 
+    logger.info(
+        "trade_proposals: fetching IBKR intraday for %s (live_quote=True)",
+        symbols,
+    )
     try:
         result = fetch_today_intraday_bars(
             symbols,
             interval_minutes=15,
             window_bars=80,
-            timeout_sec=30,
+            timeout_sec=45,
             diagnostics_surface="cockpit_trade_proposals",
             include_live_quote=True,
             snapshot_wait_sec=2.5,
         )
     except Exception as exc:
-        logger.info("trade_proposals: intraday fetch unavailable: %s", exc)
-        return _IntradayFetch(overlay_status="UNAVAILABLE", evaluated_ts=None)
+        # Promote to WARNING so default API log levels show *why*
+        # the proposal panel is rendering "Live unavailable".
+        logger.warning(
+            "trade_proposals: intraday fetch raised: %s", exc, exc_info=True,
+        )
+        return _IntradayFetch(
+            overlay_status="UNAVAILABLE",
+            evaluated_ts=None,
+            error=str(exc)[:300],
+        )
 
     # Decide overlay-level status. If every symbol is EMPTY/FAILED with
     # no bars and no live quote, the market is closed (or TWS down).
@@ -537,10 +558,22 @@ def _fetch_intraday_for_proposals(symbols: List[str]) -> _IntradayFetch:
     else:
         overlay_status = "PARTIAL"
 
+    if overlay_status != "OK":
+        logger.warning(
+            "trade_proposals: intraday overlay_status=%s symbols=%s error=%s",
+            overlay_status, symbols, getattr(result, "error", None),
+        )
+    else:
+        logger.info(
+            "trade_proposals: intraday OK (%d symbols, fetched_at=%s)",
+            len(by_sym), result.fetched_at_utc,
+        )
+
     return _IntradayFetch(
         overlay_status=overlay_status,
         evaluated_ts=result.fetched_at_utc,
         by_symbol=by_sym,
+        error=getattr(result, "error", None),
     )
 
 
@@ -720,12 +753,19 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
             )
         )
 
+    note: Optional[str] = None
+    if intraday.overlay_status == "UNAVAILABLE" and intraday.error:
+        note = f"Live fetch unavailable: {intraday.error}"
+    elif intraday.overlay_status == "MARKET_CLOSED":
+        note = "Market closed — showing previous close only."
+
     return TradeProposalsPayload(
         available=True,
         total_count=total_count,
         intraday_overlay_status=intraday.overlay_status,
         intraday_evaluated_ts=intraday.evaluated_ts,
         proposals=proposals,
+        note=note,
     )
 
 

@@ -69,8 +69,14 @@ export default function Cockpit() {
     inFlightRef.current = true
     setError('')
     try {
-      const url = `${API_BASE}/cockpit/overview${forceRefresh ? '?force_refresh=true' : ''}`
-      const resp = await fetch(url)
+      // Always append a cache-buster so no proxy/browser layer can ever
+      // hand back a stale payload. forceRefresh additionally tells the
+      // backend to bypass its 60s intraday-overlay cache.
+      const params = new URLSearchParams()
+      if (forceRefresh) params.set('force_refresh', 'true')
+      params.set('_t', Date.now().toString())
+      const url = `${API_BASE}/cockpit/overview?${params.toString()}`
+      const resp = await fetch(url, { cache: 'no-store' })
       const data = await resp.json().catch(() => ({}))
       if (!resp.ok) {
         throw new Error(data?.detail || `Cockpit overview failed (${resp.status})`)
@@ -90,14 +96,16 @@ export default function Cockpit() {
   }, [loadOverview])
 
   // Auto-poll every 90s while the tab is visible so the intraday card,
-  // status freshness timestamps, and counts stay current without the
-  // user having to click Refresh. The server's 60s intraday-overlay
-  // cache absorbs duplicate hits within the window.
+  // trade proposals, status freshness timestamps, and counts stay
+  // current without the user having to click Refresh. We pass
+  // forceRefresh so the server bypasses its 60s intraday-overlay cache
+  // and TWS is queried fresh each tick (90s > a 15m bar's worth of
+  // staleness budget anyway).
   useEffect(() => {
     const POLL_MS = 90_000
     const tick = () => {
       if (typeof document !== 'undefined' && document.hidden) return
-      loadOverview()
+      loadOverview({ forceRefresh: true })
     }
     const id = setInterval(tick, POLL_MS)
     return () => clearInterval(id)

@@ -290,7 +290,12 @@ def _fetch_intraday(
         )
     except Exception as exc:
         msg = _extract_subprocess_error(exc)
-        logger.info("intraday_bars: fetch unavailable (%s)", msg)
+        # WARNING-level so default log config surfaces *why* the cockpit
+        # fell back to "Live unavailable" without needing DEBUG turned on.
+        logger.warning(
+            "intraday_bars: fetch unavailable for %s (surface=%s): %s",
+            symbols, diagnostics_surface, msg,
+        )
         return IntradayBarsResult(
             status="UNAVAILABLE",
             fetched_at_utc=fetched_at_utc,

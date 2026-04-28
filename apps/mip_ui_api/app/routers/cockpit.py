@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from app.services.cockpit.overview_service import build_cockpit_overview
@@ -287,6 +287,7 @@ class CockpitOverview(BaseModel):
 
 @router.get("/overview", response_model=CockpitOverview)
 def get_cockpit_overview(
+    response: Response,
     portfolio_id: Optional[int] = Query(
         None,
         ge=1,
@@ -304,6 +305,10 @@ def get_cockpit_overview(
         ),
     ),
 ):
+    # The cockpit payload contains live tick prices and intraday bars
+    # that change every poll — never cache it anywhere along the path.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
     try:
         return build_cockpit_overview(
             portfolio_id=portfolio_id,

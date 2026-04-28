@@ -405,6 +405,15 @@ export default function TradeProposalsPanel({ data }) {
         </span>
       </header>
 
+      {/* When the live overlay is degraded, surface the actual reason
+          (timeout, TWS disconnected, sub missing, etc.) so the operator
+          knows why the panel is showing prev close only. */}
+      {overlayStatus !== 'OK' && data.note ? (
+        <p className="ck-co-tp-note ck-co-tp-note--warn" title={data.note}>
+          {data.note}
+        </p>
+      ) : null}
+
       {proposals.length === 0 ? (
         <p className="ck-co-tp-note">
           {data.note || 'No actionable proposals right now.'}

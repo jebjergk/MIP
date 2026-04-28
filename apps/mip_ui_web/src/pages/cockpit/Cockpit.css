@@ -241,6 +241,22 @@
   font-style: italic;
 }
 
+.ck-co-tp-note--warn {
+  margin: 4px 0 6px;
+  padding: 4px 8px;
+  background: #fff5f0;
+  border: 1px solid #f4cdb6;
+  border-radius: 4px;
+  color: #8a3d12;
+  font-style: normal;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ck-co-tp-list {
   display: flex;
   flex-direction: column;

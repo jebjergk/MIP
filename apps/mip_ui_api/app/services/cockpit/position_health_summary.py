@@ -203,13 +203,31 @@ class PositionHealthSummaryRow:
 # --- SQL --------------------------------------------------------------------
 
 
+# Drive the cockpit's Position Health row set off broker truth
+# (V_LIVE_OPEN_POSITIONS), then LEFT JOIN the daily Position Health
+# comparison view. This is required so that positions opened intraday
+# (which the daily Position Health pipeline has not yet processed)
+# still appear on the cockpit immediately — with NULL verdicts that
+# render as "—" / "No plan yet" / "Hold — verdict pending". Driving
+# off the comparison view alone made fresh positions invisible until
+# the next daily run, which contradicts the spec rule that the cockpit
+# reflects current live broker-aligned truth.
 _COMPARISON_SQL = """
     SELECT
-        c.POSITION_EPISODE_KEY,
-        c.PORTFOLIO_ID,
-        c.SYMBOL,
-        c.SIDE,
-        c.DAYS_HELD,
+        v.POSITION_EPISODE_KEY,
+        v.PORTFOLIO_ID,
+        v.SYMBOL,
+        COALESCE(
+            c.SIDE,
+            CASE
+                WHEN v.QUANTITY > 0 THEN 'LONG'
+                WHEN v.QUANTITY < 0 THEN 'SHORT'
+            END
+        ) AS SIDE,
+        COALESCE(
+            c.DAYS_HELD,
+            DATEDIFF(day, v.ENTRY_DATE, CURRENT_DATE())
+        ) AS DAYS_HELD,
         c.UNREALIZED_PNL_PCT,
         c.DISTANCE_TO_INVALIDATION_PCT,
 
@@ -227,8 +245,11 @@ _COMPARISON_SQL = """
         c.SHADOW_WHY_SUMMARY,
 
         c.AGREEMENT_LABEL
-    FROM MIP.MART.V_POSITION_HEALTH_COMPARISON_LATEST c
-    WHERE c.PORTFOLIO_ID = %(portfolio_id)s
+    FROM MIP.MART.V_LIVE_OPEN_POSITIONS v
+    LEFT JOIN MIP.MART.V_POSITION_HEALTH_COMPARISON_LATEST c
+        ON c.PORTFOLIO_ID = v.PORTFOLIO_ID
+       AND c.POSITION_EPISODE_KEY = v.POSITION_EPISODE_KEY
+    WHERE v.PORTFOLIO_ID = %(portfolio_id)s
 """
 
 
@@ -473,6 +494,11 @@ def _recommendation_text_for(
         return "Watch closely — daily verdict is on watch."
     if rv == "KEEP":
         return "Hold — daily keep and today stable."
+    if not rv:
+        # Fresh position the daily Position Health pipeline has not
+        # yet processed (e.g. opened intraday today). Don't claim
+        # "no material concern" — there is simply no verdict yet.
+        return "Hold — verdict pending (fresh position; next daily run will assess)."
     return "Hold — no material concern in current data."
 
 

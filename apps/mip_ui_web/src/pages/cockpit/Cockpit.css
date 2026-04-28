@@ -327,6 +327,47 @@
 }
 .ck-co-tp-stance--missing { font-style: italic; color: #6c757d; background: transparent; padding: 0; }
 
+/* Priority badge — comparative ranking strength. Sits on the LEFT of the
+ * headline so the operator's eye reads "#1 High · ORCL LONG · Approve"
+ * left-to-right. Tone matches the band: HIGH=ok, MEDIUM=info, LOW=neutral.
+ * The readiness badge stays in its existing badge row below; the two
+ * dimensions are intentionally separate (priority = strength,
+ * readiness = actionable now). */
+.ck-co-tp-priority {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  cursor: help;
+}
+.ck-co-tp-priority-rank {
+  font-variant-numeric: tabular-nums;
+}
+.ck-co-tp-priority-band {
+  font-weight: 600;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.ck-co-tp-priority--ok      { background: #d1e7dd; color: #0f5132; border-color: #a3cfbb; }
+.ck-co-tp-priority--info    { background: #cfe2ff; color: #052c65; border-color: #9ec5fe; }
+.ck-co-tp-priority--neutral { background: #f1f3f5; color: #495057; border-color: #dee2e6; }
+
+/* "Why ranked" detail line — short reason that explains the priority.
+ * Same compact style as the other secondary lines in the row. */
+.ck-co-tp-line--reason {
+  font-size: 0.72rem;
+  color: #6c757d;
+}
+.ck-co-tp-reason-text {
+  font-style: italic;
+}
+
 .ck-co-tp-line {
   font-size: 0.78rem;
   color: #495057;

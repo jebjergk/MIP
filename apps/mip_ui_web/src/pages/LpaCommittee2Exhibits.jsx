@@ -304,6 +304,12 @@ function Reveal({ show, children, className = '' }) {
 export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg, loading }) {
   const chartGradId = useMemo(() => `c2fx_${Math.random().toString(36).slice(2, 11)}`, [])
   const [revealStep, setRevealStep] = useState(0)
+  // Comparative-priority context for this proposal vs the rest of the
+  // active slate — backed by /committee/proposal/{id}/priority-context.
+  // Intentionally orthogonal to stance/confidence: priority answers
+  // "is this the strongest idea right now?", stance answers
+  // "should we take it?". Failures keep the page rendering without the pill.
+  const [priorityCtx, setPriorityCtx] = useState(null)
   const revealKey = useMemo(
     () =>
       inline
@@ -311,6 +317,30 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         : '',
     [inline],
   )
+
+  useEffect(() => {
+    const pid = inline?.proposal_id
+    if (pid == null) {
+      setPriorityCtx(null)
+      return undefined
+    }
+    let cancelled = false
+    const run = async () => {
+      try {
+        const r = await fetch(`${API_BASE}/committee/proposal/${encodeURIComponent(pid)}/priority-context`)
+        if (cancelled || !r.ok) return
+        const j = await r.json()
+        if (!cancelled && j && j.available) setPriorityCtx(j)
+        else if (!cancelled) setPriorityCtx(null)
+      } catch (_e) {
+        if (!cancelled) setPriorityCtx(null)
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [inline?.proposal_id])
 
   // ----------------------------------------------------------------------
   // Phase 1 dual-hearing: simultaneous shadow-board polling.
@@ -505,8 +535,22 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             <span className="lpa-c2-pill lpa-c2-pill--stance">{String(inline.stance || '—').replace(/_/g, ' ')}</span>
             <span className="lpa-c2-pill">conf {fmtNum(inline.confidence, 2)}</span>
             <span className="lpa-c2-pill lpa-c2-pill--ghost">{inline.symbol || '—'}</span>
+            {priorityCtx && priorityCtx.in_slate ? (
+              <span
+                className={`lpa-c2-pill lpa-c2-pill--priority lpa-c2-pill--priority-${String(priorityCtx.priority_band || 'low').toLowerCase()}`}
+                title={`Priority #${priorityCtx.priority_rank} of ${priorityCtx.total} (${priorityCtx.priority_band_label}) — ${priorityCtx.priority_reason_label}${priorityCtx.composite_score != null ? ` · score ${priorityCtx.composite_score.toFixed(3)}` : ''}`}
+              >
+                Priority #{priorityCtx.priority_rank} / {priorityCtx.total} · {priorityCtx.priority_band_label}
+              </span>
+            ) : null}
           </div>
         </div>
+        {priorityCtx && priorityCtx.in_slate ? (
+          <div className="lpa-c2-priority-reason" title="Why this proposal ranks here">
+            <span className="lpa-c2-priority-reason-label">Why ranked</span>
+            <span className="lpa-c2-priority-reason-text">{priorityCtx.priority_reason_label}</span>
+          </div>
+        ) : null}
         <div className="lpa-c2-freshness-bar">
           <div className="lpa-c2-freshness-primary">
             <strong className="lpa-c2-freshness-updated">

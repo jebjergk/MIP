@@ -80,6 +80,23 @@ function readinessTone(code) {
   }
 }
 
+// Priority is an INTENTIONALLY-SEPARATE concept from entry readiness:
+//   * priority  = comparative ranking strength of this proposal vs the
+//                 rest of today's slate (computed from the same composite
+//                 the proposal SP uses).
+//   * readiness = whether the proposal is actionable RIGHT NOW (live
+//                 price vs entry zone + committee stance).
+// A #1 proposal can be WAIT, and a #5 proposal can be READY_NOW. The two
+// badges are read independently.
+function priorityTone(band) {
+  switch (band) {
+    case 'HIGH':   return 'ok'
+    case 'MEDIUM': return 'info'
+    case 'LOW':    return 'neutral'
+    default:       return 'neutral'
+  }
+}
+
 function stanceLabel(stance) {
   if (!stance) return null
   const s = String(stance).toUpperCase()
@@ -299,10 +316,27 @@ function ProposalRow({ proposal }) {
   const distancePct = fmtPct(proposal.distance_to_zone_pct)
   const stance = stanceLabel(proposal.committee_stance)
   const liveAvailable = proposal.current_price != null
+  const hasPriority = proposal.priority_rank != null && proposal.priority_band != null
+  // Tooltip explains *why* this proposal ranks where it does. The score is
+  // included so an operator can compare two proposals at a glance.
+  const priorityTooltip = hasPriority
+    ? `Priority #${proposal.priority_rank} (${proposal.priority_band_label}) — ${proposal.priority_reason_label}` +
+      (proposal.composite_score != null ? ` · score ${proposal.composite_score.toFixed(3)}` : '')
+    : null
   return (
     <div className="ck-co-tp-row">
       <div className="ck-co-tp-info">
         <div className="ck-co-tp-headline">
+          {hasPriority ? (
+            <span
+              className={`ck-co-tp-priority ck-co-tp-priority--${priorityTone(proposal.priority_band)}`}
+              title={priorityTooltip}
+              aria-label={priorityTooltip}
+            >
+              <span className="ck-co-tp-priority-rank">#{proposal.priority_rank}</span>
+              <span className="ck-co-tp-priority-band">{proposal.priority_band_label}</span>
+            </span>
+          ) : null}
           <span className="ck-co-tp-symbol">{proposal.symbol}</span>
           <span className={`ck-co-tp-direction ck-co-tp-direction--${(proposal.direction || '').toLowerCase()}`}>
             {proposal.direction || '\u2014'}
@@ -315,6 +349,13 @@ function ProposalRow({ proposal }) {
             <span className="ck-co-tp-stance ck-co-tp-stance--missing">No verdict yet</span>
           )}
         </div>
+
+        {hasPriority ? (
+          <div className="ck-co-tp-line ck-co-tp-line--reason" title={priorityTooltip}>
+            <span className="ck-co-tp-line-label">Why ranked</span>
+            <span className="ck-co-tp-reason-text">{proposal.priority_reason_label}</span>
+          </div>
+        ) : null}
 
         <div className="ck-co-tp-line">
           <span className="ck-co-tp-line-label">Zone</span>

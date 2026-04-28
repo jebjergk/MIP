@@ -956,6 +956,31 @@ def committee_hearing_commit(hearing_id: str, req: HearingCommitRequest = Body(d
         conn.close()
 
 
+@router.get("/proposal/{proposal_id}/priority-context")
+def committee_proposal_priority_context(proposal_id: int):
+    """Return this proposal's rank position in the current ranked slate.
+
+    Powers the LPA Committee 2 Exhibits masthead "Priority #N of M" pill
+    so an operator viewing a single proposal can see how it compares to
+    the rest of the active slate without flipping back to the cockpit.
+
+    Same composite formula as the proposal SP and the cockpit Trade
+    Proposals panel (see app/services/cockpit/structural_priority.py).
+    Slate definition is *all* STATUS='PROPOSED' rows — no held-symbol
+    filter — because the operator wants to know how this proposal
+    ranks against everything in flight.
+
+    Fail-soft: returns 200 with `available=False` (rather than raising)
+    when the proposal isn't in the active slate or the priority load
+    failed; the LPA page just hides the pill in that case.
+    """
+    from app.services.cockpit.trade_proposals import compute_proposal_priority_context
+    ctx = compute_proposal_priority_context(int(proposal_id))
+    if ctx is None:
+        return {"available": False, "proposal_id": int(proposal_id)}
+    return {"available": True, **ctx}
+
+
 @router.get("/proposal/{proposal_id}/final-decision")
 def committee_proposal_final_decision(proposal_id: int):
     conn = get_connection()

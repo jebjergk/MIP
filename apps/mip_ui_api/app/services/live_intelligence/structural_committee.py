@@ -36,6 +36,11 @@ Newly wired — level / path timing (layer on top of path_quality)
 Newly wired — risk / hold
 - RISK_CLASS: AGGRESSIVE with trust label not TRUSTED applies size_mult 0.85 and
   RISK_CLASS_AGGRESSIVE_SIZE_CLAMP; SPECULATIVE applies 0.9 and reason tag.
+  GAP_AWARE applies size_mult 0.5 and RISK_CLASS_GAP_AWARE_SIZE_CLAMP
+  (used by BREAKOUT_RETEST_LONG to enforce the C3 gap-risk-aware sizing intent
+  documented in 520_sp_propose_structural_trades.sql; binds the previously
+  informational sizing_multiplier=0.5 carried in COMMITTEE_PAYLOAD; token kept
+  short to fit STRUCTURAL_TRADE_PROPOSALS.RISK_CLASS TEXT(10) constraint).
 - EXIT_STYLE: recorded on joint_decision.exit_style for submit/diagnostics coherence.
 - MAX_HOLD_BARS / EXPECTED_HOLD_CHARACTER: already on joint_decision; hold used in risk note.
 
@@ -360,6 +365,9 @@ def _evaluate_structural_extended_context(action: dict) -> dict:
     elif risk_c == "SPECULATIVE":
         mult *= 0.90
         tags_add.append("RISK_CLASS_SPECULATIVE_NOTE")
+    elif risk_c == "GAP_AWARE":
+        mult *= 0.50
+        tags_add.append("RISK_CLASS_GAP_AWARE_SIZE_CLAMP")
 
     narrative = str(action.get("SETUP_NARRATIVE") or "").strip()
     conf = _safe_float(action.get("STRUCTURE_CONFIDENCE"), 1.0)

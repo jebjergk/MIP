@@ -55,9 +55,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from app.db import fetch_all, get_connection, serialize_row
+from app.services.cockpit.structural_priority import rank_proposals
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +134,20 @@ class TradeProposal:
     detail_route: Optional[str] = None
     created_at: Optional[str] = None
 
+    # Priority signal — comparative strength relative to other proposals
+    # in the slate. Computed locally by structural_priority.compute_components
+    # which mirrors the 520_sp_propose_structural_trades.sql composite
+    # formula. Intentionally orthogonal to entry_readiness above:
+    #   priority  = "is this the strongest idea on the slate?"
+    #   readiness = "is it actionable right now?"
+    # The two are read independently in the UI.
+    priority_rank: Optional[int] = None              # 1 = strongest; None when slate empty
+    priority_band: Optional[str] = None              # 'HIGH' | 'MEDIUM' | 'LOW'
+    priority_band_label: Optional[str] = None        # 'High' | 'Medium' | 'Low'
+    priority_reason_code: Optional[str] = None       # see structural_priority.REASON_LABELS
+    priority_reason_label: Optional[str] = None      # plain English (one line)
+    composite_score: Optional[float] = None          # rounded to 4 dp
+
 
 @dataclass(frozen=True)
 class TradeProposalsPayload:
@@ -151,6 +167,16 @@ class TradeProposalsPayload:
 # pipeline has expired stale rows. We do NOT join LIVE_ACTIONS here -
 # once a proposal moves into the execution queue it stops being a
 # "trade proposal" and becomes either a working order or a position.
+#
+# We also pull every component the 520 SP composite uses
+# (STRUCTURE_CONFIDENCE, LEVEL_SIGNIFICANCE, REGIME_COMPAT,
+#  MEANINGFUL_HIT_RATE, PATH_SURVIVAL_HIT_RATE) plus TRUST_LABEL from
+# COMMITTEE_PAYLOAD and SETUP_DATE from the originating setup event.
+# These let structural_priority.rank_proposals reproduce the SP-side
+# composite locally so the cockpit and LPA surfaces can show priority
+# rank + dominant reason without a round-trip to the SP.
+#
+# ORDER BY is unimportant here — rank_proposals re-sorts strongest-first.
 _PROPOSALS_SQL = """
     SELECT
         p.PROPOSAL_ID,
@@ -160,10 +186,18 @@ _PROPOSALS_SQL = """
         p.ENTRY_ZONE_LOW,
         p.ENTRY_ZONE_HIGH,
         p.PRICE_INVALIDATION_LEVEL,
-        p.CREATED_AT
+        p.CREATED_AT,
+        p.STRUCTURE_CONFIDENCE,
+        p.LEVEL_SIGNIFICANCE,
+        p.REGIME_COMPAT,
+        p.MEANINGFUL_HIT_RATE,
+        p.PATH_SURVIVAL_HIT_RATE,
+        COALESCE(p.COMMITTEE_PAYLOAD:trust_label::STRING, 'RESEARCH') AS TRUST_LABEL,
+        s.SETUP_DATE
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+    LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS s
+      ON s.SETUP_EVENT_ID = p.SETUP_EVENT_ID
     WHERE p.STATUS = 'PROPOSED'
-    ORDER BY p.CREATED_AT DESC
 """
 
 # Latest committed committee decision per proposal. We pick the most
@@ -652,6 +686,11 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
         if str(r.get("SYMBOL") or "").upper() not in held_symbols
     ]
 
+    # Rank the full actionable slate strongest-first BEFORE the
+    # MAX_PROPOSALS truncation so the rank we assign is meaningful
+    # ("#1 of 7", not "#1 of the 6 we happened to keep").
+    actionable_rows = rank_proposals(actionable_rows, as_of_date=date.today())
+
     total_count = len(actionable_rows)
     actionable_rows = actionable_rows[:MAX_PROPOSALS]
 
@@ -755,6 +794,12 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
                 mini_chart_series=chart_series,
                 detail_route=f"/structural-market-timeline?symbol={symbol}",
                 created_at=str(r.get("CREATED_AT")) if r.get("CREATED_AT") else None,
+                priority_rank=r.get("priority_rank"),
+                priority_band=r.get("priority_band"),
+                priority_band_label=r.get("priority_band_label"),
+                priority_reason_code=r.get("priority_reason_code"),
+                priority_reason_label=r.get("priority_reason_label"),
+                composite_score=r.get("composite_score"),
             )
         )
 
@@ -772,6 +817,57 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
         proposals=proposals,
         note=note,
     )
+
+
+def compute_proposal_priority_context(proposal_id: int) -> Optional[Dict[str, Any]]:
+    """Look up `proposal_id` in the current ranked slate.
+
+    Returns a small dict suitable for showing a "Priority #N of M" pill
+    on a per-proposal detail page (LPA Committee 2 Exhibits masthead),
+    or None when the proposal is not in the active slate (already
+    cancelled / executed / expired, or stale id).
+
+    Slate definition for this lookup is intentionally *all* PROPOSED
+    rows — not the cockpit's held-symbol-filtered slate — because the
+    operator looking at one proposal wants to know "how does this rank
+    against everything in flight right now", not "against what I haven't
+    already taken".
+
+    Fail-soft: any DB error returns None and logs a warning, so the
+    LPA page can render without the priority pill rather than failing.
+    """
+    try:
+        rows = _load_proposal_rows()
+    except Exception as exc:
+        logger.warning("priority_context: proposal query failed: %s", exc)
+        return None
+    if not rows:
+        return None
+    ranked = rank_proposals(rows, as_of_date=date.today())
+    total = len(ranked)
+    target_pid = int(proposal_id)
+    for r in ranked:
+        try:
+            pid = int(r.get("PROPOSAL_ID") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pid == target_pid:
+            return {
+                "proposal_id":           pid,
+                "priority_rank":         r.get("priority_rank"),
+                "total":                 total,
+                "priority_band":         r.get("priority_band"),
+                "priority_band_label":   r.get("priority_band_label"),
+                "priority_reason_code":  r.get("priority_reason_code"),
+                "priority_reason_label": r.get("priority_reason_label"),
+                "composite_score":       r.get("composite_score"),
+                "in_slate":              True,
+            }
+    return {
+        "proposal_id": target_pid,
+        "total":       total,
+        "in_slate":    False,
+    }
 
 
 def to_payload_dict(payload: TradeProposalsPayload) -> Dict[str, Any]:
@@ -811,6 +907,12 @@ def to_payload_dict(payload: TradeProposalsPayload) -> Dict[str, Any]:
                 ],
                 "detail_route": p.detail_route,
                 "created_at": p.created_at,
+                "priority_rank": p.priority_rank,
+                "priority_band": p.priority_band,
+                "priority_band_label": p.priority_band_label,
+                "priority_reason_code": p.priority_reason_code,
+                "priority_reason_label": p.priority_reason_label,
+                "composite_score": p.composite_score,
             }
             for p in payload.proposals
         ],

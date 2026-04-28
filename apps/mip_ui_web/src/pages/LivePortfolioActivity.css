@@ -1061,6 +1061,47 @@
   color: #5c6bc0;
 }
 
+/* Comparative-priority pill in the masthead — strength of this proposal
+ * vs the rest of the slate. Distinct from stance/conf which speak to
+ * "should we take it?". Tone matches the priority band. */
+.lpa-c2-pill--priority {
+  cursor: help;
+  letter-spacing: 0.02em;
+}
+.lpa-c2-pill--priority-high {
+  background: #c8e6c9;
+  color: #1b5e20;
+  border: 1px solid #81c784;
+}
+.lpa-c2-pill--priority-medium {
+  background: #bbdefb;
+  color: #0d47a1;
+  border: 1px solid #64b5f6;
+}
+.lpa-c2-pill--priority-low {
+  background: #eceff1;
+  color: #455a64;
+  border: 1px solid #cfd8dc;
+}
+
+.lpa-c2-priority-reason {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #5c6bc0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.lpa-c2-priority-reason-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: #7986cb;
+}
+.lpa-c2-priority-reason-text {
+  font-style: italic;
+}
+
 .lpa-c2-freshness-bar {
   margin-top: 10px;
   padding-top: 10px;

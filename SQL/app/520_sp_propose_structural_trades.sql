@@ -19,12 +19,23 @@
                   breakeven_at=1.0 / lock_50_at=2.0 trail params via a
                   targeted UPDATE after the seed MERGE.
               C3 gap-risk-aware sizing: BRL proposals are forced to RISK_CLASS
-                  'LOW' and carry sizing_multiplier=0.5 + gap_risk_aware=true
-                  in COMMITTEE_PAYLOAD. RATIONALE_TEXT annotated.
+                  'GAP_AWARE' (9-char token to fit TEXT(10) column) which is
+                  honored by structural_committee.py compute_structural_thesis_assessment
+                  with a 0.50x size_mult clamp (RISK_CLASS_GAP_AWARE_SIZE_CLAMP).
+                  The legacy sizing_multiplier=0.5 + gap_risk_aware=true fields
+                  are still carried in COMMITTEE_PAYLOAD for diagnostic/audit
+                  purposes, but binding now happens through RISK_CLASS rather
+                  than the payload field. RATIONALE_TEXT annotated for operator clarity.
       D   — Explicit SHORT freeze: eligible_setups WHERE clause restricted to
             DIRECTION='LONG'. Lift criterion: at least one SHORT family must
             achieve MFE/MAE >= 1.0 over the trust evaluation window before
             this filter is removed.
+      E   — Explicit FX exclusion: eligible_setups WHERE clause excludes
+            MARKET_TYPE='FX'. The detector emits FX setups for analytics but
+            the operating account does not trade FX. NULL/unknown MARKET_TYPE
+            is treated as STOCK to preserve behavior on unclassified equity
+            setups. Lift criterion: define an FX execution / risk-treatment
+            path in the broker bridge before lifting.
     ================================================================ */
 
 CREATE OR REPLACE PROCEDURE MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(
@@ -187,6 +198,18 @@ BEGIN
               AND se.SETUP_DATE >= DATEADD('day', -5, :v_as_of)
               AND COALESCE(tr.TRUST_LABEL, 'RESEARCH') IN ('TRUSTED', 'PROVISIONAL', 'RESEARCH')
               AND COALESCE(se.ENTRY_ZONE_HIGH, 0) >= COALESCE(se.ENTRY_ZONE_LOW, 0)  -- Phase 1 sanity guard: exclude any inverted zones that survived detection
+              -- Phase 6 E: explicit FX exclusion.
+              -- The structural detector produces FX setups for analytical purposes
+              -- (TREND_PULLBACK_LONG / THREE_BAR_REVERSAL_LONG on EUR/USD, GBP/JPY, etc.),
+              -- but the operating account does not trade FX. Without this filter, the
+              -- raised P_MAX_PROPOSALS=8 cap + F9 freshness boost + F10b ranking-pool
+              -- exclusion opens enough rank slots that FX setups surface in the proposal
+              -- slate (5 FX proposals observed on 2026-04-28). NULL/unknown MARKET_TYPE
+              -- is treated as STOCK to preserve historical behavior on un-classified
+              -- equity setups (e.g. ORCL/JPM rows with NULL MARKET_TYPE). Lift criterion:
+              -- once FX execution path exists in the broker bridge and FX risk treatment
+              -- is defined, swap this for a tradable-market whitelist.
+              AND COALESCE(se.MARKET_TYPE, 'STOCK') <> 'FX'
               -- Phase 6 D: explicit SHORT freeze.
               -- Lift criterion: at least one SHORT family must achieve MFE/MAE >= 1.0
               -- over the trust evaluation window before removing this filter.
@@ -223,11 +246,14 @@ BEGIN
             es.TRUST_MHR                                      AS MEANINGFUL_HIT_RATE,
             es.TRUST_PSHR                                     AS PATH_SURVIVAL_HIT_RATE,
             es.TRUST_RATIO                                    AS MFE_MAE_RATIO,
-            -- Phase 6 C3: BRL gap-risk-aware sizing — force RISK_CLASS to LOW.
-            -- BRL gap_risk_contribution = 0.574 vs TPL = 0.084 (~6.8x). LOW class
-            -- communicates a more conservative sizing posture to downstream consumers.
+            -- Phase 6 C3: BRL gap-risk-aware sizing — force RISK_CLASS to GAP_AWARE.
+            -- BRL gap_risk_contribution = 0.574 vs TPL = 0.084 (~6.8x).
+            -- structural_committee.py:compute_structural_thesis_assessment honors
+            -- GAP_AWARE with a 0.50x size_mult clamp + RISK_CLASS_GAP_AWARE_SIZE_CLAMP
+            -- reason tag, materially reducing BRL position size at execution time.
+            -- Token deliberately short (9 chars) to fit RISK_CLASS TEXT(10) column.
             CASE WHEN es.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
-                 THEN 'LOW'
+                 THEN 'GAP_AWARE'
                  ELSE es.RISK_CLASS END                       AS RISK_CLASS,
             NULL                                              AS CONFLICT_RESOLUTION,
             es.SETUP_FAMILY || ' on ' || es.SYMBOL

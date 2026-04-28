@@ -3,6 +3,28 @@
     MIP Structural Strategy Framework — Trade Proposals
     Phase 4a: Generate ranked trade proposals from ELIGIBLE setups
     using trust, regime, significance, and confidence scoring.
+
+    Phase 6+ Blocker Remediation (Apr 2026):
+      F9  — Freshness boost: same-day setups receive +0.05 composite bonus
+            so fresh detections are not crowded out by older eligibles in
+            the 5-day lookback window.
+      F10 — Cross-run dedup: proposal insert is now MERGE keyed on
+            (SETUP_EVENT_ID, PORTFOLIO_ID). The same setup is never
+            re-proposed across runs.
+      C   — BRL conditional package:
+              C1 trust treatment: BREAKOUT_RETEST_LONG uses GREATEST(MHR,PSHR)
+                  for the path-component, plus a calibrated +0.04 trust bonus
+                  reflecting strong MHR despite structurally low PSHR.
+              C2 exit style: BRL is updated to STAGED_PARTIAL with
+                  breakeven_at=1.0 / lock_50_at=2.0 trail params via a
+                  targeted UPDATE after the seed MERGE.
+              C3 gap-risk-aware sizing: BRL proposals are forced to RISK_CLASS
+                  'LOW' and carry sizing_multiplier=0.5 + gap_risk_aware=true
+                  in COMMITTEE_PAYLOAD. RATIONALE_TEXT annotated.
+      D   — Explicit SHORT freeze: eligible_setups WHERE clause restricted to
+            DIRECTION='LONG'. Lift criterion: at least one SHORT family must
+            achieve MFE/MAE >= 1.0 over the trust evaluation window before
+            this filter is removed.
     ================================================================ */
 
 CREATE OR REPLACE PROCEDURE MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(
@@ -48,10 +70,215 @@ BEGIN
     );
 
     -- ============================================================
+    -- STEP 1b: Phase 6 C2 — BRL exit style upgrade
+    -- BRL produces strong meaningful-move success (71.7%) but the
+    -- OPEN_RUNNER style lets early gains evaporate. Switch to
+    -- STAGED_PARTIAL with breakeven_at=1.0 / lock_50_at=2.0.
+    -- Targeted UPDATE because seed MERGE only INSERTs WHEN NOT MATCHED.
+    -- ============================================================
+    UPDATE MIP.APP.STRUCTURAL_RISK_POLICY
+       SET TRAIL_STYLE   = 'PROGRESS_BASED',
+           TRAIL_PARAMS  = PARSE_JSON('{"breakeven_at":1.0,"lock_50_at":2.0}'),
+           EXIT_STYLE    = 'STAGED_PARTIAL'
+     WHERE SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
+       AND DIRECTION    = 'LONG'
+       AND IS_ACTIVE    = TRUE;
+
+    -- ============================================================
     -- STEP 2: Generate proposals from ELIGIBLE setups
     --   Rank by composite score: trust + regime + significance + confidence
+    --   F10: MERGE prevents cross-run duplicates by (SETUP_EVENT_ID, PORTFOLIO_ID)
     -- ============================================================
-    INSERT INTO MIP.APP.STRUCTURAL_TRADE_PROPOSALS (
+    MERGE INTO MIP.APP.STRUCTURAL_TRADE_PROPOSALS tgt
+    USING (
+        WITH eligible_setups AS (
+            SELECT
+                se.*,
+                -- Get trust metrics for this family/market_type
+                tr.MEANINGFUL_HIT_RATE AS TRUST_MHR,
+                tr.PATH_SURVIVAL_HIT_RATE AS TRUST_PSHR,
+                tr.MFE_MAE_RATIO AS TRUST_RATIO,
+                tr.TRUST_LABEL,
+                tr.TRAIL_STRATEGY_RECOMMENDATION,
+                tr.EXIT_STYLE_RECOMMENDATION,
+                -- Get risk policy
+                rp.EXIT_STYLE AS POLICY_EXIT_STYLE,
+                rp.TRAIL_STYLE AS POLICY_TRAIL_STYLE,
+                rp.TRAIL_PARAMS AS POLICY_TRAIL_PARAMS,
+                -- Path stats
+                ps.MEDIAN_MFE, ps.MEDIAN_MAE, ps.PCT_ADVERSE_BEFORE_FAVORABLE,
+                ps.GAP_RISK_CONTRIBUTION,
+                -- Composite ranking score (Phase 6 v2)
+                -- Base weights: SC=0.25, LS=0.17, REGIME=0.20, MHR=0.18, PSHR=0.05
+                -- Trust bonus:  TRUSTED=+0.15, PROVISIONAL=+0.08, RESEARCH=+0.00
+                -- Phase 6 F9:   +0.05 freshness boost when SETUP_DATE = AS_OF
+                -- Phase 6 C1:   BRL-specific overrides:
+                --                 path component uses GREATEST(MHR,PSHR) instead of PSHR
+                --                 +0.04 calibrated trust bonus (mid-tier between RESEARCH and PROVISIONAL)
+                COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
+                + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
+                + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
+                       WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
+                       ELSE 0.0 END
+                + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
+                + CASE WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
+                       THEN GREATEST(COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3),
+                                     COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2)) * 0.05
+                       ELSE COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05 END
+                + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
+                       WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
+                       WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'             THEN 0.04
+                       ELSE 0.0 END
+                + CASE WHEN se.SETUP_DATE = :v_as_of THEN 0.05 ELSE 0.0 END
+                AS COMPOSITE_SCORE,
+
+                -- Global rank (used as overall top-N floor)
+                ROW_NUMBER() OVER (
+                    ORDER BY
+                        COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
+                        + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
+                        + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
+                               WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
+                               ELSE 0.0 END
+                        + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
+                        + CASE WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
+                               THEN GREATEST(COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3),
+                                             COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2)) * 0.05
+                               ELSE COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05 END
+                        + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
+                               WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
+                               WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'             THEN 0.04
+                               ELSE 0.0 END
+                        + CASE WHEN se.SETUP_DATE = :v_as_of THEN 0.05 ELSE 0.0 END
+                    DESC
+                ) AS RANK_N,
+
+                -- Per-direction rank for soft directional ceiling (Phase 2: max 75% per direction)
+                ROW_NUMBER() OVER (
+                    PARTITION BY se.DIRECTION
+                    ORDER BY
+                        COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
+                        + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
+                        + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
+                               WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
+                               ELSE 0.0 END
+                        + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
+                        + CASE WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
+                               THEN GREATEST(COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3),
+                                             COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2)) * 0.05
+                               ELSE COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05 END
+                        + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
+                               WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
+                               WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'             THEN 0.04
+                               ELSE 0.0 END
+                        + CASE WHEN se.SETUP_DATE = :v_as_of THEN 0.05 ELSE 0.0 END
+                    DESC
+                ) AS RANK_N_DIR
+            FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
+            LEFT JOIN MIP.APP.STRUCTURAL_SETUP_TRUST tr
+              ON tr.SETUP_FAMILY = se.SETUP_FAMILY
+             AND tr.MARKET_TYPE = se.MARKET_TYPE
+             AND tr.EVAL_WINDOW = 20  -- use best window
+            LEFT JOIN MIP.APP.STRUCTURAL_RISK_POLICY rp
+              ON rp.SETUP_FAMILY = se.SETUP_FAMILY AND rp.DIRECTION = se.DIRECTION AND rp.IS_ACTIVE = TRUE
+            LEFT JOIN MIP.APP.STRUCTURAL_PATH_STATS ps
+              ON ps.SETUP_FAMILY = se.SETUP_FAMILY AND ps.MARKET_TYPE = se.MARKET_TYPE AND ps.EVAL_WINDOW = 20
+            WHERE se.SETUP_STATUS IN ('DETECTED', 'ELIGIBLE')
+              AND se.SETUP_DATE >= DATEADD('day', -5, :v_as_of)
+              AND COALESCE(tr.TRUST_LABEL, 'RESEARCH') IN ('TRUSTED', 'PROVISIONAL', 'RESEARCH')
+              AND COALESCE(se.ENTRY_ZONE_HIGH, 0) >= COALESCE(se.ENTRY_ZONE_LOW, 0)  -- Phase 1 sanity guard: exclude any inverted zones that survived detection
+              -- Phase 6 D: explicit SHORT freeze.
+              -- Lift criterion: at least one SHORT family must achieve MFE/MAE >= 1.0
+              -- over the trust evaluation window before removing this filter.
+              -- Current SHORT MFE/MAE: 3BR_S=0.617, FB_S=0.663, BDR_S=0.594, RW_S=0.105 (all below threshold).
+              AND se.DIRECTION = 'LONG'
+              -- Phase 6 F10b: exclude setups that already have a proposal record so they
+              -- do not consume rank slots that should go to genuinely new candidates.
+              -- Without this guard, a previously-proposed setup that remains ELIGIBLE in
+              -- the 5-day lookback window still occupies a top-N slot and gets silently
+              -- skipped by the MERGE, crowding out fresh setups (e.g. BRL CRWD ranking #11
+              -- behind already-proposed older PROVISIONAL TPL setups).
+              AND NOT EXISTS (
+                  SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+                  WHERE p.SETUP_EVENT_ID = se.SETUP_EVENT_ID
+                    AND COALESCE(p.PORTFOLIO_ID, -1) = COALESCE(:P_PORTFOLIO_ID, -1)
+              )
+        )
+        SELECT
+            es.SETUP_EVENT_ID,
+            :P_PORTFOLIO_ID                                   AS PORTFOLIO_ID,
+            es.SYMBOL,
+            es.DIRECTION,
+            es.SETUP_FAMILY,
+            es.ENTRY_ZONE_LOW,
+            es.ENTRY_ZONE_HIGH,
+            es.PRICE_INVALIDATION_LEVEL,
+            es.INVALIDATION_RULE,
+            COALESCE(es.POLICY_TRAIL_STYLE, es.TRAIL_STYLE)   AS TRAIL_STYLE,
+            COALESCE(es.POLICY_TRAIL_PARAMS, es.TRAIL_PARAMS) AS TRAIL_PARAMS,
+            COALESCE(es.POLICY_EXIT_STYLE, es.EXIT_STYLE_RECOMMENDATION, 'STRUCTURAL_TARGET') AS EXIT_STYLE,
+            es.STRUCTURE_CONFIDENCE,
+            es.LEVEL_SIGNIFICANCE,
+            es.REGIME_COMPAT,
+            es.TRUST_MHR                                      AS MEANINGFUL_HIT_RATE,
+            es.TRUST_PSHR                                     AS PATH_SURVIVAL_HIT_RATE,
+            es.TRUST_RATIO                                    AS MFE_MAE_RATIO,
+            -- Phase 6 C3: BRL gap-risk-aware sizing — force RISK_CLASS to LOW.
+            -- BRL gap_risk_contribution = 0.574 vs TPL = 0.084 (~6.8x). LOW class
+            -- communicates a more conservative sizing posture to downstream consumers.
+            CASE WHEN es.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
+                 THEN 'LOW'
+                 ELSE es.RISK_CLASS END                       AS RISK_CLASS,
+            NULL                                              AS CONFLICT_RESOLUTION,
+            es.SETUP_FAMILY || ' on ' || es.SYMBOL
+                || ' | Trust: ' || COALESCE(es.TRUST_LABEL, 'UNKNOWN')
+                || ' | MHR: ' || COALESCE(ROUND(es.TRUST_MHR * 100, 1)::VARCHAR, '?') || '%'
+                || ' | Conf: ' || ROUND(es.STRUCTURE_CONFIDENCE, 2)
+                || ' | Level Sig: ' || COALESCE(ROUND(es.LEVEL_SIGNIFICANCE, 2)::VARCHAR, '?')
+                || ' | Regime: ' || es.REGIME_COMPAT
+                || CASE WHEN es.SETUP_DATE = :v_as_of THEN ' | FRESH (same-day +0.05)' ELSE '' END
+                || CASE WHEN es.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG'
+                        THEN ' | BRL: gap-risk-aware sizing (sizing_multiplier=0.5), STAGED_PARTIAL exit'
+                        ELSE '' END
+                || ' | Rank: ' || es.RANK_N                   AS RATIONALE_TEXT,
+            OBJECT_CONSTRUCT(
+                'setup_family', es.SETUP_FAMILY,
+                'direction', es.DIRECTION,
+                'symbol', es.SYMBOL,
+                'structural_state', es.STRUCTURAL_STATE,
+                'entry_zone', ARRAY_CONSTRUCT(es.ENTRY_ZONE_LOW, es.ENTRY_ZONE_HIGH),
+                'invalidation', es.PRICE_INVALIDATION_LEVEL,
+                'confidence', es.STRUCTURE_CONFIDENCE,
+                'level_significance', es.LEVEL_SIGNIFICANCE,
+                'regime_compat', es.REGIME_COMPAT,
+                'trust_label', COALESCE(es.TRUST_LABEL, 'UNKNOWN'),
+                'meaningful_hit_rate', es.TRUST_MHR,
+                'path_survival_rate', es.TRUST_PSHR,
+                'median_mfe', es.MEDIAN_MFE,
+                'median_mae', es.MEDIAN_MAE,
+                'pct_adverse_before_favorable', es.PCT_ADVERSE_BEFORE_FAVORABLE,
+                'gap_risk', es.GAP_RISK_CONTRIBUTION,
+                'composite_score', es.COMPOSITE_SCORE,
+                'fresh_same_day', (es.SETUP_DATE = :v_as_of),
+                -- Phase 6 C3: BRL-specific sizing hint — downstream sizing logic
+                -- should honor this multiplier. Default 1.0 for non-BRL families.
+                'sizing_multiplier',
+                    CASE WHEN es.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG' THEN 0.5 ELSE 1.0 END,
+                'gap_risk_aware_sizing',
+                    (es.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG')
+            )                                                 AS COMMITTEE_PAYLOAD,
+            'PROPOSED'                                        AS STATUS
+        FROM eligible_setups es
+        -- Phase 2: top-N global floor + soft directional ceiling (max 75% per direction)
+        WHERE es.RANK_N <= :P_MAX_PROPOSALS
+          AND es.RANK_N_DIR <= FLOOR(:P_MAX_PROPOSALS * 0.75)
+    ) src
+    -- Phase 6 F10: dedup key — one proposal per (setup event, portfolio).
+    -- A given setup is never re-proposed across runs even if it remains
+    -- ELIGIBLE for multiple consecutive day windows.
+    ON  tgt.SETUP_EVENT_ID = src.SETUP_EVENT_ID
+    AND COALESCE(tgt.PORTFOLIO_ID, -1) = COALESCE(src.PORTFOLIO_ID, -1)
+    WHEN NOT MATCHED THEN INSERT (
         SETUP_EVENT_ID, PORTFOLIO_ID, SYMBOL, DIRECTION, SETUP_FAMILY,
         ENTRY_ZONE_LOW, ENTRY_ZONE_HIGH,
         PRICE_INVALIDATION_LEVEL, INVALIDATION_RULE,
@@ -60,141 +287,16 @@ BEGIN
         MEANINGFUL_HIT_RATE, PATH_SURVIVAL_HIT_RATE, MFE_MAE_RATIO,
         RISK_CLASS, CONFLICT_RESOLUTION, RATIONALE_TEXT,
         COMMITTEE_PAYLOAD, STATUS
-    )
-    WITH eligible_setups AS (
-        SELECT
-            se.*,
-            -- Get trust metrics for this family/market_type
-            tr.MEANINGFUL_HIT_RATE AS TRUST_MHR,
-            tr.PATH_SURVIVAL_HIT_RATE AS TRUST_PSHR,
-            tr.MFE_MAE_RATIO AS TRUST_RATIO,
-            tr.TRUST_LABEL,
-            tr.TRAIL_STRATEGY_RECOMMENDATION,
-            tr.EXIT_STYLE_RECOMMENDATION,
-            -- Get risk policy
-            rp.EXIT_STYLE AS POLICY_EXIT_STYLE,
-            rp.TRAIL_STYLE AS POLICY_TRAIL_STYLE,
-            rp.TRAIL_PARAMS AS POLICY_TRAIL_PARAMS,
-            -- Path stats
-            ps.MEDIAN_MFE, ps.MEDIAN_MAE, ps.PCT_ADVERSE_BEFORE_FAVORABLE,
-            ps.GAP_RISK_CONTRIBUTION,
-            -- Composite ranking score (Phase 2 v1: trust weight added, weights rebalanced)
-            -- Weights: SC=0.25, LS=0.17, REGIME=0.20, MHR=0.18, PSHR=0.05
-            --          TRUST: TRUSTED=+0.15, PROVISIONAL=+0.08, RESEARCH=+0.00
-            -- Total for TRUSTED~=0.85, PROVISIONAL~=0.78, RESEARCH~=0.70 (GOOD regime, avg signals)
-            COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
-            + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
-            + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
-                   WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
-                   ELSE 0.0 END
-            + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
-            + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05
-            + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
-                   WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
-                   ELSE 0.0 END
-            AS COMPOSITE_SCORE,
-
-            -- Global rank (used as overall top-N floor)
-            ROW_NUMBER() OVER (
-                ORDER BY
-                    COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
-                    + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
-                    + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
-                           WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
-                           ELSE 0.0 END
-                    + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
-                    + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05
-                    + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
-                           WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
-                           ELSE 0.0 END
-                DESC
-            ) AS RANK_N,
-
-            -- Per-direction rank for soft directional ceiling (Phase 2: max 75% per direction)
-            ROW_NUMBER() OVER (
-                PARTITION BY se.DIRECTION
-                ORDER BY
-                    COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
-                    + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
-                    + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
-                           WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
-                           ELSE 0.0 END
-                    + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
-                    + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05
-                    + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
-                           WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
-                           ELSE 0.0 END
-                DESC
-            ) AS RANK_N_DIR
-        FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
-        LEFT JOIN MIP.APP.STRUCTURAL_SETUP_TRUST tr
-          ON tr.SETUP_FAMILY = se.SETUP_FAMILY
-         AND tr.MARKET_TYPE = se.MARKET_TYPE
-         AND tr.EVAL_WINDOW = 20  -- use best window
-        LEFT JOIN MIP.APP.STRUCTURAL_RISK_POLICY rp
-          ON rp.SETUP_FAMILY = se.SETUP_FAMILY AND rp.DIRECTION = se.DIRECTION AND rp.IS_ACTIVE = TRUE
-        LEFT JOIN MIP.APP.STRUCTURAL_PATH_STATS ps
-          ON ps.SETUP_FAMILY = se.SETUP_FAMILY AND ps.MARKET_TYPE = se.MARKET_TYPE AND ps.EVAL_WINDOW = 20
-        WHERE se.SETUP_STATUS IN ('DETECTED', 'ELIGIBLE')
-          AND se.SETUP_DATE >= DATEADD('day', -5, :v_as_of)
-          AND COALESCE(tr.TRUST_LABEL, 'RESEARCH') IN ('TRUSTED', 'PROVISIONAL', 'RESEARCH')
-          AND COALESCE(se.ENTRY_ZONE_HIGH, 0) >= COALESCE(se.ENTRY_ZONE_LOW, 0)  -- Phase 1 sanity guard: exclude any inverted zones that survived detection
-    )
-    SELECT
-        es.SETUP_EVENT_ID,
-        :P_PORTFOLIO_ID,
-        es.SYMBOL,
-        es.DIRECTION,
-        es.SETUP_FAMILY,
-        es.ENTRY_ZONE_LOW,
-        es.ENTRY_ZONE_HIGH,
-        es.PRICE_INVALIDATION_LEVEL,
-        es.INVALIDATION_RULE,
-        COALESCE(es.POLICY_TRAIL_STYLE, es.TRAIL_STYLE),
-        COALESCE(es.POLICY_TRAIL_PARAMS, es.TRAIL_PARAMS),
-        COALESCE(es.POLICY_EXIT_STYLE, es.EXIT_STYLE_RECOMMENDATION, 'STRUCTURAL_TARGET'),
-        es.STRUCTURE_CONFIDENCE,
-        es.LEVEL_SIGNIFICANCE,
-        es.REGIME_COMPAT,
-        es.TRUST_MHR,
-        es.TRUST_PSHR,
-        es.TRUST_RATIO,
-        es.RISK_CLASS,
-        NULL,  -- CONFLICT_RESOLUTION
-        -- RATIONALE_TEXT
-        es.SETUP_FAMILY || ' on ' || es.SYMBOL
-            || ' | Trust: ' || COALESCE(es.TRUST_LABEL, 'UNKNOWN')
-            || ' | MHR: ' || COALESCE(ROUND(es.TRUST_MHR * 100, 1)::VARCHAR, '?') || '%'
-            || ' | Conf: ' || ROUND(es.STRUCTURE_CONFIDENCE, 2)
-            || ' | Level Sig: ' || COALESCE(ROUND(es.LEVEL_SIGNIFICANCE, 2)::VARCHAR, '?')
-            || ' | Regime: ' || es.REGIME_COMPAT
-            || ' | Rank: ' || es.RANK_N,
-        -- COMMITTEE_PAYLOAD
-        OBJECT_CONSTRUCT(
-            'setup_family', es.SETUP_FAMILY,
-            'direction', es.DIRECTION,
-            'symbol', es.SYMBOL,
-            'structural_state', es.STRUCTURAL_STATE,
-            'entry_zone', ARRAY_CONSTRUCT(es.ENTRY_ZONE_LOW, es.ENTRY_ZONE_HIGH),
-            'invalidation', es.PRICE_INVALIDATION_LEVEL,
-            'confidence', es.STRUCTURE_CONFIDENCE,
-            'level_significance', es.LEVEL_SIGNIFICANCE,
-            'regime_compat', es.REGIME_COMPAT,
-            'trust_label', COALESCE(es.TRUST_LABEL, 'UNKNOWN'),
-            'meaningful_hit_rate', es.TRUST_MHR,
-            'path_survival_rate', es.TRUST_PSHR,
-            'median_mfe', es.MEDIAN_MFE,
-            'median_mae', es.MEDIAN_MAE,
-            'pct_adverse_before_favorable', es.PCT_ADVERSE_BEFORE_FAVORABLE,
-            'gap_risk', es.GAP_RISK_CONTRIBUTION,
-            'composite_score', es.COMPOSITE_SCORE
-        ),
-        'PROPOSED'
-    FROM eligible_setups es
-    -- Phase 2: top-N global floor + soft directional ceiling (max 75% per direction)
-    -- Allows 6/2 or 5/3 splits; prevents 8/0 monopoly; never forces 4/4 symmetry
-    WHERE es.RANK_N <= :P_MAX_PROPOSALS
-      AND es.RANK_N_DIR <= FLOOR(:P_MAX_PROPOSALS * 0.75);
+    ) VALUES (
+        src.SETUP_EVENT_ID, src.PORTFOLIO_ID, src.SYMBOL, src.DIRECTION, src.SETUP_FAMILY,
+        src.ENTRY_ZONE_LOW, src.ENTRY_ZONE_HIGH,
+        src.PRICE_INVALIDATION_LEVEL, src.INVALIDATION_RULE,
+        src.TRAIL_STYLE, src.TRAIL_PARAMS, src.EXIT_STYLE,
+        src.STRUCTURE_CONFIDENCE, src.LEVEL_SIGNIFICANCE, src.REGIME_COMPAT,
+        src.MEANINGFUL_HIT_RATE, src.PATH_SURVIVAL_HIT_RATE, src.MFE_MAE_RATIO,
+        src.RISK_CLASS, src.CONFLICT_RESOLUTION, src.RATIONALE_TEXT,
+        src.COMMITTEE_PAYLOAD, src.STATUS
+    );
 
     -- Committee 2.0: immutable proposal snapshot (one row per new proposal this run)
     INSERT INTO MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT (

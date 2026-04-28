@@ -524,7 +524,12 @@ def _fetch_intraday_for_proposals(symbols: List[str]) -> _IntradayFetch:
             interval_minutes=15,
             window_bars=80,
             timeout_sec=45,
-            diagnostics_surface="cockpit_trade_proposals",
+            # Must be one of the registered IB host surface names
+            # (live_portfolio_activity | live_intelligence | living_charts |
+            # tape_observer). Trade proposals are semantically a "live
+            # intelligence" surface — same classification as the
+            # held-position intraday overlay.
+            diagnostics_surface="live_intelligence",
             include_live_quote=True,
             snapshot_wait_sec=2.5,
         )

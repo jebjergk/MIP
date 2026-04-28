@@ -10,6 +10,31 @@ from typing import Any, Dict, List, Optional, Tuple
 # Stance ordering: worst (0) .. best (4)
 STANCE_ORDER = ("DENY", "DEFER", "WAIT_RECLAIM", "APPROVE_REDUCED", "APPROVE")
 
+# Phase 4: Block reason taxonomy — every BLOCK must carry one of these.
+# BLOCK_REASON_UNKNOWN means no known cause fired; treat as a bug to investigate.
+BLOCK_REASON_TAXONOMY = frozenset({
+    "ZONE_CHASE_SEVERE",       # price > chase threshold above/below zone
+    "INVALIDATION_BREACHED",   # price through structural invalidation level
+    "REGIME_HOSTILE",          # regime tags incompatible with direction at proposal time
+    "STRUCTURAL_STATE_DRIFT",  # structural state shifted from snapshot to now
+    "PATH_METRICS_WEAK",       # pct_adverse or MHR outside acceptable bounds
+    "TRUST_INSUFFICIENT",      # trust label insufficient for this context (future use)
+    "CONFLICTING_SIGNAL",      # opposing directional signal in same window (future use)
+    "COMMITTEE_FALLBACK",      # LLM/Cortex unavailable, deterministic fallback blocked
+    "BLOCK_REASON_UNKNOWN",    # no known cause — treat as investigation target
+})
+
+# Phase 4: ATR-relative continuation tolerance multipliers.
+# Final threshold = max(FIXED_*, zone_width_pct * ATR_MULT_*)
+# zone_width_pct = (zone_high - zone_low) / zone_mid * 100
+ATR_MULT_CONTINUATION = 0.50   # tolerance = max(0.8%, zone_width * 0.50)
+ATR_MULT_STRETCH       = 1.00  # stretch   = max(1.6%, zone_width * 1.00)
+ATR_MULT_CHASE         = 2.00  # chase     = max(2.0%, zone_width * 2.00)
+# Fixed floors (original thresholds preserved as lower bounds)
+FIXED_CONTINUATION_PCT = 0.80  # within 0.8% above zone edge: OK
+FIXED_STRETCH_PCT      = 1.60  # 0.8–1.6% above zone edge: APPROVE_REDUCED
+FIXED_CHASE_PCT        = 2.00  # >2.0% above zone edge: WAIT_RECLAIM
+
 ROLE_NAMES = (
     "STRUCTURAL_THESIS",
     "ENTRY_GEOMETRY",
@@ -78,6 +103,28 @@ class LiveContext:
     price_source: Optional[str] = None
     price_ts_utc: Optional[str] = None
     price_age_sec: Optional[float] = None
+
+
+def _atr_relative_thresholds(
+    zone_low: Optional[float],
+    zone_high: Optional[float],
+) -> Tuple[float, float, float]:
+    """
+    Return (continuation_pct, stretch_pct, chase_pct) using ATR-relative logic.
+    zone_width / zone_mid approximates zone width as a fraction of price.
+    Final threshold = max(fixed_floor, zone_width_pct * multiplier).
+    All outputs are in units of % of zone edge price.
+    """
+    if zone_low is None or zone_high is None or zone_low <= 0:
+        return FIXED_CONTINUATION_PCT, FIXED_STRETCH_PCT, FIXED_CHASE_PCT
+    zone_mid = (zone_low + zone_high) / 2.0
+    if zone_mid <= 0:
+        return FIXED_CONTINUATION_PCT, FIXED_STRETCH_PCT, FIXED_CHASE_PCT
+    zone_width_pct = (zone_high - zone_low) / zone_mid * 100.0
+    cont  = max(FIXED_CONTINUATION_PCT, zone_width_pct * ATR_MULT_CONTINUATION)
+    strch = max(FIXED_STRETCH_PCT,      zone_width_pct * ATR_MULT_STRETCH)
+    chase = max(FIXED_CHASE_PCT,        zone_width_pct * ATR_MULT_CHASE)
+    return cont, strch, chase
 
 
 def _entry_zone(snapshot: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
@@ -297,17 +344,23 @@ def compute_hearing_bundle(
     if mid and mid > 0:
         dist_pct = abs(price - mid) / mid * 100.0
 
+    # Phase 4: use ATR-relative thresholds (zone-width-aware) with fixed floors
+    cont_pct, stretch_pct, chase_pct = _atr_relative_thresholds(zone_low, zone_high)
+    edge_ref_long  = zone_high if zone_high is not None else 0.0
+    edge_ref_short = zone_low  if zone_low  is not None else 0.0
     chase_severe = False
     stretch = False
     if side == "LONG" and zone_high is not None:
-        if price > zone_high * 1.02:
+        overshoot_pct = (price - zone_high) / zone_high * 100.0 if zone_high > 0 else 0.0
+        if overshoot_pct > chase_pct:
             chase_severe = True
-        elif price > zone_high * 1.008:
+        elif overshoot_pct > stretch_pct:
             stretch = True
     elif side == "SHORT" and zone_low is not None:
-        if price < zone_low * 0.98:
+        undershoot_pct = (zone_low - price) / zone_low * 100.0 if zone_low > 0 else 0.0
+        if undershoot_pct > chase_pct:
             chase_severe = True
-        elif price < zone_low * 0.992:
+        elif undershoot_pct > stretch_pct:
             stretch = True
 
     # --- Regime drift heuristic ---
@@ -345,6 +398,22 @@ def compute_hearing_bundle(
         stance = cap_stance_worse(stance, "DEFER")
     if path_ugly:
         stance = cap_stance_worse(stance, "APPROVE_REDUCED")
+
+    # Phase 4: derive named primary reason for every BLOCK stance
+    block_primary_reason: Optional[str] = None
+    if stance in ("DENY", "DEFER", "WAIT_RECLAIM"):
+        if breach:
+            block_primary_reason = "INVALIDATION_BREACHED"
+        elif chase_severe:
+            block_primary_reason = "ZONE_CHASE_SEVERE"
+        elif thesis_broken:
+            block_primary_reason = "STRUCTURAL_STATE_DRIFT"
+        elif regime_hostile:
+            block_primary_reason = "REGIME_HOSTILE"
+        elif path_ugly or path_weak:
+            block_primary_reason = "PATH_METRICS_WEAK"
+        else:
+            block_primary_reason = "BLOCK_REASON_UNKNOWN"
 
     inv_cushion_pct = invalidation_cushion_pct(side, price, inv_level)
     r_cont, r_cont_detail = _regime_continuity_label(regime_hostile, thesis_broken, snap_regime, trend_now)
@@ -665,6 +734,13 @@ def compute_hearing_bundle(
         "side": side,
         "proposal_id": snapshot.get("PROPOSAL_ID"),
         "snapshot_id": snapshot.get("SNAPSHOT_ID"),
+        # Phase 4: explicit primary block reason (None if not blocked)
+        "block_primary_reason": block_primary_reason,
+        "atr_thresholds": {
+            "continuation_pct": round(cont_pct, 3),
+            "stretch_pct": round(stretch_pct, 3),
+            "chase_pct": round(chase_pct, 3),
+        },
     }
 
     explanatory = {

@@ -112,6 +112,11 @@ def structural_entry_verdict_from_committee2_final(fd: dict, action: dict) -> di
     block_reasons: list[str] = []
     if blocked:
         block_reasons.append(f"Committee 2.0 stance {stance}")
+        # Phase 4: add named primary block reason from operational payload for traceability
+        operational_payload = _v(fd.get("OPERATIONAL_JSON")) or {}
+        primary_reason = str(operational_payload.get("block_primary_reason") or "BLOCK_REASON_UNKNOWN")
+        reason_codes.append(f"BLOCK_PRIMARY_{primary_reason}")
+        block_reasons.append(f"Primary: {primary_reason}")
 
     role_payloads = _v(fd.get("ROLE_OUTPUTS_JSON")) or {}
     role_outputs: list[dict[str, Any]] = []

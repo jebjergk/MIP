@@ -7,7 +7,7 @@
 
 CREATE OR REPLACE PROCEDURE MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(
     P_PORTFOLIO_ID  NUMBER  DEFAULT NULL,
-    P_MAX_PROPOSALS INTEGER DEFAULT 5,
+    P_MAX_PROPOSALS INTEGER DEFAULT 8,   -- Phase 2: raised from 5 to 8
     P_AS_OF_DATE    DATE    DEFAULT NULL
 )
 RETURNS VARIANT
@@ -78,27 +78,54 @@ BEGIN
             -- Path stats
             ps.MEDIAN_MFE, ps.MEDIAN_MAE, ps.PCT_ADVERSE_BEFORE_FAVORABLE,
             ps.GAP_RISK_CONTRIBUTION,
-            -- Composite ranking score
-            COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.30
-            + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.20
-            + CASE WHEN se.REGIME_COMPAT = 'GOOD' THEN 0.20
+            -- Composite ranking score (Phase 2 v1: trust weight added, weights rebalanced)
+            -- Weights: SC=0.25, LS=0.17, REGIME=0.20, MHR=0.18, PSHR=0.05
+            --          TRUST: TRUSTED=+0.15, PROVISIONAL=+0.08, RESEARCH=+0.00
+            -- Total for TRUSTED~=0.85, PROVISIONAL~=0.78, RESEARCH~=0.70 (GOOD regime, avg signals)
+            COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
+            + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
+            + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
                    WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
                    ELSE 0.0 END
-            + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3) * 0.20
-            + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.10
+            + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
+            + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05
+            + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
+                   WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
+                   ELSE 0.0 END
             AS COMPOSITE_SCORE,
 
+            -- Global rank (used as overall top-N floor)
             ROW_NUMBER() OVER (
                 ORDER BY
-                    COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.30
-                    + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.20
-                    + CASE WHEN se.REGIME_COMPAT = 'GOOD' THEN 0.20
+                    COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
+                    + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
+                    + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
                            WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
                            ELSE 0.0 END
-                    + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3) * 0.20
-                    + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.10
+                    + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
+                    + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05
+                    + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
+                           WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
+                           ELSE 0.0 END
                 DESC
-            ) AS RANK_N
+            ) AS RANK_N,
+
+            -- Per-direction rank for soft directional ceiling (Phase 2: max 75% per direction)
+            ROW_NUMBER() OVER (
+                PARTITION BY se.DIRECTION
+                ORDER BY
+                    COALESCE(se.STRUCTURE_CONFIDENCE, 0.5) * 0.25
+                    + COALESCE(se.LEVEL_SIGNIFICANCE, 0.3) * 0.17
+                    + CASE WHEN se.REGIME_COMPAT = 'GOOD'    THEN 0.20
+                           WHEN se.REGIME_COMPAT = 'NEUTRAL' THEN 0.10
+                           ELSE 0.0 END
+                    + COALESCE(tr.MEANINGFUL_HIT_RATE, 0.3)    * 0.18
+                    + COALESCE(tr.PATH_SURVIVAL_HIT_RATE, 0.2) * 0.05
+                    + CASE WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'TRUSTED'     THEN 0.15
+                           WHEN COALESCE(tr.TRUST_LABEL, 'RESEARCH') = 'PROVISIONAL' THEN 0.08
+                           ELSE 0.0 END
+                DESC
+            ) AS RANK_N_DIR
         FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
         LEFT JOIN MIP.APP.STRUCTURAL_SETUP_TRUST tr
           ON tr.SETUP_FAMILY = se.SETUP_FAMILY
@@ -111,6 +138,7 @@ BEGIN
         WHERE se.SETUP_STATUS IN ('DETECTED', 'ELIGIBLE')
           AND se.SETUP_DATE >= DATEADD('day', -5, :v_as_of)
           AND COALESCE(tr.TRUST_LABEL, 'RESEARCH') IN ('TRUSTED', 'PROVISIONAL', 'RESEARCH')
+          AND COALESCE(se.ENTRY_ZONE_HIGH, 0) >= COALESCE(se.ENTRY_ZONE_LOW, 0)  -- Phase 1 sanity guard: exclude any inverted zones that survived detection
     )
     SELECT
         es.SETUP_EVENT_ID,
@@ -163,7 +191,10 @@ BEGIN
         ),
         'PROPOSED'
     FROM eligible_setups es
-    WHERE es.RANK_N <= :P_MAX_PROPOSALS;
+    -- Phase 2: top-N global floor + soft directional ceiling (max 75% per direction)
+    -- Allows 6/2 or 5/3 splits; prevents 8/0 monopoly; never forces 4/4 symmetry
+    WHERE es.RANK_N <= :P_MAX_PROPOSALS
+      AND es.RANK_N_DIR <= FLOOR(:P_MAX_PROPOSALS * 0.75);
 
     -- Committee 2.0: immutable proposal snapshot (one row per new proposal this run)
     INSERT INTO MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT (

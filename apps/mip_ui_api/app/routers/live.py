@@ -9,11 +9,44 @@ import os
 import subprocess
 import time
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from datetime import date, datetime, timezone, timedelta
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 from zoneinfo import ZoneInfo
+
+
+def _json_default_decimal_safe(o):
+    """JSON encoder default for Snowflake Decimal/date/datetime values.
+
+    fetch_all() returns rows with native Snowflake types (Decimal, datetime,
+    date, etc.). When those values flow through dicts that are later
+    json.dumps'd back into the database (e.g. PARAM_SNAPSHOT merges that
+    embed parts of the LIVE_ACTIONS row), the default encoder raises
+    "Object of type Decimal is not JSON serializable". This default
+    coerces Decimals to int/float (preserving int-valuedness so 20 stays
+    20 and not "20") and datetime/date to ISO strings; everything else
+    falls back to str(o) so we never crash a write path on a stray type.
+    """
+    if isinstance(o, Decimal):
+        if o == o.to_integral_value():
+            return int(o)
+        return float(o)
+    if hasattr(o, "isoformat"):
+        return o.isoformat()
+    return str(o)
+
+
+def _json_dumps_safe(obj) -> str:
+    """json.dumps wrapper that tolerates Decimal/datetime values.
+
+    Use for any payload that may transitively contain a Snowflake row
+    field (e.g. PARAM_SNAPSHOT contract / joint_decision merges). Plain
+    json.dumps would crash on Decimal; this stays write-safe and
+    round-trips numerically through Snowflake VARIANT.
+    """
+    return json.dumps(obj, default=_json_default_decimal_safe)
 
 from fastapi import APIRouter, Query, HTTPException, Body
 from fastapi.responses import StreamingResponse
@@ -2405,6 +2438,14 @@ def _merge_live_action_param_snapshot_patch(cur, action_id: str, patch: dict) ->
         ps = {}
     for k, v in patch.items():
         ps[k] = v
+    # Use the Decimal/datetime-safe dumper because `patch` (and the existing
+    # PARAM_SNAPSHOT shaped contract) transitively embed values pulled from
+    # LIVE_ACTIONS via fetch_all(), which returns Snowflake numeric columns
+    # as decimal.Decimal. Plain json.dumps would crash with
+    # "Object of type Decimal is not JSON serializable" the moment any
+    # field like TRAIL_ACTIVATION_PARAM, MAX_HOLD_BARS, or SETUP_EVENT_ID
+    # is non-NULL on the action row — which is the regression that broke
+    # Committee 2.0 orchestrate for newly-imported structural actions.
     cur.execute(
         """
         update MIP.LIVE.LIVE_ACTIONS
@@ -2412,7 +2453,7 @@ def _merge_live_action_param_snapshot_patch(cur, action_id: str, patch: dict) ->
                UPDATED_AT = current_timestamp()
          where ACTION_ID = %s
         """,
-        (json.dumps(ps), action_id),
+        (_json_dumps_safe(ps), action_id),
     )
 
 

@@ -280,6 +280,20 @@ BEGIN
 
     -- ----- D. TREND_PULLBACK_LONG -----
     -- Required state: PULLBACK_IN_TREND (from TREND_UP), or TREND_UP with recent pullback
+    --
+    -- Phase 7 PQI Fix 4 (Apr 2026): Three-condition tightening to remove
+    --   "trend-continuation noise" detections that previously fired on any
+    --   one-bar micro-retracement in any ongoing uptrend (the ORCL pattern):
+    --     1) MEANINGFUL_PULLBACK: recent local high (PREV1/PREV2) at least
+    --        0.5 * ATR_20 above today's low — real pullback magnitude, not
+    --        sideways churn at highs.
+    --     2) MEANINGFUL_BEARISH_PRIOR: prior bar's body (PREV1_OPEN minus
+    --        PREV1_CLOSE) at least 0.25 * ATR_20 — prior down bar must be
+    --        a real bearish bar, not a doji-style barely-down bar.
+    --     3) STRONGER_REVERSAL: today's CLOSE_LOCATION raised from 0.45 to
+    --        0.55 — closes in clearly upper half, not just above midpoint.
+    --   ORCL/COST style daily re-detections fail (1) or (2); legitimate
+    --   pullback-with-reclaim setups continue to qualify.
     INSERT INTO MIP.APP.STRUCTURAL_SETUP_EVENTS (
         SETUP_FAMILY, DIRECTION, SYMBOL, MARKET_TYPE, SETUP_DATE,
         STRUCTURAL_STATE, PRIOR_STATE, LEVEL_TYPE, LEVEL_PRICE, LEVEL_SIGNIFICANCE,
@@ -320,8 +334,14 @@ BEGIN
     WHERE d.STRUCTURAL_STATE IN ('PULLBACK_IN_TREND', 'TREND_UP')
       AND d.TREND_REGIME IN ('STRONG_TREND_UP', 'MODERATE_TREND_UP')
       AND d.CLOSE > d.OPEN                 -- current bar is up (re-acceptance)
-      AND d.CLOSE_LOCATION >= 0.45         -- closes in upper half
-      AND d.PREV1_CLOSE < d.PREV1_OPEN;   -- prior bar was a down bar (pullback)
+      AND d.CLOSE_LOCATION >= 0.55         -- Phase 7 PQI Fix 4: closes clearly in upper half (was 0.45)
+      AND d.PREV1_CLOSE < d.PREV1_OPEN     -- prior bar was a down bar (pullback)
+      -- Phase 7 PQI Fix 4 cond (1): meaningful pullback magnitude
+      AND d.ATR_20 IS NOT NULL
+      AND d.ATR_20 > 0
+      AND (GREATEST(COALESCE(d.PREV1_HIGH, d.HIGH), COALESCE(d.PREV2_HIGH, d.HIGH)) - d.LOW) >= 0.5 * d.ATR_20
+      -- Phase 7 PQI Fix 4 cond (2): meaningful bearish prior bar body
+      AND (d.PREV1_OPEN - d.PREV1_CLOSE) >= 0.25 * d.ATR_20;
 
     -- ----- E. BREAKDOWN_RETEST_SHORT -----
     INSERT INTO MIP.APP.STRUCTURAL_SETUP_EVENTS (

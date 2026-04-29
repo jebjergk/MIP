@@ -109,9 +109,10 @@ FROM latest_date ld, proposal_summary ps;
 --    Orchestrates the full daily structural pipeline
 -- ================================================================
 CREATE OR REPLACE PROCEDURE MIP.APP.SP_RUN_STRUCTURAL_DAILY_PIPELINE(
-    P_AS_OF_DATE    DATE    DEFAULT NULL,
-    P_PORTFOLIO_ID  NUMBER  DEFAULT NULL,
-    P_MAX_PROPOSALS INTEGER DEFAULT 8   -- Phase 2: raised from 5 to 8
+    P_AS_OF_DATE           DATE    DEFAULT NULL,
+    P_PORTFOLIO_ID         NUMBER  DEFAULT NULL,
+    P_MAX_PROPOSALS        INTEGER DEFAULT 8,  -- Phase 2: raised from 5 to 8
+    P_SYMBOL_COOLDOWN_DAYS INTEGER DEFAULT 7   -- Phase 7 PQI Fix 3
 )
 RETURNS VARIANT
 LANGUAGE SQL
@@ -169,7 +170,7 @@ BEGIN
     v_trust := (SELECT PARSE_JSON('{"status":"done"}'));
 
     -- Step 8: Generate proposals (now using up-to-date trust data)
-    CALL MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(:P_PORTFOLIO_ID, :P_MAX_PROPOSALS, :v_as_of);
+    CALL MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(:P_PORTFOLIO_ID, :P_MAX_PROPOSALS, :v_as_of, :P_SYMBOL_COOLDOWN_DAYS);
     v_proposals := (SELECT PARSE_JSON('{"status":"done"}'));
 
     -- Summary stats

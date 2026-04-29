@@ -36,12 +36,26 @@
             is treated as STOCK to preserve behavior on unclassified equity
             setups. Lift criterion: define an FX execution / risk-treatment
             path in the broker bridge before lifting.
+
+    Phase 7 PQI Fix 3 (Apr 2026):
+      Symbol-level recent-trade cooldown. eligible_setups WHERE clause
+      now suppresses any symbol that already has a STRUCTURAL LIVE_ACTION
+      either currently in-flight (PENDING_OPEN_VALIDATION,
+      EXECUTION_REQUESTED, REVALIDATED_PASS, INTENT_APPROVED, OPEN_BLOCKED,
+      PROPOSED) or recently closed within the cooldown window (default 7
+      calendar days, controlled by P_SYMBOL_COOLDOWN_DAYS). This prevents
+      same-symbol reproposal immediately after a trade was sent, executed,
+      or rejected — the dominant root cause of ORCL/COST style noise. NULL
+      P_PORTFOLIO_ID is portfolio-agnostic (cooldown applies across all
+      portfolios). Lift criterion: only relax once a discretionary
+      override path exists (operator-acknowledged "yes, propose again").
     ================================================================ */
 
 CREATE OR REPLACE PROCEDURE MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(
-    P_PORTFOLIO_ID  NUMBER  DEFAULT NULL,
-    P_MAX_PROPOSALS INTEGER DEFAULT 8,   -- Phase 2: raised from 5 to 8
-    P_AS_OF_DATE    DATE    DEFAULT NULL
+    P_PORTFOLIO_ID         NUMBER  DEFAULT NULL,
+    P_MAX_PROPOSALS        INTEGER DEFAULT 8,   -- Phase 2: raised from 5 to 8
+    P_AS_OF_DATE           DATE    DEFAULT NULL,
+    P_SYMBOL_COOLDOWN_DAYS INTEGER DEFAULT 7    -- Phase 7 PQI Fix 3
 )
 RETURNS VARIANT
 LANGUAGE SQL
@@ -225,6 +239,49 @@ BEGIN
                   SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
                   WHERE p.SETUP_EVENT_ID = se.SETUP_EVENT_ID
                     AND COALESCE(p.PORTFOLIO_ID, -1) = COALESCE(:P_PORTFOLIO_ID, -1)
+              )
+              -- Phase 7 PQI Fix 3: symbol-level recent-trade cooldown.
+              -- Suppresses any symbol that already has a STRUCTURAL LIVE_ACTION
+              -- in-flight (active states) or recently closed within the cooldown
+              -- window. This is the structural answer to ORCL/COST style noise:
+              -- a setup detector firing every day on a symbol we just sent to the
+              -- broker should not turn into a re-proposal until the prior trade
+              -- has been adjudicated and the cooldown has elapsed.
+              AND NOT EXISTS (
+                  SELECT 1 FROM MIP.LIVE.LIVE_ACTIONS la
+                  WHERE la.LIVE_INTENT_KIND = 'STRUCTURAL'
+                    AND la.SYMBOL = se.SYMBOL
+                    AND (
+                        -- Active in-flight states: never repropose while a live action exists.
+                        la.STATUS IN (
+                            'PROPOSED',
+                            'INTENT_APPROVED',
+                            'PENDING_OPEN_VALIDATION',
+                            'OPEN_BLOCKED',
+                            'REVALIDATED_PASS',
+                            'EXECUTION_REQUESTED'
+                        )
+                        -- Recently terminal states: cooldown window since last touch.
+                        OR (
+                            la.STATUS IN ('CANCELLED', 'REJECTED', 'SUPERSEDED')
+                            AND la.UPDATED_AT >= DATEADD('day', -:P_SYMBOL_COOLDOWN_DAYS, :v_as_of)
+                        )
+                    )
+              )
+              -- Phase 7 PQI Fix 5: conflicting opposite-direction signal suppression.
+              -- A LONG setup must not be proposed if the same symbol has an ELIGIBLE
+              -- SHORT setup with confidence >= 0.65 in the same lookback window.
+              -- This protects against COST-style cases where TPL LONG fires while
+              -- THREE_BAR_REVERSAL_SHORT is also ELIGIBLE on the same name with
+              -- meaningful confidence.
+              AND NOT EXISTS (
+                  SELECT 1 FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se2
+                  WHERE se2.SYMBOL = se.SYMBOL
+                    AND se2.MARKET_TYPE = se.MARKET_TYPE
+                    AND se2.DIRECTION <> se.DIRECTION
+                    AND se2.SETUP_STATUS IN ('DETECTED', 'ELIGIBLE')
+                    AND se2.SETUP_DATE >= DATEADD('day', -3, :v_as_of)
+                    AND COALESCE(se2.STRUCTURE_CONFIDENCE, 0) >= 0.65
               )
         )
         SELECT

@@ -132,13 +132,27 @@ BEGIN
     FROM MIP.MART.V_PROPOSAL_BOARD_CANDIDATE_EVIDENCE e
     WHERE e.SETUP_DATE BETWEEN DATEADD('day', -5, :v_as_of) AND :v_as_of
       AND NOT e.ABSOLUTE_EXCLUDED
+      -- Active-proposal dedup. When P_PORTFOLIO_ID is NULL the board
+      -- is producing portfolio-agnostic candidates that, if approved,
+      -- can spawn live actions on any portfolio; in that mode we must
+      -- block on ANY portfolio's existing active proposal for the same
+      -- setup event. When a specific portfolio is requested we block
+      -- on either that portfolio or a portfolio-agnostic active row.
       AND NOT EXISTS (
           SELECT 1
           FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
           WHERE p.SETUP_EVENT_ID = e.SETUP_EVENT_ID
-            AND COALESCE(p.PORTFOLIO_ID, -1) = COALESCE(:P_PORTFOLIO_ID, -1)
             AND p.STATUS = 'PROPOSED'
+            AND (
+                 :P_PORTFOLIO_ID IS NULL
+                 OR p.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                 OR p.PORTFOLIO_ID IS NULL
+            )
       )
+      -- In-flight live-actions dedup. Same NULL-aware semantics: a
+      -- portfolio-agnostic board run must respect every portfolio's
+      -- in-flight execution to avoid emitting a duplicate proposal
+      -- against a setup event already being acted on.
       AND NOT EXISTS (
           SELECT 1
           FROM MIP.LIVE.LIVE_ACTIONS la
@@ -146,8 +160,12 @@ BEGIN
             ON p.PROPOSAL_ID = la.PROPOSAL_ID
           WHERE la.LIVE_INTENT_KIND = 'STRUCTURAL'
             AND p.SETUP_EVENT_ID = e.SETUP_EVENT_ID
-            AND COALESCE(la.PORTFOLIO_ID, -1) = COALESCE(:P_PORTFOLIO_ID, -1)
             AND la.STATUS IN ('PROPOSED','INTENT_APPROVED','PENDING_OPEN_VALIDATION','OPEN_BLOCKED','REVALIDATED_PASS','EXECUTION_REQUESTED')
+            AND (
+                 :P_PORTFOLIO_ID IS NULL
+                 OR la.PORTFOLIO_ID = :P_PORTFOLIO_ID
+                 OR la.PORTFOLIO_ID IS NULL
+            )
       );
 
     SELECT COUNT(*) INTO :v_candidate_count
@@ -600,12 +618,20 @@ BEGIN
      AND v.CANDIDATE_ID = fs.CANDIDATE_ID
     WHERE fs.RUN_ID = :v_run_id
       AND fs.PUBLICATION_STATUS = 'PENDING'
+      -- Publication-time safety net. Symmetric NULL-aware semantics to
+      -- the snapshot dedup above: a portfolio-agnostic candidate
+      -- (c.PORTFOLIO_ID IS NULL) must not be published if any active
+      -- proposal exists for the same setup event on any portfolio.
       AND NOT EXISTS (
           SELECT 1
           FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
           WHERE p.SETUP_EVENT_ID = c.SETUP_EVENT_ID
-            AND COALESCE(p.PORTFOLIO_ID, -1) = COALESCE(c.PORTFOLIO_ID, -1)
             AND p.STATUS = 'PROPOSED'
+            AND (
+                 c.PORTFOLIO_ID IS NULL
+                 OR p.PORTFOLIO_ID = c.PORTFOLIO_ID
+                 OR p.PORTFOLIO_ID IS NULL
+            )
       );
 
     UPDATE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE fs

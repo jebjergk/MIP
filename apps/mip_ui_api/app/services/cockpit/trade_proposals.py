@@ -59,7 +59,6 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from app.db import fetch_all, get_connection, serialize_row
-from app.services.cockpit.structural_priority import rank_proposals
 
 logger = logging.getLogger(__name__)
 
@@ -134,19 +133,18 @@ class TradeProposal:
     detail_route: Optional[str] = None
     created_at: Optional[str] = None
 
-    # Priority signal — comparative strength relative to other proposals
-    # in the slate. Computed locally by structural_priority.compute_components
-    # which mirrors the 520_sp_propose_structural_trades.sql composite
-    # formula. Intentionally orthogonal to entry_readiness above:
+    # Board priority signal — comparative board rank relative to other
+    # published proposals in the slate. Intentionally orthogonal to
+    # entry_readiness above:
     #   priority  = "is this the strongest idea on the slate?"
     #   readiness = "is it actionable right now?"
     # The two are read independently in the UI.
     priority_rank: Optional[int] = None              # 1 = strongest; None when slate empty
     priority_band: Optional[str] = None              # 'HIGH' | 'MEDIUM' | 'LOW'
     priority_band_label: Optional[str] = None        # 'High' | 'Medium' | 'Low'
-    priority_reason_code: Optional[str] = None       # see structural_priority.REASON_LABELS
+    priority_reason_code: Optional[str] = None       # board primary reason code
     priority_reason_label: Optional[str] = None      # plain English (one line)
-    composite_score: Optional[float] = None          # rounded to 4 dp
+    composite_score: Optional[float] = None          # retired deterministic composite; always None after board cutover
 
 
 @dataclass(frozen=True)
@@ -168,15 +166,8 @@ class TradeProposalsPayload:
 # once a proposal moves into the execution queue it stops being a
 # "trade proposal" and becomes either a working order or a position.
 #
-# We also pull every component the 520 SP composite uses
-# (STRUCTURE_CONFIDENCE, LEVEL_SIGNIFICANCE, REGIME_COMPAT,
-#  MEANINGFUL_HIT_RATE, PATH_SURVIVAL_HIT_RATE) plus TRUST_LABEL from
-# COMMITTEE_PAYLOAD and SETUP_DATE from the originating setup event.
-# These let structural_priority.rank_proposals reproduce the SP-side
-# composite locally so the cockpit and LPA surfaces can show priority
-# rank + dominant reason without a round-trip to the SP.
-#
-# ORDER BY is unimportant here — rank_proposals re-sorts strongest-first.
+# Board publication columns are authoritative for ordering/explanation.
+# The old deterministic composite is intentionally not recomputed here.
 _PROPOSALS_SQL = """
     SELECT
         p.PROPOSAL_ID,
@@ -193,11 +184,19 @@ _PROPOSALS_SQL = """
         p.MEANINGFUL_HIT_RATE,
         p.PATH_SURVIVAL_HIT_RATE,
         COALESCE(p.COMMITTEE_PAYLOAD:trust_label::STRING, 'RESEARCH') AS TRUST_LABEL,
-        s.SETUP_DATE
+        s.SETUP_DATE,
+        p.BOARD_RUN_ID,
+        p.BOARD_CANDIDATE_ID,
+        p.BOARD_FINAL_RANK,
+        p.BOARD_FINAL_VERDICT,
+        p.BOARD_PRIMARY_REASON_CODE,
+        p.BOARD_REASON_CODES,
+        p.BOARD_RATIONALE
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
     LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS s
       ON s.SETUP_EVENT_ID = p.SETUP_EVENT_ID
     WHERE p.STATUS = 'PROPOSED'
+    ORDER BY p.BOARD_FINAL_RANK NULLS LAST, p.CREATED_AT
 """
 
 # Latest committed committee decision per proposal. We pick the most
@@ -686,11 +685,6 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
         if str(r.get("SYMBOL") or "").upper() not in held_symbols
     ]
 
-    # Rank the full actionable slate strongest-first BEFORE the
-    # MAX_PROPOSALS truncation so the rank we assign is meaningful
-    # ("#1 of 7", not "#1 of the 6 we happened to keep").
-    actionable_rows = rank_proposals(actionable_rows, as_of_date=date.today())
-
     total_count = len(actionable_rows)
     actionable_rows = actionable_rows[:MAX_PROPOSALS]
 
@@ -794,12 +788,12 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
                 mini_chart_series=chart_series,
                 detail_route=f"/structural-market-timeline?symbol={symbol}",
                 created_at=str(r.get("CREATED_AT")) if r.get("CREATED_AT") else None,
-                priority_rank=r.get("priority_rank"),
-                priority_band=r.get("priority_band"),
-                priority_band_label=r.get("priority_band_label"),
-                priority_reason_code=r.get("priority_reason_code"),
-                priority_reason_label=r.get("priority_reason_label"),
-                composite_score=r.get("composite_score"),
+                priority_rank=r.get("BOARD_FINAL_RANK"),
+                priority_band=r.get("BOARD_FINAL_VERDICT"),
+                priority_band_label=r.get("BOARD_FINAL_VERDICT"),
+                priority_reason_code=r.get("BOARD_PRIMARY_REASON_CODE"),
+                priority_reason_label=r.get("BOARD_RATIONALE"),
+                composite_score=None,
             )
         )
 
@@ -843,10 +837,9 @@ def compute_proposal_priority_context(proposal_id: int) -> Optional[Dict[str, An
         return None
     if not rows:
         return None
-    ranked = rank_proposals(rows, as_of_date=date.today())
-    total = len(ranked)
+    total = len(rows)
     target_pid = int(proposal_id)
-    for r in ranked:
+    for r in rows:
         try:
             pid = int(r.get("PROPOSAL_ID") or 0)
         except (TypeError, ValueError):
@@ -854,13 +847,13 @@ def compute_proposal_priority_context(proposal_id: int) -> Optional[Dict[str, An
         if pid == target_pid:
             return {
                 "proposal_id":           pid,
-                "priority_rank":         r.get("priority_rank"),
+                "priority_rank":         r.get("BOARD_FINAL_RANK"),
                 "total":                 total,
-                "priority_band":         r.get("priority_band"),
-                "priority_band_label":   r.get("priority_band_label"),
-                "priority_reason_code":  r.get("priority_reason_code"),
-                "priority_reason_label": r.get("priority_reason_label"),
-                "composite_score":       r.get("composite_score"),
+                "priority_band":         r.get("BOARD_FINAL_VERDICT"),
+                "priority_band_label":   r.get("BOARD_FINAL_VERDICT"),
+                "priority_reason_code":  r.get("BOARD_PRIMARY_REASON_CODE"),
+                "priority_reason_label": r.get("BOARD_RATIONALE"),
+                "composite_score":       None,
                 "in_slate":              True,
             }
     return {

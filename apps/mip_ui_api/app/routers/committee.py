@@ -964,8 +964,8 @@ def committee_proposal_priority_context(proposal_id: int):
     so an operator viewing a single proposal can see how it compares to
     the rest of the active slate without flipping back to the cockpit.
 
-    Same composite formula as the proposal SP and the cockpit Trade
-    Proposals panel (see app/services/cockpit/structural_priority.py).
+    Uses board publication rank/reason columns from the active proposal
+    rows. The retired deterministic composite is not recomputed here.
     Slate definition is *all* STATUS='PROPOSED' rows — no held-symbol
     filter — because the operator wants to know how this proposal
     ranks against everything in flight.

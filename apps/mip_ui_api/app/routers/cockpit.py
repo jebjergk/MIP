@@ -257,17 +257,15 @@ class TradeProposal(BaseModel):
     detail_route: Optional[str] = None
     created_at: Optional[str] = None
 
-    # Priority signal — comparative strength relative to other proposals
-    # in the slate. Computed locally from the same composite formula
-    # the proposal SP uses (see structural_priority.py). Independent of
-    # entry_readiness above:
+    # Board priority signal — comparative strength relative to other
+    # board-published proposals in the slate. Independent of entry_readiness:
     #   priority  = "is this the strongest idea on the slate?"
     #   readiness = "is it actionable right now?"
     priority_rank: Optional[int] = None
-    priority_band: Optional[str] = None              # 'HIGH' | 'MEDIUM' | 'LOW'
-    priority_band_label: Optional[str] = None        # 'High' | 'Medium' | 'Low'
-    priority_reason_code: Optional[str] = None       # TRUST | FRESH | REGIME | STRUCTURE | MHR | SIGNIFICANCE | PSHR | BASELINE
-    priority_reason_label: Optional[str] = None      # plain English
+    priority_band: Optional[str] = None              # board verdict
+    priority_band_label: Optional[str] = None        # board verdict label
+    priority_reason_code: Optional[str] = None       # board primary reason
+    priority_reason_label: Optional[str] = None      # board rationale
     composite_score: Optional[float] = None
 
 

@@ -208,7 +208,40 @@ USING (
         ('NO_GOOD_IDEAS_TODAY', 'CHAIR', 'WARN', 'No candidate was strong enough to publish.'),
         ('SYSTEM_AGENT_OUTPUT_INVALID', 'SYSTEM', 'ERROR', 'Agent output failed schema or reason-code validation.'),
         ('SYSTEM_VALIDATION_FAILED', 'SYSTEM', 'ERROR', 'Systemic board output validation failed.'),
-        ('ABSOLUTE_GUARDRAIL_EXCLUDED', 'SYSTEM', 'ERROR', 'Candidate failed an absolute pre-board guardrail.')
+        ('ABSOLUTE_GUARDRAIL_EXCLUDED', 'SYSTEM', 'ERROR', 'Candidate failed an absolute pre-board guardrail.'),
+
+        -- Phase 3 calibration codes (mirrored from 562_phase3_calibration_reason_codes.sql).
+        -- The 562_*.sql file is the authoritative migration; this block exists only so
+        -- a fresh bootstrap of the catalog seeds the same codes. Keep both in lockstep.
+        ('APPROVED_CLEAN_LONG_STRUCTURE',          'CHAIR', 'INFO',  'Approved at full size: long with clean structure, attractive opportunity, executable risk, and supportive history. No material warnings.'),
+        ('APPROVED_CLEAN_SHORT_STRUCTURE',         'CHAIR', 'INFO',  'Approved at full size: short with clean structure, attractive opportunity, executable risk. Only fires when SHORT_LIVE_ENABLED is true.'),
+        ('APPROVED_REDUCED_RISK_CONSTRAINED',      'CHAIR', 'INFO',  'Approved at reduced size because the risk/execution agent flagged the candidate as constrained (e.g. SIZE_REDUCE_REQUIRED, GAP_RISK_HIGH).'),
+        ('APPROVED_REDUCED_HISTORY_MIXED',         'CHAIR', 'INFO',  'Approved at reduced size because historical evidence is mixed but structure, opportunity, and risk are otherwise clean.'),
+        ('WATCH_SHORT_RESEARCH_ONLY',              'CHAIR', 'WARN',  'Held as research-only watchlist evidence: short candidate surfaced but SHORT_LIVE_ENABLED is false.'),
+        ('WATCH_DIRECTION_NOT_EXECUTABLE',         'CHAIR', 'WARN',  'Held as watchlist evidence: candidate direction is not currently live-enabled (non-short cases such as FX without FX_LIVE_ENABLED).'),
+        ('WATCH_OPPOSING_SETUP',                   'CHAIR', 'WARN',  'Held as watchlist evidence: same symbol carries an opposing-direction setup AND specialist signals do not converge on approve.'),
+        ('WATCH_WAITING_FOR_ENTRY',                'CHAIR', 'WARN',  'Held as watchlist evidence: structure and opportunity look adequate but price is outside the entry zone right now.'),
+        ('WATCH_RISK_REWARD_UNATTRACTIVE',         'CHAIR', 'WARN',  'Held as watchlist evidence: tradeable but risk/reward is below threshold per the risk agent.'),
+        ('REJECT_REPEATED_REPITCH',                'CHAIR', 'WARN',  'Rejected: same setup has been repeatedly proposed without improvement and opportunity quality is weak.'),
+        ('REJECT_STALE_WEAK_STRUCTURE',            'CHAIR', 'WARN',  'Rejected: stale candidate (STALE_BUT_NOT_EXPIRED) combined with weak structure and prior re-pitches.'),
+        ('REJECT_RECENT_FAILURE_NO_IMPROVEMENT',   'CHAIR', 'WARN',  'Rejected: recent terminal trade outcome on this symbol AND no measurable improvement in evidence.'),
+        ('REJECT_WEAK_OPPORTUNITY',                'CHAIR', 'WARN',  'Rejected: opportunity quality agent emitted a hard-reject verdict (e.g. TOO_EXTENDED, REVERSAL_TOO_EARLY).'),
+        ('REJECT_EXECUTION_HARD_BLOCK',            'CHAIR', 'ERROR', 'Rejected: risk/execution agent emitted hard_block (instrument disabled, market halted, or otherwise impossible to execute).'),
+        ('EXECUTION_RESEARCH_ONLY',                'RISK_EXECUTION', 'WARN', 'Risk agent verdict research_only: direction is research-visible but not live-enabled today (the policy case, distinct from execution impossibility).'),
+        ('RISK_REWARD_UNATTRACTIVE',               'RISK_EXECUTION', 'WARN', 'Risk agent verdict risk_unattractive: candidate is tradeable but the risk/reward ratio is below threshold (e.g. invalidation too near vs target).'),
+        ('STRUCTURE_ACCEPTABLE',                   'STRUCTURE', 'INFO', 'Structure is recognizable and tradeable but not pristine. Confidence and level significance are in the middle band.'),
+        ('EVIDENCE_SPARSE_BUT_ACCEPTABLE',         'HISTORY', 'INFO', 'Historical sample size is sparse (SAMPLE_SIZE_LOW) but the available statistics lean positive, so this is not a non-answer.'),
+        ('OPPORTUNITY_ACCEPTABLE',                 'OPPORTUNITY', 'INFO', 'Opportunity quality is adequate but not standout. Drives APPROVE_REDUCED rather than APPROVE.'),
+        ('OPPORTUNITY_WEAK',                       'OPPORTUNITY', 'WARN', 'Opportunity quality is weak (poor risk/reward, confluence light) but not a hard reject.'),
+        ('OPPORTUNITY_WAIT_FOR_ENTRY',             'OPPORTUNITY', 'WARN', 'Opportunity is valid but price is outside or far from the entry zone right now.'),
+
+        -- Phase 3 Step 4 chair codes (mirrored from 563_phase3_step4_chair_reason_codes.sql).
+        -- The 563_*.sql file is the authoritative migration; this block exists only so a
+        -- fresh bootstrap of the catalog seeds the same codes. Keep both in lockstep.
+        ('WATCH_OPPORTUNITY_NOT_RIPE',                    'CHAIR', 'WARN', 'Held as watchlist evidence: opportunity agent verdict is watch or weak for reasons other than waiting-for-entry (e.g. TREND_STALE, OPPORTUNITY_WEAK). Distinct from the catch-all WATCHLIST_ONLY.'),
+        ('APPROVED_REDUCED_OPPOSING_SETUP',               'CHAIR', 'INFO', 'Approved at reduced size because the same symbol carries an opposing-direction setup, but specialists do NOT converge on weak / ambiguous, so the chair demotes rather than forcing WATCH.'),
+        ('APPROVED_REDUCED_REPEATED_REPITCH',             'CHAIR', 'INFO', 'Approved at reduced size because REPEATED_REPITCH fires but the compound REJECT_REPEATED_REPITCH rule (history not OK and opportunity not actionable and structure weak/reject) does not. Demotion gives the warning real policy effect.'),
+        ('APPROVED_REDUCED_NOISY_CHOPPY_PRICE_ACTION',    'CHAIR', 'INFO', 'Approved at reduced size because NOISY_CHOPPY_PRICE_ACTION fires and the opportunity agent did NOT override it with an attractive verdict. Caps sizing to acknowledge the noisy regime per amendment 3.')
     AS v(REASON_CODE, REASON_CATEGORY, SEVERITY, DESCRIPTION)
 ) src
 ON tgt.REASON_CODE = src.REASON_CODE

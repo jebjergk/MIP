@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import BoardExplanationPanel from '../components/board/BoardExplanationPanel'
 import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationMapCard'
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
@@ -543,6 +544,24 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
                 Priority #{priorityCtx.priority_rank} / {priorityCtx.total} · {priorityCtx.priority_band_label}
               </span>
             ) : null}
+            {/* Phase 2 Sprint 4 / option 4a — non-blocking same-symbol warning.
+                Surfaces when the active slate carries another PROPOSED row on
+                this SYMBOL. Board behavior is unchanged; we just make the
+                competing setup visible to the operator. */}
+            {priorityCtx && priorityCtx.same_symbol_other_active && priorityCtx.same_symbol_other_count > 0 ? (
+              <span
+                className="lpa-c2-pill lpa-c2-pill--samesym"
+                title={`${priorityCtx.same_symbol_other_count} other active proposal${
+                  priorityCtx.same_symbol_other_count === 1 ? '' : 's'
+                } on ${inline.symbol || ''}${
+                  Array.isArray(priorityCtx.same_symbol_other_directions) && priorityCtx.same_symbol_other_directions.length > 0
+                    ? ` (${priorityCtx.same_symbol_other_directions.join(', ')})`
+                    : ''
+                } — pick one or compare on the structural market timeline before acting.`}
+              >
+                +{priorityCtx.same_symbol_other_count} on {inline.symbol || 'symbol'}
+              </span>
+            ) : null}
           </div>
         </div>
         {priorityCtx && priorityCtx.in_slate ? (
@@ -566,6 +585,15 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
             </span>
           ) : null}
         </div>
+      </Reveal>
+
+      {/* Sprint 3 — agentic board explanation. Collapsed by default;
+          lazy-loads the per-specialist verdicts + chair synthesis from
+          /committee/proposal/{id}/board-explanation only when the
+          operator opens it, so we don't pay the join cost for every
+          proposal an operator just glances at. */}
+      <Reveal show={revealStep >= 0}>
+        <BoardExplanationPanel proposalId={inline.proposal_id} />
       </Reveal>
 
       <div className="lpa-c2-exhibits-cols">

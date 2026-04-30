@@ -146,6 +146,18 @@ class TradeProposal:
     priority_reason_label: Optional[str] = None      # plain English (one line)
     composite_score: Optional[float] = None          # retired deterministic composite; always None after board cutover
 
+    # Phase 2 Sprint 4 / option 4a — same-symbol multiplicity warning.
+    # When the active slate carries more than one PROPOSED row on the
+    # same SYMBOL (legitimate when two distinct setup events fire on
+    # the same name, sometimes in opposite directions), the cockpit
+    # shows a non-blocking badge so the operator notices and can pick
+    # one. The board itself is unchanged — same-symbol is allowed,
+    # not deduplicated. Counts/directions exclude this proposal.
+    same_symbol_other_active: bool = False
+    same_symbol_other_count: int = 0
+    same_symbol_other_directions: List[str] = field(default_factory=list)
+    same_symbol_other_proposal_ids: List[int] = field(default_factory=list)
+
 
 @dataclass(frozen=True)
 class TradeProposalsPayload:
@@ -165,6 +177,17 @@ class TradeProposalsPayload:
 # pipeline has expired stale rows. We do NOT join LIVE_ACTIONS here -
 # once a proposal moves into the execution queue it stops being a
 # "trade proposal" and becomes either a working order or a position.
+#
+# Latest-board-run lineage gate (Patch Group A, post-Phase-3 operator
+# safety): we additionally require the proposal's BOARD_RUN_ID to match
+# MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN.RUN_ID. This protects the
+# cockpit even when SP_EXPIRE_STALE_DAILY_PROPOSALS has not yet run -
+# any leaked stale PROPOSED row simply doesn't appear in the panel
+# instead of confusingly competing with the canonical slate.
+#
+# Fail-closed: when the view is empty (cold start, board outage), the
+# JOIN drops every row and the panel renders empty rather than showing
+# stale rows that could be misread as actionable.
 #
 # Board publication columns are authoritative for ordering/explanation.
 # The old deterministic composite is intentionally not recomputed here.
@@ -193,6 +216,8 @@ _PROPOSALS_SQL = """
         p.BOARD_REASON_CODES,
         p.BOARD_RATIONALE
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+    JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest
+      ON latest.RUN_ID = p.BOARD_RUN_ID
     LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS s
       ON s.SETUP_EVENT_ID = p.SETUP_EVENT_ID
     WHERE p.STATUS = 'PROPOSED'
@@ -416,6 +441,64 @@ def _entry_readiness(
 
 def _load_proposal_rows() -> List[Dict[str, Any]]:
     return _query(_PROPOSALS_SQL, {})
+
+
+def _build_same_symbol_map(rows: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """For each PROPOSED row, list other PROPOSED rows with the same
+    SYMBOL.
+
+    Phase 2 Sprint 4 / option 4a — non-blocking same-symbol warning.
+    Counts/directions/ids are restricted to the *other* rows so the
+    UI badge speaks in the operator's voice ("AAPL — 2 other active
+    proposals (LONG, SHORT)").
+
+    The board itself is unchanged: same-symbol candidates are allowed
+    through, the UI just makes them visible.
+
+    Returns: {proposal_id: {"count": int, "directions": [str],
+                              "proposal_ids": [int]}}
+    """
+    by_symbol: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        sym = str(r.get("SYMBOL") or "").upper()
+        if not sym:
+            continue
+        by_symbol.setdefault(sym, []).append(r)
+
+    out: Dict[int, Dict[str, Any]] = {}
+    for r in rows:
+        try:
+            pid = int(r.get("PROPOSAL_ID"))
+        except (TypeError, ValueError):
+            continue
+        sym = str(r.get("SYMBOL") or "").upper()
+        if not sym:
+            continue
+        siblings = [
+            s for s in by_symbol.get(sym, [])
+            if s.get("PROPOSAL_ID") not in (None, r.get("PROPOSAL_ID"))
+        ]
+        if not siblings:
+            continue
+        # De-dup directions while preserving order so the UI shows
+        # "LONG, SHORT" not "LONG, LONG, SHORT".
+        seen_dirs: List[str] = []
+        for s in siblings:
+            d = str(s.get("DIRECTION") or "").upper()
+            if d and d not in seen_dirs:
+                seen_dirs.append(d)
+        sibling_ids: List[int] = []
+        for s in siblings:
+            try:
+                sibling_ids.append(int(s.get("PROPOSAL_ID")))
+            except (TypeError, ValueError):
+                continue
+        out[pid] = {
+            "count": len(siblings),
+            "directions": seen_dirs,
+            "proposal_ids": sibling_ids,
+        }
+    return out
 
 
 def _load_committee_stance() -> Dict[int, Dict[str, Any]]:
@@ -678,6 +761,12 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
 
     held_symbols = _load_open_position_symbols(int(portfolio_id))
 
+    # Same-symbol multiplicity is computed against the FULL slate (not
+    # the held-symbol-filtered actionable subset) because the badge
+    # speaks to operator awareness of competing setups, not to what
+    # this particular cockpit panel chose to render.
+    same_symbol_map = _build_same_symbol_map(rows)
+
     # Skip proposals on symbols already held; a duplicate entry signal
     # is noise, not an actionable proposal in this dashboard.
     actionable_rows = [
@@ -794,6 +883,10 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
                 priority_reason_code=r.get("BOARD_PRIMARY_REASON_CODE"),
                 priority_reason_label=r.get("BOARD_RATIONALE"),
                 composite_score=None,
+                same_symbol_other_active=bool(same_symbol_map.get(pid)),
+                same_symbol_other_count=int(same_symbol_map.get(pid, {}).get("count") or 0),
+                same_symbol_other_directions=list(same_symbol_map.get(pid, {}).get("directions") or []),
+                same_symbol_other_proposal_ids=list(same_symbol_map.get(pid, {}).get("proposal_ids") or []),
             )
         )
 
@@ -839,12 +932,14 @@ def compute_proposal_priority_context(proposal_id: int) -> Optional[Dict[str, An
         return None
     total = len(rows)
     target_pid = int(proposal_id)
+    same_symbol_map = _build_same_symbol_map(rows)
     for r in rows:
         try:
             pid = int(r.get("PROPOSAL_ID") or 0)
         except (TypeError, ValueError):
             continue
         if pid == target_pid:
+            ss = same_symbol_map.get(pid) or {}
             return {
                 "proposal_id":           pid,
                 "priority_rank":         r.get("BOARD_FINAL_RANK"),
@@ -855,6 +950,10 @@ def compute_proposal_priority_context(proposal_id: int) -> Optional[Dict[str, An
                 "priority_reason_label": r.get("BOARD_RATIONALE"),
                 "composite_score":       None,
                 "in_slate":              True,
+                "same_symbol_other_active":      bool(ss),
+                "same_symbol_other_count":       int(ss.get("count") or 0),
+                "same_symbol_other_directions":  list(ss.get("directions") or []),
+                "same_symbol_other_proposal_ids": list(ss.get("proposal_ids") or []),
             }
     return {
         "proposal_id": target_pid,
@@ -906,6 +1005,10 @@ def to_payload_dict(payload: TradeProposalsPayload) -> Dict[str, Any]:
                 "priority_reason_code": p.priority_reason_code,
                 "priority_reason_label": p.priority_reason_label,
                 "composite_score": p.composite_score,
+                "same_symbol_other_active": p.same_symbol_other_active,
+                "same_symbol_other_count": p.same_symbol_other_count,
+                "same_symbol_other_directions": p.same_symbol_other_directions,
+                "same_symbol_other_proposal_ids": p.same_symbol_other_proposal_ids,
             }
             for p in payload.proposals
         ],

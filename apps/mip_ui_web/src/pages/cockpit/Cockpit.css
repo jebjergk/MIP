@@ -358,6 +358,24 @@
 .ck-co-tp-priority--info    { background: #cfe2ff; color: #052c65; border-color: #9ec5fe; }
 .ck-co-tp-priority--neutral { background: #f1f3f5; color: #495057; border-color: #dee2e6; }
 
+/* Phase 2 Sprint 4 / option 4a — non-blocking same-symbol warning.
+ * The board itself is unchanged: same-symbol candidates are allowed
+ * through; this badge just makes the multiplicity visible so the
+ * operator can pick or compare before acting. Amber tone matches
+ * "this needs your attention" without screaming "DENY". */
+.ck-co-tp-samesym {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  background: #fff3cd;
+  color: #6d4c00;
+  border: 1px solid #ffe69c;
+  cursor: help;
+}
+
 /* "Why ranked" detail line — short reason that explains the priority.
  * Same compact style as the other secondary lines in the row. */
 .ck-co-tp-line--reason {

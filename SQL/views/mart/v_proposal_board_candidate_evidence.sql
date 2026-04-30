@@ -152,6 +152,25 @@ SELECT
     ld.HIGH AS LATEST_HIGH,
     ld.LOW AS LATEST_LOW,
     ld.CLOSE AS LATEST_CLOSE,
+    -- ----------------------------------------------------------------
+    -- Phase 3 Step B: proposal-time current_price contract.
+    --
+    -- For the daily Agentic Proposal Board CURRENT_PRICE is the latest
+    -- available completed daily-bar close as of the board AS_OF_DATE.
+    -- This is proposal-time context, not live execution price.
+    -- Committee / live revalidation downstream uses the latest quote
+    -- or IBKR live truth; the daily board MUST NOT consume that here.
+    --
+    -- When no completed daily close exists for the symbol, CURRENT_PRICE
+    -- is left NULL and CURRENT_PRICE_MISSING is added to BOARD_WARNING_FLAGS
+    -- so the OPP agent and the chair can route accordingly.
+    -- ----------------------------------------------------------------
+    ld.CLOSE                                          AS CURRENT_PRICE,
+    IFF(ld.CLOSE IS NOT NULL, 'DAILY_CLOSE', NULL)    AS CURRENT_PRICE_SOURCE,
+    ld.LATEST_DAILY_TS::DATE                          AS CURRENT_PRICE_DATE,
+    ld.LATEST_DAILY_TS                                AS CURRENT_PRICE_TS,
+    ld.CLOSE                                          AS LATEST_BAR_CLOSE,
+    ld.LATEST_DAILY_TS::DATE                          AS LATEST_BAR_DATE,
     cfg.SHORT_RESEARCH_VISIBLE,
     cfg.SHORT_LIVE_ENABLED,
     cfg.FX_LIVE_ENABLED,
@@ -202,7 +221,10 @@ SELECT
         IFF(COALESCE(tr.N_SETUPS, 0) < 20, 'SPARSE_HISTORY', NULL),
         IFF(COALESCE(se.WICK_CONFIRMATION_SCORE, 1) < 0.25 AND COALESCE(se.THREE_BAR_CONFIRMATION_SCORE, 1) < 0.25, 'NOISY_CHOPPY_PRICE_ACTION', NULL),
         IFF(COALESCE(ra.RECENT_TERMINAL_ACTION_14D, 0) = 1, 'RECENT_TERMINAL_TRADE_OUTCOME', NULL),
-        IFF(se.DIRECTION = 'SHORT' AND NOT cfg.SHORT_LIVE_ENABLED, 'DIRECTION_NOT_EXECUTABLE', NULL)
+        IFF(se.DIRECTION = 'SHORT' AND NOT cfg.SHORT_LIVE_ENABLED, 'DIRECTION_NOT_EXECUTABLE', NULL),
+        -- Phase 3 Step B: visible signal that proposal-time context lacks
+        -- a daily close. The OPP agent and the chair can route accordingly.
+        IFF(ld.CLOSE IS NULL, 'CURRENT_PRICE_MISSING', NULL)
     )) AS BOARD_WARNING_FLAGS,
     OBJECT_CONSTRUCT_KEEP_NULL(
         'setup', OBJECT_CONSTRUCT_KEEP_NULL(
@@ -240,7 +262,13 @@ SELECT
             'trail_style', COALESCE(rp.TRAIL_STYLE, se.TRAIL_STYLE),
             'trail_params', COALESCE(rp.TRAIL_PARAMS, se.TRAIL_PARAMS),
             'exit_style', COALESCE(rp.EXIT_STYLE, tr.EXIT_STYLE_RECOMMENDATION, 'STRUCTURAL_TARGET'),
-            'risk_class', CASE WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG' THEN 'GAP_AWARE' ELSE se.RISK_CLASS END
+            'risk_class', CASE WHEN se.SETUP_FAMILY = 'BREAKOUT_RETEST_LONG' THEN 'GAP_AWARE' ELSE se.RISK_CLASS END,
+            -- Phase 3 Step B: proposal-time price context. Daily close,
+            -- not live quote. Consumers (OPP agent prompt today, future
+            -- specialists tomorrow) read these keys.
+            'current_price',        ld.CLOSE,
+            'current_price_source', IFF(ld.CLOSE IS NOT NULL, 'DAILY_CLOSE', NULL),
+            'current_price_date',   ld.LATEST_DAILY_TS::DATE
         ),
         'history', OBJECT_CONSTRUCT_KEEP_NULL(
             'trust_label', COALESCE(tr.TRUST_LABEL, 'RESEARCH'),
@@ -262,7 +290,8 @@ SELECT
             IFF(COALESCE(tr.N_SETUPS, 0) < 20, 'SPARSE_HISTORY', NULL),
             IFF(COALESCE(se.WICK_CONFIRMATION_SCORE, 1) < 0.25 AND COALESCE(se.THREE_BAR_CONFIRMATION_SCORE, 1) < 0.25, 'NOISY_CHOPPY_PRICE_ACTION', NULL),
             IFF(COALESCE(ra.RECENT_TERMINAL_ACTION_14D, 0) = 1, 'RECENT_TERMINAL_TRADE_OUTCOME', NULL),
-            IFF(se.DIRECTION = 'SHORT' AND NOT cfg.SHORT_LIVE_ENABLED, 'DIRECTION_NOT_EXECUTABLE', NULL)
+            IFF(se.DIRECTION = 'SHORT' AND NOT cfg.SHORT_LIVE_ENABLED, 'DIRECTION_NOT_EXECUTABLE', NULL),
+            IFF(ld.CLOSE IS NULL, 'CURRENT_PRICE_MISSING', NULL)
         )),
         'absolute_exclusions', ARRAY_COMPACT(ARRAY_CONSTRUCT(
             IFF(se.SYMBOL IS NULL, 'MISSING_SYMBOL', NULL),

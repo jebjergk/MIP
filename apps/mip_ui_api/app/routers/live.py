@@ -7200,21 +7200,64 @@ def _is_structural_entry_pending_row(row: dict) -> bool:
 
 
 def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) -> list[dict]:
-    """One canonical structural ENTRY pending row per symbol; non-actionable-only groups fall back to max PROPOSAL_ID."""
+    """One canonical structural ENTRY pending row per symbol.
+
+    Canonical preference order (highest first):
+      1. proposal_freshness == 'CURRENT' (parent proposal is PROPOSED and
+         from the latest authoritative board run)
+      2. proposal_freshness == 'SUPERSEDED_BY_NEWER_RUN' (still PROPOSED
+         but on an older run)
+      3. proposal_freshness == 'EXPIRED' or 'NO_PROPOSAL_LINK'
+      4. Tiebreak within band: higher PROPOSAL_ID wins.
+
+    The non-canonical siblings are demoted to `superseded_pending` so
+    operators can still see them, but only the canonical row drives
+    cockpit actionability. Combined with `submission_allowed=False` and
+    `superseded_blocked=True` set in the build-loop above, this means
+    even when EVERY row for a symbol is stale (no CURRENT row exists),
+    the canonical row appears with submission disabled and a clear
+    "Reject stale / cleanup only" hint — never as a Run Committee /
+    Submit candidate.
+
+    The legacy STATUS-map lookup is retained as a defensive fallback
+    for rows where the new SQL join did not populate proposal_freshness
+    (should never happen post-deploy, but the contract is preserved).
+    """
     se_rows = [r for r in pending_decisions if _is_structural_entry_pending_row(r)]
     if not se_rows:
         return pending_decisions
     other = [r for r in pending_decisions if not _is_structural_entry_pending_row(r)]
-    prop_ids: list[int] = []
-    for r in se_rows:
-        p = r.get("proposal_id")
-        if p is None:
-            continue
-        try:
-            prop_ids.append(int(p))
-        except (TypeError, ValueError):
-            continue
-    st_map = _fetch_structural_proposal_status_map(cur, prop_ids)
+
+    # Defensive backfill: if a row arrived without proposal_freshness
+    # (e.g. test fixture / stale code path), recover via the existing
+    # STATUS-map lookup so dedup still behaves sanely.
+    rows_needing_fallback = [r for r in se_rows if not r.get("proposal_freshness")]
+    if rows_needing_fallback:
+        prop_ids: list[int] = []
+        for r in rows_needing_fallback:
+            p = r.get("proposal_id")
+            if p is None:
+                continue
+            try:
+                prop_ids.append(int(p))
+            except (TypeError, ValueError):
+                continue
+        st_map = _fetch_structural_proposal_status_map(cur, prop_ids) if prop_ids else {}
+        for r in rows_needing_fallback:
+            p = r.get("proposal_id")
+            if p is None:
+                r["proposal_freshness"] = "NO_PROPOSAL_LINK"
+                continue
+            try:
+                pid = int(p)
+            except (TypeError, ValueError):
+                r["proposal_freshness"] = "NO_PROPOSAL_LINK"
+                continue
+            st = st_map.get(pid, "PROPOSED")
+            r["proposal_freshness"] = (
+                "CURRENT" if _structural_proposal_status_is_actionable(st) else "EXPIRED"
+            )
+
     by_sym: dict[str, list[dict]] = {}
     for r in se_rows:
         sk = str(r.get("symbol") or "").upper().strip()
@@ -7222,30 +7265,29 @@ def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) ->
             continue
         by_sym.setdefault(sk, []).append(r)
 
+    _FRESHNESS_RANK = {
+        "CURRENT": 3,
+        "SUPERSEDED_BY_NEWER_RUN": 2,
+        "EXPIRED": 1,
+        "NO_PROPOSAL_LINK": 0,
+    }
+
+    def _pid_key(row: dict) -> int:
+        p = row.get("proposal_id")
+        try:
+            return int(p)
+        except (TypeError, ValueError):
+            return -1
+
+    def _canonical_sort_key(row: dict) -> tuple[int, int]:
+        return (
+            _FRESHNESS_RANK.get(str(row.get("proposal_freshness") or ""), 0),
+            _pid_key(row),
+        )
+
     deduped: list[dict] = []
     for _sym, rows_g in by_sym.items():
-
-        def _pid_key(row: dict) -> int:
-            p = row.get("proposal_id")
-            try:
-                return int(p)
-            except (TypeError, ValueError):
-                return -1
-
-        def _row_actionable(row: dict) -> bool:
-            p = row.get("proposal_id")
-            if p is None:
-                return False
-            try:
-                pid = int(p)
-            except (TypeError, ValueError):
-                return False
-            st = st_map.get(pid, "PROPOSED")
-            return _structural_proposal_status_is_actionable(st)
-
-        actionable_subset = [x for x in rows_g if _row_actionable(x)]
-        pool = actionable_subset if actionable_subset else rows_g
-        canonical = max(pool, key=_pid_key)
+        canonical = max(rows_g, key=_canonical_sort_key)
         others = [x for x in rows_g if x is not canonical]
         if others:
             canon = dict(canonical)
@@ -7254,6 +7296,8 @@ def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) ->
                     "action_id": x.get("action_id"),
                     "proposal_id": x.get("proposal_id"),
                     "status": x.get("status"),
+                    "proposal_freshness": x.get("proposal_freshness"),
+                    "proposal_status_now": x.get("proposal_status_now"),
                 }
                 for x in others
             ]
@@ -7597,6 +7641,14 @@ def get_live_activity_overview(
                 "trailing_stop": trailing_stop_leg,
             }
 
+        # Proposal-lineage gate (operator-safety hardening, post-Phase-3):
+        # join to STRUCTURAL_TRADE_PROPOSALS + the canonical
+        # V_LATEST_AUTHORITATIVE_BOARD_RUN view so every action row
+        # carries its parent proposal's STATUS and BOARD_RUN_ID, and the
+        # currently-canonical authoritative run id. The build-loop below
+        # uses these to compute `proposal_freshness` and gate
+        # submission_allowed for STRUCTURAL ENTRY actions whose parent
+        # proposal is no longer current.
         cur.execute(
             """
             select
@@ -7611,10 +7663,17 @@ def get_live_activity_overview(
               la.SETUP_EVENT_ID, la.SETUP_FAMILY, la.DIRECTION, la.ENTRY_ZONE_LOW, la.ENTRY_ZONE_HIGH,
               la.INVALIDATION_LEVEL, la.TRAIL_STYLE, la.TRAIL_ACTIVATION_TYPE,
               la.SETUP_NARRATIVE, la.FRESHNESS_ASSESSMENT, la.EXPECTED_HOLD_CHARACTER,
-              la.LIVE_INTENT_KIND
+              la.LIVE_INTENT_KIND,
+              p.STATUS as PROPOSAL_STATUS_NOW,
+              p.BOARD_RUN_ID as PROPOSAL_BOARD_RUN_ID,
+              latest.RUN_ID as LATEST_AUTHORITATIVE_RUN_ID
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
               on cv.RUN_ID = la.COMMITTEE_RUN_ID
+            left join MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+              on p.PROPOSAL_ID = la.PROPOSAL_ID
+            left join MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest
+              on TRUE
             where la.PORTFOLIO_ID = %s
               and la.STATUS in (
                 'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
@@ -7799,9 +7858,67 @@ def get_live_activity_overview(
                     or bracket_realism_rc
                 )
             )
+            # Proposal-lineage freshness gate (Patch Group A, post-Phase-3
+            # operator-safety hardening). For STRUCTURAL ENTRY actions
+            # only: a live action whose parent proposal has been EXPIRED
+            # by lifecycle (Rule 0/1/2/3) or whose parent proposal is
+            # still PROPOSED but belongs to a non-canonical board run is
+            # no longer actionable. The action row stays in the queue
+            # for visibility but loses Run Committee / Submit. EXIT
+            # actions are intentionally NOT gated — closing a live
+            # position is a cleanup path that must remain available
+            # regardless of what happened to the originating proposal.
+            #
+            # `proposal_freshness` values:
+            #   CURRENT      - proposal STATUS='PROPOSED' AND BOARD_RUN_ID
+            #                  matches the latest authoritative run.
+            #   EXPIRED      - proposal STATUS != 'PROPOSED'.
+            #   SUPERSEDED_BY_NEWER_RUN
+            #                - proposal still PROPOSED but BOARD_RUN_ID
+            #                  is not the latest authoritative run id
+            #                  (or the latest run id is unknown — a cold-
+            #                  start fail-closed condition).
+            #   NO_PROPOSAL_LINK
+            #                - action carries no proposal_id at all.
+            #                  Treated as not-fresh for STRUCTURAL ENTRY.
+            proposal_status_now = (row.get("PROPOSAL_STATUS_NOW") or "").upper() or None
+            proposal_board_run_id = row.get("PROPOSAL_BOARD_RUN_ID")
+            latest_auth_run_id = row.get("LATEST_AUTHORITATIVE_RUN_ID")
+            if row.get("PROPOSAL_ID") is None:
+                proposal_freshness = "NO_PROPOSAL_LINK"
+            elif proposal_status_now is None:
+                proposal_freshness = "EXPIRED"
+            elif proposal_status_now != "PROPOSED":
+                proposal_freshness = "EXPIRED"
+            elif latest_auth_run_id is None:
+                proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
+            elif (
+                proposal_board_run_id is None
+                or str(proposal_board_run_id) != str(latest_auth_run_id)
+            ):
+                proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
+            else:
+                proposal_freshness = "CURRENT"
+
+            is_structural_action = str(row.get("LIVE_INTENT_KIND") or "").upper() == "STRUCTURAL"
+            superseded_blocked = bool(
+                is_structural_action
+                and (not is_exit)
+                and proposal_freshness != "CURRENT"
+            )
+            if superseded_blocked and "PROPOSAL_EXPIRED_OR_SUPERSEDED" not in action_reason_codes:
+                action_reason_codes = list(action_reason_codes) + ["PROPOSAL_EXPIRED_OR_SUPERSEDED"]
+
             trade_surface_ok = page_actionable_base and (market_open or is_exit)
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
-            submit_allowed = submit_allowed and trade_surface_ok and (not blocked) and (not execution_hard_blocked) and (not committee_blocks_entry)
+            submit_allowed = (
+                submit_allowed
+                and trade_surface_ok
+                and (not blocked)
+                and (not execution_hard_blocked)
+                and (not committee_blocks_entry)
+                and (not superseded_blocked)
+            )
             in_position = symbol in held_symbols
             action_id = str(row.get("ACTION_ID") or "")
             action_orders = order_groups.get(action_id) or []
@@ -7819,6 +7936,23 @@ def get_live_activity_overview(
             )
 
             submission_gate_hints: list[str] = []
+            # Always surface the proposal-lineage gate as a top-priority
+            # hint — it overrides everything else, because "the
+            # underlying proposal is dead" is the most operator-relevant
+            # blocker on the screen.
+            if superseded_blocked:
+                if proposal_freshness == "EXPIRED":
+                    submission_gate_hints.append(
+                        "Underlying proposal is EXPIRED — submission blocked. Reject stale / cleanup only."
+                    )
+                elif proposal_freshness == "SUPERSEDED_BY_NEWER_RUN":
+                    submission_gate_hints.append(
+                        "Underlying proposal is from a superseded board run — submission blocked. Reject stale / cleanup only."
+                    )
+                elif proposal_freshness == "NO_PROPOSAL_LINK":
+                    submission_gate_hints.append(
+                        "Action has no parent proposal — submission blocked. Reject / cleanup only."
+                    )
             if status == "REVALIDATED_PASS" and not submit_allowed:
                 if snapshot_state not in ("FRESH", "AGING"):
                     submission_gate_hints.append("Snapshot not fresh enough — click Refresh From IB.")
@@ -7843,6 +7977,15 @@ def get_live_activity_overview(
                 and (is_exit or not in_position)
                 and (is_exit or symbol not in suppress_pending_symbols)
             ):
+                # When the parent proposal is dead/superseded, override
+                # the required_next_step so the cockpit no longer
+                # advertises Run Committee / Submit. The action stays
+                # visible but the only sane next step is rejection /
+                # cleanup. Exits already short-circuit past this branch.
+                required_next_step = _required_next_step_for_status(status)
+                if superseded_blocked:
+                    required_next_step = "Reject stale proposal (cleanup only)"
+
                 pending_decisions.append(
                     {
                         "action_id": row.get("ACTION_ID"),
@@ -7860,11 +8003,16 @@ def get_live_activity_overview(
                         "committee_completed_ts": row.get("COMMITTEE_COMPLETED_TS"),
                         "committee_required": bool(row.get("COMMITTEE_REQUIRED")) if row.get("COMMITTEE_REQUIRED") is not None else True,
                         "reason_codes": action_reason_codes,
-                        "required_next_step": _required_next_step_for_status(status),
+                        "required_next_step": required_next_step,
                         "submission_allowed": bool(submit_allowed),
                         "submission_gate_hints": submission_gate_hints,
                         "is_blocked": bool(blocked),
                         "execution_hard_blocked": bool(execution_hard_blocked),
+                        "superseded_blocked": bool(superseded_blocked),
+                        "proposal_freshness": proposal_freshness,
+                        "proposal_status_now": proposal_status_now,
+                        "proposal_board_run_id": proposal_board_run_id,
+                        "latest_authoritative_run_id": latest_auth_run_id,
                         "committee_should_enter": committee_should_enter,
                         "committee_decision": {
                             "should_enter": joint_decision.get("should_enter") if joint_decision else None,

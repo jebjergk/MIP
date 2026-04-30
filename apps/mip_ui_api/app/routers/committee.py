@@ -981,6 +981,31 @@ def committee_proposal_priority_context(proposal_id: int):
     return {"available": True, **ctx}
 
 
+@router.get("/proposal/{proposal_id}/board-explanation")
+def committee_proposal_board_explanation(proposal_id: int):
+    """Read-only board audit trail for a single proposal.
+
+    Joins `STRUCTURAL_TRADE_PROPOSALS.BOARD_*` lineage to:
+      - `PROPOSAL_BOARD_RUN`              (model config / prompt / policy version)
+      - `PROPOSAL_BOARD_AGENT_OUTCOME`    (per-specialist verdicts)
+      - `PROPOSAL_BOARD_ORCHESTRATOR_VERDICT` (chair synthesis)
+      - `PROPOSAL_BOARD_INTERACTION`      (cross-agent disagreements)
+
+    Sprint 3 of the Phase 2 plan: powers the cockpit
+    "Board explanation" disclosure panel without introducing any
+    new write paths.
+
+    Fail-soft contract: returns HTTP 200 with `available=False`
+    (and a short `note`) when the proposal is missing, has no
+    board lineage (legacy pre-cutover row), or any underlying
+    query fails. Callers render an inline notice instead of a
+    panel-blocking error.
+    """
+    from app.services.board.explanation import load_board_explanation
+
+    return load_board_explanation(int(proposal_id))
+
+
 @router.get("/proposal/{proposal_id}/final-decision")
 def committee_proposal_final_decision(proposal_id: int):
     conn = get_connection()

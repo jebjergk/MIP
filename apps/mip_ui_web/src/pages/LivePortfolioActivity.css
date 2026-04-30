@@ -1084,6 +1084,17 @@
   border: 1px solid #cfd8dc;
 }
 
+/* Phase 2 Sprint 4 / option 4a — non-blocking same-symbol pill.
+ * The board itself is unchanged: same-symbol candidates are allowed
+ * through; this pill just makes the multiplicity visible so the
+ * operator can pick or compare before acting. */
+.lpa-c2-pill--samesym {
+  background: #fff3cd;
+  color: #6d4c00;
+  border: 1px solid #ffe69c;
+  cursor: help;
+}
+
 .lpa-c2-priority-reason {
   margin-top: 6px;
   font-size: 12px;
@@ -2114,4 +2125,366 @@
 .lpa-c2-progress-inline {
   font-size: 12px;
   color: #3949ab;
+}
+
+/* ----------------------------------------------------------------- */
+/* Sprint 3 — Board explanation disclosure (BoardExplanationPanel)    */
+/* ----------------------------------------------------------------- */
+
+.lpa-c2-bx-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.lpa-c2-bx-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: #283593;
+  border-radius: 10px;
+}
+
+.lpa-c2-bx-toggle:hover {
+  background: #f5f7ff;
+}
+
+.lpa-c2-bx-toggle.is-open {
+  background: #f5f7ff;
+  border-bottom: 1px solid #e0e0e0;
+  border-radius: 10px 10px 0 0;
+}
+
+.lpa-c2-bx-toggle-caret {
+  font-size: 11px;
+  color: #5c6bc0;
+}
+
+.lpa-c2-bx-toggle-label {
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #3949ab;
+}
+
+.lpa-c2-bx-toggle-sub {
+  font-size: 11px;
+  color: #78909c;
+  font-style: italic;
+}
+
+.lpa-c2-bx-body {
+  padding: 10px 12px 12px;
+}
+
+.lpa-c2-bx-card-subhead {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #5c6bc0;
+  margin-bottom: 6px;
+}
+
+.lpa-c2-bx-runmeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #455a64;
+}
+
+.lpa-c2-bx-runmeta-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: #7986cb;
+  font-weight: 700;
+}
+
+.lpa-c2-bx-runmeta-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #283593;
+}
+
+.lpa-c2-bx-runmeta-chip {
+  background: #eceff1;
+  color: #455a64;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.lpa-c2-bx-spec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lpa-c2-bx-spec-row {
+  border: 1px solid #eceff1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fafbff;
+}
+
+.lpa-c2-bx-spec-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.lpa-c2-bx-spec-name {
+  font-weight: 700;
+  font-size: 12px;
+  color: #283593;
+  min-width: 110px;
+}
+
+.lpa-c2-bx-verdict {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+}
+
+.lpa-c2-bx-verdict--ok {
+  background: #c8e6c9;
+  color: #1b5e20;
+}
+
+.lpa-c2-bx-verdict--info {
+  background: #bbdefb;
+  color: #0d47a1;
+}
+
+.lpa-c2-bx-verdict--warn {
+  background: #ffe0b2;
+  color: #6d4c00;
+}
+
+.lpa-c2-bx-verdict--critical {
+  background: #ffcdd2;
+  color: #b71c1c;
+}
+
+.lpa-c2-bx-verdict--neutral {
+  background: #eceff1;
+  color: #455a64;
+}
+
+.lpa-c2-bx-conf {
+  font-size: 11px;
+  color: #5c6bc0;
+}
+
+.lpa-c2-bx-mode {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.lpa-c2-bx-mode--cortex {
+  background: #e8eaf6;
+  color: #283593;
+  border: 1px solid #c5cae9;
+}
+
+.lpa-c2-bx-mode--fallback {
+  background: #fff3e0;
+  color: #6d4c00;
+  border: 1px solid #ffcc80;
+}
+
+.lpa-c2-bx-mode--neutral {
+  background: #eceff1;
+  color: #455a64;
+}
+
+.lpa-c2-bx-spec-codes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.lpa-c2-bx-code-pri {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #283593;
+  background: #fff;
+  border: 1px solid #c5cae9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.lpa-c2-bx-code-sec {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #5c6bc0;
+  background: transparent;
+  border: 1px dashed #c5cae9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.lpa-c2-bx-flags {
+  font-size: 10px;
+  color: #6d4c00;
+  background: #fff8e1;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.lpa-c2-bx-spec-rat {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #455a64;
+  line-height: 1.4;
+  font-style: italic;
+}
+
+.lpa-c2-bx-disagree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lpa-c2-bx-disagree-counts {
+  display: flex;
+  gap: 8px;
+}
+
+.lpa-c2-bx-disagree-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #f5f7ff;
+  border: 1px solid #e8eaf6;
+  border-radius: 6px;
+  padding: 4px 10px;
+  min-width: 64px;
+  font-size: 10px;
+  color: #5c6bc0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lpa-c2-bx-disagree-cell strong {
+  font-size: 16px;
+  color: #283593;
+}
+
+.lpa-c2-bx-disagree-cell--ok {
+  background: #e8f5e9;
+  border-color: #c8e6c9;
+  color: #1b5e20;
+}
+
+.lpa-c2-bx-disagree-cell--ok strong {
+  color: #1b5e20;
+}
+
+.lpa-c2-bx-disagree-cell--warn {
+  background: #fff8e1;
+  border-color: #ffe0b2;
+  color: #6d4c00;
+}
+
+.lpa-c2-bx-disagree-cell--warn strong {
+  color: #6d4c00;
+}
+
+.lpa-c2-bx-disagree-cell--critical {
+  background: #ffebee;
+  border-color: #ffcdd2;
+  color: #b71c1c;
+}
+
+.lpa-c2-bx-disagree-cell--critical strong {
+  color: #b71c1c;
+}
+
+.lpa-c2-bx-disagree-flags {
+  font-size: 11px;
+  color: #6d4c00;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.lpa-c2-bx-disagree-flags-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: #b08800;
+  font-weight: 700;
+}
+
+.lpa-c2-bx-chair {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lpa-c2-bx-chair-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.lpa-c2-bx-chair-why {
+  margin: 0;
+  font-size: 12px;
+  color: #283593;
+  line-height: 1.45;
+}
+
+.lpa-c2-bx-chair-why-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7986cb;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.lpa-c2-bx-chair-rat {
+  margin: 0;
+  font-size: 12px;
+  color: #455a64;
+  line-height: 1.45;
+  font-style: italic;
+}
+
+.lpa-c2-bx-chair-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: #78909c;
+  letter-spacing: 0.02em;
 }

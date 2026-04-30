@@ -323,6 +323,19 @@ function ProposalRow({ proposal }) {
     ? `Priority #${proposal.priority_rank} (${proposal.priority_band_label}) — ${proposal.priority_reason_label}` +
       (proposal.composite_score != null ? ` · score ${proposal.composite_score.toFixed(3)}` : '')
     : null
+  // Phase 2 Sprint 4 / option 4a — non-blocking same-symbol warning.
+  // Surfaces when the active slate carries more than one PROPOSED row
+  // on this SYMBOL so the operator notices and can pick. The board
+  // itself is unchanged; we just make the multiplicity visible.
+  const sameSymbolOther = proposal.same_symbol_other_active && proposal.same_symbol_other_count > 0
+  const sameSymbolDirs = Array.isArray(proposal.same_symbol_other_directions)
+    ? proposal.same_symbol_other_directions
+    : []
+  const sameSymbolTooltip = sameSymbolOther
+    ? `${proposal.same_symbol_other_count} other active proposal${proposal.same_symbol_other_count === 1 ? '' : 's'} on ${proposal.symbol}` +
+      (sameSymbolDirs.length > 0 ? ` (${sameSymbolDirs.join(', ')})` : '') +
+      ' — pick one or compare on the structural market timeline before acting.'
+    : null
   return (
     <div className="ck-co-tp-row">
       <div className="ck-co-tp-info">
@@ -348,6 +361,15 @@ function ProposalRow({ proposal }) {
           ) : (
             <span className="ck-co-tp-stance ck-co-tp-stance--missing">No verdict yet</span>
           )}
+          {sameSymbolOther ? (
+            <span
+              className="ck-co-tp-samesym"
+              title={sameSymbolTooltip}
+              aria-label={sameSymbolTooltip}
+            >
+              +{proposal.same_symbol_other_count} on {proposal.symbol}
+            </span>
+          ) : null}
         </div>
 
         {hasPriority ? (

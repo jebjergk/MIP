@@ -191,3 +191,44 @@ The "today" snapshot below reflects the state after the
 - Add automatic retry for `MISSING_OR_NON_OBJECT_JSON` (small N
   attempts, then fall through).
 - Owner: TBD.
+
+---
+
+## 8. Trail-style strings on agentic proposals (cosmetic)
+
+**Status today (2026-05-01).**
+- The orchestrator publication INSERT in
+  `MIP/scripts/proposal_board_phase4/orchestrator.py::_publish_to_structural`
+  now writes a canonical `EXIT_PROFILE` (`FIXED_STANDARD` /
+  `TRAIL_TIGHT` / `TRAIL_STANDARD` / `TRAIL_WIDE`) and a broker-executable
+  `TRAIL_PARAMS` (with `policy_version='v1'`, bounded `trail_value` PCT)
+  on every agentic proposal. The proposal-to-LIVE_ACTION bridge in
+  `MIP/apps/mip_ui_api/app/routers/live.py` line 15283 now resolves
+  `EXIT_POLICY = TRAIL_BRACKET` correctly, so IBKR receives a TRAIL leg
+  rather than a fixed STP.
+- The chair agent prompt
+  (`MIP/SQL/app/570_phase4_agentic_board_agents.sql`) now requires the
+  chair to emit `exit_profile` as one of the four bounded names plus a
+  `trail_value` in `[0.5, 10.0]` PCT, framed as a volatility/conviction
+  decision.
+- Hard-rule smoke assertions
+  (`AGENTIC_PROPOSAL_NULL_EXIT_PROFILE`,
+   `AGENTIC_PROPOSAL_INVALID_EXIT_PROFILE`,
+   `AGENTIC_TRAIL_PARAMS_INVALID`) live in
+  `MIP/SQL/smoke/phase4_eligibility_short_gate_smoke.sql`.
+
+**Cleanup scope (cosmetic only — does not block trading).**
+- `STRUCTURAL_TRADE_PROPOSALS.TRAIL_STYLE` is the legacy 20-char text
+  column. The new path always writes `'PCT'` (canonical), but pre-fix
+  rows in audit history carry chair-emitted free text such as
+  `"ATR based"`, `"support_trail"`, `"ATR trailing"`. These are not
+  consumed by any code path post-fix, but they are visible in admin
+  views.
+- One-shot cleanup: rewrite legacy `TRAIL_STYLE` values on rows where
+  `BOARD_RUN_ID IS NOT NULL` to the canonical token derived from
+  `TRAIL_PARAMS:trail_mode` (`'PCT'`). Keep an audit row in
+  `MIP_AUDIT_LOG` so the original chair-emitted strings are preserved.
+- Optional: drop `TRAIL_STYLE` entirely once consumers migrate to
+  `EXIT_PROFILE` + `TRAIL_PARAMS:trail_mode` (which is what
+  `exit_policy_service` reads).
+- Owner: TBD.

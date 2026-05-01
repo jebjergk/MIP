@@ -159,3 +159,64 @@ SELECT 'LPA_POST_DECISION_LEGACY_PARENT_INFO' AS CHECK_NAME,
        )
  GROUP BY la.STATUS
  ORDER BY N DESC;
+
+-- 12) Trailing stop hard rule (HARD RULE):
+--     Every PROPOSED agentic proposal must carry a bounded EXIT_PROFILE so
+--     the proposal-to-LIVE_ACTION bridge in mip_ui_api/routers/live.py
+--     resolves EXIT_POLICY=TRAIL_BRACKET (not FIXED_BRACKET) for trailing
+--     intents. The operator does not watch screens intraday so a missing
+--     EXIT_PROFILE silently downgrading to FIXED_STANDARD/STP at IBKR is
+--     a critical risk-posture bug. Should be 0.
+SELECT 'AGENTIC_PROPOSAL_NULL_EXIT_PROFILE' AS CHECK_NAME,
+       COUNT(*) AS NULL_EXIT_PROFILE_COUNT
+  FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+ WHERE BOARD_RUN_ID IS NOT NULL
+   AND STATUS = 'PROPOSED'
+   AND EXIT_PROFILE IS NULL;
+
+-- 13) EXIT_PROFILE allowlist enforcement: only the four bounded profiles
+--     defined by exit_policy_service.PROFILES are accepted. Any value
+--     outside the set means upstream wrote junk and downstream
+--     resolve_exit_policy() will raise ValueError. Should be 0.
+SELECT 'AGENTIC_PROPOSAL_INVALID_EXIT_PROFILE' AS CHECK_NAME,
+       EXIT_PROFILE, COUNT(*) AS N
+  FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+ WHERE BOARD_RUN_ID IS NOT NULL
+   AND STATUS = 'PROPOSED'
+   AND EXIT_PROFILE IS NOT NULL
+   AND EXIT_PROFILE NOT IN ('FIXED_STANDARD','TRAIL_TIGHT','TRAIL_STANDARD','TRAIL_WIDE')
+ GROUP BY EXIT_PROFILE;
+
+-- 14) Broker-executable TRAIL_PARAMS shape: every TRAIL_* proposal must
+--     carry policy_version='v1', trail_mode='PCT', reference='ENTRY_FILL',
+--     and trail_value within [0.5, 10.0] PCT bounds. Anything else is
+--     rejected by validate_trail_params() and execution is hard-blocked
+--     with TRAIL_PARAMS_INVALID. Should be 0.
+SELECT 'AGENTIC_TRAIL_PARAMS_INVALID' AS CHECK_NAME,
+       PROPOSAL_ID, SYMBOL, EXIT_PROFILE,
+       TRAIL_PARAMS:policy_version::STRING AS POLICY_VERSION,
+       TRAIL_PARAMS:trail_mode::STRING     AS TRAIL_MODE,
+       TRAIL_PARAMS:reference::STRING      AS REFERENCE_,
+       TRY_TO_DOUBLE(TRAIL_PARAMS:trail_value::STRING) AS TRAIL_VALUE
+  FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+ WHERE BOARD_RUN_ID IS NOT NULL
+   AND STATUS        = 'PROPOSED'
+   AND EXIT_PROFILE IN ('TRAIL_TIGHT','TRAIL_STANDARD','TRAIL_WIDE')
+   AND (
+            TRAIL_PARAMS:policy_version::STRING <> 'v1'
+         OR TRAIL_PARAMS:trail_mode::STRING     <> 'PCT'
+         OR TRAIL_PARAMS:reference::STRING      <> 'ENTRY_FILL'
+         OR TRY_TO_DOUBLE(TRAIL_PARAMS:trail_value::STRING) IS NULL
+         OR TRY_TO_DOUBLE(TRAIL_PARAMS:trail_value::STRING) NOT BETWEEN 0.5 AND 10.0
+       );
+
+-- 15) EXIT_PROFILE distribution for the latest agentic run (informational).
+--     Use this to spot drift toward FIXED_STANDARD that would indicate the
+--     chair has stopped recommending trails.
+SELECT 'AGENTIC_EXIT_PROFILE_DISTRIBUTION' AS CHECK_NAME,
+       EXIT_PROFILE, COUNT(*) AS N
+  FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+ WHERE BOARD_RUN_ID = $v_run_id
+   AND STATUS = 'PROPOSED'
+ GROUP BY EXIT_PROFILE
+ ORDER BY N DESC;

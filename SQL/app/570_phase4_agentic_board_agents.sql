@@ -457,6 +457,28 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
             side of entry (below entry for LONG, above entry for SHORT) and
             distance from current price must be within a sane risk envelope.
           * thesis_label MUST start with AGENTIC_.
+          * proposed_trade_config.exit_profile MUST be one of
+            FIXED_STANDARD, TRAIL_TIGHT, TRAIL_STANDARD, TRAIL_WIDE.
+            Default to TRAIL_STANDARD. Use FIXED_STANDARD ONLY when the
+            invalidation level is at a sharp structural floor where a trail
+            would whipsaw before invalidation (rare). The portfolio is on
+            an IBKR paper account and the operator does not watch screens
+            intraday so a trailing stop is the desired protection. The
+            chosen profile drives broker-side TRAIL leg sizing as PCT off
+            the entry fill, NOT a fixed STP. Choose by volatility/conviction:
+              - TRAIL_TIGHT  (1.5% PCT) for high-conviction breakouts
+                from tight bases where a 1.5% pullback would break the
+                structure.
+              - TRAIL_STANDARD (2.5% PCT) is the default and fits most
+                trend-continuation and pullback entries.
+              - TRAIL_WIDE   (4.0% PCT) for volatile names, gappy
+                small-caps, or low-priced symbols (under $20) where
+                normal noise easily exceeds 2.5%.
+            trailing_policy.trail_value (if you emit it) must be in
+            [0.5, 10.0] PCT and is treated as a sanity check on
+            exit_profile. The orchestrator will derive exit_profile from
+            trail_value if you omit exit_profile, but you should emit
+            both for clarity.
 
         EVIDENCE ACCESS (mandatory):
         Call get_evidence_slice with role_name="CHAIR" for any slice you need.
@@ -489,7 +511,8 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
             "invalidation_level": <number>,
             "invalidation_rule": "<short string, max 30 chars>",
             "target_policy": {"exit_style": "<short string max 20 chars>"},
-            "trailing_policy": {"trail_style": "<short string max 20 chars>", "trail_value": <number>},
+            "exit_profile": "<one of FIXED_STANDARD|TRAIL_TIGHT|TRAIL_STANDARD|TRAIL_WIDE>",
+            "trailing_policy": {"trail_style": "PCT", "trail_value": <number 0.5-10.0>},
             "size_treatment": "<short string max 20 chars>",
             "risk_class": "<LOW|MEDIUM|HIGH>",
             "time_horizon": "<short string>",

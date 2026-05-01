@@ -54,6 +54,23 @@ def _parse_symbols(s: str) -> list[str]:
     return [t.strip().upper() for t in s.split(",") if t.strip()]
 
 
+_VALID_MARKET_TYPES = {"STOCK", "ETF", "FX"}
+
+
+def _parse_market_types(s: str) -> list[str]:
+    raw = [t.strip().upper() for t in s.split(",") if t.strip()]
+    bad = [t for t in raw if t not in _VALID_MARKET_TYPES]
+    if bad:
+        raise argparse.ArgumentTypeError(
+            f"Unknown market_type(s): {bad}. Allowed: {sorted(_VALID_MARKET_TYPES)}"
+        )
+    seen: list[str] = []
+    for t in raw:
+        if t not in seen:
+            seen.append(t)
+    return seen
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run the Phase 4 Cortex Agentic Proposal Board.",
@@ -64,6 +81,14 @@ def main() -> int:
                         help="As-of date (YYYY-MM-DD). Defaults to today.")
     parser.add_argument("--symbols", type=_parse_symbols, default=None,
                         help="Optional comma-separated symbol filter.")
+    parser.add_argument("--market-types", type=_parse_market_types,
+                        default=["STOCK"],
+                        help=(
+                            "Comma-separated market types to evaluate. Defaults to "
+                            "STOCK (MIP does not currently trade ETF or FX). "
+                            "Pass STOCK,ETF,FX to include everything. "
+                            f"Allowed values: {sorted(_VALID_MARKET_TYPES)}."
+                        ))
     parser.add_argument("--max-proposals", type=int, default=8,
                         help="Max proposals to publish to STRUCTURAL_TRADE_PROPOSALS.")
     parser.add_argument("--max-rounds", type=int, default=2,
@@ -95,6 +120,7 @@ def main() -> int:
             portfolio_id=args.portfolio,
             as_of_date=args.as_of,
             symbols_filter=args.symbols,
+            market_types_filter=args.market_types,
             max_proposals=args.max_proposals,
             max_rounds=max_rounds,
             inter_dossier_concurrency=args.inter_concurrency,
@@ -117,6 +143,7 @@ def main() -> int:
         "eligibility_skip_breakdown": result.eligibility_skip_breakdown,
         "ibkr_account_mode": result.ibkr_account_mode,
         "short_publication_allowed": result.short_publication_allowed,
+        "market_types_filter": args.market_types,
         "error": result.error,
         "dry_run": args.dry_run,
     }, indent=2, default=str))

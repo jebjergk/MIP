@@ -442,15 +442,25 @@ def _snapshot_dossiers(
     as_of_date: _date,
     portfolio_id: Optional[int],
     symbols_filter: Optional[List[str]],
+    market_types_filter: Optional[List[str]] = None,
 ) -> List[Tuple[int, str, str, Dict[str, Any]]]:
     """
     Insert dossier snapshot rows for this run. Returns
     [(dossier_id, symbol, market_type, dossier_payload_dict), ...].
+
+    `market_types_filter`, when provided, restricts the snapshot to the
+    listed MARKET_TYPE values (case-insensitive). Used to scope daily
+    runs to STOCK only since MIP does not currently trade ETF or FX.
     """
     sql_filter = ""
     if symbols_filter:
         in_list = ",".join("'" + s.replace("'", "''").upper() + "'" for s in symbols_filter)
         sql_filter = f" AND UPPER(SYMBOL) IN ({in_list})"
+    if market_types_filter:
+        mt_list = ",".join(
+            "'" + m.replace("'", "''").upper() + "'" for m in market_types_filter
+        )
+        sql_filter += f" AND UPPER(MARKET_TYPE) IN ({mt_list})"
 
     insert_sql = f"""
     INSERT INTO MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT (
@@ -1676,6 +1686,7 @@ async def orchestrate_phase4_board(
     portfolio_id: Optional[int] = None,
     as_of_date: Optional[_date] = None,
     symbols_filter: Optional[List[str]] = None,
+    market_types_filter: Optional[List[str]] = None,
     max_proposals: int = _DEFAULT_MAX_PROPOSALS,
     max_rounds: int = _DEFAULT_MAX_ROUNDS,
     inter_dossier_concurrency: int = 2,
@@ -1716,13 +1727,20 @@ async def orchestrate_phase4_board(
                         "per_dossier_concurrency": per_dossier_concurrency,
                         "inter_dossier_concurrency": inter_dossier_concurrency,
                         "max_proposals": max_proposals,
+                        "market_types_filter": (
+                            [m.upper() for m in market_types_filter]
+                            if market_types_filter else None
+                        ),
                         "dry_run": bool(dry_run),
                     }),
                     "prompt_v": _PROMPT_VERSION,
                     "policy_v": _POLICY_VERSION,
                 },
             )
-            rows = _snapshot_dossiers(cur, run_id, as_of, portfolio_id, symbols_filter)
+            rows = _snapshot_dossiers(
+                cur, run_id, as_of, portfolio_id, symbols_filter,
+                market_types_filter=market_types_filter,
+            )
             _stage_pack_cache(cur, run_id, rows)
             conn.commit()
         finally:

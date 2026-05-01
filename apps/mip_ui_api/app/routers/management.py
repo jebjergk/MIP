@@ -169,6 +169,14 @@ def run_ib_manual_daily_job(
     ),
     proposal_board_max_proposals: int = Query(8, ge=1, le=20),
     proposal_board_max_rounds: int = Query(2, ge=1, le=3),
+    proposal_board_market_types: str = Query(
+        "STOCK",
+        description=(
+            "Comma-separated MARKET_TYPE filter passed to run_board.py. "
+            "Default 'STOCK' since MIP does not currently trade ETF or FX. "
+            "Use 'STOCK,ETF,FX' to include everything."
+        ),
+    ),
     synth_intraday_daily: bool = Query(
         False,
         description="If true, ingest builds 1440m rows from 1m bars (STOCK/ETF RTH TRADES, FX MIDPOINT) on today's NY calendar date, then catch-up and optional pipeline.",
@@ -355,6 +363,9 @@ def run_ib_manual_daily_job(
         response["pipeline_result"] = pipeline_payload
 
     if not dry_run and run_pipeline and run_proposal_board:
+        normalized_market_types = ",".join(
+            sorted({m.strip().upper() for m in (proposal_board_market_types or "STOCK").split(",") if m.strip()})
+        ) or "STOCK"
         board_cmd = [
             str(py),
             "-m",
@@ -365,13 +376,16 @@ def run_ib_manual_daily_job(
             str(int(proposal_board_max_proposals)),
             "--max-rounds",
             str(int(proposal_board_max_rounds)),
+            "--market-types",
+            normalized_market_types,
         ]
         log.info(
-            "Phase 4 agentic board: workspace=%s portfolio=%s max_proposals=%s max_rounds=%s",
+            "Phase 4 agentic board: workspace=%s portfolio=%s max_proposals=%s max_rounds=%s market_types=%s",
             project_root,
             proposal_board_portfolio,
             proposal_board_max_proposals,
             proposal_board_max_rounds,
+            normalized_market_types,
         )
         try:
             board_proc = subprocess.run(

@@ -104,3 +104,58 @@ SELECT 'PUBLISHED_SHORT_WITH_NON_PAPER_PORTFOLIO' AS CHECK_NAME,
  WHERE fs.PUBLICATION_STATUS = 'PUBLISHED'
    AND fs.FINAL_ACTION = 'PROPOSE_SHORT'
    AND COALESCE(c.IBKR_ACCOUNT_MODE, 'UNKNOWN') <> 'PAPER';
+
+-- 9) Agentic-only structural-timeline guarantee: the proposals lane must not
+--    surface any legacy deterministic-selector row (BOARD_RUN_ID NULL).
+--    Should be 0 after the v_structural_timeline_views.sql cutover.
+SELECT 'TIMELINE_PROPOSALS_LEGACY_LEAK' AS CHECK_NAME,
+       COUNT(*) AS LEGACY_ROW_COUNT
+  FROM MIP.MART.V_STRUCTURAL_TIMELINE_PROPOSALS
+ WHERE BOARD_RUN_ID IS NULL;
+
+-- 10) Agentic-only structural-timeline event rail: no PROPOSAL_CREATED event
+--     should be missing PROPOSAL_ID (defensive) or stem from a legacy row.
+--     Cross-check by joining back to STRUCTURAL_TRADE_PROPOSALS.
+SELECT 'TIMELINE_EVENTS_LEGACY_PROPOSAL_LEAK' AS CHECK_NAME,
+       COUNT(*) AS LEGACY_EVENT_COUNT
+  FROM MIP.MART.V_STRUCTURAL_TIMELINE_EVENTS ev
+  LEFT JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
+    ON sp.PROPOSAL_ID = ev.PROPOSAL_ID
+ WHERE ev.EVENT_TYPE = 'PROPOSAL_CREATED'
+   AND COALESCE(sp.BOARD_RUN_ID, '') = '';
+
+-- 11a) LPA decision-validation gate (HARD RULE):
+--      No LIVE_ACTIONS row in a pre-decision/committee-validation status
+--      may be linked to a parent proposal with BOARD_RUN_ID NULL (legacy).
+--      "Pre-decision" = states where the operator/committee is still
+--      being asked to validate or approve. Once a row reaches PM_ACCEPTED
+--      or beyond, the decision has been made and the proposal-lineage gate
+--      no longer applies. Should be 0.
+SELECT 'LPA_PENDING_DECISION_LEGACY_PARENT' AS CHECK_NAME,
+       COUNT(*) AS LEGACY_PENDING_DECISION_COUNT
+  FROM MIP.LIVE.LIVE_ACTIONS la
+  JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+    ON p.PROPOSAL_ID = la.PROPOSAL_ID
+ WHERE p.BOARD_RUN_ID IS NULL
+   AND la.STATUS IN (
+        'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
+        'OPEN_BLOCKED','PENDING_OPEN_STABILITY_REVIEW','READY_FOR_APPROVAL_FLOW'
+       );
+
+-- 11b) Historical/post-decision lineage (INFORMATIONAL ONLY):
+--      Pre-cutover legacy-proposal LIVE_ACTIONS that already passed
+--      decision-validation and are now post-approval (PM_ACCEPTED through
+--      EXECUTION_REQUESTED). These rows are expected and not actionable
+--      by the LPA decision flow. Reported for audit completeness only.
+SELECT 'LPA_POST_DECISION_LEGACY_PARENT_INFO' AS CHECK_NAME,
+       la.STATUS, COUNT(*) AS N
+  FROM MIP.LIVE.LIVE_ACTIONS la
+  JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+    ON p.PROPOSAL_ID = la.PROPOSAL_ID
+ WHERE p.BOARD_RUN_ID IS NULL
+   AND la.STATUS IN (
+        'PM_ACCEPTED','COMPLIANCE_APPROVED','INTENT_SUBMITTED','INTENT_APPROVED',
+        'REVALIDATED_PASS','REVALIDATED_FAIL','EXECUTION_REQUESTED'
+       )
+ GROUP BY la.STATUS
+ ORDER BY N DESC;

@@ -155,6 +155,20 @@ def run_ib_manual_daily_job(
     dry_run: bool = Query(False),
     skip_ingest: bool = Query(False),
     run_pipeline: bool = Query(True, description="After successful IB job, run SP_RUN_DAILY_PIPELINE."),
+    run_proposal_board: bool = Query(
+        True,
+        description=(
+            "After SP_RUN_DAILY_PIPELINE succeeds, run the Phase 4 Cortex agentic "
+            "proposal board (MIP/scripts/proposal_board_phase4/run_board.py). "
+            "Required for fresh agentic proposals to appear in cockpit/timeline. "
+            "Skipped automatically when dry_run=true or run_pipeline=false."
+        ),
+    ),
+    proposal_board_portfolio: int = Query(
+        1, description="portfolio_id passed to run_board.py (default 1 = configured IBKR PAPER test portfolio)."
+    ),
+    proposal_board_max_proposals: int = Query(8, ge=1, le=20),
+    proposal_board_max_rounds: int = Query(2, ge=1, le=3),
     synth_intraday_daily: bool = Query(
         False,
         description="If true, ingest builds 1440m rows from 1m bars (STOCK/ETF RTH TRADES, FX MIDPOINT) on today's NY calendar date, then catch-up and optional pipeline.",
@@ -270,6 +284,7 @@ def run_ib_manual_daily_job(
         "status": "SUCCESS",
         "payload": payload,
         "pipeline_triggered": False,
+        "proposal_board_triggered": False,
         "synth_intraday_daily": bool(synth_intraday_daily),
         "python_used": str(py),
         "ingest_partial_failure": bool(
@@ -338,6 +353,100 @@ def run_ib_manual_daily_job(
             )
         response["pipeline_triggered"] = True
         response["pipeline_result"] = pipeline_payload
+
+    if not dry_run and run_pipeline and run_proposal_board:
+        board_cmd = [
+            str(py),
+            "-m",
+            "MIP.scripts.proposal_board_phase4.run_board",
+            "--portfolio",
+            str(int(proposal_board_portfolio)),
+            "--max-proposals",
+            str(int(proposal_board_max_proposals)),
+            "--max-rounds",
+            str(int(proposal_board_max_rounds)),
+        ]
+        log.info(
+            "Phase 4 agentic board: workspace=%s portfolio=%s max_proposals=%s max_rounds=%s",
+            project_root,
+            proposal_board_portfolio,
+            proposal_board_max_proposals,
+            proposal_board_max_rounds,
+        )
+        try:
+            board_proc = subprocess.run(
+                board_cmd,
+                cwd=str(project_root),
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=2400,
+            )
+        except subprocess.TimeoutExpired:
+            log.error("Phase 4 agentic board subprocess timed out after 2400s")
+            raise HTTPException(
+                status_code=504,
+                detail=jsonable_encoder(
+                    {
+                        "message": (
+                            "IB ingest/catch-up + daily pipeline succeeded, but Phase 4 "
+                            "agentic proposal board timed out (40 min). Inspect "
+                            "MIP.APP.PROPOSAL_BOARD_RUN for the in-flight RUN_ID."
+                        ),
+                        "python": str(py),
+                        "ingest_payload": payload,
+                    }
+                ),
+            )
+        board_stdout = (board_proc.stdout or "").strip()
+        board_stderr = (board_proc.stderr or "").strip()
+        board_payload: Any = None
+        for stream in (board_stdout, board_stderr):
+            if not stream:
+                continue
+            idx_arr = stream.find("[")
+            idx_obj = stream.find("{")
+            idx = idx_arr if idx_arr >= 0 and (idx_obj < 0 or idx_arr < idx_obj) else idx_obj
+            if idx < 0:
+                continue
+            try:
+                board_payload = json.loads(stream[idx:])
+                break
+            except Exception:
+                continue
+        board_status = (
+            str(board_payload.get("status") or "").upper()
+            if isinstance(board_payload, dict)
+            else ""
+        )
+        board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS"}
+        if board_proc.returncode != 0 or board_status not in board_ok_statuses:
+            log.warning(
+                "Phase 4 agentic board failed rc=%s status=%s stderr_tail=%s",
+                board_proc.returncode,
+                board_status or "?",
+                (board_stderr or board_stdout)[-500:],
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=jsonable_encoder(
+                    {
+                        "message": (
+                            "IB daily job + SP_RUN_DAILY_PIPELINE succeeded, but the "
+                            "Phase 4 agentic proposal board failed. Cockpit/Timeline "
+                            "will continue to show the previous authoritative run."
+                        ),
+                        "python": str(py),
+                        "payload": payload,
+                        "pipeline_payload": response.get("pipeline_result"),
+                        "board_payload": board_payload,
+                        "board_stdout": board_stdout[-4000:],
+                        "board_stderr": board_stderr[-4000:],
+                    }
+                ),
+            )
+        response["proposal_board_triggered"] = True
+        response["proposal_board_result"] = board_payload
 
     return jsonable_encoder(response)
 

@@ -235,6 +235,7 @@ LEFT JOIN MIP.APP.STRUCTURAL_SETUP_OUTCOMES so
   ON so.SETUP_EVENT_ID = se.SETUP_EVENT_ID AND so.EVAL_WINDOW = 20 AND so.EVAL_STATUS = 'SUCCESS'
 LEFT JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
   ON sp.SETUP_EVENT_ID = se.SETUP_EVENT_ID
+  AND sp.BOARD_RUN_ID IS NOT NULL
 LEFT JOIN trust_best tb
   ON tb.SETUP_FAMILY = se.SETUP_FAMILY AND tb.MARKET_TYPE = se.MARKET_TYPE
 LEFT JOIN policy_active pa
@@ -244,6 +245,11 @@ WHERE se.MARKET_TYPE != 'ETF';
 -- ================================================================
 -- 4. V_STRUCTURAL_TIMELINE_PROPOSALS
 --    Proposals with full setup-to-trade lineage.
+--    Agentic-only: BOARD_RUN_ID IS NOT NULL (legacy deterministic
+--    selector retired post-Phase-4 cutover; only Phase 4 Cortex
+--    agentic-board rows surface here). The IS_AGENTIC flag is
+--    always TRUE in this view; it is exposed so the UI can label
+--    the lane unambiguously.
 -- ================================================================
 CREATE OR REPLACE VIEW MIP.MART.V_STRUCTURAL_TIMELINE_PROPOSALS AS
 SELECT
@@ -268,6 +274,8 @@ SELECT
     sp.RATIONALE_TEXT,
     sp.STATUS                                AS PROPOSAL_STATUS,
     sp.CREATED_AT                            AS PROPOSAL_CREATED_AT,
+    sp.BOARD_RUN_ID,
+    TRUE                                     AS IS_AGENTIC,
     se.SETUP_DATE,
     se.MARKET_TYPE,
     se.STRUCTURAL_STATE,
@@ -284,7 +292,8 @@ JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
   ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
 LEFT JOIN MIP.APP.PORTFOLIO_TRADES pt
   ON pt.PROPOSAL_ID = sp.PROPOSAL_ID
-WHERE se.MARKET_TYPE != 'ETF';
+WHERE se.MARKET_TYPE != 'ETF'
+  AND sp.BOARD_RUN_ID IS NOT NULL;
 
 -- ================================================================
 -- 5. V_STRUCTURAL_TIMELINE_EVENTS
@@ -368,7 +377,7 @@ WHERE se.SETUP_STATUS IN ('INVALIDATED', 'EXPIRED', 'STALE')
 
 UNION ALL
 
--- Proposal created
+-- Proposal created (agentic-only: legacy rows with BOARD_RUN_ID NULL are excluded)
 SELECT
     sp.CREATED_AT::DATE                      AS EVENT_DATE,
     sp.SYMBOL,
@@ -383,6 +392,7 @@ FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
 JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
   ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
 WHERE se.MARKET_TYPE != 'ETF'
+  AND sp.BOARD_RUN_ID IS NOT NULL
 
 UNION ALL
 
@@ -420,6 +430,7 @@ WITH setup_counts AS (
     GROUP BY se.SYMBOL, se.MARKET_TYPE
 ),
 proposal_counts AS (
+    -- Agentic-only: legacy deterministic-selector rows (BOARD_RUN_ID NULL) are excluded.
     SELECT
         sp.SYMBOL,
         se.MARKET_TYPE,
@@ -428,9 +439,11 @@ proposal_counts AS (
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
     JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
     WHERE se.MARKET_TYPE != 'ETF'
+      AND sp.BOARD_RUN_ID IS NOT NULL
     GROUP BY sp.SYMBOL, se.MARKET_TYPE
 ),
 trade_counts AS (
+    -- Agentic-only: only trades whose parent proposal came from the Phase 4 board.
     SELECT
         sp.SYMBOL,
         se.MARKET_TYPE,
@@ -438,7 +451,9 @@ trade_counts AS (
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
     JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
     LEFT JOIN MIP.APP.PORTFOLIO_TRADES pt ON pt.PROPOSAL_ID = sp.PROPOSAL_ID
-    WHERE se.MARKET_TYPE != 'ETF' AND pt.TRADE_ID IS NOT NULL
+    WHERE se.MARKET_TYPE != 'ETF'
+      AND pt.TRADE_ID IS NOT NULL
+      AND sp.BOARD_RUN_ID IS NOT NULL
     GROUP BY sp.SYMBOL, se.MARKET_TYPE
 ),
 latest_state AS (
@@ -454,6 +469,7 @@ latest_regime AS (
     QUALIFY ROW_NUMBER() OVER (PARTITION BY SYMBOL, MARKET_TYPE ORDER BY AS_OF_DATE DESC) = 1
 ),
 current_thesis AS (
+    -- Agentic-only thesis: latest PROPOSED row from the Phase 4 board within the last 5 days.
     SELECT
         sp.SYMBOL,
         se.MARKET_TYPE,
@@ -463,6 +479,7 @@ current_thesis AS (
     WHERE sp.STATUS = 'PROPOSED'
       AND sp.CREATED_AT >= DATEADD('day', -5, CURRENT_TIMESTAMP())
       AND se.MARKET_TYPE != 'ETF'
+      AND sp.BOARD_RUN_ID IS NOT NULL
     QUALIFY ROW_NUMBER() OVER (PARTITION BY sp.SYMBOL, se.MARKET_TYPE ORDER BY sp.CREATED_AT DESC) = 1
 ),
 family_trust AS (

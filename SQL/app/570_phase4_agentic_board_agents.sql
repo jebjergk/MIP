@@ -93,7 +93,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_MARKET_STRUCTURE_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 30
+          query_timeout: 90
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -168,7 +168,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 30
+          query_timeout: 90
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -254,7 +254,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_THESIS_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 30
+          query_timeout: 90
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -330,7 +330,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_HISTORICAL_EVIDENCE_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 30
+          query_timeout: 90
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -413,7 +413,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_RISK_EXECUTION_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 30
+          query_timeout: 90
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -529,6 +529,6 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 30
+          query_timeout: 90
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;

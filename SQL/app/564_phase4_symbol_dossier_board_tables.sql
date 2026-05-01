@@ -1,0 +1,194 @@
+/* ================================================================
+   564_phase4_symbol_dossier_board_tables.sql
+   Phase 4 active Agentic Proposal Board — symbol-dossier persistence.
+
+   This adds V2 symbol-grain audit tables while preserving existing
+   proposal publication compatibility through STRUCTURAL_TRADE_PROPOSALS.
+   ================================================================ */
+
+USE ROLE MIP_ADMIN_ROLE;
+USE DATABASE MIP;
+USE SCHEMA APP;
+
+ALTER TABLE IF EXISTS MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+    ALTER COLUMN SETUP_FAMILY SET DATA TYPE VARCHAR(80);
+
+ALTER TABLE IF EXISTS MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT
+    ALTER COLUMN SETUP_FAMILY SET DATA TYPE VARCHAR(80);
+
+ALTER TABLE IF EXISTS MIP.LIVE.LIVE_ACTIONS
+    ALTER COLUMN SETUP_FAMILY SET DATA TYPE VARCHAR(80);
+
+ALTER TABLE IF EXISTS MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+    ADD COLUMN IF NOT EXISTS BOARD_DOSSIER_ID NUMBER;
+
+ALTER TABLE IF EXISTS MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+    ADD COLUMN IF NOT EXISTS PRIMARY_EVIDENCE_SETUP_EVENT_ID NUMBER;
+
+CREATE TABLE IF NOT EXISTS MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT (
+    DOSSIER_ID              NUMBER        AUTOINCREMENT START 1 INCREMENT 1 ORDER PRIMARY KEY,
+    RUN_ID                  VARCHAR(36)   NOT NULL,
+    DOSSIER_KEY             VARCHAR(160)  NOT NULL,
+    AS_OF_DATE              DATE          NOT NULL,
+    PORTFOLIO_ID            NUMBER,
+    SYMBOL                  VARCHAR(20)   NOT NULL,
+    MARKET_TYPE             VARCHAR(20),
+    CURRENT_PRICE           FLOAT,
+    CURRENT_PRICE_SOURCE    VARCHAR(30),
+    CURRENT_PRICE_DATE      DATE,
+    PRIMARY_EVIDENCE_SETUP_EVENT_ID NUMBER,
+    SHORT_RESEARCH_VISIBLE  BOOLEAN,
+    SHORT_LIVE_ENABLED      BOOLEAN,
+    FX_LIVE_ENABLED         BOOLEAN,
+    DATA_QUALITY_FLAGS      VARIANT,
+    BOARD_WARNING_FLAGS     VARIANT,
+    DOSSIER_PAYLOAD_JSON    VARIANT       NOT NULL,
+    PAYLOAD_HASH            VARCHAR(64),
+    CREATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UNIQUE (RUN_ID, DOSSIER_KEY)
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.PROPOSAL_BOARD_AGENT_OUTCOME_V2 (
+    OUTCOME_ID              NUMBER        AUTOINCREMENT START 1 INCREMENT 1 ORDER PRIMARY KEY,
+    RUN_ID                  VARCHAR(36)   NOT NULL,
+    DOSSIER_ID              NUMBER        NOT NULL,
+    AGENT_NAME              VARCHAR(80)   NOT NULL,
+    VERDICT                 VARCHAR(80)   NOT NULL,
+    PRIMARY_REASON_CODE     VARCHAR(80)   NOT NULL,
+    SECONDARY_REASON_CODE   VARCHAR(80),
+    CONFIDENCE              FLOAT,
+    LONG_SCORE              FLOAT,
+    SHORT_SCORE             FLOAT,
+    NO_TRADE_SCORE          FLOAT,
+    RATIONALE_TEXT          VARCHAR(4000),
+    STRUCTURED_OUTPUT_JSON  VARIANT       NOT NULL,
+    CREATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UNIQUE (RUN_ID, DOSSIER_ID, AGENT_NAME)
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.PROPOSAL_BOARD_INTERACTION_V2 (
+    INTERACTION_ID          NUMBER        AUTOINCREMENT START 1 INCREMENT 1 ORDER PRIMARY KEY,
+    RUN_ID                  VARCHAR(36)   NOT NULL,
+    DOSSIER_ID              NUMBER        NOT NULL,
+    SOURCE_AGENT            VARCHAR(80),
+    TARGET_AGENT            VARCHAR(80),
+    TOPIC                   VARCHAR(120),
+    DISAGREEMENT_TYPE       VARCHAR(80),
+    DISAGREEMENT_TEXT       VARCHAR(4000),
+    RESPONSE_TEXT           VARCHAR(4000),
+    RESOLVED_FLAG           BOOLEAN       DEFAULT FALSE,
+    CREATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT (
+    VERDICT_ID              NUMBER        AUTOINCREMENT START 1 INCREMENT 1 ORDER PRIMARY KEY,
+    RUN_ID                  VARCHAR(36)   NOT NULL,
+    DOSSIER_ID              NUMBER        NOT NULL,
+    SYMBOL                  VARCHAR(20)   NOT NULL,
+    MARKET_TYPE             VARCHAR(20),
+    FINAL_RANK              NUMBER,
+    THESIS_VERDICT          VARCHAR(80),
+    THESIS_DIRECTION        VARCHAR(10),
+    FINAL_ACTION            VARCHAR(40)   NOT NULL,
+    FINAL_DIRECTION         VARCHAR(10),
+    FINAL_THESIS            VARCHAR(4000),
+    WHY_NOT_OPPOSITE        VARCHAR(4000),
+    WHY_NOT_NO_TRADE        VARCHAR(4000),
+    PRIMARY_REASON_CODE     VARCHAR(80)   NOT NULL,
+    SECONDARY_REASON_CODE   VARCHAR(80),
+    PROPOSED_TRADE_CONFIG_JSON VARIANT,
+    RISK_TREATMENT          VARCHAR(80),
+    COMMITTEE_PAYLOAD       VARIANT,
+    CHAIR_OUTPUT_JSON       VARIANT       NOT NULL,
+    CREATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UNIQUE (RUN_ID, DOSSIER_ID)
+);
+
+ALTER TABLE IF EXISTS MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT
+    ALTER COLUMN RISK_TREATMENT SET DATA TYPE VARCHAR(4000);
+
+CREATE TABLE IF NOT EXISTS MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 (
+    SLATE_ID                NUMBER        AUTOINCREMENT START 1 INCREMENT 1 ORDER PRIMARY KEY,
+    RUN_ID                  VARCHAR(36)   NOT NULL,
+    DOSSIER_ID              NUMBER        NOT NULL,
+    SYMBOL                  VARCHAR(20)   NOT NULL,
+    MARKET_TYPE             VARCHAR(20),
+    RANK                    NUMBER        NOT NULL,
+    FINAL_ACTION            VARCHAR(40)   NOT NULL,
+    FINAL_DIRECTION         VARCHAR(10),
+    THESIS_LABEL            VARCHAR(80),
+    SIZING_TREATMENT        VARCHAR(80),
+    FINAL_RATIONALE_SUMMARY VARCHAR(4000),
+    DOWNSTREAM_PAYLOAD_POINTER VARCHAR(200),
+    PUBLICATION_STATUS      VARCHAR(30)   DEFAULT 'PENDING',
+    PUBLISHED_PROPOSAL_ID   NUMBER,
+    PUBLISHED_AT            TIMESTAMP_NTZ,
+    PUBLICATION_ERROR_JSON  VARIANT,
+    CREATED_AT              TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UNIQUE (RUN_ID, DOSSIER_ID)
+);
+
+MERGE INTO MIP.APP.PROPOSAL_BOARD_REASON_CODE tgt
+USING (
+    SELECT * FROM VALUES
+        ('STRUCTURE_TREND_UP', 'STRUCTURE', 'INFO', 'Agentic structure read: trend up.'),
+        ('STRUCTURE_TREND_DOWN', 'STRUCTURE', 'INFO', 'Agentic structure read: trend down.'),
+        ('STRUCTURE_RANGE', 'STRUCTURE', 'INFO', 'Agentic structure read: range.'),
+        ('STRUCTURE_CHOP_NO_EDGE', 'STRUCTURE', 'WARN', 'Agentic structure read: chop or no durable edge.'),
+        ('STRUCTURE_REVERSAL_FORMING', 'STRUCTURE', 'WARN', 'Agentic structure read: reversal forming.'),
+        ('STRUCTURE_FAILED_BREAKOUT', 'STRUCTURE', 'WARN', 'Agentic structure read: failed breakout.'),
+        ('LEVEL_LONG_LOCATION', 'OPPORTUNITY', 'INFO', 'Price action favors a long location.'),
+        ('LEVEL_SHORT_LOCATION', 'OPPORTUNITY', 'INFO', 'Price action favors a short location.'),
+        ('LEVEL_WAIT_CONFIRMATION', 'OPPORTUNITY', 'WARN', 'Price action needs confirmation before action.'),
+        ('LEVEL_NO_EDGE', 'OPPORTUNITY', 'WARN', 'Price action does not show a clean edge.'),
+        ('THESIS_LONG', 'CHAIR', 'INFO', 'Agentic thesis favors long.'),
+        ('THESIS_SHORT', 'CHAIR', 'INFO', 'Agentic thesis favors short.'),
+        ('THESIS_WATCH_LONG', 'CHAIR', 'WARN', 'Agentic thesis favors watching for a long.'),
+        ('THESIS_WATCH_SHORT', 'CHAIR', 'WARN', 'Agentic thesis favors watching for a short.'),
+        ('THESIS_NO_TRADE', 'CHAIR', 'WARN', 'Agentic thesis says no trade.'),
+        ('THESIS_CONFLICTED', 'CHAIR', 'WARN', 'Agentic thesis is conflicted.'),
+        ('HISTORY_LONG_SUPPORTIVE', 'HISTORY', 'INFO', 'Historical evidence supports the long side.'),
+        ('HISTORY_SHORT_SUPPORTIVE', 'HISTORY', 'INFO', 'Historical evidence supports the short side.'),
+        ('HISTORY_MIXED_DIRECTIONAL', 'HISTORY', 'WARN', 'Historical evidence is mixed across directions.'),
+        ('HISTORY_WEAK_BOTH_SIDES', 'HISTORY', 'WARN', 'Historical evidence is weak on both sides.'),
+        ('RISK_ACTIONABLE', 'RISK_EXECUTION', 'INFO', 'The board-authored thesis is actionable at proposal time.'),
+        ('RISK_RESEARCH_ONLY', 'RISK_EXECUTION', 'WARN', 'The thesis is research/watch only, not executable.'),
+        ('RISK_WAIT_CONFIRMATION', 'RISK_EXECUTION', 'WARN', 'The thesis needs confirmation before execution.'),
+        ('RISK_NO_TRADE', 'RISK_EXECUTION', 'WARN', 'Risk/execution says no trade.'),
+        ('RISK_HARD_BLOCK', 'RISK_EXECUTION', 'ERROR', 'Risk/execution hard-blocks actionability.'),
+        ('CHAIR_PROPOSE_LONG', 'CHAIR', 'INFO', 'Chair publishes an agent-authored long proposal.'),
+        ('CHAIR_PROPOSE_SHORT', 'CHAIR', 'INFO', 'Chair publishes an agent-authored short proposal.'),
+        ('CHAIR_WATCH_LONG', 'CHAIR', 'WARN', 'Chair keeps the symbol on long watch.'),
+        ('CHAIR_WATCH_SHORT', 'CHAIR', 'WARN', 'Chair keeps the symbol on short watch.'),
+        ('CHAIR_NO_TRADE', 'CHAIR', 'WARN', 'Chair selects no trade.'),
+        ('CHAIR_REJECT', 'CHAIR', 'WARN', 'Chair rejects the symbol thesis.'),
+        ('CHAIR_WAIT_FOR_CONFIRMATION', 'CHAIR', 'WARN', 'Chair waits for confirmation.'),
+        ('SHORT_RESEARCH_ONLY', 'CHAIR', 'WARN', 'Short thesis is retained as research/watch because live shorts are disabled.'),
+        ('SHORT_LIVE_DISABLED', 'RISK_EXECUTION', 'WARN', 'Executable short publication is disabled by policy.'),
+        ('AGENT_OUTPUT_INVALID', 'SYSTEM', 'ERROR', 'Required agent output was missing, malformed, or failed validation.'),
+        ('RETIRED_CANDIDATE_REVIEW_BOARD_CUTOVER', 'SYSTEM', 'WARN', 'Active candidate-review proposal retired during Phase 4 symbol-dossier cutover.')
+    AS v(REASON_CODE, REASON_CATEGORY, SEVERITY, DESCRIPTION)
+) src
+ON tgt.REASON_CODE = src.REASON_CODE
+WHEN MATCHED THEN UPDATE SET
+    tgt.REASON_CATEGORY = src.REASON_CATEGORY,
+    tgt.SEVERITY = src.SEVERITY,
+    tgt.DESCRIPTION = src.DESCRIPTION,
+    tgt.IS_ACTIVE = TRUE
+WHEN NOT MATCHED THEN INSERT (
+    REASON_CODE, REASON_CATEGORY, SEVERITY, DESCRIPTION, IS_ACTIVE
+) VALUES (
+    src.REASON_CODE, src.REASON_CATEGORY, src.SEVERITY, src.DESCRIPTION, TRUE
+);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT TO ROLE MIP_ADMIN_ROLE;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE MIP.APP.PROPOSAL_BOARD_AGENT_OUTCOME_V2 TO ROLE MIP_ADMIN_ROLE;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE MIP.APP.PROPOSAL_BOARD_INTERACTION_V2 TO ROLE MIP_ADMIN_ROLE;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT TO ROLE MIP_ADMIN_ROLE;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 TO ROLE MIP_ADMIN_ROLE;
+
+GRANT SELECT ON TABLE MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT TO ROLE MIP_UI_API_ROLE;
+GRANT SELECT ON TABLE MIP.APP.PROPOSAL_BOARD_AGENT_OUTCOME_V2 TO ROLE MIP_UI_API_ROLE;
+GRANT SELECT ON TABLE MIP.APP.PROPOSAL_BOARD_INTERACTION_V2 TO ROLE MIP_UI_API_ROLE;
+GRANT SELECT ON TABLE MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT TO ROLE MIP_UI_API_ROLE;
+GRANT SELECT ON TABLE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 TO ROLE MIP_UI_API_ROLE;

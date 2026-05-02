@@ -14,6 +14,8 @@ import {
 import {
   mergeBarsByTimestamp,
   buildLivingChartShapesAndTA,
+  buildPhase4Overlays,
+  barTimeMs,
 } from '../lib/livingChartOverlays'
 import {
   riskPressureTier,
@@ -523,6 +525,145 @@ export default function SymbolTracker() {
     [activeFlowVisible, chartChips.length],
   )
 
+  // --- Phase 4 (agentic board) overlays --------------------------------
+  //
+  // Source: /committee/proposal/{proposal_id}/board-explanation, which
+  // exposes both `phase4_chair` (proposal-time chair output) and
+  // `phase4_latest_health` (latest lineage-aware verdict). The chart
+  // markers blend both — proposal marker uses chair, verdict marker
+  // uses latest, broken-zone band prefers latest.
+  //
+  // Proposal selection: prefer an explicit `proposal_id` URL param
+  // (e.g. deep-linked from the cockpit). When missing, fall back to
+  // auto-resolution via /structural-timeline/proposals — but only when
+  // there is exactly one active proposal for the selected symbol.
+  // Per plan refinement #4: "do not silently pick one" when multiple
+  // active proposals exist; the operator must select one explicitly.
+  const proposalIdParam = useMemo(() => {
+    const raw = searchParams.get('proposal_id')
+    if (!raw) return null
+    const n = parseInt(raw, 10)
+    return Number.isFinite(n) ? n : null
+  }, [searchParams])
+
+  const [phase4Data, setPhase4Data] = useState(null)
+  const [phase4Toggles, setPhase4Toggles] = useState({
+    showProposal: true,
+    showVerdict: true,
+    showBrokenZone: true,
+  })
+  const togglePhase4 = useCallback((key) => {
+    setPhase4Toggles((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
+  // Auto-resolve a proposal_id when none is pinned in the URL: if the
+  // selected symbol has exactly one active (PROPOSED) row, use it;
+  // otherwise leave proposal selection unset.
+  const [autoProposalId, setAutoProposalId] = useState(null)
+  useEffect(() => {
+    if (proposalIdParam != null || !selectedSymbol) {
+      setAutoProposalId(null)
+      return undefined
+    }
+    let cancelled = false
+    const run = async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE}/structural-timeline/proposals?symbol=${encodeURIComponent(selectedSymbol)}&market_type=STOCK`,
+        )
+        if (cancelled) return
+        if (!r.ok) {
+          setAutoProposalId(null)
+          return
+        }
+        const j = await r.json()
+        if (cancelled) return
+        const rows = Array.isArray(j?.proposals) ? j.proposals : []
+        const active = rows.filter((row) => {
+          const st = String(row?.PROPOSAL_STATUS || row?.status || row?.STATUS || '').toUpperCase()
+          return st === 'PROPOSED'
+        })
+        if (active.length === 1) {
+          const pid = parseInt(active[0]?.PROPOSAL_ID ?? active[0]?.proposal_id, 10)
+          setAutoProposalId(Number.isFinite(pid) ? pid : null)
+        } else {
+          setAutoProposalId(null)
+        }
+      } catch {
+        if (!cancelled) setAutoProposalId(null)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [selectedSymbol, proposalIdParam])
+
+  const effectiveProposalId = proposalIdParam != null ? proposalIdParam : autoProposalId
+
+  useEffect(() => {
+    if (effectiveProposalId == null) {
+      setPhase4Data(null)
+      return undefined
+    }
+    let cancelled = false
+    const run = async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE}/committee/proposal/${encodeURIComponent(effectiveProposalId)}/board-explanation`,
+        )
+        if (cancelled) return
+        if (!r.ok) {
+          setPhase4Data(null)
+          return
+        }
+        const j = await r.json()
+        if (cancelled) return
+        if (!j || j.available !== true) {
+          setPhase4Data(null)
+          return
+        }
+        setPhase4Data({
+          phase4_chair: j.phase4_chair || null,
+          phase4_latest_health: j.phase4_latest_health || null,
+          proposal: {
+            proposal_id: j.proposal_id,
+            symbol: j.symbol,
+            direction: j.direction,
+            created_at: j.created_at,
+          },
+        })
+      } catch {
+        if (!cancelled) setPhase4Data(null)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [effectiveProposalId])
+
+  // Only attach Phase 4 overlays when the URL-pinned proposal matches the
+  // currently-selected symbol — otherwise we'd show stale markers from a
+  // different ticker.
+  const phase4Overlays = useMemo(() => {
+    if (!phase4Data || !activeTile) return null
+    const propSymbol = String(phase4Data.proposal?.symbol || '').toUpperCase()
+    const curSymbol = String(activeTile.symbol || '').toUpperCase()
+    if (!propSymbol || propSymbol !== curSymbol) return null
+    const barList = Array.isArray(activeTile?.chart?.bars) ? activeTile.chart.bars : []
+    if (barList.length === 0) return null
+    const tArr = barList.map(barTimeMs).filter((x) => x != null)
+    if (tArr.length === 0) return null
+    return buildPhase4Overlays(
+      phase4Data,
+      phase4Data.proposal,
+      { x0Ms: tArr[0], x1Ms: tArr[tArr.length - 1] },
+      phase4Toggles,
+    )
+  }, [phase4Data, activeTile, phase4Toggles])
+
+  const phase4Available =
+    phase4Data != null
+    && activeTile != null
+    && String(phase4Data.proposal?.symbol || '').toUpperCase() === String(activeTile?.symbol || '').toUpperCase()
+
   useEffect(() => {
     const primary = activeDisplay?.primaryAction != null ? String(activeDisplay.primaryAction) : null
     const sub = activeDisplay?.secondaryFallback?.line
@@ -878,6 +1019,38 @@ export default function SymbolTracker() {
                       })()}
                     </div>
                   ) : null}
+                  {phase4Available ? (
+                    <div className="lc-phase4-toggles" aria-label="Agentic board chart overlays">
+                      <span className="lc-phase4-toggles-label">Agentic overlays</span>
+                      <button
+                        type="button"
+                        className={`lc-phase4-toggle${phase4Toggles.showProposal ? ' is-on' : ''}`}
+                        onClick={() => togglePhase4('showProposal')}
+                        title="Vertical line at proposal publication date."
+                        aria-pressed={phase4Toggles.showProposal}
+                      >
+                        Proposal
+                      </button>
+                      <button
+                        type="button"
+                        className={`lc-phase4-toggle${phase4Toggles.showVerdict ? ' is-on' : ''}`}
+                        onClick={() => togglePhase4('showVerdict')}
+                        title="Latest agentic board verdict marker plus recent cluster chip."
+                        aria-pressed={phase4Toggles.showVerdict}
+                      >
+                        Verdict
+                      </button>
+                      <button
+                        type="button"
+                        className={`lc-phase4-toggle${phase4Toggles.showBrokenZone ? ' is-on' : ''}`}
+                        onClick={() => togglePhase4('showBrokenZone')}
+                        title="Broken resistance acting as support — band with role and confidence."
+                        aria-pressed={phase4Toggles.showBrokenZone}
+                      >
+                        Zone
+                      </button>
+                    </div>
+                  ) : null}
                   <Suspense fallback={<div className="lc-loading">Loading chart…</div>}>
                     <LivingChartErrorBoundary>
                       <LivingChartPlot
@@ -898,6 +1071,7 @@ export default function SymbolTracker() {
                         flowBurst={flowBurstForPlot}
                         flowAnnotationText={flowAnnotationText}
                         tapeSnapshot={tapeSnapshot}
+                        phase4Overlays={phase4Overlays}
                         className="lc-plot"
                       />
                     </LivingChartErrorBoundary>

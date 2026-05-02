@@ -97,6 +97,236 @@ function priorityTone(band) {
   }
 }
 
+
+// --- Phase 4 thesis-health surfacing ---------------------------------------
+//
+// Tones map to existing badge CSS palettes:
+//   constructive = green/ok       (long thesis intact, e.g. PROPOSE_LONG)
+//   warning      = amber/warn     (long thesis degraded but alive)
+//   bearish      = rose/danger    (fresh short signal forming)
+//   neutral      = grey           (not actionable, e.g. NO_TRADE)
+//
+// IMPORTANT semantic notes:
+//   * WATCH_LONG_FAILURE is a *long-thesis warning*, not a fresh short.
+//     Tone is 'warning', not 'bearish' — operator sees "long is in
+//     trouble, watch for failure" rather than "go short".
+//   * SHORT_REJECTED is a neutral non-event ("don't short here"), not
+//     a bullish call.
+//   * LONG_DEGRADED_BUT_ALIVE / SHORT_DEGRADED_BUT_ALIVE are health
+//     states attached to the prior thesis; both render amber.
+const THESIS_HEALTH_TONE = {
+  PROPOSE_LONG:          'ok',
+  PROPOSE_SHORT:         'bearish',
+  WATCH_LONG:            'info',
+  WATCH_SHORT:           'bearish',
+  WAIT_FOR_CONFIRMATION: 'neutral',
+  WATCH_LONG_FAILURE:    'warn',
+  WATCH_SHORT_FAILURE:   'warn',
+  NO_TRADE:              'neutral',
+}
+
+const HEALTH_LABEL_TONE = {
+  LONG_CONFIRMED:           'ok',
+  SHORT_CONFIRMED:          'bearish',
+  LONG_DEGRADED_BUT_ALIVE:  'warn',
+  SHORT_DEGRADED_BUT_ALIVE: 'warn',
+  LONG_REJECTED:            'warn',
+  SHORT_REJECTED:           'neutral',
+  UNKNOWN:                  'neutral',
+}
+
+const FINAL_ACTION_LABEL = {
+  PROPOSE_LONG:          'Propose long',
+  PROPOSE_SHORT:         'Propose short',
+  WATCH_LONG:            'Watch long',
+  WATCH_SHORT:           'Watch short',
+  WAIT_FOR_CONFIRMATION: 'Wait for confirmation',
+  WATCH_LONG_FAILURE:    'Watch long failure',
+  WATCH_SHORT_FAILURE:   'Watch short failure',
+  NO_TRADE:              'No trade',
+}
+
+const FINAL_ACTION_TOOLTIP = {
+  WATCH_LONG_FAILURE:
+    'Prior long thesis is degrading but a confirmed short is not yet dominant. ' +
+    'Treat as a long-thesis health warning, not a short signal.',
+  WAIT_FOR_CONFIRMATION:
+    'Setup is still forming. Wait for confirming follow-through before acting.',
+  WATCH_SHORT:
+    'Fresh short evidence dominant: support failure or breakdown confirmation. ' +
+    'A new short proposal may be forming.',
+  WATCH_SHORT_FAILURE:
+    'Prior short thesis is degrading. Watch for invalidation, not a new short.',
+}
+
+function thesisHealthLabel(health) {
+  if (!health) return null
+  return String(health).replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase())
+}
+
+function isDegradedLongAction(action) {
+  return action === 'WATCH_LONG_FAILURE'
+}
+
+function isBearishWatchAction(action) {
+  return action === 'WATCH_SHORT' || action === 'WATCH_SHORT_FAILURE'
+}
+
+function fmtAsOfDate(iso) {
+  if (!iso) return null
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return iso
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const mo = months[parseInt(m[2], 10) - 1] || m[2]
+  return `${mo} ${parseInt(m[3], 10)}`
+}
+
+/** Days between an ISO date and today, or null if not parseable. */
+function daysSince(isoDate) {
+  if (!isoDate) return null
+  const m = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]))
+  if (Number.isNaN(dt.getTime())) return null
+  const today = new Date()
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+  return Math.max(0, Math.floor((todayUtc - dt.getTime()) / 86400000))
+}
+
+function fmtConfidence(v) {
+  if (v == null) return null
+  const n = Number(v)
+  if (!Number.isFinite(n)) return null
+  return n.toFixed(2)
+}
+
+
+function ThesisHealthBadge({ health }) {
+  if (!health) return null
+  const action = health.latest_board_action || null
+  if (!action) return null
+  const tone = THESIS_HEALTH_TONE[action] || 'neutral'
+  const label = FINAL_ACTION_LABEL[action] || action.replace(/_/g, ' ')
+  const tooltip = FINAL_ACTION_TOOLTIP[action] || (health.latest_final_thesis || null)
+  const linkageNote =
+    health.linkage === 'SYMBOL_LATEST_ONLY' ? ' (symbol-level)' : ''
+  return (
+    <span
+      className={`ck-co-tp-thesis ck-co-tp-thesis--${tone}`}
+      title={tooltip || undefined}
+      aria-label={tooltip || undefined}
+    >
+      <span className="ck-co-tp-thesis-label">{label}</span>
+      {linkageNote ? (
+        <span className="ck-co-tp-thesis-linkage">{linkageNote}</span>
+      ) : null}
+    </span>
+  )
+}
+
+
+function BoardAgeNote({ health }) {
+  if (!health) return null
+  const asOf = health.as_of_date
+  if (!asOf) return null
+  const days = daysSince(asOf)
+  let suffix = ''
+  if (days === 0) suffix = ' · today'
+  else if (days === 1) suffix = ' · 1d ago'
+  else if (days != null) suffix = ` · ${days}d ago`
+  const stale = days != null && days >= 2
+  return (
+    <span
+      className={`ck-co-tp-board-age${stale ? ' ck-co-tp-board-age--stale' : ''}`}
+      title={stale ? `Board verdict is ${days} days old.` : undefined}
+    >
+      {`as_of ${fmtAsOfDate(asOf)}${suffix}`}
+    </span>
+  )
+}
+
+
+function AgenticHealthDetail({ health }) {
+  if (!health) return null
+  const healthLabel = thesisHealthLabel(health.latest_thesis_health)
+  const healthTone = HEALTH_LABEL_TONE[health.latest_thesis_health] || 'neutral'
+  const continuation = health.continuation_quality
+  const overhead = health.resistance_overhead_risk
+  const cluster = health.recent_cluster
+  const rangePct = health.current_range_position_pct
+  const brokenLevel = health.broken_resistance_level
+  const brokenConf = health.broken_resistance_confidence
+  const ns = health.nearest_support
+  const nr = health.nearest_resistance
+  const thesis = health.latest_final_thesis
+  return (
+    <details className="ck-co-tp-health-detail">
+      <summary className="ck-co-tp-health-summary">
+        Agentic thesis health
+        {healthLabel ? (
+          <span className={`ck-co-tp-thesis-state ck-co-tp-thesis-state--${healthTone}`}>
+            {healthLabel}
+          </span>
+        ) : null}
+      </summary>
+      <div className="ck-co-tp-health-body">
+        {thesis ? (
+          <p className="ck-co-tp-health-thesis">{thesis}</p>
+        ) : null}
+        <dl className="ck-co-tp-health-grid">
+          {continuation ? (
+            <>
+              <dt>Continuation</dt>
+              <dd>{continuation.replace(/_/g, ' ').toLowerCase()}</dd>
+            </>
+          ) : null}
+          {overhead ? (
+            <>
+              <dt>Resistance overhead</dt>
+              <dd>{overhead.replace(/_/g, ' ').toLowerCase()}</dd>
+            </>
+          ) : null}
+          {cluster ? (
+            <>
+              <dt>Recent cluster</dt>
+              <dd>{cluster.replace(/_/g, ' ').toLowerCase()}</dd>
+            </>
+          ) : null}
+          {rangePct != null ? (
+            <>
+              <dt>Range position</dt>
+              <dd>{Number(rangePct).toFixed(1)}%</dd>
+            </>
+          ) : null}
+          {brokenLevel != null ? (
+            <>
+              <dt>Broken R{'\u2192'}S</dt>
+              <dd>
+                {fmtPrice(brokenLevel)}
+                {brokenConf != null ? (
+                  <span className="ck-co-tp-health-conf"> · conf {fmtConfidence(brokenConf)}</span>
+                ) : null}
+              </dd>
+            </>
+          ) : null}
+          {ns != null ? (
+            <>
+              <dt>Nearest support</dt>
+              <dd>{fmtPrice(ns)}</dd>
+            </>
+          ) : null}
+          {nr != null ? (
+            <>
+              <dt>Nearest resistance</dt>
+              <dd>{fmtPrice(nr)}</dd>
+            </>
+          ) : null}
+        </dl>
+      </div>
+    </details>
+  )
+}
+
 function stanceLabel(stance) {
   if (!stance) return null
   const s = String(stance).toUpperCase()
@@ -317,6 +547,14 @@ function ProposalRow({ proposal }) {
   const stance = stanceLabel(proposal.committee_stance)
   const liveAvailable = proposal.current_price != null
   const hasPriority = proposal.priority_rank != null && proposal.priority_band != null
+  // Phase 4 thesis-health surfacing — UI-only, never affects trading.
+  const ph4 = proposal.phase4_health || null
+  const ph4Action = ph4?.latest_board_action || null
+  const rowToneClass = isDegradedLongAction(ph4Action)
+    ? ' ck-co-tp-row--degraded'
+    : isBearishWatchAction(ph4Action)
+      ? ' ck-co-tp-row--bearish-watch'
+      : ''
   // Tooltip explains *why* this proposal ranks where it does. The score is
   // included so an operator can compare two proposals at a glance.
   const priorityTooltip = hasPriority
@@ -337,7 +575,7 @@ function ProposalRow({ proposal }) {
       ' — pick one or compare on the structural market timeline before acting.'
     : null
   return (
-    <div className="ck-co-tp-row">
+    <div className={`ck-co-tp-row${rowToneClass}`}>
       <div className="ck-co-tp-info">
         <div className="ck-co-tp-headline">
           {hasPriority ? (
@@ -361,6 +599,7 @@ function ProposalRow({ proposal }) {
           ) : (
             <span className="ck-co-tp-stance ck-co-tp-stance--missing">No verdict yet</span>
           )}
+          <ThesisHealthBadge health={ph4} />
           {sameSymbolOther ? (
             <span
               className="ck-co-tp-samesym"
@@ -370,6 +609,7 @@ function ProposalRow({ proposal }) {
               +{proposal.same_symbol_other_count} on {proposal.symbol}
             </span>
           ) : null}
+          <BoardAgeNote health={ph4} />
         </div>
 
         {hasPriority ? (
@@ -418,6 +658,7 @@ function ProposalRow({ proposal }) {
             Live data unavailable {'\u2014'} zone status will update on the next refresh.
           </div>
         )}
+        <AgenticHealthDetail health={ph4} />
       </div>
       <MiniChart proposal={proposal} />
     </div>

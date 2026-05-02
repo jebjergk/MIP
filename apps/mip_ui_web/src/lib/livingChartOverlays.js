@@ -518,6 +518,245 @@ export function buildLivingChartShapesAndTA({
   return { shapes, taTraces, annotations, conditionalKeys }
 }
 
+/**
+ * Phase 4 chart overlays — surfaces the agentic board's structural
+ * evidence on the SymbolTracker chart for an active proposal.
+ *
+ * Inputs:
+ *   ph4   - the `phase4_chair` (proposal-time) and/or
+ *           `phase4_latest_health` (latest lineage-aware) blocks from
+ *           the board-explanation API. Both shapes are accepted; we
+ *           merge by preferring `latest` for verdict marker and using
+ *           `chair` for the prior-proposal marker.
+ *   proposal - the structural proposal row (entry zone / created_at /
+ *              direction / final_action label).
+ *   xRange   - { x0Ms, x1Ms } for the chart x-extent. Used to clip
+ *              shape widths and place anchor annotations.
+ *   toggles  - { showProposal, showVerdict, showBrokenZone, showCluster, showContinuationStrip }
+ *              Boolean flags so callers can wire to UI toggles. Each
+ *              defaults to true; pass an explicit `false` to suppress.
+ *
+ * Returns: { shapes, annotations } — Plotly shapes/annotations that
+ * can be merged with the existing tile overlays. Empty arrays when no
+ * Phase 4 data is available.
+ */
+export function buildPhase4Overlays(ph4, proposal, xRange, toggles = {}) {
+  const out = { shapes: [], annotations: [] }
+  if (!ph4 && !proposal) return out
+  const x0 = Number(xRange?.x0Ms)
+  const x1 = Number(xRange?.x1Ms)
+  if (!Number.isFinite(x0) || !Number.isFinite(x1) || x1 <= x0) return out
+  const span = x1 - x0
+  const xLeft = x0
+  const xRight = x1
+  const xAnnotRight = x1 + span * 0.02
+
+  const chair = ph4?.phase4_chair || ph4?.proposal_time || null
+  const latest = ph4?.phase4_latest_health || ph4?.latest || null
+
+  const showProposal = toggles.showProposal !== false
+  const showVerdict = toggles.showVerdict !== false
+  const showBrokenZone = toggles.showBrokenZone !== false
+  const showCluster = toggles.showCluster !== false
+  const showContinuationStrip = toggles.showContinuationStrip === true  // off by default
+
+  // 1. Prior proposal marker — vertical dashed line at proposal
+  //    publication date, with a small label "Proposed: PROPOSE_LONG #2803".
+  if (showProposal && proposal && proposal.created_at) {
+    const tProp = new Date(proposal.created_at).getTime()
+    if (Number.isFinite(tProp) && tProp >= x0 && tProp <= x1) {
+      out.shapes.push({
+        type: 'line',
+        xref: 'x',
+        yref: 'paper',
+        x0: tProp, x1: tProp,
+        y0: 0, y1: 1,
+        line: { color: 'rgba(167, 139, 250, 0.8)', width: 1.4, dash: '6px,4px' },
+        layer: 'below',
+      })
+      const label = `Proposed${proposal.direction ? ` ${String(proposal.direction).toUpperCase()}` : ''}${proposal.proposal_id != null ? ` #${proposal.proposal_id}` : ''}`
+      out.annotations.push({
+        xref: 'x',
+        yref: 'paper',
+        x: tProp,
+        y: 1,
+        text: label,
+        showarrow: false,
+        xanchor: 'left',
+        yanchor: 'top',
+        xshift: 4,
+        yshift: -2,
+        font: { size: 10, color: '#a78bfa' },
+      })
+    }
+  }
+
+  // 2. Latest board verdict marker — chip at chart top with verdict label.
+  if (showVerdict && latest && latest.final_action) {
+    const verdictTime = latest.run_at
+      ? new Date(latest.run_at).getTime()
+      : (latest.as_of_date ? new Date(`${latest.as_of_date}T16:00:00Z`).getTime() : null)
+    const xVerdict = Number.isFinite(verdictTime) ? Math.min(Math.max(verdictTime, x0), x1) : x1
+    const tone = String(latest.final_action).startsWith('WATCH_LONG_FAILURE') || String(latest.final_action).startsWith('WATCH_SHORT_FAILURE')
+      ? '#f0ad4e'
+      : String(latest.final_action) === 'PROPOSE_LONG' || String(latest.final_action) === 'WATCH_LONG'
+        ? '#22c55e'
+        : String(latest.final_action) === 'PROPOSE_SHORT' || String(latest.final_action) === 'WATCH_SHORT'
+          ? '#ef4444'
+          : '#94a3b8'
+    if (Number.isFinite(verdictTime)) {
+      out.shapes.push({
+        type: 'line',
+        xref: 'x',
+        yref: 'paper',
+        x0: xVerdict, x1: xVerdict,
+        y0: 0, y1: 1,
+        line: { color: tone, width: 1.6, dash: 'solid' },
+        layer: 'below',
+      })
+    }
+    const linkageSuffix = latest.linkage === 'SYMBOL_LATEST_ONLY' ? ' (sym)' : ''
+    const label = `Verdict: ${String(latest.final_action).replace(/_/g, ' ')}${linkageSuffix}`
+    out.annotations.push({
+      xref: 'x',
+      yref: 'paper',
+      x: xVerdict,
+      y: 1,
+      text: label,
+      showarrow: false,
+      xanchor: 'right',
+      yanchor: 'top',
+      xshift: -4,
+      yshift: -16,
+      font: { size: 10, color: tone, family: 'system-ui, sans-serif' },
+      bgcolor: 'rgba(15, 23, 42, 0.78)',
+      bordercolor: tone,
+      borderwidth: 1,
+      borderpad: 3,
+    })
+  }
+
+  // 3. Broken resistance / support zone band.
+  //    Uses zone_low/zone_high when present, otherwise falls back to a
+  //    ±0.3% band around level_price. Label includes role + confidence.
+  if (showBrokenZone) {
+    const zonesSrc = latest?.zones?.broken_resistance_as_support
+      || chair?.zones?.broken_resistance_as_support
+      || null
+    if (zonesSrc && zonesSrc.level_price != null) {
+      const lvl = Number(zonesSrc.level_price)
+      let zLow = Number(zonesSrc.zone_low)
+      let zHigh = Number(zonesSrc.zone_high)
+      if (!Number.isFinite(zLow) || !Number.isFinite(zHigh)) {
+        const pad = lvl * 0.003
+        zLow = lvl - pad
+        zHigh = lvl + pad
+      }
+      if (Number.isFinite(zLow) && Number.isFinite(zHigh)) {
+        const sh = shapeForHorizontalBand(
+          zLow, zHigh, xLeft, xRight,
+          'rgba(34, 197, 94, 0.16)',
+          { color: 'rgba(34, 197, 94, 0.55)', width: 1, dash: '4px,3px' },
+          'below',
+        )
+        if (sh) out.shapes.push(sh)
+        const conf = zonesSrc.confidence != null ? Number(zonesSrc.confidence) : null
+        const role = zonesSrc.role === 'BROKEN_RESISTANCE_NOW_SUPPORT' ? 'Broken R\u2192S' : (zonesSrc.role || 'Zone')
+        const label = `${role} ${lvl.toFixed(2)}${conf != null && Number.isFinite(conf) ? ` \u00b7 conf ${conf.toFixed(2)}` : ''}`
+        out.annotations.push({
+          xref: 'x',
+          yref: 'y',
+          x: xAnnotRight,
+          y: (zLow + zHigh) / 2,
+          text: label,
+          showarrow: false,
+          xanchor: 'left',
+          font: { size: 10, color: '#22c55e' },
+        })
+      }
+    }
+  }
+
+  // 4. Recent rejection/accumulation cluster marker — a small chip at
+  //    the right edge labeled with the cluster name. Cheap and clear.
+  if (showCluster) {
+    const cluster = latest?.candle_psychology?.recent_cluster
+      || chair?.candle_psychology?.recent_cluster
+      || null
+    if (cluster) {
+      const labelMap = {
+        UPPER_ZONE_REJECTION_CLUSTER: 'Upper-zone rejection',
+        SELLER_PRESSURE_AFTER_ADVANCE: 'Seller pressure',
+        LOWER_WICK_ACCUMULATION:       'Lower-wick accumulation',
+        ORDERLY_PULLBACK:              'Orderly pullback',
+        BREAKOUT_AND_RETEST:           'Breakout & retest',
+        NOISY_CHOP:                    'Noisy chop',
+      }
+      const text = labelMap[cluster] || String(cluster).replace(/_/g, ' ').toLowerCase()
+      out.annotations.push({
+        xref: 'x',
+        yref: 'paper',
+        x: x1,
+        y: 0,
+        text: `Cluster: ${text}`,
+        showarrow: false,
+        xanchor: 'right',
+        yanchor: 'bottom',
+        xshift: -6,
+        yshift: 6,
+        font: { size: 10, color: '#fbbf24' },
+        bgcolor: 'rgba(15, 23, 42, 0.7)',
+        bordercolor: 'rgba(251, 191, 36, 0.5)',
+        borderwidth: 1,
+        borderpad: 3,
+      })
+    }
+  }
+
+  // 5. Continuation-quality strip — tiny color-coded band along the
+  //    chart bottom indicating CONFIRMED / UNCONFIRMED / CONTESTED /
+  //    REJECTED. Off by default; off-by-default keeps the chart clean.
+  if (showContinuationStrip) {
+    const cq = latest?.actionability_context?.continuation_quality
+      || chair?.actionability_context?.continuation_quality
+      || null
+    if (cq) {
+      const tones = {
+        CONFIRMED:   'rgba(34, 197, 94, 0.4)',
+        UNCONFIRMED: 'rgba(245, 158, 11, 0.4)',
+        CONTESTED:   'rgba(239, 68, 68, 0.4)',
+        REJECTED:    'rgba(239, 68, 68, 0.6)',
+      }
+      const fill = tones[cq] || 'rgba(148, 163, 184, 0.3)'
+      out.shapes.push({
+        type: 'rect',
+        xref: 'x',
+        yref: 'paper',
+        x0: xLeft, x1: xRight,
+        y0: 0, y1: 0.012,
+        fillcolor: fill,
+        line: { width: 0 },
+        layer: 'above',
+      })
+      out.annotations.push({
+        xref: 'paper',
+        yref: 'paper',
+        x: 0,
+        y: 0.018,
+        text: `Continuation: ${String(cq).toLowerCase()}`,
+        showarrow: false,
+        xanchor: 'left',
+        yanchor: 'bottom',
+        xshift: 6,
+        font: { size: 9, color: '#cbd5e1' },
+      })
+    }
+  }
+
+  return out
+}
+
+
 export function buildStatusChips(tile, exitRec, liveState, conditionalKeys) {
   const chips = []
   const urg = exitRec?.urgency

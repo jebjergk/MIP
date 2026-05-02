@@ -483,6 +483,142 @@
 .ck-co-tp-badge--critical { background: #f8d7da; color: #58151c; }
 .ck-co-tp-badge--neutral  { background: #e9ecef; color: #495057; }
 
+/* --- Phase 4 thesis-health surfacing -------------------------------------
+ *
+ * UI-only signal: latest agentic board verdict for an active proposal,
+ * with explicit lineage. Tones map to the same palette used elsewhere
+ * in the cockpit (ok/info/warn/critical/neutral), but with a `bearish`
+ * variant for fresh short-watch states so the operator can distinguish
+ * "long thesis is failing (amber)" from "fresh short signal (rose)".
+ *
+ * The row-level border tweaks below are intentionally non-blocking:
+ *   * --degraded     amber border-left   ⇒ WATCH_LONG_FAILURE
+ *   * --bearish-watch rose dashed border ⇒ WATCH_SHORT / WATCH_SHORT_FAILURE
+ * They alter perception, not behaviour: the row is still clickable,
+ * still shows the same stance/readiness logic. */
+
+.ck-co-tp-row--degraded {
+  border-left: 3px solid #f0ad4e;
+  background: #fff8e6;
+}
+.ck-co-tp-row-link:hover .ck-co-tp-row--degraded {
+  background: #fff1cf;
+  border-color: #ffe39a;
+  border-left-color: #d18a1f;
+}
+
+.ck-co-tp-row--bearish-watch {
+  border-left: 3px dashed #e26d6d;
+  background: #fdf3f3;
+}
+.ck-co-tp-row-link:hover .ck-co-tp-row--bearish-watch {
+  background: #fbe7e7;
+  border-color: #f0c2c2;
+}
+
+.ck-co-tp-thesis {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.ck-co-tp-thesis--ok       { background: #d1e7dd; color: #0f5132; border-color: #a3cfbb; }
+.ck-co-tp-thesis--info     { background: #cfe2ff; color: #052c65; border-color: #9ec5fe; }
+.ck-co-tp-thesis--warn     { background: #fff3cd; color: #5c4400; border-color: #ffe39a; }
+.ck-co-tp-thesis--bearish  { background: #fde2e2; color: #6b1f1f; border-color: #f0c2c2; }
+.ck-co-tp-thesis--neutral  { background: #f1f3f5; color: #495057; border-color: #dee2e6; }
+.ck-co-tp-thesis-linkage {
+  font-weight: 400;
+  font-size: 0.66rem;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.ck-co-tp-board-age {
+  font-size: 0.7rem;
+  color: #6c757d;
+  font-variant-numeric: tabular-nums;
+}
+.ck-co-tp-board-age--stale {
+  color: #adb5bd;
+  font-style: italic;
+}
+
+.ck-co-tp-health-detail {
+  font-size: 0.78rem;
+  color: #495057;
+  border-top: 1px dashed #e9ecef;
+  margin-top: 0.25rem;
+  padding-top: 0.25rem;
+}
+.ck-co-tp-health-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  list-style: none;
+  user-select: none;
+}
+.ck-co-tp-health-summary::-webkit-details-marker { display: none; }
+.ck-co-tp-health-summary::before {
+  content: '\25B8';
+  font-size: 0.7rem;
+  color: #adb5bd;
+  transition: transform 0.12s ease;
+}
+.ck-co-tp-health-detail[open] .ck-co-tp-health-summary::before {
+  transform: rotate(90deg);
+}
+.ck-co-tp-thesis-state {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.02rem 0.3rem;
+  border-radius: 3px;
+}
+.ck-co-tp-thesis-state--ok       { background: #d1e7dd; color: #0f5132; }
+.ck-co-tp-thesis-state--info     { background: #cfe2ff; color: #052c65; }
+.ck-co-tp-thesis-state--warn     { background: #fff3cd; color: #5c4400; }
+.ck-co-tp-thesis-state--bearish  { background: #fde2e2; color: #6b1f1f; }
+.ck-co-tp-thesis-state--neutral  { background: #f1f3f5; color: #495057; }
+
+.ck-co-tp-health-body {
+  margin-top: 0.35rem;
+  padding-left: 0.85rem;
+}
+.ck-co-tp-health-thesis {
+  margin: 0 0 0.35rem 0;
+  font-size: 0.77rem;
+  color: #343a40;
+  line-height: 1.35;
+}
+.ck-co-tp-health-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 0.6rem;
+  row-gap: 0.18rem;
+  margin: 0;
+}
+.ck-co-tp-health-grid dt {
+  color: #6c757d;
+  font-size: 0.72rem;
+  text-transform: lowercase;
+}
+.ck-co-tp-health-grid dd {
+  margin: 0;
+  color: #212529;
+  font-size: 0.77rem;
+  font-variant-numeric: tabular-nums;
+}
+.ck-co-tp-health-conf {
+  color: #6c757d;
+  font-size: 0.72rem;
+}
+
 .ck-co-tp-spark {
   position: relative;
   width: 100%;

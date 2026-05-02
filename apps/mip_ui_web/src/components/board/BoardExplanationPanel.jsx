@@ -24,6 +24,7 @@
  */
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../config/apiBase'
+import Phase4ChairSection from './Phase4ChairSection'
 
 function fmtConfidence(v) {
   if (v == null) return '\u2014'
@@ -265,11 +266,10 @@ export default function BoardExplanationPanel({ proposalId }) {
     setHasFetched(false)
   }, [proposalId])
 
-  // Lazy fetch: only hit the API the first time the operator opens
-  // the panel. Avoids paying the join cost on every cockpit/LPA load
-  // for proposals the operator never inspects.
+  // Fetch immediately on mount / proposal change — Phase 4 agentic read
+  // must be visible without expanding the legacy Phase 3 audit trail.
   useEffect(() => {
-    if (!open || hasFetched || proposalId == null) return undefined
+    if (proposalId == null || hasFetched) return undefined
     let cancelled = false
     const run = async () => {
       setLoading(true)
@@ -300,16 +300,42 @@ export default function BoardExplanationPanel({ proposalId }) {
     return () => {
       cancelled = true
     }
-  }, [open, hasFetched, proposalId])
+  }, [proposalId, hasFetched])
 
   if (proposalId == null) return null
 
   const available = data?.available === true
   const note = data?.note
   const specialists = Array.isArray(data?.specialists) ? data.specialists : []
+  const phase4Chair = data?.phase4_chair || null
+  const phase4LatestHealth = data?.phase4_latest_health || null
+  const hasPhase4 = Boolean(phase4Chair || phase4LatestHealth)
+  const hasSpecialists = specialists.length > 0
+  const hasChairBlock = data?.chair && (
+    data.chair.final_verdict || data.chair.final_rationale || data.chair.why_selected_or_rejected
+  )
 
   return (
     <section className="lpa-c2-card lpa-c2-bx-card">
+      <div className="lpa-c2-bx-ph4-masthead">
+        {loading ? (
+          <p className="lpa-c2-muted">Loading agentic board read…</p>
+        ) : error ? (
+          <p className="lpa-c2-muted">Could not load board data: {error}</p>
+        ) : !available ? (
+          <p className="lpa-c2-muted">{note || 'Board explanation is not available for this proposal.'}</p>
+        ) : hasPhase4 ? (
+          <Phase4ChairSection
+            phase4Chair={phase4Chair}
+            phase4LatestHealth={phase4LatestHealth}
+          />
+        ) : (
+          <p className="lpa-c2-muted">
+            No Phase 4 chair payload returned for this proposal (check board lineage / STOCK-only guard).
+          </p>
+        )}
+      </div>
+
       <button
         type="button"
         className={`lpa-c2-bx-toggle ${open ? 'is-open' : ''}`}
@@ -320,38 +346,44 @@ export default function BoardExplanationPanel({ proposalId }) {
         <span className="lpa-c2-bx-toggle-caret" aria-hidden>
           {open ? '\u25BE' : '\u25B8'}
         </span>
-        <span className="lpa-c2-bx-toggle-label">Board explanation</span>
+        <span className="lpa-c2-bx-toggle-label">Board audit trail</span>
         <span className="lpa-c2-bx-toggle-sub">
-          why the agentic board produced this verdict
+          Phase 3 specialists · disagreement · templated chair
         </span>
       </button>
       {open ? (
         <div id={`lpa-c2-bx-body-${proposalId}`} className="lpa-c2-bx-body">
           {loading ? (
-            <p className="lpa-c2-muted">Loading board explanation\u2026</p>
+            <p className="lpa-c2-muted">Loading…</p>
           ) : error ? (
-            <p className="lpa-c2-muted">Could not load board explanation: {error}</p>
+            <p className="lpa-c2-muted">Could not load: {error}</p>
           ) : !available ? (
-            <p className="lpa-c2-muted">{note || 'Board explanation is not available for this proposal.'}</p>
+            <p className="lpa-c2-muted">{note || 'Not available.'}</p>
           ) : (
             <>
               <RunMeta run={data.run} boardRunId={data.board_run_id} />
-              <div className="lpa-c2-divider" />
-              <div className="lpa-c2-bx-card-subhead">Specialists</div>
-              {specialists.length === 0 ? (
-                <p className="lpa-c2-muted">No specialist outcomes recorded for this candidate.</p>
+              {hasSpecialists ? (
+                <>
+                  <div className="lpa-c2-divider" />
+                  <div className="lpa-c2-bx-card-subhead">Specialists</div>
+                  <div className="lpa-c2-bx-spec-list">
+                    {specialists.map((s) => (
+                      <SpecialistRow key={s.agent_name || Math.random()} specialist={s} />
+                    ))}
+                  </div>
+                  <div className="lpa-c2-divider" />
+                  <div className="lpa-c2-bx-card-subhead">Disagreement summary</div>
+                  <DisagreementSummary disagreement={data.disagreement} />
+                </>
               ) : (
-                <div className="lpa-c2-bx-spec-list">
-                  {specialists.map((s) => (
-                    <SpecialistRow key={s.agent_name || Math.random()} specialist={s} />
-                  ))}
-                </div>
+                <p className="lpa-c2-muted">No Phase 3 specialist outcomes (agentic Phase 4 proposal).</p>
               )}
-              <div className="lpa-c2-divider" />
-              <div className="lpa-c2-bx-card-subhead">Disagreement summary</div>
-              <DisagreementSummary disagreement={data.disagreement} />
-              <div className="lpa-c2-divider" />
-              <ChairBlock chair={data.chair} />
+              {hasChairBlock ? (
+                <>
+                  <div className="lpa-c2-divider" />
+                  <ChairBlock chair={data.chair} />
+                </>
+              ) : null}
             </>
           )}
         </div>

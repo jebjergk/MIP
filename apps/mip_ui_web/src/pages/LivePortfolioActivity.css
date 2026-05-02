@@ -2136,6 +2136,12 @@
   overflow: hidden;
 }
 
+.lpa-c2-bx-ph4-masthead {
+  padding: 12px 14px;
+  border-bottom: 1px solid #e8eaf6;
+  background: linear-gradient(180deg, #fafbff 0%, #ffffff 100%);
+}
+
 .lpa-c2-bx-toggle {
   display: flex;
   align-items: baseline;

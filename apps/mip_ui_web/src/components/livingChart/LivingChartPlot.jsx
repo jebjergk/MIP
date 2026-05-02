@@ -130,6 +130,11 @@ export default function LivingChartPlot({
   flowAnnotationText = null,
   /** When tape_active_for_ui, chart may draw tape overlay hints only — never bar volume coloring. */
   tapeSnapshot = null,
+  /** Optional Phase 4 (agentic board) overlays — { shapes, annotations }.
+   *  Built upstream via buildPhase4Overlays so the chart stays decoupled
+   *  from the board-explanation API call. Merged into the layout
+   *  identically to the tape overlay shapes. Pass null/undefined to skip. */
+  phase4Overlays = null,
   className,
 }) {
   const { data, shapePack, xExtents } = useMemo(() => {
@@ -442,6 +447,17 @@ export default function LivingChartPlot({
       ly.shapes = [...(ly.shapes || []), ...tapeShapes]
     }
 
+    // Phase 4 (agentic board) overlays — proposal marker, verdict
+    // marker, broken R→S band, recent cluster chip, continuation strip.
+    // Merged identically to tape overlays so they share the same z-stack
+    // model (below = structural, above = transient).
+    if (phase4Overlays && Array.isArray(phase4Overlays.shapes) && phase4Overlays.shapes.length > 0) {
+      ly.shapes = [...(ly.shapes || []), ...phase4Overlays.shapes]
+    }
+    if (phase4Overlays && Array.isArray(phase4Overlays.annotations) && phase4Overlays.annotations.length > 0) {
+      ly.annotations = [...(ly.annotations || []), ...phase4Overlays.annotations]
+    }
+
     if (followLatest && !viewportLocked && xExtents) {
       const { xMin, xMax } = xExtents
       const span = Math.max(xMax - xMin, 120000)
@@ -470,6 +486,7 @@ export default function LivingChartPlot({
     tile,
     liveState,
     tapeSnapshot,
+    phase4Overlays,
   ])
 
   const onRelayout = useCallback(

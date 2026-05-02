@@ -158,14 +158,38 @@ _ALLOWED_PRIMARY_REASON = {
 _CHAIR_ALLOWED_FINAL_ACTIONS = {
     "PROPOSE_LONG", "PROPOSE_SHORT",
     "WATCH_LONG", "WATCH_SHORT",
+    # Phase 4 taxonomy v2: thesis-health states for stewarding a contested
+    # prior thesis without committing to a fresh opposite-direction trade.
+    "WATCH_LONG_FAILURE", "WATCH_SHORT_FAILURE",
     "NO_TRADE", "REJECT", "WAIT_FOR_CONFIRMATION",
 }
 _CHAIR_ALLOWED_FINAL_DIRECTIONS = {"LONG", "SHORT", "NONE"}
 _CHAIR_ALLOWED_PRIMARY_REASON = {
     "CHAIR_PROPOSE_LONG", "CHAIR_PROPOSE_SHORT",
     "CHAIR_WATCH_LONG", "CHAIR_WATCH_SHORT",
+    "CHAIR_WATCH_LONG_FAILURE", "CHAIR_WATCH_SHORT_FAILURE",
     "CHAIR_NO_TRADE", "CHAIR_REJECT", "CHAIR_WAIT_FOR_CONFIRMATION",
     "SHORT_RESEARCH_ONLY", "FX_LIVE_DISABLED",
+}
+# Phase 4 taxonomy v2: required thesis_health labels.
+_CHAIR_ALLOWED_THESIS_HEALTH = {
+    "LONG_CONFIRMED",
+    "LONG_DEGRADED_BUT_ALIVE",
+    "LONG_REJECTED",
+    "SHORT_CONFIRMED",
+    "SHORT_DEGRADED_BUT_ALIVE",
+    "SHORT_REJECTED",
+    "NEUTRAL",
+}
+# final_actions that require thesis_label to start with AGENTIC_.
+_AGENTIC_THESIS_LABEL_REQUIRED = {
+    "PROPOSE_LONG", "PROPOSE_SHORT",
+    "WATCH_LONG", "WATCH_SHORT",
+    "WATCH_LONG_FAILURE", "WATCH_SHORT_FAILURE",
+}
+# final_actions that must carry a non-null prior_thesis_reference.
+_REQUIRES_PRIOR_THESIS_REFERENCE = {
+    "WATCH_LONG_FAILURE", "WATCH_SHORT_FAILURE",
 }
 
 
@@ -914,6 +938,9 @@ class ChairOutput:
     unresolved_disagreement: bool
     proposed_trade_config: Dict[str, Any]
     structured_output: Dict[str, Any]
+    # Phase 4 taxonomy v2.
+    thesis_health: str = ""
+    prior_thesis_reference: Optional[Dict[str, Any]] = None
     invalid_reason: Optional[str] = None
 
 
@@ -934,6 +961,10 @@ def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
     secondary_v = raw.get("secondary_reason_code")
     secondary = str(secondary_v).strip().upper() if secondary_v else None
     config = raw.get("proposed_trade_config") if isinstance(raw.get("proposed_trade_config"), dict) else {}
+    # Phase 4 taxonomy v2: thesis_health + prior_thesis_reference are required.
+    thesis_health = str(raw.get("thesis_health") or "").strip().upper()
+    prior_ref_raw = raw.get("prior_thesis_reference")
+    prior_ref = prior_ref_raw if isinstance(prior_ref_raw, dict) else None
 
     invalid: Optional[str] = None
     if final_action not in _CHAIR_ALLOWED_FINAL_ACTIONS:
@@ -942,9 +973,13 @@ def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
         invalid = f"FINAL_DIRECTION_NOT_ALLOWED:{final_direction}"
     elif primary not in _CHAIR_ALLOWED_PRIMARY_REASON:
         invalid = f"PRIMARY_REASON_NOT_ALLOWED:{primary}"
+    elif thesis_health and thesis_health not in _CHAIR_ALLOWED_THESIS_HEALTH:
+        invalid = f"THESIS_HEALTH_NOT_ALLOWED:{thesis_health}"
+    elif final_action in _REQUIRES_PRIOR_THESIS_REFERENCE and not prior_ref:
+        invalid = f"PRIOR_THESIS_REFERENCE_REQUIRED:{final_action}"
     else:
         thesis_label = str(config.get("thesis_label") or "").strip()
-        if final_action in ("PROPOSE_LONG", "PROPOSE_SHORT", "WATCH_LONG", "WATCH_SHORT") and not thesis_label.upper().startswith("AGENTIC_"):
+        if final_action in _AGENTIC_THESIS_LABEL_REQUIRED and not thesis_label.upper().startswith("AGENTIC_"):
             invalid = f"THESIS_LABEL_NOT_AGENTIC:{thesis_label[:40]}"
 
     return ChairOutput(
@@ -963,6 +998,8 @@ def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
         rationale=str(raw.get("rationale") or ""),
         unresolved_disagreement=bool(raw.get("unresolved_disagreement") or False),
         proposed_trade_config=config or {},
+        thesis_health=thesis_health,
+        prior_thesis_reference=prior_ref,
         structured_output=raw,
         invalid_reason=invalid,
     )
@@ -1319,6 +1356,264 @@ async def _orchestrate_dossier(
                 "chair_action": chair.final_action,
             })
 
+    # Phase 4 evidence-hardening v1: MISSING_STRUCTURAL_EVIDENCE diagnostic.
+    # Non-blocking. If the Chair publishes a directional proposal but its
+    # `evidence_used` list does not include the new structural slices,
+    # persist an audit interaction so the operator can spot prompt-contract
+    # drift or a Chair that ignored the new evidence-hardening contract.
+    if chair.final_action in {"PROPOSE_LONG", "PROPOSE_SHORT"}:
+        evidence_used_raw = chair.structured_output.get("evidence_used") \
+            if isinstance(chair.structured_output, dict) else None
+        evidence_used: List[str] = []
+        if isinstance(evidence_used_raw, list):
+            evidence_used = [str(x).strip().lower() for x in evidence_used_raw if isinstance(x, (str, int, float))]
+        required_structural_slices = {
+            "structural_timeline_summary",
+            "candle_psychology",
+            "actionability_context",
+        }
+        missing_slices = sorted(required_structural_slices - set(evidence_used))
+        if missing_slices:
+            diag_text = (
+                f"Chair returned {chair.final_action} but did not list required "
+                "Phase 4 structural evidence slices in evidence_used: "
+                + ", ".join(missing_slices)
+                + ". Required by phase4_structural_v1 evidence contract. "
+                "Recorded for audit; this is informational and non-blocking."
+            )
+            diag_response = (
+                f"chair_primary_reason={chair.primary_reason_code} | "
+                f"evidence_used={','.join(evidence_used) if evidence_used else 'NONE'}"
+            )
+
+            def _persist_missing_structural_evidence(cn):
+                cur = cn.cursor()
+                try:
+                    _persist_interaction(
+                        cur, run_id, dossier_id,
+                        source_agent=_CHAIR_AGENT_NAME,
+                        target_agent=_CHAIR_AGENT_NAME,
+                        topic="MISSING_STRUCTURAL_EVIDENCE",
+                        disagreement_type="MISSING_STRUCTURAL_EVIDENCE",
+                        disagreement_text=_truncate(diag_text, 4000),
+                        response_text=_truncate(diag_response, 4000),
+                        resolved_flag=True,
+                    )
+                    cn.commit()
+                finally:
+                    cur.close()
+
+            try:
+                await asyncio.to_thread(
+                    lambda: _persist_missing_structural_evidence(conn_factory()),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "phase4 missing_structural_evidence persist failed dossier=%s: %s",
+                    dossier_id, e,
+                )
+
+            res.interactions.append({
+                "topic": "MISSING_STRUCTURAL_EVIDENCE",
+                "disagreement_type": "MISSING_STRUCTURAL_EVIDENCE",
+                "challenger": "CHAIR",
+                "target": "CHAIR",
+                "outcome": "AUDIT_RECORDED",
+                "challenge_text": diag_text,
+                "missing_slices": missing_slices,
+                "evidence_used": evidence_used,
+                "chair_action": chair.final_action,
+                "evidence_contract_version": "phase4_structural_v1",
+            })
+
+    # ------------------------------------------------------------------
+    # Phase 4 taxonomy v2: WEAK_SHORT_EVIDENCE diagnostic.
+    # Non-blocking. Surface short verdicts that do not satisfy the
+    # DOMINANT SHORT EVIDENCE RULE (>=3 short-leaning specialists,
+    # continuation_quality REJECTED, rejection cluster present, no
+    # bullish counter-cluster). Symmetric for long.
+    # ------------------------------------------------------------------
+    _SHORT_LEANING_VERDICTS = {
+        "SHORT_LOCATION", "SHORT_THESIS", "WATCH_SHORT",
+        "SHORT_SUPPORTIVE", "RESISTANCE_REJECTION",
+    }
+    _LONG_LEANING_VERDICTS = {
+        "LONG_LOCATION", "LONG_THESIS", "WATCH_LONG",
+        "LONG_SUPPORTIVE", "TREND_UP", "BREAKOUT_ATTEMPT", "SUPPORT_BOUNCE",
+    }
+    _BULLISH_COUNTER_CLUSTERS = {
+        "LOWER_WICK_ACCUMULATION", "BREAKOUT_FOLLOW_THROUGH",
+        "ORDERLY_PULLBACK",
+    }
+    _BEARISH_COUNTER_CLUSTERS = {
+        "UPPER_ZONE_REJECTION_CLUSTER", "SELLER_PRESSURE_AFTER_ADVANCE",
+    }
+    _REQUIRED_REJECTION_CLUSTERS = {
+        "UPPER_ZONE_REJECTION_CLUSTER", "SELLER_PRESSURE_AFTER_ADVANCE",
+    }
+
+    if chair.final_action in {"WATCH_SHORT", "PROPOSE_SHORT", "WATCH_LONG", "PROPOSE_LONG"}:
+        is_short = chair.final_action in {"WATCH_SHORT", "PROPOSE_SHORT"}
+        leaning_set = _SHORT_LEANING_VERDICTS if is_short else _LONG_LEANING_VERDICTS
+        adverse_clusters = _BULLISH_COUNTER_CLUSTERS if is_short else _BEARISH_COUNTER_CLUSTERS
+
+        leaning_count = 0
+        for role, pos in current_positions.items():
+            v = (pos.verdict or "").upper()
+            if v in leaning_set:
+                leaning_count += 1
+
+        actionability = chair.structured_output.get("actionability_summary") \
+            if isinstance(chair.structured_output, dict) else None
+        if not isinstance(actionability, dict):
+            actionability = {}
+        chair_continuation_quality = str(actionability.get("continuation_quality") or "").strip().upper()
+        chair_recent_cluster = str(actionability.get("recent_cluster") or "").strip().upper()
+
+        weak_reasons: List[str] = []
+        if leaning_count < 3:
+            weak_reasons.append(
+                f"specialist_dominance_below_3:{leaning_count}/5"
+            )
+        if chair_continuation_quality and chair_continuation_quality != "REJECTED":
+            weak_reasons.append(
+                f"continuation_quality_not_rejected:{chair_continuation_quality}"
+            )
+        if is_short and chair_recent_cluster not in _REQUIRED_REJECTION_CLUSTERS:
+            weak_reasons.append(
+                f"missing_rejection_cluster:{chair_recent_cluster or 'NONE'}"
+            )
+        if chair_recent_cluster in adverse_clusters:
+            weak_reasons.append(
+                f"counter_cluster_present:{chair_recent_cluster}"
+            )
+
+        if weak_reasons:
+            weak_text = (
+                f"Chair returned {chair.final_action} but DOMINANT "
+                f"{'SHORT' if is_short else 'LONG'} EVIDENCE RULE not satisfied: "
+                + "; ".join(weak_reasons)
+                + ". Recorded for audit; this is informational and non-blocking."
+            )
+            weak_response = (
+                f"chair_primary_reason={chair.primary_reason_code} | "
+                f"thesis_health={chair.thesis_health or 'NONE'} | "
+                f"specialists={','.join((p.verdict or '?') for p in current_positions.values())}"
+            )
+
+            def _persist_weak_short(cn):
+                cur = cn.cursor()
+                try:
+                    _persist_interaction(
+                        cur, run_id, dossier_id,
+                        source_agent=_CHAIR_AGENT_NAME,
+                        target_agent=_CHAIR_AGENT_NAME,
+                        topic="WEAK_SHORT_EVIDENCE",
+                        disagreement_type="WEAK_SHORT_EVIDENCE",
+                        disagreement_text=_truncate(weak_text, 4000),
+                        response_text=_truncate(weak_response, 4000),
+                        resolved_flag=True,
+                    )
+                    cn.commit()
+                finally:
+                    cur.close()
+
+            try:
+                await asyncio.to_thread(
+                    lambda: _persist_weak_short(conn_factory()),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "phase4 weak_short_evidence persist failed dossier=%s: %s",
+                    dossier_id, e,
+                )
+
+            res.interactions.append({
+                "topic": "WEAK_SHORT_EVIDENCE",
+                "disagreement_type": "WEAK_SHORT_EVIDENCE",
+                "challenger": "CHAIR",
+                "target": "CHAIR",
+                "outcome": "AUDIT_RECORDED",
+                "challenge_text": weak_text,
+                "weak_reasons": weak_reasons,
+                "chair_action": chair.final_action,
+                "thesis_health": chair.thesis_health,
+                "evidence_contract_version": "phase4_taxonomy_v2",
+            })
+
+    # ------------------------------------------------------------------
+    # Phase 4 taxonomy v2: MISSING_LEVEL_CONFIDENCE_CITATION diagnostic.
+    # Non-blocking. If the Chair returns a short verdict and references
+    # support / broken-resistance language, the rationale should also
+    # cite a confidence value to satisfy the LEVEL CONFIDENCE CITATION
+    # RULE. Heuristic keyword-based check; deterministic, non-fatal.
+    # ------------------------------------------------------------------
+    if chair.final_action in {"WATCH_SHORT", "PROPOSE_SHORT"}:
+        rationale_blob = " ".join([
+            chair.final_thesis or "",
+            chair.why_not_opposite or "",
+            chair.risk_treatment or "",
+        ]).lower()
+        # Cheap keyword check: does the rationale reference support / a level?
+        cites_level = any(kw in rationale_blob for kw in (
+            "broken resistance", "broken-resistance",
+            "nearest support", "support level",
+            "support at", "support near",
+            "at $", "above $", "below $",
+        ))
+        cites_confidence = ("confidence" in rationale_blob)
+        if cites_level and not cites_confidence:
+            cite_text = (
+                f"Chair returned {chair.final_action} and referenced a price "
+                "level in its rationale but did not cite the level's "
+                "confidence value. LEVEL CONFIDENCE CITATION RULE requires "
+                "explicit confidence when the dossier provides one (especially "
+                "broken_resistance_support_confidence >= 0.7). "
+                "Recorded for audit; this is informational and non-blocking."
+            )
+            cite_response = (
+                f"chair_primary_reason={chair.primary_reason_code} | "
+                f"thesis_health={chair.thesis_health or 'NONE'}"
+            )
+
+            def _persist_missing_confidence(cn):
+                cur = cn.cursor()
+                try:
+                    _persist_interaction(
+                        cur, run_id, dossier_id,
+                        source_agent=_CHAIR_AGENT_NAME,
+                        target_agent=_CHAIR_AGENT_NAME,
+                        topic="MISSING_LEVEL_CONFIDENCE_CITATION",
+                        disagreement_type="MISSING_LEVEL_CONFIDENCE_CITATION",
+                        disagreement_text=_truncate(cite_text, 4000),
+                        response_text=_truncate(cite_response, 4000),
+                        resolved_flag=True,
+                    )
+                    cn.commit()
+                finally:
+                    cur.close()
+
+            try:
+                await asyncio.to_thread(
+                    lambda: _persist_missing_confidence(conn_factory()),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "phase4 missing_level_confidence persist failed dossier=%s: %s",
+                    dossier_id, e,
+                )
+
+            res.interactions.append({
+                "topic": "MISSING_LEVEL_CONFIDENCE_CITATION",
+                "disagreement_type": "MISSING_LEVEL_CONFIDENCE_CITATION",
+                "challenger": "CHAIR",
+                "target": "CHAIR",
+                "outcome": "AUDIT_RECORDED",
+                "challenge_text": cite_text,
+                "chair_action": chair.final_action,
+                "evidence_contract_version": "phase4_taxonomy_v2",
+            })
+
     return res
 
 
@@ -1575,14 +1870,18 @@ def _publish_to_structural(
           AND v.RANK <= %(max_props)s
           AND s.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
           AND v.PTC:thesis_label::STRING ILIKE 'AGENTIC_%%'
+          -- Phase 4 taxonomy v2: hard STOCK-only publication guard.
+          -- ETF and FX dossiers can be researched but cannot publish to
+          -- STRUCTURAL_TRADE_PROPOSALS. The downstream UPDATE marks
+          -- non-STOCK rows as SKIPPED_GUARDRAIL with reason
+          -- BLOCKED_NON_STOCK_PUBLISH for explicit audit visibility.
+          AND s.MARKET_TYPE = 'STOCK'
           AND (
                 v.FINAL_ACTION = 'PROPOSE_LONG'
-                AND (s.MARKET_TYPE <> 'FX' OR s.FX_LIVE_ENABLED)
               OR
                 v.FINAL_ACTION = 'PROPOSE_SHORT'
                 AND s.SHORT_LIVE_ENABLED
                 AND %(short_pub_allowed)s
-                AND (s.MARKET_TYPE <> 'FX' OR s.FX_LIVE_ENABLED)
               )
           AND NOT EXISTS (
               SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
@@ -1620,12 +1919,22 @@ def _publish_to_structural(
         {"run_id": run_id},
     )
 
+    # Phase 4 taxonomy v2: any PENDING row that did not insert is marked
+    # SKIPPED_GUARDRAIL with a reason. Non-STOCK rows get a dedicated
+    # BLOCKED_NON_STOCK_PUBLISH reason so the smoke check surfaces them.
     cur.execute(
         """
-        UPDATE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2
+        UPDATE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
            SET PUBLICATION_STATUS = 'SKIPPED_GUARDRAIL',
                PUBLICATION_ERROR_JSON = CASE
-                   WHEN FINAL_ACTION = 'PROPOSE_SHORT' AND NOT %(short_pub_allowed)s
+                   WHEN COALESCE(s.MARKET_TYPE, 'UNKNOWN') <> 'STOCK'
+                   THEN OBJECT_CONSTRUCT(
+                       'reason', 'BLOCKED_NON_STOCK_PUBLISH',
+                       'reason_detail', 'Phase 4 hard STOCK-only publication guard blocked this row.',
+                       'market_type', COALESCE(s.MARKET_TYPE, 'UNKNOWN'),
+                       'portfolio_id', %(pid)s
+                   )
+                   WHEN fs.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT %(short_pub_allowed)s
                    THEN OBJECT_CONSTRUCT(
                        'reason', 'IBKR_ACCOUNT_MODE_NOT_PAPER',
                        'reason_detail', 'Short publication blocked: portfolio IBKR_ACCOUNT_MODE is not PAPER.',
@@ -1636,7 +1945,11 @@ def _publish_to_structural(
                        'reason', 'not_inserted_duplicate_collision_missing_evidence_or_policy'
                    )
                END
-         WHERE RUN_ID = %(run_id)s AND PUBLICATION_STATUS = 'PENDING'
+          FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+         WHERE fs.RUN_ID = %(run_id)s
+           AND fs.PUBLICATION_STATUS = 'PENDING'
+           AND s.RUN_ID = fs.RUN_ID
+           AND s.DOSSIER_ID = fs.DOSSIER_ID
         """,
         {
             "run_id": run_id,
@@ -1670,8 +1983,19 @@ def _publish_to_structural(
         )
         SELECT
             p.PROPOSAL_ID, p.CREATED_AT, p.SYMBOL, p.DIRECTION, p.SETUP_FAMILY,
-            p.COMMITTEE_PAYLOAD:dossier_payload:structure:structural_state::STRING,
-            p.COMMITTEE_PAYLOAD:dossier_payload:regime:tags:trend_regime::STRING,
+            -- BOARD_PAYLOAD_JSON embeds dossier_payload at publish time.
+            -- COMMITTEE_PAYLOAD for Phase 4 agentic proposals does NOT
+            -- contain dossier_payload, so the legacy path always resolved
+            -- to NULL. COALESCE keeps backward compatibility with any
+            -- legacy committee paths that still embed dossier_payload.
+            COALESCE(
+                p.BOARD_PAYLOAD_JSON:dossier_payload:structure:structural_state::STRING,
+                p.COMMITTEE_PAYLOAD:dossier_payload:structure:structural_state::STRING
+            ),
+            COALESCE(
+                p.BOARD_PAYLOAD_JSON:dossier_payload:regime:tags:trend_regime::STRING,
+                p.COMMITTEE_PAYLOAD:dossier_payload:regime:tags:trend_regime::STRING
+            ),
             'AGENTIC',
             OBJECT_CONSTRUCT('low', p.ENTRY_ZONE_LOW, 'high', p.ENTRY_ZONE_HIGH),
             OBJECT_CONSTRUCT('level', p.PRICE_INVALIDATION_LEVEL, 'rule', p.INVALIDATION_RULE),

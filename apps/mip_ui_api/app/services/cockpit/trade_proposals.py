@@ -158,6 +158,14 @@ class TradeProposal:
     same_symbol_other_directions: List[str] = field(default_factory=list)
     same_symbol_other_proposal_ids: List[int] = field(default_factory=list)
 
+    # Phase 4 thesis-health surfacing (UI-only; never affects trading).
+    # Populated when the latest Phase 4 board has a verdict for this
+    # proposal — preferentially the verdict whose prior_thesis_reference
+    # explicitly points at this PROPOSAL_ID (linkage = PRIOR_THESIS_MATCH),
+    # otherwise the most recent symbol-level verdict (linkage =
+    # SYMBOL_LATEST_ONLY). None when no Phase 4 data exists.
+    phase4_health: Optional[Dict[str, Any]] = None
+
 
 @dataclass(frozen=True)
 class TradeProposalsPayload:
@@ -278,6 +286,92 @@ _DAILY_BARS_SINCE_SQL = """
       AND SYMBOL IN ({symbols})
       AND TS >= %(since)s
     ORDER BY SYMBOL, TS
+"""
+
+# Phase 4 thesis-health lineage surfacing (UI-only; never affects
+# trading). Two queries, both bounded to recent runs to keep the
+# scan tight. We then dispatch in Python:
+#   1) Prefer the latest verdict whose CHAIR_OUTPUT_JSON.prior_thesis_reference
+#      .proposal_id matches the active cockpit proposal — this is the
+#      "lineage match" case (e.g. WATCH_LONG_FAILURE referencing
+#      proposal #2803).
+#   2) Otherwise fall back to the latest symbol-level verdict and tag
+#      it linkage='SYMBOL_LATEST_ONLY' so the UI can show "(symbol-level)".
+#
+# Lookback (14 days) mirrors the recall window used by the
+# WATCH_LONG_FAILURE rule in the Chair prompt — older verdicts are not
+# considered representative of the current thesis.
+_PH4_LOOKBACK_DAYS = 14
+
+# Latest Phase 4 verdict per PRIOR_PROPOSAL_ID (lineage-match path).
+_PHASE4_LINKED_SQL = """
+    SELECT
+        tv.CHAIR_OUTPUT_JSON:prior_thesis_reference:proposal_id::INT       AS PRIOR_PROPOSAL_ID,
+        tv.SYMBOL,
+        tv.RUN_ID,
+        tv.DOSSIER_ID,
+        tv.FINAL_ACTION,
+        tv.FINAL_DIRECTION,
+        tv.FINAL_THESIS,
+        tv.PRIMARY_REASON_CODE,
+        tv.CHAIR_OUTPUT_JSON:thesis_health::STRING                        AS THESIS_HEALTH,
+        tv.CHAIR_OUTPUT_JSON:prior_thesis_reference                        AS PRIOR_THESIS_REF,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:continuation_quality::STRING       AS CONTINUATION_QUALITY,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:resistance_overhead_risk::STRING   AS RESISTANCE_OVERHEAD_RISK,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:recent_cluster::STRING             AS RECENT_CLUSTER,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:current_range_position_pct::FLOAT  AS CURRENT_RANGE_POSITION_PCT,
+        tv.CREATED_AT                                                      AS RUN_AT,
+        ds.AS_OF_DATE                                                      AS AS_OF_DATE,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:level_price::FLOAT  AS BROKEN_R_LEVEL,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:level_low::FLOAT    AS BROKEN_R_ZONE_LOW,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:level_high::FLOAT   AS BROKEN_R_ZONE_HIGH,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:confidence::FLOAT   AS BROKEN_R_CONFIDENCE,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:role::STRING        AS BROKEN_R_ROLE,
+        ds.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_price::FLOAT     AS NEAREST_SUPPORT,
+        ds.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_price::FLOAT  AS NEAREST_RESISTANCE
+    FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT tv
+    JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT ds
+      ON ds.RUN_ID = tv.RUN_ID AND ds.DOSSIER_ID = tv.DOSSIER_ID
+    WHERE tv.MARKET_TYPE = 'STOCK'
+      AND tv.CREATED_AT >= DATEADD('day', -%(lookback_days)s, CURRENT_TIMESTAMP())
+      AND tv.CHAIR_OUTPUT_JSON:prior_thesis_reference:proposal_id IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY tv.CHAIR_OUTPUT_JSON:prior_thesis_reference:proposal_id::INT
+        ORDER BY tv.CREATED_AT DESC
+    ) = 1
+"""
+
+# Latest Phase 4 verdict per SYMBOL (fallback path).
+_PHASE4_LATEST_BY_SYMBOL_SQL = """
+    SELECT
+        tv.SYMBOL,
+        tv.RUN_ID,
+        tv.DOSSIER_ID,
+        tv.FINAL_ACTION,
+        tv.FINAL_DIRECTION,
+        tv.FINAL_THESIS,
+        tv.PRIMARY_REASON_CODE,
+        tv.CHAIR_OUTPUT_JSON:thesis_health::STRING                        AS THESIS_HEALTH,
+        tv.CHAIR_OUTPUT_JSON:prior_thesis_reference                        AS PRIOR_THESIS_REF,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:continuation_quality::STRING       AS CONTINUATION_QUALITY,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:resistance_overhead_risk::STRING   AS RESISTANCE_OVERHEAD_RISK,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:recent_cluster::STRING             AS RECENT_CLUSTER,
+        tv.CHAIR_OUTPUT_JSON:actionability_summary:current_range_position_pct::FLOAT  AS CURRENT_RANGE_POSITION_PCT,
+        tv.CREATED_AT                                                      AS RUN_AT,
+        ds.AS_OF_DATE                                                      AS AS_OF_DATE,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:level_price::FLOAT  AS BROKEN_R_LEVEL,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:level_low::FLOAT    AS BROKEN_R_ZONE_LOW,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:level_high::FLOAT   AS BROKEN_R_ZONE_HIGH,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:confidence::FLOAT   AS BROKEN_R_CONFIDENCE,
+        ds.DOSSIER_PAYLOAD_JSON:levels:broken_resistance_as_support:role::STRING        AS BROKEN_R_ROLE,
+        ds.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_price::FLOAT     AS NEAREST_SUPPORT,
+        ds.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_price::FLOAT  AS NEAREST_RESISTANCE
+    FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT tv
+    JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT ds
+      ON ds.RUN_ID = tv.RUN_ID AND ds.DOSSIER_ID = tv.DOSSIER_ID
+    WHERE tv.MARKET_TYPE = 'STOCK'
+      AND tv.CREATED_AT >= DATEADD('day', -%(lookback_days)s, CURRENT_TIMESTAMP())
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY tv.SYMBOL ORDER BY tv.CREATED_AT DESC) = 1
 """
 
 
@@ -498,6 +592,141 @@ def _build_same_symbol_map(rows: List[Dict[str, Any]]) -> Dict[int, Dict[str, An
             "directions": seen_dirs,
             "proposal_ids": sibling_ids,
         }
+    return out
+
+
+def _parse_variant_json(value: Any) -> Optional[Dict[str, Any]]:
+    """Best-effort decode of a Snowflake VARIANT cell.
+
+    Snowflake VARIANT columns come back from the Python connector as
+    JSON strings; this helper tolerates that shape, an already-decoded
+    dict (defensive — happens with some connector configs), and returns
+    None for empty / null / unparseable input.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or s.lower() == "null":
+            return None
+        try:
+            import json
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                return obj
+            return None
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def _build_phase4_health_payload(row: Dict[str, Any], linkage: str) -> Dict[str, Any]:
+    """Convert a Snowflake `_PHASE4_*_SQL` row into the JSON payload
+    consumed by the cockpit ProposalRow.
+
+    `linkage` is one of `PRIOR_THESIS_MATCH` | `SYMBOL_LATEST_ONLY` and
+    drives the UI's "(symbol-level)" suffix.
+    """
+    return {
+        "linkage": linkage,
+        "latest_board_action": row.get("FINAL_ACTION"),
+        "latest_board_direction": row.get("FINAL_DIRECTION"),
+        "latest_thesis_health": row.get("THESIS_HEALTH"),
+        "latest_final_thesis": row.get("FINAL_THESIS"),
+        "primary_reason_code": row.get("PRIMARY_REASON_CODE"),
+        "prior_thesis_ref": _parse_variant_json(row.get("PRIOR_THESIS_REF")),
+        "continuation_quality": row.get("CONTINUATION_QUALITY"),
+        "resistance_overhead_risk": row.get("RESISTANCE_OVERHEAD_RISK"),
+        "recent_cluster": row.get("RECENT_CLUSTER"),
+        "current_range_position_pct": _f(row.get("CURRENT_RANGE_POSITION_PCT")),
+        "broken_resistance_level": _f(row.get("BROKEN_R_LEVEL")),
+        "broken_resistance_zone_low": _f(row.get("BROKEN_R_ZONE_LOW")),
+        "broken_resistance_zone_high": _f(row.get("BROKEN_R_ZONE_HIGH")),
+        "broken_resistance_confidence": _f(row.get("BROKEN_R_CONFIDENCE")),
+        "broken_resistance_role": row.get("BROKEN_R_ROLE"),
+        "nearest_support": _f(row.get("NEAREST_SUPPORT")),
+        "nearest_resistance": _f(row.get("NEAREST_RESISTANCE")),
+        "as_of_date": row.get("AS_OF_DATE"),
+        "run_at": row.get("RUN_AT"),
+        "run_id": row.get("RUN_ID"),
+    }
+
+
+def _load_phase4_health(
+    proposal_id_to_symbol: Dict[int, str],
+) -> Dict[int, Dict[str, Any]]:
+    """Resolve the latest Phase 4 thesis-health verdict for each cockpit
+    proposal, lineage-aware.
+
+    Strategy:
+      1. Run `_PHASE4_LINKED_SQL` once. Every row carries a
+         PRIOR_PROPOSAL_ID. If it matches an active proposal id, that's
+         the lineage-match verdict (linkage = PRIOR_THESIS_MATCH).
+      2. Run `_PHASE4_LATEST_BY_SYMBOL_SQL` once. For active proposals
+         that did NOT find a lineage match, dispatch the symbol's
+         latest verdict (linkage = SYMBOL_LATEST_ONLY).
+
+    Both queries are bounded by `_PH4_LOOKBACK_DAYS`. Failures are
+    fail-soft: an empty dict is returned and the cockpit renders without
+    Phase 4 surfacing rather than failing.
+    """
+    if not proposal_id_to_symbol:
+        return {}
+
+    out: Dict[int, Dict[str, Any]] = {}
+    params = {"lookback_days": int(_PH4_LOOKBACK_DAYS)}
+
+    try:
+        linked_rows = _query(_PHASE4_LINKED_SQL, params)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("phase4_health: linked query failed: %s", exc)
+        linked_rows = []
+
+    by_prior: Dict[int, Dict[str, Any]] = {}
+    for r in linked_rows:
+        try:
+            ppid = int(r.get("PRIOR_PROPOSAL_ID"))
+        except (TypeError, ValueError):
+            continue
+        by_prior[ppid] = r
+
+    # First pass: lineage match.
+    for pid in proposal_id_to_symbol.keys():
+        match = by_prior.get(pid)
+        if match is not None:
+            out[pid] = _build_phase4_health_payload(match, "PRIOR_THESIS_MATCH")
+
+    # Identify proposals that still need a fallback.
+    unmatched_symbols = {
+        proposal_id_to_symbol[pid]
+        for pid in proposal_id_to_symbol
+        if pid not in out
+    }
+    if not unmatched_symbols:
+        return out
+
+    try:
+        latest_rows = _query(_PHASE4_LATEST_BY_SYMBOL_SQL, params)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("phase4_health: latest-by-symbol query failed: %s", exc)
+        return out
+
+    by_symbol: Dict[str, Dict[str, Any]] = {}
+    for r in latest_rows:
+        sym = str(r.get("SYMBOL") or "").upper()
+        if sym:
+            by_symbol[sym] = r
+
+    for pid, sym in proposal_id_to_symbol.items():
+        if pid in out:
+            continue
+        sym_u = sym.upper() if sym else ""
+        latest = by_symbol.get(sym_u)
+        if latest is not None:
+            out[pid] = _build_phase4_health_payload(latest, "SYMBOL_LATEST_ONLY")
+
     return out
 
 
@@ -788,6 +1017,19 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
     symbols = sorted({str(r.get("SYMBOL") or "").upper() for r in actionable_rows})
     daily_bars_by_symbol = _load_daily_bars(symbols)
 
+    # Phase 4 thesis-health surfacing — fail-soft and lineage-aware.
+    pid_symbol_map: Dict[int, str] = {}
+    for r in actionable_rows:
+        try:
+            pid_symbol_map[int(r.get("PROPOSAL_ID"))] = str(r.get("SYMBOL") or "").upper()
+        except (TypeError, ValueError):
+            continue
+    try:
+        phase4_health_by_pid = _load_phase4_health(pid_symbol_map)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trade_proposals: phase4_health load failed: %s", exc)
+        phase4_health_by_pid = {}
+
     # Fetch live intraday bars + tick snapshots for the proposal symbols.
     # Fail-soft: any error → overlay_status='UNAVAILABLE' and proposals
     # render with the "Live unavailable" banner.
@@ -887,6 +1129,7 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
                 same_symbol_other_count=int(same_symbol_map.get(pid, {}).get("count") or 0),
                 same_symbol_other_directions=list(same_symbol_map.get(pid, {}).get("directions") or []),
                 same_symbol_other_proposal_ids=list(same_symbol_map.get(pid, {}).get("proposal_ids") or []),
+                phase4_health=phase4_health_by_pid.get(pid),
             )
         )
 
@@ -1009,6 +1252,7 @@ def to_payload_dict(payload: TradeProposalsPayload) -> Dict[str, Any]:
                 "same_symbol_other_count": p.same_symbol_other_count,
                 "same_symbol_other_directions": p.same_symbol_other_directions,
                 "same_symbol_other_proposal_ids": p.same_symbol_other_proposal_ids,
+                "phase4_health": p.phase4_health,
             }
             for p in payload.proposals
         ],

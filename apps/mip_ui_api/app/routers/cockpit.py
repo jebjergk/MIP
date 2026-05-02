@@ -268,6 +268,14 @@ class TradeProposal(BaseModel):
     priority_reason_label: Optional[str] = None      # board rationale
     composite_score: Optional[float] = None
 
+    # Phase 4 thesis-health surfacing (UI-only, never affects trading).
+    # Lineage-aware: when the latest Phase 4 verdict's
+    # prior_thesis_reference points at this proposal, linkage is
+    # 'PRIOR_THESIS_MATCH'; otherwise the most recent symbol-level
+    # verdict is used and tagged 'SYMBOL_LATEST_ONLY'. None when no
+    # Phase 4 verdict is available within the lookback window.
+    phase4_health: Optional[Dict[str, Any]] = None
+
 
 class TradeProposalsBlock(BaseModel):
     available: bool

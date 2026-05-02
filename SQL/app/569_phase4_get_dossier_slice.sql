@@ -15,35 +15,47 @@
      CHAIR
 
    ALLOWED SLICES (full catalog):
-     identity                 -> symbol/market_type/as_of_date/portfolio
-     price                    -> current price + source + recent close ref
-     recent_bars              -> compact recent bar array
-     candle_sequence          -> compact recent candle pattern descriptors
-     recent_price_action      -> short text summary
-     levels                   -> nearest support/resistance + significance + distance
-     structure                -> structural state + state_confidence
-     regime                   -> trend/vol/range regime tags
-     long_pattern_signs       -> array of long-side pattern evidence
-     short_pattern_signs      -> array of short-side pattern evidence
-     setup_events             -> evidence-only setup events (no direction inheritance)
-     invalidation_evidence    -> recent invalidation observations
-     history                  -> long_history + short_history arrays
-     memory                   -> recent_trade_memory + recent_proposal_memory + open_position_context
-     policy_flags             -> short_research_visible / short_live_enabled / fx_live_enabled / warnings
+     identity                      -> symbol/market_type/as_of_date/portfolio
+     price                         -> current price + source + recent close ref
+     recent_bars                   -> compact recent bar array (20 daily bars)
+     candle_sequence               -> compact recent candle pattern descriptors
+     recent_price_action           -> short text summary
+     levels                        -> nearest support/resistance + significance + distance
+     zone_context                  -> alias for levels (S/R zones, broken_resistance_as_support)
+     structure                     -> structural state + state_confidence
+     regime                        -> trend/vol/range regime tags
+     long_pattern_signs            -> array of long-side pattern evidence
+     short_pattern_signs           -> array of short-side pattern evidence
+     setup_events                  -> evidence-only setup events (no direction inheritance)
+     invalidation_evidence         -> recent invalidation observations
+     history                       -> long_history + short_history arrays
+     memory                        -> recent_trade_memory + recent_proposal_memory + open_position_context
+     policy_flags                  -> short_research_visible / short_live_enabled / fx_live_enabled / warnings
+     structural_timeline_summary   -> 90D OHLC summary (compact). PHASE 4 EVIDENCE V1.
+     structural_timeline_bars      -> 90D OHLC dated bars (heavier). CHAIR ONLY. PHASE 4 EVIDENCE V1.
+     candle_psychology             -> per-bar multi-labels + recent cluster classification. PHASE 4 EVIDENCE V1.
+     actionability_context         -> deterministic synthesis: overhead risk, continuation_quality,
+                                      entry_location_quality, target_path_clear, confirmation_needed.
+                                      PHASE 4 EVIDENCE V1.
 
    Role-to-slice access map (closed world):
      MARKET_STRUCTURE     -> identity, price, recent_bars, candle_sequence,
-                              recent_price_action, structure, regime
+                              recent_price_action, structure, regime,
+                              structural_timeline_summary, candle_psychology,
+                              actionability_context
      LEVEL_PRICE_ACTION   -> identity, price, recent_bars, candle_sequence,
-                              recent_price_action, levels
-     THESIS               -> identity, price, structure, regime, levels,
+                              recent_price_action, levels, zone_context,
+                              candle_psychology, actionability_context
+     THESIS               -> identity, price, structure, regime, levels, zone_context,
                               long_pattern_signs, short_pattern_signs,
-                              setup_events, recent_price_action
+                              setup_events, recent_price_action,
+                              structural_timeline_summary, actionability_context
      HISTORICAL_EVIDENCE  -> identity, history, setup_events,
                               invalidation_evidence, memory
-     RISK_EXECUTION       -> identity, price, levels, structure, regime,
-                              policy_flags, memory, invalidation_evidence
-     CHAIR                -> all slices above
+     RISK_EXECUTION       -> identity, price, levels, zone_context, structure, regime,
+                              policy_flags, memory, invalidation_evidence,
+                              actionability_context
+     CHAIR                -> all slices above PLUS structural_timeline_bars
 
    No dynamic SQL. No writes. Reads PROPOSAL_BOARD_DOSSIER_PACK_CACHE only.
    ================================================================ */
@@ -83,6 +95,7 @@ _ALLOWED_SLICES = {
     'candle_sequence',
     'recent_price_action',
     'levels',
+    'zone_context',
     'structure',
     'regime',
     'long_pattern_signs',
@@ -92,40 +105,56 @@ _ALLOWED_SLICES = {
     'history',
     'memory',
     'policy_flags',
+    'structural_timeline_summary',
+    'structural_timeline_bars',
+    'candle_psychology',
+    'actionability_context',
 }
 
 _ROLE_SLICE_MAP = {
     'MARKET_STRUCTURE': {
         'identity', 'price', 'recent_bars', 'candle_sequence',
         'recent_price_action', 'structure', 'regime',
+        'structural_timeline_summary', 'candle_psychology',
+        'actionability_context',
     },
     'LEVEL_PRICE_ACTION': {
         'identity', 'price', 'recent_bars', 'candle_sequence',
-        'recent_price_action', 'levels',
+        'recent_price_action', 'levels', 'zone_context',
+        'candle_psychology', 'actionability_context',
     },
     'THESIS': {
-        'identity', 'price', 'structure', 'regime', 'levels',
+        'identity', 'price', 'structure', 'regime', 'levels', 'zone_context',
         'long_pattern_signs', 'short_pattern_signs',
         'setup_events', 'recent_price_action',
+        'structural_timeline_summary', 'actionability_context',
     },
     'HISTORICAL_EVIDENCE': {
         'identity', 'history', 'setup_events',
         'invalidation_evidence', 'memory',
     },
     'RISK_EXECUTION': {
-        'identity', 'price', 'levels', 'structure', 'regime',
+        'identity', 'price', 'levels', 'zone_context',
+        'structure', 'regime',
         'policy_flags', 'memory', 'invalidation_evidence',
+        'actionability_context',
     },
     'CHAIR': {
         'identity', 'price', 'recent_bars', 'candle_sequence',
-        'recent_price_action', 'levels', 'structure', 'regime',
+        'recent_price_action', 'levels', 'zone_context',
+        'structure', 'regime',
         'long_pattern_signs', 'short_pattern_signs',
         'setup_events', 'invalidation_evidence',
         'history', 'memory', 'policy_flags',
+        'structural_timeline_summary', 'structural_timeline_bars',
+        'candle_psychology', 'actionability_context',
     },
 }
 
 # Map slice_name -> dossier payload key (most are identical names).
+# Phase 4 evidence-hardening v1: zone_context aliases the existing 'levels'
+# payload key so agents can request it under the more semantic name without
+# duplicating the underlying data.
 _SLICE_TO_PAYLOAD_KEY = {
     'identity': 'identity',
     'price': 'price',
@@ -133,6 +162,7 @@ _SLICE_TO_PAYLOAD_KEY = {
     'candle_sequence': 'candle_sequence',
     'recent_price_action': 'recent_price_action_summary',
     'levels': 'levels',
+    'zone_context': 'levels',
     'structure': 'structure',
     'regime': 'regime',
     'long_pattern_signs': 'long_pattern_signs',
@@ -142,6 +172,10 @@ _SLICE_TO_PAYLOAD_KEY = {
     'history': 'history',
     'memory': 'memory',
     'policy_flags': 'policy',
+    'structural_timeline_summary': 'structural_timeline_summary',
+    'structural_timeline_bars': 'structural_timeline_bars',
+    'candle_psychology': 'candle_psychology',
+    'actionability_context': 'actionability_context',
 }
 
 

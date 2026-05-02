@@ -105,6 +105,8 @@ WITH categories AS (
         ('PROPOSE_SHORT'),
         ('WATCH_LONG'),
         ('WATCH_SHORT'),
+        ('WATCH_LONG_FAILURE'),
+        ('WATCH_SHORT_FAILURE'),
         ('NO_TRADE'),
         ('REJECT'),
         ('WAIT_FOR_CONFIRMATION')
@@ -177,3 +179,111 @@ SELECT 'OUTPUT_ERRORS_FOR_RUN' AS CHECK_NAME,
  WHERE RUN_ID = $v_run_id
  GROUP BY AGENT_NAME, ERROR_TYPE
  ORDER BY AGENT_NAME, ERROR_TYPE;
+
+-- ================================================================
+-- Phase 4 evidence-hardening v1 smoke checks
+-- ================================================================
+
+-- 15) SNAPSHOT_NULL_STRUCTURAL_STATE: every published agentic proposal in this
+--     run must have a non-NULL STRUCTURAL_STATE and REGIME_STATE. Should
+--     return 0 rows.
+SELECT 'SNAPSHOT_NULL_STRUCTURAL_STATE' AS CHECK_NAME,
+       p.PROPOSAL_ID, p.SYMBOL, p.SETUP_FAMILY,
+       s.STRUCTURAL_STATE, s.REGIME_STATE
+  FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+  LEFT JOIN MIP.APP.STRUCTURAL_PROPOSAL_SNAPSHOT s
+    ON s.PROPOSAL_ID = p.PROPOSAL_ID
+ WHERE p.BOARD_RUN_ID = $v_run_id
+   AND p.SETUP_FAMILY ILIKE 'AGENTIC_%'
+   AND (s.STRUCTURAL_STATE IS NULL OR s.REGIME_STATE IS NULL)
+ ORDER BY p.PROPOSAL_ID;
+
+-- 16) DOSSIER_MISSING_STRUCTURAL_TIMELINE: every dossier snapshot in this run
+--     must contain the new structural_timeline_summary, candle_psychology,
+--     and actionability_context fields. Should return 0 rows.
+SELECT 'DOSSIER_MISSING_STRUCTURAL_TIMELINE' AS CHECK_NAME,
+       DOSSIER_ID, SYMBOL,
+       DOSSIER_PAYLOAD_JSON:evidence_contract_version::STRING AS CONTRACT_VERSION,
+       (DOSSIER_PAYLOAD_JSON:structural_timeline_summary IS NOT NULL) AS HAS_TIMELINE_SUMMARY,
+       (DOSSIER_PAYLOAD_JSON:candle_psychology IS NOT NULL) AS HAS_CANDLE_PSYCHOLOGY,
+       (DOSSIER_PAYLOAD_JSON:actionability_context IS NOT NULL) AS HAS_ACTIONABILITY
+  FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT
+ WHERE RUN_ID = $v_run_id
+   AND (
+       DOSSIER_PAYLOAD_JSON:structural_timeline_summary IS NULL
+       OR DOSSIER_PAYLOAD_JSON:candle_psychology IS NULL
+       OR DOSSIER_PAYLOAD_JSON:actionability_context IS NULL
+       OR DOSSIER_PAYLOAD_JSON:evidence_contract_version::STRING IS NULL
+   )
+ ORDER BY DOSSIER_ID;
+
+-- 17) CHAIR_MISSING_STRUCTURAL_EVIDENCE: informational. Surfaces every Chair
+--     diagnostic where the Chair returned a directional proposal without
+--     listing the new structural slices in evidence_used. Non-blocking but
+--     should be reviewed; ideally returns 0 rows once prompts have settled.
+SELECT 'CHAIR_MISSING_STRUCTURAL_EVIDENCE' AS CHECK_NAME,
+       DOSSIER_ID, SOURCE_AGENT, TOPIC, DISAGREEMENT_TYPE,
+       LEFT(DISAGREEMENT_TEXT, 300) AS DISAGREEMENT_TEXT_SAMPLE
+  FROM MIP.APP.PROPOSAL_BOARD_INTERACTION_V2
+ WHERE RUN_ID = $v_run_id
+   AND DISAGREEMENT_TYPE = 'MISSING_STRUCTURAL_EVIDENCE'
+ ORDER BY DOSSIER_ID;
+
+-- ================================================================
+-- Phase 4 taxonomy v2 smoke checks
+-- ================================================================
+
+-- 18) THESIS_HEALTH_PRESENT: every WATCH_LONG_FAILURE / WATCH_SHORT_FAILURE
+--     row must carry a non-null thesis_health and prior_thesis_reference.
+--     Should return 0 rows.
+SELECT 'THESIS_HEALTH_PRESENT' AS CHECK_NAME,
+       v.DOSSIER_ID, v.SYMBOL, v.FINAL_ACTION,
+       v.CHAIR_OUTPUT_JSON:thesis_health::STRING AS THESIS_HEALTH,
+       v.CHAIR_OUTPUT_JSON:prior_thesis_reference AS PRIOR_THESIS_REFERENCE
+  FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v
+ WHERE v.RUN_ID = $v_run_id
+   AND v.FINAL_ACTION IN ('WATCH_LONG_FAILURE','WATCH_SHORT_FAILURE')
+   AND (
+       v.CHAIR_OUTPUT_JSON:thesis_health::STRING IS NULL
+       OR v.CHAIR_OUTPUT_JSON:prior_thesis_reference IS NULL
+       OR v.CHAIR_OUTPUT_JSON:prior_thesis_reference:proposal_id IS NULL
+   )
+ ORDER BY v.DOSSIER_ID;
+
+-- 19) WATCH_SHORT_WITHOUT_DOMINANT_EVIDENCE: informational. Surfaces every
+--     row where the Chair returned WATCH_SHORT or PROPOSE_SHORT (or LONG
+--     symmetrically) but the DOMINANT EVIDENCE rule was not satisfied.
+--     Ideally 0 rows once prompts settle; non-blocking.
+SELECT 'WATCH_SHORT_WITHOUT_DOMINANT_EVIDENCE' AS CHECK_NAME,
+       DOSSIER_ID, SOURCE_AGENT, TOPIC, DISAGREEMENT_TYPE,
+       LEFT(DISAGREEMENT_TEXT, 400) AS DISAGREEMENT_TEXT_SAMPLE
+  FROM MIP.APP.PROPOSAL_BOARD_INTERACTION_V2
+ WHERE RUN_ID = $v_run_id
+   AND DISAGREEMENT_TYPE = 'WEAK_SHORT_EVIDENCE'
+ ORDER BY DOSSIER_ID;
+
+-- 20) LEVEL_CITATION_MISSING_CONFIDENCE: informational. Surfaces every
+--     short-direction Chair verdict that referenced a level without
+--     citing its confidence value. Non-blocking.
+SELECT 'LEVEL_CITATION_MISSING_CONFIDENCE' AS CHECK_NAME,
+       DOSSIER_ID, SOURCE_AGENT, TOPIC, DISAGREEMENT_TYPE,
+       LEFT(DISAGREEMENT_TEXT, 400) AS DISAGREEMENT_TEXT_SAMPLE
+  FROM MIP.APP.PROPOSAL_BOARD_INTERACTION_V2
+ WHERE RUN_ID = $v_run_id
+   AND DISAGREEMENT_TYPE = 'MISSING_LEVEL_CONFIDENCE_CITATION'
+ ORDER BY DOSSIER_ID;
+
+-- 21) NON_STOCK_PUBLISH_ATTEMPT: hard guard. Should always return 0 rows.
+--     Surfaces any final-slate row where the Phase 4 STOCK-only publication
+--     guard had to block a non-STOCK proposal. Ideally never fires because
+--     run_board.py defaults to --market-types STOCK; this is the belt-and-
+--     braces audit on top of the orchestrator-level guard.
+SELECT 'NON_STOCK_PUBLISH_ATTEMPT' AS CHECK_NAME,
+       fs.DOSSIER_ID, fs.SYMBOL, fs.MARKET_TYPE,
+       fs.FINAL_ACTION, fs.PUBLICATION_STATUS,
+       fs.PUBLICATION_ERROR_JSON:reason::STRING AS REASON,
+       fs.PUBLICATION_ERROR_JSON:market_type::STRING AS BLOCKED_MARKET_TYPE
+  FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
+ WHERE fs.RUN_ID = $v_run_id
+   AND fs.PUBLICATION_ERROR_JSON:reason::STRING = 'BLOCKED_NON_STOCK_PUBLISH'
+ ORDER BY fs.DOSSIER_ID;

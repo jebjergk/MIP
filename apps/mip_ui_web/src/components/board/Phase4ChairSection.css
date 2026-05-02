@@ -1,0 +1,163 @@
+/* Phase 4 thesis-health — shared by LPA Board Explanation + Structural Timeline agentic read */
+
+.lpa-c2-bx-ph4 {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lpa-c2-bx-ph4-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.lpa-c2-bx-ph4-action,
+.lpa-c2-bx-ph4-health {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  text-transform: uppercase;
+}
+.lpa-c2-bx-ph4-action--ok,
+.lpa-c2-bx-ph4-health--ok       { background: #e8f5e9; color: #1b5e20; border-color: #c8e6c9; }
+.lpa-c2-bx-ph4-action--info,
+.lpa-c2-bx-ph4-health--info     { background: #e3f2fd; color: #0d47a1; border-color: #bbdefb; }
+.lpa-c2-bx-ph4-action--warn,
+.lpa-c2-bx-ph4-health--warn     { background: #fff8e1; color: #6d4c00; border-color: #ffe0b2; }
+.lpa-c2-bx-ph4-action--bearish,
+.lpa-c2-bx-ph4-health--bearish  { background: #ffebee; color: #b71c1c; border-color: #ffcdd2; }
+.lpa-c2-bx-ph4-action--neutral,
+.lpa-c2-bx-ph4-health--neutral  { background: #eceff1; color: #455a64; border-color: #cfd8dc; }
+
+.lpa-c2-bx-ph4-linkage {
+  font-size: 10px;
+  color: #78909c;
+  font-style: italic;
+}
+
+.lpa-c2-bx-ph4-age {
+  font-size: 11px;
+  color: #607d8b;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.lpa-c2-bx-ph4-age--stale {
+  color: #b0bec5;
+  font-style: italic;
+}
+
+.lpa-c2-bx-ph4-callout {
+  background: #fff8e1;
+  border: 1px solid #ffe0b2;
+  border-left: 3px solid #f0ad4e;
+  color: #6d4c00;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.lpa-c2-bx-ph4-prior {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: #455a64;
+}
+.lpa-c2-bx-ph4-prior-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: #78909c;
+  font-weight: 700;
+}
+.lpa-c2-bx-ph4-prior-dir {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  color: #1b5e20;
+}
+.lpa-c2-bx-ph4-prior-action {
+  color: #6d4c00;
+  font-style: italic;
+}
+
+.lpa-c2-bx-ph4-thesis {
+  margin: 0;
+  font-size: 13px;
+  color: #263238;
+  line-height: 1.5;
+  background: #fafafa;
+  border-left: 3px solid #cfd8dc;
+  padding: 8px 12px;
+  border-radius: 0 4px 4px 0;
+}
+
+.lpa-c2-bx-ph4-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.lpa-c2-bx-ph4-section {
+  background: #fafafa;
+  border: 1px solid #eceff1;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.lpa-c2-bx-ph4-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: #78909c;
+  margin-bottom: 6px;
+}
+
+.lpa-c2-bx-ph4-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 10px;
+  row-gap: 4px;
+  margin: 0;
+  font-size: 12px;
+}
+.lpa-c2-bx-ph4-dl dt {
+  color: #78909c;
+  text-transform: lowercase;
+}
+.lpa-c2-bx-ph4-dl dd {
+  margin: 0;
+  color: #263238;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+.lpa-c2-bx-ph4-conf {
+  color: #78909c;
+  font-size: 11px;
+}
+
+.lpa-c2-bx-ph4-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: #78909c;
+  border-top: 1px dashed #eceff1;
+  padding-top: 6px;
+}
+.lpa-c2-bx-ph4-breadcrumb-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  color: #90a4ae;
+  font-weight: 700;
+}

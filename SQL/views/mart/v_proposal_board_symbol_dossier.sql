@@ -79,7 +79,13 @@ recent_bars AS (
         ARRAY_AGG(
             OBJECT_CONSTRUCT_KEEP_NULL(
                 'bar_date', TS::DATE,
+                'open', OPEN,
+                'high', HIGH,
+                'low', LOW,
+                'close', CLOSE,
                 'body_direction', IFF(CLOSE >= OPEN, 'UP', 'DOWN'),
+                'body_ratio',
+                    IFF(HIGH = LOW, NULL, ABS(CLOSE - OPEN) / NULLIF(HIGH - LOW, 0)),
                 'close_location',
                     IFF(HIGH = LOW, NULL, (CLOSE - LOW) / NULLIF(HIGH - LOW, 0)),
                 'upper_wick_ratio',
@@ -95,7 +101,7 @@ recent_bars AS (
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY SYMBOL, MARKET_TYPE
             ORDER BY TS DESC
-        ) <= 10
+        ) <= 20
     )
     GROUP BY SYMBOL, MARKET_TYPE
 ),
@@ -181,6 +187,9 @@ nearest_resistance AS (
     ) = 1
 ),
 broken_resistance AS (
+    -- Phase 4 evidence-hardening v1: widened from 3% to 5% with explicit
+    -- role label and a confidence value that decays linearly with distance.
+    -- Confidence: 1.0 at <=1% distance, 0.3 at 5% distance.
     SELECT
         SYMBOL,
         MARKET_TYPE,
@@ -192,16 +201,333 @@ broken_resistance AS (
             'level_high', LEVEL_HIGH,
             'touch_count', TOUCH_COUNT,
             'level_significance', LEVEL_SIGNIFICANCE,
-            'distance_below_current_pct', 100 * (CURRENT_PRICE - LEVEL_PRICE) / NULLIF(CURRENT_PRICE, 0)
+            'role', 'BROKEN_RESISTANCE_NOW_SUPPORT',
+            'distance_below_current_pct',
+                100 * (CURRENT_PRICE - LEVEL_PRICE) / NULLIF(CURRENT_PRICE, 0),
+            'confidence',
+                GREATEST(0.3,
+                    LEAST(1.0,
+                        1.0 - 0.175 *
+                        ((100 * (CURRENT_PRICE - LEVEL_PRICE)
+                          / NULLIF(CURRENT_PRICE, 0)) - 1.0)
+                    )
+                )
         ) AS BROKEN_RESISTANCE_AS_SUPPORT_JSON
     FROM level_base
     WHERE LEVEL_TYPE IN ('RESISTANCE_ZONE', 'SWING_HIGH')
       AND LEVEL_PRICE < CURRENT_PRICE
-      AND 100 * (CURRENT_PRICE - LEVEL_PRICE) / NULLIF(CURRENT_PRICE, 0) <= 3.0
+      AND 100 * (CURRENT_PRICE - LEVEL_PRICE) / NULLIF(CURRENT_PRICE, 0) <= 5.0
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY SYMBOL, MARKET_TYPE
         ORDER BY CURRENT_PRICE - LEVEL_PRICE
     ) = 1
+),
+-- ----------------------------------------------------------------
+-- Phase 4 evidence-hardening v1: structural_timeline_90d
+-- Anchored to the latest ingested daily bar per symbol (not wall-clock
+-- date) so the 90D window is stable across late/missing ingests.
+-- Emits two pieces:
+--   - STRUCTURAL_TIMELINE_SUMMARY_JSON  (compact stats; default agent slice)
+--   - STRUCTURAL_TIMELINE_BARS_JSON     (90 daily OHLC bars; Chair/audit only)
+-- ----------------------------------------------------------------
+structural_timeline_anchor AS (
+    SELECT SYMBOL, MARKET_TYPE, MAX(TS) AS ANCHOR_TS
+    FROM MIP.MART.MARKET_BARS
+    WHERE INTERVAL_MINUTES = 1440
+    GROUP BY SYMBOL, MARKET_TYPE
+),
+structural_timeline_90d AS (
+    SELECT
+        b.SYMBOL,
+        b.MARKET_TYPE,
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'lookback_days', 90,
+            'anchor_date', MAX(b.TS::DATE),
+            'start_date', MIN(b.TS::DATE),
+            'bar_count', COUNT(*),
+            'start_price', MIN_BY(b.CLOSE, b.TS),
+            'end_price', MAX_BY(b.CLOSE, b.TS),
+            'range_low', MIN(b.LOW),
+            'range_high', MAX(b.HIGH),
+            'current_range_position_pct',
+                ROUND(100.0 * (MAX_BY(b.CLOSE, b.TS) - MIN(b.LOW))
+                      / NULLIF(MAX(b.HIGH) - MIN(b.LOW), 0), 2),
+            'distance_from_range_high_pct',
+                ROUND(100.0 * (MAX(b.HIGH) - MAX_BY(b.CLOSE, b.TS))
+                      / NULLIF(MAX_BY(b.CLOSE, b.TS), 0), 2),
+            'distance_from_range_low_pct',
+                ROUND(100.0 * (MAX_BY(b.CLOSE, b.TS) - MIN(b.LOW))
+                      / NULLIF(MAX_BY(b.CLOSE, b.TS), 0), 2),
+            'window_return_pct',
+                ROUND(100.0 * (MAX_BY(b.CLOSE, b.TS) - MIN_BY(b.CLOSE, b.TS))
+                      / NULLIF(MIN_BY(b.CLOSE, b.TS), 0), 2),
+            'anchor_note',
+                'Anchored to latest ingested daily bar per symbol, not wall-clock date.'
+        ) AS STRUCTURAL_TIMELINE_SUMMARY_JSON,
+        ARRAY_AGG(
+            OBJECT_CONSTRUCT_KEEP_NULL(
+                'bar_date', b.TS::DATE,
+                'open', b.OPEN,
+                'high', b.HIGH,
+                'low', b.LOW,
+                'close', b.CLOSE,
+                'volume', b.VOLUME
+            )
+        ) WITHIN GROUP (ORDER BY b.TS) AS STRUCTURAL_TIMELINE_BARS_JSON
+    FROM MIP.MART.MARKET_BARS b
+    JOIN structural_timeline_anchor a
+      ON a.SYMBOL = b.SYMBOL AND a.MARKET_TYPE = b.MARKET_TYPE
+    WHERE b.INTERVAL_MINUTES = 1440
+      AND b.TS >= DATEADD('day', -90, a.ANCHOR_TS)
+    GROUP BY b.SYMBOL, b.MARKET_TYPE
+),
+-- ----------------------------------------------------------------
+-- Phase 4 evidence-hardening v1: candle_psychology
+-- Per-bar multi-label psychology over the 20 most-recent daily bars,
+-- plus a most-recent-5-bar cluster classification. Labels are derived
+-- deterministically from body_direction, body_ratio, close_location,
+-- and wick ratios; bars can carry multiple labels.
+-- ----------------------------------------------------------------
+candle_psychology_bars AS (
+    SELECT
+        SYMBOL,
+        MARKET_TYPE,
+        b.value:bar_date::DATE AS BAR_DATE,
+        ROW_NUMBER() OVER (
+            PARTITION BY SYMBOL, MARKET_TYPE
+            ORDER BY b.value:bar_date::DATE DESC
+        ) AS BAR_RANK_DESC,
+        b.value:body_direction::STRING AS BODY_DIRECTION,
+        b.value:body_ratio::FLOAT AS BODY_RATIO,
+        b.value:close_location::FLOAT AS CLOSE_LOCATION,
+        b.value:upper_wick_ratio::FLOAT AS UPPER_WICK_RATIO,
+        b.value:lower_wick_ratio::FLOAT AS LOWER_WICK_RATIO
+    FROM recent_bars rb,
+         LATERAL FLATTEN(input => rb.CANDLE_SEQUENCE_JSON) b
+),
+candle_psychology_labeled AS (
+    SELECT
+        SYMBOL, MARKET_TYPE, BAR_DATE, BAR_RANK_DESC, BODY_DIRECTION,
+        BODY_RATIO, CLOSE_LOCATION, UPPER_WICK_RATIO, LOWER_WICK_RATIO,
+        ARRAY_COMPACT(ARRAY_CONSTRUCT(
+            IFF(BODY_DIRECTION = 'UP'   AND BODY_RATIO >= 0.55 AND CLOSE_LOCATION >= 0.75, 'BULLISH_PUSH', NULL),
+            IFF(BODY_DIRECTION = 'DOWN' AND BODY_RATIO >= 0.55 AND CLOSE_LOCATION <= 0.25, 'BEARISH_PUSH', NULL),
+            IFF(UPPER_WICK_RATIO >= 0.35, 'UPPER_WICK_REJECTION', NULL),
+            IFF(LOWER_WICK_RATIO >= 0.35, 'LOWER_WICK_SUPPORT', NULL),
+            IFF(BODY_RATIO < 0.30 AND UPPER_WICK_RATIO >= 0.25 AND LOWER_WICK_RATIO >= 0.25, 'INDECISION_BATTLE', NULL),
+            IFF(CLOSE_LOCATION >= 0.75, 'STRONG_CLOSE_NEAR_HIGH', NULL),
+            IFF(CLOSE_LOCATION <= 0.25, 'WEAK_CLOSE_NEAR_LOW', NULL),
+            IFF(BODY_DIRECTION = 'UP'   AND CLOSE_LOCATION < 0.40, 'FAILED_UP_DAY', NULL),
+            IFF(BODY_DIRECTION = 'DOWN' AND CLOSE_LOCATION >= 0.50, 'PULLBACK_DIGESTION', NULL)
+        )) AS LABELS
+    FROM candle_psychology_bars
+),
+candle_psychology_with_primary AS (
+    SELECT
+        SYMBOL, MARKET_TYPE, BAR_DATE, BAR_RANK_DESC, BODY_DIRECTION,
+        BODY_RATIO, CLOSE_LOCATION, UPPER_WICK_RATIO, LOWER_WICK_RATIO, LABELS,
+        CASE
+            WHEN ARRAY_CONTAINS('BULLISH_PUSH'::VARIANT, LABELS) THEN 'BULLISH_PUSH'
+            WHEN ARRAY_CONTAINS('BEARISH_PUSH'::VARIANT, LABELS) THEN 'BEARISH_PUSH'
+            WHEN ARRAY_CONTAINS('UPPER_WICK_REJECTION'::VARIANT, LABELS) THEN 'UPPER_WICK_REJECTION'
+            WHEN ARRAY_CONTAINS('LOWER_WICK_SUPPORT'::VARIANT, LABELS) THEN 'LOWER_WICK_SUPPORT'
+            WHEN ARRAY_CONTAINS('INDECISION_BATTLE'::VARIANT, LABELS) THEN 'INDECISION_BATTLE'
+            WHEN ARRAY_CONTAINS('STRONG_CLOSE_NEAR_HIGH'::VARIANT, LABELS) THEN 'STRONG_CLOSE_NEAR_HIGH'
+            WHEN ARRAY_CONTAINS('WEAK_CLOSE_NEAR_LOW'::VARIANT, LABELS) THEN 'WEAK_CLOSE_NEAR_LOW'
+            WHEN ARRAY_CONTAINS('FAILED_UP_DAY'::VARIANT, LABELS) THEN 'FAILED_UP_DAY'
+            WHEN ARRAY_CONTAINS('PULLBACK_DIGESTION'::VARIANT, LABELS) THEN 'PULLBACK_DIGESTION'
+            ELSE 'NEUTRAL'
+        END AS PRIMARY_LABEL
+    FROM candle_psychology_labeled
+),
+candle_psychology_clusters AS (
+    -- Aggregate metrics over the most-recent-5 bars to derive a cluster label.
+    SELECT
+        SYMBOL,
+        MARKET_TYPE,
+        SUM(IFF(ARRAY_CONTAINS('BEARISH_PUSH'::VARIANT, LABELS) OR ARRAY_CONTAINS('UPPER_WICK_REJECTION'::VARIANT, LABELS), 1, 0)) AS REJECTION_HITS,
+        SUM(IFF(ARRAY_CONTAINS('BULLISH_PUSH'::VARIANT, LABELS), 1, 0)) AS BULLISH_PUSH_HITS,
+        SUM(IFF(ARRAY_CONTAINS('LOWER_WICK_SUPPORT'::VARIANT, LABELS), 1, 0)) AS LOWER_WICK_HITS,
+        SUM(IFF(BODY_DIRECTION = 'DOWN', 1, 0)) AS DOWN_BODY_COUNT,
+        SUM(IFF(BODY_DIRECTION = 'UP',   1, 0)) AS UP_BODY_COUNT,
+        SUM(IFF(ARRAY_CONTAINS('PULLBACK_DIGESTION'::VARIANT, LABELS) OR ARRAY_CONTAINS('STRONG_CLOSE_NEAR_HIGH'::VARIANT, LABELS), 1, 0)) AS DIGESTION_HITS,
+        AVG(CLOSE_LOCATION) AS AVG_CLOSE_LOCATION,
+        COUNT(*) AS BARS_ASSESSED
+    FROM candle_psychology_with_primary
+    WHERE BAR_RANK_DESC <= 5
+    GROUP BY SYMBOL, MARKET_TYPE
+),
+candle_psychology_streak_grp AS (
+    -- Build a "streak group" for consecutive DOWN bodies.
+    -- This first level computes the row numbers separately so the
+    -- subtraction can be done without nested window functions.
+    SELECT
+        SYMBOL, MARKET_TYPE, BAR_RANK_DESC, BODY_DIRECTION,
+        ROW_NUMBER() OVER (PARTITION BY SYMBOL, MARKET_TYPE ORDER BY BAR_RANK_DESC) AS RN_ALL,
+        ROW_NUMBER() OVER (PARTITION BY SYMBOL, MARKET_TYPE, BODY_DIRECTION ORDER BY BAR_RANK_DESC) AS RN_DIR
+    FROM candle_psychology_with_primary
+    WHERE BAR_RANK_DESC <= 5
+),
+candle_psychology_consec_down AS (
+    -- Detect "3+ consecutive DOWN bodies in the last 5 bars" deterministically.
+    -- The DOWN-only filter happens AFTER the row numbers are computed, so the
+    -- (RN_ALL - RN_DIR) trick correctly groups runs of DOWN bodies together
+    -- (since RN_DIR is monotonic only within the DOWN partition).
+    SELECT
+        SYMBOL,
+        MARKET_TYPE,
+        MAX(STREAK_LEN) AS MAX_DOWN_STREAK
+    FROM (
+        SELECT
+            SYMBOL, MARKET_TYPE,
+            (RN_ALL - RN_DIR) AS GRP,
+            COUNT(*) OVER (PARTITION BY SYMBOL, MARKET_TYPE, (RN_ALL - RN_DIR)) AS STREAK_LEN
+        FROM candle_psychology_streak_grp
+        WHERE BODY_DIRECTION = 'DOWN'
+    )
+    GROUP BY SYMBOL, MARKET_TYPE
+),
+candle_psychology AS (
+    SELECT
+        c.SYMBOL,
+        c.MARKET_TYPE,
+        -- Cluster label exposed as a column for actionability_context.
+        CASE
+            WHEN c.REJECTION_HITS >= 3
+                 THEN 'UPPER_ZONE_REJECTION_CLUSTER'
+            WHEN COALESCE(d.MAX_DOWN_STREAK, 0) >= 3
+                 THEN 'SELLER_PRESSURE_AFTER_ADVANCE'
+            WHEN c.DOWN_BODY_COUNT >= 2
+                 AND c.DIGESTION_HITS >= 2
+                 AND c.REJECTION_HITS = 0
+                 THEN 'ORDERLY_PULLBACK'
+            WHEN c.LOWER_WICK_HITS >= 3
+                 THEN 'LOWER_WICK_ACCUMULATION'
+            WHEN c.BULLISH_PUSH_HITS >= 2 AND c.REJECTION_HITS = 0
+                 THEN 'BREAKOUT_FOLLOW_THROUGH'
+            WHEN ABS(c.UP_BODY_COUNT - c.DOWN_BODY_COUNT) <= 1
+                 AND c.AVG_CLOSE_LOCATION BETWEEN 0.35 AND 0.65
+                 THEN 'NOISY_CHOP'
+            ELSE 'NO_CLUSTER'
+        END AS RECENT_CLUSTER,
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'bar_labels', (
+                SELECT ARRAY_AGG(OBJECT_CONSTRUCT_KEEP_NULL(
+                    'bar_date', BAR_DATE,
+                    'body_direction', BODY_DIRECTION,
+                    'body_ratio', BODY_RATIO,
+                    'close_location', CLOSE_LOCATION,
+                    'upper_wick_ratio', UPPER_WICK_RATIO,
+                    'lower_wick_ratio', LOWER_WICK_RATIO,
+                    'primary_label', PRIMARY_LABEL,
+                    'labels', LABELS
+                )) WITHIN GROUP (ORDER BY BAR_DATE DESC)
+                FROM candle_psychology_with_primary p
+                WHERE p.SYMBOL = c.SYMBOL AND p.MARKET_TYPE = c.MARKET_TYPE
+            ),
+            'recent_cluster',
+                CASE
+                    WHEN c.REJECTION_HITS >= 3 THEN 'UPPER_ZONE_REJECTION_CLUSTER'
+                    WHEN COALESCE(d.MAX_DOWN_STREAK, 0) >= 3 THEN 'SELLER_PRESSURE_AFTER_ADVANCE'
+                    WHEN c.DOWN_BODY_COUNT >= 2 AND c.DIGESTION_HITS >= 2 AND c.REJECTION_HITS = 0 THEN 'ORDERLY_PULLBACK'
+                    WHEN c.LOWER_WICK_HITS >= 3 THEN 'LOWER_WICK_ACCUMULATION'
+                    WHEN c.BULLISH_PUSH_HITS >= 2 AND c.REJECTION_HITS = 0 THEN 'BREAKOUT_FOLLOW_THROUGH'
+                    WHEN ABS(c.UP_BODY_COUNT - c.DOWN_BODY_COUNT) <= 1
+                         AND c.AVG_CLOSE_LOCATION BETWEEN 0.35 AND 0.65 THEN 'NOISY_CHOP'
+                    ELSE 'NO_CLUSTER'
+                END,
+            'cluster_confidence',
+                LEAST(1.0, GREATEST(c.REJECTION_HITS, COALESCE(d.MAX_DOWN_STREAK, 0),
+                    c.BULLISH_PUSH_HITS, c.DIGESTION_HITS, c.LOWER_WICK_HITS) / 5.0),
+            'cluster_bars_assessed', c.BARS_ASSESSED,
+            'bars_assessed_total', 20
+        ) AS CANDLE_PSYCHOLOGY_JSON
+    FROM candle_psychology_clusters c
+    LEFT JOIN candle_psychology_consec_down d
+      ON d.SYMBOL = c.SYMBOL AND d.MARKET_TYPE = c.MARKET_TYPE
+),
+-- ----------------------------------------------------------------
+-- Phase 4 evidence-hardening v1: actionability_context
+-- Synthesized read of resistance/support proximity and recent cluster
+-- behavior. Refined: CONFIRMED requires no HIGH overhead AND a
+-- BREAKOUT_FOLLOW_THROUGH or ORDERLY_PULLBACK cluster. A bullish bar
+-- or TREND_UP state alone is NOT sufficient.
+-- ----------------------------------------------------------------
+actionability_context AS (
+    SELECT
+        u.SYMBOL,
+        u.MARKET_TYPE,
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'resistance_overhead_risk',
+                CASE
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT IS NULL THEN 'UNKNOWN'
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT < 3.0 THEN 'HIGH'
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT < 6.0 THEN 'MODERATE'
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT < 12.0 THEN 'LOW'
+                    ELSE 'CLEAR'
+                END,
+            'overhead_resistance_distance_pct', nr.DISTANCE_TO_RESISTANCE_PCT,
+            'support_protection_quality',
+                CASE
+                    WHEN br.BROKEN_RESISTANCE_AS_SUPPORT_JSON:confidence::FLOAT >= 0.7 THEN 'STRONG'
+                    WHEN ns.DISTANCE_TO_SUPPORT_PCT IS NOT NULL
+                         AND ns.DISTANCE_TO_SUPPORT_PCT <= 3.0 THEN 'MODERATE'
+                    WHEN ns.DISTANCE_TO_SUPPORT_PCT IS NOT NULL THEN 'WEAK'
+                    ELSE 'ABSENT'
+                END,
+            'nearest_support_distance_pct', ns.DISTANCE_TO_SUPPORT_PCT,
+            'broken_resistance_support_confidence',
+                br.BROKEN_RESISTANCE_AS_SUPPORT_JSON:confidence::FLOAT,
+            'continuation_quality',
+                CASE
+                    -- Active rejection cluster always degrades continuation.
+                    WHEN cp.RECENT_CLUSTER IN ('UPPER_ZONE_REJECTION_CLUSTER','SELLER_PRESSURE_AFTER_ADVANCE')
+                         AND st.STRUCTURAL_STATE IN ('TREND_UP','PULLBACK_IN_TREND')
+                        THEN 'CONTESTED'
+                    WHEN cp.RECENT_CLUSTER IN ('UPPER_ZONE_REJECTION_CLUSTER','SELLER_PRESSURE_AFTER_ADVANCE')
+                        THEN 'REJECTED'
+                    -- Confirmation requires follow-through or orderly pullback AND no HIGH overhead.
+                    WHEN cp.RECENT_CLUSTER = 'BREAKOUT_FOLLOW_THROUGH'
+                         AND COALESCE(nr.DISTANCE_TO_RESISTANCE_PCT, 99) >= 3.0
+                        THEN 'CONFIRMED'
+                    WHEN cp.RECENT_CLUSTER = 'ORDERLY_PULLBACK'
+                         AND COALESCE(nr.DISTANCE_TO_RESISTANCE_PCT, 99) >= 3.0
+                         AND st.STRUCTURAL_STATE IN ('TREND_UP','PULLBACK_IN_TREND')
+                        THEN 'CONFIRMED'
+                    ELSE 'UNCONFIRMED'
+                END,
+            'active_candle_cluster', cp.RECENT_CLUSTER,
+            'entry_location_quality',
+                CASE
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT IS NULL THEN 'UNKNOWN'
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT < 2.0 THEN 'AT_RESISTANCE'
+                    WHEN COALESCE(br.BROKEN_RESISTANCE_AS_SUPPORT_JSON:distance_below_current_pct::FLOAT, 99) <= 2.0
+                        THEN 'AT_BROKEN_RESISTANCE_SUPPORT'
+                    WHEN COALESCE(ns.DISTANCE_TO_SUPPORT_PCT, 99) <= 2.0
+                        THEN 'AT_SUPPORT'
+                    WHEN nr.DISTANCE_TO_RESISTANCE_PCT < 6.0 THEN 'BELOW_RESISTANCE_OVERHEAD'
+                    ELSE 'MID_RANGE'
+                END,
+            'target_path_clear',
+                COALESCE(nr.DISTANCE_TO_RESISTANCE_PCT, 99) >= 6.0,
+            'confirmation_needed',
+                (nr.DISTANCE_TO_RESISTANCE_PCT IS NOT NULL AND nr.DISTANCE_TO_RESISTANCE_PCT < 3.0)
+                OR cp.RECENT_CLUSTER IN ('UPPER_ZONE_REJECTION_CLUSTER','SELLER_PRESSURE_AFTER_ADVANCE'),
+            'invalidation_reference_available',
+                (br.BROKEN_RESISTANCE_AS_SUPPORT_JSON IS NOT NULL
+                 OR ns.NEAREST_SUPPORT_JSON IS NOT NULL)
+        ) AS ACTIONABILITY_CONTEXT_JSON
+    FROM symbol_universe u
+    LEFT JOIN nearest_resistance nr
+      ON nr.SYMBOL = u.SYMBOL AND nr.MARKET_TYPE = u.MARKET_TYPE
+    LEFT JOIN nearest_support ns
+      ON ns.SYMBOL = u.SYMBOL AND ns.MARKET_TYPE = u.MARKET_TYPE
+    LEFT JOIN broken_resistance br
+      ON br.SYMBOL = u.SYMBOL AND br.MARKET_TYPE = u.MARKET_TYPE
+    LEFT JOIN latest_state st
+      ON st.SYMBOL = u.SYMBOL AND st.MARKET_TYPE = u.MARKET_TYPE
+    LEFT JOIN candle_psychology cp
+      ON cp.SYMBOL = u.SYMBOL AND cp.MARKET_TYPE = u.MARKET_TYPE
 ),
 setup_events AS (
     SELECT
@@ -330,17 +656,55 @@ recent_trade_memory AS (
     FROM MIP.MART.V_TRADE_INTELLIGENCE
     GROUP BY SYMBOL
 ),
-recent_proposal_memory AS (
+-- Phase 4 taxonomy v2: most recent agentic proposal per symbol so the Chair
+-- can detect contested-prior-thesis cases (WATCH_LONG_FAILURE / WATCH_SHORT_FAILURE)
+-- without an extra slice call. Active statuses mirror live_action_context.
+last_agentic_proposal_row AS (
     SELECT
         SYMBOL,
         OBJECT_CONSTRUCT_KEEP_NULL(
-            'proposals_14d', COUNT_IF(CREATED_AT >= DATEADD('day', -14, CURRENT_TIMESTAMP())),
-            'last_proposed_at', MAX(CREATED_AT),
-            'active_proposals', COUNT_IF(STATUS = 'PROPOSED'),
-            'recent_agentic_proposals_14d', COUNT_IF(CREATED_AT >= DATEADD('day', -14, CURRENT_TIMESTAMP()) AND SETUP_FAMILY ILIKE 'AGENTIC_%')
-        ) AS RECENT_PROPOSAL_MEMORY_JSON
+            'proposal_id', PROPOSAL_ID,
+            'created_at', CREATED_AT,
+            'age_days', DATEDIFF('day', CREATED_AT, CURRENT_TIMESTAMP()),
+            'direction', DIRECTION,
+            'final_action', BOARD_FINAL_VERDICT,
+            'status', STATUS,
+            'setup_family', SETUP_FAMILY,
+            'entry_zone_low', ENTRY_ZONE_LOW,
+            'entry_zone_high', ENTRY_ZONE_HIGH,
+            'invalidation_level', PRICE_INVALIDATION_LEVEL,
+            'is_active', STATUS IN (
+                'PROPOSED','INTENT_APPROVED','PENDING_OPEN_VALIDATION',
+                'OPEN_BLOCKED','REVALIDATED_PASS','EXECUTION_REQUESTED'
+            )
+        ) AS LAST_AGENTIC_PROPOSAL_JSON
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
-    GROUP BY SYMBOL
+    WHERE SETUP_FAMILY ILIKE 'AGENTIC_%'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY SYMBOL ORDER BY CREATED_AT DESC) = 1
+),
+recent_proposal_memory AS (
+    SELECT
+        agg.SYMBOL,
+        OBJECT_CONSTRUCT_KEEP_NULL(
+            'proposals_14d', agg.PROPOSALS_14D,
+            'last_proposed_at', agg.LAST_PROPOSED_AT,
+            'active_proposals', agg.ACTIVE_PROPOSALS,
+            'recent_agentic_proposals_14d', agg.RECENT_AGENTIC_PROPOSALS_14D,
+            'last_agentic_proposal', lap.LAST_AGENTIC_PROPOSAL_JSON
+        ) AS RECENT_PROPOSAL_MEMORY_JSON
+    FROM (
+        SELECT
+            SYMBOL,
+            COUNT_IF(CREATED_AT >= DATEADD('day', -14, CURRENT_TIMESTAMP())) AS PROPOSALS_14D,
+            MAX(CREATED_AT) AS LAST_PROPOSED_AT,
+            COUNT_IF(STATUS = 'PROPOSED') AS ACTIVE_PROPOSALS,
+            COUNT_IF(CREATED_AT >= DATEADD('day', -14, CURRENT_TIMESTAMP())
+                     AND SETUP_FAMILY ILIKE 'AGENTIC_%') AS RECENT_AGENTIC_PROPOSALS_14D
+        FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+        GROUP BY SYMBOL
+    ) agg
+    LEFT JOIN last_agentic_proposal_row lap
+      ON lap.SYMBOL = agg.SYMBOL
 ),
 live_action_context AS (
     SELECT
@@ -465,6 +829,8 @@ SELECT
         'setup_events', se.SETUP_EVENTS_JSON
     )), 256) AS PAYLOAD_HASH,
     OBJECT_CONSTRUCT_KEEP_NULL(
+        -- Phase 4 evidence-hardening v1: contract version for audit/lineage.
+        'evidence_contract_version', 'phase4_structural_v1',
         'identity', OBJECT_CONSTRUCT_KEEP_NULL(
             'symbol', u.SYMBOL,
             'market_type', u.MARKET_TYPE,
@@ -481,6 +847,10 @@ SELECT
         'recent_bars', rb.RECENT_DAILY_BARS_JSON,
         'recent_price_action_summary', rb.RECENT_PRICE_ACTION_SUMMARY_JSON,
         'candle_sequence', rb.CANDLE_SEQUENCE_JSON,
+        'structural_timeline_summary', t90.STRUCTURAL_TIMELINE_SUMMARY_JSON,
+        'structural_timeline_bars', t90.STRUCTURAL_TIMELINE_BARS_JSON,
+        'candle_psychology', cp.CANDLE_PSYCHOLOGY_JSON,
+        'actionability_context', ac.ACTIONABILITY_CONTEXT_JSON,
         'levels', OBJECT_CONSTRUCT_KEEP_NULL(
             'nearest_support', ns.NEAREST_SUPPORT_JSON,
             'nearest_resistance', nr.NEAREST_RESISTANCE_JSON,
@@ -575,6 +945,15 @@ LEFT JOIN nearest_resistance nr
 LEFT JOIN broken_resistance br
   ON br.SYMBOL = u.SYMBOL
  AND br.MARKET_TYPE = u.MARKET_TYPE
+LEFT JOIN structural_timeline_90d t90
+  ON t90.SYMBOL = u.SYMBOL
+ AND t90.MARKET_TYPE = u.MARKET_TYPE
+LEFT JOIN candle_psychology cp
+  ON cp.SYMBOL = u.SYMBOL
+ AND cp.MARKET_TYPE = u.MARKET_TYPE
+LEFT JOIN actionability_context ac
+  ON ac.SYMBOL = u.SYMBOL
+ AND ac.MARKET_TYPE = u.MARKET_TYPE
 LEFT JOIN setup_events se
   ON se.SYMBOL = u.SYMBOL
  AND se.MARKET_TYPE = u.MARKET_TYPE

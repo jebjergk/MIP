@@ -399,8 +399,15 @@ BEGIN
     )
     SELECT
         p.PROPOSAL_ID, p.CREATED_AT, p.SYMBOL, p.DIRECTION, p.SETUP_FAMILY,
-        p.COMMITTEE_PAYLOAD:dossier_payload:structure:structural_state::STRING,
-        p.COMMITTEE_PAYLOAD:dossier_payload:regime:tags:trend_regime::STRING,
+        -- Phase 4 agentic proposals embed the dossier in BOARD_PAYLOAD_JSON.
+        COALESCE(
+            p.BOARD_PAYLOAD_JSON:dossier_payload:structure:structural_state::STRING,
+            p.COMMITTEE_PAYLOAD:dossier_payload:structure:structural_state::STRING
+        ),
+        COALESCE(
+            p.BOARD_PAYLOAD_JSON:dossier_payload:regime:tags:trend_regime::STRING,
+            p.COMMITTEE_PAYLOAD:dossier_payload:regime:tags:trend_regime::STRING
+        ),
         'AGENTIC',
         OBJECT_CONSTRUCT('low', p.ENTRY_ZONE_LOW, 'high', p.ENTRY_ZONE_HIGH),
         OBJECT_CONSTRUCT('level', p.PRICE_INVALIDATION_LEVEL, 'rule', p.INVALIDATION_RULE),

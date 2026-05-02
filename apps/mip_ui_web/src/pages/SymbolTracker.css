@@ -2183,6 +2183,50 @@
 .lc-swatch--tp { background: #10b981; }
 .lc-swatch--sl { background: #ef4444; }
 
+/* --- Phase 4 (agentic board) overlay toggle strip ----------------------- */
+.lc-phase4-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border-bottom: 1px solid #1e293b;
+  background: rgba(15, 23, 42, 0.7);
+  font-size: 0.7rem;
+}
+.lc-phase4-toggles-label {
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.6rem;
+  font-weight: 700;
+  margin-right: 0.2rem;
+}
+.lc-phase4-toggle {
+  cursor: pointer;
+  border: 1px solid #334155;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.lc-phase4-toggle:hover {
+  border-color: #475569;
+  color: #cbd5e1;
+}
+.lc-phase4-toggle.is-on {
+  background: rgba(167, 139, 250, 0.18);
+  border-color: #a78bfa;
+  color: #ddd6fe;
+}
+.lc-phase4-toggle.is-on:hover {
+  background: rgba(167, 139, 250, 0.28);
+}
+
 @media (max-width: 900px) {
   .lc-body {
     flex-direction: column;

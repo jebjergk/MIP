@@ -795,15 +795,20 @@ _ROLE_SLICE_MAP = {
     "MARKET_STRUCTURE": [
         "identity", "price", "recent_bars", "candle_sequence",
         "recent_price_action_summary", "structure", "regime",
+        "structural_timeline_summary", "candle_psychology",
+        "actionability_context", "market_structure_map",
     ],
     "LEVEL_PRICE_ACTION": [
         "identity", "price", "recent_bars", "candle_sequence",
         "recent_price_action_summary", "levels",
+        "candle_psychology", "actionability_context", "market_structure_map",
     ],
     "THESIS": [
         "identity", "price", "structure", "regime", "levels",
         "long_pattern_signs", "short_pattern_signs",
         "setup_events_evidence_only", "recent_price_action_summary",
+        "structural_timeline_summary", "actionability_context",
+        "market_structure_map",
     ],
     "HISTORICAL_EVIDENCE": [
         "identity", "history", "setup_events_evidence_only",
@@ -1356,12 +1361,18 @@ async def _orchestrate_dossier(
                 "chair_action": chair.final_action,
             })
 
-    # Phase 4 evidence-hardening v1: MISSING_STRUCTURAL_EVIDENCE diagnostic.
+    # Phase 4 evidence-hardening v2: MISSING_STRUCTURAL_EVIDENCE diagnostic.
     # Non-blocking. If the Chair publishes a directional proposal but its
     # `evidence_used` list does not include the new structural slices,
     # persist an audit interaction so the operator can spot prompt-contract
     # drift or a Chair that ignored the new evidence-hardening contract.
-    if chair.final_action in {"PROPOSE_LONG", "PROPOSE_SHORT"}:
+    if chair.final_action in {
+        "PROPOSE_LONG",
+        "PROPOSE_SHORT",
+        "WATCH_LONG_FAILURE",
+        "WATCH_SHORT_FAILURE",
+        "WAIT_FOR_CONFIRMATION",
+    }:
         evidence_used_raw = chair.structured_output.get("evidence_used") \
             if isinstance(chair.structured_output, dict) else None
         evidence_used: List[str] = []
@@ -1371,6 +1382,7 @@ async def _orchestrate_dossier(
             "structural_timeline_summary",
             "candle_psychology",
             "actionability_context",
+            "market_structure_map",
         }
         missing_slices = sorted(required_structural_slices - set(evidence_used))
         if missing_slices:
@@ -1378,7 +1390,7 @@ async def _orchestrate_dossier(
                 f"Chair returned {chair.final_action} but did not list required "
                 "Phase 4 structural evidence slices in evidence_used: "
                 + ", ".join(missing_slices)
-                + ". Required by phase4_structural_v1 evidence contract. "
+                + ". Required by phase4_structural_v2 evidence contract. "
                 "Recorded for audit; this is informational and non-blocking."
             )
             diag_response = (
@@ -1423,7 +1435,7 @@ async def _orchestrate_dossier(
                 "missing_slices": missing_slices,
                 "evidence_used": evidence_used,
                 "chair_action": chair.final_action,
-                "evidence_contract_version": "phase4_structural_v1",
+                "evidence_contract_version": "phase4_structural_v2",
             })
 
     # ------------------------------------------------------------------

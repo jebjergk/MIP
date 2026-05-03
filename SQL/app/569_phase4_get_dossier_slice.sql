@@ -37,25 +37,27 @@
      actionability_context         -> deterministic synthesis: overhead risk, continuation_quality,
                                       entry_location_quality, target_path_clear, confirmation_needed.
                                       PHASE 4 EVIDENCE V1.
+     market_structure_map          -> deterministic swing/BOS/CHOCH map (wick pivots, body-close breaks).
+                                      PHASE 4 EVIDENCE V2.
 
    Role-to-slice access map (closed world):
      MARKET_STRUCTURE     -> identity, price, recent_bars, candle_sequence,
                               recent_price_action, structure, regime,
                               structural_timeline_summary, candle_psychology,
-                              actionability_context
+                              actionability_context, market_structure_map
      LEVEL_PRICE_ACTION   -> identity, price, recent_bars, candle_sequence,
                               recent_price_action, levels, zone_context,
-                              candle_psychology, actionability_context
+                              candle_psychology, actionability_context, market_structure_map
      THESIS               -> identity, price, structure, regime, levels, zone_context,
                               long_pattern_signs, short_pattern_signs,
                               setup_events, recent_price_action,
-                              structural_timeline_summary, actionability_context
+                              structural_timeline_summary, actionability_context, market_structure_map
      HISTORICAL_EVIDENCE  -> identity, history, setup_events,
                               invalidation_evidence, memory
      RISK_EXECUTION       -> identity, price, levels, zone_context, structure, regime,
                               policy_flags, memory, invalidation_evidence,
                               actionability_context
-     CHAIR                -> all slices above PLUS structural_timeline_bars
+     CHAIR                -> all slices above PLUS structural_timeline_bars and market_structure_map
 
    No dynamic SQL. No writes. Reads PROPOSAL_BOARD_DOSSIER_PACK_CACHE only.
    ================================================================ */
@@ -109,6 +111,7 @@ _ALLOWED_SLICES = {
     'structural_timeline_bars',
     'candle_psychology',
     'actionability_context',
+    'market_structure_map',
 }
 
 _ROLE_SLICE_MAP = {
@@ -116,18 +119,18 @@ _ROLE_SLICE_MAP = {
         'identity', 'price', 'recent_bars', 'candle_sequence',
         'recent_price_action', 'structure', 'regime',
         'structural_timeline_summary', 'candle_psychology',
-        'actionability_context',
+        'actionability_context', 'market_structure_map',
     },
     'LEVEL_PRICE_ACTION': {
         'identity', 'price', 'recent_bars', 'candle_sequence',
         'recent_price_action', 'levels', 'zone_context',
-        'candle_psychology', 'actionability_context',
+        'candle_psychology', 'actionability_context', 'market_structure_map',
     },
     'THESIS': {
         'identity', 'price', 'structure', 'regime', 'levels', 'zone_context',
         'long_pattern_signs', 'short_pattern_signs',
         'setup_events', 'recent_price_action',
-        'structural_timeline_summary', 'actionability_context',
+        'structural_timeline_summary', 'actionability_context', 'market_structure_map',
     },
     'HISTORICAL_EVIDENCE': {
         'identity', 'history', 'setup_events',
@@ -147,7 +150,7 @@ _ROLE_SLICE_MAP = {
         'setup_events', 'invalidation_evidence',
         'history', 'memory', 'policy_flags',
         'structural_timeline_summary', 'structural_timeline_bars',
-        'candle_psychology', 'actionability_context',
+        'candle_psychology', 'actionability_context', 'market_structure_map',
     },
 }
 
@@ -176,6 +179,7 @@ _SLICE_TO_PAYLOAD_KEY = {
     'structural_timeline_bars': 'structural_timeline_bars',
     'candle_psychology': 'candle_psychology',
     'actionability_context': 'actionability_context',
+    'market_structure_map': 'market_structure_map',
 }
 
 

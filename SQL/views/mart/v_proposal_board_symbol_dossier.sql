@@ -829,14 +829,14 @@ SELECT
         'setup_events', se.SETUP_EVENTS_JSON
     )), 256) AS PAYLOAD_HASH,
     OBJECT_CONSTRUCT_KEEP_NULL(
-        -- Phase 4 evidence-hardening v1: contract version for audit/lineage.
-        'evidence_contract_version', 'phase4_structural_v1',
+        -- Phase 4 evidence-hardening v2: market_structure_map + structural timeline v1.
+        'evidence_contract_version', 'phase4_structural_v2',
         'identity', OBJECT_CONSTRUCT_KEEP_NULL(
             'symbol', u.SYMBOL,
             'market_type', u.MARKET_TYPE,
             'as_of_date', CURRENT_DATE(),
             'portfolio_id', NULL,
-            'dossier_version', 'phase4_symbol_dossier_v1'
+            'dossier_version', 'phase4_symbol_dossier_v2'
         ),
         'price', OBJECT_CONSTRUCT_KEEP_NULL(
             'current_price', ld.CLOSE,
@@ -851,6 +851,7 @@ SELECT
         'structural_timeline_bars', t90.STRUCTURAL_TIMELINE_BARS_JSON,
         'candle_psychology', cp.CANDLE_PSYCHOLOGY_JSON,
         'actionability_context', ac.ACTIONABILITY_CONTEXT_JSON,
+        'market_structure_map', msm.MARKET_STRUCTURE_MAP,
         'levels', OBJECT_CONSTRUCT_KEEP_NULL(
             'nearest_support', ns.NEAREST_SUPPORT_JSON,
             'nearest_resistance', nr.NEAREST_RESISTANCE_JSON,
@@ -948,6 +949,9 @@ LEFT JOIN broken_resistance br
 LEFT JOIN structural_timeline_90d t90
   ON t90.SYMBOL = u.SYMBOL
  AND t90.MARKET_TYPE = u.MARKET_TYPE
+LEFT JOIN MIP.MART.V_SYMBOL_MARKET_STRUCTURE_MAP msm
+  ON msm.SYMBOL = u.SYMBOL
+ AND msm.MARKET_TYPE = u.MARKET_TYPE
 LEFT JOIN candle_psychology cp
   ON cp.SYMBOL = u.SYMBOL
  AND cp.MARKET_TYPE = u.MARKET_TYPE

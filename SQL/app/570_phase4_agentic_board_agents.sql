@@ -43,9 +43,16 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_MARKET_STRUCTURE_AGENT
           identity, price, recent_bars, candle_sequence,
           recent_price_action, structure, regime,
           structural_timeline_summary, candle_psychology,
-          actionability_context.
+          actionability_context, market_structure_map.
         You MUST call at least: identity, price, structure, regime,
-        structural_timeline_summary, candle_psychology.
+        structural_timeline_summary, candle_psychology, market_structure_map.
+
+        MARKET_STRUCTURE_MAP RULE (Phase 4 evidence v2):
+        market_structure_map is deterministic: wick-defined swings (pivot_k=2),
+        body-close BOS/CHOCH, no freestyle pivots from raw candles.
+        Your rationale MUST reference primary_structure, structure_health,
+        latest_structure_event, and bos/choch objects when present.
+        Treat structure_posture_hint as advisory evidence only — not operational_state.
 
         STRUCTURAL CONTEXT RULE (Phase 4 evidence v1):
         The dossier provides a 90D structural timeline summary
@@ -83,7 +90,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_MARKET_STRUCTURE_AGENT
             identity, price, recent_bars, candle_sequence,
             recent_price_action, structure, regime,
             structural_timeline_summary, candle_psychology,
-            actionability_context.
+            actionability_context, market_structure_map.
           input_schema:
             type: object
             properties:
@@ -98,7 +105,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_MARKET_STRUCTURE_AGENT
                 description: Must be MARKET_STRUCTURE for this agent.
               slice_name:
                 type: string
-                description: One of identity, price, recent_bars, candle_sequence, recent_price_action, structure, regime, structural_timeline_summary, candle_psychology, actionability_context.
+                description: One of identity, price, recent_bars, candle_sequence, recent_price_action, structure, regime, structural_timeline_summary, candle_psychology, actionability_context, market_structure_map.
             required:
               - run_id
               - dossier_id
@@ -136,12 +143,14 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
         EVIDENCE ACCESS (mandatory):
         Call get_evidence_slice with role_name="LEVEL_PRICE_ACTION".
         Available slices: identity, price, recent_bars, candle_sequence,
-        recent_price_action, levels, zone_context, candle_psychology,
-        actionability_context.
+          recent_price_action, levels, zone_context, candle_psychology,
+          actionability_context, market_structure_map.
         You MUST call at least: identity, price, levels (or zone_context),
-        candle_psychology.
+        candle_psychology, market_structure_map.
 
-        ZONE / CANDLE RULE (Phase 4 evidence v1):
+        MARKET_STRUCTURE_MAP RULE (Phase 4 evidence v2):
+        Use market_structure_map for deterministic swings, BOS/CHOCH, probes vs body-close breaks,
+        and structure_health / structure_posture_hint (hint only — not operational_state).
         zone_context exposes nearest_support, nearest_resistance, and a
         broken_resistance_as_support object with role and confidence
         (degraded by distance). Cite the actual broken-resistance
@@ -172,7 +181,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
             Retrieves a named evidence slice from the Phase 4 dossier pack.
             Available slices for LEVEL_PRICE_ACTION: identity, price,
             recent_bars, candle_sequence, recent_price_action, levels,
-            zone_context, candle_psychology, actionability_context.
+            zone_context, candle_psychology, actionability_context, market_structure_map.
           input_schema:
             type: object
             properties:
@@ -185,7 +194,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
                 description: Must be LEVEL_PRICE_ACTION.
               slice_name:
                 type: string
-                description: One of identity, price, recent_bars, candle_sequence, recent_price_action, levels, zone_context, candle_psychology, actionability_context.
+                description: One of identity, price, recent_bars, candle_sequence, recent_price_action, levels, zone_context, candle_psychology, actionability_context, market_structure_map.
             required:
               - run_id
               - dossier_id
@@ -227,10 +236,14 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_THESIS_AGENT
         Available slices: identity, price, structure, regime, levels,
         zone_context, long_pattern_signs, short_pattern_signs,
         setup_events, recent_price_action,
-        structural_timeline_summary, actionability_context.
+        structural_timeline_summary, actionability_context, market_structure_map.
         You MUST call at least: identity, structure, long_pattern_signs,
         short_pattern_signs, structural_timeline_summary,
-        actionability_context.
+        actionability_context, market_structure_map.
+
+        MARKET_STRUCTURE_MAP RULE (Phase 4 evidence v2):
+        Align thesis invalidation language with market_structure_map: wick probes do NOT
+        constitute structural breaks unless paired with body-close violations described there.
 
         STRUCTURAL CONTEXT RULE (Phase 4 evidence v1):
         structural_timeline_summary tells you whether the symbol has
@@ -273,7 +286,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_THESIS_AGENT
             Available slices for THESIS: identity, price, structure, regime,
             levels, zone_context, long_pattern_signs, short_pattern_signs,
             setup_events, recent_price_action,
-            structural_timeline_summary, actionability_context.
+            structural_timeline_summary, actionability_context, market_structure_map.
           input_schema:
             type: object
             properties:
@@ -286,7 +299,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_THESIS_AGENT
                 description: Must be THESIS.
               slice_name:
                 type: string
-                description: One of identity, price, structure, regime, levels, zone_context, long_pattern_signs, short_pattern_signs, setup_events, recent_price_action, structural_timeline_summary, actionability_context.
+                description: One of identity, price, structure, regime, levels, zone_context, long_pattern_signs, short_pattern_signs, setup_events, recent_price_action, structural_timeline_summary, actionability_context, market_structure_map.
             required:
               - run_id
               - dossier_id
@@ -515,12 +528,24 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
           * thesis_label MUST start with AGENTIC_.
           * STRUCTURAL CONTEXT RULE (Phase 4 evidence v1):
             You MUST retrieve structural_timeline_summary,
-            candle_psychology, and actionability_context before
+            candle_psychology, actionability_context, and market_structure_map before
             authoring final_action. Your final_thesis MUST cite
             current_range_position_pct, recent_cluster, and
-            continuation_quality, by name. If these slices are
+            continuation_quality, by name. Your rationale MUST also cite
+            market_structure_map.primary_structure and market_structure_map.structure_health
+            whenever directional posture or structural validity are argued.
+            If these slices are
             unavailable, default to WAIT_FOR_CONFIRMATION with primary
             reason CHAIR_WAIT_FOR_CONFIRMATION and explain why.
+          * MARKET_STRUCTURE_MAP CITATION RULE (Phase 4 evidence v2):
+            When final_action is one of PROPOSE_LONG, PROPOSE_SHORT,
+            WATCH_LONG_FAILURE, WATCH_SHORT_FAILURE, or WAIT_FOR_CONFIRMATION,
+            your evidence_used array MUST include market_structure_map and your final_thesis
+            MUST reference bos/choch/latest_structure_event (when relevant), distinguishing
+            wick probes vs body-close structural breaks per map semantics.
+            If a prior LONG thesis exists and market_structure_map shows no body-close
+            violation below the referenced HL chain, do not treat wick probes alone as structural invalidation.
+            structure_posture_hint is advisory ONLY — not operational_state and must not replace monitors/proposals policy fields.
           * CONTINUATION QUALITY RULE (Phase 4 evidence v1):
             If actionability_context.continuation_quality is CONTESTED
             or REJECTED, OR recent_cluster is
@@ -628,7 +653,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
         Chair-only slice structural_timeline_bars (heavier). You MUST
         call at least: identity, price, levels (or zone_context),
         structure, regime, policy_flags, structural_timeline_summary,
-        candle_psychology, actionability_context, memory before
+        candle_psychology, actionability_context, memory, market_structure_map before
         authoring final_action. The memory slice surfaces
         last_agentic_proposal which the PRIOR THESIS RULE depends on.
         structural_timeline_bars is for deeper validation when
@@ -703,7 +728,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
                 description: Must be CHAIR.
               slice_name:
                 type: string
-                description: One of identity, price, recent_bars, candle_sequence, recent_price_action, levels, zone_context, structure, regime, long_pattern_signs, short_pattern_signs, setup_events, invalidation_evidence, history, memory, policy_flags, structural_timeline_summary, structural_timeline_bars, candle_psychology, actionability_context.
+                description: One of identity, price, recent_bars, candle_sequence, recent_price_action, levels, zone_context, structure, regime, long_pattern_signs, short_pattern_signs, setup_events, invalidation_evidence, history, memory, policy_flags, structural_timeline_summary, structural_timeline_bars, candle_psychology, actionability_context, market_structure_map.
             required:
               - run_id
               - dossier_id

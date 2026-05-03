@@ -92,17 +92,41 @@
   margin: 0;
   font-size: 13px;
   color: #263238;
-  line-height: 1.5;
+  line-height: 1.55;
   background: #fafafa;
   border-left: 3px solid #cfd8dc;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 0 4px 4px 0;
+  max-width: none;
+}
+
+.lpa-c2-muted {
+  color: #90a4ae;
+  font-style: italic;
 }
 
 .lpa-c2-bx-ph4-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+  align-items: start;
+}
+
+/* Wide: evidence tiles share left band; verdict rationale gets a wider prose column */
+.lpa-c2-bx-ph4-grid--with-verdict {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 1.22fr);
+}
+
+.lpa-c2-bx-ph4-evidence-cluster {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .lpa-c2-bx-ph4-grid--with-verdict {
+    grid-template-columns: 1fr;
+  }
 }
 
 .lpa-c2-bx-ph4-section {
@@ -110,6 +134,22 @@
   border: 1px solid #eceff1;
   border-radius: 4px;
   padding: 8px 10px;
+}
+
+.lpa-c2-bx-ph4-section--verdict {
+  padding: 10px 12px;
+  min-height: 100%;
+}
+
+.lpa-c2-bx-ph4-dl--prose {
+  grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr);
+  row-gap: 8px;
+}
+
+.lpa-c2-bx-ph4-dl--prose dd {
+  white-space: normal;
+  line-height: 1.45;
+  font-variant-numeric: normal;
 }
 
 .lpa-c2-bx-ph4-section-label {

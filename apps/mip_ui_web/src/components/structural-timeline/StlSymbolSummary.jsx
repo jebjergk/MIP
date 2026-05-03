@@ -48,7 +48,7 @@ export default function StlSymbolSummary({ setups, summary, get }) {
   const funnelData = [
     { label: 'Detected', value: stats.detected, color: '#9e9e9e' },
     { label: 'Eligible', value: stats.eligible, color: '#42a5f5' },
-    { label: 'Proposed', value: stats.proposed, color: '#f9a825' },
+    { label: 'Proposed', value: stats.proposed, color: '#f97316' },
   ]
 
   const stateColors = {

@@ -7666,6 +7666,7 @@ def get_live_activity_overview(
               la.LIVE_INTENT_KIND,
               p.STATUS as PROPOSAL_STATUS_NOW,
               p.BOARD_RUN_ID as PROPOSAL_BOARD_RUN_ID,
+              p.BOARD_DOSSIER_ID as PROPOSAL_BOARD_DOSSIER_ID,
               latest.RUN_ID as LATEST_AUTHORITATIVE_RUN_ID
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
@@ -7971,6 +7972,14 @@ def get_live_activity_overview(
                 if not submission_gate_hints:
                     submission_gate_hints.append("Submission unavailable — refresh the page or verify action status.")
 
+            dossier_raw = row.get("PROPOSAL_BOARD_DOSSIER_ID")
+            try:
+                structural_board_dossier_id = (
+                    int(dossier_raw) if dossier_raw is not None else None
+                )
+            except (TypeError, ValueError):
+                structural_board_dossier_id = None
+
             if (
                 status != "EXECUTION_REQUESTED"
                 and (not has_active_order)
@@ -8055,6 +8064,7 @@ def get_live_activity_overview(
                                 "setup_narrative": row.get("SETUP_NARRATIVE"),
                                 "freshness_assessment": row.get("FRESHNESS_ASSESSMENT"),
                                 "hold_character": row.get("EXPECTED_HOLD_CHARACTER"),
+                                "board_dossier_id": structural_board_dossier_id,
                                 "committee_logic_version": STRUCTURAL_COMMITTEE_LOGIC_VERSION,
                                 "structural_diagnostics_v1": param_snap_row.get("structural_diagnostics_v1"),
                                 "structural_execution_contract_v1": param_snap_row.get("structural_execution_contract_v1"),

@@ -170,6 +170,48 @@
   border-color: #1a73e8;
 }
 
+/* Chart toolbar docked flush above chart (detail view) */
+.stl-chart-stack {
+  margin-bottom: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.stl-chart-toolbar {
+  padding: 0;
+  background: #f8fafc;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.stl-chart-toolbar .stl-controls--chart-filters {
+  margin-bottom: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0.45rem 0.65rem;
+  background: transparent;
+}
+
+.stl-chart-toolbar .stl-overlays--dock {
+  margin-bottom: 0;
+  padding: 0.35rem 0.65rem 0.5rem;
+  border-top: 1px dashed #e2e8f0;
+  background: #fafafa;
+}
+
+.stl-chart-stack > .stl-chart-wrap {
+  margin-bottom: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0.5rem 0.55rem 0.55rem;
+}
+
+.stl-controls--symbol-nav {
+  margin-bottom: 0.75rem;
+}
+
 /* ── Summary strip ── */
 .stl-summary-strip {
   display: flex;
@@ -486,10 +528,11 @@
 /* Phase 4 agentic read (Phase4ChairSection uses LPA .lpa-c2-bx-ph4-* styles) */
 .stl-agentic-read {
   margin: 0.75rem 0 1rem;
-  padding: 0.75rem 1rem;
+  padding: 0.65rem 1rem 0.85rem;
   border: 1px solid #bae6fd;
   border-radius: 8px;
   background: linear-gradient(180deg, #f0f9ff 0%, #fff 100%);
+  max-width: none;
 }
 .stl-agentic-read-head {
   display: flex;
@@ -498,6 +541,13 @@
   justify-content: space-between;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
+}
+.stl-agentic-read-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: #475569;
+  max-width: 52rem;
 }
 .stl-agentic-read-title {
   margin: 0;

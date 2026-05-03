@@ -982,7 +982,14 @@ def committee_proposal_priority_context(proposal_id: int):
 
 
 @router.get("/proposal/{proposal_id}/board-explanation")
-def committee_proposal_board_explanation(proposal_id: int):
+def committee_proposal_board_explanation(
+    proposal_id: int,
+    portfolio_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="When set, EXECUTED operational_state reflects open positions tied to this proposal_id.",
+    ),
+):
     """Read-only board audit trail for a single proposal.
 
     Joins `STRUCTURAL_TRADE_PROPOSALS.BOARD_*` lineage to:
@@ -1003,7 +1010,7 @@ def committee_proposal_board_explanation(proposal_id: int):
     """
     from app.services.board.explanation import load_board_explanation
 
-    return load_board_explanation(int(proposal_id))
+    return load_board_explanation(int(proposal_id), portfolio_id=portfolio_id)
 
 
 @router.get("/proposal/{proposal_id}/final-decision")

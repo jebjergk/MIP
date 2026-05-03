@@ -655,6 +655,36 @@
   margin: 4px 0;
 }
 
+.lpa-phase4-inline {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #90caf9;
+  background: linear-gradient(90deg, #e3f2fd 0%, #f5fbff 100%);
+  font-size: 12px;
+  line-height: 1.45;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: baseline;
+}
+
+.lpa-phase4-inline a {
+  font-weight: 700;
+  color: #0d47a1;
+  text-decoration: none;
+}
+
+.lpa-phase4-inline a:hover {
+  text-decoration: underline;
+}
+
+.lpa-phase4-inline-meta {
+  font-size: 11px;
+  color: #37474f;
+  font-weight: 600;
+}
+
 .lpa-badge {
   display: inline-block;
   padding: 1px 7px;
@@ -2140,6 +2170,37 @@
   padding: 12px 14px;
   border-bottom: 1px solid #e8eaf6;
   background: linear-gradient(180deg, #fafbff 0%, #ffffff 100%);
+}
+
+.lpa-c2-bx-contract {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.lpa-c2-bx-contract-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #c5cae9;
+  background: #fff;
+  color: #3949ab;
+}
+
+.lpa-c2-bx-contract-pill--life {
+  border-color: #b0bec5;
+  color: #37474f;
+  background: #eceff1;
+}
+
+.lpa-c2-bx-contract-pill--op {
+  border-color: #ffe0b2;
+  color: #6d4c00;
+  background: #fffaf0;
 }
 
 .lpa-c2-bx-toggle {

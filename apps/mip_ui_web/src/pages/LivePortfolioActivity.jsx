@@ -1047,6 +1047,20 @@ export default function LivePortfolioActivity() {
                         {d.structural?.setup_narrative ? (
                           <div className="lpa-subtle lpa-narrative">{d.structural.setup_narrative}</div>
                         ) : null}
+                        {isStructuralEntry && d.proposal_id != null ? (
+                          <div className="lpa-phase4-inline">
+                            <Link
+                              to={`/symbol-tracker?symbol=${encodeURIComponent(String(d.symbol || '').trim())}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`}
+                            >
+                              Symbol Tracker — Phase 4 overlays & board read
+                            </Link>
+                            {d.structural?.board_dossier_id != null ? (
+                              <span className="lpa-phase4-inline-meta">
+                                Dossier #{d.structural.board_dossier_id}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                         <div>Action: {d.action_id}</div>
                         <div>Created: {fmtTs(d.timestamps?.created_at)} ({fmtAge(d.timestamps?.created_at)} ago)</div>
                         {isNewDecision(d.timestamps?.created_at) ? <div className="lpa-subtle">NEW</div> : null}

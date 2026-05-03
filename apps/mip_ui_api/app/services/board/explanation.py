@@ -431,7 +431,10 @@ def _phase4_chair_view(row: Dict[str, Any]) -> Dict[str, Any]:
 # --- Public entry point -----------------------------------------------------
 
 
-def load_board_explanation(proposal_id: int) -> Dict[str, Any]:
+def load_board_explanation(
+    proposal_id: int,
+    portfolio_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """Build the read-only board explanation payload for a single
     `proposal_id`.
 
@@ -560,6 +563,27 @@ def load_board_explanation(proposal_id: int) -> Dict[str, Any]:
     if not isinstance(comparative, dict):
         comparative = {}
 
+    # Operator-facing state — API-derived only (no live invalidation here;
+    # cockpit trade proposals layer owns LIVE_UNAVAILABLE / zone INVALIDATED).
+    from app.services.cockpit.operational_state import derive_operational_state
+    from app.services.cockpit.trade_proposals import _load_executed_proposal_ids
+
+    action_src = phase4_latest_health or phase4_chair
+    latest_action = (action_src or {}).get("final_action")
+    ph4_present = bool(action_src)
+    executed_set_ok = False
+    if portfolio_id is not None:
+        try:
+            executed_set_ok = int(proposal_id) in _load_executed_proposal_ids(int(portfolio_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("board_explanation: executed lookup failed: %s", exc)
+    operational_state = derive_operational_state(
+        latest_board_action=latest_action,
+        phase4_health_present=ph4_present,
+        executed=executed_set_ok,
+        live_invalidated=False,
+    )
+
     return {
         "available": True,
         "proposal_id": int(proposal_id),
@@ -567,6 +591,8 @@ def load_board_explanation(proposal_id: int) -> Dict[str, Any]:
         "direction": head.get("DIRECTION"),
         "setup_family": head.get("SETUP_FAMILY"),
         "status": head.get("STATUS"),
+        "proposal_lifecycle_status": head.get("STATUS"),
+        "operational_state": operational_state,
         "created_at": head.get("CREATED_AT"),
         "board_run_id": run_id,
         "board_candidate_id": int(candidate_id) if candidate_id is not None else None,

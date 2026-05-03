@@ -256,6 +256,7 @@ class TradeProposal(BaseModel):
     mini_chart_series: List[TradeProposalChartPoint] = Field(default_factory=list)
     detail_route: Optional[str] = None
     created_at: Optional[str] = None
+    board_dossier_id: Optional[int] = None
 
     # Board priority signal — comparative strength relative to other
     # board-published proposals in the slate. Independent of entry_readiness:
@@ -275,6 +276,9 @@ class TradeProposal(BaseModel):
     # verdict is used and tagged 'SYMBOL_LATEST_ONLY'. None when no
     # Phase 4 verdict is available within the lookback window.
     phase4_health: Optional[Dict[str, Any]] = None
+
+    # Derived operator contract — computed only in the API (never persisted).
+    operational_state: str = "UNKNOWN"
 
 
 class TradeProposalsBlock(BaseModel):

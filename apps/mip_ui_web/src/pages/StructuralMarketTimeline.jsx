@@ -311,6 +311,7 @@ export default function StructuralMarketTimeline() {
       </div>
 
       <StlSymbolControls
+        mode="symbolNav"
         symbolList={symbolList}
         symbol={symbol}
         setSymbol={handleSelectSymbol}
@@ -337,21 +338,44 @@ export default function StructuralMarketTimeline() {
         <>
           {summary && <StlSummaryStrip data={summary} get={get} />}
 
-          <StlHearingLaunch proposals={proposals} get={get} />
-
           <StlAgenticBoardRead proposals={proposals} get={get} />
 
-          <StlChart
-            bars={bars}
-            levels={levels}
-            setups={filteredSetups}
-            proposals={proposals}
-            overlays={overlays}
-            chartMode={chartMode}
-            selectedSetupId={selectedSetupId}
-            onSelectSetup={handleSelectSetup}
-            get={get}
-          />
+          <StlHearingLaunch proposals={proposals} get={get} />
+
+          <div className="stl-chart-stack">
+            <StlSymbolControls
+              mode="chartFilters"
+              symbolList={symbolList}
+              symbol={symbol}
+              setSymbol={handleSelectSymbol}
+              marketType={marketType}
+              setMarketType={setMarketType}
+              dateRange={dateRange}
+              setDateRange={setDateRange}
+              chartMode={chartMode}
+              setChartMode={setChartMode}
+              dirFilter={dirFilter}
+              setDirFilter={setDirFilter}
+              familyFilter={familyFilter}
+              setFamilyFilter={setFamilyFilter}
+              familyOptions={familyOptions}
+              overlays={overlays}
+              toggleOverlay={toggleOverlay}
+              get={get}
+            />
+
+            <StlChart
+              bars={bars}
+              levels={levels}
+              setups={filteredSetups}
+              proposals={proposals}
+              overlays={overlays}
+              chartMode={chartMode}
+              selectedSetupId={selectedSetupId}
+              onSelectSetup={handleSelectSetup}
+              get={get}
+            />
+          </div>
 
           <div ref={detailRef} className="stl-detail-anchor">
             {(selectedSetupId || setupDetailLoading) && (

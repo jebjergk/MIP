@@ -546,6 +546,13 @@ export default function SymbolTracker() {
     return Number.isFinite(n) ? n : null
   }, [searchParams])
 
+  const portfolioIdParam = useMemo(() => {
+    const raw = searchParams.get('portfolio_id')
+    if (!raw) return null
+    const n = parseInt(raw, 10)
+    return Number.isFinite(n) && n >= 1 ? n : null
+  }, [searchParams])
+
   const [phase4Data, setPhase4Data] = useState(null)
   const [phase4Toggles, setPhase4Toggles] = useState({
     showProposal: true,
@@ -607,9 +614,11 @@ export default function SymbolTracker() {
     let cancelled = false
     const run = async () => {
       try {
-        const r = await fetch(
-          `${API_BASE}/committee/proposal/${encodeURIComponent(effectiveProposalId)}/board-explanation`,
-        )
+        let url = `${API_BASE}/committee/proposal/${encodeURIComponent(effectiveProposalId)}/board-explanation`
+        if (portfolioIdParam != null) {
+          url += `?portfolio_id=${encodeURIComponent(portfolioIdParam)}`
+        }
+        const r = await fetch(url)
         if (cancelled) return
         if (!r.ok) {
           setPhase4Data(null)
@@ -637,7 +646,7 @@ export default function SymbolTracker() {
     }
     run()
     return () => { cancelled = true }
-  }, [effectiveProposalId])
+  }, [effectiveProposalId, portfolioIdParam])
 
   // Only attach Phase 4 overlays when the URL-pinned proposal matches the
   // currently-selected symbol — otherwise we'd show stale markers from a
@@ -1049,6 +1058,23 @@ export default function SymbolTracker() {
                       >
                         Zone
                       </button>
+                      <div className="lc-phase4-legend" aria-hidden>
+                        <span className="lc-phase4-legend-item">
+                          <i className="lc-phase4-swatch lc-phase4-swatch--proposal" /> Proposal date
+                        </span>
+                        <span className="lc-phase4-legend-item">
+                          <i className="lc-phase4-swatch lc-phase4-swatch--watch" /> Monitor / watch verdict
+                        </span>
+                        <span className="lc-phase4-legend-item">
+                          <i className="lc-phase4-swatch lc-phase4-swatch--action-long" /> Propose long
+                        </span>
+                        <span className="lc-phase4-legend-item">
+                          <i className="lc-phase4-swatch lc-phase4-swatch--action-short" /> Propose short
+                        </span>
+                        <span className="lc-phase4-legend-item">
+                          <i className="lc-phase4-swatch lc-phase4-swatch--none" /> No trade
+                        </span>
+                      </div>
                     </div>
                   ) : null}
                   <Suspense fallback={<div className="lc-loading">Loading chart…</div>}>

@@ -80,6 +80,44 @@ function readinessTone(code) {
   }
 }
 
+// --- API-derived operational state (Phase 4 monitor contract) ----------
+const OP_STATE_LABEL = {
+  ACTIONABLE_PROPOSAL: 'Actionable',
+  MONITOR: 'Monitor',
+  NOT_ACTIONABLE: 'Not actionable',
+  INVALIDATED: 'Invalidated',
+  EXECUTED: 'Executed',
+  UNKNOWN: 'Unknown',
+}
+
+function operationalStateTone(state) {
+  switch (state) {
+    case 'ACTIONABLE_PROPOSAL':
+      return 'ok'
+    case 'MONITOR':
+    case 'INVALIDATED':
+    case 'EXECUTED':
+      return state === 'MONITOR' ? 'monitor' : 'warn'
+    case 'NOT_ACTIONABLE':
+      return 'neutral'
+    default:
+      return 'neutral'
+  }
+}
+
+function groupProposalsByOperationalState(list) {
+  const actionable = []
+  const monitor = []
+  const other = []
+  for (const p of list) {
+    const s = p?.operational_state || 'UNKNOWN'
+    if (s === 'ACTIONABLE_PROPOSAL') actionable.push(p)
+    else if (s === 'MONITOR' || s === 'INVALIDATED' || s === 'EXECUTED') monitor.push(p)
+    else other.push(p)
+  }
+  return { actionable, monitor, other }
+}
+
 // Priority is an INTENTIONALLY-SEPARATE concept from entry readiness:
 //   * priority  = comparative ranking strength of this proposal vs the
 //                 rest of today's slate (computed from the same composite
@@ -235,12 +273,33 @@ function BoardAgeNote({ health }) {
   else if (days === 1) suffix = ' · 1d ago'
   else if (days != null) suffix = ` · ${days}d ago`
   const stale = days != null && days >= 2
+  const tier = health.staleness_tier
+  const tierStale = tier === 'STALE'
   return (
     <span
-      className={`ck-co-tp-board-age${stale ? ' ck-co-tp-board-age--stale' : ''}`}
-      title={stale ? `Board verdict is ${days} days old.` : undefined}
+      className={`ck-co-tp-board-age${stale || tierStale ? ' ck-co-tp-board-age--stale' : ''}`}
+      title={
+        stale || tierStale
+          ? `Board verdict is ${days ?? '?'} days old${tier ? ` (${tier})` : ''}.`
+          : undefined
+      }
     >
       {`as_of ${fmtAsOfDate(asOf)}${suffix}`}
+    </span>
+  )
+}
+
+
+function OperationalStateBadge({ state }) {
+  if (!state) return null
+  const label = OP_STATE_LABEL[state] || String(state).replace(/_/g, ' ')
+  const tone = operationalStateTone(state)
+  return (
+    <span
+      className={`ck-co-tp-opstate ck-co-tp-opstate--${tone}`}
+      title="Derived in the API from Phase 4 chair action, execution linkage, and live invalidation only."
+    >
+      {label}
     </span>
   )
 }
@@ -599,6 +658,7 @@ function ProposalRow({ proposal }) {
           ) : (
             <span className="ck-co-tp-stance ck-co-tp-stance--missing">No verdict yet</span>
           )}
+          <OperationalStateBadge state={proposal.operational_state} />
           <ThesisHealthBadge health={ph4} />
           {sameSymbolOther ? (
             <span
@@ -610,6 +670,11 @@ function ProposalRow({ proposal }) {
             </span>
           ) : null}
           <BoardAgeNote health={ph4} />
+          {proposal.board_dossier_id != null ? (
+            <span className="ck-co-tp-dossier" title="Published Phase 4 dossier id">
+              Dossier #{proposal.board_dossier_id}
+            </span>
+          ) : null}
         </div>
 
         {hasPriority ? (
@@ -666,6 +731,32 @@ function ProposalRow({ proposal }) {
 }
 
 
+function Phase4CockpitNotice({ proposals }) {
+  const list = Array.isArray(proposals) ? proposals : []
+  if (list.length === 0) return null
+  const rich = list.some(
+    (p) =>
+      p.board_dossier_id != null ||
+      Boolean(p.phase4_health?.latest_board_action),
+  )
+  return (
+    <div
+      className={`ck-co-tp-phase4-strip${rich ? '' : ' ck-co-tp-phase4-strip--subtle'}`}
+      role="status"
+    >
+      <strong className="ck-co-tp-phase4-strip-title">
+        {rich ? 'Phase 4 agentic board' : 'Symbol Tracker'}
+      </strong>
+      <span className="ck-co-tp-phase4-strip-body">
+        {rich
+          ? 'Thesis health, dossier lineage, and chart overlays open on Symbol Tracker — click a proposal row below.'
+          : 'Each row opens Symbol Tracker for that proposal — Phase 4 overlays and board read appear when lineage data exists.'}
+      </span>
+    </div>
+  )
+}
+
+
 function overlaySubLabel(status) {
   switch (status) {
     case 'OK':            return null   // healthy → no extra label needed
@@ -674,6 +765,29 @@ function overlaySubLabel(status) {
     case 'UNAVAILABLE':   return 'live unavailable'
     default:              return null
   }
+}
+
+
+function ProposalsGroup({ title, hint, items }) {
+  if (!items.length) return null
+  return (
+    <div className="ck-co-tp-group">
+      <h4 className="ck-co-tp-group-title">{title}</h4>
+      {hint ? <p className="ck-co-tp-group-hint">{hint}</p> : null}
+      <div className="ck-co-tp-list ck-co-tp-list--in-group">
+        {items.map((p) => (
+          <Link
+            key={p.proposal_id}
+            to={p.detail_route || '#'}
+            className="ck-co-tp-row-link"
+            title={`Symbol Tracker — ${p.symbol} · proposal #${p.proposal_id} (Phase 4 overlays & dossier)`}
+          >
+            <ProposalRow proposal={p} />
+          </Link>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 
@@ -698,12 +812,16 @@ export default function TradeProposalsPanel({ data }) {
     )
   }
 
+  const grouped = groupProposalsByOperationalState(proposals)
+
   return (
     <section className="ck-co-tp-section">
       <header className="ck-co-tp-header">
         <h3 className="ck-co-tp-title">Trade proposals</h3>
         <span className="ck-co-tp-sub">
-          {proposals.length === 0 && total === 0 ? 'none today' : `${proposals.length} actionable`}
+          {proposals.length === 0 && total === 0
+            ? 'none today'
+            : `${proposals.length} showing \u00b7 ${total} in scope`}
           {moreCount > 0 ? ` \u00b7 +${moreCount} more` : ''}
           {overlaySub ? ` \u00b7 ${overlaySub}` : ''}
         </span>
@@ -718,23 +836,28 @@ export default function TradeProposalsPanel({ data }) {
         </p>
       ) : null}
 
+      <Phase4CockpitNotice proposals={proposals} />
+
       {proposals.length === 0 ? (
         <p className="ck-co-tp-note">
-          {data.note || 'No actionable proposals right now.'}
+          {data.note || 'No proposals in scope right now.'}
         </p>
       ) : (
-        <div className="ck-co-tp-list">
-          {proposals.map((p) => (
-            <Link
-              key={p.proposal_id}
-              to={p.detail_route || '#'}
-              className="ck-co-tp-row-link"
-              title={`Inspect ${p.symbol} on the structural market timeline`}
-            >
-              <ProposalRow proposal={p} />
-            </Link>
-          ))}
-        </div>
+        <>
+          <ProposalsGroup
+            title="Actionable proposals"
+            hint="Fresh structural entry. Duplicate actionable adds on symbols you already hold are hidden."
+            items={grouped.actionable}
+          />
+          <ProposalsGroup
+            title="Monitor / degraded thesis"
+            items={grouped.monitor}
+          />
+          <ProposalsGroup
+            title="Not actionable / rejected / unknown"
+            items={grouped.other}
+          />
+        </>
       )}
     </section>
   )

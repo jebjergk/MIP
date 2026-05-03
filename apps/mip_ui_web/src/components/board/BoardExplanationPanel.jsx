@@ -324,15 +324,40 @@ export default function BoardExplanationPanel({ proposalId }) {
           <p className="lpa-c2-muted">Could not load board data: {error}</p>
         ) : !available ? (
           <p className="lpa-c2-muted">{note || 'Board explanation is not available for this proposal.'}</p>
-        ) : hasPhase4 ? (
-          <Phase4ChairSection
-            phase4Chair={phase4Chair}
-            phase4LatestHealth={phase4LatestHealth}
-          />
         ) : (
-          <p className="lpa-c2-muted">
-            No Phase 4 chair payload returned for this proposal (check board lineage / STOCK-only guard).
-          </p>
+          <>
+            <div className="lpa-c2-bx-contract" role="status">
+              {(data?.proposal_lifecycle_status || data?.status) ? (
+                <span
+                  className="lpa-c2-bx-contract-pill lpa-c2-bx-contract-pill--life"
+                  title="Proposal row status in STRUCTURAL_TRADE_PROPOSALS"
+                >
+                  Lifecycle: {pretty(data.proposal_lifecycle_status || data.status)}
+                </span>
+              ) : null}
+              {data?.operational_state ? (
+                <span
+                  className="lpa-c2-bx-contract-pill lpa-c2-bx-contract-pill--op"
+                  title={
+                    'API-derived operator state from Phase 4 + execution linkage. ' +
+                    'Live invalidation is applied on the cockpit trade-proposals path; this panel does not synthesize it.'
+                  }
+                >
+                  Operator: {pretty(data.operational_state)}
+                </span>
+              ) : null}
+            </div>
+            {hasPhase4 ? (
+              <Phase4ChairSection
+                phase4Chair={phase4Chair}
+                phase4LatestHealth={phase4LatestHealth}
+              />
+            ) : (
+              <p className="lpa-c2-muted">
+                No Phase 4 chair payload returned for this proposal (check board lineage / STOCK-only guard).
+              </p>
+            )}
+          </>
         )}
       </div>
 

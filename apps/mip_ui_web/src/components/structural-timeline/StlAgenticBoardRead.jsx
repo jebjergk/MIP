@@ -108,7 +108,14 @@ export default function StlAgenticBoardRead({ proposals, get }) {
       ) : data?.available === false ? (
         <p className="stl-muted">{data?.note || 'No board lineage for this proposal.'}</p>
       ) : hasPhase4 ? (
-        <Phase4ChairSection phase4Chair={phase4Chair} phase4LatestHealth={phase4LatestHealth} />
+        <>
+          <p className="stl-agentic-read-hint">
+            Symbol Tracker chart: <strong>orange</strong> dashed = proposal publication date;
+            {' '}<strong>teal</strong> solid = latest Phase 4 watch / wait / failure verdict.
+            Structural chart above: orange <strong>only</strong> marks a published proposal (P), not monitor mode.
+          </p>
+          <Phase4ChairSection phase4Chair={phase4Chair} phase4LatestHealth={phase4LatestHealth} />
+        </>
       ) : (
         <p className="stl-muted">No Phase 4 chair payload returned.</p>
       )}

@@ -33,8 +33,10 @@ Sources (no legacy / sim / shadow):
                                    zone_status.
 
 Filtering:
-  * Skip symbols already held in V_LIVE_OPEN_POSITIONS for this
-    portfolio.
+  * Suppress ACTIONABLE_PROPOSAL rows on symbols already held in
+    V_LIVE_OPEN_POSITIONS (duplicate fresh-entry noise).
+  * Always surface MONITOR / NOT_ACTIONABLE / UNKNOWN (etc.) on held
+    symbols so operators see thesis degradation while long.
   * Cap to MAX_PROPOSALS.
 
 Derived fields (live-driven):
@@ -54,11 +56,14 @@ TradeProposalsPayload(available=False, ...).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import date
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, timezone
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import quote
 
 from app.db import fetch_all, get_connection, serialize_row
+from app.services.cockpit.operational_state import ACTIONABLE_PROPOSAL, derive_operational_state
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +138,10 @@ class TradeProposal:
     detail_route: Optional[str] = None
     created_at: Optional[str] = None
 
+    # Phase 4 agentic dossier id when published via BOARD_DOSSIER_ID (null
+    # for legacy Phase 3 candidate-only proposals).
+    board_dossier_id: Optional[int] = None
+
     # Board priority signal — comparative board rank relative to other
     # published proposals in the slate. Intentionally orthogonal to
     # entry_readiness above:
@@ -165,6 +174,9 @@ class TradeProposal:
     # otherwise the most recent symbol-level verdict (linkage =
     # SYMBOL_LATEST_ONLY). None when no Phase 4 data exists.
     phase4_health: Optional[Dict[str, Any]] = None
+
+    # Derived operator contract (API-only; never persisted).
+    operational_state: str = "UNKNOWN"
 
 
 @dataclass(frozen=True)
@@ -218,6 +230,7 @@ _PROPOSALS_SQL = """
         s.SETUP_DATE,
         p.BOARD_RUN_ID,
         p.BOARD_CANDIDATE_ID,
+        p.BOARD_DOSSIER_ID,
         p.BOARD_FINAL_RANK,
         p.BOARD_FINAL_VERDICT,
         p.BOARD_PRIMARY_REASON_CODE,
@@ -270,6 +283,15 @@ _OPEN_POSITION_SYMBOLS_SQL = """
     SELECT DISTINCT SYMBOL
     FROM MIP.MART.V_LIVE_OPEN_POSITIONS
     WHERE PORTFOLIO_ID = %(portfolio_id)s
+"""
+
+# Open rows that still reference a structural proposal_id (executed /
+# managed position keyed back to the originating proposal).
+_EXECUTED_PROPOSAL_IDS_SQL = """
+    SELECT DISTINCT PROPOSAL_ID
+    FROM MIP.MART.V_LIVE_OPEN_POSITIONS
+    WHERE PORTFOLIO_ID = %(portfolio_id)s
+      AND PROPOSAL_ID IS NOT NULL
 """
 
 # Daily closes per symbol since `since`. Used to draw the compact
@@ -622,6 +644,31 @@ def _parse_variant_json(value: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _calendar_age_days_from_as_of(as_of_val: Any) -> Optional[int]:
+    """UTC calendar-day distance from as_of (date or ISO prefix) to today."""
+    if as_of_val is None:
+        return None
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(as_of_val))
+    if not m:
+        return None
+    try:
+        dt = date(int(m[1]), int(m[2]), int(m[3]))
+    except ValueError:
+        return None
+    today = datetime.now(timezone.utc).date()
+    return max(0, (today - dt).days)
+
+
+def _staleness_tier(age_days: Optional[int]) -> str:
+    if age_days is None:
+        return "UNKNOWN"
+    if age_days <= 2:
+        return "FRESH"
+    if age_days >= 3:
+        return "STALE"
+    return "AGING"
+
+
 def _build_phase4_health_payload(row: Dict[str, Any], linkage: str) -> Dict[str, Any]:
     """Convert a Snowflake `_PHASE4_*_SQL` row into the JSON payload
     consumed by the cockpit ProposalRow.
@@ -629,13 +676,18 @@ def _build_phase4_health_payload(row: Dict[str, Any], linkage: str) -> Dict[str,
     `linkage` is one of `PRIOR_THESIS_MATCH` | `SYMBOL_LATEST_ONLY` and
     drives the UI's "(symbol-level)" suffix.
     """
+    as_of = row.get("AS_OF_DATE")
+    run_at = row.get("RUN_AT")
+    age_days = _calendar_age_days_from_as_of(as_of)
+    pri = row.get("PRIMARY_REASON_CODE")
     return {
         "linkage": linkage,
         "latest_board_action": row.get("FINAL_ACTION"),
         "latest_board_direction": row.get("FINAL_DIRECTION"),
         "latest_thesis_health": row.get("THESIS_HEALTH"),
         "latest_final_thesis": row.get("FINAL_THESIS"),
-        "primary_reason_code": row.get("PRIMARY_REASON_CODE"),
+        "primary_reason_code": pri,
+        "latest_board_primary_reason": pri,
         "prior_thesis_ref": _parse_variant_json(row.get("PRIOR_THESIS_REF")),
         "continuation_quality": row.get("CONTINUATION_QUALITY"),
         "resistance_overhead_risk": row.get("RESISTANCE_OVERHEAD_RISK"),
@@ -648,8 +700,12 @@ def _build_phase4_health_payload(row: Dict[str, Any], linkage: str) -> Dict[str,
         "broken_resistance_role": row.get("BROKEN_R_ROLE"),
         "nearest_support": _f(row.get("NEAREST_SUPPORT")),
         "nearest_resistance": _f(row.get("NEAREST_RESISTANCE")),
-        "as_of_date": row.get("AS_OF_DATE"),
-        "run_at": row.get("RUN_AT"),
+        "as_of_date": as_of,
+        "run_at": run_at,
+        "latest_board_as_of": as_of,
+        "latest_board_run_at": run_at,
+        "latest_board_age_days": age_days,
+        "staleness_tier": _staleness_tier(age_days),
         "run_id": row.get("RUN_ID"),
     }
 
@@ -781,6 +837,25 @@ def _load_open_position_symbols(portfolio_id: int) -> set:
         logger.warning("trade_proposals: open-positions query failed: %s", exc)
         return set()
     return {str(r.get("SYMBOL") or "").upper() for r in rows if r.get("SYMBOL")}
+
+
+def _load_executed_proposal_ids(portfolio_id: int) -> Set[int]:
+    """Proposal IDs referenced by currently-open live positions."""
+    try:
+        rows = _query(_EXECUTED_PROPOSAL_IDS_SQL, {"portfolio_id": int(portfolio_id)})
+    except Exception as exc:
+        logger.warning("trade_proposals: executed-proposal query failed: %s", exc)
+        return set()
+    out: Set[int] = set()
+    for r in rows:
+        pid = r.get("PROPOSAL_ID")
+        if pid is None:
+            continue
+        try:
+            out.add(int(pid))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _load_daily_bars(symbols: List[str]) -> Dict[str, List[MiniChartPoint]]:
@@ -989,6 +1064,7 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
         return TradeProposalsPayload(available=True, total_count=0)
 
     held_symbols = _load_open_position_symbols(int(portfolio_id))
+    executed_pids = _load_executed_proposal_ids(int(portfolio_id))
 
     # Same-symbol multiplicity is computed against the FULL slate (not
     # the held-symbol-filtered actionable subset) because the badge
@@ -996,30 +1072,13 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
     # this particular cockpit panel chose to render.
     same_symbol_map = _build_same_symbol_map(rows)
 
-    # Skip proposals on symbols already held; a duplicate entry signal
-    # is noise, not an actionable proposal in this dashboard.
-    actionable_rows = [
-        r for r in rows
-        if str(r.get("SYMBOL") or "").upper() not in held_symbols
-    ]
-
-    total_count = len(actionable_rows)
-    actionable_rows = actionable_rows[:MAX_PROPOSALS]
-
-    if not actionable_rows:
-        note = (
-            "All current proposals are on symbols you already hold."
-            if rows else None
-        )
-        return TradeProposalsPayload(available=True, total_count=0, note=note)
-
     stances = _load_committee_stance()
-    symbols = sorted({str(r.get("SYMBOL") or "").upper() for r in actionable_rows})
+    symbols = sorted({str(r.get("SYMBOL") or "").upper() for r in rows})
     daily_bars_by_symbol = _load_daily_bars(symbols)
 
     # Phase 4 thesis-health surfacing — fail-soft and lineage-aware.
     pid_symbol_map: Dict[int, str] = {}
-    for r in actionable_rows:
+    for r in rows:
         try:
             pid_symbol_map[int(r.get("PROPOSAL_ID"))] = str(r.get("SYMBOL") or "").upper()
         except (TypeError, ValueError):
@@ -1036,11 +1095,16 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
     intraday = _fetch_intraday_for_proposals(symbols)
 
     proposals: List[TradeProposal] = []
-    for r in actionable_rows:
+    for r in rows:
         try:
             pid = int(r.get("PROPOSAL_ID"))
         except (TypeError, ValueError):
             continue
+        dossier_raw = r.get("BOARD_DOSSIER_ID")
+        try:
+            board_dossier_id = int(dossier_raw) if dossier_raw is not None else None
+        except (TypeError, ValueError):
+            board_dossier_id = None
         symbol = str(r.get("SYMBOL") or "").upper()
         direction = str(r.get("DIRECTION") or "").upper() or "LONG"
         entry_low = _f(r.get("ENTRY_ZONE_LOW"))
@@ -1083,6 +1147,14 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
             committee_stance=stance,
         )
 
+        ph4 = phase4_health_by_pid.get(pid)
+        operational_state = derive_operational_state(
+            latest_board_action=ph4.get("latest_board_action") if ph4 else None,
+            phase4_health_present=bool(ph4),
+            executed=pid in executed_pids,
+            live_invalidated=zone_code == "INVALIDATED",
+        )
+
         # --- Chart series ---------------------------------------------
         # Always include the daily backbone for context, then append
         # today's intraday bars (when available) so the chart shows
@@ -1090,6 +1162,11 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
         chart_series: List[MiniChartPoint] = []
         chart_series.extend(daily_pts)
         chart_series.extend(intraday_bars)
+
+        detail_route = (
+            f"/symbol-tracker?symbol={quote(symbol, safe='-.')}"
+            f"&proposal_id={pid}&portfolio_id={int(portfolio_id)}"
+        )
 
         proposals.append(
             TradeProposal(
@@ -1117,8 +1194,9 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
                 ),
                 intraday_status=per_proposal_intraday_status,
                 mini_chart_series=chart_series,
-                detail_route=f"/structural-market-timeline?symbol={symbol}",
+                detail_route=detail_route,
                 created_at=str(r.get("CREATED_AT")) if r.get("CREATED_AT") else None,
+                board_dossier_id=board_dossier_id,
                 priority_rank=r.get("BOARD_FINAL_RANK"),
                 priority_band=r.get("BOARD_FINAL_VERDICT"),
                 priority_band_label=r.get("BOARD_FINAL_VERDICT"),
@@ -1129,9 +1207,31 @@ def load_trade_proposals(portfolio_id: int) -> TradeProposalsPayload:
                 same_symbol_other_count=int(same_symbol_map.get(pid, {}).get("count") or 0),
                 same_symbol_other_directions=list(same_symbol_map.get(pid, {}).get("directions") or []),
                 same_symbol_other_proposal_ids=list(same_symbol_map.get(pid, {}).get("proposal_ids") or []),
-                phase4_health=phase4_health_by_pid.get(pid),
+                phase4_health=ph4,
+                operational_state=operational_state,
             )
         )
+
+    # Drop only fresh-entry noise: held symbol + ACTIONABLE_PROPOSAL.
+    filtered = [
+        p for p in proposals
+        if not (p.symbol in held_symbols and p.operational_state == ACTIONABLE_PROPOSAL)
+    ]
+    total_count = len(filtered)
+    if total_count == 0:
+        note0 = (
+            "All current proposals are on symbols you already hold."
+            if rows else None
+        )
+        return TradeProposalsPayload(
+            available=True,
+            total_count=0,
+            intraday_overlay_status=intraday.overlay_status,
+            intraday_evaluated_ts=intraday.evaluated_ts,
+            note=note0,
+        )
+
+    proposals = filtered[:MAX_PROPOSALS]
 
     note: Optional[str] = None
     if intraday.overlay_status == "UNAVAILABLE" and intraday.error:
@@ -1242,6 +1342,7 @@ def to_payload_dict(payload: TradeProposalsPayload) -> Dict[str, Any]:
                 ],
                 "detail_route": p.detail_route,
                 "created_at": p.created_at,
+                "board_dossier_id": p.board_dossier_id,
                 "priority_rank": p.priority_rank,
                 "priority_band": p.priority_band,
                 "priority_band_label": p.priority_band_label,
@@ -1253,6 +1354,7 @@ def to_payload_dict(payload: TradeProposalsPayload) -> Dict[str, Any]:
                 "same_symbol_other_directions": p.same_symbol_other_directions,
                 "same_symbol_other_proposal_ids": p.same_symbol_other_proposal_ids,
                 "phase4_health": p.phase4_health,
+                "operational_state": p.operational_state,
             }
             for p in payload.proposals
         ],

@@ -2219,13 +2219,41 @@
   color: #cbd5e1;
 }
 .lc-phase4-toggle.is-on {
-  background: rgba(167, 139, 250, 0.18);
-  border-color: #a78bfa;
-  color: #ddd6fe;
+  background: rgba(249, 115, 22, 0.15);
+  border-color: #f97316;
+  color: #fdba74;
 }
 .lc-phase4-toggle.is-on:hover {
-  background: rgba(167, 139, 250, 0.28);
+  background: rgba(249, 115, 22, 0.24);
 }
+
+.lc-phase4-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  margin-left: auto;
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 500;
+}
+.lc-phase4-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+.lc-phase4-swatch {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.22rem;
+  border-radius: 2px;
+}
+.lc-phase4-swatch--proposal { background: #f97316; }
+.lc-phase4-swatch--watch { background: #0e7490; }
+.lc-phase4-swatch--action-long { background: #22c55e; }
+.lc-phase4-swatch--action-short { background: #ef4444; }
+.lc-phase4-swatch--none { background: #94a3b8; }
 
 @media (max-width: 900px) {
   .lc-body {

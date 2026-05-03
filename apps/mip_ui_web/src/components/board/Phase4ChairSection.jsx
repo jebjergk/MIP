@@ -110,6 +110,20 @@ export default function Phase4ChairSection({ phase4Chair, phase4LatestHealth }) 
   const nearestSupport = zones.nearest_support
   const nearestResistance = zones.nearest_resistance
 
+  const hasVerdictDrivers = Boolean(
+    latest.why_not_opposite || latest.why_not_no_trade || latest.risk_treatment,
+  )
+  const showStructuralCol = Boolean(
+    struct.trend_shape_class ||
+      struct.current_range_position_pct != null ||
+      ac.continuation_quality,
+  )
+  const showZonesCol = Boolean(
+    (brokenR && brokenR.level_price != null) ||
+      nearestSupport != null ||
+      nearestResistance != null,
+  )
+
   const showBreadcrumb =
     phase4LatestHealth && phase4Chair && phase4LatestHealth !== phase4Chair
 
@@ -166,106 +180,116 @@ export default function Phase4ChairSection({ phase4Chair, phase4LatestHealth }) 
         <p className="lpa-c2-bx-ph4-thesis">{latest.final_thesis}</p>
       ) : null}
 
-      <div className="lpa-c2-bx-ph4-grid">
-        <div className="lpa-c2-bx-ph4-section">
-          <div className="lpa-c2-bx-ph4-section-label">Structural timeline</div>
-          <dl className="lpa-c2-bx-ph4-dl">
-            {struct.trend_shape_class ? (
-              <>
-                <dt>Trend shape</dt>
-                <dd>{pretty(struct.trend_shape_class)}</dd>
-              </>
-            ) : null}
-            {struct.current_range_position_pct != null ? (
-              <>
-                <dt>Range position</dt>
-                <dd>{Number(struct.current_range_position_pct).toFixed(1)}%</dd>
-              </>
-            ) : null}
-            {ac.continuation_quality ? (
-              <>
-                <dt>Continuation</dt>
-                <dd>{pretty(ac.continuation_quality)}</dd>
-              </>
-            ) : null}
-          </dl>
+      <div
+        className={`lpa-c2-bx-ph4-grid${hasVerdictDrivers ? ' lpa-c2-bx-ph4-grid--with-verdict' : ''}`}
+      >
+        <div className="lpa-c2-bx-ph4-evidence-cluster">
+          {showStructuralCol ? (
+            <div className="lpa-c2-bx-ph4-section">
+              <div className="lpa-c2-bx-ph4-section-label">Structural timeline</div>
+              <dl className="lpa-c2-bx-ph4-dl">
+                {struct.trend_shape_class ? (
+                  <>
+                    <dt>Trend shape</dt>
+                    <dd>{pretty(struct.trend_shape_class)}</dd>
+                  </>
+                ) : null}
+                {struct.current_range_position_pct != null ? (
+                  <>
+                    <dt>Range position</dt>
+                    <dd>{Number(struct.current_range_position_pct).toFixed(1)}%</dd>
+                  </>
+                ) : null}
+                {ac.continuation_quality ? (
+                  <>
+                    <dt>Continuation</dt>
+                    <dd>{pretty(ac.continuation_quality)}</dd>
+                  </>
+                ) : null}
+              </dl>
+            </div>
+          ) : null}
+
+          <div className="lpa-c2-bx-ph4-section">
+            <div className="lpa-c2-bx-ph4-section-label">Candle psychology</div>
+            <dl className="lpa-c2-bx-ph4-dl">
+              {candle.recent_cluster ? (
+                <>
+                  <dt>Recent cluster</dt>
+                  <dd>{pretty(candle.recent_cluster)}</dd>
+                </>
+              ) : (
+                <>
+                  <dt>Recent cluster</dt>
+                  <dd className="lpa-c2-muted">none labeled</dd>
+                </>
+              )}
+              {ac.resistance_overhead_risk ? (
+                <>
+                  <dt>Resistance overhead</dt>
+                  <dd>{pretty(ac.resistance_overhead_risk)}</dd>
+                </>
+              ) : null}
+            </dl>
+          </div>
+
+          {showZonesCol ? (
+            <div className="lpa-c2-bx-ph4-section">
+              <div className="lpa-c2-bx-ph4-section-label">Zones</div>
+              <dl className="lpa-c2-bx-ph4-dl">
+                {brokenR && brokenR.level_price != null ? (
+                  <>
+                    <dt>Broken R{'\u2192'}S</dt>
+                    <dd>
+                      {fmtPriceLite(brokenR.level_price)}
+                      {brokenR.confidence != null ? (
+                        <span className="lpa-c2-bx-ph4-conf"> · conf {Number(brokenR.confidence).toFixed(2)}</span>
+                      ) : null}
+                    </dd>
+                  </>
+                ) : null}
+                {nearestSupport != null ? (
+                  <>
+                    <dt>Nearest support</dt>
+                    <dd>{fmtPriceLite(nearestSupport)}</dd>
+                  </>
+                ) : null}
+                {nearestResistance != null ? (
+                  <>
+                    <dt>Nearest resistance</dt>
+                    <dd>{fmtPriceLite(nearestResistance)}</dd>
+                  </>
+                ) : null}
+              </dl>
+            </div>
+          ) : null}
         </div>
 
-        <div className="lpa-c2-bx-ph4-section">
-          <div className="lpa-c2-bx-ph4-section-label">Candle psychology</div>
-          <dl className="lpa-c2-bx-ph4-dl">
-            {candle.recent_cluster ? (
-              <>
-                <dt>Recent cluster</dt>
-                <dd>{pretty(candle.recent_cluster)}</dd>
-              </>
-            ) : (
-              <>
-                <dt>Recent cluster</dt>
-                <dd className="lpa-c2-muted">none labeled</dd>
-              </>
-            )}
-            {ac.resistance_overhead_risk ? (
-              <>
-                <dt>Resistance overhead</dt>
-                <dd>{pretty(ac.resistance_overhead_risk)}</dd>
-              </>
-            ) : null}
-          </dl>
-        </div>
-
-        <div className="lpa-c2-bx-ph4-section">
-          <div className="lpa-c2-bx-ph4-section-label">Zones</div>
-          <dl className="lpa-c2-bx-ph4-dl">
-            {brokenR && brokenR.level_price != null ? (
-              <>
-                <dt>Broken R{'\u2192'}S</dt>
-                <dd>
-                  {fmtPriceLite(brokenR.level_price)}
-                  {brokenR.confidence != null ? (
-                    <span className="lpa-c2-bx-ph4-conf"> · conf {Number(brokenR.confidence).toFixed(2)}</span>
-                  ) : null}
-                </dd>
-              </>
-            ) : null}
-            {nearestSupport != null ? (
-              <>
-                <dt>Nearest support</dt>
-                <dd>{fmtPriceLite(nearestSupport)}</dd>
-              </>
-            ) : null}
-            {nearestResistance != null ? (
-              <>
-                <dt>Nearest resistance</dt>
-                <dd>{fmtPriceLite(nearestResistance)}</dd>
-              </>
-            ) : null}
-          </dl>
-        </div>
-
-        <div className="lpa-c2-bx-ph4-section">
-          <div className="lpa-c2-bx-ph4-section-label">What changes the verdict</div>
-          <dl className="lpa-c2-bx-ph4-dl">
-            {latest.why_not_opposite ? (
-              <>
-                <dt>Why not opposite</dt>
-                <dd>{latest.why_not_opposite}</dd>
-              </>
-            ) : null}
-            {latest.why_not_no_trade ? (
-              <>
-                <dt>Why not no-trade</dt>
-                <dd>{latest.why_not_no_trade}</dd>
-              </>
-            ) : null}
-            {latest.risk_treatment ? (
-              <>
-                <dt>Risk treatment</dt>
-                <dd>{latest.risk_treatment}</dd>
-              </>
-            ) : null}
-          </dl>
-        </div>
+        {hasVerdictDrivers ? (
+          <div className="lpa-c2-bx-ph4-section lpa-c2-bx-ph4-section--verdict">
+            <div className="lpa-c2-bx-ph4-section-label">What changes the verdict</div>
+            <dl className="lpa-c2-bx-ph4-dl lpa-c2-bx-ph4-dl--prose">
+              {latest.why_not_opposite ? (
+                <>
+                  <dt>Why not opposite</dt>
+                  <dd>{latest.why_not_opposite}</dd>
+                </>
+              ) : null}
+              {latest.why_not_no_trade ? (
+                <>
+                  <dt>Why not no-trade</dt>
+                  <dd>{latest.why_not_no_trade}</dd>
+                </>
+              ) : null}
+              {latest.risk_treatment ? (
+                <>
+                  <dt>Risk treatment</dt>
+                  <dd>{latest.risk_treatment}</dd>
+                </>
+              ) : null}
+            </dl>
+          </div>
+        ) : null}
       </div>
 
       {showBreadcrumb ? (

@@ -565,13 +565,14 @@ export function buildPhase4Overlays(ph4, proposal, xRange, toggles = {}) {
   if (showProposal && proposal && proposal.created_at) {
     const tProp = new Date(proposal.created_at).getTime()
     if (Number.isFinite(tProp) && tProp >= x0 && tProp <= x1) {
+      const proposalOrange = '#f97316'
       out.shapes.push({
         type: 'line',
         xref: 'x',
         yref: 'paper',
         x0: tProp, x1: tProp,
         y0: 0, y1: 1,
-        line: { color: 'rgba(167, 139, 250, 0.8)', width: 1.4, dash: '6px,4px' },
+        line: { color: 'rgba(249, 115, 22, 0.85)', width: 1.4, dash: '6px,4px' },
         layer: 'below',
       })
       const label = `Proposed${proposal.direction ? ` ${String(proposal.direction).toUpperCase()}` : ''}${proposal.proposal_id != null ? ` #${proposal.proposal_id}` : ''}`
@@ -586,7 +587,7 @@ export function buildPhase4Overlays(ph4, proposal, xRange, toggles = {}) {
         yanchor: 'top',
         xshift: 4,
         yshift: -2,
-        font: { size: 10, color: '#a78bfa' },
+        font: { size: 10, color: proposalOrange },
       })
     }
   }
@@ -597,13 +598,23 @@ export function buildPhase4Overlays(ph4, proposal, xRange, toggles = {}) {
       ? new Date(latest.run_at).getTime()
       : (latest.as_of_date ? new Date(`${latest.as_of_date}T16:00:00Z`).getTime() : null)
     const xVerdict = Number.isFinite(verdictTime) ? Math.min(Math.max(verdictTime, x0), x1) : x1
-    const tone = String(latest.final_action).startsWith('WATCH_LONG_FAILURE') || String(latest.final_action).startsWith('WATCH_SHORT_FAILURE')
-      ? '#f0ad4e'
-      : String(latest.final_action) === 'PROPOSE_LONG' || String(latest.final_action) === 'WATCH_LONG'
-        ? '#22c55e'
-        : String(latest.final_action) === 'PROPOSE_SHORT' || String(latest.final_action) === 'WATCH_SHORT'
-          ? '#ef4444'
-          : '#94a3b8'
+    const fa = String(latest.final_action || '').toUpperCase()
+    // Teal/cyan for monitor + wait — deliberately **not** adjacent to proposal orange (#f97316).
+    const monitorVerdict = '#0e7490'
+    const grey = '#94a3b8'
+    let tone = grey
+    if (
+      fa.startsWith('WATCH_')
+      || fa === 'WAIT_FOR_CONFIRMATION'
+    ) {
+      tone = monitorVerdict
+    } else if (fa === 'PROPOSE_LONG' || fa === 'WATCH_LONG') {
+      tone = '#22c55e'
+    } else if (fa === 'PROPOSE_SHORT' || fa === 'WATCH_SHORT') {
+      tone = '#ef4444'
+    } else if (fa === 'NO_TRADE' || fa === 'REJECT') {
+      tone = grey
+    }
     if (Number.isFinite(verdictTime)) {
       out.shapes.push({
         type: 'line',

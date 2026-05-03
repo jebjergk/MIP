@@ -212,6 +212,57 @@
   gap: 0.4rem;
 }
 
+.ck-co-tp-phase4-strip {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #96f2d7;
+  background: linear-gradient(90deg, #d8f5e9 0%, #f4fcf8 100%);
+  font-size: 0.78rem;
+  line-height: 1.38;
+  color: #1b4332;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  align-items: baseline;
+}
+
+.ck-co-tp-phase4-strip-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+}
+
+.ck-co-tp-phase4-strip-body {
+  flex: 1 1 14rem;
+  color: #2d6a4f;
+}
+
+.ck-co-tp-phase4-strip--subtle {
+  border-color: #ced4da;
+  background: linear-gradient(90deg, #f1f3f5 0%, #f8f9fa 100%);
+  color: #495057;
+}
+
+.ck-co-tp-phase4-strip--subtle .ck-co-tp-phase4-strip-title {
+  color: #495057;
+}
+
+.ck-co-tp-phase4-strip--subtle .ck-co-tp-phase4-strip-body {
+  color: #6c757d;
+}
+
+.ck-co-tp-dossier {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.06rem 0.38rem;
+  border-radius: 4px;
+  background: #e7f5ff;
+  color: #1864ab;
+  border: 1px solid #a5d8ff;
+}
+
 .ck-co-tp-header {
   display: flex;
   align-items: baseline;
@@ -261,6 +312,63 @@
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+
+.ck-co-tp-list--in-group {
+  margin-top: 0.25rem;
+}
+
+.ck-co-tp-group {
+  margin-top: 0.65rem;
+}
+.ck-co-tp-group:first-of-type {
+  margin-top: 0.15rem;
+}
+
+.ck-co-tp-group-title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #495057;
+}
+
+.ck-co-tp-group-hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  color: #868e96;
+  line-height: 1.35;
+}
+
+.ck-co-tp-opstate {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.06rem 0.38rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+.ck-co-tp-opstate--ok {
+  background: #d1e7dd;
+  color: #0f5132;
+  border-color: #a3cfbb;
+}
+.ck-co-tp-opstate--warn {
+  background: #fff4e6;
+  color: #8a5a00;
+  border-color: #ffd8a8;
+}
+.ck-co-tp-opstate--monitor {
+  background: #ecfeff;
+  color: #0e7490;
+  border-color: #a5f3fc;
+}
+.ck-co-tp-opstate--neutral {
+  background: #f1f3f5;
+  color: #495057;
+  border-color: #dee2e6;
 }
 
 .ck-co-tp-row-link {

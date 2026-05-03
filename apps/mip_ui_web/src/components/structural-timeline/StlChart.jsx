@@ -76,7 +76,7 @@ function SetupMarkerShape(props) {
   const dir = (payload.setupDir || '').toUpperCase()
   const hasProposal = payload.setupHasProposal
   const isLong = dir === 'LONG'
-  const fill = hasProposal ? '#f9a825' : (isLong ? '#1a73e8' : '#d93025')
+  const fill = hasProposal ? '#f97316' : (isLong ? '#1a73e8' : '#d93025')
   const size = 5
   const points = isLong
     ? `${cx},${cy - size} ${cx - size},${cy + size} ${cx + size},${cy + size}`
@@ -89,7 +89,7 @@ function ProposalMarkerShape(props) {
   if (cx == null || cy == null) return null
   return (
     <g>
-      <circle cx={cx} cy={cy} r={6} fill="#f9a825" stroke="#fff" strokeWidth={1.5} />
+      <circle cx={cx} cy={cy} r={6} fill="#f97316" stroke="#fff" strokeWidth={1.5} />
       <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize={8} fill="#fff" fontWeight="bold">P</text>
     </g>
   )
@@ -115,7 +115,7 @@ function ChartTooltip({ active, payload, label }) {
         </div>
       )}
       {d.proposalEvents && d.proposalEvents.length > 0 && (
-        <div style={{ marginTop: 4, color: '#e37400', fontWeight: 600, fontSize: '0.75rem' }}>
+        <div style={{ marginTop: 4, color: '#f97316', fontWeight: 600, fontSize: '0.75rem' }}>
           Proposal: {(d.proposalEvents[0].SETUP_FAMILY || d.proposalEvents[0].setup_family || '').replace(/_/g, ' ')}
         </div>
       )}
@@ -295,7 +295,9 @@ export default function StlChart({
       <div className="stl-chart-legend">
         <span className="stl-legend-item"><span className="stl-legend-swatch" style={{ background: '#1a73e8' }} /> Long setup</span>
         <span className="stl-legend-item"><span className="stl-legend-swatch" style={{ background: '#d93025' }} /> Short setup</span>
-        <span className="stl-legend-item"><span className="stl-legend-swatch" style={{ background: '#f9a825', borderRadius: '50%' }} /> Proposal</span>
+        <span className="stl-legend-item" title="Same orange as Symbol Tracker proposal publication line. Phase 4 watch/monitor verdict there is teal, not this swatch.">
+          <span className="stl-legend-swatch" style={{ background: '#f97316', borderRadius: '50%' }} /> Published proposal (P)
+        </span>
         {overlays.levels && <span className="stl-legend-item"><span className="stl-legend-swatch" style={{ background: '#26a69a' }} /> Support</span>}
         {overlays.levels && <span className="stl-legend-item"><span className="stl-legend-swatch" style={{ background: '#ef5350' }} /> Resistance</span>}
       </div>

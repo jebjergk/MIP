@@ -2,13 +2,46 @@
 Structural Market Timeline: API endpoints for the symbol-first
 structural timeline page.  All data from MIP.MART.V_STRUCTURAL_TIMELINE_* views.
 """
-from typing import Optional
+import json
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.db import get_connection, fetch_all, serialize_rows, serialize_row
 
 router = APIRouter(prefix="/structural-timeline", tags=["structural-timeline"])
+
+# Phase 4 thesis verdict rows surfaced as amber monitor markers (not publication anchors).
+_MONITOR_FINAL_ACTIONS = (
+    "WATCH_LONG",
+    "WATCH_SHORT",
+    "WATCH_LONG_FAILURE",
+    "WATCH_SHORT_FAILURE",
+    "WAIT_FOR_CONFIRMATION",
+    "CHAIR_WATCH_LONG",
+    "CHAIR_WATCH_SHORT",
+    "CHAIR_WATCH_LONG_FAILURE",
+    "CHAIR_WATCH_SHORT_FAILURE",
+    "CHAIR_WAIT_FOR_CONFIRMATION",
+)
+
+
+def _decode_variant_object(val: Any) -> Optional[dict]:
+    """Snowflake VARIANT → dict for JSON responses (read-only surfacing)."""
+    if val is None:
+        return None
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if not s or s.lower() == "null":
+            return None
+        try:
+            obj = json.loads(s)
+            return obj if isinstance(obj, dict) else None
+        except Exception:  # noqa: BLE001
+            return None
+    return None
 
 
 def _date_clauses(start: Optional[str], end: Optional[str], date_col: str):
@@ -231,6 +264,80 @@ def get_structural_timeline_events(
         cur.execute(sql, params)
         rows = fetch_all(cur)
         return {"events": serialize_rows(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/market-structure")
+def get_structural_timeline_market_structure(
+    symbol: str = Query(...),
+    market_type: str = Query("STOCK"),
+):
+    """Deterministic market_structure_map from V_SYMBOL_MARKET_STRUCTURE_MAP (read-only)."""
+    conn = get_connection()
+    try:
+        sql = (
+            "SELECT MARKET_STRUCTURE_MAP FROM MIP.MART.V_SYMBOL_MARKET_STRUCTURE_MAP"
+            " WHERE SYMBOL = %s AND MARKET_TYPE = %s"
+        )
+        cur = conn.cursor()
+        cur.execute(sql, [symbol.upper(), market_type.upper()])
+        rows = fetch_all(cur)
+        if not rows:
+            return {"market_structure_map": None}
+        row = serialize_row(rows[0])
+        raw = row.get("MARKET_STRUCTURE_MAP") or row.get("market_structure_map")
+        return {"market_structure_map": _decode_variant_object(raw)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        conn.close()
+
+
+@router.get("/board-markers")
+def get_structural_timeline_board_markers(
+    symbol: str = Query(...),
+    market_type: str = Query("STOCK"),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+):
+    """Watch / monitor thesis verdicts — amber markers only; excludes PROPOSE_* and NO_TRADE/REJECT."""
+    conn = get_connection()
+    try:
+        in_list = ",".join(["%s"] * len(_MONITOR_FINAL_ACTIONS))
+        inner_where = ["v.SYMBOL = %s", "UPPER(COALESCE(v.MARKET_TYPE, 'STOCK')) = %s"]
+        params: List[Any] = [symbol.upper(), market_type.upper()]
+        if start:
+            inner_where.append("v.CREATED_AT::DATE >= %s")
+            params.append(start)
+        if end:
+            inner_where.append("v.CREATED_AT::DATE <= %s")
+            params.append(end)
+        iw = " AND ".join(inner_where)
+
+        sql = (
+            "WITH ranked AS ("
+            " SELECT"
+            " v.CREATED_AT::DATE AS MARKER_DATE,"
+            " v.FINAL_ACTION AS FINAL_ACTION,"
+            " v.RUN_ID AS RUN_ID,"
+            " v.DOSSIER_ID AS DOSSIER_ID,"
+            " ROW_NUMBER() OVER ("
+            " PARTITION BY v.CREATED_AT::DATE, v.FINAL_ACTION ORDER BY v.CREATED_AT DESC"
+            " ) AS RN"
+            " FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v"
+            f" WHERE {iw}"
+            ") SELECT MARKER_DATE, FINAL_ACTION, RUN_ID, DOSSIER_ID FROM ranked"
+            " WHERE RN = 1 AND FINAL_ACTION IN (" + in_list + ")"
+            " ORDER BY MARKER_DATE DESC"
+        )
+        params.extend(_MONITOR_FINAL_ACTIONS)
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        rows = fetch_all(cur)
+        return {"markers": serialize_rows(rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     finally:

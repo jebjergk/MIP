@@ -529,23 +529,41 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
           * STRUCTURAL CONTEXT RULE (Phase 4 evidence v1):
             You MUST retrieve structural_timeline_summary,
             candle_psychology, actionability_context, and market_structure_map before
-            authoring final_action. Your final_thesis MUST cite
+            authoring final_action.             Your final_thesis MUST cite
             current_range_position_pct, recent_cluster, and
-            continuation_quality, by name. Your rationale MUST also cite
-            market_structure_map.primary_structure and market_structure_map.structure_health
-            whenever directional posture or structural validity are argued.
+            continuation_quality, by name. For market_structure_map,
+            prefer copying facts into market_structure_read when final_action
+            is PROPOSE_LONG, PROPOSE_SHORT, WATCH_LONG_FAILURE,
+            WATCH_SHORT_FAILURE, or WAIT_FOR_CONFIRMATION; rationale may stay brief.
             If these slices are
             unavailable, default to WAIT_FOR_CONFIRMATION with primary
             reason CHAIR_WAIT_FOR_CONFIRMATION and explain why.
           * MARKET_STRUCTURE_MAP CITATION RULE (Phase 4 evidence v2):
             When final_action is one of PROPOSE_LONG, PROPOSE_SHORT,
             WATCH_LONG_FAILURE, WATCH_SHORT_FAILURE, or WAIT_FOR_CONFIRMATION,
-            your evidence_used array MUST include market_structure_map and your final_thesis
-            MUST reference bos/choch/latest_structure_event (when relevant), distinguishing
-            wick probes vs body-close structural breaks per map semantics.
+            your evidence_used array MUST include market_structure_map.
+            final_thesis may stay concise; UI consumers read market_structure_read
+            (below) for explicit MSM fields.
             If a prior LONG thesis exists and market_structure_map shows no body-close
             violation below the referenced HL chain, do not treat wick probes alone as structural invalidation.
             structure_posture_hint is advisory ONLY — not operational_state and must not replace monitors/proposals policy fields.
+          * STRUCTURED_MSM_SUMMARY RULE (Phase 4 evidence v2 — REQUIRED fields):
+            When final_action is one of PROPOSE_LONG, PROPOSE_SHORT,
+            WATCH_LONG_FAILURE, WATCH_SHORT_FAILURE, or WAIT_FOR_CONFIRMATION,
+            you MUST emit market_structure_read, body_wick_break_read, and
+            structure_decision_reason. Copy values faithfully from the
+            market_structure_map slice (do not invent swings).
+            market_structure_read.bos_body_close_confirmed MUST mirror
+            market_structure_map.bos.body_close_confirmed (boolean JSON true/false).
+            market_structure_read.choch_detected MUST mirror
+            market_structure_map.choch.detected (boolean).
+            body_wick_break_read: one short sentence stating whether the latest
+            structural picture is a wick-only probe/rejection vs a body-close
+            break vs neither (per map latest_structure_event and bos/choch).
+            structure_decision_reason: one sentence explaining why structure supports
+            ACTIONABLE vs MONITOR vs WAIT_FOR_CONFIRMATION vs NOT_ACTIONABLE language
+            aligned with your final_action (hint is evidence-only — cite map facts).
+            For other final_action values, omit these three keys or set them null.
           * CONTINUATION QUALITY RULE (Phase 4 evidence v1):
             If actionability_context.continuation_quality is CONTESTED
             or REJECTED, OR recent_cluster is
@@ -690,8 +708,19 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
             "continuation_quality": "<one of CONFIRMED, UNCONFIRMED, CONTESTED, REJECTED>",
             "resistance_overhead_risk": "<one of HIGH, MODERATE, LOW, CLEAR, UNKNOWN>",
             "entry_location_quality": "<one of AT_RESISTANCE, BELOW_RESISTANCE_OVERHEAD, MID_RANGE, AT_BROKEN_RESISTANCE_SUPPORT, AT_SUPPORT, UNKNOWN>",
-            "why_now_evidence": "<1-2 sentences citing structural_timeline_summary + recent_cluster>"
+            "why_now_evidence": "<1-2 sentences: cite structural_timeline_summary + recent_cluster and/or echo key MSM facts consistent with market_structure_read>"
           },
+          "market_structure_read": {
+            "primary_structure": "<exact copy market_structure_map.primary_structure when final_action gated>",
+            "structure_health": "<exact copy structure_health>",
+            "current_phase": "<exact copy current_phase>",
+            "latest_structure_event": "<exact copy latest_structure_event>",
+            "bos_body_close_confirmed": <boolean JSON true or false from map bos.body_close_confirmed>,
+            "choch_detected": <boolean JSON true or false from map choch.detected>,
+            "structure_posture_hint": "<exact copy structure_posture_hint>"
+          },
+          "body_wick_break_read": "<REQUIRED when final_action is PROPOSE_LONG, PROPOSE_SHORT, WATCH_LONG_FAILURE, WATCH_SHORT_FAILURE, or WAIT_FOR_CONFIRMATION: one sentence>",
+          "structure_decision_reason": "<REQUIRED when gated: one sentence tying structure to ACTIONABLE vs MONITOR vs WAIT vs NOT_ACTIONABLE>",
           "proposed_trade_config": {
             "thesis_label": "AGENTIC_<descriptor>",
             "entry_zone_low": <number>,

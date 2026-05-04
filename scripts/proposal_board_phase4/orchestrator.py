@@ -191,6 +191,23 @@ _AGENTIC_THESIS_LABEL_REQUIRED = {
 _REQUIRES_PRIOR_THESIS_REFERENCE = {
     "WATCH_LONG_FAILURE", "WATCH_SHORT_FAILURE",
 }
+# Phase 4 structural v2: Chair emits MSM summary JSON for UI consumers.
+_CHAIR_STRUCTURE_SUMMARY_REQUIRED_ACTIONS = {
+    "PROPOSE_LONG",
+    "PROPOSE_SHORT",
+    "WATCH_LONG_FAILURE",
+    "WATCH_SHORT_FAILURE",
+    "WAIT_FOR_CONFIRMATION",
+}
+_CHAIR_MARKET_STRUCTURE_READ_KEYS = (
+    "primary_structure",
+    "structure_health",
+    "current_phase",
+    "latest_structure_event",
+    "bos_body_close_confirmed",
+    "choch_detected",
+    "structure_posture_hint",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -949,6 +966,32 @@ class ChairOutput:
     invalid_reason: Optional[str] = None
 
 
+def _chair_structure_summary_output_invalid(raw: Dict[str, Any]) -> Optional[str]:
+    """Require market_structure_read + body/wick line + decision line for gated actions."""
+    final_action = str(raw.get("final_action") or "").strip().upper()
+    if final_action not in _CHAIR_STRUCTURE_SUMMARY_REQUIRED_ACTIONS:
+        return None
+    msr = raw.get("market_structure_read")
+    if not isinstance(msr, dict):
+        return "MARKET_STRUCTURE_READ_MISSING_OR_NON_OBJECT"
+    for key in _CHAIR_MARKET_STRUCTURE_READ_KEYS:
+        if key not in msr:
+            return f"MARKET_STRUCTURE_READ_MISSING_KEY:{key}"
+        val = msr[key]
+        if key in ("bos_body_close_confirmed", "choch_detected"):
+            if not isinstance(val, bool):
+                return f"MARKET_STRUCTURE_READ_BOOL_REQUIRED:{key}"
+        elif val is None or not str(val).strip():
+            return f"MARKET_STRUCTURE_READ_EMPTY:{key}"
+    bwk = raw.get("body_wick_break_read")
+    if not isinstance(bwk, str) or not bwk.strip():
+        return "BODY_WICK_BREAK_READ_REQUIRED_NON_EMPTY"
+    sdr = raw.get("structure_decision_reason")
+    if not isinstance(sdr, str) or not sdr.strip():
+        return "STRUCTURE_DECISION_REASON_REQUIRED_NON_EMPTY"
+    return None
+
+
 def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
     if not isinstance(raw, dict):
         return ChairOutput(
@@ -986,6 +1029,10 @@ def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
         thesis_label = str(config.get("thesis_label") or "").strip()
         if final_action in _AGENTIC_THESIS_LABEL_REQUIRED and not thesis_label.upper().startswith("AGENTIC_"):
             invalid = f"THESIS_LABEL_NOT_AGENTIC:{thesis_label[:40]}"
+    if invalid is None:
+        msm_invalid = _chair_structure_summary_output_invalid(raw)
+        if msm_invalid:
+            invalid = msm_invalid
 
     return ChairOutput(
         final_action=final_action,

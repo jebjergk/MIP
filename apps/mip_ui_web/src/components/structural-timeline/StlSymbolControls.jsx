@@ -9,12 +9,17 @@ const RANGES = [
 ]
 
 const OVERLAY_DEFS = [
-  { key: 'setupMarkers', label: 'Setup markers' },
   { key: 'proposalMarkers', label: 'Proposal markers' },
-  { key: 'tradeMarkers', label: 'Trade markers' },
-  { key: 'stateStrip', label: 'State strip' },
-  { key: 'levels', label: 'S/R levels' },
+  { key: 'monitorMarkers', label: 'Monitor markers' },
+  { key: 'swingStructure', label: 'Swing structure' },
+  { key: 'bosChoch', label: 'BOS / CHOCH' },
+  { key: 'consolidation', label: 'Consolidation' },
   { key: 'zones', label: 'S/R zones' },
+  { key: 'levels', label: 'S/R levels' },
+  { key: 'setupMarkers', label: 'Setup markers' },
+  { key: 'stateStrip', label: 'State strip' },
+  { key: 'candlePsychology', label: 'Candle psychology' },
+  { key: 'impulseCorrectionShade', label: 'Impulse shading' },
   { key: 'regimeStrip', label: 'Regime strip' },
   { key: 'entryZones', label: 'Entry zones' },
   { key: 'invalidationLines', label: 'Invalidation lines' },

@@ -20,10 +20,15 @@ const get = (r, k) => r[k] ?? r[k.toUpperCase()] ?? r[k.toLowerCase()]
 const DEFAULT_OVERLAYS = {
   setupMarkers: true,
   proposalMarkers: true,
-  tradeMarkers: true,
+  monitorMarkers: true,
+  swingStructure: true,
+  bosChoch: true,
+  consolidation: false,
+  candlePsychology: false,
+  impulseCorrectionShade: false,
   stateStrip: true,
   levels: false,
-  zones: false,
+  zones: true,
   regimeStrip: false,
   entryZones: false,
   invalidationLines: false,
@@ -56,6 +61,8 @@ export default function StructuralMarketTimeline() {
   const [setups, setSetups] = useState([])
   const [proposals, setProposals] = useState([])
   const [events, setEvents] = useState([])
+  const [marketStructureMap, setMarketStructureMap] = useState(null)
+  const [boardMarkers, setBoardMarkers] = useState([])
   const [detailDataLoading, setDetailDataLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -95,6 +102,7 @@ export default function StructuralMarketTimeline() {
   useEffect(() => {
     if (!symbol) {
       setSummary(null); setBars([]); setLevels([]); setSetups([]); setProposals([]); setEvents([])
+      setMarketStructureMap(null); setBoardMarkers([])
       return
     }
     let cancelled = false
@@ -112,8 +120,10 @@ export default function StructuralMarketTimeline() {
       fetch(`${API_BASE}/structural-timeline/setups?${qs}`).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText))),
       fetch(`${API_BASE}/structural-timeline/proposals?${qs}`).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText))),
       fetch(`${API_BASE}/structural-timeline/events?${qs}`).then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText))),
+      fetch(`${API_BASE}/structural-timeline/market-structure?symbol=${encodeURIComponent(symbol)}&market_type=${marketType}`).then(r => r.ok ? r.json() : { market_structure_map: null }),
+      fetch(`${API_BASE}/structural-timeline/board-markers?${qs}`).then(r => r.ok ? r.json() : { markers: [] }),
     ])
-      .then(([s, p, l, st, pr, ev]) => {
+      .then(([s, p, l, st, pr, ev, msm, bm]) => {
         if (cancelled) return
         setSummary(s)
         setBars(p.bars || [])
@@ -121,6 +131,8 @@ export default function StructuralMarketTimeline() {
         setSetups(st.setups || [])
         setProposals(pr.proposals || [])
         setEvents(ev.events || [])
+        setMarketStructureMap(msm.market_structure_map ?? null)
+        setBoardMarkers(bm.markers || [])
       })
       .catch(e => { if (!cancelled) setError(e.message) })
       .finally(() => { if (!cancelled) setDetailDataLoading(false) })
@@ -369,6 +381,8 @@ export default function StructuralMarketTimeline() {
               levels={levels}
               setups={filteredSetups}
               proposals={proposals}
+              boardMarkers={boardMarkers}
+              marketStructureMap={marketStructureMap}
               overlays={overlays}
               chartMode={chartMode}
               selectedSetupId={selectedSetupId}

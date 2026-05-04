@@ -250,6 +250,31 @@
   padding: 0.5rem;
   margin-bottom: 1rem;
 }
+.stl-structure-badge-row {
+  padding: 0.35rem 0.5rem 0.25rem;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 0.35rem;
+}
+.stl-structure-badge {
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: #1e293b;
+  letter-spacing: 0.01em;
+}
+.stl-structure-posture-hint {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  margin-top: 0.15rem;
+}
+.stl-structure-rule-note {
+  font-size: 0.78rem;
+  color: #0f766e;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 4px;
+  padding: 0.35rem 0.55rem;
+  margin: 0 0.5rem 0.45rem;
+}
 .stl-chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -265,6 +290,32 @@
   border-radius: 2px;
   display: inline-block;
 }
+.stl-legend-swatch--monitor {
+  background: #f59e0b;
+  border-radius: 3px;
+}
+.stl-legend-swatch--dash-pink {
+  height: 2px;
+  width: 14px;
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, #be185d 0 4px, transparent 4px 7px);
+  opacity: 0.85;
+}
+.stl-legend-swatch--dash-teal {
+  height: 2px;
+  width: 14px;
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, #0d9488 0 4px, transparent 4px 7px);
+  opacity: 0.85;
+}
+.stl-msm-swing-footnote {
+  font-size: 0.72rem;
+  color: #64748b;
+  margin: 0 0.35rem 0.55rem;
+  line-height: 1.4;
+  max-width: 920px;
+}
+.stl-msm-swing-footnote__sep { display: block; margin-top: 0.25rem; }
 
 /* ── State strip ── */
 .stl-state-strip {

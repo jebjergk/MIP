@@ -297,7 +297,7 @@ BEGIN
     INSERT INTO MIP.APP.STRUCTURAL_TRADE_PROPOSALS (
         SETUP_EVENT_ID, PORTFOLIO_ID, SYMBOL, DIRECTION, SETUP_FAMILY,
         ENTRY_ZONE_LOW, ENTRY_ZONE_HIGH, PRICE_INVALIDATION_LEVEL, INVALIDATION_RULE,
-        TRAIL_STYLE, TRAIL_PARAMS, EXIT_STYLE,
+        TRAIL_STYLE, TRAIL_PARAMS, EXIT_STYLE, EXIT_PROFILE,
         STRUCTURE_CONFIDENCE, LEVEL_SIGNIFICANCE, REGIME_COMPAT,
         MEANINGFUL_HIT_RATE, PATH_SURVIVAL_HIT_RATE, MFE_MAE_RATIO,
         RISK_CLASS, CONFLICT_RESOLUTION, RATIONALE_TEXT,
@@ -306,32 +306,79 @@ BEGIN
         BOARD_FINAL_RANK, BOARD_FINAL_VERDICT, BOARD_PRIMARY_REASON_CODE,
         BOARD_REASON_CODES, BOARD_RATIONALE, BOARD_PAYLOAD_JSON
     )
+    WITH chair_intent AS (
+        -- Resolve chair-emitted exit profile (preferred path) or derive from
+        -- trailing_policy.trail_value PCT. Trailing stops are the AGENTIC
+        -- default; we only use FIXED_STANDARD when the chair explicitly opts
+        -- out. Mirrors orchestrator.py _publish_to_structural so that the
+        -- SQL and Python paths produce identical EXIT_PROFILE / TRAIL_PARAMS
+        -- shapes consumed by exit_policy.py.
+        SELECT
+            fs.RUN_ID, fs.DOSSIER_ID, fs.RANK, fs.PUBLICATION_STATUS,
+            v.PROPOSED_TRADE_CONFIG_JSON AS PTC,
+            v.FINAL_ACTION, v.FINAL_DIRECTION,
+            v.PRIMARY_REASON_CODE, v.SECONDARY_REASON_CODE,
+            v.FINAL_THESIS, v.COMMITTEE_PAYLOAD, v.CHAIR_OUTPUT_JSON,
+            CASE
+                WHEN UPPER(NULLIF(TRIM(v.PROPOSED_TRADE_CONFIG_JSON:exit_profile::STRING), ''))
+                     IN ('FIXED_STANDARD','TRAIL_TIGHT','TRAIL_STANDARD','TRAIL_WIDE')
+                    THEN UPPER(TRIM(v.PROPOSED_TRADE_CONFIG_JSON:exit_profile::STRING))
+                WHEN TRY_TO_DOUBLE(v.PROPOSED_TRADE_CONFIG_JSON:trailing_policy:trail_value::STRING) IS NULL
+                    THEN 'TRAIL_STANDARD'
+                WHEN TRY_TO_DOUBLE(v.PROPOSED_TRADE_CONFIG_JSON:trailing_policy:trail_value::STRING) <= 1.5
+                    THEN 'TRAIL_TIGHT'
+                WHEN TRY_TO_DOUBLE(v.PROPOSED_TRADE_CONFIG_JSON:trailing_policy:trail_value::STRING) <= 3.0
+                    THEN 'TRAIL_STANDARD'
+                ELSE 'TRAIL_WIDE'
+            END AS DERIVED_EXIT_PROFILE
+          FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
+          JOIN MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v
+            ON v.RUN_ID = fs.RUN_ID AND v.DOSSIER_ID = fs.DOSSIER_ID
+         WHERE fs.RUN_ID = :v_run_id
+    )
     SELECT
         s.PRIMARY_EVIDENCE_SETUP_EVENT_ID, s.PORTFOLIO_ID, s.SYMBOL, v.FINAL_DIRECTION,
-        v.PROPOSED_TRADE_CONFIG_JSON:thesis_label::STRING,
-        TRY_TO_DOUBLE(v.PROPOSED_TRADE_CONFIG_JSON:entry_zone_low::STRING),
-        TRY_TO_DOUBLE(v.PROPOSED_TRADE_CONFIG_JSON:entry_zone_high::STRING),
-        TRY_TO_DOUBLE(v.PROPOSED_TRADE_CONFIG_JSON:invalidation_level::STRING),
-        LEFT(COALESCE(v.PROPOSED_TRADE_CONFIG_JSON:invalidation_rule::STRING, 'AGENTIC_INVALIDATION'), 30),
-        LEFT(COALESCE(v.PROPOSED_TRADE_CONFIG_JSON:trailing_policy:trail_style::STRING, v.PROPOSED_TRADE_CONFIG_JSON:trailing_policy::STRING, 'PCT'), 20),
-        COALESCE(v.PROPOSED_TRADE_CONFIG_JSON:trailing_policy:trail_params, PARSE_JSON('{"policy_version":"phase4_agentic","profile":"TRAIL_STANDARD","reference":"ENTRY_FILL","tp_mode":"LIMIT","trail_mode":"PCT","trail_value":2.5}')),
-        LEFT(COALESCE(v.PROPOSED_TRADE_CONFIG_JSON:target_policy:exit_style::STRING, v.PROPOSED_TRADE_CONFIG_JSON:target_policy::STRING, 'STAGED_PARTIAL'), 20),
+        v.PTC:thesis_label::STRING,
+        TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
+        TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING),
+        TRY_TO_DOUBLE(v.PTC:invalidation_level::STRING),
+        LEFT(COALESCE(v.PTC:invalidation_rule::STRING, 'AGENTIC_INVALIDATION'), 30),
+        -- TRAIL_STYLE: NULL when chair chose FIXED_STANDARD; PCT otherwise.
+        CASE WHEN v.DERIVED_EXIT_PROFILE = 'FIXED_STANDARD' THEN NULL ELSE 'PCT' END,
+        -- TRAIL_PARAMS: broker-executable shape matching exit_policy.PROFILES.
+        -- policy_version='v1' is mandatory; otherwise validate_trail_params()
+        -- in mip_ui_api/services/live_intelligence/exit_policy.py rejects it
+        -- with UNSUPPORTED_POLICY_VERSION and execution is hard-blocked.
+        CASE
+            WHEN v.DERIVED_EXIT_PROFILE = 'FIXED_STANDARD' THEN NULL
+            WHEN v.DERIVED_EXIT_PROFILE = 'TRAIL_TIGHT' THEN PARSE_JSON(
+                '{"policy_version":"v1","profile":"TRAIL_TIGHT","reference":"ENTRY_FILL",'
+                || '"tp_mode":"LIMIT","trail_mode":"PCT","trail_value":1.5}')
+            WHEN v.DERIVED_EXIT_PROFILE = 'TRAIL_WIDE' THEN PARSE_JSON(
+                '{"policy_version":"v1","profile":"TRAIL_WIDE","reference":"ENTRY_FILL",'
+                || '"tp_mode":"LIMIT","trail_mode":"PCT","trail_value":4.0}')
+            ELSE PARSE_JSON(
+                '{"policy_version":"v1","profile":"TRAIL_STANDARD","reference":"ENTRY_FILL",'
+                || '"tp_mode":"LIMIT","trail_mode":"PCT","trail_value":2.5}')
+        END,
+        LEFT(COALESCE(v.PTC:target_policy:exit_style::STRING, v.PTC:target_policy::STRING, 'STAGED_PARTIAL'), 20),
+        v.DERIVED_EXIT_PROFILE,
         TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:structure:state_confidence::STRING),
         COALESCE(TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_resistance:level_significance::STRING), TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:levels:nearest_support:level_significance::STRING)),
         LEFT(COALESCE(s.DOSSIER_PAYLOAD_JSON:regime:tags:trend_regime::STRING, 'AGENTIC'), 10),
         COALESCE(TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:history:long_history[0]:meaningful_hit_rate::STRING), TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:history:short_history[0]:meaningful_hit_rate::STRING)),
         COALESCE(TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:history:long_history[0]:path_survival_hit_rate::STRING), TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:history:short_history[0]:path_survival_hit_rate::STRING)),
         COALESCE(TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:history:long_history[0]:mfe_mae_ratio::STRING), TRY_TO_DOUBLE(s.DOSSIER_PAYLOAD_JSON:history:short_history[0]:mfe_mae_ratio::STRING)),
-        LEFT(COALESCE(v.PROPOSED_TRADE_CONFIG_JSON:risk_class::STRING, 'MEDIUM'), 10),
+        LEFT(COALESCE(v.PTC:risk_class::STRING, 'MEDIUM'), 10),
         NULL,
-        LEFT('Phase 4 agentic board rank ' || fs.RANK || ' | ' || v.FINAL_ACTION || ' | ' || v.PRIMARY_REASON_CODE || ' | ' || v.FINAL_THESIS, 2000),
+        LEFT('Phase 4 agentic board rank ' || v.RANK || ' | ' || v.FINAL_ACTION || ' | ' || v.PRIMARY_REASON_CODE || ' | ' || v.FINAL_THESIS, 2000),
         v.COMMITTEE_PAYLOAD,
         'PROPOSED',
         :v_run_id,
         NULL,
         v.DOSSIER_ID,
         s.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
-        fs.RANK,
+        v.RANK,
         LEFT(v.FINAL_ACTION, 30),
         v.PRIMARY_REASON_CODE,
         ARRAY_CONSTRUCT(v.PRIMARY_REASON_CODE, v.SECONDARY_REASON_CODE),
@@ -340,21 +387,22 @@ BEGIN
             'agentic_board_cutover', TRUE,
             'direction_source', 'CHAIR_PORTFOLIO_PM.final_direction',
             'setup_family_source', 'CHAIR_PORTFOLIO_PM.proposed_trade_config.thesis_label',
+            'exit_profile_source', 'CHAIR_PORTFOLIO_PM.proposed_trade_config.exit_profile_or_trail_value_derived',
+            'derived_exit_profile', v.DERIVED_EXIT_PROFILE,
             'primary_evidence_setup_event_id', s.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
             'primary_evidence_setup_event_id_role', 'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE',
             'dossier_id', v.DOSSIER_ID,
             'dossier_payload', s.DOSSIER_PAYLOAD_JSON,
             'chair_output', v.CHAIR_OUTPUT_JSON,
-            'proposed_trade_config', v.PROPOSED_TRADE_CONFIG_JSON
+            'proposed_trade_config', v.PTC
         )
-    FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
-    JOIN MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v ON v.RUN_ID = fs.RUN_ID AND v.DOSSIER_ID = fs.DOSSIER_ID
-    JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s ON s.RUN_ID = fs.RUN_ID AND s.DOSSIER_ID = fs.DOSSIER_ID
-    WHERE fs.RUN_ID = :v_run_id
-      AND fs.PUBLICATION_STATUS = 'PENDING'
-      AND fs.RANK <= :P_MAX_PROPOSALS
+    FROM chair_intent v
+    JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+      ON s.RUN_ID = v.RUN_ID AND s.DOSSIER_ID = v.DOSSIER_ID
+    WHERE v.PUBLICATION_STATUS = 'PENDING'
+      AND v.RANK <= :P_MAX_PROPOSALS
       AND s.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
-      AND v.PROPOSED_TRADE_CONFIG_JSON:thesis_label::STRING ILIKE 'AGENTIC_%'
+      AND v.PTC:thesis_label::STRING ILIKE 'AGENTIC_%'
       AND (v.FINAL_ACTION = 'PROPOSE_LONG' OR (v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED))
       AND NOT EXISTS (
           SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p

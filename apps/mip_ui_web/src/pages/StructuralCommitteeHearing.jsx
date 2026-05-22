@@ -223,7 +223,7 @@ export default function StructuralCommitteeHearing() {
       <div className="sch-wrap sch-wrap--landing">
         <header className="sch-header sch-header--premium">
           <div>
-            <h1>Committee 2.0</h1>
+            <h1>Hearing Replay — Deterministic Baseline</h1>
             <p className="sch-sub">
               Structural entry hearings are opened from a proposal. This page is empty until you open or load a hearing.
             </p>
@@ -294,7 +294,7 @@ export default function StructuralCommitteeHearing() {
       </div>
       <header className="sch-header sch-header--premium">
         <div>
-          <h1>Committee 2.0 — Hearing</h1>
+          <h1>Hearing Replay — Deterministic Baseline</h1>
           <p className="sch-sub">
             {payload?.proposal?.symbol} {payload?.proposal?.direction} · Proposal {payload?.proposal_id} · Hearing{' '}
             <code>{payload?.hearing_id}</code>

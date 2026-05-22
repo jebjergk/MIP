@@ -134,7 +134,7 @@ BEGIN
             || 'Evaluate this symbol from facts, not from a pre-labelled candidate. '
             || 'The deterministic engine is evidence-only. Setup events are evidence arrays only. '
             || 'Direction must be authored only by chair.final_direction. '
-            || 'If short_live_enabled=false, short evidence remains visible and can produce WATCH_SHORT with primary_reason_code SHORT_RESEARCH_ONLY, but executable short publication is forbidden. '
+            || 'If short_live_enabled=false and structural analysis supports SHORT: output PROPOSE_SHORT with primary_reason_code CHAIR_PROPOSE_SHORT. The backend marks the row POLICY_BLOCKED and prevents live execution. Do NOT output WATCH_SHORT or PROPOSE_LONG merely because short execution is disabled. A LONG verdict after predominant SHORT evidence requires explicit independent long evidence (failed-short reversal, resistance reclaim, higher-low defense, support hold, or bullish continuation structure). '
             || 'Return ONLY one JSON object, no markdown. Required top-level keys: market_structure, level_price_action, thesis, historical_evidence, risk_execution, chair. '
             || 'Do not nest one role inside another role. historical_evidence must be a top-level object, not a child of thesis. '
             || 'Each role object must include all of these exact keys: verdict, primary_reason_code, secondary_reason_code, confidence, rationale_text, long_score, short_score, no_trade_score. Use numeric scores between 0 and 1. '
@@ -284,12 +284,14 @@ BEGIN
         v.FINAL_THESIS,
         'MIP.APP.STRUCTURAL_TRADE_PROPOSALS',
         CASE
-            WHEN v.FINAL_ACTION = 'PROPOSE_LONG' AND v.FINAL_RANK <= :P_MAX_PROPOSALS THEN 'PENDING'
-            WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED AND v.FINAL_RANK <= :P_MAX_PROPOSALS THEN 'PENDING'
-            WHEN v.FINAL_DIRECTION = 'SHORT' AND NOT s.SHORT_LIVE_ENABLED THEN 'SHORT_RESEARCH_ONLY'
+            WHEN v.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT') AND v.FINAL_RANK <= :P_MAX_PROPOSALS THEN 'PENDING'
             ELSE 'NOT_PUBLISHABLE'
         END,
-        IFF(v.FINAL_DIRECTION = 'SHORT' AND NOT s.SHORT_LIVE_ENABLED, OBJECT_CONSTRUCT('reason', 'SHORT_LIVE_ENABLED_FALSE', 'retained_as', 'SHORT_RESEARCH_ONLY'), NULL)
+        CASE
+            WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED
+                THEN OBJECT_CONSTRUCT('reason', 'SHORT_LIVE_DISABLED', 'execution_policy_status', 'POLICY_BLOCKED')
+            ELSE NULL
+        END
     FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT v
     JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s ON s.RUN_ID = v.RUN_ID AND s.DOSSIER_ID = v.DOSSIER_ID
     WHERE v.RUN_ID = :v_run_id;
@@ -304,7 +306,8 @@ BEGIN
         COMMITTEE_PAYLOAD, STATUS,
         BOARD_RUN_ID, BOARD_CANDIDATE_ID, BOARD_DOSSIER_ID, PRIMARY_EVIDENCE_SETUP_EVENT_ID,
         BOARD_FINAL_RANK, BOARD_FINAL_VERDICT, BOARD_PRIMARY_REASON_CODE,
-        BOARD_REASON_CODES, BOARD_RATIONALE, BOARD_PAYLOAD_JSON
+        BOARD_REASON_CODES, BOARD_RATIONALE, BOARD_PAYLOAD_JSON,
+        EXECUTION_POLICY_STATUS, EXECUTION_POLICY_REASON, IS_RESEARCH_ONLY
     )
     WITH chair_intent AS (
         -- Resolve chair-emitted exit profile (preferred path) or derive from
@@ -337,7 +340,10 @@ BEGIN
          WHERE fs.RUN_ID = :v_run_id
     )
     SELECT
-        s.PRIMARY_EVIDENCE_SETUP_EVENT_ID, s.PORTFOLIO_ID, s.SYMBOL, v.FINAL_DIRECTION,
+        -- SETUP_EVENT_ID: only write when evidence direction matches proposal direction.
+        -- Cross-direction evidence stays in PRIMARY_EVIDENCE_SETUP_EVENT_ID only.
+        IFF(ev.DIRECTION = v.FINAL_DIRECTION, s.PRIMARY_EVIDENCE_SETUP_EVENT_ID, NULL),
+        s.PORTFOLIO_ID, s.SYMBOL, v.FINAL_DIRECTION,
         v.PTC:thesis_label::STRING,
         TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
         TRY_TO_DOUBLE(v.PTC:entry_zone_high::STRING),
@@ -390,20 +396,41 @@ BEGIN
             'exit_profile_source', 'CHAIR_PORTFOLIO_PM.proposed_trade_config.exit_profile_or_trail_value_derived',
             'derived_exit_profile', v.DERIVED_EXIT_PROFILE,
             'primary_evidence_setup_event_id', s.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
-            'primary_evidence_setup_event_id_role', 'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE',
+            'primary_evidence_setup_event_id_role',
+                IFF(ev.DIRECTION = v.FINAL_DIRECTION,
+                    'AUTHORITATIVE_DIRECTION_SOURCE',
+                    'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE'),
+            'evidence_direction', ev.DIRECTION,
+            'proposal_direction', v.FINAL_DIRECTION,
+            'is_cross_direction_evidence', IFF(ev.DIRECTION != v.FINAL_DIRECTION, TRUE, FALSE),
             'dossier_id', v.DOSSIER_ID,
             'dossier_payload', s.DOSSIER_PAYLOAD_JSON,
             'chair_output', v.CHAIR_OUTPUT_JSON,
             'proposed_trade_config', v.PTC
-        )
+        ),
+        -- Execution policy: hard gate persisted at write time.
+        -- PROPOSE_SHORT when shorts disabled → POLICY_BLOCKED; never silently dropped.
+        CASE
+            WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED THEN 'POLICY_BLOCKED'
+            ELSE 'EXECUTABLE'
+        END,
+        CASE
+            WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED THEN 'SHORT_LIVE_DISABLED'
+            ELSE NULL
+        END,
+        IFF(v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED, TRUE, FALSE)
     FROM chair_intent v
     JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
       ON s.RUN_ID = v.RUN_ID AND s.DOSSIER_ID = v.DOSSIER_ID
+    -- Left-join evidence event to get direction for SETUP_EVENT_ID guard
+    LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS ev
+      ON ev.SETUP_EVENT_ID = s.PRIMARY_EVIDENCE_SETUP_EVENT_ID
     WHERE v.PUBLICATION_STATUS = 'PENDING'
       AND v.RANK <= :P_MAX_PROPOSALS
       AND s.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
       AND v.PTC:thesis_label::STRING ILIKE 'AGENTIC_%'
-      AND (v.FINAL_ACTION = 'PROPOSE_LONG' OR (v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED))
+      -- Allow PROPOSE_SHORT unconditionally; policy is recorded in EXECUTION_POLICY_STATUS
+      AND v.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT')
       AND NOT EXISTS (
           SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
           WHERE p.STATUS = 'PROPOSED' AND p.SYMBOL = s.SYMBOL
@@ -430,6 +457,53 @@ BEGIN
        SET PUBLICATION_STATUS = 'SKIPPED_GUARDRAIL',
            PUBLICATION_ERROR_JSON = OBJECT_CONSTRUCT('reason', 'not_inserted_duplicate_collision_missing_evidence_or_policy')
      WHERE RUN_ID = :v_run_id AND PUBLICATION_STATUS = 'PENDING';
+
+    -- ── Phase 3: Post-INSERT geometry validation ──────────────────────────
+    -- Runs immediately after materialization. Marks GEOMETRY_INVALID for any
+    -- proposal with geometrically incoherent invalidation levels.
+    -- LONG: invalidation must be strictly BELOW entry zone low.
+    -- SHORT: invalidation must be strictly ABOVE entry zone high.
+    -- These proposals are blocked at LPA/API (hard gate) and visible in
+    -- diagnostics but not silently dropped.
+    UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+       SET EXECUTION_POLICY_STATUS = 'GEOMETRY_INVALID',
+           EXECUTION_POLICY_REASON = CASE
+               WHEN p.DIRECTION = 'LONG'  THEN 'INVALID_LONG_GEOMETRY'
+               WHEN p.DIRECTION = 'SHORT' THEN 'INVALID_SHORT_GEOMETRY'
+               ELSE 'INVALID_LONG_GEOMETRY'
+           END,
+           IS_RESEARCH_ONLY = TRUE
+     WHERE p.BOARD_RUN_ID = :v_run_id
+       AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+       AND (
+           -- LONG: invalidation must be below entry zone low
+           (p.DIRECTION = 'LONG'
+            AND p.PRICE_INVALIDATION_LEVEL IS NOT NULL
+            AND p.ENTRY_ZONE_LOW IS NOT NULL
+            AND p.PRICE_INVALIDATION_LEVEL >= p.ENTRY_ZONE_LOW)
+           OR
+           -- SHORT: invalidation must be above entry zone high
+           (p.DIRECTION = 'SHORT'
+            AND p.PRICE_INVALIDATION_LEVEL IS NOT NULL
+            AND p.ENTRY_ZONE_HIGH IS NOT NULL
+            AND p.PRICE_INVALIDATION_LEVEL <= p.ENTRY_ZONE_HIGH)
+           OR
+           -- Entry zone must be internally consistent
+           (p.ENTRY_ZONE_LOW IS NOT NULL AND p.ENTRY_ZONE_HIGH IS NOT NULL
+            AND p.ENTRY_ZONE_LOW > p.ENTRY_ZONE_HIGH)
+       );
+
+    -- Cross-direction evidence: mark non-executable when SETUP_EVENT_ID is NULL
+    -- and the evidence direction differs from proposal direction.
+    -- These proposals survive for research but cannot be imported to LPA.
+    UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+       SET EXECUTION_POLICY_STATUS = 'POLICY_BLOCKED',
+           EXECUTION_POLICY_REASON = 'SETUP_EVENT_DIRECTION_MISMATCH',
+           IS_RESEARCH_ONLY = TRUE
+     WHERE p.BOARD_RUN_ID = :v_run_id
+       AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+       AND p.SETUP_EVENT_ID IS NULL
+       AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL;
 
     SELECT COUNT(*) INTO :v_published_count
     FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2

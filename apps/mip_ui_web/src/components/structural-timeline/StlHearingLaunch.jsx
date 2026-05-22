@@ -24,7 +24,7 @@ export default function StlHearingLaunch({ proposals, get }) {
       try {
         j = await r.json()
       } catch {
-        window.alert(`Committee 2.0 open failed (${r.status}): response was not JSON — check API / proxy.`)
+        window.alert(`Hearing Replay open failed (${r.status}): response was not JSON — check API / proxy.`)
         return
       }
       if (!r.ok) {
@@ -45,7 +45,7 @@ export default function StlHearingLaunch({ proposals, get }) {
 
   return (
     <div className="stl-hearing-launch">
-      <h3 className="stl-hearing-launch-title">Committee 2.0</h3>
+      <h3 className="stl-hearing-launch-title">Hearing Replay launch</h3>
       <p className="stl-hearing-launch-hint">Open a structural hearing for a proposal (requires snapshot + bars).</p>
       <ul className="stl-hearing-launch-list">
         {proposals.slice(0, 12).map((p) => {

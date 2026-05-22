@@ -1818,7 +1818,8 @@ def _publish_to_structural(
             BOARD_RUN_ID, BOARD_CANDIDATE_ID, BOARD_DOSSIER_ID,
             PRIMARY_EVIDENCE_SETUP_EVENT_ID,
             BOARD_FINAL_RANK, BOARD_FINAL_VERDICT, BOARD_PRIMARY_REASON_CODE,
-            BOARD_REASON_CODES, BOARD_RATIONALE, BOARD_PAYLOAD_JSON
+            BOARD_REASON_CODES, BOARD_RATIONALE, BOARD_PAYLOAD_JSON,
+            EXECUTION_POLICY_STATUS, EXECUTION_POLICY_REASON, IS_RESEARCH_ONLY
         )
         WITH chair_intent AS (
             -- Resolve chair-emitted exit profile (preferred path) or derive
@@ -1848,7 +1849,10 @@ def _publish_to_structural(
              WHERE fs.RUN_ID = %(run_id)s
         )
         SELECT
-            s.PRIMARY_EVIDENCE_SETUP_EVENT_ID, s.PORTFOLIO_ID, s.SYMBOL,
+            -- SETUP_EVENT_ID: NULL when evidence direction != proposal direction.
+            -- Cross-direction evidence is preserved in PRIMARY_EVIDENCE_SETUP_EVENT_ID.
+            IFF(ev.DIRECTION = v.FINAL_DIRECTION, s.PRIMARY_EVIDENCE_SETUP_EVENT_ID, NULL),
+            s.PORTFOLIO_ID, s.SYMBOL,
             v.FINAL_DIRECTION,
             LEFT(v.PTC:thesis_label::STRING, 80),
             TRY_TO_DOUBLE(v.PTC:entry_zone_low::STRING),
@@ -1915,33 +1919,54 @@ def _publish_to_structural(
                 'exit_profile_source', 'CHAIR_PORTFOLIO_PM.proposed_trade_config.exit_profile_or_trail_value_derived',
                 'derived_exit_profile', v.DERIVED_EXIT_PROFILE,
                 'primary_evidence_setup_event_id', s.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
-                'primary_evidence_setup_event_id_role', 'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE',
+                'primary_evidence_setup_event_id_role',
+                    IFF(ev.DIRECTION = v.FINAL_DIRECTION,
+                        'AUTHORITATIVE_DIRECTION_SOURCE',
+                        'EVIDENCE_ONLY_NOT_DIRECTION_SOURCE'),
+                'evidence_direction', ev.DIRECTION,
+                'proposal_direction', v.FINAL_DIRECTION,
+                'is_cross_direction_evidence', IFF(ev.DIRECTION != v.FINAL_DIRECTION, TRUE, FALSE),
                 'dossier_id', v.DOSSIER_ID,
                 'dossier_payload', s.DOSSIER_PAYLOAD_JSON,
                 'chair_output', v.CHAIR_OUTPUT_JSON,
                 'proposed_trade_config', v.PTC,
                 'committee_payload', v.COMMITTEE_PAYLOAD
-            )
+            ),
+            -- Execution policy: hard gate persisted at write time.
+            -- SHORT proposals are never silently dropped; policy is recorded explicitly.
+            CASE
+                WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED
+                    THEN 'POLICY_BLOCKED'
+                WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED
+                     AND NOT %(short_pub_allowed)s
+                    THEN 'BROKER_BLOCKED'
+                ELSE 'EXECUTABLE'
+            END,
+            CASE
+                WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED
+                    THEN 'SHORT_LIVE_DISABLED'
+                WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED
+                     AND NOT %(short_pub_allowed)s
+                    THEN 'IBKR_NOT_PAPER'
+                ELSE NULL
+            END,
+            IFF(v.FINAL_ACTION = 'PROPOSE_SHORT'
+                AND (NOT s.SHORT_LIVE_ENABLED OR NOT %(short_pub_allowed)s),
+                TRUE, FALSE)
         FROM chair_intent v
         JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
           ON s.RUN_ID = v.RUN_ID AND s.DOSSIER_ID = v.DOSSIER_ID
+        -- Left-join evidence event to get direction for SETUP_EVENT_ID guard
+        LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS ev
+          ON ev.SETUP_EVENT_ID = s.PRIMARY_EVIDENCE_SETUP_EVENT_ID
         WHERE v.PUBLICATION_STATUS = 'PENDING'
           AND v.RANK <= %(max_props)s
           AND s.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
           AND v.PTC:thesis_label::STRING ILIKE 'AGENTIC_%%'
           -- Phase 4 taxonomy v2: hard STOCK-only publication guard.
-          -- ETF and FX dossiers can be researched but cannot publish to
-          -- STRUCTURAL_TRADE_PROPOSALS. The downstream UPDATE marks
-          -- non-STOCK rows as SKIPPED_GUARDRAIL with reason
-          -- BLOCKED_NON_STOCK_PUBLISH for explicit audit visibility.
           AND s.MARKET_TYPE = 'STOCK'
-          AND (
-                v.FINAL_ACTION = 'PROPOSE_LONG'
-              OR
-                v.FINAL_ACTION = 'PROPOSE_SHORT'
-                AND s.SHORT_LIVE_ENABLED
-                AND %(short_pub_allowed)s
-              )
+          -- Allow PROPOSE_SHORT unconditionally; policy recorded in EXECUTION_POLICY_STATUS.
+          AND v.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT')
           AND NOT EXISTS (
               SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
               WHERE p.STATUS = 'PROPOSED' AND p.SYMBOL = s.SYMBOL
@@ -2016,6 +2041,53 @@ def _publish_to_structural(
             "ibkr_mode": ibkr_account_mode,
             "pid": portfolio_id,
         },
+    )
+
+    # Phase 3: post-INSERT geometry validation.
+    # Marks GEOMETRY_INVALID for proposals with incoherent invalidation geometry.
+    # Cross-direction evidence (SETUP_EVENT_ID IS NULL) → SETUP_EVENT_DIRECTION_MISMATCH.
+    # Both are hard-blocked at LPA/API; proposals survive for diagnostics.
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET EXECUTION_POLICY_STATUS = 'GEOMETRY_INVALID',
+               EXECUTION_POLICY_REASON = CASE
+                   WHEN p.DIRECTION = 'LONG'  THEN 'INVALID_LONG_GEOMETRY'
+                   WHEN p.DIRECTION = 'SHORT' THEN 'INVALID_SHORT_GEOMETRY'
+                   ELSE 'INVALID_LONG_GEOMETRY'
+               END,
+               IS_RESEARCH_ONLY = TRUE
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+           AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+           AND (
+               (p.DIRECTION = 'LONG'
+                AND p.PRICE_INVALIDATION_LEVEL IS NOT NULL
+                AND p.ENTRY_ZONE_LOW IS NOT NULL
+                AND p.PRICE_INVALIDATION_LEVEL >= p.ENTRY_ZONE_LOW)
+               OR
+               (p.DIRECTION = 'SHORT'
+                AND p.PRICE_INVALIDATION_LEVEL IS NOT NULL
+                AND p.ENTRY_ZONE_HIGH IS NOT NULL
+                AND p.PRICE_INVALIDATION_LEVEL <= p.ENTRY_ZONE_HIGH)
+               OR
+               (p.ENTRY_ZONE_LOW IS NOT NULL AND p.ENTRY_ZONE_HIGH IS NOT NULL
+                AND p.ENTRY_ZONE_LOW > p.ENTRY_ZONE_HIGH)
+           )
+        """,
+        {"run_id": run_id},
+    )
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET EXECUTION_POLICY_STATUS = 'POLICY_BLOCKED',
+               EXECUTION_POLICY_REASON = 'SETUP_EVENT_DIRECTION_MISMATCH',
+               IS_RESEARCH_ONLY = TRUE
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+           AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
+           AND p.SETUP_EVENT_ID IS NULL
+           AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
+        """,
+        {"run_id": run_id},
     )
 
     cur.execute(

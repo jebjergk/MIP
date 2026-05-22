@@ -165,10 +165,14 @@ SELECT
     so.BARS_TO_CONFIRMATION,
     so.BARS_TO_INVALIDATION,
 
-    -- Proposal linkage
+    -- Proposal linkage — direction-guarded: only link when proposal direction
+    -- matches setup direction (SETUP_EVENT_ID is NULL for cross-direction cases).
     sp.PROPOSAL_ID,
     sp.STATUS                                        AS PROPOSAL_STATUS,
     sp.RATIONALE_TEXT,
+    sp.EXECUTION_POLICY_STATUS,
+    sp.EXECUTION_POLICY_REASON,
+    sp.IS_RESEARCH_ONLY,
     CASE WHEN sp.PROPOSAL_ID IS NOT NULL THEN TRUE ELSE FALSE END AS BECAME_PROPOSAL,
 
     -- Backend-driven plain-language narrative
@@ -233,8 +237,11 @@ SELECT
 FROM MIP.APP.STRUCTURAL_SETUP_EVENTS se
 LEFT JOIN MIP.APP.STRUCTURAL_SETUP_OUTCOMES so
   ON so.SETUP_EVENT_ID = se.SETUP_EVENT_ID AND so.EVAL_WINDOW = 20 AND so.EVAL_STATUS = 'SUCCESS'
+-- Direction-guarded join: SETUP_EVENT_ID is NULL for cross-direction proposals,
+-- so this join naturally excludes contaminated cross-direction links.
 LEFT JOIN MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
   ON sp.SETUP_EVENT_ID = se.SETUP_EVENT_ID
+  AND sp.DIRECTION = se.DIRECTION
   AND sp.BOARD_RUN_ID IS NOT NULL
 LEFT JOIN trust_best tb
   ON tb.SETUP_FAMILY = se.SETUP_FAMILY AND tb.MARKET_TYPE = se.MARKET_TYPE
@@ -251,19 +258,35 @@ WHERE se.MARKET_TYPE != 'ETF';
 --    always TRUE in this view; it is exposed so the UI can label
 --    the lane unambiguously.
 -- ================================================================
+-- ================================================================
+-- 4. V_STRUCTURAL_TIMELINE_PROPOSALS
+--    Proposals with full setup-to-trade lineage.
+--    Strict column separation: proposal fields come from sp,
+--    evidence fields from the evidence setup event.
+--    IS_CROSS_DIRECTION_EVIDENCE = TRUE when SETUP_EVENT_ID is NULL
+--    (proposal direction differs from primary evidence setup direction).
+--    Agentic-only: BOARD_RUN_ID IS NOT NULL.
+-- ================================================================
 CREATE OR REPLACE VIEW MIP.MART.V_STRUCTURAL_TIMELINE_PROPOSALS AS
 SELECT
+    -- ── Proposal identity ──────────────────────────────────────────
     sp.PROPOSAL_ID,
-    sp.SETUP_EVENT_ID,
     sp.SYMBOL,
-    sp.DIRECTION,
-    sp.SETUP_FAMILY,
+    sp.STATUS                                AS PROPOSAL_STATUS,
+    sp.CREATED_AT                            AS PROPOSAL_CREATED_AT,
+    sp.BOARD_RUN_ID,
+    TRUE                                     AS IS_AGENTIC,
+
+    -- ── Proposal direction + geometry (from sp — always authoritative) ──
+    sp.DIRECTION                             AS PROPOSAL_DIRECTION,
+    sp.SETUP_FAMILY                          AS PROPOSAL_SETUP_FAMILY,
     sp.ENTRY_ZONE_LOW,
     sp.ENTRY_ZONE_HIGH,
     sp.PRICE_INVALIDATION_LEVEL,
     sp.INVALIDATION_RULE,
     sp.TRAIL_STYLE,
     sp.EXIT_STYLE,
+    sp.EXIT_PROFILE,
     sp.STRUCTURE_CONFIDENCE,
     sp.LEVEL_SIGNIFICANCE,
     sp.REGIME_COMPAT,
@@ -272,27 +295,51 @@ SELECT
     sp.MFE_MAE_RATIO,
     sp.RISK_CLASS,
     sp.RATIONALE_TEXT,
-    sp.STATUS                                AS PROPOSAL_STATUS,
-    sp.CREATED_AT                            AS PROPOSAL_CREATED_AT,
-    sp.BOARD_RUN_ID,
-    TRUE                                     AS IS_AGENTIC,
-    se.SETUP_DATE,
-    se.MARKET_TYPE,
-    se.STRUCTURAL_STATE,
-    se.REGIME_COMPAT                         AS SETUP_REGIME_COMPAT,
-    -- Trade linkage (if structural proposal was bridged to a portfolio trade)
+
+    -- ── Execution policy (hard gate) ──────────────────────────────
+    sp.EXECUTION_POLICY_STATUS,
+    sp.EXECUTION_POLICY_REASON,
+    sp.IS_RESEARCH_ONLY,
+
+    -- ── Evidence setup event fields (may differ in direction) ─────
+    sp.SETUP_EVENT_ID,
+    sp.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
+    -- Evidence direction from the linked same-direction event (NULL if cross-direction)
+    se_same.DIRECTION                        AS EVIDENCE_SETUP_DIRECTION,
+    se_same.SETUP_FAMILY                     AS EVIDENCE_SETUP_FAMILY,
+    -- For cross-direction: pull from the actual evidence event for context only
+    COALESCE(se_same.SETUP_DATE, se_ev.SETUP_DATE)    AS EVIDENCE_SETUP_DATE,
+    COALESCE(se_same.MARKET_TYPE, se_ev.MARKET_TYPE)  AS MARKET_TYPE,
+    COALESCE(se_same.STRUCTURAL_STATE, se_ev.STRUCTURAL_STATE) AS EVIDENCE_STRUCTURAL_STATE,
+    COALESCE(se_same.REGIME_COMPAT, se_ev.REGIME_COMPAT) AS EVIDENCE_REGIME_COMPAT,
+
+    -- ── Cross-direction evidence flag ─────────────────────────────
+    -- TRUE when the primary evidence setup direction differs from proposal direction.
+    -- These proposals are POLICY_BLOCKED (research-only) at LPA/API.
+    IFF(sp.SETUP_EVENT_ID IS NULL AND sp.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL,
+        TRUE, FALSE)                         AS IS_CROSS_DIRECTION_EVIDENCE,
+    -- Evidence-only context: setup family of cross-direction evidence (for diagnostics)
+    IFF(sp.SETUP_EVENT_ID IS NULL, se_ev.SETUP_FAMILY, NULL) AS CROSS_DIRECTION_EVIDENCE_SETUP_FAMILY,
+    IFF(sp.SETUP_EVENT_ID IS NULL, se_ev.DIRECTION,    NULL) AS CROSS_DIRECTION_EVIDENCE_DIRECTION,
+
+    -- ── Trade linkage ─────────────────────────────────────────────
     pt.TRADE_ID,
     pt.TRADE_TS,
     pt.SIDE                                  AS TRADE_SIDE,
     pt.PRICE                                 AS TRADE_PRICE,
     pt.QUANTITY                              AS TRADE_QTY,
     pt.REALIZED_PNL
+
 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
-JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
-  ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
+-- Same-direction evidence event (non-null SETUP_EVENT_ID means directions match)
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_same
+  ON se_same.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
+-- Primary evidence event regardless of direction (for cross-direction context)
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_ev
+  ON se_ev.SETUP_EVENT_ID = sp.PRIMARY_EVIDENCE_SETUP_EVENT_ID
 LEFT JOIN MIP.APP.PORTFOLIO_TRADES pt
   ON pt.PROPOSAL_ID = sp.PROPOSAL_ID
-WHERE se.MARKET_TYPE != 'ETF'
+WHERE COALESCE(se_same.MARKET_TYPE, se_ev.MARKET_TYPE) != 'ETF'
   AND sp.BOARD_RUN_ID IS NOT NULL;
 
 -- ================================================================

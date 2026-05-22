@@ -808,6 +808,110 @@
   gap: 4px;
 }
 
+/* Stage 2: Shadow Chair Verdict headline — the new primary intelligence
+ * readout on each structural ENTRY row. Sits above the deterministic
+ * baseline panel. Read-only / advisory until Stage 4. */
+.lpa-c2-shadow-headline {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-left: 3px solid #2563eb;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.12), rgba(96, 165, 250, 0.02));
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+}
+
+.lpa-c2-shadow-headline-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lpa-c2-shadow-headline-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #1d3a8a;
+  font-size: 13px;
+}
+
+.lpa-c2-shadow-headline-agentic {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(37, 99, 235, 0.18);
+  color: #1d3a8a;
+  text-transform: uppercase;
+}
+
+.lpa-c2-shadow-headline-sub {
+  font-size: 11px;
+  font-style: italic;
+}
+
+.lpa-c2-shadow-headline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.lpa-c2-shadow-headline-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  color: #1d3a8a;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.lpa-c2-shadow-headline-pill--stance {
+  background: rgba(37, 99, 235, 0.18);
+  border-color: rgba(37, 99, 235, 0.4);
+}
+
+.lpa-c2-shadow-headline-disagree {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.lpa-c2-shadow-headline-degraded {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(120, 113, 108, 0.16);
+  border: 1px solid rgba(120, 113, 108, 0.4);
+  color: #57534e;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.lpa-c2-shadow-headline-placeholder {
+  font-size: 12px;
+  font-style: italic;
+  padding: 2px 0;
+}
+
 .lpa-c2-panel--err {
   border-color: #e57373;
   background: #fff8f8;
@@ -850,6 +954,13 @@
   min-width: 0;
   width: 100%;
 }
+
+/* Stage 2: SHADOW BOARD is the primary visible intelligence column (top).
+ * REAL BOARD (deterministic baseline) moves below it. DOM order preserved
+ * so existing logic and refs continue to work; flex `order` flips the
+ * visual stack only. Authority and materialization are unchanged. */
+.lpa-c2-dual-shadow { order: 0; }
+.lpa-c2-dual-real { order: 1; }
 
 .lpa-c2-dual-banner {
   display: flex;

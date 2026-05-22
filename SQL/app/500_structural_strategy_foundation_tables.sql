@@ -320,7 +320,9 @@ CREATE TABLE IF NOT EXISTS MIP.APP.STRUCTURAL_RISK_POLICY (
 -- ----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS MIP.APP.STRUCTURAL_TRADE_PROPOSALS (
     PROPOSAL_ID                 NUMBER AUTOINCREMENT PRIMARY KEY,
-    SETUP_EVENT_ID              NUMBER        NOT NULL,
+    -- NULL when primary evidence is cross-direction (direction mismatch);
+    -- always preserved in PRIMARY_EVIDENCE_SETUP_EVENT_ID.
+    SETUP_EVENT_ID              NUMBER,
     PORTFOLIO_ID                NUMBER,
     SYMBOL                      VARCHAR(20)   NOT NULL,
     DIRECTION                   VARCHAR(5)    NOT NULL,
@@ -333,6 +335,7 @@ CREATE TABLE IF NOT EXISTS MIP.APP.STRUCTURAL_TRADE_PROPOSALS (
     TRAIL_STYLE                 VARCHAR(20),
     TRAIL_PARAMS                VARIANT,
     EXIT_STYLE                  VARCHAR(20),
+    EXIT_PROFILE                VARCHAR(20),
 
     STRUCTURE_CONFIDENCE        FLOAT,
     LEVEL_SIGNIFICANCE          FLOAT,
@@ -346,5 +349,26 @@ CREATE TABLE IF NOT EXISTS MIP.APP.STRUCTURAL_TRADE_PROPOSALS (
     RATIONALE_TEXT              VARCHAR(2000),
     COMMITTEE_PAYLOAD           VARIANT,
     STATUS                      VARCHAR(20)    DEFAULT 'PROPOSED',
-    CREATED_AT                  TIMESTAMP_NTZ  DEFAULT CURRENT_TIMESTAMP()
+    CREATED_AT                  TIMESTAMP_NTZ  DEFAULT CURRENT_TIMESTAMP(),
+
+    -- Phase 4 board lineage
+    BOARD_RUN_ID                VARCHAR(100),
+    BOARD_CANDIDATE_ID          NUMBER,
+    BOARD_DOSSIER_ID            NUMBER,
+    PRIMARY_EVIDENCE_SETUP_EVENT_ID  NUMBER,   -- always the evidence source; direction may differ
+    BOARD_FINAL_RANK            NUMBER,
+    BOARD_FINAL_VERDICT         VARCHAR(30),
+    BOARD_PRIMARY_REASON_CODE   VARCHAR(80),
+    BOARD_REASON_CODES          VARIANT,
+    BOARD_RATIONALE             VARCHAR(2000),
+    BOARD_PAYLOAD_JSON          VARIANT,
+
+    -- Execution policy gate (hard backend gate — LPA/API must reject non-EXECUTABLE)
+    -- Values: EXECUTABLE | RESEARCH_ONLY | POLICY_BLOCKED | BROKER_BLOCKED |
+    --         RISK_BLOCKED | GEOMETRY_INVALID
+    EXECUTION_POLICY_STATUS     VARCHAR(30)    DEFAULT 'EXECUTABLE',
+    -- Values: SHORT_LIVE_DISABLED | FX_LIVE_DISABLED | INVALID_LONG_GEOMETRY |
+    --         INVALID_SHORT_GEOMETRY | SETUP_EVENT_DIRECTION_MISMATCH | IBKR_NOT_PAPER
+    EXECUTION_POLICY_REASON     VARCHAR(80),
+    IS_RESEARCH_ONLY            BOOLEAN        DEFAULT FALSE
 );

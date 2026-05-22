@@ -15260,18 +15260,20 @@ latest_regime AS (
 SELECT
     stp.PROPOSAL_ID,
     stp.SETUP_EVENT_ID,
+    stp.PRIMARY_EVIDENCE_SETUP_EVENT_ID,
     stp.SYMBOL,
-    se.MARKET_TYPE,
+    COALESCE(se.MARKET_TYPE, se_ev.MARKET_TYPE)             AS MARKET_TYPE,
     stp.SETUP_FAMILY,
     stp.DIRECTION,
     stp.ENTRY_ZONE_LOW,
     stp.ENTRY_ZONE_HIGH,
+    -- SUPPORTING_LEVEL from same-direction evidence event only
     se.LEVEL_PRICE                                          AS SUPPORTING_LEVEL,
     stp.PRICE_INVALIDATION_LEVEL                            AS INVALIDATION_LEVEL,
     stp.INVALIDATION_RULE,
     stp.STRUCTURE_CONFIDENCE,
-    se.LEVEL_SIGNIFICANCE,
-    se.STRUCTURAL_STATE,
+    COALESCE(se.LEVEL_SIGNIFICANCE, stp.LEVEL_SIGNIFICANCE) AS LEVEL_SIGNIFICANCE,
+    COALESCE(se.STRUCTURAL_STATE, se_ev.STRUCTURAL_STATE)   AS STRUCTURAL_STATE,
     lr.REGIME_TAGS,
     stp.REGIME_COMPAT,
     COALESCE(st.TRUST_LABEL, 'UNKNOWN')                     AS TRUST_LABEL,
@@ -15297,14 +15299,22 @@ SELECT
     stp.RATIONALE_TEXT                                       AS PROPOSAL_RATIONALE,
     mb.LATEST_BAR_DATE,
     mb.CLOSE_PRICE                                           AS CURRENT_PRICE,
-    se.SETUP_STATUS,
+    COALESCE(se.SETUP_STATUS, se_ev.SETUP_STATUS)           AS SETUP_STATUS,
+    stp.EXECUTION_POLICY_STATUS,
+    stp.EXECUTION_POLICY_REASON,
+    stp.IS_RESEARCH_ONLY,
     stp.CREATED_AT                                           AS PROPOSAL_CREATED_AT
 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS stp
-JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
+-- LEFT JOIN: SETUP_EVENT_ID is NULL for cross-direction proposals.
+-- These are blocked by EXECUTION_POLICY_STATUS and must not be imported.
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se
     ON se.SETUP_EVENT_ID = stp.SETUP_EVENT_ID
+-- Evidence event for cross-direction context (always populated)
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_ev
+    ON se_ev.SETUP_EVENT_ID = stp.PRIMARY_EVIDENCE_SETUP_EVENT_ID
 LEFT JOIN MIP.APP.STRUCTURAL_SETUP_TRUST st
     ON st.SETUP_FAMILY = stp.SETUP_FAMILY
-   AND st.MARKET_TYPE  = se.MARKET_TYPE
+   AND st.MARKET_TYPE  = COALESCE(se.MARKET_TYPE, se_ev.MARKET_TYPE)
    AND st.EVAL_WINDOW  = 20
 LEFT JOIN MIP.APP.STRUCTURAL_RISK_POLICY rp
     ON rp.SETUP_FAMILY = stp.SETUP_FAMILY
@@ -15314,8 +15324,9 @@ LEFT JOIN latest_bars mb
     ON mb.SYMBOL = stp.SYMBOL
 LEFT JOIN latest_regime lr
     ON lr.SYMBOL      = stp.SYMBOL
-   AND lr.MARKET_TYPE = se.MARKET_TYPE
+   AND lr.MARKET_TYPE = COALESCE(se.MARKET_TYPE, se_ev.MARKET_TYPE)
 WHERE stp.STATUS = 'PROPOSED'
+  AND COALESCE(stp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
   AND stp.CREATED_AT >= DATEADD('day', -%s, CURRENT_DATE())
 ORDER BY stp.CREATED_AT DESC
 LIMIT %s
@@ -15578,6 +15589,14 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
             )
             if cur.fetchone():
                 skipped_existing += 1
+                continue
+
+            # Execution policy hard gate (backend — not UI-only).
+            # Proposals with any status other than EXECUTABLE must never become
+            # live actions regardless of direction, freshness, or other flags.
+            exec_policy = (p.get("EXECUTION_POLICY_STATUS") or "EXECUTABLE").upper()
+            if exec_policy != "EXECUTABLE":
+                skipped_contract_violations += 1
                 continue
 
             # Long-only gate

@@ -516,9 +516,17 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
             choose one of WAIT_FOR_CONFIRMATION, WATCH_LONG, WATCH_SHORT, or
             NO_TRADE. You may NOT propose a directional trade with unresolved
             specialist disagreement on direction.
-          * If short_live_enabled=false and your final_direction is SHORT,
-            final_action must be WATCH_SHORT with primary_reason_code
-            SHORT_RESEARCH_ONLY (never PROPOSE_SHORT).
+          * If short_live_enabled=false and your structural analysis supports
+            a SHORT thesis, you MUST still output PROPOSE_SHORT with
+            primary_reason_code CHAIR_PROPOSE_SHORT. The backend will mark
+            the proposal POLICY_BLOCKED / SHORT_LIVE_DISABLED and prevent
+            execution. Do NOT convert a SHORT thesis into a LONG proposal or
+            WATCH_SHORT merely because short live execution is disabled. A
+            LONG verdict after predominant SHORT evidence requires explicit
+            independent long evidence such as: failed-short reversal,
+            resistance reclaim, higher-low defense, support hold, or bullish
+            continuation structure. If that independent evidence does not
+            exist, use PROPOSE_SHORT (policy-blocked) or WATCH_SHORT.
           * If fx_live_enabled=false and the symbol is FX, final_action may
             not be PROPOSE_LONG or PROPOSE_SHORT; use WATCH_LONG/WATCH_SHORT
             with primary_reason_code FX_LIVE_DISABLED if appropriate.

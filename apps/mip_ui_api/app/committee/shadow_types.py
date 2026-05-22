@@ -27,18 +27,40 @@ SHADOW_ROLES = (
 )
 
 # Role → allowed slice names (closed-world; mirrors GET_SHADOW_EVIDENCE_SLICE)
+# Phase 4 slices (phase4_thesis_verdict, phase4_dossier_context) are added for
+# roles that benefit from Phase 4 proposal-board intelligence. They are
+# null-safe: when no Phase 4 lineage exists the slice carries phase4_available=False.
 ROLE_SLICE_MAP: Dict[str, set] = {
-    "STRUCTURAL_THESIS":  {"proposal_meta", "structural_state", "thesis_summary"},
-    "ENTRY_GEOMETRY":     {"proposal_meta", "entry_zone", "live_price"},
-    "REGIME":             {"proposal_meta", "regime_state", "live_bars"},
-    "PATH_TRADEABILITY":  {"proposal_meta", "path_metrics", "mfe_mae"},
-    "PROTECTION_EXIT":    {"proposal_meta", "invalidation", "live_price"},
-    "SYMBOL_BEHAVIOR":    {"proposal_meta", "trust_label", "path_metrics", "live_bars"},
+    "STRUCTURAL_THESIS": {
+        "proposal_meta", "structural_state", "thesis_summary",
+        "phase4_thesis_verdict", "phase4_dossier_context",
+    },
+    "ENTRY_GEOMETRY": {
+        "proposal_meta", "entry_zone", "live_price",
+        "phase4_dossier_context",
+    },
+    "REGIME": {
+        "proposal_meta", "regime_state", "live_bars",
+        "phase4_dossier_context",
+    },
+    "PATH_TRADEABILITY": {
+        "proposal_meta", "path_metrics", "mfe_mae",
+        "phase4_thesis_verdict", "phase4_dossier_context",
+    },
+    "PROTECTION_EXIT": {
+        "proposal_meta", "invalidation", "live_price",
+        "phase4_thesis_verdict", "phase4_dossier_context",
+    },
+    "SYMBOL_BEHAVIOR": {
+        "proposal_meta", "trust_label", "path_metrics", "live_bars",
+        "phase4_dossier_context",
+    },
     "SHADOW_CHAIR": {
         "proposal_meta", "structural_state", "thesis_summary",
         "entry_zone", "live_price", "regime_state", "live_bars",
         "path_metrics", "mfe_mae", "invalidation", "trust_label",
         "deltas_summary", "artifacts_summary",
+        "phase4_thesis_verdict", "phase4_dossier_context",
     },
 }
 
@@ -62,7 +84,7 @@ class ShadowEvidencePack(BaseModel):
     """
     hearing_id: str
     proposal_id: int
-    pack_version: str = "1.0.0"
+    pack_version: str = "2.0.0"
 
     # Pre-computed slices — keyed by slice_name, consumed by GET_SHADOW_EVIDENCE_SLICE
     slices: Dict[str, Any] = Field(default_factory=dict)
@@ -285,6 +307,8 @@ def build_shadow_evidence_pack(
     proposal: Dict[str, Any],
     roles: List[Dict[str, Any]],
     artifacts: List[Dict[str, Any]],
+    phase4_thesis: Optional[Dict[str, Any]] = None,
+    phase4_dossier: Optional[Dict[str, Any]] = None,
 ) -> ShadowEvidencePack:
     """
     Build the ShadowEvidencePack from Committee 2.0 DB rows.
@@ -301,6 +325,11 @@ def build_shadow_evidence_pack(
       - Raw live context (latest_price, structural_state_now, trend_regime_now, etc.)
       - Delta categories (drift buckets, no final stance)
       - Artifact existence + kind (not raw geometry payloads)
+      - Phase 4 thesis verdict slice (phase4_thesis_verdict) — null-safe
+      - Phase 4 dossier context slice (phase4_dossier_context) — null-safe
+
+    phase4_thesis and phase4_dossier may be empty dicts for pre-Phase-4 proposals.
+    In that case the new slices carry phase4_available=False and all fields are None.
     """
     hid = str(hearing.get("HEARING_ID") or "")
     pid = int(proposal.get("PROPOSAL_ID") or 0)
@@ -477,6 +506,58 @@ def build_shadow_evidence_pack(
         "artifacts_summary": {
             "artifact_kinds": artifact_kinds,
         },
+    }
+
+    # -----------------------------------------------------------------------
+    # Phase 4 slices — null-safe for pre-Phase-4 proposals.
+    # phase4_thesis: row from PROPOSAL_BOARD_THESIS_VERDICT (may be empty dict).
+    # phase4_dossier: row from PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT (may be empty).
+    # Mirroring the field projection from board/explanation.py _phase4_chair_view.
+    # -----------------------------------------------------------------------
+    _p4t = phase4_thesis or {}
+    _p4d = phase4_dossier or {}
+    _p4t_available = bool(_p4t)
+    _p4d_available = bool(_p4d)
+
+    chair_json = _safe_variant(_p4t.get("CHAIR_OUTPUT_JSON")) if _p4t else {}
+    dossier_payload = _safe_variant(_p4d.get("DOSSIER_PAYLOAD_JSON")) if _p4d else {}
+    act_ctx  = dossier_payload.get("actionability_context") or {} if dossier_payload else {}
+    candle_ps = dossier_payload.get("candle_psychology") or {} if dossier_payload else {}
+    levels    = dossier_payload.get("levels") or {} if dossier_payload else {}
+    timeline  = dossier_payload.get("structural_timeline_summary") or {} if dossier_payload else {}
+
+    slices["phase4_thesis_verdict"] = {
+        "phase4_available": _p4t_available,
+        "board_run_id": proposal.get("BOARD_RUN_ID"),
+        "board_dossier_id": proposal.get("BOARD_DOSSIER_ID"),
+        "final_action":         _p4t.get("FINAL_ACTION"),
+        "final_direction":      _p4t.get("FINAL_DIRECTION"),
+        "final_thesis":         _p4t.get("FINAL_THESIS"),
+        "thesis_health":        chair_json.get("thesis_health"),
+        "prior_thesis_reference": chair_json.get("prior_thesis_reference"),
+        "actionability_summary": chair_json.get("actionability_summary"),
+        "primary_reason_code":  _p4t.get("PRIMARY_REASON_CODE"),
+        "secondary_reason_code": _p4t.get("SECONDARY_REASON_CODE"),
+        "why_not_opposite":     _p4t.get("WHY_NOT_OPPOSITE"),
+        "why_not_no_trade":     _p4t.get("WHY_NOT_NO_TRADE"),
+        "risk_treatment":       _p4t.get("RISK_TREATMENT"),
+    }
+
+    slices["phase4_dossier_context"] = {
+        "phase4_available": _p4d_available,
+        "continuation_quality":              act_ctx.get("continuation_quality"),
+        "resistance_overhead_risk":          act_ctx.get("resistance_overhead_risk"),
+        "broken_resistance_support_confidence": act_ctx.get("broken_resistance_support_confidence"),
+        "candle_psychology":                 candle_ps,
+        "recent_cluster":                    candle_ps.get("recent_cluster"),
+        "broken_resistance_as_support":      levels.get("broken_resistance_as_support"),
+        "nearest_support":                   (levels.get("nearest_support") or {}).get("level_price"),
+        "nearest_resistance":                (levels.get("nearest_resistance") or {}).get("level_price"),
+        "current_range_position_pct":        timeline.get("current_range_position_pct"),
+        "trend_shape_class":                 timeline.get("trend_shape_class"),
+        "structural_timeline_summary":       timeline,
+        "levels":                            levels,
+        "actionability_context":             act_ctx,
     }
 
     return ShadowEvidencePack(

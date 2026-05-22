@@ -43,8 +43,8 @@ function pageTitleForPath(pathname) {
     { pattern: '/structural-training', title: 'Structural Training Intelligence' },
     { pattern: '/training', title: 'Legacy Training Status' },
     { pattern: '/structural-timeline', title: 'Structural Market Timeline' },
-    { pattern: '/structural-committee/:hearingId', title: 'Committee 2.0 Hearing' },
-    { pattern: '/structural-committee', title: 'Committee 2.0 Hearing' },
+    { pattern: '/structural-committee/:hearingId', title: 'Hearing Replay — Deterministic Baseline' },
+    { pattern: '/structural-committee', title: 'Hearing Replay — Deterministic Baseline' },
     { pattern: '/committee-performance', title: 'Committee Bake-off' },
     { pattern: '/market-timeline', title: 'Legacy Market Timeline' },
     { pattern: '/symbol-tracker', title: 'Living Chart' },
@@ -82,7 +82,7 @@ function pageTitleForPath(pathname) {
       return `Pattern ${match.params.patternId}`
     }
     if (entry.pattern === '/structural-committee/:hearingId' && match.params.hearingId) {
-      return `Committee ${String(match.params.hearingId).slice(0, 8)}…`
+      return `Hearing Replay ${String(match.params.hearingId).slice(0, 8)}…`
     }
     return entry.title
   }

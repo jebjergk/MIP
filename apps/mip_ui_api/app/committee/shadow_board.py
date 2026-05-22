@@ -246,8 +246,8 @@ def _insert_running_placeholder_sync(
             INSERT INTO MIP.APP.SHADOW_BOARD_SESSION
                 (SESSION_ID, HEARING_ID, PROPOSAL_ID,
                  SNAPSHOT_ID, EVIDENCE_PACK_HASH,
-                 STAGE_REACHED, STATUS, DEGRADED, CREATED_AT)
-            SELECT %s, %s, %s, %s, %s, 0, 'RUNNING', FALSE, CURRENT_TIMESTAMP()
+                 STAGE_REACHED, STATUS, DEGRADED, PACK_VERSION, CREATED_AT)
+            SELECT %s, %s, %s, %s, %s, 0, 'RUNNING', FALSE, '2.0.0', CURRENT_TIMESTAMP()
             WHERE NOT EXISTS (
                 SELECT 1 FROM MIP.APP.SHADOW_BOARD_SESSION
                  WHERE HEARING_ID = %s
@@ -381,9 +381,22 @@ async def _run_shadow_in_background(
 
 def _fetch_hearing_data(hearing_id: str) -> Tuple[
     Dict[str, Any], Dict[str, Any], Dict[str, Any],
-    List[Dict[str, Any]], List[Dict[str, Any]]
+    List[Dict[str, Any]], List[Dict[str, Any]],
+    Dict[str, Any], Dict[str, Any],
 ]:
-    """Fetch all required rows for building ShadowEvidencePack."""
+    """Fetch all required rows for building ShadowEvidencePack.
+
+    Returns:
+        hearing, snapshot, proposal, roles, artifacts,
+        phase4_thesis (may be empty dict if no Phase 4 lineage),
+        phase4_dossier (may be empty dict if no Phase 4 lineage)
+
+    Phase 4 fields are NULL-safe: proposals without BOARD_DOSSIER_ID or
+    BOARD_RUN_ID yield empty dicts. build_shadow_evidence_pack sets
+    phase4_available=False for those slices and the board runs normally.
+    Join keys mirror board/explanation.py _PHASE4_CHAIR_SQL exactly:
+    WHERE tv.RUN_ID = %s AND tv.DOSSIER_ID = %s.
+    """
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -418,7 +431,61 @@ def _fetch_hearing_data(hearing_id: str) -> Tuple[
         )
         artifacts = fetch_all(cur)
 
-        return hearing, snapshot, proposal, roles, artifacts
+        # Phase 4 evidence — NULL-safe. Only fetched when BOARD_RUN_ID and
+        # BOARD_DOSSIER_ID are present on the proposal (Phase 4-native rows).
+        # Pre-Phase-4 proposals return empty dicts; no exception is raised.
+        board_run_id = proposal.get("BOARD_RUN_ID")
+        board_dossier_id = proposal.get("BOARD_DOSSIER_ID")
+
+        phase4_thesis: Dict[str, Any] = {}
+        phase4_dossier: Dict[str, Any] = {}
+
+        if board_run_id and board_dossier_id:
+            try:
+                cur.execute(
+                    """
+                    SELECT
+                        FINAL_ACTION, FINAL_DIRECTION, PRIMARY_REASON_CODE,
+                        SECONDARY_REASON_CODE, FINAL_THESIS,
+                        WHY_NOT_OPPOSITE, WHY_NOT_NO_TRADE, RISK_TREATMENT,
+                        CHAIR_OUTPUT_JSON
+                    FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT
+                    WHERE RUN_ID = %s AND DOSSIER_ID = %s
+                    LIMIT 1
+                    """,
+                    (board_run_id, int(board_dossier_id)),
+                )
+                tv_rows = fetch_all(cur)
+                if tv_rows:
+                    phase4_thesis = tv_rows[0]
+            except Exception as exc:
+                logger.warning(
+                    "shadow_fetch: phase4 thesis query failed for proposal=%s "
+                    "(run=%s dossier=%s): %s — continuing with phase4_available=false",
+                    proposal_id, board_run_id, board_dossier_id, exc,
+                )
+
+            try:
+                cur.execute(
+                    """
+                    SELECT DOSSIER_PAYLOAD_JSON
+                    FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT
+                    WHERE RUN_ID = %s AND DOSSIER_ID = %s
+                    LIMIT 1
+                    """,
+                    (board_run_id, int(board_dossier_id)),
+                )
+                ds_rows = fetch_all(cur)
+                if ds_rows:
+                    phase4_dossier = ds_rows[0]
+            except Exception as exc:
+                logger.warning(
+                    "shadow_fetch: phase4 dossier query failed for proposal=%s "
+                    "(run=%s dossier=%s): %s — continuing with phase4_available=false",
+                    proposal_id, board_run_id, board_dossier_id, exc,
+                )
+
+        return hearing, snapshot, proposal, roles, artifacts, phase4_thesis, phase4_dossier
     finally:
         conn.close()
 
@@ -1069,6 +1136,7 @@ def _finalize_session_sync(
                    DEGRADED           = %s,
                    DEGRADED_REASON    = %s,
                    RUN_MS             = %s,
+                   PACK_VERSION       = '2.0.0',
                    COMPLETED_AT       = CURRENT_TIMESTAMP()
              WHERE SESSION_ID = %s
             """,
@@ -1350,11 +1418,15 @@ async def orchestrate_shadow_board(
         # Stage 0: Build + stage evidence pack
         # ------------------------------------------------------------------
         logger.info("shadow_stage0: building evidence pack for hearing %s", hearing_id)
-        hearing, snapshot, proposal, roles, artifacts = await asyncio.to_thread(
-            _fetch_hearing_data, hearing_id
+        hearing, snapshot, proposal, roles, artifacts, phase4_thesis, phase4_dossier = (
+            await asyncio.to_thread(_fetch_hearing_data, hearing_id)
         )
         result.proposal_id = int(proposal.get("PROPOSAL_ID") or 0)
-        pack = build_shadow_evidence_pack(hearing, snapshot, proposal, roles, artifacts)
+        pack = build_shadow_evidence_pack(
+            hearing, snapshot, proposal, roles, artifacts,
+            phase4_thesis=phase4_thesis,
+            phase4_dossier=phase4_dossier,
+        )
         await asyncio.to_thread(_stage_evidence_pack, pack, session_id)
         result.stage_reached = 0
         await _safe_checkpoint("stage0_progress", _checkpoint_session_progress_sync, session_id, 0, "RUNNING")

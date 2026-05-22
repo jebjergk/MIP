@@ -244,6 +244,27 @@ export default function LivePortfolioActivity() {
   const [c20OrchestrateByAction, setC20OrchestrateByAction] = useState({})
   /** Inline proof exhibits expanded per structural entry action. */
   const [c20ExpandedByAction, setC20ExpandedByAction] = useState({})
+  /**
+   * Stage 2: bounded shadow-board poll per structural ENTRY action.
+   * Headline (agentic / shadow chair verdict) is the primary intelligence
+   * readout; deterministic baseline remains the materialization source
+   * until Stage 4. Polling is strictly bounded (max 5 attempts @ 1.5s)
+   * and never blocks operator flow.
+   */
+  const [shadowBoardByAction, setShadowBoardByAction] = useState({})
+  const shadowPollersRef = useRef({})
+
+  useEffect(() => {
+    return () => {
+      const pollers = shadowPollersRef.current || {}
+      Object.values(pollers).forEach((ctx) => {
+        if (!ctx) return
+        ctx.cancelled = true
+        if (ctx.timer) clearTimeout(ctx.timer)
+      })
+      shadowPollersRef.current = {}
+    }
+  }, [])
 
   const load = useCallback(async (opts = {}) => {
     const silent = Boolean(opts.silent)
@@ -362,7 +383,7 @@ export default function LivePortfolioActivity() {
         setStreamStatus('Advancing approval flow...')
         setLiveLineTarget(
           isStructuralC20Flow
-            ? 'Committee 2.0 verdict applied. Advancing PM/Compliance/Intent approvals...'
+            ? 'Intelligence Review verdict applied. Advancing PM/Compliance/Intent approvals...'
             : 'Committee complete. Advancing PM/Compliance/Intent approvals...',
         )
         const approveResp = await fetch(`${API_BASE}/live/decisions/${actionId}/approve-flow`, {
@@ -393,7 +414,7 @@ export default function LivePortfolioActivity() {
       } else {
         setLiveLineTarget(
           isStructuralC20Flow
-            ? 'Committee 2.0 verdict updated. No further revalidation step available for this status yet.'
+            ? 'Intelligence Review verdict updated. No further revalidation step available for this status yet.'
             : 'Committee updated. No further revalidation step available for this status yet.',
         )
       }
@@ -405,6 +426,112 @@ export default function LivePortfolioActivity() {
     },
     [load],
   )
+
+  /**
+   * Stage 2: bounded shadow-board poll for the Shadow Chair Verdict
+   * headline on a structural ENTRY action.
+   *
+   * Strictly bounded:
+   *   - Max 5 attempts at ~1.5s = ~7.5s wall clock.
+   *   - Stops immediately on terminal status (COMPLETE / DEGRADED / FAILED).
+   *   - Stops on max attempts (marks status = 'TIMEOUT').
+   *   - Stops on cancel (new poll started for same action, or component unmount).
+   *
+   * All fetch errors are swallowed into UI state. The headline degrades
+   * gracefully; it never throws and never blocks submission.
+   */
+  const startBoundedShadowPoll = useCallback((actionId, hearingId) => {
+    if (!actionId || !hearingId) return
+
+    const prior = shadowPollersRef.current[actionId]
+    if (prior) {
+      prior.cancelled = true
+      if (prior.timer) clearTimeout(prior.timer)
+    }
+
+    const ctx = { cancelled: false, attempts: 0, timer: null }
+    shadowPollersRef.current[actionId] = ctx
+
+    const MAX_ATTEMPTS = 5
+    const INTERVAL_MS = 1500
+
+    setShadowBoardByAction((prev) => ({
+      ...prev,
+      [actionId]: {
+        polling: true,
+        hearingId,
+        status: 'RUNNING',
+        stance: null,
+        confidence: null,
+        degraded: false,
+        degradedReason: null,
+        chair: null,
+        error: null,
+        attempts: 0,
+      },
+    }))
+
+    const tick = async () => {
+      if (ctx.cancelled) return
+      ctx.attempts += 1
+
+      try {
+        const r = await fetch(
+          `${API_BASE}/committee/hearing/${encodeURIComponent(hearingId)}/shadow-board`,
+        )
+        if (ctx.cancelled) return
+        if (r.ok) {
+          const j = await r.json().catch(() => null)
+          if (j) {
+            const status = String(j.status || '').toUpperCase()
+            const terminal = status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED'
+            setShadowBoardByAction((prev) => ({
+              ...prev,
+              [actionId]: {
+                ...(prev[actionId] || {}),
+                polling: !terminal && ctx.attempts < MAX_ATTEMPTS,
+                hearingId,
+                status: status || 'RUNNING',
+                stance: j.shadow_stance || j.chair?.shadow_stance || null,
+                confidence: j.shadow_confidence ?? j.chair?.shadow_confidence ?? null,
+                degraded: Boolean(j.degraded),
+                degradedReason: j.degraded_reason || null,
+                chair: j.chair || null,
+                error: null,
+                attempts: ctx.attempts,
+              },
+            }))
+            if (terminal) {
+              ctx.cancelled = true
+              return
+            }
+          }
+        }
+        // 404 / non-OK / parse failure: keep polling silently until max attempts.
+      } catch (_e) {
+        // Network error swallowed — never crash the row.
+      }
+
+      if (ctx.attempts >= MAX_ATTEMPTS) {
+        setShadowBoardByAction((prev) => {
+          const cur = prev[actionId] || {}
+          const finalStatus = cur.status && cur.status !== 'RUNNING' ? cur.status : 'TIMEOUT'
+          return {
+            ...prev,
+            [actionId]: { ...cur, polling: false, status: finalStatus, attempts: ctx.attempts },
+          }
+        })
+        ctx.cancelled = true
+        return
+      }
+
+      if (!ctx.cancelled) {
+        ctx.timer = setTimeout(tick, INTERVAL_MS)
+      }
+    }
+
+    tick()
+  }, [])
 
   const runCommittee2Orchestrate = useCallback(
     async (actionId) => {
@@ -439,7 +566,7 @@ export default function LivePortfolioActivity() {
         })
         const body = await resp.json().catch(() => null)
         if (!resp.ok) {
-          throw new Error(messageFromApiFailure(body, 'Committee 2.0 orchestration failed.'))
+          throw new Error(messageFromApiFailure(body, 'Intelligence Review orchestration failed.'))
         }
         if (progressTick) {
           clearInterval(progressTick)
@@ -455,6 +582,10 @@ export default function LivePortfolioActivity() {
             progressMsg: 'Verdict received — advancing approvals & 1m revalidation…',
           },
         }))
+        const _shadowHearingId = body?.hearing_id || body?.inline_hearing?.hearing_id || null
+        if (_shadowHearingId) {
+          startBoundedShadowPoll(actionId, _shadowHearingId)
+        }
         await advanceLiveActionAfterCommitteeApply(actionId, body, { isStructuralC20Flow: true })
         setC20OrchestrateByAction((prev) => ({
           ...prev,
@@ -462,11 +593,11 @@ export default function LivePortfolioActivity() {
         }))
         setNotice(
           body?.idempotent_replay
-            ? `Committee 2.0 replay OK for ${actionId} (already materialized).`
-            : `Committee 2.0 applied for ${actionId}.`,
+            ? `Intelligence Review replay OK for ${actionId} (already materialized).`
+            : `Intelligence Review applied for ${actionId}.`,
         )
       } catch (e) {
-        const msg = e.message || 'Committee 2.0 orchestration failed.'
+        const msg = e.message || 'Intelligence Review orchestration failed.'
         setC20OrchestrateByAction((prev) => ({
           ...prev,
           [actionId]: { loading: false, error: msg, lastAt: Date.now() },
@@ -477,7 +608,7 @@ export default function LivePortfolioActivity() {
         setBusy('')
       }
     },
-    [advanceLiveActionAfterCommitteeApply],
+    [advanceLiveActionAfterCommitteeApply, startBoundedShadowPoll],
   )
 
   const finalizeCommitteeRevalidation = useCallback(async (actionId, verdict) => {
@@ -504,7 +635,7 @@ export default function LivePortfolioActivity() {
             syncC20 && executionOnlyExit
               ? 'Execution replay is currently unavailable.'
               : syncC20
-                ? 'Committee 2.0 sync is currently unavailable.'
+                ? 'Intelligence Review sync is currently unavailable.'
                 : 'Committee revalidation is currently unavailable.',
           ),
         )
@@ -518,7 +649,7 @@ export default function LivePortfolioActivity() {
           committeeStreamContextRef.current?.executionOnlyExit
             ? 'Execution replay failed.'
             : committeeStreamContextRef.current?.structural
-              ? 'Committee 2.0 sync failed.'
+              ? 'Intelligence Review sync failed.'
               : 'Committee revalidation failed.'),
       )
       setStreamStatus('Stopped')
@@ -545,7 +676,7 @@ export default function LivePortfolioActivity() {
         summary: executionOnlyExit
           ? 'Starting execution replay stream...'
           : syncC20
-            ? 'Starting Committee 2.0 sync stream...'
+            ? 'Starting Intelligence Review sync stream...'
             : 'Starting committee stream...',
       },
     ])
@@ -553,7 +684,7 @@ export default function LivePortfolioActivity() {
       executionOnlyExit
         ? 'Starting execution replay...'
         : syncC20
-          ? 'Starting Committee 2.0 sync...'
+          ? 'Starting Intelligence Review sync...'
           : 'Starting committee stream...',
     )
     const es = new EventSource(
@@ -575,7 +706,7 @@ export default function LivePortfolioActivity() {
             summary: executionOnlyExit
               ? 'Execution replay started.'
               : syncC20
-                ? 'Committee 2.0 sync started.'
+                ? 'Intelligence Review sync started.'
                 : 'Committee run started.',
           },
         ])
@@ -583,7 +714,7 @@ export default function LivePortfolioActivity() {
           executionOnlyExit
             ? 'Execution replay started.'
             : syncC20
-              ? 'Committee 2.0 sync started.'
+              ? 'Intelligence Review sync started.'
               : 'Committee run started.',
         )
       }
@@ -972,8 +1103,8 @@ export default function LivePortfolioActivity() {
           <section className="lpa-section">
             <h3>Pending Decisions</h3>
             <div className="lpa-subtle">
-              Decisions not yet broker-opened. Structural <strong>entry</strong>: use <strong>Run Committee 2.0</strong> (one step), then Submit.
-              Optional full hearing for deep review. Structural <strong>exit</strong>: legacy SSE <strong>replays the execution-only</strong> verdict (not Committee 2.0). Other intents: committee revalidation stream, then Submit.
+              Decisions not yet broker-opened. Structural <strong>entry</strong>: use <strong>Run Intelligence Review</strong> (one step), then Submit.
+              Optional full hearing for deep review. Structural <strong>exit</strong>: legacy SSE <strong>replays the execution-only</strong> verdict (not Intelligence Review). Other intents: committee revalidation stream, then Submit.
             </div>
             {outsideHours ? <div className="lpa-subtle">Market is closed. Submit sends DAY orders that IB queues for next session.</div> : null}
             <div className="lpa-table-wrap">
@@ -1075,8 +1206,73 @@ export default function LivePortfolioActivity() {
                           </div>
                         ) : null}
                         {isStructuralEntry && (c20State.lastResult || c20State.error || c20State.loading) ? (
+                          <>
+                            {(() => {
+                              if (!c20State.lastResult?.hearing_id) return null
+                              const shadow = shadowBoardByAction[d.action_id] || null
+                              if (!shadow) return null
+                              const baselineStance = String(c20State.lastResult?.stance || '').toUpperCase()
+                              const shadowStanceRaw = shadow.stance ? String(shadow.stance).toUpperCase() : ''
+                              const status = String(shadow.status || 'RUNNING').toUpperCase()
+                              const showStance = Boolean(shadowStanceRaw) && status !== 'FAILED'
+                              const showDisagree =
+                                baselineStance && shadowStanceRaw && baselineStance !== shadowStanceRaw
+                              const placeholder =
+                                status === 'TIMEOUT'
+                                  ? 'Agentic review still running — check exhibits in a few seconds'
+                                  : status === 'FAILED'
+                                    ? 'Agentic review unavailable — using deterministic baseline only'
+                                    : shadow.polling
+                                      ? 'Agentic review running…'
+                                      : 'Agentic review not yet available — using deterministic baseline only'
+                              return (
+                                <div className="lpa-c2-shadow-headline">
+                                  <div className="lpa-c2-shadow-headline-head">
+                                    <span className="lpa-c2-shadow-headline-title">Shadow Chair Verdict</span>
+                                    <span className="lpa-c2-shadow-headline-agentic">Agentic</span>
+                                  </div>
+                                  <div className="lpa-c2-shadow-headline-sub lpa-subtle">
+                                    Read-only · advisory · not execution-authoritative (until Stage 4)
+                                  </div>
+                                  {showStance ? (
+                                    <div className="lpa-c2-shadow-headline-row">
+                                      <span className="lpa-c2-shadow-headline-pill lpa-c2-shadow-headline-pill--stance">
+                                        {shadowStanceRaw.replace(/_/g, ' ')}
+                                      </span>
+                                      <span className="lpa-c2-shadow-headline-pill">
+                                        conf{' '}
+                                        {shadow.confidence != null ? fmtNum(shadow.confidence, 2) : '—'}
+                                      </span>
+                                      {showDisagree ? (
+                                        <span
+                                          className="lpa-c2-shadow-headline-disagree"
+                                          title={`Agentic stance ${shadowStanceRaw.replace(/_/g, ' ')} differs from deterministic baseline ${baselineStance.replace(/_/g, ' ')} — informational only, does not block submit.`}
+                                        >
+                                          Δ Disagrees with baseline
+                                        </span>
+                                      ) : null}
+                                      {shadow.degraded || status === 'DEGRADED' ? (
+                                        <span
+                                          className="lpa-c2-shadow-headline-degraded"
+                                          title={shadow.degradedReason || 'Agentic review completed in degraded mode.'}
+                                        >
+                                          Degraded
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <div className="lpa-c2-shadow-headline-placeholder lpa-subtle">
+                                      {placeholder}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })()}
                           <div className={`lpa-c2-panel${c20State.error ? ' lpa-c2-panel--err' : ''}`}>
-                            <div className="lpa-c2-panel-title">Committee 2.0 (last run)</div>
+                            <div className="lpa-c2-panel-title">Intelligence Review (last run)</div>
+                            <div className="lpa-c2-panel-subtitle lpa-subtle">
+                              Deterministic baseline · executes &amp; materializes (until Stage 4)
+                            </div>
                             {c20State.loading && c20State.progressMsg ? (
                               <div className="lpa-c2-progress-inline">{c20State.progressMsg}</div>
                             ) : null}
@@ -1129,6 +1325,7 @@ export default function LivePortfolioActivity() {
                               </>
                             )}
                           </div>
+                          </>
                         ) : null}
                         <div>Committee: {d.committee_verdict || '—'}</div>
                         {d.structural?.freshness_assessment ? <div className="lpa-subtle">Freshness: {d.structural.freshness_assessment} | Hold: {d.structural.hold_character || '—'}</div> : null}
@@ -1200,13 +1397,13 @@ export default function LivePortfolioActivity() {
                         <div className="lpa-actions">
                         {isStaleRevalidationState(d) ? (
                           <div className="lpa-warning-inline">
-                            Revalidation expired —{' '}
+                            Safety revalidation expired —{' '}
                             {isStructuralEntry
-                              ? 'run Committee 2.0'
+                              ? 'run Intelligence Review'
                               : isStructuralExit
                                 ? 'replay execution verdict (SSE)'
                                 : isStructuralC20
-                                  ? 'sync Committee 2.0'
+                                  ? 'sync Intelligence Review'
                                   : 'run committee revalidation'}{' '}
                             before submit.
                           </div>
@@ -1222,11 +1419,11 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-subtle">
                             Submit to IBKR is enabled only when status is REVALIDATED_PASS (
                             {isStructuralEntry
-                              ? 'Run Committee 2.0 if needed'
+                              ? 'Run Intelligence Review if needed'
                               : isStructuralExit
                                 ? 'replay execution verdict if needed'
                                 : isStructuralC20
-                                  ? 'sync Committee 2.0 if needed'
+                                  ? 'sync Intelligence Review if needed'
                                   : 'run committee revalidation if needed'}
                             ).
                           </div>
@@ -1250,7 +1447,7 @@ export default function LivePortfolioActivity() {
                                 ? 'Running…'
                                 : c20State.lastResult
                                   ? 'Refresh decision'
-                                  : 'Run Committee 2.0'}
+                                  : 'Run Intelligence Review'}
                             </button>
                           </>
                         ) : (
@@ -1276,7 +1473,7 @@ export default function LivePortfolioActivity() {
                               : isStructuralC20
                                 ? isStructuralExit
                                   ? 'Replay execution verdict'
-                                  : 'Sync Committee 2.0'
+                                  : 'Sync Intelligence Review'
                                 : 'Committee revalidation'}
                           </button>
                         )}
@@ -1295,11 +1492,11 @@ export default function LivePortfolioActivity() {
                             {d.execution_hard_blocked
                               ? 'Submit blocked by risk limits shown in reason codes. Adjust sizing/config or rerun committee.'
                               : isStructuralEntry
-                                ? 'Run Committee 2.0 refreshes the hearing, commits to this action, and syncs LIVE. Then advance approvals; Submit enables when REVALIDATED_PASS.'
+                                ? 'Run Intelligence Review refreshes the hearing, commits to this action, and syncs LIVE. Then advance approvals; Submit enables when REVALIDATED_PASS.'
                                 : isStructuralExit
                                   ? 'Replay execution verdict (SSE) materializes the execution-only structural exit check. Submit enables when REVALIDATED_PASS.'
                                   : isStructuralC20
-                                    ? 'Sync Committee 2.0 after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
+                                    ? 'Sync Intelligence Review after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
                                     : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
                           </div>
                         ) : null}
@@ -1307,11 +1504,11 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-subtle">
                             Blocked by opening guard.{' '}
                             {isStructuralEntry
-                              ? 'Re-run Committee 2.0'
+                              ? 'Re-run Intelligence Review'
                               : isStructuralExit
                                 ? 'Replay execution verdict again'
                                 : isStructuralC20
-                                  ? 'Re-sync Committee 2.0'
+                                  ? 'Re-sync Intelligence Review'
                                   : 'Re-run committee revalidation'}{' '}
                             when data is fresher, or Reject stale to clear.
                           </div>
@@ -1348,7 +1545,7 @@ export default function LivePortfolioActivity() {
                                 {d.structural
                                   ? isStructuralExitRow
                                     ? 'Structural execution replay'
-                                    : 'Committee 2.0 sync'
+                                    : 'Intelligence Review sync'
                                   : 'Live committee stream'}
                               </b>{' '}
                               for{' '}

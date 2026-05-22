@@ -275,7 +275,7 @@ function WipTerminal({ progressMsg }) {
       <div className="lpa-c2-wip-glow" aria-hidden />
       <header className="lpa-c2-wip-head">
         <span className="lpa-c2-wip-badge">In progress</span>
-        <h4 className="lpa-c2-wip-title">Committee 2.0 orchestration</h4>
+        <h4 className="lpa-c2-wip-title">Intelligence Review Evidence</h4>
         <p className="lpa-c2-wip-sub">Evidence is being compiled — hang tight.</p>
       </header>
       <div className="lpa-c2-wip-current">
@@ -520,7 +520,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       <div className="lpa-c2-dual-real">
         <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
           <span className="lpa-c2-dual-chip">REAL BOARD</span>
-          <span className="lpa-c2-dual-banner-text">Authoritative · executes trades</span>
+          <span className="lpa-c2-dual-banner-text">Deterministic baseline · executes &amp; materializes (until Stage 4)</span>
         </div>
         <div className="lpa-c2-exhibits">
       {loading && progressMsg ? (
@@ -804,7 +804,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       <div className="lpa-c2-dual-shadow">
         <div className="lpa-c2-dual-banner lpa-c2-dual-banner--shadow">
           <span className="lpa-c2-dual-chip lpa-c2-dual-chip--shadow">SHADOW BOARD</span>
-          <span className="lpa-c2-dual-banner-text">Advisory · same frozen snapshot · zero authority</span>
+          <span className="lpa-c2-dual-banner-text">Agentic · primary review · advisory only · zero authority (until Stage 4)</span>
         </div>
         <ShadowBoardPanel
           shadowPayload={shadowPayload}

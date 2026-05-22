@@ -89,7 +89,7 @@ _AGENT_OBJECT_NAMES = {
 _CHAIR_AGENT_NAME = "PHASE4_CHAIR_PORTFOLIO_PM_AGENT"
 _REQUIRED_ROLES = list(_AGENT_OBJECT_NAMES.keys())
 
-_OBJECTLESS_MODEL = "claude-4-sonnet"
+_OBJECTLESS_MODEL = "claude-sonnet-4-6"
 
 _PROMPT_VERSION = "phase4_agentic_board_v1_cortex_agents_multi_round"
 _POLICY_VERSION = "phase4_agentic_board_v1"

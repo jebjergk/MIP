@@ -67,7 +67,8 @@ _SPECIALIST_AGENTS = {
 }
 _CHAIR_AGENT = "SHADOW_CHAIR_AGENT"
 
-_OBJECTLESS_MODEL = "claude-4-sonnet"
+_OBJECTLESS_MODEL = "claude-sonnet-4-6"
+_AGENT_MODEL = "claude-sonnet-4-6"  # Baked into all SHADOW_*_AGENT specs; mirrored here so SHADOW_BOARD_SESSION.AGENT_MODEL is recorded explicitly instead of relying on the (stale) column default.
 _CACHE_TTL_HOURS = 24
 
 
@@ -246,8 +247,10 @@ def _insert_running_placeholder_sync(
             INSERT INTO MIP.APP.SHADOW_BOARD_SESSION
                 (SESSION_ID, HEARING_ID, PROPOSAL_ID,
                  SNAPSHOT_ID, EVIDENCE_PACK_HASH,
-                 STAGE_REACHED, STATUS, DEGRADED, PACK_VERSION, CREATED_AT)
-            SELECT %s, %s, %s, %s, %s, 0, 'RUNNING', FALSE, '2.0.0', CURRENT_TIMESTAMP()
+                 STAGE_REACHED, STATUS, DEGRADED,
+                 AGENT_MODEL, PACK_VERSION, CREATED_AT)
+            SELECT %s, %s, %s, %s, %s, 0, 'RUNNING', FALSE,
+                   %s, '2.0.0', CURRENT_TIMESTAMP()
             WHERE NOT EXISTS (
                 SELECT 1 FROM MIP.APP.SHADOW_BOARD_SESSION
                  WHERE HEARING_ID = %s
@@ -258,6 +261,7 @@ def _insert_running_placeholder_sync(
             (
                 session_id, hearing_id, proposal_id,
                 snapshot_id, evidence_pack_hash,
+                _AGENT_MODEL,
                 hearing_id, evidence_pack_hash,
             ),
         )
@@ -571,11 +575,11 @@ async def _run_specialist(
         return role, position, elapsed
     except Exception as exc:
         elapsed = int((time.monotonic() - t0) * 1000)
-        logger.warning("shadow_stage1: %s FAILED in %dms: %s", role, elapsed, exc)
+        logger.warning("shadow_stage1: %s FAILED in %dms: %s: %s", role, elapsed, type(exc).__name__, exc)
         return role, DegradedPosition(
             role=role,
             degraded=True,
-            degraded_reason=str(exc)[:400],
+            degraded_reason=(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)[:400],
         ), elapsed
 
 
@@ -825,13 +829,13 @@ async def _run_chair(
         return ruling, elapsed
     except Exception as exc:
         elapsed = int((time.monotonic() - t0) * 1000)
-        logger.warning("shadow_stage5: chair FAILED in %dms: %s", elapsed, exc)
+        logger.warning("shadow_stage5: chair FAILED in %dms: %s: %s", elapsed, type(exc).__name__, exc)
         return ShadowChairRuling(
             shadow_stance="DEFER",
             shadow_confidence=0.0,
             parse_ok=False,
             degraded=True,
-            degraded_reason=str(exc)[:400],
+            degraded_reason=(f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__)[:400],
         ), elapsed
 
 
@@ -1220,13 +1224,13 @@ def _persist_shadow_session(
                      SNAPSHOT_ID, EVIDENCE_PACK_HASH,
                      SHADOW_STANCE, SHADOW_CONFIDENCE,
                      STAGE_REACHED, STATUS, DEGRADED, DEGRADED_REASON,
-                     RUN_MS, CREATED_AT, COMPLETED_AT)
+                     AGENT_MODEL, RUN_MS, CREATED_AT, COMPLETED_AT)
                 SELECT
                     %s, %s, %s,
                     %s, %s,
                     %s, %s,
                     %s, %s, %s, %s,
-                    %s, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+                    %s, %s, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                 """,
                 (
                     sid, hid, result.proposal_id,
@@ -1234,7 +1238,7 @@ def _persist_shadow_session(
                     result.shadow_stance, result.shadow_confidence,
                     result.stage_reached, result.status,
                     result.degraded, (result.degraded_reason or "")[:500],
-                    result.run_ms,
+                    _AGENT_MODEL, result.run_ms,
                 ),
             )
 

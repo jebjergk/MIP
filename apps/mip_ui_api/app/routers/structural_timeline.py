@@ -216,7 +216,9 @@ def get_structural_timeline_proposals(
     try:
         clauses = ["SYMBOL = %s", "MARKET_TYPE = %s"]
         params = [symbol.upper(), market_type.upper()]
-        dc, dp = _date_clauses(start, end, "SETUP_DATE")
+        # SETUP_DATE is a legacy alias on the view (evidence date or proposal created date).
+        # Fall back to PROPOSAL_CREATED_AT so filtering still works if the alias is absent.
+        dc, dp = _date_clauses(start, end, "COALESCE(SETUP_DATE, PROPOSAL_CREATED_AT::DATE)")
         clauses.extend(dc)
         params.extend(dp)
         where = " WHERE " + " AND ".join(clauses)

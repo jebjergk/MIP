@@ -981,7 +981,7 @@ export default function ShadowBoardPanel({
       />
       <footer className="sbp-disclaimer">
         Shadow Boardroom — six independent specialists + one chair, frozen snapshot, zero trade authority.
-        Model: claude-4-sonnet via Snowflake Cortex Agents.
+        Model: claude-sonnet-4-6 via Snowflake Cortex Agents.
       </footer>
     </aside>
   )

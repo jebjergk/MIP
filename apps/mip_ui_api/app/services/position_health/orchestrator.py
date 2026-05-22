@@ -356,7 +356,7 @@ async def run_shadow_health_review(
                 payload,
                 result,
                 agent_name,
-                "claude-4-sonnet",
+                "claude-sonnet-4-6",
                 "1.0.0",
             )
         except Exception as e:

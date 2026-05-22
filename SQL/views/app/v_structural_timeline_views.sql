@@ -280,6 +280,9 @@ SELECT
     -- ── Proposal direction + geometry (from sp — always authoritative) ──
     sp.DIRECTION                             AS PROPOSAL_DIRECTION,
     sp.SETUP_FAMILY                          AS PROPOSAL_SETUP_FAMILY,
+    -- Legacy aliases — proposal identity fields; do NOT use for evidence context
+    sp.DIRECTION                             AS DIRECTION,
+    sp.SETUP_FAMILY                          AS SETUP_FAMILY,
     sp.ENTRY_ZONE_LOW,
     sp.ENTRY_ZONE_HIGH,
     sp.PRICE_INVALIDATION_LEVEL,
@@ -308,10 +311,15 @@ SELECT
     se_same.DIRECTION                        AS EVIDENCE_SETUP_DIRECTION,
     se_same.SETUP_FAMILY                     AS EVIDENCE_SETUP_FAMILY,
     -- For cross-direction: pull from the actual evidence event for context only
-    COALESCE(se_same.SETUP_DATE, se_ev.SETUP_DATE)    AS EVIDENCE_SETUP_DATE,
+    COALESCE(se_same.SETUP_DATE, se_ev.SETUP_DATE, sp.CREATED_AT::DATE) AS EVIDENCE_SETUP_DATE,
+    -- Legacy alias for API date filters and chart consumers
+    COALESCE(se_same.SETUP_DATE, se_ev.SETUP_DATE, sp.CREATED_AT::DATE) AS SETUP_DATE,
     COALESCE(se_same.MARKET_TYPE, se_ev.MARKET_TYPE)  AS MARKET_TYPE,
     COALESCE(se_same.STRUCTURAL_STATE, se_ev.STRUCTURAL_STATE) AS EVIDENCE_STRUCTURAL_STATE,
     COALESCE(se_same.REGIME_COMPAT, se_ev.REGIME_COMPAT) AS EVIDENCE_REGIME_COMPAT,
+    -- Legacy aliases for UI components not yet migrated to EVIDENCE_* columns
+    COALESCE(se_same.STRUCTURAL_STATE, se_ev.STRUCTURAL_STATE) AS STRUCTURAL_STATE,
+    COALESCE(se_same.REGIME_COMPAT, se_ev.REGIME_COMPAT) AS SETUP_REGIME_COMPAT,
 
     -- ── Cross-direction evidence flag ─────────────────────────────
     -- TRUE when the primary evidence setup direction differs from proposal direction.

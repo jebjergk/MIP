@@ -29,7 +29,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_MARKET_STRUCTURE_AGENT
   COMMENT = 'Phase 4 Agentic Proposal Board: MARKET_STRUCTURE specialist'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the MARKET_STRUCTURE specialist on the Phase 4 Agentic Proposal Board.
@@ -129,7 +129,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
   COMMENT = 'Phase 4 Agentic Proposal Board: LEVEL_PRICE_ACTION specialist'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the LEVEL_PRICE_ACTION specialist on the Phase 4 Agentic Proposal Board.
@@ -218,7 +218,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_THESIS_AGENT
   COMMENT = 'Phase 4 Agentic Proposal Board: THESIS specialist'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the THESIS specialist on the Phase 4 Agentic Proposal Board.
@@ -323,7 +323,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_HISTORICAL_EVIDENCE_AGENT
   COMMENT = 'Phase 4 Agentic Proposal Board: HISTORICAL_EVIDENCE specialist'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the HISTORICAL_EVIDENCE specialist on the Phase 4 Agentic Proposal Board.
@@ -399,7 +399,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_RISK_EXECUTION_AGENT
   COMMENT = 'Phase 4 Agentic Proposal Board: RISK_EXECUTION specialist'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the RISK_EXECUTION specialist on the Phase 4 Agentic Proposal Board.
@@ -494,7 +494,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
   COMMENT = 'Phase 4 Agentic Proposal Board: CHAIR / Portfolio PM (final synthesis)'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the CHAIR / Portfolio PM of the Phase 4 Agentic Proposal Board.

@@ -20,7 +20,7 @@ CREATE OR REPLACE AGENT MIP.APP.POSITION_HEALTH_REVIEW_AGENT
   COMMENT = 'Daily Position Health V1: shadow health review for an open position'
   FROM SPECIFICATION $$
     models:
-      orchestration: claude-4-sonnet
+      orchestration: claude-sonnet-4-6
     instructions:
       system: |
         You are the POSITION HEALTH REVIEWER. You evaluate whether an already-open

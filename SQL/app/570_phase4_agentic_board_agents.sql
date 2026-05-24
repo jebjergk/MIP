@@ -163,7 +163,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
         {
           "role": "LEVEL_PRICE_ACTION",
           "verdict": "<one of LONG_LOCATION, SHORT_LOCATION, BOTH_SIDES, WAIT_CONFIRMATION, NO_EDGE>",
-          "primary_reason_code": "<one of LEVEL_LONG_LOCATION, LEVEL_SHORT_LOCATION, LEVEL_WAIT_CONFIRMATION, LEVEL_NO_EDGE>",
+          "primary_reason_code": "<one of LEVEL_LONG_LOCATION, LEVEL_SHORT_LOCATION, LEVEL_BOTH_SIDES, LEVEL_WAIT_CONFIRMATION, LEVEL_NO_EDGE>",
           "secondary_reason_code": null,
           "confidence": <float 0.0-1.0>,
           "long_score": <float 0.0-1.0>,

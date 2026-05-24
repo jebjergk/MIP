@@ -5,6 +5,7 @@ import IntradaySubstantiationMapCard from '../components/IntradaySubstantiationM
 import LivePoliticianDisclosureContextCard from '../components/LivePoliticianDisclosureContextCard'
 import PublicDisclosureContextCard from '../components/PublicDisclosureContextCard'
 import ShadowBoardPanel from '../components/committee/ShadowBoardPanel'
+import { normalizeShadowBoardResponse } from '../components/committee/shadowResponse'
 import { API_BASE } from '../config/apiBase'
 
 function fmtNum(v, digits = 2) {
@@ -302,7 +303,7 @@ function Reveal({ show, children, className = '' }) {
 /**
  * Inline proof exhibits + WIP terminal for Committee 2.0 orchestrate.
  */
-export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg, loading }) {
+export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg, loading, onShadowSessionLoaded }) {
   const chartGradId = useMemo(() => `c2fx_${Math.random().toString(36).slice(2, 11)}`, [])
   const [revealStep, setRevealStep] = useState(0)
   // Comparative-priority context for this proposal vs the rest of the
@@ -465,6 +466,34 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hearingId, inlineShadowSession])
 
+  // Stage 2: when the exhibits panel has fetched the (possibly final) shadow
+  // payload, normalize it and push it back to the LPA row so the Shadow
+  // Chair Verdict headline stays in sync with what's actually rendered
+  // here in the exhibits. Without this, the LPA bounded poll can exit at
+  // TIMEOUT while the exhibits show the completed board.
+  // Read-only / advisory — no effect on submit gating or materialization.
+  //
+  // The callback is held in a ref so a new inline arrow from the parent
+  // (recreated on every parent render) does NOT retrigger this effect.
+  // Otherwise we'd race: parent re-render → new prop fn → effect fires →
+  // calls back → parent setState → parent re-render → loop.
+  const onShadowSessionLoadedRef = useRef(onShadowSessionLoaded)
+  useEffect(() => {
+    onShadowSessionLoadedRef.current = onShadowSessionLoaded
+  }, [onShadowSessionLoaded])
+  useEffect(() => {
+    const cb = onShadowSessionLoadedRef.current
+    if (!cb) return
+    // Prefer the full payload; fall back to the progress payload so the
+    // headline still surfaces RUNNING/DEGRADED transitions while the
+    // chair is mid-flight.
+    const source = shadowPayload || shadowProgress
+    if (!source) return
+    const normalized = normalizeShadowBoardResponse(source)
+    if (normalized.status === 'UNAVAILABLE' && !normalized.stance) return
+    cb(normalized)
+  }, [shadowPayload, shadowProgress])
+
   useEffect(() => {
     if (!inline) {
       setRevealStep(0)
@@ -517,6 +546,13 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
 
   return (
     <div className="lpa-c2-dual">
+      <div className="lpa-c2-dual-diagnostic-header">
+        <span className="lpa-c2-dual-diagnostic-chip">Diagnostic deep-dive</span>
+        <span className="lpa-c2-dual-diagnostic-text">
+          Full reasoning trail — agentic Shadow Chair Verdict (primary, read-only) above the deterministic baseline
+          (still materializes until Stage 4). This view is for investigation, not the primary operator decision.
+        </span>
+      </div>
       <div className="lpa-c2-dual-real">
         <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
           <span className="lpa-c2-dual-chip">REAL BOARD</span>
@@ -795,7 +831,11 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       </Reveal>
 
       <Reveal show={revealStep >= linkStep} className="lpa-c2-full-link">
-        {hearingHref ? <Link to={hearingHref}>Open full hearing →</Link> : null}
+        {hearingHref ? (
+          <Link to={hearingHref} title="Hearing Replay — full deterministic baseline diagnostic page">
+            Open hearing replay (full diagnostic) →
+          </Link>
+        ) : null}
       </Reveal>
         </div>
       </div>

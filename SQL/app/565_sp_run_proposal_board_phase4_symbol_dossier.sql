@@ -89,14 +89,20 @@ BEGIN
         BOARD_WARNING_FLAGS,
         OBJECT_INSERT(
             OBJECT_INSERT(
-                OBJECT_INSERT(DOSSIER_PAYLOAD_JSON, 'portfolio_id', :P_PORTFOLIO_ID, TRUE),
-                'direction_source_rule', 'CHAIR_PORTFOLIO_PM.final_direction', TRUE
+                OBJECT_INSERT(
+                    OBJECT_INSERT(DOSSIER_PAYLOAD_JSON, 'portfolio_id', :P_PORTFOLIO_ID, TRUE),
+                    'direction_source_rule', 'CHAIR_PORTFOLIO_PM.final_direction', TRUE
+                ),
+                'setup_event_id_rule', 'PRIMARY_EVIDENCE_SETUP_EVENT_ID_EVIDENCE_ONLY', TRUE
             ),
-            'setup_event_id_rule', 'PRIMARY_EVIDENCE_SETUP_EVENT_ID_EVIDENCE_ONLY', TRUE
+            'pipeline_as_of_date', :v_as_of, TRUE
         ),
         PAYLOAD_HASH
     FROM MIP.MART.V_PROPOSAL_BOARD_SYMBOL_DOSSIER
-    WHERE AS_OF_DATE = :v_as_of
+    -- Calendar-aware filter (see 566 for full rationale): late or replay runs
+    -- where the pipeline calendar day differs from the trading day match the
+    -- CURRENT_DATE()-stamped dossier rows too.
+    WHERE (AS_OF_DATE = :v_as_of OR (:v_as_of < CURRENT_DATE() AND AS_OF_DATE = CURRENT_DATE()))
       AND ARRAY_SIZE(COALESCE(DATA_QUALITY_FLAGS, ARRAY_CONSTRUCT())) = 0;
 
     SELECT COUNT(*) INTO :v_dossier_count
@@ -540,18 +546,25 @@ BEGIN
             c.PRIMARY_REASON_CODE,
             c.SECONDARY_REASON_CODE,
             c.CONFIDENCE,
+            -- Direction-neutral ranking (see 566 for rationale). PROPOSE_LONG
+            -- and PROPOSE_SHORT share tier 1; confidence and max(long/short
+            -- score) decide ordering.
             ROW_NUMBER() OVER (
                 ORDER BY
                     CASE c.STRUCTURED_OUTPUT_JSON:final_action::STRING
                         WHEN 'PROPOSE_LONG' THEN 1
-                        WHEN 'PROPOSE_SHORT' THEN 2
-                        WHEN 'WATCH_LONG' THEN 3
-                        WHEN 'WATCH_SHORT' THEN 4
-                        WHEN 'WAIT_FOR_CONFIRMATION' THEN 5
-                        WHEN 'NO_TRADE' THEN 6
-                        ELSE 7
+                        WHEN 'PROPOSE_SHORT' THEN 1
+                        WHEN 'WATCH_LONG' THEN 2
+                        WHEN 'WATCH_SHORT' THEN 2
+                        WHEN 'WAIT_FOR_CONFIRMATION' THEN 3
+                        WHEN 'NO_TRADE' THEN 4
+                        ELSE 5
                     END,
                     c.CONFIDENCE DESC,
+                    GREATEST(
+                        COALESCE(TRY_TO_DOUBLE(c.STRUCTURED_OUTPUT_JSON:long_score::STRING), 0.0),
+                        COALESCE(TRY_TO_DOUBLE(c.STRUCTURED_OUTPUT_JSON:short_score::STRING), 0.0)
+                    ) DESC,
                     s.SYMBOL
             ) AS RN
         FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s

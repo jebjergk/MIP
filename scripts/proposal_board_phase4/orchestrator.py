@@ -1757,19 +1757,24 @@ def _persist_final_slate(
         )
         SELECT
             v.RUN_ID, v.DOSSIER_ID, v.SYMBOL, v.MARKET_TYPE,
+            -- Direction-neutral ranking (mirrors 566/565). PROPOSE_LONG and
+            -- PROPOSE_SHORT share tier 1 so the strongest evidence wins
+            -- regardless of direction. The prior LONG-before-SHORT ordering
+            -- silently demoted all shorts below all longs.
             ROW_NUMBER() OVER (
                 PARTITION BY v.RUN_ID
                 ORDER BY
                     CASE v.FINAL_ACTION
                         WHEN 'PROPOSE_LONG' THEN 1
-                        WHEN 'PROPOSE_SHORT' THEN 2
-                        WHEN 'WATCH_LONG' THEN 3
-                        WHEN 'WATCH_SHORT' THEN 4
-                        WHEN 'WAIT_FOR_CONFIRMATION' THEN 5
-                        WHEN 'NO_TRADE' THEN 6
-                        WHEN 'REJECT' THEN 7
-                        ELSE 8
+                        WHEN 'PROPOSE_SHORT' THEN 1
+                        WHEN 'WATCH_LONG' THEN 2
+                        WHEN 'WATCH_SHORT' THEN 2
+                        WHEN 'WAIT_FOR_CONFIRMATION' THEN 3
+                        WHEN 'NO_TRADE' THEN 4
+                        WHEN 'REJECT' THEN 5
+                        ELSE 6
                     END,
+                    COALESCE(TRY_TO_DOUBLE(v.CHAIR_OUTPUT_JSON:confidence::STRING), 0.0) DESC,
                     v.SYMBOL
             ) AS RANK,
             v.FINAL_ACTION, v.FINAL_DIRECTION,

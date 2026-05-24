@@ -11,6 +11,30 @@ function trustBadge(label) {
   return badge(l || 'UNKNOWN', cls)
 }
 
+// PROPOSAL_SKIP_REASON comes from V_STRUCTURAL_TIMELINE_SETUPS and reflects a
+// setup-family trust / regime gate — NOT the agentic board's execution policy.
+// We map the raw code to a human-readable label so users do not confuse
+// RESEARCH_ONLY (setup trust) with SHORT_LIVE_DISABLED (execution policy).
+const SKIP_REASON_LABELS = {
+  RESEARCH_ONLY: 'Family trust = RESEARCH (not TRUSTED/PROVISIONAL)',
+  FAMILY_TRUST_RESEARCH: 'Family trust = RESEARCH (not TRUSTED/PROVISIONAL)',
+  INSUFFICIENT_TRUST: 'Trust label unknown',
+  NO_ACTIVE_POLICY: 'No active risk policy for family',
+  REJECTED_TRUST: 'Family rejected by trust model',
+  WEAK_REGIME: 'Regime compatibility POOR',
+}
+
+function skipReasonLabel(code) {
+  if (!code) return null
+  return SKIP_REASON_LABELS[code] || code.replace(/_/g, ' ')
+}
+
+function execPolicyBadge(status) {
+  const s = (status || '').toUpperCase()
+  if (!s || s === 'EXECUTABLE') return badge('EXECUTABLE', 'success')
+  return badge(s, 'fail')
+}
+
 function dirBadge(dir) {
   const d = (dir || '').toUpperCase()
   return badge(d, d === 'LONG' ? 'long' : 'short')
@@ -109,8 +133,14 @@ export default function StlSetupDetail({ detail, loading, onClose, get }) {
             <Row label="Invalidation Hit" value={v('INVALIDATION_HIT') === true ? badge('Yes', 'fail') : v('INVALIDATION_HIT') === false ? badge('No', 'success') : '—'} />
             <Row label="Failure Mode" value={(v('FAILURE_MODE') || '').replace(/_/g, ' ') || '—'} />
             <Row label="Became Proposal" value={v('BECAME_PROPOSAL') ? badge('Yes', 'success') : badge('No', 'fail')} />
-            {skipReason && <Row label="Skip Reason" value={skipReason.replace(/_/g, ' ')} />}
+            {skipReason && <Row label="Skip Reason" value={skipReasonLabel(skipReason)} />}
           </div>
+          {skipReason && (skipReason === 'RESEARCH_ONLY' || skipReason === 'FAMILY_TRUST_RESEARCH') && (
+            <div className="stl-detail-note" style={{ fontSize: '0.8rem', marginTop: 8, color: '#6b7280' }}>
+              This is a setup-family trust gate, not a short execution block. Live short
+              execution policy is evaluated separately at the agentic board / LPA layer.
+            </div>
+          )}
         </div>
 
         {/* Symbol vs Pooled Family */}
@@ -157,6 +187,13 @@ export default function StlSetupDetail({ detail, loading, onClose, get }) {
             <div className="stl-detail-grid" style={{ marginTop: 8 }}>
               <Row label="Proposal ID" value={v('PROPOSAL_ID')} />
               <Row label="Proposal Status" value={v('PROPOSAL_STATUS')} />
+              <Row label="Execution Policy" value={execPolicyBadge(v('EXECUTION_POLICY_STATUS'))} />
+              {v('EXECUTION_POLICY_REASON') && (
+                <Row label="Policy Reason" value={(v('EXECUTION_POLICY_REASON') || '').replace(/_/g, ' ')} />
+              )}
+              {v('IS_RESEARCH_ONLY') === true && (
+                <Row label="Research Only" value={badge('Yes', 'fail')} />
+              )}
             </div>
           </div>
         )}

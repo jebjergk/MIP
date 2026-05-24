@@ -5,6 +5,10 @@ import { useSymbolMeta } from '../context/SymbolMetaContext'
 import './LivePortfolioActivity.css'
 import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 import LpaCommittee2Exhibits from './LpaCommittee2Exhibits'
+import {
+  normalizeShadowBoardResponse,
+  isShadowStatusTerminal,
+} from '../components/committee/shadowResponse'
 
 function fmtTs(ts) {
   if (!ts) return '—'
@@ -244,6 +248,10 @@ export default function LivePortfolioActivity() {
   const [c20OrchestrateByAction, setC20OrchestrateByAction] = useState({})
   /** Inline proof exhibits expanded per structural entry action. */
   const [c20ExpandedByAction, setC20ExpandedByAction] = useState({})
+  // Stage 3: deterministic baseline panel is collapsible / visually secondary.
+  // Defaults to collapsed; auto-expanded while loading or on error so the
+  // operator never loses visibility on a failure mode.
+  const [c20BaselineExpandedByAction, setC20BaselineExpandedByAction] = useState({})
   /**
    * Stage 2: bounded shadow-board poll per structural ENTRY action.
    * Headline (agentic / shadow chair verdict) is the primary intelligence
@@ -452,8 +460,29 @@ export default function LivePortfolioActivity() {
     const ctx = { cancelled: false, attempts: 0, timer: null }
     shadowPollersRef.current[actionId] = ctx
 
-    const MAX_ATTEMPTS = 5
-    const INTERVAL_MS = 1500
+    // Two-phase bounded poll (still has a hard ceiling — no continuous
+    // background loops). The shadow chair under pack v2.0.0 + sonnet-4.6
+    // typically completes in ~100–180s, so the original 5×1.5s=7.5s
+    // window always fell through to TIMEOUT and froze the headline at
+    // "still running" forever.
+    //
+    //   - Fast phase: 5 × 1500ms (= 7.5s) catches early stance / specialist
+    //     bubbles and any unusually fast chair.
+    //   - Slow phase: 6 × 30000ms (= 180s) covers the chair-completion
+    //     window without hammering the API while specialists deliberate.
+    //   Total ceiling: 11 fetches over ~187s. Cancels immediately on
+    //   the first terminal status (COMPLETE / DEGRADED / FAILED).
+    //
+    // Belt-and-braces: when the user expands proof exhibits, that
+    // panel's own long-running fetch pushes the latest normalized
+    // payload back into shadowBoardByAction via onShadowSessionLoaded
+    // (see LpaCommittee2Exhibits mount below). So even if a chair runs
+    // longer than 187s, opening exhibits resolves the headline.
+    const FAST_ATTEMPTS = 5
+    const FAST_INTERVAL_MS = 1500
+    const SLOW_ATTEMPTS = 6
+    const SLOW_INTERVAL_MS = 30000
+    const MAX_ATTEMPTS = FAST_ATTEMPTS + SLOW_ATTEMPTS
 
     setShadowBoardByAction((prev) => ({
       ...prev,
@@ -463,6 +492,9 @@ export default function LivePortfolioActivity() {
         status: 'RUNNING',
         stance: null,
         confidence: null,
+        thesisHealth: null,
+        primaryReasonCode: null,
+        whyNotOpposite: null,
         degraded: false,
         degradedReason: null,
         chair: null,
@@ -483,20 +515,16 @@ export default function LivePortfolioActivity() {
         if (r.ok) {
           const j = await r.json().catch(() => null)
           if (j) {
-            const status = String(j.status || '').toUpperCase()
-            const terminal = status === 'COMPLETE' || status === 'DEGRADED' || status === 'FAILED'
+            const normalized = normalizeShadowBoardResponse(j)
+            const terminal = isShadowStatusTerminal(normalized.status)
+            const stillPolling = !terminal && ctx.attempts < MAX_ATTEMPTS
             setShadowBoardByAction((prev) => ({
               ...prev,
               [actionId]: {
                 ...(prev[actionId] || {}),
-                polling: !terminal && ctx.attempts < MAX_ATTEMPTS,
+                ...normalized,
                 hearingId,
-                status: status || 'RUNNING',
-                stance: j.shadow_stance || j.chair?.shadow_stance || null,
-                confidence: j.shadow_confidence ?? j.chair?.shadow_confidence ?? null,
-                degraded: Boolean(j.degraded),
-                degradedReason: j.degraded_reason || null,
-                chair: j.chair || null,
+                polling: stillPolling,
                 error: null,
                 attempts: ctx.attempts,
               },
@@ -526,11 +554,45 @@ export default function LivePortfolioActivity() {
       }
 
       if (!ctx.cancelled) {
-        ctx.timer = setTimeout(tick, INTERVAL_MS)
+        const nextInterval = ctx.attempts >= FAST_ATTEMPTS ? SLOW_INTERVAL_MS : FAST_INTERVAL_MS
+        ctx.timer = setTimeout(tick, nextInterval)
       }
     }
 
     tick()
+  }, [])
+
+  /**
+   * Stage 2: when the proof-exhibits panel mounts and fetches the full
+   * shadow-board payload (its internal long-running poll), it pushes the
+   * normalized result back here so the LPA headline state stays in sync
+   * with whatever the operator is actually looking at on screen — even
+   * if our bounded poll exited earlier with status=TIMEOUT/RUNNING.
+   *
+   * Stage 2 contract: this only updates display state. It cannot affect
+   * submit gating (REVALIDATED_PASS), materialization, or the
+   * deterministic baseline.
+   */
+  const handleExhibitsShadowLoaded = useCallback((actionId, normalized) => {
+    if (!actionId || !normalized) return
+    setShadowBoardByAction((prev) => {
+      const cur = prev[actionId] || {}
+      // Don't downgrade a terminal status we already have to UNAVAILABLE
+      // just because a transient progress fetch came back empty.
+      if (normalized.status === 'UNAVAILABLE' && isShadowStatusTerminal(cur.status)) {
+        return prev
+      }
+      return {
+        ...prev,
+        [actionId]: {
+          ...cur,
+          ...normalized,
+          hearingId: cur.hearingId || normalized.hearingId,
+          polling: cur.polling && !isShadowStatusTerminal(normalized.status),
+          error: null,
+        },
+      }
+    })
   }, [])
 
   const runCommittee2Orchestrate = useCallback(
@@ -1137,6 +1199,14 @@ export default function LivePortfolioActivity() {
                       const isStructuralExit = isStructuralC20 && !isStructuralEntry
                       const c20State = c20OrchestrateByAction[d.action_id] || {}
                       const c20Expanded = Boolean(c20ExpandedByAction[d.action_id])
+                      const c20BaselineUserExpanded = Boolean(c20BaselineExpandedByAction[d.action_id])
+                      // Auto-expand while loading or on error so the operator
+                      // never loses visibility on a failure mode; otherwise
+                      // honor the manual collapse/expand state (default
+                      // collapsed in Stage 3 — Shadow Chair Verdict is the
+                      // primary intelligence card).
+                      const c20BaselineExpanded =
+                        c20BaselineUserExpanded || Boolean(c20State.loading) || Boolean(c20State.error)
                       const canSubmit = statusUpper === 'REVALIDATED_PASS' && Boolean(d.submission_allowed)
                       const canRunCommittee = [
                         'RESEARCH_IMPORTED',
@@ -1268,62 +1338,109 @@ export default function LivePortfolioActivity() {
                                 </div>
                               )
                             })()}
-                          <div className={`lpa-c2-panel${c20State.error ? ' lpa-c2-panel--err' : ''}`}>
-                            <div className="lpa-c2-panel-title">Intelligence Review (last run)</div>
-                            <div className="lpa-c2-panel-subtitle lpa-subtle">
-                              Deterministic baseline · executes &amp; materializes (until Stage 4)
-                            </div>
-                            {c20State.loading && c20State.progressMsg ? (
-                              <div className="lpa-c2-progress-inline">{c20State.progressMsg}</div>
-                            ) : null}
-                            {c20State.error ? (
-                              <div>{c20State.error}</div>
-                            ) : (
-                              <>
-                                <div>
-                                  Stance / confidence: {String(c20State.lastResult?.stance ?? '—')} /{' '}
-                                  {c20State.lastResult?.confidence != null
+                          <div
+                            className={`lpa-c2-panel lpa-c2-panel--secondary${
+                              c20State.error ? ' lpa-c2-panel--err' : ''
+                            }${c20BaselineExpanded ? ' lpa-c2-panel--expanded' : ' lpa-c2-panel--collapsed'}`}
+                          >
+                            <button
+                              type="button"
+                              className="lpa-c2-panel-titlebar"
+                              aria-expanded={c20BaselineExpanded}
+                              onClick={() =>
+                                setC20BaselineExpandedByAction((prev) => ({
+                                  ...prev,
+                                  [d.action_id]: !c20BaselineUserExpanded,
+                                }))
+                              }
+                              title={
+                                c20BaselineExpanded
+                                  ? 'Collapse deterministic baseline (Shadow Chair Verdict above remains primary)'
+                                  : 'Expand deterministic baseline details (advisory of execution chain; still materializes until Stage 4)'
+                              }
+                            >
+                              <span className="lpa-c2-panel-toggle" aria-hidden>
+                                {c20BaselineExpanded ? '▼' : '▶'}
+                              </span>
+                              <span className="lpa-c2-panel-title">Deterministic baseline (last run)</span>
+                              {!c20BaselineExpanded && c20State.lastResult ? (
+                                <span className="lpa-c2-panel-summary lpa-subtle">
+                                  {String(c20State.lastResult.stance ?? '—').replace(/_/g, ' ')} ·
+                                  conf{' '}
+                                  {c20State.lastResult.confidence != null
                                     ? fmtNum(c20State.lastResult.confidence, 2)
-                                    : '—'}
+                                    : '—'}{' '}
+                                  · {String(c20State.lastResult.recommendation || '—')}
+                                  {c20State.lastResult.blocked ? ' (blocked)' : ''}
+                                  {c20State.lastResult.idempotent_replay ? ' · replay' : ''}
+                                </span>
+                              ) : null}
+                              {!c20BaselineExpanded && !c20State.lastResult && c20State.loading ? (
+                                <span className="lpa-c2-panel-summary lpa-subtle">running…</span>
+                              ) : null}
+                            </button>
+                            {c20BaselineExpanded ? (
+                              <div className="lpa-c2-panel-body">
+                                <div className="lpa-c2-panel-subtitle lpa-subtle">
+                                  Deterministic baseline · executes &amp; materializes (until Stage 4)
                                 </div>
-                                <div>
-                                  Verdict: {String(c20State.lastResult?.recommendation || '—')}
-                                  {c20State.lastResult?.blocked ? ' (blocked)' : ''}
-                                  {c20State.lastResult?.idempotent_replay ? ' · replay' : ''}
-                                </div>
-                                {Array.isArray(c20State.lastResult?.reason_codes) &&
-                                c20State.lastResult.reason_codes.length > 0 ? (
-                                  <div className="lpa-subtle">
-                                    {c20State.lastResult.reason_codes.slice(0, 6).join(', ')}
-                                  </div>
+                                {c20State.loading && c20State.progressMsg ? (
+                                  <div className="lpa-c2-progress-inline">{c20State.progressMsg}</div>
                                 ) : null}
-                                {c20State.lastResult?.inline_hearing ? (
-                                  <button
-                                    type="button"
-                                    className="lpa-c2-expand-btn"
-                                    onClick={() =>
-                                      setC20ExpandedByAction((prev) => ({
-                                        ...prev,
-                                        [d.action_id]: !prev[d.action_id],
-                                      }))
-                                    }
-                                  >
-                                    {c20Expanded ? '▲ Hide proof exhibits' : '▼ Show proof exhibits'}
-                                  </button>
-                                ) : null}
-                                {c20State.lastResult?.hearing_id && d.action_id && d.proposal_id != null ? (
-                                  <div className="lpa-c2-panel-links">
-                                    <Link
-                                      to={`/structural-committee/${encodeURIComponent(c20State.lastResult.hearing_id)}?action_id=${encodeURIComponent(
-                                        String(d.action_id),
-                                      )}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`}
-                                    >
-                                      Open full hearing
-                                    </Link>
-                                  </div>
-                                ) : null}
-                              </>
-                            )}
+                                {c20State.error ? (
+                                  <div>{c20State.error}</div>
+                                ) : (
+                                  <>
+                                    <div>
+                                      Stance / confidence: {String(c20State.lastResult?.stance ?? '—')} /{' '}
+                                      {c20State.lastResult?.confidence != null
+                                        ? fmtNum(c20State.lastResult.confidence, 2)
+                                        : '—'}
+                                    </div>
+                                    <div>
+                                      Verdict: {String(c20State.lastResult?.recommendation || '—')}
+                                      {c20State.lastResult?.blocked ? ' (blocked)' : ''}
+                                      {c20State.lastResult?.idempotent_replay ? ' · replay' : ''}
+                                    </div>
+                                    {Array.isArray(c20State.lastResult?.reason_codes) &&
+                                    c20State.lastResult.reason_codes.length > 0 ? (
+                                      <div className="lpa-subtle">
+                                        {c20State.lastResult.reason_codes.slice(0, 6).join(', ')}
+                                      </div>
+                                    ) : null}
+                                    {c20State.lastResult?.inline_hearing ? (
+                                      <button
+                                        type="button"
+                                        className="lpa-c2-expand-btn lpa-c2-expand-btn--diagnostic"
+                                        onClick={() =>
+                                          setC20ExpandedByAction((prev) => ({
+                                            ...prev,
+                                            [d.action_id]: !prev[d.action_id],
+                                          }))
+                                        }
+                                        title="Diagnostic deep-dive — full deterministic reasoning, exhibits, and shadow-board boardroom. Not the primary operator readout."
+                                      >
+                                        {c20Expanded
+                                          ? '▲ Hide baseline diagnostic exhibits'
+                                          : '▼ Show baseline diagnostic exhibits'}
+                                      </button>
+                                    ) : null}
+                                    {c20State.lastResult?.hearing_id && d.action_id && d.proposal_id != null ? (
+                                      <div className="lpa-c2-panel-links">
+                                        <Link
+                                          to={`/structural-committee/${encodeURIComponent(c20State.lastResult.hearing_id)}?action_id=${encodeURIComponent(
+                                            String(d.action_id),
+                                          )}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`}
+                                          title="Hearing Replay — full deterministic baseline diagnostic page"
+                                        >
+                                          Open hearing replay
+                                        </Link>
+                                      </div>
+                                    ) : null}
+                                  </>
+                                )}
+                              </div>
+                            ) : null}
                           </div>
                           </>
                         ) : null}
@@ -1527,6 +1644,9 @@ export default function LivePortfolioActivity() {
                               c20State.lastResult?.hearing_id && d.proposal_id != null
                                 ? `/structural-committee/${encodeURIComponent(c20State.lastResult.hearing_id)}?action_id=${encodeURIComponent(String(d.action_id))}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`
                                 : null
+                            }
+                            onShadowSessionLoaded={(normalized) =>
+                              handleExhibitsShadowLoaded(d.action_id, normalized)
                             }
                           />
                         </td>

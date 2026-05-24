@@ -124,3 +124,54 @@ FROM MIP.INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_NAME = 'STRUCTURAL_TRADE_PROPOSALS'
   AND COLUMN_NAME IN ('EXECUTION_POLICY_STATUS','EXECUTION_POLICY_REASON','IS_RESEARCH_ONLY')
 ORDER BY COLUMN_NAME;
+
+-- ── 10. Chair PROPOSE_SHORT verdicts fire when short evidence is present ────
+-- After the Chair prompt cleanup (removing the WATCH_SHORT-on-short-disabled
+-- override), at least one PROPOSE_SHORT must appear in the most recent
+-- completed board run that included any SHORT structural evidence. A run with
+-- short structural evidence that emits only WATCH_SHORT and no PROPOSE_SHORT
+-- indicates the Chair is still suppressing shorts at the prompt layer.
+WITH latest_complete_run AS (
+    SELECT RUN_ID, AS_OF_DATE
+    FROM MIP.APP.PROPOSAL_BOARD_RUN
+    WHERE RUN_STATUS = 'COMPLETE'
+    ORDER BY STARTED_AT DESC
+    LIMIT 1
+),
+run_short_evidence AS (
+    SELECT COUNT(*) AS short_evidence_count
+    FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+    JOIN latest_complete_run r ON r.RUN_ID = s.RUN_ID
+    JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS ev
+      ON ev.SETUP_EVENT_ID = s.PRIMARY_EVIDENCE_SETUP_EVENT_ID
+    WHERE ev.DIRECTION = 'SHORT'
+),
+run_short_proposals AS (
+    SELECT COUNT(*) AS propose_short_count
+    FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 f
+    JOIN latest_complete_run r ON r.RUN_ID = f.RUN_ID
+    WHERE f.FINAL_ACTION = 'PROPOSE_SHORT'
+)
+SELECT 'SMOKE_10_PROPOSE_SHORT_FIRES_WHEN_EVIDENCE_EXISTS' AS CHECK_NAME,
+       (SELECT RUN_ID FROM latest_complete_run)             AS LATEST_COMPLETE_RUN,
+       (SELECT short_evidence_count FROM run_short_evidence) AS SHORT_EVIDENCE_DOSSIERS,
+       (SELECT propose_short_count FROM run_short_proposals) AS PROPOSE_SHORT_VERDICTS,
+       CASE
+           WHEN (SELECT short_evidence_count FROM run_short_evidence) = 0 THEN 'SKIP_NO_SHORT_EVIDENCE'
+           WHEN (SELECT propose_short_count FROM run_short_proposals) > 0 THEN 'PASS'
+           ELSE 'FAIL'
+       END AS RESULT;
+
+-- ── 11. APP_CONFIG: PROPOSAL_BOARD_SHORT_LIVE_ENABLED current value ─────────
+-- Informational. When unset or false, all PROPOSE_SHORT verdicts must be
+-- materialised with EXECUTION_POLICY_STATUS = POLICY_BLOCKED /
+-- EXECUTION_POLICY_REASON = SHORT_LIVE_DISABLED. Flip to true (via UPDATE)
+-- only after IBKR paper-account verification is complete.
+SELECT 'SMOKE_11_SHORT_LIVE_CONFIG' AS CHECK_NAME,
+       COALESCE(MAX(CASE WHEN CONFIG_KEY = 'PROPOSAL_BOARD_SHORT_LIVE_ENABLED'
+                         THEN CONFIG_VALUE END), '(unset → default FALSE)') AS SHORT_LIVE_ENABLED_VALUE,
+       MAX(CASE WHEN CONFIG_KEY = 'PROPOSAL_BOARD_SHORT_LIVE_ENABLED'
+                THEN UPDATED_AT END) AS UPDATED_AT
+FROM MIP.APP.APP_CONFIG
+WHERE CONFIG_KEY = 'PROPOSAL_BOARD_SHORT_LIVE_ENABLED'
+   OR 1=1;  -- ensure single-row report even when unset

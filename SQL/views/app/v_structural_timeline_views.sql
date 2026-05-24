@@ -143,13 +143,18 @@ SELECT
              AND pa.SETUP_FAMILY IS NOT NULL
         THEN TRUE ELSE FALSE
     END                                              AS IS_PROPOSAL_READY,
+    -- PROPOSAL_SKIP_REASON reflects the deterministic setup-family trust/regime
+    -- gate; it is unrelated to execution policy (IS_RESEARCH_ONLY / SHORT_LIVE_DISABLED
+    -- on the proposal row). The trust-RESEARCH value was renamed from RESEARCH_ONLY
+    -- to FAMILY_TRUST_RESEARCH to disambiguate it from execution-policy semantics;
+    -- UI maps both labels for backward compatibility.
     CASE
         WHEN pa.SETUP_FAMILY IS NULL                          THEN 'NO_ACTIVE_POLICY'
         WHEN COALESCE(tb.TRUST_LABEL, '') = 'REJECTED'        THEN 'REJECTED_TRUST'
-        WHEN COALESCE(tb.TRUST_LABEL, '') = 'RESEARCH'         THEN 'RESEARCH_ONLY'
+        WHEN COALESCE(tb.TRUST_LABEL, '') = 'RESEARCH'        THEN 'FAMILY_TRUST_RESEARCH'
         WHEN COALESCE(tb.TRUST_LABEL, '') NOT IN ('TRUSTED', 'PROVISIONAL')
-                                                               THEN 'INSUFFICIENT_TRUST'
-        WHEN se.REGIME_COMPAT = 'POOR'                         THEN 'WEAK_REGIME'
+                                                              THEN 'INSUFFICIENT_TRUST'
+        WHEN se.REGIME_COMPAT = 'POOR'                        THEN 'WEAK_REGIME'
         ELSE NULL
     END                                              AS PROPOSAL_SKIP_REASON,
 

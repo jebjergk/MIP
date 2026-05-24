@@ -87,14 +87,23 @@ BEGIN
         BOARD_WARNING_FLAGS,
         OBJECT_INSERT(
             OBJECT_INSERT(
-                OBJECT_INSERT(DOSSIER_PAYLOAD_JSON, 'portfolio_id', :P_PORTFOLIO_ID, TRUE),
-                'direction_source_rule', 'CHAIR_PORTFOLIO_PM.final_direction', TRUE
+                OBJECT_INSERT(
+                    OBJECT_INSERT(DOSSIER_PAYLOAD_JSON, 'portfolio_id', :P_PORTFOLIO_ID, TRUE),
+                    'direction_source_rule', 'CHAIR_PORTFOLIO_PM.final_direction', TRUE
+                ),
+                'setup_event_id_rule', 'PRIMARY_EVIDENCE_SETUP_EVENT_ID_EVIDENCE_ONLY', TRUE
             ),
-            'setup_event_id_rule', 'PRIMARY_EVIDENCE_SETUP_EVENT_ID_EVIDENCE_ONLY', TRUE
+            'pipeline_as_of_date', :v_as_of, TRUE
         ),
         PAYLOAD_HASH
     FROM MIP.MART.V_PROPOSAL_BOARD_SYMBOL_DOSSIER
-    WHERE AS_OF_DATE = :v_as_of
+    -- Calendar-aware filter: when the daily pipeline runs on calendar day D+N
+    -- for trading day D (D < CURRENT_DATE), the dossier view still stamps rows
+    -- with CURRENT_DATE() as AS_OF_DATE. Match either the intended trading day
+    -- or today's stamp when v_as_of is in the past so late/replay runs are not
+    -- blocked by NO_SYMBOL_DOSSIERS. The intended trading day is preserved on
+    -- the snapshot via DOSSIER_PAYLOAD_JSON.pipeline_as_of_date.
+    WHERE (AS_OF_DATE = :v_as_of OR (:v_as_of < CURRENT_DATE() AND AS_OF_DATE = CURRENT_DATE()))
       AND ARRAY_SIZE(COALESCE(DATA_QUALITY_FLAGS, ARRAY_CONSTRUCT())) = 0
       AND PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL;
 
@@ -141,16 +150,16 @@ BEGIN
             || 'market_structure verdict allowed: TREND_UP, TREND_DOWN, RANGE, BREAKOUT_ATTEMPT, FAILED_BREAKOUT, RESISTANCE_REJECTION, SUPPORT_BOUNCE, EXHAUSTION, REVERSAL_FORMING, CHOP_NO_EDGE. '
             || 'market_structure primary_reason_code allowed: STRUCTURE_TREND_UP, STRUCTURE_TREND_DOWN, STRUCTURE_RANGE, STRUCTURE_CHOP_NO_EDGE, STRUCTURE_REVERSAL_FORMING, STRUCTURE_FAILED_BREAKOUT. '
             || 'level_price_action verdict allowed: LONG_LOCATION, SHORT_LOCATION, BOTH_SIDES, WAIT_CONFIRMATION, NO_EDGE. '
-            || 'level_price_action primary_reason_code allowed: LEVEL_LONG_LOCATION, LEVEL_SHORT_LOCATION, LEVEL_WAIT_CONFIRMATION, LEVEL_NO_EDGE. '
+            || 'level_price_action primary_reason_code allowed: LEVEL_LONG_LOCATION, LEVEL_SHORT_LOCATION, LEVEL_BOTH_SIDES, LEVEL_WAIT_CONFIRMATION, LEVEL_NO_EDGE. '
             || 'thesis verdict allowed: LONG_THESIS, SHORT_THESIS, WATCH_LONG, WATCH_SHORT, NO_TRADE, CONFLICTED. '
             || 'thesis primary_reason_code allowed: THESIS_LONG, THESIS_SHORT, THESIS_WATCH_LONG, THESIS_WATCH_SHORT, THESIS_NO_TRADE, THESIS_CONFLICTED. '
             || 'thesis must also include thesis_text, why_long, why_short, why_no_trade, opposing_evidence, needed_confirmation. '
             || 'historical_evidence verdict allowed: LONG_SUPPORTIVE, SHORT_SUPPORTIVE, MIXED_DIRECTIONAL, WEAK_BOTH_SIDES. '
             || 'historical_evidence primary_reason_code allowed: HISTORY_LONG_SUPPORTIVE, HISTORY_SHORT_SUPPORTIVE, HISTORY_MIXED_DIRECTIONAL, HISTORY_WEAK_BOTH_SIDES. '
-            || 'risk_execution verdict allowed: ACTIONABLE, RESEARCH_ONLY, WAIT_CONFIRMATION, NO_TRADE, HARD_BLOCK. '
+            || 'risk_execution verdict allowed: ACTIONABLE, RESEARCH_ONLY, WAIT_CONFIRMATION, NO_TRADE, HARD_BLOCK. Never use SHORT_RESEARCH_ONLY or SHORT_LIVE_DISABLED as a verdict; those are only primary_reason_code values. When short_live_enabled=false and the thesis is SHORT, use risk_execution.verdict=RESEARCH_ONLY with primary_reason_code=SHORT_LIVE_DISABLED. '
             || 'risk_execution primary_reason_code allowed: RISK_ACTIONABLE, RISK_RESEARCH_ONLY, RISK_WAIT_CONFIRMATION, RISK_NO_TRADE, RISK_HARD_BLOCK, SHORT_LIVE_DISABLED, SHORT_RESEARCH_ONLY. '
             || 'chair must include these exact keys: final_action, final_direction, primary_reason_code, secondary_reason_code, confidence, final_thesis, why_not_opposite, why_not_no_trade, risk_treatment, rationale_text, proposed_trade_config, committee_payload, long_score, short_score, no_trade_score. Use why_not_opposite exactly; do not use why_not_opposing. '
-            || 'chair final_action allowed: PROPOSE_LONG, PROPOSE_SHORT, WATCH_LONG, WATCH_SHORT, NO_TRADE, REJECT, WAIT_FOR_CONFIRMATION. Do not invent RESEARCH_ONLY as a chair final_action. For short research, use final_action WATCH_SHORT, final_direction SHORT, primary_reason_code SHORT_RESEARCH_ONLY. '
+            || 'chair final_action allowed: PROPOSE_LONG, PROPOSE_SHORT, WATCH_LONG, WATCH_SHORT, NO_TRADE, REJECT, WAIT_FOR_CONFIRMATION. Do not invent RESEARCH_ONLY as a chair final_action. When the structural thesis is SHORT, emit final_action PROPOSE_SHORT with primary_reason_code CHAIR_PROPOSE_SHORT regardless of short_live_enabled; the backend gates live execution via execution policy. Only use WATCH_SHORT when the thesis is short but needs confirmation (e.g. failed reclaim pending, breakdown retest pending), not as a substitute for SHORT_LIVE_DISABLED. '
             || 'chair final_direction allowed: LONG, SHORT, NONE. '
             || 'chair primary_reason_code allowed: CHAIR_PROPOSE_LONG, CHAIR_PROPOSE_SHORT, CHAIR_WATCH_LONG, CHAIR_WATCH_SHORT, CHAIR_NO_TRADE, CHAIR_REJECT, CHAIR_WAIT_FOR_CONFIRMATION, SHORT_RESEARCH_ONLY. Do not invent CHAIR_RESEARCH_ONLY. '
             || 'chair.proposed_trade_config must include thesis_label starting with AGENTIC_, entry_zone_low, entry_zone_high, invalidation_level, invalidation_rule, target_policy, trailing_policy, size_treatment, time_horizon, primary_evidence_setup_event_id. '
@@ -190,7 +199,7 @@ BEGIN
         AND BOARD_JSON:market_structure:primary_reason_code::STRING IN ('STRUCTURE_TREND_UP','STRUCTURE_TREND_DOWN','STRUCTURE_RANGE','STRUCTURE_CHOP_NO_EDGE','STRUCTURE_REVERSAL_FORMING','STRUCTURE_FAILED_BREAKOUT')
         AND TRY_TO_DOUBLE(BOARD_JSON:market_structure:confidence::STRING) BETWEEN 0.0 AND 1.0
         AND BOARD_JSON:level_price_action:verdict::STRING IN ('LONG_LOCATION','SHORT_LOCATION','BOTH_SIDES','WAIT_CONFIRMATION','NO_EDGE')
-        AND BOARD_JSON:level_price_action:primary_reason_code::STRING IN ('LEVEL_LONG_LOCATION','LEVEL_SHORT_LOCATION','LEVEL_WAIT_CONFIRMATION','LEVEL_NO_EDGE')
+        AND BOARD_JSON:level_price_action:primary_reason_code::STRING IN ('LEVEL_LONG_LOCATION','LEVEL_SHORT_LOCATION','LEVEL_BOTH_SIDES','LEVEL_WAIT_CONFIRMATION','LEVEL_NO_EDGE')
         AND TRY_TO_DOUBLE(BOARD_JSON:level_price_action:confidence::STRING) BETWEEN 0.0 AND 1.0
         AND BOARD_JSON:thesis:verdict::STRING IN ('LONG_THESIS','SHORT_THESIS','WATCH_LONG','WATCH_SHORT','NO_TRADE','CONFLICTED')
         AND BOARD_JSON:thesis:primary_reason_code::STRING IN ('THESIS_LONG','THESIS_SHORT','THESIS_WATCH_LONG','THESIS_WATCH_SHORT','THESIS_NO_TRADE','THESIS_CONFLICTED')
@@ -252,10 +261,27 @@ BEGIN
     WITH chair AS (
         SELECT
             s.RUN_ID, s.DOSSIER_ID, s.SYMBOL, s.MARKET_TYPE, s.DOSSIER_PAYLOAD_JSON, s.PRIMARY_EVIDENCE_SETUP_EVENT_ID, b.BOARD_JSON, b.BOARD_JSON:chair AS CJ,
+            -- Direction-neutral ranking. PROPOSE_LONG and PROPOSE_SHORT share
+            -- tier 1 so the strongest-evidence verdicts win regardless of
+            -- direction. Previously LONG was hard-coded ahead of SHORT, which
+            -- silently demoted every short below every long and prevented
+            -- shorts from reaching the top P_MAX_PROPOSALS publishable slots.
             ROW_NUMBER() OVER (
                 ORDER BY CASE b.BOARD_JSON:chair:final_action::STRING
-                    WHEN 'PROPOSE_LONG' THEN 1 WHEN 'PROPOSE_SHORT' THEN 2 WHEN 'WATCH_LONG' THEN 3 WHEN 'WATCH_SHORT' THEN 4 WHEN 'WAIT_FOR_CONFIRMATION' THEN 5 WHEN 'NO_TRADE' THEN 6 ELSE 7 END,
-                    TRY_TO_DOUBLE(b.BOARD_JSON:chair:confidence::STRING) DESC, s.SYMBOL
+                    WHEN 'PROPOSE_LONG' THEN 1
+                    WHEN 'PROPOSE_SHORT' THEN 1
+                    WHEN 'WATCH_LONG' THEN 2
+                    WHEN 'WATCH_SHORT' THEN 2
+                    WHEN 'WAIT_FOR_CONFIRMATION' THEN 3
+                    WHEN 'NO_TRADE' THEN 4
+                    ELSE 5
+                END,
+                TRY_TO_DOUBLE(b.BOARD_JSON:chair:confidence::STRING) DESC,
+                GREATEST(
+                    COALESCE(TRY_TO_DOUBLE(b.BOARD_JSON:chair:long_score::STRING), 0.0),
+                    COALESCE(TRY_TO_DOUBLE(b.BOARD_JSON:chair:short_score::STRING), 0.0)
+                ) DESC,
+                s.SYMBOL
             ) AS RN
         FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
         JOIN TMP_PHASE4_BOARD_RAW b ON b.RUN_ID = s.RUN_ID AND b.DOSSIER_ID = s.DOSSIER_ID

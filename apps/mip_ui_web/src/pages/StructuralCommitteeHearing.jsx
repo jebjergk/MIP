@@ -245,7 +245,7 @@ export default function StructuralCommitteeHearing() {
             </li>
           </ul>
           <p className="sch-muted sch-landing-foot">
-            If Committee 2.0 is disabled in Snowflake (<code>COMMITTEE2_ENABLED</code>), the API returns 503 and this
+            If Hearing Replay is disabled in Snowflake (<code>COMMITTEE2_ENABLED</code>), the API returns 503 and this
             room cannot load.
           </p>
         </section>

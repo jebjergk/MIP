@@ -926,6 +926,126 @@
   font-size: 12px;
 }
 
+/* ----------------------------------------------------------------------
+ * Stage 3 — Deterministic baseline panel demoted to a collapsible
+ * secondary card under the Shadow Chair Verdict headline. Default state
+ * is collapsed (chevron + 1-line summary). Auto-expanded while loading
+ * or on error so the operator never loses visibility on failure modes.
+ * Authority and materialization unchanged — this is presentation only.
+ * -------------------------------------------------------------------- */
+.lpa-c2-panel--secondary {
+  background: #fafafa;
+  border-color: #d4d4d8;
+  box-shadow: none;
+}
+
+.lpa-c2-panel--secondary.lpa-c2-panel--err {
+  background: #fff8f8;
+  border-color: #e57373;
+}
+
+.lpa-c2-panel-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.lpa-c2-panel-titlebar:hover .lpa-c2-panel-title,
+.lpa-c2-panel-titlebar:focus-visible .lpa-c2-panel-title {
+  color: #1e3a8a;
+}
+
+.lpa-c2-panel-titlebar:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.lpa-c2-panel--secondary .lpa-c2-panel-title {
+  font-weight: 500;
+  font-size: 13px;
+  color: #475569;
+}
+
+.lpa-c2-panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.lpa-c2-panel-summary {
+  font-size: 12px;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
+
+.lpa-c2-panel-body {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.lpa-c2-panel--collapsed { padding-bottom: 4px; }
+.lpa-c2-panel--expanded { padding-bottom: 8px; }
+
+.lpa-c2-expand-btn--diagnostic {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: #64748b;
+}
+.lpa-c2-expand-btn--diagnostic:hover,
+.lpa-c2-expand-btn--diagnostic:focus-visible {
+  color: #1e3a8a;
+}
+
+/* Diagnostic header above the dual-board exhibits — re-frames the deep
+ * dive so the deterministic masthead inside doesn't read as the primary
+ * operator decision. The Shadow Chair Verdict above the deterministic
+ * baseline remains the primary intelligence card. */
+.lpa-c2-dual-diagnostic-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.10);
+  border: 1px dashed rgba(148, 163, 184, 0.45);
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lpa-c2-dual-diagnostic-chip {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(100, 116, 139, 0.18);
+  color: #334155;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.lpa-c2-dual-diagnostic-text {
+  opacity: 0.9;
+}
+
 .lpa-btn--compact {
   font-size: 12px;
   padding: 4px 10px;

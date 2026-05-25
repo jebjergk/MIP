@@ -662,7 +662,20 @@ export default function LivePortfolioActivity() {
         const msg = e.message || 'Intelligence Review orchestration failed.'
         setC20OrchestrateByAction((prev) => ({
           ...prev,
-          [actionId]: { loading: false, error: msg, lastAt: Date.now() },
+          [actionId]: {
+            // Preserve lastResult (especially hearing_id) when a downstream
+            // step throws — e.g. /committee/apply or /revalidate failing with
+            // IBKR_BAR_STALE_ENTRY_BLOCKED / OUTSIDE_EXTENDED_TRADING_WINDOW.
+            // Orchestrate itself already succeeded and the bounded shadow poll
+            // is running; without this merge the Shadow Chair Verdict headline
+            // disappears because the render gate at the top of the inline
+            // shadow block reads c20State.lastResult?.hearing_id.
+            ...(prev[actionId] || {}),
+            loading: false,
+            error: msg,
+            lastAt: Date.now(),
+            progressMsg: null,
+          },
         }))
         setError(msg)
       } finally {

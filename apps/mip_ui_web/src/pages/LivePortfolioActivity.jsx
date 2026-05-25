@@ -262,6 +262,25 @@ export default function LivePortfolioActivity() {
   const [shadowBoardByAction, setShadowBoardByAction] = useState({})
   const shadowPollersRef = useRef({})
 
+  /**
+   * Stage 4c: latest agentic-authority row per action.
+   *
+   * Read from GET /live/trades/actions/{action_id}/agentic-authority. Used to
+   * render the authority chip + "Apply Agentic Review" / "Re-commit (stale)"
+   * buttons on the Shadow Chair Verdict headline.
+   *
+   * Stage 4c contract: this is observation-only. The chip and button never
+   * gate Submit — Submit gating still flows through REVALIDATED_PASS +
+   * submission_allowed. Stage 4d will start gating on OPERATOR_COMMITTED rows.
+   *
+   * Shape per action:
+   *   { loading, error, authority, gate_eligible, display, fetchedAt }
+   * authority is the row from V_AGENTIC_AUTHORITY_LATEST or null.
+   */
+  const [agenticAuthorityByAction, setAgenticAuthorityByAction] = useState({})
+  const [agenticCommitBusyByAction, setAgenticCommitBusyByAction] = useState({})
+  const agenticAuthorityFetchInFlightRef = useRef({})
+
   useEffect(() => {
     return () => {
       const pollers = shadowPollersRef.current || {}
@@ -518,17 +537,38 @@ export default function LivePortfolioActivity() {
             const normalized = normalizeShadowBoardResponse(j)
             const terminal = isShadowStatusTerminal(normalized.status)
             const stillPolling = !terminal && ctx.attempts < MAX_ATTEMPTS
-            setShadowBoardByAction((prev) => ({
-              ...prev,
-              [actionId]: {
-                ...(prev[actionId] || {}),
-                ...normalized,
-                hearingId,
-                polling: stillPolling,
-                error: null,
-                attempts: ctx.attempts,
-              },
-            }))
+            setShadowBoardByAction((prev) => {
+              const cur = prev[actionId] || {}
+              // Never downgrade a stance/confidence we already have. The
+              // session may briefly omit them on intermediate fetches; we
+              // want the headline to remain stable once a verdict shows.
+              const nextStance =
+                normalized.stance != null && normalized.stance !== ''
+                  ? normalized.stance
+                  : cur.stance
+              const nextConfidence =
+                normalized.confidence != null ? normalized.confidence : cur.confidence
+              // Once terminal is observed, lock it in — later fetches that
+              // happen to return a non-terminal status (rare; would only
+              // occur on a race) must not overwrite it.
+              const nextStatus = isShadowStatusTerminal(cur.status)
+                ? cur.status
+                : normalized.status
+              return {
+                ...prev,
+                [actionId]: {
+                  ...cur,
+                  ...normalized,
+                  stance: nextStance,
+                  confidence: nextConfidence,
+                  status: nextStatus,
+                  hearingId,
+                  polling: stillPolling,
+                  error: null,
+                  attempts: ctx.attempts,
+                },
+              }
+            })
             if (terminal) {
               ctx.cancelled = true
               return
@@ -582,11 +622,26 @@ export default function LivePortfolioActivity() {
       if (normalized.status === 'UNAVAILABLE' && isShadowStatusTerminal(cur.status)) {
         return prev
       }
+      // Don't downgrade a stance/confidence we already have just because a
+      // transient progress fetch came back empty. The exhibits panel polls
+      // its own way and can briefly return an UNAVAILABLE/RUNNING payload
+      // without stance even though we already saw COMPLETE with a stance.
+      // Without this guard the Shadow Chair Verdict headline visibly
+      // "disappears" / drops back to placeholder after showing the verdict.
+      const preserveStance =
+        cur.stance != null && (normalized.stance == null || normalized.stance === '')
+      const preserveConfidence =
+        cur.confidence != null && (normalized.confidence == null)
       return {
         ...prev,
         [actionId]: {
           ...cur,
           ...normalized,
+          stance: preserveStance ? cur.stance : normalized.stance,
+          confidence: preserveConfidence ? cur.confidence : normalized.confidence,
+          // If we already saw a terminal status, keep it. Otherwise take what
+          // the exhibits push tells us.
+          status: isShadowStatusTerminal(cur.status) ? cur.status : normalized.status,
           hearingId: cur.hearingId || normalized.hearingId,
           polling: cur.polling && !isShadowStatusTerminal(normalized.status),
           error: null,
@@ -594,6 +649,195 @@ export default function LivePortfolioActivity() {
       }
     })
   }, [])
+
+  /**
+   * Stage 4c — fetch the latest agentic authority row for an action.
+   *
+   * Called automatically when the bounded shadow poll reaches a terminal
+   * status (so the Preview chip can show up alongside the verdict) and
+   * after a successful commit. Safe to call any time; the endpoint always
+   * returns 200 (with authority:null when no row exists yet).
+   *
+   * Never raises. On error we just stash {error} so the UI can render a
+   * subdued failure note without unmounting the headline.
+   */
+  const fetchAgenticAuthority = useCallback(async (actionId) => {
+    if (!actionId) return null
+    // Coalesce duplicate in-flight fetches.
+    if (agenticAuthorityFetchInFlightRef.current[actionId]) return null
+    agenticAuthorityFetchInFlightRef.current[actionId] = true
+    setAgenticAuthorityByAction((prev) => ({
+      ...prev,
+      [actionId]: { ...(prev[actionId] || {}), loading: true, error: null },
+    }))
+    try {
+      const r = await fetch(
+        `${API_BASE}/live/trades/actions/${encodeURIComponent(actionId)}/agentic-authority`,
+      )
+      const body = await r.json().catch(() => null)
+      if (!r.ok) {
+        setAgenticAuthorityByAction((prev) => ({
+          ...prev,
+          [actionId]: {
+            ...(prev[actionId] || {}),
+            loading: false,
+            error: body?.detail?.error_code || `HTTP_${r.status}`,
+          },
+        }))
+        return null
+      }
+      const payload = body || {}
+      setAgenticAuthorityByAction((prev) => ({
+        ...prev,
+        [actionId]: {
+          loading: false,
+          error: null,
+          authority: payload.authority || null,
+          gate_eligible: Boolean(payload.gate_eligible),
+          display: payload.display || null,
+          gate_evaluation: payload.gate_evaluation || null,
+          fetchedAt: new Date().toISOString(),
+        },
+      }))
+      return payload
+    } catch (e) {
+      setAgenticAuthorityByAction((prev) => ({
+        ...prev,
+        [actionId]: {
+          ...(prev[actionId] || {}),
+          loading: false,
+          error: e?.message || 'fetch_failed',
+        },
+      }))
+      return null
+    } finally {
+      delete agenticAuthorityFetchInFlightRef.current[actionId]
+    }
+  }, [])
+
+  /**
+   * Stage 4c — commit the latest shadow verdict as OPERATOR_COMMITTED
+   * authority. Writes one row into MIP.APP.AGENTIC_REVALIDATION_AUTHORITY.
+   *
+   * Submit gating is NOT affected in Stage 4c. The commit only changes
+   * `V_AGENTIC_AUTHORITY_LATEST`'s newest row to AUTHORITY_MODE=
+   * OPERATOR_COMMITTED, which Stage 4d will gate on.
+   *
+   * The shadow_session_id + hearing_id come from `shadowBoardByAction`,
+   * populated by the bounded poll / exhibits panel.
+   */
+  const commitAgenticAuthority = useCallback(
+    async (actionId) => {
+      if (!actionId) return
+      const shadow = shadowBoardByAction[actionId] || null
+      const sessionId = shadow?.sessionId
+      const hearingId = shadow?.hearingId
+      if (!sessionId || !hearingId) {
+        setAgenticAuthorityByAction((prev) => ({
+          ...prev,
+          [actionId]: {
+            ...(prev[actionId] || {}),
+            error: 'NO_SESSION_OR_HEARING',
+          },
+        }))
+        return
+      }
+      setAgenticCommitBusyByAction((prev) => ({ ...prev, [actionId]: true }))
+      try {
+        const r = await fetch(
+          `${API_BASE}/live/trades/actions/${encodeURIComponent(actionId)}/agentic-authority/commit`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shadow_session_id: sessionId,
+              hearing_id: hearingId,
+              actor: 'lpa_operator',
+            }),
+          },
+        )
+        const body = await r.json().catch(() => null)
+        if (!r.ok) {
+          const code =
+            body?.detail?.error_code ||
+            body?.error_code ||
+            `HTTP_${r.status}`
+          setAgenticAuthorityByAction((prev) => ({
+            ...prev,
+            [actionId]: {
+              ...(prev[actionId] || {}),
+              error: code,
+              lastCommitMessage: body?.detail?.message || null,
+            },
+          }))
+          return
+        }
+        // Synthesize the authority row from the commit response so the chip
+        // updates immediately without a second roundtrip. The shape mirrors
+        // V_AGENTIC_AUTHORITY_LATEST columns.
+        const auth = {
+          AUTHORITY_ID: body.authority_id,
+          ACTION_ID: body.action_id,
+          AUTHORITY_MODE: body.authority_mode,
+          AUTHORITY_STATUS: body.authority_status,
+          AUTHORITY_REASON_CODE: body.authority_reason_code,
+          AUTHORITY_CONFIDENCE: body.authority_confidence,
+          SHADOW_STANCE_RAW: body.shadow_stance_raw,
+          DETERMINISTIC_BASELINE_STANCE: body.deterministic_baseline_stance,
+          DISAGREES_WITH_BASELINE: body.disagrees_with_baseline,
+          IS_STALE: body.is_stale,
+          STALE_REASON: body.stale_reason,
+          PACK_VERSION: body.pack_version,
+          PACK_VERSION_OK: body.pack_version_ok,
+          SESSION_AGE_MINUTES: body.session_age_minutes,
+          COMMITTED_BY: 'lpa_operator',
+          CREATED_AT: new Date().toISOString(),
+        }
+        setAgenticAuthorityByAction((prev) => ({
+          ...prev,
+          [actionId]: {
+            loading: false,
+            error: null,
+            authority: auth,
+            gate_eligible: Boolean(body.gate_eligible),
+            display: body.display || null,
+            gate_evaluation: body.gate_evaluation || null,
+            lastCommitMessage: null,
+            fetchedAt: new Date().toISOString(),
+          },
+        }))
+      } catch (e) {
+        setAgenticAuthorityByAction((prev) => ({
+          ...prev,
+          [actionId]: {
+            ...(prev[actionId] || {}),
+            error: e?.message || 'commit_failed',
+          },
+        }))
+      } finally {
+        setAgenticCommitBusyByAction((prev) => ({ ...prev, [actionId]: false }))
+      }
+    },
+    [shadowBoardByAction],
+  )
+
+  /**
+   * Stage 4c — when the bounded shadow poll reaches a terminal status for an
+   * action, fetch its latest authority row so the chip can render. We use a
+   * derived key that captures (actionId + terminal status) so the effect runs
+   * exactly once per terminal transition.
+   *
+   * No-op for actions that haven't reached a terminal status yet.
+   */
+  useEffect(() => {
+    Object.entries(shadowBoardByAction).forEach(([actionId, state]) => {
+      if (!state) return
+      if (!isShadowStatusTerminal(state.status)) return
+      const auth = agenticAuthorityByAction[actionId]
+      if (auth && (auth.authority || auth.loading || auth.error)) return
+      fetchAgenticAuthority(actionId)
+    })
+  }, [shadowBoardByAction, agenticAuthorityByAction, fetchAgenticAuthority])
 
   const runCommittee2Orchestrate = useCallback(
     async (actionId) => {
@@ -1288,10 +1532,26 @@ export default function LivePortfolioActivity() {
                               .join('; ')}
                           </div>
                         ) : null}
-                        {isStructuralEntry && (c20State.lastResult || c20State.error || c20State.loading) ? (
+                        {isStructuralEntry &&
+                        (c20State.lastResult ||
+                          c20State.error ||
+                          c20State.loading ||
+                          shadowBoardByAction[d.action_id]) ? (
                           <>
                             {(() => {
-                              if (!c20State.lastResult?.hearing_id) return null
+                              // Shadow Chair Verdict headline render gate.
+                              //
+                              // The headline is anchored to shadow board state
+                              // (bounded poll output) — NOT to c20State — so it
+                              // survives any downstream throw in
+                              // advanceLiveActionAfterCommitteeApply (e.g.
+                              // /revalidate failing IBKR_BAR_STALE_ENTRY_BLOCKED
+                              // or OUTSIDE_EXTENDED_TRADING_WINDOW).
+                              //
+                              // c20State.lastResult is used ONLY to compute the
+                              // optional Δ disagrees-with-baseline chip. If it
+                              // is missing, the headline still shows stance /
+                              // confidence / placeholder without the chip.
                               const shadow = shadowBoardByAction[d.action_id] || null
                               if (!shadow) return null
                               const baselineStance = String(c20State.lastResult?.stance || '').toUpperCase()
@@ -1305,9 +1565,77 @@ export default function LivePortfolioActivity() {
                                   ? 'Agentic review still running — check exhibits in a few seconds'
                                   : status === 'FAILED'
                                     ? 'Agentic review unavailable — using deterministic baseline only'
-                                    : shadow.polling
-                                      ? 'Agentic review running…'
-                                      : 'Agentic review not yet available — using deterministic baseline only'
+                                    : status === 'UNAVAILABLE'
+                                      ? 'Agentic review starting…'
+                                      : shadow.polling || status === 'RUNNING'
+                                        ? 'Agentic review running…'
+                                        : 'Agentic review not yet available — using deterministic baseline only'
+
+                              // Stage 4c — authority chip + Apply button.
+                              const authState = agenticAuthorityByAction[d.action_id] || null
+                              const authority = authState?.authority || null
+                              const authorityMode = String(authority?.AUTHORITY_MODE || '').toUpperCase()
+                              const authorityStatus = String(authority?.AUTHORITY_STATUS || '').toUpperCase()
+                              const authorityIsStale = Boolean(authority?.IS_STALE)
+                              const authorityConfidence = authority?.AUTHORITY_CONFIDENCE
+                              const shadowIsTerminal = isShadowStatusTerminal(status)
+                              const POSITIVE = new Set(['AGENTIC_APPROVE', 'AGENTIC_APPROVE_REDUCED'])
+                              const BLOCK_LIKE = new Set([
+                                'AGENTIC_WAIT_RECLAIM',
+                                'AGENTIC_DEFER',
+                                'AGENTIC_REJECT',
+                                'AGENTIC_DEGRADED_NO_AUTHORITY',
+                                'AGENTIC_FAILED_NO_AUTHORITY',
+                              ])
+                              const cssToneByStatus = {
+                                AGENTIC_APPROVE:                 'lpa-authority-approve',
+                                AGENTIC_APPROVE_REDUCED:         'lpa-authority-approve-reduced',
+                                AGENTIC_WAIT_RECLAIM:            'lpa-authority-block',
+                                AGENTIC_DEFER:                   'lpa-authority-block',
+                                AGENTIC_REJECT:                  'lpa-authority-reject',
+                                AGENTIC_DEGRADED_NO_AUTHORITY:   'lpa-authority-degraded',
+                                AGENTIC_FAILED_NO_AUTHORITY:     'lpa-authority-degraded',
+                              }
+                              const labelByStatus = {
+                                AGENTIC_APPROVE:                 'Approved',
+                                AGENTIC_APPROVE_REDUCED:         'Approve (reduced size)',
+                                AGENTIC_WAIT_RECLAIM:            'Wait / Reclaim',
+                                AGENTIC_DEFER:                   'Defer',
+                                AGENTIC_REJECT:                  'Reject',
+                                AGENTIC_DEGRADED_NO_AUTHORITY:   'Degraded — no authority',
+                                AGENTIC_FAILED_NO_AUTHORITY:     'Not available',
+                              }
+                              const authorityChipLabel = labelByStatus[authorityStatus] || '—'
+                              const authorityChipTone =
+                                cssToneByStatus[authorityStatus] || 'lpa-authority-degraded'
+                              const isOperatorCommitted =
+                                authorityMode === 'OPERATOR_COMMITTED' && !authorityIsStale
+                              const isOperatorStale =
+                                authorityMode === 'OPERATOR_COMMITTED' && authorityIsStale
+                              const isPreviewAutoAudit =
+                                authorityMode === 'AUTO_AUDIT' && !authorityIsStale
+                              const showApplyButton =
+                                shadowIsTerminal &&
+                                shadow.sessionId &&
+                                shadow.hearingId &&
+                                !isOperatorCommitted &&
+                                authorityStatus !== '' // we have at least an AUTO_AUDIT row to commit
+                              const showRecommitButton =
+                                shadowIsTerminal &&
+                                shadow.sessionId &&
+                                shadow.hearingId &&
+                                isOperatorStale
+                              const commitBusy = Boolean(agenticCommitBusyByAction[d.action_id])
+                              // Stage 4d — when the server reports the gate is enabled, render
+                              // the actual gate state; otherwise fall back to the Stage 4c
+                              // "would block" preview copy so operators see the future effect.
+                              const gateEval = authState?.gate_evaluation || null
+                              const gateEnabled = Boolean(gateEval?.gate_enabled)
+                              const gateOk = gateEval ? Boolean(gateEval.gate_ok) : null
+                              const gateTooltip = gateEval?.tooltip || null
+                              const wouldGateBlockSubmit = BLOCK_LIKE.has(authorityStatus)
+                              const gateActuallyBlocks = gateEnabled && gateOk === false
+
                               return (
                                 <div className="lpa-c2-shadow-headline">
                                   <div className="lpa-c2-shadow-headline-head">
@@ -1348,6 +1676,116 @@ export default function LivePortfolioActivity() {
                                       {placeholder}
                                     </div>
                                   )}
+
+                                  {/* Stage 4c — agentic authority chip + actions. */}
+                                  {shadowIsTerminal && authority ? (
+                                    <div className="lpa-authority-row">
+                                      <span
+                                        className={`lpa-authority-chip ${authorityChipTone}${
+                                          isOperatorStale ? ' lpa-authority-chip--stale' : ''
+                                        }`}
+                                        title={`Authority reason: ${
+                                          authority.AUTHORITY_REASON_CODE || '—'
+                                        }`}
+                                      >
+                                        Agentic: {authorityChipLabel}
+                                        {authorityConfidence != null ? (
+                                          <span className="lpa-authority-chip-conf">
+                                            · conf {fmtNum(authorityConfidence, 2)}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                      {isOperatorCommitted ? (
+                                        <span
+                                          className="lpa-authority-badge lpa-authority-badge--committed"
+                                          title={`Committed by ${authority.COMMITTED_BY || '—'} at ${fmtTs(
+                                            authority.CREATED_AT,
+                                          )}`}
+                                        >
+                                          Committed
+                                        </span>
+                                      ) : isPreviewAutoAudit ? (
+                                        <span
+                                          className="lpa-authority-badge lpa-authority-badge--preview"
+                                          title="Preview only — system-observed authority. Click Apply Agentic Review to commit."
+                                        >
+                                          Preview
+                                        </span>
+                                      ) : null}
+                                      {authorityIsStale ? (
+                                        <span
+                                          className="lpa-authority-badge lpa-authority-badge--stale"
+                                          title={authority.STALE_REASON || 'Authority row is stale relative to the current hearing evidence pack.'}
+                                        >
+                                          Stale
+                                        </span>
+                                      ) : null}
+                                      {authority.DISAGREES_WITH_BASELINE === true ? (
+                                        <span
+                                          className="lpa-authority-badge lpa-authority-badge--delta"
+                                          title={`Agentic ${authority.SHADOW_STANCE_RAW || '—'} differs from deterministic baseline ${authority.DETERMINISTIC_BASELINE_STANCE || '—'}.`}
+                                        >
+                                          Δ vs baseline
+                                        </span>
+                                      ) : null}
+                                      {gateActuallyBlocks ? (
+                                        <span
+                                          className="lpa-authority-badge lpa-authority-badge--blocking"
+                                          title={
+                                            gateTooltip ||
+                                            'Agentic authority gate is blocking Submit for this action.'
+                                          }
+                                        >
+                                          Blocks submit
+                                        </span>
+                                      ) : wouldGateBlockSubmit && !gateEnabled ? (
+                                        <span
+                                          className="lpa-authority-badge lpa-authority-badge--future-gate"
+                                          title="In Stage 4d this authority status will block Submit. The Stage 4d gate is currently disabled in APP_CONFIG; Submit remains controlled by the deterministic gate only."
+                                        >
+                                          Would block submit in Stage 4d
+                                        </span>
+                                      ) : null}
+                                      {showApplyButton ? (
+                                        <button
+                                          type="button"
+                                          className="lpa-authority-btn"
+                                          disabled={commitBusy}
+                                          onClick={() => commitAgenticAuthority(d.action_id)}
+                                          title="Commit this shadow verdict as the operator-authorized agentic authority for this action. Submit gating is unchanged in Stage 4c."
+                                        >
+                                          {commitBusy ? 'Applying…' : 'Apply Agentic Review'}
+                                        </button>
+                                      ) : null}
+                                      {showRecommitButton ? (
+                                        <button
+                                          type="button"
+                                          className="lpa-authority-btn lpa-authority-btn--recommit"
+                                          disabled={commitBusy}
+                                          onClick={() => commitAgenticAuthority(d.action_id)}
+                                          title="The committed authority is stale relative to a newer hearing evidence pack. Re-commit to refresh."
+                                        >
+                                          {commitBusy ? 'Re-committing…' : 'Re-commit (stale)'}
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
+                                  {shadowIsTerminal && !authority && authState?.loading ? (
+                                    <div className="lpa-authority-row lpa-subtle">
+                                      Loading agentic authority…
+                                    </div>
+                                  ) : null}
+                                  {authState?.error ? (
+                                    <div className="lpa-authority-row lpa-authority-row--err">
+                                      Agentic authority: {authState.error}
+                                      {authState.lastCommitMessage ? (
+                                        <span className="lpa-subtle">
+                                          {' '}
+                                          — {authState.lastCommitMessage}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               )
                             })()}
@@ -1646,7 +2084,19 @@ export default function LivePortfolioActivity() {
                         </div>
                       </td>
                     </tr>
-                    {isStructuralEntry && c20Expanded && !c20State.error && (c20State.loading || c20State.lastResult?.inline_hearing) ? (
+                    {isStructuralEntry &&
+                    c20Expanded &&
+                    (c20State.loading || c20State.lastResult?.inline_hearing) ? (
+                      // Note: deliberately do NOT gate on !c20State.error.
+                      // If a downstream chain step (e.g. /revalidate failing
+                      // IBKR_BAR_STALE_ENTRY_BLOCKED or
+                      // OUTSIDE_EXTENDED_TRADING_WINDOW) throws, the catch
+                      // handler sets c20State.error — but the agentic
+                      // shadow board is already running in the background
+                      // and the exhibits panel must stay mounted to show
+                      // live specialist/conflict/chair bubbles as they
+                      // land. Unmounting on error was the cause of the
+                      // "agentic board vanished after ~10s" symptom.
                       <tr className="lpa-c2-expand-row">
                         <td colSpan={5}>
                           <LpaCommittee2Exhibits

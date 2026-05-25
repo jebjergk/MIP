@@ -132,6 +132,7 @@ def _normalize_session(session: Dict[str, Any]) -> Dict[str, Any]:
         "proposal_id":        session.get("PROPOSAL_ID"),
         "evidence_pack_hash": session.get("EVIDENCE_PACK_HASH"),
         "created_at":         session.get("CREATED_AT"),
+        "age_minutes_at_fetch": session.get("AGE_MINUTES_AT_FETCH"),
         "run_ms":             session.get("RUN_MS"),
         "chair":              session.get("chair"),
     }
@@ -215,19 +216,63 @@ def build_staleness_check(
     COMMITTEE_HEARING evidence pack and a maximum age.
 
     Returns {is_stale, stale_reason, session_age_minutes}.
+
+    Timezone safety:
+        Snowflake `TIMESTAMP_NTZ` columns (including `SHADOW_BOARD_SESSION.CREATED_AT`)
+        store wall-clock values without offset info. Comparing a naïve datetime
+        from Snowflake against `datetime.now(timezone.utc)` is incorrect when the
+        Snowflake session TIMEZONE is non-UTC (e.g. Europe/Berlin), producing
+        spurious negative `session_age_minutes`.
+
+        The robust source for the age is therefore an in-Snowflake delta
+        (`DATEDIFF(minute, CREATED_AT, CURRENT_TIMESTAMP())`) computed inside
+        the same Snowflake session as the fetch. Callers that go through
+        `_fetch_shadow_session_sync` get this for free via `age_minutes_at_fetch`.
+
+        For synthetic callers (unit tests / direct dict input) the Python
+        datetime path remains, but is clamped at `max(0, …)` so a tz-mismatch
+        can never report a negative age. The `now` kwarg is honored for tests
+        that inject a fixed reference time.
     """
     s = _normalize_session(session)
 
     age_minutes: Optional[int] = None
-    created = _coerce_datetime(s.get("created_at"))
-    if created is not None:
-        reference = (now or datetime.now(timezone.utc))
-        if reference.tzinfo is None:
-            reference = reference.replace(tzinfo=timezone.utc)
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        delta = reference - created
-        age_minutes = int(delta.total_seconds() // 60)
+
+    # Preferred: DB-computed delta. Always timezone-agnostic because both
+    # CREATED_AT and CURRENT_TIMESTAMP() are evaluated inside the same
+    # Snowflake session, so any TIMEZONE param simply cancels out in the diff.
+    db_age = s.get("age_minutes_at_fetch")
+    if db_age is not None:
+        try:
+            age_minutes = int(db_age)
+        except (TypeError, ValueError):
+            age_minutes = None
+
+    # Fallback: Python datetime arithmetic. Only used when a caller assembled
+    # the session dict by hand (no `age_minutes_at_fetch`).
+    if age_minutes is None:
+        created = _coerce_datetime(s.get("created_at"))
+        if created is not None:
+            reference = (now or datetime.now(timezone.utc))
+            # If both sides are naïve, compare naïvely (caller is responsible
+            # for keeping them in the same frame). If only one side is aware,
+            # promote the naïve side to UTC — this is the historical behavior
+            # and is still wrong for non-UTC Snowflake sessions, but the
+            # `max(0, …)` clamp below prevents a negative output.
+            if reference.tzinfo is None and created.tzinfo is None:
+                delta = reference - created
+            else:
+                if reference.tzinfo is None:
+                    reference = reference.replace(tzinfo=timezone.utc)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                delta = reference - created
+            age_minutes = int(delta.total_seconds() // 60)
+
+    # Defensive clamp — `session_age_minutes` is documented as "minutes since
+    # CREATED_AT" and must never be negative.
+    if age_minutes is not None and age_minutes < 0:
+        age_minutes = 0
 
     # Hash mismatch is the strongest stale signal.
     session_hash = s.get("evidence_pack_hash")
@@ -523,6 +568,16 @@ CONFIG_KEY_AUTO_AUDIT_ENABLED = "AGENTIC_AUTO_AUDIT_ENABLED"
 CONFIG_KEY_MIN_CONFIDENCE = "AGENTIC_MIN_CONFIDENCE_THRESHOLD"
 CONFIG_KEY_MAX_AGE = "AGENTIC_MAX_SESSION_AGE_MINUTES"
 
+# Stage 4c — operator-commit flag. Gates the POST .../agentic-authority/commit
+# endpoint. Default false on initial deploy so we can flip it on after smoke.
+# Stage 4d Submit-gating uses a separate AGENTIC_AUTHORITY_ENABLED flag.
+CONFIG_KEY_OPERATOR_COMMIT_ENABLED = "AGENTIC_OPERATOR_COMMIT_ENABLED"
+
+# Stage 4d — Submit-gating flag. When true, the agentic authority gate fires
+# inside `submission_allowed` (LPA pending-decisions builder) and inside
+# `execute_live_action`. Stage 4a deploys with this OFF.
+CONFIG_KEY_AUTHORITY_GATE_ENABLED = "AGENTIC_AUTHORITY_ENABLED"
+
 
 def _is_flag_true(value: Any) -> bool:
     if isinstance(value, bool):
@@ -571,13 +626,25 @@ def _fetch_authority_config_sync(cur) -> Dict[str, Any]:
 
 
 def _fetch_shadow_session_sync(cur, session_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch a single SHADOW_BOARD_SESSION row plus an in-Snowflake age delta.
+
+    `AGE_MINUTES_AT_FETCH = DATEDIFF('minute', CREATED_AT, CURRENT_TIMESTAMP())`
+    is computed Snowflake-side, in the same session as the read, so it is
+    timezone-agnostic — both ends of the diff are evaluated in whatever
+    session TIMEZONE is configured and the offset cancels out. This is the
+    canonical source for staleness/freshness math; downstream Python code
+    no longer has to reason about the wall-clock semantics of `CREATED_AT`
+    (which is a naïve `TIMESTAMP_NTZ`).
+    """
     cur.execute(
         """
         SELECT
             SESSION_ID, HEARING_ID, PROPOSAL_ID, SNAPSHOT_ID, EVIDENCE_PACK_HASH,
             SHADOW_STANCE, SHADOW_CONFIDENCE, STAGE_REACHED, STATUS,
             DEGRADED, DEGRADED_REASON, AGENT_MODEL, PACK_VERSION, RUN_MS,
-            CREATED_AT, COMPLETED_AT
+            CREATED_AT, COMPLETED_AT,
+            DATEDIFF('minute', CREATED_AT, CURRENT_TIMESTAMP()) AS AGE_MINUTES_AT_FETCH
         FROM MIP.APP.SHADOW_BOARD_SESSION
         WHERE SESSION_ID = %s
         """,
@@ -686,6 +753,9 @@ def _normalize_session_with_chair(
         "proposal_id":        session_row.get("PROPOSAL_ID"),
         "evidence_pack_hash": session_row.get("EVIDENCE_PACK_HASH"),
         "created_at":         session_row.get("CREATED_AT"),
+        # In-Snowflake age delta — timezone-agnostic. See
+        # `_fetch_shadow_session_sync` and `build_staleness_check` for details.
+        "age_minutes_at_fetch": session_row.get("AGE_MINUTES_AT_FETCH"),
         "run_ms":             session_row.get("RUN_MS"),
         "chair":              chair_dict,
     }
@@ -806,6 +876,617 @@ def commit_auto_audit_authority_for_session(
         }
 
 
+# ---------------------------------------------------------------------------
+# Stage 4c — operator-committed authority
+# ---------------------------------------------------------------------------
+
+def is_operator_commit_enabled(conn) -> bool:
+    """Return True only if APP_CONFIG.AGENTIC_OPERATOR_COMMIT_ENABLED is truthy.
+
+    Read-only. Never raises (returns False on any error). This flag gates the
+    operator-facing POST .../agentic-authority/commit endpoint — independently
+    from AGENTIC_AUTO_AUDIT_ENABLED (Stage 4b) and AGENTIC_AUTHORITY_ENABLED
+    (Stage 4d Submit gating)."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                (CONFIG_KEY_OPERATOR_COMMIT_ENABLED,),
+            )
+            row = cur.fetchone()
+            return _is_flag_true(row[0]) if row else False
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        logger.exception("is_operator_commit_enabled: config read failed")
+        return False
+
+
+def _fetch_current_hearing_id_for_action_sync(cur, action_id: str) -> Optional[str]:
+    """Return the most recent COMMITTEE_FINAL_DECISION.HEARING_ID for an action.
+
+    The orchestrate path always commits FD bound to the action, so this is the
+    canonical "current hearing" anchor for the action."""
+    cur.execute(
+        """
+        SELECT HEARING_ID
+        FROM MIP.APP.COMMITTEE_FINAL_DECISION
+        WHERE ACTION_ID = %s
+        ORDER BY DECISION_TS DESC NULLS LAST
+        LIMIT 1
+        """,
+        (action_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _fetch_current_pack_hash_for_hearing_sync(cur, hearing_id: str) -> Optional[str]:
+    cur.execute(
+        "SELECT EVIDENCE_PACK_HASH FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s",
+        (hearing_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+# Skip-reason codes used by the operator commit helper. API layer maps these
+# to HTTP responses.
+SKIP_DISABLED = "DISABLED"
+SKIP_OVERRIDE_NOT_ENABLED = "OVERRIDE_NOT_ENABLED"
+SKIP_SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+SKIP_HEARING_MISMATCH = "HEARING_MISMATCH"
+SKIP_ACTION_HEARING_MISSING = "ACTION_HEARING_MISSING"
+SKIP_EVIDENCE_PACK_STALE = "EVIDENCE_PACK_STALE"
+SKIP_ERROR = "ERROR"
+
+
+def commit_operator_authority_for_session(
+    conn,
+    *,
+    action_id: str,
+    shadow_session_id: str,
+    hearing_id: str,
+    committed_by: str,
+    override_reason: Optional[str] = None,
+    enforce_config_flag: bool = True,
+) -> Dict[str, Any]:
+    """
+    Stage 4c — write one OPERATOR_COMMITTED authority row for a completed
+    shadow session, triggered by an explicit operator click ("Apply Agentic
+    Review").
+
+    Differences from the AUTO_AUDIT helper:
+      - Strict input validation (returns structured skip_reason so the API
+        layer can map to HTTP 4xx). Never silently swallows.
+      - The operator-supplied (shadow_session_id, hearing_id) MUST match each
+        other AND must match the action's current COMMITTEE_FINAL_DECISION
+        hearing — guards against committing a verdict that belongs to a
+        different action or a stale hearing iteration.
+      - `committed_by` is the operator/actor identifier from the request, not
+        a system constant.
+      - `override_reason` is reserved for Stage 4d+. In Stage 4c any non-null
+        override_reason returns skip_reason='OVERRIDE_NOT_ENABLED'.
+      - LIVE_ACTIONS / Submit gating are NOT touched. The new row simply
+        becomes IS_LATEST=TRUE for the action, ready to be read by Stage 4d
+        gating once that's enabled.
+
+    Returns:
+      On success:
+        {
+          "committed": True,
+          "authority_id": "<uuid>",
+          "action_id": ...,
+          "authority_mode": "OPERATOR_COMMITTED",
+          "authority_status": ...,
+          "authority_reason_code": ...,
+          "authority_confidence": ...,
+          "is_stale": bool,
+          "shadow_stance_raw": ...,
+          "deterministic_baseline_stance": ...,
+          "disagrees_with_baseline": bool|None,
+          "pack_version": ...,
+          "pack_version_ok": bool,
+          "session_age_minutes": int|None,
+          "superseded_authority_id": "<uuid>"|None,
+        }
+      On failure:
+        {"committed": False, "skip_reason": "<CODE>", ...optional context...}
+
+    Raises only on programmer errors (missing required args).
+    """
+    if not action_id:
+        raise ValueError("action_id is required")
+    if not shadow_session_id:
+        raise ValueError("shadow_session_id is required")
+    if not hearing_id:
+        raise ValueError("hearing_id is required")
+    if not committed_by:
+        raise ValueError("committed_by is required")
+
+    # Stage 4c does not implement operator override. Stage 4d+ will.
+    if override_reason is not None and str(override_reason).strip() != "":
+        return {
+            "committed": False,
+            "skip_reason": SKIP_OVERRIDE_NOT_ENABLED,
+            "message": "Operator override is reserved for Stage 4d+; commit without override_reason.",
+        }
+
+    try:
+        cur = conn.cursor()
+        try:
+            if enforce_config_flag:
+                cur.execute(
+                    "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                    (CONFIG_KEY_OPERATOR_COMMIT_ENABLED,),
+                )
+                row = cur.fetchone()
+                if not row or not _is_flag_true(row[0]):
+                    return {
+                        "committed": False,
+                        "skip_reason": SKIP_DISABLED,
+                        "message": (
+                            f"APP_CONFIG.{CONFIG_KEY_OPERATOR_COMMIT_ENABLED} is not enabled. "
+                            "Stage 4c operator commit is currently disabled."
+                        ),
+                    }
+
+            session_row = _fetch_shadow_session_sync(cur, shadow_session_id)
+            if not session_row:
+                return {
+                    "committed": False,
+                    "skip_reason": SKIP_SESSION_NOT_FOUND,
+                    "shadow_session_id": shadow_session_id,
+                }
+
+            session_hearing_id = session_row.get("HEARING_ID")
+            if session_hearing_id and str(session_hearing_id) != str(hearing_id):
+                return {
+                    "committed": False,
+                    "skip_reason": SKIP_HEARING_MISMATCH,
+                    "message": (
+                        "shadow_session.hearing_id does not match the hearing_id supplied with the request."
+                    ),
+                    "session_hearing_id": str(session_hearing_id),
+                    "request_hearing_id": str(hearing_id),
+                }
+
+            current_hearing_for_action = _fetch_current_hearing_id_for_action_sync(cur, action_id)
+            if current_hearing_for_action and str(current_hearing_for_action) != str(hearing_id):
+                # The action has moved on to a newer hearing iteration (intraday
+                # re-run). Refuse to commit a verdict bound to an older hearing.
+                return {
+                    "committed": False,
+                    "skip_reason": SKIP_HEARING_MISMATCH,
+                    "message": (
+                        "Action has been re-orchestrated; the supplied hearing_id is not the action's "
+                        "current hearing. Run a fresh Intelligence Review and commit the new verdict."
+                    ),
+                    "action_current_hearing_id": str(current_hearing_for_action),
+                    "request_hearing_id": str(hearing_id),
+                }
+            if not current_hearing_for_action:
+                return {
+                    "committed": False,
+                    "skip_reason": SKIP_ACTION_HEARING_MISSING,
+                    "message": (
+                        "No COMMITTEE_FINAL_DECISION found for this action yet. "
+                        "Run Intelligence Review first."
+                    ),
+                }
+
+            chair_row = _fetch_chair_ruling_sync(cur, shadow_session_id)
+            c2_final = _fetch_c2_final_for_action_sync(cur, action_id)
+            config = _fetch_authority_config_sync(cur)
+
+            # Use the current COMMITTEE_HEARING.EVIDENCE_PACK_HASH as the truth-
+            # of-record for staleness — this catches the case where the operator
+            # is committing a session that was built against an older pack hash.
+            current_pack_hash = _fetch_current_pack_hash_for_hearing_sync(cur, hearing_id)
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        normalized = _normalize_session_with_chair(session_row, chair_row)
+
+        authority_row = build_authority_row(
+            action_id=action_id,
+            session=normalized,
+            c2_final_decision=c2_final,
+            config=config,
+            authority_mode=AUTHORITY_MODE_OPERATOR_COMMITTED,
+            committed_by=committed_by,
+            current_pack_hash=current_pack_hash,
+        )
+
+        # Look up the row we are about to supersede so callers can see the
+        # prior authority_id in the response.
+        prior_authority_id: Optional[str] = None
+        try:
+            tmp_cur = conn.cursor()
+            try:
+                tmp_cur.execute(
+                    """
+                    SELECT AUTHORITY_ID
+                    FROM MIP.APP.AGENTIC_REVALIDATION_AUTHORITY
+                    WHERE ACTION_ID = %s AND IS_LATEST = TRUE
+                    """,
+                    (action_id,),
+                )
+                row = tmp_cur.fetchone()
+                if row:
+                    prior_authority_id = row[0]
+            finally:
+                try:
+                    tmp_cur.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            logger.exception("commit_operator_authority: prior-row lookup failed (non-fatal)")
+
+        new_authority_id = insert_authority_row_with_supersession(conn, authority_row)
+
+        return {
+            "committed": True,
+            "authority_id": new_authority_id,
+            "action_id": action_id,
+            "authority_mode": AUTHORITY_MODE_OPERATOR_COMMITTED,
+            "authority_status": authority_row["AUTHORITY_STATUS"],
+            "authority_reason_code": authority_row["AUTHORITY_REASON_CODE"],
+            "authority_confidence": authority_row["AUTHORITY_CONFIDENCE"],
+            "is_stale": authority_row["IS_STALE"],
+            "stale_reason": authority_row["STALE_REASON"],
+            "shadow_stance_raw": authority_row["SHADOW_STANCE_RAW"],
+            "deterministic_baseline_stance": authority_row["DETERMINISTIC_BASELINE_STANCE"],
+            "disagrees_with_baseline": authority_row["DISAGREES_WITH_BASELINE"],
+            "pack_version": authority_row["PACK_VERSION"],
+            "pack_version_ok": authority_row["PACK_VERSION_OK"],
+            "session_age_minutes": authority_row["SESSION_AGE_MINUTES"],
+            "superseded_authority_id": prior_authority_id,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "commit_operator_authority_for_session FAILED action=%s session=%s hearing=%s",
+            action_id, shadow_session_id, hearing_id,
+        )
+        return {
+            "committed": False,
+            "skip_reason": SKIP_ERROR,
+            "error": str(exc)[:300],
+            "action_id": action_id,
+            "shadow_session_id": shadow_session_id,
+            "hearing_id": hearing_id,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Stage 4d — Submit gating evaluation
+# ---------------------------------------------------------------------------
+
+# Reason-code taxonomy emitted by `evaluate_authority_gate`. These strings
+# flow into `submission_gate_hints` (LPA) and `reason_codes` (execute_live_action)
+# and are stable identifiers — UI / clients may switch on them.
+GATE_REASON_NOT_COMMITTED       = "AGENTIC_AUTHORITY_NOT_COMMITTED"
+GATE_REASON_STALE               = "AGENTIC_AUTHORITY_STALE"
+GATE_REASON_BLOCKED_WAIT_RECLAIM = "AGENTIC_AUTHORITY_BLOCKED_WAIT_RECLAIM"
+GATE_REASON_BLOCKED_DEFER       = "AGENTIC_AUTHORITY_BLOCKED_DEFER"
+GATE_REASON_BLOCKED_REJECT      = "AGENTIC_AUTHORITY_BLOCKED_REJECT"
+GATE_REASON_DEGRADED            = "AGENTIC_AUTHORITY_DEGRADED"
+GATE_REASON_FAILED              = "AGENTIC_AUTHORITY_FAILED"
+GATE_REASON_UNKNOWN_STATUS      = "AGENTIC_AUTHORITY_UNKNOWN_STATUS"
+
+# Human-readable submit-button tooltips per design table (LPA UX).
+_GATE_TOOLTIP_BY_REASON: Dict[str, str] = {
+    GATE_REASON_NOT_COMMITTED:        "Agentic review not committed — apply review first",
+    GATE_REASON_STALE:                "Agentic authority stale — re-commit after new review",
+    GATE_REASON_BLOCKED_WAIT_RECLAIM: "Agentic board: Wait / Reclaim — submit blocked",
+    GATE_REASON_BLOCKED_DEFER:        "Agentic board: Defer — submit blocked",
+    GATE_REASON_BLOCKED_REJECT:       "Agentic board: Reject — submit blocked",
+    GATE_REASON_DEGRADED:             "Agentic review degraded — run new review",
+    GATE_REASON_FAILED:               "Agentic review unavailable — run new review",
+    GATE_REASON_UNKNOWN_STATUS:       "Agentic review unrecognized — run new review",
+}
+
+_STATUS_TO_BLOCK_REASON: Dict[str, str] = {
+    AGENTIC_WAIT_RECLAIM:           GATE_REASON_BLOCKED_WAIT_RECLAIM,
+    AGENTIC_DEFER:                  GATE_REASON_BLOCKED_DEFER,
+    AGENTIC_REJECT:                 GATE_REASON_BLOCKED_REJECT,
+    AGENTIC_DEGRADED_NO_AUTHORITY:  GATE_REASON_DEGRADED,
+    AGENTIC_FAILED_NO_AUTHORITY:    GATE_REASON_FAILED,
+}
+
+
+def is_authority_gate_enabled(conn) -> bool:
+    """Return True only if APP_CONFIG.AGENTIC_AUTHORITY_ENABLED is truthy.
+
+    This is the Stage 4d Submit-gating circuit breaker. When False the
+    `evaluate_authority_gate` consumer paths in `live.py` must short-circuit
+    to gate_ok=True so behavior is identical to pre-Stage-4d.
+
+    Read-only. Never raises (returns False on any error)."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                (CONFIG_KEY_AUTHORITY_GATE_ENABLED,),
+            )
+            row = cur.fetchone()
+            return _is_flag_true(row[0]) if row else False
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        logger.exception("is_authority_gate_enabled: config read failed")
+        return False
+
+
+def _gate_from_latest_row(latest_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Pure evaluator: given the latest AGENTIC_REVALIDATION_AUTHORITY row for
+    an action (or None), return the Stage 4d gate verdict.
+
+    Result shape:
+        {
+          "gate_ok":      bool,                    # all four conditions met?
+          "reason_code":  str | None,              # primary blocking reason
+          "reason_codes": list[str],               # full list (may have extras)
+          "tooltip":      str | None,              # submit-button hint
+          "authority_mode":    str | None,
+          "authority_status":  str | None,
+          "is_stale":          bool | None,
+          "is_latest":         bool | None,
+          "size_posture":      str | None,         # 'REDUCED' for REDUCED approval
+          "authority_id":      str | None,
+        }
+
+    This helper makes no DB calls — pass it the row dict you already have.
+    """
+    if not latest_row:
+        return {
+            "gate_ok": False,
+            "reason_code": GATE_REASON_NOT_COMMITTED,
+            "reason_codes": [GATE_REASON_NOT_COMMITTED],
+            "tooltip": _GATE_TOOLTIP_BY_REASON[GATE_REASON_NOT_COMMITTED],
+            "authority_mode": None,
+            "authority_status": None,
+            "is_stale": None,
+            "is_latest": None,
+            "size_posture": None,
+            "authority_id": None,
+        }
+
+    mode = (latest_row.get("AUTHORITY_MODE") or "").upper()
+    status = (latest_row.get("AUTHORITY_STATUS") or "").upper()
+    is_stale = bool(latest_row.get("IS_STALE"))
+    is_latest = bool(latest_row.get("IS_LATEST", True))  # view default
+    size_posture = latest_row.get("SHADOW_SIZE_POSTURE")
+    authority_id = latest_row.get("AUTHORITY_ID")
+
+    common = {
+        "authority_mode": mode or None,
+        "authority_status": status or None,
+        "is_stale": is_stale,
+        "is_latest": is_latest,
+        "size_posture": (str(size_posture).upper() if size_posture else None),
+        "authority_id": authority_id,
+    }
+
+    # The Stage 4d gate ONLY trusts the LATEST OPERATOR_COMMITTED row. If a
+    # newer AUTO_AUDIT row has been written (e.g. after a fresh shadow run)
+    # the operator must re-apply review even if their previous OPERATOR_COMMITTED
+    # row was already approving.
+    if mode != AUTHORITY_MODE_OPERATOR_COMMITTED:
+        return {
+            **common,
+            "gate_ok": False,
+            "reason_code": GATE_REASON_NOT_COMMITTED,
+            "reason_codes": [GATE_REASON_NOT_COMMITTED],
+            "tooltip": _GATE_TOOLTIP_BY_REASON[GATE_REASON_NOT_COMMITTED],
+        }
+
+    if is_stale:
+        return {
+            **common,
+            "gate_ok": False,
+            "reason_code": GATE_REASON_STALE,
+            "reason_codes": [GATE_REASON_STALE],
+            "tooltip": _GATE_TOOLTIP_BY_REASON[GATE_REASON_STALE],
+        }
+
+    if status in POSITIVE_AUTHORITY_STATUSES:
+        return {
+            **common,
+            "gate_ok": True,
+            "reason_code": None,
+            "reason_codes": [],
+            "tooltip": None,
+        }
+
+    blocking_reason = _STATUS_TO_BLOCK_REASON.get(status, GATE_REASON_UNKNOWN_STATUS)
+    return {
+        **common,
+        "gate_ok": False,
+        "reason_code": blocking_reason,
+        "reason_codes": [blocking_reason],
+        "tooltip": _GATE_TOOLTIP_BY_REASON[blocking_reason],
+    }
+
+
+def evaluate_authority_gate(conn, action_id: str) -> Dict[str, Any]:
+    """
+    Stage 4d — evaluate the Submit gate for a single ACTION_ID.
+
+    Reads the latest authority row from `V_AGENTIC_AUTHORITY_LATEST` (the
+    `IS_LATEST = TRUE` filtered view), evaluates the four gate conditions:
+
+        IS_LATEST        = TRUE
+        AUTHORITY_MODE   = 'OPERATOR_COMMITTED'
+        IS_STALE         = FALSE
+        AUTHORITY_STATUS IN ('AGENTIC_APPROVE', 'AGENTIC_APPROVE_REDUCED')
+
+    and returns the verdict per `_gate_from_latest_row`.
+
+    Always also returns `"gate_enabled"`: True only when
+    `AGENTIC_AUTHORITY_ENABLED='true'` in `APP_CONFIG`. Callers must use this
+    flag to decide whether to enforce the gate — when False, the gate verdict
+    is informational only.
+
+    Never raises. On DB error returns an open gate (gate_ok=True) with a
+    diagnostic reason code so an unrelated infrastructure failure cannot
+    silently start blocking trades. Inverting fail-mode here is a deliberate
+    safety choice: if the DB is down, every other Submit gate fails first;
+    we do not want this gate to be a unique blocker.
+    """
+    if not action_id:
+        return {
+            "gate_enabled": False,
+            "gate_ok": True,
+            "reason_code": None,
+            "reason_codes": [],
+            "tooltip": None,
+            "authority_mode": None,
+            "authority_status": None,
+            "is_stale": None,
+            "is_latest": None,
+            "size_posture": None,
+            "authority_id": None,
+            "error": "MISSING_ACTION_ID",
+        }
+    try:
+        gate_enabled = is_authority_gate_enabled(conn)
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT AUTHORITY_ID, AUTHORITY_MODE, AUTHORITY_STATUS,
+                       AUTHORITY_REASON_CODE, AUTHORITY_CONFIDENCE,
+                       IS_STALE, STALE_REASON,
+                       SHADOW_SIZE_POSTURE, SHADOW_STANCE_RAW,
+                       DETERMINISTIC_BASELINE_STANCE, DISAGREES_WITH_BASELINE,
+                       COMMITTED_BY, CREATED_AT
+                FROM MIP.APP.V_AGENTIC_AUTHORITY_LATEST
+                WHERE ACTION_ID = %s
+                """,
+                (action_id,),
+            )
+            row = cur.fetchone()
+            cols = [d[0] for d in cur.description] if cur.description else []
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+        latest = dict(zip(cols, row)) if row else None
+        # `V_AGENTIC_AUTHORITY_LATEST` already filters IS_LATEST=TRUE; force
+        # the flag in the dict so _gate_from_latest_row's invariant holds.
+        if latest is not None:
+            latest["IS_LATEST"] = True
+        verdict = _gate_from_latest_row(latest)
+        verdict["gate_enabled"] = gate_enabled
+        return verdict
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("evaluate_authority_gate FAILED action=%s", action_id)
+        return {
+            "gate_enabled": False,
+            "gate_ok": True,
+            "reason_code": None,
+            "reason_codes": [],
+            "tooltip": None,
+            "authority_mode": None,
+            "authority_status": None,
+            "is_stale": None,
+            "is_latest": None,
+            "size_posture": None,
+            "authority_id": None,
+            "error": str(exc)[:300],
+        }
+
+
+def evaluate_authority_gate_bulk(conn, action_ids: list) -> Dict[str, Dict[str, Any]]:
+    """
+    Bulk variant of `evaluate_authority_gate` — one query covering up to a few
+    hundred action_ids in a single round-trip. Used by the LPA pending-decisions
+    builder which evaluates every visible row.
+
+    Returns a dict keyed by ACTION_ID. Missing actions get the "no row" verdict.
+    Includes `gate_enabled` (same flag value) on every entry so callers don't
+    have to plumb it separately.
+
+    Never raises; an infrastructure failure returns an open-gate verdict for
+    every requested action_id (with `error` populated) — see the rationale on
+    `evaluate_authority_gate`.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    unique_ids = [a for a in {str(x) for x in (action_ids or []) if x} if a]
+    if not unique_ids:
+        return out
+    try:
+        gate_enabled = is_authority_gate_enabled(conn)
+        # Build a parametrized IN clause; Snowflake supports up to ~16k params.
+        placeholders = ",".join(["%s"] * len(unique_ids))
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                f"""
+                SELECT AUTHORITY_ID, ACTION_ID, AUTHORITY_MODE, AUTHORITY_STATUS,
+                       AUTHORITY_REASON_CODE, AUTHORITY_CONFIDENCE,
+                       IS_STALE, STALE_REASON,
+                       SHADOW_SIZE_POSTURE, SHADOW_STANCE_RAW,
+                       DETERMINISTIC_BASELINE_STANCE, DISAGREES_WITH_BASELINE,
+                       COMMITTED_BY, CREATED_AT
+                FROM MIP.APP.V_AGENTIC_AUTHORITY_LATEST
+                WHERE ACTION_ID IN ({placeholders})
+                """,
+                unique_ids,
+            )
+            cols = [d[0] for d in cur.description] if cur.description else []
+            rows = cur.fetchall()
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        by_action: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            d = dict(zip(cols, r))
+            d["IS_LATEST"] = True  # the view filters this, force the flag
+            by_action[str(d.get("ACTION_ID"))] = d
+
+        for action_id in unique_ids:
+            verdict = _gate_from_latest_row(by_action.get(action_id))
+            verdict["gate_enabled"] = gate_enabled
+            out[action_id] = verdict
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("evaluate_authority_gate_bulk FAILED")
+        err = str(exc)[:300]
+        for action_id in unique_ids:
+            out[action_id] = {
+                "gate_enabled": False,
+                "gate_ok": True,
+                "reason_code": None,
+                "reason_codes": [],
+                "tooltip": None,
+                "authority_mode": None,
+                "authority_status": None,
+                "is_stale": None,
+                "is_latest": None,
+                "size_posture": None,
+                "authority_id": None,
+                "error": err,
+            }
+        return out
+
+
 __all__ = [
     "SUPPORTED_PACK_VERSIONS",
     "AGENTIC_APPROVE",
@@ -819,13 +1500,35 @@ __all__ = [
     "AUTHORITY_MODE_AUTO_AUDIT",
     "AUTHORITY_MODE_OPERATOR_COMMITTED",
     "CONFIG_KEY_AUTO_AUDIT_ENABLED",
+    "CONFIG_KEY_OPERATOR_COMMIT_ENABLED",
+    "CONFIG_KEY_AUTHORITY_GATE_ENABLED",
     "CONFIG_KEY_MIN_CONFIDENCE",
     "CONFIG_KEY_MAX_AGE",
+    "SKIP_DISABLED",
+    "SKIP_OVERRIDE_NOT_ENABLED",
+    "SKIP_SESSION_NOT_FOUND",
+    "SKIP_HEARING_MISMATCH",
+    "SKIP_ACTION_HEARING_MISSING",
+    "SKIP_EVIDENCE_PACK_STALE",
+    "SKIP_ERROR",
+    "GATE_REASON_NOT_COMMITTED",
+    "GATE_REASON_STALE",
+    "GATE_REASON_BLOCKED_WAIT_RECLAIM",
+    "GATE_REASON_BLOCKED_DEFER",
+    "GATE_REASON_BLOCKED_REJECT",
+    "GATE_REASON_DEGRADED",
+    "GATE_REASON_FAILED",
+    "GATE_REASON_UNKNOWN_STATUS",
     "is_pack_version_supported",
     "is_auto_audit_enabled",
+    "is_operator_commit_enabled",
+    "is_authority_gate_enabled",
     "map_shadow_to_authority_status",
     "build_staleness_check",
     "build_authority_row",
     "insert_authority_row_with_supersession",
     "commit_auto_audit_authority_for_session",
+    "commit_operator_authority_for_session",
+    "evaluate_authority_gate",
+    "evaluate_authority_gate_bulk",
 ]

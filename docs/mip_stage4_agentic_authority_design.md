@@ -27,6 +27,48 @@ Stage 4d, after the agentic authority path is validated in production.
 
 ---
 
+## Design Principle — Intraday Re-Runs Are Intentional
+
+The deterministic Committee 2.0 has always been **re-runnable during the trading day**, and
+the same property must carry forward to the agentic authority. This is not a bug or a leak —
+it is a load-bearing design decision:
+
+- A proposal that resolves to `BLOCK` / `WAIT_RECLAIM` at hearing iteration N may legitimately
+  become `PROCEED` at hearing iteration N+k once the symbol reaches the planned entry zone, or
+  once structural levels confirm during the session.
+- The orchestrate path force-refreshes the latest IBKR 1-minute bar before each chair
+  evaluation (`live.py` ~lines 10852–10869) so every re-run reflects current tape, not stale
+  evidence.
+- The append-only authority history (`IS_LATEST` + `SUPERSEDED_AT` + `SUPERSEDED_BY`)
+  preserves the full sequence of authority decisions for the same `ACTION_ID`, so an operator
+  audit can always answer "what did the agentic board say at 10:32 vs 14:15?".
+
+### Implications for Stage 4
+
+- **Do not** introduce a per-action "one verdict per day" lock or a click-cooldown on
+  "Run Intelligence Review". Operators must be able to re-evaluate as conditions evolve.
+- **Do** rely on idempotency at the snapshot-identity level: the same
+  `(hearing_id, evidence_pack_hash)` reuses the existing shadow session; only a **changed**
+  evidence pack (new bar, new snapshot, new dossier) produces a fresh shadow session and a
+  new authority row.
+- **Do** require `IS_STALE = FALSE` and `IS_LATEST = TRUE` in the Submit gate so the operator
+  can never accept a stale prior verdict on a moved tape.
+- **Do** track each re-run as an explicit append in `AGENTIC_REVALIDATION_AUTHORITY` so the
+  history-of-verdict trail survives intraday flips.
+- Safety revalidation (price/bar/news guard at `/revalidate`) is also intentionally
+  re-runnable for the same reason — bar freshness and price-gap reasons are time-sensitive
+  and must be re-checked, not cached.
+
+### Implication for the UI
+
+The Shadow Chair Verdict headline and the live Shadow Boardroom exhibits panel must remain
+mounted across re-clicks so the operator can watch the next iteration land in real time
+alongside the previous result. They must also survive downstream chain failures (e.g.
+`/revalidate` 400 `IBKR_BAR_STALE_ENTRY_BLOCKED`) — the safety guard correctly blocks
+submission but the intelligence review continues to run and must remain visible.
+
+---
+
 ## Current Materialization Chain
 
 ### Full chain: "Run Intelligence Review" → EXECUTION_REQUESTED

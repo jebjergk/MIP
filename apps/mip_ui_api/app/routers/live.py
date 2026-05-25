@@ -75,6 +75,10 @@ from app.services.broker_execution_reconcile import (
     run_reconcile_dry_run,
     verify_apply_item,
 )
+from app.committee.agentic_authority import (
+    evaluate_authority_gate,
+    evaluate_authority_gate_bulk,
+)
 from app.committee.committee2_live_bridge import (
     fetch_committee2_final_decision_for_action,
     structural_entry_verdict_from_committee2_final,
@@ -7748,6 +7752,18 @@ def get_live_activity_overview(
 
         pending_decisions = []
         suppress_pending_symbols: set[str] = set()
+        # Stage 4d — bulk-evaluate the agentic authority gate for every visible
+        # action in one query. We pass action_ids for all rows (structural and
+        # non-structural alike); the per-row check below ignores the verdict
+        # for non-structural / EXIT rows.
+        _candidate_action_ids = [
+            str(r.get("ACTION_ID")) for r in action_rows if r.get("ACTION_ID")
+        ]
+        agentic_authority_gate_by_action = (
+            evaluate_authority_gate_bulk(conn, _candidate_action_ids)
+            if _candidate_action_ids
+            else {}
+        )
         for row in action_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
             if not symbol:
@@ -7912,6 +7928,18 @@ def get_live_activity_overview(
 
             trade_surface_ok = page_actionable_base and (market_open or is_exit)
             submit_allowed = status in ("INTENT_APPROVED", "REVALIDATED_FAIL", "REVALIDATED_PASS", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED", "PM_ACCEPTED", "READY_FOR_APPROVAL_FLOW")
+            # Stage 4d — agentic authority gate. Block submit only when:
+            #   * action is STRUCTURAL ENTRY (EXIT actions never use shadow board), AND
+            #   * AGENTIC_AUTHORITY_ENABLED = true (gate fully off until flag flip), AND
+            #   * the latest authority row does not satisfy the four gate conditions.
+            _row_action_id = str(row.get("ACTION_ID") or "")
+            _agentic_verdict = agentic_authority_gate_by_action.get(_row_action_id) or {}
+            agentic_authority_blocks_entry = bool(
+                is_structural_action
+                and (not is_exit)
+                and _agentic_verdict.get("gate_enabled")
+                and not _agentic_verdict.get("gate_ok")
+            )
             submit_allowed = (
                 submit_allowed
                 and trade_surface_ok
@@ -7919,6 +7947,7 @@ def get_live_activity_overview(
                 and (not execution_hard_blocked)
                 and (not committee_blocks_entry)
                 and (not superseded_blocked)
+                and (not agentic_authority_blocks_entry)
             )
             in_position = symbol in held_symbols
             action_id = str(row.get("ACTION_ID") or "")
@@ -7969,6 +7998,10 @@ def get_live_activity_overview(
                     submission_gate_hints.append("Execution policy blocked — see reason codes.")
                 if committee_blocks_entry:
                     submission_gate_hints.append("Committee did not approve entry.")
+                if agentic_authority_blocks_entry:
+                    _agentic_tip = _agentic_verdict.get("tooltip")
+                    if _agentic_tip:
+                        submission_gate_hints.append(_agentic_tip)
                 if not submission_gate_hints:
                     submission_gate_hints.append("Submission unavailable — refresh the page or verify action status.")
 
@@ -8018,6 +8051,18 @@ def get_live_activity_overview(
                         "is_blocked": bool(blocked),
                         "execution_hard_blocked": bool(execution_hard_blocked),
                         "superseded_blocked": bool(superseded_blocked),
+                        "agentic_authority_blocks_entry": bool(agentic_authority_blocks_entry),
+                        "agentic_authority_gate": {
+                            "gate_enabled": bool(_agentic_verdict.get("gate_enabled")) if _agentic_verdict else False,
+                            "gate_ok": bool(_agentic_verdict.get("gate_ok")) if _agentic_verdict else None,
+                            "reason_code": _agentic_verdict.get("reason_code") if _agentic_verdict else None,
+                            "tooltip": _agentic_verdict.get("tooltip") if _agentic_verdict else None,
+                            "authority_mode": _agentic_verdict.get("authority_mode") if _agentic_verdict else None,
+                            "authority_status": _agentic_verdict.get("authority_status") if _agentic_verdict else None,
+                            "is_stale": _agentic_verdict.get("is_stale") if _agentic_verdict else None,
+                            "authority_id": _agentic_verdict.get("authority_id") if _agentic_verdict else None,
+                            "applies": bool(is_structural_action and (not is_exit)),
+                        },
                         "proposal_freshness": proposal_freshness,
                         "proposal_status_now": proposal_status_now,
                         "proposal_board_run_id": proposal_board_run_id,
@@ -12306,6 +12351,24 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             if rv_ts <= cd_ts:
                 reason_codes.append("REVALIDATION_REQUIRED_AFTER_COMPLIANCE")
 
+        # Stage 4d — Agentic authority gate (Submit gating switch).
+        # Only applies to STRUCTURAL ENTRY actions. EXIT actions never run
+        # shadow board and must not be gated by agentic authority. The gate
+        # is fully disabled when `AGENTIC_AUTHORITY_ENABLED` is false in
+        # APP_CONFIG; the helper evaluates the flag and returns gate_enabled
+        # in the verdict.
+        agentic_gate_verdict = None
+        _exec_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+        if _exec_intent != "EXIT" and is_structural_live_action(action):
+            agentic_gate_verdict = evaluate_authority_gate(conn, action_id)
+            if (
+                agentic_gate_verdict.get("gate_enabled")
+                and not agentic_gate_verdict.get("gate_ok")
+            ):
+                for rc in agentic_gate_verdict.get("reason_codes") or []:
+                    if rc not in reason_codes:
+                        reason_codes.append(rc)
+
         cur.execute(
             """
             select
@@ -12702,6 +12765,22 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "Long-only policy: you already have a short position in this symbol on the broker snapshot. "
                     "Close or cover it before adding to the same side, or refresh from IB if the snapshot is stale."
                 )
+            agentic_block = None
+            if agentic_gate_verdict and any(
+                str(rc).startswith("AGENTIC_AUTHORITY_")
+                for rc in final_reason_codes
+            ):
+                agentic_block = {
+                    "gate_enabled": agentic_gate_verdict.get("gate_enabled"),
+                    "reason_code": agentic_gate_verdict.get("reason_code"),
+                    "tooltip": agentic_gate_verdict.get("tooltip"),
+                    "authority_mode": agentic_gate_verdict.get("authority_mode"),
+                    "authority_status": agentic_gate_verdict.get("authority_status"),
+                    "is_stale": agentic_gate_verdict.get("is_stale"),
+                    "authority_id": agentic_gate_verdict.get("authority_id"),
+                }
+                if agentic_gate_verdict.get("tooltip"):
+                    block_msg = agentic_gate_verdict["tooltip"]
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -12709,6 +12788,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     "reason_codes": final_reason_codes,
                     "long_only_guard": long_only_guard,
                     "unmapped_execution_summary": unmapped_exec_summary if "BROKER_EXECUTION_UNMAPPED" in final_reason_codes else None,
+                    "agentic_authority": agentic_block,
                 },
             )
 

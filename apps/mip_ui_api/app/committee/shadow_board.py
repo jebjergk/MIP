@@ -277,6 +277,7 @@ async def kickoff_shadow_board_for_snapshot(
     evidence_pack_hash: str,
     timeout_sec: float = 120.0,
     force: bool = False,
+    action_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Phase 1 dual-hearing kickoff.
@@ -342,6 +343,7 @@ async def kickoff_shadow_board_for_snapshot(
             snapshot_id=snapshot_id,
             evidence_pack_hash=evidence_pack_hash,
             timeout_sec=timeout_sec,
+            action_id=action_id,
         )
     )
     logger.info(
@@ -362,6 +364,7 @@ async def _run_shadow_in_background(
     snapshot_id: Optional[int],
     evidence_pack_hash: Optional[str],
     timeout_sec: float,
+    action_id: Optional[str] = None,
 ) -> None:
     """Background wrapper. Never raises into the event loop."""
     try:
@@ -371,6 +374,7 @@ async def _run_shadow_in_background(
             session_id=session_id,
             snapshot_id=snapshot_id,
             evidence_pack_hash=evidence_pack_hash,
+            action_id=action_id,
         )
     except Exception as exc:  # defensive — orchestrate_shadow_board already swallows
         logger.error(
@@ -1158,6 +1162,65 @@ def _finalize_session_sync(
         conn.close()
 
 
+def _auto_audit_authority_after_finalize(
+    session_id: str,
+    hearing_id: str,
+    evidence_pack_hash: Optional[str],
+    action_id: Optional[str],
+) -> None:
+    """Stage 4b — best-effort AUTO_AUDIT authority row after shadow finalize.
+
+    Gated by APP_CONFIG.AGENTIC_AUTO_AUDIT_ENABLED. Always fail-closed: any
+    exception is logged but never propagated. Writes only AUTHORITY_MODE =
+    AUTO_AUDIT rows. Never touches LIVE_ACTIONS, Submit gating, LPA, or
+    COMMITTEE_FINAL_DECISION.
+    """
+    try:
+        from app.committee.agentic_authority import commit_auto_audit_authority_for_session
+    except Exception as imp_exc:  # noqa: BLE001
+        logger.warning(
+            "auto_audit: agentic_authority import failed (skipping) session=%s: %s",
+            session_id, imp_exc,
+        )
+        return
+
+    conn = None
+    try:
+        conn = get_connection()
+        result = commit_auto_audit_authority_for_session(
+            conn,
+            session_id=session_id,
+            hearing_id=hearing_id,
+            evidence_pack_hash=evidence_pack_hash,
+            action_id=action_id,
+            enforce_config_flag=True,
+        )
+        if result.get("committed"):
+            logger.info(
+                "auto_audit: wrote authority row session=%s action=%s authority_id=%s status=%s",
+                session_id,
+                result.get("action_id"),
+                result.get("authority_id"),
+                result.get("authority_status"),
+            )
+        else:
+            logger.info(
+                "auto_audit: skipped session=%s hearing=%s reason=%s",
+                session_id, hearing_id, result.get("skip_reason"),
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "auto_audit: hook failed (swallowed) session=%s hearing=%s: %s",
+            session_id, hearing_id, exc,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 async def _safe_checkpoint(coro_call_label: str, fn, *args) -> None:
     """Run a sync persistence helper on a thread, swallowing exceptions.
     Persistence hiccups must not break orchestration — at worst the user
@@ -1388,6 +1451,7 @@ async def orchestrate_shadow_board(
     session_id: Optional[str] = None,
     snapshot_id: Optional[int] = None,
     evidence_pack_hash: Optional[str] = None,
+    action_id: Optional[str] = None,
 ) -> ShadowBoardResult:
     """
     Run the full shadow board session for a given hearing_id.
@@ -1671,6 +1735,26 @@ async def orchestrate_shadow_board(
                 )
             except Exception as persist_exc:
                 logger.error("shadow_board: bulk fallback also FAILED for session %s: %s", session_id, persist_exc)
+
+        # Stage 4b — best-effort auto-audit authority commit. Gated by
+        # APP_CONFIG.AGENTIC_AUTO_AUDIT_ENABLED. Writes one AUTHORITY_MODE=AUTO_AUDIT
+        # row into MIP.APP.AGENTIC_REVALIDATION_AUTHORITY. Never touches
+        # LIVE_ACTIONS, Submit gating, COMMITTEE_FINAL_DECISION, or LPA. Any
+        # failure here is swallowed and logged so it cannot degrade the shadow
+        # board completion.
+        try:
+            await asyncio.to_thread(
+                _auto_audit_authority_after_finalize,
+                session_id,
+                hearing_id,
+                evidence_pack_hash,
+                action_id,
+            )
+        except Exception as audit_exc:  # noqa: BLE001
+            logger.warning(
+                "shadow_board: auto-audit hook raised (swallowed) session=%s hearing=%s: %s",
+                session_id, hearing_id, audit_exc,
+            )
 
         # Expire the evidence pack cache entry
         try:

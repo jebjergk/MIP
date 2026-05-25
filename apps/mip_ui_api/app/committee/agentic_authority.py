@@ -514,6 +514,298 @@ def insert_authority_row_with_supersession(conn, row: Dict[str, Any]) -> str:
     return authority_id
 
 
+# ---------------------------------------------------------------------------
+# Stage 4b — auto-audit commit from a completed shadow session
+# ---------------------------------------------------------------------------
+
+# Config keys used by the auto-audit hook.
+CONFIG_KEY_AUTO_AUDIT_ENABLED = "AGENTIC_AUTO_AUDIT_ENABLED"
+CONFIG_KEY_MIN_CONFIDENCE = "AGENTIC_MIN_CONFIDENCE_THRESHOLD"
+CONFIG_KEY_MAX_AGE = "AGENTIC_MAX_SESSION_AGE_MINUTES"
+
+
+def _is_flag_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"true", "1", "yes", "y", "on"}
+
+
+def is_auto_audit_enabled(conn) -> bool:
+    """Return True only if APP_CONFIG.AGENTIC_AUTO_AUDIT_ENABLED is truthy.
+
+    Read-only. Never raises (returns False on any error)."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                (CONFIG_KEY_AUTO_AUDIT_ENABLED,),
+            )
+            row = cur.fetchone()
+            return _is_flag_true(row[0]) if row else False
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        logger.exception("is_auto_audit_enabled: config read failed")
+        return False
+
+
+def _fetch_authority_config_sync(cur) -> Dict[str, Any]:
+    cur.execute(
+        """
+        SELECT CONFIG_KEY, CONFIG_VALUE
+        FROM MIP.APP.APP_CONFIG
+        WHERE CONFIG_KEY IN (%s, %s)
+        """,
+        (CONFIG_KEY_MIN_CONFIDENCE, CONFIG_KEY_MAX_AGE),
+    )
+    out: Dict[str, Any] = {}
+    for row in cur.fetchall():
+        out[row[0]] = row[1]
+    return out
+
+
+def _fetch_shadow_session_sync(cur, session_id: str) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            SESSION_ID, HEARING_ID, PROPOSAL_ID, SNAPSHOT_ID, EVIDENCE_PACK_HASH,
+            SHADOW_STANCE, SHADOW_CONFIDENCE, STAGE_REACHED, STATUS,
+            DEGRADED, DEGRADED_REASON, AGENT_MODEL, PACK_VERSION, RUN_MS,
+            CREATED_AT, COMPLETED_AT
+        FROM MIP.APP.SHADOW_BOARD_SESSION
+        WHERE SESSION_ID = %s
+        """,
+        (session_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
+
+
+def _fetch_chair_ruling_sync(cur, session_id: str) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            SHADOW_STANCE, SHADOW_CONFIDENCE,
+            PLURALITY_BASIS, CONFLICT_RESOLUTION,
+            SHADOW_TRADE_JSON, TOP_SUPPORTS, TOP_TENSIONS,
+            PARSE_OK, DEGRADED, DEGRADED_REASON, AGENT_ELAPSED_MS, CREATED_AT
+        FROM MIP.APP.SHADOW_CHAIR_RULING
+        WHERE SESSION_ID = %s
+        """,
+        (session_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
+
+
+def _fetch_c2_final_for_action_sync(cur, action_id: str) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT FINAL_DECISION_ID, HEARING_ID, PROPOSAL_ID, STANCE, CONFIDENCE,
+               ACTION_ID, DECISION_TS
+        FROM MIP.APP.COMMITTEE_FINAL_DECISION
+        WHERE ACTION_ID = %s
+        ORDER BY DECISION_TS DESC NULLS LAST
+        LIMIT 1
+        """,
+        (action_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row))
+
+
+def _resolve_action_id_from_hearing_sync(cur, hearing_id: str) -> Optional[str]:
+    """Fallback: find ACTION_ID for a hearing via COMMITTEE_FINAL_DECISION.
+
+    Returns the most recent ACTION_ID bound to this hearing, or None when no
+    action has been bound (e.g. pure diagnostic replay)."""
+    cur.execute(
+        """
+        SELECT ACTION_ID
+        FROM MIP.APP.COMMITTEE_FINAL_DECISION
+        WHERE HEARING_ID = %s
+          AND ACTION_ID IS NOT NULL
+        ORDER BY DECISION_TS DESC NULLS LAST
+        LIMIT 1
+        """,
+        (hearing_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _normalize_session_with_chair(
+    session_row: Dict[str, Any],
+    chair_row: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Lower-case shape build_authority_row expects, with chair nested."""
+    chair_dict: Optional[Dict[str, Any]] = None
+    if chair_row:
+        shadow_trade = chair_row.get("SHADOW_TRADE_JSON")
+        if isinstance(shadow_trade, str):
+            try:
+                shadow_trade = json.loads(shadow_trade)
+            except Exception:  # noqa: BLE001
+                shadow_trade = {}
+        chair_dict = {
+            "shadow_stance": chair_row.get("SHADOW_STANCE"),
+            "shadow_confidence": chair_row.get("SHADOW_CONFIDENCE"),
+            "plurality_basis": chair_row.get("PLURALITY_BASIS"),
+            "conflict_resolution": chair_row.get("CONFLICT_RESOLUTION"),
+            "shadow_trade": shadow_trade if isinstance(shadow_trade, dict) else {},
+            "parse_ok": chair_row.get("PARSE_OK"),
+            "degraded": chair_row.get("DEGRADED"),
+            "degraded_reason": chair_row.get("DEGRADED_REASON"),
+        }
+
+    return {
+        "session_id":         session_row.get("SESSION_ID"),
+        "status":             session_row.get("STATUS"),
+        "shadow_stance":      session_row.get("SHADOW_STANCE"),
+        "shadow_confidence":  session_row.get("SHADOW_CONFIDENCE"),
+        "stage_reached":      session_row.get("STAGE_REACHED"),
+        "degraded":           session_row.get("DEGRADED"),
+        "degraded_reason":    session_row.get("DEGRADED_REASON"),
+        "pack_version":       session_row.get("PACK_VERSION"),
+        "hearing_id":         session_row.get("HEARING_ID"),
+        "proposal_id":        session_row.get("PROPOSAL_ID"),
+        "evidence_pack_hash": session_row.get("EVIDENCE_PACK_HASH"),
+        "created_at":         session_row.get("CREATED_AT"),
+        "run_ms":             session_row.get("RUN_MS"),
+        "chair":              chair_dict,
+    }
+
+
+def commit_auto_audit_authority_for_session(
+    conn,
+    *,
+    session_id: str,
+    hearing_id: str,
+    evidence_pack_hash: Optional[str] = None,
+    action_id: Optional[str] = None,
+    enforce_config_flag: bool = True,
+) -> Dict[str, Any]:
+    """
+    Stage 4b — write one AUTO_AUDIT authority row for a completed shadow session.
+
+    Best-effort: this function is the safe path for the shadow board finalize
+    hook to call. It NEVER touches LIVE_ACTIONS. It NEVER changes Submit gating.
+    It ONLY writes AUTHORITY_MODE = AUTO_AUDIT rows.
+
+    Behavior:
+    - If `enforce_config_flag` is True (default) and APP_CONFIG.AGENTIC_AUTO_AUDIT_ENABLED
+      is not truthy, returns {"committed": False, "skip_reason": "DISABLED"} and writes nothing.
+    - If `action_id` is None, attempts a fallback lookup via
+      COMMITTEE_FINAL_DECISION.HEARING_ID. If still None, returns
+      {"committed": False, "skip_reason": "NO_ACTION_MAPPED"}.
+    - Otherwise builds a row via `build_authority_row` and inserts via
+      `insert_authority_row_with_supersession`.
+
+    Returns a small dict describing what happened. Callers should not rely on
+    exceptions — failures are caught at the caller boundary.
+
+    Raises only programmer errors (e.g. missing required args). Never raises on
+    DB I/O — wraps and returns {"committed": False, "skip_reason": "ERROR", "error": "..."}.
+    """
+    if not session_id:
+        raise ValueError("session_id is required")
+    if not hearing_id:
+        raise ValueError("hearing_id is required")
+
+    try:
+        cur = conn.cursor()
+        try:
+            if enforce_config_flag:
+                cur.execute(
+                    "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                    (CONFIG_KEY_AUTO_AUDIT_ENABLED,),
+                )
+                row = cur.fetchone()
+                if not row or not _is_flag_true(row[0]):
+                    return {"committed": False, "skip_reason": "DISABLED"}
+
+            resolved_action_id = action_id
+            if not resolved_action_id:
+                resolved_action_id = _resolve_action_id_from_hearing_sync(cur, hearing_id)
+
+            if not resolved_action_id:
+                return {"committed": False, "skip_reason": "NO_ACTION_MAPPED"}
+
+            session_row = _fetch_shadow_session_sync(cur, session_id)
+            if not session_row:
+                return {
+                    "committed": False,
+                    "skip_reason": "SESSION_NOT_FOUND",
+                    "session_id": session_id,
+                }
+
+            chair_row = _fetch_chair_ruling_sync(cur, session_id)
+            c2_final = _fetch_c2_final_for_action_sync(cur, resolved_action_id)
+            config = _fetch_authority_config_sync(cur)
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        normalized = _normalize_session_with_chair(session_row, chair_row)
+
+        # Prefer the explicit pack hash from the caller (truth-of-record for the
+        # current evidence pack); fall back to the session row's hash.
+        pack_hash_for_staleness = evidence_pack_hash or session_row.get("EVIDENCE_PACK_HASH")
+
+        authority_row = build_authority_row(
+            action_id=resolved_action_id,
+            session=normalized,
+            c2_final_decision=c2_final,
+            config=config,
+            authority_mode=AUTHORITY_MODE_AUTO_AUDIT,
+            committed_by="system_shadow_audit",
+            current_pack_hash=pack_hash_for_staleness,
+        )
+
+        new_authority_id = insert_authority_row_with_supersession(conn, authority_row)
+
+        return {
+            "committed": True,
+            "authority_id": new_authority_id,
+            "action_id": resolved_action_id,
+            "authority_mode": AUTHORITY_MODE_AUTO_AUDIT,
+            "authority_status": authority_row["AUTHORITY_STATUS"],
+            "authority_reason_code": authority_row["AUTHORITY_REASON_CODE"],
+            "is_stale": authority_row["IS_STALE"],
+            "shadow_stance_raw": authority_row["SHADOW_STANCE_RAW"],
+            "disagrees_with_baseline": authority_row["DISAGREES_WITH_BASELINE"],
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "commit_auto_audit_authority_for_session FAILED session=%s hearing=%s",
+            session_id, hearing_id,
+        )
+        return {
+            "committed": False,
+            "skip_reason": "ERROR",
+            "error": str(exc)[:300],
+            "session_id": session_id,
+            "hearing_id": hearing_id,
+        }
+
+
 __all__ = [
     "SUPPORTED_PACK_VERSIONS",
     "AGENTIC_APPROVE",
@@ -526,9 +818,14 @@ __all__ = [
     "POSITIVE_AUTHORITY_STATUSES",
     "AUTHORITY_MODE_AUTO_AUDIT",
     "AUTHORITY_MODE_OPERATOR_COMMITTED",
+    "CONFIG_KEY_AUTO_AUDIT_ENABLED",
+    "CONFIG_KEY_MIN_CONFIDENCE",
+    "CONFIG_KEY_MAX_AGE",
     "is_pack_version_supported",
+    "is_auto_audit_enabled",
     "map_shadow_to_authority_status",
     "build_staleness_check",
     "build_authority_row",
     "insert_authority_row_with_supersession",
+    "commit_auto_audit_authority_for_session",
 ]

@@ -10470,6 +10470,160 @@ def _shadow_timeout_for_orchestrate(cur, default: float = 120.0) -> float:
         return default
 
 
+async def _intelligence_only_shadow_kickoff(
+    conn,
+    cur,
+    action_id: str,
+    action: dict,
+) -> dict | None:
+    """Best-effort shadow-board kickoff when execution path is blocked by a
+    safety gate (e.g. OPEN_MARKET_CLOSED outside the extended trading window).
+
+    Performs ONLY intelligence work:
+        - fetch/create hearing row
+        - refresh COMMITTEE_HEARING via the existing deterministic _run_refresh
+        - compute + persist EVIDENCE_PACK_HASH on COMMITTEE_HEARING
+        - kickoff_shadow_board_for_snapshot(..., action_id=action_id)
+
+    Explicitly does NOT:
+        - commit COMMITTEE_FINAL_DECISION
+        - materialize LIVE_ACTIONS committee/verdict fields
+        - change LIVE_ACTIONS.STATUS
+        - touch /revalidate or Submit gating
+
+    Returns a small dict on success or None on any failure / when shadow board
+    is disabled. Never raises — the caller may still need to surface a 409 for
+    the execution-side block.
+    """
+    proposal_id_raw = action.get("PROPOSAL_ID")
+    if proposal_id_raw is None:
+        return None
+    try:
+        proposal_id_int = int(proposal_id_raw)
+    except (TypeError, ValueError):
+        return None
+    try:
+        proposal = _fetch_proposal(cur, proposal_id_int)
+        if not proposal:
+            return None
+        snapshot = _fetch_snapshot(cur, proposal_id_int)
+        if not snapshot:
+            return None
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "intelligence_only_kickoff: proposal/snapshot fetch failed action=%s: %s",
+            action_id, exc,
+        )
+        return None
+
+    if not _shadow_board_enabled_for_orchestrate(cur):
+        return None
+
+    try:
+        from app.committee.shadow_board import (
+            compute_evidence_pack_hash,
+            kickoff_shadow_board_for_snapshot,
+        )
+    except Exception as imp_exc:  # noqa: BLE001
+        _log.warning("intelligence_only_kickoff: shadow_board import failed: %s", imp_exc)
+        return None
+
+    existing = _fetch_hearing_by_proposal(cur, proposal_id_int)
+    hearing_id = str(existing["HEARING_ID"]) if existing else str(uuid.uuid4())
+
+    raw = _underlying_sf_conn(conn)
+    prior_autocommit = True
+    refresh_payload: dict = {}
+    try:
+        raw.autocommit(False)
+        prior_autocommit = False
+        # Intelligence-only refresh of the deterministic hearing. _run_refresh
+        # writes only to COMMITTEE_HEARING / COMMITTEE_ROLE_OUTPUT /
+        # COMMITTEE_EVIDENCE_ARTIFACT — never to LIVE_ACTIONS.
+        refresh_payload = _run_refresh(conn, hearing_id, proposal_id_int, snapshot, proposal)
+        raw.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            raw.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        _log.warning(
+            "intelligence_only_kickoff: hearing refresh failed action=%s hearing=%s: %s",
+            action_id, hearing_id, exc,
+        )
+        # Refresh failure is not fatal: fall through and attempt shadow kickoff
+        # against whatever evidence is already in COMMITTEE_HEARING.
+    finally:
+        try:
+            raw.autocommit(True)
+            prior_autocommit = True
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Compute + persist evidence_pack_hash so the shadow session binds to the
+    # same snapshot identity as the deterministic hearing.
+    evidence_pack_hash: str | None = None
+    try:
+        cur.execute(
+            "SELECT * FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s",
+            (hearing_id,),
+        )
+        hearing_rows = fetch_all(cur)
+        hearing_row = hearing_rows[0] if hearing_rows else None
+        evidence_pack_hash = compute_evidence_pack_hash(
+            snapshot_id=int(snapshot["SNAPSHOT_ID"]),
+            snapshot_row=dict(snapshot),
+            proposal_row=dict(proposal),
+            hearing_row=hearing_row,
+        )
+        cur.execute(
+            """
+            UPDATE MIP.APP.COMMITTEE_HEARING
+               SET EVIDENCE_PACK_HASH = %s
+             WHERE HEARING_ID = %s
+            """,
+            (evidence_pack_hash, hearing_id),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "intelligence_only_kickoff: evidence_pack_hash compute/persist failed action=%s hearing=%s: %s",
+            action_id, hearing_id, exc,
+        )
+
+    if not evidence_pack_hash:
+        # Shadow kickoff requires the hash for snapshot binding. Without it we
+        # cannot guarantee idempotency — bail rather than create an orphan
+        # shadow session.
+        return None
+
+    try:
+        shadow_kickoff = await kickoff_shadow_board_for_snapshot(
+            hearing_id=hearing_id,
+            proposal_id=proposal_id_int,
+            snapshot_id=int(snapshot["SNAPSHOT_ID"]),
+            evidence_pack_hash=evidence_pack_hash,
+            timeout_sec=_shadow_timeout_for_orchestrate(cur),
+            force=False,
+            action_id=action_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "intelligence_only_kickoff: shadow kickoff failed action=%s hearing=%s: %s",
+            action_id, hearing_id, exc,
+        )
+        return None
+
+    return {
+        "intelligence_only": True,
+        "hearing_id": hearing_id,
+        "evidence_pack_hash": evidence_pack_hash,
+        "shadow_session_id": shadow_kickoff.get("session_id") if shadow_kickoff else None,
+        "shadow_status": shadow_kickoff.get("status") if shadow_kickoff else None,
+        "shadow_reused": shadow_kickoff.get("reused") if shadow_kickoff else None,
+        "refresh_stance": refresh_payload.get("stance") if isinstance(refresh_payload, dict) else None,
+    }
+
+
 @router.post("/trades/actions/{action_id}/committee2/orchestrate")
 async def orchestrate_committee2_structural_entry(
     action_id: str,
@@ -10536,6 +10690,26 @@ async def orchestrate_committee2_structural_entry(
             action = _fetch_live_action(cur, action_id) or action
             status_upper = (action.get("STATUS") or "").upper()
             if status_upper == "OPEN_BLOCKED":
+                # Intelligence/execution separation: the opening sanity gate is
+                # a safety/execution guard (e.g. OPEN_MARKET_CLOSED outside the
+                # extended trading window, snapshot stale, gap block, live
+                # activation guard). Those reasons correctly prevent
+                # materialization, FD commit, and Submit — but they must NOT
+                # also gate the agentic/shadow review, which is an
+                # intelligence/audit process. Attempt a best-effort
+                # intelligence-only shadow kickoff so the Shadow Chair Verdict
+                # can still evaluate and an AUTO_AUDIT authority row can be
+                # written. Failure here is swallowed inside the helper.
+                intelligence_only_shadow = None
+                try:
+                    intelligence_only_shadow = await _intelligence_only_shadow_kickoff(
+                        conn, cur, action_id, action,
+                    )
+                except Exception as intel_exc:  # noqa: BLE001
+                    _log.warning(
+                        "orchestrate: intelligence-only shadow kickoff raised (swallowed) action=%s: %s",
+                        action_id, intel_exc,
+                    )
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -10544,6 +10718,7 @@ async def orchestrate_committee2_structural_entry(
                         "blocked_stage": "OPENING_SANITY_GATE",
                         "opening_validation": opening_gate_payload.get("opening_validation") or {},
                         "status": status_upper,
+                        "intelligence_only_shadow": intelligence_only_shadow,
                     },
                 )
 
@@ -10699,6 +10874,10 @@ async def orchestrate_committee2_structural_entry(
                     evidence_pack_hash=evidence_pack_hash,
                     timeout_sec=_shadow_timeout_for_orchestrate(cur),
                     force=False,
+                    # Stage 4b: thread action_id so the auto-audit hook can
+                    # write an AGENTIC_REVALIDATION_AUTHORITY row when the
+                    # shadow board finalizes. Best-effort; never gates Submit.
+                    action_id=action_id,
                 )
         except Exception as kickoff_exc:
             # Real board must remain authoritative — shadow kickoff is advisory.

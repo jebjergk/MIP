@@ -842,6 +842,30 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.lpa-c2-stale-proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.lpa-c2-stale-proposal-actions .lpa-btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border: 1px solid #b91c1c;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lpa-c2-stale-proposal-actions .lpa-btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+.lpa-c2-stale-proposal-actions .lpa-btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* Stage 2: Shadow Chair Verdict headline — the new primary intelligence
  * readout on each structural ENTRY row. Sits above the deterministic

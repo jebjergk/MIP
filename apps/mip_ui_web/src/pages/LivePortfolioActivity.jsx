@@ -1475,7 +1475,19 @@ export default function LivePortfolioActivity() {
                       const c20BaselineExpanded =
                         c20BaselineUserExpanded || Boolean(c20State.loading) || Boolean(c20State.error)
                       const canSubmit = statusUpper === 'REVALIDATED_PASS' && Boolean(d.submission_allowed)
-                      const canRunCommittee = [
+                      // Phase 5C: structural ENTRY actions whose underlying
+                      // proposal is from a superseded board run cannot ever be
+                      // submitted. Re-running Intelligence Review on them just
+                      // refreshes the evidence dossier and the Agentic
+                      // Committee but cannot unstick the supersedure gate — so
+                      // disable revalidation entirely. Only "Reject stale"
+                      // remains meaningful for these rows.
+                      const proposalIsStale = (
+                        isStructuralEntry
+                        && d.proposal_freshness
+                        && String(d.proposal_freshness).toUpperCase() !== 'CURRENT'
+                      )
+                      const canRunCommittee = !proposalIsStale && [
                         'RESEARCH_IMPORTED',
                         'PROPOSED',
                         'PENDING_OPEN_VALIDATION',
@@ -1570,24 +1582,36 @@ export default function LivePortfolioActivity() {
                               // entirely, so the operator sees the dead-end before
                               // running any more validations.
                               if (d.proposal_freshness && String(d.proposal_freshness).toUpperCase() !== 'CURRENT') {
+                                const rejectBusy = busy === `reject:${d.action_id}`
                                 return (
                                   <div className="lpa-c2-stale-proposal-banner" role="alert">
                                     <div className="lpa-c2-stale-proposal-head">
                                       <span className="lpa-c2-stale-proposal-chip">Stale proposal</span>
-                                      <strong>Cannot submit this action.</strong>
+                                      <strong>This action is dead. Submit will never enable.</strong>
                                     </div>
                                     <p>
                                       The underlying proposal is from a board run that has been
                                       superseded by a newer one ({String(d.proposal_freshness).replace(/_/g, ' ').toLowerCase()}).
-                                      No matter how many times you re-validate, Submit will not
-                                      enable for this action — the agentic verdict can only act on
-                                      the current board run's proposals.
+                                      Re-validating it does nothing useful — the agentic verdict can
+                                      only act on the current board run's proposals. The only way
+                                      forward is to reject this row and trade a proposal from the
+                                      latest board run instead.
                                     </p>
-                                    <p className="lpa-subtle">
-                                      Click <strong>Reject stale</strong> on the right to clean up this row,
-                                      then look for the newer proposal on the same symbol/direction
-                                      in the LPA list (or in Trade Proposals) and validate that one.
-                                    </p>
+                                    <div className="lpa-c2-stale-proposal-actions">
+                                      <button
+                                        type="button"
+                                        className="lpa-btn lpa-btn-danger"
+                                        disabled={rejectBusy}
+                                        onClick={() => rejectStale(d.action_id)}
+                                        title="Mark this superseded action as rejected and clear it from the active LPA list."
+                                      >
+                                        {rejectBusy ? 'Rejecting…' : `Reject this ${d.symbol || 'action'}`}
+                                      </button>
+                                      <span className="lpa-subtle">
+                                        Then look in the LPA list for a proposal from the newest
+                                        board run (no red banner) and validate that one.
+                                      </span>
+                                    </div>
                                   </div>
                                 )
                               }
@@ -1841,6 +1865,12 @@ export default function LivePortfolioActivity() {
                                 </div>
                               )
                             })()}
+                          {/* Phase 5C: skip the entire secondary evidence-dossier
+                              collapsible for actions whose proposal is from a
+                              superseded board run. The red banner above is the
+                              only thing the operator should see for those rows
+                              — anything else just invites another wasted click. */}
+                          {proposalIsStale ? null : (
                           <div
                             className={`lpa-c2-panel lpa-c2-panel--secondary${
                               c20State.error ? ' lpa-c2-panel--err' : ''
@@ -1972,6 +2002,7 @@ export default function LivePortfolioActivity() {
                               </div>
                             ) : null}
                           </div>
+                          )}
                           </>
                         ) : null}
                         {/* Phase 5B: LIVE_ACTIONS.COMMITTEE_VERDICT is the last verdict
@@ -2094,6 +2125,7 @@ export default function LivePortfolioActivity() {
                           {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}
                         </button>
                         {isStructuralEntry ? (
+                          proposalIsStale ? null : (
                           <>
                             <button
                               type="button"
@@ -2108,6 +2140,7 @@ export default function LivePortfolioActivity() {
                                   : 'Run Intelligence Review'}
                             </button>
                           </>
+                          )
                         ) : (
                           <button
                             type="button"
@@ -2135,13 +2168,19 @@ export default function LivePortfolioActivity() {
                                 : 'Committee revalidation'}
                           </button>
                         )}
-                        <button
-                          className="lpa-btn lpa-btn-secondary"
-                          disabled={busy === `reject:${d.action_id}`}
-                          onClick={() => rejectStale(d.action_id)}
-                        >
-                          {busy === `reject:${d.action_id}` ? 'Rejecting...' : 'Reject stale'}
-                        </button>
+                        {/* Phase 5C: for stale-proposal structural ENTRY rows the
+                            Reject button now lives inside the red banner where it
+                            is closer to the explanation; suppress the duplicate
+                            sidebar button so the action toolbar isn't redundant. */}
+                        {isStructuralEntry && proposalIsStale ? null : (
+                          <button
+                            className="lpa-btn lpa-btn-secondary"
+                            disabled={busy === `reject:${d.action_id}`}
+                            onClick={() => rejectStale(d.action_id)}
+                          >
+                            {busy === `reject:${d.action_id}` ? 'Rejecting...' : 'Reject stale'}
+                          </button>
+                        )}
                         {readyPulseActionId === d.action_id ? (
                           <div className="lpa-ready-chip">Ready to submit</div>
                         ) : null}
@@ -2149,13 +2188,15 @@ export default function LivePortfolioActivity() {
                           <div className="lpa-subtle">
                             {d.execution_hard_blocked
                               ? 'Submit blocked by risk limits shown in reason codes. Adjust sizing/config or rerun committee.'
-                              : isStructuralEntry
-                                ? 'Run Intelligence Review refreshes the evidence dossier and runs the Agentic Committee. After committing the agentic verdict, Submit enables when REVALIDATED_PASS.'
-                                : isStructuralExit
-                                  ? 'Replay execution verdict (SSE) materializes the execution-only structural exit check. Submit enables when REVALIDATED_PASS.'
-                                  : isStructuralC20
-                                    ? 'Sync Intelligence Review after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
-                                    : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
+                              : isStructuralEntry && proposalIsStale
+                                ? 'Submit is permanently blocked for this row — the proposal is from a superseded board run. Use Reject this action above.'
+                                : isStructuralEntry
+                                  ? 'Run Intelligence Review refreshes the evidence dossier and runs the Agentic Committee. After committing the agentic verdict, Submit enables when REVALIDATED_PASS.'
+                                  : isStructuralExit
+                                    ? 'Replay execution verdict (SSE) materializes the execution-only structural exit check. Submit enables when REVALIDATED_PASS.'
+                                    : isStructuralC20
+                                      ? 'Sync Intelligence Review after Hearing Room commit. If the verdict allows execution, Submit will be enabled.'
+                                      : 'Run committee revalidation. If committee says go, Submit will be enabled.'}
                           </div>
                         ) : null}
                         {!canRunCommittee && statusUpper === 'OPEN_BLOCKED' ? (
@@ -2176,6 +2217,7 @@ export default function LivePortfolioActivity() {
                     </tr>
                     {isStructuralEntry &&
                     c20Expanded &&
+                    !proposalIsStale &&
                     (c20State.loading || c20State.lastResult?.inline_hearing) ? (
                       // Note: deliberately do NOT gate on !c20State.error.
                       // If a downstream chain step (e.g. /revalidate failing
@@ -2187,6 +2229,13 @@ export default function LivePortfolioActivity() {
                       // live specialist/conflict/chair bubbles as they
                       // land. Unmounting on error was the cause of the
                       // "agentic board vanished after ~10s" symptom.
+                      //
+                      // Phase 5C: also gated on !proposalIsStale so the big
+                      // exhibits panel never renders for actions whose
+                      // proposal is from a superseded board run — those
+                      // rows show ONLY the red "stale proposal" banner so
+                      // the operator does not get stuck running validations
+                      // in circles.
                       <tr className="lpa-c2-expand-row">
                         <td colSpan={5}>
                           <LpaCommittee2Exhibits

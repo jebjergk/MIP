@@ -11148,6 +11148,72 @@ async def orchestrate_committee2_structural_entry(
                 },
             )
 
+        # Phase 5C: fail fast for structural ENTRY rows whose underlying
+        # proposal has been superseded by a newer board run. Running the
+        # orchestrate just refreshes evidence and re-runs the Agentic
+        # Committee but cannot unstick the supersedure gate — Submit will
+        # still be blocked downstream. Returning 409 here prevents the
+        # operator from getting stuck in a re-validate loop on dead rows
+        # if they bypass the disabled UI button (curl / replay).
+        proposal_freshness = "CURRENT"
+        try:
+            proposal_id_for_freshness = action.get("PROPOSAL_ID")
+            if proposal_id_for_freshness is None:
+                proposal_freshness = "NO_PROPOSAL_LINK"
+            else:
+                cur.execute(
+                    """
+                    SELECT
+                      p.STATUS                AS PROPOSAL_STATUS_NOW,
+                      p.BOARD_RUN_ID          AS PROPOSAL_BOARD_RUN_ID,
+                      latest.RUN_ID           AS LATEST_AUTHORITATIVE_RUN_ID
+                    FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+                    LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest ON TRUE
+                    WHERE p.PROPOSAL_ID = %s
+                    """,
+                    (proposal_id_for_freshness,),
+                )
+                _frow = cur.fetchone()
+                if not _frow:
+                    proposal_freshness = "EXPIRED"
+                else:
+                    _proposal_status_now = (_frow[0] or "").upper() or None
+                    _proposal_board_run_id = _frow[1]
+                    _latest_auth_run_id = _frow[2]
+                    if _proposal_status_now is None or _proposal_status_now != "PROPOSED":
+                        proposal_freshness = "EXPIRED"
+                    elif _latest_auth_run_id is None:
+                        proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
+                    elif (
+                        _proposal_board_run_id is None
+                        or str(_proposal_board_run_id) != str(_latest_auth_run_id)
+                    ):
+                        proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
+                    else:
+                        proposal_freshness = "CURRENT"
+        except Exception as fresh_exc:  # noqa: BLE001
+            _log.warning(
+                "orchestrate: proposal freshness lookup raised (treated as CURRENT) action=%s: %s",
+                action_id, fresh_exc,
+            )
+            proposal_freshness = "CURRENT"
+        if proposal_freshness and str(proposal_freshness).upper() != "CURRENT":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        "Stale proposal — this action's parent proposal is from a superseded "
+                        "board run. Reject this action and validate a proposal from the current "
+                        "board run instead."
+                    ),
+                    "reason_codes": [
+                        "PROPOSAL_EXPIRED_OR_SUPERSEDED",
+                        "COMMITTEE2_ORCHESTRATE_STALE_PROPOSAL",
+                    ],
+                    "proposal_freshness": str(proposal_freshness),
+                },
+            )
+
         status_upper = (action.get("STATUS") or "").upper()
         # LPA-first parity with the legacy /committee/run endpoint: when the action
         # hasn't yet passed opening validation, auto-run the opening sanity gate so

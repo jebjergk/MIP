@@ -102,7 +102,7 @@ export default function StructuralCommitteeHearing() {
       }
       if (!r.ok) {
         const msg = j.detail?.message || j.detail || r.statusText
-        setShadowError(`Shadow board run failed: ${msg}`)
+        setShadowError(`Agentic Committee run failed: ${msg}`)
         return
       }
       // Run completed — now fetch the full session payload
@@ -284,7 +284,7 @@ export default function StructuralCommitteeHearing() {
         aria-live="polite"
       >
         <strong>Replay / Diagnostics view.</strong>{' '}
-        Live committee hearings now run inside the LPA hearing room (real and shadow boards side-by-side).
+        Live committee hearings now run inside the LPA hearing room (evidence dossier + Agentic Committee).
         This page is for inspecting persisted hearings and for shadow-board re-runs against existing snapshots.
         {!diagnostics && (
           <span className="sch-replay-banner-hint">

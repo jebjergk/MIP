@@ -551,6 +551,182 @@ def _run_refresh(conn, hearing_id: str, proposal_id: int, snapshot: Dict[str, An
     return _assemble_payload(hearing, snapshot, proposal, cur=cur)
 
 
+# =============================================================================
+# Phase 5B — Agentic-only evidence dossier refresh (no deterministic chair)
+# =============================================================================
+
+def _persist_evidence_only_hearing(
+    conn,
+    hearing_id: str,
+    proposal_id: int,
+    snapshot_id: int,
+    bundle: Dict[str, Any],
+    evidence_pack_version: str,
+) -> None:
+    """Phase 5B sibling of `_persist_hearing_atomic`.
+
+    Writes COMMITTEE_HEARING (+ role + artifact rows) for the agentic-only
+    orchestrate path. Mirrors `_persist_hearing_atomic` exactly EXCEPT:
+      - `STANCE`, `CONFIDENCE`, `CHAIR_OUTPUT_JSON` are written as NULL.
+      - Role rows carry only their `evidence_refs`; `stance_badge`,
+        `one_liner`, `bullets`, `influence`, `output` are all NULL.
+
+    This keeps the COMMITTEE_HEARING row useful as an evidence container
+    (the Agentic Committee's shadow-evidence-pack builder needs the
+    EVIDENCE_JSON / DELTAS_JSON / artifact rows / role rows) while
+    guaranteeing NO deterministic verdict ever lands in the DB from this
+    code path. The historical hearing replay UI degrades gracefully —
+    chair / stance / confidence display as `—`.
+    """
+    evidence_j, deltas_j, _chair_j, op_j = bundle_to_db_json(bundle)
+    # Phase 5B: chair output is NULL by contract; operational still carries
+    # evidence-only metadata (symbol/side/proposal_id/snapshot_id/version).
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE MIP.APP.COMMITTEE_HEARING
+           SET HEARING_TS = CURRENT_TIMESTAMP(),
+               SNAPSHOT_ID = %s,
+               EVIDENCE_JSON = PARSE_JSON(%s),
+               DELTAS_JSON = PARSE_JSON(%s),
+               CHAIR_OUTPUT_JSON = NULL,
+               OPERATIONAL_JSON = PARSE_JSON(%s),
+               STANCE = NULL,
+               CONFIDENCE = NULL,
+               EVIDENCE_PACK_VERSION = %s,
+               UPDATED_AT = CURRENT_TIMESTAMP()
+         WHERE HEARING_ID = %s
+        """,
+        (
+            snapshot_id,
+            _json_dumps(evidence_j),
+            _json_dumps(deltas_j),
+            _json_dumps(op_j),
+            evidence_pack_version,
+            hearing_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.COMMITTEE_HEARING (
+                HEARING_ID, PROPOSAL_ID, SNAPSHOT_ID, HEARING_TS,
+                EVIDENCE_JSON, DELTAS_JSON, CHAIR_OUTPUT_JSON, OPERATIONAL_JSON,
+                STANCE, CONFIDENCE, STATUS, EVIDENCE_PACK_VERSION, UPDATED_AT
+            )
+            SELECT
+                %s, %s, %s, CURRENT_TIMESTAMP(),
+                PARSE_JSON(%s), PARSE_JSON(%s), NULL, PARSE_JSON(%s),
+                NULL, NULL, 'OPEN', %s, CURRENT_TIMESTAMP()
+            """,
+            (
+                hearing_id,
+                proposal_id,
+                snapshot_id,
+                _json_dumps(evidence_j),
+                _json_dumps(deltas_j),
+                _json_dumps(op_j),
+                evidence_pack_version,
+            ),
+        )
+
+    cur.execute("DELETE FROM MIP.APP.COMMITTEE_ROLE_OUTPUT WHERE HEARING_ID = %s", (hearing_id,))
+    for role in bundle["roles"]:
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.COMMITTEE_ROLE_OUTPUT (HEARING_ID, ROLE_NAME, OUTPUT_JSON, EVIDENCE_REFS, UPDATED_AT)
+            SELECT %s, %s, PARSE_JSON(%s), PARSE_JSON(%s), CURRENT_TIMESTAMP()
+            """,
+            (
+                hearing_id,
+                role["role_name"],
+                _json_dumps(
+                    {
+                        # Phase 5B: all verdict-shaped fields explicitly NULL.
+                        "stance_badge": None,
+                        "one_liner": None,
+                        "bullets": None,
+                        "influence": None,
+                        "output": None,
+                    }
+                ),
+                _json_dumps(role.get("evidence_refs") or []),
+            ),
+        )
+
+    cur.execute("DELETE FROM MIP.APP.COMMITTEE_EVIDENCE_ARTIFACT WHERE HEARING_ID = %s", (hearing_id,))
+    for art in bundle["artifacts"]:
+        cur.execute(
+            """
+            INSERT INTO MIP.APP.COMMITTEE_EVIDENCE_ARTIFACT (
+                HEARING_ID, ARTIFACT_KIND, PAYLOAD_JSON, SCHEMA_VERSION, EVIDENCE_REFS, UPDATED_AT
+            )
+            SELECT %s, %s, PARSE_JSON(%s), %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
+            """,
+            (
+                hearing_id,
+                art["artifact_kind"],
+                _json_dumps(art.get("payload") or {}),
+                art.get("schema_version") or "1",
+                _json_dumps(art.get("evidence_refs") or []),
+            ),
+        )
+
+
+def _run_evidence_only_refresh(
+    conn,
+    hearing_id: str,
+    proposal_id: int,
+    snapshot: Dict[str, Any],
+    proposal: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Phase 5B sibling of `_run_refresh`.
+
+    Builds the evidence-only dossier (via `compute_evidence_only_dossier`)
+    and persists it via `_persist_evidence_only_hearing`. Returns the
+    `_assemble_payload`-shaped dict so existing orchestrate callers get the
+    same response shape; `stance` and `confidence` in the payload are None.
+
+    Intraday substantiation artifact is still appended (it's a pure
+    evidence visualization, not a verdict).
+    """
+    from app.committee.engine import (
+        EVIDENCE_ONLY_PACK_VERSION,
+        compute_evidence_only_dossier,
+    )
+
+    symbol = proposal.get("SYMBOL") or snapshot.get("SYMBOL")
+    cur = conn.cursor()
+    live = _live_context(cur, symbol)
+    snap_eng = _build_snapshot_engine_dict(snapshot)
+    bundle = compute_evidence_only_dossier(snap_eng, live, EVIDENCE_ONLY_PACK_VERSION)
+    try:
+        bars_15 = fetch_intraday_bars_15m_ib(str(symbol or "").strip(), market_type=None)
+        intraday_art = build_intraday_substantiation_artifact(
+            snap_eng,
+            live,
+            bars_15,
+            snapshot.get("PROPOSAL_TS"),
+        )
+        if intraday_art:
+            bundle["artifacts"].append(intraday_art)
+    except Exception:
+        pass
+
+    _persist_evidence_only_hearing(
+        conn,
+        hearing_id,
+        proposal_id,
+        int(snapshot["SNAPSHOT_ID"]),
+        bundle,
+        EVIDENCE_ONLY_PACK_VERSION,
+    )
+    cur.execute("SELECT * FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s", (hearing_id,))
+    hrows = fetch_all(cur)
+    hearing = hrows[0]
+    return _assemble_payload(hearing, snapshot, proposal, cur=cur)
+
+
 def committee_final_decision_commit_for_action(cur, hearing_id: str, req: HearingCommitRequest) -> Dict[str, Any]:
     """
     Insert or reconcile COMMITTEE_FINAL_DECISION for a hearing with ACTION_ID-aware rules:

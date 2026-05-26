@@ -1562,14 +1562,14 @@ export default function LivePortfolioActivity() {
                                 baselineStance && shadowStanceRaw && baselineStance !== shadowStanceRaw
                               const placeholder =
                                 status === 'TIMEOUT'
-                                  ? 'Agentic review still running — check exhibits in a few seconds'
+                                  ? 'Agentic Committee still running — check exhibits in a few seconds'
                                   : status === 'FAILED'
-                                    ? 'Agentic review unavailable — using deterministic baseline only'
+                                    ? 'Agentic Committee unavailable — Submit blocked until review succeeds'
                                     : status === 'UNAVAILABLE'
-                                      ? 'Agentic review starting…'
+                                      ? 'Agentic Committee starting…'
                                       : shadow.polling || status === 'RUNNING'
-                                        ? 'Agentic review running…'
-                                        : 'Agentic review not yet available — using deterministic baseline only'
+                                        ? 'Agentic Committee running…'
+                                        : 'Agentic Committee not yet available — Submit blocked until review completes'
 
                               // Stage 4c — authority chip + Apply button.
                               const authState = agenticAuthorityByAction[d.action_id] || null
@@ -1639,11 +1639,11 @@ export default function LivePortfolioActivity() {
                               return (
                                 <div className="lpa-c2-shadow-headline">
                                   <div className="lpa-c2-shadow-headline-head">
-                                    <span className="lpa-c2-shadow-headline-title">Shadow Chair Verdict</span>
-                                    <span className="lpa-c2-shadow-headline-agentic">Agentic</span>
+                                    <span className="lpa-c2-shadow-headline-title">Agentic Committee Verdict</span>
+                                    <span className="lpa-c2-shadow-headline-agentic">Primary</span>
                                   </div>
                                   <div className="lpa-c2-shadow-headline-sub lpa-subtle">
-                                    Read-only · advisory · not execution-authoritative (until Stage 4)
+                                    Authoritative · Submit eligibility flows from this verdict once operator commits
                                   </div>
                                   {showStance ? (
                                     <div className="lpa-c2-shadow-headline-row">
@@ -1657,7 +1657,7 @@ export default function LivePortfolioActivity() {
                                       {showDisagree ? (
                                         <span
                                           className="lpa-c2-shadow-headline-disagree"
-                                          title={`Agentic stance ${shadowStanceRaw.replace(/_/g, ' ')} differs from deterministic baseline ${baselineStance.replace(/_/g, ' ')} — informational only, does not block submit.`}
+                                          title={`Agentic stance ${shadowStanceRaw.replace(/_/g, ' ')} differs from historical evidence snapshot ${baselineStance.replace(/_/g, ' ')} — informational only.`}
                                         >
                                           Δ Disagrees with baseline
                                         </span>
@@ -1723,7 +1723,7 @@ export default function LivePortfolioActivity() {
                                       {authority.DISAGREES_WITH_BASELINE === true ? (
                                         <span
                                           className="lpa-authority-badge lpa-authority-badge--delta"
-                                          title={`Agentic ${authority.SHADOW_STANCE_RAW || '—'} differs from deterministic baseline ${authority.DETERMINISTIC_BASELINE_STANCE || '—'}.`}
+                                          title={`Agentic ${authority.SHADOW_STANCE_RAW || '—'} differs from historical evidence snapshot ${authority.DETERMINISTIC_BASELINE_STANCE || '—'}.`}
                                         >
                                           Δ vs baseline
                                         </span>
@@ -1741,9 +1741,9 @@ export default function LivePortfolioActivity() {
                                       ) : wouldGateBlockSubmit && !gateEnabled ? (
                                         <span
                                           className="lpa-authority-badge lpa-authority-badge--future-gate"
-                                          title="In Stage 4d this authority status will block Submit. The Stage 4d gate is currently disabled in APP_CONFIG; Submit remains controlled by the deterministic gate only."
+                                          title="This authority status would block Submit when the Agentic Committee gate is enabled. The gate is currently disabled in APP_CONFIG."
                                         >
-                                          Would block submit in Stage 4d
+                                          Would block submit
                                         </span>
                                       ) : null}
                                       {showApplyButton ? (
@@ -1806,14 +1806,14 @@ export default function LivePortfolioActivity() {
                               }
                               title={
                                 c20BaselineExpanded
-                                  ? 'Collapse deterministic baseline (Shadow Chair Verdict above remains primary)'
-                                  : 'Expand deterministic baseline details (advisory of execution chain; still materializes until Stage 4)'
+                                  ? 'Collapse evidence snapshot (Agentic Committee Verdict above is authoritative)'
+                                  : 'Expand evidence snapshot (historical hearing baseline; read-only diagnostic)'
                               }
                             >
                               <span className="lpa-c2-panel-toggle" aria-hidden>
                                 {c20BaselineExpanded ? '▼' : '▶'}
                               </span>
-                              <span className="lpa-c2-panel-title">Deterministic baseline (last run)</span>
+                              <span className="lpa-c2-panel-title">Evidence snapshot (read-only)</span>
                               {!c20BaselineExpanded && c20State.lastResult ? (
                                 <span className="lpa-c2-panel-summary lpa-subtle">
                                   {String(c20State.lastResult.stance ?? '—').replace(/_/g, ' ')} ·
@@ -1833,7 +1833,7 @@ export default function LivePortfolioActivity() {
                             {c20BaselineExpanded ? (
                               <div className="lpa-c2-panel-body">
                                 <div className="lpa-c2-panel-subtitle lpa-subtle">
-                                  Deterministic baseline · diagnostic only (no longer materializes — agentic primary)
+                                  Historical evidence snapshot · read-only diagnostic · Agentic Committee above is authoritative
                                 </div>
                                 {c20State.loading && c20State.progressMsg ? (
                                   <div className="lpa-c2-progress-inline">{c20State.progressMsg}</div>
@@ -1869,11 +1869,11 @@ export default function LivePortfolioActivity() {
                                             [d.action_id]: !prev[d.action_id],
                                           }))
                                         }
-                                        title="Diagnostic deep-dive — full deterministic reasoning, exhibits, and shadow-board boardroom. Not the primary operator readout."
+                                        title="Open the full evidence dossier — specialist outputs + Agentic Committee boardroom. Read-only diagnostic."
                                       >
                                         {c20Expanded
-                                          ? '▲ Hide baseline diagnostic exhibits'
-                                          : '▼ Show baseline diagnostic exhibits'}
+                                          ? '▲ Hide evidence dossier'
+                                          : '▼ Show evidence dossier'}
                                       </button>
                                     ) : null}
                                     {c20State.lastResult?.hearing_id && d.action_id && d.proposal_id != null ? (
@@ -1882,9 +1882,9 @@ export default function LivePortfolioActivity() {
                                           to={`/structural-committee/${encodeURIComponent(c20State.lastResult.hearing_id)}?action_id=${encodeURIComponent(
                                             String(d.action_id),
                                           )}&proposal_id=${encodeURIComponent(String(d.proposal_id))}`}
-                                          title="Hearing Replay — full deterministic baseline diagnostic page"
+                                          title="Open the historical hearing evidence dossier (read-only)"
                                         >
-                                          Open hearing replay
+                                          Open evidence dossier
                                         </Link>
                                       </div>
                                     ) : null}

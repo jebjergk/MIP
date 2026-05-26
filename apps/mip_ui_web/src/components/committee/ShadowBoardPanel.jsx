@@ -1,15 +1,14 @@
 /**
- * ShadowBoardPanel — "The Shadow Boardroom"
+ * ShadowBoardPanel — Agentic Committee boardroom
  *
  * A live, conversational deliberation view that animates the six specialist
  * agents arguing through a frozen evidence pack and the chair's closing
- * verdict. Replaces the legacy static-cards layout with a chronological
- * message-thread feel: persona avatars, animated confidence donuts, inline
- * evidence chips, mini stance-scale bars, threaded challenge/revision
- * replies, and a dramatic chair finale.
- *
- * Frontend-only: uses the existing /committee/hearing/{id}/shadow-board
- * payload — no backend extension required.
+ * verdict. This is the AUTHORITATIVE review surface as of Stage 4 — the
+ * operator commits its verdict via the Agentic Authority endpoint, and
+ * Submit eligibility flows directly from that commit. The component name
+ * (`ShadowBoardPanel`) and underlying `/shadow-board` payload route are
+ * kept for now to avoid a backend-wide rename; user-facing strings have
+ * been migrated to the "Agentic Committee" name.
  *
  * Props (unchanged from legacy panel for drop-in compatibility):
  *   shadowPayload, shadowLoading, shadowError, onRun, runLoading,
@@ -652,7 +651,7 @@ function SnapshotBindFooter({ evidenceHash, snapshotId, sessionId }) {
   if (!evidenceHash && !snapshotId && !sessionId) return null
   const shortHash = evidenceHash ? `${String(evidenceHash).slice(0, 12)}…` : null
   return (
-    <div className="sbp-snapshot-bind" title="Phase 1 dual-hearing: same frozen snapshot as the real board">
+    <div className="sbp-snapshot-bind" title="Frozen evidence snapshot binding for this Agentic Committee session">
       <span className="sbp-snapshot-bind-label">Bound to</span>
       {snapshotId != null && <span className="sbp-snapshot-bind-chip">snapshot #{snapshotId}</span>}
       {shortHash && <span className="sbp-snapshot-bind-chip sbp-snapshot-bind-chip--mono">pack {shortHash}</span>}
@@ -859,9 +858,9 @@ export default function ShadowBoardPanel({
             className="sbp-run-btn"
             onClick={onRun}
             disabled={runLoading || shadowLoading}
-            title="Diagnostics: re-run shadow board session"
+            title="Diagnostics: re-run agentic committee session"
           >
-            {runLoading ? 'Running…' : shadowPayload ? 'Re-run' : 'Run shadow board'}
+            {runLoading ? 'Running…' : shadowPayload ? 'Re-run' : 'Run Agentic Committee'}
           </button>
         )}
       </div>
@@ -909,7 +908,7 @@ export default function ShadowBoardPanel({
           {shadowError && !shadowPayload && (
             <div className="sbp-error">
               <p className="sbp-error-msg">{shadowError}</p>
-              <p className="sbp-muted">Shadow board unavailable. Real board is unaffected.</p>
+              <p className="sbp-muted">Agentic Committee unavailable. Submit will be blocked until the review succeeds.</p>
             </div>
           )}
 
@@ -980,8 +979,8 @@ export default function ShadowBoardPanel({
         sessionId={effectiveSessionId}
       />
       <footer className="sbp-disclaimer">
-        Shadow Boardroom — six independent specialists + one chair, frozen snapshot, zero trade authority.
-        Model: claude-sonnet-4-6 via Snowflake Cortex Agents.
+        Agentic Committee — six independent specialists + one chair, frozen snapshot. Submit eligibility requires
+        operator commit. Model: claude-sonnet-4-6 via Snowflake Cortex Agents.
       </footer>
     </aside>
   )

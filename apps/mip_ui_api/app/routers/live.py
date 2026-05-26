@@ -93,6 +93,7 @@ from app.routers.committee import (
     _fetch_snapshot,
     _fetch_hearing_by_proposal,
     _run_refresh,
+    _run_evidence_only_refresh,
     _underlying_sf_conn,
 )
 from app.services.live_intelligence.structural_committee import (
@@ -8016,7 +8017,10 @@ def get_live_activity_overview(
                 if execution_hard_blocked:
                     submission_gate_hints.append("Execution policy blocked — see reason codes.")
                 if committee_blocks_entry:
-                    submission_gate_hints.append("Committee did not approve entry.")
+                    # Stage 4f neutralizes this gate when agentic-primary is on, so
+                    # this hint only fires under the legacy/rollback path. Keep the
+                    # phrasing generic ("review") rather than naming a specific board.
+                    submission_gate_hints.append("Review verdict did not approve entry.")
                 if agentic_authority_blocks_entry:
                     _agentic_tip = _agentic_verdict.get("tooltip")
                     if _agentic_tip:
@@ -10472,19 +10476,19 @@ def _materialize_structural_entry_agentic_apply(
     except (TypeError, ValueError):
         confidence = 0.5
 
-    fd_apply = fetch_committee2_final_decision_for_action(cur, action_id) or {}
-    jd_payload = _parse_variant(fd_apply.get("DECISION_JSON")) if fd_apply else {}
-    jd_raw = jd_payload.get("joint_decision") if isinstance(jd_payload, dict) else None
-    # Start from the C2 JD only for structural context (TP/SL, journey baselines).
-    # Then OVERWRITE the decision fields with the agentic outcome so this JD is
-    # never read as deterministic-authoritative downstream. See Stage 4f notes:
-    # the LPA pending-decisions builder still uses `joint_decision.should_enter`
-    # to derive `committee_blocks_entry`, and a stale C2 `should_enter=True`
-    # could otherwise produce an inconsistent UI under an agentic BLOCK.
-    jd = dict(jd_raw) if isinstance(jd_raw, dict) else {}
-    jd["should_enter"] = (not blocked)
-    jd["agentic_source"] = True
-    jd["agentic_authority_status"] = outcome["status_code"]
+    # Phase 5B: agentic-primary materialization no longer reads
+    # COMMITTEE_FINAL_DECISION for joint_decision context. The previous code
+    # tried to read `DECISION_JSON.joint_decision` off the CFD row, but the
+    # CFD schema has no `DECISION_JSON` column — so the call was already a
+    # no-op (jd_raw was always None). Under Phase 5B we make this explicit
+    # and seed the agentic joint_decision from scratch. TP/SL / bracket
+    # values come downstream from `_load_executable_entry_bracket_for_action`
+    # which has its own priority chain on PARAM_SNAPSHOT.
+    jd: dict = {
+        "should_enter": (not blocked),
+        "agentic_source": True,
+        "agentic_authority_status": outcome["status_code"],
+    }
 
     reason_codes: list[str] = [
         "STRUCTURAL_AGENTIC_REVIEWED",
@@ -10941,7 +10945,9 @@ async def _intelligence_only_shadow_kickoff(
 
     Performs ONLY intelligence work:
         - fetch/create hearing row
-        - refresh COMMITTEE_HEARING via the existing deterministic _run_refresh
+        - refresh COMMITTEE_HEARING via the agentic-primary evidence-only
+          refresh (Phase 5B) when AGENTIC_PRIMARY_MATERIALIZATION_ENABLED is
+          on; otherwise falls back to the legacy deterministic _run_refresh
         - compute + persist EVIDENCE_PACK_HASH on COMMITTEE_HEARING
         - kickoff_shadow_board_for_snapshot(..., action_id=action_id)
 
@@ -10997,10 +11003,23 @@ async def _intelligence_only_shadow_kickoff(
     try:
         raw.autocommit(False)
         prior_autocommit = False
-        # Intelligence-only refresh of the deterministic hearing. _run_refresh
-        # writes only to COMMITTEE_HEARING / COMMITTEE_ROLE_OUTPUT /
-        # COMMITTEE_EVIDENCE_ARTIFACT — never to LIVE_ACTIONS.
-        refresh_payload = _run_refresh(conn, hearing_id, proposal_id_int, snapshot, proposal)
+        # Phase 5B: prefer the agentic-only evidence-dossier refresh when
+        # AGENTIC_PRIMARY_MATERIALIZATION_ENABLED is on. Falls back to the
+        # legacy deterministic refresh for rollback mode. Either way only
+        # writes to COMMITTEE_HEARING / COMMITTEE_ROLE_OUTPUT /
+        # COMMITTEE_EVIDENCE_ARTIFACT — never to LIVE_ACTIONS, never to
+        # COMMITTEE_FINAL_DECISION.
+        _agentic_primary_for_kickoff = False
+        try:
+            _agentic_primary_for_kickoff = is_agentic_primary_materialization_enabled(raw)
+        except Exception:  # noqa: BLE001 — fail closed to legacy refresh
+            _agentic_primary_for_kickoff = False
+        if _agentic_primary_for_kickoff:
+            refresh_payload = _run_evidence_only_refresh(
+                conn, hearing_id, proposal_id_int, snapshot, proposal,
+            )
+        else:
+            refresh_payload = _run_refresh(conn, hearing_id, proposal_id_int, snapshot, proposal)
         raw.commit()
     except Exception as exc:  # noqa: BLE001
         try:
@@ -11250,12 +11269,13 @@ async def orchestrate_committee2_structural_entry(
                 pass
 
         raw = _underlying_sf_conn(conn)
-        # Stage 4e — decide once per orchestrate request whether the agentic
-        # path owns LIVE_ACTIONS materialization. When this flag is on we
-        # still write COMMITTEE_HEARING + COMMITTEE_FINAL_DECISION (downstream
-        # readers like SP_RUN_DAILY_POSITION_VERDICT depend on them) but we
-        # skip the deterministic LIVE_ACTIONS materialize step; the operator
-        # commit endpoint becomes the new source of truth.
+        # Phase 5B: decide once per orchestrate request whether the agentic
+        # path owns LIVE_ACTIONS materialization. When this flag is on the
+        # deterministic chair is NOT executed and COMMITTEE_FINAL_DECISION
+        # is NOT written — instead the new agentic-only refresh writes
+        # COMMITTEE_HEARING as an evidence-only container (NULL chair /
+        # stance / confidence) and the operator commit endpoint becomes
+        # the sole source of truth for LIVE_ACTIONS.
         agentic_primary_enabled = False
         try:
             agentic_primary_enabled = is_agentic_primary_materialization_enabled(raw)
@@ -11268,33 +11288,40 @@ async def orchestrate_committee2_structural_entry(
         materialize_out: dict | None = None
         idempotent_replay = False
         try:
-            refresh_payload = _run_refresh(conn, hearing_id, proposal_id_int, snapshot, proposal)
-            commit_payload = committee_final_decision_commit_for_action(
-                cur,
-                hearing_id,
-                HearingCommitRequest(action_id=action_id, note="LPA Committee 2.0 orchestrate"),
-            )
-            action_refresh = _fetch_live_action(cur, action_id) or action
-            committee_status = (action_refresh.get("COMMITTEE_STATUS") or "").upper()
-            already_fd = bool(commit_payload.get("already_committed"))
-            idempotent_replay = bool(already_fd and committee_status == "COMPLETED")
-
             if agentic_primary_enabled:
-                # Stage 4e: skip C2 materialize. C2 still wrote the hearing
-                # + final decision above (still needed for history). The
-                # operator-commit endpoint will fire the agentic materializer
-                # which then drives LIVE_ACTIONS.STATUS / sizing.
-                materialize_out = None
-            elif idempotent_replay:
-                materialize_out = None
-            else:
-                materialize_out = _materialize_structural_entry_committee_apply(
-                    cur,
-                    action_id,
-                    dict(action_refresh),
-                    ApplyCommitteeVerdictRequest(),
-                    apply_detail_source="COMMITTEE2_ORCHESTRATE",
+                # Phase 5B: evidence-only refresh — no deterministic chair,
+                # no COMMITTEE_FINAL_DECISION write, no LIVE_ACTIONS
+                # materialization here. The shadow board kickoff below
+                # then runs the Agentic Committee against this dossier;
+                # operator commit is what eventually drives Submit.
+                refresh_payload = _run_evidence_only_refresh(
+                    conn, hearing_id, proposal_id_int, snapshot, proposal,
                 )
+                commit_payload = {}
+                materialize_out = None
+                idempotent_replay = False
+            else:
+                refresh_payload = _run_refresh(conn, hearing_id, proposal_id_int, snapshot, proposal)
+                commit_payload = committee_final_decision_commit_for_action(
+                    cur,
+                    hearing_id,
+                    HearingCommitRequest(action_id=action_id, note="LPA Committee 2.0 orchestrate"),
+                )
+                action_refresh = _fetch_live_action(cur, action_id) or action
+                committee_status = (action_refresh.get("COMMITTEE_STATUS") or "").upper()
+                already_fd = bool(commit_payload.get("already_committed"))
+                idempotent_replay = bool(already_fd and committee_status == "COMPLETED")
+
+                if idempotent_replay:
+                    materialize_out = None
+                else:
+                    materialize_out = _materialize_structural_entry_committee_apply(
+                        cur,
+                        action_id,
+                        dict(action_refresh),
+                        ApplyCommitteeVerdictRequest(),
+                        apply_detail_source="COMMITTEE2_ORCHESTRATE",
+                    )
             raw.commit()
         except HTTPException:
             raw.rollback()
@@ -11403,10 +11430,12 @@ async def orchestrate_committee2_structural_entry(
             }
 
         if agentic_primary_enabled:
-            # Stage 4e: orchestrate refreshed the hearing + wrote the final
-            # decision, but LIVE_ACTIONS materialization is deferred to the
-            # operator-commit endpoint. Return a payload that makes the new
-            # mode explicit so the LPA can render the agentic-pending state.
+            # Phase 5B: orchestrate refreshed the evidence-only hearing
+            # (NULL chair / stance / confidence). NO COMMITTEE_FINAL_DECISION
+            # is written. LIVE_ACTIONS materialization is deferred to the
+            # operator-commit endpoint after the Agentic Committee finishes.
+            # Return a payload that makes the new mode explicit so the LPA
+            # can render the agentic-pending state.
             return {
                 "ok": True,
                 "action_id": action_id,

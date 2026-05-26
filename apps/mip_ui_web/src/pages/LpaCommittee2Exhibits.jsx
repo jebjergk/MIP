@@ -404,7 +404,7 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
           return
         }
         if (r.status === 503) {
-          setShadowError('Shadow board disabled')
+          setShadowError('Agentic Committee disabled')
           return
         }
         if (!r.ok) return
@@ -547,16 +547,15 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   return (
     <div className="lpa-c2-dual">
       <div className="lpa-c2-dual-diagnostic-header">
-        <span className="lpa-c2-dual-diagnostic-chip">Diagnostic deep-dive</span>
+        <span className="lpa-c2-dual-diagnostic-chip">Evidence trail</span>
         <span className="lpa-c2-dual-diagnostic-text">
-          Full reasoning trail — agentic Shadow Chair Verdict (primary, read-only) above the deterministic baseline
-          (still materializes until Stage 4). This view is for investigation, not the primary operator decision.
+          Full reasoning trail behind the Agentic Committee — read-only investigation view.
         </span>
       </div>
       <div className="lpa-c2-dual-real">
         <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
-          <span className="lpa-c2-dual-chip">DETERMINISTIC BASELINE</span>
-          <span className="lpa-c2-dual-banner-text">Diagnostic baseline · hearing replay (no longer materializes — agentic primary)</span>
+          <span className="lpa-c2-dual-chip">EVIDENCE SNAPSHOT</span>
+          <span className="lpa-c2-dual-banner-text">Frozen evidence dossier supporting the Agentic Committee review</span>
         </div>
         <div className="lpa-c2-exhibits">
       {loading && progressMsg ? (
@@ -832,19 +831,22 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
 
       <Reveal show={revealStep >= linkStep} className="lpa-c2-full-link">
         {hearingHref ? (
-          <Link to={hearingHref} title="Hearing Replay — full deterministic baseline diagnostic page">
-            Open hearing replay (full diagnostic) →
+          <Link to={hearingHref} title="Open historical evidence dossier (read-only)">
+            Open evidence dossier →
           </Link>
         ) : null}
       </Reveal>
         </div>
       </div>
 
-      {/* Phase 1 dual-hearing — right column: agentic shadow board, same snapshot. */}
+      {/* Agentic Committee — the authoritative review path. Same snapshot as
+          the evidence dossier on the left, ran by the agentic specialists +
+          chair. As of Stage 4, this is the only board that can grant Submit
+          authority. */}
       <div className="lpa-c2-dual-shadow">
         <div className="lpa-c2-dual-banner lpa-c2-dual-banner--shadow">
-          <span className="lpa-c2-dual-chip lpa-c2-dual-chip--shadow">SHADOW BOARD</span>
-          <span className="lpa-c2-dual-banner-text">Agentic · primary review · advisory only · zero authority (until Stage 4)</span>
+          <span className="lpa-c2-dual-chip lpa-c2-dual-chip--shadow">AGENTIC COMMITTEE</span>
+          <span className="lpa-c2-dual-banner-text">Primary review · authoritative · grants Submit when operator commits</span>
         </div>
         <ShadowBoardPanel
           shadowPayload={shadowPayload}

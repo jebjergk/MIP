@@ -783,3 +783,346 @@ def bundle_to_db_json(bundle: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str,
     chair = bundle["chair"]
     operational = bundle["operational"]
     return evidence, deltas, chair, operational
+
+
+# =============================================================================
+# Phase 5B — Agentic-only evidence dossier (no deterministic chair output)
+# =============================================================================
+
+# Pack version bumped when the orchestrate path stops producing a deterministic
+# chair verdict. Shadow board sessions tagged with this version are guaranteed
+# to have been computed against an evidence-only hearing container.
+EVIDENCE_ONLY_PACK_VERSION = "2.0.0"
+
+
+def compute_evidence_only_dossier(
+    snapshot: Dict[str, Any],
+    live: LiveContext,
+    evidence_pack_version: str = EVIDENCE_ONLY_PACK_VERSION,
+) -> Dict[str, Any]:
+    """Phase 5B: build only the evidence-pack fields needed by the Agentic
+    Committee. Does not compute a chair verdict, stance, confidence, or any
+    deterministic-baseline output.
+
+    The Agentic Committee's shadow-evidence-pack builder reads:
+      - `hearing.EVIDENCE_JSON`        (price/regime/structure/freshness facts)
+      - `hearing.DELTAS_JSON.categories` (drift buckets — NOT a final verdict)
+      - role rows (only their `evidence_refs`, never their `stance_badge`)
+      - artifact rows (only their `artifact_kind`, never the payload)
+
+    This function produces exactly that shape. It still emits 6 role entries
+    and 6 artifact descriptors so the shadow board's existing reader contract
+    stays intact, but every `stance_badge`, `one_liner`, and `influence` field
+    on roles is None — the Agentic Committee makes its own judgments and never
+    inherits a deterministic stance. The artifact payloads carry the same
+    pure-evidence geometry/regime numbers as before; they are diagnostic
+    visualizations, not verdicts.
+
+    Returns a dict with the same top-level keys as `compute_hearing_bundle`
+    so the existing persistence helpers can write it. The crucial differences
+    vs `compute_hearing_bundle`:
+      - `stance` = None
+      - `confidence` = None
+      - `chair` = {} (empty — no deterministic chair verdict)
+      - role entries carry `evidence_refs` only; `stance_badge`/`one_liner`/
+        `influence` are None.
+      - The `execution_implication` synthetic delta (which named a stance) is
+        dropped; only factual drift buckets remain.
+      - `operational.stance` and `operational.confidence` are None; `posture`
+        is dropped (it was a chair-shaped verdict).
+    """
+    side = (snapshot.get("SIDE") or "").upper()
+    sym = snapshot.get("SYMBOL") or ""
+    zone_low, zone_high = _entry_zone(snapshot)
+    inv_level, inv_rule = _invalidation(snapshot)
+    pm = _path_metrics(snapshot)
+    pct_adv = _f(pm.get("pct_adverse_before_favorable"))
+    mhr = _f(pm.get("meaningful_hit_rate"))
+    trend_now = (live.trend_regime_now or "").upper()
+    struct_now = (live.structural_state_now or "").upper()
+    struct_snap = (snapshot.get("STRUCTURAL_STATE") or "").upper()
+
+    price = float(live.latest_price)
+    breach = invalidation_breached(side, price, inv_level)
+
+    mid = None
+    if zone_low is not None and zone_high is not None:
+        mid = (zone_low + zone_high) / 2.0
+    dist_pct = None
+    if mid and mid > 0:
+        dist_pct = abs(price - mid) / mid * 100.0
+
+    inv_cushion_pct = invalidation_cushion_pct(side, price, inv_level)
+    r_cont, r_cont_detail = _regime_continuity_label(
+        snap_regime=_regime_bucket(snapshot.get("REGIME_STATE")),
+        trend_now=trend_now,
+        regime_hostile=False,
+        thesis_broken=bool(struct_snap and struct_now and struct_snap != struct_now),
+    ) if False else (None, None)
+    # NOTE: regime continuity label uses the same deterministic helper, but
+    # Phase 5B does NOT compute "regime_hostile" / "thesis_broken" verdict
+    # flags (those are chair-shaped). We pass plain inputs to keep the helper
+    # producing an evidence-only label.
+    try:
+        r_cont, r_cont_detail = _regime_continuity_label(
+            False,
+            bool(struct_snap and struct_now and struct_snap != struct_now),
+            _regime_bucket(snapshot.get("REGIME_STATE")),
+            trend_now,
+        )
+    except Exception:  # noqa: BLE001
+        r_cont, r_cont_detail = None, None
+    path_interpretation = _path_quality_interpretation(pct_adv, mhr, False, False)
+
+    trace = list(live.recent_bar_trace) if live.recent_bar_trace else []
+    evidence = {
+        "latest_price": price,
+        "latest_price_source": live.price_source,
+        "latest_price_ts_utc": live.price_ts_utc,
+        "latest_price_age_sec": live.price_age_sec,
+        "open_price": live.open_price,
+        "prior_close": live.prior_close,
+        "gap_pct": (
+            ((live.open_price - live.prior_close) / live.prior_close * 100.0)
+            if live.open_price and live.prior_close and live.prior_close != 0
+            else None
+        ),
+        "structural_state_now": live.structural_state_now,
+        "trend_regime_now": live.trend_regime_now,
+        "vol_regime_now": live.vol_regime_now,
+        "recent_bar_dates": live.bar_dates[:5],
+        "recent_bar_trace": trace,
+        "zone_distance_pct": dist_pct,
+        "invalidation_level": inv_level,
+        "invalidation_breached": breach,
+        "invalidation_cushion_pct": inv_cushion_pct,
+        "regime_continuity": r_cont,
+        "regime_continuity_detail": r_cont_detail,
+        "path_quality_interpretation": path_interpretation,
+    }
+
+    # Factual delta categories only — no synthetic "execution_implication" /
+    # "Deterministic stance ... after policy caps" entry. The Agentic
+    # Committee composes its own narrative from these drift buckets.
+    deltas: List[Dict[str, Any]] = [
+        {
+            "category": "price",
+            "summary": "Price vs proposal-time context",
+            "detail": f"Latest {price:.4f} vs zone mid {mid:.4f}" if mid else f"Latest {price:.4f}",
+            "evidence_refs": ["hearing.latest_price", "snapshot.ENTRY_ZONE_JSON"],
+        },
+        {
+            "category": "entry_geometry",
+            "summary": "Entry geometry delta",
+            "detail": (
+                f"Distance from mid {dist_pct:.2f}%"
+                if dist_pct is not None
+                else "Distance from zone mid n/a"
+            ),
+            "evidence_refs": ["hearing.zone_distance_pct", "snapshot.ENTRY_ZONE_JSON"],
+        },
+        {
+            "category": "structure",
+            "summary": "Structural state vs snapshot",
+            "detail": f"Snapshot {struct_snap or 'n/a'} vs now {struct_now or 'n/a'}",
+            "evidence_refs": ["snapshot.STRUCTURAL_STATE", "hearing.structural_state_now"],
+        },
+        {
+            "category": "regime",
+            "summary": "Regime backdrop",
+            "detail": f"Proposal regime {snapshot.get('REGIME_STATE')}; trend now {live.trend_regime_now}",
+            "evidence_refs": ["snapshot.REGIME_STATE", "hearing.trend_regime_now"],
+        },
+        {
+            "category": "path",
+            "summary": "Path / tradeability",
+            "detail": f"Adverse-before-favorable {pct_adv}; MHR {mhr}",
+            "evidence_refs": ["snapshot.PATH_METRICS_JSON"],
+        },
+        {
+            "category": "freshness",
+            "summary": "Evidence freshness",
+            "detail": f"Based on latest daily bar {live.bar_dates[0] if live.bar_dates else 'n/a'}",
+            "evidence_refs": ["hearing.recent_bar_dates"],
+        },
+    ]
+
+    # Roles: 6 specialist row stubs carrying ONLY evidence_refs so the
+    # Agentic Committee's evidence pack reader sees the expected role list.
+    # No `stance_badge`, `one_liner`, or `influence` — those were the
+    # deterministic-chair-flavored verdict fields and would contradict the
+    # agentic specialists' judgments.
+    roles: List[Dict[str, Any]] = [
+        {
+            "role_name": "STRUCTURAL_THESIS",
+            "stance_badge": None,
+            "one_liner": None,
+            "bullets": None,
+            "influence": None,
+            "output": None,
+            "evidence_refs": ["snapshot.STRUCTURAL_STATE", "hearing.structural_state_now"],
+        },
+        {
+            "role_name": "ENTRY_GEOMETRY",
+            "stance_badge": None,
+            "one_liner": None,
+            "bullets": None,
+            "influence": None,
+            "output": None,
+            "evidence_refs": ["snapshot.ENTRY_ZONE_JSON", "hearing.latest_price"],
+        },
+        {
+            "role_name": "REGIME",
+            "stance_badge": None,
+            "one_liner": None,
+            "bullets": None,
+            "influence": None,
+            "output": None,
+            "evidence_refs": ["snapshot.REGIME_STATE", "hearing.trend_regime_now"],
+        },
+        {
+            "role_name": "PATH_TRADEABILITY",
+            "stance_badge": None,
+            "one_liner": None,
+            "bullets": None,
+            "influence": None,
+            "output": None,
+            "evidence_refs": ["snapshot.PATH_METRICS_JSON"],
+        },
+        {
+            "role_name": "PROTECTION_EXIT",
+            "stance_badge": None,
+            "one_liner": None,
+            "bullets": None,
+            "influence": None,
+            "output": None,
+            "evidence_refs": ["snapshot.INVALIDATION_JSON", "hearing.latest_price"],
+        },
+        {
+            "role_name": "SYMBOL_BEHAVIOR",
+            "stance_badge": None,
+            "one_liner": None,
+            "bullets": None,
+            "influence": None,
+            "output": None,
+            "evidence_refs": ["snapshot.SYMBOL", "snapshot.TRUST_LABEL", "snapshot.PATH_METRICS_JSON"],
+        },
+    ]
+
+    # Artifacts: same pure-evidence visualizations as the legacy bundle, so
+    # the LPA's evidence dossier UI continues rendering structure/geometry/
+    # regime/path/protection strips. None of these carry a verdict.
+    artifacts: List[Dict[str, Any]] = [
+        {
+            "artifact_kind": "STRUCTURE_MAP",
+            "schema_version": "1",
+            "payload": {
+                "snapshot_state": struct_snap,
+                "now_state": struct_now,
+                "thesis": None,
+            },
+            "evidence_refs": ["snapshot.STRUCTURAL_STATE", "hearing.structural_state_now"],
+        },
+        {
+            "artifact_kind": "GEOMETRY_METER",
+            "schema_version": "1",
+            "payload": {
+                "zone_low": zone_low,
+                "zone_high": zone_high,
+                "price": price,
+                "dist_pct": dist_pct,
+                "label": None,
+            },
+            "evidence_refs": ["snapshot.ENTRY_ZONE_JSON", "hearing.latest_price"],
+        },
+        {
+            "artifact_kind": "REGIME_GAUGE",
+            "schema_version": "1",
+            "payload": {
+                "proposal": snapshot.get("REGIME_STATE"),
+                "trend": live.trend_regime_now,
+                "vol": live.vol_regime_now,
+                "continuity": r_cont,
+                "continuity_detail": r_cont_detail,
+            },
+            "evidence_refs": ["snapshot.REGIME_STATE", "hearing.trend_regime_now"],
+        },
+        {
+            "artifact_kind": "PATH_STRIP",
+            "schema_version": "1",
+            "payload": {
+                "pct_adverse": pct_adv,
+                "mhr": mhr,
+                "label": None,
+                "interpretation": path_interpretation,
+            },
+            "evidence_refs": ["snapshot.PATH_METRICS_JSON"],
+        },
+        {
+            "artifact_kind": "PROTECTION_STRIP",
+            "schema_version": "1",
+            "payload": {
+                "invalidation": inv_level,
+                "breached": breach,
+                "rule": inv_rule,
+                "cushion_pct": inv_cushion_pct,
+            },
+            "evidence_refs": ["snapshot.INVALIDATION_JSON", "hearing.latest_price"],
+        },
+        {
+            "artifact_kind": "SYMBOL_FINGERPRINT",
+            "schema_version": "1",
+            "payload": {
+                "symbol": sym,
+                "setup_family": snapshot.get("SETUP_FAMILY"),
+                "trust_label": snapshot.get("TRUST_LABEL"),
+                "vol_regime_now": live.vol_regime_now,
+                "zone_distance_pct": dist_pct,
+                "pct_adverse": pct_adv,
+                "mhr": mhr,
+            },
+            "evidence_refs": [
+                "snapshot.SYMBOL",
+                "snapshot.SETUP_FAMILY",
+                "snapshot.TRUST_LABEL",
+                "hearing.*",
+            ],
+        },
+    ]
+
+    operational = {
+        "stance": None,
+        "confidence": None,
+        "posture": None,
+        "evidence_pack_version": evidence_pack_version,
+        "symbol": sym,
+        "side": side,
+        "proposal_id": snapshot.get("PROPOSAL_ID"),
+        "snapshot_id": snapshot.get("SNAPSHOT_ID"),
+    }
+
+    return {
+        "evidence": evidence,
+        "deltas": deltas,
+        "roles": roles,
+        # Empty dict — explicitly NO deterministic chair verdict in Phase 5B.
+        "chair": {},
+        "artifacts": artifacts,
+        "operational": operational,
+        "explanatory": {"header_subtitle": f"{sym} {side} — evidence-only dossier (Phase 5B)"},
+        "stance": None,
+        "confidence": None,
+        "posture": None,
+        "evidence_refs_aggregate": {
+            "snapshot_fields": [
+                "PROPOSAL_ID",
+                "SNAPSHOT_ID",
+                "ENTRY_ZONE_JSON",
+                "INVALIDATION_JSON",
+                "PATH_METRICS_JSON",
+                "REGIME_STATE",
+                "STRUCTURAL_STATE",
+            ],
+            "hearing_fields": list(evidence.keys()),
+        },
+    }

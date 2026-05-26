@@ -689,6 +689,17 @@ def _fetch_chair_ruling_sync(cur, session_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _fetch_c2_final_for_action_sync(cur, action_id: str) -> Optional[Dict[str, Any]]:
+    """Phase 5B: legacy deterministic baseline stance lookup.
+
+    Returns the most recent COMMITTEE_FINAL_DECISION row for the action, or
+    None when no row exists. Under Phase 5B+ the orchestrate path no longer
+    writes COMMITTEE_FINAL_DECISION, so this returns None for actions that
+    were revalidated under the agentic-only path. `build_authority_row`
+    already handles None by setting DETERMINISTIC_BASELINE_STANCE and
+    DISAGREES_WITH_BASELINE to None. This function is kept (rather than
+    deleted) so historical CFD rows can still inform the baseline diff for
+    actions that pre-date Phase 5B; it is NOT a runtime dependency for the
+    Phase 5B operator path."""
     cur.execute(
         """
         SELECT FINAL_DECISION_ID, HEARING_ID, PROPOSAL_ID, STANCE, CONFIDENCE,
@@ -708,10 +719,53 @@ def _fetch_c2_final_for_action_sync(cur, action_id: str) -> Optional[Dict[str, A
 
 
 def _resolve_action_id_from_hearing_sync(cur, hearing_id: str) -> Optional[str]:
-    """Fallback: find ACTION_ID for a hearing via COMMITTEE_FINAL_DECISION.
+    """Phase 5B: agentic-native hearing -> action mapping.
 
-    Returns the most recent ACTION_ID bound to this hearing, or None when no
-    action has been bound (e.g. pure diagnostic replay)."""
+    Resolution order:
+      1. AGENTIC_REVALIDATION_AUTHORITY by HEARING_ID (latest row).
+         This is the agentic-primary anchor: every shadow session that
+         completed via the AUTO_AUDIT hook writes its mapping here.
+      2. LIVE_ACTIONS joined to COMMITTEE_HEARING by PROPOSAL_ID. CH is
+         still written as an evidence container under Phase 5B, so this
+         is the bootstrap fallback for cases where no authority row
+         exists yet (first revalidation of an action).
+      3. Legacy COMMITTEE_FINAL_DECISION lookup. Kept ONLY so that
+         actions migrated mid-flight from the pre-Phase-5B era still
+         resolve; it is NEVER a runtime dependency for new actions.
+
+    Returns None when no mapping can be found via any path."""
+    cur.execute(
+        """
+        SELECT ACTION_ID
+        FROM MIP.APP.AGENTIC_REVALIDATION_AUTHORITY
+        WHERE HEARING_ID = %s
+          AND ACTION_ID IS NOT NULL
+        ORDER BY CREATED_AT DESC NULLS LAST
+        LIMIT 1
+        """,
+        (hearing_id,),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        return row[0]
+
+    cur.execute(
+        """
+        SELECT la.ACTION_ID
+        FROM MIP.APP.COMMITTEE_HEARING ch
+        JOIN MIP.LIVE.LIVE_ACTIONS la
+          ON la.PROPOSAL_ID = ch.PROPOSAL_ID
+        WHERE ch.HEARING_ID = %s
+          AND la.ACTION_ID IS NOT NULL
+        ORDER BY la.UPDATED_AT DESC NULLS LAST
+        LIMIT 1
+        """,
+        (hearing_id,),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        return row[0]
+
     cur.execute(
         """
         SELECT ACTION_ID
@@ -918,10 +972,57 @@ def is_operator_commit_enabled(conn) -> bool:
 
 
 def _fetch_current_hearing_id_for_action_sync(cur, action_id: str) -> Optional[str]:
-    """Return the most recent COMMITTEE_FINAL_DECISION.HEARING_ID for an action.
+    """Phase 5B: agentic-native current-hearing anchor for an action.
 
-    The orchestrate path always commits FD bound to the action, so this is the
-    canonical "current hearing" anchor for the action."""
+    Resolution order (each step independent of deterministic C2 writes):
+
+      1. AGENTIC_REVALIDATION_AUTHORITY by ACTION_ID + IS_LATEST=TRUE.
+         Under Phase 5B every shadow session completion writes an AUTO_AUDIT
+         row that becomes IS_LATEST; the operator commit path reads the
+         hearing identity from here.
+      2. COMMITTEE_HEARING joined via LIVE_ACTIONS.PROPOSAL_ID. CH is still
+         written as the evidence-only container by the orchestrate path,
+         so this is the bootstrap fallback when no authority row exists
+         yet (first revalidation of an action, before the shadow finalize
+         hook has fired).
+      3. Legacy COMMITTEE_FINAL_DECISION. Retained ONLY so actions migrated
+         mid-flight from the pre-Phase-5B era still resolve. New Phase 5B
+         actions never reach this branch because step 2 always finds a CH
+         row written by the agentic-only orchestrate path.
+
+    Returns None when none of the three anchors resolves — caller must fail
+    closed (do NOT silently approve)."""
+    cur.execute(
+        """
+        SELECT HEARING_ID
+        FROM MIP.APP.AGENTIC_REVALIDATION_AUTHORITY
+        WHERE ACTION_ID = %s
+          AND IS_LATEST = TRUE
+        ORDER BY CREATED_AT DESC NULLS LAST
+        LIMIT 1
+        """,
+        (action_id,),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        return row[0]
+
+    cur.execute(
+        """
+        SELECT ch.HEARING_ID
+        FROM MIP.LIVE.LIVE_ACTIONS la
+        JOIN MIP.APP.COMMITTEE_HEARING ch
+          ON ch.PROPOSAL_ID = la.PROPOSAL_ID
+        WHERE la.ACTION_ID = %s
+        ORDER BY ch.UPDATED_AT DESC NULLS LAST
+        LIMIT 1
+        """,
+        (action_id,),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        return row[0]
+
     cur.execute(
         """
         SELECT HEARING_ID
@@ -937,8 +1038,38 @@ def _fetch_current_hearing_id_for_action_sync(cur, action_id: str) -> Optional[s
 
 
 def _fetch_current_pack_hash_for_hearing_sync(cur, hearing_id: str) -> Optional[str]:
+    """Phase 5B: agentic-native evidence-pack-hash lookup.
+
+    Resolution order:
+      1. COMMITTEE_HEARING.EVIDENCE_PACK_HASH — still the canonical
+         per-proposal pack hash. Under Phase 5B this column is written by
+         the new evidence-only orchestrate path (no deterministic chair
+         needed). CH is the "container of last resort" — the user
+         explicitly allows this as historical/container-only storage.
+      2. SHADOW_BOARD_SESSION.EVIDENCE_PACK_HASH — the latest shadow
+         session bound to this hearing carries its own copy of the pack
+         hash. Used as the agentic-native fallback when the CH row is
+         missing or has a NULL EVIDENCE_PACK_HASH (e.g. mid-migration
+         actions).
+
+    Returns None when neither lookup yields a hash."""
     cur.execute(
         "SELECT EVIDENCE_PACK_HASH FROM MIP.APP.COMMITTEE_HEARING WHERE HEARING_ID = %s",
+        (hearing_id,),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        return row[0]
+
+    cur.execute(
+        """
+        SELECT EVIDENCE_PACK_HASH
+        FROM MIP.APP.SHADOW_BOARD_SESSION
+        WHERE HEARING_ID = %s
+          AND EVIDENCE_PACK_HASH IS NOT NULL
+        ORDER BY CREATED_AT DESC NULLS LAST
+        LIMIT 1
+        """,
         (hearing_id,),
     )
     row = cur.fetchone()
@@ -1085,8 +1216,9 @@ def commit_operator_authority_for_session(
                     "committed": False,
                     "skip_reason": SKIP_ACTION_HEARING_MISSING,
                     "message": (
-                        "No COMMITTEE_FINAL_DECISION found for this action yet. "
-                        "Run Intelligence Review first."
+                        "No agentic authority anchor found for this action. "
+                        "Run Intelligence Review first to build an evidence "
+                        "dossier and run the Agentic Committee."
                     ),
                 }
 
@@ -1094,9 +1226,11 @@ def commit_operator_authority_for_session(
             c2_final = _fetch_c2_final_for_action_sync(cur, action_id)
             config = _fetch_authority_config_sync(cur)
 
-            # Use the current COMMITTEE_HEARING.EVIDENCE_PACK_HASH as the truth-
-            # of-record for staleness — this catches the case where the operator
-            # is committing a session that was built against an older pack hash.
+            # Phase 5B: pack-hash truth-of-record is sourced from the agentic-
+            # native lookup chain (COMMITTEE_HEARING evidence container, then
+            # SHADOW_BOARD_SESSION as the agentic fallback). This catches the
+            # case where the operator is committing a session that was built
+            # against an older pack hash.
             current_pack_hash = _fetch_current_pack_hash_for_hearing_sync(cur, hearing_id)
         finally:
             try:

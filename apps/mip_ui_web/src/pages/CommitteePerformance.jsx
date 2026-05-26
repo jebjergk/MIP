@@ -283,12 +283,14 @@ export default function CommitteePerformance() {
   return (
     <div className="cbo-page">
       <header className="cbo-header">
-        <h1>Committee Bake-off</h1>
+        <h1>Committee Bake-off <span className="cbo-historical-tag">(historical)</span></h1>
         <p>
-          One question: <b>is the shadow board helping, hurting, or inconclusive vs the real committee?</b>{' '}
-          Side-by-side scoring on shared opportunities, one row per first-ENTER (or first terminal
-          non-enter) decision per board. Diagnostics only — does not change live execution, the
-          proposal pipeline, or IBKR.
+          <b>Historical analytics from the pre-Stage-4 era.</b>{' '}
+          As of Stage 4 the Agentic Committee is the only authoritative review path; this bake-off
+          remains for retrospective comparison of the legacy deterministic committee (labeled "Real
+          Board" below) versus the agentic specialists (labeled "Shadow Board" below) on shared
+          historical opportunities. Diagnostics only — does not change live execution, the proposal
+          pipeline, or IBKR.
         </p>
       </header>
 

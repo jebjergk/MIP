@@ -261,14 +261,17 @@ function CloseHistoryChart({ trace, gradId }) {
 
 function WipTerminal({ progressMsg }) {
   const steps = [
-    { key: 'hearing', label: 'Refresh deterministic hearing from latest bars' },
-    { key: 'bind', label: 'Bind final decision to this LIVE action' },
-    { key: 'live', label: 'Materialize verdict into LIVE committee tables' },
+    { key: 'hearing', label: 'Refresh evidence dossier from latest bars' },
+    { key: 'bind', label: 'Run Agentic Committee against evidence dossier' },
+    { key: 'live', label: 'Apply Agentic Committee verdict to LIVE action' },
   ]
   const pm = progressMsg || ''
-  const activeIdx = /revalidation|approvals|Verdict received|Materializing/i.test(pm)
+  // Phase 5B-aware progress mapping. Backward compatible with the legacy
+  // "Refreshing hearing… / Binding final decision… / Materializing LIVE…"
+  // phrasing in case any caller still emits the old strings.
+  const activeIdx = /Applying agentic verdict|Materializing|revalidation|approvals|Verdict received/i.test(pm)
     ? 2
-    : /Binding|final decision/i.test(pm)
+    : /Running Agentic Committee|Binding|final decision/i.test(pm)
       ? 1
       : 0
   return (
@@ -527,6 +530,19 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
   const pr = inline.exhibit_protection || {}
   const fp = inline.exhibit_symbol_fingerprint || {}
   const chair = inline.chair_board || {}
+  // Phase 5B: when the agentic-only orchestrate writes the hearing, every
+  // verdict-flavored field (stance / confidence / chair.stance / chair
+  // supports + tensions) is NULL on COMMITTEE_HEARING by design. Detect that
+  // state so the "Chair board" panel and stance/conf masthead pills don't
+  // render as empty placeholders that look like a still-loading deterministic
+  // verdict — that's what made revalidations appear to "run the deterministic
+  // committee first" when in fact no chair ever executes.
+  const isEvidenceOnlyHearing = (
+    !inline.stance
+    && !chair.stance
+    && (chair.top_supports || []).length === 0
+    && (chair.top_tensions || []).length === 0
+  )
   const strip = Array.isArray(inline.what_changed_strip) ? inline.what_changed_strip : []
   const trace = gh.post_proposal_path_trace
   const pdcExhibit = inline.exhibit_public_disclosure_context
@@ -568,8 +584,19 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       <Reveal show={revealStep >= 0} className="lpa-c2-masthead">
         <div className="lpa-c2-masthead-row">
           <div>
-            <span className="lpa-c2-pill lpa-c2-pill--stance">{String(inline.stance || '—').replace(/_/g, ' ')}</span>
-            <span className="lpa-c2-pill">conf {fmtNum(inline.confidence, 2)}</span>
+            {isEvidenceOnlyHearing ? (
+              <span
+                className="lpa-c2-pill lpa-c2-pill--ghost"
+                title="Phase 5B: this dossier carries evidence only. The Agentic Committee on the right is the verdict source."
+              >
+                Evidence dossier — verdict from Agentic Committee →
+              </span>
+            ) : (
+              <>
+                <span className="lpa-c2-pill lpa-c2-pill--stance">{String(inline.stance || '—').replace(/_/g, ' ')}</span>
+                <span className="lpa-c2-pill">conf {fmtNum(inline.confidence, 2)}</span>
+              </>
+            )}
             <span className="lpa-c2-pill lpa-c2-pill--ghost">{inline.symbol || '—'}</span>
             {priorityCtx && priorityCtx.in_slate ? (
               <span
@@ -794,40 +821,48 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
         )}
       </Reveal>
 
-      <Reveal show={revealStep >= chairStep} className="lpa-c2-chair">
-        <div className="lpa-c2-card-head">
-          <span className="lpa-c2-card-icon" aria-hidden>
-            ⚖
-          </span>
-          Chair board
-        </div>
-        <div className="lpa-c2-chair-head">
-          <strong>{String(chair.stance || inline.stance || '—').replace(/_/g, ' ')}</strong>
-          <span>confidence {fmtNum(chair.confidence ?? inline.confidence, 2)}</span>
-        </div>
-        <div className="lpa-c2-chair-zones">
-          <div>
-            <span className="lpa-c2-zone-label">Supports</span>
-            <ul>
-              {(chair.top_supports || []).map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
+      {/* Phase 5B: when the orchestrate path is the agentic-only refresh,
+          the deterministic chair is not executed and CH.STANCE / CONFIDENCE /
+          CHAIR_OUTPUT_JSON are all NULL on purpose. Hiding the "Chair board"
+          card prevents the empty pills + empty Supports/Tensions lists from
+          looking like a half-loaded deterministic verdict. The Agentic
+          Committee panel on the right is the only verdict source. */}
+      {isEvidenceOnlyHearing ? null : (
+        <Reveal show={revealStep >= chairStep} className="lpa-c2-chair">
+          <div className="lpa-c2-card-head">
+            <span className="lpa-c2-card-icon" aria-hidden>
+              ⚖
+            </span>
+            Chair board
           </div>
-          <div>
-            <span className="lpa-c2-zone-label">Tensions</span>
-            <ul>
-              {(chair.top_tensions || []).map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
+          <div className="lpa-c2-chair-head">
+            <strong>{String(chair.stance || inline.stance || '—').replace(/_/g, ' ')}</strong>
+            <span>confidence {fmtNum(chair.confidence ?? inline.confidence, 2)}</span>
           </div>
-          <div>
-            <span className="lpa-c2-zone-label">Execution shaping</span>
-            <ExecutionShapingPanel shaping={chair.execution_shaping} />
+          <div className="lpa-c2-chair-zones">
+            <div>
+              <span className="lpa-c2-zone-label">Supports</span>
+              <ul>
+                {(chair.top_supports || []).map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <span className="lpa-c2-zone-label">Tensions</span>
+              <ul>
+                {(chair.top_tensions || []).map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <span className="lpa-c2-zone-label">Execution shaping</span>
+              <ExecutionShapingPanel shaping={chair.execution_shaping} />
+            </div>
           </div>
-        </div>
-      </Reveal>
+        </Reveal>
+      )}
 
       <Reveal show={revealStep >= linkStep} className="lpa-c2-full-link">
         {hearingHref ? (

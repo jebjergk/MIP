@@ -844,7 +844,7 @@ export default function LivePortfolioActivity() {
       setBusy(`c2orch:${actionId}`)
       setError('')
       setNotice('')
-      const progressMsgs = ['Refreshing hearing…', 'Binding final decision…', 'Materializing LIVE…']
+      const progressMsgs = ['Refreshing evidence dossier…', 'Running Agentic Committee…', 'Applying agentic verdict…']
       let rot = 0
       let progressTick = null
       setC20ExpandedByAction((prev) => ({ ...prev, [actionId]: true }))
@@ -1806,25 +1806,38 @@ export default function LivePortfolioActivity() {
                               }
                               title={
                                 c20BaselineExpanded
-                                  ? 'Collapse evidence snapshot (Agentic Committee Verdict above is authoritative)'
-                                  : 'Expand evidence snapshot (historical hearing baseline; read-only diagnostic)'
+                                  ? 'Collapse evidence dossier (Agentic Committee Verdict above is authoritative)'
+                                  : 'Expand evidence dossier (read-only diagnostic; agentic verdict above is authoritative)'
                               }
                             >
                               <span className="lpa-c2-panel-toggle" aria-hidden>
                                 {c20BaselineExpanded ? '▼' : '▶'}
                               </span>
-                              <span className="lpa-c2-panel-title">Evidence snapshot (read-only)</span>
+                              <span className="lpa-c2-panel-title">Evidence dossier (read-only)</span>
+                              {/* Phase 5B detection: the agentic-only orchestrate path returns
+                                  stance/confidence/recommendation all empty because the
+                                  deterministic chair never runs. The old summary line
+                                  "—  ·  conf —  ·  —" looked like a broken deterministic
+                                  verdict, which is what users were calling "old committee
+                                  UX". Show an evidence-only summary instead, pointing
+                                  upward to the Agentic Committee Verdict. */}
                               {!c20BaselineExpanded && c20State.lastResult ? (
-                                <span className="lpa-c2-panel-summary lpa-subtle">
-                                  {String(c20State.lastResult.stance ?? '—').replace(/_/g, ' ')} ·
-                                  conf{' '}
-                                  {c20State.lastResult.confidence != null
-                                    ? fmtNum(c20State.lastResult.confidence, 2)
-                                    : '—'}{' '}
-                                  · {String(c20State.lastResult.recommendation || '—')}
-                                  {c20State.lastResult.blocked ? ' (blocked)' : ''}
-                                  {c20State.lastResult.idempotent_replay ? ' · replay' : ''}
-                                </span>
+                                (!c20State.lastResult.stance && !c20State.lastResult.recommendation) ? (
+                                  <span className="lpa-c2-panel-summary lpa-subtle">
+                                    evidence refreshed · agentic verdict above
+                                  </span>
+                                ) : (
+                                  <span className="lpa-c2-panel-summary lpa-subtle">
+                                    {String(c20State.lastResult.stance ?? '—').replace(/_/g, ' ')} ·
+                                    conf{' '}
+                                    {c20State.lastResult.confidence != null
+                                      ? fmtNum(c20State.lastResult.confidence, 2)
+                                      : '—'}{' '}
+                                    · {String(c20State.lastResult.recommendation || '—')}
+                                    {c20State.lastResult.blocked ? ' (blocked)' : ''}
+                                    {c20State.lastResult.idempotent_replay ? ' · replay' : ''}
+                                  </span>
+                                )
                               ) : null}
                               {!c20BaselineExpanded && !c20State.lastResult && c20State.loading ? (
                                 <span className="lpa-c2-panel-summary lpa-subtle">running…</span>
@@ -1833,7 +1846,7 @@ export default function LivePortfolioActivity() {
                             {c20BaselineExpanded ? (
                               <div className="lpa-c2-panel-body">
                                 <div className="lpa-c2-panel-subtitle lpa-subtle">
-                                  Historical evidence snapshot · read-only diagnostic · Agentic Committee above is authoritative
+                                  Evidence dossier (read-only diagnostic) · the Agentic Committee Verdict above is the authoritative source.
                                 </div>
                                 {c20State.loading && c20State.progressMsg ? (
                                   <div className="lpa-c2-progress-inline">{c20State.progressMsg}</div>
@@ -1842,17 +1855,31 @@ export default function LivePortfolioActivity() {
                                   <div>{c20State.error}</div>
                                 ) : (
                                   <>
-                                    <div>
-                                      Stance / confidence: {String(c20State.lastResult?.stance ?? '—')} /{' '}
-                                      {c20State.lastResult?.confidence != null
-                                        ? fmtNum(c20State.lastResult.confidence, 2)
-                                        : '—'}
-                                    </div>
-                                    <div>
-                                      Verdict: {String(c20State.lastResult?.recommendation || '—')}
-                                      {c20State.lastResult?.blocked ? ' (blocked)' : ''}
-                                      {c20State.lastResult?.idempotent_replay ? ' · replay' : ''}
-                                    </div>
+                                    {/* Phase 5B: when stance and recommendation are both empty,
+                                        no deterministic chair executed for this hearing — these
+                                        lines would render as "— / —" and "Verdict: —" which is
+                                        exactly what made the panel look like a broken old
+                                        committee. Hide them and show an evidence-only status. */}
+                                    {(!c20State.lastResult?.stance && !c20State.lastResult?.recommendation) ? (
+                                      <div className="lpa-subtle">
+                                        Evidence dossier refreshed for the hearing snapshot. The Agentic Committee
+                                        above runs against this dossier and produces the only authoritative verdict.
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div>
+                                          Stance / confidence: {String(c20State.lastResult?.stance ?? '—')} /{' '}
+                                          {c20State.lastResult?.confidence != null
+                                            ? fmtNum(c20State.lastResult.confidence, 2)
+                                            : '—'}
+                                        </div>
+                                        <div>
+                                          Verdict: {String(c20State.lastResult?.recommendation || '—')}
+                                          {c20State.lastResult?.blocked ? ' (blocked)' : ''}
+                                          {c20State.lastResult?.idempotent_replay ? ' · replay' : ''}
+                                        </div>
+                                      </>
+                                    )}
                                     {Array.isArray(c20State.lastResult?.reason_codes) &&
                                     c20State.lastResult.reason_codes.length > 0 ? (
                                       <div className="lpa-subtle">
@@ -1895,7 +1922,18 @@ export default function LivePortfolioActivity() {
                           </div>
                           </>
                         ) : null}
-                        <div>Committee: {d.committee_verdict || '—'}</div>
+                        {/* Phase 5B: LIVE_ACTIONS.COMMITTEE_VERDICT is the last verdict
+                            written to this action's row. For actions revalidated under
+                            the agentic-only path it carries the Agentic Committee
+                            outcome (or remains as the historical verdict until the
+                            operator commits). Surface it as "Last verdict on file"
+                            with a tooltip so it doesn't read as a fresh deterministic
+                            committee output. */}
+                        {d.committee_verdict ? (
+                          <div className="lpa-subtle" title="Last verdict written to LIVE_ACTIONS for this action. Operator authority comes from the Agentic Committee Verdict, not from this field.">
+                            Last verdict on file: {d.committee_verdict}
+                          </div>
+                        ) : null}
                         {d.structural?.freshness_assessment ? <div className="lpa-subtle">Freshness: {d.structural.freshness_assessment} | Hold: {d.structural.hold_character || '—'}</div> : null}
                       </td>
                       <td>
@@ -2060,7 +2098,7 @@ export default function LivePortfolioActivity() {
                             {d.execution_hard_blocked
                               ? 'Submit blocked by risk limits shown in reason codes. Adjust sizing/config or rerun committee.'
                               : isStructuralEntry
-                                ? 'Run Intelligence Review refreshes the hearing, commits to this action, and syncs LIVE. Then advance approvals; Submit enables when REVALIDATED_PASS.'
+                                ? 'Run Intelligence Review refreshes the evidence dossier and runs the Agentic Committee. After committing the agentic verdict, Submit enables when REVALIDATED_PASS.'
                                 : isStructuralExit
                                   ? 'Replay execution verdict (SSE) materializes the execution-only structural exit check. Submit enables when REVALIDATED_PASS.'
                                   : isStructuralC20

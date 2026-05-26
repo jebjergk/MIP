@@ -223,9 +223,10 @@ export default function StructuralCommitteeHearing() {
       <div className="sch-wrap sch-wrap--landing">
         <header className="sch-header sch-header--premium">
           <div>
-            <h1>Hearing Replay — Deterministic Baseline</h1>
+            <h1>Hearing Replay — Evidence Snapshot (historical)</h1>
             <p className="sch-sub">
-              Structural entry hearings are opened from a proposal. This page is empty until you open or load a hearing.
+              Read-only inspection of persisted evidence dossiers. Structural entry hearings now run inside the LPA;
+              this page is for historical replay only.
             </p>
           </div>
         </header>
@@ -294,7 +295,7 @@ export default function StructuralCommitteeHearing() {
       </div>
       <header className="sch-header sch-header--premium">
         <div>
-          <h1>Hearing Replay — Deterministic Baseline</h1>
+          <h1>Hearing Replay — Evidence Snapshot (historical)</h1>
           <p className="sch-sub">
             {payload?.proposal?.symbol} {payload?.proposal?.direction} · Proposal {payload?.proposal_id} · Hearing{' '}
             <code>{payload?.hearing_id}</code>

@@ -78,6 +78,8 @@ from app.services.broker_execution_reconcile import (
 from app.committee.agentic_authority import (
     evaluate_authority_gate,
     evaluate_authority_gate_bulk,
+    is_agentic_primary_materialization_enabled,
+    should_block_deterministic_materialization,
 )
 from app.committee.committee2_live_bridge import (
     fetch_committee2_final_decision_for_action,
@@ -7764,6 +7766,14 @@ def get_live_activity_overview(
             if _candidate_action_ids
             else {}
         )
+        # Stage 4f — when agentic-primary materialization is on, the
+        # committee joint-decision is diagnostic only and must not feed
+        # the Submit decision. Read the flag once per request and suppress
+        # `committee_blocks_entry` below for structural ENTRY rows.
+        try:
+            _agentic_primary_on = is_agentic_primary_materialization_enabled(conn)
+        except Exception:  # noqa: BLE001
+            _agentic_primary_on = False
         for row in action_rows:
             symbol = str(row.get("SYMBOL") or "").upper()
             if not symbol:
@@ -7826,6 +7836,15 @@ def get_live_activity_overview(
             )
             committee_should_enter = joint_decision.get("should_enter")
             committee_blocks_entry = (action_intent != "EXIT") and (committee_should_enter is False)
+            # Stage 4f — when agentic-primary is active, the deterministic
+            # JD is diagnostic only. Do NOT let `should_enter=False` from a
+            # stale C2 verdict participate in the Submit gate; the agentic
+            # gate (below) is the single source of truth.
+            is_structural_row_for_4f = (
+                str(row.get("LIVE_INTENT_KIND") or "").upper() == "STRUCTURAL"
+            )
+            if _agentic_primary_on and is_structural_row_for_4f and not is_exit:
+                committee_blocks_entry = False
             hard_block_codes = {
                 "MAX_POSITIONS_EXCEEDED",
                 "MAX_POSITION_PCT_EXCEEDED",
@@ -9666,6 +9685,33 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
                     action, exit_position_qty=exit_position_qty
                 )
             else:
+                # Stage 4f — block structural ENTRY through this legacy route
+                # when agentic-primary materialization is on. The route's
+                # remaining job (writing COMMITTEE_RUN/VERDICT and updating
+                # LIVE_ACTIONS.STATUS) is exactly what Stage 4f forbids.
+                if _read_agentic_primary_flag_via_cursor(cur):
+                    _log.error(
+                        "STAGE_4F_GUARD run_live_trade_committee blocked deterministic "
+                        "materialize for structural ENTRY action_id=%s.",
+                        action_id,
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                "Deterministic committee run is disabled for structural "
+                                "ENTRY while agentic-primary materialization is on. Use "
+                                "POST /live/trades/actions/{id}/committee2/orchestrate "
+                                "to refresh the hearing diagnostically, then commit "
+                                "agentic authority."
+                            ),
+                            "reason_codes": [
+                                "DETERMINISTIC_RUN_DISABLED_AGENTIC_PRIMARY",
+                                "STAGE_4F_NO_C2_FALLBACK",
+                            ],
+                            "action_id": action_id,
+                        },
+                    )
                 fd_row = fetch_committee2_final_decision_for_action(cur, action_id)
                 if not fd_row:
                     raise HTTPException(
@@ -10046,6 +10092,34 @@ def run_live_trade_committee(action_id: str, req: CommitteeRunRequest):
         conn.close()
 
 
+def _read_agentic_primary_flag_via_cursor(cur) -> bool:
+    """Stage 4f helper — read AGENTIC_PRIMARY_MATERIALIZATION_ENABLED using a
+    cursor we already hold. Returns True (fail-closed) if the row is missing
+    or unreadable. Mirrors `should_block_deterministic_materialization` but
+    does not require a connection handle."""
+    try:
+        cur.execute(
+            "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+            ("AGENTIC_PRIMARY_MATERIALIZATION_ENABLED",),
+        )
+        row = cur.fetchone()
+        if not row:
+            _log.warning(
+                "Stage 4f flag row missing in APP_CONFIG — failing closed (blocking C2 materialize)."
+            )
+            return True
+        v = row[0]
+        if v is None:
+            return True
+        s = str(v).strip().lower()
+        return s in {"true", "t", "1", "yes", "y", "on"}
+    except Exception:  # noqa: BLE001
+        _log.exception(
+            "Stage 4f flag read failed — failing closed (blocking C2 materialize)."
+        )
+        return True
+
+
 def _materialize_structural_entry_committee_apply(
     cur,
     action_id: str,
@@ -10057,7 +10131,41 @@ def _materialize_structural_entry_committee_apply(
     """
     Persist COMMITTEE_RUN / COMMITTEE_VERDICT / LIVE_ACTIONS for structural ENTRY after
     COMMITTEE_FINAL_DECISION exists for action_id.
+
+    Stage 4f — hard guard: when `AGENTIC_PRIMARY_MATERIALIZATION_ENABLED`
+    is truthy (or unreadable), this function must NEVER materialize. It
+    refuses with a 409 carrying `DETERMINISTIC_MATERIALIZATION_DISABLED_AGENTIC_PRIMARY`
+    so no caller — orchestrate, `/committee/apply`, streaming finalize, or
+    any future call site — can silently fall back to the deterministic path.
     """
+    # Stage 4f circuit breaker. Fail-CLOSED on config read errors.
+    _block = _read_agentic_primary_flag_via_cursor(cur)
+    if _block:
+        _log.error(
+            "STAGE_4F_GUARD_BLOCKED_DETERMINISTIC_MATERIALIZE action_id=%s "
+            "source=%s — AGENTIC_PRIMARY_MATERIALIZATION_ENABLED is on (or "
+            "unreadable). The agentic-primary materializer is the only legal "
+            "path to LIVE_ACTIONS.STATUS.",
+            action_id, apply_detail_source,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Deterministic committee materialization is disabled while "
+                    "agentic-primary materialization is the operating mode. "
+                    "Run agentic review and commit the verdict via the agentic "
+                    "authority endpoint to advance LIVE_ACTIONS."
+                ),
+                "reason_codes": [
+                    "DETERMINISTIC_MATERIALIZATION_DISABLED_AGENTIC_PRIMARY",
+                    "STAGE_4F_NO_C2_FALLBACK",
+                ],
+                "action_id": action_id,
+                "apply_detail_source": apply_detail_source,
+            },
+        )
+
     fd_apply = fetch_committee2_final_decision_for_action(cur, action_id)
     if not fd_apply:
         raise HTTPException(
@@ -10266,6 +10374,313 @@ def _materialize_structural_entry_committee_apply(
         "joint_decision": verdict.get("joint_decision"),
         "reason_codes": reason_codes,
         "derived_sizing": {"proposed_price": proposed_price_derived, "proposed_qty": proposed_qty_derived},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage 4e — Agentic-primary materializer
+# ---------------------------------------------------------------------------
+
+# Maps the canonical AUTHORITY_STATUS values to the Stage 4e materializer
+# outcome. PROCEED moves the action to READY_FOR_APPROVAL_FLOW with sized
+# legs. BLOCK keeps the action at OPEN_BLOCKED with no executable sizing.
+_AGENTIC_AUTHORITY_TO_OUTCOME: dict[str, dict] = {
+    "AGENTIC_APPROVE":              {"recommendation": "PROCEED", "size_factor": 1.0, "blocked": False},
+    "AGENTIC_APPROVE_REDUCED":      {"recommendation": "PROCEED_REDUCED", "size_factor": 0.5, "blocked": False},
+    "AGENTIC_WAIT_RECLAIM":         {"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True},
+    "AGENTIC_DEFER":                {"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True},
+    "AGENTIC_REJECT":               {"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True},
+    "AGENTIC_DEGRADED_NO_AUTHORITY":{"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True},
+    "AGENTIC_FAILED_NO_AUTHORITY":  {"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True},
+}
+
+
+def _agentic_outcome_from_authority(authority_row: dict) -> dict:
+    """Map an AGENTIC_REVALIDATION_AUTHORITY row to a Stage 4e materializer
+    outcome. Honors IS_STALE: a stale row always blocks regardless of status.
+
+    Returns a dict with: recommendation, size_factor, blocked, status_code.
+    """
+    status = str(authority_row.get("AUTHORITY_STATUS") or "").upper()
+    is_stale = bool(authority_row.get("IS_STALE"))
+    base = _AGENTIC_AUTHORITY_TO_OUTCOME.get(status)
+    if base is None:
+        return {"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True, "status_code": status or "UNKNOWN"}
+    if is_stale and not base["blocked"]:
+        return {"recommendation": "BLOCK", "size_factor": 0.0, "blocked": True, "status_code": "STALE"}
+    posture = str(authority_row.get("SHADOW_SIZE_POSTURE") or "").upper()
+    size_factor = float(base["size_factor"])
+    # Treat explicit FULL posture as 1.0 regardless of REDUCED status, and
+    # explicit NONE / REDUCED postures as their literal meaning when the
+    # status itself is APPROVE (defensive — should not happen but easy to
+    # express).
+    if status == "AGENTIC_APPROVE" and posture == "REDUCED":
+        size_factor = 0.5
+    elif status == "AGENTIC_APPROVE_REDUCED" and posture == "FULL":
+        size_factor = 1.0
+    return {
+        "recommendation": base["recommendation"],
+        "size_factor": size_factor,
+        "blocked": bool(base["blocked"]),
+        "status_code": status,
+    }
+
+
+def _materialize_structural_entry_agentic_apply(
+    cur,
+    action_id: str,
+    action: dict,
+    authority_row: dict,
+    *,
+    apply_detail_source: str = "AGENTIC_APPLY",
+) -> dict:
+    """Stage 4e agentic-primary materializer.
+
+    Called after the operator-commit endpoint writes an OPERATOR_COMMITTED
+    authority row. Replaces `_materialize_structural_entry_committee_apply`
+    as the source of truth for LIVE_ACTIONS.STATUS / PROPOSED_PRICE /
+    PROPOSED_QTY / REASON_CODES whenever AGENTIC_PRIMARY_MATERIALIZATION_ENABLED
+    is true.
+
+    Behavior:
+
+    * Maps AUTHORITY_STATUS + IS_STALE to a PROCEED / BLOCK outcome via
+      `_agentic_outcome_from_authority`.
+    * Pulls the most recent COMMITTEE_FINAL_DECISION for the joint_decision
+      structural context (TP/SL, journey baselines) — C2 still writes this
+      table in Stage 4e for history/position health, so it remains a valid
+      structural anchor.
+    * Computes notional sizing from LIVE_PORTFOLIO_CONFIG + BROKER_SNAPSHOTS
+      (NAV), gated by MAX_POSITION_PCT and the agentic size_factor.
+    * Reuses `_apply_post_committee_entry_viability_and_qty` so IB risk
+      gates / min-notional / bracket calibration behave identically to the
+      C2 path.
+    * Writes a COMMITTEE_RUN + COMMITTEE_VERDICT row tagged with
+      MODEL_NAME='AGENTIC_AUTHORITY_v1' so the LPA verdict trail keeps
+      rendering. Per design these writes are diagnostic — the operational
+      truth lives in AGENTIC_REVALIDATION_AUTHORITY.
+    * Updates LIVE_ACTIONS.STATUS to READY_FOR_APPROVAL_FLOW (PROCEED) or
+      OPEN_BLOCKED (BLOCK).
+    """
+    outcome = _agentic_outcome_from_authority(authority_row)
+    size_factor = max(0.0, min(1.0, float(outcome["size_factor"])))
+    blocked = bool(outcome["blocked"])
+    recommendation = outcome["recommendation"]
+    confidence_raw = authority_row.get("AUTHORITY_CONFIDENCE")
+    try:
+        confidence = max(0.0, min(1.0, float(confidence_raw))) if confidence_raw is not None else 0.5
+    except (TypeError, ValueError):
+        confidence = 0.5
+
+    fd_apply = fetch_committee2_final_decision_for_action(cur, action_id) or {}
+    jd_payload = _parse_variant(fd_apply.get("DECISION_JSON")) if fd_apply else {}
+    jd_raw = jd_payload.get("joint_decision") if isinstance(jd_payload, dict) else None
+    # Start from the C2 JD only for structural context (TP/SL, journey baselines).
+    # Then OVERWRITE the decision fields with the agentic outcome so this JD is
+    # never read as deterministic-authoritative downstream. See Stage 4f notes:
+    # the LPA pending-decisions builder still uses `joint_decision.should_enter`
+    # to derive `committee_blocks_entry`, and a stale C2 `should_enter=True`
+    # could otherwise produce an inconsistent UI under an agentic BLOCK.
+    jd = dict(jd_raw) if isinstance(jd_raw, dict) else {}
+    jd["should_enter"] = (not blocked)
+    jd["agentic_source"] = True
+    jd["agentic_authority_status"] = outcome["status_code"]
+
+    reason_codes: list[str] = [
+        "STRUCTURAL_AGENTIC_REVIEWED",
+        f"AGENTIC_AUTHORITY_{outcome['status_code']}",
+    ]
+    if bool(authority_row.get("IS_STALE")):
+        reason_codes.append("AGENTIC_AUTHORITY_STALE")
+    if outcome["status_code"] == "AGENTIC_APPROVE_REDUCED":
+        reason_codes.append("AGENTIC_SIZE_POSTURE_REDUCED")
+
+    verdict = {
+        "recommendation": recommendation,
+        "size_factor": size_factor,
+        "confidence": confidence,
+        "blocked": blocked,
+        "joint_decision": jd,
+        "structural_source": True,
+        "tier_c_conflict": False,
+        "agentic_source": True,
+        "authority_id": authority_row.get("AUTHORITY_ID"),
+        "authority_status": outcome["status_code"],
+    }
+    next_status = "OPEN_BLOCKED" if blocked else "READY_FOR_APPROVAL_FLOW"
+    is_exit = False
+
+    proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
+    if proposed_price_derived is None and not is_exit:
+        for key in ("REVALIDATION_PRICE", "PROPOSED_PRICE", "CURRENT_PRICE", "ONE_MIN_BAR_CLOSE"):
+            v = action.get(key)
+            if v is not None:
+                try:
+                    proposed_price_derived = float(v)
+                    break
+                except (TypeError, ValueError):
+                    pass
+        if proposed_price_derived is None and action.get("ENTRY_ZONE_LOW") is not None and action.get("ENTRY_ZONE_HIGH") is not None:
+            try:
+                proposed_price_derived = (
+                    float(action["ENTRY_ZONE_LOW"]) + float(action["ENTRY_ZONE_HIGH"])
+                ) / 2.0
+            except (TypeError, ValueError):
+                pass
+    proposed_qty_derived: float | None = None
+
+    if not blocked and proposed_price_derived is not None:
+        try:
+            training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
+            open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
+            cur.execute(
+                """
+                select
+                  c.IBKR_ACCOUNT_ID,
+                  c.MAX_POSITION_PCT,
+                  s.NET_LIQUIDATION_EUR
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG c
+                left join MIP.LIVE.BROKER_SNAPSHOTS s
+                  on s.IBKR_ACCOUNT_ID = c.IBKR_ACCOUNT_ID
+                 and s.SNAPSHOT_TYPE = 'NAV'
+                where c.PORTFOLIO_ID = %s
+                qualify row_number() over (
+                  partition by c.PORTFOLIO_ID
+                  order by s.SNAPSHOT_TS desc nulls last
+                ) = 1
+                """,
+                (action.get("PORTFOLIO_ID"),),
+            )
+            nav_rows = fetch_all(cur)
+            nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
+            if nav_eur > 0:
+                pos_pct = float((nav_rows[0] or {}).get("MAX_POSITION_PCT") or 0.05)
+                max_notional = (
+                    nav_eur * pos_pct * size_factor * training_size_cap * open_factor
+                )
+                proposed_qty_derived = max(int(max_notional / max(proposed_price_derived, 1e-9)), 1)
+        except Exception:  # noqa: BLE001 — sizing best-effort
+            proposed_qty_derived = None
+
+    proposed_qty_derived, reason_codes = _apply_post_committee_entry_viability_and_qty(
+        cur,
+        action_id=action_id,
+        portfolio_id=int(action.get("PORTFOLIO_ID") or 0),
+        side=str(action.get("SIDE") or "").upper(),
+        is_exit=is_exit,
+        is_committee_blocked=blocked,
+        proposed_price=proposed_price_derived,
+        committee_qty=proposed_qty_derived,
+        joint_decision=jd,
+        reason_codes=reason_codes,
+    )
+
+    verdict_envelope = build_structural_verdict_envelope_v1(
+        action=action,
+        verdict=verdict,
+        reason_codes=reason_codes,
+        committee_run_id="",
+        outputs_wrapper=[],
+    )
+
+    run_id = str(uuid.uuid4())
+    if isinstance(verdict_envelope.get("structural_verdict_envelope_v1"), dict):
+        verdict_envelope["structural_verdict_envelope_v1"]["committee_run_id"] = run_id
+        verdict_envelope["structural_verdict_envelope_v1"]["agentic_source"] = True
+
+    cur.execute(
+        """
+        insert into MIP.LIVE.COMMITTEE_RUN (
+          RUN_ID, ACTION_ID, PORTFOLIO_ID, STATUS, MODEL_NAME, STARTED_AT, COMPLETED_AT, DETAILS
+        )
+        select
+          %s, %s, %s, 'COMPLETED', %s, current_timestamp(), current_timestamp(), try_parse_json(%s)
+        """,
+        (
+            run_id,
+            action_id,
+            action.get("PORTFOLIO_ID"),
+            "AGENTIC_AUTHORITY_v1",
+            json.dumps({
+                "actor": authority_row.get("COMMITTED_BY") or "operator",
+                "source": apply_detail_source,
+                "authority_id": authority_row.get("AUTHORITY_ID"),
+                "authority_status": outcome["status_code"],
+                "is_stale": bool(authority_row.get("IS_STALE")),
+            }),
+        ),
+    )
+    cur.execute(
+        """
+        insert into MIP.LIVE.COMMITTEE_VERDICT (
+          RUN_ID, ACTION_ID, PORTFOLIO_ID, RECOMMENDATION, SIZE_FACTOR, CONFIDENCE, IS_BLOCKED,
+          REASON_CODES, VERDICT_JSON, CREATED_AT
+        )
+        select
+          %s, %s, %s, %s, %s, %s, %s, try_parse_json(%s), try_parse_json(%s), current_timestamp()
+        """,
+        (
+            run_id,
+            action_id,
+            action.get("PORTFOLIO_ID"),
+            verdict["recommendation"],
+            verdict["size_factor"],
+            verdict["confidence"],
+            verdict["blocked"],
+            json.dumps(reason_codes),
+            json.dumps(
+                {
+                    "verdict": verdict,
+                    "joint_decision": jd,
+                    **verdict_envelope,
+                }
+            ),
+        ),
+    )
+    cur.execute(
+        """
+        update MIP.LIVE.LIVE_ACTIONS
+           set COMMITTEE_STATUS = 'COMPLETED',
+               COMMITTEE_RUN_ID = %s,
+               COMMITTEE_COMPLETED_TS = current_timestamp(),
+               COMMITTEE_VERDICT = %s,
+               STATUS = %s,
+               PROPOSED_PRICE = coalesce(%s, PROPOSED_PRICE),
+               PROPOSED_QTY = coalesce(%s, PROPOSED_QTY),
+               REASON_CODES = parse_json(%s),
+               UPDATED_AT = current_timestamp()
+         where ACTION_ID = %s
+        """,
+        (
+            run_id,
+            verdict["recommendation"],
+            next_status,
+            proposed_price_derived,
+            proposed_qty_derived,
+            json.dumps(reason_codes),
+            action_id,
+        ),
+    )
+    _merge_structural_contract_and_diagnostics(
+        cur,
+        action_id=action_id,
+        committee_run_id=run_id,
+        verdict=verdict,
+        reason_codes=reason_codes,
+    )
+    return {
+        "ok": True,
+        "action_id": action_id,
+        "run_id": run_id,
+        "status": "COMPLETED",
+        "action_status": next_status,
+        "verdict": verdict,
+        "joint_decision": jd,
+        "reason_codes": reason_codes,
+        "derived_sizing": {"proposed_price": proposed_price_derived, "proposed_qty": proposed_qty_derived},
+        "agentic_source": True,
+        "authority_status": outcome["status_code"],
+        "authority_is_stale": bool(authority_row.get("IS_STALE")),
     }
 
 
@@ -10835,6 +11250,18 @@ async def orchestrate_committee2_structural_entry(
                 pass
 
         raw = _underlying_sf_conn(conn)
+        # Stage 4e — decide once per orchestrate request whether the agentic
+        # path owns LIVE_ACTIONS materialization. When this flag is on we
+        # still write COMMITTEE_HEARING + COMMITTEE_FINAL_DECISION (downstream
+        # readers like SP_RUN_DAILY_POSITION_VERDICT depend on them) but we
+        # skip the deterministic LIVE_ACTIONS materialize step; the operator
+        # commit endpoint becomes the new source of truth.
+        agentic_primary_enabled = False
+        try:
+            agentic_primary_enabled = is_agentic_primary_materialization_enabled(raw)
+        except Exception:  # noqa: BLE001 — fail closed to legacy behavior
+            agentic_primary_enabled = False
+
         raw.autocommit(False)
         refresh_payload: dict = {}
         commit_payload: dict = {}
@@ -10852,7 +11279,13 @@ async def orchestrate_committee2_structural_entry(
             already_fd = bool(commit_payload.get("already_committed"))
             idempotent_replay = bool(already_fd and committee_status == "COMPLETED")
 
-            if idempotent_replay:
+            if agentic_primary_enabled:
+                # Stage 4e: skip C2 materialize. C2 still wrote the hearing
+                # + final decision above (still needed for history). The
+                # operator-commit endpoint will fire the agentic materializer
+                # which then drives LIVE_ACTIONS.STATUS / sizing.
+                materialize_out = None
+            elif idempotent_replay:
                 materialize_out = None
             else:
                 materialize_out = _materialize_structural_entry_committee_apply(
@@ -10966,6 +11399,32 @@ async def orchestrate_committee2_structural_entry(
                 "idempotent_replay": True,
                 "joint_decision": vr.get("joint_decision"),
                 "inline_hearing": inline_hearing,
+                "agentic_primary_enabled": agentic_primary_enabled,
+            }
+
+        if agentic_primary_enabled:
+            # Stage 4e: orchestrate refreshed the hearing + wrote the final
+            # decision, but LIVE_ACTIONS materialization is deferred to the
+            # operator-commit endpoint. Return a payload that makes the new
+            # mode explicit so the LPA can render the agentic-pending state.
+            return {
+                "ok": True,
+                "action_id": action_id,
+                "proposal_id": proposal_id_int,
+                "hearing_id": hearing_id,
+                "stance": stance,
+                "confidence": conf,
+                "blocked": False,
+                "recommendation": "AGENTIC_PENDING_COMMIT",
+                "reason_codes": ["AGENTIC_PRIMARY_MATERIALIZATION_PENDING"],
+                "committee_run_id": "",
+                "action_status": str(action_after.get("STATUS") or ""),
+                "already_committed": bool(commit_payload.get("already_committed")),
+                "idempotent_replay": False,
+                "joint_decision": None,
+                "derived_sizing": None,
+                "inline_hearing": inline_hearing,
+                "agentic_primary_enabled": True,
             }
 
         mv = materialize_out or {}
@@ -10988,6 +11447,7 @@ async def orchestrate_committee2_structural_entry(
             "joint_decision": mv.get("joint_decision"),
             "derived_sizing": mv.get("derived_sizing"),
             "inline_hearing": inline_hearing,
+            "agentic_primary_enabled": False,
         }
     finally:
         conn.close()
@@ -11029,6 +11489,33 @@ def apply_live_trade_committee(action_id: str, req: ApplyCommitteeVerdictRequest
         is_structural = is_structural_live_action(action)
         action_intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
         is_exit = action_intent == "EXIT"
+
+        # Stage 4f — explicit route-level guard for structural ENTRY actions.
+        # When agentic-primary materialization is on, this endpoint cannot
+        # materialize from a deterministic verdict; the operator must commit
+        # an agentic authority row instead. EXIT actions are exempt (they
+        # never run shadow board and use execution-only verdicts).
+        if is_structural and not is_exit and _read_agentic_primary_flag_via_cursor(cur):
+            _log.error(
+                "STAGE_4F_GUARD apply_live_trade_committee blocked deterministic "
+                "materialize for structural ENTRY action_id=%s (agentic-primary on).",
+                action_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        "Deterministic committee apply is disabled for structural ENTRY "
+                        "while agentic-primary materialization is on. Commit agentic "
+                        "authority via POST /live/trades/actions/{id}/agentic-authority/commit."
+                    ),
+                    "reason_codes": [
+                        "DETERMINISTIC_APPLY_DISABLED_AGENTIC_PRIMARY",
+                        "STAGE_4F_NO_C2_FALLBACK",
+                    ],
+                    "action_id": action_id,
+                },
+            )
 
         if is_structural:
             if is_exit:

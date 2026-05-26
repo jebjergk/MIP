@@ -1833,7 +1833,7 @@ export default function LivePortfolioActivity() {
                             {c20BaselineExpanded ? (
                               <div className="lpa-c2-panel-body">
                                 <div className="lpa-c2-panel-subtitle lpa-subtle">
-                                  Deterministic baseline · executes &amp; materializes (until Stage 4)
+                                  Deterministic baseline · diagnostic only (no longer materializes — agentic primary)
                                 </div>
                                 {c20State.loading && c20State.progressMsg ? (
                                   <div className="lpa-c2-progress-inline">{c20State.progressMsg}</div>

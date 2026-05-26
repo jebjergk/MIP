@@ -45,6 +45,7 @@ from app.committee.agentic_authority import (
     SKIP_SESSION_NOT_FOUND,
     _gate_from_latest_row,
     commit_operator_authority_for_session,
+    is_agentic_primary_materialization_enabled,
     is_authority_gate_enabled,
 )
 from app.db import fetch_all, get_connection, serialize_row, serialize_rows
@@ -128,6 +129,108 @@ _SKIP_TO_HTTP: Dict[str, int] = {
 }
 
 
+# Stage 4e — statuses where the agentic materializer is allowed to drive the
+# action forward. Beyond these (PM_ACCEPTED, COMPLIANCE_APPROVED, INTENT_*,
+# REVALIDATED_*) the operator commit remains a pure audit snapshot — we do
+# not re-materialize a late-stage action.
+_AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES = {
+    "OPEN_BLOCKED",
+    "OPEN_ELIGIBLE",
+    "OPEN_CAUTION",
+    "PENDING_OPEN_STABILITY_REVIEW",
+    "READY_FOR_APPROVAL_FLOW",
+}
+
+
+def _build_authority_row_from_commit(
+    action_id: str, result: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Synthesize the dict shape expected by the agentic materializer from a
+    commit_operator_authority_for_session result. Keeps the materializer's
+    contract narrow and decoupled from the live AGENTIC_REVALIDATION_AUTHORITY
+    table schema."""
+    return {
+        "AUTHORITY_ID":          result.get("authority_id"),
+        "ACTION_ID":             action_id,
+        "AUTHORITY_MODE":        result.get("authority_mode"),
+        "AUTHORITY_STATUS":      (result.get("authority_status") or "").upper(),
+        "AUTHORITY_CONFIDENCE":  result.get("authority_confidence"),
+        "COMMITTED_BY":          result.get("committed_by") or "operator",
+        "IS_STALE":              bool(result.get("is_stale")),
+        "IS_LATEST":             True,
+        "SHADOW_SIZE_POSTURE":   result.get("shadow_size_posture"),
+        "SESSION_AGE_MINUTES":   result.get("session_age_minutes"),
+    }
+
+
+def _maybe_run_agentic_materializer(
+    action_id: str, commit_result: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """If AGENTIC_PRIMARY_MATERIALIZATION_ENABLED is true and the action is in
+    a forward-eligible status, run `_materialize_structural_entry_agentic_apply`.
+
+    Returns the materializer result dict on success, None when the flag is
+    off / the action is not eligible, or a `{"error": ..., "ran": False}` shape
+    when something failed. Failure never propagates to the caller — the commit
+    has already succeeded and the operator's audit row is preserved regardless.
+    """
+    materializer_conn = None
+    try:
+        materializer_conn = get_connection()
+        if not is_agentic_primary_materialization_enabled(materializer_conn):
+            return {"ran": False, "reason": "flag_off"}
+
+        cur = materializer_conn.cursor()
+        try:
+            from app.routers.committee import _underlying_sf_conn
+            from app.routers.live import (
+                _fetch_live_action,
+                _materialize_structural_entry_agentic_apply,
+                is_structural_live_action,
+            )
+            action_row = _fetch_live_action(cur, action_id)
+            if not action_row:
+                return {"ran": False, "reason": "action_not_found"}
+            if not is_structural_live_action(action_row):
+                return {"ran": False, "reason": "non_structural"}
+            status = str(action_row.get("STATUS") or "").upper()
+            if status not in _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES:
+                return {"ran": False, "reason": "status_not_eligible", "status": status}
+
+            authority_row = _build_authority_row_from_commit(action_id, commit_result)
+            raw = _underlying_sf_conn(materializer_conn)
+            raw.autocommit(False)
+            try:
+                out = _materialize_structural_entry_agentic_apply(
+                    cur,
+                    action_id,
+                    dict(action_row),
+                    authority_row,
+                    apply_detail_source="AGENTIC_OPERATOR_COMMIT",
+                )
+                raw.commit()
+            except Exception:  # noqa: BLE001
+                raw.rollback()
+                raise
+            finally:
+                raw.autocommit(True)
+            return {"ran": True, **out}
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as exc:  # noqa: BLE001 — never let materializer kill the commit
+        _log.exception("agentic materializer failed for action %s", action_id)
+        return {"ran": False, "reason": "error", "error": str(exc)}
+    finally:
+        if materializer_conn is not None:
+            try:
+                materializer_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -173,6 +276,12 @@ def commit_agentic_authority(
 
     auth_status = (result.get("authority_status") or "").upper()
 
+    # Stage 4e — fire the agentic materializer once the operator row is
+    # safely written. Runs in its own connection so a materializer failure
+    # never undoes the commit. Returns None or a diagnostic dict so the UI
+    # can surface why STATUS did/didn't move.
+    agentic_materializer = _maybe_run_agentic_materializer(action_id, result)
+
     # Build the Stage 4d gate verdict using the row we just wrote so the
     # client doesn't have to re-fetch. Keep the verdict shape identical to
     # the GET endpoint so the UI can use one rendering path.
@@ -187,9 +296,11 @@ def commit_agentic_authority(
     gate_eval = _gate_from_latest_row(synthetic_row)
     # Pop a fresh flag read so the response is self-describing.
     gate_eval_conn = None
+    agentic_primary_enabled = False
     try:
         gate_eval_conn = get_connection()
         gate_eval["gate_enabled"] = is_authority_gate_enabled(gate_eval_conn)
+        agentic_primary_enabled = is_agentic_primary_materialization_enabled(gate_eval_conn)
     except Exception:  # noqa: BLE001
         gate_eval["gate_enabled"] = False
     finally:
@@ -222,6 +333,8 @@ def commit_agentic_authority(
         ),
         "display": _status_to_display(auth_status),
         "gate_evaluation": gate_eval,
+        "agentic_primary_enabled": agentic_primary_enabled,
+        "agentic_materializer": agentic_materializer,
     }
 
 

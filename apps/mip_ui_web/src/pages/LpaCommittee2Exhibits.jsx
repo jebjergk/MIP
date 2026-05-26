@@ -555,8 +555,8 @@ export default function LpaCommittee2Exhibits({ inline, hearingHref, progressMsg
       </div>
       <div className="lpa-c2-dual-real">
         <div className="lpa-c2-dual-banner lpa-c2-dual-banner--real">
-          <span className="lpa-c2-dual-chip">REAL BOARD</span>
-          <span className="lpa-c2-dual-banner-text">Deterministic baseline · executes &amp; materializes (until Stage 4)</span>
+          <span className="lpa-c2-dual-chip">DETERMINISTIC BASELINE</span>
+          <span className="lpa-c2-dual-banner-text">Diagnostic baseline · hearing replay (no longer materializes — agentic primary)</span>
         </div>
         <div className="lpa-c2-exhibits">
       {loading && progressMsg ? (

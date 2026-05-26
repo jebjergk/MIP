@@ -578,6 +578,17 @@ CONFIG_KEY_OPERATOR_COMMIT_ENABLED = "AGENTIC_OPERATOR_COMMIT_ENABLED"
 # `execute_live_action`. Stage 4a deploys with this OFF.
 CONFIG_KEY_AUTHORITY_GATE_ENABLED = "AGENTIC_AUTHORITY_ENABLED"
 
+# Stage 4e — Primary-materializer flag. When true:
+#   * `orchestrate_committee2_structural_entry` SKIPS the deterministic C2
+#     `_materialize_structural_entry_committee_apply` call (no COMMITTEE_RUN /
+#     COMMITTEE_VERDICT writes, no LIVE_ACTIONS.STATUS transition driven by C2).
+#   * C2 still refreshes COMMITTEE_HEARING and writes COMMITTEE_FINAL_DECISION
+#     because position health + history readers depend on them.
+#   * Operator-commit endpoint, after writing the OPERATOR_COMMITTED authority
+#     row, fires the agentic materializer which becomes the source of truth
+#     for LIVE_ACTIONS.STATUS / PROPOSED_QTY / PROPOSED_PRICE / REASON_CODES.
+CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED = "AGENTIC_PRIMARY_MATERIALIZATION_ENABLED"
+
 
 def _is_flag_true(value: Any) -> bool:
     if isinstance(value, bool):
@@ -1143,12 +1154,14 @@ def commit_operator_authority_for_session(
             "is_stale": authority_row["IS_STALE"],
             "stale_reason": authority_row["STALE_REASON"],
             "shadow_stance_raw": authority_row["SHADOW_STANCE_RAW"],
+            "shadow_size_posture": authority_row.get("SHADOW_SIZE_POSTURE"),
             "deterministic_baseline_stance": authority_row["DETERMINISTIC_BASELINE_STANCE"],
             "disagrees_with_baseline": authority_row["DISAGREES_WITH_BASELINE"],
             "pack_version": authority_row["PACK_VERSION"],
             "pack_version_ok": authority_row["PACK_VERSION_OK"],
             "session_age_minutes": authority_row["SESSION_AGE_MINUTES"],
             "superseded_authority_id": prior_authority_id,
+            "committed_by": committed_by,
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception(
@@ -1180,11 +1193,16 @@ GATE_REASON_BLOCKED_REJECT      = "AGENTIC_AUTHORITY_BLOCKED_REJECT"
 GATE_REASON_DEGRADED            = "AGENTIC_AUTHORITY_DEGRADED"
 GATE_REASON_FAILED              = "AGENTIC_AUTHORITY_FAILED"
 GATE_REASON_UNKNOWN_STATUS      = "AGENTIC_AUTHORITY_UNKNOWN_STATUS"
+# Stage 4f — used when the authority row cannot be evaluated due to a DB /
+# infra error AND agentic-primary materialization is the intended mode.
+# This is the explicit fail-closed reason code.
+GATE_REASON_EVAL_ERROR          = "AGENTIC_AUTHORITY_EVAL_ERROR"
 
 # Human-readable submit-button tooltips per design table (LPA UX).
 _GATE_TOOLTIP_BY_REASON: Dict[str, str] = {
     GATE_REASON_NOT_COMMITTED:        "Agentic review not committed — apply review first",
     GATE_REASON_STALE:                "Agentic authority stale — re-commit after new review",
+    GATE_REASON_EVAL_ERROR:           "Agentic authority could not be evaluated — submit blocked (fail-closed)",
     GATE_REASON_BLOCKED_WAIT_RECLAIM: "Agentic board: Wait / Reclaim — submit blocked",
     GATE_REASON_BLOCKED_DEFER:        "Agentic board: Defer — submit blocked",
     GATE_REASON_BLOCKED_REJECT:       "Agentic board: Reject — submit blocked",
@@ -1227,6 +1245,91 @@ def is_authority_gate_enabled(conn) -> bool:
     except Exception:  # noqa: BLE001
         logger.exception("is_authority_gate_enabled: config read failed")
         return False
+
+
+def is_agentic_primary_materialization_enabled(conn) -> bool:
+    """Return True only if APP_CONFIG.AGENTIC_PRIMARY_MATERIALIZATION_ENABLED
+    is truthy.
+
+    Stage 4e circuit breaker. When False the orchestrate path remains
+    pre-Stage-4e: C2 owns the LIVE_ACTIONS materialization. When True, C2
+    materialize is skipped and the operator-commit endpoint becomes the
+    source of truth for LIVE_ACTIONS.STATUS / sizing.
+
+    Read-only. Never raises (returns False on any error). For
+    fail-CLOSED behavior at deterministic-materialization sites, use
+    `should_block_deterministic_materialization` instead — that helper
+    treats a config-read failure as "block C2" so a DB blip cannot
+    silently re-enable the deterministic path."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                (CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED,),
+            )
+            row = cur.fetchone()
+            return _is_flag_true(row[0]) if row else False
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "is_agentic_primary_materialization_enabled: config read failed",
+        )
+        return False
+
+
+def should_block_deterministic_materialization(conn) -> bool:
+    """Stage 4f hard-guard helper. Returns True when the deterministic C2
+    materializer must be blocked from running.
+
+    Semantics:
+
+    * True when `AGENTIC_PRIMARY_MATERIALIZATION_ENABLED` is truthy.
+    * True when the flag CANNOT be read (config row missing, DB error,
+      cursor failure). Stage 4f explicitly requires fail-CLOSED behavior
+      for the deterministic path: a config-read blip must not silently
+      re-enable C2 materialization while agentic-primary is the intended
+      operating mode.
+
+    The only way this returns False is an explicit, successfully-read
+    `'false'` / `'0'` / `'no'` / empty value. That preserves the
+    documented rollback semantics (set the flag to `'false'`, the
+    deterministic path returns).
+    """
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                (CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED,),
+            )
+            row = cur.fetchone()
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if not row:
+            # No config row at all -> safer assumption is "block" because the
+            # default for a freshly-provisioned environment running Stage 4f
+            # code is agentic-primary.
+            logger.warning(
+                "should_block_deterministic_materialization: APP_CONFIG row "
+                "for %s missing; failing closed (blocking C2 materialize).",
+                CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED,
+            )
+            return True
+        return _is_flag_true(row[0])
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "should_block_deterministic_materialization: config read failed; "
+            "failing closed (blocking C2 materialize).",
+        )
+        return True
 
 
 def _gate_from_latest_row(latest_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1339,11 +1442,16 @@ def evaluate_authority_gate(conn, action_id: str) -> Dict[str, Any]:
     flag to decide whether to enforce the gate — when False, the gate verdict
     is informational only.
 
-    Never raises. On DB error returns an open gate (gate_ok=True) with a
-    diagnostic reason code so an unrelated infrastructure failure cannot
-    silently start blocking trades. Inverting fail-mode here is a deliberate
-    safety choice: if the DB is down, every other Submit gate fails first;
-    we do not want this gate to be a unique blocker.
+    Never raises. Stage 4f fail-mode policy:
+
+    * If `AGENTIC_PRIMARY_MATERIALIZATION_ENABLED` is true (or its config
+      row cannot be read), an evaluation error fails CLOSED:
+      gate_enabled=True, gate_ok=False, reason=AGENTIC_AUTHORITY_EVAL_ERROR.
+      No silent fallback to the deterministic path is possible.
+    * If agentic-primary is explicitly off, the historical Stage 4d behavior
+      applies: an evaluation error returns gate_enabled=False, gate_ok=True
+      so the gate does not become a unique blocker while the system is in
+      the legacy operating mode.
     """
     if not action_id:
         return {
@@ -1394,6 +1502,28 @@ def evaluate_authority_gate(conn, action_id: str) -> Dict[str, Any]:
         return verdict
     except Exception as exc:  # noqa: BLE001
         logger.exception("evaluate_authority_gate FAILED action=%s", action_id)
+        # Stage 4f — fail-CLOSED when agentic-primary is the operating mode
+        # (or when we cannot read the flag). Otherwise preserve the historical
+        # Stage 4d fail-open default so legacy environments are not affected.
+        try:
+            fail_closed = should_block_deterministic_materialization(conn)
+        except Exception:  # noqa: BLE001
+            fail_closed = True
+        if fail_closed:
+            return {
+                "gate_enabled": True,
+                "gate_ok": False,
+                "reason_code": GATE_REASON_EVAL_ERROR,
+                "reason_codes": [GATE_REASON_EVAL_ERROR],
+                "tooltip": _GATE_TOOLTIP_BY_REASON[GATE_REASON_EVAL_ERROR],
+                "authority_mode": None,
+                "authority_status": None,
+                "is_stale": None,
+                "is_latest": None,
+                "size_posture": None,
+                "authority_id": None,
+                "error": str(exc)[:300],
+            }
         return {
             "gate_enabled": False,
             "gate_ok": True,
@@ -1502,6 +1632,7 @@ __all__ = [
     "CONFIG_KEY_AUTO_AUDIT_ENABLED",
     "CONFIG_KEY_OPERATOR_COMMIT_ENABLED",
     "CONFIG_KEY_AUTHORITY_GATE_ENABLED",
+    "CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED",
     "CONFIG_KEY_MIN_CONFIDENCE",
     "CONFIG_KEY_MAX_AGE",
     "SKIP_DISABLED",
@@ -1519,10 +1650,13 @@ __all__ = [
     "GATE_REASON_DEGRADED",
     "GATE_REASON_FAILED",
     "GATE_REASON_UNKNOWN_STATUS",
+    "GATE_REASON_EVAL_ERROR",
     "is_pack_version_supported",
     "is_auto_audit_enabled",
     "is_operator_commit_enabled",
     "is_authority_gate_enabled",
+    "is_agentic_primary_materialization_enabled",
+    "should_block_deterministic_materialization",
     "map_shadow_to_authority_status",
     "build_staleness_check",
     "build_authority_row",

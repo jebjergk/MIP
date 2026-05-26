@@ -808,6 +808,41 @@
   gap: 4px;
 }
 
+/* Phase 5C: stale-proposal banner. Replaces the Agentic Committee Verdict
+ * panel entirely for actions whose underlying proposal is from a superseded
+ * board run, so the operator sees the dead-end immediately and does not
+ * waste clicks running re-validations that cannot ever enable Submit. */
+.lpa-c2-stale-proposal-banner {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-left: 4px solid #dc2626;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.02));
+  color: #7f1d1d;
+  font-size: 13px;
+  display: grid;
+  gap: 6px;
+}
+.lpa-c2-stale-proposal-banner p { margin: 0; }
+.lpa-c2-stale-proposal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lpa-c2-stale-proposal-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 /* Stage 2: Shadow Chair Verdict headline — the new primary intelligence
  * readout on each structural ENTRY row. Sits above the deterministic
  * baseline panel. Read-only / advisory until Stage 4. */

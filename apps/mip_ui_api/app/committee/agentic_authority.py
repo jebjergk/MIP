@@ -589,6 +589,29 @@ CONFIG_KEY_AUTHORITY_GATE_ENABLED = "AGENTIC_AUTHORITY_ENABLED"
 #     for LIVE_ACTIONS.STATUS / PROPOSED_QTY / PROPOSED_PRICE / REASON_CODES.
 CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED = "AGENTIC_PRIMARY_MATERIALIZATION_ENABLED"
 
+# Phase 5C — Auto-commit flag. When true (default), the shadow-board completion
+# hook auto-promotes a clean APPROVE / APPROVE_REDUCED AUTO_AUDIT row to
+# OPERATOR_COMMITTED so the operator does not have to click "Apply Agentic
+# Review" for the happy path. Auto-promote fails closed on any non-approving
+# stance, degraded session, unsupported pack version, staleness, hearing
+# mismatch, or DB error. The operator can always re-commit / override via the
+# explicit endpoint.
+CONFIG_KEY_AUTO_COMMIT_ENABLED = "AGENTIC_AUTO_COMMIT_ENABLED"
+
+# The actor identifier used when the auto-commit hook promotes AUTO_AUDIT to
+# OPERATOR_COMMITTED. UIs and audit readers use the `system_auto_commit_`
+# prefix to distinguish system-promoted authority from operator-clicked
+# authority.
+AUTO_COMMIT_ACTOR = "system_auto_commit_v1"
+
+# Approving stances that the auto-commit hook is allowed to promote. Any other
+# status (WAIT_RECLAIM, DEFER, REJECT, DEGRADED, FAILED, ...) must remain in
+# AUTO_AUDIT and require an explicit operator click to override.
+AUTO_COMMIT_APPROVING_STATUSES = frozenset({
+    "AGENTIC_APPROVE",
+    "AGENTIC_APPROVE_REDUCED",
+})
+
 
 def _is_flag_true(value: Any) -> bool:
     if isinstance(value, bool):
@@ -926,6 +949,13 @@ def commit_auto_audit_authority_for_session(
             "is_stale": authority_row["IS_STALE"],
             "shadow_stance_raw": authority_row["SHADOW_STANCE_RAW"],
             "disagrees_with_baseline": authority_row["DISAGREES_WITH_BASELINE"],
+            # Phase 5C: surface pack_version_ok + degraded so the auto-commit
+            # hook can decide whether this AUTO_AUDIT row is safe to promote.
+            "pack_version_ok": authority_row["PACK_VERSION_OK"],
+            "pack_version": authority_row["PACK_VERSION"],
+            "shadow_degraded": bool(normalized.get("DEGRADED")) if normalized else False,
+            "session_id": session_id,
+            "hearing_id": hearing_id,
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception(
@@ -939,6 +969,135 @@ def commit_auto_audit_authority_for_session(
             "session_id": session_id,
             "hearing_id": hearing_id,
         }
+
+
+# ---------------------------------------------------------------------------
+# Phase 5C — auto-commit hook (system promotes AUTO_AUDIT -> OPERATOR_COMMITTED
+# for clean APPROVE / APPROVE_REDUCED verdicts so the operator does not need to
+# click "Apply Agentic Review" for the happy path)
+# ---------------------------------------------------------------------------
+
+
+def is_auto_commit_enabled(conn) -> bool:
+    """Return True only if APP_CONFIG.AGENTIC_AUTO_COMMIT_ENABLED is truthy.
+
+    Read-only. Never raises (returns False on any error)."""
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT CONFIG_VALUE FROM MIP.APP.APP_CONFIG WHERE CONFIG_KEY = %s",
+                (CONFIG_KEY_AUTO_COMMIT_ENABLED,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+            return _is_flag_true(row[0])
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _auto_promote_eligible(audit_result: Dict[str, Any]) -> Tuple[bool, str]:
+    """Return (eligible, reason) for whether an AUTO_AUDIT row should be
+    promoted to OPERATOR_COMMITTED by the system.
+
+    Fail-closed: ANY non-approving status, ANY staleness, ANY pack-version
+    failure, ANY degraded shadow, ANY missing field — returns (False, reason).
+    """
+    if not audit_result.get("committed"):
+        return False, "AUDIT_NOT_COMMITTED"
+    status = (audit_result.get("authority_status") or "").upper().strip()
+    if status not in AUTO_COMMIT_APPROVING_STATUSES:
+        return False, f"NON_APPROVING_STATUS:{status or 'EMPTY'}"
+    if audit_result.get("is_stale"):
+        return False, "AUDIT_IS_STALE"
+    # Pack version check: build_authority_row puts the supported-version
+    # decision in PACK_VERSION_OK. False means the audit row exists but the
+    # pack version is outside the supported set; never promote those.
+    if audit_result.get("pack_version_ok") is False:
+        return False, "PACK_VERSION_UNSUPPORTED"
+    if audit_result.get("shadow_degraded"):
+        return False, "SHADOW_DEGRADED"
+    if not audit_result.get("action_id"):
+        return False, "NO_ACTION_ID"
+    if not audit_result.get("session_id"):
+        return False, "NO_SESSION_ID"
+    if not audit_result.get("hearing_id"):
+        return False, "NO_HEARING_ID"
+    return True, "ELIGIBLE"
+
+
+def auto_promote_authority_to_operator_committed(
+    conn,
+    audit_result: Dict[str, Any],
+    *,
+    enforce_config_flag: bool = True,
+) -> Dict[str, Any]:
+    """Phase 5C — promote a freshly-written AUTO_AUDIT row to OPERATOR_COMMITTED
+    when the system can do so safely without operator interaction.
+
+    Strict eligibility (see `_auto_promote_eligible`): APPROVE / APPROVE_REDUCED
+    only, not stale, pack version supported, not degraded. Anything else stays
+    in AUTO_AUDIT and the operator must explicitly click "Apply Agentic
+    Review" (or equivalent override path).
+
+    Calls into `commit_operator_authority_for_session` so the downstream
+    hearing-mismatch / session-not-found / staleness gates remain authoritative.
+    Uses `AUTO_COMMIT_ACTOR` as the committer.
+
+    Returns a dict with shape compatible with `commit_operator_authority_for_session`,
+    plus an `auto_promoted` boolean and a `skip_reason` when no-op.
+    Never raises on DB I/O — wraps and logs.
+    """
+    eligible, reason = _auto_promote_eligible(audit_result)
+    if not eligible:
+        return {
+            "committed": False,
+            "auto_promoted": False,
+            "skip_reason": reason,
+            "action_id": audit_result.get("action_id"),
+        }
+
+    if enforce_config_flag and not is_auto_commit_enabled(conn):
+        return {
+            "committed": False,
+            "auto_promoted": False,
+            "skip_reason": "DISABLED",
+            "action_id": audit_result.get("action_id"),
+        }
+
+    try:
+        result = commit_operator_authority_for_session(
+            conn,
+            action_id=str(audit_result["action_id"]),
+            shadow_session_id=str(audit_result["session_id"]),
+            hearing_id=str(audit_result["hearing_id"]),
+            committed_by=AUTO_COMMIT_ACTOR,
+            enforce_config_flag=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "auto_promote: commit_operator_authority_for_session raised action=%s",
+            audit_result.get("action_id"),
+        )
+        return {
+            "committed": False,
+            "auto_promoted": False,
+            "skip_reason": "ERROR",
+            "error": str(exc)[:300],
+            "action_id": audit_result.get("action_id"),
+        }
+
+    if result.get("committed"):
+        result["auto_promoted"] = True
+    else:
+        result.setdefault("auto_promoted", False)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1767,6 +1926,9 @@ __all__ = [
     "CONFIG_KEY_OPERATOR_COMMIT_ENABLED",
     "CONFIG_KEY_AUTHORITY_GATE_ENABLED",
     "CONFIG_KEY_PRIMARY_MATERIALIZATION_ENABLED",
+    "CONFIG_KEY_AUTO_COMMIT_ENABLED",
+    "AUTO_COMMIT_ACTOR",
+    "AUTO_COMMIT_APPROVING_STATUSES",
     "CONFIG_KEY_MIN_CONFIDENCE",
     "CONFIG_KEY_MAX_AGE",
     "SKIP_DISABLED",
@@ -1797,6 +1959,8 @@ __all__ = [
     "insert_authority_row_with_supersession",
     "commit_auto_audit_authority_for_session",
     "commit_operator_authority_for_session",
+    "auto_promote_authority_to_operator_committed",
+    "is_auto_commit_enabled",
     "evaluate_authority_gate",
     "evaluate_authority_gate_bulk",
 ]

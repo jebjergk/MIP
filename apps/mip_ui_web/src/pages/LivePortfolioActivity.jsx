@@ -822,19 +822,29 @@ export default function LivePortfolioActivity() {
   )
 
   /**
-   * Stage 4c — when the bounded shadow poll reaches a terminal status for an
-   * action, fetch its latest authority row so the chip can render. We use a
-   * derived key that captures (actionId + terminal status) so the effect runs
-   * exactly once per terminal transition.
+   * Stage 4c + Phase 5C — refetch the latest authority row whenever the
+   * shadow board reaches a terminal status OR when its (terminal) session id
+   * changes (a fresh revalidation produces a new session). Previously this
+   * effect short-circuited when *any* prior auth state existed, which left a
+   * stale "Not available · conf 0.00" chip on screen after re-validations
+   * because the new IS_LATEST row was never fetched.
    *
    * No-op for actions that haven't reached a terminal status yet.
    */
+  const lastAuthoritySessionRef = useRef({})
   useEffect(() => {
     Object.entries(shadowBoardByAction).forEach(([actionId, state]) => {
       if (!state) return
       if (!isShadowStatusTerminal(state.status)) return
+      const sessionId = state.sessionId || ''
+      // Skip in-flight fetches.
       const auth = agenticAuthorityByAction[actionId]
-      if (auth && (auth.authority || auth.loading || auth.error)) return
+      if (auth?.loading) return
+      // Refetch when the session id changes (revalidation produced a new
+      // shadow session) OR when we have never fetched for this action.
+      const lastSession = lastAuthoritySessionRef.current[actionId]
+      if (lastSession === sessionId && auth && (auth.authority || auth.error)) return
+      lastAuthoritySessionRef.current[actionId] = sessionId
       fetchAgenticAuthority(actionId)
     })
   }, [shadowBoardByAction, agenticAuthorityByAction, fetchAgenticAuthority])
@@ -1553,6 +1563,34 @@ export default function LivePortfolioActivity() {
                               // is missing, the headline still shows stance /
                               // confidence / placeholder without the chip.
                               const shadow = shadowBoardByAction[d.action_id] || null
+                              // Phase 5C: when the underlying proposal is from a
+                              // superseded board run, no Agentic Committee verdict
+                              // can ever produce a Submit-able state. Render a
+                              // prominent banner that replaces the agentic panel
+                              // entirely, so the operator sees the dead-end before
+                              // running any more validations.
+                              if (d.proposal_freshness && String(d.proposal_freshness).toUpperCase() !== 'CURRENT') {
+                                return (
+                                  <div className="lpa-c2-stale-proposal-banner" role="alert">
+                                    <div className="lpa-c2-stale-proposal-head">
+                                      <span className="lpa-c2-stale-proposal-chip">Stale proposal</span>
+                                      <strong>Cannot submit this action.</strong>
+                                    </div>
+                                    <p>
+                                      The underlying proposal is from a board run that has been
+                                      superseded by a newer one ({String(d.proposal_freshness).replace(/_/g, ' ').toLowerCase()}).
+                                      No matter how many times you re-validate, Submit will not
+                                      enable for this action — the agentic verdict can only act on
+                                      the current board run's proposals.
+                                    </p>
+                                    <p className="lpa-subtle">
+                                      Click <strong>Reject stale</strong> on the right to clean up this row,
+                                      then look for the newer proposal on the same symbol/direction
+                                      in the LPA list (or in Trade Proposals) and validate that one.
+                                    </p>
+                                  </div>
+                                )
+                              }
                               if (!shadow) return null
                               const baselineStance = String(c20State.lastResult?.stance || '').toUpperCase()
                               const shadowStanceRaw = shadow.stance ? String(shadow.stance).toUpperCase() : ''
@@ -1643,7 +1681,7 @@ export default function LivePortfolioActivity() {
                                     <span className="lpa-c2-shadow-headline-agentic">Primary</span>
                                   </div>
                                   <div className="lpa-c2-shadow-headline-sub lpa-subtle">
-                                    Authoritative · Submit eligibility flows from this verdict once operator commits
+                                    Authoritative · clean APPROVE / APPROVE_REDUCED auto-commits and enables Submit; anything else awaits operator review
                                   </div>
                                   {showStance ? (
                                     <div className="lpa-c2-shadow-headline-row">
@@ -1696,14 +1734,28 @@ export default function LivePortfolioActivity() {
                                         ) : null}
                                       </span>
                                       {isOperatorCommitted ? (
-                                        <span
-                                          className="lpa-authority-badge lpa-authority-badge--committed"
-                                          title={`Committed by ${authority.COMMITTED_BY || '—'} at ${fmtTs(
-                                            authority.CREATED_AT,
-                                          )}`}
-                                        >
-                                          Committed
-                                        </span>
+                                        (() => {
+                                          // Phase 5C: distinguish auto-committed
+                                          // (system promoted AUTO_AUDIT for clean
+                                          // APPROVE / APPROVE_REDUCED) from
+                                          // operator-clicked commits so the
+                                          // operator can see whether they need to
+                                          // intervene.
+                                          const committedBy = String(authority.COMMITTED_BY || '')
+                                          const isAutoCommit = committedBy.startsWith('system_auto_commit')
+                                          return (
+                                            <span
+                                              className="lpa-authority-badge lpa-authority-badge--committed"
+                                              title={
+                                                isAutoCommit
+                                                  ? `Auto-committed by the system after the Agentic Committee returned a clean APPROVE / APPROVE_REDUCED verdict (${committedBy}) at ${fmtTs(authority.CREATED_AT)}. No operator click required.`
+                                                  : `Committed by ${committedBy || '—'} at ${fmtTs(authority.CREATED_AT)}`
+                                              }
+                                            >
+                                              {isAutoCommit ? 'Auto-committed' : 'Committed'}
+                                            </span>
+                                          )
+                                        })()
                                       ) : isPreviewAutoAudit ? (
                                         <span
                                           className="lpa-authority-badge lpa-authority-badge--preview"

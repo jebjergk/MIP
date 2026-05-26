@@ -1162,21 +1162,145 @@ def _finalize_session_sync(
         conn.close()
 
 
+def _run_agentic_materializer_after_auto_commit(
+    action_id: Optional[str],
+    commit_result: Dict[str, Any],
+) -> None:
+    """Phase 5C — fire the agentic materializer after an auto-commit so
+    LIVE_ACTIONS transitions in lock-step with the OPERATOR_COMMITTED row.
+
+    Mirrors `app.routers.agentic_authority_router._maybe_run_agentic_materializer`
+    but lives here so the shadow-board completion hook can call it without
+    requiring an HTTP round-trip. Deferred imports avoid a circular dependency
+    with `app.routers.live`.
+
+    Fail-closed: any exception is logged but never propagated. The auto-commit
+    authority row is preserved even if materialization fails, so the operator
+    can re-trigger materialization via the explicit endpoint if needed.
+    """
+    if not action_id:
+        return
+    try:
+        from app.committee.agentic_authority import (
+            is_agentic_primary_materialization_enabled,
+        )
+        from app.routers.agentic_authority_router import (
+            _build_authority_row_from_commit,
+            _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES,
+        )
+        from app.routers.committee import _underlying_sf_conn
+        from app.routers.live import (
+            _fetch_live_action,
+            _materialize_structural_entry_agentic_apply,
+            is_structural_live_action,
+        )
+    except Exception as imp_exc:  # noqa: BLE001
+        logger.warning(
+            "auto_commit materializer: import failed (skipping) action=%s: %s",
+            action_id, imp_exc,
+        )
+        return
+
+    conn = None
+    try:
+        conn = get_connection()
+        if not is_agentic_primary_materialization_enabled(conn):
+            logger.info(
+                "auto_commit materializer: skipped (flag off) action=%s", action_id,
+            )
+            return
+
+        cur = conn.cursor()
+        try:
+            action_row = _fetch_live_action(cur, action_id)
+            if not action_row:
+                logger.info(
+                    "auto_commit materializer: action not found action=%s",
+                    action_id,
+                )
+                return
+            if not is_structural_live_action(action_row):
+                logger.info(
+                    "auto_commit materializer: non-structural action=%s",
+                    action_id,
+                )
+                return
+            status = str(action_row.get("STATUS") or "").upper()
+            if status not in _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES:
+                logger.info(
+                    "auto_commit materializer: status not eligible action=%s status=%s",
+                    action_id, status,
+                )
+                return
+
+            authority_row = _build_authority_row_from_commit(action_id, commit_result)
+            raw = _underlying_sf_conn(conn)
+            raw.autocommit(False)
+            try:
+                out = _materialize_structural_entry_agentic_apply(
+                    cur,
+                    action_id,
+                    dict(action_row),
+                    authority_row,
+                    apply_detail_source="AGENTIC_AUTO_COMMIT",
+                )
+                raw.commit()
+                logger.info(
+                    "auto_commit materializer: applied action=%s out_status=%s",
+                    action_id, (out or {}).get("status"),
+                )
+            except Exception:
+                raw.rollback()
+                raise
+            finally:
+                raw.autocommit(True)
+        finally:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "auto_commit materializer: failed (swallowed) action=%s: %s",
+            action_id, exc,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _auto_audit_authority_after_finalize(
     session_id: str,
     hearing_id: str,
     evidence_pack_hash: Optional[str],
     action_id: Optional[str],
 ) -> None:
-    """Stage 4b — best-effort AUTO_AUDIT authority row after shadow finalize.
+    """Stage 4b + Phase 5C — best-effort authority commit after shadow finalize.
 
-    Gated by APP_CONFIG.AGENTIC_AUTO_AUDIT_ENABLED. Always fail-closed: any
-    exception is logged but never propagated. Writes only AUTHORITY_MODE =
-    AUTO_AUDIT rows. Never touches LIVE_ACTIONS, Submit gating, LPA, or
-    COMMITTEE_FINAL_DECISION.
+    Stage 4b: writes one AUTHORITY_MODE=AUTO_AUDIT row gated by
+    AGENTIC_AUTO_AUDIT_ENABLED.
+
+    Phase 5C: when the AUTO_AUDIT row carries a clean APPROVE / APPROVE_REDUCED
+    verdict on a fresh non-degraded session with a supported pack version, the
+    hook immediately promotes it to AUTHORITY_MODE=OPERATOR_COMMITTED with
+    actor=`system_auto_commit_v1`. This removes the manual "Apply Agentic
+    Review" click for the happy path. Auto-promote is gated by
+    AGENTIC_AUTO_COMMIT_ENABLED and fail-closed on every non-approve status,
+    staleness, degraded session, unsupported pack version, or DB error.
+
+    Always fail-closed: any exception is logged but never propagated. Never
+    touches LIVE_ACTIONS directly, Submit gating, LPA, or COMMITTEE_FINAL_DECISION.
+    Materialization continues to run from the operator-commit endpoint path or
+    from the agentic materializer.
     """
     try:
-        from app.committee.agentic_authority import commit_auto_audit_authority_for_session
+        from app.committee.agentic_authority import (
+            commit_auto_audit_authority_for_session,
+            auto_promote_authority_to_operator_committed,
+        )
     except Exception as imp_exc:  # noqa: BLE001
         logger.warning(
             "auto_audit: agentic_authority import failed (skipping) session=%s: %s",
@@ -1187,7 +1311,7 @@ def _auto_audit_authority_after_finalize(
     conn = None
     try:
         conn = get_connection()
-        result = commit_auto_audit_authority_for_session(
+        audit_result = commit_auto_audit_authority_for_session(
             conn,
             session_id=session_id,
             hearing_id=hearing_id,
@@ -1195,18 +1319,55 @@ def _auto_audit_authority_after_finalize(
             action_id=action_id,
             enforce_config_flag=True,
         )
-        if result.get("committed"):
+        if audit_result.get("committed"):
             logger.info(
                 "auto_audit: wrote authority row session=%s action=%s authority_id=%s status=%s",
                 session_id,
-                result.get("action_id"),
-                result.get("authority_id"),
-                result.get("authority_status"),
+                audit_result.get("action_id"),
+                audit_result.get("authority_id"),
+                audit_result.get("authority_status"),
             )
         else:
             logger.info(
                 "auto_audit: skipped session=%s hearing=%s reason=%s",
-                session_id, hearing_id, result.get("skip_reason"),
+                session_id, hearing_id, audit_result.get("skip_reason"),
+            )
+            return
+
+        # Phase 5C: try to auto-promote AUTO_AUDIT -> OPERATOR_COMMITTED for
+        # the happy path. Any non-approve / stale / degraded / pack-unsupported
+        # case is rejected by the eligibility filter and leaves the AUTO_AUDIT
+        # row in place so the operator can still override via the explicit
+        # endpoint.
+        promote_result = auto_promote_authority_to_operator_committed(
+            conn,
+            audit_result,
+            enforce_config_flag=True,
+        )
+        if promote_result.get("auto_promoted"):
+            logger.info(
+                "auto_commit: promoted AUTO_AUDIT -> OPERATOR_COMMITTED action=%s "
+                "authority_id=%s status=%s",
+                promote_result.get("action_id"),
+                promote_result.get("authority_id"),
+                promote_result.get("authority_status"),
+            )
+            # Phase 5C: also fire the agentic materializer so LIVE_ACTIONS
+            # transitions in lock-step with the auto-committed authority row.
+            # Without this the action would carry a fresh OPERATOR_COMMITTED
+            # row but LIVE_ACTIONS.STATUS would not advance, so Submit would
+            # still be gated by `submission_allowed` even though the operator
+            # never has to click anything. Mirrors the materializer call in
+            # `agentic_authority_router.commit_agentic_authority`.
+            _run_agentic_materializer_after_auto_commit(
+                promote_result.get("action_id"),
+                promote_result,
+            )
+        else:
+            logger.info(
+                "auto_commit: skipped action=%s reason=%s",
+                audit_result.get("action_id"),
+                promote_result.get("skip_reason"),
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning(

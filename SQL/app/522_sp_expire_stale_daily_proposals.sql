@@ -19,43 +19,29 @@
         daily detection re-runs cycle out the underlying event.
         Reason code on cascade: 'UNDERLYING_SETUP_NOT_ELIGIBLE'.
 
-      RULE 3 — Same-day board run supersession (Phase 2 Sprint 4 / 3a):
-        Any STRUCTURAL_TRADE_PROPOSALS row with STATUS='PROPOSED'
-        AND BOARD_RUN_ID IS NOT NULL AND BOARD_RUN_ID is *not* the
-        latest authoritative PROPOSAL_BOARD_RUN.RUN_ID for the same
-        AS_OF_DATE is also marked STATUS='EXPIRED'. This closes the
-        gap when multiple board runs occur on the same calendar day
-        (smoke + production, or a manual re-run). Without it, Rule 1
-        doesn't fire (same calendar day) and Rule 2 only fires if
-        the underlying setup itself moved — leaving overlapping
-        PROPOSED rows from prior same-day runs.
-        Reason code on cascade: 'SUPERSEDED_BY_NEWER_BOARD_RUN'.
+      RULE 3 — DISABLED in Phase 5D (multi-run-per-day union semantics):
+        Previously this rule expired any STATUS='PROPOSED' row whose
+        BOARD_RUN_ID was not the single most-recently-started run for
+        the same AS_OF_DATE. The original intent was to prevent a smoke
+        test or accidental re-run from masking the "real" production
+        board run within a single trading day. In practice when the
+        board procedure ran multiple times in a day (manual re-trigger,
+        retry loop, smoke + prod) it produced DISJOINT symbol sets and
+        the supersedure logic killed perfectly valid proposals on
+        symbols the newer run never even considered.
 
-        AUTHORITATIVE-RUN GUARD (Phase 2 Sprint 4 / 3a safety):
-        A run is treated as "latest authoritative" only when ALL of:
-          (a) RUN_STATUS = 'COMPLETE'
-              (excludes RUNNING and FAILED — both validation
-              failures and SQL exceptions land in FAILED).
-          (b) CANDIDATE_COUNT > 0
-              (distinguishes the legitimate chair verdict
-              "NO_GOOD_IDEAS_TODAY" — board evaluated N>0
-              candidates and rejected all — from the upstream
-              empty-evidence early-exit path that uses the SAME
-              reason_code but had ZERO candidates to evaluate.
-              See SP_RUN_PROPOSAL_BOARD: when v_candidate_count = 0
-              the run is marked COMPLETE with the same reason_code,
-              so CANDIDATE_COUNT is the only field that separates
-              the two cases).
-          (c) No rows in PROPOSAL_BOARD_OUTPUT_ERROR for the run
-              (defensive belt-and-suspenders — SP_RUN_PROPOSAL_BOARD
-              already marks runs as FAILED when validation populates
-              this table, but this guard protects Rule 3 against any
-              future SP change that allows partial publication on top
-              of validation errors).
+        Phase 5D shifts to union semantics: every COMPLETE+VALID run
+        for the latest AS_OF_DATE is equally authoritative. Same-day
+        runs are sibling components of one planning batch, not
+        adversaries. This rule's logic is therefore SKIPPED — the
+        STEP 6 block exits early with all counters at zero. The
+        variable scaffolding is kept so the audit-log shape remains
+        stable and existing callers/dashboards don't break.
 
-        Net effect: a broken or empty-evidence board run can never
-        wipe a healthier predecessor's PROPOSED rows on the same
-        AS_OF_DATE.
+        Cross-day staleness is still handled by Rule 1 (CREATED_AT-
+        based) and by V_LATEST_AUTHORITATIVE_BOARD_RUN's MAX(AS_OF_DATE)
+        filter at read time. Within-day same-AS_OF_DATE siblings are
+        no longer touched.
 
       RULE 0 — Orphan-action cleanup pass (added post-Phase-3 for
         operator safety after the manual transition refresh):
@@ -317,129 +303,23 @@ BEGIN
     END IF;
 
     -- ============================================================
-    -- STEP 6 (Phase 2 Sprint 4 / option 3a):
-    -- Same-day board run supersession.
+    -- STEP 6 (Phase 5D — DISABLED):
+    --   Same-day board run supersession is OFF. All COMPLETE+VALID
+    --   runs for the same AS_OF_DATE are now treated as siblings of a
+    --   single planning batch (see V_LATEST_AUTHORITATIVE_BOARD_RUN
+    --   for the read-side enforcement). Counters stay at zero and no
+    --   rows are touched here. Cross-day staleness is fully handled
+    --   by Rule 1 (CREATED_AT-based) and the view's AS_OF_DATE filter.
     --
-    --   When multiple PROPOSAL_BOARD_RUN rows complete on the same
-    --   AS_OF_DATE (smoke + production, manual re-run, etc.), the
-    --   prior runs' published proposals are no longer the freshest
-    --   board verdict for that day. Without this rule those rows
-    --   sit alongside the new rows because Rule 1 only fires across
-    --   calendar boundaries, and Rule 2 only fires when the
-    --   underlying setup itself moves.
-    --
-    --   We define "latest" as the latest *authoritative* board run
-    --   for the same AS_OF_DATE — see the docstring on Rule 3 for
-    --   the full guard. STARTED_AT is the tiebreaker (FINISHED_AT
-    --   would also work; STARTED_AT is unambiguous and the procedure
-    --   populates STARTED_AT before any row publication).
-    --   PORTFOLIO_ID is intentionally not part of the partitioning:
-    --   the board can publish across portfolios but each AS_OF_DATE
-    --   has one canonical "latest" board.
-    --
-    --   AUTHORITATIVE-RUN GUARD:
-    --     RUN_STATUS = 'COMPLETE'
-    --       — excludes RUNNING and FAILED.
-    --     COALESCE(CANDIDATE_COUNT, 0) > 0
-    --       — separates the legitimate chair verdict
-    --         NO_GOOD_IDEAS_TODAY (CANDIDATE_COUNT >= 1, board
-    --         actually evaluated and rejected all) from the upstream
-    --         empty-evidence early-exit path that emits the SAME
-    --         reason_code with CANDIDATE_COUNT = 0.
-    --     NOT EXISTS PROPOSAL_BOARD_OUTPUT_ERROR
-    --       — defensive: SP_RUN_PROPOSAL_BOARD already flips runs
-    --         to FAILED when validation captures rows here, but we
-    --         double-check so a future SP change can't quietly let
-    --         a half-broken run wipe healthy predecessors.
+    --   The variable scaffolding above (v_proposals_expired_board,
+    --   v_expired_ids_board, etc.) is intentionally preserved so the
+    --   audit-log payload shape stays backwards compatible with
+    --   existing readers and dashboards.
     -- ============================================================
-    CREATE OR REPLACE TEMPORARY TABLE TMP_LATEST_BOARD_RUN_BY_DATE AS
-    SELECT
-        AS_OF_DATE,
-        RUN_ID AS LATEST_RUN_ID
-    FROM (
-        SELECT
-            r.AS_OF_DATE,
-            r.RUN_ID,
-            ROW_NUMBER() OVER (
-                PARTITION BY r.AS_OF_DATE
-                ORDER BY r.STARTED_AT DESC, r.RUN_ID DESC
-            ) AS RN
-        FROM MIP.APP.PROPOSAL_BOARD_RUN r
-        WHERE r.RUN_STATUS = 'COMPLETE'
-          AND COALESCE(r.CANDIDATE_COUNT, 0) > 0
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM MIP.APP.PROPOSAL_BOARD_OUTPUT_ERROR e
-                 WHERE e.RUN_ID = r.RUN_ID
-              )
-    )
-    WHERE RN = 1;
-
-    CREATE OR REPLACE TEMPORARY TABLE TMP_EXPIRED_BOARD AS
-    SELECT p.PROPOSAL_ID
-      FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
-      JOIN MIP.APP.PROPOSAL_BOARD_RUN r
-        ON r.RUN_ID = p.BOARD_RUN_ID
-      LEFT JOIN TMP_LATEST_BOARD_RUN_BY_DATE l
-        ON l.AS_OF_DATE = r.AS_OF_DATE
-     WHERE p.STATUS = 'PROPOSED'
-       AND p.BOARD_RUN_ID IS NOT NULL
-       AND l.LATEST_RUN_ID IS NOT NULL
-       AND p.BOARD_RUN_ID <> l.LATEST_RUN_ID
-       -- Defensive: don't double-fire on rows already caught by
-       -- Rule 1 or Rule 2 (those temp tables were dropped above? -
-       -- actually we now drop them after this step).
-       AND p.PROPOSAL_ID NOT IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_PROPOSALS)
-       AND p.PROPOSAL_ID NOT IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_LIFECYCLE);
-
-    SELECT COUNT(*), ARRAY_AGG(PROPOSAL_ID) WITHIN GROUP (ORDER BY PROPOSAL_ID)
-      INTO :v_proposals_expired_board, :v_expired_ids_board
-      FROM TMP_EXPIRED_BOARD;
-
-    v_expired_ids_board := COALESCE(:v_expired_ids_board, ARRAY_CONSTRUCT());
-
-    IF (v_proposals_expired_board > 0) THEN
-        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS
-           SET STATUS = 'EXPIRED'
-         WHERE PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_BOARD);
-
-        -- Cascade to LIVE_ACTIONS pre-broker open states only.
-        SELECT ARRAY_AGG(ACTION_ID) WITHIN GROUP (ORDER BY ACTION_ID)
-          INTO :v_superseded_action_ids_board
-          FROM MIP.LIVE.LIVE_ACTIONS
-         WHERE LIVE_INTENT_KIND = 'STRUCTURAL'
-           AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_BOARD)
-           AND STATUS IN (
-               'PROPOSED',
-               'INTENT_APPROVED',
-               'PENDING_OPEN_VALIDATION',
-               'OPEN_BLOCKED'
-           );
-
-        v_superseded_action_ids_board := COALESCE(:v_superseded_action_ids_board, ARRAY_CONSTRUCT());
-
-        UPDATE MIP.LIVE.LIVE_ACTIONS
-           SET STATUS       = 'SUPERSEDED',
-               REASON_CODES = ARRAY_APPEND(
-                                 COALESCE(REASON_CODES, ARRAY_CONSTRUCT()),
-                                 'SUPERSEDED_BY_NEWER_BOARD_RUN'
-                              ),
-               UPDATED_AT   = CURRENT_TIMESTAMP()
-         WHERE LIVE_INTENT_KIND = 'STRUCTURAL'
-           AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_BOARD)
-           AND STATUS IN (
-               'PROPOSED',
-               'INTENT_APPROVED',
-               'PENDING_OPEN_VALIDATION',
-               'OPEN_BLOCKED'
-           );
-        v_actions_superseded_board := SQLROWCOUNT;
-    END IF;
+    -- (intentionally no-op)
 
     DROP TABLE IF EXISTS TMP_EXPIRED_PROPOSALS;
     DROP TABLE IF EXISTS TMP_EXPIRED_LIFECYCLE;
-    DROP TABLE IF EXISTS TMP_EXPIRED_BOARD;
-    DROP TABLE IF EXISTS TMP_LATEST_BOARD_RUN_BY_DATE;
 
     -- ============================================================
     -- STEP 7: Audit log

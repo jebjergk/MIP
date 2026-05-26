@@ -7674,6 +7674,17 @@ def get_live_activity_overview(
               p.STATUS as PROPOSAL_STATUS_NOW,
               p.BOARD_RUN_ID as PROPOSAL_BOARD_RUN_ID,
               p.BOARD_DOSSIER_ID as PROPOSAL_BOARD_DOSSIER_ID,
+              -- Phase 5D: V_LATEST_AUTHORITATIVE_BOARD_RUN now returns ONE
+              -- row per COMPLETE run for the latest AS_OF_DATE (previously
+              -- a single global "latest" row). Switching the join to match
+              -- on RUN_ID converts the column to a per-row indicator: when
+              -- the proposal's BOARD_RUN_ID belongs to the authoritative
+              -- set the column is non-NULL and equal to the proposal's run
+              -- (proposal is CURRENT); when it doesn't, the column is NULL
+              -- (proposal is from an older AS_OF_DATE — SUPERSEDED). Same-
+              -- day siblings are no longer adversaries; they all show up
+              -- as CURRENT because every completed run for the latest
+              -- AS_OF_DATE appears in the view.
               latest.RUN_ID as LATEST_AUTHORITATIVE_RUN_ID
             from MIP.LIVE.LIVE_ACTIONS la
             left join MIP.LIVE.COMMITTEE_VERDICT cv
@@ -7681,7 +7692,7 @@ def get_live_activity_overview(
             left join MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
               on p.PROPOSAL_ID = la.PROPOSAL_ID
             left join MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest
-              on TRUE
+              on latest.RUN_ID = p.BOARD_RUN_ID
             where la.PORTFOLIO_ID = %s
               and la.STATUS in (
                 'RESEARCH_IMPORTED','PROPOSED','PENDING_OPEN_VALIDATION','OPEN_ELIGIBLE','OPEN_CAUTION',
@@ -7920,6 +7931,18 @@ def get_live_activity_overview(
             #                  Treated as not-fresh for STRUCTURAL ENTRY.
             proposal_status_now = (row.get("PROPOSAL_STATUS_NOW") or "").upper() or None
             proposal_board_run_id = row.get("PROPOSAL_BOARD_RUN_ID")
+            # Phase 5D: with the new RUN_ID-matching LEFT JOIN above,
+            # LATEST_AUTHORITATIVE_RUN_ID is either:
+            #   * non-NULL and equal to the proposal's BOARD_RUN_ID, when
+            #     the proposal's parent run is one of the authoritative
+            #     runs for the latest AS_OF_DATE (CURRENT), OR
+            #   * NULL, when no authoritative run matches the proposal's
+            #     parent run — either because the proposal is from an
+            #     older AS_OF_DATE (SUPERSEDED) or because no runs are
+            #     currently authoritative at all (cold-start fail-closed,
+            #     same SUPERSEDED treatment).
+            # We therefore no longer need to compare board run ids — the
+            # join itself is the test.
             latest_auth_run_id = row.get("LATEST_AUTHORITATIVE_RUN_ID")
             if row.get("PROPOSAL_ID") is None:
                 proposal_freshness = "NO_PROPOSAL_LINK"
@@ -7928,11 +7951,6 @@ def get_live_activity_overview(
             elif proposal_status_now != "PROPOSED":
                 proposal_freshness = "EXPIRED"
             elif latest_auth_run_id is None:
-                proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
-            elif (
-                proposal_board_run_id is None
-                or str(proposal_board_run_id) != str(latest_auth_run_id)
-            ):
                 proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
             else:
                 proposal_freshness = "CURRENT"
@@ -11161,14 +11179,23 @@ async def orchestrate_committee2_structural_entry(
             if proposal_id_for_freshness is None:
                 proposal_freshness = "NO_PROPOSAL_LINK"
             else:
+                # Phase 5D: V_LATEST_AUTHORITATIVE_BOARD_RUN returns one
+                # row per COMPLETE run for the latest AS_OF_DATE. The
+                # LEFT JOIN on RUN_ID matches when the proposal's parent
+                # run is one of the authoritative same-day siblings —
+                # MATCHED_AUTH_RUN_ID is then non-NULL (CURRENT). When
+                # the proposal is from an older AS_OF_DATE the join
+                # produces NULL (SUPERSEDED). No equality check is
+                # needed; the join is the test.
                 cur.execute(
                     """
                     SELECT
                       p.STATUS                AS PROPOSAL_STATUS_NOW,
                       p.BOARD_RUN_ID          AS PROPOSAL_BOARD_RUN_ID,
-                      latest.RUN_ID           AS LATEST_AUTHORITATIVE_RUN_ID
+                      latest.RUN_ID           AS MATCHED_AUTH_RUN_ID
                     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
-                    LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest ON TRUE
+                    LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest
+                      ON latest.RUN_ID = p.BOARD_RUN_ID
                     WHERE p.PROPOSAL_ID = %s
                     """,
                     (proposal_id_for_freshness,),
@@ -11178,16 +11205,10 @@ async def orchestrate_committee2_structural_entry(
                     proposal_freshness = "EXPIRED"
                 else:
                     _proposal_status_now = (_frow[0] or "").upper() or None
-                    _proposal_board_run_id = _frow[1]
-                    _latest_auth_run_id = _frow[2]
+                    _matched_auth_run_id = _frow[2]
                     if _proposal_status_now is None or _proposal_status_now != "PROPOSED":
                         proposal_freshness = "EXPIRED"
-                    elif _latest_auth_run_id is None:
-                        proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
-                    elif (
-                        _proposal_board_run_id is None
-                        or str(_proposal_board_run_id) != str(_latest_auth_run_id)
-                    ):
+                    elif _matched_auth_run_id is None:
                         proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
                     else:
                         proposal_freshness = "CURRENT"

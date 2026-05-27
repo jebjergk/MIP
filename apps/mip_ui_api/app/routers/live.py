@@ -8134,6 +8134,8 @@ def get_live_activity_overview(
                     for pbc in preflight_bracket_codes:
                         if pbc not in action_reason_codes:
                             action_reason_codes.append(pbc)
+                else:
+                    action_reason_codes = _strip_recomputable_entry_bracket_codes(action_reason_codes)
             # Proposal-lineage freshness gate (Patch Group A, post-Phase-3
             # operator-safety hardening). For STRUCTURAL ENTRY actions
             # only: a live action whose parent proposal has been EXPIRED
@@ -8206,6 +8208,19 @@ def get_live_activity_overview(
                 and _agentic_verdict.get("gate_enabled")
                 and not _agentic_verdict.get("gate_ok")
             )
+            if is_structural_action and (not is_exit) and _agentic_verdict:
+                from app.committee.agentic_authority import reconcile_agentic_authority_reason_codes
+
+                action_reason_codes = reconcile_agentic_authority_reason_codes(
+                    action_reason_codes,
+                    authority_status=_agentic_verdict.get("authority_status"),
+                    is_stale=bool(_agentic_verdict.get("is_stale")),
+                    gate_ok=(
+                        _agentic_verdict.get("gate_ok")
+                        if _agentic_verdict.get("gate_enabled")
+                        else True
+                    ),
+                )
             submit_allowed = (
                 submit_allowed
                 and trade_surface_ok
@@ -13103,6 +13118,24 @@ def revalidate_live_action(
             rc_text = str(rc)
             if rc_text and rc_text not in merged_reason_codes:
                 merged_reason_codes.append(rc_text)
+
+        if (not is_exit) and is_structural_live_action(action):
+            from app.committee.agentic_authority import (
+                evaluate_authority_gate,
+                reconcile_agentic_authority_reason_codes,
+            )
+
+            agentic_gate = evaluate_authority_gate(conn, action_id)
+            merged_reason_codes = reconcile_agentic_authority_reason_codes(
+                merged_reason_codes,
+                authority_status=agentic_gate.get("authority_status"),
+                is_stale=bool(agentic_gate.get("is_stale")),
+                gate_ok=(
+                    agentic_gate.get("gate_ok")
+                    if agentic_gate.get("gate_enabled")
+                    else True
+                ),
+            )
 
         target_snapshot_before = _parse_variant(action.get("TARGET_EXPECTATION_SNAPSHOT"))
         target_snapshot_after = _build_target_expectation_snapshot(

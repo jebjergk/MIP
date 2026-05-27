@@ -1513,6 +1513,105 @@ _STATUS_TO_BLOCK_REASON: Dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Agentic reason-code sync (LPA display / LIVE_ACTIONS persistence)
+# ---------------------------------------------------------------------------
+
+_AGENTIC_SYNC_STRIP_EXACT = frozenset({
+    "STRUCTURAL_AGENTIC_REVIEWED",
+    "AGENTIC_SIZE_POSTURE_REDUCED",
+})
+
+
+def is_agentic_authority_sync_reason_code(code: str) -> bool:
+    """True for agentic tags owned by the latest authority row (safe to replace)."""
+    u = str(code or "").strip().upper()
+    if not u:
+        return False
+    if u in _AGENTIC_SYNC_STRIP_EXACT:
+        return True
+    return u.startswith("AGENTIC_AUTHORITY_")
+
+
+def _dedupe_reason_codes(reason_codes: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for rc in reason_codes or []:
+        text = str(rc).strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def reconcile_agentic_authority_reason_codes(
+    reason_codes: list[str],
+    *,
+    authority_status: str | None,
+    is_stale: bool,
+    gate_ok: bool | None = None,
+) -> list[str]:
+    """Replace stale agentic tags with tags matching the latest authority truth."""
+    kept = [
+        str(rc)
+        for rc in (reason_codes or [])
+        if not is_agentic_authority_sync_reason_code(rc)
+    ]
+    status = str(authority_status or "").upper().strip()
+    if not status:
+        return _dedupe_reason_codes(kept)
+
+    positive = status in POSITIVE_AUTHORITY_STATUSES and not is_stale
+    if gate_ok is None:
+        gate_ok = positive
+    elif gate_ok and not positive:
+        gate_ok = False
+
+    if gate_ok:
+        kept.append("STRUCTURAL_AGENTIC_REVIEWED")
+        kept.append(f"AGENTIC_AUTHORITY_{status}")
+        if status == AGENTIC_APPROVE_REDUCED:
+            kept.append("AGENTIC_SIZE_POSTURE_REDUCED")
+    else:
+        kept.append(f"AGENTIC_AUTHORITY_{status}")
+        if is_stale:
+            kept.append(GATE_REASON_STALE)
+
+    return _dedupe_reason_codes(kept)
+
+
+def sync_live_action_agentic_reason_codes(
+    conn,
+    action_id: str,
+    *,
+    authority_status: str | None,
+    is_stale: bool,
+    gate_ok: bool | None = None,
+) -> list[str] | None:
+    """Persist reconciled agentic tags onto LIVE_ACTIONS.REASON_CODES."""
+    from app.routers.live import _fetch_live_action, _parse_list_variant, _write_reason_codes
+
+    cur = conn.cursor()
+    try:
+        action = _fetch_live_action(cur, action_id)
+        if not action:
+            return None
+        existing = _parse_list_variant(action.get("REASON_CODES"))
+        merged = reconcile_agentic_authority_reason_codes(
+            existing,
+            authority_status=authority_status,
+            is_stale=is_stale,
+            gate_ok=gate_ok,
+        )
+        _write_reason_codes(cur, action_id, merged)
+        return merged
+    finally:
+        try:
+            cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def is_authority_gate_enabled(conn) -> bool:
     """Return True only if APP_CONFIG.AGENTIC_AUTHORITY_ENABLED is truthy.
 

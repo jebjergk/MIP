@@ -92,8 +92,41 @@ function explainReasonCode(code) {
     EXIT_NO_LONG_POSITION_AT_BROKER: 'Broker shows no long shares to sell-to-close—refresh IB; your exit may have already filled.',
     EXIT_NO_SHORT_POSITION_AT_BROKER: 'Broker shows no short to cover—refresh IB before retrying.',
     COMPLIANCE_NOT_APPROVED: 'Decision is not approved for execution yet.',
+    STRUCTURAL_AGENTIC_REVIEWED: 'Agentic intelligence review applied to this structural entry.',
+    AGENTIC_AUTHORITY_AGENTIC_APPROVE: 'Agentic board: Approved.',
+    AGENTIC_AUTHORITY_AGENTIC_APPROVE_REDUCED: 'Agentic board: Approved (reduced size).',
+    AGENTIC_AUTHORITY_AGENTIC_FAILED_NO_AUTHORITY: 'Agentic review unavailable — run Intelligence Review again.',
+    AGENTIC_AUTHORITY_STALE: 'Agentic authority is stale — re-commit after a fresh review.',
+    AGENTIC_SIZE_POSTURE_REDUCED: 'Agentic sizing posture: reduced.',
+    STRUCT_SUBMIT_CONTRACT_INCOMPLETE: 'Executable protection contract incomplete — re-apply agentic review.',
+    LIVE_RISK_REWARD_TOO_LOW: 'Live bracket R/R below minimum — protection targets need refresh.',
   }
   return map[c] || c.replaceAll('_', ' ')
+}
+
+function isAgenticAuthoritySyncReasonCode(code) {
+  const c = String(code || '').toUpperCase()
+  return (
+    c.startsWith('AGENTIC_AUTHORITY_') ||
+    c === 'STRUCTURAL_AGENTIC_REVIEWED' ||
+    c === 'AGENTIC_SIZE_POSTURE_REDUCED'
+  )
+}
+
+/** Hide superseded agentic tags when the live gate says authority is current. */
+function displayReasonCodes(decision) {
+  const codes = Array.isArray(decision?.reason_codes) ? decision.reason_codes : []
+  const gate = decision?.agentic_authority_gate
+  if (!gate?.gate_enabled || gate.gate_ok !== true) return codes
+  const status = String(gate.authority_status || '').toUpperCase()
+  const expected = status ? `AGENTIC_AUTHORITY_${status}` : ''
+  return codes.filter((code) => {
+    const c = String(code || '').toUpperCase()
+    if (!isAgenticAuthoritySyncReasonCode(c)) return true
+    if (c === 'AGENTIC_AUTHORITY_STALE') return false
+    if (c.startsWith('AGENTIC_AUTHORITY_') && expected && c !== expected) return false
+    return true
+  })
 }
 
 function summarizeReasonCodes(reasonCodes) {
@@ -2055,9 +2088,11 @@ export default function LivePortfolioActivity() {
                         ) : null}
                       </td>
                       <td>
-                        {Array.isArray(d.reason_codes) && d.reason_codes.length > 0 ? (
+                        {(() => {
+                          const shownReasons = displayReasonCodes(d)
+                          return shownReasons.length > 0 ? (
                           <ul className="lpa-reason-list">
-                            {d.reason_codes.map((code, idx) => (
+                            {shownReasons.map((code, idx) => (
                               <li key={`${d.action_id}:reason:${idx}`}>
                                 <span className="lpa-reason-human">{explainReasonCode(code)}</span>
                               </li>
@@ -2065,7 +2100,8 @@ export default function LivePortfolioActivity() {
                           </ul>
                         ) : (
                           <div>—</div>
-                        )}
+                        )
+                        })()}
                         {hasPriceGuardFailReason(d.reason_codes) &&
                         d.price_guard != null &&
                         d.price_guard.price_deviation_pct != null ? (

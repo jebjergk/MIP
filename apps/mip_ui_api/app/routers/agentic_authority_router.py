@@ -47,6 +47,7 @@ from app.committee.agentic_authority import (
     commit_operator_authority_for_session,
     is_agentic_primary_materialization_enabled,
     is_authority_gate_enabled,
+    sync_live_action_agentic_reason_codes,
 )
 from app.db import fetch_all, get_connection, serialize_row, serialize_rows
 
@@ -374,6 +375,44 @@ def commit_agentic_authority(
     # never undoes the commit. Returns None or a diagnostic dict so the UI
     # can surface why STATUS did/didn't move.
     agentic_materializer = _maybe_run_agentic_materializer(action_id, result)
+
+    # Keep LIVE_ACTIONS agentic tags aligned with the row we just committed.
+    # When the materializer does not run (healthy late-stage recovery already
+    # complete), stale AGENTIC_AUTHORITY_* tags would otherwise linger and
+    # confuse the LPA operator.
+    sync_conn = None
+    try:
+        sync_conn = get_connection()
+        from app.routers.committee import _underlying_sf_conn
+
+        gate_ok = (
+            auth_status in POSITIVE_AUTHORITY_STATUSES
+            and not bool(result.get("is_stale"))
+        )
+        raw = _underlying_sf_conn(sync_conn)
+        raw.autocommit(False)
+        try:
+            sync_live_action_agentic_reason_codes(
+                sync_conn,
+                action_id,
+                authority_status=auth_status,
+                is_stale=bool(result.get("is_stale")),
+                gate_ok=gate_ok,
+            )
+            raw.commit()
+        except Exception:  # noqa: BLE001
+            raw.rollback()
+            raise
+        finally:
+            raw.autocommit(True)
+    except Exception:  # noqa: BLE001 — never undo a successful commit
+        _log.exception("agentic reason-code sync failed for action %s", action_id)
+    finally:
+        if sync_conn is not None:
+            try:
+                sync_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # Build the Stage 4d gate verdict using the row we just wrote so the
     # client doesn't have to re-fetch. Keep the verdict shape identical to

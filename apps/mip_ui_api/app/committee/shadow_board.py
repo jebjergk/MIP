@@ -1186,7 +1186,7 @@ def _run_agentic_materializer_after_auto_commit(
         )
         from app.routers.agentic_authority_router import (
             _build_authority_row_from_commit,
-            _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES,
+            agentic_materializer_status_eligible,
         )
         from app.routers.committee import _underlying_sf_conn
         from app.routers.live import (
@@ -1226,13 +1226,18 @@ def _run_agentic_materializer_after_auto_commit(
                 )
                 return
             status = str(action_row.get("STATUS") or "").upper()
-            if status not in _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES:
+            eligible, eligibility_reason = agentic_materializer_status_eligible(dict(action_row))
+            if not eligible:
                 logger.info(
-                    "auto_commit materializer: status not eligible action=%s status=%s",
-                    action_id, status,
+                    "auto_commit materializer: status not eligible action=%s status=%s reason=%s",
+                    action_id, status, eligibility_reason,
                 )
                 return
 
+            recovery_late_stage = (
+                eligibility_reason == "recovery_incomplete_contract"
+                and status in ("REVALIDATED_PASS", "REVALIDATED_FAIL")
+            )
             authority_row = _build_authority_row_from_commit(action_id, commit_result)
             raw = _underlying_sf_conn(conn)
             raw.autocommit(False)
@@ -1243,6 +1248,7 @@ def _run_agentic_materializer_after_auto_commit(
                     dict(action_row),
                     authority_row,
                     apply_detail_source="AGENTIC_AUTO_COMMIT",
+                    recovery_late_stage=recovery_late_stage,
                 )
                 raw.commit()
                 logger.info(

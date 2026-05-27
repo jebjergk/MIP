@@ -1919,33 +1919,93 @@ def _load_live_entry_fee_params(cur) -> dict:
     }
 
 
-def _live_target_and_stop_from_joint_decision(
+def _live_rr_meets_min_floor(
+    target_return: float,
+    stop_loss_pct: float,
+    min_rr: float,
+) -> bool:
+    """R/R check on 6dp-rounded pct fields (parity with structural bracket builder)."""
+    try:
+        tr = round(float(target_return), 6)
+        sl = round(float(stop_loss_pct), 6)
+    except (TypeError, ValueError):
+        return False
+    if sl <= 0:
+        return False
+    return (tr / sl) >= float(min_rr) - 1e-12
+
+
+def _joint_decision_stop_loss_pct(
     joint_decision: dict | None,
     bust_pct_default: float | None,
-) -> tuple[float | None, float | None]:
-    """Prefer early-exit target then realistic return; cap stop at bust_pct (execute_live_action parity)."""
+) -> float | None:
     jd = joint_decision or {}
-    target_return = None
-    try:
-        if jd.get("acceptable_early_exit_target_return") is not None:
-            target_return = float(jd.get("acceptable_early_exit_target_return"))
-    except Exception:
-        target_return = None
-    if target_return is None:
-        try:
-            if jd.get("realistic_target_return") is not None:
-                target_return = float(jd.get("realistic_target_return"))
-        except Exception:
-            target_return = None
     stop_loss_pct = None
     try:
         if jd.get("stop_loss_pct") is not None:
             stop_loss_pct = float(jd.get("stop_loss_pct"))
-    except Exception:
+    except (TypeError, ValueError):
         stop_loss_pct = None
     if stop_loss_pct is not None and bust_pct_default is not None:
         stop_loss_pct = min(float(stop_loss_pct), float(bust_pct_default))
-    return target_return, stop_loss_pct
+    return stop_loss_pct
+
+
+def _select_executable_target_from_joint_decision(
+    joint_decision: dict | None,
+    bust_pct_default: float | None,
+    *,
+    min_rr: float | None = None,
+) -> tuple[float | None, float | None, str | None]:
+    """Pick a live executable target_return that satisfies min R/R when possible.
+
+    Early-exit/management targets are used only when they pass the floor; otherwise
+    falls back to realistic_target_return. Returns (target_return, stop_loss_pct, source).
+    """
+    jd = joint_decision or {}
+    stop_loss_pct = _joint_decision_stop_loss_pct(jd, bust_pct_default)
+    if stop_loss_pct is None or float(stop_loss_pct) <= 0:
+        return None, stop_loss_pct, None
+
+    floor = float(min_rr if min_rr is not None else float(os.getenv("LIVE_MIN_R_MULTIPLE", "1.10")))
+
+    candidates: list[tuple[str, float]] = []
+    for source, key in (
+        ("acceptable_early_exit_target_return", "acceptable_early_exit_target_return"),
+        ("realistic_target_return", "realistic_target_return"),
+    ):
+        try:
+            raw = jd.get(key)
+            if raw is not None:
+                val = float(raw)
+                if val > 0:
+                    candidates.append((source, val))
+        except (TypeError, ValueError):
+            continue
+
+    for source, tr in candidates:
+        if _live_rr_meets_min_floor(tr, stop_loss_pct, floor):
+            return tr, stop_loss_pct, source
+
+    if candidates:
+        source, tr = candidates[-1]
+        return tr, stop_loss_pct, source
+    return None, stop_loss_pct, None
+
+
+def _live_target_and_stop_from_joint_decision(
+    joint_decision: dict | None,
+    bust_pct_default: float | None,
+    *,
+    min_rr: float | None = None,
+) -> tuple[float | None, float | None]:
+    """Executable live bracket target/stop; prefers R/R-viable targets over early-exit."""
+    tr, sl, _source = _select_executable_target_from_joint_decision(
+        joint_decision,
+        bust_pct_default,
+        min_rr=min_rr,
+    )
+    return tr, sl
 
 
 def _load_executable_entry_bracket_for_action(
@@ -2655,7 +2715,7 @@ def _merge_structural_contract_and_diagnostics(
         and eb.get("stop_loss_pct") is not None
         and not eb.get("blocked")
     )
-    contract_complete = (not entry_like) or (tr_ok and sl_ok and not has_blocked_eb and (eb is None or eb_has_legs or not isinstance(eb, dict)))
+    contract_complete = (not entry_like) or (tr_ok and sl_ok and not has_blocked_eb and eb_has_legs)
     if entry_like and has_blocked_eb:
         contract_complete = False
     diagnostics = {
@@ -10623,6 +10683,7 @@ def _materialize_structural_entry_agentic_apply(
     authority_row: dict,
     *,
     apply_detail_source: str = "AGENTIC_APPLY",
+    recovery_late_stage: bool = False,
 ) -> dict:
     """Stage 4e agentic-primary materializer.
 
@@ -10695,7 +10756,11 @@ def _materialize_structural_entry_agentic_apply(
         "authority_id": authority_row.get("AUTHORITY_ID"),
         "authority_status": outcome["status_code"],
     }
-    next_status = "OPEN_BLOCKED" if blocked else "READY_FOR_APPROVAL_FLOW"
+    prior_status = str(action.get("STATUS") or "").upper()
+    if recovery_late_stage and prior_status in ("REVALIDATED_PASS", "REVALIDATED_FAIL"):
+        next_status = prior_status
+    else:
+        next_status = "OPEN_BLOCKED" if blocked else "READY_FOR_APPROVAL_FLOW"
     is_exit = False
 
     proposed_price_derived = _fetch_ibkr_mart_reference_close(cur, action.get("SYMBOL"))
@@ -10716,8 +10781,9 @@ def _materialize_structural_entry_agentic_apply(
             except (TypeError, ValueError):
                 pass
     proposed_qty_derived: float | None = None
+    seed_executable_bracket = (not blocked) or recovery_late_stage
 
-    if not blocked and proposed_price_derived is not None:
+    if seed_executable_bracket and proposed_price_derived is not None:
         try:
             training_size_cap = float(action.get("TRAINING_SIZE_CAP_FACTOR") or 1.0)
             open_factor = float(action.get("TARGET_OPEN_CONDITION_FACTOR") or 1.0)
@@ -10741,7 +10807,7 @@ def _materialize_structural_entry_agentic_apply(
             )
             nav_rows = fetch_all(cur)
             nav_eur = float((nav_rows[0] or {}).get("NET_LIQUIDATION_EUR") or 0.0) if nav_rows else 0.0
-            if nav_eur > 0:
+            if nav_eur > 0 and not blocked:
                 pos_pct = float((nav_rows[0] or {}).get("MAX_POSITION_PCT") or 0.05)
                 max_notional = (
                     nav_eur * pos_pct * size_factor * training_size_cap * open_factor
@@ -10750,13 +10816,21 @@ def _materialize_structural_entry_agentic_apply(
         except Exception:  # noqa: BLE001 — sizing best-effort
             proposed_qty_derived = None
 
+    if seed_executable_bracket and proposed_qty_derived is None:
+        try:
+            pq = action.get("PROPOSED_QTY")
+            if pq is not None and float(pq) > 0:
+                proposed_qty_derived = float(pq)
+        except (TypeError, ValueError):
+            pass
+
     proposed_qty_derived, reason_codes = _apply_post_committee_entry_viability_and_qty(
         cur,
         action_id=action_id,
         portfolio_id=int(action.get("PORTFOLIO_ID") or 0),
         side=str(action.get("SIDE") or "").upper(),
         is_exit=is_exit,
-        is_committee_blocked=blocked,
+        is_committee_blocked=not seed_executable_bracket,
         proposed_price=proposed_price_derived,
         committee_qty=proposed_qty_derived,
         joint_decision=jd,
@@ -10764,7 +10838,7 @@ def _materialize_structural_entry_agentic_apply(
     )
 
     verdict["joint_decision"] = jd
-    if not blocked:
+    if seed_executable_bracket:
         bracket_block = any(_is_entry_bracket_hard_block_code(rc) for rc in reason_codes)
         if not bracket_block:
             refreshed = _fetch_live_action(cur, action_id)
@@ -10785,11 +10859,14 @@ def _materialize_structural_entry_agentic_apply(
                 bracket_block = True
                 if "STRUCT_SUBMIT_CONTRACT_INCOMPLETE" not in reason_codes:
                     reason_codes.append("STRUCT_SUBMIT_CONTRACT_INCOMPLETE")
-        if bracket_block:
+        if bracket_block and not recovery_late_stage:
             blocked = True
             next_status = "OPEN_BLOCKED"
             verdict["blocked"] = True
             verdict["recommendation"] = "BLOCK"
+        elif bracket_block and recovery_late_stage and not blocked:
+            if "STRUCT_SUBMIT_CONTRACT_INCOMPLETE" not in reason_codes:
+                reason_codes.append("STRUCT_SUBMIT_CONTRACT_INCOMPLETE")
 
     verdict_envelope = build_structural_verdict_envelope_v1(
         action=action,
@@ -10897,6 +10974,7 @@ def _materialize_structural_entry_agentic_apply(
         "agentic_source": True,
         "authority_status": outcome["status_code"],
         "authority_is_stale": bool(authority_row.get("IS_STALE")),
+        "recovery_late_stage": recovery_late_stage,
     }
 
 

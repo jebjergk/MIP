@@ -141,6 +141,88 @@ _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES = {
     "READY_FOR_APPROVAL_FLOW",
 }
 
+# Stage 1.5 — late-stage recovery when executable protection was never materialized.
+_RECOVERY_LATE_STAGE_STATUSES = frozenset({"REVALIDATED_PASS", "REVALIDATED_FAIL"})
+
+_RECOVERY_INCOMPLETE_BRACKET_REASON_CODES = frozenset({
+    "STRUCT_SUBMIT_CONTRACT_INCOMPLETE",
+    "LIVE_TP_REQUIRED_MISSING",
+    "LIVE_SL_REQUIRED_MISSING",
+    "LIVE_BRACKET_REQUIRED",
+})
+
+
+def _committee_bracket_baseline_incomplete(param_snapshot: dict) -> bool:
+    baseline = param_snapshot.get("committee_bracket_baseline")
+    if not isinstance(baseline, dict):
+        return True
+    for key in (
+        "acceptable_early_exit_target_return",
+        "realistic_target_return",
+        "stop_loss_pct",
+    ):
+        if baseline.get(key) is not None:
+            return False
+    return True
+
+
+def _executable_bracket_incomplete(param_snapshot: dict) -> bool:
+    eb = param_snapshot.get("executable_bracket")
+    if eb is None:
+        return True
+    if not isinstance(eb, dict):
+        return True
+    if eb.get("blocked"):
+        return True
+    if eb.get("target_return") is None or eb.get("stop_loss_pct") is None:
+        return True
+    return False
+
+
+def _action_needs_recovery_materialization(action: dict) -> bool:
+    """True when a late-stage row still lacks a viable executable protection contract."""
+    from app.routers.live import _parse_list_variant, _parse_variant
+
+    ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    if not isinstance(ps, dict):
+        ps = {}
+
+    diag = ps.get("structural_diagnostics_v1")
+    contract_incomplete = True
+    if isinstance(diag, dict):
+        contract_incomplete = not bool(diag.get("structural_contract_complete", False))
+
+    eb_incomplete = _executable_bracket_incomplete(ps)
+    baseline_incomplete = _committee_bracket_baseline_incomplete(ps)
+
+    reason_codes = {
+        str(rc).strip().upper()
+        for rc in _parse_list_variant(action.get("REASON_CODES"))
+        if rc
+    }
+    has_incomplete_reason = bool(reason_codes & _RECOVERY_INCOMPLETE_BRACKET_REASON_CODES)
+
+    structural_incomplete = contract_incomplete or eb_incomplete or baseline_incomplete
+    if structural_incomplete:
+        return True
+    return has_incomplete_reason and (
+        contract_incomplete or eb_incomplete or baseline_incomplete
+    )
+
+
+def agentic_materializer_status_eligible(
+    action: dict,
+) -> tuple[bool, str | None]:
+    """Return (eligible, reason) for agentic-primary materialization on commit."""
+    status = str(action.get("STATUS") or "").upper()
+    if status in _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES:
+        return True, "forward_eligible_status"
+    if status in _RECOVERY_LATE_STAGE_STATUSES:
+        if _action_needs_recovery_materialization(action):
+            return True, "recovery_incomplete_contract"
+        return False, "status_not_eligible"
+    return False, "status_not_eligible"
+
 
 def _build_authority_row_from_commit(
     action_id: str, result: Dict[str, Any]
@@ -193,11 +275,16 @@ def _maybe_run_agentic_materializer(
                 return {"ran": False, "reason": "action_not_found"}
             if not is_structural_live_action(action_row):
                 return {"ran": False, "reason": "non_structural"}
+            eligible, eligibility_reason = agentic_materializer_status_eligible(dict(action_row))
             status = str(action_row.get("STATUS") or "").upper()
-            if status not in _AGENTIC_MATERIALIZER_ELIGIBLE_STATUSES:
-                return {"ran": False, "reason": "status_not_eligible", "status": status}
+            if not eligible:
+                return {"ran": False, "reason": eligibility_reason, "status": status}
 
             authority_row = _build_authority_row_from_commit(action_id, commit_result)
+            recovery_late_stage = (
+                eligibility_reason == "recovery_incomplete_contract"
+                and status in _RECOVERY_LATE_STAGE_STATUSES
+            )
             raw = _underlying_sf_conn(materializer_conn)
             raw.autocommit(False)
             try:
@@ -207,6 +294,7 @@ def _maybe_run_agentic_materializer(
                     dict(action_row),
                     authority_row,
                     apply_detail_source="AGENTIC_OPERATOR_COMMIT",
+                    recovery_late_stage=recovery_late_stage,
                 )
                 raw.commit()
             except Exception:  # noqa: BLE001
@@ -214,7 +302,12 @@ def _maybe_run_agentic_materializer(
                 raise
             finally:
                 raw.autocommit(True)
-            return {"ran": True, **out}
+            return {
+                "ran": True,
+                "eligibility_reason": eligibility_reason,
+                "recovery_late_stage": recovery_late_stage,
+                **out,
+            }
         finally:
             try:
                 cur.close()

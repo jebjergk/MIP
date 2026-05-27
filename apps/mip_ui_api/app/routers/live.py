@@ -2,6 +2,8 @@
 GET /live/metrics — lightweight live metrics for header and Suggestions.
 Read-only. Returns api_ok, snowflake_ok, updated_at, last_run, last_brief, outcomes.
 """
+from __future__ import annotations
+
 import json
 import logging
 import math
@@ -2083,6 +2085,161 @@ def _live_ib_entry_risk_reason_codes(
         if rr_multiple < min_rr:
             codes.append("LIVE_RISK_REWARD_TOO_LOW")
     return codes
+
+
+_ENTRY_BRACKET_HARD_BLOCK_CODES = frozenset({
+    "MAX_POSITIONS_EXCEEDED",
+    "MAX_POSITION_PCT_EXCEEDED",
+    "CASH_BUFFER_BREACH",
+    "MISSING_NOTIONAL_INPUT",
+    "LIVE_TP_REQUIRED_MISSING",
+    "LIVE_SL_REQUIRED_MISSING",
+    "LIVE_BRACKET_REQUIRED",
+    "LIVE_TP_NET_EDGE_TOO_LOW",
+    "LIVE_RISK_REWARD_TOO_LOW",
+    "LIVE_MIN_VIABLE_SIZE_NOT_REACHED",
+    "LIVE_BRACKET_NOT_VIABLE_WITHIN_GUARDRAILS",
+    "LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_TP",
+    "LIVE_BRACKET_CALIBRATION_EXCEEDS_MAX_SL",
+    "STRUCT_SUBMIT_CONTRACT_INCOMPLETE",
+    "ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY",
+    "BROKER_SHORT_POSITION_OUT_OF_POLICY",
+    "SYMBOL_SHORT_POSITION_OUT_OF_POLICY",
+})
+
+
+def _is_entry_bracket_hard_block_code(code: str) -> bool:
+    u = str(code or "").strip().upper()
+    return u in _ENTRY_BRACKET_HARD_BLOCK_CODES or u.startswith("LIVE_BRACKET_")
+
+
+def _strip_recomputable_entry_bracket_codes(reason_codes: list[str]) -> list[str]:
+    return [rc for rc in reason_codes if not _is_entry_bracket_hard_block_code(rc)]
+
+
+def _structural_ref_price_for_bracket(action: dict) -> float | None:
+    for key in ("REVALIDATION_PRICE", "PROPOSED_PRICE", "CURRENT_PRICE", "ONE_MIN_BAR_CLOSE"):
+        try:
+            v = action.get(key)
+            if v is not None:
+                px = float(v)
+                if px > 0:
+                    return px
+        except (TypeError, ValueError):
+            pass
+    try:
+        lo = action.get("ENTRY_ZONE_LOW")
+        hi = action.get("ENTRY_ZONE_HIGH")
+        if lo is not None and hi is not None:
+            lo_f, hi_f = float(lo), float(hi)
+            if lo_f > 0 and hi_f > 0:
+                return (lo_f + hi_f) / 2.0
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _preflight_entry_bracket_hard_block_reason_codes(cur, action: dict) -> list[str]:
+    """Recompute entry bracket viability (no DB writes) for overview/revalidate preflight."""
+    intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+    if intent == "EXIT" or not is_structural_live_action(action):
+        return []
+
+    side = str(action.get("SIDE") or "").upper()
+    portfolio_id = int(action.get("PORTFOLIO_ID") or 0)
+
+    long_only_cfg = _read_app_config(cur, ["LIVE_ENFORCE_LONG_ONLY", "LIVE_BLOCK_ON_BROKER_SHORT"])
+    enforce_long_only = _parse_bool_config(long_only_cfg.get("LIVE_ENFORCE_LONG_ONLY"), True)
+    block_on_broker_short = _parse_bool_config(long_only_cfg.get("LIVE_BLOCK_ON_BROKER_SHORT"), True)
+    if enforce_long_only and block_on_broker_short and side != "BUY":
+        return ["ENTRY_SIDE_NOT_ALLOWED_LONG_ONLY"]
+
+    cur.execute(
+        """
+        select IBKR_ACCOUNT_ID, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, BUST_PCT
+        from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+        where PORTFOLIO_ID = %s
+        """,
+        (portfolio_id,),
+    )
+    cfg_rows = fetch_all(cur)
+    live_cfg = cfg_rows[0] if cfg_rows else {}
+    if not _live_execution_requires_ib_risk_gates(live_cfg):
+        return []
+
+    bust_pct_default = None
+    try:
+        if live_cfg.get("BUST_PCT") is not None:
+            bust_pct_default = float(live_cfg.get("BUST_PCT"))
+    except Exception:
+        bust_pct_default = None
+
+    entry_price = _structural_ref_price_for_bracket(action)
+    ps = _parse_variant(action.get("PARAM_SNAPSHOT"))
+    eb = ps.get("executable_bracket") if isinstance(ps, dict) else None
+    target_return = None
+    stop_loss_pct = None
+    if isinstance(eb, dict) and not eb.get("blocked"):
+        try:
+            if eb.get("target_return") is not None:
+                target_return = float(eb["target_return"])
+            if eb.get("stop_loss_pct") is not None:
+                stop_loss_pct = float(eb["stop_loss_pct"])
+        except (TypeError, ValueError):
+            target_return = None
+            stop_loss_pct = None
+    if target_return is None or stop_loss_pct is None:
+        jd = build_structural_entry_joint_decision(dict(action))
+        target_return, stop_loss_pct = _live_target_and_stop_from_joint_decision(jd, bust_pct_default)
+
+    fee_params = _load_live_entry_fee_params(cur)
+    codes = _live_ib_entry_risk_reason_codes(
+        side=side,
+        is_exit=False,
+        entry_price=entry_price,
+        target_return=target_return,
+        stop_loss_pct=stop_loss_pct,
+        fee_params=fee_params,
+    )
+
+    proposed_qty = action.get("PROPOSED_QTY")
+    if (
+        entry_price is not None
+        and float(entry_price) > 0
+        and proposed_qty is not None
+        and float(proposed_qty) > 0
+        and target_return is not None
+        and stop_loss_pct is not None
+    ):
+        tp_p, sl_p = _live_entry_tp_sl_prices(side, float(entry_price), target_return, stop_loss_pct)
+        if tp_p is not None and sl_p is not None:
+            realism_cfg = _load_bracket_realism_config(cur)
+            bracket_codes = _live_bracket_realism_reason_codes(
+                cur,
+                live_cfg=live_cfg,
+                side=side,
+                entry_price=float(entry_price),
+                qty=float(proposed_qty),
+                tp_price=tp_p,
+                sl_price=sl_p,
+                target_return=target_return,
+                fee_params=fee_params,
+                preloaded_realism_cfg=realism_cfg,
+            )
+            codes = sorted(set(codes + bracket_codes))
+
+    diag = ps.get("structural_diagnostics_v1") if isinstance(ps, dict) else {}
+    contract_complete = True
+    if isinstance(diag, dict):
+        contract_complete = bool(diag.get("structural_contract_complete", True))
+    tr_ok = target_return is not None and float(target_return) > 0
+    sl_ok = stop_loss_pct is not None and float(stop_loss_pct) > 0
+    eb_blocked = isinstance(eb, dict) and bool(eb.get("blocked"))
+    if not contract_complete or not tr_ok or not sl_ok or eb_blocked:
+        if "STRUCT_SUBMIT_CONTRACT_INCOMPLETE" not in codes:
+            codes.append("STRUCT_SUBMIT_CONTRACT_INCOMPLETE")
+
+    return sorted(set(codes))
 
 
 def _load_bracket_realism_config(cur) -> dict:
@@ -7906,6 +8063,17 @@ def get_live_activity_overview(
                     or bracket_realism_rc
                 )
             )
+            if (
+                not is_exit
+                and is_structural_live_action(row)
+                and status not in ("EXECUTED", "EXECUTION_REQUESTED", "EXECUTION_PARTIAL")
+            ):
+                preflight_bracket_codes = _preflight_entry_bracket_hard_block_reason_codes(cur, row)
+                if preflight_bracket_codes:
+                    execution_hard_blocked = True
+                    for pbc in preflight_bracket_codes:
+                        if pbc not in action_reason_codes:
+                            action_reason_codes.append(pbc)
             # Proposal-lineage freshness gate (Patch Group A, post-Phase-3
             # operator-safety hardening). For STRUCTURAL ENTRY actions
             # only: a live action whose parent proposal has been EXPIRED
@@ -10494,19 +10662,17 @@ def _materialize_structural_entry_agentic_apply(
     except (TypeError, ValueError):
         confidence = 0.5
 
-    # Phase 5B: agentic-primary materialization no longer reads
-    # COMMITTEE_FINAL_DECISION for joint_decision context. The previous code
-    # tried to read `DECISION_JSON.joint_decision` off the CFD row, but the
-    # CFD schema has no `DECISION_JSON` column — so the call was already a
-    # no-op (jd_raw was always None). Under Phase 5B we make this explicit
-    # and seed the agentic joint_decision from scratch. TP/SL / bracket
-    # values come downstream from `_load_executable_entry_bracket_for_action`
-    # which has its own priority chain on PARAM_SNAPSHOT.
-    jd: dict = {
-        "should_enter": (not blocked),
-        "agentic_source": True,
-        "agentic_authority_status": outcome["status_code"],
-    }
+    # Stage 1 short submit safety: seed TP/SL from structural action fields via the
+    # canonical protection builder (same helper as C2 bridge execute self-heal).
+    # Agentic authority still owns thesis proceed/block; bracket math is deterministic.
+    struct_jd = build_structural_entry_joint_decision(dict(action))
+    struct_jd["should_enter"] = not blocked
+    struct_jd["agentic_source"] = True
+    struct_jd["agentic_authority_status"] = outcome["status_code"]
+    if outcome["status_code"] == "AGENTIC_APPROVE_REDUCED":
+        struct_jd["size_factor"] = size_factor
+        struct_jd["position_size_factor"] = size_factor
+    jd: dict = struct_jd
 
     reason_codes: list[str] = [
         "STRUCTURAL_AGENTIC_REVIEWED",
@@ -10596,6 +10762,34 @@ def _materialize_structural_entry_agentic_apply(
         joint_decision=jd,
         reason_codes=reason_codes,
     )
+
+    verdict["joint_decision"] = jd
+    if not blocked:
+        bracket_block = any(_is_entry_bracket_hard_block_code(rc) for rc in reason_codes)
+        if not bracket_block:
+            refreshed = _fetch_live_action(cur, action_id)
+            ps_ref = _parse_variant((refreshed or {}).get("PARAM_SNAPSHOT"))
+            eb_ref = ps_ref.get("executable_bracket") if isinstance(ps_ref, dict) else None
+            try:
+                tr_ok = jd.get("realistic_target_return") is not None and float(jd["realistic_target_return"]) > 0
+                sl_ok = jd.get("stop_loss_pct") is not None and float(jd["stop_loss_pct"]) > 0
+            except (TypeError, ValueError):
+                tr_ok = sl_ok = False
+            eb_ok = (
+                isinstance(eb_ref, dict)
+                and eb_ref.get("target_return") is not None
+                and eb_ref.get("stop_loss_pct") is not None
+                and not eb_ref.get("blocked")
+            )
+            if not (tr_ok and sl_ok and eb_ok):
+                bracket_block = True
+                if "STRUCT_SUBMIT_CONTRACT_INCOMPLETE" not in reason_codes:
+                    reason_codes.append("STRUCT_SUBMIT_CONTRACT_INCOMPLETE")
+        if bracket_block:
+            blocked = True
+            next_status = "OPEN_BLOCKED"
+            verdict["blocked"] = True
+            verdict["recommendation"] = "BLOCK"
 
     verdict_envelope = build_structural_verdict_envelope_v1(
         action=action,
@@ -12745,6 +12939,12 @@ def revalidate_live_action(
         if is_exit:
             _exit_reval_strip = {"PRICE_GUARD_FAIL", "REDUCED_SIZE_DUE_TO_PRICE_DEVIATION"}
             existing_reason_codes = [rc for rc in existing_reason_codes if str(rc).upper() not in _exit_reval_strip]
+        elif str(action.get("STATUS") or "").upper() not in (
+            "EXECUTED",
+            "EXECUTION_REQUESTED",
+            "EXECUTION_PARTIAL",
+        ):
+            existing_reason_codes = _strip_recomputable_entry_bracket_codes(existing_reason_codes)
         reason_codes: list[str] = []
         reduced_size_factor = None
         target_open_condition_factor = 1.0
@@ -12809,6 +13009,17 @@ def revalidate_live_action(
                 reason_codes.append("NEWS_EVENT_SHOCK_BLOCK")
         elif news_causes_caution and revalidation_outcome == "PASS":
             reason_codes.append("NEWS_REVALIDATION_CAUTION")
+        if (
+            not is_exit
+            and str(action.get("STATUS") or "").upper()
+            not in ("EXECUTED", "EXECUTION_REQUESTED", "EXECUTION_PARTIAL")
+        ):
+            action_for_bracket = dict(action)
+            action_for_bracket["REVALIDATION_PRICE"] = ref_price
+            bracket_recompute = _preflight_entry_bracket_hard_block_reason_codes(cur, action_for_bracket)
+            for brc in bracket_recompute:
+                if brc not in reason_codes:
+                    reason_codes.append(brc)
         merged_reason_codes: list[str] = []
         for rc in existing_reason_codes + reason_codes:
             rc_text = str(rc)
@@ -13661,16 +13872,27 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             def _execute_recalibrate_from_baseline() -> tuple[float | None, float | None]:
                 ps0 = _parse_variant(action.get("PARAM_SNAPSHOT"))
                 if not isinstance(ps0, dict):
-                    return None, None
+                    ps0 = {}
                 base = ps0.get("committee_bracket_baseline")
-                if not isinstance(base, dict):
-                    return None, None
-                jd0 = {
-                    "realistic_target_return": base.get("realistic_target_return"),
-                    "acceptable_early_exit_target_return": base.get("acceptable_early_exit_target_return"),
-                    "stop_loss_pct": base.get("stop_loss_pct"),
-                }
-                b_tr, b_sl = _live_target_and_stop_from_joint_decision(jd0, stop_loss_pct_default)
+                b_tr: float | None = None
+                b_sl: float | None = None
+                if isinstance(base, dict):
+                    jd0 = {
+                        "realistic_target_return": base.get("realistic_target_return"),
+                        "acceptable_early_exit_target_return": base.get("acceptable_early_exit_target_return"),
+                        "stop_loss_pct": base.get("stop_loss_pct"),
+                    }
+                    b_tr, b_sl = _live_target_and_stop_from_joint_decision(jd0, stop_loss_pct_default)
+                if (
+                    b_tr is None
+                    or b_sl is None
+                    or float(b_tr) <= 0
+                    or float(b_sl) <= 0
+                ):
+                    jd_fallback = build_structural_entry_joint_decision(dict(action))
+                    b_tr, b_sl = _live_target_and_stop_from_joint_decision(
+                        jd_fallback, stop_loss_pct_default
+                    )
                 if (
                     b_tr is None
                     or b_sl is None

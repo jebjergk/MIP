@@ -60,6 +60,7 @@ freshness/trust/regime committee layer; see live router.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -104,8 +105,8 @@ def _safe_float(v, default=None) -> float | None:
 
 
 def _structural_reference_price(action: dict) -> float | None:
-    """Best-effort price for invalidation-distance and TP/SL % (matches apply/execute fallbacks)."""
-    for key in ("CURRENT_PRICE", "REVALIDATION_PRICE", "PROPOSED_PRICE", "ONE_MIN_BAR_CLOSE"):
+    """Best-effort price for invalidation-distance and TP/SL % (materialize/execute anchor)."""
+    for key in ("REVALIDATION_PRICE", "PROPOSED_PRICE", "CURRENT_PRICE", "ONE_MIN_BAR_CLOSE"):
         px = _safe_float(action.get(key))
         if px is not None and px > 0:
             return px
@@ -114,6 +115,22 @@ def _structural_reference_price(action: dict) -> float | None:
     if lo is not None and hi is not None and lo > 0 and hi > 0:
         return (lo + hi) / 2.0
     return None
+
+
+def _target_return_meeting_min_rr(
+    sl_pct: float,
+    candidate: float,
+    min_rr: float = _MIN_RR_FOR_LIVE_ENTRY,
+) -> float:
+    """Return target_return (6dp) with target_return / stop_loss_pct >= min_rr after rounding."""
+    sl = float(sl_pct)
+    if sl <= 0:
+        return round(min(max(float(candidate), 0.0), _MAX_STRUCTURAL_TP_PCT), 6)
+    needed = sl * float(min_rr)
+    tr = round(min(max(float(candidate), needed), _MAX_STRUCTURAL_TP_PCT), 6)
+    if tr / sl < float(min_rr) - 1e-12:
+        tr = min(math.ceil(needed * 1_000_000) / 1_000_000, _MAX_STRUCTURAL_TP_PCT)
+    return tr
 
 
 def _target_return_from_expectation_snapshot(action: dict) -> float | None:
@@ -531,7 +548,7 @@ def build_structural_entry_joint_decision(action: dict) -> dict:
     tp_floor = float(sl_pct) * _MIN_RR_FOR_LIVE_ENTRY
     te_tp = _target_return_from_expectation_snapshot(action)
     candidate = max(tp_floor, float(te_tp) if te_tp is not None else 0.0, 0.02)
-    jd["realistic_target_return"] = round(min(candidate, _MAX_STRUCTURAL_TP_PCT), 6)
+    jd["realistic_target_return"] = _target_return_meeting_min_rr(sl_pct, candidate)
     if te_tp is not None and float(te_tp) > 0:
         jd["acceptable_early_exit_target_return"] = round(
             min(float(te_tp) * 0.85, jd["realistic_target_return"]), 6

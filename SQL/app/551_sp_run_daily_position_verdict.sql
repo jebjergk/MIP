@@ -22,6 +22,11 @@
        from V_LIVE_OPEN_POSITIONS (sourced from LIVE_ACTIONS), not
        from PORTFOLIO_TRADES.
 
+   Stage 2 SHORT (2026-05-27):
+     - SIDE derived from broker QUANTITY sign (negative = SHORT).
+     - Thesis, path, regime, invalidation, fragility, and PnL logic
+       are side-aware (mirrored for shorts vs longs).
+
    No weighted scoring. Precedence rules only.
    No LLM. Template-string summaries.
    No real position changes. Advisory only.
@@ -41,7 +46,7 @@ EXECUTE AS CALLER
 AS
 $$
 DECLARE
-    v_engine_version VARCHAR := '1.1.0-live-anchor';
+    v_engine_version VARCHAR := '1.2.0-short-aware';
     v_rows_written NUMBER := 0;
     v_run_started TIMESTAMP_NTZ := CURRENT_TIMESTAMP();
     v_summary VARIANT;
@@ -64,7 +69,10 @@ BEGIN
             p.ENTRY_DATE,
             p.ENTRY_PRICE,
             p.QUANTITY,
-            'LONG'::VARCHAR(8)                                     AS SIDE,
+            CASE
+                WHEN COALESCE(p.QUANTITY, 0) < 0 THEN 'SHORT'::VARCHAR(8)
+                ELSE 'LONG'::VARCHAR(8)
+            END                                                    AS SIDE,
             DATEDIFF('day', p.ENTRY_DATE, :P_AS_OF_DATE)           AS DAYS_HELD,
             SHA2(
                 p.PORTFOLIO_ID::STRING || '|' ||
@@ -180,6 +188,25 @@ BEGIN
         FROM nearest_support
         WHERE RN = 1
     ),
+    /* ---- 6b) Nearest resistance level (invalidation proxy for SHORT) ---- */
+    nearest_resistance AS (
+        SELECT
+            l.SYMBOL,
+            l.MARKET_TYPE,
+            l.LEVEL_PRICE,
+            ROW_NUMBER() OVER (
+                PARTITION BY l.SYMBOL, l.MARKET_TYPE
+                ORDER BY l.LEVEL_SIGNIFICANCE DESC NULLS LAST, l.LAST_TOUCH_DATE DESC NULLS LAST
+            ) AS RN
+        FROM MIP.APP.STRUCTURAL_LEVEL_CACHE l
+        WHERE l.LEVEL_TYPE IN ('RESISTANCE', 'resistance', 'RESISTANCE_ZONE', 'SWING_HIGH')
+          AND l.AS_OF_DATE <= :P_AS_OF_DATE
+    ),
+    nearest_resistance_one AS (
+        SELECT SYMBOL, MARKET_TYPE, LEVEL_PRICE
+        FROM nearest_resistance
+        WHERE RN = 1
+    ),
     /* ---- 7) Path metrics: bars from ENTRY_DATE to AS_OF_DATE per position ---- */
     path_bars AS (
         SELECT
@@ -203,6 +230,7 @@ BEGIN
             POSITION_EPISODE_KEY,
             COUNT(*)                                              AS BARS_OBSERVED,
             SUM(CASE WHEN CLOSE > PREV_CLOSE THEN 1 ELSE 0 END)   AS UP_DAYS,
+            SUM(CASE WHEN CLOSE < PREV_CLOSE THEN 1 ELSE 0 END) AS DOWN_DAYS,
             COUNT(PREV_CLOSE)                                     AS COMPARABLE_DAYS,
             MAX(CLOSE)                                            AS HIGH_WATER_CLOSE,
             MIN(CLOSE)                                            AS TROUGH_CLOSE,
@@ -232,57 +260,91 @@ BEGIN
             ELSE 'MEDIUM'
         END                                            AS BASELINE_QUALITY,
 
-        /* ---- THESIS_INTEGRITY: derived from current structural state, NOT from baseline ---- */
+        /* ---- THESIS_INTEGRITY: side-aware structural state vs position direction ---- */
         CASE
             WHEN st.STRUCTURAL_STATE IS NULL THEN 'PARTIAL'
-            WHEN UPPER(st.STRUCTURAL_STATE) LIKE '%BEAR%'
+            WHEN op.SIDE = 'SHORT'
+                 AND UPPER(st.STRUCTURAL_STATE) LIKE '%BULL%'
+                 AND UPPER(COALESCE(rg.TREND_REGIME, 'NEUTRAL')) LIKE '%BULL%' THEN 'FAILED'
+            WHEN op.SIDE = 'SHORT' AND UPPER(st.STRUCTURAL_STATE) LIKE '%BULL%' THEN 'WEAKENING'
+            WHEN op.SIDE = 'SHORT' AND UPPER(st.STRUCTURAL_STATE) LIKE '%BEAR%' THEN 'ALIGNED'
+            WHEN op.SIDE = 'LONG'
+                 AND UPPER(st.STRUCTURAL_STATE) LIKE '%BEAR%'
                  AND UPPER(COALESCE(rg.TREND_REGIME, 'NEUTRAL')) LIKE '%BEAR%' THEN 'FAILED'
-            WHEN UPPER(st.STRUCTURAL_STATE) LIKE '%BEAR%' THEN 'WEAKENING'
-            WHEN UPPER(st.STRUCTURAL_STATE) LIKE '%BULL%' THEN 'ALIGNED'
+            WHEN op.SIDE = 'LONG' AND UPPER(st.STRUCTURAL_STATE) LIKE '%BEAR%' THEN 'WEAKENING'
+            WHEN op.SIDE = 'LONG' AND UPPER(st.STRUCTURAL_STATE) LIKE '%BULL%' THEN 'ALIGNED'
             ELSE 'PARTIAL'
         END                                            AS THESIS_INTEGRITY,
 
-        /* ---- PATH_QUALITY: from bar sequence since entry ---- */
+        /* ---- PATH_QUALITY: side-aware bar sequence since entry ---- */
         CASE
             WHEN pm.COMPARABLE_DAYS IS NULL OR pm.COMPARABLE_DAYS = 0 THEN 'ACCEPTABLE'
-            WHEN pm.LAST_CLOSE >= COALESCE(pm.HIGH_WATER_CLOSE, pm.LAST_CLOSE) * 0.97
+            WHEN op.SIDE = 'LONG'
+                 AND pm.LAST_CLOSE >= COALESCE(pm.HIGH_WATER_CLOSE, pm.LAST_CLOSE) * 0.97
                  AND (pm.UP_DAYS::FLOAT / NULLIF(pm.COMPARABLE_DAYS, 0)) >= 0.55
                  AND pm.LAST_CLOSE > op.ENTRY_PRICE THEN 'CONSTRUCTIVE'
-            WHEN (pm.UP_DAYS::FLOAT / NULLIF(pm.COMPARABLE_DAYS, 0)) < 0.40
-                 OR pm.LAST_CLOSE < pm.FIRST_CLOSE * 0.93 THEN 'DETERIORATING'
+            WHEN op.SIDE = 'SHORT'
+                 AND pm.LAST_CLOSE <= COALESCE(pm.TROUGH_CLOSE, pm.LAST_CLOSE) * 1.03
+                 AND (pm.DOWN_DAYS::FLOAT / NULLIF(pm.COMPARABLE_DAYS, 0)) >= 0.55
+                 AND pm.LAST_CLOSE < op.ENTRY_PRICE THEN 'CONSTRUCTIVE'
+            WHEN op.SIDE = 'LONG'
+                 AND ((pm.UP_DAYS::FLOAT / NULLIF(pm.COMPARABLE_DAYS, 0)) < 0.40
+                      OR pm.LAST_CLOSE < pm.FIRST_CLOSE * 0.93) THEN 'DETERIORATING'
+            WHEN op.SIDE = 'SHORT'
+                 AND ((pm.UP_DAYS::FLOAT / NULLIF(pm.COMPARABLE_DAYS, 0)) >= 0.60
+                      OR pm.LAST_CLOSE > pm.FIRST_CLOSE * 1.07) THEN 'DETERIORATING'
             WHEN (pm.UP_DAYS::FLOAT / NULLIF(pm.COMPARABLE_DAYS, 0)) BETWEEN 0.40 AND 0.50
                  AND ABS(pm.LAST_CLOSE - pm.FIRST_CLOSE) / NULLIF(pm.FIRST_CLOSE, 0) < 0.03 THEN 'NOISY'
             ELSE 'ACCEPTABLE'
         END                                            AS PATH_QUALITY,
 
-        /* ---- REGIME_ALIGNMENT: TREND_REGIME match for LONG ---- */
+        /* ---- REGIME_ALIGNMENT: side-aware trend regime ---- */
         CASE
             WHEN rg.TREND_REGIME IS NULL THEN 'NEUTRAL'
-            WHEN UPPER(rg.TREND_REGIME) LIKE '%BULL%' THEN 'SUPPORTIVE'
-            WHEN UPPER(rg.TREND_REGIME) LIKE '%BEAR%' THEN 'ADVERSE'
+            WHEN op.SIDE = 'LONG' AND UPPER(rg.TREND_REGIME) LIKE '%BULL%' THEN 'SUPPORTIVE'
+            WHEN op.SIDE = 'LONG' AND UPPER(rg.TREND_REGIME) LIKE '%BEAR%' THEN 'ADVERSE'
+            WHEN op.SIDE = 'SHORT' AND UPPER(rg.TREND_REGIME) LIKE '%BEAR%' THEN 'SUPPORTIVE'
+            WHEN op.SIDE = 'SHORT' AND UPPER(rg.TREND_REGIME) LIKE '%BULL%' THEN 'ADVERSE'
             ELSE 'NEUTRAL'
         END                                            AS REGIME_ALIGNMENT,
 
-        /* ---- DISTANCE_TO_INVALIDATION_PCT and FRAGILITY ---- */
+        /* ---- DISTANCE_TO_INVALIDATION_PCT: support cushion (LONG) / resistance cushion (SHORT) ---- */
         CASE
-            WHEN ns.LEVEL_PRICE IS NOT NULL AND lb.CLOSE IS NOT NULL AND lb.CLOSE > 0
+            WHEN op.SIDE = 'LONG'
+                 AND ns.LEVEL_PRICE IS NOT NULL AND lb.CLOSE IS NOT NULL AND lb.CLOSE > 0
                  AND ns.LEVEL_PRICE < lb.CLOSE
                  THEN ((lb.CLOSE - ns.LEVEL_PRICE) / lb.CLOSE) * 100.0
+            WHEN op.SIDE = 'SHORT'
+                 AND nr.LEVEL_PRICE IS NOT NULL AND lb.CLOSE IS NOT NULL AND lb.CLOSE > 0
+                 AND nr.LEVEL_PRICE > lb.CLOSE
+                 THEN ((nr.LEVEL_PRICE - lb.CLOSE) / lb.CLOSE) * 100.0
             ELSE NULL
         END                                            AS DISTANCE_TO_INVALIDATION_PCT,
 
         CASE
-            WHEN ns.LEVEL_PRICE IS NULL OR lb.CLOSE IS NULL OR lb.CLOSE <= 0 THEN 'COMFORTABLE'
-            WHEN ns.LEVEL_PRICE >= lb.CLOSE THEN 'FRAGILE'
-            WHEN ((lb.CLOSE - ns.LEVEL_PRICE) / lb.CLOSE) * 100.0 < 5.0 THEN 'FRAGILE'
-            WHEN ((lb.CLOSE - ns.LEVEL_PRICE) / lb.CLOSE) * 100.0 < 10.0 THEN 'TIGHTENING'
+            WHEN lb.CLOSE IS NULL OR lb.CLOSE <= 0 THEN 'COMFORTABLE'
+            WHEN op.SIDE = 'LONG' AND ns.LEVEL_PRICE IS NULL THEN 'COMFORTABLE'
+            WHEN op.SIDE = 'LONG' AND ns.LEVEL_PRICE >= lb.CLOSE THEN 'FRAGILE'
+            WHEN op.SIDE = 'LONG'
+                 AND ((lb.CLOSE - ns.LEVEL_PRICE) / lb.CLOSE) * 100.0 < 5.0 THEN 'FRAGILE'
+            WHEN op.SIDE = 'LONG'
+                 AND ((lb.CLOSE - ns.LEVEL_PRICE) / lb.CLOSE) * 100.0 < 10.0 THEN 'TIGHTENING'
+            WHEN op.SIDE = 'SHORT' AND nr.LEVEL_PRICE IS NULL THEN 'COMFORTABLE'
+            WHEN op.SIDE = 'SHORT' AND nr.LEVEL_PRICE <= lb.CLOSE THEN 'FRAGILE'
+            WHEN op.SIDE = 'SHORT'
+                 AND ((nr.LEVEL_PRICE - lb.CLOSE) / lb.CLOSE) * 100.0 < 5.0 THEN 'FRAGILE'
+            WHEN op.SIDE = 'SHORT'
+                 AND ((nr.LEVEL_PRICE - lb.CLOSE) / lb.CLOSE) * 100.0 < 10.0 THEN 'TIGHTENING'
             ELSE 'COMFORTABLE'
         END                                            AS FRAGILITY,
 
-        /* ---- UNREALIZED_PNL_PCT (LONG-only V1) ---- */
+        /* ---- UNREALIZED_PNL_PCT: long gain when price up; short gain when price down ---- */
         CASE
-            WHEN op.ENTRY_PRICE IS NOT NULL AND op.ENTRY_PRICE > 0 AND lb.CLOSE IS NOT NULL
-                 THEN ((lb.CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE) * 100.0
+            WHEN op.ENTRY_PRICE IS NOT NULL AND op.ENTRY_PRICE > 0 AND lb.CLOSE IS NOT NULL THEN
+                CASE op.SIDE
+                    WHEN 'SHORT' THEN ((op.ENTRY_PRICE - lb.CLOSE) / op.ENTRY_PRICE) * 100.0
+                    ELSE ((lb.CLOSE - op.ENTRY_PRICE) / op.ENTRY_PRICE) * 100.0
+                END
             ELSE NULL
         END                                            AS UNREALIZED_PNL_PCT,
 
@@ -296,10 +358,13 @@ BEGIN
         lb.CLOSE                                       AS LATEST_CLOSE,
         lb.BAR_DATE                                    AS LATEST_BAR_DATE,
         ns.LEVEL_PRICE                                 AS NEAREST_SUPPORT_PRICE,
+        nr.LEVEL_PRICE                                 AS NEAREST_RESISTANCE_PRICE,
         pm.BARS_OBSERVED                               AS PATH_BARS_OBSERVED,
         pm.UP_DAYS                                     AS PATH_UP_DAYS,
+        pm.DOWN_DAYS                                   AS PATH_DOWN_DAYS,
         pm.COMPARABLE_DAYS                             AS PATH_COMPARABLE_DAYS,
         pm.HIGH_WATER_CLOSE                            AS PATH_HIGH_WATER_CLOSE,
+        pm.TROUGH_CLOSE                                AS PATH_TROUGH_CLOSE,
         pm.LAST_CLOSE                                  AS PATH_LAST_CLOSE,
         op.POSITION_IDENTITY_SOURCE                    AS POSITION_IDENTITY_SOURCE,
         op.IBKR_ACCOUNT_ID                             AS IBKR_ACCOUNT_ID,
@@ -319,6 +384,9 @@ BEGIN
     LEFT JOIN nearest_support_one ns
            ON ns.SYMBOL = op.SYMBOL
           AND ns.MARKET_TYPE = op.MARKET_TYPE
+    LEFT JOIN nearest_resistance_one nr
+           ON nr.SYMBOL = op.SYMBOL
+          AND nr.MARKET_TYPE = op.MARKET_TYPE
     LEFT JOIN path_metrics pm
            ON pm.POSITION_EPISODE_KEY = op.POSITION_EPISODE_KEY;
 
@@ -412,8 +480,16 @@ BEGIN
                      AND REGIME_ALIGNMENT = 'ADVERSE'
                      AND FRAGILITY = 'FRAGILE' THEN 'Position is deteriorating into adverse regime with thin invalidation cushion.'
                 WHEN THESIS_INTEGRITY = 'WEAKENING' AND FRAGILITY = 'FRAGILE' THEN 'Thesis weakening while invalidation cushion has thinned.'
-                WHEN PATH_QUALITY = 'DETERIORATING' THEN 'Realized path since entry is deteriorating.'
-                WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN 'Macro and trend regime is adverse to the position direction.'
+                WHEN PATH_QUALITY = 'DETERIORATING' THEN
+                    CASE SIDE
+                        WHEN 'SHORT' THEN 'Realized path since entry is rising (adverse to short).'
+                        ELSE 'Realized path since entry is deteriorating.'
+                    END
+                WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN
+                    CASE SIDE
+                        WHEN 'SHORT' THEN 'Macro and trend regime is adverse to the short direction.'
+                        ELSE 'Macro and trend regime is adverse to the position direction.'
+                    END
                 WHEN PATH_QUALITY = 'NOISY' THEN 'Path since entry has been choppy with no clear progress.'
                 WHEN THESIS_INTEGRITY = 'ALIGNED' AND PATH_QUALITY = 'CONSTRUCTIVE' THEN 'Thesis intact and realized path is constructive.'
                 ELSE 'Thesis intact and structure remains supportive.'
@@ -441,8 +517,16 @@ BEGIN
                      AND REGIME_ALIGNMENT = 'ADVERSE'
                      AND FRAGILITY = 'FRAGILE' THEN 'Triple-confluence: deteriorating path, adverse regime, thin cushion.'
                 WHEN THESIS_INTEGRITY = 'WEAKENING' AND FRAGILITY = 'FRAGILE' THEN 'Weakening thesis combined with thin invalidation cushion.'
-                WHEN PATH_QUALITY = 'DETERIORATING' THEN 'Realized closes trending downward since entry.'
-                WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN 'Trend regime ' || COALESCE(TREND_REGIME_NOW, 'unknown') || ' opposes position direction.'
+                WHEN PATH_QUALITY = 'DETERIORATING' THEN
+                    CASE SIDE
+                        WHEN 'SHORT' THEN 'Realized closes trending upward since entry (adverse to short).'
+                        ELSE 'Realized closes trending downward since entry.'
+                    END
+                WHEN REGIME_ALIGNMENT = 'ADVERSE' THEN
+                    CASE SIDE
+                        WHEN 'SHORT' THEN 'Trend regime ' || COALESCE(TREND_REGIME_NOW, 'unknown') || ' opposes short direction.'
+                        ELSE 'Trend regime ' || COALESCE(TREND_REGIME_NOW, 'unknown') || ' opposes position direction.'
+                    END
                 WHEN PATH_QUALITY = 'NOISY' THEN 'Up-day ratio low and net move negligible.'
                 WHEN THESIS_INTEGRITY = 'ALIGNED' AND PATH_QUALITY = 'CONSTRUCTIVE' THEN 'Structure ' || COALESCE(STRUCTURAL_STATE_NOW, 'unknown') || ' and path constructive.'
                 ELSE 'Structure ' || COALESCE(STRUCTURAL_STATE_NOW, 'unknown') || ' remains supportive.'
@@ -458,10 +542,13 @@ BEGIN
                 'latest_close',                 LATEST_CLOSE,
                 'latest_bar_date',              LATEST_BAR_DATE,
                 'nearest_support_price',        NEAREST_SUPPORT_PRICE,
+                'nearest_resistance_price',     NEAREST_RESISTANCE_PRICE,
                 'path_bars_observed',           PATH_BARS_OBSERVED,
                 'path_up_days',                 PATH_UP_DAYS,
+                'path_down_days',               PATH_DOWN_DAYS,
                 'path_comparable_days',         PATH_COMPARABLE_DAYS,
                 'path_high_water_close',        PATH_HIGH_WATER_CLOSE,
+                'path_trough_close',            PATH_TROUGH_CLOSE,
                 'path_last_close',              PATH_LAST_CLOSE,
                 'position_identity_source',     POSITION_IDENTITY_SOURCE,
                 'ibkr_account_id',              IBKR_ACCOUNT_ID,

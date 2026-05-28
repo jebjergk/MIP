@@ -22,10 +22,20 @@ def _norm_id(v: Any) -> str:
     return s
 
 
+def _coerce_payload_dict(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            parsed = json.loads(payload)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
 def _broker_keys_from_execution_row(row: dict[str, Any]) -> list[str]:
-    payload = row.get("PAYLOAD")
-    if not isinstance(payload, dict):
-        payload = {}
+    payload = _coerce_payload_dict(row.get("PAYLOAD"))
     keys: list[str] = []
     for k in (
         row.get("OPEN_ORDER_ID"),
@@ -53,7 +63,7 @@ def _preferred_broker_order_id(row: dict[str, Any]) -> str:
     is coalesced to perm_id in fetch_deduped_executions), then payload.perm_id, then
     fall back to TWS local order_id. Returns '' if nothing usable.
     """
-    payload = row.get("PAYLOAD") if isinstance(row.get("PAYLOAD"), dict) else {}
+    payload = _coerce_payload_dict(row.get("PAYLOAD"))
     for k in (
         row.get("OPEN_ORDER_ID"),
         payload.get("perm_id"),
@@ -74,8 +84,7 @@ def _preferred_broker_order_id(row: dict[str, Any]) -> str:
 
 
 def _execution_fill_fields(payload: Any) -> tuple[float | None, float | None]:
-    if not isinstance(payload, dict):
-        return None, None
+    payload = _coerce_payload_dict(payload)
     qty = None
     for qk in ("shares", "cumQty", "qty"):
         if payload.get(qk) is not None:
@@ -185,7 +194,7 @@ def classify_execution_against_orders(
     order_index: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     keys = _broker_keys_from_execution_row(exec_row)
-    payload = exec_row.get("PAYLOAD") if isinstance(exec_row.get("PAYLOAD"), dict) else {}
+    payload = _coerce_payload_dict(exec_row.get("PAYLOAD"))
     exec_qty, exec_price = _execution_fill_fields(payload)
     sym = str(exec_row.get("SYMBOL") or "").upper().strip()
 
@@ -387,6 +396,6 @@ def insert_reconcile_audit(
         )
         select %s, current_timestamp(), %s, %s, %s, parse_json(%s)
         """,
-        (eid, event_type, portfolio_id, action_id, json.dumps(payload)),
+        (eid, event_type, portfolio_id, action_id, json.dumps(payload, default=str)),
     )
     return eid

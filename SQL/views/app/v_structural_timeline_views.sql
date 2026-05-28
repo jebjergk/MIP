@@ -491,11 +491,46 @@ WITH setup_counts AS (
 ),
 proposal_counts AS (
     -- Agentic-only: legacy deterministic-selector rows (BOARD_RUN_ID NULL) are excluded.
+    --
+    -- Three counts, all gated on STATUS = 'PROPOSED' (i.e. still open):
+    --   PROPOSALS_CREATED   - lifetime count of agentic proposals for the symbol
+    --                         (any status, includes expired/superseded historical rows).
+    --   ACTIVE_PROPOSALS    - all open proposals, including research-only rows
+    --                         that LPA cannot import. Kept for backward compat
+    --                         and as the "everything the board produced" KPI.
+    --   ACTIONABLE_PROPOSALS- subset of ACTIVE that LPA's structural importer
+    --                         will accept: EXECUTION_POLICY_STATUS='EXECUTABLE'
+    --                         AND NOT IS_RESEARCH_ONLY. This is what drives the
+    --                         orange "operator-actionable" tile styling so the
+    --                         timeline matches LPA pending-decisions reality.
+    --   RESEARCH_PROPOSALS  - subset of ACTIVE that is research-only / policy-
+    --                         blocked (geometry invalid, short-live disabled,
+    --                         etc.). Surfaced separately so the UI can show a
+    --                         distinct "research" badge instead of pretending
+    --                         these rows are actionable.
     SELECT
         sp.SYMBOL,
         se.MARKET_TYPE,
         COUNT(*)                                                                AS PROPOSALS_CREATED,
-        COUNT(CASE WHEN sp.STATUS = 'PROPOSED' THEN 1 END)                      AS ACTIVE_PROPOSALS
+        COUNT(CASE WHEN sp.STATUS = 'PROPOSED' THEN 1 END)                      AS ACTIVE_PROPOSALS,
+        COUNT(
+            CASE
+                WHEN sp.STATUS = 'PROPOSED'
+                 AND COALESCE(sp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
+                 AND NOT COALESCE(sp.IS_RESEARCH_ONLY, FALSE)
+                THEN 1
+            END
+        )                                                                       AS ACTIONABLE_PROPOSALS,
+        COUNT(
+            CASE
+                WHEN sp.STATUS = 'PROPOSED'
+                 AND (
+                     COALESCE(sp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') != 'EXECUTABLE'
+                     OR COALESCE(sp.IS_RESEARCH_ONLY, FALSE)
+                 )
+                THEN 1
+            END
+        )                                                                       AS RESEARCH_PROPOSALS
     FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS sp
     JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se ON se.SETUP_EVENT_ID = sp.SETUP_EVENT_ID
     WHERE se.MARKET_TYPE != 'ETF'
@@ -586,6 +621,8 @@ SELECT
     sc.ELIGIBLE_SETUPS,
     COALESCE(pc.PROPOSALS_CREATED, 0)          AS PROPOSALS_CREATED,
     COALESCE(pc.ACTIVE_PROPOSALS, 0)           AS ACTIVE_PROPOSALS,
+    COALESCE(pc.ACTIONABLE_PROPOSALS, 0)       AS ACTIONABLE_PROPOSALS,
+    COALESCE(pc.RESEARCH_PROPOSALS, 0)         AS RESEARCH_PROPOSALS,
     COALESCE(tc.TRADES_EXECUTED, 0)            AS TRADES_EXECUTED,
     sc.LONG_SETUPS,
     sc.SHORT_SETUPS,

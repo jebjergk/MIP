@@ -85,6 +85,21 @@
 .stl-tile-eligible {
   border-left: 3px solid #1a73e8;
 }
+.stl-tile-research {
+  border-left: 3px dashed #9aa0a6;
+  background: #fafafa;
+}
+.stl-count-research {
+  color: #6c757d;
+  font-weight: 500;
+  font-style: italic;
+}
+.stl-tile-research-suffix {
+  margin-left: 2px;
+  font-size: 0.62rem;
+  color: #6c757d;
+  font-style: italic;
+}
 
 /* ── Detail anchor (prevents layout jump) ── */
 .stl-detail-anchor {

@@ -268,20 +268,43 @@ export default function StructuralMarketTimeline() {
                 const eligible = Number(get(s, 'ELIGIBLE_SETUPS') || 0)
                 const propLifetime = Number(get(s, 'PROPOSALS_CREATED') || 0)
                 const propActive = Number(get(s, 'ACTIVE_PROPOSALS') || 0)
+                const propActionable = Number(get(s, 'ACTIONABLE_PROPOSALS') || 0)
+                const propResearch = Number(get(s, 'RESEARCH_PROPOSALS') || 0)
                 const trades = Number(get(s, 'TRADES_EXECUTED') || 0)
                 const state = get(s, 'DOMINANT_STATE')
-                const hasActiveProposals = propActive > 0
-                // Tile edge color escalates: nothing → signal (eligible setup) → proposal.
-                // TRADES_EXECUTED is lifetime/historical — kept as a badge below but
-                // intentionally NOT used to color the tile (would mask actionable proposals).
-                const tileClass = hasActiveProposals
+                // Tile edge color escalates: nothing → signal (eligible setup) →
+                // research-only proposal → operator-actionable proposal. The
+                // ACTIONABLE_PROPOSALS count matches what LPA's structural
+                // importer accepts (EXECUTABLE + not research-only), so an
+                // orange tile here means the symbol is genuinely available in
+                // LPA pending decisions. Research-only board output (geometry
+                // invalid, policy blocked) gets a distinct dashed style so the
+                // operator sees the board produced something without being led
+                // to expect an LPA row that will never appear.
+                // TRADES_EXECUTED is lifetime/historical — kept as a badge
+                // below but intentionally NOT used to color the tile (would
+                // mask actionable proposals).
+                const tileClass = propActionable > 0
                   ? 'stl-tile-proposed'
-                  : eligible > 0
-                    ? 'stl-tile-eligible'
-                    : ''
-                const propBadgeTitle = propLifetime > propActive
-                  ? `${propActive} active proposal${propActive === 1 ? '' : 's'} (${propLifetime} lifetime, incl. expired/historical)`
-                  : `${propActive} active proposal${propActive === 1 ? '' : 's'}`
+                  : propResearch > 0
+                    ? 'stl-tile-research'
+                    : eligible > 0
+                      ? 'stl-tile-eligible'
+                      : ''
+                const propBadgeCount = propActionable
+                const propBadgeParts = []
+                propBadgeParts.push(
+                  `${propActionable} actionable proposal${propActionable === 1 ? '' : 's'} (eligible for LPA pending decisions)`,
+                )
+                if (propResearch > 0) {
+                  propBadgeParts.push(
+                    `${propResearch} research-only proposal${propResearch === 1 ? '' : 's'} (board produced but blocked from LPA — geometry/policy)`,
+                  )
+                }
+                if (propLifetime > propActive) {
+                  propBadgeParts.push(`${propLifetime} lifetime (incl. expired/historical)`)
+                }
+                const propBadgeTitle = propBadgeParts.join(' · ')
                 return (
                   <div
                     key={`${sym}-${mt}`}
@@ -296,7 +319,10 @@ export default function StructuralMarketTimeline() {
                     </div>
                     <div className="stl-tile-counts">
                       <span className={`stl-tile-count ${setups > 0 ? 'stl-count-has' : ''}`} title="Setups">S:{setups}</span>
-                      <span className={`stl-tile-count ${propActive > 0 ? 'stl-count-prop' : ''}`} title={propBadgeTitle}>P:{propActive}</span>
+                      <span className={`stl-tile-count ${propActionable > 0 ? 'stl-count-prop' : (propResearch > 0 ? 'stl-count-research' : '')}`} title={propBadgeTitle}>
+                        P:{propBadgeCount}
+                        {propResearch > 0 && <span className="stl-tile-research-suffix"> (+{propResearch}R)</span>}
+                      </span>
                       <span className={`stl-tile-count ${trades > 0 ? 'stl-count-trade' : ''}`} title="Trades">T:{trades}</span>
                     </div>
                     {state && <div className="stl-tile-state">{state.replace(/_/g, ' ')}</div>}

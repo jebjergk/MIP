@@ -2,6 +2,27 @@
    supersede_stale_structural_pending_actions.sql
    LPA stale-proposal lifecycle cleanup — one-time backfill.
 
+   !!! DO NOT RE-RUN UNTIL Rule 1 OF SP_EXPIRE_STALE_DAILY_PROPOSALS
+   !!! IS REWORKED TO BE BOARD-RUN-BASED INSTEAD OF CALENDAR-DATE-BASED.
+   !!!
+   !!! Incident 2026-05-28: re-running this script after the original
+   !!! one-time backfill (still inside the same trading day as the
+   !!! previous evening's board run) caused proposal 3501 (CRM SHORT)
+   !!! to be wrongly EXPIRED and its LIVE_ACTION wrongly SUPERSEDED,
+   !!! removing it from LPA pending decisions before the operator
+   !!! had a chance to act on it. CRM was restored via
+   !!! restore_crm_proposal_3501_20260528.sql.
+   !!!
+   !!! Root cause: SP_EXPIRE_STALE_DAILY_PROPOSALS Rule 1 uses
+   !!! `CREATED_AT::DATE < CURRENT_DATE()`. Any call to the SP after
+   !!! UTC midnight terminalises proposals from the previous evening's
+   !!! board run even though the operator's day has not yet rolled
+   !!! over (the next evening pipeline has not produced fresh
+   !!! authoritative proposals yet).
+   !!!
+   !!! Until Rule 1 is reworked, this script must be considered
+   !!! one-shot historical only.
+
    Companion to the wider Stage A change in
    MIP/SQL/app/522_sp_expire_stale_daily_proposals.sql which expands
    the cascade status list to ALL pre-broker structural pending

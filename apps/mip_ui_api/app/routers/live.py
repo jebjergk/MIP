@@ -281,6 +281,12 @@ class UpdateLiveOrderStatusRequest(BaseModel):
     broker_order_id: str | None = None
     total_commission: float | None = None
     notes: str | None = None
+    # Optional broker-truth fill time. When set on a FILLED transition, the
+    # update preserves the broker's actual execution timestamp instead of
+    # stamping current_timestamp(). Reconcile/backfill paths should always
+    # pass this; live submit acks can omit it (current_timestamp is correct
+    # for fills that just happened).
+    filled_at: datetime | None = None
 
 
 class ReconcileApplyItem(BaseModel):
@@ -8842,12 +8848,29 @@ def get_live_activity_overview(
             f"{str(e.get('broker_order_id') or '')}:{str(e.get('symbol') or '').upper()}:{str(e.get('execution_ts') or '')}:{str(e.get('qty_filled') or '')}"
             for e in executions
         }
+        # Also dedupe on (broker_order_id, symbol) so MIP_BROKER_LEDGER rows do
+        # not surface alongside IBKR rows that already carry execution_context
+        # and P&L logic. Without this, a stale FILLED_AT (e.g. from a reconcile
+        # backfill stamping current_timestamp) creates a phantom ledger row
+        # with the wrong date and no P&L — the 2026-05-28 incident pattern.
+        seen_broker_keys = {
+            (
+                str(e.get("broker_order_id") or "").strip(),
+                str(e.get("symbol") or "").upper(),
+            )
+            for e in executions
+            if e.get("broker_order_id")
+        }
         for local_exec in executions_local:
             local_key = (
                 f"{str(local_exec.get('broker_order_id') or '')}:{str(local_exec.get('symbol') or '').upper()}:"
                 f"{str(local_exec.get('execution_ts') or '')}:{str(local_exec.get('qty_filled') or '')}"
             )
             if local_key in seen_combined:
+                continue
+            local_broker_id = str(local_exec.get("broker_order_id") or "").strip()
+            local_symbol = str(local_exec.get("symbol") or "").upper()
+            if local_broker_id and (local_broker_id, local_symbol) in seen_broker_keys:
                 continue
             executions.append(local_exec)
 
@@ -15092,6 +15115,12 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
         if target_status == "FILLED":
             new_qty_filled = qty_ordered if qty_ordered > 0 else (req.qty_filled or existing_qty_filled)
 
+        # When a reconcile/backfill caller supplies the broker's true fill time,
+        # preserve it; otherwise fall back to FILLED_AT (idempotent replay) or
+        # current_timestamp() (live ack with no broker time available).
+        filled_at_param = (
+            req.filled_at.replace(tzinfo=None) if req.filled_at is not None else None
+        )
         cur.execute(
             """
             update MIP.LIVE.LIVE_ORDERS
@@ -15100,7 +15129,11 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                    QTY_FILLED = %s,
                    AVG_FILL_PRICE = coalesce(%s, AVG_FILL_PRICE),
                    TOTAL_COMMISSION = coalesce(%s, TOTAL_COMMISSION),
-                   FILLED_AT = case when %s = 'FILLED' then current_timestamp() else FILLED_AT end,
+                   FILLED_AT = case
+                                 when %s = 'FILLED'
+                                   then coalesce(%s, FILLED_AT, current_timestamp())
+                                 else FILLED_AT
+                               end,
                    LAST_UPDATED_AT = current_timestamp()
              where ORDER_ID = %s
             """,
@@ -15111,6 +15144,7 @@ def update_live_order_status(order_id: str, req: UpdateLiveOrderStatusRequest):
                 req.avg_fill_price,
                 req.total_commission,
                 target_status,
+                filled_at_param,
                 order_id,
             ),
         )
@@ -15536,6 +15570,7 @@ def reconcile_executions_apply(req: ReconcileExecutionsApplyRequest):
                         "proposed_status": clf.get("proposed_status"),
                         "proposed_qty_filled": clf.get("proposed_qty_filled"),
                         "proposed_avg_fill_price": clf.get("proposed_avg_fill_price"),
+                        "proposed_filled_at": clf.get("proposed_filled_at"),
                         "reason_detail": clf.get("reason_detail"),
                     },
                 },
@@ -15564,6 +15599,10 @@ def reconcile_executions_apply(req: ReconcileExecutionsApplyRequest):
             qty_filled=float(clf["proposed_qty_filled"]) if clf.get("proposed_qty_filled") is not None else None,
             avg_fill_price=float(clf["proposed_avg_fill_price"]) if clf.get("proposed_avg_fill_price") is not None else None,
             broker_order_id=new_bid,
+            # Preserve broker truth: stamp FILLED_AT with the actual IB
+            # execution time, not current_timestamp(). Without this, syncing
+            # a fill that happened days ago would back-date the trade to now.
+            filled_at=clf.get("proposed_filled_at"),
             notes=(
                 f"broker_execution_reconcile run={reconcile_run_id} exec_key={item.exec_key}"
                 + (

@@ -21,7 +21,14 @@
      5) Wide-cascade contract: a STATUS bucket REVALIDATED_PASS is
         reachable by the cascade SQL (sanity: status list contract).
 
-   Idempotent. Safe to re-run after each daily pipeline.
+   Read-only. The previous version called
+   SP_EXPIRE_STALE_DAILY_PROPOSALS(CURRENT_DATE()) as an idempotency
+   check (step 6). That CALL has been DISABLED because Rule 1 of the
+   SP currently uses calendar-date logic and will incorrectly expire
+   proposals from the previous evening's board run any time it is
+   invoked after UTC midnight. See step 6 for re-enable conditions.
+
+   Safe to re-run after each daily pipeline.
    ================================================================ */
 
 USE ROLE MIP_ADMIN_ROLE;
@@ -117,9 +124,23 @@ SELECT
  ORDER BY la.UPDATED_AT DESC
  LIMIT 5;
 
--- 6. SP idempotency: a second invocation on the same date should
---    report zero new supersedes (the first call already terminalized
---    everything reachable). The result VARIANT is returned in the
---    `actions_superseded`, `actions_superseded_lifecycle`, and
---    `actions_superseded_orphan` keys.
-CALL MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(CURRENT_DATE());
+-- 6. SP idempotency check — DISABLED for now.
+--
+--    The CALL below is intentionally commented out. SP_EXPIRE_STALE_
+--    DAILY_PROPOSALS Rule 1 currently uses calendar-date logic
+--    (CREATED_AT::DATE < CURRENT_DATE()), which is mis-aligned with
+--    the operator time model: proposals from the previous evening's
+--    board run must remain actionable in LPA throughout the next
+--    trading day, until the NEXT evening pipeline produces a fresh
+--    authoritative board run. Calling the SP at any time after
+--    UTC midnight terminalizes still-valid proposals from the prior
+--    evening (CRM 3501 incident, 2026-05-28).
+--
+--    DO NOT re-enable until Rule 1 is reworked to be board-run-based
+--    (e.g. "expire proposals whose BOARD_RUN_ID is older than the
+--    latest authoritative run for the same scope") rather than
+--    calendar-date-based. Tracked as a follow-up to this commit.
+--
+-- CALL MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(CURRENT_DATE());
+SELECT 'SP_IDEMPOTENCY_CHECK_DISABLED' AS CHECK_NAME,
+       'See header comment: Rule 1 calendar-date bug. Re-enable after fix.' AS NOTE;

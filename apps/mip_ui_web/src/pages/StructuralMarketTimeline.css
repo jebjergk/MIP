@@ -644,3 +644,26 @@
   font-size: 0.8rem;
   color: #64748b;
 }
+
+.stl-research-banner {
+  margin: 0 0 0.65rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px dashed #9aa0a6;
+  border-radius: 6px;
+  background: #fafafa;
+  font-size: 0.78rem;
+  color: #475569;
+  line-height: 1.45;
+}
+.stl-research-banner strong {
+  color: #6c757d;
+  font-style: italic;
+  margin-right: 0.15rem;
+}
+.stl-research-banner-detail {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  color: #6c757d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

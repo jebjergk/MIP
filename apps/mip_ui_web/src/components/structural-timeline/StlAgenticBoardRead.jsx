@@ -73,6 +73,23 @@ export default function StlAgenticBoardRead({ proposals, get }) {
   const phase4LatestHealth = data?.phase4_latest_health || null
   const hasPhase4 = Boolean(phase4Chair || phase4LatestHealth)
 
+  // Research-only banner: when the selected proposal is research-only or
+  // policy-blocked (geometry invalid, short-live disabled, etc.) the board
+  // produced a thesis but LPA's structural importer will never pick it up.
+  // Surface the policy status/reason here so operators don't waste time
+  // looking for it in LPA pending decisions.
+  const selectedRow = activeRows.find(
+    (r) => Number(get(r, 'PROPOSAL_ID')) === selectedPid,
+  )
+  const selectedExecPolicy = String(
+    get(selectedRow, 'EXECUTION_POLICY_STATUS') || 'EXECUTABLE',
+  ).toUpperCase()
+  const selectedIsResearchOnly = Boolean(get(selectedRow, 'IS_RESEARCH_ONLY'))
+  const selectedPolicyReason =
+    get(selectedRow, 'EXECUTION_POLICY_REASON') || null
+  const isResearchOnly =
+    selectedExecPolicy !== 'EXECUTABLE' || selectedIsResearchOnly
+
   return (
     <section className="stl-agentic-read">
       <div className="stl-agentic-read-head">
@@ -101,6 +118,18 @@ export default function StlAgenticBoardRead({ proposals, get }) {
           <span className="stl-agentic-read-single">Proposal #{selectedPid}</span>
         )}
       </div>
+      {isResearchOnly && (
+        <div className="stl-research-banner" role="note">
+          <strong>Research only</strong> &mdash; this proposal is not eligible for
+          LPA pending decisions.
+          {' '}
+          <span className="stl-research-banner-detail">
+            Policy: {selectedExecPolicy}
+            {selectedPolicyReason ? ` (${selectedPolicyReason})` : ''}
+            {selectedIsResearchOnly ? ' · IS_RESEARCH_ONLY=true' : ''}
+          </span>
+        </div>
+      )}
       {loading ? (
         <p className="stl-muted">Loading agentic read…</p>
       ) : err ? (

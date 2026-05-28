@@ -105,6 +105,20 @@ def _execution_fill_fields(payload: Any) -> tuple[float | None, float | None]:
     return qty, px
 
 
+def _execution_fill_time(exec_row: dict[str, Any]) -> Any:
+    """Return the broker-truth fill time for an execution snapshot row.
+
+    Prefers PAYLOAD:time (the IB-reported execution time) and falls back to
+    SNAPSHOT_TS. Returned as the original value (str or datetime) — the
+    receiving side coerces via Pydantic / Snowflake binding.
+    """
+    payload = _coerce_payload_dict(exec_row.get("PAYLOAD"))
+    t = payload.get("time")
+    if t is None or (isinstance(t, str) and not t.strip()):
+        t = exec_row.get("SNAPSHOT_TS")
+    return t
+
+
 def fetch_deduped_executions(cur, account_id: str, lookback_days: int) -> list[dict[str, Any]]:
     cur.execute(
         """
@@ -196,6 +210,7 @@ def classify_execution_against_orders(
     keys = _broker_keys_from_execution_row(exec_row)
     payload = _coerce_payload_dict(exec_row.get("PAYLOAD"))
     exec_qty, exec_price = _execution_fill_fields(payload)
+    exec_time = _execution_fill_time(exec_row)
     sym = str(exec_row.get("SYMBOL") or "").upper().strip()
 
     candidates: list[dict[str, Any]] = []
@@ -215,6 +230,7 @@ def classify_execution_against_orders(
         "preferred_broker_order_id": _preferred_broker_order_id(exec_row),
         "execution_qty": exec_qty,
         "execution_price": exec_price,
+        "execution_time": exec_time,
     }
 
     if not keys:
@@ -290,6 +306,7 @@ def classify_execution_against_orders(
             "proposed_status": "PARTIAL_FILL",
             "proposed_qty_filled": float(exec_qty),
             "proposed_avg_fill_price": exec_price,
+            "proposed_filled_at": exec_time,
             "reason_detail": "partial_fill_from_execution",
         }
 
@@ -302,6 +319,7 @@ def classify_execution_against_orders(
         "proposed_status": "FILLED",
         "proposed_qty_filled": float(q_ord) if q_ord > 0 else (float(exec_qty) if exec_qty is not None else 0.0),
         "proposed_avg_fill_price": exec_price,
+        "proposed_filled_at": exec_time,
         "reason_detail": "ok",
     }
 

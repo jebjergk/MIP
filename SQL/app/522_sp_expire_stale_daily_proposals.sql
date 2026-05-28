@@ -61,17 +61,32 @@
         SP now closes the gap on every invocation.
 
       * Cascades to LIVE_ACTIONS where LIVE_INTENT_KIND='STRUCTURAL'
-        and the action is still in an open / pre-broker state
-        (PROPOSED, INTENT_APPROVED, PENDING_OPEN_VALIDATION,
-        OPEN_BLOCKED). Those are marked STATUS='SUPERSEDED' with
-        REASON_CODES appended 'PROPOSAL_EXPIRED_AT_PARENT' (rule 0),
+        and the action is still in any pre-broker pending state. The
+        full pre-broker pending set covered here is:
+            PROPOSED, PENDING_OPEN_VALIDATION, OPEN_ELIGIBLE,
+            OPEN_CAUTION, OPEN_BLOCKED, PENDING_OPEN_STABILITY_REVIEW,
+            READY_FOR_APPROVAL_FLOW, PM_ACCEPTED, COMPLIANCE_APPROVED,
+            INTENT_SUBMITTED, INTENT_APPROVED,
+            REVALIDATED_PASS, REVALIDATED_FAIL
+        Those are marked STATUS='SUPERSEDED' with REASON_CODES appended
+        'PROPOSAL_EXPIRED_AT_PARENT' (rule 0),
         'OLD_DAILY_PROPOSAL_EXPIRED' (rule 1),
         'UNDERLYING_SETUP_NOT_ELIGIBLE' (rule 2), or
         'SUPERSEDED_BY_NEWER_BOARD_RUN' (rule 3).
 
-      * EXECUTION_REQUESTED actions tied to expired proposals are
-        NOT modified (they're live with the broker — race risk).
-        They are reported in the result for visibility / manual review.
+        Rationale (LPA stale lifecycle fix): an action that has progressed
+        through committee to e.g. REVALIDATED_PASS but whose parent
+        proposal is now expired (or from a superseded board run) must
+        not survive the next daily pipeline boundary. The previous
+        narrow 4-status cascade left such rows dangling and forced
+        operators to manually Reject them in LPA. The wider cascade
+        makes the daily pipeline the authoritative cleanup boundary.
+
+      * EXECUTION_REQUESTED, EXECUTION_PARTIAL, EXECUTED, CLOSED,
+        REJECTED, SUPERSEDED, CANCELLED, EXPIRED actions are NOT
+        modified. EXECUTION_REQUESTED / EXECUTION_PARTIAL are live
+        with the broker (race risk) and are reported in the result
+        for manual review; the others are already terminal.
 
     Called automatically at the start of SP_RUN_STRUCTURAL_DAILY_PIPELINE
     (right before SP_PROPOSE_STRUCTURAL_TRADES). Safe to invoke ad-hoc.
@@ -132,9 +147,18 @@ BEGIN
      WHERE la.LIVE_INTENT_KIND = 'STRUCTURAL'
        AND la.STATUS IN (
            'PROPOSED',
-           'INTENT_APPROVED',
            'PENDING_OPEN_VALIDATION',
-           'OPEN_BLOCKED'
+           'OPEN_ELIGIBLE',
+           'OPEN_CAUTION',
+           'OPEN_BLOCKED',
+           'PENDING_OPEN_STABILITY_REVIEW',
+           'READY_FOR_APPROVAL_FLOW',
+           'PM_ACCEPTED',
+           'COMPLIANCE_APPROVED',
+           'INTENT_SUBMITTED',
+           'INTENT_APPROVED',
+           'REVALIDATED_PASS',
+           'REVALIDATED_FAIL'
        )
        AND p.STATUS = 'EXPIRED';
 
@@ -152,9 +176,18 @@ BEGIN
        AND la.LIVE_INTENT_KIND = 'STRUCTURAL'
        AND la.STATUS IN (
            'PROPOSED',
-           'INTENT_APPROVED',
            'PENDING_OPEN_VALIDATION',
-           'OPEN_BLOCKED'
+           'OPEN_ELIGIBLE',
+           'OPEN_CAUTION',
+           'OPEN_BLOCKED',
+           'PENDING_OPEN_STABILITY_REVIEW',
+           'READY_FOR_APPROVAL_FLOW',
+           'PM_ACCEPTED',
+           'COMPLIANCE_APPROVED',
+           'INTENT_SUBMITTED',
+           'INTENT_APPROVED',
+           'REVALIDATED_PASS',
+           'REVALIDATED_FAIL'
        )
        AND p.STATUS = 'EXPIRED';
     v_actions_superseded_orphan := SQLROWCOUNT;
@@ -197,9 +230,18 @@ BEGIN
            AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_PROPOSALS)
            AND STATUS IN (
                'PROPOSED',
-               'INTENT_APPROVED',
                'PENDING_OPEN_VALIDATION',
-               'OPEN_BLOCKED'
+               'OPEN_ELIGIBLE',
+               'OPEN_CAUTION',
+               'OPEN_BLOCKED',
+               'PENDING_OPEN_STABILITY_REVIEW',
+               'READY_FOR_APPROVAL_FLOW',
+               'PM_ACCEPTED',
+               'COMPLIANCE_APPROVED',
+               'INTENT_SUBMITTED',
+               'INTENT_APPROVED',
+               'REVALIDATED_PASS',
+               'REVALIDATED_FAIL'
            );
 
         v_superseded_action_ids := COALESCE(:v_superseded_action_ids, ARRAY_CONSTRUCT());
@@ -215,9 +257,18 @@ BEGIN
            AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_PROPOSALS)
            AND STATUS IN (
                'PROPOSED',
-               'INTENT_APPROVED',
                'PENDING_OPEN_VALIDATION',
-               'OPEN_BLOCKED'
+               'OPEN_ELIGIBLE',
+               'OPEN_CAUTION',
+               'OPEN_BLOCKED',
+               'PENDING_OPEN_STABILITY_REVIEW',
+               'READY_FOR_APPROVAL_FLOW',
+               'PM_ACCEPTED',
+               'COMPLIANCE_APPROVED',
+               'INTENT_SUBMITTED',
+               'INTENT_APPROVED',
+               'REVALIDATED_PASS',
+               'REVALIDATED_FAIL'
            );
         v_actions_superseded := SQLROWCOUNT;
 
@@ -277,9 +328,18 @@ BEGIN
            AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_LIFECYCLE)
            AND STATUS IN (
                'PROPOSED',
-               'INTENT_APPROVED',
                'PENDING_OPEN_VALIDATION',
-               'OPEN_BLOCKED'
+               'OPEN_ELIGIBLE',
+               'OPEN_CAUTION',
+               'OPEN_BLOCKED',
+               'PENDING_OPEN_STABILITY_REVIEW',
+               'READY_FOR_APPROVAL_FLOW',
+               'PM_ACCEPTED',
+               'COMPLIANCE_APPROVED',
+               'INTENT_SUBMITTED',
+               'INTENT_APPROVED',
+               'REVALIDATED_PASS',
+               'REVALIDATED_FAIL'
            );
 
         v_superseded_action_ids_lifecycle := COALESCE(:v_superseded_action_ids_lifecycle, ARRAY_CONSTRUCT());
@@ -295,9 +355,18 @@ BEGIN
            AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_LIFECYCLE)
            AND STATUS IN (
                'PROPOSED',
-               'INTENT_APPROVED',
                'PENDING_OPEN_VALIDATION',
-               'OPEN_BLOCKED'
+               'OPEN_ELIGIBLE',
+               'OPEN_CAUTION',
+               'OPEN_BLOCKED',
+               'PENDING_OPEN_STABILITY_REVIEW',
+               'READY_FOR_APPROVAL_FLOW',
+               'PM_ACCEPTED',
+               'COMPLIANCE_APPROVED',
+               'INTENT_SUBMITTED',
+               'INTENT_APPROVED',
+               'REVALIDATED_PASS',
+               'REVALIDATED_FAIL'
            );
         v_actions_superseded_lifecycle := SQLROWCOUNT;
     END IF;

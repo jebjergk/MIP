@@ -97,7 +97,13 @@ class TestDedupeStructuralEntryPending(unittest.TestCase):
         self.assertEqual(len(canon.get("superseded_pending") or []), 1)
         self.assertEqual(canon["superseded_pending"][0]["action_id"], "a10")
 
-    def test_falls_back_when_only_terminal_proposals(self):
+    def test_drops_symbol_entirely_when_only_terminal_proposals(self):
+        """LPA stale-lifecycle contract: a structural ENTRY symbol whose
+        only candidate proposals are terminal (EXPIRED / EXECUTED / etc.)
+        must not surface in pending_decisions at all. The daily pipeline
+        SP_EXPIRE_STALE_DAILY_PROPOSALS cascade is the authoritative
+        cleanup boundary; the UI should never display a stale-only row.
+        """
         cur = MagicMock()
         st_rows = [
             {"PROPOSAL_ID": 1, "STATUS": "EXECUTED"},
@@ -125,7 +131,7 @@ class TestDedupeStructuralEntryPending(unittest.TestCase):
         with patch("app.routers.live.fetch_all", return_value=st_rows):
             out = _dedupe_structural_entry_pending_rows(cur, pending)
         pids = {r.get("proposal_id") for r in out if r.get("action_id", "").startswith("x")}
-        self.assertEqual(pids, {2})
+        self.assertEqual(pids, set())
 
 
 class TestInlineHearingPayload(unittest.TestCase):

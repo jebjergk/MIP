@@ -451,7 +451,10 @@ def _fetch_live_action_state(action_id: str) -> dict | None:
         cur = conn.cursor()
         cur.execute(
             """
-            select ACTION_ID, STATUS, COMPLIANCE_STATUS, REASON_CODES, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE
+            select
+              ACTION_ID, STATUS, COMPLIANCE_STATUS, REASON_CODES,
+              PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE,
+              LIVE_INTENT_KIND, PROPOSAL_ID, SETUP_EVENT_ID
             from MIP.LIVE.LIVE_ACTIONS
             where ACTION_ID = %s
             """,
@@ -7417,6 +7420,88 @@ def _fetch_structural_proposal_status_map(cur, proposal_ids: list[int]) -> dict[
     return out
 
 
+def _compute_action_proposal_freshness(cur, proposal_id) -> str:
+    """Single-action proposal_freshness label.
+
+    Mirrors the overview builder's lineage join so submit/execute gates
+    and the cockpit pending list agree on what counts as stale.
+
+    Returns one of:
+      - 'CURRENT': proposal is PROPOSED and its BOARD_RUN_ID is an
+        authoritative run for the latest AS_OF_DATE.
+      - 'SUPERSEDED_BY_NEWER_RUN': proposal is still PROPOSED but its
+        parent board run is not authoritative (older AS_OF_DATE or
+        cold-start fail-closed).
+      - 'EXPIRED': proposal STATUS != 'PROPOSED', or the proposal row
+        is gone.
+      - 'NO_PROPOSAL_LINK': action carries no proposal_id at all.
+    """
+    if proposal_id is None:
+        return "NO_PROPOSAL_LINK"
+    cur.execute(
+        """
+        SELECT
+          p.STATUS        AS PROPOSAL_STATUS_NOW,
+          latest.RUN_ID   AS MATCHED_AUTH_RUN_ID
+        FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+        LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest
+          ON latest.RUN_ID = p.BOARD_RUN_ID
+        WHERE p.PROPOSAL_ID = %s
+        """,
+        (proposal_id,),
+    )
+    frow = cur.fetchone()
+    if not frow:
+        return "EXPIRED"
+    status_now = (frow[0] or "").upper() or None
+    matched_auth_run_id = frow[1]
+    if status_now is None or status_now != "PROPOSED":
+        return "EXPIRED"
+    if matched_auth_run_id is None:
+        return "SUPERSEDED_BY_NEWER_RUN"
+    return "CURRENT"
+
+
+def _assert_proposal_freshness_for_structural_entry(action: dict | None) -> None:
+    """Raise 409 when a structural ENTRY action has a non-CURRENT parent.
+
+    LPA stale-lifecycle defense in depth: the overview already hides
+    these rows from pending_decisions, but operators (or scripts) can
+    still call submit/execute directly with an action_id. This guard
+    ensures stale lineage cannot reach the broker even via the curl /
+    replay path. EXIT actions are intentionally exempt — closing a
+    live position must remain available regardless of what happened
+    to the proposal that originated it.
+    """
+    if not action:
+        return
+    intent = _normalize_action_intent(action.get("SIDE"), action.get("ACTION_INTENT"))
+    if intent == "EXIT":
+        return
+    if not is_structural_live_action(action):
+        return
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        freshness = _compute_action_proposal_freshness(cur, action.get("PROPOSAL_ID"))
+    finally:
+        conn.close()
+    if freshness == "CURRENT":
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": (
+                "Stale proposal — this action's parent proposal is no longer "
+                "current. The next daily pipeline run will terminalize it; "
+                "reject it explicitly if you need to clean it up sooner."
+            ),
+            "reason_codes": ["PROPOSAL_EXPIRED_OR_SUPERSEDED"],
+            "proposal_freshness": freshness,
+        },
+    )
+
+
 def _is_structural_entry_pending_row(row: dict) -> bool:
     if str(row.get("live_intent_kind") or "").upper() != "STRUCTURAL":
         return False
@@ -7426,26 +7511,23 @@ def _is_structural_entry_pending_row(row: dict) -> bool:
 def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) -> list[dict]:
     """One canonical structural ENTRY pending row per symbol.
 
-    Canonical preference order (highest first):
-      1. proposal_freshness == 'CURRENT' (parent proposal is PROPOSED and
-         from the latest authoritative board run)
-      2. proposal_freshness == 'SUPERSEDED_BY_NEWER_RUN' (still PROPOSED
-         but on an older run)
-      3. proposal_freshness == 'EXPIRED' or 'NO_PROPOSAL_LINK'
-      4. Tiebreak within band: higher PROPOSAL_ID wins.
+    LPA stale-lifecycle contract (post-fix): only proposal_freshness
+    == 'CURRENT' rows are eligible for the pending list. The overview
+    build-loop now hard-excludes structural ENTRY rows whose parent
+    proposal is no longer CURRENT, so by the time this function is
+    called the input should already contain only CURRENT structural
+    ENTRY rows. This function is therefore reduced to two jobs:
 
-    The non-canonical siblings are demoted to `superseded_pending` so
-    operators can still see them, but only the canonical row drives
-    cockpit actionability. Combined with `submission_allowed=False` and
-    `superseded_blocked=True` set in the build-loop above, this means
-    even when EVERY row for a symbol is stale (no CURRENT row exists),
-    the canonical row appears with submission disabled and a clear
-    "Reject stale / cleanup only" hint — never as a Run Committee /
-    Submit candidate.
+      1. Defense in depth — drop any non-CURRENT structural ENTRY row
+         that somehow slipped through (test fixture, future code path
+         change). These rows are never canonical and never shown.
+      2. Pick the highest PROPOSAL_ID per symbol as the canonical row
+         when multiple CURRENT siblings exist (same-day board runs
+         under Phase 5D union semantics).
 
-    The legacy STATUS-map lookup is retained as a defensive fallback
-    for rows where the new SQL join did not populate proposal_freshness
-    (should never happen post-deploy, but the contract is preserved).
+    The legacy STATUS-map fallback is retained for rows where the SQL
+    join did not populate proposal_freshness, so older fixtures and
+    unit tests still resolve to a sensible freshness label.
     """
     se_rows = [r for r in pending_decisions if _is_structural_entry_pending_row(r)]
     if not se_rows:
@@ -7454,7 +7536,7 @@ def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) ->
 
     # Defensive backfill: if a row arrived without proposal_freshness
     # (e.g. test fixture / stale code path), recover via the existing
-    # STATUS-map lookup so dedup still behaves sanely.
+    # STATUS-map lookup so the CURRENT-only filter below still works.
     rows_needing_fallback = [r for r in se_rows if not r.get("proposal_freshness")]
     if rows_needing_fallback:
         prop_ids: list[int] = []
@@ -7482,19 +7564,24 @@ def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) ->
                 "CURRENT" if _structural_proposal_status_is_actionable(st) else "EXPIRED"
             )
 
+    # CURRENT-only filter — drop any structural ENTRY row whose parent
+    # proposal is no longer canonical. Non-CURRENT rows must never be
+    # promoted to a canonical pending row; the daily pipeline cleanup
+    # boundary (SP_EXPIRE_STALE_DAILY_PROPOSALS) is responsible for
+    # terminalizing them in the DB.
+    current_se_rows = [
+        r for r in se_rows
+        if str(r.get("proposal_freshness") or "").upper() == "CURRENT"
+    ]
+    if not current_se_rows:
+        return other
+
     by_sym: dict[str, list[dict]] = {}
-    for r in se_rows:
+    for r in current_se_rows:
         sk = str(r.get("symbol") or "").upper().strip()
         if not sk:
             continue
         by_sym.setdefault(sk, []).append(r)
-
-    _FRESHNESS_RANK = {
-        "CURRENT": 3,
-        "SUPERSEDED_BY_NEWER_RUN": 2,
-        "EXPIRED": 1,
-        "NO_PROPOSAL_LINK": 0,
-    }
 
     def _pid_key(row: dict) -> int:
         p = row.get("proposal_id")
@@ -7503,15 +7590,12 @@ def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) ->
         except (TypeError, ValueError):
             return -1
 
-    def _canonical_sort_key(row: dict) -> tuple[int, int]:
-        return (
-            _FRESHNESS_RANK.get(str(row.get("proposal_freshness") or ""), 0),
-            _pid_key(row),
-        )
-
     deduped: list[dict] = []
     for _sym, rows_g in by_sym.items():
-        canonical = max(rows_g, key=_canonical_sort_key)
+        # All rows here are CURRENT; pick the highest PROPOSAL_ID as
+        # canonical and demote the rest into `superseded_pending` for
+        # operator visibility (siblings from the same as-of board).
+        canonical = max(rows_g, key=_pid_key)
         others = [x for x in rows_g if x is not canonical]
         if others:
             canon = dict(canonical)
@@ -8303,14 +8387,30 @@ def get_live_activity_overview(
                 and (is_exit or not in_position)
                 and (is_exit or symbol not in suppress_pending_symbols)
             ):
-                # When the parent proposal is dead/superseded, override
-                # the required_next_step so the cockpit no longer
-                # advertises Run Committee / Submit. The action stays
-                # visible but the only sane next step is rejection /
-                # cleanup. Exits already short-circuit past this branch.
-                required_next_step = _required_next_step_for_status(status)
+                # LPA stale-lifecycle gate. A structural ENTRY action
+                # whose parent proposal is no longer CURRENT (expired
+                # or from a superseded board run) is hidden from the
+                # pending_decisions list entirely. The authoritative
+                # cleanup boundary is the next daily pipeline run,
+                # which calls SP_EXPIRE_STALE_DAILY_PROPOSALS to
+                # terminalize these rows in Snowflake. Until then we
+                # simply do not surface them — operators should not
+                # need to manually Reject stale rows at the daily
+                # boundary. EXIT actions are never gated this way:
+                # closing a live position must remain available
+                # regardless of what happened to the proposal that
+                # originated it.
                 if superseded_blocked:
-                    required_next_step = "Reject stale proposal (cleanup only)"
+                    continue
+
+                # Defensive: the SQL whitelist already excludes terminal
+                # statuses (SUPERSEDED / REJECTED / CANCELLED), but guard
+                # against any future widening so terminal rows can never
+                # leak into the cockpit pending list.
+                if status in ("SUPERSEDED", "REJECTED", "CANCELLED"):
+                    continue
+
+                required_next_step = _required_next_step_for_status(status)
 
                 pending_decisions.append(
                     {
@@ -9513,6 +9613,8 @@ def submit_live_decision_only(action_id: str, req: SubmitLiveDecisionRequest):
             "idempotent_replay": True,
             "steps": steps,
         }
+
+    _assert_proposal_freshness_for_structural_entry(action)
 
     # Streamlined UX: if user presses Submit from pre-intent states, auto-run approval chain.
     if status in ("READY_FOR_APPROVAL_FLOW", "PM_ACCEPTED", "COMPLIANCE_APPROVED", "INTENT_SUBMITTED"):
@@ -11462,43 +11564,9 @@ async def orchestrate_committee2_structural_entry(
         # if they bypass the disabled UI button (curl / replay).
         proposal_freshness = "CURRENT"
         try:
-            proposal_id_for_freshness = action.get("PROPOSAL_ID")
-            if proposal_id_for_freshness is None:
-                proposal_freshness = "NO_PROPOSAL_LINK"
-            else:
-                # Phase 5D: V_LATEST_AUTHORITATIVE_BOARD_RUN returns one
-                # row per COMPLETE run for the latest AS_OF_DATE. The
-                # LEFT JOIN on RUN_ID matches when the proposal's parent
-                # run is one of the authoritative same-day siblings —
-                # MATCHED_AUTH_RUN_ID is then non-NULL (CURRENT). When
-                # the proposal is from an older AS_OF_DATE the join
-                # produces NULL (SUPERSEDED). No equality check is
-                # needed; the join is the test.
-                cur.execute(
-                    """
-                    SELECT
-                      p.STATUS                AS PROPOSAL_STATUS_NOW,
-                      p.BOARD_RUN_ID          AS PROPOSAL_BOARD_RUN_ID,
-                      latest.RUN_ID           AS MATCHED_AUTH_RUN_ID
-                    FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
-                    LEFT JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN latest
-                      ON latest.RUN_ID = p.BOARD_RUN_ID
-                    WHERE p.PROPOSAL_ID = %s
-                    """,
-                    (proposal_id_for_freshness,),
-                )
-                _frow = cur.fetchone()
-                if not _frow:
-                    proposal_freshness = "EXPIRED"
-                else:
-                    _proposal_status_now = (_frow[0] or "").upper() or None
-                    _matched_auth_run_id = _frow[2]
-                    if _proposal_status_now is None or _proposal_status_now != "PROPOSED":
-                        proposal_freshness = "EXPIRED"
-                    elif _matched_auth_run_id is None:
-                        proposal_freshness = "SUPERSEDED_BY_NEWER_RUN"
-                    else:
-                        proposal_freshness = "CURRENT"
+            proposal_freshness = _compute_action_proposal_freshness(
+                cur, action.get("PROPOSAL_ID")
+            )
         except Exception as fresh_exc:  # noqa: BLE001
             _log.warning(
                 "orchestrate: proposal freshness lookup raised (treated as CURRENT) action=%s: %s",
@@ -13258,6 +13326,32 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
         assert_legacy_execute_forbidden(action, _live_structural_only_enabled(cur))
+
+        # LPA stale-lifecycle gate. A structural ENTRY action whose
+        # parent proposal is no longer CURRENT (EXPIRED or from a
+        # superseded board run) must never reach the broker. The
+        # overview already hides these rows from pending_decisions;
+        # this check is defense in depth for direct API callers.
+        # EXIT actions are exempt — closing a live position must
+        # remain available regardless of proposal lineage.
+        _exec_intent_for_freshness = _normalize_action_intent(
+            action.get("SIDE"), action.get("ACTION_INTENT")
+        )
+        if _exec_intent_for_freshness != "EXIT" and is_structural_live_action(action):
+            freshness = _compute_action_proposal_freshness(cur, action.get("PROPOSAL_ID"))
+            if freshness != "CURRENT":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "Stale proposal — this action's parent proposal is no longer "
+                            "current. The next daily pipeline run will terminalize it; "
+                            "reject it explicitly if you need to clean it up sooner."
+                        ),
+                        "reason_codes": ["PROPOSAL_EXPIRED_OR_SUPERSEDED"],
+                        "proposal_freshness": freshness,
+                    },
+                )
 
         reason_codes: list[str] = []
         now_utc = datetime.now(timezone.utc)

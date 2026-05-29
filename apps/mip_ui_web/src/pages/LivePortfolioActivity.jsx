@@ -277,6 +277,8 @@ export default function LivePortfolioActivity() {
   const [streamActionId, setStreamActionId] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [streamLogs, setStreamLogs] = useState([])
+  const [sessionProbe, setSessionProbe] = useState(null)
+  const [sessionProbeLoading, setSessionProbeLoading] = useState(false)
   const [activeStreamActionId, setActiveStreamActionId] = useState('')
   const [readyPulseActionId, setReadyPulseActionId] = useState('')
   const [liveLineTarget, setLiveLineTarget] = useState('')
@@ -367,7 +369,22 @@ export default function LivePortfolioActivity() {
   }, [load])
 
   useEffect(() => {
-    return () => {
+    if (!selectedPortfolioId) {
+      setSessionProbe(null)
+      return
+    }
+    let cancelled = false
+    setSessionProbeLoading(true)
+    fetch(`${API_BASE}/live/ibkr/session-probe?portfolio_id=${selectedPortfolioId}`)
+      .then((r) => r.json())
+      .then((data) => { if (!cancelled) setSessionProbe(data) })
+      .catch(() => {
+        if (!cancelled) setSessionProbe({ status: 'PROBE_ERROR', connected: false, detected_accounts: [] })
+      })
+      .finally(() => { if (!cancelled) setSessionProbeLoading(false) })
+    return () => { cancelled = true }
+  }, [selectedPortfolioId])
+
       if (streamRef.current) {
         streamRef.current.close()
         streamRef.current = null
@@ -1329,6 +1346,17 @@ export default function LivePortfolioActivity() {
   // True when the selected portfolio has IS_EXECUTION_ENABLED=false (e.g. real account in read-only mode).
   // Applied to Submit, Exit, and Approve-Flow buttons for defence-in-depth; backend gates remain authoritative.
   const executionDisabled = selectedPortfolio ? !selectedPortfolio.is_execution_enabled : true
+
+  // Broker read is blocked when the probe hasn't resolved or shows a session mismatch/error.
+  // Refresh From IB is read-only and can proceed on MATCH or MULTIPLE_ACCOUNTS even when execution is off.
+  const brokerReadBlocked =
+    sessionProbeLoading ||
+    !sessionProbe ||
+    ['ACCOUNT_MISMATCH', 'NOT_CONNECTED', 'PROBE_ERROR', 'CONFIG_NOT_FOUND'].includes(sessionProbe.status)
+
+  // Broker execution is blocked when reading is blocked OR execution is disabled on the portfolio.
+  const brokerExecutionBlocked = brokerReadBlocked || executionDisabled
+
   const executionsChrono = useMemo(() => {
     const list = Array.isArray(executions) ? [...executions] : []
     const ts = (e) => {
@@ -1394,7 +1422,7 @@ export default function LivePortfolioActivity() {
           <h2>Live Portfolio Activity</h2>
           <p>Broker-truth operations console for the linked IBKR portfolio.</p>
         </div>
-        <button className="lpa-btn" disabled={busy === 'refresh'} onClick={refreshBroker}>
+        <button className="lpa-btn" disabled={busy === 'refresh' || brokerReadBlocked} onClick={refreshBroker}>
           {busy === 'refresh' ? 'Refreshing...' : 'Refresh From IB'}
         </button>
       </div>
@@ -1450,6 +1478,48 @@ export default function LivePortfolioActivity() {
           </span>
         ) : null}
       </div>
+
+      {/* Session compatibility banner — shown when probe has resolved */}
+      {selectedPortfolioId && !portfolioLoading && (
+        <div
+          className={
+            `lpa-session-bar ` +
+            (sessionProbeLoading
+              ? 'lpa-session-bar--loading'
+              : !sessionProbe || ['NOT_CONNECTED', 'PROBE_ERROR'].includes(sessionProbe?.status)
+                ? 'lpa-session-bar--error'
+                : sessionProbe?.status === 'ACCOUNT_MISMATCH' || sessionProbe?.status === 'CONFIG_NOT_FOUND'
+                  ? 'lpa-session-bar--mismatch'
+                  : 'lpa-session-bar--match')
+          }
+        >
+          {sessionProbeLoading ? (
+            <span>Checking IBKR session…</span>
+          ) : !sessionProbe || sessionProbe.status === 'PROBE_ERROR' ? (
+            <span>Session probe failed — cannot verify IBKR connection. Broker operations are disabled.</span>
+          ) : sessionProbe.status === 'NOT_CONNECTED' ? (
+            <span>IBKR session not reachable. Start TWS/Gateway for this portfolio, then reload. Broker operations are disabled.</span>
+          ) : sessionProbe.status === 'CONFIG_NOT_FOUND' ? (
+            <span>No portfolio config found — cannot resolve IBKR connection. Broker operations are disabled.</span>
+          ) : sessionProbe.status === 'ACCOUNT_MISMATCH' ? (
+            <span>
+              Session mismatch — connected session exposes{' '}
+              <strong>{(sessionProbe.detected_accounts || []).join(', ') || '(none)'}</strong>
+              {selectedPortfolio?.ibkr_account_id ? <>, expected <strong>{selectedPortfolio.ibkr_account_id}</strong></> : null}.
+              {' '}Start the matching TWS/Gateway or select the matching portfolio.
+            </span>
+          ) : sessionProbe.status === 'MULTIPLE_ACCOUNTS' ? (
+            <span>
+              Session OK — <strong>{selectedPortfolio?.ibkr_account_id}</strong> present
+              (session also exposes: {(sessionProbe.detected_accounts || []).filter((a) => a !== selectedPortfolio?.ibkr_account_id).join(', ')}).
+            </span>
+          ) : (
+            <span>
+              Session OK — <strong>{(sessionProbe.detected_accounts || []).join(', ') || selectedPortfolio?.ibkr_account_id}</strong> connected.
+            </span>
+          )}
+        </div>
+      )}
 
       <div ref={feedbackRef} className="lpa-feedback-region">
         {error ? <div className="lpa-error" role="alert">{error}</div> : null}
@@ -2232,15 +2302,15 @@ export default function LivePortfolioActivity() {
                         ) : null}
                         <button
                           className="lpa-btn"
-                          disabled={busy === `submit:${d.action_id}` || !canSubmit || isStaleRevalidationState(d) || executionDisabled}
+                          disabled={busy === `submit:${d.action_id}` || !canSubmit || isStaleRevalidationState(d) || brokerExecutionBlocked}
                           onClick={() => submitOnly(d.action_id)}
-                          title={executionDisabled ? 'Execution disabled for this portfolio' : undefined}
+                          title={brokerExecutionBlocked ? (executionDisabled ? 'Execution disabled for this portfolio' : 'Session mismatch — start the correct TWS/Gateway') : undefined}
                         >
                           {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}
                         </button>
-                        {executionDisabled ? (
+                        {brokerExecutionBlocked ? (
                           <div className="lpa-subtle" style={{ color: '#e65100', fontWeight: 600 }}>
-                            Execution disabled — read-only portfolio
+                            {executionDisabled ? 'Execution disabled — read-only portfolio' : 'Session mismatch — start correct TWS/Gateway'}
                           </div>
                         ) : null}
                         {isStructuralEntry ? (
@@ -2640,8 +2710,8 @@ export default function LivePortfolioActivity() {
                                     <button
                                     type="button"
                                     className="lpa-btn lpa-btn-secondary lpa-btn-compact lpa-position-sell-btn"
-                                    disabled={busy === `exit:${symbol}` || executionDisabled}
-                                    title={executionDisabled ? 'Execution disabled for this portfolio' : (hasPendingExit ? 'An exit is already in the workflow — use Pending Decisions.' : isShort ? 'Places a BUY at IB to cover the short (same as close short).' : 'Places a SELL at IB to close the long.')}
+                                    disabled={busy === `exit:${symbol}` || brokerExecutionBlocked}
+                                    title={brokerExecutionBlocked ? (executionDisabled ? 'Execution disabled for this portfolio' : 'Session mismatch — start correct TWS/Gateway') : (hasPendingExit ? 'An exit is already in the workflow — use Pending Decisions.' : isShort ? 'Places a BUY at IB to cover the short (same as close short).' : 'Places a SELL at IB to close the long.')}
                                     onClick={() => {
                                       if (hasPendingExit) {
                                         setError('')

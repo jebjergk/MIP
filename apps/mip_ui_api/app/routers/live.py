@@ -3916,6 +3916,135 @@ def _snapshot_sync_params_for_portfolio(portfolio_id: int | None) -> dict:
     }
 
 
+def _probe_ibkr_session(
+    host: str,
+    port: int,
+    client_id: int,
+    expected_account: str | None,
+    connect_timeout_sec: int = 8,
+) -> dict:
+    """
+    Probe the IBKR Gateway/TWS session and return a structured compatibility result.
+
+    Runs cursorfiles/probe_ibkr_session.py as a subprocess (because ib_insync lives
+    in the cursorfiles venv, not the API venv). Strictly read-only: readonly=True,
+    managedAccounts() only, no snapshot writes, no orders.
+
+    Returns a dict with keys:
+        connected         bool
+        detected_accounts list[str]
+        account_match     bool
+        status            MATCH | ACCOUNT_MISMATCH | MULTIPLE_ACCOUNTS |
+                          NOT_CONNECTED | PROBE_ERROR | CONFIG_NOT_FOUND
+        message           str
+    """
+    root   = _project_root()
+    py     = root / "cursorfiles" / ".venv" / "Scripts" / "python.exe"
+    script = root / "cursorfiles" / "probe_ibkr_session.py"
+
+    if not py.exists() or not script.exists():
+        return {
+            "connected": False,
+            "detected_accounts": [],
+            "account_match": False,
+            "status": "PROBE_ERROR",
+            "message": "probe_ibkr_session.py or cursorfiles venv not found.",
+        }
+
+    cmd = [
+        str(py), str(script),
+        "--host",      host,
+        "--port",      str(port),
+        "--client-id", str(client_id),
+        "--timeout",   str(connect_timeout_sec),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=connect_timeout_sec + 5,
+            cwd=str(root),
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "connected": False,
+            "detected_accounts": [],
+            "account_match": False,
+            "status": "NOT_CONNECTED",
+            "message": f"IBKR probe timed out connecting to {host}:{port}.",
+        }
+    except Exception as exc:
+        return {
+            "connected": False,
+            "detected_accounts": [],
+            "account_match": False,
+            "status": "PROBE_ERROR",
+            "message": str(exc),
+        }
+
+    out = (proc.stdout or "").strip()
+    payload: dict = {}
+    try:
+        idx = out.rfind("{")
+        if idx >= 0:
+            payload = json.loads(out[idx:])
+    except Exception:
+        payload = {}
+
+    if not payload.get("connected"):
+        return {
+            "connected": False,
+            "detected_accounts": [],
+            "account_match": False,
+            "status": "NOT_CONNECTED",
+            "message": payload.get("error") or f"IBKR session on {host}:{port} is not reachable.",
+        }
+
+    detected: list[str] = list(payload.get("detected_accounts") or [])
+
+    if not expected_account:
+        return {
+            "connected": True,
+            "detected_accounts": detected,
+            "account_match": True,
+            "status": "MATCH",
+            "message": "Connected (no expected account configured).",
+        }
+
+    if expected_account in detected:
+        if len(detected) > 1:
+            return {
+                "connected": True,
+                "detected_accounts": detected,
+                "account_match": True,
+                "status": "MULTIPLE_ACCOUNTS",
+                "message": (
+                    f"Expected account {expected_account} is present. "
+                    f"Session also exposes: {[a for a in detected if a != expected_account]}."
+                ),
+            }
+        return {
+            "connected": True,
+            "detected_accounts": detected,
+            "account_match": True,
+            "status": "MATCH",
+            "message": f"Session matches expected account {expected_account}.",
+        }
+
+    return {
+        "connected": True,
+        "detected_accounts": detected,
+        "account_match": False,
+        "status": "ACCOUNT_MISMATCH",
+        "message": (
+            f"Connected IBKR session exposes {detected} "
+            f"but portfolio expects {expected_account}. "
+            "Start the matching TWS/Gateway session or select the matching portfolio."
+        ),
+    }
+
+
 def _live_portfolio_ib_host_diagnostics(
     *,
     snapshot_state: str,
@@ -6353,6 +6482,74 @@ def _has_tier_c_conflict(verdict: dict, pw_evidence: dict, news_snapshot: dict) 
     return risk_high
 
 
+@router.get("/ibkr/session-probe")
+def get_ibkr_session_probe(
+    portfolio_id: int | None = Query(None, description="LIVE portfolio ID. Resolves expected account, host, and port from config."),
+):
+    """
+    Probe the connected IBKR TWS/Gateway session and return compatibility status.
+
+    Connects in read-only mode, retrieves managed accounts, then disconnects immediately.
+    No snapshot data is written, no Snowflake writes occur.
+
+    Returns:
+        connected         bool
+        detected_accounts list[str]
+        account_match     bool
+        status            MATCH | ACCOUNT_MISMATCH | MULTIPLE_ACCOUNTS |
+                          NOT_CONNECTED | PROBE_ERROR | CONFIG_NOT_FOUND
+        message           str
+    """
+    if portfolio_id is None:
+        return {
+            "connected": False,
+            "detected_accounts": [],
+            "account_match": False,
+            "status": "CONFIG_NOT_FOUND",
+            "message": "No portfolio_id provided — cannot resolve IBKR session parameters.",
+        }
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select IBKR_ACCOUNT_ID, IB_GATEWAY_HOST, IB_GATEWAY_PORT, IB_CLIENT_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (portfolio_id,),
+        )
+        rows = fetch_all(cur)
+    finally:
+        conn.close()
+
+    if not rows:
+        return {
+            "connected": False,
+            "detected_accounts": [],
+            "account_match": False,
+            "status": "CONFIG_NOT_FOUND",
+            "message": f"No LIVE_PORTFOLIO_CONFIG row found for portfolio_id={portfolio_id}.",
+        }
+
+    row = rows[0]
+    expected_account: str | None = row.get("IBKR_ACCOUNT_ID") or None
+    params = _snapshot_sync_params_for_portfolio(portfolio_id)
+
+    # Use a dedicated probe client ID that cannot collide with snapshot or execution clients.
+    # All current allocations: 991 tape, 9402 paper-snapshot, 9403 real-snapshot (LIVE_PORTFOLIO_CONFIG),
+    # 9410 probe, 9421 ingest, 9436 live-bars.
+    probe_client_id = 9410
+
+    return _probe_ibkr_session(
+        host=params["host"],
+        port=params["port"],
+        client_id=probe_client_id,
+        expected_account=expected_account,
+    )
+
+
 @router.post("/snapshot/refresh")
 def refresh_live_snapshot(
     portfolio_id: int | None = Query(None, description="LIVE portfolio ID. Resolves host/port/account from config when provided."),
@@ -6393,6 +6590,28 @@ def refresh_live_snapshot(
                 effective_account = cfg_rows[0].get("IBKR_ACCOUNT_ID") or None
         finally:
             conn.close()
+
+    # Session probe guard — block read if connected session does not expose the expected account.
+    # Returns 409 (Conflict) instead of letting the sync attempt and surface a confusing 502.
+    if portfolio_id is not None and effective_account:
+        probe = _probe_ibkr_session(
+            host=effective_host,
+            port=effective_port,
+            client_id=9410,
+            expected_account=effective_account,
+        )
+        bad_statuses = {"ACCOUNT_MISMATCH", "NOT_CONNECTED", "PROBE_ERROR"}
+        if probe.get("status") in bad_statuses:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "SESSION_MISMATCH",
+                    "status": probe.get("status"),
+                    "detected_accounts": probe.get("detected_accounts", []),
+                    "expected_account": effective_account,
+                    "message": probe.get("message", "IBKR session mismatch — start the correct TWS/Gateway."),
+                },
+            )
 
     result = _run_on_demand_snapshot_sync(
         host=effective_host,
@@ -13640,6 +13859,34 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 raise HTTPException(status_code=400, detail="Real-money execution blocked: ENABLE_REAL_MONEY_TRADING env flag not set.")
             if not cfg.get("REAL_MONEY_ENABLED"):
                 raise HTTPException(status_code=400, detail="Real-money execution blocked: REAL_MONEY_ENABLED=false on portfolio config.")
+
+        # Gate 6b — session probe: connected IBKR session must expose the expected account.
+        # Probe before any broker contact so the operator gets a clear 409 instead of a
+        # confusing 502 from the TWS/Gateway adapter.
+        _exec_portfolio_id = action.get("PORTFOLIO_ID")
+        _exec_account_id   = action.get("IBKR_ACCOUNT_ID")
+        if _exec_account_id:
+            _exec_params = _snapshot_sync_params_for_portfolio(_exec_portfolio_id)
+            _probe = _probe_ibkr_session(
+                host=_exec_params["host"],
+                port=_exec_params["port"],
+                client_id=9410,
+                expected_account=_exec_account_id,
+            )
+            if not _probe.get("account_match"):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "SESSION_MISMATCH",
+                        "status": _probe.get("status"),
+                        "detected_accounts": _probe.get("detected_accounts", []),
+                        "expected_account": _exec_account_id,
+                        "message": _probe.get(
+                            "message",
+                            "IBKR session does not match this portfolio. Start the correct TWS/Gateway before executing.",
+                        ),
+                    },
+                )
 
         unresolved_drift_row = None
         try:

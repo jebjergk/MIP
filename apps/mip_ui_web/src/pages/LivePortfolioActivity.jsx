@@ -385,6 +385,8 @@ export default function LivePortfolioActivity() {
     return () => { cancelled = true }
   }, [selectedPortfolioId])
 
+  useEffect(() => {
+    return () => {
       if (streamRef.current) {
         streamRef.current.close()
         streamRef.current = null

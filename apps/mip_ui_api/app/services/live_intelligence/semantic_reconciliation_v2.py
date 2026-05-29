@@ -283,11 +283,15 @@ def _check_protection(
             "detail": "no_active_position",
         }
 
-    # Find expected protection from MIP orders
+    # Find expected protection from MIP orders.
+    # Fix #3 — match trailing legs robustly across the canonical TRAILING_STOP role,
+    # the legacy PROTECTIVE_TRAIL role (historical paper rows), the TRAILING_STOP
+    # protection_type (carried by both old and new rows), and the TRAIL order type.
     protection_orders = [
         o for o in mip_orders
-        if _norm_status(o.get("ORDER_ROLE")) in ("PROTECTIVE_STOP", "TRAILING_STOP")
-        or _norm_status(o.get("ORDER_TYPE")) == "STP"
+        if _norm_status(o.get("ORDER_ROLE")) in ("PROTECTIVE_STOP", "TRAILING_STOP", "PROTECTIVE_TRAIL")
+        or _norm_status(o.get("PROTECTION_TYPE")) == "TRAILING_STOP"
+        or _norm_status(o.get("ORDER_TYPE")) in ("STP", "TRAIL")
     ]
 
     expected_type = None

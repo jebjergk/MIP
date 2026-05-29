@@ -14508,6 +14508,26 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         elif execution_mode == "PLACEHOLDER":
             use_ibkr_submit = False
 
+        # Fix #1 — REAL placeholder path is forbidden (fail closed).
+        # Real-money execution MUST use the IBKR submit path. Paper validated the
+        # IBKR submit path (ADAPTER_MODE=LIVE against the paper IBKR account); real
+        # money must inherit that exact tested path. The placeholder builder is
+        # distinct code that real money has never exercised, so it is blocked here
+        # BEFORE any order construction or broker contact.
+        if ibkr_account_mode == "REAL" and not use_ibkr_submit:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": (
+                        "Real-money execution must use the IBKR submit path. "
+                        "Placeholder execution is not allowed for REAL portfolios."
+                    ),
+                    "reason_codes": ["REAL_PLACEHOLDER_PATH_FORBIDDEN"],
+                    "adapter_mode": adapter_mode,
+                    "execution_mode": execution_mode,
+                },
+            )
+
         stop_loss_pct_default = float(cfg.get("BUST_PCT")) if cfg.get("BUST_PCT") is not None else None
         target_return, stop_loss_pct, bracket_src = _load_executable_entry_bracket_for_action(
             cur,
@@ -15524,8 +15544,16 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         trail_params_for_paper = {}
                 if not isinstance(trail_params_for_paper, dict):
                     trail_params_for_paper = {}
+                # Fix #3 — normalize trail_style to canonical PCT/ABS, matching the
+                # IBKR submit path's inference. Falls back to TRAIL_PARAMS.trail_mode
+                # only if neither percent nor amount is present, so paper-IBKR and
+                # real-IBKR trailing legs are represented identically in LIVE_ORDERS.
                 trail_style_for_paper = (
                     action.get("TRAIL_STYLE")
+                    or (
+                        "PCT" if structural_trail_percent is not None
+                        else ("ABS" if structural_trail_amount is not None else None)
+                    )
                     or trail_params_for_paper.get("trail_mode")
                 )
                 order_legs.append(
@@ -15538,7 +15566,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "limit_price": None,
                         "role": "TRAILING_STOP",
                         "status": "ACKNOWLEDGED",
-                        "order_role": "PROTECTIVE_TRAIL" if is_structural else None,
+                        # Fix #3 — use canonical TRAILING_STOP order_role (was PROTECTIVE_TRAIL)
+                        # so reconciliation and UI treat paper and real trailing legs identically.
+                        "order_role": "TRAILING_STOP" if is_structural else None,
                         "protection_type": "TRAILING_STOP" if is_structural else None,
                         "stop_price": None,
                         "oca_group": structural_oca_group,

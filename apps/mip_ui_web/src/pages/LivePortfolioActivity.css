@@ -136,6 +136,101 @@
   font-weight: 600;
 }
 
+/* ── Phase 3A: REAL MONEY chip ─────────────────────────────────────────── */
+.lpa-real-money-chip {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 7px;
+  background: #b71c1c;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  text-transform: uppercase;
+  vertical-align: middle;
+  cursor: default;
+  user-select: none;
+}
+
+/* ── Phase 3A: risk limits panel ───────────────────────────────────────── */
+.lpa-risk-panel {
+  margin: 4px 0 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fafafa;
+  font-size: 0.82rem;
+}
+
+.lpa-risk-panel__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #424242;
+  text-align: left;
+}
+.lpa-risk-panel__toggle:hover {
+  background: #f0f0f0;
+}
+
+.lpa-risk-panel__real-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  background: #b71c1c;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.lpa-risk-panel__caret {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: #9e9e9e;
+}
+
+.lpa-risk-panel__body {
+  padding: 6px 12px 10px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.lpa-risk-panel__dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 2px;
+  margin: 0;
+}
+.lpa-risk-panel__dl dt {
+  font-weight: 600;
+  color: #616161;
+}
+.lpa-risk-panel__dl dd {
+  margin: 0;
+  color: #212121;
+}
+.lpa-risk-panel__val--warn {
+  color: #e65100;
+  font-weight: 600;
+}
+.lpa-risk-panel__val--blocked {
+  color: #b71c1c;
+  font-weight: 700;
+}
+.lpa-risk-panel__val--ok {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
 .lpa-kpis {
   display: flex;
   flex-wrap: nowrap;

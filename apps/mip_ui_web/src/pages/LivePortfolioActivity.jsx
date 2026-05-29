@@ -279,6 +279,7 @@ export default function LivePortfolioActivity() {
   const [streamLogs, setStreamLogs] = useState([])
   const [sessionProbe, setSessionProbe] = useState(null)
   const [sessionProbeLoading, setSessionProbeLoading] = useState(false)
+  const [showRiskPanel, setShowRiskPanel] = useState(false)
   const [activeStreamActionId, setActiveStreamActionId] = useState('')
   const [readyPulseActionId, setReadyPulseActionId] = useState('')
   const [liveLineTarget, setLiveLineTarget] = useState('')
@@ -1167,6 +1168,24 @@ export default function LivePortfolioActivity() {
   }, [finalizeCommitteeRevalidation])
 
   const submitOnly = useCallback(async (actionId) => {
+    // Phase 3A: real-money confirmation gate (temporary UI guard).
+    // NOTE: window.confirm is NOT sufficient for the first real-money pilot.
+    // This must be replaced with a modal confirmation step with explicit
+    // operator acknowledgement and a typed account confirmation before any
+    // real-money execution is enabled.
+    if (selectedPortfolio?.ibkr_account_mode === 'REAL') {
+      const confirmed = window.confirm(
+        'REAL MONEY ORDER — This will submit a live order against your real IBKR account.\n\n' +
+        `Account: ${selectedPortfolio.ibkr_account_id || '(unknown)'}\n` +
+        'Real money will be at risk. Verify the proposal details carefully.\n\n' +
+        'Click OK to proceed or Cancel to abort.'
+      )
+      if (!confirmed) {
+        setNotice('Submit cancelled by operator.')
+        return
+      }
+    }
+
     setBusy(`submit:${actionId}`)
     setError('')
     setNotice('')
@@ -1522,6 +1541,57 @@ export default function LivePortfolioActivity() {
           )}
         </div>
       )}
+
+      {/* Phase 3A risk limits panel — collapsed by default, expands on click */}
+      {selectedPortfolio && (
+        <div className="lpa-risk-panel">
+          <button
+            type="button"
+            className="lpa-risk-panel__toggle"
+            onClick={() => setShowRiskPanel((v) => !v)}
+            aria-expanded={showRiskPanel}
+          >
+            {selectedPortfolio.ibkr_account_mode === 'REAL' ? (
+              <span className="lpa-risk-panel__real-chip">REAL MONEY</span>
+            ) : null}
+            Risk Limits
+            <span className="lpa-risk-panel__caret">{showRiskPanel ? '▲' : '▼'}</span>
+          </button>
+          {showRiskPanel && (
+            <div className="lpa-risk-panel__body">
+              <dl className="lpa-risk-panel__dl">
+                <dt>Max Positions</dt>
+                <dd>{selectedPortfolio.max_positions ?? '—'}</dd>
+                <dt>Max Position %</dt>
+                <dd>{selectedPortfolio.max_position_pct != null ? `${(selectedPortfolio.max_position_pct * 100).toFixed(1)}%` : '—'}</dd>
+                <dt>Cash Buffer %</dt>
+                <dd>{selectedPortfolio.cash_buffer_pct != null ? `${(selectedPortfolio.cash_buffer_pct * 100).toFixed(1)}%` : '—'}</dd>
+                <dt>Drawdown Stop</dt>
+                <dd className={selectedPortfolio.drawdown_stop_pct != null ? 'lpa-risk-panel__val--warn' : ''}>
+                  {selectedPortfolio.drawdown_stop_pct != null ? `${(selectedPortfolio.drawdown_stop_pct * 100).toFixed(1)}% max drawdown` : '—'}
+                </dd>
+                <dt>Max Slippage %</dt>
+                <dd className={selectedPortfolio.max_slippage_pct != null ? 'lpa-risk-panel__val--warn' : ''}>
+                  {selectedPortfolio.max_slippage_pct != null ? `${(selectedPortfolio.max_slippage_pct * 100).toFixed(2)}%` : '—'}
+                </dd>
+                {selectedPortfolio.ibkr_account_mode === 'REAL' && (
+                  <>
+                    <dt>Short Selling</dt>
+                    <dd className={!selectedPortfolio.allow_short_selling ? 'lpa-risk-panel__val--blocked' : 'lpa-risk-panel__val--ok'}>
+                      {selectedPortfolio.allow_short_selling ? 'Allowed' : 'Blocked'}
+                    </dd>
+                    <dt>Trailing Stop</dt>
+                    <dd className={!selectedPortfolio.trail_enabled ? 'lpa-risk-panel__val--warn' : 'lpa-risk-panel__val--ok'}>
+                      {selectedPortfolio.trail_enabled ? 'Enabled' : 'Pending certification'}
+                    </dd>
+                  </>
+                )}
+              </dl>
+            </div>
+          )}
+        </div>
+      )}
+
 
       <div ref={feedbackRef} className="lpa-feedback-region">
         {error ? <div className="lpa-error" role="alert">{error}</div> : null}
@@ -2310,6 +2380,11 @@ export default function LivePortfolioActivity() {
                         >
                           {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}
                         </button>
+                        {selectedPortfolio?.ibkr_account_mode === 'REAL' ? (
+                          <span className="lpa-real-money-chip" title="Orders submitted here will execute against a real-money IBKR account.">
+                            REAL MONEY
+                          </span>
+                        ) : null}
                         {brokerExecutionBlocked ? (
                           <div className="lpa-subtle" style={{ color: '#e65100', fontWeight: 600 }}>
                             {executionDisabled ? 'Execution disabled — read-only portfolio' : 'Session mismatch — start correct TWS/Gateway'}

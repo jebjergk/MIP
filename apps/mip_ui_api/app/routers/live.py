@@ -187,7 +187,7 @@ class ImportStructuralProposalsRequest(BaseModel):
 
 class ExecuteLiveActionRequest(BaseModel):
     actor: str
-    attempt_n: int = 1
+    attempt_n: int = Field(default=1, ge=1)
     # Optional client-side context assertions. Backend validates these against
     # the frozen LIVE_ACTIONS fields and LIVE_PORTFOLIO_CONFIG independently
     # (Phase 1 gates are authoritative). Mismatches are rejected before broker submit.
@@ -205,7 +205,7 @@ class ApproveAndSubmitLiveDecisionRequest(BaseModel):
     execution_actor: str = "execution_operator"
     committee_actor: str = "committee_orchestrator"
     committee_model: str = "claude-4-sonnet"
-    attempt_n: int = 1
+    attempt_n: int = Field(default=1, ge=1)
     force_refresh_1m: bool = True
     committee_recheck_before_submit: bool = True
     committee_refresh_ibkr_news: bool = True
@@ -224,7 +224,7 @@ class ApproveLiveDecisionRequest(BaseModel):
 
 class SubmitLiveDecisionRequest(BaseModel):
     execution_actor: str = "execution_operator"
-    attempt_n: int = 1
+    attempt_n: int = Field(default=1, ge=1)
     # Client-side context assertions forwarded to execute_live_action.
     portfolio_id: int | None = None
     ibkr_account_id: str | None = None
@@ -249,6 +249,7 @@ class CancelSingleOrderRequest(BaseModel):
     actor: str = "portfolio_manager"
     dry_run: bool = False
     include_local_sync: bool = True
+    portfolio_id: int | None = None  # required for account assertion (Phase 3A)
 
 
 class CommitteeRunRequest(BaseModel):
@@ -6694,6 +6695,32 @@ def cancel_pending_live_orders(req: CancelPendingOrdersRequest):
     finally:
         conn.close()
 
+    # Phase 3A — session probe before any broker cancel contact.
+    # Require explicit portfolio_id (no silent fallback to most-recent-active-config).
+    if portfolio_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="portfolio_id is required for cancel-pending (Phase 3A: no implicit account fallback).",
+        )
+    _cancel_params = _snapshot_sync_params_for_portfolio(portfolio_id)
+    _cancel_probe = _probe_ibkr_session(
+        host=_cancel_params["host"],
+        port=_cancel_params["port"],
+        client_id=9410,
+        expected_account=account_id,
+    )
+    if _cancel_probe.get("status") not in ("MATCH", "MULTIPLE_ACCOUNTS"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "SESSION_MISMATCH",
+                "status": _cancel_probe.get("status"),
+                "detected_accounts": _cancel_probe.get("detected_accounts", []),
+                "expected_account": account_id,
+                "message": _cancel_probe.get("message", "IBKR session mismatch — cannot cancel orders safely."),
+            },
+        )
+
     cancel_result = _cancel_ibkr_open_orders(
         account=account_id,
         symbol=req.symbol,
@@ -6705,7 +6732,7 @@ def cancel_pending_live_orders(req: CancelPendingOrdersRequest):
     if not req.dry_run:
         try:
             snapshot_refresh = _run_on_demand_snapshot_sync(
-                **_default_snapshot_sync_params(),
+                **_snapshot_sync_params_for_portfolio(portfolio_id),
                 account=account_id,
                 portfolio_id=portfolio_id,
             )
@@ -6806,6 +6833,39 @@ def cancel_single_live_order(order_id: str, req: CancelSingleOrderRequest = Body
             status_code=400,
             detail={"message": "Cannot cancel order: IBKR account is missing.", "reason_codes": ["MISSING_IBKR_ACCOUNT"]},
         )
+
+    # Phase 3A — portfolio assertion and session probe before broker contact.
+    _single_order_portfolio_id = order.get("PORTFOLIO_ID")
+    if req.portfolio_id is not None and _single_order_portfolio_id is not None:
+        if int(req.portfolio_id) != int(_single_order_portfolio_id):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": f"PORTFOLIO_MISMATCH: order belongs to portfolio {_single_order_portfolio_id}, "
+                               f"not the requested portfolio {req.portfolio_id}.",
+                    "reason_codes": ["ORDER_PORTFOLIO_MISMATCH"],
+                },
+            )
+    _probe_portfolio_id = _single_order_portfolio_id or (req.portfolio_id if req.portfolio_id is not None else None)
+    if _probe_portfolio_id is not None:
+        _single_cancel_params = _snapshot_sync_params_for_portfolio(_probe_portfolio_id)
+        _single_probe = _probe_ibkr_session(
+            host=_single_cancel_params["host"],
+            port=_single_cancel_params["port"],
+            client_id=9410,
+            expected_account=account_id,
+        )
+        if _single_probe.get("status") not in ("MATCH", "MULTIPLE_ACCOUNTS"):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "SESSION_MISMATCH",
+                    "status": _single_probe.get("status"),
+                    "detected_accounts": _single_probe.get("detected_accounts", []),
+                    "expected_account": account_id,
+                    "message": _single_probe.get("message", "IBKR session mismatch — cannot cancel order safely."),
+                },
+            )
 
     cancel_result = _cancel_ibkr_open_orders(
         account=account_id,
@@ -13353,6 +13413,30 @@ def revalidate_live_action(
                     "window_close_utc": ext_close_utc.isoformat(),
                 },
             )
+
+        # Phase 3A — verify broker universe type still matches config (mirrors Gate 2 at execute).
+        _reval_portfolio_id = action.get("PORTFOLIO_ID")
+        _reval_universe_type = str(action.get("BROKER_UNIVERSE_TYPE") or "").strip().upper()
+        if _reval_universe_type and _reval_portfolio_id is not None:
+            try:
+                cur.execute(
+                    "select IBKR_ACCOUNT_MODE from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = %s",
+                    (_reval_portfolio_id,),
+                )
+                _reval_cfg = fetch_all(cur)
+                if _reval_cfg:
+                    _reval_cfg_mode = str(_reval_cfg[0].get("IBKR_ACCOUNT_MODE") or "").strip().upper()
+                    if _reval_cfg_mode and _reval_universe_type != _reval_cfg_mode:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"UNIVERSE_MISMATCH: action BROKER_UNIVERSE_TYPE={_reval_universe_type} "
+                                   f"does not match portfolio IBKR_ACCOUNT_MODE={_reval_cfg_mode}.",
+                        )
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # best-effort; config join failure must not silently block revalidation
+
         symbol = action.get("SYMBOL")
         proposed_price = action.get("PROPOSED_PRICE")
         portfolio_id = action.get("PORTFOLIO_ID")
@@ -13801,7 +13885,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
             select
               IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, BUST_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE,
-              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED
+              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED,
+              DRAWDOWN_STOP_PCT, MAX_SLIPPAGE_PCT, COOLDOWN_BARS,
+              ALLOW_SHORT_SELLING, TRAIL_ENABLED
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
             """,
@@ -13859,6 +13945,17 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 raise HTTPException(status_code=400, detail="Real-money execution blocked: ENABLE_REAL_MONEY_TRADING env flag not set.")
             if not cfg.get("REAL_MONEY_ENABLED"):
                 raise HTTPException(status_code=400, detail="Real-money execution blocked: REAL_MONEY_ENABLED=false on portfolio config.")
+
+        # Gate 5b — REAL: short selling requires per-portfolio explicit opt-in.
+        # ALLOW_SHORT_SELLING=FALSE (default) blocks all non-exit SELL entries for REAL portfolios.
+        # Paper uses the global LIVE_ENFORCE_LONG_ONLY APP_CONFIG flag instead.
+        if ibkr_account_mode == "REAL" and not is_exit:
+            action_side = str(action.get("SIDE") or "").upper()
+            if action_side == "SELL" and not cfg.get("ALLOW_SHORT_SELLING"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Short selling is not enabled for this real-money portfolio (ALLOW_SHORT_SELLING=false).",
+                )
 
         # Gate 6b — session probe: connected IBKR session must expose the expected account.
         # Probe before any broker contact so the operator gets a clear 409 instead of a
@@ -13986,6 +14083,101 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 max_snap_age = cfg.get("SNAPSHOT_FRESHNESS_THRESHOLD_SEC") or 300
                 if snap_age_sec > max_snap_age:
                     reason_codes.append("SNAPSHOT_STALE")
+
+        # ── Phase 3A safety gates ──────────────────────────────────────────────
+        # For REAL accounts these are hard HTTPException blocks (400/409).
+        # For PAPER they add reason_codes (soft 409 via the existing block below).
+
+        # Gate: DRAWDOWN_STOP_PCT — block new entries when NAV has drawn down past threshold.
+        # Baseline = rolling max NAV over LIVE_DRAWDOWN_BASELINE_WINDOW_DAYS (APP_CONFIG, default 30d).
+        _drawdown_stop_pct = cfg.get("DRAWDOWN_STOP_PCT")
+        if not is_exit and nav_eur is not None and _drawdown_stop_pct is not None:
+            try:
+                _drawdown_window_cfg = _read_app_config(cur, ["LIVE_DRAWDOWN_BASELINE_WINDOW_DAYS"])
+                _drawdown_window_days = int(
+                    _drawdown_window_cfg.get("LIVE_DRAWDOWN_BASELINE_WINDOW_DAYS") or 30
+                )
+                cur.execute(
+                    """
+                    select MAX(NET_LIQUIDATION_EUR) as PEAK_NAV
+                    from MIP.LIVE.BROKER_SNAPSHOTS
+                    where IBKR_ACCOUNT_ID = %s
+                      and SNAPSHOT_TYPE = 'NAV'
+                      and SNAPSHOT_TS >= DATEADD(day, -%s, CURRENT_TIMESTAMP())
+                    """,
+                    (account_id, _drawdown_window_days),
+                )
+                _peak_rows = fetch_all(cur)
+                _peak_nav = float((_peak_rows[0] or {}).get("PEAK_NAV") or 0.0) if _peak_rows else 0.0
+                if _peak_nav > 0 and nav_eur > 0:
+                    _drawdown = (_peak_nav - nav_eur) / _peak_nav
+                    if _drawdown > float(_drawdown_stop_pct):
+                        _dd_msg = (
+                            f"Drawdown stop exceeded: current NAV drawdown {_drawdown:.1%} "
+                            f"> DRAWDOWN_STOP_PCT {float(_drawdown_stop_pct):.1%}. "
+                            "Exits are still allowed."
+                        )
+                        if ibkr_account_mode == "REAL":
+                            raise HTTPException(status_code=400, detail=_dd_msg)
+                        reason_codes.append("DRAWDOWN_STOP_EXCEEDED")
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # best-effort; never block execution on drawdown query failure
+
+        # Gate: MAX_SLIPPAGE_PCT — block entries when revalidation price has drifted beyond
+        # the per-portfolio slippage ceiling (distinct from the bracket realism BPS system).
+        _max_slippage_pct = cfg.get("MAX_SLIPPAGE_PCT")
+        if not is_exit and _max_slippage_pct is not None:
+            _rev_px = action.get("REVALIDATION_PRICE")
+            _prop_px = action.get("PROPOSED_PRICE")
+            if _rev_px is not None and _prop_px is not None and float(_prop_px) > 0:
+                _price_drift = abs(float(_rev_px) - float(_prop_px)) / float(_prop_px)
+                if _price_drift > float(_max_slippage_pct):
+                    _slip_msg = (
+                        f"Price drift {_price_drift:.1%} exceeds MAX_SLIPPAGE_PCT "
+                        f"{float(_max_slippage_pct):.1%} for this portfolio. "
+                        "Re-run revalidation after the price settles."
+                    )
+                    if ibkr_account_mode == "REAL":
+                        raise HTTPException(status_code=400, detail=_slip_msg)
+                    reason_codes.append("MAX_SLIPPAGE_PCT_EXCEEDED")
+
+        # Gate: COOLDOWN_BARS — block new entries within N bars of the last fill.
+        # Bar size proxy: LIVE_BAR_MINUTES APP_CONFIG key (default 5 min).
+        _cooldown_bars = cfg.get("COOLDOWN_BARS")
+        if not is_exit and _cooldown_bars is not None and int(_cooldown_bars) > 0:
+            try:
+                _bar_min_cfg = _read_app_config(cur, ["LIVE_BAR_MINUTES"])
+                _bar_minutes = int(_bar_min_cfg.get("LIVE_BAR_MINUTES") or 5)
+                cur.execute(
+                    """
+                    select MAX(FILLED_AT) as LAST_FILL_TS
+                    from MIP.LIVE.LIVE_ORDERS
+                    where PORTFOLIO_ID = %s
+                      and STATUS = 'FILLED'
+                    """,
+                    (action.get("PORTFOLIO_ID"),),
+                )
+                _fill_rows = fetch_all(cur)
+                _last_fill_ts = (_fill_rows[0] or {}).get("LAST_FILL_TS") if _fill_rows else None
+                if _last_fill_ts is not None:
+                    _elapsed_min = (now_utc - _last_fill_ts.replace(tzinfo=timezone.utc)).total_seconds() / 60.0
+                    _bars_since = _elapsed_min / max(_bar_minutes, 1)
+                    if _bars_since < int(_cooldown_bars):
+                        _cool_msg = (
+                            f"Cooldown active: only {_bars_since:.1f} bars since last fill, "
+                            f"need {int(_cooldown_bars)}. Entries are blocked during cooldown."
+                        )
+                        if ibkr_account_mode == "REAL":
+                            raise HTTPException(status_code=400, detail=_cool_msg)
+                        reason_codes.append("COOLDOWN_BARS_ACTIVE")
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # best-effort
+
+        # ── End Phase 3A safety gates ──────────────────────────────────────────
 
         cur.execute(
             """
@@ -14479,6 +14671,36 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 )
 
             if structural_exit_policy == exit_policy_service.EXIT_POLICY_TRAIL:
+                # Per-portfolio trail CERTIFICATION gate (Phase 3A) — checked before global kill switch.
+                #
+                # TRAIL_ENABLED is a real-money readiness CERTIFICATION GATE, not a long-term
+                # prohibition. Trailing stops are a required risk-management / profit-locking
+                # mechanism for this operator workflow (trades are not continuously monitored).
+                # The gate exists only to prevent ACCIDENTAL real-money trailing orders before
+                # the full trailing path is verified end-to-end: order placement, broker
+                # persistence, reconciliation, cancel handling, and UI visibility.
+                #
+                # For REAL accounts this is a hard block until certified (TRAIL_ENABLED=true).
+                # For PAPER it adds a reason_code so trailing can be exercised and verified.
+                if not cfg.get("TRAIL_ENABLED"):
+                    _trail_portfolio_msg = (
+                        "Trailing stop pending real-money certification: TRAIL_ENABLED=false on this "
+                        "portfolio config. Trailing-stop support must be verified end-to-end "
+                        "(placement, broker persistence, reconciliation, cancel handling, UI visibility) "
+                        "before real-money trailing orders are permitted. Set TRAIL_ENABLED=true once "
+                        "certified."
+                    )
+                    if ibkr_account_mode == "REAL":
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "message": _trail_portfolio_msg,
+                                "reason_codes": ["TRAIL_PENDING_REALMONEY_CERTIFICATION"],
+                                "exit_policy": structural_exit_policy,
+                            },
+                        )
+                    reason_codes.append("TRAIL_PENDING_REALMONEY_CERTIFICATION")
+
                 # Global Phase 1 kill switch — never silently downgrades.
                 trail_phase1_cfg = _read_app_config(
                     cur, ["TRAIL_PHASE1_ENABLED"]
@@ -14803,6 +15025,61 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 )
                 entry_symbol_qty_before = float(truth_before_entry.get("symbol_position_qty") or 0.0)
 
+            # TOCTOU pre-record — insert a PENDING_SUBMIT sentinel to LIVE_ORDERS before
+            # any broker contact. If a concurrent request already inserted this key the
+            # unique constraint raises immediately and we block the duplicate submission.
+            # On broker failure the sentinel is updated to SUBMIT_FAILED so retries must
+            # increment attempt_n (the idempotency key changes).
+            _sentinel_order_id   = str(uuid.uuid4())
+            _sentinel_idem_key   = f"{idempotency_key}:PENDING"
+            _sentinel_broker_ut  = action.get("BROKER_UNIVERSE_TYPE") or ibkr_account_mode
+            _sentinel_inserted   = False
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO MIP.LIVE.LIVE_ORDERS (
+                      ORDER_ID, ACTION_ID, PORTFOLIO_ID, IBKR_ACCOUNT_ID, IDEMPOTENCY_KEY,
+                      STATUS, SYMBOL, SIDE, ACTION_INTENT, BROKER_UNIVERSE_TYPE,
+                      QTY_ORDERED, ORDER_TYPE,
+                      SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
+                    ) VALUES (
+                      %(order_id)s, %(action_id)s, %(portfolio_id)s, %(account_id)s, %(idem_key)s,
+                      'PENDING_SUBMIT', %(symbol)s, %(side)s, %(action_intent)s, %(broker_universe_type)s,
+                      %(qty)s, 'PENDING_SUBMIT',
+                      CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+                    )
+                    """,
+                    {
+                        "order_id":            _sentinel_order_id,
+                        "action_id":           action_id,
+                        "portfolio_id":        action.get("PORTFOLIO_ID"),
+                        "account_id":          account_id,
+                        "idem_key":            _sentinel_idem_key,
+                        "symbol":              action.get("SYMBOL"),
+                        "side":                side,
+                        "action_intent":       action_intent,
+                        "broker_universe_type": _sentinel_broker_ut,
+                        "qty":                 qty_ordered,
+                    },
+                )
+                _sentinel_inserted = True
+            except Exception as _sent_exc:
+                _sent_msg = str(_sent_exc)
+                if "unique" in _sent_msg.lower() or "duplicate" in _sent_msg.lower():
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": (
+                                "Concurrent submission detected: a PENDING_SUBMIT sentinel already "
+                                "exists for this action and attempt. Increment attempt_n to retry."
+                            ),
+                            "reason_codes": ["LIVE_IDEMPOTENT_SUBMIT_ALREADY_RECORDED"],
+                            "idempotency_key": _sentinel_idem_key,
+                        },
+                    )
+                # Non-unique constraint failure: log and continue (sentinel is best-effort
+                # except for the duplicate-key case handled above).
+
             cur.execute(
                 """
                 insert into MIP.LIVE.BROKER_EVENT_LEDGER (
@@ -14864,14 +15141,29 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         qty_ordered,
                         entry_price,
                         json.dumps(
-                            {
-                                "message": "IBKR submission raised HTTPException",
-                                "detail": exc.detail,
-                                "attempt": submit_attempt_payload,
-                            }
+                                {
+                                    "message": "IBKR submission raised HTTPException",
+                                    "detail": exc.detail,
+                                    "attempt": submit_attempt_payload,
+                                }
                         ),
                     ),
                 )
+                # Sentinel cleanup — mark the pre-record as SUBMIT_FAILED so the
+                # idempotency key is no longer PENDING and retries get a clean slate
+                # when the operator increments attempt_n.
+                if _sentinel_inserted:
+                    try:
+                        cur.execute(
+                            """
+                            UPDATE MIP.LIVE.LIVE_ORDERS
+                            SET STATUS = 'SUBMIT_FAILED', LAST_UPDATED_AT = CURRENT_TIMESTAMP()
+                            WHERE ORDER_ID = %s AND STATUS = 'PENDING_SUBMIT'
+                            """,
+                            (_sentinel_order_id,),
+                        )
+                    except Exception:
+                        pass
                 raise
             cur.execute(
                 """
@@ -15023,6 +15315,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
                       PARENT_ORDER_ID, ORDER_ROLE, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
                       TRAIL_STYLE, TRAIL_AMOUNT, TRAIL_PERCENT,
+                      BROKER_UNIVERSE_TYPE,
                       SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                     )
                     VALUES (
@@ -15030,6 +15323,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
                       %(parent_order_id)s, %(order_role)s, %(protection_type)s, %(oca_group)s, %(stop_price)s,
                       %(trail_style)s, %(trail_amount)s, %(trail_percent)s,
+                      %(broker_universe_type)s,
                       CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                     )
                     """,
@@ -15056,6 +15350,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "trail_style": leg.get("trail_style"),
                         "trail_amount": leg.get("trail_amount"),
                         "trail_percent": leg.get("trail_percent"),
+                        "broker_universe_type": action.get("BROKER_UNIVERSE_TYPE") or ibkr_account_mode,
                     },
                 )
             ib_live_orders_inserted = True
@@ -15085,7 +15380,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                 if attempt_idx > 0 and truth_sleep_sec > 0:
                     time.sleep(truth_sleep_sec)
                 _run_on_demand_snapshot_sync(
-                    **_default_snapshot_sync_params(),
+                    **_snapshot_sync_params_for_portfolio(action.get("PORTFOLIO_ID")),
                     account=str(account_id),
                     portfolio_id=action.get("PORTFOLIO_ID"),
                 )
@@ -15290,6 +15585,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, ORDER_TYPE, QTY_ORDERED, LIMIT_PRICE,
                       PARENT_ORDER_ID, ORDER_ROLE, PROTECTION_TYPE, OCA_GROUP, STOP_PRICE,
                       TRAIL_STYLE, TRAIL_AMOUNT, TRAIL_PERCENT,
+                      BROKER_UNIVERSE_TYPE,
                       SUBMITTED_AT, ACKNOWLEDGED_AT, LAST_UPDATED_AT, CREATED_AT
                     )
                     VALUES (
@@ -15297,6 +15593,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                       %(symbol)s, %(side)s, %(action_intent)s, %(exit_type)s, %(order_type)s, %(qty_ordered)s, %(limit_price)s,
                       %(parent_order_id)s, %(order_role)s, %(protection_type)s, %(oca_group)s, %(stop_price)s,
                       %(trail_style)s, %(trail_amount)s, %(trail_percent)s,
+                      %(broker_universe_type)s,
                       CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                     )
                     """,
@@ -15326,6 +15623,7 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                         "trail_style": leg.get("trail_style"),
                         "trail_amount": leg.get("trail_amount"),
                         "trail_percent": leg.get("trail_percent"),
+                        "broker_universe_type": action.get("BROKER_UNIVERSE_TYPE") or ibkr_account_mode,
                     },
                 )
 

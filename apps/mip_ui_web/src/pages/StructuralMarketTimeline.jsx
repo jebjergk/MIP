@@ -15,7 +15,7 @@ import StlHearingLaunch from '../components/structural-timeline/StlHearingLaunch
 import StlAgenticBoardRead from '../components/structural-timeline/StlAgenticBoardRead'
 import './StructuralMarketTimeline.css'
 
-const get = (r, k) => r[k] ?? r[k.toUpperCase()] ?? r[k.toLowerCase()]
+const get = (r, k) => (r == null ? undefined : (r[k] ?? r[k.toUpperCase()] ?? r[k.toLowerCase()]))
 
 const DEFAULT_OVERLAYS = {
   setupMarkers: true,

@@ -1801,14 +1801,23 @@ def _publish_to_structural(
 ) -> Tuple[int, int]:
     """Returns (published_count, skipped_count).
 
-    `short_publication_allowed` MUST be True only after the caller has
-    verified that ``MIP.LIVE.LIVE_PORTFOLIO_CONFIG.IBKR_ACCOUNT_MODE = 'PAPER'``
-    for ``portfolio_id`` (see ``_get_ibkr_account_mode``). When False, no
-    PROPOSE_SHORT row is inserted and shorts on the slate are marked
-    SKIPPED_GUARDRAIL with reason ``IBKR_ACCOUNT_MODE_NOT_PAPER``.
+    Design rule (paper/real equivalence): the market VERDICT and trade
+    configuration are identical regardless of account mode. Account mode is an
+    EXECUTION SAFETY CONTROL only — it may annotate a proposal as non-executable
+    but must never change direction, entry zone, invalidation, trail params, or
+    committee payload.
 
-    `ibkr_account_mode` is recorded in the SKIPPED_GUARDRAIL audit JSON for
-    transparency.
+    Accordingly, both PROPOSE_LONG and PROPOSE_SHORT rows are ALWAYS inserted
+    with their full chair verdict preserved. `short_publication_allowed` (set
+    True only when ``MIP.LIVE.LIVE_PORTFOLIO_CONFIG.IBKR_ACCOUNT_MODE = 'PAPER'``
+    for the board-run ``portfolio_id``, see ``_get_ibkr_account_mode``) does NOT
+    suppress shorts; when False it only records
+    ``EXECUTION_POLICY_STATUS='BROKER_BLOCKED'`` /
+    ``EXECUTION_POLICY_REASON='IBKR_NOT_PAPER'`` / ``IS_RESEARCH_ONLY=TRUE`` on
+    the short proposal. Real-account execution of shorts is independently gated
+    at execute time by the per-portfolio ``ALLOW_SHORT_SELLING`` flag.
+
+    `ibkr_account_mode` is recorded in audit JSON for transparency.
     """
     cur.execute(
         """

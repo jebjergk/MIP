@@ -146,6 +146,7 @@ class ComplianceDecisionRequest(BaseModel):
 
 class LivePortfolioConfigUpsertRequest(BaseModel):
     ibkr_account_id: str | None = None
+    broker_name: str | None = None
     adapter_mode: str | None = Field(default=None, pattern="^(PAPER|LIVE)$")
     base_currency: str | None = None
     max_positions: int | None = None
@@ -160,6 +161,8 @@ class LivePortfolioConfigUpsertRequest(BaseModel):
     bust_pct: float | None = None
     cooldown_bars: int | None = None
     is_active: bool | None = None
+    is_execution_enabled: bool | None = None
+    real_money_enabled: bool | None = None
 
 
 class ImportLiveActionsFromProposalsRequest(BaseModel):
@@ -185,6 +188,13 @@ class ImportStructuralProposalsRequest(BaseModel):
 class ExecuteLiveActionRequest(BaseModel):
     actor: str
     attempt_n: int = 1
+    # Optional client-side context assertions. Backend validates these against
+    # the frozen LIVE_ACTIONS fields and LIVE_PORTFOLIO_CONFIG independently
+    # (Phase 1 gates are authoritative). Mismatches are rejected before broker submit.
+    portfolio_id: int | None = None
+    ibkr_account_id: str | None = None
+    broker_name: str | None = None
+    broker_universe_type: str | None = None
 
 
 class ApproveAndSubmitLiveDecisionRequest(BaseModel):
@@ -215,6 +225,11 @@ class ApproveLiveDecisionRequest(BaseModel):
 class SubmitLiveDecisionRequest(BaseModel):
     execution_actor: str = "execution_operator"
     attempt_n: int = 1
+    # Client-side context assertions forwarded to execute_live_action.
+    portfolio_id: int | None = None
+    ibkr_account_id: str | None = None
+    broker_name: str | None = None
+    broker_universe_type: str | None = None
 
 
 class RevalidateLiveActionRequest(BaseModel):
@@ -420,7 +435,8 @@ def _fetch_live_action(cur, action_id: str) -> dict | None:
           EXPECTED_HOLD_CHARACTER, MAX_HOLD_BARS,
           SETUP_NARRATIVE, PROPOSAL_RATIONALE,
           CURRENT_PRICE, DISTANCE_TO_ENTRY_ZONE, SETUP_STILL_VALID, PRICE_MOVED_TOO_FAR, FRESHNESS_ASSESSMENT,
-          MARKET_TYPE, LIVE_INTENT_KIND
+          MARKET_TYPE, LIVE_INTENT_KIND,
+          BROKER_NAME, IBKR_ACCOUNT_ID, BROKER_UNIVERSE_TYPE
         from MIP.LIVE.LIVE_ACTIONS
         where ACTION_ID = %s
         """,
@@ -6588,6 +6604,23 @@ def get_latest_live_snapshot(
         if params:
             cur.execute(nav_sql, tuple(params))
         else:
+            # Global fallback (no portfolio_id/account filter). Guard against
+            # multiple active portfolio configs — caller must be explicit.
+            cur.execute(
+                "select count(*) as CNT from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where coalesce(IS_ACTIVE, true) = true"
+            )
+            _snap_active_count = (cur.fetchone() or [0])[0]
+            if _snap_active_count > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Multiple active portfolio configs exist — portfolio_id is required for /live/snapshot/latest.",
+                )
+            if _snap_active_count == 1:
+                import logging as _logging
+                _logging.getLogger("live").warning(
+                    "GET /live/snapshot/latest called without portfolio_id — using single-config fallback. "
+                    "Pass portfolio_id explicitly once LPA supports account selection."
+                )
             cur.execute(nav_sql)
         nav_row = cur.fetchone()
         nav_cols = [d[0] for d in cur.description] if cur.description else []
@@ -7623,6 +7656,7 @@ def _dedupe_structural_entry_pending_rows(cur, pending_decisions: list[dict]) ->
 
 @router.get("/activity/overview")
 def get_live_activity_overview(
+    portfolio_id: int | None = Query(None, description="Live portfolio ID. Required when multiple active configs exist."),
     limit: int = Query(200, ge=50, le=1000),
     order_limit: int = Query(120, ge=20, le=1000),
     execution_limit: int = Query(60, ge=10, le=500),
@@ -7636,17 +7670,49 @@ def get_live_activity_overview(
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            """
-            select
-              PORTFOLIO_ID, IBKR_ACCOUNT_ID, DRIFT_STATUS, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
-              MAX_POSITIONS, MAX_POSITION_PCT, BUST_PCT, IS_ACTIVE, UPDATED_AT
-            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
-            where coalesce(IS_ACTIVE, true) = true
-            order by PORTFOLIO_ID
-            limit 1
-            """
-        )
+        if portfolio_id is not None:
+            # Explicit portfolio — resolve directly, no count guard needed.
+            cur.execute(
+                """
+                select
+                  PORTFOLIO_ID, IBKR_ACCOUNT_ID, DRIFT_STATUS, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+                  MAX_POSITIONS, MAX_POSITION_PCT, BUST_PCT, IS_ACTIVE, UPDATED_AT
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where PORTFOLIO_ID = %s
+                """,
+                (portfolio_id,),
+            )
+        else:
+            # Multi-config guard: if more than one active portfolio config exists and
+            # no portfolio_id was provided, we cannot safely pick one. Fail closed so
+            # the caller must be explicit. With a single active config the fallback
+            # works normally (logs a warning for observability).
+            cur.execute(
+                "select count(*) as CNT from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where coalesce(IS_ACTIVE, true) = true"
+            )
+            _active_count = (cur.fetchone() or [0])[0]
+            if _active_count > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Multiple active portfolio configs exist — portfolio_id is required for /live/activity/overview.",
+                )
+            if _active_count == 1:
+                import logging as _logging
+                _logging.getLogger("live").warning(
+                    "GET /live/activity/overview called without portfolio_id — using single-config fallback. "
+                    "Pass portfolio_id explicitly once LPA supports account selection."
+                )
+            cur.execute(
+                """
+                select
+                  PORTFOLIO_ID, IBKR_ACCOUNT_ID, DRIFT_STATUS, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
+                  MAX_POSITIONS, MAX_POSITION_PCT, BUST_PCT, IS_ACTIVE, UPDATED_AT
+                from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                where coalesce(IS_ACTIVE, true) = true
+                order by PORTFOLIO_ID
+                limit 1
+                """
+            )
         cfg_rows = fetch_all(cur)
         if not cfg_rows:
             return {
@@ -9104,7 +9170,7 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
         cur = conn.cursor()
         cur.execute(
             """
-            select PORTFOLIO_ID, IBKR_ACCOUNT_ID, VALIDITY_WINDOW_SEC
+            select PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, IBKR_ACCOUNT_MODE, VALIDITY_WINDOW_SEC
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
               and coalesce(IS_ACTIVE, true) = true
@@ -9117,6 +9183,8 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
             raise HTTPException(status_code=404, detail="Active live portfolio config not found.")
         cfg = cfg_rows[0]
         account_id = str(cfg.get("IBKR_ACCOUNT_ID") or "").strip()
+        broker_name = str(cfg.get("BROKER_NAME") or "IBKR").strip()
+        broker_universe_type = str(cfg.get("IBKR_ACCOUNT_MODE") or "PAPER").strip()
         validity_window_sec = int(cfg.get("VALIDITY_WINDOW_SEC") or 14400)
         if not account_id:
             raise HTTPException(
@@ -9242,18 +9310,22 @@ def create_exit_action_from_position(req: CreateExitActionRequest):
         cur.execute(
             """
             insert into MIP.LIVE.LIVE_ACTIONS (
-              ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON,
+              ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, BROKER_NAME, IBKR_ACCOUNT_ID, BROKER_UNIVERSE_TYPE,
+              SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON,
               PROPOSED_QTY, PROPOSED_PRICE, ASSET_CLASS, STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS,
               PARAM_SNAPSHOT, REASON_CODES, COMMITTEE_REQUIRED, COMMITTEE_STATUS, LIVE_INTENT_KIND, CREATED_AT, UPDATED_AT
             )
             select
-              %s, null, %s, %s, %s, 'EXIT', 'MANUAL', %s,
+              %s, null, %s, %s, %s, %s, %s, %s, 'EXIT', 'MANUAL', %s,
               %s, %s, null, 'READY_FOR_APPROVAL_FLOW', dateadd(second, %s, current_timestamp()), 'PENDING',
               parse_json(%s), parse_json(%s), false, 'SKIPPED', 'OPERATOR_EXIT', current_timestamp(), current_timestamp()
             """,
             (
                 action_id,
                 int(req.portfolio_id),
+                broker_name,
+                account_id,
+                broker_universe_type,
                 symbol,
                 side,
                 reason_text,
@@ -9754,7 +9826,14 @@ def submit_live_decision_only(action_id: str, req: SubmitLiveDecisionRequest):
 
     execute_resp = execute_live_action(
         action_id,
-        ExecuteLiveActionRequest(actor=req.execution_actor, attempt_n=req.attempt_n),
+        ExecuteLiveActionRequest(
+            actor=req.execution_actor,
+            attempt_n=req.attempt_n,
+            portfolio_id=req.portfolio_id,
+            ibkr_account_id=req.ibkr_account_id,
+            broker_name=req.broker_name,
+            broker_universe_type=req.broker_universe_type,
+        ),
     )
     steps.append("execute")
     action = refresh_state()
@@ -13348,6 +13427,32 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         action = _fetch_live_action(cur, action_id)
         if not action:
             raise HTTPException(status_code=404, detail="Action not found.")
+
+        # Client-assertion pre-gate: if the caller supplied context fields,
+        # validate them against the action row before running the full gate chain.
+        # These are assertions only — the Phase 1 frozen-context gates below remain
+        # authoritative. A mismatch here means the UI sent stale/wrong context.
+        if req.portfolio_id is not None and req.portfolio_id != action.get("PORTFOLIO_ID"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Client assertion mismatch: portfolio_id={req.portfolio_id} vs action.PORTFOLIO_ID={action.get('PORTFOLIO_ID')}.",
+            )
+        if req.ibkr_account_id and str(req.ibkr_account_id).strip() != str(action.get("IBKR_ACCOUNT_ID") or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Client assertion mismatch: ibkr_account_id={req.ibkr_account_id} vs action.IBKR_ACCOUNT_ID={action.get('IBKR_ACCOUNT_ID')}.",
+            )
+        if req.broker_name and str(req.broker_name).strip().upper() != str(action.get("BROKER_NAME") or "").strip().upper():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Client assertion mismatch: broker_name={req.broker_name} vs action.BROKER_NAME={action.get('BROKER_NAME')}.",
+            )
+        if req.broker_universe_type and str(req.broker_universe_type).strip().upper() != str(action.get("BROKER_UNIVERSE_TYPE") or "").strip().upper():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Client assertion mismatch: broker_universe_type={req.broker_universe_type} vs action.BROKER_UNIVERSE_TYPE={action.get('BROKER_UNIVERSE_TYPE')}.",
+            )
+
         assert_legacy_execute_forbidden(action, _live_structural_only_enabled(cur))
 
         # LPA stale-lifecycle gate. A structural ENTRY action whose
@@ -13414,8 +13519,9 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         cur.execute(
             """
             select
-              IBKR_ACCOUNT_ID, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, BUST_PCT,
-              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE
+              IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, BUST_PCT,
+              VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC, DRIFT_STATUS, IS_ACTIVE,
+              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
             """,
@@ -13431,6 +13537,48 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         drift_status = (cfg.get("DRIFT_STATUS") or "").upper()
         if drift_status and drift_status not in ("OK", "CLEAR", "HEALTHY"):
             reason_codes.append("BROKER_TRUTH_DRIFT_UNRESOLVED")
+
+        # ── Broker-universe safety gates ──────────────────────────────────────
+        # Phase 1: enforce frozen execution context on the action row and
+        # validate it against the live portfolio config before any order can
+        # reach the broker. Gates run in strict order; LIVE_EXECUTION_MODE=IBKR
+        # may only select the broker submit path at the end, after all pass.
+
+        # Gate 1 — frozen context completeness
+        action_broker_name   = str(action.get("BROKER_NAME")         or "").strip()
+        action_ibkr_id       = str(action.get("IBKR_ACCOUNT_ID")     or "").strip()
+        action_universe_type = str(action.get("BROKER_UNIVERSE_TYPE") or "").strip()
+        if not action_broker_name:
+            raise HTTPException(status_code=400, detail="Action BROKER_NAME is missing — action context is incomplete.")
+        if not action_ibkr_id:
+            raise HTTPException(status_code=400, detail="Action IBKR_ACCOUNT_ID is missing — action context is incomplete.")
+        if not action_universe_type:
+            raise HTTPException(status_code=400, detail="Action BROKER_UNIVERSE_TYPE is missing — action context is incomplete.")
+
+        # Gate 2 — frozen context must match live portfolio config
+        config_broker     = str(cfg.get("BROKER_NAME")      or "IBKR").strip()
+        ibkr_account_mode = str(cfg.get("IBKR_ACCOUNT_MODE") or "UNKNOWN").upper()
+        if action_broker_name != config_broker:
+            raise HTTPException(status_code=400, detail=f"Broker mismatch: action={action_broker_name}, config={config_broker}.")
+        if action_ibkr_id != account_id:
+            raise HTTPException(status_code=400, detail=f"Account mismatch: action={action_ibkr_id}, config={account_id}.")
+        if action_universe_type.upper() != ibkr_account_mode:
+            raise HTTPException(status_code=400, detail=f"Universe mismatch: action={action_universe_type}, config={ibkr_account_mode}.")
+
+        # Gate 3 — execution must be explicitly enabled on this portfolio
+        if not cfg.get("IS_EXECUTION_ENABLED"):
+            raise HTTPException(status_code=400, detail="Execution not enabled on this portfolio (IS_EXECUTION_ENABLED=false).")
+
+        # Gate 4 — account mode must be PAPER or REAL (UNKNOWN fails closed)
+        if ibkr_account_mode == "UNKNOWN":
+            raise HTTPException(status_code=400, detail="IBKR_ACCOUNT_MODE is UNKNOWN — set to PAPER or REAL before executing.")
+
+        # Gate 5 — REAL requires dual approval: env flag AND DB flag
+        if ibkr_account_mode == "REAL":
+            if str(os.getenv("ENABLE_REAL_MONEY_TRADING", "false")).lower() != "true":
+                raise HTTPException(status_code=400, detail="Real-money execution blocked: ENABLE_REAL_MONEY_TRADING env flag not set.")
+            if not cfg.get("REAL_MONEY_ENABLED"):
+                raise HTTPException(status_code=400, detail="Real-money execution blocked: REAL_MONEY_ENABLED=false on portfolio config.")
 
         unresolved_drift_row = None
         try:
@@ -13850,6 +13998,10 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         structural_oca_group = str(uuid.uuid4())[:8] if is_structural else None
         adapter_mode = str(cfg.get("ADAPTER_MODE") or "PAPER").upper()
         execution_mode = str(os.getenv("LIVE_EXECUTION_MODE", "AUTO")).upper()
+        # Gate 6 — broker submit path selection. LIVE_EXECUTION_MODE=IBKR may
+        # only select the IBKR submit path here, AFTER all safety gates above
+        # have passed. It cannot bypass frozen-context checks, IS_EXECUTION_ENABLED,
+        # IBKR_ACCOUNT_MODE, or the REAL dual-approval requirement.
         use_ibkr_submit = adapter_mode == "LIVE"
         if execution_mode == "IBKR":
             use_ibkr_submit = True
@@ -15956,12 +16108,14 @@ def list_live_portfolio_configs():
         cur.execute(
             """
             select
-              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
-              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE,
+              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED,
+              CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             order by PORTFOLIO_ID
             """
@@ -15980,12 +16134,14 @@ def get_live_portfolio_config(portfolio_id: int):
         cur.execute(
             """
             select
-              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
-              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE,
+              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED,
+              CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
             """,
@@ -16015,6 +16171,7 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                 """
                 update MIP.LIVE.LIVE_PORTFOLIO_CONFIG
                    set IBKR_ACCOUNT_ID = coalesce(%s, IBKR_ACCOUNT_ID),
+                       BROKER_NAME = coalesce(%s, BROKER_NAME),
                        ADAPTER_MODE = coalesce(%s, ADAPTER_MODE),
                        BASE_CURRENCY = coalesce(%s, BASE_CURRENCY),
                        MAX_POSITIONS = coalesce(%s, MAX_POSITIONS),
@@ -16029,12 +16186,15 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                        BUST_PCT = coalesce(%s, BUST_PCT),
                        COOLDOWN_BARS = coalesce(%s, COOLDOWN_BARS),
                        IS_ACTIVE = coalesce(%s, IS_ACTIVE),
+                       IS_EXECUTION_ENABLED = coalesce(%s, IS_EXECUTION_ENABLED),
+                       REAL_MONEY_ENABLED = coalesce(%s, REAL_MONEY_ENABLED),
                        CONFIG_VERSION = coalesce(CONFIG_VERSION, 1) + 1,
                        UPDATED_AT = current_timestamp()
                  where PORTFOLIO_ID = %s
                 """,
                 (
                     req.ibkr_account_id,
+                    req.broker_name,
                     req.adapter_mode,
                     req.base_currency.upper() if req.base_currency else None,
                     req.max_positions,
@@ -16049,6 +16209,8 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                     req.bust_pct,
                     req.cooldown_bars,
                     req.is_active,
+                    req.is_execution_enabled,
+                    req.real_money_enabled,
                     portfolio_id,
                 ),
             )
@@ -16058,25 +16220,28 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_PORTFOLIO_CONFIG (
-                  PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+                  PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, BASE_CURRENCY,
                   MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
                   VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
                   MAX_BAR_END_LAG_SEC,
-                  DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
+                  DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE,
+                  IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED, CONFIG_VERSION,
                   CREATED_AT, UPDATED_AT
                 )
                 values (
-                  %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
+                  %s, %s, coalesce(%s, 'IBKR'), coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
                   %s, %s, %s, %s,
                   coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
                   %s,
-                  %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
+                  %s, %s, coalesce(%s, 3), coalesce(%s, true),
+                  coalesce(%s, false), coalesce(%s, false), 1,
                   current_timestamp(), current_timestamp()
                 )
                 """,
                 (
                     portfolio_id,
                     req.ibkr_account_id,
+                    req.broker_name,
                     req.adapter_mode,
                     req.base_currency.upper() if req.base_currency else None,
                     req.max_positions,
@@ -16091,18 +16256,21 @@ def upsert_live_portfolio_config(portfolio_id: int, req: LivePortfolioConfigUpse
                     req.bust_pct,
                     req.cooldown_bars,
                     req.is_active,
+                    req.is_execution_enabled,
+                    req.real_money_enabled,
                 ),
             )
-
         cur.execute(
             """
             select
-              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
-              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE,
+              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED,
+              CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
             """,
@@ -16132,25 +16300,28 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
         cur.execute(
             """
             insert into MIP.LIVE.LIVE_PORTFOLIO_CONFIG (
-              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               MAX_BAR_END_LAG_SEC,
-              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE, CONFIG_VERSION,
+              DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS, IS_ACTIVE,
+              IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED, CONFIG_VERSION,
               CREATED_AT, UPDATED_AT
             )
             values (
-              %s, %s, coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
+              %s, %s, coalesce(%s, 'IBKR'), coalesce(%s, 'PAPER'), coalesce(%s, 'EUR'),
               %s, %s, %s, %s,
               coalesce(%s, 14400), coalesce(%s, 60), coalesce(%s, 300),
               %s,
-              %s, %s, coalesce(%s, 3), coalesce(%s, true), 1,
+              %s, %s, coalesce(%s, 3), coalesce(%s, true),
+              coalesce(%s, false), coalesce(%s, false), 1,
               current_timestamp(), current_timestamp()
             )
             """,
             (
                 next_id,
                 req.ibkr_account_id,
+                req.broker_name,
                 req.adapter_mode,
                 req.base_currency.upper() if req.base_currency else None,
                 req.max_positions,
@@ -16165,18 +16336,22 @@ def create_live_portfolio_config(req: LivePortfolioConfigUpsertRequest):
                 req.bust_pct,
                 req.cooldown_bars,
                 req.is_active,
+                req.is_execution_enabled,
+                req.real_money_enabled,
             ),
         )
 
         cur.execute(
             """
             select
-              PORTFOLIO_ID, IBKR_ACCOUNT_ID, ADAPTER_MODE, BASE_CURRENCY,
+              PORTFOLIO_ID, IBKR_ACCOUNT_ID, BROKER_NAME, ADAPTER_MODE, BASE_CURRENCY,
               MAX_POSITIONS, MAX_POSITION_PCT, CASH_BUFFER_PCT, MAX_SLIPPAGE_PCT,
               VALIDITY_WINDOW_SEC, QUOTE_FRESHNESS_THRESHOLD_SEC, SNAPSHOT_FRESHNESS_THRESHOLD_SEC,
               MAX_BAR_END_LAG_SEC,
               DRAWDOWN_STOP_PCT, BUST_PCT, COOLDOWN_BARS,
-              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE, CREATED_AT, UPDATED_AT
+              DRIFT_STATUS, CONFIG_VERSION, IS_ACTIVE,
+              IBKR_ACCOUNT_MODE, IS_EXECUTION_ENABLED, REAL_MONEY_ENABLED,
+              CREATED_AT, UPDATED_AT
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
             """,
@@ -16246,7 +16421,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             """
             select
               coalesce(VALIDITY_WINDOW_SEC, 14400) as VALIDITY_WINDOW_SEC,
-              IBKR_ACCOUNT_ID
+              IBKR_ACCOUNT_ID,
+              COALESCE(BROKER_NAME, 'IBKR') AS BROKER_NAME,
+              COALESCE(IBKR_ACCOUNT_MODE, 'PAPER') AS IBKR_ACCOUNT_MODE
             from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             where PORTFOLIO_ID = %s
               and coalesce(IS_ACTIVE, true) = true
@@ -16259,8 +16436,10 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                 status_code=400,
                 detail="Live portfolio config not found or inactive.",
             )
-        validity_window_sec, ibkr_account_id = cfg
+        validity_window_sec, ibkr_account_id, import_broker_name, import_universe_type = cfg
         ibkr_account_id = str(ibkr_account_id or "").strip()
+        import_broker_name = str(import_broker_name or "IBKR").strip()
+        import_universe_type = str(import_universe_type or "PAPER").strip()
         source_portfolio_id = int(req.source_portfolio_id) if req.source_portfolio_id is not None else None
         source_origin = "request" if source_portfolio_id is not None else "all_portfolios"
 
@@ -16434,7 +16613,8 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
             cur.execute(
                 """
                 insert into MIP.LIVE.LIVE_ACTIONS (
-                  ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON, PROPOSED_QTY, ASSET_CLASS,
+                  ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, BROKER_NAME, IBKR_ACCOUNT_ID, BROKER_UNIVERSE_TYPE,
+                  SYMBOL, SIDE, ACTION_INTENT, EXIT_TYPE, EXIT_REASON, PROPOSED_QTY, ASSET_CLASS,
                   STATUS, VALIDITY_WINDOW_END, COMPLIANCE_STATUS, PARAM_SNAPSHOT, REASON_CODES,
                   TRAINING_QUALIFICATION_SNAPSHOT, TRAINING_LIVE_ELIGIBLE, TRAINING_RANK_IMPACT, TRAINING_SIZE_CAP_FACTOR,
                   TARGET_EXPECTATION_SNAPSHOT, TARGET_OPEN_CONDITION_FACTOR, TARGET_EXPECTATION_POLICY_VERSION,
@@ -16443,7 +16623,7 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                   CREATED_AT, UPDATED_AT
                 )
                 select
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                   'PENDING_OPEN_VALIDATION', dateadd(second, %s, current_timestamp()), 'PENDING', parse_json(%s), parse_json(%s),
                   parse_json(%s), %s, %s, %s,
                   parse_json(%s), %s, %s,
@@ -16455,6 +16635,9 @@ def import_live_actions_from_proposals(req: ImportLiveActionsFromProposalsReques
                     action_id,
                     proposal_id,
                     req.live_portfolio_id,
+                    import_broker_name,
+                    ibkr_account_id,
+                    import_universe_type,
                     (p.get("SYMBOL") or "").upper(),
                     (p.get("SIDE") or "").upper(),
                     action_intent,
@@ -16814,7 +16997,9 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
         cur.execute(
             """
             SELECT COALESCE(VALIDITY_WINDOW_SEC, 14400) AS VALIDITY_WINDOW_SEC,
-                   IBKR_ACCOUNT_ID
+                   IBKR_ACCOUNT_ID,
+                   COALESCE(BROKER_NAME, 'IBKR') AS BROKER_NAME,
+                   COALESCE(IBKR_ACCOUNT_MODE, 'PAPER') AS IBKR_ACCOUNT_MODE
             FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
             WHERE PORTFOLIO_ID = %s AND COALESCE(IS_ACTIVE, TRUE) = TRUE
             """,
@@ -16823,8 +17008,10 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
         cfg = cur.fetchone()
         if not cfg:
             raise HTTPException(status_code=400, detail="Live portfolio config not found or inactive.")
-        validity_window_sec, ibkr_account_id = cfg
+        validity_window_sec, ibkr_account_id, structural_broker_name, structural_universe_type = cfg
         ibkr_account_id = str(ibkr_account_id or "").strip()
+        structural_broker_name = str(structural_broker_name or "IBKR").strip()
+        structural_universe_type = str(structural_universe_type or "PAPER").strip()
 
         # 2. Read feature flags
         flags = _read_app_config(cur, ["LIVE_ENFORCE_LONG_ONLY"])
@@ -16996,7 +17183,8 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
             cur.execute(
                 """
                 INSERT INTO MIP.LIVE.LIVE_ACTIONS (
-                    ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, SYMBOL, SIDE,
+                    ACTION_ID, PROPOSAL_ID, PORTFOLIO_ID, BROKER_NAME, IBKR_ACCOUNT_ID, BROKER_UNIVERSE_TYPE,
+                    SYMBOL, SIDE,
                     ACTION_INTENT, STATUS,
                     VALIDITY_WINDOW_END, ASSET_CLASS,
                     COMMITTEE_REQUIRED, COMMITTEE_STATUS,
@@ -17026,7 +17214,8 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     CREATED_AT, UPDATED_AT
                 )
                 SELECT
-                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s,
                     %s, 'PENDING_OPEN_VALIDATION',
                     DATEADD(SECOND, %s, CURRENT_TIMESTAMP()), %s,
                     TRUE, 'PENDING',
@@ -17049,7 +17238,9 @@ def _import_structural_proposals_locked(req: ImportStructuralProposalsRequest):
                     CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                 """,
                 (
-                    action_id, proposal_id, req.live_portfolio_id, symbol, side,
+                    action_id, proposal_id, req.live_portfolio_id,
+                    structural_broker_name, ibkr_account_id, structural_universe_type,
+                    symbol, side,
                     action_intent,
                     int(validity_window_sec) if validity_window_sec else 14400, p.get("MARKET_TYPE"),
                     param_snapshot_structural,

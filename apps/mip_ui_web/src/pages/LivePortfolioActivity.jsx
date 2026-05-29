@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Link } from 'react-router-dom'
 import { API_BASE } from '../config/apiBase'
 import { useSymbolMeta } from '../context/SymbolMetaContext'
+import { usePortfolio } from '../context/PortfolioContext'
 import './LivePortfolioActivity.css'
 import { useAskMipPageRuntime } from '../hooks/useAskMipPageRuntime'
 import LpaCommittee2Exhibits from './LpaCommittee2Exhibits'
@@ -255,6 +256,13 @@ export default function LivePortfolioActivity() {
     session_mode: 'live',
   })
   const { formatSymbolLabel } = useSymbolMeta()
+  const {
+    portfolios,
+    selectedPortfolioId,
+    setSelectedPortfolioId,
+    selectedPortfolio,
+    loading: portfolioLoading,
+  } = usePortfolio()
   const [overview, setOverview] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -327,6 +335,7 @@ export default function LivePortfolioActivity() {
   }, [])
 
   const load = useCallback(async (opts = {}) => {
+    if (!selectedPortfolioId) return   // guard: wait for portfolio selection
     const silent = Boolean(opts.silent)
     if (!silent) {
       setLoading(true)
@@ -335,6 +344,7 @@ export default function LivePortfolioActivity() {
     }
     try {
       const params = new URLSearchParams({
+        portfolio_id: String(selectedPortfolioId),
         order_lookback_days: String(ordersLookbackDays),
         order_limit: String(ordersLimit),
         execution_limit: String(executionsLimit),
@@ -350,7 +360,7 @@ export default function LivePortfolioActivity() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays])
+  }, [selectedPortfolioId, ordersLookbackDays, ordersLimit, executionsLimit, snapshotLookbackDays])
 
   useEffect(() => {
     load()
@@ -392,7 +402,12 @@ export default function LivePortfolioActivity() {
     setError('')
     setNotice('')
     try {
-      const resp = await fetch(`${API_BASE}/live/snapshot/refresh`, { method: 'POST' })
+      const body = selectedPortfolioId ? { portfolio_id: selectedPortfolioId } : {}
+      const resp = await fetch(`${API_BASE}/live/snapshot/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
       if (!resp.ok) throw new Error(`Broker refresh failed (${resp.status})`)
       await load()
     } catch (e) {
@@ -400,7 +415,7 @@ export default function LivePortfolioActivity() {
     } finally {
       setBusy('')
     }
-  }, [load])
+  }, [load, selectedPortfolioId])
 
   const cancelSingleOrder = useCallback(async (order) => {
     const orderId = order?.ORDER_ID
@@ -1141,10 +1156,17 @@ export default function LivePortfolioActivity() {
     setError('')
     setNotice('')
     try {
+      // Send client-side context assertions so the backend can validate before broker submit.
+      const assertions = {
+        ...(selectedPortfolio?.portfolio_id != null    ? { portfolio_id:         Number(selectedPortfolio.portfolio_id) }    : {}),
+        ...(selectedPortfolio?.ibkr_account_id        ? { ibkr_account_id:       selectedPortfolio.ibkr_account_id }         : {}),
+        ...(selectedPortfolio?.broker_name            ? { broker_name:           selectedPortfolio.broker_name }             : {}),
+        ...(selectedPortfolio?.broker_universe_type   ? { broker_universe_type:  selectedPortfolio.broker_universe_type }    : {}),
+      }
       const resp = await fetchWithTimeout(`${API_BASE}/live/decisions/${actionId}/submit-only`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(assertions),
       }, 180000)
       if (!resp.ok) {
         const body = await resp.json().catch(() => null)
@@ -1160,7 +1182,7 @@ export default function LivePortfolioActivity() {
     } finally {
       setBusy('')
     }
-  }, [load])
+  }, [load, selectedPortfolio])
 
   const rejectStale = useCallback(async (actionId) => {
     setBusy(`reject:${actionId}`)
@@ -1192,7 +1214,7 @@ export default function LivePortfolioActivity() {
 
   const createExitAction = useCallback(async (positionRow) => {
     const symbol = String(positionRow?.SYMBOL || '').toUpperCase().trim()
-    const portfolioId = overview?.portfolio?.portfolio_id
+    const portfolioId = selectedPortfolioId
     const positionQty = Number(positionRow?.POSITION_QTY || 0)
     const isShort = positionQty < 0
     const exitSideLabel = isShort ? 'BUY (cover short)' : 'SELL (close long)'
@@ -1258,7 +1280,7 @@ export default function LivePortfolioActivity() {
     } finally {
       setBusy('')
     }
-  }, [load, overview?.portfolio?.portfolio_id, scrollFeedbackIntoView])
+  }, [load, selectedPortfolioId, scrollFeedbackIntoView])
 
   const kpis = overview?.account_kpis || {}
   const pending = overview?.pending_decisions || []
@@ -1377,10 +1399,65 @@ export default function LivePortfolioActivity() {
         </button>
       </div>
 
+      {/* Portfolio selector / mode banner — rendered above all action controls */}
+      <div className="lpa-portfolio-bar">
+        {portfolioLoading ? (
+          <span className="lpa-portfolio-bar__loading">Loading portfolio config…</span>
+        ) : portfolios.length > 1 ? (
+          <>
+            <label className="lpa-portfolio-bar__label" htmlFor="lpa-portfolio-select">Portfolio:</label>
+            <select
+              id="lpa-portfolio-select"
+              className="lpa-portfolio-bar__select"
+              value={selectedPortfolioId ?? ''}
+              onChange={(e) => setSelectedPortfolioId(e.target.value ? Number(e.target.value) : null)}
+            >
+              {portfolios.map((p) => (
+                <option key={p.portfolio_id} value={p.portfolio_id}>
+                  {p.name || `Portfolio ${p.portfolio_id}`}
+                  {p.ibkr_account_id ? ` (${p.ibkr_account_id})` : ''}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : selectedPortfolio ? (
+          <span className="lpa-portfolio-bar__name">
+            {selectedPortfolio.name || `Portfolio ${selectedPortfolio.portfolio_id}`}
+            {selectedPortfolio.ibkr_account_id ? ` · ${selectedPortfolio.ibkr_account_id}` : ''}
+          </span>
+        ) : null}
+        {selectedPortfolio ? (
+          <span
+            className={`lpa-portfolio-bar__mode lpa-portfolio-bar__mode--${(selectedPortfolio.ibkr_account_mode || 'unknown').toLowerCase()}`}
+            title={
+              selectedPortfolio.ibkr_account_mode === 'PAPER'
+                ? 'Paper trading — no real money at risk'
+                : selectedPortfolio.ibkr_account_mode === 'REAL'
+                  ? 'REAL MONEY — execution is live'
+                  : 'Account mode unknown'
+            }
+          >
+            {selectedPortfolio.ibkr_account_mode === 'PAPER'
+              ? 'PAPER'
+              : selectedPortfolio.ibkr_account_mode === 'REAL'
+                ? 'REAL MONEY'
+                : 'MODE UNKNOWN'}
+          </span>
+        ) : null}
+        {selectedPortfolio && !selectedPortfolio.is_execution_enabled ? (
+          <span className="lpa-portfolio-bar__exec-disabled" title="Execution is disabled for this portfolio in LIVE_PORTFOLIO_CONFIG">
+            EXECUTION DISABLED
+          </span>
+        ) : null}
+      </div>
+
       <div ref={feedbackRef} className="lpa-feedback-region">
         {error ? <div className="lpa-error" role="alert">{error}</div> : null}
         {notice ? <div className="lpa-notice-banner" role="status">{notice}</div> : null}
       </div>
+      {!selectedPortfolioId && !portfolioLoading ? (
+        <div className="lpa-notice-inline" role="status">No portfolio selected — select a portfolio above to load live activity.</div>
+      ) : null}
       {loading ? <div>Loading live portfolio activity...</div> : null}
 
       {!loading && (

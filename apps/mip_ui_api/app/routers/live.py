@@ -3880,6 +3880,42 @@ def _default_snapshot_sync_params() -> dict:
         }
 
 
+def _snapshot_sync_params_for_portfolio(portfolio_id: int | None) -> dict:
+    """Resolve IB Gateway connection params for a specific portfolio.
+
+    When portfolio_id is given, looks up IB_GATEWAY_HOST, IB_GATEWAY_PORT,
+    IB_CLIENT_ID from LIVE_PORTFOLIO_CONFIG and uses non-null values.
+    Falls back to env-var defaults for any column that is NULL, or when
+    portfolio_id is None (preserving backward-compat for the paper portfolio
+    which stores all three as NULL).
+    """
+    defaults = _default_snapshot_sync_params()
+    if portfolio_id is None:
+        return defaults
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            select IB_GATEWAY_HOST, IB_GATEWAY_PORT, IB_CLIENT_ID
+            from MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+            where PORTFOLIO_ID = %s
+            """,
+            (portfolio_id,),
+        )
+        rows = fetch_all(cur)
+    finally:
+        conn.close()
+    if not rows:
+        return defaults
+    row = rows[0]
+    return {
+        "host":      str(row["IB_GATEWAY_HOST"]) if row.get("IB_GATEWAY_HOST") else defaults["host"],
+        "port":      int(row["IB_GATEWAY_PORT"]) if row.get("IB_GATEWAY_PORT") is not None else defaults["port"],
+        "client_id": int(row["IB_CLIENT_ID"])    if row.get("IB_CLIENT_ID")    is not None else defaults["client_id"],
+    }
+
+
 def _live_portfolio_ib_host_diagnostics(
     *,
     snapshot_state: str,
@@ -6319,25 +6355,50 @@ def _has_tier_c_conflict(verdict: dict, pw_evidence: dict, news_snapshot: dict) 
 
 @router.post("/snapshot/refresh")
 def refresh_live_snapshot(
-    portfolio_id: int | None = Query(None, description="Optional LIVE portfolio ID to stamp snapshot rows"),
-    account: str | None = Query(None, description="IBKR account code (optional if only one managed account)"),
-    host: str = Query("127.0.0.1", description="IB Gateway/TWS host"),
-    port: int = Query(7497, description="IB paper port (7497 TWS paper default, 4002 Gateway paper)"),
-    client_id: int = Query(9402, description="IB client id"),
+    portfolio_id: int | None = Query(None, description="LIVE portfolio ID. Resolves host/port/account from config when provided."),
+    account: str | None = Query(None, description="IBKR account code override. Resolved from config when portfolio_id is given and this is omitted."),
+    host: str | None = Query(None, description="IB Gateway/TWS host override (optional; resolved from portfolio config when portfolio_id is set)."),
+    port: int | None = Query(None, description="IB port override (optional; resolved from portfolio config when portfolio_id is set)."),
+    client_id: int | None = Query(None, description="IB client ID override (optional; resolved from portfolio config when portfolio_id is set)."),
 ):
     """
     On-demand snapshot refresh.
     Triggers a single IBKR read-only pull and stores results in MIP.LIVE.BROKER_SNAPSHOTS.
+    When portfolio_id is supplied, host/port/client_id are resolved from LIVE_PORTFOLIO_CONFIG
+    (falling back to env-var defaults for NULL columns). Explicit query-param overrides take
+    precedence over config-resolved values.
     Intended for:
       - opening Live Portfolio page
       - opening Live Trade/Approval page
       - pre-trade and post-trade refresh
     """
+    # Resolve connection params: config lookup → env defaults; explicit overrides take priority.
+    params = _snapshot_sync_params_for_portfolio(portfolio_id)
+    effective_host      = host      if host      is not None else params["host"]
+    effective_port      = port      if port      is not None else params["port"]
+    effective_client_id = client_id if client_id is not None else params["client_id"]
+
+    # Resolve account from portfolio config when not explicitly supplied.
+    effective_account = account
+    if not effective_account and portfolio_id is not None:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "select IBKR_ACCOUNT_ID from MIP.LIVE.LIVE_PORTFOLIO_CONFIG where PORTFOLIO_ID = %s",
+                (portfolio_id,),
+            )
+            cfg_rows = fetch_all(cur)
+            if cfg_rows:
+                effective_account = cfg_rows[0].get("IBKR_ACCOUNT_ID") or None
+        finally:
+            conn.close()
+
     result = _run_on_demand_snapshot_sync(
-        host=host,
-        port=port,
-        client_id=client_id,
-        account=account,
+        host=effective_host,
+        port=effective_port,
+        client_id=effective_client_id,
+        account=effective_account,
         portfolio_id=portfolio_id,
     )
 
@@ -9781,7 +9842,7 @@ def submit_live_decision_only(action_id: str, req: SubmitLiveDecisionRequest):
     else:
         try:
             _run_on_demand_snapshot_sync(
-                **_default_snapshot_sync_params(),
+                **_snapshot_sync_params_for_portfolio(action.get("PORTFOLIO_ID")),
                 account=account_id,
                 portfolio_id=action.get("PORTFOLIO_ID"),
             )

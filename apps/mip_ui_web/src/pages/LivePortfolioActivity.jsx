@@ -402,12 +402,8 @@ export default function LivePortfolioActivity() {
     setError('')
     setNotice('')
     try {
-      const body = selectedPortfolioId ? { portfolio_id: selectedPortfolioId } : {}
-      const resp = await fetch(`${API_BASE}/live/snapshot/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+      const qs = selectedPortfolioId ? `?portfolio_id=${selectedPortfolioId}` : ''
+      const resp = await fetch(`${API_BASE}/live/snapshot/refresh${qs}`, { method: 'POST' })
       if (!resp.ok) throw new Error(`Broker refresh failed (${resp.status})`)
       await load()
     } catch (e) {
@@ -1329,6 +1325,10 @@ export default function LivePortfolioActivity() {
   const totalUnrealized = openPositions.reduce((sum, p) => sum + Number(p?.UNREALIZED_PNL || 0), 0)
   const winners = openPositions.filter((p) => Number(p?.UNREALIZED_PNL || 0) > 0).length
   const losers = openPositions.filter((p) => Number(p?.UNREALIZED_PNL || 0) < 0).length
+
+  // True when the selected portfolio has IS_EXECUTION_ENABLED=false (e.g. real account in read-only mode).
+  // Applied to Submit, Exit, and Approve-Flow buttons for defence-in-depth; backend gates remain authoritative.
+  const executionDisabled = selectedPortfolio ? !selectedPortfolio.is_execution_enabled : true
   const executionsChrono = useMemo(() => {
     const list = Array.isArray(executions) ? [...executions] : []
     const ts = (e) => {
@@ -2232,11 +2232,17 @@ export default function LivePortfolioActivity() {
                         ) : null}
                         <button
                           className="lpa-btn"
-                          disabled={busy === `submit:${d.action_id}` || !canSubmit || isStaleRevalidationState(d)}
+                          disabled={busy === `submit:${d.action_id}` || !canSubmit || isStaleRevalidationState(d) || executionDisabled}
                           onClick={() => submitOnly(d.action_id)}
+                          title={executionDisabled ? 'Execution disabled for this portfolio' : undefined}
                         >
                           {busy === `submit:${d.action_id}` ? 'Submitting...' : 'Submit'}
                         </button>
+                        {executionDisabled ? (
+                          <div className="lpa-subtle" style={{ color: '#e65100', fontWeight: 600 }}>
+                            Execution disabled — read-only portfolio
+                          </div>
+                        ) : null}
                         {isStructuralEntry ? (
                           proposalIsStale ? null : (
                           <>
@@ -2631,10 +2637,11 @@ export default function LivePortfolioActivity() {
                                   ) : (
                                     <span className="lpa-subtle">No active TP/SL</span>
                                   )}
-                                  <button
+                                    <button
                                     type="button"
                                     className="lpa-btn lpa-btn-secondary lpa-btn-compact lpa-position-sell-btn"
-                                    disabled={busy === `exit:${symbol}`}
+                                    disabled={busy === `exit:${symbol}` || executionDisabled}
+                                    title={executionDisabled ? 'Execution disabled for this portfolio' : (hasPendingExit ? 'An exit is already in the workflow — use Pending Decisions.' : isShort ? 'Places a BUY at IB to cover the short (same as close short).' : 'Places a SELL at IB to close the long.')}
                                     onClick={() => {
                                       if (hasPendingExit) {
                                         setError('')
@@ -2648,13 +2655,6 @@ export default function LivePortfolioActivity() {
                                       }
                                       createExitAction(p)
                                     }}
-                                    title={
-                                      hasPendingExit
-                                        ? 'An exit is already in the workflow — use Pending Decisions.'
-                                        : isShort
-                                          ? 'Places a BUY at IB to cover the short (same as close short).'
-                                          : 'Places a SELL at IB to close the long.'
-                                    }
                                   >
                                     {busy === `exit:${symbol}`
                                       ? 'Creating...'

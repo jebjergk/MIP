@@ -14087,6 +14087,11 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
         # ── Phase 3A safety gates ──────────────────────────────────────────────
         # For REAL accounts these are hard HTTPException blocks (400/409).
         # For PAPER they add reason_codes (soft 409 via the existing block below).
+        #
+        # is_exit is re-derived again later in the execution-path block; define it
+        # here from the already-computed exec_intent so these entry-only gates can
+        # reference it (they run before that later assignment).
+        is_exit = exec_intent == "EXIT"
 
         # Gate: DRAWDOWN_STOP_PCT — block new entries when NAV has drawn down past threshold.
         # Baseline = rolling max NAV over LIVE_DRAWDOWN_BASELINE_WINDOW_DAYS (APP_CONFIG, default 30d).
@@ -15208,6 +15213,23 @@ def execute_live_action(action_id: str, req: ExecuteLiveActionRequest):
                     json.dumps(broker_submit_payload or {}),
                 ),
             )
+            # Sentinel cleanup (success) — the real order legs persisted below
+            # fully supersede the TOCTOU pre-record, so remove it. Otherwise it
+            # lingers forever as a phantom PENDING_SUBMIT row (no broker_order_id)
+            # that pollutes reconciliation and the UI. Re-submit protection is
+            # preserved by the action-status idempotent-replay guard (status is
+            # now EXECUTION_REQUESTED), so dropping the sentinel is safe.
+            if _sentinel_inserted:
+                try:
+                    cur.execute(
+                        """
+                        DELETE FROM MIP.LIVE.LIVE_ORDERS
+                        WHERE ORDER_ID = %s AND STATUS = 'PENDING_SUBMIT'
+                        """,
+                        (_sentinel_order_id,),
+                    )
+                except Exception:
+                    pass
             ib_orders = broker_submit_payload.get("orders") or []
             ib_orders_after_wait = broker_submit_payload.get("orders_after_wait") or []
             # Prefer broker IDs observed after wait/poll, because initial order bundle

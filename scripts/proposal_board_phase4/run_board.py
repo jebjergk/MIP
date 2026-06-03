@@ -15,16 +15,20 @@ It runs the full multi-agent orchestration:
 
 Usage examples
 --------------
+# Cost-controlled daily run (recommended):
+python -m MIP.scripts.proposal_board_phase4.run_board \
+    --max-candidates 5 --max-rounds 1 --inter-concurrency 2
+
 # Dry-run on focus symbols (no STRUCTURAL_TRADE_PROPOSALS insert):
 python -m MIP.scripts.proposal_board_phase4.run_board \
     --symbols CRWD,AAPL,AMZN,PANW --dry-run
 
-# Full daily run:
-python -m MIP.scripts.proposal_board_phase4.run_board
+# Full daily run (uncapped — requires explicit override):
+python -m MIP.scripts.proposal_board_phase4.run_board --allow-budget-override
 
 # As-of override + portfolio:
 python -m MIP.scripts.proposal_board_phase4.run_board \
-    --as-of 2026-04-30 --portfolio 1 --max-proposals 8
+    --as-of 2026-04-30 --portfolio 1 --max-proposals 8 --max-candidates 8
 """
 from __future__ import annotations
 
@@ -99,6 +103,25 @@ def main() -> int:
                         help="Max specialists per dossier in parallel.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Run all stages but skip STRUCTURAL_TRADE_PROPOSALS insert.")
+    parser.add_argument("--max-candidates", type=int, default=None,
+                        help=(
+                            "Cap on symbols sent to Cortex agents after eligibility filter. "
+                            "None = uncapped legacy mode (also requires --allow-budget-override). "
+                            "Recommended daily value: 5-8."
+                        ))
+    parser.add_argument("--daily-call-budget", type=int, default=80,
+                        help=(
+                            "Max estimated agent sessions for this run. "
+                            "Run aborts before Cortex fan-out if projected sessions exceed this. "
+                            "Denominated in agent sessions (~7/candidate). "
+                            "Use --allow-budget-override to bypass."
+                        ))
+    parser.add_argument("--allow-budget-override", action="store_true",
+                        help=(
+                            "Bypass --daily-call-budget check. Must be explicit. "
+                            "Not implied by --symbols or any other flag. "
+                            "Also required for uncapped mode (no --max-candidates)."
+                        ))
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
@@ -115,6 +138,16 @@ def main() -> int:
             args.max_rounds, max_rounds,
         )
 
+    _log = logging.getLogger(__name__)
+
+    # Warn loudly if running uncapped without an explicit override.
+    if args.max_candidates is None and not args.allow_budget_override:
+        _log.warning(
+            "phase4 run_board: WARNING — no --max-candidates set and no "
+            "--allow-budget-override. This is uncapped legacy mode and may incur "
+            "very high Cortex Agent cost. Recommended: --max-candidates 5 or 8."
+        )
+
     result = asyncio.run(
         orchestrate_phase4_board(
             portfolio_id=args.portfolio,
@@ -126,6 +159,9 @@ def main() -> int:
             inter_dossier_concurrency=args.inter_concurrency,
             per_dossier_concurrency=args.per_concurrency,
             dry_run=args.dry_run,
+            max_candidates=args.max_candidates,
+            daily_call_budget=args.daily_call_budget,
+            allow_budget_override=args.allow_budget_override,
         )
     )
 
@@ -139,14 +175,71 @@ def main() -> int:
         "published_count": result.published_count,
         "skipped_count": result.skipped_count,
         "eligible_count": result.eligible_count,
+        "genuine_eligible_count": result.genuine_eligible_count,
+        "cost_capped_count": result.cost_capped_count,
         "eligibility_skipped_count": result.eligibility_skipped_count,
         "eligibility_skip_breakdown": result.eligibility_skip_breakdown,
+        "candidate_mode": result.candidate_mode,
+        "estimated_agent_sessions": result.estimated_agent_sessions,
+        "chair_propose_count": result.chair_propose_count,
+        "props_executable_count": result.props_executable_count,
+        "imported_to_lpa_count": result.imported_to_lpa_count,
         "ibkr_account_mode": result.ibkr_account_mode,
         "short_publication_allowed": result.short_publication_allowed,
         "market_types_filter": args.market_types,
         "error": result.error,
         "dry_run": args.dry_run,
     }, indent=2, default=str))
+
+    # -------------------------------------------------------------------------
+    # PHASE 4 COST / ATTRITION SUMMARY — printed at end of every run.
+    # Painfully visible for operator review.
+    # -------------------------------------------------------------------------
+    _dominant_reason = "N/A"
+    skip_bd = result.eligibility_skip_breakdown or {}
+    genuine_blocks = {k: v for k, v in skip_bd.items()
+                      if k != "NOT_SENT_TO_AGENT_PANEL_COST_CAP"}
+    if genuine_blocks:
+        _dominant_reason = max(genuine_blocks, key=genuine_blocks.get)  # type: ignore[arg-type]
+    elif result.chair_propose_count == 0 and result.eligible_count > 0:
+        _dominant_reason = "CHAIR_NO_PROPOSE (all agents ran but chair declined)"
+
+    _dry_tag = "  [DRY-RUN — no STRUCTURAL_TRADE_PROPOSALS insert]" if args.dry_run else ""
+
+    _summary_lines = [
+        "",
+        "=" * 72,
+        "  PHASE 4 COST / ATTRITION SUMMARY" + _dry_tag,
+        "=" * 72,
+        f"  Run ID              : {result.run_id}",
+        f"  As-of date          : {result.as_of_date}",
+        f"  Final status        : {result.status}",
+        f"  Mode                : {result.candidate_mode}",
+        "-" * 72,
+        f"  Candidates snapshotted  : {result.dossier_count}",
+        f"  Eligible genuine        : {result.genuine_eligible_count}"
+        + (f"  (eligibility blocks: {sum(genuine_blocks.values())})" if genuine_blocks else ""),
+        f"  Skipped by cost cap     : {result.cost_capped_count}"
+        + ("  [NOT a quality rejection]" if result.cost_capped_count else ""),
+        f"  Selected for agents     : {result.eligible_count}",
+        "-" * 72,
+        f"  Agent sessions est.     : {result.estimated_agent_sessions}"
+        + f"  (~{result.eligible_count} × 7 sessions/candidate)",
+        f"  Agent sessions actual   : see ACCOUNT_USAGE.QUERY_HISTORY (cortex-agent-* tags)",
+        "-" * 72,
+        f"  Chair propose           : {result.chair_propose_count}",
+        f"  Final slate published   : {result.published_count}",
+        f"  Struct proposals exec.  : {result.props_executable_count}",
+        f"  Imported to LPA         : {result.imported_to_lpa_count}",
+        "-" * 72,
+        f"  Dominant skip reason    : {_dominant_reason}",
+    ]
+    if result.error:
+        _summary_lines.append(f"  ERROR                   : {result.error[:120]}")
+    _summary_lines.append("=" * 72)
+    _summary_lines.append("")
+
+    print("\n".join(_summary_lines), flush=True)
 
     return 0 if result.status in ("COMPLETE", "COMPLETE_NO_DOSSIERS") else 1
 

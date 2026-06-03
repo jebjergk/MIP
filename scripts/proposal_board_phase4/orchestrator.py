@@ -99,6 +99,14 @@ _CACHE_TTL_HOURS = 24
 _DEFAULT_MAX_ROUNDS = 2
 _DEFAULT_MAX_PROPOSALS = 8
 
+# Cost-control defaults — empirically validated from QUERY_HISTORY (May 2026).
+# ~7 Cortex agent sessions per candidate (5 specialists + chair + ~1 revision avg).
+# ~10 GET_PHASE4_DOSSIER_SLICE calls per session (measured avg 9.7).
+_DEFAULT_MAX_CANDIDATES: Optional[int] = None   # None = uncapped legacy mode
+_DEFAULT_DAILY_CALL_BUDGET: int = 80            # agent sessions; use allow_budget_override to exceed
+_EMPIRICAL_SESSIONS_PER_CANDIDATE: int = 7
+_EMPIRICAL_SLICES_PER_SESSION: int = 10
+
 _AGENT_TIMEOUT_SEC = 240.0
 _OBJECTLESS_TIMEOUT_SEC = 180.0
 
@@ -2174,6 +2182,24 @@ def _publish_to_structural(
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
+
+def _crude_prerank_key(row: Tuple[int, str, str, Dict[str, Any]]) -> Tuple[int, int, str]:
+    """TEMP_COST_CAP_ORDER: crude stable ordering used until ranking.py (Stage 3).
+
+    Sorts eligible rows before applying max_candidates cap so the selection is
+    deterministic and reproducible.  Priority (descending):
+      1. Number of active setup events (more evidence = more likely to produce a proposal)
+      2. Dossier ID descending (larger = more recently inserted)
+      3. Symbol alphabetically (tie-break)
+
+    Not a quality gate.  Replaced by score_candidate() in Stage 3.
+    """
+    did, sym, _mkt, payload = row
+    setup_events = payload.get("setup_events_evidence_only") if isinstance(payload, dict) else None
+    n_events = len(setup_events) if isinstance(setup_events, list) else 0
+    return (-n_events, -did, sym)
+
+
 @dataclass
 class BoardRunResult:
     run_id: str
@@ -2185,8 +2211,15 @@ class BoardRunResult:
     published_count: int
     skipped_count: int
     eligible_count: int = 0
+    genuine_eligible_count: int = 0
+    cost_capped_count: int = 0
     eligibility_skipped_count: int = 0
     eligibility_skip_breakdown: Dict[str, int] = field(default_factory=dict)
+    candidate_mode: str = "UNCAPPED"
+    estimated_agent_sessions: int = 0
+    chair_propose_count: int = 0
+    props_executable_count: int = 0
+    imported_to_lpa_count: int = 0
     ibkr_account_mode: str = "UNKNOWN"
     short_publication_allowed: bool = False
     error: Optional[str] = None
@@ -2202,6 +2235,9 @@ async def orchestrate_phase4_board(
     inter_dossier_concurrency: int = 2,
     per_dossier_concurrency: int = 5,
     dry_run: bool = False,
+    max_candidates: Optional[int] = _DEFAULT_MAX_CANDIDATES,
+    daily_call_budget: int = _DEFAULT_DAILY_CALL_BUDGET,
+    allow_budget_override: bool = False,
 ) -> BoardRunResult:
     """
     Run the full Phase 4 Cortex Agentic Proposal Board.
@@ -2237,6 +2273,7 @@ async def orchestrate_phase4_board(
                         "per_dossier_concurrency": per_dossier_concurrency,
                         "inter_dossier_concurrency": inter_dossier_concurrency,
                         "max_proposals": max_proposals,
+                        "max_candidates": max_candidates,
                         "market_types_filter": (
                             [m.upper() for m in market_types_filter]
                             if market_types_filter else None
@@ -2350,6 +2387,119 @@ async def orchestrate_phase4_board(
         run_id, len(rows), len(eligible_rows), len(rows) - len(eligible_rows),
         skip_counts, operator_override,
     )
+
+    # Stage 0.6 — TEMP_COST_CAP_ORDER: crude stable pre-agent sort + candidate cap.
+    # Applied before asyncio.gather so only the top-N candidates reach Cortex agents.
+    # Sorting is deterministic (not raw arrival order) regardless of whether a cap
+    # is active. This is Stage 2 of the cost-control plan; replaced by
+    # score_candidate() in Stage 3 (ranking.py).
+    genuine_eligible_count = len(eligible_rows)
+    cost_capped_count = 0
+    candidate_mode = "UNCAPPED"
+
+    # Always sort by crude stable key for deterministic order.
+    eligible_rows = sorted(eligible_rows, key=_crude_prerank_key)
+
+    if max_candidates is not None and len(eligible_rows) > max_candidates:
+        kept = eligible_rows[:max_candidates]
+        skipped_cap = eligible_rows[max_candidates:]
+        cost_capped_count = len(skipped_cap)
+        candidate_mode = "TEMP_COST_CAP_ORDER"
+
+        logger.info(
+            "phase4 TEMP_COST_CAP_ORDER run=%s max_candidates=%d "
+            "kept=%s skipped=%d (order=n_setup_events,dossier_id,symbol)",
+            run_id, max_candidates,
+            [sym for _, sym, _, _ in kept],
+            cost_capped_count,
+        )
+
+        cap_elig_cur = conn.cursor()
+        try:
+            for did, sym, mkt, _payload in skipped_cap:
+                skip_counts["NOT_SENT_TO_AGENT_PANEL_COST_CAP"] = (
+                    skip_counts.get("NOT_SENT_TO_AGENT_PANEL_COST_CAP", 0) + 1
+                )
+                try:
+                    _persist_eligibility(
+                        cap_elig_cur, run_id, as_of, portfolio_id, did,
+                        EligibilityDecision(
+                            symbol=sym,
+                            market_type=mkt,
+                            eligible=False,
+                            primary_reason_code="NOT_SENT_TO_AGENT_PANEL_COST_CAP",
+                            signal_flags={"temp_cap_order": True},
+                            evidence_summary={"note": "skipped by max_candidates cap; not a quality rejection"},
+                        ),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            conn.commit()
+        finally:
+            try:
+                cap_elig_cur.close()
+            except Exception:  # noqa: BLE001
+                pass
+        eligible_rows = kept
+
+    # Budget preflight guard — runs after candidate cap, before Cortex fan-out.
+    # Denominated in estimated agent sessions (not SP calls).
+    # --allow-budget-override required to exceed daily_call_budget.
+    estimated_agent_sessions = len(eligible_rows) * _EMPIRICAL_SESSIONS_PER_CANDIDATE
+    estimated_sp_calls = estimated_agent_sessions * _EMPIRICAL_SLICES_PER_SESSION
+    logger.info(
+        "phase4 budget_preflight run=%s candidates=%d "
+        "estimated_agent_sessions=%d estimated_sp_calls=%d "
+        "daily_budget=%d allow_override=%s",
+        run_id, len(eligible_rows),
+        estimated_agent_sessions, estimated_sp_calls,
+        daily_call_budget, allow_budget_override,
+    )
+    if not allow_budget_override and estimated_agent_sessions > daily_call_budget:
+        err_msg = (
+            f"phase4 budget_exceeded: estimated_agent_sessions={estimated_agent_sessions} "
+            f"> daily_call_budget={daily_call_budget}. "
+            f"Reduce --max-candidates or pass --allow-budget-override."
+        )
+        logger.error(err_msg)
+        try:
+            err_cur = conn.cursor()
+            err_cur.execute(
+                """
+                UPDATE MIP.APP.PROPOSAL_BOARD_RUN
+                   SET RUN_STATUS = 'FAILED',
+                       FINISHED_AT = CURRENT_TIMESTAMP(),
+                       ERROR_JSON = OBJECT_CONSTRUCT('reason_code','BUDGET_EXCEEDED','message',%(msg)s)
+                 WHERE RUN_ID = %(run_id)s
+                """,
+                {"run_id": run_id, "msg": err_msg[:2000]},
+            )
+            conn.commit()
+            err_cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            conn.close()
+        return BoardRunResult(
+            run_id=run_id, status="FAILED", as_of_date=as_of,
+            dossier_count=len(rows), valid_dossier_count=0,
+            invalid_dossier_count=0, published_count=0, skipped_count=0,
+            eligible_count=0,
+            genuine_eligible_count=genuine_eligible_count,
+            cost_capped_count=cost_capped_count,
+            eligibility_skipped_count=len(rows) - len(eligible_rows),
+            eligibility_skip_breakdown=dict(skip_counts),
+            candidate_mode=candidate_mode,
+            estimated_agent_sessions=estimated_agent_sessions,
+            error=err_msg,
+        )
+
+    if not allow_budget_override and max_candidates is None:
+        logger.warning(
+            "phase4 UNCAPPED_RUN run=%s candidates=%d estimated_agent_sessions=%d "
+            "— running without max_candidates. Pass --max-candidates to control cost.",
+            run_id, len(eligible_rows), estimated_agent_sessions,
+        )
 
     inter_sem = asyncio.Semaphore(inter_dossier_concurrency)
 
@@ -2465,6 +2615,33 @@ async def orchestrate_phase4_board(
         )
         conn.commit()
 
+        # Collect summary stats for the run-end summary block.
+        chair_propose_count = sum(
+            1 for r in valid_results
+            if r.chair and r.chair.final_action in {"PROPOSE_LONG", "PROPOSE_SHORT"}
+        )
+        props_executable_count = 0
+        imported_to_lpa_count = 0
+        try:
+            cur.execute(
+                """
+                SELECT
+                    SUM(IFF(EXECUTION_POLICY_STATUS = 'EXECUTABLE', 1, 0)) AS exec_ok,
+                    SUM(IFF(stp.PROPOSAL_ID IS NOT NULL
+                            AND EXISTS (SELECT 1 FROM MIP.LIVE.LIVE_ACTIONS la
+                                        WHERE la.PROPOSAL_ID = stp.PROPOSAL_ID), 1, 0)) AS imported
+                FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS stp
+                WHERE stp.BOARD_RUN_ID = %(run_id)s
+                """,
+                {"run_id": run_id},
+            )
+            row_summary = cur.fetchone()
+            if row_summary:
+                props_executable_count = int(row_summary[0] or 0)
+                imported_to_lpa_count = int(row_summary[1] or 0)
+        except Exception:  # noqa: BLE001
+            pass
+
         return BoardRunResult(
             run_id=run_id,
             status=final_status,
@@ -2475,8 +2652,15 @@ async def orchestrate_phase4_board(
             published_count=int(published),
             skipped_count=int(skipped),
             eligible_count=len(eligible_rows),
-            eligibility_skipped_count=len(rows) - len(eligible_rows),
+            genuine_eligible_count=genuine_eligible_count,
+            cost_capped_count=cost_capped_count,
+            eligibility_skipped_count=len(rows) - genuine_eligible_count,
             eligibility_skip_breakdown=dict(skip_counts),
+            candidate_mode=candidate_mode,
+            estimated_agent_sessions=estimated_agent_sessions,
+            chair_propose_count=chair_propose_count,
+            props_executable_count=props_executable_count,
+            imported_to_lpa_count=imported_to_lpa_count,
             ibkr_account_mode=ibkr_account_mode,
             short_publication_allowed=bool(short_publication_allowed),
         )

@@ -2241,7 +2241,151 @@ class BoardRunResult:
     imported_to_lpa_count: int = 0
     ibkr_account_mode: str = "UNKNOWN"
     short_publication_allowed: bool = False
+    # Pre-board fail-closed safety gates (run before Cortex fan-out).
+    pre_board_stock_only_gate: str = "NOT_RUN"
+    pre_board_market_type_integrity_gate: str = "NOT_RUN"
+    pre_board_gate_checks: Dict[str, int] = field(default_factory=dict)
     error: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Pre-board fail-closed safety gates (run BEFORE Cortex fan-out)
+# ---------------------------------------------------------------------------
+#
+# These gates are a REGRESSION GUARD around the runtime pre-agent
+# MARKET_TYPE='STOCK' filter — not a replacement for it. They mirror the
+# hard checks in:
+#   MIP/SQL/smoke/47_phase4_stock_only_regression.sql   (R1-R4)
+#   MIP/SQL/smoke/48_market_type_null_integrity.sql      (C1/C1b/C2/C3)
+# plus a direct in-memory assertion that the candidate set about to be
+# fanned out to Cortex contains zero non-STOCK rows. If any HARD check
+# fails the board aborts before any Cortex/agent call — no proposals are
+# published, nothing is imported to LPA, real-money execution is untouched.
+
+# SQL block returning one row per check. R1/R2 are scoped to THIS run
+# (no agent outcomes exist yet at pre-board time, so they assert the
+# current run has not already leaked non-STOCK into the agent tables).
+_PRE_BOARD_GATE_SQL = """
+WITH ref AS (
+    SELECT SYM, COUNT(DISTINCT MT) AS NMT
+    FROM (
+        SELECT UPPER(SYMBOL) AS SYM, MARKET_TYPE AS MT FROM MIP.APP.INGEST_UNIVERSE        WHERE MARKET_TYPE IS NOT NULL
+        UNION SELECT UPPER(SYMBOL), MARKET_TYPE FROM MIP.APP.STRUCTURAL_SETUP_EVENTS WHERE MARKET_TYPE IS NOT NULL
+        UNION SELECT UPPER(SYMBOL), MARKET_TYPE FROM MIP.APP.PORTFOLIO_TRADES        WHERE MARKET_TYPE IS NOT NULL
+    )
+    GROUP BY SYM
+)
+SELECT 'R1_NON_STOCK_SENT_TO_AGENTS' AS CHECK_NAME, COUNT(DISTINCT ao.DOSSIER_ID) AS N
+FROM MIP.APP.PROPOSAL_BOARD_AGENT_OUTCOME_V2 ao
+JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+  ON s.RUN_ID = ao.RUN_ID AND s.DOSSIER_ID = ao.DOSSIER_ID
+WHERE ao.RUN_ID = %(run_id)s AND COALESCE(s.MARKET_TYPE,'STOCK') <> 'STOCK'
+UNION ALL
+SELECT 'R2_NON_STOCK_AGENT_OUTCOMES', COUNT(*)
+FROM MIP.APP.PROPOSAL_BOARD_AGENT_OUTCOME_V2 ao
+JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+  ON s.RUN_ID = ao.RUN_ID AND s.DOSSIER_ID = ao.DOSSIER_ID
+WHERE ao.RUN_ID = %(run_id)s AND COALESCE(s.MARKET_TYPE,'STOCK') <> 'STOCK'
+UNION ALL
+SELECT 'R3_NON_STOCK_EXECUTABLE_PROPOSALS', COUNT(*)
+FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+LEFT JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+  ON s.RUN_ID = p.BOARD_RUN_ID AND s.DOSSIER_ID = p.BOARD_DOSSIER_ID
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_ev
+  ON se_ev.SETUP_EVENT_ID = p.PRIMARY_EVIDENCE_SETUP_EVENT_ID
+WHERE p.STATUS = 'PROPOSED'
+  AND COALESCE(p.EXECUTION_POLICY_STATUS,'EXECUTABLE') = 'EXECUTABLE'
+  AND COALESCE(p.IS_RESEARCH_ONLY, FALSE) = FALSE
+  AND COALESCE(s.MARKET_TYPE, se_ev.MARKET_TYPE, 'STOCK') <> 'STOCK'
+UNION ALL
+SELECT 'R4_NON_STOCK_TRADEABLE_LIVE_ACTIONS', COUNT(*)
+FROM MIP.LIVE.LIVE_ACTIONS la
+WHERE la.MARKET_TYPE IS NOT NULL AND la.MARKET_TYPE <> 'STOCK'
+  AND la.STATUS IN ('PROPOSED','INTENT_APPROVED','PENDING_OPEN_VALIDATION',
+                    'OPEN_BLOCKED','REVALIDATED_PASS','EXECUTION_REQUESTED',
+                    'PENDING_SUBMIT','OPEN','FILLED')
+UNION ALL
+SELECT 'C1_LIVE_ACTIONS_RESOLVABLE_BUT_NULL', COUNT(*)
+FROM MIP.LIVE.LIVE_ACTIONS la
+JOIN ref r ON r.SYM = UPPER(la.SYMBOL) AND r.NMT = 1
+WHERE la.MARKET_TYPE IS NULL
+UNION ALL
+SELECT 'C1b_LIVE_ACTIONS_REVIEW_REQUIRED', COUNT(*)
+FROM MIP.LIVE.LIVE_ACTIONS la
+LEFT JOIN ref r ON r.SYM = UPPER(la.SYMBOL) AND r.NMT = 1
+WHERE la.MARKET_TYPE IS NULL AND r.SYM IS NULL
+UNION ALL
+SELECT 'C2_NON_STOCK_EXECUTABLE_PROPOSALS', COUNT(*)
+FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+LEFT JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+  ON s.RUN_ID = p.BOARD_RUN_ID AND s.DOSSIER_ID = p.BOARD_DOSSIER_ID
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_ev
+  ON se_ev.SETUP_EVENT_ID = p.PRIMARY_EVIDENCE_SETUP_EVENT_ID
+WHERE p.STATUS = 'PROPOSED'
+  AND COALESCE(p.EXECUTION_POLICY_STATUS,'EXECUTABLE') = 'EXECUTABLE'
+  AND COALESCE(p.IS_RESEARCH_ONLY, FALSE) = FALSE
+  AND COALESCE(s.MARKET_TYPE, se_ev.MARKET_TYPE, 'STOCK') <> 'STOCK'
+UNION ALL
+SELECT 'C3_NON_STOCK_TRADEABLE_LIVE_ACTIONS', COUNT(*)
+FROM MIP.LIVE.LIVE_ACTIONS la
+WHERE la.MARKET_TYPE IS NOT NULL AND la.MARKET_TYPE <> 'STOCK'
+  AND la.STATUS IN ('PROPOSED','INTENT_APPROVED','PENDING_OPEN_VALIDATION',
+                    'OPEN_BLOCKED','REVALIDATED_PASS','EXECUTION_REQUESTED',
+                    'PENDING_SUBMIT','OPEN','FILLED')
+"""
+
+
+def _run_pre_board_gates(
+    cur,
+    run_id: str,
+    eligible_rows: List[Tuple[int, str, str, Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Run the pre-board fail-closed safety gates.
+
+    Returns a dict with:
+      - stock_only_gate: "PASS"/"FAIL"
+      - market_type_integrity_gate: "PASS"/"FAIL"
+      - checks: {CHECK_NAME: count}
+      - passed: bool (both hard gates pass)
+      - failed_checks: [CHECK_NAME, ...]
+    """
+    checks: Dict[str, int] = {}
+
+    # In-memory assertion: the candidate set about to reach Cortex must be
+    # 100% STOCK. This is the direct current-run pre-agent guard.
+    non_stock_in_fanout = sum(
+        1 for (_did, _sym, mkt, _payload) in eligible_rows
+        if (mkt or "").upper() != "STOCK"
+    )
+    checks["CURRENT_RUN_NONSTOCK_IN_FANOUT"] = non_stock_in_fanout
+
+    cur.execute(_PRE_BOARD_GATE_SQL, {"run_id": run_id})
+    for row in cur.fetchall():
+        checks[str(row[0])] = int(row[1] or 0)
+
+    # Hard checks per gate. C1b is informational only (review backlog).
+    stock_only_hard = [
+        "CURRENT_RUN_NONSTOCK_IN_FANOUT",
+        "R1_NON_STOCK_SENT_TO_AGENTS",
+        "R2_NON_STOCK_AGENT_OUTCOMES",
+        "R3_NON_STOCK_EXECUTABLE_PROPOSALS",
+        "R4_NON_STOCK_TRADEABLE_LIVE_ACTIONS",
+    ]
+    integrity_hard = [
+        "C1_LIVE_ACTIONS_RESOLVABLE_BUT_NULL",
+        "C2_NON_STOCK_EXECUTABLE_PROPOSALS",
+        "C3_NON_STOCK_TRADEABLE_LIVE_ACTIONS",
+    ]
+    stock_only_fail = [c for c in stock_only_hard if checks.get(c, 0) > 0]
+    integrity_fail = [c for c in integrity_hard if checks.get(c, 0) > 0]
+
+    return {
+        "stock_only_gate": "FAIL" if stock_only_fail else "PASS",
+        "market_type_integrity_gate": "FAIL" if integrity_fail else "PASS",
+        "checks": checks,
+        "passed": not (stock_only_fail or integrity_fail),
+        "failed_checks": stock_only_fail + integrity_fail,
+    }
 
 
 async def orchestrate_phase4_board(
@@ -2555,6 +2699,80 @@ async def orchestrate_phase4_board(
             run_id, len(eligible_rows), estimated_agent_sessions,
         )
 
+    # ── Pre-board fail-closed safety gates — LAST checkpoint before Cortex ──
+    # Regression guard around the runtime STOCK-only filter. If any hard
+    # check fails we abort here: zero Cortex calls, no publication, no LPA
+    # import, real-money untouched. Mirrors smoke 47 (R1-R4) + smoke 48.
+    gate_cur = conn.cursor()
+    try:
+        gate = _run_pre_board_gates(gate_cur, run_id, eligible_rows)
+    finally:
+        try:
+            gate_cur.close()
+        except Exception:  # noqa: BLE001
+            pass
+    logger.info(
+        "phase4 pre_board_gates run=%s stock_only=%s market_type_integrity=%s checks=%s",
+        run_id, gate["stock_only_gate"], gate["market_type_integrity_gate"],
+        gate["checks"],
+    )
+    if not gate["passed"]:
+        err_msg = (
+            "phase4 PRE_BOARD_GATE_FAILED — aborted before Cortex fan-out. "
+            f"stock_only_gate={gate['stock_only_gate']} "
+            f"market_type_integrity_gate={gate['market_type_integrity_gate']} "
+            f"failed_checks={gate['failed_checks']}"
+        )
+        logger.error(err_msg)
+        try:
+            err_cur = conn.cursor()
+            err_cur.execute(
+                """
+                UPDATE MIP.APP.PROPOSAL_BOARD_RUN
+                   SET RUN_STATUS = 'FAILED',
+                       FINISHED_AT = CURRENT_TIMESTAMP(),
+                       ERROR_JSON = OBJECT_CONSTRUCT(
+                           'reason_code', 'PRE_BOARD_GATE_FAILED',
+                           'message', %(msg)s,
+                           'stock_only_gate', %(sog)s,
+                           'market_type_integrity_gate', %(mtig)s,
+                           'failed_checks', PARSE_JSON(%(failed)s),
+                           'check_counts', PARSE_JSON(%(checks)s)
+                       )
+                 WHERE RUN_ID = %(run_id)s
+                """,
+                {
+                    "run_id": run_id,
+                    "msg": err_msg[:2000],
+                    "sog": gate["stock_only_gate"],
+                    "mtig": gate["market_type_integrity_gate"],
+                    "failed": _jdump(gate["failed_checks"]),
+                    "checks": _jdump(gate["checks"]),
+                },
+            )
+            conn.commit()
+            err_cur.close()
+        except Exception:  # noqa: BLE001
+            logger.exception("phase4 pre_board_gate audit write failed run=%s", run_id)
+        finally:
+            conn.close()
+        return BoardRunResult(
+            run_id=run_id, status="FAILED_PRE_BOARD_GATE", as_of_date=as_of,
+            dossier_count=len(rows), valid_dossier_count=0,
+            invalid_dossier_count=0, published_count=0, skipped_count=0,
+            eligible_count=len(eligible_rows),
+            genuine_eligible_count=genuine_eligible_count,
+            cost_capped_count=cost_capped_count,
+            eligibility_skipped_count=len(rows) - len(eligible_rows),
+            eligibility_skip_breakdown=dict(skip_counts),
+            candidate_mode=candidate_mode,
+            estimated_agent_sessions=estimated_agent_sessions,
+            pre_board_stock_only_gate=gate["stock_only_gate"],
+            pre_board_market_type_integrity_gate=gate["market_type_integrity_gate"],
+            pre_board_gate_checks=gate["checks"],
+            error=err_msg,
+        )
+
     inter_sem = asyncio.Semaphore(inter_dossier_concurrency)
 
     async def _run_with_inter_limit(did, sym, mkt, payload):
@@ -2717,6 +2935,9 @@ async def orchestrate_phase4_board(
             imported_to_lpa_count=imported_to_lpa_count,
             ibkr_account_mode=ibkr_account_mode,
             short_publication_allowed=bool(short_publication_allowed),
+            pre_board_stock_only_gate=gate["stock_only_gate"],
+            pre_board_market_type_integrity_gate=gate["market_type_integrity_gate"],
+            pre_board_gate_checks=gate["checks"],
         )
     finally:
         try:

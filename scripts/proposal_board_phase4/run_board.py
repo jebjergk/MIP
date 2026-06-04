@@ -184,6 +184,9 @@ def main() -> int:
         "chair_propose_count": result.chair_propose_count,
         "props_executable_count": result.props_executable_count,
         "imported_to_lpa_count": result.imported_to_lpa_count,
+        "pre_board_stock_only_gate": result.pre_board_stock_only_gate,
+        "pre_board_market_type_integrity_gate": result.pre_board_market_type_integrity_gate,
+        "pre_board_gate_checks": result.pre_board_gate_checks,
         "ibkr_account_mode": result.ibkr_account_mode,
         "short_publication_allowed": result.short_publication_allowed,
         "market_types_filter": args.market_types,
@@ -215,6 +218,15 @@ def main() -> int:
         f"  As-of date          : {result.as_of_date}",
         f"  Final status        : {result.status}",
         f"  Mode                : {result.candidate_mode}",
+        "-" * 72,
+        "  PRE-BOARD SAFETY GATES (fail-closed, before Cortex fan-out)",
+        f"  PRE_BOARD_STOCK_ONLY_GATE          : {result.pre_board_stock_only_gate}",
+        f"  PRE_BOARD_MARKET_TYPE_INTEGRITY_GATE: {result.pre_board_market_type_integrity_gate}",
+    ]
+    for _ck, _cv in sorted((result.pre_board_gate_checks or {}).items()):
+        _flag = "  <== FAIL" if (_cv and not _ck.startswith("C1b")) else ""
+        _summary_lines.append(f"      {_ck:<38}: {_cv}{_flag}")
+    _summary_lines += [
         "-" * 72,
         f"  Candidates snapshotted  : {result.dossier_count}",
         f"  Eligible genuine        : {result.genuine_eligible_count}"

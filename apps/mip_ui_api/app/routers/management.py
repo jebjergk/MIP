@@ -168,13 +168,38 @@ def run_ib_manual_daily_job(
         1, description="portfolio_id passed to run_board.py (default 1 = configured IBKR PAPER test portfolio)."
     ),
     proposal_board_max_proposals: int = Query(8, ge=1, le=20),
-    proposal_board_max_rounds: int = Query(2, ge=1, le=3),
+    proposal_board_max_rounds: int = Query(1, ge=1, le=3),
+    proposal_board_max_candidates: int = Query(
+        5,
+        ge=1,
+        le=50,
+        description=(
+            "COST CAP. Max STOCK candidates sent to the Cortex agent panel "
+            "(passed as --max-candidates to run_board.py). This is the primary "
+            "Phase 4 cost control: agent sessions ~= max_candidates * 7. Keep "
+            "small (e.g. 5) to bound Cortex spend. The board also enforces a "
+            "hard daily session budget and fails closed if exceeded."
+        ),
+    ),
+    proposal_board_inter_concurrency: int = Query(
+        2, ge=1, le=8,
+        description="Parallel dossiers sent to agents (--inter-concurrency).",
+    ),
     proposal_board_market_types: str = Query(
         "STOCK",
         description=(
             "Comma-separated MARKET_TYPE filter passed to run_board.py. "
             "Default 'STOCK' since MIP does not currently trade ETF or FX. "
             "Use 'STOCK,ETF,FX' to include everything."
+        ),
+    ),
+    import_proposals_to_lpa: bool = Query(
+        True,
+        description=(
+            "After the capped board publishes, automatically import genuine "
+            "EXECUTABLE structural proposals into LIVE_ACTIONS so they appear "
+            "in LPA without any manual step. Non-STOCK / research-only / "
+            "policy-blocked proposals are never imported."
         ),
     ),
     synth_intraday_daily: bool = Query(
@@ -376,15 +401,22 @@ def run_ib_manual_daily_job(
             str(int(proposal_board_max_proposals)),
             "--max-rounds",
             str(int(proposal_board_max_rounds)),
+            "--max-candidates",
+            str(int(proposal_board_max_candidates)),
+            "--inter-concurrency",
+            str(int(proposal_board_inter_concurrency)),
             "--market-types",
             normalized_market_types,
         ]
         log.info(
-            "Phase 4 agentic board: workspace=%s portfolio=%s max_proposals=%s max_rounds=%s market_types=%s",
+            "Phase 4 agentic board (CAPPED): workspace=%s portfolio=%s max_proposals=%s "
+            "max_rounds=%s max_candidates=%s inter_concurrency=%s market_types=%s",
             project_root,
             proposal_board_portfolio,
             proposal_board_max_proposals,
             proposal_board_max_rounds,
+            proposal_board_max_candidates,
+            proposal_board_inter_concurrency,
             normalized_market_types,
         )
         try:
@@ -461,6 +493,106 @@ def run_ib_manual_daily_job(
             )
         response["proposal_board_triggered"] = True
         response["proposal_board_result"] = board_payload
+
+        # ── Guaranteed LPA import — genuine proposals must appear in LPA ──
+        # Historically the only path that materialised structural proposals
+        # into LIVE_ACTIONS was a best-effort bridge fired when the LPA
+        # activity overview happened to be loaded. That left genuine
+        # EXECUTABLE proposals (e.g. CSCO) stranded in
+        # STRUCTURAL_TRADE_PROPOSALS and invisible/un-tradeable in LPA. We
+        # now import as an explicit, wired step of the daily button so the
+        # operator never has to run anything by hand. The importer only
+        # promotes STATUS='PROPOSED' + EXECUTION_POLICY_STATUS='EXECUTABLE'
+        # + STOCK proposals into a PENDING (non-executed) LIVE_ACTIONS state;
+        # it never submits to a broker and never touches real-money gates.
+        response["lpa_import_triggered"] = False
+        if import_proposals_to_lpa:
+            try:
+                from .live import (  # lazy import avoids router import cycle
+                    ImportStructuralProposalsRequest,
+                    import_structural_proposals,
+                )
+
+                # Proposals are PORTFOLIO-AGNOSTIC: the agentic board publishes a
+                # single shared set of STRUCTURAL_TRADE_PROPOSALS (PORTFOLIO_ID is
+                # NULL). The same proposal is used across real-money and paper.
+                # The daily run must therefore make EVERY active live portfolio's
+                # LPA see the same proposals INDEPENDENTLY — it must never write
+                # LPA for only the one account that happened to be connected when
+                # the job ran. We import into each active LIVE_PORTFOLIO_CONFIG
+                # portfolio; each gets its own (PORTFOLIO_ID, PROPOSAL_ID)
+                # LIVE_ACTIONS row in a PENDING (non-executed) state. Importing
+                # into a REAL portfolio's LPA never auto-trades — real-money
+                # execution still requires the separate arming/confirmation gates.
+                conn = get_connection()
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        """
+                        SELECT PORTFOLIO_ID
+                        FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                        WHERE COALESCE(IS_ACTIVE, TRUE) = TRUE
+                        ORDER BY PORTFOLIO_ID
+                        """
+                    )
+                    active_portfolios = [int(r[0]) for r in (cur.fetchall() or [])]
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                if not active_portfolios:
+                    # Fall back to the board's context portfolio so the daily run
+                    # never silently imports nothing when config is unexpected.
+                    active_portfolios = [int(proposal_board_portfolio)]
+
+                per_portfolio_results: dict[str, Any] = {}
+                total_imported = 0
+                for pid in active_portfolios:
+                    try:
+                        import_result = import_structural_proposals(
+                            ImportStructuralProposalsRequest(
+                                live_portfolio_id=pid,
+                                limit=max(1, min(int(proposal_board_max_proposals), 50)),
+                                max_proposal_age_days=7,
+                                dedupe_by_symbol=True,
+                                skip_stale=True,
+                            )
+                        )
+                        res = (
+                            import_result
+                            if isinstance(import_result, dict)
+                            else {"result": import_result}
+                        )
+                        per_portfolio_results[str(pid)] = res
+                        total_imported += int(res.get("imported_count") or 0)
+                    except HTTPException as hex_exc:
+                        # Per-portfolio failure must not abort the others or the
+                        # whole daily job — the board already published.
+                        log.warning(
+                            "LPA import portfolio %s failed (http): %s",
+                            pid, hex_exc.detail,
+                        )
+                        per_portfolio_results[str(pid)] = {
+                            "error": jsonable_encoder(hex_exc.detail)
+                        }
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("LPA import portfolio %s failed", pid)
+                        per_portfolio_results[str(pid)] = {"error": str(exc)}
+
+                response["lpa_import_triggered"] = True
+                response["lpa_import_portfolios"] = active_portfolios
+                response["lpa_import_total_imported"] = total_imported
+                response["lpa_import_result"] = per_portfolio_results
+                log.info(
+                    "LPA import after capped board: portfolios=%s total_imported=%s",
+                    active_portfolios, total_imported,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("LPA import after board failed")
+                response["lpa_import_triggered"] = False
+                response["lpa_import_error"] = str(exc)
 
     return jsonable_encoder(response)
 

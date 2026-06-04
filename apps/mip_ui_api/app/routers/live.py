@@ -17494,6 +17494,17 @@ LEFT JOIN latest_bars mb
 LEFT JOIN latest_regime lr
     ON lr.SYMBOL      = stp.SYMBOL
    AND lr.MARKET_TYPE = COALESCE(se.MARKET_TYPE, se_ev.MARKET_TYPE)
+-- PROPOSAL-CURRENCY CONTRACT (must match the structural timeline / cockpit
+-- pending list, which use V_LATEST_AUTHORITATIVE_BOARD_RUN). A proposal is
+-- valid for exactly one daily cycle: it is importable only while it is
+-- PROPOSED *and* belongs to the latest authoritative board run. Proposals
+-- from a superseded/older run (or after the next daily run expires them)
+-- are never importable. This is the authority for freshness — NOT the
+-- underlying setup-event lifecycle status (a fresh proposal can reference a
+-- setup whose deterministic SETUP_STATUS has aged to STALE; that must not
+-- veto a current-cycle proposal).
+JOIN MIP.MART.V_LATEST_AUTHORITATIVE_BOARD_RUN auth
+    ON auth.RUN_ID = stp.BOARD_RUN_ID
 WHERE stp.STATUS = 'PROPOSED'
   AND COALESCE(stp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
   AND stp.CREATED_AT >= DATEADD('day', -%s, CURRENT_DATE())
@@ -17543,9 +17554,18 @@ def _compute_freshness(
         threshold = max(entry_zone_tolerance_pct, (zone_width / ((entry_low + entry_high) / 2)) * 200)
         price_moved_too_far = distance > threshold
 
-    if not setup_still_valid:
-        freshness = "STALE_INVALID"
-    elif price_moved_too_far:
+    # Proposal-currency is the authority for "is this still valid this cycle",
+    # enforced upstream by the V_LATEST_AUTHORITATIVE_BOARD_RUN join in
+    # _STRUCTURAL_PROPOSAL_QUERY (the same contract the structural timeline /
+    # cockpit pending list use). The underlying setup-event SETUP_STATUS is
+    # therefore intentionally NOT a freshness veto here: a fresh, current-cycle
+    # proposal can legitimately reference a setup whose deterministic lifecycle
+    # has aged to STALE/TRIGGERED, and must still materialise in LPA. The only
+    # remaining veto is the entry-quality guard (price ran beyond a tolerant
+    # entry window); downstream opening-validation / committee gates remain
+    # authoritative for whether it can actually execute. setup_still_valid is
+    # retained below for display/telemetry only.
+    if price_moved_too_far:
         freshness = "STALE_INVALID"
     elif distance is not None and distance > entry_zone_tolerance_pct:
         freshness = "STALE_BUT_VALID"

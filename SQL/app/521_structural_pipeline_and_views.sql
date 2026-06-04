@@ -169,9 +169,29 @@ BEGIN
     CALL MIP.APP.SP_COMPUTE_STRUCTURAL_TRUST();
     v_trust := (SELECT PARSE_JSON('{"status":"done"}'));
 
-    -- Step 8: Generate proposals (now using up-to-date trust data)
-    CALL MIP.APP.SP_PROPOSE_STRUCTURAL_TRADES(:P_PORTFOLIO_ID, :P_MAX_PROPOSALS, :v_as_of, :P_SYMBOL_COOLDOWN_DAYS);
-    v_proposals := (SELECT PARSE_JSON('{"status":"done"}'));
+    -- Step 8: Agentic proposal generation is intentionally NOT run here.
+    --   COST CONTROL / SINGLE SOURCE OF TRUTH:
+    --   The Phase 4 agentic proposal board (Cortex) is the most expensive
+    --   stage in MIP. It must run exactly once per cycle, capped, via the
+    --   capped Python orchestrator (MIP/scripts/proposal_board_phase4/
+    --   run_board.py) which is invoked by the "Run IB Daily Job" endpoint
+    --   AFTER this pipeline completes (run_ib_manual_daily_job in
+    --   management.py). Calling SP_PROPOSE_STRUCTURAL_TRADES ->
+    --   SP_RUN_PROPOSAL_BOARD here would run a SECOND, UNCAPPED Cortex board
+    --   over every eligible STOCK candidate, double-spending and defeating
+    --   the candidate cap. So the daily SP pipeline does the deterministic
+    --   structural analysis only; the capped agentic board owns proposals.
+    --
+    --   This matches the documented Phase 4 cutover intent
+    --   (567_sp_run_proposal_board_phase4_disabled_stub.sql).
+    --
+    --   NOTE: SP_PROPOSE_STRUCTURAL_TRADES / SP_RUN_PROPOSAL_BOARD remain
+    --   deployed for manual/diagnostic use, but are no longer wired into
+    --   the daily pipeline.
+    v_proposals := (SELECT PARSE_JSON(
+        '{"status":"skipped","reason":"PHASE4_AGENTIC_BOARD_OWNS_PROPOSALS",'
+        || '"detail":"capped python orchestrator runs post-pipeline via Run IB Daily Job"}'
+    ));
 
     -- Summary stats
     RETURN OBJECT_CONSTRUCT(
@@ -186,8 +206,9 @@ BEGIN
             'SP_UPDATE_SETUP_LIFECYCLE',
             'SP_EVALUATE_STRUCTURAL_OUTCOMES',
             'SP_COMPUTE_STRUCTURAL_TRUST',
-            'SP_PROPOSE_STRUCTURAL_TRADES'
+            'SP_PROPOSE_STRUCTURAL_TRADES_SKIPPED_PHASE4_PYTHON_BOARD'
         ),
+        'proposals', :v_proposals,
         'elapsed_sec', DATEDIFF('second', :v_run_start, CURRENT_TIMESTAMP())
     );
 END;

@@ -1153,34 +1153,67 @@ def _fetch_latest_broker_truth(
     symbol: str | None = None,
     asset_class: str | None = None,
 ) -> dict:
-    # Use the latest row *per snapshot type*. Global max(SNAPSHOT_TS) can be NAV-only
-    # (or another type) with no OPEN_ORDER rows at that timestamp, which yields an empty
-    # open-order set and false NOT_ACTIVE_AT_BROKER / truth mismatches.
+    # IB is the source of truth for the *current* book. Every Refresh-From-IB
+    # writes a NAV snapshot; POSITION and OPEN_ORDER rows are written at the SAME
+    # SNAPSHOT_TS only when the account actually holds positions / has working
+    # orders. When IB is flat, a refresh writes NAV with NO POSITION/OPEN_ORDER
+    # rows at all.
+    #
+    # The old behaviour anchored to the latest POSITION/OPEN_ORDER-typed
+    # timestamp, which resurrected the last non-empty batch as phantom holdings
+    # long after the broker book went flat (portfolio drift: MIP disagreeing with
+    # IB — e.g. a month-old AMD/AAPL batch still reading as "held"). Anchor
+    # instead to the latest NAV snapshot (the refresh anchor) and read
+    # POSITION/OPEN_ORDER rows at that timestamp, so "no rows at the latest
+    # refresh" correctly reads as flat. This matches the cockpit/LPA overview and
+    # the unmapped-execution reconciliation, which already anchor positions to the
+    # latest NAV snapshot.
     cur.execute(
         """
         select max(SNAPSHOT_TS) as SNAPSHOT_TS
         from MIP.LIVE.BROKER_SNAPSHOTS
         where IBKR_ACCOUNT_ID = %s
-          and SNAPSHOT_TYPE = 'OPEN_ORDER'
+          and SNAPSHOT_TYPE = 'NAV'
         """,
         (account_id,),
     )
-    open_ts_rows = fetch_all(cur)
-    latest_open_ts = (open_ts_rows[0] or {}).get("SNAPSHOT_TS") if open_ts_rows else None
+    nav_ts_rows = fetch_all(cur)
+    anchor_ts = (nav_ts_rows[0] or {}).get("SNAPSHOT_TS") if nav_ts_rows else None
 
-    latest_pos_ts = None
-    if symbol:
+    if anchor_ts is not None:
+        # Normal path: the latest refresh anchor is authoritative for both the
+        # open-order set and the per-symbol position. Absence == flat at broker.
+        latest_open_ts = anchor_ts
+        latest_pos_ts = anchor_ts if symbol else None
+    else:
+        # Fallback only when an account has no NAV lineage at all (should not
+        # happen for active live portfolios): preserve the legacy per-type max so
+        # we never silently flatten a genuinely-held legacy book.
         cur.execute(
             """
             select max(SNAPSHOT_TS) as SNAPSHOT_TS
             from MIP.LIVE.BROKER_SNAPSHOTS
             where IBKR_ACCOUNT_ID = %s
-              and SNAPSHOT_TYPE = 'POSITION'
+              and SNAPSHOT_TYPE = 'OPEN_ORDER'
             """,
             (account_id,),
         )
-        pos_ts_rows = fetch_all(cur)
-        latest_pos_ts = (pos_ts_rows[0] or {}).get("SNAPSHOT_TS") if pos_ts_rows else None
+        open_ts_rows = fetch_all(cur)
+        latest_open_ts = (open_ts_rows[0] or {}).get("SNAPSHOT_TS") if open_ts_rows else None
+
+        latest_pos_ts = None
+        if symbol:
+            cur.execute(
+                """
+                select max(SNAPSHOT_TS) as SNAPSHOT_TS
+                from MIP.LIVE.BROKER_SNAPSHOTS
+                where IBKR_ACCOUNT_ID = %s
+                  and SNAPSHOT_TYPE = 'POSITION'
+                """,
+                (account_id,),
+            )
+            pos_ts_rows = fetch_all(cur)
+            latest_pos_ts = (pos_ts_rows[0] or {}).get("SNAPSHOT_TS") if pos_ts_rows else None
 
     if not latest_open_ts and not latest_pos_ts:
         return {

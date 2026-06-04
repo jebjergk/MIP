@@ -107,9 +107,31 @@ BEGIN
       AND ARRAY_SIZE(COALESCE(DATA_QUALITY_FLAGS, ARRAY_CONSTRUCT())) = 0
       AND PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL;
 
+    -- STOCK-ONLY HARD GATE (pre-agent): the Phase 4 agentic candidate universe
+    -- is STOCK only. Audit any non-STOCK snapshot rows as
+    -- NON_STOCK_EXCLUDED_PRE_AGENT for traceability. They are NEVER sent to the
+    -- Cortex panel (the prompt source below filters MARKET_TYPE = 'STOCK'), so
+    -- they consume zero agent calls / zero cost and never reach the chair.
+    INSERT INTO MIP.APP.PROPOSAL_BOARD_REVIEW_ELIGIBILITY (
+        RUN_ID, AS_OF_DATE, PORTFOLIO_ID, DOSSIER_ID, SYMBOL, MARKET_TYPE,
+        ELIGIBLE, PRIMARY_REASON_CODE, SIGNAL_FLAGS_JSON, EVIDENCE_SUMMARY_JSON, NOTES
+    )
+    SELECT
+        :v_run_id, :v_as_of, :P_PORTFOLIO_ID, DOSSIER_ID, SYMBOL, MARKET_TYPE,
+        FALSE, 'NON_STOCK_EXCLUDED_PRE_AGENT',
+        OBJECT_CONSTRUCT('non_stock_excluded', TRUE),
+        OBJECT_CONSTRUCT('market_type', MARKET_TYPE,
+                         'note', 'Phase 4 agentic universe is STOCK only; excluded before agent panel (zero agent cost).'),
+        'Excluded pre-agent: non-STOCK market type.'
+    FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT
+    WHERE RUN_ID = :v_run_id
+      AND COALESCE(MARKET_TYPE, 'UNKNOWN') <> 'STOCK';
+
+    -- Count only the STOCK candidates that will actually be sent to agents.
     SELECT COUNT(*) INTO :v_dossier_count
     FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT
-    WHERE RUN_ID = :v_run_id;
+    WHERE RUN_ID = :v_run_id
+      AND COALESCE(MARKET_TYPE, 'UNKNOWN') = 'STOCK';
 
     UPDATE MIP.APP.PROPOSAL_BOARD_RUN
        SET CANDIDATE_COUNT = :v_dossier_count
@@ -168,6 +190,8 @@ BEGIN
             || 'Dossier JSON: ' || TO_JSON(DOSSIER_PAYLOAD_JSON) AS PROMPT_TEXT
         FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT
         WHERE RUN_ID = :v_run_id
+          -- STOCK-only hard gate: non-STOCK dossiers are never sent to Cortex.
+          AND COALESCE(MARKET_TYPE, 'UNKNOWN') = 'STOCK'
     ),
     cortexed AS (
         SELECT p.*, SNOWFLAKE.CORTEX.COMPLETE(:v_model_name, p.PROMPT_TEXT) AS RAW_TEXT
@@ -455,6 +479,10 @@ BEGIN
       AND v.RANK <= :P_MAX_PROPOSALS
       AND s.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL
       AND v.PTC:thesis_label::STRING ILIKE 'AGENTIC_%'
+      -- Defensive STOCK-only publication guard (mirrors orchestrator.py).
+      -- Non-STOCK should never reach here (excluded pre-agent), but this is a
+      -- hard belt-and-suspenders gate so non-STOCK can never be published.
+      AND COALESCE(s.MARKET_TYPE, 'UNKNOWN') = 'STOCK'
       -- Allow PROPOSE_SHORT unconditionally; policy is recorded in EXECUTION_POLICY_STATUS
       AND v.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT')
       AND NOT EXISTS (
@@ -530,6 +558,20 @@ BEGIN
        AND p.EXECUTION_POLICY_STATUS = 'EXECUTABLE'
        AND p.SETUP_EVENT_ID IS NULL
        AND p.PRIMARY_EVIDENCE_SETUP_EVENT_ID IS NOT NULL;
+
+    -- Defensive non-STOCK guard: any structural proposal whose board dossier is
+    -- non-STOCK can never be EXECUTABLE or live-tradeable. Non-STOCK should never
+    -- reach here (excluded pre-agent + publish guard), but this forces the
+    -- invariant unconditionally so it can never import into LIVE_ACTIONS.
+    UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+       SET EXECUTION_POLICY_STATUS = 'POLICY_BLOCKED',
+           EXECUTION_POLICY_REASON = 'NON_STOCK_NOT_TRADEABLE',
+           IS_RESEARCH_ONLY = TRUE
+      FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+     WHERE p.BOARD_RUN_ID = :v_run_id
+       AND s.RUN_ID = p.BOARD_RUN_ID
+       AND s.DOSSIER_ID = p.BOARD_DOSSIER_ID
+       AND COALESCE(s.MARKET_TYPE, 'UNKNOWN') <> 'STOCK';
 
     SELECT COUNT(*) INTO :v_published_count
     FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2

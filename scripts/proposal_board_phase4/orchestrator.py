@@ -2112,6 +2112,25 @@ def _publish_to_structural(
         {"run_id": run_id},
     )
 
+    # Defensive non-STOCK guard: any structural proposal whose board dossier is
+    # non-STOCK can never be EXECUTABLE or live-tradeable. Non-STOCK is excluded
+    # pre-agent and by the publish WHERE, but this forces the invariant
+    # unconditionally so it can never import into LIVE_ACTIONS.
+    cur.execute(
+        """
+        UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+           SET EXECUTION_POLICY_STATUS = 'POLICY_BLOCKED',
+               EXECUTION_POLICY_REASON = 'NON_STOCK_NOT_TRADEABLE',
+               IS_RESEARCH_ONLY = TRUE
+          FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+         WHERE p.BOARD_RUN_ID = %(run_id)s
+           AND s.RUN_ID = p.BOARD_RUN_ID
+           AND s.DOSSIER_ID = p.BOARD_DOSSIER_ID
+           AND COALESCE(s.MARKET_TYPE, 'UNKNOWN') <> 'STOCK'
+        """,
+        {"run_id": run_id},
+    )
+
     cur.execute(
         "SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 "
         "WHERE RUN_ID = %(run_id)s AND PUBLICATION_STATUS = 'PUBLISHED'",
@@ -2344,6 +2363,13 @@ async def orchestrate_phase4_board(
     # Stage 0.5 — direction-neutral eligibility filter. Persist a decision per
     # snapshotted symbol regardless of whether agents will run. The filter is
     # bypassed when the operator passed an explicit --symbols list.
+    #
+    # STOCK-ONLY HARD GATE (pre-agent): the Phase 4 agentic candidate universe
+    # is STOCK only. Any MARKET_TYPE != 'STOCK' (FX, ETF, etc.) is excluded here,
+    # BEFORE the candidate cap, ranking, budget estimation, Cortex agent fan-out,
+    # and chair validation. Non-STOCK rows therefore consume ZERO agent sessions.
+    # They are audited as NON_STOCK_EXCLUDED_PRE_AGENT for full traceability but
+    # are never added to eligible_rows. This is not overridable by --symbols.
     operator_override = bool(symbols_filter)
     eligibility_by_dossier: Dict[int, EligibilityDecision] = {}
     eligible_rows: List[Tuple[int, str, str, Dict[str, Any]]] = []
@@ -2351,6 +2377,34 @@ async def orchestrate_phase4_board(
     elig_cur = conn.cursor()
     try:
         for did, sym, mkt, payload in rows:
+            # STOCK-only hard gate — runs before any agent-bound processing.
+            if (mkt or "").upper() != "STOCK":
+                decision = EligibilityDecision(
+                    symbol=sym,
+                    market_type=mkt,
+                    eligible=False,
+                    primary_reason_code="NON_STOCK_EXCLUDED_PRE_AGENT",
+                    signal_flags={"non_stock_excluded": True},
+                    evidence_summary={
+                        "market_type": mkt,
+                        "note": "Phase 4 agentic universe is STOCK only; "
+                                "excluded before agent panel (zero agent cost).",
+                    },
+                )
+                eligibility_by_dossier[did] = decision
+                try:
+                    _persist_eligibility(
+                        elig_cur, run_id, as_of, portfolio_id, did, decision,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "phase4 non_stock persist failed dossier=%s symbol=%s mkt=%s: %s",
+                        did, sym, mkt, e,
+                    )
+                skip_counts["NON_STOCK_EXCLUDED_PRE_AGENT"] = (
+                    skip_counts.get("NON_STOCK_EXCLUDED_PRE_AGENT", 0) + 1
+                )
+                continue
             decision = evaluate_dossier_eligibility(
                 symbol=sym,
                 market_type=mkt,

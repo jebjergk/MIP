@@ -1,0 +1,88 @@
+/* ================================================================
+   48_market_type_null_integrity.sql
+   MARKET_TYPE integrity smoke check for execution/proposal-critical rows.
+
+   Enforces the hardening invariant that execution/proposal-critical rows
+   no longer depend on MARKET_TYPE = NULL being treated as STOCK:
+
+     C1  LIVE_ACTIONS rows with MARKET_TYPE IS NULL that CANNOT be
+         confidently classified from canonical reference  -> must be 0
+         (any remaining NULL must be explicitly REVIEW_REQUIRED, listed by C1b)
+     C2  Explicit non-STOCK (FX/ETF) structural proposals that are still
+         EXECUTABLE / tradeable                            -> must be 0
+     C3  Explicit non-STOCK (FX/ETF) LIVE_ACTIONS in a tradeable state -> must be 0
+
+   Reference: INGEST_UNIVERSE + STRUCTURAL_SETUP_EVENTS + PORTFOLIO_TRADES
+   (authoritative NOT-NULL sources). Run repair_market_type_null.sql first.
+   ================================================================ */
+
+USE ROLE MIP_ADMIN_ROLE;
+USE DATABASE MIP;
+USE SCHEMA APP;
+
+-- C1: LIVE_ACTIONS NULL rows that are RESOLVABLE but still NULL => FAIL.
+-- (Resolvable-but-NULL means the repair script was not run / regressed.)
+WITH ref AS (
+    SELECT SYM, COUNT(DISTINCT MT) AS NMT
+    FROM (
+        SELECT UPPER(SYMBOL) AS SYM, MARKET_TYPE AS MT FROM MIP.APP.INGEST_UNIVERSE        WHERE MARKET_TYPE IS NOT NULL
+        UNION SELECT UPPER(SYMBOL), MARKET_TYPE FROM MIP.APP.STRUCTURAL_SETUP_EVENTS WHERE MARKET_TYPE IS NOT NULL
+        UNION SELECT UPPER(SYMBOL), MARKET_TYPE FROM MIP.APP.PORTFOLIO_TRADES        WHERE MARKET_TYPE IS NOT NULL
+    )
+    GROUP BY SYM
+)
+SELECT
+    'C1_LIVE_ACTIONS_RESOLVABLE_BUT_NULL' AS CHECK_NAME,
+    COUNT(*) AS OBSERVED_COUNT,
+    IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS RESULT
+FROM MIP.LIVE.LIVE_ACTIONS la
+JOIN ref r ON r.SYM = UPPER(la.SYMBOL) AND r.NMT = 1
+WHERE la.MARKET_TYPE IS NULL;
+
+-- C1b: Remaining NULL rows explicitly classified REVIEW_REQUIRED (informational).
+WITH ref AS (
+    SELECT SYM, COUNT(DISTINCT MT) AS NMT
+    FROM (
+        SELECT UPPER(SYMBOL) AS SYM, MARKET_TYPE AS MT FROM MIP.APP.INGEST_UNIVERSE        WHERE MARKET_TYPE IS NOT NULL
+        UNION SELECT UPPER(SYMBOL), MARKET_TYPE FROM MIP.APP.STRUCTURAL_SETUP_EVENTS WHERE MARKET_TYPE IS NOT NULL
+        UNION SELECT UPPER(SYMBOL), MARKET_TYPE FROM MIP.APP.PORTFOLIO_TRADES        WHERE MARKET_TYPE IS NOT NULL
+    )
+    GROUP BY SYM
+)
+SELECT
+    'C1b_LIVE_ACTIONS_REVIEW_REQUIRED' AS CHECK_NAME,
+    COUNT(*) AS OBSERVED_COUNT,
+    'REVIEW_REQUIRED' AS RESULT
+FROM MIP.LIVE.LIVE_ACTIONS la
+LEFT JOIN ref r ON r.SYM = UPPER(la.SYMBOL) AND r.NMT = 1
+WHERE la.MARKET_TYPE IS NULL
+  AND r.SYM IS NULL;
+
+-- C2: Explicit non-STOCK structural proposals still EXECUTABLE / tradeable.
+SELECT
+    'C2_NON_STOCK_EXECUTABLE_PROPOSALS' AS CHECK_NAME,
+    COUNT(*) AS OBSERVED_COUNT,
+    IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS RESULT
+FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
+LEFT JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+  ON s.RUN_ID = p.BOARD_RUN_ID AND s.DOSSIER_ID = p.BOARD_DOSSIER_ID
+LEFT JOIN MIP.APP.STRUCTURAL_SETUP_EVENTS se_ev
+  ON se_ev.SETUP_EVENT_ID = p.PRIMARY_EVIDENCE_SETUP_EVENT_ID
+WHERE p.STATUS = 'PROPOSED'
+  AND COALESCE(p.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
+  AND COALESCE(p.IS_RESEARCH_ONLY, FALSE) = FALSE
+  AND COALESCE(s.MARKET_TYPE, se_ev.MARKET_TYPE, 'STOCK') <> 'STOCK';
+
+-- C3: Explicit non-STOCK LIVE_ACTIONS in a tradeable (non-terminal) state.
+SELECT
+    'C3_NON_STOCK_TRADEABLE_LIVE_ACTIONS' AS CHECK_NAME,
+    COUNT(*) AS OBSERVED_COUNT,
+    IFF(COUNT(*) = 0, 'PASS', 'FAIL') AS RESULT
+FROM MIP.LIVE.LIVE_ACTIONS la
+WHERE la.MARKET_TYPE IS NOT NULL
+  AND la.MARKET_TYPE <> 'STOCK'
+  AND la.STATUS IN (
+      'PROPOSED', 'INTENT_APPROVED', 'PENDING_OPEN_VALIDATION',
+      'OPEN_BLOCKED', 'REVALIDATED_PASS', 'EXECUTION_REQUESTED',
+      'PENDING_SUBMIT', 'OPEN', 'FILLED'
+  );

@@ -17497,6 +17497,10 @@ LEFT JOIN latest_regime lr
 WHERE stp.STATUS = 'PROPOSED'
   AND COALESCE(stp.EXECUTION_POLICY_STATUS, 'EXECUTABLE') = 'EXECUTABLE'
   AND stp.CREATED_AT >= DATEADD('day', -%s, CURRENT_DATE())
+  -- STOCK-only hard gate: MIP trades STOCK live only. Non-STOCK (FX/ETF)
+  -- proposals must never import into LIVE_ACTIONS as tradeable, even if a
+  -- stale row was mislabelled EXECUTABLE by an older board path.
+  AND COALESCE(se.MARKET_TYPE, se_ev.MARKET_TYPE, 'STOCK') = 'STOCK'
 ORDER BY stp.CREATED_AT DESC
 LIMIT %s
 """

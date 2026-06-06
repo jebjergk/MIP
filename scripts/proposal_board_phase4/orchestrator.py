@@ -637,7 +637,7 @@ async def _run_one_specialist(
         except Exception as e:
             logger.warning("phase4 specialist %s dossier=%s symbol=%s FAILED: %s",
                            role, dossier_id, symbol, e)
-            response = {"error": str(e)}
+            response = {"error": (str(e).strip() or type(e).__name__)}
         elapsed = time.monotonic() - t0
 
     text = extract_agent_text(response) if isinstance(response, dict) and "error" not in response else ""
@@ -1217,7 +1217,7 @@ async def _orchestrate_dossier(
                     conflict.target_role, dossier_id, repr(e),
                 )
                 response_text = ""
-                response = {"error": str(e)}
+                response = {"error": (str(e).strip() or type(e).__name__)}
 
             revised_raw = _try_parse_json(response_text) if response_text else None
             revised_pos = _validate_specialist(conflict.target_role, revised_raw)
@@ -1323,7 +1323,7 @@ async def _orchestrate_dossier(
     except Exception as e:
         logger.warning("phase4 chair call failed dossier=%s: %s", dossier_id, e)
         chair_text = ""
-        chair_resp = {"error": str(e)}
+        chair_resp = {"error": (str(e).strip() or type(e).__name__)}
 
     chair_parsed = _try_parse_json(chair_text) if chair_text else None
     chair = _validate_chair(chair_parsed)

@@ -18,9 +18,11 @@ The Cortex Agents REST schema is the post-2025-09-01 shape:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
+import random
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -124,6 +126,87 @@ def _normalize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Transient-failure retry (timeouts / dropped connections / 5xx / 429)
+# ---------------------------------------------------------------------------
+#
+# The dominant Phase 4 board failure was NOT bad model output — it was the HTTP
+# call to the Cortex Agents endpoint timing out or the connection dropping
+# mid-stream, which previously surfaced as an empty `{"error":""}` and silently
+# discarded the whole symbol. These hiccups are almost always transient: a fresh
+# attempt over a new connection typically returns quickly. We retry only on
+# transport-level failures and retryable status codes, with exponential backoff
+# and jitter, and we ALWAYS raise a non-empty, typed error when attempts are
+# exhausted so the failure reason is visible in PROPOSAL_BOARD_OUTPUT_ERROR.
+
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_DEFAULT_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY_SEC = 2.0
+_RETRY_MAX_DELAY_SEC = 20.0
+
+
+def _is_retryable_exception(exc: Exception) -> bool:
+    # httpx.TimeoutException covers Connect/Read/Write/Pool timeouts; the broader
+    # httpx.TransportError covers connection resets, remote-protocol errors, etc.
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in _RETRYABLE_STATUS
+    return False
+
+
+def _format_exc(exc: Exception) -> str:
+    """A non-empty, typed description — httpx timeouts often have str(exc) == ''."""
+    name = type(exc).__name__
+    msg = str(exc).strip()
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"{name}: HTTP {exc.response.status_code} {msg}".strip()
+    return f"{name}: {msg}" if msg else name
+
+
+async def _post_agent_with_retries(
+    *,
+    url: str,
+    body: Dict[str, Any],
+    headers: Dict[str, str],
+    timeout: float,
+    label: str,
+    max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
+) -> Dict[str, Any]:
+    # Split timeout so a stalled connect fails fast (and is retried) while the
+    # model still gets the full budget to generate its answer (read).
+    timeout_cfg = httpx.Timeout(timeout, connect=min(15.0, timeout))
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout_cfg) as client:
+                resp = await client.post(url, json=body, headers=headers)
+                if resp.status_code >= 400:
+                    logger.warning(
+                        "phase4_agent[%s]: HTTP %s body=%s",
+                        label, resp.status_code, resp.text[:1000],
+                    )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:  # noqa: BLE001
+            last_exc = e
+            retryable = _is_retryable_exception(e)
+            logger.warning(
+                "phase4_agent[%s]: attempt %d/%d failed (retryable=%s): %s",
+                label, attempt, max_attempts, retryable, _format_exc(e),
+            )
+            if not retryable or attempt >= max_attempts:
+                break
+            delay = min(_RETRY_MAX_DELAY_SEC, _RETRY_BASE_DELAY_SEC * (2 ** (attempt - 1)))
+            delay += random.uniform(0.0, delay * 0.25)
+            await asyncio.sleep(delay)
+
+    detail = _format_exc(last_exc) if last_exc is not None else "unknown error"
+    raise RuntimeError(
+        f"Cortex agent call failed after {max_attempts} attempt(s) [{label}]: {detail}"
+    ) from last_exc
+
+
+# ---------------------------------------------------------------------------
 # Persistent agent (CREATE AGENT) runner
 # ---------------------------------------------------------------------------
 
@@ -146,15 +229,10 @@ async def run_agent_object(
     }
 
     logger.debug("phase4_agent_object: POST %s (agent=%s)", url, agent_name)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(url, json=body, headers=headers)
-        if resp.status_code >= 400:
-            logger.warning(
-                "phase4_agent_object: %s -> HTTP %s body=%s",
-                agent_name, resp.status_code, resp.text[:1000],
-            )
-        resp.raise_for_status()
-        return resp.json()
+    return await _post_agent_with_retries(
+        url=url, body=body, headers=headers, timeout=timeout,
+        label=f"object:{agent_name}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -192,15 +270,10 @@ async def run_agent_objectless(
         body["tool_resources"] = tool_resources
 
     logger.debug("phase4_agent_objectless: POST %s (model=%s)", url, model)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(url, json=body, headers=headers)
-        if resp.status_code >= 400:
-            logger.warning(
-                "phase4_agent_objectless: model=%s -> HTTP %s body=%s",
-                model, resp.status_code, resp.text[:1000],
-            )
-        resp.raise_for_status()
-        return resp.json()
+    return await _post_agent_with_retries(
+        url=url, body=body, headers=headers, timeout=timeout,
+        label=f"objectless:{model}",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,26 @@
 /* ================================================================
    569_phase4_get_dossier_slice.sql
    Phase 4 Cortex Agentic Proposal Board: GET_PHASE4_DOSSIER_SLICE
-   Snowpark stored procedure used as the `generic` tool backing
+   Pure-SQL stored procedure used as the `generic` tool backing
    for all PHASE4_*_AGENT objects.
+
+   PERFORMANCE NOTE (why this is LANGUAGE SQL, not Python):
+     This procedure was originally a Snowpark/Python SP. Python SPs
+     carry multi-second sandbox cold/warm-start overhead on every
+     CALL (measured 9-30s on MIP_WH_XS even for a zero-row lookup).
+     The agent panel runs up to inter_dossier_concurrency(2) x
+     per_dossier_concurrency(5) = 10 specialist agents at once, each
+     calling this tool ~7 times. Concurrent Python-SP cold starts
+     saturated the XS warehouse so individual slice calls blew past
+     the Cortex tool query_timeout (90s) -> HTTP 408 (error 000630)
+     -> agents received no evidence -> they refused to fabricate a
+     verdict and returned prose -> validator flagged the position
+     MISSING_OR_NON_OBJECT_JSON -> INVALID_SPECIALISTS -> zero
+     proposals. This pure-SQL rewrite removes the Python runtime so a
+     slice lookup is a sub-second single-row read, eliminating the
+     saturation/timeout failure mode. Output shape, role/slice
+     allowlists, error codes, and slice->payload-key mapping are
+     identical to the prior Python implementation.
 
    Mirrors GET_SHADOW_EVIDENCE_SLICE shape and guard pattern.
 
@@ -73,160 +91,138 @@ CREATE OR REPLACE PROCEDURE MIP.APP.GET_PHASE4_DOSSIER_SLICE(
     SLICE_NAME  VARCHAR
 )
 RETURNS VARIANT
-LANGUAGE PYTHON
-RUNTIME_VERSION = '3.11'
-PACKAGES = ('snowflake-snowpark-python')
-HANDLER = 'get_slice'
+LANGUAGE SQL
 AS
 $$
-import json
+DECLARE
+    role_u    STRING;
+    slice_l   STRING;
+    rid       STRING;
+    did       NUMBER;
+    pkey      STRING;
+    role_slices ARRAY;
+    pack      VARIANT;
+    slice_val VARIANT;
+    -- slice_name -> dossier payload key (most identical). zone_context
+    -- aliases 'levels'; recent_price_action -> recent_price_action_summary;
+    -- setup_events -> setup_events_evidence_only; policy_flags -> policy.
+    payload_key_map OBJECT;
+    -- closed-world role -> allowed slices map.
+    role_slice_map  OBJECT;
+BEGIN
+    role_u  := UPPER(TRIM(COALESCE(:ROLE_NAME, '')));
+    slice_l := LOWER(TRIM(COALESCE(:SLICE_NAME, '')));
+    rid     := TRIM(COALESCE(:RUN_ID, ''));
+    did     := :DOSSIER_ID;
 
-_ALLOWED_ROLES = {
-    'MARKET_STRUCTURE',
-    'LEVEL_PRICE_ACTION',
-    'THESIS',
-    'HISTORICAL_EVIDENCE',
-    'RISK_EXECUTION',
-    'CHAIR',
-}
+    payload_key_map := OBJECT_CONSTRUCT(
+        'identity', 'identity',
+        'price', 'price',
+        'recent_bars', 'recent_bars',
+        'candle_sequence', 'candle_sequence',
+        'recent_price_action', 'recent_price_action_summary',
+        'levels', 'levels',
+        'zone_context', 'levels',
+        'structure', 'structure',
+        'regime', 'regime',
+        'long_pattern_signs', 'long_pattern_signs',
+        'short_pattern_signs', 'short_pattern_signs',
+        'setup_events', 'setup_events_evidence_only',
+        'invalidation_evidence', 'invalidation_evidence',
+        'history', 'history',
+        'memory', 'memory',
+        'policy_flags', 'policy',
+        'structural_timeline_summary', 'structural_timeline_summary',
+        'structural_timeline_bars', 'structural_timeline_bars',
+        'candle_psychology', 'candle_psychology',
+        'actionability_context', 'actionability_context',
+        'market_structure_map', 'market_structure_map'
+    );
 
-_ALLOWED_SLICES = {
-    'identity',
-    'price',
-    'recent_bars',
-    'candle_sequence',
-    'recent_price_action',
-    'levels',
-    'zone_context',
-    'structure',
-    'regime',
-    'long_pattern_signs',
-    'short_pattern_signs',
-    'setup_events',
-    'invalidation_evidence',
-    'history',
-    'memory',
-    'policy_flags',
-    'structural_timeline_summary',
-    'structural_timeline_bars',
-    'candle_psychology',
-    'actionability_context',
-    'market_structure_map',
-}
+    role_slice_map := OBJECT_CONSTRUCT(
+        'MARKET_STRUCTURE', ARRAY_CONSTRUCT(
+            'identity', 'price', 'recent_bars', 'candle_sequence',
+            'recent_price_action', 'structure', 'regime',
+            'structural_timeline_summary', 'candle_psychology',
+            'actionability_context', 'market_structure_map'),
+        'LEVEL_PRICE_ACTION', ARRAY_CONSTRUCT(
+            'identity', 'price', 'recent_bars', 'candle_sequence',
+            'recent_price_action', 'levels', 'zone_context',
+            'candle_psychology', 'actionability_context', 'market_structure_map'),
+        'THESIS', ARRAY_CONSTRUCT(
+            'identity', 'price', 'structure', 'regime', 'levels', 'zone_context',
+            'long_pattern_signs', 'short_pattern_signs',
+            'setup_events', 'recent_price_action',
+            'structural_timeline_summary', 'actionability_context', 'market_structure_map'),
+        'HISTORICAL_EVIDENCE', ARRAY_CONSTRUCT(
+            'identity', 'history', 'setup_events',
+            'invalidation_evidence', 'memory'),
+        'RISK_EXECUTION', ARRAY_CONSTRUCT(
+            'identity', 'price', 'levels', 'zone_context',
+            'structure', 'regime',
+            'policy_flags', 'memory', 'invalidation_evidence',
+            'actionability_context'),
+        'CHAIR', ARRAY_CONSTRUCT(
+            'identity', 'price', 'recent_bars', 'candle_sequence',
+            'recent_price_action', 'levels', 'zone_context',
+            'structure', 'regime',
+            'long_pattern_signs', 'short_pattern_signs',
+            'setup_events', 'invalidation_evidence',
+            'history', 'memory', 'policy_flags',
+            'structural_timeline_summary', 'structural_timeline_bars',
+            'candle_psychology', 'actionability_context', 'market_structure_map')
+    );
 
-_ROLE_SLICE_MAP = {
-    'MARKET_STRUCTURE': {
-        'identity', 'price', 'recent_bars', 'candle_sequence',
-        'recent_price_action', 'structure', 'regime',
-        'structural_timeline_summary', 'candle_psychology',
-        'actionability_context', 'market_structure_map',
-    },
-    'LEVEL_PRICE_ACTION': {
-        'identity', 'price', 'recent_bars', 'candle_sequence',
-        'recent_price_action', 'levels', 'zone_context',
-        'candle_psychology', 'actionability_context', 'market_structure_map',
-    },
-    'THESIS': {
-        'identity', 'price', 'structure', 'regime', 'levels', 'zone_context',
-        'long_pattern_signs', 'short_pattern_signs',
-        'setup_events', 'recent_price_action',
-        'structural_timeline_summary', 'actionability_context', 'market_structure_map',
-    },
-    'HISTORICAL_EVIDENCE': {
-        'identity', 'history', 'setup_events',
-        'invalidation_evidence', 'memory',
-    },
-    'RISK_EXECUTION': {
-        'identity', 'price', 'levels', 'zone_context',
-        'structure', 'regime',
-        'policy_flags', 'memory', 'invalidation_evidence',
-        'actionability_context',
-    },
-    'CHAIR': {
-        'identity', 'price', 'recent_bars', 'candle_sequence',
-        'recent_price_action', 'levels', 'zone_context',
-        'structure', 'regime',
-        'long_pattern_signs', 'short_pattern_signs',
-        'setup_events', 'invalidation_evidence',
-        'history', 'memory', 'policy_flags',
-        'structural_timeline_summary', 'structural_timeline_bars',
-        'candle_psychology', 'actionability_context', 'market_structure_map',
-    },
-}
+    -- Guard order mirrors the prior Python implementation exactly.
+    IF (GET(role_slice_map, role_u) IS NULL) THEN
+        RETURN OBJECT_CONSTRUCT('error', 'ROLE_NOT_ALLOWED', 'role', role_u);
+    END IF;
 
-# Map slice_name -> dossier payload key (most are identical names).
-# Phase 4 evidence-hardening v1: zone_context aliases the existing 'levels'
-# payload key so agents can request it under the more semantic name without
-# duplicating the underlying data.
-_SLICE_TO_PAYLOAD_KEY = {
-    'identity': 'identity',
-    'price': 'price',
-    'recent_bars': 'recent_bars',
-    'candle_sequence': 'candle_sequence',
-    'recent_price_action': 'recent_price_action_summary',
-    'levels': 'levels',
-    'zone_context': 'levels',
-    'structure': 'structure',
-    'regime': 'regime',
-    'long_pattern_signs': 'long_pattern_signs',
-    'short_pattern_signs': 'short_pattern_signs',
-    'setup_events': 'setup_events_evidence_only',
-    'invalidation_evidence': 'invalidation_evidence',
-    'history': 'history',
-    'memory': 'memory',
-    'policy_flags': 'policy',
-    'structural_timeline_summary': 'structural_timeline_summary',
-    'structural_timeline_bars': 'structural_timeline_bars',
-    'candle_psychology': 'candle_psychology',
-    'actionability_context': 'actionability_context',
-    'market_structure_map': 'market_structure_map',
-}
+    IF (GET(payload_key_map, slice_l) IS NULL) THEN
+        RETURN OBJECT_CONSTRUCT('error', 'SLICE_NOT_IN_CATALOG', 'slice', slice_l);
+    END IF;
 
+    role_slices := GET(role_slice_map, role_u)::ARRAY;
+    IF (NOT ARRAY_CONTAINS(slice_l::VARIANT, role_slices)) THEN
+        RETURN OBJECT_CONSTRUCT(
+            'error', 'SLICE_NOT_ALLOWED_FOR_ROLE', 'role', role_u, 'slice', slice_l);
+    END IF;
 
-def get_slice(session, run_id: str, dossier_id: int, role_name: str, slice_name: str):
-    role_upper = (role_name or '').strip().upper()
-    slice_lower = (slice_name or '').strip().lower()
-    rid = (run_id or '').strip()
-    did = dossier_id
+    IF (rid = '') THEN
+        RETURN OBJECT_CONSTRUCT('error', 'RUN_ID_REQUIRED');
+    END IF;
 
-    if role_upper not in _ALLOWED_ROLES:
-        return {'error': 'ROLE_NOT_ALLOWED', 'role': role_upper}
-    if slice_lower not in _ALLOWED_SLICES:
-        return {'error': 'SLICE_NOT_IN_CATALOG', 'slice': slice_lower}
-    if slice_lower not in _ROLE_SLICE_MAP.get(role_upper, set()):
-        return {'error': 'SLICE_NOT_ALLOWED_FOR_ROLE', 'role': role_upper, 'slice': slice_lower}
-    if not rid:
-        return {'error': 'RUN_ID_REQUIRED'}
-    if did is None:
-        return {'error': 'DOSSIER_ID_REQUIRED'}
+    IF (did IS NULL) THEN
+        RETURN OBJECT_CONSTRUCT('error', 'DOSSIER_ID_REQUIRED');
+    END IF;
 
-    rows = session.sql(
-        "SELECT PACK_JSON FROM MIP.APP.PROPOSAL_BOARD_DOSSIER_PACK_CACHE "
-        "WHERE RUN_ID = ? AND DOSSIER_ID = ? AND EXPIRES_AT > CURRENT_TIMESTAMP()",
-        params=[rid, int(did)],
-    ).collect()
+    pack := (
+        SELECT PACK_JSON
+        FROM MIP.APP.PROPOSAL_BOARD_DOSSIER_PACK_CACHE
+        WHERE RUN_ID = :rid
+          AND DOSSIER_ID = :did
+          AND EXPIRES_AT > CURRENT_TIMESTAMP()
+        LIMIT 1
+    );
 
-    if not rows:
-        return {
-            'error': 'PACK_NOT_FOUND_OR_EXPIRED',
-            'run_id': rid,
-            'dossier_id': int(did),
-        }
+    IF (pack IS NULL) THEN
+        RETURN OBJECT_CONSTRUCT(
+            'error', 'PACK_NOT_FOUND_OR_EXPIRED', 'run_id', rid, 'dossier_id', did);
+    END IF;
 
-    pack = rows[0]['PACK_JSON']
-    if isinstance(pack, str):
-        pack = json.loads(pack)
+    pkey := GET(payload_key_map, slice_l)::STRING;
+    slice_val := GET(pack, pkey);
 
-    payload_key = _SLICE_TO_PAYLOAD_KEY[slice_lower]
-    slice_value = pack.get(payload_key) if isinstance(pack, dict) else None
-
-    return {
-        'run_id': rid,
-        'dossier_id': int(did),
-        'role': role_upper,
-        'slice': slice_lower,
-        'payload': slice_value,
-    }
+    -- KEEP_NULL so 'payload' is present as JSON null when the key is absent,
+    -- matching the Python version's {'payload': None}.
+    RETURN OBJECT_CONSTRUCT_KEEP_NULL(
+        'run_id', rid,
+        'dossier_id', did,
+        'role', role_u,
+        'slice', slice_l,
+        'payload', slice_val
+    );
+END;
 $$;
 
 GRANT USAGE ON PROCEDURE MIP.APP.GET_PHASE4_DOSSIER_SLICE(VARCHAR, NUMBER, VARCHAR, VARCHAR) TO ROLE MIP_ADMIN_ROLE;

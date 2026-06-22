@@ -16,6 +16,13 @@
    specialists in parallel, persists their initial positions,
    detects conflicts, runs challenge + revision rounds via
    objectless Cortex AGENT_RUN, then runs the chair.
+
+   TOOL TIMEOUT NOTE:
+     get_evidence_slice query_timeout is 180s (was 90s). The 90s cap
+     was being hit under concurrent board load when the slice tool
+     was a Python SP (see 569_*.sql header). The slice tool is now
+     pure SQL (sub-second), so 180s is a generous safety margin that
+     stays well under the orchestrator's per-agent timeout (240s).
    ================================================================ */
 
 USE ROLE MIP_ADMIN_ROLE;
@@ -117,7 +124,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_MARKET_STRUCTURE_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 90
+          query_timeout: 180
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -206,7 +213,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_LEVEL_PRICE_ACTION_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 90
+          query_timeout: 180
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -311,7 +318,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_THESIS_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 90
+          query_timeout: 180
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -387,7 +394,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_HISTORICAL_EVIDENCE_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 90
+          query_timeout: 180
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -482,7 +489,7 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_RISK_EXECUTION_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 90
+          query_timeout: 180
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;
 
@@ -777,6 +784,6 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
         execution_environment:
           type: warehouse
           warehouse: MIP_WH_XS
-          query_timeout: 90
+          query_timeout: 180
         identifier: MIP.APP.GET_PHASE4_DOSSIER_SLICE
   $$;

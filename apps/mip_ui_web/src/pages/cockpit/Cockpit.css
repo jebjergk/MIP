@@ -1269,3 +1269,36 @@
 }
 .ck-co-ops-msg--ok    { background: #d1e7dd; color: #0a3622; }
 .ck-co-ops-msg--error { background: #f8d7da; color: #58151c; }
+
+.ck-co-ops-section {
+  margin-top: 0.6rem;
+}
+
+.ck-co-ops-section-title {
+  font-weight: 600;
+  color: #495057;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+
+.ck-co-ops-section-desc {
+  font-size: 0.78rem;
+  color: #868e96;
+  margin-bottom: 0.3rem;
+}
+
+.ck-co-ops-divider {
+  border-top: 1px solid #dee2e6;
+  margin-top: 0.7rem;
+}
+
+.ck-op-btn--agentic {
+  border-color: #6f42c1;
+  background: #6f42c1;
+}
+.ck-op-btn--agentic:hover:not(:disabled) {
+  background: #5a32a3;
+  border-color: #5a32a3;
+}

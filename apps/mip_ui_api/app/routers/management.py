@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
 import subprocess
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -14,6 +16,61 @@ from app.cursorfiles_paths import mip_workspace_root, resolve_subprocess_python
 from app.db import get_connection, fetch_all
 
 log = logging.getLogger(__name__)
+
+
+# ── COCKPIT_RUN_LOG helpers ──────────────────────────────────────────────────
+# Best-effort audit writes: they log a warning on failure but never raise,
+# so they cannot break the existing pipeline/board flow.
+
+def _cockpit_run_start(
+    run_id: str,
+    run_type: str,
+    target_date_str: Optional[str] = None,
+    operator: Optional[str] = None,
+) -> None:
+    """Insert a RUNNING row into COCKPIT_RUN_LOG."""
+    try:
+        conn = get_connection()
+        try:
+            td_expr = f"'{target_date_str}'::DATE" if target_date_str else "NULL"
+            op_val = f"'{operator}'" if operator else "NULL"
+            conn.cursor().execute(
+                f"INSERT INTO MIP.APP.COCKPIT_RUN_LOG "
+                f"(RUN_ID, RUN_TYPE, TARGET_DATE, STARTED_AT, STATUS, OPERATOR) "
+                f"VALUES ('{run_id}', '{run_type}', {td_expr}, "
+                f"CURRENT_TIMESTAMP(), 'RUNNING', {op_val})"
+            )
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("COCKPIT_RUN_LOG start insert failed (non-fatal)", exc_info=True)
+
+
+def _cockpit_run_complete(
+    run_id: str,
+    status: str,
+    summary: Any = None,
+    error_detail: Optional[str] = None,
+) -> None:
+    """Update COCKPIT_RUN_LOG row to SUCCESS or FAILED."""
+    try:
+        conn = get_connection()
+        try:
+            summary_json = json.dumps(summary, default=str) if summary is not None else None
+            sq = summary_json.replace("'", "''") if summary_json else None
+            sq_expr = f"PARSE_JSON('{sq}')" if sq else "NULL"
+            err = (error_detail or "").replace("'", "''")[:3900] if error_detail else None
+            err_expr = f"'{err}'" if err else "NULL"
+            conn.cursor().execute(
+                f"UPDATE MIP.APP.COCKPIT_RUN_LOG "
+                f"SET STATUS='{status}', COMPLETED_AT=CURRENT_TIMESTAMP(), "
+                f"SUMMARY_JSON={sq_expr}, ERROR_DETAIL={err_expr} "
+                f"WHERE RUN_ID='{run_id}'"
+            )
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("COCKPIT_RUN_LOG complete update failed (non-fatal)", exc_info=True)
 
 
 def _summarize_ib_daily_job_failure(payload: Any, stderr: str, stdout: str) -> str:
@@ -156,11 +213,12 @@ def run_ib_manual_daily_job(
     skip_ingest: bool = Query(False),
     run_pipeline: bool = Query(True, description="After successful IB job, run SP_RUN_DAILY_PIPELINE."),
     run_proposal_board: bool = Query(
-        True,
+        False,
         description=(
             "After SP_RUN_DAILY_PIPELINE succeeds, run the Phase 4 Cortex agentic "
             "proposal board (MIP/scripts/proposal_board_phase4/run_board.py). "
-            "Required for fresh agentic proposals to appear in cockpit/timeline. "
+            "Default FALSE — agentic search is a separate operator action "
+            "(POST /manage/proposal-board/run). "
             "Skipped automatically when dry_run=true or run_pipeline=false."
         ),
     ),
@@ -207,10 +265,14 @@ def run_ib_manual_daily_job(
         description="If true, ingest builds 1440m rows from 1m bars (STOCK/ETF RTH TRADES, FX MIDPOINT) on today's NY calendar date, then catch-up and optional pipeline.",
     ),
 ):
+    dmu_run_id = str(uuid4())
+    _cockpit_run_start(dmu_run_id, "DAILY_MARKET_UPDATE", operator="cockpit")
+
     project_root = mip_workspace_root()
     py = resolve_subprocess_python(project_root)
     runner = project_root / "cursorfiles" / "run_ib_manual_daily_job.py"
     if not runner.is_file():
+        _cockpit_run_complete(dmu_run_id, "FAILED", error_detail=f"Runner script missing: {runner}")
         raise HTTPException(
             status_code=500,
             detail=(
@@ -219,6 +281,7 @@ def run_ib_manual_daily_job(
             ),
         )
     if not py.is_file():
+        _cockpit_run_complete(dmu_run_id, "FAILED", error_detail=f"Python interpreter not found: {py}")
         raise HTTPException(
             status_code=500,
             detail=(
@@ -298,6 +361,7 @@ def run_ib_manual_daily_job(
         summary = _summarize_ib_daily_job_failure(payload, stderr, stdout)
         base_msg = "Manual IB daily job failed (ingest or SP_RUN_IB_DAILY_CATCHUP)."
         message = f"{base_msg} {summary}".strip() if summary else base_msg
+        _cockpit_run_complete(dmu_run_id, "FAILED", error_detail=message[:3900])
         raise HTTPException(
             status_code=500,
             detail=jsonable_encoder(
@@ -315,9 +379,12 @@ def run_ib_manual_daily_job(
 
     response = {
         "status": "SUCCESS",
+        "run_type": "DAILY_MARKET_UPDATE",
+        "cockpit_run_id": dmu_run_id,
         "payload": payload,
         "pipeline_triggered": False,
         "proposal_board_triggered": False,
+        "agentic_opportunity_search_not_run": True,
         "synth_intraday_daily": bool(synth_intraday_daily),
         "python_used": str(py),
         "ingest_partial_failure": bool(
@@ -371,11 +438,13 @@ def run_ib_manual_daily_job(
                 pipeline_proc.returncode,
                 (pipeline_stderr or pipeline_stdout)[-500:],
             )
+            err_msg = "IB daily job succeeded, but SP_RUN_DAILY_PIPELINE failed."
+            _cockpit_run_complete(dmu_run_id, "FAILED", error_detail=err_msg)
             raise HTTPException(
                 status_code=500,
                 detail=jsonable_encoder(
                     {
-                        "message": "IB daily job succeeded, but SP_RUN_DAILY_PIPELINE failed.",
+                        "message": err_msg,
                         "python": str(py),
                         "payload": payload,
                         "pipeline_payload": pipeline_payload,
@@ -594,6 +663,364 @@ def run_ib_manual_daily_job(
                 response["lpa_import_triggered"] = False
                 response["lpa_import_error"] = str(exc)
 
+    _cockpit_run_complete(
+        dmu_run_id,
+        "SUCCESS",
+        summary={
+            "run_type": "DAILY_MARKET_UPDATE",
+            "pipeline_triggered": response.get("pipeline_triggered"),
+            "proposal_board_triggered": False,
+            "agentic_opportunity_search_not_run": True,
+            "ingest_partial_failure": response.get("ingest_partial_failure"),
+        },
+    )
+    return jsonable_encoder(response)
+
+
+# ── Phase 4 agentic opportunity search ───────────────────────────────────────
+
+_STALENESS_SQL = """
+WITH last_trading AS (
+    -- Most recent completed US equity trading session (Mon-Fri, not a holiday, before today)
+    SELECT MAX(d) AS expected_date
+    FROM (
+        SELECT DATEADD(DAY, -seq4()::INT, CURRENT_DATE())::DATE AS d
+        FROM TABLE(GENERATOR(ROWCOUNT => 30))
+    )
+    WHERE DAYOFWEEK(d) NOT IN (0, 6)
+      AND d NOT IN (
+          SELECT HOLIDAY_DATE FROM MIP.APP.US_EQUITY_HOLIDAYS
+          WHERE EXCHANGE = 'NYSE' AND FULL_DAY_CLOSE = TRUE
+      )
+      AND d < CURRENT_DATE()
+),
+last_pipeline AS (
+    SELECT MAX(DETAILS:effective_to_ts::TIMESTAMP_NTZ)::DATE AS pipeline_date
+    FROM MIP.APP.MIP_AUDIT_LOG
+    WHERE EVENT_TYPE = 'PIPELINE'
+      AND EVENT_NAME = 'SP_RUN_DAILY_PIPELINE'
+      AND STATUS IN ('SUCCESS', 'SUCCESS_WITH_SKIPS')
+),
+latest_bar AS (
+    SELECT MAX(TS::DATE) AS bar_date
+    FROM MIP.MART.MARKET_BARS
+    WHERE MARKET_TYPE IN ('STOCK', 'ETF') AND INTERVAL_MINUTES = 1440
+)
+SELECT
+    lt.expected_date,
+    lp.pipeline_date,
+    lb.bar_date,
+    DATEDIFF('day', lp.pipeline_date, CURRENT_DATE()) AS pipeline_lag_days,
+    DATEDIFF('day', lb.bar_date, CURRENT_DATE()) AS bar_lag_days
+FROM last_trading lt, last_pipeline lp, latest_bar lb
+"""
+
+
+@router.post("/proposal-board/run")
+def run_proposal_board(
+    portfolio: int = Query(
+        1,
+        description="portfolio_id passed to run_board.py (default 1 = configured IBKR PAPER portfolio).",
+    ),
+    max_proposals: int = Query(8, ge=1, le=20),
+    max_rounds: int = Query(1, ge=1, le=3),
+    max_candidates: int = Query(
+        5,
+        ge=1,
+        le=50,
+        description=(
+            "COST CAP. Max STOCK candidates sent to the Cortex agent panel. "
+            "Agent sessions ≈ max_candidates × 7. Keep small (≤5) to bound Cortex spend."
+        ),
+    ),
+    inter_concurrency: int = Query(2, ge=1, le=8, description="Parallel dossiers sent to agents."),
+    market_types: str = Query(
+        "STOCK",
+        description=(
+            "Comma-separated MARKET_TYPE filter. Default 'STOCK' — MIP does not trade ETF/FX. "
+            "Changing to include FX or ETF requires explicit operator intent."
+        ),
+    ),
+    import_proposals_to_lpa: bool = Query(
+        True,
+        description=(
+            "Import genuine EXECUTABLE STOCK proposals into LIVE_ACTIONS after the board runs. "
+            "Non-STOCK, research-only, and policy-blocked proposals are never imported. "
+            "Importing into LPA never auto-executes a trade."
+        ),
+    ),
+    staleness_max_trading_days_lag: int = Query(
+        1,
+        ge=0,
+        le=5,
+        description=(
+            "Maximum acceptable pipeline lag (trading days). "
+            "Refuse to run if pipeline_date < expected_date - lag. Default 1."
+        ),
+    ),
+):
+    """
+    Run the Phase 4 Cortex agentic proposal board (costly AI operation).
+
+    Pre-flight checks that market data and pipeline are current before spending
+    Cortex credits. Use /manage/ib/daily-job/run (Run Daily Market Update) first
+    to ensure fresh data.
+
+    Does NOT automatically execute any trade. Proposals appear in LPA as PENDING
+    review items only.
+    """
+    board_run_id = str(uuid4())
+    _cockpit_run_start(board_run_id, "AGENTIC_OPPORTUNITY_SEARCH", operator="cockpit")
+
+    # ── Staleness preflight ──────────────────────────────────────────────────
+    try:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(_STALENESS_SQL)
+            row = fetch_all(cur)
+        finally:
+            conn.close()
+    except Exception as exc:
+        _cockpit_run_complete(board_run_id, "FAILED", error_detail=f"Staleness check failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Staleness check query failed: {exc}") from exc
+
+    if not row:
+        _cockpit_run_complete(board_run_id, "FAILED", error_detail="Staleness check returned no rows")
+        raise HTTPException(status_code=500, detail="Staleness check returned no rows.")
+
+    staleness = row[0]
+    expected_date = staleness.get("EXPECTED_DATE")
+    pipeline_date = staleness.get("PIPELINE_DATE")
+    bar_date = staleness.get("BAR_DATE")
+    _pl = staleness.get("PIPELINE_LAG_DAYS")
+    _bl = staleness.get("BAR_LAG_DAYS")
+    pipeline_lag = int(_pl) if _pl is not None else 999
+    bar_lag = int(_bl) if _bl is not None else 999
+
+    if pipeline_lag > staleness_max_trading_days_lag or bar_lag > staleness_max_trading_days_lag:
+        detail = {
+            "message": (
+                "Market data or pipeline is stale. Run 'Run Daily Market Update' first "
+                "to refresh data before running the agentic opportunity search."
+            ),
+            "expected_trading_date": str(expected_date) if expected_date else None,
+            "pipeline_date": str(pipeline_date) if pipeline_date else None,
+            "bar_date": str(bar_date) if bar_date else None,
+            "pipeline_lag_days": pipeline_lag,
+            "bar_lag_days": bar_lag,
+            "staleness_max_trading_days_lag": staleness_max_trading_days_lag,
+        }
+        _cockpit_run_complete(board_run_id, "FAILED", error_detail=detail["message"])
+        raise HTTPException(status_code=409, detail=jsonable_encoder(detail))
+
+    # ── Phase 4 board execution ──────────────────────────────────────────────
+    project_root = mip_workspace_root()
+    py = resolve_subprocess_python(project_root)
+
+    child_env = dict(os.environ)
+    for key in list(child_env.keys()):
+        if key.startswith("SNOWFLAKE_"):
+            child_env.pop(key, None)
+
+    normalized_market_types = ",".join(
+        sorted({m.strip().upper() for m in (market_types or "STOCK").split(",") if m.strip()})
+    ) or "STOCK"
+
+    board_cmd = [
+        str(py),
+        "-m",
+        "MIP.scripts.proposal_board_phase4.run_board",
+        "--portfolio",
+        str(int(portfolio)),
+        "--max-proposals",
+        str(int(max_proposals)),
+        "--max-rounds",
+        str(int(max_rounds)),
+        "--max-candidates",
+        str(int(max_candidates)),
+        "--inter-concurrency",
+        str(int(inter_concurrency)),
+        "--market-types",
+        normalized_market_types,
+    ]
+    log.info(
+        "Phase 4 agentic board (CAPPED): workspace=%s portfolio=%s max_proposals=%s "
+        "max_rounds=%s max_candidates=%s inter_concurrency=%s market_types=%s",
+        project_root,
+        portfolio,
+        max_proposals,
+        max_rounds,
+        max_candidates,
+        inter_concurrency,
+        normalized_market_types,
+    )
+
+    try:
+        board_proc = subprocess.run(
+            board_cmd,
+            cwd=str(project_root),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=2400,
+        )
+    except subprocess.TimeoutExpired:
+        log.error("Phase 4 agentic board subprocess timed out after 2400s")
+        err_msg = (
+            "Phase 4 agentic proposal board timed out (40 min). "
+            "Inspect MIP.APP.PROPOSAL_BOARD_RUN for the in-flight RUN_ID."
+        )
+        _cockpit_run_complete(board_run_id, "FAILED", error_detail=err_msg)
+        raise HTTPException(
+            status_code=504,
+            detail=jsonable_encoder({"message": err_msg, "python": str(py)}),
+        )
+
+    board_stdout = (board_proc.stdout or "").strip()
+    board_stderr = (board_proc.stderr or "").strip()
+    board_payload: Any = None
+    for stream in (board_stdout, board_stderr):
+        if not stream:
+            continue
+        idx_arr = stream.find("[")
+        idx_obj = stream.find("{")
+        idx = idx_arr if idx_arr >= 0 and (idx_obj < 0 or idx_arr < idx_obj) else idx_obj
+        if idx < 0:
+            continue
+        try:
+            board_payload = json.loads(stream[idx:])
+            break
+        except Exception:
+            continue
+
+    board_status = (
+        str(board_payload.get("status") or "").upper()
+        if isinstance(board_payload, dict)
+        else ""
+    )
+    board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS"}
+    if board_proc.returncode != 0 or board_status not in board_ok_statuses:
+        log.warning(
+            "Phase 4 agentic board failed rc=%s status=%s stderr_tail=%s",
+            board_proc.returncode,
+            board_status or "?",
+            (board_stderr or board_stdout)[-500:],
+        )
+        err_msg = (
+            "Phase 4 agentic proposal board failed. "
+            "Cockpit/Timeline will continue to show the previous authoritative run."
+        )
+        _cockpit_run_complete(board_run_id, "FAILED", error_detail=err_msg)
+        raise HTTPException(
+            status_code=500,
+            detail=jsonable_encoder(
+                {
+                    "message": err_msg,
+                    "python": str(py),
+                    "board_payload": board_payload,
+                    "board_stdout": board_stdout[-4000:],
+                    "board_stderr": board_stderr[-4000:],
+                }
+            ),
+        )
+
+    response = {
+        "status": "SUCCESS",
+        "run_type": "AGENTIC_OPPORTUNITY_SEARCH",
+        "cockpit_run_id": board_run_id,
+        "proposal_board_result": board_payload,
+        "trade_auto_executed": False,
+        "staleness_check": {
+            "expected_trading_date": str(expected_date) if expected_date else None,
+            "pipeline_date": str(pipeline_date) if pipeline_date else None,
+            "bar_date": str(bar_date) if bar_date else None,
+            "pipeline_lag_days": pipeline_lag,
+            "bar_lag_days": bar_lag,
+        },
+    }
+
+    # ── LPA import ───────────────────────────────────────────────────────────
+    response["lpa_import_triggered"] = False
+    if import_proposals_to_lpa:
+        try:
+            from .live import (
+                ImportStructuralProposalsRequest,
+                import_structural_proposals,
+            )
+
+            conn = get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT PORTFOLIO_ID
+                    FROM MIP.LIVE.LIVE_PORTFOLIO_CONFIG
+                    WHERE COALESCE(IS_ACTIVE, TRUE) = TRUE
+                    ORDER BY PORTFOLIO_ID
+                    """
+                )
+                active_portfolios = [int(r[0]) for r in (cur.fetchall() or [])]
+            finally:
+                conn.close()
+
+            if not active_portfolios:
+                active_portfolios = [int(portfolio)]
+
+            per_portfolio_results: dict[str, Any] = {}
+            total_imported = 0
+            for pid in active_portfolios:
+                try:
+                    import_result = import_structural_proposals(
+                        ImportStructuralProposalsRequest(
+                            live_portfolio_id=pid,
+                            limit=max(1, min(int(max_proposals), 50)),
+                            max_proposal_age_days=7,
+                            dedupe_by_symbol=True,
+                            skip_stale=True,
+                        )
+                    )
+                    res = (
+                        import_result
+                        if isinstance(import_result, dict)
+                        else {"result": import_result}
+                    )
+                    per_portfolio_results[str(pid)] = res
+                    total_imported += int(res.get("imported_count") or 0)
+                except HTTPException as hex_exc:
+                    log.warning("LPA import portfolio %s failed (http): %s", pid, hex_exc.detail)
+                    per_portfolio_results[str(pid)] = {"error": jsonable_encoder(hex_exc.detail)}
+                except Exception as exc:
+                    log.exception("LPA import portfolio %s failed", pid)
+                    per_portfolio_results[str(pid)] = {"error": str(exc)}
+
+            response["lpa_import_triggered"] = True
+            response["lpa_import_portfolios"] = active_portfolios
+            response["lpa_import_total_imported"] = total_imported
+            response["lpa_import_result"] = per_portfolio_results
+            log.info(
+                "LPA import after capped board: portfolios=%s total_imported=%s",
+                active_portfolios,
+                total_imported,
+            )
+        except Exception as exc:
+            log.exception("LPA import after board failed")
+            response["lpa_import_triggered"] = False
+            response["lpa_import_error"] = str(exc)
+
+    _cockpit_run_complete(
+        board_run_id,
+        "SUCCESS",
+        summary={
+            "run_type": "AGENTIC_OPPORTUNITY_SEARCH",
+            "board_status": board_status,
+            "market_types": normalized_market_types,
+            "max_candidates": max_candidates,
+            "lpa_import_triggered": response.get("lpa_import_triggered"),
+            "lpa_import_total_imported": response.get("lpa_import_total_imported"),
+            "trade_auto_executed": False,
+        },
+    )
     return jsonable_encoder(response)
 
 

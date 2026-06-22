@@ -56,9 +56,11 @@ export default function Cockpit() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
 
-  // Demoted ops drawer state (full IB daily job + partial RTH variant).
+  // Operations drawer: shared running flag so both buttons disable together.
   const [opsRunning, setOpsRunning] = useState(false)
   const [opsMsg, setOpsMsg] = useState({ type: '', text: '' })
+  // Agentic search result (shown separately from the market-update result).
+  const [agenticResult, setAgenticResult] = useState(null)
 
   // Track an in-flight overview fetch so auto-polls don't trample a
   // user-triggered manual refresh and vice-versa.
@@ -133,18 +135,20 @@ export default function Cockpit() {
     }
   }, [loadOverview, refreshing])
 
-  const runIbJob = useCallback(async (synthIntraday) => {
+  const runDailyMarketUpdate = useCallback(async (synthIntraday) => {
     const prompt = synthIntraday
-      ? 'Run partial daily pipeline using today\u2019s session-so-far (1m \u2192 1440m, equities RTH TRADES, FX MIDPOINT)?'
-      : 'Run full IB daily job now? This ingests bars and runs the daily pipeline.'
+      ? 'Run Daily Market Update using today\u2019s session-so-far (1m \u2192 1440m, equities RTH TRADES, FX MIDPOINT)?\n\nThis refreshes market bars, returns, features, patterns, and structural state.\nThe agentic opportunity search will NOT run.'
+      : 'Run Daily Market Update?\n\nThis ingests bars and runs the daily pipeline (returns, features, patterns, structural state).\nThe agentic opportunity search will NOT run automatically.'
     if (!window.confirm(prompt)) return
     setOpsRunning(true)
     setOpsMsg({ type: '', text: '' })
+    setAgenticResult(null)
     try {
       const qs = new URLSearchParams()
       qs.set('dry_run', 'false')
       qs.set('skip_ingest', 'false')
       qs.set('run_pipeline', 'true')
+      qs.set('run_proposal_board', 'false')
       if (synthIntraday) qs.set('synth_intraday_daily', 'true')
       const resp = await fetch(`${API_BASE}/manage/ib/daily-job/run?${qs.toString()}`, {
         method: 'POST',
@@ -155,16 +159,61 @@ export default function Cockpit() {
         const errText = typeof d === 'string'
           ? d
           : d?.message || (typeof d === 'object' && d != null ? JSON.stringify(d) : null)
-        throw new Error(errText || `IB daily job failed (${resp.status})`)
+        throw new Error(errText || `Daily market update failed (${resp.status})`)
       }
-      setOpsMsg({ type: 'ok', text: 'IB job completed and daily pipeline triggered.' })
+      const partial = payload?.ingest_partial_failure ? ' (partial ingest)' : ''
+      setOpsMsg({
+        type: 'ok',
+        text: `Daily market update completed${partial}. Market data, returns, features, and structural analysis refreshed. Agentic opportunity search was NOT run.`,
+      })
       await loadOverview()
     } catch (e) {
-      setOpsMsg({ type: 'error', text: e?.message || 'IB daily job failed.' })
+      setOpsMsg({ type: 'error', text: e?.message || 'Daily market update failed.' })
     } finally {
       setOpsRunning(false)
     }
   }, [loadOverview])
+
+  const runAgenticSearch = useCallback(async () => {
+    const confirmed = window.confirm(
+      'Search for New Trade Proposals\n\n' +
+      'This runs the Phase 4 Cortex AI agent panel (~5 candidates \u00d7 7 agent sessions).\n' +
+      'AI credits will be consumed. Market data must be current.\n\n' +
+      'No trade will be automatically executed. Proposals appear in LPA as PENDING review items.\n\n' +
+      'Proceed?'
+    )
+    if (!confirmed) return
+    setOpsRunning(true)
+    setOpsMsg({ type: '', text: '' })
+    setAgenticResult(null)
+    try {
+      const resp = await fetch(`${API_BASE}/manage/proposal-board/run`, { method: 'POST' })
+      const payload = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        const d = payload?.detail
+        const errText = typeof d === 'string'
+          ? d
+          : d?.message || (typeof d === 'object' && d != null ? JSON.stringify(d) : null)
+        throw new Error(errText || `Agentic search failed (${resp.status})`)
+      }
+      const boardResult = payload?.proposal_board_result || {}
+      const proposals = boardResult?.proposals_published ?? boardResult?.published_count ?? '?'
+      const candidates = boardResult?.candidates_evaluated ?? boardResult?.candidates ?? '?'
+      const lpaImported = payload?.lpa_import_total_imported ?? 0
+      setAgenticResult({
+        type: 'ok',
+        proposals,
+        candidates,
+        lpaImported,
+        tradeAutoExecuted: payload?.trade_auto_executed === true,
+        runId: payload?.cockpit_run_id,
+      })
+    } catch (e) {
+      setAgenticResult({ type: 'error', text: e?.message || 'Agentic opportunity search failed.' })
+    } finally {
+      setOpsRunning(false)
+    }
+  }, [])
 
   if (loading) {
     return (
@@ -232,31 +281,73 @@ export default function Cockpit() {
       </div>
 
       <details className="ck-co-ops">
-        <summary>Operations (IB daily job)</summary>
-        <div className="ck-co-ops-actions">
-          <button
-            className="ck-op-btn"
-            type="button"
-            onClick={() => runIbJob(false)}
-            disabled={opsRunning}
-          >
-            {opsRunning ? 'Running...' : 'Run IB Daily Job'}
-          </button>
-          <button
-            className="ck-op-btn"
-            type="button"
-            onClick={() => runIbJob(true)}
-            disabled={opsRunning}
-            title="Aggregate today's RTH 1m \u2192 1440m and run the daily pipeline now."
-          >
-            {opsRunning ? 'Running...' : 'Pipeline (today RTH \u2192 daily)'}
-          </button>
-        </div>
-        {opsMsg.text ? (
-          <div className={`ck-co-ops-msg ck-co-ops-msg--${opsMsg.type === 'ok' ? 'ok' : 'error'}`}>
-            {opsMsg.text}
+        <summary>Operations</summary>
+
+        <div className="ck-co-ops-section">
+          <div className="ck-co-ops-section-title">Routine Market Maintenance</div>
+          <div className="ck-co-ops-actions">
+            <button
+              className="ck-op-btn"
+              type="button"
+              onClick={() => runDailyMarketUpdate(false)}
+              disabled={opsRunning}
+              title="Ingest daily bars, refresh returns/features/patterns/structural state. Does NOT run agentic search."
+            >
+              {opsRunning ? 'Running...' : 'Run Daily Market Update'}
+            </button>
+            <button
+              className="ck-op-btn"
+              type="button"
+              onClick={() => runDailyMarketUpdate(true)}
+              disabled={opsRunning}
+              title="Aggregate today\u2019s RTH 1m \u2192 1440m and run the daily pipeline. Does NOT run agentic search."
+            >
+              {opsRunning ? 'Running...' : 'Update from Today\u2019s Session'}
+            </button>
           </div>
-        ) : null}
+          {opsMsg.text ? (
+            <div className={`ck-co-ops-msg ck-co-ops-msg--${opsMsg.type === 'ok' ? 'ok' : 'error'}`}>
+              {opsMsg.text}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="ck-co-ops-divider" />
+
+        <div className="ck-co-ops-section">
+          <div className="ck-co-ops-section-title">Agentic Opportunity Search</div>
+          <div className="ck-co-ops-section-desc">
+            Runs Phase 4 Cortex AI agents to find new trade proposals. Costs AI credits.
+            Run &quot;Daily Market Update&quot; first to ensure fresh data.
+          </div>
+          <div className="ck-co-ops-actions">
+            <button
+              className="ck-op-btn ck-op-btn--agentic"
+              type="button"
+              onClick={runAgenticSearch}
+              disabled={opsRunning}
+              title="Runs Phase 4 Cortex AI agents. Requires fresh market data. No trade auto-executed."
+            >
+              {opsRunning ? 'Running...' : 'Search for New Trade Proposals'}
+            </button>
+          </div>
+          {agenticResult ? (
+            agenticResult.type === 'error' ? (
+              <div className="ck-co-ops-msg ck-co-ops-msg--error">
+                {agenticResult.text}
+              </div>
+            ) : (
+              <div className="ck-co-ops-msg ck-co-ops-msg--ok">
+                Agentic search complete.
+                {' '}Candidates evaluated: {agenticResult.candidates}.
+                {' '}Proposals published: {agenticResult.proposals}.
+                {' '}Imported to LPA: {agenticResult.lpaImported}.
+                {' '}No trade auto-executed.
+                {agenticResult.runId ? ` [Run ${agenticResult.runId.slice(0, 8)}]` : ''}
+              </div>
+            )
+          ) : null}
+        </div>
       </details>
     </div>
   )

@@ -174,6 +174,35 @@ def _try_parse_json_blob(value: Any) -> Any:
     return value
 
 
+def _extract_first_json(stream: Any) -> Any:
+    """Parse the first JSON object/array in a string, ignoring any trailing
+    non-JSON text.
+
+    run_board.py prints its machine-readable JSON status payload AND then a
+    human-readable "PHASE 4 COST / ATTRITION SUMMARY" block to stdout. A plain
+    json.loads(stream[idx:]) raises "Extra data" on that trailing text, which
+    previously made the wrapper treat a fully successful board run as FAILED.
+    Using raw_decode parses only the leading JSON value and discards the rest.
+    """
+    if not isinstance(stream, str) or not stream:
+        return None
+    idx_arr = stream.find("[")
+    idx_obj = stream.find("{")
+    if idx_arr < 0 and idx_obj < 0:
+        return None
+    if idx_arr < 0:
+        idx = idx_obj
+    elif idx_obj < 0:
+        idx = idx_arr
+    else:
+        idx = min(idx_arr, idx_obj)
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(stream[idx:])
+        return obj
+    except Exception:
+        return None
+
+
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -517,18 +546,9 @@ def run_ib_manual_daily_job(
         board_stderr = (board_proc.stderr or "").strip()
         board_payload: Any = None
         for stream in (board_stdout, board_stderr):
-            if not stream:
-                continue
-            idx_arr = stream.find("[")
-            idx_obj = stream.find("{")
-            idx = idx_arr if idx_arr >= 0 and (idx_obj < 0 or idx_arr < idx_obj) else idx_obj
-            if idx < 0:
-                continue
-            try:
-                board_payload = json.loads(stream[idx:])
+            board_payload = _extract_first_json(stream)
+            if isinstance(board_payload, dict):
                 break
-            except Exception:
-                continue
         board_status = (
             str(board_payload.get("status") or "").upper()
             if isinstance(board_payload, dict)
@@ -881,18 +901,9 @@ def run_proposal_board(
     board_stderr = (board_proc.stderr or "").strip()
     board_payload: Any = None
     for stream in (board_stdout, board_stderr):
-        if not stream:
-            continue
-        idx_arr = stream.find("[")
-        idx_obj = stream.find("{")
-        idx = idx_arr if idx_arr >= 0 and (idx_obj < 0 or idx_arr < idx_obj) else idx_obj
-        if idx < 0:
-            continue
-        try:
-            board_payload = json.loads(stream[idx:])
+        board_payload = _extract_first_json(stream)
+        if isinstance(board_payload, dict):
             break
-        except Exception:
-            continue
 
     board_status = (
         str(board_payload.get("status") or "").upper()

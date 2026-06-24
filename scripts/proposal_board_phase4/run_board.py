@@ -2,16 +2,15 @@
 """
 Phase 4 Cortex Agentic Proposal Board — daily entry point.
 
-This script replaces the disabled SP_RUN_PROPOSAL_BOARD stored procedure.
-It runs the full multi-agent orchestration:
+This script runs the Phase 4 Proposal Board via bounded AI_COMPLETE calls
+(no Cortex Agent tool loops):
+
   Stage 0: snapshot dossiers + stage evidence pack cache
-  Stage 1: 5 specialist Cortex Agents in parallel (per dossier)
-  Stage 2: Python conflict detection
-  Stage 3: challenge turn (objectless AGENT_RUN, persisted to INTERACTION_V2)
-  Stage 4: revision turn (objectless AGENT_RUN, persisted to INTERACTION_V2 +
-           AGENT_OUTCOME_V2 update)
-  Stage 5: chair Cortex Agent (only after all 5 specialists durable)
-  Stage 6: publication policy + STRUCTURAL_TRADE_PROPOSALS insert
+  Stage 1: 5 specialist AI_COMPLETE calls per dossier (parallel, injected evidence)
+  Stage 2: chair AI_COMPLETE call (single-pass synthesis)
+  Stage 3: publication policy + STRUCTURAL_TRADE_PROPOSALS insert
+
+Exactly 6 LLM calls per candidate. Debate/challenge rounds retired for cost control.
 
 Usage examples
 --------------

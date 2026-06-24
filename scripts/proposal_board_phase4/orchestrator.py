@@ -6,23 +6,14 @@ Stages:
      PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT and stage the per-dossier
      evidence pack into PROPOSAL_BOARD_DOSSIER_PACK_CACHE.
 
-  1  Run 5 specialist agents per dossier in parallel via persistent
-     CREATE AGENT objects (DATA_AGENT_RUN equivalent through REST).
-     Persist each initial position to PROPOSAL_BOARD_AGENT_OUTCOME_V2.
+  1  Run 5 specialist AI_COMPLETE calls per dossier in parallel (single-pass,
+     bounded max_tokens, injected dossier evidence). Persist each position to
+     PROPOSAL_BOARD_AGENT_OUTCOME_V2.
 
-  2  Detect conflicts in Python from persisted positions.
+  2  (Retired) challenge/revision debate — removed for cost control.
 
-  3  Challenge turn (objectless AGENT_RUN per challenger) — persist to
-     PROPOSAL_BOARD_INTERACTION_V2 with TOPIC, DISAGREEMENT_TYPE.
-
-  4  Revision turn (objectless AGENT_RUN for the challenged role) —
-     persist response to PROPOSAL_BOARD_INTERACTION_V2 and update the
-     challenged role's row in PROPOSAL_BOARD_AGENT_OUTCOME_V2 with the
-     revised stance. Loop back to Stage 2 if MAX_ROUNDS not exhausted
-     and revision changed any verdicts.
-
-  5  Chair agent — runs only if all 5 specialists are durable. Reads
-     persisted positions + interactions and authors the final decision.
+  3  Chair AI_COMPLETE call — runs only if all 5 specialists are valid. Reads
+     persisted positions and injected evidence; authors the final decision.
      Persist to PROPOSAL_BOARD_THESIS_VERDICT and
      PROPOSAL_BOARD_FINAL_SLATE_V2.
 
@@ -63,11 +54,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
-from .conflict_detection import ConflictEntry, detect_conflicts, detect_stance_drift
-from .cortex_client import (
-    extract_agent_text,
-    run_agent_object,
-    run_agent_objectless,
+from .complete_client import run_complete_json
+from .prompts import (
+    chair_response_format,
+    chair_system_prompt,
+    chair_user_message,
+    specialist_response_format,
+    specialist_system_prompt,
+    specialist_user_message,
 )
 from .review_eligibility import EligibilityDecision, evaluate_dossier_eligibility
 
@@ -89,39 +83,29 @@ _AGENT_OBJECT_NAMES = {
 _CHAIR_AGENT_NAME = "PHASE4_CHAIR_PORTFOLIO_PM_AGENT"
 _REQUIRED_ROLES = list(_AGENT_OBJECT_NAMES.keys())
 
-_OBJECTLESS_MODEL = "claude-sonnet-4-6"
-
-_PROMPT_VERSION = "phase4_agentic_board_v1_cortex_agents_multi_round"
-_POLICY_VERSION = "phase4_agentic_board_v1"
-_MODEL_CONFIG_MODE = "symbol_dossier_cortex_agentic_board_multi_round"
+_PROMPT_VERSION = "phase4_complete_v1_bounded_no_debate"
+_POLICY_VERSION = "phase4_complete_v1"
+_MODEL_CONFIG_MODE = "symbol_dossier_ai_complete_bounded"
 
 _CACHE_TTL_HOURS = 24
-_DEFAULT_MAX_ROUNDS = 2
+_DEFAULT_MAX_ROUNDS = 0  # debate retired; kept for CLI compat
 _DEFAULT_MAX_PROPOSALS = 8
 
-# Cost-control defaults — empirically validated from QUERY_HISTORY (May 2026).
-# ~7 Cortex agent sessions per candidate (5 specialists + chair + ~1 revision avg).
-# ~10 GET_PHASE4_DOSSIER_SLICE calls per session (measured avg 9.7).
-_DEFAULT_MAX_CANDIDATES: Optional[int] = None   # None = uncapped legacy mode
-_DEFAULT_DAILY_CALL_BUDGET: int = 80            # agent sessions; use allow_budget_override to exceed
-_EMPIRICAL_SESSIONS_PER_CANDIDATE: int = 7
-_EMPIRICAL_SLICES_PER_SESSION: int = 10
+# Bounded AI_COMPLETE cost model: exactly 6 LLM calls per candidate (5 + chair).
+_LLM_CALLS_PER_CANDIDATE = 6
+_DEFAULT_MAX_CANDIDATES: Optional[int] = None
+_DEFAULT_MAX_LLM_CALLS_PER_RUN = 36
+_DEFAULT_DAILY_RUNS_PER_PORTFOLIO = 1
+_DEFAULT_SPECIALIST_MODEL = "llama3.1-8b"
+_DEFAULT_CHAIR_MODEL = "llama3.1-8b"
+_DEFAULT_SPECIALIST_MAX_TOKENS = 1500
+_DEFAULT_CHAIR_MAX_TOKENS = 4000
+_DEFAULT_MAX_EVIDENCE_CHARS = 80_000
+_DEFAULT_STATEMENT_TIMEOUT_SEC = 120
+_COMPLETE_MAX_RETRIES = 1
 
-_AGENT_TIMEOUT_SEC = 240.0
-_OBJECTLESS_TIMEOUT_SEC = 180.0
-# The chair synthesis is the single most expensive call (many evidence tool
-# round-trips + long JSON synthesis), so it gets a longer timeout than the
-# specialists. An empty/invalid chair response invalidates the whole dossier
-# (INVALID_CHAIR) and silently drops a candidate. We allow ONE bounded retry
-# (not three): each attempt is a billed Cortex call, so deep retry stacks
-# multiply cost on exactly the hard dossiers that are most likely to fail
-# repeatedly. Incremental per-dossier persistence (below) is what protects
-# spend now — a crash no longer discards chairs that already succeeded — so the
-# retry only needs to cover a single transient empty body, not act as the
-# primary durability mechanism.
-_CHAIR_TIMEOUT_SEC = 240.0
-_CHAIR_MAX_ATTEMPTS = 2
-_CHAIR_RETRY_BACKOFF_SEC = 5.0
+# Legacy CLI budget alias (LLM calls, not agent sessions).
+_DEFAULT_DAILY_CALL_BUDGET: int = _DEFAULT_MAX_LLM_CALLS_PER_RUN
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +265,134 @@ def _get_rest_creds() -> Tuple[str, str, str]:
         os.getenv("SNOWFLAKE_USER") or "",
         os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH") or "",
     )
+
+
+@dataclass
+class Phase4RuntimeConfig:
+    enabled: bool = True
+    specialist_model: str = _DEFAULT_SPECIALIST_MODEL
+    chair_model: str = _DEFAULT_CHAIR_MODEL
+    max_llm_calls_per_run: int = _DEFAULT_MAX_LLM_CALLS_PER_RUN
+    max_daily_runs_per_portfolio: int = _DEFAULT_DAILY_RUNS_PER_PORTFOLIO
+    specialist_max_tokens: int = _DEFAULT_SPECIALIST_MAX_TOKENS
+    chair_max_tokens: int = _DEFAULT_CHAIR_MAX_TOKENS
+    max_evidence_chars: int = _DEFAULT_MAX_EVIDENCE_CHARS
+    statement_timeout_sec: int = _DEFAULT_STATEMENT_TIMEOUT_SEC
+
+
+class _LlmCallBudget:
+    """Runtime guard — abort if more than max_calls AI_COMPLETE invocations occur."""
+
+    def __init__(self, max_calls: int) -> None:
+        self.max_calls = int(max_calls)
+        self.used = 0
+        self._lock = asyncio.Lock()
+
+    async def consume(self, n: int = 1) -> None:
+        async with self._lock:
+            self.used += int(n)
+            if self.used > self.max_calls:
+                raise RuntimeError(
+                    f"PHASE4_LLM_CALL_CAP_EXCEEDED used={self.used} max={self.max_calls}"
+                )
+
+
+def _config_bool(val: Optional[str], default: bool = True) -> bool:
+    if val is None or str(val).strip() == "":
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _config_int(val: Optional[str], default: int) -> int:
+    if val is None or str(val).strip() == "":
+        return default
+    try:
+        return int(str(val).strip())
+    except ValueError:
+        return default
+
+
+def _load_runtime_config(cur) -> Phase4RuntimeConfig:
+    keys = (
+        "PHASE4_ENABLED",
+        "PHASE4_SPECIALIST_MODEL",
+        "PHASE4_CHAIR_MODEL",
+        "MAX_LLM_CALLS_PER_RUN",
+        "PHASE4_MAX_DAILY_RUNS_PER_PORTFOLIO",
+        "PHASE4_SPECIALIST_MAX_TOKENS",
+        "PHASE4_CHAIR_MAX_TOKENS",
+        "PHASE4_MAX_EVIDENCE_CHARS",
+        "PHASE4_COMPLETE_STATEMENT_TIMEOUT_SEC",
+    )
+    cur.execute(
+        "SELECT CONFIG_KEY, CONFIG_VALUE FROM MIP.APP.APP_CONFIG "
+        "WHERE CONFIG_KEY IN (%s)"
+        % ",".join("'" + k.replace("'", "''") + "'" for k in keys)
+    )
+    rows = {str(r[0]): r[1] for r in (cur.fetchall() or [])}
+    return Phase4RuntimeConfig(
+        enabled=_config_bool(rows.get("PHASE4_ENABLED"), True),
+        specialist_model=(rows.get("PHASE4_SPECIALIST_MODEL") or _DEFAULT_SPECIALIST_MODEL).strip(),
+        chair_model=(rows.get("PHASE4_CHAIR_MODEL") or _DEFAULT_CHAIR_MODEL).strip(),
+        max_llm_calls_per_run=_config_int(
+            rows.get("MAX_LLM_CALLS_PER_RUN"), _DEFAULT_MAX_LLM_CALLS_PER_RUN,
+        ),
+        max_daily_runs_per_portfolio=_config_int(
+            rows.get("PHASE4_MAX_DAILY_RUNS_PER_PORTFOLIO"), _DEFAULT_DAILY_RUNS_PER_PORTFOLIO,
+        ),
+        specialist_max_tokens=_config_int(
+            rows.get("PHASE4_SPECIALIST_MAX_TOKENS"), _DEFAULT_SPECIALIST_MAX_TOKENS,
+        ),
+        chair_max_tokens=_config_int(
+            rows.get("PHASE4_CHAIR_MAX_TOKENS"), _DEFAULT_CHAIR_MAX_TOKENS,
+        ),
+        max_evidence_chars=_config_int(
+            rows.get("PHASE4_MAX_EVIDENCE_CHARS"), _DEFAULT_MAX_EVIDENCE_CHARS,
+        ),
+        statement_timeout_sec=_config_int(
+            rows.get("PHASE4_COMPLETE_STATEMENT_TIMEOUT_SEC"), _DEFAULT_STATEMENT_TIMEOUT_SEC,
+        ),
+    )
+
+
+def _count_board_runs_today(cur, portfolio_id: Optional[int]) -> int:
+    if portfolio_id is None:
+        return 0
+    cur.execute(
+        """
+        SELECT COUNT(*)
+          FROM MIP.APP.PROPOSAL_BOARD_RUN
+         WHERE PORTFOLIO_ID = %(pid)s
+           AND STARTED_AT >= DATE_TRUNC('day', CURRENT_TIMESTAMP())
+           AND RUN_STATUS NOT IN ('FAILED', 'FAILED_PRE_BOARD_GATE')
+        """,
+        {"pid": int(portfolio_id)},
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def _truncate_evidence_json(obj: Dict[str, Any], max_chars: int) -> Dict[str, Any]:
+    """Bound injected evidence size to prevent runaway prompt tokens."""
+    text = json.dumps(obj, default=str)
+    if len(text) <= max_chars:
+        return obj
+    logger.warning(
+        "phase4 evidence truncated chars=%d max=%d keys=%s",
+        len(text), max_chars, list(obj.keys())[:12],
+    )
+    trimmed = dict(obj)
+    for heavy in ("recent_bars", "candle_sequence", "structural_timeline_bars"):
+        if heavy in trimmed:
+            trimmed[heavy] = {"truncated": True, "reason": "PHASE4_MAX_EVIDENCE_CHARS"}
+    text2 = json.dumps(trimmed, default=str)
+    if len(text2) <= max_chars:
+        return trimmed
+    return {
+        "truncated": True,
+        "reason": "PHASE4_MAX_EVIDENCE_CHARS",
+        "preview_keys": list(obj.keys()),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -611,59 +723,64 @@ def _stage_pack_cache(
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 — specialist agents (parallel per dossier)
+# Stage 1 — specialist AI_COMPLETE calls (parallel per dossier)
 # ---------------------------------------------------------------------------
-
-def _user_message_for_specialist(role: str, run_id: str, dossier_id: int, symbol: str) -> str:
-    return (
-        f"Run the {role} specialist analysis for symbol={symbol}, "
-        f"run_id={run_id}, dossier_id={dossier_id}. "
-        "You MUST call the get_evidence_slice tool with role_name='" + role + "' "
-        "for every slice you reason from before producing output. "
-        "Your output MUST be the JSON object specified in your system prompt. "
-        "Do not include prose, explanations, or markdown fences."
-    )
-
 
 async def _run_one_specialist(
     sem: asyncio.Semaphore,
-    rest_creds: Tuple[str, str, str],
+    conn_factory,
+    runtime_cfg: Phase4RuntimeConfig,
+    call_budget: _LlmCallBudget,
     role: str,
     run_id: str,
     dossier_id: int,
     symbol: str,
+    dossier_payload: Dict[str, Any],
 ) -> Tuple[str, SpecialistPosition, Dict[str, Any]]:
-    """Run one specialist agent and return (role, validated_position, raw_response)."""
-    account, user, key_path = rest_creds
-    agent_name = _AGENT_OBJECT_NAMES[role]
-    user_msg = _user_message_for_specialist(role, run_id, dossier_id, symbol)
+    """Run one specialist via bounded AI_COMPLETE with injected evidence."""
+    per_role_cap = max(4000, runtime_cfg.max_evidence_chars // max(len(_REQUIRED_ROLES), 1))
+    evidence = _truncate_evidence_json(
+        _slice_payload_for_role(role, dossier_payload),
+        per_role_cap,
+    )
+    user_msg = specialist_user_message(role, run_id, dossier_id, symbol, evidence)
+    sys_prompt = specialist_system_prompt(role)
+    response_format = specialist_response_format(role)
 
     async with sem:
+        await call_budget.consume(1)
         t0 = time.monotonic()
-        try:
-            response = await run_agent_object(
-                account=account, user=user, private_key_path=key_path,
-                agent_name=agent_name,
-                messages=[{"role": "user", "content": user_msg}],
-                timeout=_AGENT_TIMEOUT_SEC,
-            )
-        except Exception as e:
-            logger.warning("phase4 specialist %s dossier=%s symbol=%s FAILED: %s",
-                           role, dossier_id, symbol, e)
-            response = {"error": (str(e).strip() or type(e).__name__)}
+        result = await run_complete_json(
+            conn_factory,
+            model=runtime_cfg.specialist_model,
+            system_prompt=sys_prompt,
+            user_message=user_msg,
+            response_format=response_format,
+            max_tokens=runtime_cfg.specialist_max_tokens,
+            statement_timeout_sec=runtime_cfg.statement_timeout_sec,
+            max_retries=_COMPLETE_MAX_RETRIES,
+            label=f"specialist:{role}:{symbol}",
+        )
         elapsed = time.monotonic() - t0
 
-    text = extract_agent_text(response) if isinstance(response, dict) and "error" not in response else ""
-    parsed = _try_parse_json(text) if text else None
+    parsed = result.parsed
     pos = _validate_specialist(role, parsed)
-    if pos.invalid_reason and parsed is None and "error" in response:
-        pos.invalid_reason = "AGENT_HTTP_ERROR:" + str(response.get("error"))[:200]
+    if pos.invalid_reason and parsed is None and result.error:
+        pos.invalid_reason = "COMPLETE_ERROR:" + str(result.error)[:200]
+
+    response: Dict[str, Any] = {
+        "mode": "AI_COMPLETE",
+        "model": runtime_cfg.specialist_model,
+        "usage": result.usage,
+        "raw_text": result.raw_text[:4000] if result.raw_text else "",
+        "error": result.error,
+    }
 
     logger.info(
         "phase4 specialist done role=%s dossier=%s symbol=%s "
-        "verdict=%s primary=%s elapsed=%.2fs invalid=%s",
+        "verdict=%s primary=%s elapsed=%.2fs invalid=%s model=%s",
         role, dossier_id, symbol, pos.verdict, pos.primary_reason_code,
-        elapsed, pos.invalid_reason,
+        elapsed, pos.invalid_reason, runtime_cfg.specialist_model,
     )
     return role, pos, response
 
@@ -857,6 +974,27 @@ _ROLE_SLICE_MAP = {
         "policy", "memory", "invalidation_evidence",
     ],
 }
+
+
+_CHAIR_EVIDENCE_KEYS = [
+    "identity", "price", "recent_bars", "candle_sequence",
+    "recent_price_action_summary", "levels", "structure", "regime",
+    "long_pattern_signs", "short_pattern_signs",
+    "setup_events_evidence_only", "invalidation_evidence",
+    "history", "memory", "policy",
+    "structural_timeline_summary", "structural_timeline_bars",
+    "candle_psychology", "actionability_context", "market_structure_map",
+]
+
+
+def _slice_payload_for_chair(payload: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    if not isinstance(payload, dict):
+        return out
+    for key in _CHAIR_EVIDENCE_KEYS:
+        if key in payload:
+            out[key] = payload[key]
+    return out
 
 
 def _slice_payload_for_role(role: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1098,16 +1236,61 @@ class DossierResult:
     invalid_reason: Optional[str] = None
 
 
+def _backfill_chair_from_evidence(
+    raw: Optional[Dict[str, Any]],
+    dossier_payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Copy deterministic MSM fields into chair JSON when the model omits them."""
+    if not isinstance(raw, dict):
+        return raw
+    final_action = str(raw.get("final_action") or "").strip().upper()
+    if final_action not in _CHAIR_STRUCTURE_SUMMARY_REQUIRED_ACTIONS:
+        return raw
+    msm = dossier_payload.get("market_structure_map") if isinstance(dossier_payload, dict) else None
+    if not isinstance(msm, dict):
+        return raw
+    out = dict(raw)
+    if not isinstance(out.get("market_structure_read"), dict):
+        bos = msm.get("bos") if isinstance(msm.get("bos"), dict) else {}
+        choch = msm.get("choch") if isinstance(msm.get("choch"), dict) else {}
+        out["market_structure_read"] = {
+            "primary_structure": msm.get("primary_structure"),
+            "structure_health": msm.get("structure_health"),
+            "current_phase": msm.get("current_phase"),
+            "latest_structure_event": msm.get("latest_structure_event"),
+            "bos_body_close_confirmed": bool(bos.get("body_close_confirmed")),
+            "choch_detected": bool(choch.get("detected")),
+            "structure_posture_hint": msm.get("structure_posture_hint"),
+        }
+    if not isinstance(out.get("body_wick_break_read"), str) or not out["body_wick_break_read"].strip():
+        evt = msm.get("latest_structure_event") or "n/a"
+        out["body_wick_break_read"] = (
+            f"Latest structure event from market_structure_map: {evt}."
+        )
+    if not isinstance(out.get("structure_decision_reason"), str) or not out["structure_decision_reason"].strip():
+        out["structure_decision_reason"] = (
+            f"Structure health {msm.get('structure_health')} supports {final_action} posture."
+        )
+    evidence_used = out.get("evidence_used")
+    if not isinstance(evidence_used, list):
+        evidence_used = []
+    if "market_structure_map" not in [str(x).lower() for x in evidence_used]:
+        evidence_used = list(evidence_used) + ["market_structure_map"]
+    out["evidence_used"] = evidence_used
+    return out
+
+
 async def _orchestrate_dossier(
-    rest_creds: Tuple[str, str, str],
     conn_factory,
+    runtime_cfg: Phase4RuntimeConfig,
+    call_budget: _LlmCallBudget,
     run_id: str,
     dossier_id: int,
     symbol: str,
     market_type: str,
     payload: Dict[str, Any],
     spec_concurrency: int,
-    max_rounds: int,
+    max_rounds: int,  # noqa: ARG001 — debate retired; kept for signature compat
 ) -> DossierResult:
     dossier_payload = payload if isinstance(payload, dict) else {}
     primary_evidence_setup_event_id = None
@@ -1130,10 +1313,13 @@ async def _orchestrate_dossier(
         short_research_visible=bool(policy.get("short_research_visible")),
     )
 
-    # Stage 1 — parallel specialists
+    # Stage 1 — parallel specialists (bounded AI_COMPLETE, injected evidence)
     sem = asyncio.Semaphore(spec_concurrency)
     coros = [
-        _run_one_specialist(sem, rest_creds, role, run_id, dossier_id, symbol)
+        _run_one_specialist(
+            sem, conn_factory, runtime_cfg, call_budget,
+            role, run_id, dossier_id, symbol, dossier_payload,
+        )
         for role in _REQUIRED_ROLES
     ]
     raw_positions: Dict[str, SpecialistPosition] = {}
@@ -1144,7 +1330,6 @@ async def _orchestrate_dossier(
         raw_positions[role] = pos
         raw_responses[role] = response
 
-    # Persist initial positions (or invalid markers)
     def _persist_initial(cn):
         cur = cn.cursor()
         try:
@@ -1168,204 +1353,77 @@ async def _orchestrate_dossier(
         res.invalid_reason = "INVALID_SPECIALISTS:" + ",".join(invalid_roles)
         return res
 
-    # Stages 2/3/4 — challenge/revision rounds
     current_positions: Dict[str, SpecialistPosition] = dict(raw_positions)
-    rounds_done = 0
     interactions: List[Dict[str, Any]] = []
-
-    while rounds_done < max_rounds:
-        conflicts = detect_conflicts({r: p.structured_output for r, p in current_positions.items()})
-        if not conflicts:
-            break
-
-        for conflict in conflicts:
-            target_pos = current_positions.get(conflict.target_role)
-            challenger_pos = current_positions.get(conflict.source_role)
-            if target_pos is None or challenger_pos is None:
-                continue
-
-            # Persist the challenge row first (RESOLVED_FLAG=False until revision)
-            def _persist_challenge(cn):
-                cur = cn.cursor()
-                try:
-                    _persist_interaction(
-                        cur, run_id, dossier_id,
-                        source_agent=_AGENT_OBJECT_NAMES[conflict.source_role],
-                        target_agent=_AGENT_OBJECT_NAMES[conflict.target_role],
-                        topic=conflict.topic,
-                        disagreement_type=conflict.disagreement_type,
-                        disagreement_text=conflict.challenge_text,
-                        response_text=None,
-                        resolved_flag=False,
-                    )
-                    cn.commit()
-                finally:
-                    cur.close()
-            await asyncio.to_thread(lambda: _persist_challenge(conn_factory()))
-
-            # Stage 4: ask the challenged role to respond. Use objectless
-            # AGENT_RUN so we can deliver dynamic challenge content as
-            # instructions. Do NOT pass tools — embed the relevant dossier
-            # evidence directly in the user message instead. This mirrors the
-            # proven Shadow Board revision pattern.
-            sys_prompt = _objectless_system_for_role(conflict.target_role)
-            evidence_context = _slice_payload_for_role(conflict.target_role, dossier_payload)
-            user_msg = _challenge_user_message(
-                conflict, conflict.target_role, target_pos, challenger_pos,
-                run_id, dossier_id, symbol, evidence_context,
-            )
-            account, user, key_path = rest_creds
-            try:
-                response = await run_agent_objectless(
-                    account=account, user=user, private_key_path=key_path,
-                    model=_OBJECTLESS_MODEL,
-                    system_prompt=sys_prompt,
-                    user_message=user_msg,
-                    timeout=_OBJECTLESS_TIMEOUT_SEC,
-                )
-                response_text = extract_agent_text(response)
-            except Exception as e:
-                logger.warning(
-                    "phase4 revision call failed role=%s dossier=%s: %s",
-                    conflict.target_role, dossier_id, repr(e),
-                )
-                response_text = ""
-                response = {"error": (str(e).strip() or type(e).__name__)}
-
-            revised_raw = _try_parse_json(response_text) if response_text else None
-            revised_pos = _validate_specialist(conflict.target_role, revised_raw)
-
-            # If revision is INVALID, keep the prior position (do not corrupt).
-            if revised_pos.invalid_reason:
-                # Persist a revision interaction row marking the failure.
-                def _persist_failed_revision(cn):
-                    cur = cn.cursor()
-                    try:
-                        _persist_interaction(
-                            cur, run_id, dossier_id,
-                            source_agent=_AGENT_OBJECT_NAMES[conflict.target_role],
-                            target_agent=_AGENT_OBJECT_NAMES[conflict.source_role],
-                            topic=conflict.topic,
-                            disagreement_type=conflict.disagreement_type,
-                            disagreement_text=None,
-                            response_text=("REVISION_INVALID: " + (revised_pos.invalid_reason or "")),
-                            resolved_flag=False,
-                        )
-                        cn.commit()
-                    finally:
-                        cur.close()
-                await asyncio.to_thread(lambda: _persist_failed_revision(conn_factory()))
-                interactions.append({
-                    "topic": conflict.topic,
-                    "disagreement_type": conflict.disagreement_type,
-                    "challenger": conflict.source_role,
-                    "target": conflict.target_role,
-                    "outcome": "REVISION_INVALID",
-                    "challenge_text": conflict.challenge_text,
-                })
-                continue
-
-            # Update current positions; persist revision interaction + AGENT_OUTCOME_V2 update.
-            verdict_changed = (revised_pos.verdict != target_pos.verdict)
-            current_positions[conflict.target_role] = revised_pos
-
-            response_summary = (
-                f"REVISION verdict={revised_pos.verdict} "
-                f"primary={revised_pos.primary_reason_code} "
-                f"changed={verdict_changed} "
-                f"rationale={revised_pos.rationale[:1500]}"
-            )
-
-            def _persist_revision_and_update(cn):
-                cur = cn.cursor()
-                try:
-                    _persist_interaction(
-                        cur, run_id, dossier_id,
-                        source_agent=_AGENT_OBJECT_NAMES[conflict.target_role],
-                        target_agent=_AGENT_OBJECT_NAMES[conflict.source_role],
-                        topic=conflict.topic,
-                        disagreement_type=conflict.disagreement_type,
-                        disagreement_text=None,
-                        response_text=response_summary,
-                        resolved_flag=(not verdict_changed),
-                    )
-                    _persist_specialist(cur, run_id, dossier_id, revised_pos)
-                    cn.commit()
-                finally:
-                    cur.close()
-            await asyncio.to_thread(lambda: _persist_revision_and_update(conn_factory()))
-
-            interactions.append({
-                "topic": conflict.topic,
-                "disagreement_type": conflict.disagreement_type,
-                "challenger": conflict.source_role,
-                "target": conflict.target_role,
-                "outcome": "MAINTAIN" if not verdict_changed else "AMEND",
-                "challenge_text": conflict.challenge_text,
-                "revised_verdict": revised_pos.verdict,
-                "revised_primary": revised_pos.primary_reason_code,
-            })
-
-        rounds_done += 1
-        # Loop again only if revisions changed verdicts (otherwise no new conflicts possible).
-        drifted = detect_stance_drift(
-            {r: p.structured_output for r, p in raw_positions.items()},
-            {r: p.structured_output for r, p in current_positions.items()},
-        )
-        if not drifted:
-            break
-
     res.final_positions = current_positions
     res.interactions = interactions
 
-    # Stage 5: chair (only after all 5 specialists are durable + valid)
-    chair_user_msg = _chair_user_message(
-        run_id, dossier_id, symbol, current_positions, interactions,
-        res.short_live_enabled, res.fx_live_enabled, market_type,
-        res.primary_evidence_setup_event_id,
+    # Stage 2 — chair (single-pass AI_COMPLETE; no debate rounds)
+    spec_summary = []
+    for role in _REQUIRED_ROLES:
+        p = current_positions.get(role)
+        if p is None:
+            continue
+        spec_summary.append({
+            "role": role,
+            "verdict": p.verdict,
+            "primary_reason_code": p.primary_reason_code,
+            "confidence": p.confidence,
+            "long_score": p.long_score,
+            "short_score": p.short_score,
+            "no_trade_score": p.no_trade_score,
+            "rationale": p.rationale,
+        })
+    board_input = {
+        "run_id": run_id,
+        "dossier_id": dossier_id,
+        "symbol": symbol,
+        "market_type": market_type,
+        "policy_flags": {
+            "short_live_enabled": bool(res.short_live_enabled),
+            "fx_live_enabled": bool(res.fx_live_enabled),
+        },
+        "primary_evidence_setup_event_id": primary_evidence_setup_event_id,
+        "specialist_positions": spec_summary,
+        "interactions_summary": interactions,
+    }
+    chair_evidence = _truncate_evidence_json(
+        _slice_payload_for_chair(dossier_payload),
+        runtime_cfg.max_evidence_chars,
     )
-    account, user, key_path = rest_creds
-    # The chair is the most important call in the board: an empty or non-JSON
-    # response invalidates the entire dossier (INVALID_CHAIR) and silently drops
-    # a candidate. The Cortex AGENT_RUN can return an empty body on heavy
-    # dossiers (many evidence tool calls + long synthesis), so retry a bounded
-    # number of times until we get parseable JSON before giving up. The call is
-    # read-only (no side effects), so retrying is safe.
-    chair_resp: Any = None
-    chair_text = ""
-    chair_parsed = None
-    for _attempt in range(_CHAIR_MAX_ATTEMPTS):
-        try:
-            chair_resp = await run_agent_object(
-                account=account, user=user, private_key_path=key_path,
-                agent_name=_CHAIR_AGENT_NAME,
-                messages=[{"role": "user", "content": chair_user_msg}],
-                timeout=_CHAIR_TIMEOUT_SEC,
-            )
-            chair_text = extract_agent_text(chair_resp) or ""
-        except Exception as e:
-            logger.warning("phase4 chair call failed dossier=%s attempt=%d/%d: %s",
-                           dossier_id, _attempt + 1, _CHAIR_MAX_ATTEMPTS, e)
-            chair_text = ""
-            chair_resp = {"error": (str(e).strip() or type(e).__name__)}
+    chair_msg = chair_user_message(
+        run_id, dossier_id, symbol, board_input, chair_evidence,
+    )
 
-        chair_parsed = _try_parse_json(chair_text) if chair_text else None
-        if isinstance(chair_parsed, dict):
-            break
-        if _attempt + 1 < _CHAIR_MAX_ATTEMPTS:
-            logger.warning(
-                "phase4 chair empty/non-JSON dossier=%s attempt=%d/%d — retrying",
-                dossier_id, _attempt + 1, _CHAIR_MAX_ATTEMPTS,
-            )
-            await asyncio.sleep(_CHAIR_RETRY_BACKOFF_SEC)
+    await call_budget.consume(1)
+    chair_result = await run_complete_json(
+        conn_factory,
+        model=runtime_cfg.chair_model,
+        system_prompt=chair_system_prompt(),
+        user_message=chair_msg,
+        response_format=chair_response_format(),
+        max_tokens=runtime_cfg.chair_max_tokens,
+        statement_timeout_sec=runtime_cfg.statement_timeout_sec,
+        max_retries=_COMPLETE_MAX_RETRIES,
+        label=f"chair:{symbol}",
+    )
+    chair_parsed = chair_result.parsed
+    chair_resp: Dict[str, Any] = {
+        "mode": "AI_COMPLETE",
+        "model": runtime_cfg.chair_model,
+        "usage": chair_result.usage,
+        "raw_text": chair_result.raw_text[:8000] if chair_result.raw_text else "",
+        "error": chair_result.error,
+    }
 
+    chair_parsed = _backfill_chair_from_evidence(chair_result.parsed, dossier_payload)
     chair = _validate_chair(chair_parsed)
     res.chair = chair
 
     if chair.invalid_reason:
         res.is_valid = False
         res.invalid_reason = "INVALID_CHAIR:" + chair.invalid_reason
-        # Still persist the raw chair to OUTPUT_ERROR for audit.
+
         def _persist_chair_error(cn):
             cur = cn.cursor()
             try:
@@ -2519,15 +2577,37 @@ async def orchestrate_phase4_board(
     `dry_run=True` skips the STRUCTURAL_TRADE_PROPOSALS insert step (Stage 6).
     """
     _load_env()
-    rest_creds = _get_rest_creds()
     run_id = str(uuid.uuid4())
     as_of = as_of_date or _date.today()
 
     conn = _connect()
     started_at_log = ""
+    runtime_cfg = Phase4RuntimeConfig()
     try:
         cur = conn.cursor()
         try:
+            runtime_cfg = _load_runtime_config(cur)
+            if not runtime_cfg.enabled:
+                conn.close()
+                return BoardRunResult(
+                    run_id=run_id, status="FAILED", as_of_date=as_of,
+                    dossier_count=0, valid_dossier_count=0,
+                    invalid_dossier_count=0, published_count=0, skipped_count=0,
+                    error="PHASE4_DISABLED: set PHASE4_ENABLED=true in APP_CONFIG to run",
+                )
+            if portfolio_id is not None:
+                runs_today = _count_board_runs_today(cur, portfolio_id)
+                if runs_today >= runtime_cfg.max_daily_runs_per_portfolio:
+                    conn.close()
+                    return BoardRunResult(
+                        run_id=run_id, status="FAILED", as_of_date=as_of,
+                        dossier_count=0, valid_dossier_count=0,
+                        invalid_dossier_count=0, published_count=0, skipped_count=0,
+                        error=(
+                            f"PHASE4_DAILY_RUN_CAP: portfolio={portfolio_id} "
+                            f"runs_today={runs_today} cap={runtime_cfg.max_daily_runs_per_portfolio}"
+                        ),
+                    )
             cur.execute(
                 """
                 INSERT INTO MIP.APP.PROPOSAL_BOARD_RUN (
@@ -2541,10 +2621,14 @@ async def orchestrate_phase4_board(
                     "run_id": run_id, "as_of": as_of, "portfolio_id": portfolio_id,
                     "cfg": _jdump({
                         "mode": _MODEL_CONFIG_MODE,
-                        "agents": _AGENT_OBJECT_NAMES,
-                        "chair": _CHAIR_AGENT_NAME,
-                        "model": _OBJECTLESS_MODEL,
-                        "max_rounds": max_rounds,
+                        "inference": "AI_COMPLETE",
+                        "specialist_model": runtime_cfg.specialist_model,
+                        "chair_model": runtime_cfg.chair_model,
+                        "llm_calls_per_candidate": _LLM_CALLS_PER_CANDIDATE,
+                        "max_llm_calls_per_run": runtime_cfg.max_llm_calls_per_run,
+                        "specialist_max_tokens": runtime_cfg.specialist_max_tokens,
+                        "chair_max_tokens": runtime_cfg.chair_max_tokens,
+                        "debate_rounds": 0,
                         "per_dossier_concurrency": per_dossier_concurrency,
                         "inter_dossier_concurrency": inter_dossier_concurrency,
                         "max_proposals": max_proposals,
@@ -2752,23 +2836,22 @@ async def orchestrate_phase4_board(
                 pass
         eligible_rows = kept
 
-    # Budget preflight guard — runs after candidate cap, before Cortex fan-out.
-    # Denominated in estimated agent sessions (not SP calls).
-    # --allow-budget-override required to exceed daily_call_budget.
-    estimated_agent_sessions = len(eligible_rows) * _EMPIRICAL_SESSIONS_PER_CANDIDATE
-    estimated_sp_calls = estimated_agent_sessions * _EMPIRICAL_SLICES_PER_SESSION
+    # Budget preflight — exact LLM call count (6 per candidate). No tool loops.
+    max_llm_cap = min(
+        runtime_cfg.max_llm_calls_per_run,
+        daily_call_budget if daily_call_budget else runtime_cfg.max_llm_calls_per_run,
+    )
+    estimated_llm_calls = len(eligible_rows) * _LLM_CALLS_PER_CANDIDATE
     logger.info(
         "phase4 budget_preflight run=%s candidates=%d "
-        "estimated_agent_sessions=%d estimated_sp_calls=%d "
-        "daily_budget=%d allow_override=%s",
+        "estimated_llm_calls=%d max_llm_cap=%d allow_override=%s",
         run_id, len(eligible_rows),
-        estimated_agent_sessions, estimated_sp_calls,
-        daily_call_budget, allow_budget_override,
+        estimated_llm_calls, max_llm_cap, allow_budget_override,
     )
-    if not allow_budget_override and estimated_agent_sessions > daily_call_budget:
+    if not allow_budget_override and estimated_llm_calls > max_llm_cap:
         err_msg = (
-            f"phase4 budget_exceeded: estimated_agent_sessions={estimated_agent_sessions} "
-            f"> daily_call_budget={daily_call_budget}. "
+            f"phase4 budget_exceeded: estimated_llm_calls={estimated_llm_calls} "
+            f"> max_llm_cap={max_llm_cap}. "
             f"Reduce --max-candidates or pass --allow-budget-override."
         )
         logger.error(err_msg)
@@ -2800,18 +2883,20 @@ async def orchestrate_phase4_board(
             eligibility_skipped_count=len(rows) - len(eligible_rows),
             eligibility_skip_breakdown=dict(skip_counts),
             candidate_mode=candidate_mode,
-            estimated_agent_sessions=estimated_agent_sessions,
+            estimated_agent_sessions=estimated_llm_calls,
             error=err_msg,
         )
 
-    if not allow_budget_override and max_candidates is None:
+    if not allow_budget_override and max_candidates is None and len(eligible_rows) > 0:
         logger.warning(
-            "phase4 UNCAPPED_RUN run=%s candidates=%d estimated_agent_sessions=%d "
+            "phase4 UNCAPPED_RUN run=%s candidates=%d estimated_llm_calls=%d "
             "— running without max_candidates. Pass --max-candidates to control cost.",
-            run_id, len(eligible_rows), estimated_agent_sessions,
+            run_id, len(eligible_rows), estimated_llm_calls,
         )
 
-    # ── Pre-board fail-closed safety gates — LAST checkpoint before Cortex ──
+    call_budget = _LlmCallBudget(estimated_llm_calls)
+
+    # ── Pre-board fail-closed safety gates — LAST checkpoint before LLM fan-out ──
     # Regression guard around the runtime STOCK-only filter. If any hard
     # check fails we abort here: zero Cortex calls, no publication, no LPA
     # import, real-money untouched. Mirrors smoke 47 (R1-R4) + smoke 48.
@@ -2878,7 +2963,7 @@ async def orchestrate_phase4_board(
             eligibility_skipped_count=len(rows) - len(eligible_rows),
             eligibility_skip_breakdown=dict(skip_counts),
             candidate_mode=candidate_mode,
-            estimated_agent_sessions=estimated_agent_sessions,
+            estimated_agent_sessions=estimated_llm_calls,
             pre_board_stock_only_gate=gate["stock_only_gate"],
             pre_board_market_type_integrity_gate=gate["market_type_integrity_gate"],
             pre_board_gate_checks=gate["checks"],
@@ -2890,8 +2975,9 @@ async def orchestrate_phase4_board(
     async def _run_with_inter_limit(did, sym, mkt, payload):
         async with inter_sem:
             return await _orchestrate_dossier(
-                rest_creds=rest_creds,
                 conn_factory=_conn_factory,
+                runtime_cfg=runtime_cfg,
+                call_budget=call_budget,
                 run_id=run_id,
                 dossier_id=did, symbol=sym, market_type=mkt, payload=payload,
                 spec_concurrency=per_dossier_concurrency,
@@ -3045,7 +3131,7 @@ async def orchestrate_phase4_board(
             eligibility_skipped_count=len(rows) - genuine_eligible_count,
             eligibility_skip_breakdown=dict(skip_counts),
             candidate_mode=candidate_mode,
-            estimated_agent_sessions=estimated_agent_sessions,
+            estimated_agent_sessions=estimated_llm_calls,
             chair_propose_count=chair_propose_count,
             props_executable_count=props_executable_count,
             imported_to_lpa_count=imported_to_lpa_count,

@@ -518,11 +518,29 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
           * If RISK_EXECUTION returned HARD_BLOCK or NO_TRADE, you cannot
             propose a directional trade. Use NO_TRADE, WAIT_FOR_CONFIRMATION,
             WATCH_LONG, or WATCH_SHORT.
-          * If unresolved direction disagreement remains between specialists
-            (LONG vs SHORT, LONG vs NO_TRADE, SHORT vs NO_TRADE), you must
-            choose one of WAIT_FOR_CONFIRMATION, WATCH_LONG, WATCH_SHORT, or
-            NO_TRADE. You may NOT propose a directional trade with unresolved
-            specialist disagreement on direction.
+          * SPECIALIST DISAGREEMENT — DIRECTION-SETTING vs CONTEXT
+            (Phase 4 taxonomy v3): Not all specialists vote on direction.
+            The THREE direction-SETTING specialists are MARKET_STRUCTURE,
+            LEVEL_PRICE_ACTION, and THESIS. HISTORICAL_EVIDENCE is base-rate
+            CONTEXT (a backward-looking prior), NOT a direction vote: large-cap
+            names carry a structural long base rate, so a HISTORY_LONG_SUPPORTIVE
+            verdict standing against confirmed live SHORT structure is EXPECTED
+            and does NOT by itself constitute unresolved direction disagreement.
+            RISK_EXECUTION governs timing/safety, not direction.
+            Decide unresolved_disagreement strictly as follows:
+              - If the 3 direction-setting specialists do NOT share one
+                directional lean (they split LONG vs SHORT among themselves),
+                set unresolved_disagreement=true and you may NOT PROPOSE; use
+                WAIT_FOR_CONFIRMATION / WATCH_LONG / WATCH_SHORT / NO_TRADE.
+              - If the 3 direction-setting specialists DO share one lean AND
+                RISK_EXECUTION did not return HARD_BLOCK or NO_TRADE, then a
+                contrary HISTORICAL_EVIDENCE lean does NOT block a proposal:
+                set unresolved_disagreement=false, treat the historical prior
+                as a risk caveat you MUST address in risk_treatment (e.g.
+                tighter size or trail), and you ARE permitted to PROPOSE in the
+                shared direction provided the remaining gating rules
+                (continuation/structure/location) are satisfied. Do not downgrade
+                to WATCH solely because HISTORICAL_EVIDENCE leans the other way.
           * If short_live_enabled=false and your structural analysis supports
             a SHORT thesis, you MUST still output PROPOSE_SHORT with
             primary_reason_code CHAIR_PROPOSE_SHORT. The backend will mark
@@ -610,13 +628,15 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
             or WAIT_FOR_CONFIRMATION are valid.
             WATCH_LONG_FAILURE / WATCH_SHORT_FAILURE require a non-null
             prior_thesis_reference object in your output.
-          * DOMINANT SHORT EVIDENCE RULE (Phase 4 taxonomy v2):
+          * DOMINANT SHORT EVIDENCE RULE (Phase 4 taxonomy v3):
             WATCH_SHORT or PROPOSE_SHORT is only valid when ALL FOUR
             conditions hold:
-              1) >= 3 of 5 specialists return short-leaning verdicts
-                 (SHORT_LOCATION, RESISTANCE_REJECTION coupled with
-                 STRUCTURE_TREND_DOWN, THESIS_SHORT or THESIS_WATCH_SHORT,
-                 HISTORY_SHORT_SUPPORTIVE).
+              1) At least 2 of the 3 DIRECTION-SETTING specialists
+                 (MARKET_STRUCTURE, LEVEL_PRICE_ACTION, THESIS) return
+                 short-leaning verdicts (STRUCTURE_TREND_DOWN, SHORT_LOCATION
+                 or RESISTANCE_REJECTION, THESIS_SHORT or THESIS_WATCH_SHORT).
+                 HISTORICAL_EVIDENCE is context, not counted here; a contrary
+                 HISTORY_LONG_SUPPORTIVE does not reduce this count.
               2) actionability_context.continuation_quality is REJECTED
                  (CONTESTED or UNCONFIRMED is NOT enough).
               3) Either recent_cluster is UPPER_ZONE_REJECTION_CLUSTER
@@ -625,10 +645,34 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
                  nearest_support distance and a confirmed breakdown.
               4) recent_cluster is NOT one of LOWER_WICK_ACCUMULATION,
                  BREAKOUT_FOLLOW_THROUGH, ORDERLY_PULLBACK.
-            Symmetric for WATCH_LONG / PROPOSE_LONG (long-side dominance).
-            If specialists tilt toward short but conditions 2-4 are not
-            all met, downgrade: prior LONG -> WATCH_LONG_FAILURE,
+            Symmetric for WATCH_LONG / PROPOSE_LONG (long-side dominance):
+            at least 2 of the 3 direction-setting specialists long-leaning,
+            continuation_quality CONFIRMED, supportive (non-rejective) cluster.
+            If the direction-setting specialists tilt one way but conditions
+            2-4 are not all met, downgrade: prior thesis -> WATCH_*_FAILURE,
             no prior -> WAIT_FOR_CONFIRMATION.
+          * CLEAN BREAKOUT / CONTINUATION EXCEPTION (Phase 4 taxonomy v3 —
+            enables PROPOSE_LONG in a trending market): PROPOSE_LONG is ALSO
+            valid when continuation_quality is UNCONFIRMED (not only CONFIRMED)
+            provided ALL of the following hold, in which case do NOT downgrade
+            to WATCH_LONG / WAIT_FOR_CONFIRMATION:
+              a) the 3 direction-setting specialists share a LONG lean and
+                 unresolved_disagreement=false (per the disagreement rule above);
+              b) recent_cluster is one of BREAKOUT_FOLLOW_THROUGH,
+                 ORDERLY_PULLBACK, or LOWER_WICK_ACCUMULATION (a constructive,
+                 non-rejective cluster);
+              c) resistance_overhead_risk is CLEAR or LOW;
+              d) entry_location_quality is NOT AT_RESISTANCE (BELOW_RESISTANCE_
+                 OVERHEAD, MID_RANGE, AT_BROKEN_RESISTANCE_SUPPORT, or AT_SUPPORT
+                 are acceptable);
+              e) market_structure_map shows an intact uptrend or a body-close
+                 BOS up with no body-close violation of the referenced HL chain.
+            This exception NEVER applies when continuation_quality is CONTESTED
+            or REJECTED, nor when recent_cluster is UPPER_ZONE_REJECTION_CLUSTER
+            or SELLER_PRESSURE_AFTER_ADVANCE. Document the qualifying breakout
+            evidence in why_now_evidence and why_not_no_trade. The symmetric
+            short breakdown case is intentionally NOT loosened: shorts still
+            require continuation_quality=REJECTED.
           * LEVEL CONFIDENCE CITATION RULE (Phase 4 taxonomy v2):
             Whenever your final_thesis, why_not_opposite, or
             risk_treatment cites a specific price level

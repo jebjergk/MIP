@@ -1806,8 +1806,14 @@ def _publish_to_structural(
     cur, run_id: str, portfolio_id: Optional[int], max_proposals: int,
     short_publication_allowed: bool = False,
     ibkr_account_mode: str = "UNKNOWN",
-) -> Tuple[int, int]:
-    """Returns (published_count, skipped_count).
+) -> Tuple[int, int, int]:
+    """Returns (published_count, skipped_count, research_published_count).
+
+    ``research_published_count`` is the number of WATCH_LONG / WATCH_SHORT
+    verdicts published into STRUCTURAL_TRADE_PROPOSALS as RESEARCH_ONLY rows.
+    These are operator-review items: visible in LPA but hard-gated out of
+    LIVE_ACTIONS (import requires EXECUTION_POLICY_STATUS='EXECUTABLE') so they
+    can never execute.
 
     Design rule (paper/real equivalence): the market VERDICT and trade
     configuration are identical regardless of account mode. Account mode is an
@@ -1956,7 +1962,12 @@ def _publish_to_structural(
             ),
             -- Execution policy: hard gate persisted at write time.
             -- SHORT proposals are never silently dropped; policy is recorded explicitly.
+            -- WATCH_LONG / WATCH_SHORT are published as RESEARCH_ONLY so the
+            -- operator can review the directional read in LPA; they can NEVER
+            -- import into LIVE_ACTIONS (gated to EXECUTABLE-only) or execute.
             CASE
+                WHEN v.FINAL_ACTION IN ('WATCH_LONG','WATCH_SHORT')
+                    THEN 'RESEARCH_ONLY'
                 WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED
                     THEN 'POLICY_BLOCKED'
                 WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED
@@ -1965,6 +1976,8 @@ def _publish_to_structural(
                 ELSE 'EXECUTABLE'
             END,
             CASE
+                WHEN v.FINAL_ACTION IN ('WATCH_LONG','WATCH_SHORT')
+                    THEN 'WATCH_RESEARCH_ONLY'
                 WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT s.SHORT_LIVE_ENABLED
                     THEN 'SHORT_LIVE_DISABLED'
                 WHEN v.FINAL_ACTION = 'PROPOSE_SHORT' AND s.SHORT_LIVE_ENABLED
@@ -1972,8 +1985,9 @@ def _publish_to_structural(
                     THEN 'IBKR_NOT_PAPER'
                 ELSE NULL
             END,
-            IFF(v.FINAL_ACTION = 'PROPOSE_SHORT'
-                AND (NOT s.SHORT_LIVE_ENABLED OR NOT %(short_pub_allowed)s),
+            IFF(v.FINAL_ACTION IN ('WATCH_LONG','WATCH_SHORT')
+                OR (v.FINAL_ACTION = 'PROPOSE_SHORT'
+                    AND (NOT s.SHORT_LIVE_ENABLED OR NOT %(short_pub_allowed)s)),
                 TRUE, FALSE)
         FROM chair_intent v
         JOIN MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
@@ -1988,11 +2002,22 @@ def _publish_to_structural(
           -- Phase 4 taxonomy v2: hard STOCK-only publication guard.
           AND s.MARKET_TYPE = 'STOCK'
           -- Allow PROPOSE_SHORT unconditionally; policy recorded in EXECUTION_POLICY_STATUS.
-          AND v.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT')
+          -- WATCH_LONG / WATCH_SHORT publish as RESEARCH_ONLY (see policy CASE above).
+          AND v.FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT', 'WATCH_LONG', 'WATCH_SHORT')
           AND NOT EXISTS (
               SELECT 1 FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS p
               WHERE p.STATUS = 'PROPOSED' AND p.SYMBOL = s.SYMBOL
                 AND (%(portfolio_id)s IS NULL OR p.PORTFOLIO_ID = %(portfolio_id)s OR p.PORTFOLIO_ID IS NULL)
+                -- A PROPOSE_* intent is blocked only by an existing EXECUTABLE-intent
+                -- (non research-only) proposal; a research-only WATCH row must never
+                -- block a genuine executable proposal. A WATCH_* intent is blocked by
+                -- ANY existing PROPOSED row for the symbol (executable or research) so
+                -- research items never pile up and always defer to a real proposal.
+                AND (
+                    (v.FINAL_ACTION IN ('PROPOSE_LONG','PROPOSE_SHORT')
+                     AND COALESCE(p.IS_RESEARCH_ONLY, FALSE) = FALSE)
+                    OR v.FINAL_ACTION IN ('WATCH_LONG','WATCH_SHORT')
+                )
           )
           AND NOT EXISTS (
               SELECT 1 FROM MIP.LIVE.LIVE_ACTIONS la
@@ -2131,12 +2156,24 @@ def _publish_to_structural(
         {"run_id": run_id},
     )
 
+    # published = genuine EXECUTABLE-intent proposals (PROPOSE_LONG/PROPOSE_SHORT).
+    # research_published = WATCH_LONG/WATCH_SHORT rows published as RESEARCH_ONLY
+    # (operator-review only; never executable). Tracked separately so
+    # FINAL_PROPOSAL_COUNT keeps reflecting tradeable proposals only.
     cur.execute(
-        "SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 "
-        "WHERE RUN_ID = %(run_id)s AND PUBLICATION_STATUS = 'PUBLISHED'",
+        "SELECT COUNT(*) FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS "
+        "WHERE BOARD_RUN_ID = %(run_id)s "
+        "AND BOARD_FINAL_VERDICT IN ('PROPOSE_LONG','PROPOSE_SHORT')",
         {"run_id": run_id},
     )
     published = cur.fetchone()[0] or 0
+    cur.execute(
+        "SELECT COUNT(*) FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS "
+        "WHERE BOARD_RUN_ID = %(run_id)s "
+        "AND BOARD_FINAL_VERDICT IN ('WATCH_LONG','WATCH_SHORT')",
+        {"run_id": run_id},
+    )
+    research_published = cur.fetchone()[0] or 0
     cur.execute(
         "SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 "
         "WHERE RUN_ID = %(run_id)s AND PUBLICATION_STATUS = 'SKIPPED_GUARDRAIL'",
@@ -2194,7 +2231,7 @@ def _publish_to_structural(
         """,
         {"run_id": run_id},
     )
-    return int(published), int(skipped)
+    return int(published), int(skipped), int(research_published)
 
 
 # ---------------------------------------------------------------------------
@@ -2229,6 +2266,7 @@ class BoardRunResult:
     invalid_dossier_count: int
     published_count: int
     skipped_count: int
+    research_published_count: int = 0
     eligible_count: int = 0
     genuine_eligible_count: int = 0
     cost_capped_count: int = 0
@@ -2837,8 +2875,9 @@ async def orchestrate_phase4_board(
 
         published = 0
         skipped = 0
+        research_published = 0
         if not dry_run:
-            published, skipped = _publish_to_structural(
+            published, skipped, research_published = _publish_to_structural(
                 cur, run_id, portfolio_id, max_proposals,
                 short_publication_allowed=short_publication_allowed,
                 ibkr_account_mode=ibkr_account_mode,
@@ -2923,6 +2962,7 @@ async def orchestrate_phase4_board(
             invalid_dossier_count=len(invalid_results),
             published_count=int(published),
             skipped_count=int(skipped),
+            research_published_count=int(research_published),
             eligible_count=len(eligible_rows),
             genuine_eligible_count=genuine_eligible_count,
             cost_capped_count=cost_capped_count,

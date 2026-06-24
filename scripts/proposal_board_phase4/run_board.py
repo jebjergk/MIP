@@ -173,6 +173,7 @@ def main() -> int:
         "valid_dossier_count": result.valid_dossier_count,
         "invalid_dossier_count": result.invalid_dossier_count,
         "published_count": result.published_count,
+        "research_published_count": result.research_published_count,
         "skipped_count": result.skipped_count,
         "eligible_count": result.eligible_count,
         "genuine_eligible_count": result.genuine_eligible_count,
@@ -241,6 +242,8 @@ def main() -> int:
         "-" * 72,
         f"  Chair propose           : {result.chair_propose_count}",
         f"  Final slate published   : {result.published_count}",
+        f"  Research-only (WATCH)   : {result.research_published_count}"
+        + ("  [operator review only — never executable]" if result.research_published_count else ""),
         f"  Struct proposals exec.  : {result.props_executable_count}",
         f"  Imported to LPA         : {result.imported_to_lpa_count}",
         "-" * 72,

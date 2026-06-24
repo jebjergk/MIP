@@ -188,7 +188,6 @@ select
     curr.portfolio_id,
     current_timestamp() as as_of_ts,
     object_construct(
-        'curr', curr.brief,
         'prev_meta', object_construct(
             'prev_as_of_ts', prev.as_of_ts,
             'prev_run_id', prev.run_id

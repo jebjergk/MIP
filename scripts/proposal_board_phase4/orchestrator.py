@@ -109,6 +109,19 @@ _EMPIRICAL_SLICES_PER_SESSION: int = 10
 
 _AGENT_TIMEOUT_SEC = 240.0
 _OBJECTLESS_TIMEOUT_SEC = 180.0
+# The chair synthesis is the single most expensive call (many evidence tool
+# round-trips + long JSON synthesis), so it gets a longer timeout than the
+# specialists. An empty/invalid chair response invalidates the whole dossier
+# (INVALID_CHAIR) and silently drops a candidate. We allow ONE bounded retry
+# (not three): each attempt is a billed Cortex call, so deep retry stacks
+# multiply cost on exactly the hard dossiers that are most likely to fail
+# repeatedly. Incremental per-dossier persistence (below) is what protects
+# spend now — a crash no longer discards chairs that already succeeded — so the
+# retry only needs to cover a single transient empty body, not act as the
+# primary durability mechanism.
+_CHAIR_TIMEOUT_SEC = 240.0
+_CHAIR_MAX_ATTEMPTS = 2
+_CHAIR_RETRY_BACKOFF_SEC = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -1312,20 +1325,40 @@ async def _orchestrate_dossier(
         res.primary_evidence_setup_event_id,
     )
     account, user, key_path = rest_creds
-    try:
-        chair_resp = await run_agent_object(
-            account=account, user=user, private_key_path=key_path,
-            agent_name=_CHAIR_AGENT_NAME,
-            messages=[{"role": "user", "content": chair_user_msg}],
-            timeout=_AGENT_TIMEOUT_SEC,
-        )
-        chair_text = extract_agent_text(chair_resp)
-    except Exception as e:
-        logger.warning("phase4 chair call failed dossier=%s: %s", dossier_id, e)
-        chair_text = ""
-        chair_resp = {"error": (str(e).strip() or type(e).__name__)}
+    # The chair is the most important call in the board: an empty or non-JSON
+    # response invalidates the entire dossier (INVALID_CHAIR) and silently drops
+    # a candidate. The Cortex AGENT_RUN can return an empty body on heavy
+    # dossiers (many evidence tool calls + long synthesis), so retry a bounded
+    # number of times until we get parseable JSON before giving up. The call is
+    # read-only (no side effects), so retrying is safe.
+    chair_resp: Any = None
+    chair_text = ""
+    chair_parsed = None
+    for _attempt in range(_CHAIR_MAX_ATTEMPTS):
+        try:
+            chair_resp = await run_agent_object(
+                account=account, user=user, private_key_path=key_path,
+                agent_name=_CHAIR_AGENT_NAME,
+                messages=[{"role": "user", "content": chair_user_msg}],
+                timeout=_CHAIR_TIMEOUT_SEC,
+            )
+            chair_text = extract_agent_text(chair_resp) or ""
+        except Exception as e:
+            logger.warning("phase4 chair call failed dossier=%s attempt=%d/%d: %s",
+                           dossier_id, _attempt + 1, _CHAIR_MAX_ATTEMPTS, e)
+            chair_text = ""
+            chair_resp = {"error": (str(e).strip() or type(e).__name__)}
 
-    chair_parsed = _try_parse_json(chair_text) if chair_text else None
+        chair_parsed = _try_parse_json(chair_text) if chair_text else None
+        if isinstance(chair_parsed, dict):
+            break
+        if _attempt + 1 < _CHAIR_MAX_ATTEMPTS:
+            logger.warning(
+                "phase4 chair empty/non-JSON dossier=%s attempt=%d/%d — retrying",
+                dossier_id, _attempt + 1, _CHAIR_MAX_ATTEMPTS,
+            )
+            await asyncio.sleep(_CHAIR_RETRY_BACKOFF_SEC)
+
     chair = _validate_chair(chair_parsed)
     res.chair = chair
 
@@ -1681,6 +1714,43 @@ async def _orchestrate_dossier(
                 "evidence_contract_version": "phase4_taxonomy_v2",
             })
 
+    # ------------------------------------------------------------------
+    # Incremental durability: flush the valid chair verdict to
+    # THESIS_VERDICT the instant it is finalized, using this dossier's own
+    # connection. The chair is the single most expensive call in the board.
+    # Previously verdicts were only written in one batch AFTER every dossier
+    # finished (see orchestrate end-of-run loop), so a crash anywhere in the
+    # long chair stage discarded every chair that had already succeeded — and
+    # the spend with it. Persisting per-dossier means a completed chair is
+    # never lost. This is best-effort and non-fatal: the end-of-run loop is an
+    # idempotent safety net (the INSERT is guarded by NOT EXISTS on
+    # RUN_ID+DOSSIER_ID), and final-slate ranking/publication still run once at
+    # the end of the board.
+    def _persist_chair_now(cn):
+        c = cn.cursor()
+        try:
+            if not _gate_chair_specialist_count(c, run_id, dossier_id):
+                logger.warning(
+                    "phase4 chair_gate_failed (incremental) run=%s dossier=%s "
+                    "symbol=%s", run_id, dossier_id, symbol,
+                )
+                return
+            _persist_chair_verdict(
+                c, run_id, dossier_id, symbol, market_type,
+                chair, res.interactions, res.primary_evidence_setup_event_id,
+            )
+            cn.commit()
+        finally:
+            c.close()
+
+    try:
+        await asyncio.to_thread(lambda: _persist_chair_now(conn_factory()))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "phase4 incremental chair persist failed dossier=%s: %s "
+            "(end-of-run batch loop will retry)", dossier_id, e,
+        )
+
     return res
 
 
@@ -1728,6 +1798,10 @@ def _persist_chair_verdict(
             PARSE_JSON(%(config)s), %(risk_treatment)s,
             PARSE_JSON(%(committee_payload)s),
             PARSE_JSON(%(chair_json)s)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT t
+            WHERE t.RUN_ID = %(run_id)s AND t.DOSSIER_ID = %(did)s
+        )
         """,
         {
             "run_id": run_id, "did": dossier_id, "sym": symbol, "mkt": market_type,
@@ -2901,6 +2975,7 @@ async def orchestrate_phase4_board(
             UPDATE MIP.APP.PROPOSAL_BOARD_RUN
                SET RUN_STATUS = %(status)s,
                    FINISHED_AT = CURRENT_TIMESTAMP(),
+                   CANDIDATE_COUNT = %(cand_n)s,
                    FINAL_PROPOSAL_COUNT = %(pub)s,
                    ERROR_JSON = CASE
                        WHEN %(invalid_n)s > 0 THEN OBJECT_CONSTRUCT(
@@ -2914,6 +2989,7 @@ async def orchestrate_phase4_board(
             {
                 "run_id": run_id,
                 "status": final_status,
+                "cand_n": int(len(eligible_rows)),
                 "pub": int(published),
                 "invalid_n": len(invalid_results),
                 "invalid_json": _jdump([

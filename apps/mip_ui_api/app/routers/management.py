@@ -524,17 +524,17 @@ def run_ib_manual_daily_job(
                 env=child_env,
                 capture_output=True,
                 text=True,
-                timeout=2400,
+                timeout=3000,
             )
         except subprocess.TimeoutExpired:
-            log.error("Phase 4 agentic board subprocess timed out after 2400s")
+            log.error("Phase 4 agentic board subprocess timed out after 3000s")
             raise HTTPException(
                 status_code=504,
                 detail=jsonable_encoder(
                     {
                         "message": (
                             "IB ingest/catch-up + daily pipeline succeeded, but Phase 4 "
-                            "agentic proposal board timed out (40 min). Inspect "
+                            "agentic proposal board timed out (50 min). Inspect "
                             "MIP.APP.PROPOSAL_BOARD_RUN for the in-flight RUN_ID."
                         ),
                         "python": str(py),
@@ -883,12 +883,12 @@ def run_proposal_board(
             env=child_env,
             capture_output=True,
             text=True,
-            timeout=2400,
+            timeout=3000,
         )
     except subprocess.TimeoutExpired:
-        log.error("Phase 4 agentic board subprocess timed out after 2400s")
+        log.error("Phase 4 agentic board subprocess timed out after 3000s")
         err_msg = (
-            "Phase 4 agentic proposal board timed out (40 min). "
+            "Phase 4 agentic proposal board timed out (50 min). "
             "Inspect MIP.APP.PROPOSAL_BOARD_RUN for the in-flight RUN_ID."
         )
         _cockpit_run_complete(board_run_id, "FAILED", error_detail=err_msg)

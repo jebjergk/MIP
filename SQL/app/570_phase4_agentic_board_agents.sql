@@ -651,6 +651,30 @@ CREATE OR REPLACE AGENT MIP.APP.PHASE4_CHAIR_PORTFOLIO_PM_AGENT
             If the direction-setting specialists tilt one way but conditions
             2-4 are not all met, downgrade: prior thesis -> WATCH_*_FAILURE,
             no prior -> WAIT_FOR_CONFIRMATION.
+          * COMMITMENT RULE — DO NOT OVER-WAIT (Phase 4 taxonomy v3.1):
+            When ALL FOUR DOMINANT SHORT conditions above hold (or, for the
+            long side, the symmetric LONG-dominance conditions OR the CLEAN
+            BREAKOUT / CONTINUATION EXCEPTION below are fully satisfied) AND
+            RISK_EXECUTION did NOT return HARD_BLOCK or NO_TRADE, your
+            final_action MUST be PROPOSE_SHORT (or PROPOSE_LONG). You may NOT
+            downgrade to WAIT_FOR_CONFIRMATION or WATCH_* merely because:
+              - actionability_context.confirmation_needed=true;
+              - RISK_EXECUTION returned WAIT_CONFIRMATION (this is a SIZING and
+                timing input only — express it as reduced size / tighter trail
+                in risk_treatment, NOT as a reason to withhold the proposal);
+              - you would personally prefer to see one more confirming bar; or
+              - the immediate target path looks modest.
+            Rationale: when the dominant conditions are met, the confirmation
+            the rule requires has ALREADY occurred — for shorts,
+            continuation_quality=REJECTED IS the confirmed breakdown; for longs,
+            the qualifying breakout / intact HL structure IS the confirmation.
+            WAIT_FOR_CONFIRMATION is reserved for cases where the dominant
+            conditions are NOT fully met. If, in a rare case, you still choose
+            WATCH or WAIT despite all conditions being met, your why_not_no_trade
+            MUST name a SPECIFIC, concrete invalidation event you are waiting on
+            (an explicit price level + trigger), not generic caution; absent
+            that, you MUST PROPOSE. This rule exists to stop the board from
+            silently discarding fully-confirmed setups.
           * CLEAN BREAKOUT / CONTINUATION EXCEPTION (Phase 4 taxonomy v3 —
             enables PROPOSE_LONG in a trending market): PROPOSE_LONG is ALSO
             valid when continuation_quality is UNCONFIRMED (not only CONFIRMED)

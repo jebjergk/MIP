@@ -4799,14 +4799,24 @@ def _fetch_ibkr_mart_reference_close(cur, symbol: str | None) -> float | None:
     if not sym:
         return None
     try:
+        # Pick the FRESHEST IBKR bar by timestamp across intervals rather than
+        # blindly taking the latest 1m bar. A symbol whose intraday (1m) feed has
+        # gone stale (e.g. only refreshed while actively traded) would otherwise
+        # return a months-old 1m close, corrupting the entry reference and the
+        # bracket R/R math. Ordering by TS first guarantees a current daily/15/60
+        # bar beats a stale 1m; the interval tiebreak still prefers 1m precision
+        # when multiple intervals share the most recent timestamp.
         cur.execute(
             """
             select CLOSE
             from MIP.MART.MARKET_BARS
             where SYMBOL = %s
-              and INTERVAL_MINUTES = 1
+              and INTERVAL_MINUTES in (1, 15, 60, 1440)
               and upper(coalesce(SOURCE, '')) = 'IBKR'
-            order by TS desc
+            order by TS desc,
+                     case INTERVAL_MINUTES
+                       when 1 then 0 when 15 then 1 when 60 then 2 else 3
+                     end
             limit 1
             """,
             (sym,),
@@ -4814,21 +4824,6 @@ def _fetch_ibkr_mart_reference_close(cur, symbol: str | None) -> float | None:
         bar = cur.fetchone()
         if bar and bar[0] is not None:
             return float(bar[0])
-        cur.execute(
-            """
-            select CLOSE
-            from MIP.MART.MARKET_BARS
-            where SYMBOL = %s
-              and INTERVAL_MINUTES in (15, 60, 1440)
-              and upper(coalesce(SOURCE, '')) = 'IBKR'
-            order by TS desc
-            limit 1
-            """,
-            (sym,),
-        )
-        fallback = cur.fetchone()
-        if fallback and fallback[0] is not None:
-            return float(fallback[0])
     except Exception:
         return None
     return None

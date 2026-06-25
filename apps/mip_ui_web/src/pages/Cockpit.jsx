@@ -57,7 +57,10 @@ export default function Cockpit() {
   const [error, setError] = useState('')
 
   // Operations drawer: shared running flag so both buttons disable together.
-  const [opsRunning, setOpsRunning] = useState(false)
+  const [localOpsActive, setLocalOpsActive] = useState(false)
+  const [serverOpsRunning, setServerOpsRunning] = useState(false)
+  const [opsProgress, setOpsProgress] = useState(null)
+  const opsRunning = localOpsActive || serverOpsRunning
   const [opsMsg, setOpsMsg] = useState({ type: '', text: '' })
   // Agentic search result (shown separately from the market-update result).
   const [agenticResult, setAgenticResult] = useState(null)
@@ -96,6 +99,42 @@ export default function Cockpit() {
   useEffect(() => {
     loadOverview()
   }, [loadOverview])
+
+  // Poll server-side Cockpit ops so buttons stay disabled while backend runs
+  // even if the browser request finished early or the tab was backgrounded.
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/manage/cockpit-ops/status`, { cache: 'no-store' })
+        const data = await resp.json().catch(() => ({}))
+        if (cancelled || !resp.ok) return
+        setServerOpsRunning(Boolean(data?.ops_running))
+        const board = data?.board_running
+        const active = (data?.active_runs || []).find((r) => r.STATUS === 'RUNNING')
+        if (board || active) {
+          setOpsProgress({
+            cockpitType: active?.RUN_TYPE || null,
+            boardStatus: board?.RUN_STATUS || null,
+            outcomes: board?.OUTCOMES ?? null,
+            verdicts: board?.VERDICTS ?? null,
+            candidates: board?.CANDIDATE_COUNT ?? null,
+            startedAt: active?.STARTED_AT || board?.STARTED_AT || null,
+          })
+        } else {
+          setOpsProgress(null)
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    }
+    poll()
+    const id = setInterval(poll, 4000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
 
   // Auto-poll every 90s while the tab is visible so the intraday card,
   // trade proposals, status freshness timestamps, and counts stay
@@ -140,7 +179,7 @@ export default function Cockpit() {
       ? 'Run Daily Market Update using today\u2019s session-so-far (1m \u2192 1440m, equities RTH TRADES, FX MIDPOINT)?\n\nThis refreshes market bars, returns, features, patterns, and structural state.\nThe agentic opportunity search will NOT run.'
       : 'Run Daily Market Update?\n\nThis ingests bars and runs the daily pipeline (returns, features, patterns, structural state).\nThe agentic opportunity search will NOT run automatically.'
     if (!window.confirm(prompt)) return
-    setOpsRunning(true)
+    setLocalOpsActive(true)
     setOpsMsg({ type: '', text: '' })
     setAgenticResult(null)
     try {
@@ -170,20 +209,20 @@ export default function Cockpit() {
     } catch (e) {
       setOpsMsg({ type: 'error', text: e?.message || 'Daily market update failed.' })
     } finally {
-      setOpsRunning(false)
+      setLocalOpsActive(false)
     }
   }, [loadOverview])
 
   const runAgenticSearch = useCallback(async () => {
     const confirmed = window.confirm(
       'Search for New Trade Proposals\n\n' +
-      'This runs the Phase 4 Cortex AI agent panel (~5 candidates \u00d7 7 agent sessions).\n' +
-      'AI credits will be consumed. Market data must be current.\n\n' +
-      'No trade will be automatically executed. Proposals appear in LPA as PENDING review items.\n\n' +
+      'Runs the Phase 4 proposal board (6 AI calls per candidate, bounded cost).\n' +
+      'Run Daily Market Update first so daily bars are current.\n\n' +
+      'No trade is auto-executed. New proposals appear in LPA for review.\n\n' +
       'Proceed?'
     )
     if (!confirmed) return
-    setOpsRunning(true)
+    setLocalOpsActive(true)
     setOpsMsg({ type: '', text: '' })
     setAgenticResult(null)
     try {
@@ -200,20 +239,25 @@ export default function Cockpit() {
       const proposals = boardResult?.proposals_published ?? boardResult?.published_count ?? '?'
       const candidates = boardResult?.candidates_evaluated ?? boardResult?.candidates ?? '?'
       const lpaImported = payload?.lpa_import_total_imported ?? 0
+      const partial = payload?.proposal_board_partial === true
+        || String(boardResult?.status || '').toUpperCase() === 'PARTIAL_FAILURE'
       setAgenticResult({
-        type: 'ok',
+        type: partial ? 'partial' : 'ok',
         proposals,
         candidates,
         lpaImported,
         tradeAutoExecuted: payload?.trade_auto_executed === true,
         runId: payload?.cockpit_run_id,
+        boardStatus: boardResult?.status,
+        invalidCount: boardResult?.invalid_dossier_count,
       })
+      await loadOverview()
     } catch (e) {
       setAgenticResult({ type: 'error', text: e?.message || 'Agentic opportunity search failed.' })
     } finally {
-      setOpsRunning(false)
+      setLocalOpsActive(false)
     }
-  }, [])
+  }, [loadOverview])
 
   if (loading) {
     return (
@@ -305,6 +349,16 @@ export default function Cockpit() {
               {opsRunning ? 'Running...' : 'Update from Today\u2019s Session'}
             </button>
           </div>
+          {opsProgress ? (
+            <div className="ck-co-ops-msg">
+              {opsProgress.cockpitType === 'DAILY_MARKET_UPDATE'
+                ? 'Daily market update running on server…'
+                : 'Proposal board running on server…'}
+              {opsProgress.outcomes != null ? (
+                <> Outcomes: {opsProgress.outcomes}. Verdicts: {opsProgress.verdicts ?? 0}.</>
+              ) : null}
+            </div>
+          ) : null}
           {opsMsg.text ? (
             <div className={`ck-co-ops-msg ck-co-ops-msg--${opsMsg.type === 'ok' ? 'ok' : 'error'}`}>
               {opsMsg.text}
@@ -317,7 +371,7 @@ export default function Cockpit() {
         <div className="ck-co-ops-section">
           <div className="ck-co-ops-section-title">Agentic Opportunity Search</div>
           <div className="ck-co-ops-section-desc">
-            Runs Phase 4 Cortex AI agents to find new trade proposals. Costs AI credits.
+            Runs Phase 4 AI proposal board (6 bounded calls per candidate). Costs AI credits.
             Run &quot;Daily Market Update&quot; first to ensure fresh data.
           </div>
           <div className="ck-co-ops-actions">
@@ -335,6 +389,15 @@ export default function Cockpit() {
             agenticResult.type === 'error' ? (
               <div className="ck-co-ops-msg ck-co-ops-msg--error">
                 {agenticResult.text}
+              </div>
+            ) : agenticResult.type === 'partial' ? (
+              <div className="ck-co-ops-msg ck-co-ops-msg--warn">
+                Board finished with partial failures (some candidates skipped).
+                {' '}Evaluated: {agenticResult.candidates}.
+                {' '}Published: {agenticResult.proposals}.
+                {' '}LPA imported: {agenticResult.lpaImported}.
+                {agenticResult.invalidCount != null ? ` Invalid dossiers: ${agenticResult.invalidCount}.` : ''}
+                {agenticResult.runId ? ` [Run ${agenticResult.runId.slice(0, 8)}]` : ''}
               </div>
             ) : (
               <div className="ck-co-ops-msg ck-co-ops-msg--ok">

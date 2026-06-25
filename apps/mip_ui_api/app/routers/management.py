@@ -910,7 +910,8 @@ def run_proposal_board(
         if isinstance(board_payload, dict)
         else ""
     )
-    board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS"}
+    board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS", "PARTIAL_FAILURE"}
+    board_partial = board_status == "PARTIAL_FAILURE"
     if board_proc.returncode != 0 or board_status not in board_ok_statuses:
         log.warning(
             "Phase 4 agentic board failed rc=%s status=%s stderr_tail=%s",
@@ -937,10 +938,11 @@ def run_proposal_board(
         )
 
     response = {
-        "status": "SUCCESS",
+        "status": "PARTIAL_SUCCESS" if board_partial else "SUCCESS",
         "run_type": "AGENTIC_OPPORTUNITY_SEARCH",
         "cockpit_run_id": board_run_id,
         "proposal_board_result": board_payload,
+        "proposal_board_partial": board_partial,
         "trade_auto_executed": False,
         "staleness_check": {
             "expected_trading_date": str(expected_date) if expected_date else None,
@@ -1025,6 +1027,7 @@ def run_proposal_board(
         summary={
             "run_type": "AGENTIC_OPPORTUNITY_SEARCH",
             "board_status": board_status,
+            "board_partial": board_partial,
             "market_types": normalized_market_types,
             "max_candidates": max_candidates,
             "lpa_import_triggered": response.get("lpa_import_triggered"),
@@ -1033,6 +1036,63 @@ def run_proposal_board(
         },
     )
     return jsonable_encoder(response)
+
+
+@router.get("/cockpit-ops/status")
+def cockpit_ops_status():
+    """
+    Poll active Cockpit operator jobs (Daily Market Update, Agentic Search)
+    and in-flight Phase 4 board progress for UI status display.
+    """
+    try:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT RUN_ID, RUN_TYPE, STATUS, STARTED_AT, COMPLETED_AT, ERROR_DETAIL
+                  FROM MIP.APP.COCKPIT_RUN_LOG
+                 WHERE STATUS = 'RUNNING'
+                    OR STARTED_AT >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+                 ORDER BY STARTED_AT DESC
+                 LIMIT 8
+                """
+            )
+            cockpit_rows = fetch_all(cur)
+
+            cur.execute(
+                """
+                SELECT r.RUN_ID, r.RUN_STATUS, r.CANDIDATE_COUNT, r.FINAL_PROPOSAL_COUNT,
+                       r.PROMPT_VERSION, r.STARTED_AT, r.FINISHED_AT,
+                       (SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_AGENT_OUTCOME_V2 ao
+                         WHERE ao.RUN_ID = r.RUN_ID) AS OUTCOMES,
+                       (SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_THESIS_VERDICT tv
+                         WHERE tv.RUN_ID = r.RUN_ID) AS VERDICTS
+                  FROM MIP.APP.PROPOSAL_BOARD_RUN r
+                 WHERE r.RUN_STATUS = 'RUNNING'
+                    OR r.STARTED_AT >= DATEADD('hour', -2, CURRENT_TIMESTAMP())
+                 ORDER BY r.STARTED_AT DESC
+                 LIMIT 3
+                """
+            )
+            board_rows = fetch_all(cur)
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"cockpit-ops status query failed: {exc}") from exc
+
+    active_runs = [r for r in cockpit_rows if r.get("STATUS") == "RUNNING"]
+    board_running = next((b for b in board_rows if b.get("RUN_STATUS") == "RUNNING"), None)
+
+    return jsonable_encoder(
+        {
+            "ops_running": bool(active_runs),
+            "active_runs": active_runs,
+            "recent_runs": cockpit_rows,
+            "board_running": board_running,
+            "recent_board_runs": board_rows,
+        }
+    )
 
 
 @router.post("/ib/onboarding/run")

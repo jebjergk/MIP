@@ -1268,6 +1268,7 @@
   font-size: 0.8rem;
 }
 .ck-co-ops-msg--ok    { background: #d1e7dd; color: #0a3622; }
+.ck-co-ops-msg--warn  { background: #fff3cd; color: #664d03; }
 .ck-co-ops-msg--error { background: #f8d7da; color: #58151c; }
 
 .ck-co-ops-section {

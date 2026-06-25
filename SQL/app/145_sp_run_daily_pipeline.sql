@@ -119,6 +119,7 @@ declare
     v_pos_health_start timestamp_ntz;
     v_pos_health_end timestamp_ntz;
     v_pos_health_rows number := 0;
+    v_expire_bar_session_result variant;
     -- Error capture variables (used in exception handlers)
     v_ingest_error_query_id string;
     v_ingest_duration_ms number;
@@ -588,6 +589,44 @@ begin
             null
         );
         return :v_summary;
+    end if;
+
+    -- Rule 1b: new daily bars invalidate the entire PROPOSED basket (even
+    -- same calendar day). Operator contract: proposals survive only until
+    -- the next daily bar load.
+    if (v_has_new_bars) then
+        begin
+            v_expire_bar_session_result := (
+                call MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(
+                    :v_effective_to_ts::date,
+                    true
+                )
+            );
+        exception
+            when other then
+                v_expire_bar_session_result := object_construct(
+                    'status', 'FAIL',
+                    'error', :sqlerrm
+                );
+        end;
+        call MIP.APP.SP_AUDIT_LOG_STEP(
+            :v_run_id,
+            'PROPOSAL_BAR_SESSION_EXPIRY',
+            coalesce(:v_expire_bar_session_result:status::string, 'SUCCESS'),
+            coalesce(:v_expire_bar_session_result:proposals_expired_bar_session::number, 0),
+            object_construct(
+                'step_name', 'proposal_bar_session_expiry',
+                'scope', 'AGG',
+                'scope_key', null,
+                'has_new_bars', :v_has_new_bars,
+                'result', :v_expire_bar_session_result
+            ),
+            iff(
+                coalesce(:v_expire_bar_session_result:status::string, 'SUCCESS') = 'FAIL',
+                :v_expire_bar_session_result:error::string,
+                null
+            )
+        );
     end if;
 
     create or replace temporary table MIP.APP.TMP_PIPELINE_MARKET_TYPES (MARKET_TYPE string);

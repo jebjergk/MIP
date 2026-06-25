@@ -101,7 +101,7 @@ _DEFAULT_CHAIR_MODEL = "llama3.1-8b"
 _DEFAULT_SPECIALIST_MAX_TOKENS = 1500
 _DEFAULT_CHAIR_MAX_TOKENS = 4000
 _DEFAULT_MAX_EVIDENCE_CHARS = 80_000
-_DEFAULT_STATEMENT_TIMEOUT_SEC = 120
+_DEFAULT_STATEMENT_TIMEOUT_SEC = 240
 _COMPLETE_MAX_RETRIES = 1
 
 # Legacy CLI budget alias (LLM calls, not agent sessions).
@@ -1151,6 +1151,17 @@ def _chair_structure_summary_output_invalid(raw: Dict[str, Any]) -> Optional[str
     return None
 
 
+def _primary_setup_event_id(payload: Dict[str, Any]) -> Optional[int]:
+    raw = payload.get("primary_evidence_setup_event_id")
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _validate_chair(raw: Optional[Dict[str, Any]]) -> ChairOutput:
     if not isinstance(raw, dict):
         return ChairOutput(
@@ -1437,6 +1448,26 @@ async def _orchestrate_dossier(
                 cur.close()
         await asyncio.to_thread(lambda: _persist_chair_error(conn_factory()))
         return res
+
+    if chair.final_action in {"PROPOSE_LONG", "PROPOSE_SHORT"}:
+        if _primary_setup_event_id(dossier_payload) is None:
+            missing_setup_reason = "MISSING_PRIMARY_SETUP_EVENT_ID"
+            res.is_valid = False
+            res.invalid_reason = "INVALID_CHAIR:" + missing_setup_reason
+
+            def _persist_chair_no_setup(cn):
+                cur = cn.cursor()
+                try:
+                    _persist_invalid_agent(
+                        cur, run_id, dossier_id, _CHAIR_AGENT_NAME,
+                        missing_setup_reason,
+                        chair.structured_output or chair_resp,
+                    )
+                    cn.commit()
+                finally:
+                    cur.close()
+            await asyncio.to_thread(lambda: _persist_chair_no_setup(conn_factory()))
+            return res
 
     res.is_valid = True
 

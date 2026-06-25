@@ -10,6 +10,14 @@
         is marked STATUS='EXPIRED' (no longer surfaced as actionable
         in V_STRUCTURAL_PROPOSALS_FOR_COMMITTEE).
 
+      RULE 1b — New daily-bar session invalidation (operator contract):
+        When P_INVALIDATE_ON_NEW_BARS = TRUE (daily pipeline sets this
+        when ingestion loaded new 1440m bars this run), ALL remaining
+        STATUS='PROPOSED' rows are expired immediately — even on the
+        same calendar day. A proposal is valid only until the next daily
+        bar load; the evening close bar invalidates a midday basket.
+        Cascades to open LIVE_ACTIONS with reason NEW_DAILY_BAR_SESSION.
+
       RULE 2 — Setup-lifecycle sync (Phase 7 PQI fix Fix 2):
         Any STRUCTURAL_TRADE_PROPOSALS row with STATUS='PROPOSED'
         whose underlying STRUCTURAL_SETUP_EVENTS row is now
@@ -71,6 +79,7 @@
         Those are marked STATUS='SUPERSEDED' with REASON_CODES appended
         'PROPOSAL_EXPIRED_AT_PARENT' (rule 0),
         'OLD_DAILY_PROPOSAL_EXPIRED' (rule 1),
+        'NEW_DAILY_BAR_SESSION' (rule 1b),
         'UNDERLYING_SETUP_NOT_ELIGIBLE' (rule 2), or
         'SUPERSEDED_BY_NEWER_BOARD_RUN' (rule 3).
 
@@ -96,8 +105,12 @@ USE ROLE MIP_ADMIN_ROLE;
 USE DATABASE MIP;
 USE SCHEMA APP;
 
+DROP PROCEDURE IF EXISTS MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(DATE);
+DROP PROCEDURE IF EXISTS MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(DATE, BOOLEAN);
+
 CREATE OR REPLACE PROCEDURE MIP.APP.SP_EXPIRE_STALE_DAILY_PROPOSALS(
-    P_AS_OF_DATE DATE DEFAULT NULL
+    P_AS_OF_DATE DATE DEFAULT NULL,
+    P_INVALIDATE_ON_NEW_BARS BOOLEAN DEFAULT FALSE
 )
 RETURNS VARIANT
 LANGUAGE SQL
@@ -108,17 +121,21 @@ DECLARE
     v_as_of                          DATE := COALESCE(P_AS_OF_DATE, CURRENT_DATE());
     v_run_start                      TIMESTAMP_NTZ := CURRENT_TIMESTAMP();
     v_proposals_expired              NUMBER := 0;
+    v_proposals_expired_bar_session  NUMBER := 0;
     v_proposals_expired_lifecycle    NUMBER := 0;
     v_proposals_expired_board        NUMBER := 0;
     v_actions_superseded             NUMBER := 0;
+    v_actions_superseded_bar_session NUMBER := 0;
     v_actions_superseded_lifecycle   NUMBER := 0;
     v_actions_superseded_board       NUMBER := 0;
     v_actions_superseded_orphan      NUMBER := 0;
     v_actions_at_broker_stale        NUMBER := 0;
     v_expired_ids                    ARRAY := ARRAY_CONSTRUCT();
+    v_expired_ids_bar_session        ARRAY := ARRAY_CONSTRUCT();
     v_expired_ids_lifecycle          ARRAY := ARRAY_CONSTRUCT();
     v_expired_ids_board              ARRAY := ARRAY_CONSTRUCT();
     v_superseded_action_ids          ARRAY := ARRAY_CONSTRUCT();
+    v_superseded_action_ids_bar_session ARRAY := ARRAY_CONSTRUCT();
     v_superseded_action_ids_lifecycle ARRAY := ARRAY_CONSTRUCT();
     v_superseded_action_ids_board    ARRAY := ARRAY_CONSTRUCT();
     v_superseded_action_ids_orphan   ARRAY := ARRAY_CONSTRUCT();
@@ -191,6 +208,80 @@ BEGIN
        )
        AND p.STATUS = 'EXPIRED';
     v_actions_superseded_orphan := SQLROWCOUNT;
+
+    -- ============================================================
+    -- STEP 1b (Rule 1b): Invalidate entire PROPOSED basket when new
+    -- daily bars were loaded this pipeline run (same calendar day OK).
+    -- ============================================================
+    IF (P_INVALIDATE_ON_NEW_BARS) THEN
+        CREATE OR REPLACE TEMPORARY TABLE TMP_EXPIRED_BAR_SESSION AS
+        SELECT PROPOSAL_ID
+          FROM MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+         WHERE STATUS = 'PROPOSED';
+
+        SELECT COUNT(*), ARRAY_AGG(PROPOSAL_ID) WITHIN GROUP (ORDER BY PROPOSAL_ID)
+          INTO :v_proposals_expired_bar_session, :v_expired_ids_bar_session
+          FROM TMP_EXPIRED_BAR_SESSION;
+
+        v_expired_ids_bar_session := COALESCE(:v_expired_ids_bar_session, ARRAY_CONSTRUCT());
+
+        IF (v_proposals_expired_bar_session > 0) THEN
+            UPDATE MIP.APP.STRUCTURAL_TRADE_PROPOSALS
+               SET STATUS = 'EXPIRED'
+             WHERE PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_BAR_SESSION);
+
+            SELECT ARRAY_AGG(ACTION_ID) WITHIN GROUP (ORDER BY ACTION_ID)
+              INTO :v_superseded_action_ids_bar_session
+              FROM MIP.LIVE.LIVE_ACTIONS
+             WHERE LIVE_INTENT_KIND = 'STRUCTURAL'
+               AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_BAR_SESSION)
+               AND STATUS IN (
+                   'PROPOSED',
+                   'PENDING_OPEN_VALIDATION',
+                   'OPEN_ELIGIBLE',
+                   'OPEN_CAUTION',
+                   'OPEN_BLOCKED',
+                   'PENDING_OPEN_STABILITY_REVIEW',
+                   'READY_FOR_APPROVAL_FLOW',
+                   'PM_ACCEPTED',
+                   'COMPLIANCE_APPROVED',
+                   'INTENT_SUBMITTED',
+                   'INTENT_APPROVED',
+                   'REVALIDATED_PASS',
+                   'REVALIDATED_FAIL'
+               );
+
+            v_superseded_action_ids_bar_session := COALESCE(:v_superseded_action_ids_bar_session, ARRAY_CONSTRUCT());
+
+            UPDATE MIP.LIVE.LIVE_ACTIONS
+               SET STATUS       = 'SUPERSEDED',
+                   REASON_CODES = ARRAY_APPEND(
+                                     COALESCE(REASON_CODES, ARRAY_CONSTRUCT()),
+                                     'NEW_DAILY_BAR_SESSION'
+                                  ),
+                   UPDATED_AT   = CURRENT_TIMESTAMP()
+             WHERE LIVE_INTENT_KIND = 'STRUCTURAL'
+               AND PROPOSAL_ID IN (SELECT PROPOSAL_ID FROM TMP_EXPIRED_BAR_SESSION)
+               AND STATUS IN (
+                   'PROPOSED',
+                   'PENDING_OPEN_VALIDATION',
+                   'OPEN_ELIGIBLE',
+                   'OPEN_CAUTION',
+                   'OPEN_BLOCKED',
+                   'PENDING_OPEN_STABILITY_REVIEW',
+                   'READY_FOR_APPROVAL_FLOW',
+                   'PM_ACCEPTED',
+                   'COMPLIANCE_APPROVED',
+                   'INTENT_SUBMITTED',
+                   'INTENT_APPROVED',
+                   'REVALIDATED_PASS',
+                   'REVALIDATED_FAIL'
+               );
+            v_actions_superseded_bar_session := SQLROWCOUNT;
+        END IF;
+
+        DROP TABLE IF EXISTS TMP_EXPIRED_BAR_SESSION;
+    END IF;
 
     -- ============================================================
     -- STEP 1: Identify stale PROPOSED rows (created on a prior day)
@@ -398,11 +489,16 @@ BEGIN
             'STRUCTURAL',
             'SP_EXPIRE_STALE_DAILY_PROPOSALS',
             'SUCCESS',
-            :v_proposals_expired + :v_proposals_expired_lifecycle + :v_proposals_expired_board,
+            :v_proposals_expired + :v_proposals_expired_bar_session + :v_proposals_expired_lifecycle + :v_proposals_expired_board,
             OBJECT_CONSTRUCT(
                 'as_of_date',                       :v_as_of,
+                'invalidate_on_new_bars',           :P_INVALIDATE_ON_NEW_BARS,
                 'proposals_expired',                :v_proposals_expired,
                 'expired_proposal_ids',             :v_expired_ids,
+                'proposals_expired_bar_session',    :v_proposals_expired_bar_session,
+                'expired_proposal_ids_bar_session', :v_expired_ids_bar_session,
+                'actions_superseded_bar_session',   :v_actions_superseded_bar_session,
+                'superseded_action_ids_bar_session', :v_superseded_action_ids_bar_session,
                 'proposals_expired_lifecycle',      :v_proposals_expired_lifecycle,
                 'expired_proposal_ids_lifecycle',   :v_expired_ids_lifecycle,
                 'proposals_expired_board',          :v_proposals_expired_board,
@@ -431,8 +527,13 @@ BEGIN
     RETURN OBJECT_CONSTRUCT(
         'status',                          'SUCCESS',
         'as_of_date',                      :v_as_of,
+        'invalidate_on_new_bars',          :P_INVALIDATE_ON_NEW_BARS,
         'proposals_expired',               :v_proposals_expired,
         'expired_proposal_ids',            :v_expired_ids,
+        'proposals_expired_bar_session',   :v_proposals_expired_bar_session,
+        'expired_proposal_ids_bar_session', :v_expired_ids_bar_session,
+        'actions_superseded_bar_session',  :v_actions_superseded_bar_session,
+        'superseded_action_ids_bar_session', :v_superseded_action_ids_bar_session,
         'proposals_expired_lifecycle',     :v_proposals_expired_lifecycle,
         'expired_proposal_ids_lifecycle',  :v_expired_ids_lifecycle,
         'proposals_expired_board',         :v_proposals_expired_board,

@@ -255,7 +255,7 @@ def main() -> int:
 
     print("\n".join(_summary_lines), flush=True)
 
-    return 0 if result.status in ("COMPLETE", "COMPLETE_NO_DOSSIERS") else 1
+    return 0 if result.status in ("COMPLETE", "COMPLETE_NO_DOSSIERS", "PARTIAL_FAILURE") else 1
 
 
 if __name__ == "__main__":

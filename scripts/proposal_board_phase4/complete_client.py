@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STATEMENT_TIMEOUT_SEC = 120
+DEFAULT_STATEMENT_TIMEOUT_SEC = 240
 DEFAULT_MAX_RETRIES = 1
 
 
@@ -112,6 +113,7 @@ def run_complete_json_sync(
     )
     conn = conn_factory()
     cur = conn.cursor()
+    started = time.perf_counter()
     try:
         cur.execute(
             "ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = %s",
@@ -169,15 +171,29 @@ def run_complete_json_sync(
         elif isinstance(raw, dict) and isinstance(raw.get("usage"), dict):
             usage = raw["usage"]
         if parsed is None and text:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            logger.warning(
+                "phase4_complete[%s] parse_fail model=%s elapsed_ms=%s",
+                label, model, elapsed_ms,
+            )
             return CompleteCallResult(
                 parsed=None,
                 raw_text=text,
                 usage=usage,
                 error=f"{label}: non_object_or_unparseable_json",
             )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "phase4_complete[%s] ok model=%s elapsed_ms=%s",
+            label, model, elapsed_ms,
+        )
         return CompleteCallResult(parsed=parsed, raw_text=text, usage=usage)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("phase4_complete[%s] failed model=%s: %s", label, model, exc)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.warning(
+            "phase4_complete[%s] failed model=%s elapsed_ms=%s: %s",
+            label, model, elapsed_ms, exc,
+        )
         return CompleteCallResult(
             parsed=None,
             raw_text="",

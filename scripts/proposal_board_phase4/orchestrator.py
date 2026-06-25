@@ -1965,6 +1965,88 @@ def _persist_final_slate(
     )
 
 
+def _finalize_unpublished_slate(
+    cur,
+    run_id: str,
+    portfolio_id: Optional[int],
+    short_publication_allowed: bool,
+    ibkr_account_mode: str,
+    *,
+    dry_run: bool = False,
+) -> int:
+    """Mark any remaining PENDING slate rows as terminal (never leave limbo).
+
+    Called after publish attempt and on dry_run so PROPOSE_* rows cannot sit
+    in PUBLICATION_STATUS='PENDING' forever.
+    """
+    cur.execute(
+        """
+        UPDATE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
+           SET PUBLICATION_STATUS = 'SKIPPED_GUARDRAIL',
+               PUBLICATION_ERROR_JSON = CASE
+                   WHEN %(dry_run)s
+                   THEN OBJECT_CONSTRUCT(
+                       'reason', 'DRY_RUN_NO_PUBLISH',
+                       'reason_detail', 'Dry run — STRUCTURAL_TRADE_PROPOSALS insert skipped.'
+                   )
+                   WHEN COALESCE(s.MARKET_TYPE, 'UNKNOWN') <> 'STOCK'
+                   THEN OBJECT_CONSTRUCT(
+                       'reason', 'BLOCKED_NON_STOCK_PUBLISH',
+                       'reason_detail', 'Phase 4 hard STOCK-only publication guard blocked this row.',
+                       'market_type', COALESCE(s.MARKET_TYPE, 'UNKNOWN'),
+                       'portfolio_id', %(pid)s
+                   )
+                   WHEN fs.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT %(short_pub_allowed)s
+                   THEN OBJECT_CONSTRUCT(
+                       'reason', 'IBKR_ACCOUNT_MODE_NOT_PAPER',
+                       'reason_detail', 'Short publication blocked: portfolio IBKR_ACCOUNT_MODE is not PAPER.',
+                       'ibkr_account_mode', %(ibkr_mode)s,
+                       'portfolio_id', %(pid)s
+                   )
+                   ELSE OBJECT_CONSTRUCT(
+                       'reason', 'not_inserted_duplicate_collision_missing_evidence_or_policy'
+                   )
+               END
+          FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
+         WHERE fs.RUN_ID = %(run_id)s
+           AND fs.PUBLICATION_STATUS = 'PENDING'
+           AND s.RUN_ID = fs.RUN_ID
+           AND s.DOSSIER_ID = fs.DOSSIER_ID
+        """,
+        {
+            "run_id": run_id,
+            "short_pub_allowed": bool(short_publication_allowed),
+            "ibkr_mode": ibkr_account_mode,
+            "pid": portfolio_id,
+            "dry_run": bool(dry_run),
+        },
+    )
+    return int(cur.rowcount or 0)
+
+
+def _warn_limbo_propose_slate(cur, run_id: str) -> None:
+    """Log loudly if any PROPOSE_* slate row is still PENDING after finalize."""
+    cur.execute(
+        """
+        SELECT SYMBOL, FINAL_ACTION, PUBLICATION_STATUS
+          FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2
+         WHERE RUN_ID = %(run_id)s
+           AND FINAL_ACTION IN ('PROPOSE_LONG', 'PROPOSE_SHORT')
+           AND PUBLICATION_STATUS = 'PENDING'
+         ORDER BY SYMBOL
+        """,
+        {"run_id": run_id},
+    )
+    rows = cur.fetchall() or []
+    if rows:
+        logger.error(
+            "phase4 LIMBO_PROPOSE_SLATE run=%s count=%s symbols=%s",
+            run_id,
+            len(rows),
+            [f"{r[0]}:{r[1]}" for r in rows],
+        )
+
+
 def _publish_to_structural(
     cur, run_id: str, portfolio_id: Optional[int], max_proposals: int,
     short_publication_allowed: bool = False,
@@ -2213,44 +2295,9 @@ def _publish_to_structural(
         {"run_id": run_id},
     )
 
-    # Phase 4 taxonomy v2: any PENDING row that did not insert is marked
-    # SKIPPED_GUARDRAIL with a reason. Non-STOCK rows get a dedicated
-    # BLOCKED_NON_STOCK_PUBLISH reason so the smoke check surfaces them.
-    cur.execute(
-        """
-        UPDATE MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 fs
-           SET PUBLICATION_STATUS = 'SKIPPED_GUARDRAIL',
-               PUBLICATION_ERROR_JSON = CASE
-                   WHEN COALESCE(s.MARKET_TYPE, 'UNKNOWN') <> 'STOCK'
-                   THEN OBJECT_CONSTRUCT(
-                       'reason', 'BLOCKED_NON_STOCK_PUBLISH',
-                       'reason_detail', 'Phase 4 hard STOCK-only publication guard blocked this row.',
-                       'market_type', COALESCE(s.MARKET_TYPE, 'UNKNOWN'),
-                       'portfolio_id', %(pid)s
-                   )
-                   WHEN fs.FINAL_ACTION = 'PROPOSE_SHORT' AND NOT %(short_pub_allowed)s
-                   THEN OBJECT_CONSTRUCT(
-                       'reason', 'IBKR_ACCOUNT_MODE_NOT_PAPER',
-                       'reason_detail', 'Short publication blocked: portfolio IBKR_ACCOUNT_MODE is not PAPER.',
-                       'ibkr_account_mode', %(ibkr_mode)s,
-                       'portfolio_id', %(pid)s
-                   )
-                   ELSE OBJECT_CONSTRUCT(
-                       'reason', 'not_inserted_duplicate_collision_missing_evidence_or_policy'
-                   )
-               END
-          FROM MIP.APP.PROPOSAL_BOARD_SYMBOL_DOSSIER_SNAPSHOT s
-         WHERE fs.RUN_ID = %(run_id)s
-           AND fs.PUBLICATION_STATUS = 'PENDING'
-           AND s.RUN_ID = fs.RUN_ID
-           AND s.DOSSIER_ID = fs.DOSSIER_ID
-        """,
-        {
-            "run_id": run_id,
-            "short_pub_allowed": bool(short_publication_allowed),
-            "ibkr_mode": ibkr_account_mode,
-            "pid": portfolio_id,
-        },
+    # Any PENDING row that did not insert is marked SKIPPED_GUARDRAIL.
+    _finalize_unpublished_slate(
+        cur, run_id, portfolio_id, short_publication_allowed, ibkr_account_mode,
     )
 
     # Phase 3: post-INSERT geometry validation.
@@ -3067,21 +3114,26 @@ async def orchestrate_phase4_board(
         published = 0
         skipped = 0
         research_published = 0
-        if not dry_run:
-            published, skipped, research_published = _publish_to_structural(
-                cur, run_id, portfolio_id, max_proposals,
-                short_publication_allowed=short_publication_allowed,
-                ibkr_account_mode=ibkr_account_mode,
+        if dry_run:
+            skipped = _finalize_unpublished_slate(
+                cur, run_id, portfolio_id, short_publication_allowed,
+                ibkr_account_mode, dry_run=True,
             )
         else:
-            cur.execute(
-                "SELECT COUNT(*) FROM MIP.APP.PROPOSAL_BOARD_FINAL_SLATE_V2 "
-                "WHERE RUN_ID=%(run_id)s",
-                {"run_id": run_id},
-            )
-            slate_n = cur.fetchone()[0] or 0
-            published = 0
-            skipped = int(slate_n)
+            try:
+                published, skipped, research_published = _publish_to_structural(
+                    cur, run_id, portfolio_id, max_proposals,
+                    short_publication_allowed=short_publication_allowed,
+                    ibkr_account_mode=ibkr_account_mode,
+                )
+            except Exception as pub_exc:
+                logger.exception("phase4 publish failed run=%s", run_id)
+                _finalize_unpublished_slate(
+                    cur, run_id, portfolio_id, short_publication_allowed,
+                    ibkr_account_mode,
+                )
+                raise pub_exc
+        _warn_limbo_propose_slate(cur, run_id)
 
         final_status = "COMPLETE"
         if invalid_results:

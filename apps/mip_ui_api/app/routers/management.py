@@ -554,7 +554,8 @@ def run_ib_manual_daily_job(
             if isinstance(board_payload, dict)
             else ""
         )
-        board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS"}
+        board_ok_statuses = {"COMPLETE", "COMPLETE_NO_DOSSIERS", "PARTIAL_FAILURE"}
+        board_partial = board_status == "PARTIAL_FAILURE"
         if board_proc.returncode != 0 or board_status not in board_ok_statuses:
             log.warning(
                 "Phase 4 agentic board failed rc=%s status=%s stderr_tail=%s",
@@ -582,6 +583,9 @@ def run_ib_manual_daily_job(
             )
         response["proposal_board_triggered"] = True
         response["proposal_board_result"] = board_payload
+        response["proposal_board_partial"] = board_partial
+        if board_partial:
+            response["status"] = "PARTIAL_SUCCESS"
 
         # ── Guaranteed LPA import — genuine proposals must appear in LPA ──
         # Historically the only path that materialised structural proposals
